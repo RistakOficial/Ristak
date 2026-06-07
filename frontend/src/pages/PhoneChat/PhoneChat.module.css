@@ -2542,6 +2542,22 @@
   background: var(--phone-chat-outbound);
 }
 
+.messageRow_outbound .messageBubbleScheduled {
+  color: #4b5563;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow:
+    inset 0 0 0 1px rgba(107, 114, 128, 0.42),
+    0 1px 0 rgba(15, 23, 42, 0.04);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .messageRow_outbound .messageBubbleScheduled {
+  color: #cbd5e1;
+  background: rgba(32, 44, 51, 0.72);
+  box-shadow:
+    inset 0 0 0 1px rgba(203, 213, 225, 0.28),
+    0 1px 0 rgba(0, 0, 0, 0.22);
+}
+
 .messageRow_system .messageBubble {
   max-width: 88%;
   color: var(--phone-chat-muted);
@@ -3063,6 +3079,18 @@
   opacity: 0.78;
 }
 
+.messageScheduledMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.messageScheduledMeta svg,
+.messageScheduledIcon {
+  color: currentColor;
+  opacity: 0.78;
+}
+
 .messageErrorButton {
   display: inline-flex;
   align-items: center;
@@ -3261,6 +3289,10 @@
     background-color 220ms ease;
 }
 
+.messageInputWrapWithSchedule {
+  grid-template-columns: minmax(0, 1fr) 38px;
+}
+
 .composerHasContent .messageInputWrap {
   border-color: color-mix(in srgb, var(--phone-chat-accent) 24%, var(--phone-chat-border));
   box-shadow: 0 6px 18px rgba(var(--phone-chat-primary-rgb), 0.06);
@@ -3308,6 +3340,17 @@
   width: 38px;
   height: 38px;
   margin-bottom: 0;
+}
+
+.composerScheduleButton {
+  align-self: end;
+  color: #7c838d;
+  border-radius: 999px;
+}
+
+.composerScheduleButton:active {
+  color: var(--phone-chat-text);
+  background: rgba(107, 114, 128, 0.12);
 }
 
 .composerIconButton {
@@ -4002,6 +4045,11 @@
   transform-origin: bottom center;
 }
 
+.scheduleSheet {
+  min-height: 316px;
+  background: var(--phone-chat-panel);
+}
+
 .sheetPanelInteractive {
   animation: none;
 }
@@ -4157,6 +4205,128 @@
 .chatMoreMute {
   color: #525252;
   background: #eeeeee;
+}
+
+.scheduleSheetContent {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  min-height: 0;
+  padding: 0 0 4px;
+}
+
+.scheduleFields {
+  display: grid;
+  gap: 12px;
+}
+
+.scheduleTimeRow {
+  display: grid;
+  grid-template-columns: minmax(0, 0.88fr) minmax(0, 0.72fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.scheduleField {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.scheduleField span {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.scheduleField input {
+  width: 100%;
+  min-width: 0;
+  height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 12px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 720;
+  letter-spacing: 0;
+  outline: none;
+}
+
+.scheduleField input:focus {
+  border-color: color-mix(in srgb, var(--phone-chat-accent) 44%, var(--phone-chat-border));
+  box-shadow: 0 0 0 3px rgba(var(--phone-chat-accent-rgb), 0.12);
+}
+
+.schedulePeriodToggle {
+  display: grid;
+  grid-template-columns: repeat(2, 45px);
+  height: 48px;
+  padding: 3px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  background: var(--phone-chat-surface);
+}
+
+.schedulePeriodToggle button {
+  min-width: 0;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 860;
+}
+
+.schedulePeriodToggle .schedulePeriodActive {
+  color: var(--phone-chat-text-on-primary);
+  background: var(--phone-chat-primary);
+}
+
+.schedulePreview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--phone-chat-muted);
+  font-size: 13px;
+  font-weight: 780;
+}
+
+.schedulePreview span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduleError {
+  margin: -2px 0 0;
+  color: #dc2626;
+  font-size: 13px;
+  font-weight: 680;
+  line-height: 1.28;
+}
+
+.scheduleSubmitButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-text-on-primary);
+  background: var(--phone-chat-primary);
+  font-size: 15px;
+  font-weight: 860;
+}
+
+.scheduleSubmitButton:disabled {
+  opacity: 0.48;
 }
 
 .attachmentGrid button strong {

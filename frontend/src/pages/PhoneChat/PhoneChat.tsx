@@ -73,7 +73,7 @@ import {
 import { mobileAppService, type MobileChatAttachment, type MobileDocumentAttachment, type MobilePhotoAttachment } from '@/services/mobileAppService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
-import { whatsappApiService, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
+import { whatsappApiService, type ScheduledChatMessage, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField, ContactCustomFieldDefinition } from '@/types'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import {
@@ -165,7 +165,7 @@ type PhoneChatDeviceMode = PortableDeviceMode | 'checking'
 type ComposerStatus = 'idle' | 'sending'
 type MessageAudioRate = typeof MESSAGE_AUDIO_RATE_OPTIONS[number]
 type PaymentMode = 'single' | 'partial'
-type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | null
+type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | null
 type ChatFilter = 'all' | 'unread' | 'appointments' | 'customers' | 'leads'
 type TemplateMode = 'choice' | 'send' | 'create'
 type ChatSettingsSection = 'appearance' | 'templates' | 'numbers' | 'notifications' | 'agent' | 'chats' | 'display' | null
@@ -178,6 +178,15 @@ type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
 type SendMessageOptions = {
   textOverride?: string
   preserveComposer?: boolean
+}
+
+type SchedulePeriod = 'AM' | 'PM'
+
+interface ScheduleDraft {
+  date: string
+  hour: string
+  minute: string
+  period: SchedulePeriod
 }
 
 interface BankClabeAccount {
@@ -291,6 +300,8 @@ interface ChatMessage {
   direction: 'inbound' | 'outbound' | 'system'
   status?: string
   errorReason?: string
+  scheduledAt?: string
+  scheduledMessageId?: string
   sentAt?: string
   deliveredAt?: string
   readAt?: string
@@ -643,6 +654,56 @@ function formatMessageDate(value?: string | null) {
   }).format(date).replace('.', '')
 }
 
+function padTwoDigits(value: number) {
+  return String(value).padStart(2, '0')
+}
+
+function formatDateInputValue(date: Date) {
+  return `${date.getFullYear()}-${padTwoDigits(date.getMonth() + 1)}-${padTwoDigits(date.getDate())}`
+}
+
+function createDefaultScheduleDraft(): ScheduleDraft {
+  const date = new Date(Date.now() + 15 * 60 * 1000)
+  const minutes = date.getMinutes()
+  date.setMinutes(minutes + ((5 - (minutes % 5)) % 5), 0, 0)
+
+  const hour24 = date.getHours()
+  const hour12 = hour24 % 12 || 12
+  return {
+    date: formatDateInputValue(date),
+    hour: String(hour12),
+    minute: padTwoDigits(date.getMinutes()),
+    period: hour24 >= 12 ? 'PM' : 'AM'
+  }
+}
+
+function getScheduleDateFromDraft(draft: ScheduleDraft) {
+  const [year, month, day] = draft.date.split('-').map(Number)
+  const hour = Number(draft.hour)
+  const minute = Number(draft.minute)
+
+  if (!year || !month || !day || !Number.isFinite(hour) || !Number.isFinite(minute)) return null
+  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null
+
+  const hour24 = draft.period === 'PM'
+    ? (hour === 12 ? 12 : hour + 12)
+    : (hour === 12 ? 0 : hour)
+  const date = new Date(year, month - 1, day, hour24, minute, 0, 0)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function formatScheduledMessageLabel(value?: string | null) {
+  if (!value) return 'Programado'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Programado'
+
+  const time = formatMessageTime(value)
+  const sameDay = date.toDateString() === new Date().toDateString()
+  if (sameDay) return `Programado ${time}`
+
+  return `Programado ${formatMessageDate(value)} ${time}`.trim()
+}
+
 function capitalizeFirst(value: string) {
   if (!value) return value
   return value.charAt(0).toUpperCase() + value.slice(1)
@@ -889,6 +950,10 @@ function isMessagePending(message: ChatMessage) {
   return PENDING_MESSAGE_STATUSES.has(status) || status.startsWith('enviando')
 }
 
+function isMessageScheduled(message: ChatMessage) {
+  return String(message.status || '').trim().toLowerCase() === 'scheduled' || Boolean(message.scheduledAt && message.scheduledMessageId)
+}
+
 type MessageReceiptStatus = 'sent' | 'delivered' | 'read'
 
 function getMessageReceiptStatus(message: ChatMessage): MessageReceiptStatus {
@@ -906,6 +971,7 @@ function getMessageReceiptLabel(status: MessageReceiptStatus) {
 
 function shouldTrackOutboundReceipt(message: ChatMessage) {
   if (message.direction !== 'outbound' || isMessageFailed(message)) return false
+  if (isMessageScheduled(message)) return false
   const status = getMessageReceiptStatus(message)
   if (status === 'read') return false
 
@@ -966,6 +1032,8 @@ function getMessageSignature(message: ChatMessage) {
     message.direction,
     message.status,
     message.errorReason,
+    message.scheduledAt,
+    message.scheduledMessageId,
     message.sentAt,
     message.deliveredAt,
     message.readAt,
@@ -1218,6 +1286,24 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     businessPhoneNumberId: String(event.data?.business_phone_number_id || ''),
     transport: String(event.data?.transport || (isMetaMessage ? event.data?.social_platform || 'meta' : 'api')),
     attachment
+  }
+}
+
+function getScheduledChatMessageBubble(message: ScheduledChatMessage): ChatMessage | null {
+  if (!message?.id || !message.text) return null
+
+  return {
+    id: `scheduled-${message.id}`,
+    scheduledMessageId: message.id,
+    text: message.text,
+    date: message.createdAt || message.updatedAt || new Date().toISOString(),
+    direction: 'outbound',
+    status: message.status || 'scheduled',
+    errorReason: message.errorMessage || '',
+    scheduledAt: message.scheduledAt,
+    businessPhone: message.fromPhone || '',
+    businessPhoneNumberId: message.businessPhoneNumberId || '',
+    transport: message.transport || (message.provider === 'highlevel' ? message.channel || 'ghl_whatsapp' : 'api')
   }
 }
 
@@ -2236,6 +2322,9 @@ export const PhoneChat: React.FC = () => {
   const [messageAudioRates, setMessageAudioRates] = useState<Record<string, MessageAudioRate>>({})
   const [messageAudioPlayback, setMessageAudioPlayback] = useState<Record<string, MessageAudioPlaybackState>>({})
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(() => createDefaultScheduleDraft())
+  const [scheduleError, setScheduleError] = useState('')
+  const [schedulingMessage, setSchedulingMessage] = useState(false)
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [calendarsLoading, setCalendarsLoading] = useState(false)
@@ -2726,9 +2815,11 @@ export const PhoneChat: React.FC = () => {
     ? Boolean(activeContact?.id && (!activeHighLevelChannelNeedsPhone || activeContact.phone))
     : Boolean(activeContact?.phone)
   const composerBlockedByReplyWindow = Boolean(outsideReplyWindow && !selectedQrReady && !sendingThroughHighLevel)
-  const hasComposerContent = Boolean(messageText.trim() || draftAttachments.length > 0 || voiceDraft)
+  const hasComposerText = Boolean(messageText.trim())
+  const hasComposerContent = Boolean(hasComposerText || draftAttachments.length > 0 || voiceDraft)
   const voicePanelActive = Boolean(voiceRecording || voiceProcessing || voiceDraft)
   const canSendMessage = Boolean(selectedChannelCanSend && hasComposerContent && !voiceRecording && !voiceProcessing && !composerBlockedByReplyWindow)
+  const canOpenScheduleSheet = Boolean(selectedChannelCanSend && hasComposerText && !draftAttachments.length && !voicePanelActive && !composerBlockedByReplyWindow && composerStatus !== 'sending')
   const composerInputDisabled = Boolean(!selectedChannelCanSend || voiceRecording || voiceProcessing || voiceDraft)
   const composerPlaceholder = voiceRecording
     ? 'Grabando...'
@@ -3047,14 +3138,21 @@ export const PhoneChat: React.FC = () => {
     }
 
     try {
-      const journey = await contactsService.getContactJourney(contactId)
+      const [journey, scheduledMessages] = await Promise.all([
+        contactsService.getContactJourney(contactId),
+        whatsappApiService.getScheduledMessages(contactId).catch(() => [])
+      ])
       if (!isCurrentConversationLoad()) return
       setContactJourney((currentJourney) => (
         getJourneySignature(currentJourney) === getJourneySignature(journey) ? currentJourney : journey
       ))
-      const nextMessages = journey
+      const journeyMessages = journey
         .map(getJourneyMessage)
         .filter((message): message is ChatMessage => Boolean(message))
+      const scheduledMessageBubbles = scheduledMessages
+        .map(getScheduledChatMessageBubble)
+        .filter((message): message is ChatMessage => Boolean(message))
+      const nextMessages = [...journeyMessages, ...scheduledMessageBubbles]
         .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime())
 
       setMessages((currentMessages) => (
@@ -3509,6 +3607,18 @@ export const PhoneChat: React.FC = () => {
     () => messages.some(shouldTrackOutboundReceipt),
     [messages]
   )
+  const scheduledRefreshIntervalMs = useMemo(() => {
+    const scheduledTimes = messages
+      .filter((message) => isMessageScheduled(message) && !isMessageFailed(message))
+      .map((message) => new Date(message.scheduledAt || message.date).getTime())
+      .filter(Number.isFinite)
+
+    if (scheduledTimes.length === 0) return 0
+
+    const nextScheduledTime = Math.min(...scheduledTimes)
+    const delay = nextScheduledTime - Date.now() + 35_000
+    return Math.max(15_000, Math.min(delay, 5 * 60_000))
+  }, [messages])
 
   useEffect(() => {
     if (!activeContact?.id || accessState !== 'allowed' || !conversationVisible || !shouldRefreshReceipts) return
@@ -3521,6 +3631,18 @@ export const PhoneChat: React.FC = () => {
 
     return () => window.clearInterval(interval)
   }, [accessState, activeContact?.id, conversationVisible, loadConversation, shouldRefreshReceipts])
+
+  useEffect(() => {
+    if (!activeContact?.id || accessState !== 'allowed' || !conversationVisible || !scheduledRefreshIntervalMs) return
+
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadConversation(activeContact.id, { silent: true, useCache: false })
+      }
+    }, scheduledRefreshIntervalMs)
+
+    return () => window.clearInterval(interval)
+  }, [accessState, activeContact?.id, conversationVisible, loadConversation, scheduledRefreshIntervalMs])
 
   useEffect(() => {
     if (!conversationOpen || conversationVisible || chatsLoading) return
@@ -4918,6 +5040,153 @@ export const PhoneChat: React.FC = () => {
     setDraftAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))
   }
 
+  const handleOpenScheduleSheet = () => {
+    if (!activeContact) return
+
+    if (!messageTextRef.current.trim()) {
+      showToast('warning', 'Escribe el mensaje', 'Primero escribe el texto que quieres programar.')
+      return
+    }
+
+    if (draftAttachments.length > 0 || voiceDraft) {
+      showToast('warning', 'Solo texto por ahora', 'Programa mensajes escritos; las fotos, documentos y audios se mandan al momento.')
+      return
+    }
+
+    setScheduleDraft(createDefaultScheduleDraft())
+    setScheduleError('')
+    setSheet('schedule')
+  }
+
+  const handleScheduleDraftChange = (patch: Partial<ScheduleDraft>) => {
+    setScheduleDraft((current) => ({ ...current, ...patch }))
+    setScheduleError('')
+  }
+
+  const handleScheduleMessage = async () => {
+    if (!activeContact || schedulingMessage) return
+
+    const text = messageTextRef.current.trim()
+    if (!text) {
+      setScheduleError('Escribe el mensaje que quieres programar.')
+      return
+    }
+
+    if (draftAttachments.length > 0 || voiceDraft) {
+      setScheduleError('Por ahora sólo se pueden programar mensajes escritos.')
+      return
+    }
+
+    const scheduledDate = getScheduleDateFromDraft(scheduleDraft)
+    if (!scheduledDate) {
+      setScheduleError('Revisa la fecha y la hora.')
+      return
+    }
+
+    if (scheduledDate.getTime() < Date.now() + 10 * 1000) {
+      setScheduleError('Elige una hora que todavía no haya pasado.')
+      return
+    }
+
+    let provider: 'highlevel' | 'whatsapp_api' = 'whatsapp_api'
+    let channel: HighLevelChatChannel | undefined
+    let transport: 'api' | 'qr' = 'api'
+
+    if (sendingThroughHighLevel) {
+      provider = 'highlevel'
+      channel = activeHighLevelChatChannel
+      if (activeHighLevelChannelNeedsPhone && !activeContact.phone) {
+        setScheduleError('Este contacto necesita teléfono para programar por este canal.')
+        return
+      }
+    } else {
+      if (!activeContact.phone) {
+        setScheduleError('Guarda el teléfono del contacto antes de programar.')
+        return
+      }
+
+      if (!selectedBusinessPhoneValue) {
+        setScheduleError('Elige el WhatsApp del negocio que mandará el mensaje.')
+        return
+      }
+
+      transport = selectedQrReady && (!apiReplyWindowOpen || !whatsappConnected) ? 'qr' : 'api'
+
+      if (transport === 'api' && !whatsappConnected) {
+        setScheduleError('Conecta WhatsApp API antes de programar este mensaje.')
+        return
+      }
+
+      if (!apiReplyWindowOpen && !selectedQrReady) {
+        setScheduleError('Para este chat necesitas mandar una plantilla antes de programar un mensaje libre.')
+        return
+      }
+
+      if (transport === 'qr' && !selectedQrReady) {
+        setScheduleError('Conecta el QR de este número antes de programar.')
+        return
+      }
+
+      const lastInboundTime = new Date(lastInboundForSelectedPhone?.date || '').getTime()
+      if (transport === 'api' && !selectedQrReady && Number.isFinite(lastInboundTime) && scheduledDate.getTime() > lastInboundTime + 24 * 60 * 60 * 1000) {
+        setScheduleError('Para esa hora WhatsApp ya no dejará responder así. Usa una plantilla o QR.')
+        return
+      }
+    }
+
+    setSchedulingMessage(true)
+    setScheduleError('')
+
+    try {
+      const scheduledMessage = await whatsappApiService.scheduleMessage({
+        contactId: activeContact.id,
+        provider,
+        channel,
+        transport: provider === 'whatsapp_api' ? transport : undefined,
+        text,
+        toPhone: activeContact.phone || undefined,
+        fromPhone: selectedBusinessPhoneValue || undefined,
+        businessPhoneNumberId: selectedBusinessPhone?.id || undefined,
+        scheduledAt: scheduledDate.toISOString()
+      })
+      const scheduledBubble = getScheduledChatMessageBubble(scheduledMessage)
+
+      setComposerMessageText('')
+      if (composerInputRef.current) {
+        composerInputRef.current.textContent = ''
+      }
+
+      if (scheduledBubble) {
+        setMessages((current) => {
+          const next = current.filter((message) => message.id !== scheduledBubble.id)
+          next.push(scheduledBubble)
+          return next.sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime())
+        })
+        setChats((current) => current.map((contact) => (
+          contact.id === activeContact.id
+            ? {
+                ...contact,
+                lastMessageText: `Programado: ${text}`,
+                lastMessageDate: scheduledBubble.date,
+                lastMessageDirection: 'outbound',
+                lastMessageChannel: provider === 'highlevel' ? channel : contact.lastMessageChannel,
+                messageCount: Number(contact.messageCount || 0) + 1
+              }
+            : contact
+        )))
+      }
+
+      setSheet(null)
+      showToast('success', 'Mensaje programado', formatScheduledMessageLabel(scheduledDate.toISOString()))
+    } catch (error: any) {
+      const errorMessage = getErrorMessage(error, 'No se pudo programar el mensaje.')
+      setScheduleError(errorMessage)
+      showToast('error', 'No se programó', errorMessage)
+    } finally {
+      setSchedulingMessage(false)
+    }
+  }
+
   const handleSendMessage = async (transport: 'api' | 'qr' = 'api', options: SendMessageOptions = {}) => {
     const textOverride = options.textOverride?.trim()
     const hasTextOverride = Boolean(textOverride)
@@ -6003,6 +6272,7 @@ export const PhoneChat: React.FC = () => {
 
   const renderMessageMeta = (message: ChatMessage, className = styles.messageMeta, options?: { showTransport?: boolean }) => {
     const failed = message.direction === 'outbound' && isMessageFailed(message)
+    const scheduled = message.direction === 'outbound' && !failed && isMessageScheduled(message)
     const pending = message.direction === 'outbound' && !failed && isMessagePending(message)
     const receiptStatus = getMessageReceiptStatus(message)
     const receiptLabel = getMessageReceiptLabel(receiptStatus)
@@ -6011,7 +6281,14 @@ export const PhoneChat: React.FC = () => {
     return (
       <span className={className}>
         {transportBadge && <em className={styles.messageTransport}>{transportBadge}</em>}
-        {formatMessageTime(message.date)}
+        {scheduled ? (
+          <span className={styles.messageScheduledMeta}>
+            <Clock size={13} />
+            {formatScheduledMessageLabel(message.scheduledAt)}
+          </span>
+        ) : (
+          formatMessageTime(message.date)
+        )}
         {message.direction === 'outbound' && (failed ? (
           <button
             type="button"
@@ -6021,6 +6298,8 @@ export const PhoneChat: React.FC = () => {
           >
             <CircleAlert size={15} />
           </button>
+        ) : scheduled ? (
+          <Clock size={14} className={styles.messageScheduledIcon} />
         ) : pending ? (
           <Loader2 size={14} className={`${styles.spinIcon} ${styles.messageSendingIcon}`} />
         ) : receiptStatus === 'delivered' || receiptStatus === 'read' ? (
@@ -6595,6 +6874,7 @@ export const PhoneChat: React.FC = () => {
               const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage
               const messageSwipeOffset = draggingMessageInfoSwipe?.messageId === message.id ? draggingMessageInfoSwipe.offset : 0
               const canOpenMessageInfo = message.direction !== 'system'
+              const scheduled = isMessageScheduled(message)
 
               return (
                 <div
@@ -6606,7 +6886,7 @@ export const PhoneChat: React.FC = () => {
                       <ReceiptText size={17} />
                     </span>
                     <div
-                      className={`${styles.messageBubble} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''}`}
+                      className={`${styles.messageBubble} ${scheduled ? styles.messageBubbleScheduled : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''}`}
                       style={messageSwipeOffset > 0 ? { transform: `translate3d(-${messageSwipeOffset}px, 0, 0)` } : undefined}
                       onTouchStart={canOpenMessageInfo ? (event) => handleMessageInfoTouchStart(message, event) : undefined}
                       onTouchMove={canOpenMessageInfo ? handleMessageInfoTouchMove : undefined}
@@ -8131,6 +8411,88 @@ export const PhoneChat: React.FC = () => {
     </div>
   )
 
+  const renderScheduleSheet = () => {
+    const previewDate = getScheduleDateFromDraft(scheduleDraft)
+    const canSubmitSchedule = Boolean(previewDate && messageText.trim() && !schedulingMessage)
+
+    return (
+      <div className={styles.scheduleSheetContent}>
+        <div className={styles.scheduleFields}>
+          <label className={styles.scheduleField}>
+            <span>Fecha</span>
+            <input
+              type="date"
+              value={scheduleDraft.date}
+              min={formatDateInputValue(new Date())}
+              onChange={(event) => handleScheduleDraftChange({ date: event.target.value })}
+            />
+          </label>
+          <div className={styles.scheduleTimeRow}>
+            <label className={styles.scheduleField}>
+              <span>Hora</span>
+              <input
+                type="number"
+                min="1"
+                max="12"
+                inputMode="numeric"
+                value={scheduleDraft.hour}
+                onChange={(event) => handleScheduleDraftChange({ hour: event.target.value.slice(0, 2) })}
+              />
+            </label>
+            <label className={styles.scheduleField}>
+              <span>Min</span>
+              <input
+                type="number"
+                min="0"
+                max="59"
+                inputMode="numeric"
+                value={scheduleDraft.minute}
+                onChange={(event) => handleScheduleDraftChange({ minute: event.target.value.slice(0, 2) })}
+                onBlur={() => {
+                  const minute = Math.min(59, Math.max(0, Number(scheduleDraft.minute) || 0))
+                  handleScheduleDraftChange({ minute: padTwoDigits(minute) })
+                }}
+              />
+            </label>
+            <div className={styles.schedulePeriodToggle} role="group" aria-label="AM o PM">
+              {(['AM', 'PM'] as SchedulePeriod[]).map((period) => (
+                <button
+                  key={period}
+                  type="button"
+                  className={scheduleDraft.period === period ? styles.schedulePeriodActive : ''}
+                  onClick={() => handleScheduleDraftChange({ period })}
+                >
+                  {period}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.schedulePreview} aria-live="polite">
+          <Clock size={17} />
+          <span>{previewDate ? formatScheduledMessageLabel(previewDate.toISOString()) : 'Elige fecha y hora'}</span>
+        </div>
+
+        {scheduleError && (
+          <p className={styles.scheduleError}>
+            {scheduleError}
+          </p>
+        )}
+
+        <button
+          type="button"
+          className={styles.scheduleSubmitButton}
+          onClick={handleScheduleMessage}
+          disabled={!canSubmitSchedule}
+        >
+          {schedulingMessage ? <Loader2 size={17} className={styles.spinIcon} /> : <Clock size={17} />}
+          Enviar programación
+        </button>
+      </div>
+    )
+  }
+
   const renderAttachmentsSheet = () => {
     const attachmentActions = [
       { label: 'Plantillas', Icon: FileText, className: styles.actionTemplate, onClick: handleOpenTemplatesSheet },
@@ -8462,7 +8824,7 @@ export const PhoneChat: React.FC = () => {
                           <button type="button" className={styles.composerPlus} onClick={() => setSheet('attachments')} aria-label="Abrir adjuntos">
                             <Plus size={34} />
                           </button>
-                          <div className={styles.messageInputWrap}>
+                          <div className={`${styles.messageInputWrap} ${canOpenScheduleSheet ? styles.messageInputWrapWithSchedule : ''}`}>
                             <div
                               ref={composerInputRef}
                               className={styles.composerInput}
@@ -8485,6 +8847,17 @@ export const PhoneChat: React.FC = () => {
                                 }
                               }}
                             />
+                            {canOpenScheduleSheet && (
+                              <button
+                                type="button"
+                                className={styles.composerScheduleButton}
+                                onClick={handleOpenScheduleSheet}
+                                aria-label="Programar mensaje"
+                                title="Programar mensaje"
+                              >
+                                <Clock size={19} />
+                              </button>
+                            )}
                           </div>
                           <div className={styles.composerTrailingActions}>
                             <button
@@ -8552,12 +8925,12 @@ export const PhoneChat: React.FC = () => {
 
       {sheet && (
         <div
-          className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' ? styles.darkSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
+          className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' ? styles.darkSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
           style={actionSheetDismiss.backdropStyle}
           onClick={actionSheetDismiss.requestClose}
         >
           <section
-            className={`${styles.sheetPanel} ${actionSheetMoving ? styles.sheetPanelInteractive : ''} ${sheet === 'payment' ? styles.paymentSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
+            className={`${styles.sheetPanel} ${actionSheetMoving ? styles.sheetPanelInteractive : ''} ${sheet === 'payment' ? styles.paymentSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${sheet === 'schedule' ? styles.scheduleSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
             style={actionSheetDismiss.sheetStyle}
             onClick={(event) => event.stopPropagation()}
             aria-label="Acciones del chat"
@@ -8577,6 +8950,7 @@ export const PhoneChat: React.FC = () => {
                     {sheet === 'settings' && 'Ajustes del chat'}
                     {sheet === 'newChat' && 'Nuevo chat'}
                     {sheet === 'chatMore' && 'Más acciones'}
+                    {sheet === 'schedule' && 'Programar mensaje'}
                   </h2>
                 </div>
               </div>
@@ -8588,6 +8962,7 @@ export const PhoneChat: React.FC = () => {
             {sheet === 'clabe' && renderClabeSheet()}
             {sheet === 'settings' && renderChatSettingsSheet()}
             {sheet === 'chatMore' && renderChatMoreSheet()}
+            {sheet === 'schedule' && renderScheduleSheet()}
 
             {sheet === 'payment' && (
               <>

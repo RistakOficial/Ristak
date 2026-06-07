@@ -2220,144 +2220,137 @@ async function saveHighLevelMetaMirror({ contact, channel, text, attachments = [
   };
 }
 
+function createHighLevelChatError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+export async function sendHighLevelConversationMessageCore(payload = {}, { req } = {}) {
+  const {
+    contactId,
+    channel,
+    message,
+    attachments,
+    audioDataUrl,
+    audioUrl,
+    durationMs,
+    fromNumber,
+    toNumber,
+    conversationProviderId,
+    externalId
+  } = payload || {};
+  const channelConfig = normalizeGhlChatChannel(channel);
+  const text = cleanString(message);
+  const attachmentUrls = Array.isArray(attachments)
+    ? attachments.map(item => cleanString(item)).filter(Boolean)
+    : [];
+
+  if (!channelConfig) {
+    throw createHighLevelChatError('Ese canal no está permitido para enviar desde el chat.');
+  }
+
+  const voiceAttachment = await prepareHighLevelVoiceAttachment({
+    audioDataUrl,
+    audioUrl,
+    durationMs,
+    req
+  });
+  const resolvedAttachmentUrls = [
+    ...attachmentUrls,
+    ...(voiceAttachment?.url ? [voiceAttachment.url] : [])
+  ];
+
+  if (!text && resolvedAttachmentUrls.length === 0) {
+    throw createHighLevelChatError('Escribe un mensaje o graba una nota de voz antes de enviarlo.');
+  }
+
+  if (resolvedAttachmentUrls.some(url => !/^https?:\/\//i.test(url))) {
+    throw createHighLevelChatError('HighLevel solo acepta archivos publicados como enlaces.');
+  }
+
+  const contact = await getLocalContactForHighLevelMessage(contactId);
+  if (!contact) {
+    throw createHighLevelChatError('Contacto no encontrado.', 404);
+  }
+
+  if ((channelConfig.key === 'whatsapp_api' || channelConfig.key === 'sms_qr') && !cleanString(toNumber || contact.phone)) {
+    throw createHighLevelChatError('Este contacto necesita teléfono para enviar por WhatsApp API o SMS/QR.');
+  }
+
+  const ghlClient = await getGHLClient();
+  const highLevelContactId = await resolveHighLevelContactIdForChat({ contact, ghlClient });
+  const cleanFromNumber = normalizePhoneForStorage(fromNumber) || cleanString(fromNumber);
+  const cleanToNumber = normalizePhoneForStorage(toNumber || contact.phone) || cleanString(toNumber || contact.phone);
+  const channelResolution = await resolveHighLevelChatChannelForReply({
+    requestedChannel: channelConfig,
+    contact,
+    ghlClient,
+    highLevelContactId
+  });
+  const effectiveChannel = channelResolution.channel;
+  const requestBody = {
+    type: effectiveChannel.type,
+    contactId: highLevelContactId,
+    status: 'pending',
+    ...(text && { message: text }),
+    ...(resolvedAttachmentUrls.length > 0 && { attachments: resolvedAttachmentUrls }),
+    ...(cleanFromNumber && { fromNumber: cleanFromNumber }),
+    ...(cleanToNumber && { toNumber: cleanToNumber }),
+    ...(cleanString(conversationProviderId) && { conversationProviderId: cleanString(conversationProviderId) })
+  };
+  const response = await ghlClient.sendConversationMessage(requestBody);
+  const localMirror = effectiveChannel.localTable === 'meta'
+    ? await saveHighLevelMetaMirror({
+        contact,
+        channel: effectiveChannel,
+        text,
+        attachments: resolvedAttachmentUrls,
+        externalId,
+        requestBody,
+        response
+      })
+    : await saveHighLevelWhatsAppMirror({
+        contact,
+        channel: effectiveChannel,
+        text,
+        attachments: resolvedAttachmentUrls,
+        fromNumber: cleanFromNumber,
+        toNumber: cleanToNumber,
+        externalId,
+        requestBody,
+        response
+      });
+
+  return {
+    ...response,
+    channel: effectiveChannel.key,
+    requestedChannel: channelResolution.requestedChannel.key,
+    channelLabel: effectiveChannel.label,
+    requestedChannelLabel: channelResolution.requestedChannel.label,
+    type: effectiveChannel.type,
+    transport: effectiveChannel.transport,
+    contactId: contact.id,
+    highLevelContactId,
+    localMessageId: localMirror.localMessageId,
+    status: localMirror.status,
+    fallbackApplied: channelResolution.fallbackApplied,
+    fallbackReason: channelResolution.fallbackReason,
+    replyWindowOpen: channelResolution.replyWindowOpen,
+    replyWindowSource: channelResolution.replyWindowSource,
+    lastInboundAt: channelResolution.lastInboundAt,
+    ...(voiceAttachment?.audio ? { audio: voiceAttachment.audio } : {}),
+    ...(voiceAttachment?.localMedia ? { localMedia: voiceAttachment.localMedia } : {})
+  };
+}
+
 export const sendConversationMessage = async (req, res) => {
   try {
-    const {
-      contactId,
-      channel,
-      message,
-      attachments,
-      audioDataUrl,
-      audioUrl,
-      durationMs,
-      fromNumber,
-      toNumber,
-      conversationProviderId,
-      externalId
-    } = req.body || {};
-    const channelConfig = normalizeGhlChatChannel(channel);
-    const text = cleanString(message);
-    const attachmentUrls = Array.isArray(attachments)
-      ? attachments.map(item => cleanString(item)).filter(Boolean)
-      : [];
-
-    if (!channelConfig) {
-      return res.status(400).json({
-        success: false,
-        error: 'Ese canal no está permitido para enviar desde el chat.'
-      });
-    }
-
-    const voiceAttachment = await prepareHighLevelVoiceAttachment({
-      audioDataUrl,
-      audioUrl,
-      durationMs,
-      req
-    });
-    const resolvedAttachmentUrls = [
-      ...attachmentUrls,
-      ...(voiceAttachment?.url ? [voiceAttachment.url] : [])
-    ];
-
-    if (!text && resolvedAttachmentUrls.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Escribe un mensaje o graba una nota de voz antes de enviarlo.'
-      });
-    }
-
-    if (resolvedAttachmentUrls.some(url => !/^https?:\/\//i.test(url))) {
-      return res.status(400).json({
-        success: false,
-        error: 'HighLevel solo acepta archivos publicados como enlaces.'
-      });
-    }
-
-    const contact = await getLocalContactForHighLevelMessage(contactId);
-    if (!contact) {
-      return res.status(404).json({
-        success: false,
-        error: 'Contacto no encontrado.'
-      });
-    }
-
-    if ((channelConfig.key === 'whatsapp_api' || channelConfig.key === 'sms_qr') && !cleanString(toNumber || contact.phone)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Este contacto necesita teléfono para enviar por WhatsApp API o SMS/QR.'
-      });
-    }
-
-    const ghlClient = await getGHLClient();
-    const highLevelContactId = await resolveHighLevelContactIdForChat({ contact, ghlClient });
-    const cleanFromNumber = normalizePhoneForStorage(fromNumber) || cleanString(fromNumber);
-    const cleanToNumber = normalizePhoneForStorage(toNumber || contact.phone) || cleanString(toNumber || contact.phone);
-    const channelResolution = await resolveHighLevelChatChannelForReply({
-      requestedChannel: channelConfig,
-      contact,
-      ghlClient,
-      highLevelContactId
-    });
-    const effectiveChannel = channelResolution.channel;
-    const requestBody = {
-      type: effectiveChannel.type,
-      contactId: highLevelContactId,
-      status: 'pending',
-      ...(text && { message: text }),
-      ...(resolvedAttachmentUrls.length > 0 && { attachments: resolvedAttachmentUrls }),
-      ...(cleanFromNumber && { fromNumber: cleanFromNumber }),
-      ...(cleanToNumber && { toNumber: cleanToNumber }),
-      ...(cleanString(conversationProviderId) && { conversationProviderId: cleanString(conversationProviderId) })
-    };
-    const response = await ghlClient.sendConversationMessage(requestBody);
-    const localMirror = effectiveChannel.localTable === 'meta'
-      ? await saveHighLevelMetaMirror({
-          contact,
-          channel: effectiveChannel,
-          text,
-          attachments: resolvedAttachmentUrls,
-          externalId,
-          requestBody,
-          response
-        })
-      : await saveHighLevelWhatsAppMirror({
-          contact,
-          channel: effectiveChannel,
-          text,
-          attachments: resolvedAttachmentUrls,
-          fromNumber: cleanFromNumber,
-          toNumber: cleanToNumber,
-          externalId,
-          requestBody,
-          response
-        });
-
-    res.json({
-      success: true,
-      data: {
-        ...response,
-        channel: effectiveChannel.key,
-        requestedChannel: channelResolution.requestedChannel.key,
-        channelLabel: effectiveChannel.label,
-        requestedChannelLabel: channelResolution.requestedChannel.label,
-        type: effectiveChannel.type,
-        transport: effectiveChannel.transport,
-        contactId: contact.id,
-        highLevelContactId,
-        localMessageId: localMirror.localMessageId,
-        status: localMirror.status,
-        fallbackApplied: channelResolution.fallbackApplied,
-        fallbackReason: channelResolution.fallbackReason,
-        replyWindowOpen: channelResolution.replyWindowOpen,
-        replyWindowSource: channelResolution.replyWindowSource,
-        lastInboundAt: channelResolution.lastInboundAt,
-        ...(voiceAttachment?.audio ? { audio: voiceAttachment.audio } : {}),
-        ...(voiceAttachment?.localMedia ? { localMedia: voiceAttachment.localMedia } : {})
-      }
-    });
+    const data = await sendHighLevelConversationMessageCore(req.body || {}, { req });
+    res.json({ success: true, data });
   } catch (error) {
     logger.error(`Error enviando mensaje por HighLevel Conversations: ${error.message}`);
-    res.status(502).json({
+    res.status(error.statusCode || 502).json({
       success: false,
       error: error.message || 'No se pudo enviar el mensaje por HighLevel.'
     });

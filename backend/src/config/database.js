@@ -255,6 +255,7 @@ const CONTACT_PHONE_REFERENCE_TABLES = [
   { table: 'whatsapp_api_contacts', column: 'contact_id' },
   { table: 'whatsapp_api_messages', column: 'contact_id' },
   { table: 'whatsapp_api_attribution', column: 'contact_id' },
+  { table: 'scheduled_chat_messages', column: 'contact_id' },
   { table: 'payment_flows', column: 'contact_id' },
   { table: 'sessions', column: 'contact_id' }
 ]
@@ -1611,6 +1612,57 @@ async function initTables() {
     }
 
     await db.run(`
+      CREATE TABLE IF NOT EXISTS scheduled_chat_messages (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        channel TEXT,
+        transport TEXT,
+        message_text TEXT NOT NULL,
+        to_phone TEXT,
+        from_phone TEXT,
+        business_phone_number_id TEXT,
+        scheduled_at DATETIME NOT NULL,
+        status TEXT DEFAULT 'scheduled',
+        external_id TEXT,
+        sent_message_id TEXT,
+        attempts INTEGER DEFAULT 0,
+        error_message TEXT,
+        raw_payload_json TEXT,
+        last_attempt_at DATETIME,
+        sent_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      )
+    `)
+
+    for (const [columnName, columnType] of [
+      ['provider', 'TEXT'],
+      ['channel', 'TEXT'],
+      ['transport', 'TEXT'],
+      ['message_text', 'TEXT'],
+      ['to_phone', 'TEXT'],
+      ['from_phone', 'TEXT'],
+      ['business_phone_number_id', 'TEXT'],
+      ['scheduled_at', 'DATETIME'],
+      ['status', "TEXT DEFAULT 'scheduled'"],
+      ['external_id', 'TEXT'],
+      ['sent_message_id', 'TEXT'],
+      ['attempts', 'INTEGER DEFAULT 0'],
+      ['error_message', 'TEXT'],
+      ['raw_payload_json', 'TEXT'],
+      ['last_attempt_at', 'DATETIME'],
+      ['sent_at', 'DATETIME']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE scheduled_chat_messages ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Columna ya existe, ignorar.
+      }
+    }
+
+    await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_api_attribution (
         id TEXT PRIMARY KEY,
         whatsapp_api_message_id TEXT,
@@ -1774,6 +1826,8 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_business_phone_id ON whatsapp_api_messages(business_phone_number_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_created ON whatsapp_api_messages(created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_wamid ON whatsapp_api_messages(wamid)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_scheduled_chat_messages_contact ON scheduled_chat_messages(contact_id, status, scheduled_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_scheduled_chat_messages_due ON scheduled_chat_messages(status, scheduled_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_attr_contact ON whatsapp_api_attribution(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_attr_source ON whatsapp_api_attribution(detected_source_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_attr_ctwa ON whatsapp_api_attribution(detected_ctwa_clid)')

@@ -170,6 +170,39 @@ export interface WhatsAppApiTextSendPayload {
   phoneNumberId?: string
 }
 
+export interface ScheduledChatMessage {
+  id: string
+  contactId: string
+  provider: 'highlevel' | 'whatsapp_api' | string
+  channel?: string
+  transport?: string
+  text: string
+  toPhone?: string
+  fromPhone?: string
+  businessPhoneNumberId?: string
+  scheduledAt: string
+  status: 'scheduled' | 'sending' | 'error' | 'sent' | string
+  externalId?: string
+  sentMessageId?: string
+  attempts?: number
+  errorMessage?: string
+  createdAt?: string
+  updatedAt?: string
+  sentAt?: string
+}
+
+export interface ScheduleChatMessagePayload {
+  contactId: string
+  provider: 'highlevel' | 'whatsapp_api'
+  channel?: string
+  transport?: 'api' | 'qr'
+  text: string
+  toPhone?: string
+  fromPhone?: string
+  businessPhoneNumberId?: string
+  scheduledAt: string
+}
+
 export interface WhatsAppApiImageSendPayload {
   to: string
   from?: string
@@ -286,6 +319,10 @@ export const whatsappApiService = {
   getTemplates: (status?: string) => apiClient.get<WhatsAppApiTemplatesResponse>('/whatsapp-api/templates', {
     params: status ? { status } : undefined
   }),
+  getScheduledMessages: (contactId: string) => apiClient.get<ScheduledChatMessage[]>('/whatsapp-api/messages/scheduled', {
+    params: { contactId }
+  }),
+  scheduleMessage: (payload: ScheduleChatMessagePayload) => apiClient.post<ScheduledChatMessage>('/whatsapp-api/messages/scheduled', payload),
   sendText: (payload: WhatsAppApiTextSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/text', payload),
   sendImage: (payload: WhatsAppApiImageSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/image', payload),
   sendDocument: (payload: WhatsAppApiDocumentSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/document', payload),

@@ -10,6 +10,7 @@ import { initializeDefaultUser } from './utils/auth.js'
 import { startMetaSyncCron } from './jobs/metaSync.cron.js'
 import { startHighLevelSyncCron } from './jobs/highlevelSync.cron.js'
 import { startMetaVersionCron, updateMetaVersion } from './jobs/metaVersionCron.js'
+import { startScheduledChatMessagesCron } from './jobs/scheduledChatMessages.cron.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
@@ -169,6 +170,7 @@ app.listen(PORT, async () => {
   startMetaSyncCron()              // Sincroniza anuncios de Meta Ads cada hora
   startHighLevelSyncCron()         // Sincroniza contactos, citas y pagos de HighLevel cada hora (silencioso)
   startMetaVersionCron()           // Revisa versión Meta API una vez al mes
+  startScheduledChatMessagesCron() // Envía mensajes de chat cuando llegue su hora programada
 })
 
 // Manejo de errores de proceso

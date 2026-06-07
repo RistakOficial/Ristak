@@ -10,6 +10,8 @@ import {
   previewWhatsAppApiPhoneNumbersView,
   refreshWhatsAppApiView,
   resetWhatsAppApiCredentialsView,
+  listScheduledChatMessagesView,
+  scheduleChatMessageView,
   sendWhatsAppApiAudioMessageView,
   sendWhatsAppApiDocumentMessageView,
   sendWhatsAppApiImageMessageView,
@@ -33,6 +35,8 @@ router.post('/reset', resetWhatsAppApiCredentialsView)
 router.get('/qr', getWhatsAppQrView)
 router.post('/qr/connect', connectWhatsAppQrView)
 router.post('/qr/disconnect', disconnectWhatsAppQrView)
+router.get('/messages/scheduled', listScheduledChatMessagesView)
+router.post('/messages/scheduled', scheduleChatMessageView)
 router.post('/messages/text', sendWhatsAppApiTextMessageView)
 router.post('/messages/image', sendWhatsAppApiImageMessageView)
 router.post('/messages/document', sendWhatsAppApiDocumentMessageView)

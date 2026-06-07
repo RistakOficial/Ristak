@@ -18,6 +18,10 @@ import {
   sendWhatsAppApiTextMessage,
   setWhatsAppApiDefaultPhoneNumber
 } from '../services/whatsappApiService.js'
+import {
+  createScheduledChatMessage,
+  listScheduledChatMessages
+} from '../services/scheduledChatMessagesService.js'
 import { logger } from '../utils/logger.js'
 
 function cleanString(value) {
@@ -207,6 +211,45 @@ export async function sendWhatsAppApiTextMessageView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo enviar el mensaje por WhatsApp_API'
+    })
+  }
+}
+
+export async function scheduleChatMessageView(req, res) {
+  try {
+    const data = await createScheduledChatMessage({
+      contactId: req.body?.contactId,
+      provider: req.body?.provider,
+      channel: req.body?.channel,
+      transport: req.body?.transport,
+      text: req.body?.text,
+      toPhone: req.body?.toPhone,
+      fromPhone: req.body?.fromPhone,
+      businessPhoneNumberId: req.body?.businessPhoneNumberId,
+      scheduledAt: req.body?.scheduledAt,
+      externalId: req.body?.externalId
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error programando mensaje de chat: ${error.message}`)
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo programar el mensaje'
+    })
+  }
+}
+
+export async function listScheduledChatMessagesView(req, res) {
+  try {
+    const data = await listScheduledChatMessages({
+      contactId: req.query?.contactId
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error leyendo mensajes programados: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'No se pudieron leer los mensajes programados'
     })
   }
 }
