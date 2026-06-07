@@ -4081,6 +4081,7 @@ export const Sites: React.FC = () => {
                         activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                         locked={!canManagePages(editorSite)}
                         draggingPageId={draggingPageId}
+                        colorFinalPages={isStandardForm(editorSite)}
                         isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
                         canDeletePage={(page) => isStandardForm(editorSite)
                           ? !isFormFinalPage(page) && getFormContentPages(pages).length > 1
@@ -6672,6 +6673,7 @@ interface FunnelPagesPanelProps {
   activePageId: string
   locked?: boolean
   draggingPageId: string | null
+  colorFinalPages?: boolean
   isFixedPage?: (page: SitePage) => boolean
   canDeletePage?: (page: SitePage) => boolean
   canDuplicatePage?: (page: SitePage) => boolean
@@ -6689,6 +6691,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   activePageId,
   locked = false,
   draggingPageId,
+  colorFinalPages = false,
   isFixedPage = () => false,
   canDeletePage = () => pages.length > 1,
   canDuplicatePage = () => true,
@@ -6713,9 +6716,9 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
           const fixedPage = isFixedPage(page)
           const pageCanDelete = !locked && canDeletePage(page)
           const pageCanDuplicate = !locked && canDuplicatePage(page)
-          const pageToneClass = page.id === FORM_THANK_YOU_PAGE_ID
+          const pageToneClass = colorFinalPages && page.id === FORM_THANK_YOU_PAGE_ID
             ? styles.pageItemThankYou
-            : page.id === FORM_DISQUALIFIED_PAGE_ID
+            : colorFinalPages && page.id === FORM_DISQUALIFIED_PAGE_ID
               ? styles.pageItemDisqualified
               : ''
 
