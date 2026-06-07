@@ -6,10 +6,10 @@
 }
 
 .pageHeader {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--spacing-xs);
-  align-items: flex-start;
+  align-items: start;
 }
 
 .pageTitle {
@@ -27,16 +27,22 @@
 
 
 .datePickerWrapper {
-  margin-top: var(--spacing-sm);
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 12px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
-@media (min-width: 768px) {
+@media (max-width: 767px) {
+  .pageHeader {
+    grid-template-columns: 1fr;
+  }
+
   .datePickerWrapper {
     margin-top: var(--spacing-sm);
+    justify-content: flex-start;
   }
 }
 
