@@ -852,6 +852,7 @@ async function initTables() {
     // Índices para contacts
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_ad_id ON contacts(attribution_ad_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_preferred_whatsapp_phone ON contacts(preferred_whatsapp_phone_number_id)')
     try {
@@ -1173,6 +1174,7 @@ async function initTables() {
     `)
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_attendance_signals_appointment ON appointment_attendance_signals(appointment_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_attendance_signals_contact ON appointment_attendance_signals(contact_id)')
 
     // Tabla de configuración de Meta
     await db.run(`
@@ -1664,6 +1666,7 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_contacts_phone ON whatsapp_api_contacts(phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_contacts_contact ON whatsapp_api_contacts(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_contact ON whatsapp_api_messages(contact_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_contact_date ON whatsapp_api_messages(contact_id, message_timestamp, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_phone ON whatsapp_api_messages(phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_business_phone ON whatsapp_api_messages(business_phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_business_phone_id ON whatsapp_api_messages(business_phone_number_id)')
@@ -2041,6 +2044,7 @@ async function initTables() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_contacts_contact ON meta_social_contacts(contact_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_contacts_sender ON meta_social_contacts(platform, sender_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_contact ON meta_social_messages(contact_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_contact_date ON meta_social_messages(contact_id, message_timestamp, created_at)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_sender ON meta_social_messages(platform, sender_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_created ON meta_social_messages(created_at)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_meta_id ON meta_social_messages(meta_message_id)')

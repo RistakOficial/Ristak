@@ -98,6 +98,7 @@ const CONTACT_META_PROFILE_SELECT = `
 
 const cleanString = (value) => String(value || '').trim()
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key)
+const isTruthyQueryValue = (value) => ['1', 'true', 'yes', 'si', 'sí'].includes(cleanString(value).toLowerCase())
 const HIGHLEVEL_MESSAGE_REFRESH_LIMIT = 12
 const HIGHLEVEL_REFRESHABLE_STATUS = new Set(['', 'pending', 'queued', 'processing', 'scheduled', 'sent', 'accepted'])
 const HIGHLEVEL_STATUS_PRIORITY = {
@@ -590,6 +591,7 @@ export const getChatContacts = async (req, res) => {
   try {
     const { q = '', limit = 60, businessPhoneNumberId = '', businessPhone = '' } = req.query
     const limitNumber = Math.min(Number(limit) || 60, 100)
+    const shouldWarmProfilePictures = isTruthyQueryValue(req.query.warmProfilePictures || req.query.warmProfiles)
     const searchTerm = cleanString(q)
     const phoneNumberIdFilter = cleanString(businessPhoneNumberId)
     const businessPhoneFilter = normalizePhoneForStorage(businessPhone)
@@ -761,10 +763,12 @@ ${CONTACT_META_PROFILE_SELECT},
       LIMIT ?
     `, [...whatsappMessageParams, ...params, limitNumber])
 
-    const responseRows = await warmWhatsAppProfilePicturesForRows(rows, {
-      apiLimit: 60,
-      qrLimit: 24
-    })
+    const responseRows = shouldWarmProfilePictures
+      ? await warmWhatsAppProfilePicturesForRows(rows, {
+          apiLimit: 60,
+          qrLimit: 24
+        })
+      : rows
 
     res.json({
       success: true,
@@ -797,6 +801,7 @@ export const getContacts = async (req, res) => {
     const pageNumber = Number(page) || 1
     const limitNumber = Math.min(Number(limit) || 50, 500)
     const offset = Math.max((pageNumber - 1) * limitNumber, 0)
+    const shouldWarmProfilePictures = isTruthyQueryValue(req.query.warmProfilePictures || req.query.warmProfiles)
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
     const rangeLabel = range.isFiltered
@@ -953,10 +958,12 @@ ${CONTACT_META_PROFILE_SELECT},
 
     const contactsParams = [...params, ...(searchRank?.params ?? []), limitNumber, offset]
     const contacts = await db.all(contactsQuery, contactsParams)
-    const hydratedContacts = await warmWhatsAppProfilePicturesForRows(contacts, {
-      apiLimit: Math.min(limitNumber, 80),
-      qrLimit: Math.min(limitNumber, 24)
-    })
+    const hydratedContacts = shouldWarmProfilePictures
+      ? await warmWhatsAppProfilePicturesForRows(contacts, {
+          apiLimit: Math.min(limitNumber, 80),
+          qrLimit: Math.min(limitNumber, 24)
+        })
+      : contacts
 
     const firstSessionsByContact = new Map()
     const firstSessionsByVisitor = new Map()

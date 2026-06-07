@@ -29,6 +29,30 @@ interface ContactChartData {
   count: number
 }
 
+export interface ContactsPagination {
+  page: number
+  limit: number
+  total: number
+  totalPages: number
+  hasNext: boolean
+  hasPrev: boolean
+}
+
+export interface ContactsPageResult {
+  contacts: Contact[]
+  pagination: ContactsPagination
+}
+
+interface ContactsPageParams {
+  startDate?: string
+  endDate?: string
+  page?: number
+  limit?: number
+  sortBy?: string
+  sortOrder?: 'ASC' | 'DESC'
+  signal?: AbortSignal
+}
+
 const normalizeContact = <T extends Record<string, any>>(contact: T): T => {
   if (!contact || typeof contact !== 'object') {
     return contact
@@ -55,39 +79,88 @@ const normalizeContact = <T extends Record<string, any>>(contact: T): T => {
   return result
 }
 
+const getAuthHeaders = () => {
+  const headers = new Headers()
+
+  try {
+    const token = localStorage.getItem('auth_token')
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
+  } catch {
+    // Local storage can be unavailable during early hydration.
+  }
+
+  return headers
+}
+
+const requestContactsPage = async ({
+  startDate,
+  endDate,
+  page = 1,
+  limit = 100,
+  sortBy = 'created_at',
+  sortOrder = 'DESC',
+  signal
+}: ContactsPageParams = {}): Promise<ContactsPageResult> => {
+  const params = new URLSearchParams()
+  params.append('page', String(page))
+  params.append('limit', String(limit))
+  params.append('sortBy', sortBy)
+  params.append('sortOrder', sortOrder)
+  if (startDate) params.append('startDate', startDate)
+  if (endDate) params.append('endDate', endDate)
+
+  const url = `${import.meta.env.VITE_API_URL || ''}/api/contacts?${params.toString()}`
+  const response = await fetch(url, {
+    headers: getAuthHeaders(),
+    signal
+  })
+
+  if (!response.ok) {
+    throw new Error(`No se pudieron cargar los contactos (${response.status})`)
+  }
+
+  const json = await response.json()
+  const contacts = Array.isArray(json?.data) ? json.data as Contact[] : []
+  const pagination = json?.pagination || {}
+
+  return {
+    contacts: dedupeContacts<Contact>(contacts).map(normalizeContact),
+    pagination: {
+      page: Number(pagination.page || page),
+      limit: Number(pagination.limit || limit),
+      total: Number(pagination.total || contacts.length),
+      totalPages: Number(pagination.totalPages || 1),
+      hasNext: Boolean(pagination.hasNext),
+      hasPrev: Boolean(pagination.hasPrev)
+    }
+  }
+}
+
 export const contactsService = {
+  getContactsPage(params: ContactsPageParams = {}): Promise<ContactsPageResult> {
+    return requestContactsPage(params)
+  },
+
   async getContacts(startDate?: string, endDate?: string): Promise<Contact[]> {
     try {
-      // SIEMPRE paginar para traer TODOS los resultados (con o sin filtro)
       const MAX_PAGES = 100
       let allContacts: Contact[] = []
       let page = 1
       let hasMore = true
 
       while (hasMore && page <= MAX_PAGES) {
-        // Construir URL con parámetros
-        const params = new URLSearchParams()
-        params.append('page', page.toString())
-        params.append('limit', '100')
-        if (startDate) params.append('startDate', startDate)
-        if (endDate) params.append('endDate', endDate)
+        const result = await requestContactsPage({
+          startDate,
+          endDate,
+          page,
+          limit: 250
+        })
 
-        const url = `${import.meta.env.VITE_API_URL || ''}/api/contacts?${params.toString()}`
-        const response = await fetch(url)
-        const json = await response.json()
-
-        // El backend devuelve { success: true, data: [...], pagination: {...} }
-        const contacts = (json.data || []) as Contact[]
-        allContacts = allContacts.concat(contacts)
-
-        // Verificar si hay más páginas
-        const nextPageAvailable = Boolean(json.pagination?.hasNext)
-        hasMore = nextPageAvailable && contacts.length > 0
+        allContacts = allContacts.concat(result.contacts)
+        hasMore = result.pagination.hasNext && result.contacts.length > 0
         page++
-
-        if (contacts.length === 0 && !nextPageAvailable) {
-          break
-        }
       }
 
       return dedupeContacts<Contact>(allContacts).map(normalizeContact)

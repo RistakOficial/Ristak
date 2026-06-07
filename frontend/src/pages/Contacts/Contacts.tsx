@@ -53,6 +53,8 @@ const APPOINTMENT_CANCELED_STATUSES = new Set([
 ])
 const REVENUE_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const DELETE_CONFIRMATION_WORD = 'ELIMINAR'
+const CONTACTS_PAGE_SIZE = 100
+const MAX_CONTACTS_BACKGROUND_PAGES = 100
 
 const ContactPhoneField: React.FC<{ defaultValue?: string; autoFocus?: boolean }> = ({ defaultValue = '', autoFocus = false }) => {
   const detected = useMemo(() => getDetectedAccountLocaleDefaults(), [])
@@ -423,6 +425,7 @@ export const Contacts: React.FC = () => {
   const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]) // Eventos de calendarios
   const [hasLoadedContacts, setHasLoadedContacts] = useState(false)
   const handledOpenContactRef = useRef<string | null>(null)
+  const fetchRequestRef = useRef(0)
 
   const openContactModal = (contact: Contact) => {
     setSelectedContact(contact)
@@ -771,6 +774,8 @@ export const Contacts: React.FC = () => {
   }
 
   const fetchData = async () => {
+    const requestId = fetchRequestRef.current + 1
+    fetchRequestRef.current = requestId
     setLoading(true)
     try {
       let startDate: string | undefined
@@ -786,19 +791,86 @@ export const Contacts: React.FC = () => {
       }
       // Si viewMode === 'all', no enviamos fechas para obtener TODOS los contactos
 
-      const [contactsData, statsData] = await Promise.all([
-        contactsService.getContacts(startDate, endDate),
-        contactsService.getStats(startDate, endDate)
-      ])
+      const statsPromise = contactsService.getStats(startDate, endDate)
+        .then((statsData) => {
+          if (fetchRequestRef.current === requestId) {
+            setStats(statsData)
+          }
+        })
+        .catch(() => {
+          if (!hasLoadedContacts && fetchRequestRef.current === requestId) {
+            setStats(null)
+          }
+        })
 
-      setContacts(contactsData)
-      setStats(statsData)
+      const firstPage = await contactsService.getContactsPage({
+        startDate,
+        endDate,
+        page: 1,
+        limit: CONTACTS_PAGE_SIZE,
+        sortBy: 'created_at',
+        sortOrder: 'DESC'
+      })
+
+      if (fetchRequestRef.current !== requestId) {
+        return
+      }
+
+      setContacts(firstPage.contacts)
+      setHasLoadedContacts(true)
+      setLoading(false)
+
+      void statsPromise
+
+      if (firstPage.pagination.hasNext) {
+        const loadRemainingPages = async () => {
+          let page = firstPage.pagination.page + 1
+          let hasMore = true
+          let loadedContacts = firstPage.contacts
+
+          while (
+            hasMore &&
+            page <= MAX_CONTACTS_BACKGROUND_PAGES &&
+            fetchRequestRef.current === requestId
+          ) {
+            const nextPage = await contactsService.getContactsPage({
+              startDate,
+              endDate,
+              page,
+              limit: CONTACTS_PAGE_SIZE,
+              sortBy: 'created_at',
+              sortOrder: 'DESC'
+            })
+
+            if (fetchRequestRef.current !== requestId) {
+              return
+            }
+
+            loadedContacts = dedupeContacts<Contact>([
+              ...loadedContacts,
+              ...nextPage.contacts
+            ])
+            setContacts(loadedContacts)
+
+            hasMore = nextPage.pagination.hasNext && nextPage.contacts.length > 0
+            page = nextPage.pagination.page + 1
+          }
+        }
+
+        loadRemainingPages().catch(() => {
+          // La primera página ya está visible; si el relleno falla, no bloqueamos al usuario.
+        })
+      }
     } catch (error) {
       // Error already shown to user via toast
-      showToast('error', 'No se pudieron cargar los contactos', 'Hubo un problema al obtener la información de contactos. Intenta refrescar la página.')
+      if (fetchRequestRef.current === requestId) {
+        showToast('error', 'No se pudieron cargar los contactos', 'Hubo un problema al obtener la información de contactos. Intenta refrescar la página.')
+      }
     } finally {
-      setLoading(false)
-      setHasLoadedContacts(true)
+      if (fetchRequestRef.current === requestId) {
+        setLoading(false)
+        setHasLoadedContacts(true)
+      }
     }
   }
 
