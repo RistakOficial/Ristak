@@ -316,7 +316,11 @@ export const PhoneSettings: React.FC = () => {
         <strong>{title}</strong>
         <small>{description}</small>
       </span>
+      <span className={`${styles.toggleControl} ${checked ? styles.toggleControlChecked : ''}`} aria-hidden="true">
+        {checked && <Check size={18} strokeWidth={3} />}
+      </span>
       <input
+        className={styles.toggleInput}
         type="checkbox"
         checked={checked}
         disabled={disabled}
@@ -640,7 +644,7 @@ export const PhoneSettings: React.FC = () => {
               <span className={styles.mobileTitle}>{activeSection ? mobileSectionTitle : 'Ajustes'}</span>
             </h1>
             {activeSection === 'custom-fields' && (
-              <span className={styles.headerSubtitle}>Activa los checkboxes de aquellos que queremos seleccionar.</span>
+              <span className={styles.headerSubtitle}>Elige qué datos quieres ver en la info de cada contacto.</span>
             )}
           </header>
           <div className={styles.content} data-phone-scrollable="true">
