@@ -31,6 +31,7 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Copy,
   DollarSign,
@@ -4018,23 +4019,61 @@ export const Sites: React.FC = () => {
                       />
                       <Pencil size={13} />
                     </label>
+                    <button
+                      type="button"
+                      className={`${styles.seoToolbarButton} ${seoValidation?.totalIssues ? styles.seoToolbarButtonWarning : ''}`}
+                      onClick={() => setSeoModalOpen(true)}
+                      title={seoValidation?.totalIssues ? `SEO tiene ${seoValidation.totalIssues} pendientes` : 'SEO completo'}
+                    >
+                      <Search size={15} />
+                      <span>SEO & optimizacion de busqueda</span>
+                      {Boolean(seoValidation?.totalIssues) && (
+                        <span className={styles.seoToolbarAlert} aria-label={`${seoValidation?.totalIssues} pendientes de SEO`}>
+                          <AlertTriangle size={13} />
+                          <strong>{seoValidation?.totalIssues}</strong>
+                        </span>
+                      )}
+                    </button>
                   </div>
                   <div className={styles.editorActions}>
-                    <label className={styles.routeField}>
-                      <span className={`${styles.publicRouteBox} ${domainConfig.domain ? '' : styles.publicRouteBoxStandalone}`}>
-                        <span className={styles.publicRouteDomain} title={getPublicDomainPreview(domainConfig)}>
-                          {getPublicDomainPreview(domainConfig)}
+                    <div className={styles.editorRouteControls}>
+                      <label className={styles.routeField}>
+                        <span className={`${styles.publicRouteBox} ${domainConfig.domain ? '' : styles.publicRouteBoxStandalone}`}>
+                          <span className={styles.publicRouteDomain} title={getPublicDomainPreview(domainConfig)}>
+                            {getPublicDomainPreview(domainConfig)}
+                          </span>
+                          <span className={styles.publicRouteSlash} aria-hidden="true">/</span>
+                          <input
+                            value={getRouteEditorValue(editorSite)}
+                            aria-label="Ruta pública"
+                            placeholder={editorSite.siteType === 'landing_page' ? 'embudo-01' : 'formulario-01'}
+                            onChange={(event) => updateSelectedSite({ slug: normalizeRouteEditorInput(event.target.value, domainConfig) })}
+                            onBlur={() => handleSaveSite(undefined, { silent: true })}
+                          />
                         </span>
-                        <span className={styles.publicRouteSlash} aria-hidden="true">/</span>
-                        <input
-                          value={getRouteEditorValue(editorSite)}
-                          aria-label="Ruta pública"
-                          placeholder={editorSite.siteType === 'landing_page' ? 'embudo-01' : 'formulario-01'}
-                          onChange={(event) => updateSelectedSite({ slug: normalizeRouteEditorInput(event.target.value, domainConfig) })}
-                          onBlur={() => handleSaveSite(undefined, { silent: true })}
+                      </label>
+                      {hasEditablePages(editorSite) && (
+                        <FunnelPagesPanel
+                          pages={pages}
+                          activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                          locked={!canManagePages(editorSite)}
+                          draggingPageId={draggingPageId}
+                          colorFinalPages={isStandardForm(editorSite)}
+                          isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
+                          canDeletePage={(page) => isStandardForm(editorSite)
+                            ? !isFormFinalPage(page) && getFormContentPages(pages).length > 1
+                            : pages.length > 1}
+                          canDuplicatePage={(page) => !isStandardForm(editorSite) || !isFormFinalPage(page)}
+                          onSelectPage={setActivePageId}
+                          onAddPage={handleAddPage}
+                          onDuplicatePage={handleDuplicatePage}
+                          onDeletePage={handleDeletePage}
+                          onDragPage={setDraggingPageId}
+                          onReorderPages={handleReorderPages}
+                          onRenamePage={handleRenamePage}
                         />
-                      </span>
-                    </label>
+                      )}
+                    </div>
                     <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
                       <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => setDevice('desktop')} title="Escritorio">
                         <Monitor size={15} />
@@ -4059,46 +4098,6 @@ export const Sites: React.FC = () => {
                       Publicar
                     </Button>
                   </div>
-                </div>
-                <div className={styles.editorToolbarSub}>
-                  <button
-                    type="button"
-                    className={`${styles.seoToolbarButton} ${seoValidation?.totalIssues ? styles.seoToolbarButtonWarning : ''}`}
-                    onClick={() => setSeoModalOpen(true)}
-                    title={seoValidation?.totalIssues ? `SEO tiene ${seoValidation.totalIssues} pendientes` : 'SEO completo'}
-                  >
-                    <Search size={15} />
-                    <span>SEO & optimizacion de busqueda</span>
-                    {Boolean(seoValidation?.totalIssues) && (
-                      <span className={styles.seoToolbarAlert} aria-label={`${seoValidation?.totalIssues} pendientes de SEO`}>
-                        <AlertTriangle size={13} />
-                        <strong>{seoValidation?.totalIssues}</strong>
-                      </span>
-                    )}
-                  </button>
-                  {hasEditablePages(editorSite) && (
-                    <div className={styles.editorInlinePages}>
-                      <FunnelPagesPanel
-                        pages={pages}
-                        activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                        locked={!canManagePages(editorSite)}
-                        draggingPageId={draggingPageId}
-                        colorFinalPages={isStandardForm(editorSite)}
-                        isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
-                        canDeletePage={(page) => isStandardForm(editorSite)
-                          ? !isFormFinalPage(page) && getFormContentPages(pages).length > 1
-                          : pages.length > 1}
-                        canDuplicatePage={(page) => !isStandardForm(editorSite) || !isFormFinalPage(page)}
-                        onSelectPage={setActivePageId}
-                        onAddPage={handleAddPage}
-                        onDuplicatePage={handleDuplicatePage}
-                        onDeletePage={handleDeletePage}
-                        onDragPage={setDraggingPageId}
-                        onReorderPages={handleReorderPages}
-                        onRenamePage={handleRenamePage}
-                      />
-                    </div>
-                  )}
                 </div>
               </div>
             </>
@@ -6706,134 +6705,186 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   onRenamePage
 }) => {
   const [renamingPageId, setRenamingPageId] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement | null>(null)
+  const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
+
+  useEffect(() => {
+    if (!open) return
+
+    const handleDocumentClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (!target) return
+      if (dropdownRef.current?.contains(target)) return
+      if (target.closest('[data-page-menu-portal="true"]')) return
+      setOpen(false)
+    }
+
+    const handleDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+
+    document.addEventListener('click', handleDocumentClick)
+    document.addEventListener('keydown', handleDocumentKeyDown)
+
+    return () => {
+      document.removeEventListener('click', handleDocumentClick)
+      document.removeEventListener('keydown', handleDocumentKeyDown)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) setRenamingPageId(null)
+  }, [open])
+
+  const handleSelectPage = (pageId: string) => {
+    onSelectPage(pageId)
+    setOpen(false)
+  }
 
   return (
-    <aside className={styles.pagesPanel}>
-      <div className={styles.pageTabsLead} aria-hidden="true">
-        <span>Paginas</span>
-        <ChevronRight size={15} />
-      </div>
-      <div className={styles.pageList}>
-        {pages.map((page, index) => {
-          const fixedPage = isFixedPage(page)
-          const pageCanDelete = !locked && canDeletePage(page)
-          const pageCanDuplicate = !locked && canDuplicatePage(page)
-          const pageToneClass = colorFinalPages && page.id === FORM_THANK_YOU_PAGE_ID
-            ? styles.pageItemThankYou
-            : colorFinalPages && page.id === FORM_DISQUALIFIED_PAGE_ID
-              ? styles.pageItemDisqualified
-              : ''
+    <div ref={dropdownRef} className={`${styles.pagesDropdown} ${open ? styles.pagesDropdownOpen : ''}`}>
+      <button
+        type="button"
+        className={styles.pagesDropdownTrigger}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen(current => !current)}
+      >
+        <FileText size={15} />
+        <span className={styles.pagesDropdownTriggerText}>
+          <small>Pagina</small>
+          <strong>{activePage?.title || 'Pagina 1'}</strong>
+        </span>
+        <ChevronDown size={15} className={styles.pagesDropdownChevron} />
+      </button>
 
-          return (
-            <React.Fragment key={page.id}>
-            <div
-              className={`${styles.pageItemWrap} ${draggingPageId === page.id ? styles.pageItemDragging : ''}`}
-              draggable={!locked && !fixedPage}
-              onDragStart={(event) => {
-                if (locked || fixedPage) {
-                  event.preventDefault()
-                  return
-                }
-                if ((event.target as HTMLElement).closest('input,button')) {
-                  event.preventDefault()
-                  return
-                }
-                event.dataTransfer.setData('application/ristak-page', page.id)
-                onDragPage(page.id)
-              }}
-              onDragOver={(event) => {
-                if (locked || fixedPage) return
-                if (event.dataTransfer.types.includes('application/ristak-page')) {
-                  event.preventDefault()
-                }
-              }}
-              onDrop={(event) => {
-                if (locked || fixedPage) return
-                event.preventDefault()
-                const sourcePageId = event.dataTransfer.getData('application/ristak-page')
-                onDragPage(null)
-                onReorderPages(sourcePageId, page.id)
-              }}
-              onDragEnd={() => onDragPage(null)}
-            >
-              <div
-                role="button"
-                tabIndex={0}
-                className={`${styles.pageItem} ${pageToneClass} ${fixedPage ? styles.pageItemFixed : ''} ${activePageId === page.id ? styles.pageItemActive : ''}`}
-                onClick={() => onSelectPage(page.id)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') onSelectPage(page.id)
-                }}
-              >
-                <GripVertical size={14} />
-                {renamingPageId === page.id && !locked ? (
-                  <EditablePageTitle
-                    pageId={page.id}
-                    title={page.title || `Pagina ${index + 1}`}
-                    onFocus={() => onSelectPage(page.id)}
-                    onRename={onRenamePage}
-                    onDone={() => setRenamingPageId(null)}
-                  />
-                ) : (
-                  <span className={styles.pageTitleText}>{page.title || `Pagina ${index + 1}`}</span>
-                )}
-                {!locked && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        type="button"
-                        className={styles.pageMenuButton}
-                        aria-label="Opciones de pagina"
-                        onClick={(event) => event.stopPropagation()}
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onKeyDown={(event) => event.stopPropagation()}
-                      >
-                        <MoreVertical size={15} />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu}>
-                      <DropdownMenuItem
-                        onSelect={() => {
-                          onSelectPage(page.id)
-                          window.setTimeout(() => setRenamingPageId(page.id), 80)
-                        }}
-                      >
-                        <Pencil size={14} />
-                        Cambiar nombre
-                      </DropdownMenuItem>
-                      <DropdownMenuItem disabled={!pageCanDuplicate} onSelect={() => onDuplicatePage(page.id)}>
-                        <Copy size={14} />
-                        Duplicar pagina
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        disabled={!pageCanDelete}
-                        className={styles.pageMenuDanger}
-                        onSelect={() => onDeletePage(page.id)}
-                      >
-                        <Trash2 size={14} />
-                        Eliminar pagina
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-              </div>
-            </div>
-            {index < pages.length - 1 && (
-              <span className={styles.pageFlowArrow} aria-hidden="true">
-                <ChevronRight size={14} />
-              </span>
+      {open && (
+        <div className={styles.pagesDropdownPanel} role="dialog" aria-label="Paginas del sitio">
+          <div className={styles.pagesDropdownHeader}>
+            <span>Paginas</span>
+            <strong>{pages.length}</strong>
+          </div>
+          <div className={styles.pageList}>
+            {pages.map((page, index) => {
+              const fixedPage = isFixedPage(page)
+              const pageCanDelete = !locked && canDeletePage(page)
+              const pageCanDuplicate = !locked && canDuplicatePage(page)
+              const pageToneClass = colorFinalPages && page.id === FORM_THANK_YOU_PAGE_ID
+                ? styles.pageItemThankYou
+                : colorFinalPages && page.id === FORM_DISQUALIFIED_PAGE_ID
+                  ? styles.pageItemDisqualified
+                  : ''
+
+              return (
+                <div
+                  key={page.id}
+                  className={`${styles.pageItemWrap} ${draggingPageId === page.id ? styles.pageItemDragging : ''}`}
+                  draggable={!locked && !fixedPage}
+                  onDragStart={(event) => {
+                    if (locked || fixedPage) {
+                      event.preventDefault()
+                      return
+                    }
+                    if ((event.target as HTMLElement).closest('input,button')) {
+                      event.preventDefault()
+                      return
+                    }
+                    event.dataTransfer.setData('application/ristak-page', page.id)
+                    onDragPage(page.id)
+                  }}
+                  onDragOver={(event) => {
+                    if (locked || fixedPage) return
+                    if (event.dataTransfer.types.includes('application/ristak-page')) {
+                      event.preventDefault()
+                    }
+                  }}
+                  onDrop={(event) => {
+                    if (locked || fixedPage) return
+                    event.preventDefault()
+                    const sourcePageId = event.dataTransfer.getData('application/ristak-page')
+                    onDragPage(null)
+                    onReorderPages(sourcePageId, page.id)
+                  }}
+                  onDragEnd={() => onDragPage(null)}
+                >
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    className={`${styles.pageItem} ${pageToneClass} ${fixedPage ? styles.pageItemFixed : ''} ${locked ? styles.pageItemLocked : ''} ${activePageId === page.id ? styles.pageItemActive : ''}`}
+                    onClick={() => handleSelectPage(page.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        handleSelectPage(page.id)
+                      }
+                    }}
+                  >
+                    <GripVertical size={14} />
+                    {renamingPageId === page.id && !locked ? (
+                      <EditablePageTitle
+                        pageId={page.id}
+                        title={page.title || `Pagina ${index + 1}`}
+                        onFocus={() => onSelectPage(page.id)}
+                        onRename={onRenamePage}
+                        onDone={() => setRenamingPageId(null)}
+                      />
+                    ) : (
+                      <span className={styles.pageTitleText}>{page.title || `Pagina ${index + 1}`}</span>
+                    )}
+                    {!locked && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className={styles.pageMenuButton}
+                            aria-label="Opciones de pagina"
+                            onClick={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => event.stopPropagation()}
+                          >
+                            <MoreVertical size={15} />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu} data-page-menu-portal="true">
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              onSelectPage(page.id)
+                              window.setTimeout(() => setRenamingPageId(page.id), 80)
+                            }}
+                          >
+                            <Pencil size={14} />
+                            Cambiar nombre
+                          </DropdownMenuItem>
+                          <DropdownMenuItem disabled={!pageCanDuplicate} onSelect={() => onDuplicatePage(page.id)}>
+                            <Copy size={14} />
+                            Duplicar pagina
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={!pageCanDelete}
+                            className={styles.pageMenuDanger}
+                            onSelect={() => onDeletePage(page.id)}
+                          >
+                            <Trash2 size={14} />
+                            Eliminar pagina
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+            {!locked && (
+              <button type="button" className={styles.addPageButton} onClick={onAddPage}>
+                <Plus size={15} />
+                Agregar pagina
+              </button>
             )}
-            </React.Fragment>
-          )
-        })}
-        {!locked && (
-          <button type="button" className={styles.addPageButton} onClick={onAddPage}>
-            <Plus size={15} />
-            Agregar pagina
-          </button>
-        )}
-      </div>
-    </aside>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

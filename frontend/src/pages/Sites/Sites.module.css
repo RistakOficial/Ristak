@@ -8564,6 +8564,266 @@
   }
 }
 
+/* Sites editor header: SEO sits with the title, pages open as a compact panel. */
+.editorToolbarTop .editorToolbarLeft .seoToolbarButton {
+  height: 34px;
+  min-height: 34px;
+  max-width: min(310px, 30vw);
+  padding-inline: 10px;
+}
+
+.editorToolbarTop .editorToolbarLeft .seoToolbarButton > span:first-of-type {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editorRouteControls {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editorToolbarTop .editorRouteControls .routeField {
+  width: clamp(300px, 25vw, 520px);
+  min-width: min(300px, 28vw);
+  max-width: 520px;
+  margin-right: 0;
+}
+
+.pagesDropdown {
+  position: relative;
+  z-index: 60;
+  flex: 0 0 auto;
+}
+
+.pagesDropdownOpen {
+  z-index: 3400;
+}
+
+.pagesDropdownTrigger {
+  width: 206px;
+  height: var(--editor-control-h);
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.52)),
+    var(--color-background-primary);
+  color: var(--color-text-primary);
+  padding: 0 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.pagesDropdownTrigger:hover,
+.pagesDropdownTrigger:focus-visible,
+.pagesDropdownOpen .pagesDropdownTrigger {
+  border-color: rgba(59, 130, 246, 0.36);
+  background:
+    linear-gradient(180deg, rgba(59, 130, 246, 0.12), rgba(59, 130, 246, 0.04)),
+    var(--color-background-primary);
+}
+
+.pagesDropdownTrigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+
+.pagesDropdownTrigger > svg {
+  color: var(--color-text-tertiary);
+}
+
+.pagesDropdownTriggerText {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  line-height: 1;
+}
+
+.pagesDropdownTriggerText small {
+  color: var(--color-text-tertiary);
+  font-size: 0.61rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pagesDropdownTriggerText strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 0.8rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pagesDropdownChevron {
+  transition: transform 0.16s ease;
+}
+
+.pagesDropdownOpen .pagesDropdownChevron {
+  transform: rotate(180deg);
+}
+
+.pagesDropdownPanel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(336px, calc(100vw - 28px));
+  max-height: min(560px, calc(100dvh - 112px));
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.78)),
+    var(--color-background-primary);
+  padding: 10px;
+  box-shadow: 0 24px 70px -44px rgba(15, 23, 42, 0.72);
+  scrollbar-gutter: stable;
+}
+
+.pagesDropdownHeader {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.pagesDropdownHeader span {
+  color: var(--color-text-primary);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.pagesDropdownHeader strong {
+  min-width: 24px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.1);
+  color: color-mix(in srgb, var(--color-primary) 78%, var(--color-text-primary) 22%);
+  padding: 0 7px;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.pagesDropdownPanel .pageList {
+  display: grid;
+  gap: 7px;
+  padding-top: 9px;
+}
+
+.pagesDropdownPanel .pageItemWrap {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pagesDropdownPanel .pageItem {
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 28px;
+  gap: 8px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.pagesDropdownPanel .pageItemLocked {
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
+.pagesDropdownPanel .pageItem > svg:first-child {
+  color: var(--color-text-tertiary);
+  cursor: grab;
+}
+
+.pagesDropdownPanel .pageItemFixed > svg:first-child {
+  cursor: default;
+}
+
+.pagesDropdownPanel .pageTitleInput {
+  height: 28px;
+  min-height: 0;
+  padding: 0 5px;
+  font-size: 0.82rem;
+}
+
+.pagesDropdownPanel .pageMenuButton {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  border-radius: 7px;
+}
+
+.pagesDropdownPanel .addPageButton {
+  min-height: 40px;
+  margin-top: 3px;
+  border-radius: 8px;
+  font-size: 0.84rem;
+}
+
+@media (max-width: 1500px) {
+  .editorToolbarTop .editorActions {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .editorRouteControls {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+  }
+
+  .editorToolbarTop .editorRouteControls .routeField {
+    flex: 1 1 280px;
+    width: auto;
+    max-width: 520px;
+  }
+}
+
+@media (max-width: 1220px) {
+  .editorToolbarTop .editorToolbarLeft .seoToolbarButton {
+    max-width: min(310px, 48vw);
+  }
+
+  .editorRouteControls {
+    justify-content: flex-start;
+  }
+
+  .pagesDropdownTrigger {
+    width: min(206px, 38vw);
+  }
+}
+
+@media (max-width: 720px) {
+  .editorRouteControls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .editorToolbarTop .editorRouteControls .routeField,
+  .pagesDropdown,
+  .pagesDropdownTrigger {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .pagesDropdownPanel {
+    left: 0;
+    right: auto;
+  }
+}
+
 /* Focus mode keeps the editing rails available while the header stays out of the way. */
 .containerEditorFocus.containerFocused:has(.builder) {
   width: 100%;
