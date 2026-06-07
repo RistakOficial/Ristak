@@ -718,6 +718,23 @@ function formatScheduledMessageLabel(value?: string | null) {
   return `Programado ${formatMessageDate(value)} ${time}`.trim()
 }
 
+function formatScheduledCountdown(value?: string | null, nowMs = Date.now()) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const remainingMs = date.getTime() - nowMs
+  if (remainingMs <= 0) return 'ahora'
+
+  const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60_000))
+  if (remainingMinutes < 60) return `${remainingMinutes}m`
+
+  const remainingHours = Math.max(1, Math.ceil(remainingMinutes / 60))
+  if (remainingHours < 24) return `${remainingHours}h`
+
+  return `${Math.max(1, Math.ceil(remainingHours / 24))}d`
+}
+
 function formatSchedulePreviewLabel(value?: string | null) {
   if (!value) return 'Elige fecha y hora'
   const date = new Date(value)
@@ -2324,6 +2341,7 @@ export const PhoneChat: React.FC = () => {
   const [contactHighLevelChannelOverrides, setContactHighLevelChannelOverrides] = useState<Record<string, HighLevelChatChannel>>({})
   const [conversationOpen, setConversationOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [scheduledCountdownNow, setScheduledCountdownNow] = useState(() => Date.now())
   const [contactJourney, setContactJourney] = useState<JourneyEvent[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [messagesRefreshing, setMessagesRefreshing] = useState(false)
@@ -3633,6 +3651,10 @@ export const PhoneChat: React.FC = () => {
     () => messages.some(shouldTrackOutboundReceipt),
     [messages]
   )
+  const shouldUpdateScheduledCountdown = useMemo(
+    () => messages.some((message) => isMessageScheduled(message) && !isMessageFailed(message)),
+    [messages]
+  )
   const scheduledRefreshIntervalMs = useMemo(() => {
     const scheduledTimes = messages
       .filter((message) => isMessageScheduled(message) && !isMessageFailed(message))
@@ -3645,6 +3667,17 @@ export const PhoneChat: React.FC = () => {
     const delay = nextScheduledTime - Date.now() + 35_000
     return Math.max(15_000, Math.min(delay, 5 * 60_000))
   }, [messages])
+
+  useEffect(() => {
+    if (!shouldUpdateScheduledCountdown) return
+
+    setScheduledCountdownNow(Date.now())
+    const interval = window.setInterval(() => {
+      setScheduledCountdownNow(Date.now())
+    }, 30_000)
+
+    return () => window.clearInterval(interval)
+  }, [shouldUpdateScheduledCountdown])
 
   useEffect(() => {
     if (!activeContact?.id || accessState !== 'allowed' || !conversationVisible || !shouldRefreshReceipts) return
@@ -6307,14 +6340,7 @@ export const PhoneChat: React.FC = () => {
     return (
       <span className={className}>
         {transportBadge && <em className={styles.messageTransport}>{transportBadge}</em>}
-        {scheduled ? (
-          <span className={styles.messageScheduledMeta}>
-            <Clock size={13} />
-            {formatScheduledMessageLabel(message.scheduledAt)}
-          </span>
-        ) : (
-          formatMessageTime(message.date)
-        )}
+        {formatMessageTime(scheduled ? message.scheduledAt || message.date : message.date)}
         {message.direction === 'outbound' && (failed ? (
           <button
             type="button"
@@ -6324,8 +6350,6 @@ export const PhoneChat: React.FC = () => {
           >
             <CircleAlert size={15} />
           </button>
-        ) : scheduled ? (
-          <Clock size={14} className={styles.messageScheduledIcon} />
         ) : pending ? (
           <Loader2 size={14} className={`${styles.spinIcon} ${styles.messageSendingIcon}`} />
         ) : receiptStatus === 'delivered' || receiptStatus === 'read' ? (
@@ -6900,14 +6924,24 @@ export const PhoneChat: React.FC = () => {
               const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage
               const messageSwipeOffset = draggingMessageInfoSwipe?.messageId === message.id ? draggingMessageInfoSwipe.offset : 0
               const canOpenMessageInfo = message.direction !== 'system'
-              const scheduled = isMessageScheduled(message)
+              const scheduled = message.direction === 'outbound' && isMessageScheduled(message)
+              const scheduledCountdown = scheduled ? formatScheduledCountdown(message.scheduledAt, scheduledCountdownNow) : ''
 
               return (
                 <div
                   key={message.id}
                   className={`${styles.messageRow} ${styles[`messageRow_${message.direction}`]}`}
                 >
-                  <div className={`${styles.messageSwipeWrap} ${messageSwipeOffset > 0 ? styles.messageSwipeWrapActive : ''}`}>
+                  <div className={`${styles.messageSwipeWrap} ${scheduled ? styles.messageSwipeWrapScheduled : ''} ${messageSwipeOffset > 0 ? styles.messageSwipeWrapActive : ''}`}>
+                    {scheduled && (
+                      <span
+                        className={styles.messageScheduleTimer}
+                        aria-label={scheduledCountdown ? `Mensaje programado, falta ${scheduledCountdown}` : 'Mensaje programado'}
+                      >
+                        <Clock size={18} />
+                        {scheduledCountdown && <small>{scheduledCountdown}</small>}
+                      </span>
+                    )}
                     <span className={styles.messageInfoSwipeCue} aria-hidden="true">
                       <ReceiptText size={17} />
                     </span>
