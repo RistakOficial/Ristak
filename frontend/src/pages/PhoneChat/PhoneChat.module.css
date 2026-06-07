@@ -2106,6 +2106,9 @@
   min-height: 0;
   padding: 8px 8px 8px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scroll-behavior: auto;
   -webkit-overflow-scrolling: touch;
   background:
     radial-gradient(circle at 8px 8px, rgba(160, 137, 106, 0.12) 0 2px, transparent 2.5px) 0 0 / 58px 58px,
@@ -2137,6 +2140,7 @@
   margin: 7px auto 13px;
   pointer-events: none;
   opacity: 0.96;
+  overflow-anchor: none;
   transform: translate3d(0, 0, 0);
 }
 

@@ -884,10 +884,6 @@ function getMessageSignature(message: ChatMessage) {
   ].map(compactCompareValue).join('\u001f')
 }
 
-function getMessagesSignature(messages: ChatMessage[]) {
-  return messages.map(getMessageSignature).join('\u001e')
-}
-
 function areMessagesEquivalent(left: ChatMessage[], right: ChatMessage[]) {
   if (left === right) return true
   if (left.length !== right.length) return false
@@ -1944,17 +1940,19 @@ export const PhoneChat: React.FC = () => {
   const [aiMessageText, setAiMessageText] = useState('')
   const [aiSending, setAiSending] = useState(false)
   const [aiSuggestionLoading, setAiSuggestionLoading] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const messagesPaneRef = useRef<HTMLDivElement | null>(null)
   const messageTextRef = useRef('')
   const messagesPaneNearBottomRef = useRef(true)
   const activeContactIdRef = useRef<string | null>(null)
   const conversationOpenRef = useRef(false)
+  const conversationInitialBottomLockRef = useRef({
+    contactId: null as string | null,
+    expiresAt: 0
+  })
   const previousMessagesScrollRef = useRef({
     activeContactId: null as string | null,
     conversationOpen: false,
     messagesLoading: false,
-    signature: '',
     count: 0
   })
   const composerInputRef = useRef<HTMLDivElement | null>(null)
@@ -2020,20 +2018,32 @@ export const PhoneChat: React.FC = () => {
 
   const aiAgentConversationOpen = activeContactId === AI_AGENT_CHAT_ID
 
+  const startConversationBottomLock = useCallback((contactId: string | null) => {
+    conversationInitialBottomLockRef.current = {
+      contactId,
+      expiresAt: contactId ? Date.now() + 700 : 0
+    }
+    messagesPaneNearBottomRef.current = true
+  }, [])
+
+  const isConversationBottomLockActive = useCallback((contactId: string | null) => {
+    const lock = conversationInitialBottomLockRef.current
+    return Boolean(contactId && lock.contactId === contactId && Date.now() < lock.expiresAt)
+  }, [])
+
   const handleMessagesPaneScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
     const bottomGap = event.currentTarget.scrollHeight - event.currentTarget.scrollTop - event.currentTarget.clientHeight
-    messagesPaneNearBottomRef.current = bottomGap < 96
+    messagesPaneNearBottomRef.current = isConversationBottomLockActive(activeContactIdRef.current) || bottomGap < 96
     if (event.currentTarget.scrollLeft !== 0) {
       event.currentTarget.scrollLeft = 0
     }
-  }, [])
+  }, [isConversationBottomLockActive])
   const scrollMessagesPaneToBottom = useCallback(() => {
     const pane = messagesPaneRef.current
     if (pane) {
-      pane.scrollTop = pane.scrollHeight
+      pane.scrollTop = Math.max(0, pane.scrollHeight - pane.clientHeight)
       pane.scrollLeft = 0
     }
-    messagesEndRef.current?.scrollIntoView({ block: 'end', inline: 'nearest' })
     messagesPaneNearBottomRef.current = true
   }, [])
 
@@ -2067,7 +2077,11 @@ export const PhoneChat: React.FC = () => {
 
     return groups
   }, [messages, timezone])
-  const messagesSignature = useMemo(() => getMessagesSignature(messages), [messages])
+  const latestMessageKey = useMemo(() => {
+    const lastMessage = messages[messages.length - 1]
+    if (!lastMessage) return ''
+    return [lastMessage.id, lastMessage.date, lastMessage.direction].join('\u001f')
+  }, [messages])
   const contactInfoData = contactInfoContact || activeContact
   const chatActionContact = useMemo(
     () => chats.find((contact) => contact.id === chatActionContactId) || activeContact || null,
@@ -2406,11 +2420,12 @@ export const PhoneChat: React.FC = () => {
     })
 
     if (requestedContact) {
+      startConversationBottomLock(requestedContact.id)
       setConversationOpen(true)
     }
 
     return nextChats
-  }, [aiAgentChatEnabled])
+  }, [aiAgentChatEnabled, startConversationBottomLock])
 
   const loadChats = useCallback(async (options: { showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
     const silentRefresh = options.silent === true
@@ -2807,7 +2822,7 @@ export const PhoneChat: React.FC = () => {
         html.scrollTop = 0
         body.scrollTop = 0
         if (html.getAttribute('data-phone-chat-keyboard') === 'true') {
-          messagesEndRef.current?.scrollIntoView({ block: 'end' })
+          scrollMessagesPaneToBottom()
         }
       }, 60)
     }
@@ -2906,7 +2921,7 @@ export const PhoneChat: React.FC = () => {
       body.style.overscrollBehavior = previousBodyOverscroll
       body.style.setProperty('-webkit-text-size-adjust', previousBodyTextSizeAdjust)
     }
-  }, [accessState])
+  }, [accessState, scrollMessagesPaneToBottom])
 
   useEffect(() => {
     if (accessState !== 'allowed') return
@@ -3038,7 +3053,7 @@ export const PhoneChat: React.FC = () => {
     }
   }, [accessState, activeSettingsSection, loadTemplates, sheet])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = previousMessagesScrollRef.current
     const lastMessage = messages[messages.length - 1]
     const openedConversation = conversationOpen && (
@@ -3048,18 +3063,18 @@ export const PhoneChat: React.FC = () => {
     const finishedInitialLoad = previous.messagesLoading && !messagesLoading
     const messageWasAdded = messages.length > previous.count
     const userWasAlreadyAtBottom = messagesPaneNearBottomRef.current
+    const initialBottomLockActive = conversationOpen && isConversationBottomLockActive(activeContactId)
     const shouldScrollToEnd = conversationOpen && (
       openedConversation ||
       finishedInitialLoad ||
-      userWasAlreadyAtBottom ||
-      (messageWasAdded && lastMessage?.direction === 'outbound')
+      initialBottomLockActive ||
+      (messageWasAdded && (userWasAlreadyAtBottom || lastMessage?.direction === 'outbound'))
     )
 
     previousMessagesScrollRef.current = {
       activeContactId,
       conversationOpen,
       messagesLoading,
-      signature: messagesSignature,
       count: messages.length
     }
 
@@ -3072,22 +3087,33 @@ export const PhoneChat: React.FC = () => {
       frameIds.push(frame)
     }
     const queueTimeout = (delay: number) => {
-      const timeout = window.setTimeout(scrollMessagesPaneToBottom, delay)
+      const timeout = window.setTimeout(() => {
+        scrollMessagesPaneToBottom()
+      }, delay)
       timeoutIds.push(timeout)
     }
 
-    queueFrame(() => {
-      scrollMessagesPaneToBottom()
-      queueFrame(scrollMessagesPaneToBottom)
-    })
-    queueTimeout(90)
-    queueTimeout(240)
+    scrollMessagesPaneToBottom()
+    queueFrame(scrollMessagesPaneToBottom)
+
+    if (openedConversation || finishedInitialLoad || initialBottomLockActive) {
+      queueTimeout(90)
+      queueTimeout(190)
+    }
 
     return () => {
       frameIds.forEach((frame) => window.cancelAnimationFrame(frame))
       timeoutIds.forEach((timeout) => window.clearTimeout(timeout))
     }
-  }, [activeContactId, conversationOpen, messages.length, messagesLoading, messagesSignature, scrollMessagesPaneToBottom])
+  }, [
+    activeContactId,
+    conversationOpen,
+    isConversationBottomLockActive,
+    latestMessageKey,
+    messages.length,
+    messagesLoading,
+    scrollMessagesPaneToBottom
+  ])
 
   useEffect(() => {
     const messageIds = new Set(messages.map((message) => message.id))
@@ -3399,6 +3425,7 @@ export const PhoneChat: React.FC = () => {
     closeSwipeActions()
     handleCancelVoiceDraft()
     markContactReadState(chatContact)
+    startConversationBottomLock(nextContact.id)
     setActiveContactId(nextContact.id)
     setChats((current) => current.map((item) => (
       item.id === nextContact.id ? { ...item, unreadCount: 0 } : item
@@ -3414,6 +3441,7 @@ export const PhoneChat: React.FC = () => {
   const handleOpenAIAgentChat = () => {
     closeSwipeActions()
     handleCancelVoiceDraft()
+    startConversationBottomLock(AI_AGENT_CHAT_ID)
     setActiveContactId(AI_AGENT_CHAT_ID)
     setConversationOpen(true)
     actionSheetDismiss.requestClose()
@@ -3523,7 +3551,10 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleOpenAppointmentForm = (contact?: Contact | null) => {
-    if (contact?.id) setActiveContactId(contact.id)
+    if (contact?.id) {
+      startConversationBottomLock(contact.id)
+      setActiveContactId(contact.id)
+    }
     setChatActionContactId(null)
     setContactInfoOpen(false)
     actionSheetDismiss.requestClose()
@@ -7319,7 +7350,6 @@ export const PhoneChat: React.FC = () => {
             onScroll={handleMessagesPaneScroll}
           >
             {renderMessages()}
-            <div ref={messagesEndRef} />
           </div>
 
           {(aiAgentConversationOpen || activeContact) && (
