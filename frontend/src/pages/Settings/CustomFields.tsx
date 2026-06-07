@@ -17,6 +17,7 @@ import { Button } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   customFieldsService,
+  isSystemCustomFieldDefinition,
   type CustomFieldDataType,
   type CustomFieldDefinition,
   type CustomFieldFolder,
@@ -98,6 +99,7 @@ const getFolderName = (folders: CustomFieldFolder[], folderId: string) => (
 )
 
 const getSourceLabel = (sourceType: string) => {
+  if (sourceType === 'system') return 'Sistema'
   if (sourceType === 'manual') return 'Creado por ti'
   if (sourceType === 'native_site') return 'Formulario Ristak'
   if (sourceType === 'imported_html') return 'HTML importado'
@@ -150,7 +152,7 @@ export const CustomFields: React.FC = () => {
 
   useEffect(() => {
     setSelectedFieldIds(current => {
-      const activeIds = new Set(fields.map(field => field.definitionId))
+      const activeIds = new Set(fields.filter(field => !isSystemCustomFieldDefinition(field)).map(field => field.definitionId))
       const next = new Set([...current].filter(id => activeIds.has(id)))
       return next.size === current.size ? current : next
     })
@@ -185,13 +187,17 @@ export const CustomFields: React.FC = () => {
   }, [activeFolder, fields, search])
 
   const selectedFields = useMemo(
-    () => fields.filter(field => selectedFieldIds.has(field.definitionId)),
+    () => fields.filter(field => !isSystemCustomFieldDefinition(field) && selectedFieldIds.has(field.definitionId)),
     [fields, selectedFieldIds]
   )
 
+  const visibleSelectableFields = useMemo(
+    () => visibleFields.filter(field => !isSystemCustomFieldDefinition(field)),
+    [visibleFields]
+  )
   const selectedCount = selectedFields.length
-  const visibleSelectedCount = visibleFields.filter(field => selectedFieldIds.has(field.definitionId)).length
-  const allVisibleSelected = visibleFields.length > 0 && visibleSelectedCount === visibleFields.length
+  const visibleSelectedCount = visibleSelectableFields.filter(field => selectedFieldIds.has(field.definitionId)).length
+  const allVisibleSelected = visibleSelectableFields.length > 0 && visibleSelectedCount === visibleSelectableFields.length
   const isDraggingFields = draggingFieldIds.length > 0
 
   const openCreateEditor = () => {
@@ -203,6 +209,11 @@ export const CustomFields: React.FC = () => {
   }
 
   const openEditEditor = (field: CustomFieldDefinition) => {
+    if (isSystemCustomFieldDefinition(field)) {
+      showToast('info', 'Campo protegido', 'Ristak crea este campo para datos internos del sistema.')
+      return
+    }
+
     setEditingField(field)
     setDraft({
       label: field.label,
@@ -337,6 +348,9 @@ export const CustomFields: React.FC = () => {
   }
 
   const toggleFieldSelection = (definitionId: string) => {
+    const field = fields.find(item => item.definitionId === definitionId)
+    if (!field || isSystemCustomFieldDefinition(field)) return
+
     setSelectedFieldIds(current => {
       const next = new Set(current)
       if (next.has(definitionId)) next.delete(definitionId)
@@ -349,9 +363,9 @@ export const CustomFields: React.FC = () => {
     setSelectedFieldIds(current => {
       const next = new Set(current)
       if (allVisibleSelected) {
-        visibleFields.forEach(field => next.delete(field.definitionId))
+        visibleSelectableFields.forEach(field => next.delete(field.definitionId))
       } else {
-        visibleFields.forEach(field => next.add(field.definitionId))
+        visibleSelectableFields.forEach(field => next.add(field.definitionId))
       }
       return next
     })
@@ -366,7 +380,7 @@ export const CustomFields: React.FC = () => {
     if (!uniqueIds.length || movingFields) return
 
     const targetFolderId = folderId || ''
-    const fieldsToMove = fields.filter(field => uniqueIds.includes(field.definitionId) && (field.folderId || '') !== targetFolderId)
+    const fieldsToMove = fields.filter(field => !isSystemCustomFieldDefinition(field) && uniqueIds.includes(field.definitionId) && (field.folderId || '') !== targetFolderId)
     if (!fieldsToMove.length) {
       setDraggingFieldIds([])
       setDropTarget(null)
@@ -406,7 +420,21 @@ export const CustomFields: React.FC = () => {
   }
 
   const handleFieldDragStart = (field: CustomFieldDefinition, event: React.DragEvent<HTMLTableRowElement>) => {
-    const ids = selectedFieldIds.has(field.definitionId) ? Array.from(selectedFieldIds) : [field.definitionId]
+    if (isSystemCustomFieldDefinition(field)) {
+      event.preventDefault()
+      setDraggingFieldIds([])
+      return
+    }
+
+    const ids = (selectedFieldIds.has(field.definitionId) ? Array.from(selectedFieldIds) : [field.definitionId])
+      .filter(id => {
+        const selectedField = fields.find(item => item.definitionId === id)
+        return selectedField && !isSystemCustomFieldDefinition(selectedField)
+      })
+    if (!ids.length) {
+      event.preventDefault()
+      return
+    }
     setDraggingFieldIds(ids)
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', ids.join(','))
@@ -612,6 +640,7 @@ export const CustomFields: React.FC = () => {
                         type="checkbox"
                         aria-label="Seleccionar campos visibles"
                         checked={allVisibleSelected}
+                        disabled={visibleSelectableFields.length === 0}
                         onChange={toggleVisibleSelection}
                       />
                     </th>
@@ -626,21 +655,23 @@ export const CustomFields: React.FC = () => {
                 </thead>
                 <tbody>
                   {visibleFields.map(field => {
-                    const selected = selectedFieldIds.has(field.definitionId)
+                    const systemField = isSystemCustomFieldDefinition(field)
+                    const selected = !systemField && selectedFieldIds.has(field.definitionId)
                     const dragging = draggingFieldIds.includes(field.definitionId)
                     return (
                     <tr
                       key={field.definitionId}
-                      className={`${styles.draggableRow} ${selected ? styles.rowSelected : ''} ${dragging ? styles.rowDragging : ''}`}
-                      draggable={!movingFields}
+                      className={`${systemField ? styles.lockedRow : styles.draggableRow} ${selected ? styles.rowSelected : ''} ${dragging ? styles.rowDragging : ''}`}
+                      draggable={!movingFields && !systemField}
                       onDragStart={(event) => handleFieldDragStart(field, event)}
                       onDragEnd={handleDragEnd}
                     >
                       <td className={styles.selectionCell}>
                         <input
                           type="checkbox"
-                          aria-label={`Seleccionar ${field.label}`}
+                          aria-label={systemField ? `${field.label} protegido por el sistema` : `Seleccionar ${field.label}`}
                           checked={selected}
+                          disabled={systemField}
                           onChange={() => toggleFieldSelection(field.definitionId)}
                           onClick={(event) => event.stopPropagation()}
                         />
@@ -655,14 +686,18 @@ export const CustomFields: React.FC = () => {
                       <td>{field.options?.length ? `${field.options.length} opciones` : '-'}</td>
                       <td>{getSourceLabel(field.sourceType)}</td>
                       <td>
-                        <div className={styles.rowActions}>
-                          <button type="button" onClick={() => openEditEditor(field)} aria-label={`Editar ${field.label}`} title="Editar">
-                            <Edit3 size={15} />
-                          </button>
-                          <button type="button" onClick={() => handleArchiveField(field)} aria-label={`Eliminar ${field.label}`} title="Eliminar">
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
+                        {systemField ? (
+                          <span className={styles.lockedAction}>Protegido</span>
+                        ) : (
+                          <div className={styles.rowActions}>
+                            <button type="button" onClick={() => openEditEditor(field)} aria-label={`Editar ${field.label}`} title="Editar">
+                              <Edit3 size={15} />
+                            </button>
+                            <button type="button" onClick={() => handleArchiveField(field)} aria-label={`Eliminar ${field.label}`} title="Eliminar">
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                     )

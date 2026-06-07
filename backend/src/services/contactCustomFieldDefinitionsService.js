@@ -14,6 +14,34 @@ const STANDARD_CONTACT_FIELD_KEYS = new Set([
   'message'
 ])
 
+const SYSTEM_CONTACT_FIELD_CONFIG = {
+  whatsapp_api_provider: {
+    label: 'WhatsApp API · Proveedor',
+    description: 'Dato tecnico usado por Ristak para identificar el proveedor de WhatsApp.',
+    fieldGroup: 'Sistema'
+  },
+  whatsapp_api_first_message: {
+    label: 'WhatsApp API · Primer mensaje',
+    description: 'Primer mensaje recibido por WhatsApp API para contexto del contacto.',
+    fieldGroup: 'Sistema'
+  },
+  whatsapp_api_source_id: {
+    label: 'WhatsApp API · ID de origen',
+    description: 'Identificador de origen o anuncio detectado en mensajes de WhatsApp.',
+    fieldGroup: 'Sistema'
+  },
+  whatsapp_api_ctwa_clid: {
+    label: 'WhatsApp API · CTWA CLID',
+    description: 'Identificador Click-to-WhatsApp usado para atribucion de Meta.',
+    fieldGroup: 'Sistema'
+  },
+  whatsapp_api_source_url: {
+    label: 'WhatsApp API · URL de origen',
+    description: 'URL de origen detectada en mensajes de WhatsApp API.',
+    fieldGroup: 'Sistema'
+  }
+}
+
 const DATA_TYPES = new Set([
   'text',
   'textarea',
@@ -63,6 +91,44 @@ export function normalizeContactCustomFieldKey(value, fallback = 'custom_field')
 
 export function isStandardContactFieldKey(value) {
   return STANDARD_CONTACT_FIELD_KEYS.has(normalizeContactCustomFieldKey(value, ''))
+}
+
+export function isSystemContactCustomFieldKey(value) {
+  return Boolean(SYSTEM_CONTACT_FIELD_CONFIG[normalizeContactCustomFieldKey(value, '')])
+}
+
+function getSystemContactCustomFieldConfig(value) {
+  return SYSTEM_CONTACT_FIELD_CONFIG[normalizeContactCustomFieldKey(value, '')] || null
+}
+
+function getRawFieldDefinitionKey(rawField = {}) {
+  const rawKey = rawField.fieldKey ||
+    rawField.field_key ||
+    rawField.key ||
+    rawField.internalName ||
+    rawField.internal_name ||
+    rawField.name ||
+    rawField.label ||
+    rawField.title ||
+    rawField.placeholder ||
+    rawField.sourceFieldName ||
+    rawField.source_field_name
+
+  return normalizeContactCustomFieldKey(rawKey)
+}
+
+function canWriteSystemContactCustomField(rawField = {}, context = {}) {
+  const requestedSourceType = normalizeContactCustomFieldKey(
+    context.sourceType ||
+    context.source_type,
+    ''
+  )
+
+  return Boolean(
+    context.allowSystemContactCustomFields ||
+    context.allow_system_contact_custom_fields ||
+    requestedSourceType === 'system'
+  )
 }
 
 function normalizeDataType(value) {
@@ -129,21 +195,23 @@ function mapFolder(row) {
 
 function mapDefinition(row) {
   if (!row) return null
+  const systemConfig = getSystemContactCustomFieldConfig(row.field_key)
+  const systemManaged = Boolean(systemConfig) || row.source_type === 'system'
 
   return {
     definitionId: row.id,
     key: row.field_key,
     fieldKey: row.field_key,
-    label: row.label || row.field_key,
-    name: row.label || row.field_key,
-    description: row.description || '',
+    label: systemConfig?.label || row.label || row.field_key,
+    name: systemConfig?.label || row.label || row.field_key,
+    description: systemConfig?.description || row.description || '',
     dataType: row.data_type || 'text',
     options: parseJsonSafe(row.options_json, []),
     folderId: row.folder_id || '',
     folderName: row.folder_name || '',
-    fieldGroup: row.field_group || 'general',
-    syncTarget: row.sync_target || 'local',
-    sourceType: row.source_type || 'manual',
+    fieldGroup: systemConfig?.fieldGroup || row.field_group || 'general',
+    syncTarget: systemManaged ? 'none' : (row.sync_target || 'local'),
+    sourceType: systemManaged ? 'system' : (row.source_type || 'manual'),
     sourceId: row.source_id || '',
     sourceSiteId: row.source_site_id || '',
     sourcePageId: row.source_page_id || '',
@@ -155,6 +223,11 @@ function mapDefinition(row) {
     sourceContext: parseJsonSafe(row.source_context_json, null),
     ownerUserId: row.owner_user_id || null,
     archived: Boolean(Number(row.archived || 0)),
+    system: systemManaged,
+    systemManaged,
+    locked: systemManaged,
+    editable: !systemManaged,
+    deletable: !systemManaged,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
   }
@@ -223,21 +296,15 @@ async function getDefinitionById(definitionId) {
 }
 
 function getFieldDefinitionInput(rawField = {}, context = {}) {
-  const rawKey = rawField.fieldKey ||
-    rawField.field_key ||
-    rawField.key ||
-    rawField.internalName ||
-    rawField.internal_name ||
-    rawField.name ||
-    rawField.label ||
-    rawField.title ||
-    rawField.placeholder ||
-    rawField.sourceFieldName ||
-    rawField.source_field_name
-  const fieldKey = normalizeContactCustomFieldKey(rawKey)
-  const sourceType = limitString(rawField.sourceType || rawField.source_type || context.sourceType || context.source_type || 'manual', 80)
+  const fieldKey = getRawFieldDefinitionKey(rawField)
+  const systemConfig = getSystemContactCustomFieldConfig(fieldKey)
+  const sourceType = systemConfig
+    ? 'system'
+    : limitString(rawField.sourceType || rawField.source_type || context.sourceType || context.source_type || 'manual', 80)
   const inferredSyncTarget = rawField.id || rawField.fieldId || rawField.customFieldId ? 'highlevel' : 'local'
-  const syncTarget = normalizeSyncTarget(rawField.syncTarget || rawField.sync_target || context.syncTarget || context.sync_target, inferredSyncTarget)
+  const syncTarget = systemConfig
+    ? 'none'
+    : normalizeSyncTarget(rawField.syncTarget || rawField.sync_target || context.syncTarget || context.sync_target, inferredSyncTarget)
   const sourceContext = rawField.sourceContext ||
     rawField.source_context ||
     context.sourceContext ||
@@ -247,11 +314,11 @@ function getFieldDefinitionInput(rawField = {}, context = {}) {
   return {
     definitionId: limitString(rawField.definitionId || rawField.definition_id || rawField.id, 180),
     fieldKey,
-    label: limitString(rawField.label || rawField.name || rawField.title || rawField.placeholder || fieldKey, 180),
-    description: limitString(rawField.description || context.description, 600),
+    label: limitString(systemConfig?.label || rawField.label || rawField.name || rawField.title || rawField.placeholder || fieldKey, 180),
+    description: limitString(systemConfig?.description || rawField.description || context.description, 600),
     dataType: normalizeDataType(rawField.dataType || rawField.type || rawField.inputType || rawField.input_type),
     folderId: normalizeFolderId(rawField.folderId || rawField.folder_id || context.folderId || context.folder_id),
-    fieldGroup: limitString(rawField.fieldGroup || rawField.field_group || context.fieldGroup || context.field_group || 'general', 120),
+    fieldGroup: limitString(systemConfig?.fieldGroup || rawField.fieldGroup || rawField.field_group || context.fieldGroup || context.field_group || 'general', 120),
     options: normalizeOptions(rawField.options || rawField.picklistOptions),
     syncTarget,
     sourceType,
@@ -262,7 +329,7 @@ function getFieldDefinitionInput(rawField = {}, context = {}) {
     sourceFormName: limitString(rawField.sourceFormName || rawField.source_form_name || context.sourceFormName || context.source_form_name, 180),
     sourceFieldId: limitString(rawField.sourceFieldId || rawField.source_field_id || context.sourceFieldId || context.source_field_id, 180),
     sourceFieldName: limitString(rawField.sourceFieldName || rawField.source_field_name || context.sourceFieldName || context.source_field_name || rawField.name, 180),
-    sourceLabel: limitString(rawField.sourceLabel || rawField.source_label || rawField.label || rawField.placeholder, 180),
+    sourceLabel: limitString(systemConfig?.label || rawField.sourceLabel || rawField.source_label || rawField.label || rawField.placeholder, 180),
     sourceContext,
     ownerUserId: normalizeOwnerUserId(rawField.ownerUserId || rawField.owner_user_id || context.ownerUserId || context.owner_user_id || context.userId || context.user_id)
   }
@@ -513,6 +580,12 @@ export async function upsertContactCustomFieldDefinition(rawField = {}, context 
     return null
   }
 
+  if (isSystemContactCustomFieldKey(input.fieldKey) && !canWriteSystemContactCustomField(rawField, context)) {
+    const error = new Error('Ese ID lo usa Ristak para datos internos de sistema y no se puede usar manualmente.')
+    error.status = rawField.createOnly ? 400 : 403
+    throw error
+  }
+
   const folder = await assertFolderExists(input.folderId)
   const existing = await findDefinitionByInput(input)
   const optionsJson = jsonString(input.options)
@@ -613,10 +686,14 @@ export async function ensureContactCustomFieldDefinitions(fields = [], context =
 }
 
 export async function prepareContactCustomFieldsForStorage(fields = [], context = {}) {
-  const definitions = await ensureContactCustomFieldDefinitions(fields, context)
+  const safeFields = (Array.isArray(fields) ? fields : []).filter(field => {
+    const fieldKey = getRawFieldDefinitionKey(field)
+    return !isSystemContactCustomFieldKey(fieldKey) || canWriteSystemContactCustomField(field, context)
+  })
+  const definitions = await ensureContactCustomFieldDefinitions(safeFields, context)
   const byKey = new Map(definitions.map(definition => [definition.fieldKey || definition.key, definition]))
 
-  const enrichedFields = (Array.isArray(fields) ? fields : []).map(field => {
+  const enrichedFields = safeFields.map(field => {
     const key = normalizeContactCustomFieldKey(field.fieldKey || field.field_key || field.key || field.name || field.label)
     const definition = byKey.get(key)
 
@@ -692,6 +769,14 @@ function assertImmutableFieldIdentity(current, input = {}) {
   }
 }
 
+function assertEditableSystemField(current) {
+  if (!current?.systemManaged && !isSystemContactCustomFieldKey(current?.fieldKey)) return
+
+  const error = new Error('Este campo lo crea Ristak para datos internos del sistema. No se puede editar, mover ni eliminar.')
+  error.status = 403
+  throw error
+}
+
 export async function updateContactCustomFieldDefinition(definitionId, input = {}) {
   const id = cleanString(definitionId)
   if (!id) return null
@@ -700,6 +785,7 @@ export async function updateContactCustomFieldDefinition(definitionId, input = {
   if (!existing) return null
 
   const current = mapDefinition(existing)
+  assertEditableSystemField(current)
   assertImmutableFieldIdentity(current, input)
 
   if (!current.fieldKey || isStandardContactFieldKey(current.fieldKey)) {
@@ -751,6 +837,7 @@ export async function deleteContactCustomFieldDefinition(definitionId) {
   `, [id])
   const definition = mapDefinition(row)
   if (!definition) return null
+  assertEditableSystemField(definition)
 
   await db.run('DELETE FROM contact_custom_field_definition_sources WHERE definition_id = ?', [id])
   await db.run('DELETE FROM contact_custom_field_definitions WHERE id = ?', [id])

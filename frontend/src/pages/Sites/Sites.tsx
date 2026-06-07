@@ -120,7 +120,11 @@ import {
 import { aiAgentService } from '@/services/aiAgentService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
-import { customFieldsService, type CustomFieldDefinition } from '@/services/customFieldsService'
+import {
+  customFieldsService,
+  isSystemCustomFieldDefinition,
+  type CustomFieldDefinition
+} from '@/services/customFieldsService'
 import { COUNTRY_OPTIONS, getCountryDefaults, getCountryFlagEmoji, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import styles from './Sites.module.css'
 import './sitesCanvas.css'
@@ -3081,7 +3085,7 @@ export const Sites: React.FC = () => {
   const loadCustomFieldsForBuilder = async () => {
     try {
       const catalog = await customFieldsService.listCatalog()
-      setCustomFields(catalog.fields || [])
+      setCustomFields((catalog.fields || []).filter(field => !isSystemCustomFieldDefinition(field)))
     } catch {
       setCustomFields([])
     }
@@ -9076,7 +9080,7 @@ const cloneImportedFormMappings = (mappings: ImportedSiteFormMapping[]) =>
 
 const getImportedActiveCustomFields = (customFields: CustomFieldDefinition[]) =>
   customFields
-    .filter(field => !field.archived)
+    .filter(field => !field.archived && !isSystemCustomFieldDefinition(field))
     .sort((a, b) => {
       const folderCompare = (a.folderName || '').localeCompare(b.folderName || '')
       if (folderCompare !== 0) return folderCompare
@@ -13545,13 +13549,13 @@ const CustomFieldBindingControl: React.FC<{
   const settings = block.settings || {}
   const currentDefinitionId = getSettingString(settings, 'customFieldDefinitionId')
   const compatibleFields = customFields
-    .filter(field => !field.archived && isCustomFieldCompatibleWithBlock(block.blockType, field))
+    .filter(field => !field.archived && !isSystemCustomFieldDefinition(field) && isCustomFieldCompatibleWithBlock(block.blockType, field))
     .sort((a, b) => (
       String(a.folderName || '').localeCompare(String(b.folderName || '')) ||
       String(a.label || '').localeCompare(String(b.label || ''))
     ))
   const selectedField = compatibleFields.find(field => field.definitionId === currentDefinitionId) ||
-    customFields.find(field => field.definitionId === currentDefinitionId)
+    customFields.find(field => field.definitionId === currentDefinitionId && !isSystemCustomFieldDefinition(field))
   const groups = compatibleFields.reduce((acc, field) => {
     const folderName = field.folderName || 'Sin carpeta'
     const current = acc.get(folderName) || []

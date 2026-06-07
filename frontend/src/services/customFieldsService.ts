@@ -43,6 +43,11 @@ export interface CustomFieldDefinition {
   fieldGroup: string
   syncTarget: string
   sourceType: string
+  system?: boolean
+  systemManaged?: boolean
+  locked?: boolean
+  editable?: boolean
+  deletable?: boolean
   archived: boolean
   createdAt: string | null
   updatedAt: string | null
@@ -64,6 +69,17 @@ export interface SaveCustomFieldInput {
   options?: CustomFieldOption[]
   syncTarget?: string
 }
+
+export const isSystemCustomFieldDefinition = (field?: Partial<CustomFieldDefinition> | null) => (
+  Boolean(
+    field?.system ||
+    field?.systemManaged ||
+    field?.locked ||
+    field?.editable === false ||
+    field?.deletable === false ||
+    field?.sourceType === 'system'
+  )
+)
 
 export const customFieldsService = {
   listCatalog() {

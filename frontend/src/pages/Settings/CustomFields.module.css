@@ -408,6 +408,14 @@
   cursor: grabbing;
 }
 
+.lockedRow {
+  cursor: default;
+}
+
+.lockedRow td {
+  color: var(--color-text-tertiary);
+}
+
 .draggableRow td,
 .draggableRow code,
 .draggableRow .typePill {
@@ -433,6 +441,11 @@
   margin: 0;
   accent-color: rgb(20, 184, 166);
   cursor: pointer;
+}
+
+.selectionHead input:disabled,
+.selectionCell input:disabled {
+  cursor: not-allowed;
 }
 
 .selectionCell {
@@ -509,6 +522,16 @@
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.lockedAction {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .rowActions button,
