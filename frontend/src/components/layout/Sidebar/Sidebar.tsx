@@ -415,12 +415,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
         <div ref={userMenuRef} className="relative flex min-w-0 flex-1 items-center">
           <button
             type="button"
-            className="flex h-full min-w-0 flex-1 items-center gap-3 px-4 text-left transition-colors hover:bg-[rgba(148,163,184,0.08)] focus:outline-none"
+            className="flex h-full min-w-0 flex-1 items-center px-4 text-left transition-colors hover:bg-[rgba(148,163,184,0.08)] focus:outline-none"
             onClick={() => setShowUserMenu((current) => !current)}
             aria-expanded={showUserMenu}
             aria-haspopup="menu"
           >
-            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[rgba(255,238,219,0.92)] text-xs font-semibold text-[#2f251b]">
+            <span className="ml-1.5 mr-1.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[rgba(255,238,219,0.92)] text-xs font-semibold text-[#2f251b]">
               {initials}
             </span>
             <span className="min-w-0 flex-1">
@@ -430,7 +430,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
             </span>
             <ChevronDown
               className={cn(
-                'h-3.5 w-3.5 flex-shrink-0 text-[var(--color-text-tertiary)] transition-transform',
+                'ml-3 h-3.5 w-3.5 flex-shrink-0 text-[var(--color-text-tertiary)] transition-transform',
                 showUserMenu && 'rotate-180'
               )}
             />
