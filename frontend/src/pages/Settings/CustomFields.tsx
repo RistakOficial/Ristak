@@ -138,7 +138,7 @@ export const CustomFields: React.FC = () => {
     try {
       const catalog = await customFieldsService.listCatalog()
       setFolders(catalog.folders || [])
-      setFields(catalog.fields || [])
+      setFields((catalog.fields || []).filter(field => !isSystemCustomFieldDefinition(field)))
     } catch (error) {
       showToast('error', 'No se pudieron cargar los campos', error instanceof Error ? error.message : 'Intenta otra vez')
     } finally {
