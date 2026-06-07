@@ -45,6 +45,10 @@
 }
 
 .bottomSheetModal {
+  max-height: min(86dvh, 820px);
+  margin: 0;
+  border-bottom: 0;
+  border-radius: 24px 24px 0 0;
   transform-origin: bottom center;
   animation: bottomSheetRise 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
   touch-action: pan-y;

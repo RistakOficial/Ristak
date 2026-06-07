@@ -5,6 +5,7 @@ interface BottomSheetDismissOptions {
   onClose: () => void
   closeDurationMs?: number
   dismissThreshold?: number
+  backdropTravelPx?: number
 }
 
 interface BottomSheetDragState {
@@ -18,6 +19,15 @@ interface BottomSheetDragState {
 
 const INTERACTIVE_SELECTOR = 'button, a, input, textarea, select, [contenteditable="true"], [data-bottom-sheet-no-drag="true"]'
 const SCROLLABLE_SELECTOR = '[data-phone-scrollable="true"], [data-phone-chat-scrollable="true"], [data-bottom-sheet-scrollable="true"]'
+const DEFAULT_BACKDROP_TRAVEL_PX = 360
+
+type BottomSheetBackdropStyle = CSSProperties & {
+  '--bottom-sheet-progress'?: string
+}
+
+function clampProgress(value: number) {
+  return Math.min(1, Math.max(0, value))
+}
 
 function getScrollableParent(target: EventTarget | null, boundary: Element) {
   if (!(target instanceof Element)) return null
@@ -30,7 +40,8 @@ export function useBottomSheetDismiss({
   isOpen,
   onClose,
   closeDurationMs = 260,
-  dismissThreshold = 92
+  dismissThreshold = 92,
+  backdropTravelPx = DEFAULT_BACKDROP_TRAVEL_PX
 }: BottomSheetDismissOptions) {
   const [dragOffset, setDragOffset] = useState(0)
   const [dragging, setDragging] = useState(false)
@@ -166,17 +177,24 @@ export function useBottomSheetDismiss({
 
   useEffect(() => () => clearCloseTimer(), [clearCloseTimer])
 
+  const backdropProgress = closing
+    ? 0
+    : clampProgress(1 - dragOffset / Math.max(1, backdropTravelPx))
+
   const sheetStyle: CSSProperties | undefined = dragging || closing || dragOffset > 0
     ? {
         transform: `translate3d(0, ${closing ? '104%' : `${dragOffset}px`}, 0)`,
-        transition: dragging ? 'none' : `transform ${closeDurationMs}ms cubic-bezier(0.22, 1, 0.36, 1)`
+        transition: dragging ? 'none' : `transform ${closeDurationMs}ms cubic-bezier(0.22, 1, 0.36, 1)`,
+        willChange: 'transform'
       }
     : undefined
 
-  const backdropStyle: CSSProperties | undefined = dragging || closing || dragOffset > 0
+  const backdropStyle: BottomSheetBackdropStyle | undefined = dragging || closing || dragOffset > 0
     ? {
-        opacity: closing ? 0 : Math.max(0.28, 1 - dragOffset / 360),
-        transition: dragging ? 'none' : `opacity ${closeDurationMs}ms ease`
+        opacity: backdropProgress,
+        transition: dragging ? 'none' : `opacity ${closeDurationMs}ms ease`,
+        willChange: 'opacity',
+        '--bottom-sheet-progress': String(backdropProgress)
       }
     : undefined
 
@@ -195,6 +213,7 @@ export function useBottomSheetDismiss({
     requestClose,
     dragging,
     closing,
-    dragOffset
+    dragOffset,
+    backdropProgress
   }
 }
