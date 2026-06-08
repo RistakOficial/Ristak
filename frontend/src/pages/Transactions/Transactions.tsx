@@ -118,6 +118,7 @@ const parseTransactionsRoute = (pathname: string): TransactionsRouteState => {
 }
 
 const buildTransactionsPath = (viewMode: TransactionsViewMode) => `/transactions/transactions/${viewMode}`
+const buildCreateTransactionPath = (viewMode: TransactionsViewMode) => `${buildTransactionsPath(viewMode)}/new`
 const buildTransactionDetailPath = (viewMode: TransactionsViewMode, transactionId: string) =>
   `${buildTransactionsPath(viewMode)}/${encodeURIComponent(transactionId)}`
 const buildPaymentPlansPath = () => '/transactions/payment-plans'
@@ -1832,7 +1833,7 @@ export const Transactions: React.FC = () => {
                 variant="secondary"
                 onClick={() => {
                   setShowRecordPaymentModal(true)
-                  navigate('/transactions/transactions/new')
+                  navigate(buildCreateTransactionPath(viewMode))
                 }}
               >
                 <Plus size={16} />
