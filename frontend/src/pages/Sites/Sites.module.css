@@ -10837,12 +10837,12 @@
   min-width: 100%;
   max-height: min(720px, calc(100dvh - 96px));
   overflow: auto;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle, rgba(148, 163, 184, 0.26)) 82%, var(--color-primary) 18%);
+  border: 1px solid var(--ristak-dropdown-border, rgba(148, 163, 184, 0.26));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-background-secondary) 92%, var(--color-background-primary) 8%);
+  background: var(--ristak-dropdown-bg, #ffffff);
   color: var(--color-text-primary);
   padding: 16px;
-  box-shadow: 0 24px 70px -42px rgba(0, 0, 0, 0.82);
+  box-shadow: var(--ristak-dropdown-panel-shadow, 0 18px 46px -30px rgba(15, 23, 42, 0.46));
   scrollbar-gutter: stable;
 }
 
@@ -11083,16 +11083,11 @@
 }
 
 .pagesDropdownActionMenu {
-  z-index: 4600;
+  z-index: 4600 !important;
   min-width: 206px;
   display: grid;
   gap: 4px;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle, rgba(148, 163, 184, 0.24)) 82%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--color-background-secondary) 94%, var(--color-background-primary) 6%);
-  color: var(--color-text-primary);
   padding: 6px;
-  box-shadow: 0 18px 48px -30px rgba(0, 0, 0, 0.86);
 }
 
 .pagesDropdownActionItem {

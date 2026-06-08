@@ -12120,7 +12120,6 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
 }) => {
   const [renamingPageId, setRenamingPageId] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
-  const [menuPageId, setMenuPageId] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
   const hasFixedPageSection = colorFinalPages
@@ -12139,7 +12138,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
       const target = event.target as HTMLElement | null
       if (!target) return
       if (dropdownRef.current?.contains(target)) return
-      if (target.closest('[data-page-menu-portal="true"]')) return
+      if (target.closest('[data-radix-popper-content-wrapper]')) return
       setOpen(false)
     }
 
@@ -12158,13 +12157,11 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
 
   useEffect(() => {
     if (!open) {
-      setMenuPageId(null)
       setRenamingPageId(null)
     }
   }, [open])
 
   const handleSelectPage = (pageId: string) => {
-    setMenuPageId(null)
     onSelectPage(pageId)
     setOpen(false)
   }
@@ -12175,7 +12172,6 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
     const pageId = String(event.active.id)
     const page = movablePages.find(item => item.id === pageId)
     if (!page || locked || isFixedPage(page)) return
-    setMenuPageId(null)
     onDragPage(pageId)
   }
 
@@ -12220,7 +12216,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       key={value}
                       type="button"
                       disabled={locked}
-                      onClick={() => { setMenuPageId(null); onChangeMode(value) }}
+                      onClick={() => { onChangeMode(value) }}
                       style={{
                         flex: 1,
                         display: 'inline-flex',
@@ -12282,25 +12278,20 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       locked={locked}
                       fixedPage={fixedPage}
                       renaming={renamingPageId === page.id}
-                      menuOpen={menuPageId === page.id}
                       pageToneClass={pageToneClass}
                       canDelete={pageCanDelete}
                       canDuplicate={pageCanDuplicate}
                       showAddSubpage={canAddSubpage}
-                      onAddSubpage={onAddSubpage ? () => { setMenuPageId(null); onAddSubpage(page.id) } : undefined}
+                      onAddSubpage={onAddSubpage ? () => { onAddSubpage(page.id) } : undefined}
                       onSelect={() => handleSelectPage(page.id)}
-                      onMenuOpenChange={(nextOpen) => setMenuPageId(nextOpen ? page.id : null)}
                       onStartRename={() => {
-                        setMenuPageId(null)
                         onSelectPage(page.id)
                         setRenamingPageId(page.id)
                       }}
                       onDuplicate={() => {
-                        setMenuPageId(null)
                         onDuplicatePage(page.id)
                       }}
                       onDelete={() => {
-                        setMenuPageId(null)
                         onDeletePage(page.id)
                       }}
                       onRenamePage={onRenamePage}
@@ -12309,7 +12300,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                   )
                 })}
                 {!locked && (
-                  <button type="button" className={styles.pagesDropdownAddButton} onClick={() => { setMenuPageId(null); onAddPage() }}>
+                  <button type="button" className={styles.pagesDropdownAddButton} onClick={() => { onAddPage() }}>
                     <Plus size={15} />
                     {websiteMode ? 'Agregar pagina principal' : 'Agregar pagina'}
                   </button>
@@ -12362,14 +12353,12 @@ interface FunnelPageDropdownItemProps {
   locked: boolean
   fixedPage: boolean
   renaming: boolean
-  menuOpen: boolean
   pageToneClass: string
   canDelete: boolean
   canDuplicate: boolean
   showAddSubpage?: boolean
   onAddSubpage?: () => void
   onSelect: () => void
-  onMenuOpenChange: (open: boolean) => void
   onStartRename: () => void
   onDuplicate: () => void
   onDelete: () => void
@@ -12386,20 +12375,19 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   locked,
   fixedPage,
   renaming,
-  menuOpen,
   pageToneClass,
   canDelete,
   canDuplicate,
   showAddSubpage = false,
   onAddSubpage,
   onSelect,
-  onMenuOpenChange,
   onStartRename,
   onDuplicate,
   onDelete,
   onRenamePage,
   onDoneRename
 }) => {
+  const [menuOpen, setMenuOpen] = useState(false)
   const title = page.title || `Pagina ${index + 1}`
   const dragDisabled = locked || fixedPage
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -12453,15 +12441,12 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
 
         {!locked && (
           <div className={styles.pagesDropdownActionWrap}>
-            <DropdownMenu open={menuOpen} onOpenChange={onMenuOpenChange}>
+            <DropdownMenu onOpenChange={setMenuOpen}>
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
                   className={styles.pagesDropdownMenuButton}
                   aria-label="Opciones de pagina"
-                  aria-haspopup="menu"
-                  aria-expanded={menuOpen}
-                  onClick={(event) => event.stopPropagation()}
                   onPointerDown={(event) => event.stopPropagation()}
                   onKeyDown={(event) => event.stopPropagation()}
                 >
@@ -12472,9 +12457,6 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                 align="end"
                 sideOffset={8}
                 className={styles.pagesDropdownActionMenu}
-                data-page-menu-portal="true"
-                onClick={(event) => event.stopPropagation()}
-                onPointerDown={(event) => event.stopPropagation()}
               >
                 <DropdownMenuItem
                   className={styles.pagesDropdownActionItem}
