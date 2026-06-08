@@ -95,6 +95,8 @@ export interface SitePage {
   id: string
   title: string
   sortOrder: number
+  parentPageId?: string
+  slug?: string
   importedAssetPath?: string
   importedOriginalTitle?: string
   headerTrackingCode?: string
@@ -119,6 +121,7 @@ export interface SiteTheme {
   importedHtml?: boolean
   importId?: string
   pages?: SitePage[]
+  pageMode?: 'funnel' | 'website'
   pagePadding?: number
   pageRadius?: number
   pageBorderWidth?: number

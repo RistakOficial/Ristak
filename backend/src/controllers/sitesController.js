@@ -187,7 +187,8 @@ export async function previewSiteHandler(req, res) {
     res.set('Cache-Control', 'no-store')
     res.status(200).type('html').send(await renderPublicSiteHtml(site, {
       pageId: req.query?.page,
-      trackingEnabled: false
+      trackingEnabled: false,
+      preview: true
     }))
   } catch (error) {
     logger.error(`Error previsualizando site: ${error.message}`)
@@ -445,8 +446,15 @@ export async function publicSiteHostMiddleware(req, res, next) {
         return sendDomainError(req, res, 404, 'Ruta no disponible en este dominio publico')
       }
 
+      // First path segment is the site slug; the rest is the page path used by
+      // website-mode sites to resolve a (sub)page. Drop a trailing /test bypass marker.
+      const pathSegments = String(req.path || '').split('/').map(segment => decodePathSegment(segment)).filter(Boolean)
+      const pagePath = pathSegments.slice(1)
+      if (pagePath.length && pagePath[pagePath.length - 1].toLowerCase() === 'test') pagePath.pop()
+
       return res.status(200).type('html').send(await renderPublicSiteHtml(resolution.site, {
         pageId: req.query?.page,
+        pagePath,
         trackingEnabled: !isTrackingBypassRequest(req)
       }))
     }

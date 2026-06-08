@@ -34,10 +34,12 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  CornerDownRight,
   DollarSign,
   Eye,
   ExternalLink,
   FileText,
+  Filter,
   FormInput,
   Globe2,
   GripVertical,
@@ -185,7 +187,7 @@ type FunnelStyleId = 'vsl' | 'lead_gen' | 'opt_in'
 type FunnelPrimaryActionId = 'buy' | 'schedule' | 'form' | 'whatsapp' | 'download'
 
 const sectionItems: Array<{ id: SitesSection; label: string; icon: React.ReactNode }> = [
-  { id: 'landings', label: 'Sitios embudo', icon: <LayoutTemplate size={17} /> },
+  { id: 'landings', label: 'Sitios web', icon: <LayoutTemplate size={17} /> },
   { id: 'forms', label: 'Formularios', icon: <FormInput size={17} /> },
   { id: 'leads', label: 'Respuestas', icon: <ListChecks size={17} /> },
   { id: 'domains', label: 'Dominios', icon: <Globe2 size={17} /> }
@@ -240,12 +242,13 @@ const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
 const FORM_FINAL_PAGE_IDS = new Set([FORM_THANK_YOU_PAGE_ID, FORM_DISQUALIFIED_PAGE_ID])
 
 const sitesSectionPathById: Record<SitesSection, string> = {
-  landings: 'landings',
+  landings: 'web',
   forms: 'forms',
   leads: 'responses',
   domains: 'domains'
 }
 const sitesSectionByPath: Record<string, SitesSection> = {
+  web: 'landings',
   landings: 'landings',
   forms: 'forms',
   leads: 'leads',
@@ -849,7 +852,7 @@ const getPublicDomainPreview = (domainConfig: SitesDomainConfig) => {
 }
 
 const getDefaultSiteNamePrefix = (siteType: SiteType) =>
-  siteType === 'landing_page' ? 'Embudo' : 'Formulario'
+  siteType === 'landing_page' ? 'Sitio' : 'Formulario'
 
 const getDefaultRoutePrefix = (siteType: SiteType) =>
   normalizeRouteInput(getDefaultSiteNamePrefix(siteType))
@@ -1154,31 +1157,31 @@ const platformChromeFor = (id: SiteTemplateId): SocialPlatform | null => {
 }
 
 const getCreateButtonLabel = (section: SitesSection) => {
-  if (section === 'landings') return 'Crear sitio embudo'
+  if (section === 'landings') return 'Crear sitio web'
   if (section === 'forms') return 'Crear formulario'
   return 'Nuevo sitio'
 }
 
 const getLibraryTitle = (section: SitesSection) => {
-  if (section === 'landings') return 'Sitios embudo'
+  if (section === 'landings') return 'Sitios web'
   if (section === 'forms') return 'Formularios'
   return 'Sitios'
 }
 
 const getLibraryDescription = (section: SitesSection) => {
-  if (section === 'landings') return 'Biblioteca de paginas publicas, embudos y sitios listos para editar.'
+  if (section === 'landings') return 'Biblioteca de paginas publicas, sitios web y embudos listos para editar.'
   if (section === 'forms') return 'Biblioteca de formularios publicos para capturar prospectos y respuestas.'
   return 'Biblioteca de sitios publicos.'
 }
 
 const getLibraryEmptyMessage = (section: SitesSection) => {
-  if (section === 'landings') return 'Crea un sitio embudo para verlo aqui como tarjeta editable.'
+  if (section === 'landings') return 'Crea un sitio web para verlo aqui como tarjeta editable.'
   if (section === 'forms') return 'Crea un formulario para verlo aqui como tarjeta editable.'
   return getEmptyEditorMessage(section)
 }
 
 const getSiteTypeLabel = (site: PublicSite) => {
-  if (site.siteType === 'landing_page') return 'Sitio embudo'
+  if (site.siteType === 'landing_page') return site.theme?.pageMode === 'website' ? 'Sitio web' : 'Embudo'
   if (site.siteType === 'interactive_form') return 'Formulario interactivo'
   return 'Formulario'
 }
@@ -1191,15 +1194,15 @@ const getCreateFlowForSection = (section: SitesSection): CreateFlow => {
 const getCreateFlowHeaderCopy = (step: CreateFlow) => {
   if (step === 'landing-start') {
     return {
-      title: 'Nuevo sitio embudo',
-      subtitle: 'Como quieres iniciar tu sitio embudo?'
+      title: 'Nuevo sitio web',
+      subtitle: 'Como quieres iniciar tu sitio web?'
     }
   }
 
   if (step === 'landing-template') {
     return {
-      title: 'Nuevo sitio embudo',
-      subtitle: 'Elige el estilo de tu sitio embudo'
+      title: 'Nuevo sitio web',
+      subtitle: 'Elige el estilo de tu sitio web'
     }
   }
 
@@ -1240,7 +1243,7 @@ const getCreateFlowHeaderCopy = (step: CreateFlow) => {
 
   return {
     title: 'Sitios',
-    subtitle: 'Constructor visual controlado para sitios embudo, formularios, leads y publicacion por dominio verificado.'
+    subtitle: 'Constructor visual controlado para sitios web, formularios, leads y publicacion por dominio verificado.'
   }
 }
 
@@ -1254,9 +1257,9 @@ const getPreviousCreateFlowStep = (step: CreateFlow): CreateFlow => {
 }
 
 const getEmptyEditorMessage = (section: SitesSection) => {
-  if (section === 'landings') return 'Crea un sitio embudo para entrar al editor visual.'
+  if (section === 'landings') return 'Crea un sitio web para entrar al editor visual.'
   if (section === 'forms') return 'Crea un formulario para entrar al editor visual.'
-  return 'Crea un sitio embudo o formulario para entrar al editor visual.'
+  return 'Crea un sitio web o formulario para entrar al editor visual.'
 }
 
 const getLibraryPreviewBlocks = (site: PublicSite) => {
@@ -1896,6 +1899,8 @@ const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
       id: page?.id || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
       title: page?.title || `Pagina ${index + 1}`,
       sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
+      ...(page?.parentPageId ? { parentPageId: page.parentPageId } : {}),
+      ...(page?.slug ? { slug: page.slug } : {}),
       ...(page?.importedAssetPath ? { importedAssetPath: page.importedAssetPath } : {}),
       ...(page?.importedOriginalTitle ? { importedOriginalTitle: page.importedOriginalTitle } : {}),
       ...(page?.headerTrackingCode !== undefined ? { headerTrackingCode: page.headerTrackingCode } : {}),
@@ -1973,13 +1978,14 @@ const isLastFormContentPage = (site: PublicSite, pages: SitePage[], pageId?: str
   return contentPages[contentPages.length - 1]?.id === pageId
 }
 
-const makeFunnelPage = (index: number): SitePage => ({
+const makeFunnelPage = (index: number, extra?: Partial<SitePage>): SitePage => ({
   id: `page-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
   title: `Pagina ${index + 1}`,
   sortOrder: index,
   metaCapiEnabled: false,
   metaEventName: 'none',
-  metaTrigger: 'page_view'
+  metaTrigger: 'page_view',
+  ...extra
 })
 
 const normalizePagesForSave = (pages: SitePage[]) =>
@@ -1987,6 +1993,8 @@ const normalizePagesForSave = (pages: SitePage[]) =>
     id: page.id,
     title: page.title || `Pagina ${index + 1}`,
     sortOrder: index,
+    ...(page.parentPageId ? { parentPageId: page.parentPageId } : {}),
+    ...(page.slug ? { slug: page.slug } : {}),
     ...(page.importedAssetPath ? { importedAssetPath: page.importedAssetPath } : {}),
     ...(page.importedOriginalTitle ? { importedOriginalTitle: page.importedOriginalTitle } : {}),
     ...(page.headerTrackingCode !== undefined ? { headerTrackingCode: page.headerTrackingCode } : {}),
@@ -1994,6 +2002,86 @@ const normalizePagesForSave = (pages: SitePage[]) =>
     metaEventName: normalizeMetaEventName(page.metaEventName, 'none'),
     metaTrigger: normalizeMetaTrigger(page.metaTrigger)
   }))
+
+// --- Website page hierarchy (subpages) helpers ---
+const MAX_WEBSITE_PAGE_DEPTH = 2 // top-level = 0, subpage = 1, sub-subpage = 2
+
+const getSitePageMode = (site?: PublicSite | null): 'funnel' | 'website' =>
+  isLanding(site) && !isImportedHtmlSite(site) && site?.theme?.pageMode === 'website' ? 'website' : 'funnel'
+
+const getPageDepth = (page: SitePage | undefined, pages: SitePage[]): number => {
+  if (!page) return 0
+  const byId = new Map(pages.map(p => [p.id, p]))
+  const seen = new Set<string>()
+  let depth = 0
+  let current: SitePage | undefined = page
+  while (current?.parentPageId) {
+    if (seen.has(current.id)) break
+    seen.add(current.id)
+    const parent = byId.get(current.parentPageId)
+    if (!parent) break
+    depth += 1
+    current = parent
+  }
+  return depth
+}
+
+const getDescendantPageIds = (pageId: string, pages: SitePage[]): string[] => {
+  const result: string[] = []
+  const collect = (parentId: string) => {
+    for (const page of pages) {
+      if ((page.parentPageId || '') === parentId) {
+        result.push(page.id)
+        collect(page.id)
+      }
+    }
+  }
+  collect(pageId)
+  return result
+}
+
+// Flatten pages into render order: each top-level page is followed by its
+// descendants (depth-first), so the dropdown can render an indented tree.
+const buildOrderedPageTree = (pages: SitePage[]): Array<{ page: SitePage; depth: number }> => {
+  const childrenOf = (parentId: string) =>
+    pages.filter(page => (page.parentPageId || '') === parentId).sort((a, b) => a.sortOrder - b.sortOrder)
+  const result: Array<{ page: SitePage; depth: number }> = []
+  const placed = new Set<string>()
+  const walk = (parentId: string, depth: number) => {
+    for (const page of childrenOf(parentId)) {
+      if (placed.has(page.id)) continue
+      placed.add(page.id)
+      result.push({ page, depth })
+      walk(page.id, depth + 1)
+    }
+  }
+  walk('', 0)
+  // Defensive: surface any orphaned page (missing parent) as top-level.
+  for (const page of pages) {
+    if (!placed.has(page.id)) result.push({ page, depth: 0 })
+  }
+  return result
+}
+
+// Ensure every page has a slug unique among its siblings (same parent). Pages
+// whose slug is empty get one derived from their title. Used before saving a
+// website-mode site so hierarchical URLs stay valid.
+const ensureWebsiteSlugs = (pages: SitePage[]): SitePage[] => {
+  const usedByParent = new Map<string, Set<string>>()
+  return pages.map(page => {
+    const parentKey = page.parentPageId || ''
+    if (!usedByParent.has(parentKey)) usedByParent.set(parentKey, new Set())
+    const used = usedByParent.get(parentKey) as Set<string>
+    let slug = normalizeRouteInput(page.slug || '') || normalizeRouteInput(page.title || '') || 'pagina'
+    if (used.has(slug)) {
+      let i = 2
+      while (used.has(`${slug}-${i}`)) i += 1
+      slug = `${slug}-${i}`
+    }
+    used.add(slug)
+    return page.slug === slug ? page : { ...page, slug }
+  })
+}
 
 const getBlockPageId = (block: SiteBlock, pages: SitePage[]) => {
   const pageId = getSettingString(block.settings || {}, 'pageId')
@@ -3677,12 +3765,13 @@ export const Sites: React.FC = () => {
   const persistFunnelPages = async (nextPages: SitePage[], nextActivePageId?: string) => {
     if (!selectedSite || !hasEditablePages(selectedSite)) return
     const orderedPages = getOrderedPagesForSite(selectedSite, nextPages)
+    const finalPages = getSitePageMode(selectedSite) === 'website' ? ensureWebsiteSlugs(orderedPages) : orderedPages
 
     setSaving(true)
     try {
       const theme = {
         ...(selectedSite.theme || {}),
-        pages: normalizePagesForSave(orderedPages)
+        pages: normalizePagesForSave(finalPages)
       }
       const site = await saveSiteTheme(selectedSite, theme)
       syncSelectedSite(site)
@@ -3709,6 +3798,51 @@ export const Sites: React.FC = () => {
     void persistFunnelPages(nextPages, nextPage.id)
   }
 
+  const handleAddSubpage = (parentId: string) => {
+    if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
+    if (getSitePageMode(selectedSite) !== 'website') return
+    const parent = pages.find(page => page.id === parentId)
+    if (!parent || getPageDepth(parent, pages) >= MAX_WEBSITE_PAGE_DEPTH) return
+    const nextPage = makeFunnelPage(pages.length, { parentPageId: parentId })
+    nextPage.title = 'Subpagina'
+    // Insert right after the parent's existing subtree so the flat order keeps subtrees contiguous.
+    const descendants = new Set(getDescendantPageIds(parentId, pages))
+    const parentIndex = pages.findIndex(page => page.id === parentId)
+    let insertIndex = parentIndex + 1
+    while (insertIndex < pages.length && descendants.has(pages[insertIndex].id)) insertIndex += 1
+    const nextPages = [
+      ...pages.slice(0, insertIndex),
+      nextPage,
+      ...pages.slice(insertIndex)
+    ]
+    void persistFunnelPages(nextPages, nextPage.id)
+  }
+
+  const handleChangePageMode = async (mode: 'funnel' | 'website') => {
+    if (!selectedSite || !isLanding(selectedSite) || isImportedHtmlSite(selectedSite)) return
+    if (getSitePageMode(selectedSite) === mode) return
+    const orderedPages = getOrderedPagesForSite(selectedSite, pages)
+    const finalPages = mode === 'website' ? ensureWebsiteSlugs(orderedPages) : orderedPages
+    setSaving(true)
+    try {
+      const theme = {
+        ...(selectedSite.theme || {}),
+        pageMode: mode,
+        pages: normalizePagesForSave(finalPages)
+      }
+      const site = await saveSiteTheme(selectedSite, theme)
+      syncSelectedSite(site)
+      setHasUnsavedChanges(false)
+      showToast('success', mode === 'website' ? 'Modo Sitio web' : 'Modo Embudo', mode === 'website'
+        ? 'Ahora puedes organizar paginas con subpaginas.'
+        : 'Las paginas vuelven a un orden lineal de embudo.')
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo cambiar el modo del sitio')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const cloneBlockForPage = (block: SiteBlock, pageId: string): Partial<SiteBlock> & { blockType: SiteBlockType } => ({
     blockType: block.blockType,
     label: block.label,
@@ -3729,30 +3863,64 @@ export const Sites: React.FC = () => {
     const sourceIndex = pages.findIndex(page => page.id === pageId)
     if (sourceIndex < 0) return
 
-    const nextPage = makeFunnelPage(isStandardForm(selectedSite) ? getFormContentPages(pages).length : pages.length)
-    nextPage.title = `${pages[sourceIndex].title} copia`
+    const websiteMode = getSitePageMode(selectedSite) === 'website'
+    // In website mode duplicate the whole subtree (page + descendants); in funnel
+    // mode there are no descendants, so this naturally clones a single page.
+    const subtreeIds = websiteMode ? [pageId, ...getDescendantPageIds(pageId, pages)] : [pageId]
+    const subtreeSet = new Set(subtreeIds)
+    const subtreePages = pages.filter(page => subtreeSet.has(page.id))
+
+    const idMap = new Map<string, string>()
+    subtreePages.forEach((page, i) => {
+      idMap.set(page.id, `page-${Date.now()}-${Math.random().toString(16).slice(2, 8)}-${i}`)
+    })
+
+    const clonedPages: SitePage[] = subtreePages.map(page => {
+      const isRoot = page.id === pageId
+      const remappedParent = isRoot
+        ? page.parentPageId
+        : idMap.get(page.parentPageId || '') || page.parentPageId
+      const cloned: SitePage = {
+        ...page,
+        id: idMap.get(page.id) as string,
+        title: isRoot ? `${page.title} copia` : page.title
+      }
+      if (remappedParent) cloned.parentPageId = remappedParent
+      else delete cloned.parentPageId
+      // Drop the slug so it is regenerated uniquely among siblings on save.
+      delete cloned.slug
+      return cloned
+    })
+
+    // Insert the cloned subtree right after the source subtree.
+    let endIndex = sourceIndex + 1
+    while (endIndex < pages.length && subtreeSet.has(pages[endIndex].id)) endIndex += 1
     const nextPages = [
-      ...pages.slice(0, sourceIndex + 1),
-      nextPage,
-      ...pages.slice(sourceIndex + 1)
+      ...pages.slice(0, endIndex),
+      ...clonedPages,
+      ...pages.slice(endIndex)
     ]
     const orderedPages = getOrderedPagesForSite(selectedSite, nextPages)
+    const finalPages = websiteMode ? ensureWebsiteSlugs(orderedPages) : orderedPages
+    const newRootId = idMap.get(pageId) as string
 
     setSaving(true)
     try {
       let site = await saveSiteTheme(selectedSite, {
         ...(selectedSite.theme || {}),
-        pages: normalizePagesForSave(orderedPages)
+        pages: normalizePagesForSave(finalPages)
       })
-      const sourceBlocks = blocks.filter(block => !isGlobalHeaderBlock(block) && getBlockPageId(block, pages) === pageId)
-      for (const block of sourceBlocks) {
-        site = await sitesService.createBlock(selectedSite.id, cloneBlockForPage(block, nextPage.id))
+      for (const oldId of subtreeIds) {
+        const sourceBlocks = blocks.filter(block => !isGlobalHeaderBlock(block) && getBlockPageId(block, pages) === oldId)
+        for (const block of sourceBlocks) {
+          site = await sitesService.createBlock(selectedSite.id, cloneBlockForPage(block, idMap.get(oldId) as string))
+        }
       }
       syncSelectedSite(site)
-      setActivePageId(nextPage.id)
-      navigateSitesEditor({ site, pageId: nextPage.id, blockId: '' })
+      setActivePageId(newRootId)
+      navigateSitesEditor({ site, pageId: newRootId, blockId: '' })
       setHasUnsavedChanges(false)
-      showToast('success', 'Pagina duplicada', 'Ya esta lista para editar.')
+      showToast('success', subtreeIds.length > 1 ? 'Pagina y subpaginas duplicadas' : 'Pagina duplicada', 'Ya esta lista para editar.')
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo duplicar la pagina')
     } finally {
@@ -3766,21 +3934,29 @@ export const Sites: React.FC = () => {
       showToast('warning', 'Pagina fija', 'Esta pagina se usa para cerrar el formulario y no se puede eliminar.')
       return
     }
-    const deletablePageCount = isStandardForm(selectedSite) ? getFormContentPages(pages).length : pages.length
-    if (deletablePageCount <= 1) {
+    const websiteMode = getSitePageMode(selectedSite) === 'website'
+    const idsToDelete = websiteMode ? [pageId, ...getDescendantPageIds(pageId, pages)] : [pageId]
+    const idsToDeleteSet = new Set(idsToDelete)
+    const remainingPageCount = isStandardForm(selectedSite)
+      ? getFormContentPages(pages).filter(page => !idsToDeleteSet.has(page.id)).length
+      : pages.filter(page => !idsToDeleteSet.has(page.id)).length
+    if (remainingPageCount < 1) {
       showToast('warning', 'No se puede eliminar', `${getSiteTypeLabel(selectedSite)} debe tener al menos una pagina.`)
       return
     }
 
+    const hasSubpages = idsToDelete.length > 1
     showConfirm(
-      'Eliminar pagina',
-      'Se eliminara esta pagina y todos sus bloques. Esta accion no se puede deshacer.',
+      hasSubpages ? 'Eliminar pagina y subpaginas' : 'Eliminar pagina',
+      hasSubpages
+        ? 'Se eliminaran esta pagina, sus subpaginas y todos sus bloques. Esta accion no se puede deshacer.'
+        : 'Se eliminara esta pagina y todos sus bloques. Esta accion no se puede deshacer.',
       () => {
         const deletePage = async () => {
           const pageIndex = pages.findIndex(page => page.id === pageId)
-          const nextPages = pages.filter(page => page.id !== pageId)
+          const nextPages = pages.filter(page => !idsToDeleteSet.has(page.id))
           const orderedPages = getOrderedPagesForSite(selectedSite, nextPages)
-          const nextActive = activePageId === pageId
+          const nextActive = idsToDeleteSet.has(activePageId)
             ? orderedPages[Math.max(0, pageIndex - 1)]?.id || orderedPages[0]?.id
             : activePageId
 
@@ -3788,7 +3964,7 @@ export const Sites: React.FC = () => {
           try {
             let site = selectedSite
             const pageBlockIds = blocks
-              .filter(block => !isGlobalHeaderBlock(block) && getBlockPageId(block, pages) === pageId)
+              .filter(block => !isGlobalHeaderBlock(block) && idsToDeleteSet.has(getBlockPageId(block, pages)))
               .map(block => block.id)
             for (const blockId of pageBlockIds) {
               site = await sitesService.deleteBlock(selectedSite.id, blockId)
@@ -3831,6 +4007,25 @@ export const Sites: React.FC = () => {
       ], activePageId)
       return
     }
+    if (getSitePageMode(selectedSite) === 'website') {
+      const source = pages.find(page => page.id === sourcePageId)
+      const target = pages.find(page => page.id === targetPageId)
+      if (!source || !target) return
+      // Only reorder among siblings (same parent); moving a page across levels is not allowed.
+      if ((source.parentPageId || '') !== (target.parentPageId || '')) return
+      const subtreeSet = new Set([sourcePageId, ...getDescendantPageIds(sourcePageId, pages)])
+      const subtreePages = pages.filter(page => subtreeSet.has(page.id))
+      const without = pages.filter(page => !subtreeSet.has(page.id))
+      const targetIndex = without.findIndex(page => page.id === targetPageId)
+      if (targetIndex < 0) return
+      const reordered = [
+        ...without.slice(0, targetIndex),
+        ...subtreePages,
+        ...without.slice(targetIndex)
+      ]
+      void persistFunnelPages(reordered, activePageId)
+      return
+    }
     const oldIndex = pages.findIndex(page => page.id === sourcePageId)
     const newIndex = pages.findIndex(page => page.id === targetPageId)
     if (oldIndex < 0 || newIndex < 0) return
@@ -3841,8 +4036,9 @@ export const Sites: React.FC = () => {
     if (!selectedSite || !canManagePages(selectedSite)) return
     const cleanTitle = title.trim()
     if (!cleanTitle) return
+    const websiteMode = getSitePageMode(selectedSite) === 'website'
     const nextPages = pages.map((page, index) => page.id === pageId
-      ? { ...page, title: cleanTitle || `Pagina ${index + 1}` }
+      ? { ...page, title: cleanTitle || `Pagina ${index + 1}`, ...(websiteMode ? { slug: undefined } : {}) }
       : page
     )
     void persistFunnelPages(nextPages, activePageId)
@@ -3874,6 +4070,7 @@ export const Sites: React.FC = () => {
           ...(siteType === 'landing_page'
             ? {
                 pageMaxWidth: templateDefaults.pageMaxWidth ?? 1440,
+                pageMode: isBlank ? 'website' : 'funnel',
                 pages: normalizePagesForSave(
                   isBlank
                     ? [makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Pagina 1', 0)]
@@ -5221,6 +5418,10 @@ export const Sites: React.FC = () => {
                           draggingPageId={draggingPageId}
                           colorFinalPages={isStandardForm(editorSite)}
                           isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
+                          pageMode={getSitePageMode(editorSite)}
+                          onChangeMode={isLanding(editorSite) && !isImportedHtmlSite(editorSite) ? handleChangePageMode : undefined}
+                          onAddSubpage={handleAddSubpage}
+                          getPageDepth={(page) => getPageDepth(page, pages)}
                           canDeletePage={(page) => isStandardForm(editorSite)
                             ? !isFormFinalPage(page) && getFormContentPages(pages).length > 1
                             : pages.length > 1}
@@ -5243,7 +5444,7 @@ export const Sites: React.FC = () => {
                           <input
                             value={getRouteEditorValue(editorSite)}
                             aria-label="Ruta pública"
-                            placeholder={editorSite.siteType === 'landing_page' ? 'embudo-01' : 'formulario-01'}
+                            placeholder={editorSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
                             disabled={editorAIGenerating}
                             onChange={(event) => updateSelectedSite({ slug: normalizeRouteEditorInput(event.target.value, domainConfig) })}
                             onBlur={() => handleSaveSite(undefined, { silent: true })}
@@ -10114,7 +10315,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
     <section className={styles.libraryPanel}>
       <div className={styles.libraryHeader}>
         <div>
-          <span>{isLandingLibrary ? 'Sitios y embudos' : 'Captura de prospectos'}</span>
+          <span>{isLandingLibrary ? 'Sitios web y embudos' : 'Captura de prospectos'}</span>
           <h2>{getLibraryTitle(section)}</h2>
           <p>{getLibraryDescription(section)}</p>
         </div>
@@ -10240,7 +10441,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
                 aria-label={`Ruta de ${routeEditingSite.name}`}
                 autoFocus
                 disabled={routeSavingId === routeEditingSite.id}
-                placeholder={routeEditingSite.siteType === 'landing_page' ? 'embudo-01' : 'formulario-01'}
+                placeholder={routeEditingSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
                 onFocus={(event) => event.currentTarget.select()}
                 onChange={(event) => setRouteDraft(normalizeRouteEditorInput(event.target.value, domainConfig))}
                 onKeyDown={(event) => {
@@ -11614,7 +11815,7 @@ const SeoOptimizationModal: React.FC<{
             <textarea
               className={styles.seoTextarea}
               value={canonicalLinks}
-              placeholder="/embudo-01"
+              placeholder="/sitio-01"
               rows={3}
               onChange={(event) => patchThemeText('seoCanonicalLinks', event.target.value)}
               onBlur={onSave}
@@ -11881,6 +12082,10 @@ interface FunnelPagesPanelProps {
   draggingPageId: string | null
   colorFinalPages?: boolean
   isFixedPage?: (page: SitePage) => boolean
+  pageMode?: 'funnel' | 'website'
+  onChangeMode?: (mode: 'funnel' | 'website') => void
+  onAddSubpage?: (parentId: string) => void
+  getPageDepth?: (page: SitePage) => number
   canDeletePage?: (page: SitePage) => boolean
   canDuplicatePage?: (page: SitePage) => boolean
   onSelectPage: (pageId: string) => void
@@ -11899,6 +12104,10 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   draggingPageId,
   colorFinalPages = false,
   isFixedPage = () => false,
+  pageMode = 'funnel',
+  onChangeMode,
+  onAddSubpage,
+  getPageDepth,
   canDeletePage = () => pages.length > 1,
   canDuplicatePage = () => true,
   onSelectPage,
@@ -11915,8 +12124,13 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
   const hasFixedPageSection = colorFinalPages
+  const websiteMode = pageMode === 'website' && !hasFixedPageSection
   const movablePages = hasFixedPageSection ? pages.filter(page => !isFixedPage(page)) : pages
   const fixedPages = hasFixedPageSection ? pages.filter(isFixedPage) : []
+  // In website mode render an indented tree (top page → subpages); otherwise a flat list.
+  const orderedItems = websiteMode
+    ? buildOrderedPageTree(movablePages)
+    : movablePages.map(page => ({ page, depth: 0 }))
 
   useEffect(() => {
     if (!open) return
@@ -11992,8 +12206,48 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
 
       {open && (
         <div className={styles.pagesDropdownPanel} role="dialog" aria-label="Paginas del sitio">
+          {onChangeMode && (
+            <div style={{ padding: '10px 12px 0' }}>
+              <div
+                role="group"
+                aria-label="Tipo de sitio"
+                style={{ display: 'flex', gap: 4, padding: 3, borderRadius: 8, background: 'rgba(148,163,184,0.16)' }}
+              >
+                {([['website', 'Sitio web'], ['funnel', 'Embudo']] as const).map(([value, label]) => {
+                  const selected = (pageMode || 'funnel') === value
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      disabled={locked}
+                      onClick={() => { setMenuPageId(null); onChangeMode(value) }}
+                      style={{
+                        flex: 1,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        padding: '6px 8px',
+                        borderRadius: 6,
+                        border: 'none',
+                        cursor: locked ? 'default' : 'pointer',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: selected ? '#0f172a' : '#475569',
+                        background: selected ? '#ffffff' : 'transparent',
+                        boxShadow: selected ? '0 1px 2px rgba(15,23,42,0.12)' : 'none'
+                      }}
+                    >
+                      {value === 'website' ? <Globe2 size={14} /> : <Filter size={14} />}
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
           <div className={styles.pagesDropdownHeader}>
-            <span>Paginas</span>
+            <span>{websiteMode ? 'Paginas y subpaginas' : 'Paginas'}</span>
             <strong>{pages.length}</strong>
           </div>
           <DndContext
@@ -12003,12 +12257,14 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
             onDragEnd={handlePageDragEnd}
             onDragCancel={() => onDragPage(null)}
           >
-            <SortableContext items={movablePages.map(page => page.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={orderedItems.map(item => item.page.id)} strategy={verticalListSortingStrategy}>
               <div className={styles.pagesDropdownList}>
-                {movablePages.map((page, index) => {
+                {orderedItems.map(({ page, depth }, index) => {
                   const fixedPage = isFixedPage(page)
                   const pageCanDelete = !locked && canDeletePage(page)
                   const pageCanDuplicate = !locked && canDuplicatePage(page)
+                  const pageDepth = getPageDepth ? getPageDepth(page) : depth
+                  const canAddSubpage = websiteMode && !locked && Boolean(onAddSubpage) && pageDepth < MAX_WEBSITE_PAGE_DEPTH
                   const pageToneClass = colorFinalPages && page.id === FORM_THANK_YOU_PAGE_ID
                     ? styles.pagesDropdownItemThankYou
                     : colorFinalPages && page.id === FORM_DISQUALIFIED_PAGE_ID
@@ -12020,6 +12276,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       key={page.id}
                       page={page}
                       index={index}
+                      depth={websiteMode ? depth : 0}
                       active={activePageId === page.id}
                       dragging={draggingPageId === page.id}
                       locked={locked}
@@ -12029,6 +12286,8 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       pageToneClass={pageToneClass}
                       canDelete={pageCanDelete}
                       canDuplicate={pageCanDuplicate}
+                      showAddSubpage={canAddSubpage}
+                      onAddSubpage={onAddSubpage ? () => { setMenuPageId(null); onAddSubpage(page.id) } : undefined}
                       onSelect={() => handleSelectPage(page.id)}
                       onMenuOpenChange={(nextOpen) => setMenuPageId(nextOpen ? page.id : null)}
                       onStartRename={() => {
@@ -12052,7 +12311,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                 {!locked && (
                   <button type="button" className={styles.pagesDropdownAddButton} onClick={() => { setMenuPageId(null); onAddPage() }}>
                     <Plus size={15} />
-                    Agregar pagina
+                    {websiteMode ? 'Agregar pagina principal' : 'Agregar pagina'}
                   </button>
                 )}
               </div>
@@ -12097,6 +12356,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
 interface FunnelPageDropdownItemProps {
   page: SitePage
   index: number
+  depth?: number
   active: boolean
   dragging: boolean
   locked: boolean
@@ -12106,6 +12366,8 @@ interface FunnelPageDropdownItemProps {
   pageToneClass: string
   canDelete: boolean
   canDuplicate: boolean
+  showAddSubpage?: boolean
+  onAddSubpage?: () => void
   onSelect: () => void
   onMenuOpenChange: (open: boolean) => void
   onStartRename: () => void
@@ -12118,6 +12380,7 @@ interface FunnelPageDropdownItemProps {
 const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   page,
   index,
+  depth = 0,
   active,
   dragging,
   locked,
@@ -12127,6 +12390,8 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   pageToneClass,
   canDelete,
   canDuplicate,
+  showAddSubpage = false,
+  onAddSubpage,
   onSelect,
   onMenuOpenChange,
   onStartRename,
@@ -12144,7 +12409,8 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   const rowStyle: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    zIndex: isDragging || menuOpen ? 4 : undefined
+    zIndex: isDragging || menuOpen ? 4 : undefined,
+    marginLeft: depth ? depth * 18 : undefined
   }
 
   return (
@@ -12180,6 +12446,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
           </div>
         ) : (
           <button type="button" className={styles.pagesDropdownSelectButton} onClick={onSelect}>
+            {depth > 0 && <CornerDownRight size={13} style={{ opacity: 0.5, flexShrink: 0 }} />}
             <span className={styles.pagesDropdownTitleText}>{title}</span>
           </button>
         )}
@@ -12229,6 +12496,18 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                   <Copy size={14} />
                   Duplicar pagina
                 </DropdownMenuItem>
+                {showAddSubpage && onAddSubpage && (
+                  <DropdownMenuItem
+                    className={styles.pagesDropdownActionItem}
+                    onSelect={(event) => {
+                      event.stopPropagation()
+                      onAddSubpage()
+                    }}
+                  >
+                    <CornerDownRight size={14} />
+                    Agregar subpagina
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   className={`${styles.pagesDropdownActionItem} ${styles.pagesDropdownActionDanger}`}
                   disabled={!canDelete}
@@ -14355,7 +14634,7 @@ const PageInspector: React.FC<{
     <aside className={styles.propertiesPanel}>
       <div className={styles.panelHeader}>
         <strong>Pagina</strong>
-        <span>{isLanding(site) ? 'Sitio embudo' : 'Formulario'}</span>
+        <span>{isLanding(site) ? (site.theme?.pageMode === 'website' ? 'Sitio web' : 'Embudo') : 'Formulario'}</span>
       </div>
       <div className={styles.propertiesBody}>
         <>
@@ -15371,7 +15650,7 @@ const LeadsPanel: React.FC<{ rows: LeadRow[]; loading: boolean; onRefresh: () =>
     <div className={styles.builderHeader}>
       <div>
         <h2>Respuestas</h2>
-        <p>Respuestas recibidas desde sitios embudo y formularios publicos.</p>
+        <p>Respuestas recibidas desde sitios web y formularios publicos.</p>
       </div>
       <Button variant="secondary" onClick={onRefresh} loading={loading}>
         <RefreshCw size={16} />
@@ -15438,7 +15717,7 @@ const DomainsPanel: React.FC<DomainsPanelProps> = ({
       <div className={styles.builderHeader}>
         <div>
           <h2>Dominios</h2>
-          <p>Conecta un solo dominio general para enrutar todos los formularios y sitios embudo.</p>
+          <p>Conecta un solo dominio general para enrutar todos los formularios y sitios web.</p>
         </div>
         <span className={`${styles.statusPill} ${domainStatus.className}`}>{domainStatus.label}</span>
       </div>

@@ -8593,6 +8593,44 @@ function collectFieldBlocks(blocks = []) {
   return fields
 }
 
+function slugifyPageSegment(value) {
+  return cleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+// Defensive: drop parentPageId references that are missing, self-referential,
+// cyclic, or exceed the allowed depth (max 2 subpage levels below a top page).
+function sanitizePageHierarchy(pages) {
+  const byId = new Map(pages.map(page => [page.id, page]))
+  const ancestorDepth = (page) => {
+    let depth = 0
+    const guard = new Set()
+    let current = page
+    while (current && cleanString(current.parentPageId)) {
+      if (guard.has(current.id)) return Infinity
+      guard.add(current.id)
+      const parent = byId.get(cleanString(current.parentPageId))
+      if (!parent) break
+      depth += 1
+      current = parent
+    }
+    return depth
+  }
+  return pages.map(page => {
+    const parentPageId = cleanString(page.parentPageId)
+    if (!parentPageId) return page
+    if (parentPageId === page.id || !byId.has(parentPageId) || ancestorDepth(page) > 2) {
+      const { parentPageId: _drop, ...rest } = page
+      return rest
+    }
+    return page
+  })
+}
+
 function normalizePageList(rawPages = []) {
   const sourcePages = Array.isArray(rawPages) ? rawPages : []
   const seen = new Set()
@@ -8603,6 +8641,8 @@ function normalizePageList(rawPages = []) {
       const headerTrackingCode = typeof (page?.headerTrackingCode ?? page?.header_tracking_code) === 'string'
         ? page.headerTrackingCode ?? page.header_tracking_code
         : ''
+      const parentPageId = cleanString(page?.parentPageId || page?.parent_page_id)
+      const slug = slugifyPageSegment(page?.slug)
 
       return {
         id: cleanString(page?.id) || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
@@ -8611,6 +8651,8 @@ function normalizePageList(rawPages = []) {
         metaCapiEnabled: Boolean(normalizeBoolean(page?.metaCapiEnabled ?? page?.meta_capi_enabled)),
         metaEventName: normalizeSiteMetaEventName(page?.metaEventName || page?.meta_event_name, { allowNone: true, fallback: SITE_META_NO_EVENT }),
         metaTrigger: normalizeSiteMetaTrigger(page?.metaTrigger || page?.meta_trigger),
+        ...(parentPageId ? { parentPageId } : {}),
+        ...(slug ? { slug } : {}),
         ...(importedAssetPath ? { importedAssetPath } : {}),
         ...(importedOriginalTitle ? { importedOriginalTitle } : {}),
         ...(headerTrackingCode ? { headerTrackingCode } : {})
@@ -8624,7 +8666,7 @@ function normalizePageList(rawPages = []) {
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((page, index) => ({ ...page, sortOrder: index }))
 
-  return pages
+  return sanitizePageHierarchy(pages)
 }
 
 function normalizeFormPages(site) {
@@ -8662,6 +8704,54 @@ function normalizeSitePages(site) {
 
   const pages = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
   return pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+}
+
+// 'website' = landing site whose pages form a tree with hierarchical URLs + auto nav.
+function getSitePageMode(site) {
+  if (!site || site.siteType !== 'landing_page' || isImportedHtmlSite(site)) return 'funnel'
+  return cleanString(site?.theme?.pageMode) === 'website' ? 'website' : 'funnel'
+}
+
+function pageSlugFor(page) {
+  return slugifyPageSegment(page?.slug) || slugifyPageSegment(page?.title) || 'pagina'
+}
+
+// First top-level page (sorted) is the site home; falls back to the first page.
+function getSiteHomePage(site) {
+  const pages = normalizeSitePages(site)
+  const topLevel = pages.filter(page => !page.parentPageId).sort((a, b) => a.sortOrder - b.sortOrder)
+  return topLevel[0] || pages[0] || null
+}
+
+// Walk the page tree using URL path segments (slugs) → the matched page, or null.
+function resolvePageByPathSegments(site, segments) {
+  const pages = normalizeSitePages(site)
+  const clean = (Array.isArray(segments) ? segments : []).map(seg => slugifyPageSegment(seg)).filter(Boolean)
+  if (!clean.length) return null
+  let parentId = ''
+  let matched = null
+  for (const segment of clean) {
+    const found = pages.find(page => (page.parentPageId || '') === parentId && pageSlugFor(page) === segment)
+    if (!found) return null
+    matched = found
+    parentId = found.id
+  }
+  return matched
+}
+
+// Ancestor slug chain for a page (e.g. ['menu','comidas']) used to build URLs.
+function getPageSlugPath(site, pageId) {
+  const pages = normalizeSitePages(site)
+  const byId = new Map(pages.map(page => [page.id, page]))
+  const segments = []
+  const seen = new Set()
+  let current = byId.get(cleanString(pageId))
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id)
+    segments.unshift(pageSlugFor(current))
+    current = current.parentPageId ? byId.get(current.parentPageId) : null
+  }
+  return segments
 }
 
 function getBlockPageId(block, pages) {
@@ -8892,6 +8982,21 @@ function pageHref(pageId) {
   return `?page=${encodeURIComponent(pageId)}`
 }
 
+// In website mode (published) links use real hierarchical paths
+// (/<site-slug>/<parent>/<child>); everywhere else they use ?page= as before.
+function buildPageHref(pageId, context = {}) {
+  const site = context.site
+  if (context.linkStyle === 'path' && site) {
+    const siteSlug = slugifyPageSegment(site.slug) || slugifyPageSegment(site.name)
+    const base = siteSlug ? `/${siteSlug}` : ''
+    const home = getSiteHomePage(site)
+    if (home && cleanString(pageId) === home.id) return base || '/'
+    const segments = getPageSlugPath(site, pageId)
+    return segments.length ? `${base}/${segments.join('/')}` : (base || '/')
+  }
+  return pageHref(pageId)
+}
+
 function getSitePage(site, pageId) {
   const pages = normalizeSitePages(site)
   const requestedPageId = cleanString(pageId)
@@ -8931,14 +9036,14 @@ function resolveButtonHref(settings = {}, context = {}) {
 
   if (action === 'next_page') {
     const nextPage = getNextPage(context.site, context.pageId)
-    if (nextPage) return pageHref(nextPage.id)
+    if (nextPage) return buildPageHref(nextPage.id, context)
   }
 
   if (action === 'specific_page') {
     const pages = normalizeSitePages(context.site)
     const targetPageId = cleanString(settings.buttonPageId || settings.button_page_id)
     const targetPage = pages.find(page => page.id === targetPageId)
-    if (targetPage) return pageHref(targetPage.id)
+    if (targetPage) return buildPageHref(targetPage.id, context)
   }
 
   return safeHref(settings.buttonUrl, '#form')
@@ -11708,7 +11813,86 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
   }
 }
 
-export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = true } = {}) {
+const SITE_NAV_STYLES = `
+.rstk-site-nav{position:relative;z-index:3;width:100%;max-width:var(--rstk-max);margin:0 auto 18px;font-family:inherit}
+.rstk-nav-inner{display:flex;align-items:center;gap:16px;padding:10px 16px;background:rgba(255,255,255,0.94);border:1px solid rgba(15,23,42,0.08);border-radius:12px;box-shadow:0 6px 20px rgba(15,23,42,0.06)}
+.rstk-nav-brand{font-weight:700;color:#0f172a;text-decoration:none;font-size:15px;margin-right:auto}
+.rstk-nav-toggle{display:none;flex-direction:column;gap:4px;background:none;border:0;cursor:pointer;padding:6px}
+.rstk-nav-toggle span{display:block;width:22px;height:2px;background:#0f172a;border-radius:2px}
+.rstk-nav-menu{display:flex;align-items:center}
+.rstk-nav-list{list-style:none;margin:0;padding:0;display:flex;align-items:center;gap:4px}
+.rstk-nav-item{position:relative}
+.rstk-nav-link{display:inline-flex;align-items:center;gap:5px;padding:8px 12px;color:#334155;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;white-space:nowrap}
+.rstk-nav-link:hover{background:rgba(15,23,42,0.06);color:#0f172a}
+.rstk-nav-active>.rstk-nav-link{color:#0f172a;background:rgba(15,23,42,0.08)}
+.rstk-nav-caret{font-size:10px;opacity:.6}
+.rstk-nav-submenu{position:absolute;top:100%;left:0;min-width:200px;padding:6px;margin-top:6px;background:#fff;border:1px solid rgba(15,23,42,0.1);border-radius:10px;box-shadow:0 12px 30px rgba(15,23,42,0.12);opacity:0;visibility:hidden;transform:translateY(4px);transition:opacity .15s,transform .15s,visibility .15s;z-index:5}
+.rstk-nav-item:hover>.rstk-nav-submenu,.rstk-nav-item:focus-within>.rstk-nav-submenu{opacity:1;visibility:visible;transform:translateY(0)}
+.rstk-nav-submenu .rstk-nav-list{flex-direction:column;align-items:stretch;gap:2px}
+.rstk-nav-submenu .rstk-nav-link{padding:8px 10px;justify-content:space-between}
+.rstk-nav-submenu .rstk-nav-submenu{top:0;left:100%;margin:0 0 0 6px}
+@media (max-width:768px){
+.rstk-nav-toggle{display:flex}
+.rstk-nav-menu{display:none;position:absolute;top:100%;left:0;right:0;margin-top:8px;background:#fff;border:1px solid rgba(15,23,42,0.1);border-radius:12px;padding:8px;box-shadow:0 12px 30px rgba(15,23,42,0.12);z-index:6}
+.rstk-site-nav.rstk-nav-open .rstk-nav-menu{display:block}
+.rstk-nav-menu .rstk-nav-list{flex-direction:column;align-items:stretch;gap:2px}
+.rstk-nav-submenu{position:static;opacity:1;visibility:visible;transform:none;box-shadow:none;border:0;padding:0 0 0 14px;margin:4px 0 4px}
+}
+`
+
+const SITE_NAV_SCRIPT = `(() => {
+  const nav = document.querySelector('.rstk-site-nav');
+  if (!nav) return;
+  const toggle = nav.querySelector('[data-rstk-nav-toggle]');
+  if (toggle) toggle.addEventListener('click', () => nav.classList.toggle('rstk-nav-open'));
+})();`
+
+function renderSiteNavItems(site, parentId, activeIds, linkStyle, depth) {
+  const pages = normalizeSitePages(site)
+  const children = pages
+    .filter(page => (page.parentPageId || '') === parentId)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+  if (!children.length) return ''
+  const items = children.map(page => {
+    const submenu = renderSiteNavItems(site, page.id, activeIds, linkStyle, depth + 1)
+    const href = buildPageHref(page.id, { site, linkStyle })
+    const classes = ['rstk-nav-item']
+    if (submenu) classes.push('rstk-nav-has-children')
+    if (activeIds.has(page.id)) classes.push('rstk-nav-active')
+    return `<li class="${classes.join(' ')}">`
+      + `<a class="rstk-nav-link" href="${escapeHtml(href)}">${escapeHtml(page.title || 'Pagina')}`
+      + `${submenu ? '<span class="rstk-nav-caret" aria-hidden="true">&#9662;</span>' : ''}</a>`
+      + `${submenu ? `<div class="rstk-nav-submenu">${submenu}</div>` : ''}`
+      + `</li>`
+  }).join('')
+  return `<ul class="rstk-nav-list rstk-nav-depth-${depth}">${items}</ul>`
+}
+
+function renderSiteNav(site, { activePageId, linkStyle } = {}) {
+  const pages = normalizeSitePages(site)
+  const byId = new Map(pages.map(page => [page.id, page]))
+  const activeIds = new Set()
+  const seen = new Set()
+  let current = byId.get(cleanString(activePageId))
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id)
+    activeIds.add(current.id)
+    current = current.parentPageId ? byId.get(current.parentPageId) : null
+  }
+  const items = renderSiteNavItems(site, '', activeIds, linkStyle, 0)
+  if (!items) return ''
+  const home = getSiteHomePage(site)
+  const homeHref = buildPageHref(home ? home.id : '', { site, linkStyle })
+  const brand = escapeHtml(site.title || site.name || 'Inicio')
+  return `<nav class="rstk-site-nav" aria-label="Navegacion del sitio">`
+    + `<div class="rstk-nav-inner">`
+    + `<a class="rstk-nav-brand" href="${escapeHtml(homeHref)}">${brand}</a>`
+    + `<button type="button" class="rstk-nav-toggle" aria-label="Abrir menu" data-rstk-nav-toggle><span></span><span></span><span></span></button>`
+    + `<div class="rstk-nav-menu" data-rstk-nav-menu>${items}</div>`
+    + `</div></nav>`
+}
+
+export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEnabled = true, preview = false } = {}) {
   if (isImportedHtmlSite(site)) {
     return renderImportedPublicSiteHtml(site, { pageId, trackingEnabled })
   }
@@ -11720,8 +11904,16 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
   const isLandingType = site.siteType === 'landing_page'
   const isStandardFormType = site.siteType === 'standard_form'
   const pages = normalizeSitePages(site)
+  const websiteMode = getSitePageMode(site) === 'website'
+  // Published website-mode pages link via real paths; preview & funnels use ?page=.
+  const linkStyle = (websiteMode && !preview) ? 'path' : 'query'
   const requestedPageId = cleanString(pageId)
-  const activePage = pages.find(page => page.id === requestedPageId) || pages[0]
+  // Page resolution order: explicit ?page= wins everywhere; then (website mode)
+  // the hierarchical URL path; otherwise the home / first page.
+  const pathPage = websiteMode && !requestedPageId ? resolvePageByPathSegments(site, pagePath) : null
+  const activePage = pages.find(page => page.id === requestedPageId)
+    || pathPage
+    || (websiteMode ? (getSiteHomePage(site) || pages[0]) : pages[0])
   let blocks = isInteractive ? getInteractiveFormBlocks(site) : getPageBlocks(site, activePage?.id)
   if (isStandardFormType && activePage?.id === FORM_THANK_YOU_PAGE_ID && blocks.length === 0) {
     blocks = getDefaultFormThankYouBlocks(site.id)
@@ -11750,7 +11942,7 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
       ? normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page')
       : 'form_default'
   const nextPage = (isLandingType || isStandardFormType) ? getNextPage(site, activePage?.id) : null
-  const nextPageUrl = nextPage ? pageHref(nextPage.id) : ''
+  const nextPageUrl = nextPage ? buildPageHref(nextPage.id, { site, linkStyle }) : ''
   const standardFormNextPageUrl = standardFormNextPage ? pageHref(standardFormNextPage.id) : ''
 	  const disqualifiedPage = isStandardFormType ? pages.find(page => page.id === FORM_DISQUALIFIED_PAGE_ID) : null
 	  const disqualifiedPageUrl = disqualifiedPage ? pageHref(disqualifiedPage.id) : ''
@@ -11804,7 +11996,7 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
 	  ].filter(Boolean).join(' ')
 
 	  const phoneLocale = await getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
-	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, phoneLocale }
+	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, phoneLocale, linkStyle, websiteMode }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
@@ -11845,6 +12037,11 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
     renderContext
   })
 
+  // Auto navigation menu for website-mode sites with more than one page.
+  const siteNavHtml = websiteMode && pages.length > 1
+    ? renderSiteNav(site, { activePageId: activePage?.id, linkStyle })
+    : ''
+
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -11856,11 +12053,13 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="${RSTK_GOOGLE_FONTS_HREF}" rel="stylesheet">
   <style>${styleSheet}</style>
+  ${siteNavHtml ? `<style>${SITE_NAV_STYLES}</style>` : ''}
   ${headerTrackingCode}
 </head>
 <body class="${bodyClass}">
   <div class="rstk-frame">
     ${pageVideo ? `<video class="rstk-bg-video" src="${escapeHtml(pageVideo)}" autoplay muted loop playsinline aria-hidden="true"></video>` : ''}
+    ${siteNavHtml}
     <main class="rstk-page">
       <div class="rstk-shell">
         ${isInteractive && hasForm && interactivePageCount > 1 ? `<div class="rstk-progress" data-progress><span class="rstk-progress-track"><span class="rstk-progress-fill" data-progress-fill></span></span><b data-progress-label>Pantalla ${interactiveInitialIndex + 1} de ${interactivePageCount}</b></div>` : ''}
@@ -11873,6 +12072,7 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
     </main>
   </div>
   ${popupHtml}
+  ${siteNavHtml ? `<script>${SITE_NAV_SCRIPT}</script>` : ''}
   <script>
     (() => {
       const form = document.querySelector('[data-site-form]');
