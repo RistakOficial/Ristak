@@ -330,14 +330,12 @@ const buildSitesEditorPath = (options: {
   section: SitesSection
   siteId: string
   pageId?: string
-  blockId?: string
   device?: DeviceMode
   focus?: boolean
 }) => {
   const pageSegment = options.pageId ? `/pages/${encodeURIComponent(options.pageId)}` : ''
   const query = new URLSearchParams()
   if (options.device === 'mobile') query.set('device', 'mobile')
-  if (options.blockId) query.set('block', options.blockId)
   if (options.focus) query.set('focus', '1')
   const queryText = query.toString()
 
@@ -2852,6 +2850,7 @@ export const Sites: React.FC = () => {
     () => parseSitesRoute(location.pathname, location.search),
     [location.pathname, location.search]
   )
+  const routeHasBlockParam = useMemo(() => new URLSearchParams(location.search).has('block'), [location.search])
   const { configured: aiAgentConfigured } = useAIAgentAvailability()
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   const [section, setSection] = useState<SitesSection>(routeState.section)
@@ -3042,18 +3041,19 @@ export const Sites: React.FC = () => {
     const site = options?.site || editorSite
     if (!site?.id) return
     const nextPageId = options?.pageId ?? activePage?.id ?? activePageId
-    const nextBlockId = options?.blockId ?? selectedBlockId
     const nextDevice = options?.device ?? device
     const nextFocus = options?.focus ?? editorFocusMode
-    navigate(buildSitesEditorPath({
+    const nextPath = buildSitesEditorPath({
       section: getSiteSection(site),
       siteId: site.id,
       pageId: nextPageId,
-      blockId: nextBlockId,
       device: nextDevice,
       focus: nextFocus
-    }), { replace: options?.replace })
-  }, [activePage?.id, activePageId, device, editorFocusMode, editorSite, navigate, selectedBlockId])
+    })
+    const currentPath = `${location.pathname}${location.search}`
+    if (nextPath === currentPath) return
+    navigate(nextPath, { replace: options?.replace })
+  }, [activePage?.id, activePageId, device, editorFocusMode, editorSite, location.pathname, location.search, navigate])
   const selectEditorPage = useCallback((pageId: string, options?: { replace?: boolean }) => {
     setActivePageId(pageId)
     setSelectedBlockId('')
@@ -3065,8 +3065,7 @@ export const Sites: React.FC = () => {
   }, [navigateSitesEditor])
   const selectEditorBlock = useCallback((blockId: string) => {
     setSelectedBlockId(blockId)
-    navigateSitesEditor({ blockId })
-  }, [navigateSitesEditor])
+  }, [])
   const setEditorFocus = useCallback((nextFocus: boolean) => {
     setEditorFocusMode(nextFocus)
     navigateSitesEditor({ focus: nextFocus })
@@ -3458,7 +3457,7 @@ export const Sites: React.FC = () => {
         if (routeState.pageId && routeState.pageId !== activePageId) {
           setActivePageId(routeState.pageId)
         }
-        if (routeState.blockId !== selectedBlockId) {
+        if (routeHasBlockParam && routeState.blockId !== selectedBlockId) {
           setSelectedBlockId(routeState.blockId)
         }
         return
@@ -3478,7 +3477,7 @@ export const Sites: React.FC = () => {
       if (routeState.pageId && routeState.pageId !== activePageId) {
         setActivePageId(routeState.pageId)
       }
-      if (routeState.blockId !== selectedBlockId) {
+      if (routeHasBlockParam && routeState.blockId !== selectedBlockId) {
         setSelectedBlockId(routeState.blockId)
       }
       return
@@ -3510,6 +3509,7 @@ export const Sites: React.FC = () => {
     routeState.pageId,
     routeState.section,
     routeState.siteId,
+    routeHasBlockParam,
     selectedBlockId,
     selectedSite?.id
   ])
