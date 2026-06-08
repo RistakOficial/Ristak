@@ -15,6 +15,7 @@ import { APIAccessSettings } from './APIAccessSettings'
 import { Domains } from './Domains'
 import { MobileAppSettings } from './MobileAppSettings'
 import { CustomFields } from './CustomFields'
+import { PageHeader } from '@/components/common'
 import { useTheme } from '@/contexts/ThemeContext'
 import styles from './Settings.module.css'
 
@@ -125,10 +126,10 @@ export const Settings: React.FC = () => {
 
         <section className={styles.settingsPanel}>
           {isAccountPage && (
-            <div className={styles.header}>
-              <h1 className={styles.title}>Configuración</h1>
-              <p className={styles.subtitle}>Gestiona las integraciones y configuración de tu cuenta</p>
-            </div>
+            <PageHeader
+              title="Configuración"
+              subtitle="Gestiona las integraciones y configuración de tu cuenta"
+            />
           )}
 
           <div className={styles.mainContent}>

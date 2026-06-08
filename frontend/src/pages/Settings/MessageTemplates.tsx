@@ -31,7 +31,7 @@ import {
   Video,
   X
 } from 'lucide-react'
-import { Button, Loading, CustomSelect } from '@/components/common'
+import { Button, Loading, CustomSelect, PageHeader } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   messageTemplatesService,
@@ -1712,19 +1712,16 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   return (
     <div className={`${styles.container} ${embedded ? styles.embedded : ''}`}>
       {!embedded && (
-        <div className={styles.header}>
-          <div className={styles.headerIcon}>
-            <MessageSquare size={26} />
-          </div>
-          <div>
-            <h2>{title}</h2>
-            <p>{subtitle}</p>
-          </div>
-          <Button variant="secondary" onClick={loadBundle}>
-            <ListTree size={16} />
-            Refrescar
-          </Button>
-        </div>
+        <PageHeader
+          title={title}
+          subtitle={subtitle}
+          actions={
+            <Button variant="secondary" onClick={loadBundle}>
+              <ListTree size={16} />
+              Refrescar
+            </Button>
+          }
+        />
       )}
 
       {view === 'list' ? renderList() : renderEditor()}
