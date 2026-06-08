@@ -59,6 +59,7 @@
 .quickLinks {
   display: grid;
   gap: 10px;
+  width: min(420px, 100%);
 }
 
 .docLink,

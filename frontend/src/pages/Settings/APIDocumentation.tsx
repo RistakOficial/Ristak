@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Copy, Database, ExternalLink, KeyRound, Network, RefreshCw, Server } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
+import { PageHeader } from '@/components/common'
 import styles from './APIDocumentation.module.css'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -103,24 +104,21 @@ export const APIDocumentation: React.FC = () => {
           Acceso API
         </a>
 
-        <div className={styles.headerGrid}>
-          <div>
-            <p className={styles.kicker}>Ristak API Docs</p>
-            <h1 className={styles.title}>Documentación API</h1>
-            <p className={styles.subtitle}>
-              Conecta sistemas externos para leer, crear, actualizar y borrar datos. Ristak actúa como intermediario y espejo de GoHighLevel para los recursos sincronizados.
-            </p>
-          </div>
-
-          <div className={styles.quickLinks}>
-            <DocLink label="REST base" value={externalApiBaseUrl} onCopy={() => copyText(externalApiBaseUrl, 'REST base')} />
-            <DocLink label="MCP server" value={mcpServerUrl} onCopy={() => copyText(mcpServerUrl, 'MCP server')} />
-            <a className={styles.openApiLink} href={openApiUrl} target="_blank" rel="noreferrer">
-              OpenAPI JSON
-              <ExternalLink size={15} />
-            </a>
-          </div>
-        </div>
+        <PageHeader
+          eyebrow="Ristak API Docs"
+          title="Documentación API"
+          subtitle="Conecta sistemas externos para leer, crear, actualizar y borrar datos. Ristak actúa como intermediario y espejo de GoHighLevel para los recursos sincronizados."
+          actions={
+            <div className={styles.quickLinks}>
+              <DocLink label="REST base" value={externalApiBaseUrl} onCopy={() => copyText(externalApiBaseUrl, 'REST base')} />
+              <DocLink label="MCP server" value={mcpServerUrl} onCopy={() => copyText(mcpServerUrl, 'MCP server')} />
+              <a className={styles.openApiLink} href={openApiUrl} target="_blank" rel="noreferrer">
+                OpenAPI JSON
+                <ExternalLink size={15} />
+              </a>
+            </div>
+          }
+        />
       </header>
 
       <section className={styles.layout}>
