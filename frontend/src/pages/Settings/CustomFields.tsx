@@ -13,7 +13,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import { Button, CustomSelect } from '@/components/common'
+import { Button, CustomSelect, PageHeader } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   customFieldsService,
@@ -514,21 +514,21 @@ export const CustomFields: React.FC = () => {
 
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
-        <div>
-          <p className={styles.eyebrow}>Sistema</p>
-          <h2>Campos personalizados</h2>
-          <span>Define donde se guardan datos extra de formularios, embudos y contactos.</span>
-        </div>
-        <div className={styles.headerActions}>
-          <Button variant="secondary" onClick={() => openFolderCreator()} leftIcon={<FolderPlus size={16} />}>
-            Crear carpeta
-          </Button>
-          <Button onClick={openCreateEditor} leftIcon={<Plus size={16} />}>
-            Nuevo campo
-          </Button>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="Sistema"
+        title="Campos personalizados"
+        subtitle="Define donde se guardan datos extra de formularios, embudos y contactos."
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => openFolderCreator()} leftIcon={<FolderPlus size={16} />}>
+              Crear carpeta
+            </Button>
+            <Button onClick={openCreateEditor} leftIcon={<Plus size={16} />}>
+              Nuevo campo
+            </Button>
+          </>
+        }
+      />
 
       <div className={styles.layout}>
         <aside className={styles.folders} aria-label="Carpetas de campos personalizados">

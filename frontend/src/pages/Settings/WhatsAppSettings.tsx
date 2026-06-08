@@ -16,7 +16,7 @@ import {
   Wallet
 } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
-import { Button, Modal } from '@/components/common'
+import { Button, Modal, PageHeader } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
 import { MessageTemplates } from './MessageTemplates'
@@ -788,13 +788,11 @@ export const WhatsAppSettings: React.FC = () => {
 
   return (
     <div className={styles.shell}>
-      <header className={styles.header}>
-        <div>
-          <p className={styles.eyebrow}>Sistema</p>
-          <h2 className={styles.title}>WhatsApp</h2>
-          <span>Conexion oficial por API para numeros, alertas y plantillas.</span>
-        </div>
-        {apiConnected ? (
+      <PageHeader
+        eyebrow="Sistema"
+        title="WhatsApp"
+        subtitle="Conexion oficial por API para numeros, alertas y plantillas."
+        actions={apiConnected ? (
           <div className={styles.headerActions} role="group" aria-label="Secciones de WhatsApp">
             <button
               type="button"
@@ -828,7 +826,7 @@ export const WhatsAppSettings: React.FC = () => {
             Abrir WhatsApp API
           </a>
         )}
-      </header>
+      />
 
       <div className={styles.stage}>
         {!apiConnected ? renderConnectStage() : activeSection === 'templates' ? renderTemplatesStage() : activeSection === 'alerts' ? renderAlertsStage() : renderNumbersStage()}
