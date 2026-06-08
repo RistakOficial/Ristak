@@ -65,7 +65,7 @@ const baseNavigation: NavItem[] = [
   { id: 'divider-1', name: '', href: '#', icon: LayoutDashboard, isDivider: true }, // Divisor visual
   { id: 'campaigns', name: 'Publicidad', href: '/campaigns/classic', icon: Megaphone },
   { id: 'sites', name: 'Sitios', href: '/sites', icon: PanelTop },
-  { id: 'reports', name: 'Reportes', href: '/reports', icon: FileBarChart }
+  { id: 'reports', name: 'Reportes', href: '/reports/table/month/cashflow', icon: FileBarChart }
 ]
 
 const analyticsNavigation: NavItem = {

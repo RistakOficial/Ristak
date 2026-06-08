@@ -191,7 +191,7 @@ export const Costs: React.FC = () => {
       if (!activated) return
     }
 
-    navigate('/reports')
+    navigate('/reports/table/month/cashflow')
   }
 
   const loadCosts = async () => {
