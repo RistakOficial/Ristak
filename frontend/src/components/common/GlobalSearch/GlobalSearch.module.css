@@ -32,17 +32,17 @@
   color: var(--color-text-primary);
   font-size: 0.95rem;
   outline: none;
-  padding: 0 76px 0 38px;
+  padding: 0 38px 0 38px;
 }
 
 .input::placeholder {
   color: var(--color-text-tertiary);
 }
 
-.clearButton,
-.searchButton {
+.clearButton {
   position: absolute;
   top: 50%;
+  right: 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -56,24 +56,9 @@
   transition: background-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
 }
 
-.clearButton {
-  right: 38px;
-}
-
-.searchButton {
-  right: 5px;
-  border-left: 1px solid rgba(148, 163, 184, 0.14);
-}
-
-.clearButton:hover,
-.searchButton:hover:not(:disabled) {
+.clearButton:hover {
   color: var(--color-text-primary);
   background: rgba(148, 163, 184, 0.12);
-}
-
-.searchButton:disabled {
-  cursor: default;
-  opacity: 0.45;
 }
 
 .dropdown {

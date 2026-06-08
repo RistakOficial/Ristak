@@ -267,16 +267,6 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
             <X size={15} />
           </button>
         )}
-        <button
-          type="button"
-          className={styles.searchButton}
-          onClick={selectActiveItem}
-          title="Abrir primer resultado"
-          aria-label="Abrir primer resultado"
-          disabled={flatResults.length === 0}
-        >
-          <Search size={16} />
-        </button>
       </div>
 
       {showDropdown && (

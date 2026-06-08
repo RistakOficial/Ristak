@@ -426,7 +426,7 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where
   transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(
+:where(body:not([data-phone-app='active']):not([data-phone-chat-theme='active'])) :where(
   input:not([type]),
   input[type='text'],
   input[type='email'],
