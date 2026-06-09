@@ -3411,7 +3411,7 @@
   justify-content: flex-start;
   gap: 6px;
   min-width: 0;
-  padding: 2px 5px 0 34px;
+  padding: 3px 6px 0 35px;
   border-top: 1px solid var(--phone-chat-border);
   overflow: hidden;
 }
@@ -3595,8 +3595,8 @@
   align-items: end;
   gap: 5px;
   box-sizing: border-box;
-  min-height: calc(34px + env(safe-area-inset-bottom));
-  padding: 2px 5px max(3px, env(safe-area-inset-bottom));
+  min-height: calc(36px + env(safe-area-inset-bottom));
+  padding: 3px 6px max(4px, env(safe-area-inset-bottom));
   background: transparent;
   transition: gap 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
@@ -3606,8 +3606,8 @@
 }
 
 :global(html[data-phone-chat-keyboard="true"]) .composer {
-  min-height: 40px;
-  padding-bottom: 3px;
+  min-height: 41px;
+  padding-bottom: 4px;
 }
 
 .composerPlus,
@@ -3622,23 +3622,23 @@
 }
 
 .composerPlus {
-  width: 24px;
-  height: 26px;
-  font-size: 18px;
+  width: 25px;
+  height: 27px;
+  font-size: 19px;
 }
 
 .composerPlus svg {
-  width: 18px;
-  height: 18px;
+  width: 19px;
+  height: 19px;
 }
 
 .messageInputWrap {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: end;
-  min-height: 26px;
+  min-height: 28px;
   border: 1px solid var(--phone-chat-border);
-  border-radius: 14px;
+  border-radius: 15px;
   background: var(--phone-chat-surface);
   box-sizing: border-box;
   overflow: hidden;
@@ -3649,7 +3649,7 @@
 }
 
 .messageInputWrapWithSchedule {
-  grid-template-columns: minmax(0, 1fr) 27px;
+  grid-template-columns: minmax(0, 1fr) 28px;
 }
 
 .composerHasContent .messageInputWrap {
@@ -3661,15 +3661,15 @@
   box-sizing: border-box;
   width: 100%;
   min-height: 24px;
-  max-height: 76px;
-  padding: 4px 5px 3px 8px;
+  max-height: 78px;
+  padding: 5px 6px 4px 9px;
   border: 0;
   outline: none;
   color: var(--phone-chat-text);
   background: transparent;
   font: inherit;
-  font-size: 12px;
-  line-height: 1.22;
+  font-size: 13px;
+  line-height: 1.24;
   letter-spacing: 0;
   white-space: pre-wrap;
   overflow-x: hidden;
@@ -3697,18 +3697,18 @@
 }
 
 .messageInputWrap button {
-  width: 25px;
-  height: 26px;
+  width: 26px;
+  height: 27px;
   margin-bottom: 0;
 }
 
 .composerScheduleButton {
   align-self: end;
   justify-self: end;
-  width: 26px;
-  height: 26px;
+  width: 27px;
+  height: 27px;
   color: var(--phone-chat-text);
-  border-radius: 14px;
+  border-radius: 15px;
 }
 
 .composerScheduleButton:active {
@@ -3717,8 +3717,8 @@
 }
 
 .composerIconButton {
-  width: 25px;
-  height: 26px;
+  width: 26px;
+  height: 27px;
   border-radius: 999px;
   overflow: hidden;
   transition:
@@ -3736,11 +3736,11 @@
 
 .composerTrailingActions {
   display: grid;
-  grid-template-columns: 25px 25px;
+  grid-template-columns: 26px 27px;
   align-items: end;
   gap: 3px;
-  min-width: 53px;
-  height: 26px;
+  min-width: 56px;
+  height: 27px;
   transition:
     grid-template-columns 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
     min-width 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
@@ -3748,9 +3748,9 @@
 }
 
 .composerHasContent .composerTrailingActions {
-  grid-template-columns: 0 26px;
+  grid-template-columns: 0 27px;
   gap: 0;
-  min-width: 26px;
+  min-width: 27px;
 }
 
 .composerCameraButton {
@@ -3767,8 +3767,8 @@
 }
 
 .composerSendButton {
-  width: 26px;
-  height: 26px;
+  width: 27px;
+  height: 27px;
   color: var(--phone-chat-text-on-primary);
   background: var(--phone-chat-accent);
   box-shadow: 0 6px 14px rgba(var(--phone-chat-accent-rgb), 0.22);

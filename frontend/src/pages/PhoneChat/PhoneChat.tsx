@@ -7628,7 +7628,7 @@ export const PhoneChat: React.FC = () => {
           </button>
           <button
             type="button"
-            className={`${styles.voiceComposerButton} ${styles.composerSendButton}`}
+            className={`${styles.voiceComposerButton} ${styles.voiceSendAudioButton}`}
             onClick={handleSendVoiceFromPanel}
             disabled={voiceProcessing}
             aria-label="Enviar audio"
