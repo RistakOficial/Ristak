@@ -392,7 +392,7 @@ export const PhonePayments: React.FC = () => {
     const previousBodyHeight = body.style.height
     const previousBodyOverscroll = body.style.overscrollBehavior
     const previousBodyBackground = body.style.background
-    const phoneFrameBackground = 'var(--phone-chat-bg, color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%))'
+    const phoneFrameBackground = 'color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%)'
     let startY = 0
 
     if (viewportMeta && !previousViewportContent.includes('viewport-fit=cover')) {

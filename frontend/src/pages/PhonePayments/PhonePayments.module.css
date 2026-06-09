@@ -1,14 +1,5 @@
 .phonePage {
-  --phone-frame-bg: var(--phone-chat-bg, #ffffff);
-  --phone-payments-surface: var(--phone-chat-surface, #ffffff);
-  --phone-payments-soft: var(--phone-chat-surface-soft, #f7f6f2);
-  --phone-payments-text: var(--phone-chat-text, #111111);
-  --phone-payments-muted: var(--phone-chat-muted, #737373);
-  --phone-payments-border: var(--phone-chat-border, rgba(17, 24, 39, 0.08));
-  --phone-payments-primary: var(--phone-chat-primary, #111111);
-  --phone-payments-accent: var(--phone-chat-accent, #25d366);
-  --phone-payments-accent-rgb: var(--phone-chat-accent-rgb, 37, 211, 102);
-  --phone-payments-text-on-accent: var(--phone-chat-text-on-primary, #ffffff);
+  --phone-frame-bg: color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%);
   position: fixed;
   inset: 0;
   isolation: isolate;
@@ -23,7 +14,6 @@
   background: var(--phone-frame-bg);
   overflow: hidden;
   overscroll-behavior: none;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
 }
 
 .phoneFrame {
@@ -40,119 +30,6 @@
   overflow: hidden;
 }
 
-:global(body[data-phone-chat-tone="dark"]) .phonePage {
-  color-scheme: dark;
-}
-
-:global(body[data-phone-chat-tone="dark"]) .header,
-:global(body[data-phone-chat-tone="dark"]) .selectStack,
-:global(body[data-phone-chat-tone="dark"]) .formHost,
-:global(body[data-phone-chat-tone="dark"]) .productsHost,
-:global(body[data-phone-chat-tone="dark"]) .loadingPage,
-:global(body[data-phone-chat-tone="dark"]) .blockedPage {
-  background: var(--phone-payments-surface);
-}
-
-:global(body[data-phone-chat-tone="dark"]) .chatBackButton,
-:global(body[data-phone-chat-tone="dark"]) .backButton,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentsRefresh,
-:global(body[data-phone-chat-tone="dark"]) .recentPeriodPicker button,
-:global(body[data-phone-chat-tone="dark"]) .productIconButton,
-:global(body[data-phone-chat-tone="dark"]) .productSecondaryButton,
-:global(body[data-phone-chat-tone="dark"]) .productFormHeader button,
-:global(body[data-phone-chat-tone="dark"]) .productItemActions button {
-  color: var(--phone-payments-text);
-  background: var(--phone-payments-soft);
-}
-
-:global(body[data-phone-chat-tone="dark"]) .brandMark,
-:global(body[data-phone-chat-tone="dark"]) .recentPeriodPicker .recentPeriodActive,
-:global(body[data-phone-chat-tone="dark"]) .productPrimaryButton,
-:global(body[data-phone-chat-tone="dark"]) .productItemIcon {
-  color: #07140d;
-  background: var(--phone-payments-accent);
-}
-
-:global(body[data-phone-chat-tone="dark"]) .headerMain h1,
-:global(body[data-phone-chat-tone="dark"]) .headerFormTitle,
-:global(body[data-phone-chat-tone="dark"]) .selectTitle,
-:global(body[data-phone-chat-tone="dark"]) .choiceCard,
-:global(body[data-phone-chat-tone="dark"]) .choiceIconBlue,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentsToggle,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentsToggle svg,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentItem,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentMain strong,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentMeta span,
-:global(body[data-phone-chat-tone="dark"]) .productsToolbarCopy strong,
-:global(body[data-phone-chat-tone="dark"]) .productFormHeader strong,
-:global(body[data-phone-chat-tone="dark"]) .productField span,
-:global(body[data-phone-chat-tone="dark"]) .productItemCopy strong {
-  color: var(--phone-payments-text);
-}
-
-:global(body[data-phone-chat-tone="dark"]) .eyebrow,
-:global(body[data-phone-chat-tone="dark"]) .choiceText small,
-:global(body[data-phone-chat-tone="dark"]) .choiceChevron,
-:global(body[data-phone-chat-tone="dark"]) .selectHint,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentsToggle small,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentsState,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentMain small,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentsRefresh,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentMeta,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentMeta small,
-:global(body[data-phone-chat-tone="dark"]) .productsToolbarCopy small,
-:global(body[data-phone-chat-tone="dark"]) .productFormHeader small,
-:global(body[data-phone-chat-tone="dark"]) .productItemCopy span,
-:global(body[data-phone-chat-tone="dark"]) .productItemCopy small,
-:global(body[data-phone-chat-tone="dark"]) .productsState,
-:global(body[data-phone-chat-tone="dark"]) .productsEmpty span,
-:global(body[data-phone-chat-tone="dark"]) .blockedCopy p:last-child {
-  color: var(--phone-payments-muted);
-}
-
-:global(body[data-phone-chat-tone="dark"]) .choiceCard + .choiceCard,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentsSection,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentItem,
-:global(body[data-phone-chat-tone="dark"]) .productForm,
-:global(body[data-phone-chat-tone="dark"]) .productItem,
-:global(body[data-phone-chat-tone="dark"]) .productField input,
-:global(body[data-phone-chat-tone="dark"]) .productField select,
-:global(body[data-phone-chat-tone="dark"]) .productField textarea {
-  border-color: var(--phone-payments-border);
-}
-
-:global(body[data-phone-chat-tone="dark"]) .productForm,
-:global(body[data-phone-chat-tone="dark"]) .productItem,
-:global(body[data-phone-chat-tone="dark"]) .productField input,
-:global(body[data-phone-chat-tone="dark"]) .productField select,
-:global(body[data-phone-chat-tone="dark"]) .productField textarea {
-  color: var(--phone-payments-text);
-  background: var(--phone-payments-soft);
-}
-
-:global(body[data-phone-chat-tone="dark"]) .productField input::placeholder,
-:global(body[data-phone-chat-tone="dark"]) .productField textarea::placeholder {
-  color: var(--phone-payments-muted);
-  opacity: 0.8;
-}
-
-:global(body[data-phone-chat-tone="dark"]) .productFormHeader button,
-:global(body[data-phone-chat-tone="dark"]) .productFormActions .productSecondaryButton,
-:global(body[data-phone-chat-tone="dark"]) .productItemActions button {
-  background: var(--phone-payments-surface);
-}
-
-:global(body[data-phone-chat-tone="dark"]) .productItemActions .productDeleteButton {
-  color: #fecaca;
-  background: rgba(239, 68, 68, 0.18);
-}
-
-:global(body[data-phone-chat-tone="dark"]) .blockedPanel {
-  border-color: var(--phone-payments-border);
-  background: var(--phone-payments-surface);
-  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.42);
-}
-
 /* Header content sits in the safe area without painting a separate top panel. */
 .header {
   position: relative;
@@ -163,9 +40,9 @@
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
-  min-height: calc(62px + env(safe-area-inset-top));
-  padding: calc(env(safe-area-inset-top) + 8px) 16px 8px;
-  background: var(--phone-payments-surface);
+  min-height: calc(74px + env(safe-area-inset-top));
+  padding: calc(env(safe-area-inset-top) + 14px) 14px 12px;
+  background: transparent;
   backdrop-filter: none;
 }
 

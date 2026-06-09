@@ -1300,9 +1300,9 @@ function mergeTrendSeries(primary: TrendPoint[], secondary: TrendPoint[]): Trend
 }
 
 function getAnalyticsMetricIcon(label: string): LucideIcon {
-  if (label === 'Visitors') return Eye
+  if (label === 'Visitantes') return Eye
   if (label === 'Leads') return Users
-  if (label === 'Appointments') return CalendarDays
+  if (label === 'Citas') return CalendarDays
   return TrendingUp
 }
 

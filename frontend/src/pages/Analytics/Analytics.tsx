@@ -778,28 +778,9 @@ const Analytics: React.FC = () => {
   const [viewType, setViewType] = useState<ViewType>(routeState.viewType)
   const [monthPreset, setMonthPreset] = useState<MonthPreset>('last12')
   const [yearRange, setYearRange] = useState(defaultYearRange)
-  const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>(routeState.mainChart)
-  const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>(routeState.conversionChart)
+  const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>('traffic')
+  const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>('registrations-customers')
   const [conversionChartTouched, setConversionChartTouched] = useState(false)
-
-  const navigateAnalyticsView = useCallback((next?: {
-    viewType?: ViewType
-    mainChart?: AnalyticsMainChartView
-    conversionChart?: AnalyticsConversionChartView
-    replace?: boolean
-  }) => {
-    navigate(buildAnalyticsPath(
-      next?.viewType ?? viewType,
-      next?.mainChart ?? selectedMainChartView,
-      next?.conversionChart ?? selectedConversionChartView
-    ), { replace: next?.replace })
-  }, [navigate, selectedConversionChartView, selectedMainChartView, viewType])
-
-  useEffect(() => {
-    setViewType(current => current === routeState.viewType ? current : routeState.viewType)
-    setSelectedMainChartView(current => current === routeState.mainChart ? current : routeState.mainChart)
-    setSelectedConversionChartView(current => current === routeState.conversionChart ? current : routeState.conversionChart)
-  }, [routeState.conversionChart, routeState.mainChart, routeState.viewType])
 
   // Guardar el valor ORIGINAL de registros para restaurar al quitar filtros
   const [originalRegistros, setOriginalRegistros] = useState<number>(0)
@@ -1936,7 +1917,6 @@ const Analytics: React.FC = () => {
       selectedConversionChartView !== 'registrations-customers'
     ) {
       setSelectedConversionChartView('registrations-customers')
-      navigateAnalyticsView({ conversionChart: 'registrations-customers', replace: true })
       return
     }
 
@@ -1946,7 +1926,7 @@ const Analytics: React.FC = () => {
       setSelectedConversionChartView(nextChart)
       navigateAnalyticsView({ conversionChart: nextChart, replace: true })
     }
-  }, [conversionChartOptions, conversionChartTouched, navigateAnalyticsView, selectedConversionChartView, webTrackingConfigured])
+  }, [conversionChartOptions, conversionChartTouched, selectedConversionChartView, webTrackingConfigured])
 
   const sessionTrendData = React.useMemo(
     () => buildSessionTrendData(sessionsForCharts, viewType, convertToLocalTime),
@@ -2297,10 +2277,7 @@ const Analytics: React.FC = () => {
                   value={selectedConversionChartView}
                   onChange={(value) => {
                     setConversionChartTouched(true)
-                    if (isAnalyticsConversionChartView(value)) {
-                      setSelectedConversionChartView(value)
-                      navigateAnalyticsView({ conversionChart: value })
-                    }
+                    setSelectedConversionChartView(value as AnalyticsConversionChartView)
                   }}
                 />
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">

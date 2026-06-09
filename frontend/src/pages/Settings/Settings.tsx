@@ -1,6 +1,6 @@
 import React from 'react'
 import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
-import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot, KeyRound, Globe2, Smartphone, Hash } from 'lucide-react'
+import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot, KeyRound, Globe2 } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { Costs } from './Costs'
@@ -13,9 +13,6 @@ import { AccountSettings } from './AccountSettings'
 import { AIAgentSettings } from './AIAgentSettings'
 import { APIAccessSettings } from './APIAccessSettings'
 import { Domains } from './Domains'
-import { MobileAppSettings } from './MobileAppSettings'
-import { CustomFields } from './CustomFields'
-import { PageHeader } from '@/components/common'
 import { useTheme } from '@/contexts/ThemeContext'
 import styles from './Settings.module.css'
 
@@ -29,11 +26,6 @@ export const Settings: React.FC = () => {
       to: '/settings/account',
       label: 'Cuenta',
       icon: <UserCircle size={18} />
-    },
-    {
-      to: '/settings/mobile-app',
-      label: 'Aplicación móvil',
-      icon: <Smartphone size={18} />
     },
     {
       to: '/settings/calendars',
@@ -125,25 +117,22 @@ export const Settings: React.FC = () => {
         </aside>
 
         <section className={styles.settingsPanel}>
-          {isAccountPage && (
-            <PageHeader
-              title="Configuración"
-              subtitle="Gestiona las integraciones y configuración de tu cuenta"
-            />
-          )}
+          <div className={styles.header}>
+            <h1 className={styles.title}>Configuración</h1>
+            {isAccountPage && <p className={styles.subtitle}>Gestiona las integraciones y configuración de tu cuenta</p>}
+          </div>
 
           <div className={styles.mainContent}>
             <Routes>
               <Route index element={<Navigate to="account" replace />} />
               <Route path="highlevel" element={<HighLevelIntegration />} />
-              <Route path="costs/*" element={<Costs />} />
-              <Route path="meta-ads/*" element={<MetaAdsIntegration />} />
-              <Route path="whatsapp/*" element={<WhatsAppSettings />} />
-              <Route path="calendars/*" element={<CalendarsConfiguration />} />
-              <Route path="tracking/*" element={<WebTracking />} />
-              <Route path="domains/*" element={<Domains />} />
-              <Route path="payments/*" element={<PaymentsConfiguration />} />
-              <Route path="custom-fields/*" element={<CustomFields />} />
+              <Route path="costs" element={<Costs />} />
+              <Route path="meta-ads" element={<MetaAdsIntegration />} />
+              <Route path="whatsapp" element={<WhatsAppSettings />} />
+              <Route path="calendars" element={<CalendarsConfiguration />} />
+              <Route path="tracking" element={<WebTracking />} />
+              <Route path="domains" element={<Domains />} />
+              <Route path="payments" element={<PaymentsConfiguration />} />
               <Route path="ai-agent" element={<AIAgentSettings />} />
               <Route path="api-access" element={<APIAccessSettings />} />
               <Route path="mobile-app" element={<MobileAppSettings />} />

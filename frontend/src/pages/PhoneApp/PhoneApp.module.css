@@ -1,10 +1,5 @@
 .phonePage {
-  --phone-frame-bg: var(--phone-chat-bg, #ffffff);
-  --phone-app-surface: var(--phone-chat-surface, var(--color-background-secondary));
-  --phone-app-soft: var(--phone-chat-surface-soft, #f7f6f2);
-  --phone-app-text: var(--phone-chat-text, #111111);
-  --phone-app-muted: var(--phone-chat-muted, #737373);
-  --phone-app-border: var(--phone-chat-border, rgba(148, 163, 184, 0.16));
+  --phone-frame-bg: color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%);
   position: fixed;
   inset: 0;
   isolation: isolate;
@@ -99,8 +94,8 @@
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
-  min-height: calc(92px + env(safe-area-inset-top));
-  padding: calc(env(safe-area-inset-top) + 14px) 18px 12px;
+  min-height: calc(74px + env(safe-area-inset-top));
+  padding: calc(env(safe-area-inset-top) + 14px) 14px 12px;
   background: transparent;
   backdrop-filter: none;
   border-bottom: 0;

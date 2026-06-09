@@ -1,14 +1,17 @@
 .container {
   display: grid;
+  gap: 18px;
 }
 
 .header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 14px;
   align-items: center;
-  padding-bottom: 16px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-background-secondary) 96%, var(--color-primary) 4%);
+  padding: 16px;
 }
 
 .headerIcon {
@@ -35,11 +38,26 @@
 
 .header p,
 .domainMeta p,
+.infoBox span,
 .emptyState p {
   margin: 4px 0 0;
   color: var(--color-text-secondary);
   font-size: 0.92rem;
   line-height: 1.45;
+}
+
+.infoBox {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(var(--color-primary-rgb), 0.18);
+  border-radius: 8px;
+  background: rgba(var(--color-primary-rgb), 0.07);
+  padding: 14px;
+}
+
+.infoBox strong {
+  color: var(--color-text-primary);
+  font-size: 0.92rem;
 }
 
 .domainList {
@@ -49,7 +67,7 @@
 
 .domainCard {
   display: grid;
-  gap: 16px;
+  gap: 14px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 8px;
   background: color-mix(in srgb, var(--color-background-secondary) 96%, var(--color-primary) 4%);
@@ -83,13 +101,6 @@
   color: var(--color-text-secondary);
   font-size: 0.82rem;
   font-weight: 800;
-}
-
-.field .helperText {
-  color: var(--color-text-tertiary);
-  font-size: 0.8rem;
-  font-weight: 650;
-  line-height: 1.35;
 }
 
 .field input,
