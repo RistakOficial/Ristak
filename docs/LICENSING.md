@@ -59,14 +59,18 @@ Features: `whatsapp`, `meta_ads`, `google_calendar`, `ai`, `automations`, `advan
 (WhatsApp API, Meta, Calendarios, AI Agent, Reportes). El frontend puede leer
 `GET /api/license/status` para conocer plan y features.
 
-## Setup inicial del dueño
+## Setup inicial del dueño (automático, mismas credenciales del portal)
 
 1. El instalador termina el deploy y genera un **setup token de un solo uso**.
 2. El cliente llega a `https://su-app.onrender.com/setup?token=...`.
-3. La app valida el token contra el servidor central (`/api/setup-token/verify`) y precarga
-   `OWNER_EMAIL`.
-4. El cliente crea su contraseña; la app consume el token (`/api/setup-token/consume`, un solo uso),
-   crea el usuario owner local y valida la licencia antes de abrir sesión.
+3. La app valida el token contra el servidor central; la respuesta incluye el **hash PBKDF2
+   de la contraseña del portal** (mismo formato que usa la app — nunca viaja la contraseña
+   en claro).
+4. La app crea el usuario owner automáticamente con **las mismas credenciales que el cliente
+   usó en el instalador**, consume el token, valida la licencia y abre sesión directa al
+   dashboard (sin formularios). La sesión dura 30 días, hasta cerrar sesión o limpiar caché.
+5. Fallback: si el servidor central no comparte el hash (`password_required`), se muestra el
+   formulario clásico de crear contraseña con el email precargado.
 
 Sin servidor central configurado, el setup clásico (usuario + contraseña, solo si no existen
 usuarios) sigue funcionando igual.

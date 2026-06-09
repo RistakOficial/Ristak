@@ -694,6 +694,7 @@ export async function setup(req, res) {
     const { password, token } = req.body
     let { username } = req.body
     let ownerEmail = ''
+    let ownerPasswordHash = null
 
     // En instalaciones gestionadas, el setup requiere el token de un solo uso
     // generado por el portal central. El email del dueño viene del servidor central.
@@ -720,10 +721,25 @@ export async function setup(req, res) {
       if (!username) {
         username = ownerEmail
       }
+
+      // Modo automático: el portal central comparte el hash de la contraseña del
+      // cliente (mismo formato PBKDF2), así el dueño entra con las MISMAS
+      // credenciales que usó en el instalador, sin crear otra contraseña.
+      if (!password && tokenResult.password_hash) {
+        ownerPasswordHash = tokenResult.password_hash
+      }
+
+      if (!password && !ownerPasswordHash) {
+        return res.status(400).json({
+          success: false,
+          code: 'password_required',
+          message: 'Crea una contraseña para tu cuenta.'
+        })
+      }
     }
 
     // Validación de entrada
-    if (!username || !password) {
+    if (!username || (!password && !ownerPasswordHash)) {
       return res.status(400).json({
         success: false,
         message: 'Usuario y contraseña son requeridos'
@@ -737,7 +753,7 @@ export async function setup(req, res) {
       })
     }
 
-    if (password.length < 6) {
+    if (!ownerPasswordHash && password.length < 6) {
       return res.status(400).json({
         success: false,
         message: 'La contraseña debe tener al menos 6 caracteres'
@@ -777,9 +793,10 @@ export async function setup(req, res) {
       })
     }
 
-    // Crear el primer usuario
+    // Crear el primer usuario. En modo automático se reutiliza el hash del
+    // portal central (mismas credenciales); si no, se hashea la contraseña nueva.
     const { hashPassword, generateToken } = await import('../utils/auth.js')
-    const passwordHash = hashPassword(password)
+    const passwordHash = ownerPasswordHash || hashPassword(password)
 
     const result = await db.run(
       'INSERT INTO users (username, email, password_hash, full_name, role, is_active) VALUES (?, ?, ?, ?, ?, ?)',
