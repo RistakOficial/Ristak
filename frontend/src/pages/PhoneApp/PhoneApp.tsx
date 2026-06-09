@@ -8,8 +8,8 @@ import {
   ChevronRight,
   Cog,
   CreditCard,
+  Eye,
   Gauge,
-  LineChart,
   Megaphone,
   MessageCircle,
   MonitorX,
@@ -92,13 +92,13 @@ interface PhoneAppData {
 const PHONE_SECTIONS: PhoneSectionConfig[] = [
   { id: 'chat', label: 'Chat', Icon: MessageCircle },
   { id: 'dashboard', label: 'Dashboard', Icon: Gauge },
-  { id: 'appointments', label: 'Appointments', Icon: CalendarDays },
-  { id: 'transactions', label: 'Payments', Icon: CreditCard },
-  { id: 'contacts', label: 'Contacts', Icon: Users },
-  { id: 'campaigns', label: 'Ads', Icon: Megaphone },
-  { id: 'reports', label: 'Reports', Icon: BarChart3 },
-  { id: 'analytics', label: 'Analytics', Icon: LineChart },
-  { id: 'settings', label: 'Settings', Icon: Cog }
+  { id: 'appointments', label: 'Citas', Icon: CalendarDays },
+  { id: 'transactions', label: 'Pagos', Icon: CreditCard },
+  { id: 'contacts', label: 'Contactos', Icon: Users },
+  { id: 'campaigns', label: 'Publicidad', Icon: Megaphone },
+  { id: 'reports', label: 'Reportes', Icon: BarChart3 },
+  { id: 'analytics', label: 'Analíticas', Icon: TrendingUp },
+  { id: 'settings', label: 'Configuración', Icon: Cog }
 ]
 
 const PERIOD_OPTIONS: PeriodOption[] = [
@@ -372,7 +372,8 @@ export const PhoneApp: React.FC = () => {
   const [refreshKey, setRefreshKey] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  const activeSectionId = isPhoneSectionId(params.section) ? params.section : null
+  const sectionParam = params.section as string | undefined
+  const activeSectionId = isPhoneSectionId(sectionParam) ? sectionParam : null
   const activeSection = activeSectionId ? SECTION_BY_ID[activeSectionId] : SECTION_BY_ID.dashboard
   const startDate = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
   const endDate = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
@@ -1226,8 +1227,9 @@ function AnalyticsSection({ visitorsTrend, leadsTrend, salesTrend, conversion }:
             key={item.label}
             label={item.label}
             value={formatCompactNumber(item.value)}
-            detail={item.label === 'Visitors' ? 'Funnel base' : `${formatPercent(item.percent)} conversion`}
-            tone={item.label === 'Sales' ? 'green' : item.label === 'Appointments' ? 'purple' : item.label === 'Leads' ? 'blue' : 'orange'}
+            detail={item.label === 'Visitantes' ? 'Base del embudo' : `${formatPercent(item.percent)} conversión`}
+            tone={item.label === 'Ventas' ? 'green' : item.label === 'Citas' ? 'purple' : item.label === 'Leads' ? 'blue' : 'orange'}
+            icon={getAnalyticsMetricIcon(item.label)}
           />
         ))}
       </div>
@@ -1297,20 +1299,36 @@ function mergeTrendSeries(primary: TrendPoint[], secondary: TrendPoint[]): Trend
   return result
 }
 
+function getAnalyticsMetricIcon(label: string): LucideIcon {
+  if (label === 'Visitors') return Eye
+  if (label === 'Leads') return Users
+  if (label === 'Appointments') return CalendarDays
+  return TrendingUp
+}
+
 interface MetricTileProps {
   label: string
   value: string
   detail: string
   delta?: number
   tone: 'green' | 'orange' | 'blue' | 'purple'
+  icon?: LucideIcon
 }
 
-function MetricTile({ label, value, detail, delta, tone }: MetricTileProps) {
+function MetricTile({ label, value, detail, delta, tone, icon }: MetricTileProps) {
   const deltaTone = typeof delta === 'number' && delta < 0 ? styles.deltaDown : styles.deltaUp
+  const MetricIcon = icon
 
   return (
     <article className={`${styles.metricTile} ${styles[`tone${tone}`]}`}>
-      <span className={styles.metricLabel}>{label}</span>
+      <div className={styles.metricHeader}>
+        <span className={styles.metricLabel}>{label}</span>
+        {MetricIcon && (
+          <span className={styles.metricIcon} aria-hidden="true">
+            <MetricIcon size={14} strokeWidth={2.2} />
+          </span>
+        )}
+      </div>
       <strong>{value}</strong>
       <span className={styles.metricDetail}>{detail}</span>
       {typeof delta === 'number' && (
