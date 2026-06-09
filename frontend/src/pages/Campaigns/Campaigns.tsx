@@ -2145,7 +2145,7 @@ export const Campaigns: React.FC = () => {
         showLegend: true,
         legendLabels: { label1: 'Ingresos', label2: 'Gastos Publicidad' },
         formatValue: formatChartCurrency,
-        formatTooltipValue: formatCurrency,
+        formatTooltipValue: (v: number) => formatCurrency(v),
         emptyMessage: 'No hay datos de campañas para este período'
       },
       visitors: {
