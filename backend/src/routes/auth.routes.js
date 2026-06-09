@@ -8,6 +8,7 @@ import {
   getMe,
   checkSetup,
   setup,
+  setupInfo,
   localDevSession,
   getApiToken,
   rotateApiToken,
@@ -22,6 +23,9 @@ router.get('/setup', checkSetup)
 
 // POST /api/auth/setup - Crear el primer usuario (solo si no existen usuarios)
 router.post('/setup', setup)
+
+// GET /api/auth/setup-info - Validar setup token del instalador y precargar email del dueño
+router.get('/setup-info', setupInfo)
 
 // POST /api/auth/login - Autenticar usuario
 router.post('/login', login)

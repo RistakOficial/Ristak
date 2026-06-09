@@ -20,7 +20,7 @@ interface AuthContextType {
   user: User | null
   isAuthenticated: boolean
   login: (username: string, password: string) => Promise<void>
-  setupAccount: (username: string, password: string) => Promise<void>
+  setupAccount: (username: string, password: string, setupToken?: string) => Promise<void>
   updateProfile: (profile: {
     firstName: string
     lastName: string
@@ -168,7 +168,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const data = await response.json()
 
       if (!response.ok || !data.success) {
-        throw new Error(data.message || 'Error en el login')
+        const error = new Error(data.message || 'Error en el login') as Error & { code?: string }
+        error.code = data.code
+        throw error
       }
 
       // Guardar token en localStorage
@@ -185,20 +187,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }
 
-  const setupAccount = async (username: string, password: string) => {
+  const setupAccount = async (username: string, password: string, setupToken?: string) => {
     try {
       const response = await fetch(`${API_URL}/api/auth/setup`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username, password, token: setupToken })
       })
 
       const data = await response.json()
 
       if (!response.ok || !data.success) {
-        throw new Error(data.message || 'Error al crear usuario')
+        const error = new Error(data.message || 'Error al crear usuario') as Error & { code?: string }
+        error.code = data.code
+        throw error
       }
 
       // Guardar token en localStorage

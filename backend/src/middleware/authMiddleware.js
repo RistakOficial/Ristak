@@ -1,5 +1,6 @@
 import { verifyToken } from '../utils/auth.js'
 import { db } from '../config/database.js'
+import { getLicenseState, isLicenseEnforced } from '../services/licenseService.js'
 
 export async function requireAuth(req, res, next) {
   try {
@@ -40,6 +41,23 @@ export async function requireAuth(req, res, next) {
       email: user.email,
       role: user.role
     }
+
+    // Identidad local válida no basta: la licencia central debe estar activa.
+    if (isLicenseEnforced()) {
+      const license = await getLicenseState({ email: user.email || user.username })
+
+      if (!license.allowed) {
+        return res.status(403).json({
+          success: false,
+          code: 'license_blocked',
+          reason: license.reason,
+          message: license.message || 'Tu licencia de Ristak no está activa. Contacta al administrador o actualiza tu suscripción para continuar.'
+        })
+      }
+
+      req.license = license
+    }
+
     next()
   } catch (error) {
     next(error)
