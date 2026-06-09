@@ -6,7 +6,8 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
 import styles from './HighLevelIntegration.module.css'
 
-type PaymentGatewayId = 'highlevel' | 'stripe' | 'openpay' | 'mercado-libre' | 'clip' | 'conekta' | 'other'
+type PaymentGatewayId = 'highlevel' | 'stripe' | 'mercado-libre' | 'clip' | 'gigstacK'
+type PaymentGatewayCategoryId = 'charge' | 'tax'
 
 interface PaymentGatewayOption {
   id: PaymentGatewayId
@@ -15,17 +16,25 @@ interface PaymentGatewayOption {
   status: 'connected' | 'soon'
 }
 
-const UPCOMING_PAYMENT_GATEWAYS: PaymentGatewayOption[] = [
+interface PaymentGatewayCategory {
+  id: PaymentGatewayCategoryId
+  title: string
+  description: string
+  options: PaymentGatewayOption[]
+}
+
+const HIGHLIGHT_GATEWAY_OPTION: PaymentGatewayOption = {
+  id: 'highlevel',
+  name: 'GoHighLevel',
+  description: 'Usa la conexión activa para cobros, links, domiciliación y parcialidades.',
+  status: 'connected'
+}
+
+const UPCOMING_CHARGE_GATEWAYS: PaymentGatewayOption[] = [
   {
     id: 'stripe',
     name: 'Stripe',
     description: 'Para cobrar con tarjeta y links de pago cuando esta conexión esté lista.',
-    status: 'soon'
-  },
-  {
-    id: 'openpay',
-    name: 'OpenPay',
-    description: 'Para preparar cobros con tarjeta, tiendas y pagos en línea cuando esta conexión esté lista.',
     status: 'soon'
   },
   {
@@ -41,20 +50,23 @@ const UPCOMING_PAYMENT_GATEWAYS: PaymentGatewayOption[] = [
     status: 'soon'
   },
   {
-    id: 'conekta',
-    name: 'Conekta',
-    description: 'Para pagos con tarjeta, efectivo o transferencias cuando se libere.',
-    status: 'soon'
-  },
-  {
-    id: 'other',
-    name: 'Otros',
-    description: 'Para agregar otra pasarela de pago cuando el equipo la tenga disponible.',
+    id: 'clip',
+    name: 'Clip',
+    description: 'Para ventas con terminal o links de pago conectados a Clip.',
     status: 'soon'
   }
 ]
 
-const paymentGatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'openpay', 'mercado-libre', 'clip', 'conekta', 'other']
+const TAX_GATEWAYS: PaymentGatewayOption[] = [
+  {
+    id: 'gigstacK',
+    name: 'GigstacK',
+    description: 'Para organizar tu manejo de impuestos y documentación fiscal en el flujo de pagos.',
+    status: 'soon'
+  }
+]
+
+const paymentGatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'mercado-libre', 'clip', 'gigstacK']
 const isPaymentGatewayId = (value?: string): value is PaymentGatewayId => paymentGatewayIds.includes(value as PaymentGatewayId)
 const parsePaymentGatewayRoute = (pathname: string) => {
   const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
@@ -90,19 +102,30 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }, [highLevelConnected, loadingHighLevelConnection, routeGateway])
 
-  const gatewayOptions: PaymentGatewayOption[] = highLevelConnected
-    ? [
-      {
-        id: 'highlevel',
-        name: 'GoHighLevel',
-        description: 'Usa la conexión activa para cobros, links, domiciliación y parcialidades.',
-        status: 'connected'
-      },
-      ...UPCOMING_PAYMENT_GATEWAYS
-    ]
-    : UPCOMING_PAYMENT_GATEWAYS
+  const gatewayCategories: PaymentGatewayCategory[] = [
+    {
+      id: 'charge',
+      title: highLevelConnected ? 'Pasarela para cobrar' : 'Conecta tu pasarela de pago',
+      description: highLevelConnected
+        ? 'Selecciona qué conexión debe usar Ristak para cobrar. Las nuevas pasarelas se activarán cuando estén listas.'
+        : 'Escoge la opción que quieres usar. Por ahora están en lista de espera y aparecerán como disponibles cuando se liberen.',
+      options: [
+        ...(highLevelConnected
+          ? [HIGHLIGHT_GATEWAY_OPTION]
+          : []),
+        ...UPCOMING_CHARGE_GATEWAYS
+      ]
+    },
+    {
+      id: 'tax',
+      title: 'Impuestos',
+      description: 'Configura tu proveedor de herramientas fiscales para mantener un flujo de cobro consistente.',
+      options: TAX_GATEWAYS
+    }
+  ]
+  const allGatewayOptions = gatewayCategories.flatMap((category) => category.options)
 
-  const selectedGatewayOption = gatewayOptions.find((gateway) => gateway.id === selectedGateway)
+  const selectedGatewayOption = allGatewayOptions.find((gateway) => gateway.id === selectedGateway)
   const showHighLevelSettings = highLevelConnected && selectedGateway === 'highlevel'
 
   const loadPaymentConfig = async () => {
@@ -205,43 +228,41 @@ export const PaymentsConfiguration: React.FC = () => {
         </div>
 
         <div className={styles.section}>
-          <div className={styles.sectionHeader}>
-            <div>
-              <h3 className={styles.sectionTitle}>
-                {highLevelConnected ? 'Pasarela para cobrar' : 'Conecta tu pasarela de pago'}
-              </h3>
-              <p className={styles.sectionDescription}>
-                {highLevelConnected
-                  ? 'Selecciona cuál conexión debe usar Ristak. Las nuevas pasarelas se activarán cuando estén listas.'
-                  : 'Elige la opción que quieres usar. Por ahora están en lista de espera y aparecerán como disponibles cuando se liberen.'}
-              </p>
-            </div>
-          </div>
+          {gatewayCategories.map((category, index) => (
+            <section key={category.id} style={index > 0 ? { marginTop: 'var(--spacing-lg)' } : undefined}>
+              <div className={styles.sectionHeader}>
+                <div>
+                  <h3 className={styles.sectionTitle}>{category.title}</h3>
+                  <p className={styles.sectionDescription}>{category.description}</p>
+                </div>
+              </div>
 
-          <div className={styles.gatewayGrid}>
-            {gatewayOptions.map((gateway) => {
-              const isSelected = selectedGateway === gateway.id
-              const isConnected = gateway.status === 'connected'
+              <div className={styles.gatewayGrid}>
+                {category.options.map((gateway) => {
+                  const isSelected = selectedGateway === gateway.id
+                  const isConnected = gateway.status === 'connected'
 
-              return (
-                <button
-                  key={gateway.id}
-                  type="button"
-                  className={`${styles.gatewayCard} ${isSelected ? styles.gatewayCardSelected : ''}`}
-                  onClick={() => handleSelectGateway(gateway)}
-                  aria-pressed={isSelected}
-                >
-                  <span className={styles.gatewayCardHeader}>
-                    <span className={styles.gatewayCardName}>{gateway.name}</span>
-                    <span className={isConnected ? styles.gatewayStatusConnected : styles.gatewayStatusSoon}>
-                      {isConnected ? 'Conectado' : 'Próximamente'}
-                    </span>
-                  </span>
-                  <span className={styles.gatewayCardDescription}>{gateway.description}</span>
-                </button>
-              )
-            })}
-          </div>
+                  return (
+                    <button
+                      key={gateway.id}
+                      type="button"
+                      className={`${styles.gatewayCard} ${isSelected ? styles.gatewayCardSelected : ''}`}
+                      onClick={() => handleSelectGateway(gateway)}
+                      aria-pressed={isSelected}
+                    >
+                      <span className={styles.gatewayCardHeader}>
+                        <span className={styles.gatewayCardName}>{gateway.name}</span>
+                        <span className={isConnected ? styles.gatewayStatusConnected : styles.gatewayStatusSoon}>
+                          {isConnected ? 'Conectado' : 'Próximamente'}
+                        </span>
+                      </span>
+                      <span className={styles.gatewayCardDescription}>{gateway.description}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </section>
+          ))}
 
           {!loadingHighLevelConnection && !highLevelConnected && (
             <div className={styles.gatewayNotice}>
