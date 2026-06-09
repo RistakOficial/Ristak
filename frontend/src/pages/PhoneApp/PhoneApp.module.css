@@ -274,9 +274,9 @@
 .metricTile {
   position: relative;
   display: grid;
-  min-height: 126px;
+  min-height: 132px;
   align-content: start;
-  gap: 7px;
+  gap: 8px;
   padding: 13px;
   border: 1px solid var(--design-card-border, rgba(148, 163, 184, 0.16));
   border-radius: var(--design-card-radius, 8px);
@@ -289,6 +289,32 @@
 
 .metricTile::before {
   content: none;
+}
+
+.metricHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.metricIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 1px solid color-mix(in srgb, var(--tile-accent, var(--color-text-tertiary)) 24%, transparent);
+  border-radius: 8px;
+  color: var(--tile-accent, var(--color-text-tertiary));
+  background: color-mix(in srgb, var(--tile-accent, var(--color-text-tertiary)) 14%, transparent);
+}
+
+.metricIcon svg {
+  width: 14px;
+  height: 14px;
 }
 
 .metricTile strong {
