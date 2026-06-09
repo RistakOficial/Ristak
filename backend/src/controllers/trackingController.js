@@ -8,7 +8,7 @@ import { getGroupExpression } from '../services/analyticsService.js'
 import fetch from 'node-fetch'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
-const TRACKING_SNIPPET_VERSION = '8' // Incrementar cuando cambies el código del snippet
+const TRACKING_SNIPPET_VERSION = '9' // Incrementar cuando cambies el código del snippet
 
 function timestampLocalExpression(column, timezone = 'UTC') {
   if (!isPostgres) {
