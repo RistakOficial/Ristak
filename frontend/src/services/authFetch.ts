@@ -75,8 +75,31 @@ export function installAuthFetch() {
     return originalFetch(input, {
       ...init,
       headers
+    }).then(response => {
+      maybeHandleLicenseBlocked(response)
+      return response
     })
   }
+}
+
+// Si la licencia central se suspende a media sesión, cualquier request privado
+// responde 403 con code license_blocked: se manda al usuario a la pantalla de bloqueo.
+function maybeHandleLicenseBlocked(response: Response) {
+  if (response.status !== 403) return
+  if (window.location.pathname === '/license-blocked') return
+
+  response.clone().json().then(data => {
+    if (data?.code === 'license_blocked') {
+      try {
+        localStorage.removeItem('auth_token')
+      } catch {
+        // sin acceso a storage, continuar igual
+      }
+      window.location.href = '/license-blocked'
+    }
+  }).catch(() => {
+    // respuesta sin JSON: no es un bloqueo de licencia
+  })
 }
 
 export async function ensureLocalDevAuth() {

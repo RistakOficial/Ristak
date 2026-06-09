@@ -46,7 +46,10 @@ import whatsappApiRoutes from './routes/whatsappApi.routes.js'
 import productsRoutes from './routes/products.routes.js'
 import sitesRoutes from './routes/sites.routes.js'
 import pushRoutes from './routes/push.routes.js'
+import licenseRoutes from './routes/license.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
+import { getHealthInfo } from './services/licenseService.js'
+import { requireFeature } from './middleware/licenseMiddleware.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -80,6 +83,12 @@ app.get('/api/health', (req, res) => {
   })
 })
 
+// Health check de instalación (lo consulta el portal instalador para saber
+// si la app ya está lista). Debe ir antes del host router de Sites.
+app.get('/health', (req, res) => {
+  res.json(getHealthInfo())
+})
+
 // Host router para Sites públicos. Debe correr antes de APIs privadas/static.
 app.use(publicSiteHostMiddleware)
 
@@ -88,10 +97,10 @@ app.use('/', oauthRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/api-access', apiAccessRoutes)
 app.use('/api/sites', sitesRoutes)
-app.use('/api/reports', reportsRoutes)
+app.use('/api/reports', requireFeature('advanced_reports'), reportsRoutes)
 app.use('/api/highlevel', highlevelRoutes)
 app.use('/api/products', productsRoutes)
-app.use('/api/meta', metaRoutes)
+app.use('/api/meta', requireFeature('meta_ads'), metaRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/webhook-config', webhookConfigRoutes)
 app.use('/api/contacts', contactsRoutes)
@@ -99,17 +108,18 @@ app.use('/api/transactions', transactionsRoutes)
 app.use('/api/integrations', integrationsRoutes)
 app.use('/api/attribution', attributionRoutes)
 app.use('/api/settings', settingsRoutes)
-app.use('/api/calendars', calendarsRoutes)
+app.use('/api/calendars', requireFeature('google_calendar'), calendarsRoutes)
 app.use('/api/push', pushRoutes)
+app.use('/api/license', licenseRoutes)
 app.use('/api/config', configRoutes)
 app.use('/api', costsRoutes)
 app.use('/api/maintenance', maintenanceRoutes)
 app.use('/api/hidden-contacts', hiddenContactsRoutes)
-app.use('/api/ai-agent', aiAgentRoutes)
+app.use('/api/ai-agent', requireFeature('ai'), aiAgentRoutes)
 app.use('/api/search', searchRoutes)
 app.use('/api/external', externalRoutes)
 app.use('/api/mcp', mcpRoutes)
-app.use('/api/whatsapp-api', whatsappApiRoutes)
+app.use('/api/whatsapp-api', requireFeature('whatsapp'), whatsappApiRoutes)
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
 
@@ -141,8 +151,8 @@ app.use((err, req, res, next) => {
   })
 })
 
-// Iniciar servidor
-app.listen(PORT, async () => {
+// Iniciar servidor. Render requiere escuchar en 0.0.0.0 y el puerto de PORT.
+app.listen(PORT, '0.0.0.0', async () => {
   logger.success(`🚀 Servidor corriendo en puerto ${PORT}`)
   logger.info(`Entorno: ${process.env.NODE_ENV || 'development'}`)
 

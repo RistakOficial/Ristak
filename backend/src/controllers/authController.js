@@ -7,6 +7,12 @@ import {
   revokeApiTokenForUser,
   rotateApiTokenForUser
 } from '../utils/apiTokens.js'
+import {
+  isLicenseEnforced,
+  verifyLicenseWithServer,
+  verifySetupToken,
+  consumeSetupToken
+} from '../services/licenseService.js'
 
 function cleanProfileText(value, maxLength = 160) {
   if (value === undefined || value === null) return ''
@@ -122,6 +128,22 @@ export async function login(req, res) {
         success: false,
         message: 'Usuario o contraseña incorrectos'
       })
+    }
+
+    // Identidad local correcta. Antes de abrir sesión, validar el permiso
+    // comercial contra el servidor central de licencias (si está configurado).
+    if (isLicenseEnforced()) {
+      const license = await verifyLicenseWithServer(user.email || user.username)
+
+      if (!license.allowed) {
+        logger.warn(`⚠️  Login bloqueado por licencia (${license.reason}) para "${username}"`)
+        return res.status(403).json({
+          success: false,
+          code: 'license_blocked',
+          reason: license.reason,
+          message: license.message || 'Tu licencia de Ristak no está activa. Contacta al administrador o actualiza tu suscripción para continuar.'
+        })
+      }
     }
 
     // Actualizar fecha de último login
@@ -609,10 +631,53 @@ export async function checkSetup(req, res) {
 
     res.json({
       success: true,
-      needsSetup: !existingUser
+      needsSetup: !existingUser,
+      // En instalaciones gestionadas por el portal central, el setup inicial
+      // requiere el enlace con token de un solo uso que genera el instalador.
+      requiresToken: isLicenseEnforced()
     })
   } catch (error) {
     logger.error('❌ Error verificando setup:', error)
+    res.status(500).json({
+      success: false,
+      message: 'Error en el servidor'
+    })
+  }
+}
+
+/**
+ * GET /api/auth/setup-info?token=...
+ * Valida el setup token contra el servidor central (sin consumirlo)
+ * y devuelve el email del dueño para precargarlo en la pantalla de setup.
+ */
+export async function setupInfo(req, res) {
+  try {
+    const token = String(req.query.token || '')
+
+    if (!isLicenseEnforced()) {
+      return res.json({ success: true, requiresToken: false })
+    }
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Falta el enlace de configuración' })
+    }
+
+    const result = await verifySetupToken(token)
+
+    if (!result.valid) {
+      return res.status(403).json({
+        success: false,
+        message: result.message || 'El enlace de configuración no es válido o ya expiró.'
+      })
+    }
+
+    res.json({
+      success: true,
+      requiresToken: true,
+      email: result.email || process.env.OWNER_EMAIL || ''
+    })
+  } catch (error) {
+    logger.error('❌ Error verificando setup token:', error)
     res.status(500).json({
       success: false,
       message: 'Error en el servidor'
@@ -626,7 +691,36 @@ export async function checkSetup(req, res) {
  */
 export async function setup(req, res) {
   try {
-    const { username, password } = req.body
+    const { password, token } = req.body
+    let { username } = req.body
+    let ownerEmail = ''
+
+    // En instalaciones gestionadas, el setup requiere el token de un solo uso
+    // generado por el portal central. El email del dueño viene del servidor central.
+    // Aquí solo se verifica (peek); se consume hasta que todas las validaciones pasen,
+    // para no quemar el token con una contraseña inválida.
+    if (isLicenseEnforced()) {
+      if (!token) {
+        return res.status(403).json({
+          success: false,
+          message: 'Necesitas el enlace de configuración que te dio el instalador para crear tu acceso.'
+        })
+      }
+
+      const tokenResult = await verifySetupToken(token)
+
+      if (!tokenResult.valid) {
+        return res.status(403).json({
+          success: false,
+          message: tokenResult.message || 'El enlace de configuración no es válido o ya fue usado.'
+        })
+      }
+
+      ownerEmail = tokenResult.email || process.env.OWNER_EMAIL || ''
+      if (!username) {
+        username = ownerEmail
+      }
+    }
 
     // Validación de entrada
     if (!username || !password) {
@@ -661,6 +755,18 @@ export async function setup(req, res) {
       })
     }
 
+    // Todas las validaciones pasaron: consumir el token de un solo uso
+    if (isLicenseEnforced()) {
+      const consumed = await consumeSetupToken(token)
+
+      if (!consumed.valid) {
+        return res.status(403).json({
+          success: false,
+          message: consumed.message || 'El enlace de configuración no es válido o ya fue usado.'
+        })
+      }
+    }
+
     // Verificar que el username no esté en uso
     const usernameTaken = await db.get('SELECT id FROM users WHERE username = ?', [username])
 
@@ -676,8 +782,8 @@ export async function setup(req, res) {
     const passwordHash = hashPassword(password)
 
     const result = await db.run(
-      'INSERT INTO users (username, password_hash, full_name, role, is_active) VALUES (?, ?, ?, ?, ?)',
-      [username, passwordHash, username, 'admin', 1]
+      'INSERT INTO users (username, email, password_hash, full_name, role, is_active) VALUES (?, ?, ?, ?, ?, ?)',
+      [username, ownerEmail || null, passwordHash, username, 'admin', 1]
     )
 
     let userId = result.lastID
@@ -695,11 +801,25 @@ export async function setup(req, res) {
       getExternalApiAppId()
     ])
 
+    // Validar la licencia contra el servidor central antes de abrir la sesión
+    if (isLicenseEnforced()) {
+      const license = await verifyLicenseWithServer(ownerEmail || username)
+
+      if (!license.allowed) {
+        return res.status(403).json({
+          success: false,
+          code: 'license_blocked',
+          reason: license.reason,
+          message: license.message || 'Tu licencia de Ristak no está activa. Contacta al administrador o actualiza tu suscripción para continuar.'
+        })
+      }
+    }
+
     // Generar token JWT
-    const token = generateToken({
+    const sessionToken = generateToken({
       userId,
       username,
-      email: '',
+      email: ownerEmail || '',
       role: 'admin'
     })
 
@@ -708,14 +828,14 @@ export async function setup(req, res) {
     res.json({
       success: true,
       message: 'Usuario creado exitosamente',
-      token,
+      token: sessionToken,
       appId,
       apiToken,
       apiTokenMetadata,
       user: serializeAuthUser({
         id: userId,
         username,
-        email: '',
+        email: ownerEmail || '',
         full_name: username,
         role: 'admin'
       })

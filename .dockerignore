@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+.git
+_harness
+docs
+frontend/android
+frontend/ios
+*.md
