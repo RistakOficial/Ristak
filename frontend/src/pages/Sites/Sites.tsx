@@ -15054,10 +15054,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       </div>
 
       <div className={styles.propertiesBody}>
-        {isFormSite(site) && isField && (
-          <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-        )}
-
         <label className={styles.field}>
           <span>{isField ? 'Pregunta visible' : block.blockType === SECTION_BLOCK_TYPE ? 'Nombre de la franja' : 'Nombre del bloque'}</span>
           <input value={block.label} onChange={(event) => onPatchBlock({ label: event.target.value })} onBlur={onSave} />
@@ -15171,6 +15167,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           onPatchSettings={onPatchSettings}
           onSave={onSave}
         />
+
+        {isFormSite(site) && isField && (
+          <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+        )}
 
       </div>
     </aside>
