@@ -10,10 +10,10 @@ import { initializeDefaultUser } from './utils/auth.js'
 import { startMetaSyncCron } from './jobs/metaSync.cron.js'
 import { startHighLevelSyncCron } from './jobs/highlevelSync.cron.js'
 import { startMetaVersionCron, updateMetaVersion } from './jobs/metaVersionCron.js'
+import { startScheduledChatMessagesCron } from './jobs/scheduledChatMessages.cron.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
-import { initializeWhatsAppWebReceiver } from './services/whatsappWebService.js'
 
 // Force redeploy to ensure latest logs are active
 
@@ -30,7 +30,7 @@ import integrationsRoutes from './routes/integrations.routes.js'
 import attributionRoutes from './routes/attribution.routes.js'
 import settingsRoutes from './routes/settings.routes.js'
 import calendarsRoutes from './routes/calendars.routes.js'
-import trackingRoutes from './routes/tracking.routes.js'
+import trackingRoutes, { publicTrackingRoutes } from './routes/tracking.routes.js'
 import configRoutes from './routes/config.routes.js'
 import costsRoutes from './routes/costs.routes.js'
 import maintenanceRoutes from './routes/maintenance.routes.js'
@@ -42,8 +42,14 @@ import aiAgentRoutes from './routes/aiAgent.routes.js'
 import searchRoutes from './routes/search.routes.js'
 import externalRoutes from './routes/external.routes.js'
 import mcpRoutes from './routes/mcp.routes.js'
-import whatsappWebRoutes from './routes/whatsappWeb.routes.js'
+import whatsappApiRoutes from './routes/whatsappApi.routes.js'
 import productsRoutes from './routes/products.routes.js'
+import sitesRoutes from './routes/sites.routes.js'
+import pushRoutes from './routes/push.routes.js'
+import licenseRoutes from './routes/license.routes.js'
+import { publicSiteHostMiddleware } from './controllers/sitesController.js'
+import { getHealthInfo } from './services/licenseService.js'
+import { requireFeature } from './middleware/licenseMiddleware.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -56,8 +62,17 @@ app.set('trust proxy', true)
 
 // Middlewares
 app.use(cors())
-app.use(express.json({ limit: '35mb' }))
+app.use(express.json({
+  limit: '35mb',
+  verify: (req, _res, buf) => {
+    req.rawBody = buf.toString('utf8')
+  }
+}))
 app.use(express.urlencoded({ extended: true, limit: '35mb' }))
+app.use('/uploads', express.static(join(__dirname, '../uploads'), {
+  maxAge: '7d',
+  immutable: true
+}))
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -68,14 +83,24 @@ app.get('/api/health', (req, res) => {
   })
 })
 
+// Health check de instalación (lo consulta el portal instalador para saber
+// si la app ya está lista). Debe ir antes del host router de Sites.
+app.get('/health', (req, res) => {
+  res.json(getHealthInfo())
+})
+
+// Host router para Sites públicos. Debe correr antes de APIs privadas/static.
+app.use(publicSiteHostMiddleware)
+
 // API Routes
 app.use('/', oauthRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/api-access', apiAccessRoutes)
-app.use('/api/reports', reportsRoutes)
+app.use('/api/sites', sitesRoutes)
+app.use('/api/reports', requireFeature('advanced_reports'), reportsRoutes)
 app.use('/api/highlevel', highlevelRoutes)
 app.use('/api/products', productsRoutes)
-app.use('/api/meta', metaRoutes)
+app.use('/api/meta', requireFeature('meta_ads'), metaRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/webhook-config', webhookConfigRoutes)
 app.use('/api/contacts', contactsRoutes)
@@ -83,22 +108,25 @@ app.use('/api/transactions', transactionsRoutes)
 app.use('/api/integrations', integrationsRoutes)
 app.use('/api/attribution', attributionRoutes)
 app.use('/api/settings', settingsRoutes)
-app.use('/api/calendars', calendarsRoutes)
+app.use('/api/calendars', requireFeature('google_calendar'), calendarsRoutes)
+app.use('/api/push', pushRoutes)
+app.use('/api/license', licenseRoutes)
 app.use('/api/config', configRoutes)
 app.use('/api', costsRoutes)
 app.use('/api/maintenance', maintenanceRoutes)
 app.use('/api/hidden-contacts', hiddenContactsRoutes)
-app.use('/api/ai-agent', aiAgentRoutes)
+app.use('/api/ai-agent', requireFeature('ai'), aiAgentRoutes)
 app.use('/api/search', searchRoutes)
 app.use('/api/external', externalRoutes)
 app.use('/api/mcp', mcpRoutes)
-app.use('/api/whatsapp-web', whatsappWebRoutes)
+app.use('/api/whatsapp-api', requireFeature('whatsapp'), whatsappApiRoutes)
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
 
-// Tracking routes (pixel)
-app.use('/', trackingRoutes) // Maneja /snip.js y /collect
-app.use('/api/tracking', trackingRoutes) // Maneja /api/tracking/sessions
+// Tracking público y privado. El router público no debe capturar "/" porque bloquearía el frontend.
+app.use('/', publicTrackingRoutes) // Maneja /snip.js, /collect, /sync-visitor y /link-visitor
+app.use('/api/tracking', publicTrackingRoutes)
+app.use('/api/tracking', trackingRoutes)
 
 // Servir frontend en producción
 if (process.env.NODE_ENV === 'production') {
@@ -123,8 +151,8 @@ app.use((err, req, res, next) => {
   })
 })
 
-// Iniciar servidor
-app.listen(PORT, async () => {
+// Iniciar servidor. Render requiere escuchar en 0.0.0.0 y el puerto de PORT.
+app.listen(PORT, '0.0.0.0', async () => {
   logger.success(`🚀 Servidor corriendo en puerto ${PORT}`)
   logger.info(`Entorno: ${process.env.NODE_ENV || 'development'}`)
 
@@ -148,14 +176,11 @@ app.listen(PORT, async () => {
     logger.error(`No se pudo ejecutar reparación inicial de parcialidades: ${error.message}`)
   })
 
-  initializeWhatsAppWebReceiver().catch(error => {
-    logger.error(`No se pudo inicializar WhatsApp Web: ${error.message}`)
-  })
-
   // Iniciar cron jobs
   startMetaSyncCron()              // Sincroniza anuncios de Meta Ads cada hora
   startHighLevelSyncCron()         // Sincroniza contactos, citas y pagos de HighLevel cada hora (silencioso)
   startMetaVersionCron()           // Revisa versión Meta API una vez al mes
+  startScheduledChatMessagesCron() // Envía mensajes de chat cuando llegue su hora programada
 })
 
 // Manejo de errores de proceso

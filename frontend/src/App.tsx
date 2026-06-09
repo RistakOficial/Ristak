@@ -21,6 +21,7 @@ import { PhoneApp } from '@/pages/PhoneApp'
 import { PhonePayments } from '@/pages/PhonePayments'
 import { Login } from '@/pages/Login'
 import { Setup } from '@/pages/Login/Setup'
+import { LicenseBlocked } from '@/pages/Login/LicenseBlocked'
 import { ToastContainer } from '@/components/common/Toast'
 import { Modal } from '@/components/common/Modal'
 import { StorageAlert } from '@/components/common/StorageAlert'
@@ -92,6 +93,7 @@ const AppWithNotifications: React.FC = () => {
       <BrowserRouter>
         <Routes>
           <Route path="/setup" element={<SetupRoute><Setup /></SetupRoute>} />
+          <Route path="/license-blocked" element={<LicenseBlocked />} />
           <Route path="/login" element={<Login />} />
           <Route
             path="/phone/agent-chat"

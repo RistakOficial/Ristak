@@ -53,6 +53,10 @@ export const Login: React.FC = () => {
       await login(username, password)
       navigate(redirectPath, { replace: true })
     } catch (err: any) {
+      if (err.code === 'license_blocked') {
+        navigate('/license-blocked', { replace: true, state: { message: err.message } })
+        return
+      }
       setError(err.message || 'Usuario o contraseña incorrectos')
     } finally {
       setIsLoading(false)
