@@ -36,6 +36,14 @@ type AlertFilter = 'all' | 'critical' | 'warning' | 'info'
 
 const YCLOUD_REGISTER_URL = 'https://www.ycloud.com/console/#/app/dashboard/createChannel/whatsapp-business-app?redirect=/app/dashboard/account'
 const YCLOUD_CONSOLE_URL = 'https://www.ycloud.com/console/#/app/dashboard/analytics'
+const META_WHATSAPP_PAYMENT_CONFIG_URL = 'https://business.facebook.com/latest/settings/whatsapp_account'
+
+type MetaCustomValuePayload = {
+  success: boolean
+  data?: {
+    whatsappBusinessAccountId?: string | null
+  }
+}
 
 function parseJson<T>(value?: string | null): T | null {
   if (!value) return null
@@ -145,6 +153,7 @@ export const WhatsAppSettings: React.FC = () => {
   const [apiDisconnecting, setApiDisconnecting] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [selectedPhoneId, setSelectedPhoneId] = useState('')
+  const [metaBusinessAccountId, setMetaBusinessAccountId] = useState('')
   const [qrConnectingPhoneId, setQrConnectingPhoneId] = useState('')
   const [qrDisconnectingPhoneId, setQrDisconnectingPhoneId] = useState('')
   const [qrConsentPhone, setQrConsentPhone] = useState<WhatsAppApiPhoneNumber | null>(null)
@@ -164,6 +173,7 @@ export const WhatsAppSettings: React.FC = () => {
   const selectedPhone = useMemo(() => {
     return apiStatus?.phoneNumbers.find(phone => phone.id === selectedPhoneId) || apiStatus?.selectedPhone || apiStatus?.phoneNumbers[0] || null
   }, [apiStatus?.phoneNumbers, apiStatus?.selectedPhone, selectedPhoneId])
+  const ycloudAssetId = selectedPhone?.waba_id || apiStatus?.sender.wabaId || ''
 
   const qrSessionsByPhoneId = useMemo(() => {
     return new Map<string, WhatsAppQrSession>(
@@ -192,6 +202,21 @@ export const WhatsAppSettings: React.FC = () => {
     return nextStatus
   }
 
+  const paymentConfigUrl = useMemo(() => {
+    const businessId = metaBusinessAccountId.trim()
+    const assetId = ycloudAssetId.trim()
+
+    if (!businessId || !assetId) return ''
+
+    const params = new URLSearchParams({
+      business_id: businessId,
+      selected_asset_id: assetId,
+      selected_asset_type: 'whatsapp-business-account'
+    })
+
+    return `${META_WHATSAPP_PAYMENT_CONFIG_URL}?${params.toString()}`
+  }, [metaBusinessAccountId, ycloudAssetId])
+
   useEffect(() => {
     let cancelled = false
 
@@ -208,6 +233,33 @@ export const WhatsAppSettings: React.FC = () => {
     }
 
     bootstrap()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadMetaCustomValues = async () => {
+      try {
+        const response = await fetch('/api/meta/custom-values')
+        const data = await response.json() as MetaCustomValuePayload
+
+        if (!cancelled && data.success && data.data?.whatsappBusinessAccountId) {
+          setMetaBusinessAccountId(String(data.data.whatsappBusinessAccountId).trim())
+        } else if (!cancelled && !data.success) {
+          setMetaBusinessAccountId('')
+        }
+      } catch {
+        if (!cancelled) {
+          setMetaBusinessAccountId('')
+        }
+      }
+    }
+
+    loadMetaCustomValues()
 
     return () => {
       cancelled = true
@@ -562,6 +614,12 @@ export const WhatsAppSettings: React.FC = () => {
             <div className={styles.toolbarActions}>
               <span>{filteredPhones.length} numeros</span>
               <span className={styles.balancePill}><Wallet size={15} />{balance ? formatCurrency(balance.amount, balance.currency) : 'Saldo pendiente'}</span>
+              {paymentConfigUrl && (
+                <a className={styles.externalButton} href={paymentConfigUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink size={15} />
+                  Configuracion de pago
+                </a>
+              )}
               <Button variant="outline" onClick={refreshApi} loading={apiRefreshing}>
                 <RefreshCw size={16} />
                 Sincronizar
