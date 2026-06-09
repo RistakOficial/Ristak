@@ -72,6 +72,8 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   const gradientIdPrefix = useId().replace(/:/g, '')
   const [actualPointPos, setActualPointPos] = useState<{ x: number; y: number } | null>(null)
   const activePointRef = useRef<{ [key: string]: { x: number; y: number } }>({})
+  const pendingPointRef = useRef<{ x: number; y: number } | null>(null)
+  const hasPendingPointRef = useRef(false)
   const hasSecondSeries = data.some((d) => typeof d.value2 === 'number')
   const isDarkMode = document.body.classList.contains('dark')
 
@@ -80,11 +82,31 @@ export const AreaChart: React.FC<AreaChartProps> = ({
     if (!isHovering) {
       setActualPointPos(null)
       activePointRef.current = {}
+      pendingPointRef.current = null
+      hasPendingPointRef.current = false
     } else {
       // Limpiar los puntos del índice anterior
       activePointRef.current = {}
+      pendingPointRef.current = null
+      hasPendingPointRef.current = false
     }
   }, [isHovering, activeIndex])
+
+  useEffect(() => {
+    if (!hasPendingPointRef.current) return
+
+    const pendingPoint = pendingPointRef.current
+    hasPendingPointRef.current = false
+
+    if (!pendingPoint) return
+
+    setActualPointPos((prev) => {
+      if (prev && prev.x === pendingPoint.x && prev.y === pendingPoint.y) {
+        return prev
+      }
+      return pendingPoint
+    })
+  })
 
   const series = useMemo<SeriesDefinition[]>(() => {
     const definitions: SeriesDefinition[] = [
@@ -245,16 +267,14 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                             if (!existing || existing.x !== pointX || existing.y !== pointY) {
                               activePointRef.current[pointKey] = { x: pointX, y: pointY }
 
-                              // Usar requestAnimationFrame para evitar setState durante render
-                              requestAnimationFrame(() => {
-                                const allPoints = Object.values(activePointRef.current)
-                                if (allPoints.length > 0) {
-                                  const highestPoint = allPoints.reduce((highest, current) =>
-                                    current.y < highest.y ? current : highest
-                                  )
-                                  setActualPointPos(highestPoint)
-                                }
-                              })
+                              const allPoints = Object.values(activePointRef.current)
+                              if (allPoints.length > 0) {
+                                const highestPoint = allPoints.reduce((highest, current) =>
+                                  current.y < highest.y ? current : highest
+                                )
+                                pendingPointRef.current = highestPoint
+                                hasPendingPointRef.current = true
+                              }
                             }
                           }
                         }
