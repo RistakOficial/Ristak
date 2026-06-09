@@ -10,6 +10,7 @@ import {
 import {
   isLicenseEnforced,
   verifyLicenseWithServer,
+  verifyOwnerCredentialsWithServer,
   verifySetupToken,
   consumeSetupToken
 } from '../services/licenseService.js'
@@ -120,7 +121,23 @@ export async function login(req, res) {
     }
 
     // Verificar password
-    const isValidPassword = verifyPassword(password, user.password_hash)
+    let isValidPassword = verifyPassword(password, user.password_hash)
+
+    // En instalaciones gestionadas, el portal central es la fuente de verdad de
+    // la contraseña del dueño: si el admin le asignó una nueva allá, se acepta
+    // aquí y se actualiza la copia local (nunca viaja nada en claro al guardar).
+    if (!isValidPassword && isLicenseEnforced()) {
+      const sync = await verifyOwnerCredentialsWithServer(user.email || user.username, password)
+
+      if (sync.valid && sync.password_hash) {
+        await db.run(
+          'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [sync.password_hash, user.id]
+        )
+        isValidPassword = true
+        logger.info(`🔄 Contraseña del dueño sincronizada desde el portal central para "${username}"`)
+      }
+    }
 
     if (!isValidPassword) {
       logger.warn(`⚠️  Intento de login fallido: contraseña incorrecta para usuario "${username}"`)
