@@ -2201,6 +2201,22 @@ export const getMetaCustomValues = async (req, res) => {
       const metaCustomValues = await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
       const refreshedLocalConfig = await getMetaConfig().catch(() => null);
 
+      // PRIORIDAD: si ya existe configuración de Meta en Ristak, usarla siempre.
+      // Los custom values de HighLevel solo se usan cuando no hay config local.
+      if (hasUsableLocalMetaConfig(refreshedLocalConfig)) {
+        const whatsappBusinessAccountId = await db.get(
+          'SELECT config_value FROM app_config WHERE config_key = ?',
+          ['meta_whatsapp_business_account_id']
+        );
+
+        return res.json({
+          success: true,
+          data: toMaskedMetaCredentials(refreshedLocalConfig, whatsappBusinessAccountId?.config_value),
+          source: 'local',
+          reconciliation
+        });
+      }
+
       if (metaCustomValues && (
         metaCustomValues.adAccountId ||
         metaCustomValues.accessToken ||
@@ -2214,20 +2230,6 @@ export const getMetaCustomValues = async (req, res) => {
           success: true,
           data: metaCustomValues,
           source: 'highlevel',
-          reconciliation
-        });
-      }
-
-      if (hasUsableLocalMetaConfig(refreshedLocalConfig)) {
-        const whatsappBusinessAccountId = await db.get(
-          'SELECT config_value FROM app_config WHERE config_key = ?',
-          ['meta_whatsapp_business_account_id']
-        );
-
-        return res.json({
-          success: true,
-          data: toMaskedMetaCredentials(refreshedLocalConfig, whatsappBusinessAccountId?.config_value),
-          source: 'local',
           reconciliation
         });
       }

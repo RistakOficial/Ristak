@@ -1669,3 +1669,29 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
     res.status(200).json({ success: true, message: 'Webhook recibido' });
   }
 };
+
+/**
+ * Webhook de conversaciones (chats) desde HighLevel.
+ * Se conecta con un workflow de GHL ("Cliente respondió" → Custom Webhook
+ * usando el custom value webhook_conversations) para que los mensajes
+ * entrantes aparezcan en el chat de la app sin esperar al sync periódico.
+ */
+export const handleConversationWebhook = async (req, res) => {
+  try {
+    const data = req.body || {};
+    logger.info(`📥 Webhook de conversación recibido: contacto ${data.contact_id || data.contactId || 'sin ID'}`);
+
+    const { processHighLevelConversationWebhook } = await import('../services/highlevelConversationsSyncService.js');
+    const result = await processHighLevelConversationWebhook(data);
+
+    if (result.skipped) {
+      logger.info(`Webhook de conversación omitido: ${result.reason}`);
+    }
+
+    res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    logger.error(`Error en handleConversationWebhook: ${error.message}`);
+    // Siempre devolver 200 para que HighLevel no reintente
+    res.status(200).json({ success: true, message: 'Webhook recibido' });
+  }
+};

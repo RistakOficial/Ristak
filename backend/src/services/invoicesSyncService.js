@@ -10,6 +10,7 @@
 
 import { db } from '../config/database.js'
 import { getGHLClient } from './ghlClient.js'
+import { ensureContactExists } from './highlevelSyncService.js'
 import { logger } from '../utils/logger.js'
 import { getInvoicePaymentMode, nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { markPaymentFlowInvoicePaid } from './paymentFlowService.js'
@@ -489,6 +490,24 @@ export async function syncLocalPaymentsToHighLevel({ paymentId, limit = 100 } = 
   }
 }
 
+/**
+ * Verifica que el contacto del invoice exista localmente.
+ * Si no existe lo descarga desde HighLevel y lo crea.
+ * @returns {Promise<boolean>} - true si el contacto existe o se creó
+ */
+async function ensureLocalContactForInvoice(ghlClient, contactId) {
+  if (!contactId) return false
+
+  const exists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId])
+  if (exists) return true
+
+  const usePostgres = Boolean(process.env.DATABASE_URL)
+  await ensureContactExists(contactId, ghlClient.apiToken, usePostgres, ghlClient.locationId)
+
+  const created = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId])
+  return Boolean(created)
+}
+
 async function findExistingPaymentForInvoice({ invoiceId, contactId, invoiceNumber, importedLocalPaymentId = null }) {
   if (importedLocalPaymentId) {
     const existingImportedLocal = await db.get(
@@ -688,14 +707,12 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
           logger.info(`Invoice actualizado: ${ghlInvoiceId} (${savedInvoiceStatus})`)
         } else {
           // Verificar si el contacto existe antes de crear el invoice
+          // (si no existe localmente, se descarga desde HighLevel)
           if (invoiceData.contact_id) {
-            const contactExists = await db.get(
-              'SELECT id FROM contacts WHERE id = ?',
-              [invoiceData.contact_id]
-            )
+            const contactAvailable = await ensureLocalContactForInvoice(ghlClient, invoiceData.contact_id)
 
-            if (!contactExists) {
-              logger.warn(`⚠️ Ignorando invoice ${ghlInvoiceId}: contacto ${invoiceData.contact_id} no existe`)
+            if (!contactAvailable) {
+              logger.warn(`⚠️ Ignorando invoice ${ghlInvoiceId}: contacto ${invoiceData.contact_id} no existe en HighLevel ni localmente`)
               skipped++
               continue
             }
@@ -840,8 +857,8 @@ export async function syncAllInvoices({ contactId } = {}) {
           continue
         }
 
-        // Verificar si ya existe en BD local
-        const contactId = invoice.contactId
+        // El listado de invoices de GHL trae el contacto en contactDetails.id
+        const contactId = invoice.contactDetails?.id || invoice.contactId
 
         const invoiceNumber = invoice.invoiceNumber || null
         const importedLocalPaymentId = extractImportedLocalPaymentId(invoice)
@@ -913,14 +930,12 @@ export async function syncAllInvoices({ contactId } = {}) {
           )
           updated++
         } else {
-          // Verificar si el contacto existe
+          // Verificar si el contacto existe (si no, descargarlo desde HighLevel)
           if (invoiceData.contact_id) {
-            const contactExists = await db.get(
-              'SELECT id FROM contacts WHERE id = ?',
-              [invoiceData.contact_id]
-            )
+            const contactAvailable = await ensureLocalContactForInvoice(ghlClient, invoiceData.contact_id)
 
-            if (!contactExists) {
+            if (!contactAvailable) {
+              logger.warn(`⚠️ Ignorando invoice ${ghlInvoiceId}: contacto ${invoiceData.contact_id} no existe en HighLevel ni localmente`)
               skipped++
               continue
             }

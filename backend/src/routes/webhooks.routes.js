@@ -11,6 +11,7 @@ import {
   handlePaymentPlanWebhook,
   handleWhatsAppAttributionWebhook,
   handleInvoiceWebhook,
+  handleConversationWebhook,
   handleMetaSocialWebhook,
   verifyMetaSocialWebhook
 } from '../controllers/webhooksController.js'
@@ -25,6 +26,7 @@ router.post('/refund', handleRefundWebhook)
 router.post('/appointment', handleAppointmentWebhook)
 router.post('/appointment/showed', handleAppointmentShowedWebhook)
 router.post('/whatsapp/attribution', handleWhatsAppAttributionWebhook)
+router.post('/conversation', handleConversationWebhook)
 router.post('/whatsapp-api/ycloud', handleYCloudWhatsAppApiWebhook)
 router.post('/invoice', handleInvoiceWebhook)
 router.get('/meta', verifyMetaSocialWebhook)

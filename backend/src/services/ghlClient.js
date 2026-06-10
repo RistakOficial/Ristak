@@ -229,6 +229,7 @@ class GHLClient {
       channel,
       startDate,
       endDate,
+      cursor,
       limit = 100,
       sortBy = 'createdAt',
       sortOrder = 'desc'
@@ -246,7 +247,8 @@ class GHLClient {
         ...(conversationId && { conversationId }),
         ...(channel && { channel }),
         ...(startDate && { startDate }),
-        ...(endDate && { endDate })
+        ...(endDate && { endDate }),
+        ...(cursor && { cursor })
       }
     })
   }

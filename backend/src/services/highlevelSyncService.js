@@ -53,6 +53,7 @@ let syncProgress = {
   appointments: { saved: 0, total: 0, status: 'pending', message: '' },
   products: { saved: 0, total: 0, status: 'pending', message: '' },
   payments: { saved: 0, total: 0, status: 'pending', message: '' },
+  conversations: { saved: 0, total: 0, status: 'pending', message: '' },
   metaAds: { synced: false, count: 0, saved: 0, total: 0, status: 'pending', message: '' }
 }
 
@@ -76,6 +77,7 @@ function updateGlobalProgress() {
     (syncProgress.appointments.total || 0) +
     (syncProgress.products?.total || 0) +
     (syncProgress.payments.total || 0) +
+    (syncProgress.conversations?.total || 0) +
     (syncProgress.metaAds?.total || 0)
 
   const currentGlobal =
@@ -84,6 +86,7 @@ function updateGlobalProgress() {
     (syncProgress.appointments.saved || 0) +
     (syncProgress.products?.saved || 0) +
     (syncProgress.payments.saved || 0) +
+    (syncProgress.conversations?.saved || 0) +
     (syncProgress.metaAds?.saved || 0)
 
   syncProgress.total = totalGlobal
@@ -112,6 +115,11 @@ function updateProducts(saved, total, status, message) {
 
 function updatePayments(saved, total, status, message) {
   syncProgress.payments = { saved, total, status, message }
+  updateGlobalProgress()
+}
+
+function updateConversations(saved, total, status, message) {
+  syncProgress.conversations = { saved, total, status, message }
   updateGlobalProgress()
 }
 
@@ -497,19 +505,30 @@ function normalizeAppointmentRecord(raw = {}, locationIdFallback) {
 async function fetchCalendarEventsByCalendar({
   locationId,
   apiToken,
-  headers,
   startTime,
   endTime,
   limit,
   onProgress,
   initialTotal = 0
 }) {
+  // Versiones correctas según la API de calendarios de HighLevel:
+  // listar calendarios usa 2023-02-21 y /calendars/events usa 2021-04-15
+  const calendarListHeaders = {
+    'Authorization': `Bearer ${apiToken}`,
+    'Version': '2023-02-21',
+    'Accept': 'application/json'
+  }
+  const calendarEventsHeaders = {
+    'Authorization': `Bearer ${apiToken}`,
+    'Version': '2021-04-15',
+    'Accept': 'application/json'
+  }
   const calendarLimit = 200
   const calendarParams = { locationId, limit: calendarLimit }
 
   const calendars = await collectPaginatedData({
     initialUrl: buildHighLevelUrl('/calendars', calendarParams),
-    headers,
+    headers: calendarListHeaders,
     limit: calendarLimit,
     label: 'calendarios',
     extractItems: data => Array.isArray(data.calendars) ? data.calendars : [],
@@ -549,7 +568,7 @@ async function fetchCalendarEventsByCalendar({
 
     const calendarEvents = await collectPaginatedData({
       initialUrl: buildHighLevelUrl('/calendars/events', baseParams),
-      headers,
+      headers: calendarEventsHeaders,
       limit,
       label: `citas del calendario ${calendar.name || calendar.id}`,
       extractItems: data => Array.isArray(data.events) ? data.events : [],
@@ -567,7 +586,7 @@ async function fetchCalendarEventsByCalendar({
   return { events, total }
 }
 
-async function ensureContactExists(contactId, apiToken, usePostgres, locationId) {
+export async function ensureContactExists(contactId, apiToken, usePostgres, locationId) {
   if (!contactId) {
     return false
   }
@@ -1078,35 +1097,23 @@ async function syncWhatsAppContactsToHighLevel(locationId, apiToken) {
 async function syncHighLevelAppointments(locationId, apiToken) {
   logger.info('Sincronizando citas desde HighLevel...')
 
-  const headers = {
-    'Authorization': `Bearer ${apiToken}`,
-    'Version': HIGHLEVEL_API_VERSION,
-    'Accept': 'application/json'
-  }
-
   const limit = 200
   let allEventsRaw = []
 
   const now = new Date()
-  const startTime = new Date(now.getFullYear() - 5, 0, 1).toISOString() // Hace 5 años, enero 1
-  const endTime = new Date(now.getFullYear() + 5, 11, 31).toISOString() // Dentro de 5 años, diciembre 31
+  // El endpoint /calendars/events requiere startTime/endTime en milisegundos epoch
+  const startTime = new Date(now.getFullYear() - 5, 0, 1).getTime() // Hace 5 años, enero 1
+  const endTime = new Date(now.getFullYear() + 5, 11, 31).getTime() // Dentro de 5 años, diciembre 31
 
-  logger.info(`Sincronizando citas desde ${startTime.split('T')[0]} hasta ${endTime.split('T')[0]}`)
+  logger.info(`Sincronizando citas desde ${new Date(startTime).toISOString().split('T')[0]} hasta ${new Date(endTime).toISOString().split('T')[0]}`)
 
   updateAppointments(0, 0, 'running', 'Obteniendo citas de HighLevel...')
 
   const progressUpdater = total => updateAppointments(0, total, 'running', `Obteniendo citas... ${total} encontradas`)
 
-  // El endpoint /calendars/calendar-events no existe en HighLevel API v2
-  // Usar directamente el método correcto: obtener calendarios primero
-  // y luego las citas de cada calendario usando /calendars/events con calendarId
-
-  logger.info('Usando método correcto: obteniendo calendarios y luego sus eventos...')
-
   const fetchResult = await fetchCalendarEventsByCalendar({
     locationId,
     apiToken,
-    headers,
     startTime,
     endTime,
     limit,
@@ -1271,7 +1278,8 @@ async function setupHighLevelWebhooks(locationId, apiToken, baseUrl) {
     'webhook_refunds': `${baseUrl}/webhook/refund`,
     'webhook_appointments': `${baseUrl}/webhook/appointment`,
     'webhook_appointment_showed': `${baseUrl}/webhook/appointment/showed`,
-    'webhook_whatsapp_attribution': `${baseUrl}/webhook/whatsapp/attribution`
+    'webhook_whatsapp_attribution': `${baseUrl}/webhook/whatsapp/attribution`,
+    'webhook_conversations': `${baseUrl}/webhook/conversation`
   }
 
   // Primero obtener todos los custom values existentes
@@ -1538,6 +1546,16 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
     }
 
     if (highLevelComplete && !localComplete) {
+      // PRIORIDAD LOCAL: si Ristak ya tiene CUALQUIER credencial de Meta
+      // configurada, no se sobrescribe con la de HighLevel. Solo se adopta
+      // la configuración de HighLevel cuando no existe ninguna config local
+      // previa (o cuando el usuario lo pide explícitamente con prefer=highlevel).
+      if (prefer !== 'highlevel' && hasAnyMetaCredential(localCredentials)) {
+        result.action = 'kept_local'
+        result.message = 'Ya existe configuración local de Meta en Ristak; no se reemplazó con la de HighLevel'
+        return result
+      }
+
       const credentialsToSave = mergeMetaCredentials(highLevelCredentials)
       await saveMetaConfig(
         credentialsToSave.adAccountId,
@@ -1698,6 +1716,7 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
       appointments: { saved: 0, total: 0, status: 'pending', message: 'Esperando...' },
       products: { saved: 0, total: 0, status: 'pending', message: 'Esperando...' },
       payments: { saved: 0, total: 0, status: 'pending', message: 'Esperando...' },
+      conversations: { saved: 0, total: 0, status: 'pending', message: 'Esperando...' },
       metaAds: { synced: false, count: 0, saved: 0, total: 0, status: 'pending', message: 'Esperando...' }
     }
 
@@ -1773,14 +1792,44 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
     try {
       appointmentsResult = await syncHighLevelAppointments(locationId, apiToken)
     } catch (error) {
-      logger.warn(`No se pudieron sincronizar citas: ${error.message}`)
+      logger.error(`No se pudieron sincronizar citas: ${error.message}`)
       logger.info('Continuando con sincronización de pagos...')
-      updateAppointments(0, 0, 'skipped', 'No hay calendarios configurados o sin permisos')
+      // Mostrar el error real para diagnosticar (token sin permisos de calendarios, etc.)
+      updateAppointments(0, 0, 'error', `Error sincronizando citas: ${error.message}`)
     }
 
-    // 4. Sincronizar pagos
+    // 4. Sincronizar pagos (si falla, continuar con el resto de módulos)
     syncProgress.step = 'Sincronizando pagos...'
-    const paymentsResult = await syncHighLevelPayments(locationId, apiToken)
+    let paymentsResult = { saved: 0, total: 0, contactsCreated: 0 }
+    try {
+      paymentsResult = await syncHighLevelPayments(locationId, apiToken)
+    } catch (error) {
+      logger.error(`No se pudieron sincronizar pagos: ${error.message}`)
+      logger.info('Continuando con sincronización de conversaciones...')
+    }
+
+    // 4.25. Sincronizar historial de conversaciones (chats) para la app
+    syncProgress.step = 'Sincronizando conversaciones...'
+    let conversationsResult = { total: 0, saved: 0, skipped: 0, contactsCreated: 0 }
+    try {
+      updateConversations(0, 0, 'running', 'Importando historial de chats de HighLevel...')
+      const { syncHighLevelConversationHistory } = await import('./highlevelConversationsSyncService.js')
+      conversationsResult = await syncHighLevelConversationHistory({
+        locationId,
+        apiToken,
+        notifyNewInbound: false,
+        onProgress: (saved, total, message) => updateConversations(saved, total, 'running', message)
+      })
+      updateConversations(
+        conversationsResult.saved,
+        Math.max(conversationsResult.total, conversationsResult.saved),
+        'completed',
+        `${conversationsResult.saved} mensajes de chat sincronizados`
+      )
+    } catch (error) {
+      logger.error(`No se pudieron sincronizar conversaciones: ${error.message}`)
+      updateConversations(0, 0, 'error', `Error sincronizando chats: ${error.message}`)
+    }
 
     // 4.5. Actualizar estadísticas de contactos (total_paid, purchases_count, etc.)
     syncProgress.step = 'Actualizando estadísticas de contactos...'
@@ -1790,7 +1839,7 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
     // 5. Completado
     syncProgress.status = 'completed'
     syncProgress.step = 'Sincronización completada'
-    syncProgress.message = `✅ Sincronización completada: ${contactsResult.saved} contactos GHL, ${whatsappContactsResult.synced} contactos WhatsApp, ${localCalendarsResult.created + localCalendarsResult.updated} calendarios Ristak→GHL, ${syncProgress.products.saved} productos/precios, ${localAppointmentsResult.created + localAppointmentsResult.updated} citas Ristak→GHL, ${appointmentsResult.saved} citas GHL→Ristak, ${paymentsResult.saved} pagos`
+    syncProgress.message = `✅ Sincronización completada: ${contactsResult.saved} contactos GHL, ${whatsappContactsResult.synced} contactos WhatsApp, ${localCalendarsResult.created + localCalendarsResult.updated} calendarios Ristak→GHL, ${syncProgress.products.saved} productos/precios, ${localAppointmentsResult.created + localAppointmentsResult.updated} citas Ristak→GHL, ${appointmentsResult.saved} citas GHL→Ristak, ${paymentsResult.saved} pagos, ${conversationsResult.saved} mensajes de chat`
 
     logger.info('===========================================')
     logger.info('SINCRONIZACIÓN COMPLETADA EXITOSAMENTE')
@@ -1801,6 +1850,7 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
     logger.info(`Citas Ristak → GHL: ${localAppointmentsResult.created + localAppointmentsResult.updated + localAppointmentsResult.deleted}/${localAppointmentsResult.total} (${localAppointmentsResult.failed} fallidas)`)
     logger.info(`Citas: ${appointmentsResult.saved}/${appointmentsResult.total} (${appointmentsResult.contactsCreated} contactos creados)`)
     logger.info(`Pagos: ${paymentsResult.saved}/${paymentsResult.total} (${paymentsResult.contactsCreated} contactos creados)`)
+    logger.info(`Chats: ${conversationsResult.saved}/${conversationsResult.total} mensajes (${conversationsResult.contactsCreated} contactos creados)`)
     logger.info('===========================================')
 
     // PASO 5: Sincronizar anuncios de Meta (últimos 35 meses)
@@ -1884,6 +1934,7 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
       localAppointments: localAppointmentsResult,
       appointments: appointmentsResult,
       payments: paymentsResult,
+      conversations: conversationsResult,
       metaAds: metaAdsResult
     }
 

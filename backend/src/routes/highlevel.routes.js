@@ -4,6 +4,7 @@ import {
   saveConfig,
   getConfig,
   syncData,
+  syncConversations,
   getSyncProgressEndpoint,
   getIntegrationStatus,
   revealToken,
@@ -65,6 +66,7 @@ router.get('/contacts/:id', getContactById)
 
 // Conversations
 router.post('/conversations/messages', sendConversationMessage)
+router.post('/conversations/sync', syncConversations)
 
 // Users
 router.get('/users', getLocationUsers)

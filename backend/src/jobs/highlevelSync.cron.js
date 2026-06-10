@@ -4,6 +4,7 @@ import { db } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { syncHighLevelData, setSyncTriggerSource } from '../services/highlevelSyncService.js'
+import { syncHighLevelConversationHistory } from '../services/highlevelConversationsSyncService.js'
 
 async function isHighLevelConnected(config) {
   const locationId = String(config?.location_id || '').trim()
@@ -87,4 +88,35 @@ export function startHighLevelSyncCron() {
   })
 
   logger.success('✅ Cron job de HighLevel configurado (cada hora a las XX:17)')
+
+  // Sincronización incremental de conversaciones (chats) cada 10 minutos.
+  // Es ligera: solo pide a HighLevel los mensajes desde el último checkpoint,
+  // para que los mensajes entrantes aparezcan en el chat de la app
+  // aunque el workflow de webhook no esté configurado en GHL.
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      const config = await db.get(
+        'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
+      )
+
+      if (!config || !config.location_id || !config.api_token) {
+        return
+      }
+
+      const result = await syncHighLevelConversationHistory({
+        locationId: config.location_id,
+        apiToken: String(config.api_token).trim().replace(/[\r\n\t]/g, ''),
+        fullSync: false,
+        notifyNewInbound: true
+      })
+
+      if (result.saved > 0) {
+        logger.info(`💬 Chats HighLevel actualizados: ${result.saved} mensajes nuevos/actualizados`)
+      }
+    } catch (error) {
+      logger.warn(`No se pudieron actualizar conversaciones de HighLevel: ${error.message}`)
+    }
+  })
+
+  logger.success('✅ Cron job de conversaciones HighLevel configurado (cada 10 minutos)')
 }

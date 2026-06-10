@@ -1012,6 +1012,42 @@ export const syncData = async (req, res) => {
 };
 
 /**
+ * Sincroniza solo el historial de conversaciones (chats) desde HighLevel.
+ * Útil para poblar los chats de la app sin re-sincronizar todo.
+ */
+export const syncConversations = async (req, res) => {
+  try {
+    const config = await db.get(
+      'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
+    );
+
+    if (!config || !config.location_id || !config.api_token) {
+      return res.status(400).json({
+        success: false,
+        error: 'Configuración de HighLevel no encontrada'
+      });
+    }
+
+    const fullSync = req.body?.fullSync === true || req.query?.fullSync === 'true';
+    const { syncHighLevelConversationHistory } = await import('../services/highlevelConversationsSyncService.js');
+    const result = await syncHighLevelConversationHistory({
+      locationId: config.location_id,
+      apiToken: config.api_token,
+      fullSync,
+      notifyNewInbound: false
+    });
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    logger.error(`Error en syncConversations: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: `Error al sincronizar conversaciones: ${error.message}`
+    });
+  }
+};
+
+/**
  * Obtiene el progreso actual de la sincronización
  */
 export const getSyncProgressEndpoint = async (req, res) => {
