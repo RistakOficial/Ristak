@@ -50,10 +50,21 @@ function startMockServer() {
           return
         }
 
+        if (req.url === '/api/owner-credentials/verify') {
+          const { password } = lastRequestBody || {}
+          if (password === 'clave-portal-1') {
+            res.end(JSON.stringify({ valid: true, password_hash: 'salt:hash-portal-nuevo' }))
+          } else {
+            res.statusCode = 403
+            res.end(JSON.stringify({ valid: false, reason: 'wrong_password' }))
+          }
+          return
+        }
+
         if (req.url === '/api/setup-token/verify' || req.url === '/api/setup-token/consume') {
           const { token } = lastRequestBody || {}
           if (token === 'good-token') {
-            res.end(JSON.stringify({ valid: true, email: 'dueno@clinica.com' }))
+            res.end(JSON.stringify({ valid: true, email: 'dueno@clinica.com', password_hash: 'salt:hash-portal' }))
           } else {
             res.statusCode = 403
             res.end(JSON.stringify({ valid: false, message: 'El enlace de configuración no es válido o ya expiró.' }))
@@ -208,4 +219,26 @@ test('setup token inválido falla con mensaje claro', async () => {
   const result = await licenseService.consumeSetupToken('bad-token')
   assert.equal(result.valid, false)
   assert.ok(result.message)
+})
+
+test('el setup token comparte el hash de credenciales del portal (setup automático)', async () => {
+  const verified = await licenseService.verifySetupToken('good-token')
+  assert.equal(verified.password_hash, 'salt:hash-portal')
+
+  const consumed = await licenseService.consumeSetupToken('good-token')
+  assert.equal(consumed.password_hash, 'salt:hash-portal')
+})
+
+test('verifyOwnerCredentialsWithServer sincroniza la contraseña vigente del portal', async () => {
+  const ok = await licenseService.verifyOwnerCredentialsWithServer('dueno@clinica.com', 'clave-portal-1')
+  assert.equal(ok.valid, true)
+  assert.equal(ok.password_hash, 'salt:hash-portal-nuevo')
+
+  const bad = await licenseService.verifyOwnerCredentialsWithServer('dueno@clinica.com', 'clave-vieja')
+  assert.equal(bad.valid, false)
+
+  // En modo standalone nunca consulta al servidor
+  configureStandalone()
+  const standalone = await licenseService.verifyOwnerCredentialsWithServer('dueno@clinica.com', 'clave-portal-1')
+  assert.equal(standalone.valid, false)
 })

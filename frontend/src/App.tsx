@@ -28,6 +28,7 @@ import { PhoneSettings } from '@/pages/PhoneSettings'
 import { Login } from '@/pages/Login'
 import { Setup } from '@/pages/Login/Setup'
 import { LicenseBlocked } from '@/pages/Login/LicenseBlocked'
+import { Sso } from '@/pages/Login/Sso'
 import { ToastContainer } from '@/components/common/Toast'
 import { Modal } from '@/components/common/Modal'
 import { StorageAlert } from '@/components/common/StorageAlert'
@@ -560,6 +561,7 @@ const AppWithNotifications: React.FC = () => {
         <Routes>
           <Route path="/setup" element={<SetupRoute><Setup /></SetupRoute>} />
           <Route path="/license-blocked" element={<LicenseBlocked />} />
+          <Route path="/sso" element={<Sso />} />
           <Route path="/login" element={<Login />} />
           <Route path="/phone/login" element={<Login />} />
           <Route

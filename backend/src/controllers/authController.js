@@ -10,6 +10,7 @@ import {
 import {
   isLicenseEnforced,
   verifyLicenseWithServer,
+  verifyOwnerCredentialsWithServer,
   verifySetupToken,
   consumeSetupToken
 } from '../services/licenseService.js'
@@ -120,7 +121,23 @@ export async function login(req, res) {
     }
 
     // Verificar password
-    const isValidPassword = verifyPassword(password, user.password_hash)
+    let isValidPassword = verifyPassword(password, user.password_hash)
+
+    // En instalaciones gestionadas, el portal central es la fuente de verdad de
+    // la contraseña del dueño: si el admin le asignó una nueva allá, se acepta
+    // aquí y se actualiza la copia local (nunca viaja nada en claro al guardar).
+    if (!isValidPassword && isLicenseEnforced()) {
+      const sync = await verifyOwnerCredentialsWithServer(user.email || user.username, password)
+
+      if (sync.valid && sync.password_hash) {
+        await db.run(
+          'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [sync.password_hash, user.id]
+        )
+        isValidPassword = true
+        logger.info(`🔄 Contraseña del dueño sincronizada desde el portal central para "${username}"`)
+      }
+    }
 
     if (!isValidPassword) {
       logger.warn(`⚠️  Intento de login fallido: contraseña incorrecta para usuario "${username}"`)
@@ -622,6 +639,90 @@ export async function changeUsername(req, res) {
 }
 
 /**
+ * POST /api/auth/sso
+ * Entrada directa desde el portal central: el portal genera un token de un
+ * solo uso y el usuario queda autenticado aquí sin volver a escribir su
+ * contraseña. Si la app aún no tiene usuarios, se redirige al setup con el
+ * mismo token (sin consumirlo).
+ */
+export async function ssoLogin(req, res) {
+  try {
+    const { token } = req.body
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Falta el enlace de acceso' })
+    }
+
+    if (!isLicenseEnforced()) {
+      return res.status(404).json({ success: false, message: 'No disponible' })
+    }
+
+    // Primero verificar sin consumir: si la app no tiene usuarios todavía,
+    // el mismo token sirve para el setup inicial.
+    const peeked = await verifySetupToken(token)
+
+    if (!peeked.valid || !peeked.email) {
+      return res.status(403).json({
+        success: false,
+        message: peeked.message || 'El enlace de acceso no es válido o ya fue usado. Inicia sesión con tu correo y contraseña.'
+      })
+    }
+
+    const user = await db.get(
+      'SELECT * FROM users WHERE email = ? OR username = ?',
+      [peeked.email, peeked.email]
+    )
+
+    if (!user) {
+      return res.status(409).json({ success: false, code: 'needs_setup' })
+    }
+
+    // Usuario existente: consumir el token (un solo uso) y abrir sesión
+    const consumed = await consumeSetupToken(token)
+    if (!consumed.valid) {
+      return res.status(403).json({ success: false, message: 'El enlace de acceso ya fue usado. Inicia sesión con tu correo y contraseña.' })
+    }
+
+    const license = await verifyLicenseWithServer(user.email || user.username)
+    if (!license.allowed) {
+      return res.status(403).json({
+        success: false,
+        code: 'license_blocked',
+        reason: license.reason,
+        message: license.message || 'Tu licencia de Ristak no está activa.'
+      })
+    }
+
+    await db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id])
+
+    const sessionToken = generateToken({
+      userId: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role
+    })
+
+    const [apiTokenMetadata, appId] = await Promise.all([
+      getApiTokenMetadataForUser(user.id),
+      getExternalApiAppId()
+    ])
+
+    logger.success(`✅ Acceso directo desde el portal: ${user.username}`)
+
+    res.json({
+      success: true,
+      token: sessionToken,
+      appId,
+      apiTokenMetadata,
+      user: serializeAuthUser(user)
+    })
+  } catch (error) {
+    logger.error('❌ Error en acceso directo (sso):', error)
+    res.status(500).json({ success: false, message: 'Error en el servidor' })
+  }
+}
+
+/**
  * GET /api/auth/setup
  * Verifica si ya existen usuarios. Si no, permite crear el primer usuario.
  */
@@ -694,6 +795,7 @@ export async function setup(req, res) {
     const { password, token } = req.body
     let { username } = req.body
     let ownerEmail = ''
+    let ownerPasswordHash = null
 
     // En instalaciones gestionadas, el setup requiere el token de un solo uso
     // generado por el portal central. El email del dueño viene del servidor central.
@@ -720,10 +822,25 @@ export async function setup(req, res) {
       if (!username) {
         username = ownerEmail
       }
+
+      // Modo automático: el portal central comparte el hash de la contraseña del
+      // cliente (mismo formato PBKDF2), así el dueño entra con las MISMAS
+      // credenciales que usó en el instalador, sin crear otra contraseña.
+      if (!password && tokenResult.password_hash) {
+        ownerPasswordHash = tokenResult.password_hash
+      }
+
+      if (!password && !ownerPasswordHash) {
+        return res.status(400).json({
+          success: false,
+          code: 'password_required',
+          message: 'Crea una contraseña para tu cuenta.'
+        })
+      }
     }
 
     // Validación de entrada
-    if (!username || !password) {
+    if (!username || (!password && !ownerPasswordHash)) {
       return res.status(400).json({
         success: false,
         message: 'Usuario y contraseña son requeridos'
@@ -737,7 +854,7 @@ export async function setup(req, res) {
       })
     }
 
-    if (password.length < 6) {
+    if (!ownerPasswordHash && password.length < 6) {
       return res.status(400).json({
         success: false,
         message: 'La contraseña debe tener al menos 6 caracteres'
@@ -777,9 +894,10 @@ export async function setup(req, res) {
       })
     }
 
-    // Crear el primer usuario
+    // Crear el primer usuario. En modo automático se reutiliza el hash del
+    // portal central (mismas credenciales); si no, se hashea la contraseña nueva.
     const { hashPassword, generateToken } = await import('../utils/auth.js')
-    const passwordHash = hashPassword(password)
+    const passwordHash = ownerPasswordHash || hashPassword(password)
 
     const result = await db.run(
       'INSERT INTO users (username, email, password_hash, full_name, role, is_active) VALUES (?, ?, ?, ?, ?, ?)',

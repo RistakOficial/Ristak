@@ -43,6 +43,10 @@ export const Setup: React.FC = () => {
     message: ''
   })
 
+  // En instalaciones gestionadas, primero se intenta el setup automático:
+  // el portal central comparte las credenciales y el dueño entra directo.
+  const [autoSetup, setAutoSetup] = useState<'pending' | 'running' | 'manual'>('pending')
+
   // Si la app fue instalada por el portal central, el setup requiere el enlace
   // con token de un solo uso y el email del dueño viene precargado.
   useEffect(() => {
@@ -96,6 +100,36 @@ export const Setup: React.FC = () => {
     checkToken()
   }, [setupToken])
 
+  const tokenModeReady = !tokenState.loading && tokenState.requiresToken && tokenState.valid
+
+  useEffect(() => {
+    if (!tokenModeReady || autoSetup !== 'pending' || !needsSetup) return
+
+    let cancelled = false
+    setAutoSetup('running')
+
+    const runAutoSetup = async () => {
+      try {
+        await setupAccount(tokenState.email, '', setupToken)
+        if (!cancelled) navigate(redirectPath, { replace: true })
+      } catch (err: any) {
+        if (cancelled) return
+        if (err.code === 'license_blocked') {
+          navigate('/license-blocked', { replace: true, state: { message: err.message } })
+          return
+        }
+        // El portal no compartió credenciales: pedir que cree su contraseña aquí.
+        setAutoSetup('manual')
+        if (err.code !== 'password_required') {
+          setError(err.message || 'No se pudo preparar tu cuenta automáticamente. Crea tu contraseña para continuar.')
+        }
+      }
+    }
+
+    runAutoSetup()
+    return () => { cancelled = true }
+  }, [tokenModeReady, autoSetup, needsSetup])
+
   // Si el setup ya terminó, mandar a la pantalla correcta sin pedir los datos otra vez.
   if (!needsSetup) {
     return isAuthenticated
@@ -148,13 +182,13 @@ export const Setup: React.FC = () => {
     }
   }
 
-  if (tokenState.loading) {
+  if (tokenState.loading || (tokenModeReady && autoSetup !== 'manual')) {
     return (
       <div className={styles.container}>
         <div className={styles.loginBox}>
           <div className={styles.header}>
             <h1 className={styles.title}>Ristak</h1>
-            <p className={styles.subtitle}>Preparando tu configuración...</p>
+            <p className={styles.subtitle}>Preparando tu cuenta... Esto toma unos segundos.</p>
           </div>
         </div>
       </div>

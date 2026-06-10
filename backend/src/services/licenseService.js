@@ -200,6 +200,38 @@ export async function hasFeature(featureKey) {
 }
 
 /**
+ * Verifica las credenciales del dueño contra el portal central. El portal es la
+ * fuente de verdad: si el admin asignó una nueva contraseña allá, la app la
+ * acepta y devuelve el hash vigente para actualizar la copia local.
+ */
+export async function verifyOwnerCredentialsWithServer(email, password) {
+  const config = getConfig()
+
+  if (!isLicenseEnforced() || !email || !password) {
+    return { valid: false }
+  }
+
+  try {
+    const response = await fetch(`${config.licenseServerUrl}/api/owner-credentials/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: config.clientId,
+        license_key: config.licenseKey,
+        installation_id: config.installationId,
+        email,
+        password
+      })
+    })
+    const data = await response.json()
+    return data || { valid: false }
+  } catch (error) {
+    logger.error(`No se pudo verificar credenciales con el servidor central: ${error.message}`)
+    return { valid: false }
+  }
+}
+
+/**
  * Valida un setup token contra el servidor central sin consumirlo.
  */
 export async function verifySetupToken(token) {
