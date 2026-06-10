@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, DateRangePicker, Table, Icon, ContactDetailsModal, VisitorDetailsModal, PageContainer, ViewSelector, AreaChart, Loading, TabList } from '@/components/common'
+import { KpiCard, Card, DateRangePicker, Table, Icon, ContactDetailsModal, VisitorDetailsModal, PageContainer, PageHeader, ViewSelector, AreaChart, Loading, TabList } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
   AlertCircle,
@@ -839,20 +839,20 @@ export const Campaigns: React.FC = () => {
     }
   }, [fetchCampaigns])
 
-  // Poll sync status periodically
+  // Poll del estado de sincronización: rápido solo mientras hay una sync
+  // corriendo; de lo contrario un respaldo lento para detectar syncs nuevas.
+  const syncRunning = Boolean(syncStatus?.running)
   useEffect(() => {
-    // Initial check
     checkSyncStatus()
 
-    // Poll every 2 seconds
     const intervalId = setInterval(() => {
       checkSyncStatus()
-    }, 2000)
+    }, syncRunning ? 2000 : 15000)
 
     return () => {
       clearInterval(intervalId)
     }
-  }, [checkSyncStatus])
+  }, [checkSyncStatus, syncRunning])
 
   const handleOpenContactsModal = useCallback(async (item: any, type: 'interesados' | 'sales' | 'appointments' | 'attendances') => {
     const typeLabel = type === 'interesados'
@@ -2239,50 +2239,51 @@ export const Campaigns: React.FC = () => {
   return (
     <PageContainer>
       <div className={styles.container}>
-        <div className={styles.pageHeader}>
-          <div>
-            <h1 className={styles.pageTitle}>Publicidad</h1>
-          </div>
-          <div className={styles.datePickerWrapper}>
-            <DateRangePicker
-              startDate={formatDateToISO(dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start))}
-              endDate={formatDateToISO(dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end))}
-              onChange={(start, end) => setDateRange({
-                start: parseLocalDateString(start),
-                end: parseLocalDateString(end),
-                preset: 'custom' as const
-              })}
-            />
+        <PageHeader
+          title="Publicidad"
+          subtitle="Rendimiento de tus campañas, conjuntos y anuncios de Meta."
+          actions={(
+            <>
+              <DateRangePicker
+                startDate={formatDateToISO(dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start))}
+                endDate={formatDateToISO(dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end))}
+                onChange={(start, end) => setDateRange({
+                  start: parseLocalDateString(start),
+                  end: parseLocalDateString(end),
+                  preset: 'custom' as const
+                })}
+              />
 
-            <button
-              type="button"
-              className={styles.viewToggleButton}
-              onClick={() => {
-                if (viewMode === 'campaigns') {
-                  navigateCampaignsView({ viewMode: 'winners', winnersCategory: 'ads' })
-                  return
-                }
-
-                navigateCampaignsView({ viewMode: 'campaigns' })
-              }}
-              aria-pressed={viewMode === 'winners'}
-            >
-              <Trophy size={16} />
-              {viewMode === 'campaigns' ? 'Ver Ganadores' : 'Ver Campañas'}
-            </button>
-
-            {/* Timezone Discrepancy Warning - Minimized version */}
-            {!timezoneInfo.isLoading && timezoneInfo.hasDiscrepancy && timezoneWarningDismissed && (
               <button
-                className={styles.timezoneWarningMinimized}
-                onClick={() => setTimezoneWarningDismissed(false)}
-                title="Click para ver detalles"
+                type="button"
+                className={styles.viewToggleButton}
+                onClick={() => {
+                  if (viewMode === 'campaigns') {
+                    navigateCampaignsView({ viewMode: 'winners', winnersCategory: 'ads' })
+                    return
+                  }
+
+                  navigateCampaignsView({ viewMode: 'campaigns' })
+                }}
+                aria-pressed={viewMode === 'winners'}
               >
-                ⚠️ Zona horaria diferente
+                <Trophy size={16} />
+                {viewMode === 'campaigns' ? 'Ver Ganadores' : 'Ver Campañas'}
               </button>
-            )}
-          </div>
-        </div>
+
+              {/* Timezone Discrepancy Warning - Minimized version */}
+              {!timezoneInfo.isLoading && timezoneInfo.hasDiscrepancy && timezoneWarningDismissed && (
+                <button
+                  className={styles.timezoneWarningMinimized}
+                  onClick={() => setTimezoneWarningDismissed(false)}
+                  title="Click para ver detalles"
+                >
+                  ⚠️ Zona horaria diferente
+                </button>
+              )}
+            </>
+          )}
+        />
 
         {/* Timezone Discrepancy Warning - Full version */}
         {!timezoneInfo.isLoading && timezoneInfo.hasDiscrepancy && !timezoneWarningDismissed && (

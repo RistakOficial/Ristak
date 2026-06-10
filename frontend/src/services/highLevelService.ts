@@ -1,5 +1,9 @@
 // Servicio de GoHighLevel para manejar configuración
 
+// Evento que avisa al AppShell que se inició una sincronización manual,
+// para mostrar la barra de progreso sin sondear continuamente el backend.
+export const HIGHLEVEL_SYNC_STARTED_EVENT = 'highlevel-sync-started'
+
 interface HighLevelConfig {
   configured: boolean
   locationId?: string
@@ -271,7 +275,11 @@ class HighLevelService {
           'Content-Type': 'application/json'
         }
       })
-      return await response.json()
+      const result = await response.json()
+      if (result?.success) {
+        window.dispatchEvent(new CustomEvent(HIGHLEVEL_SYNC_STARTED_EVENT))
+      }
+      return result
     } catch (error) {
       // TODO: Implement proper logging service
       throw error

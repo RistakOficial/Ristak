@@ -8,6 +8,7 @@ import { AIAgentPanel } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { useAppConfig, useDomainFeatureSync } from '@/hooks'
 import { requestAIAgentClose } from '@/utils/aiAgentEvents'
+import { HIGHLEVEL_SYNC_STARTED_EVENT } from '@/services/highLevelService'
 import styles from './AppShell.module.css'
 
 const AI_AGENT_FLOATING_OPEN_KEY = 'ristak.aiAgentFloating.open'
@@ -70,32 +71,41 @@ export const AppShell: React.FC = () => {
   // Asegurar que las configuraciones sensibles al dominio estén sincronizadas
   useDomainFeatureSync()
 
-  // Detectar cuando el panel de progreso está activo
+  // Detectar cuando el panel de progreso está activo. El caso normal lo cubre
+  // el evento que dispara highLevelService.syncAllData al iniciar una sync
+  // manual; el sondeo queda solo como respaldo lento (p. ej. sync iniciada en
+  // otra pestaña) para no golpear el backend cada 2 segundos.
   useEffect(() => {
+    let cancelled = false
+
     const checkSyncProgress = async () => {
       try {
         const response = await fetch('/api/highlevel/sync/progress')
         const data = await response.json()
+        if (cancelled) return
         // Solo mostrar si está sincronizando Y el origen es 'manual' (no cron)
         const isRunning = data.progress?.status === 'running' || data.progress?.status === 'syncing'
         const isManualTrigger = data.progress?.triggerSource === 'manual'
 
         if (isRunning && isManualTrigger) {
           setSyncProgressVisible(true)
-        } else {
-          setSyncProgressVisible(false)
         }
       } catch (error) {
-        // Silently handle error
-        setSyncProgressVisible(false)
+        // Silencioso: la barra simplemente no se muestra
       }
     }
 
-    // Check initially and every 2 seconds
-    checkSyncProgress()
-    const interval = setInterval(checkSyncProgress, 2000)
+    const handleSyncStarted = () => setSyncProgressVisible(true)
 
-    return () => clearInterval(interval)
+    checkSyncProgress()
+    const interval = setInterval(checkSyncProgress, 30000)
+    window.addEventListener(HIGHLEVEL_SYNC_STARTED_EVENT, handleSyncStarted)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+      window.removeEventListener(HIGHLEVEL_SYNC_STARTED_EVENT, handleSyncStarted)
+    }
   }, [])
 
   useEffect(() => {

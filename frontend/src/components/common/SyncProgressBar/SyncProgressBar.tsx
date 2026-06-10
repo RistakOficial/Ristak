@@ -174,7 +174,7 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
       }
     }
 
-    interval = setInterval(fetchProgress, 600)
+    interval = setInterval(fetchProgress, 1500)
     fetchProgress()
 
     return () => {
