@@ -75,7 +75,7 @@ const tokenSetupGuideSteps = [
   },
   {
     title: 'Crea la app en Meta Developers',
-    body: 'Cuando Meta te mande a Developers, elige la opción de Meta API para anuncios, llena el formulario básico y deja la app asociada al mismo portafolio comercial.'
+    body: 'Cuando Meta te mande a Developers, elige la opción de Marketing API. Además, activa los productos de mensajes: Messenger, Instagram y WhatsApp. Llena el formulario básico y deja la app asociada al mismo portafolio comercial.'
   },
   {
     title: 'Crea el usuario del sistema',
