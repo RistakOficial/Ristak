@@ -9,6 +9,7 @@ import {
   checkSetup,
   setup,
   setupInfo,
+  ssoLogin,
   localDevSession,
   getApiToken,
   rotateApiToken,
@@ -26,6 +27,9 @@ router.post('/setup', setup)
 
 // GET /api/auth/setup-info - Validar setup token del instalador y precargar email del dueño
 router.get('/setup-info', setupInfo)
+
+// POST /api/auth/sso - Entrada directa desde el portal central (token de un solo uso)
+router.post('/sso', ssoLogin)
 
 // POST /api/auth/login - Autenticar usuario
 router.post('/login', login)
