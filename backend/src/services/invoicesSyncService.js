@@ -13,6 +13,7 @@ import { getGHLClient } from './ghlClient.js'
 import { ensureContactExists } from './highlevelSyncService.js'
 import { logger } from '../utils/logger.js'
 import { getInvoicePaymentMode, nonTestPaymentCondition } from '../utils/paymentMode.js'
+import { sanitizeContactName } from '../utils/phoneUtils.js'
 import { markPaymentFlowInvoicePaid } from './paymentFlowService.js'
 import {
   finalizePreparedPhoneUpsert,
@@ -248,17 +249,20 @@ async function upsertHighLevelContactLocallyForPayment({ localContact, highLevel
   const targetId = highLevelContact.id || highLevelContact._id
   if (!targetId) throw new Error('HighLevel no devolvió id de contacto')
 
-  const fullName = getContactName({
-    contact_name: highLevelContact.name || highLevelContact.contactName || localContact.contact_name,
-    first_name: highLevelContact.firstName || localContact.first_name,
-    last_name: highLevelContact.lastName || localContact.last_name,
-    email: highLevelContact.email || localContact.contact_email,
-    phone: highLevelContact.phone || localContact.contact_phone
-  })
-  const firstName = cleanString(highLevelContact.firstName || localContact.first_name || fullName.split(' ')[0])
-  const lastName = cleanString(highLevelContact.lastName || localContact.last_name || fullName.split(' ').slice(1).join(' '))
   const email = cleanString(highLevelContact.email || localContact.contact_email) || null
   const phone = cleanString(highLevelContact.phone || localContact.contact_phone) || null
+  // Nunca guardar el teléfono (ni el email) como nombre del contacto
+  const fullName = sanitizeContactName(highLevelContact.contactName, phone) ||
+    sanitizeContactName(`${highLevelContact.firstName || ''} ${highLevelContact.lastName || ''}`.trim(), phone) ||
+    sanitizeContactName(highLevelContact.name, phone) ||
+    sanitizeContactName(localContact.contact_name, phone) ||
+    ''
+  const firstName = sanitizeContactName(highLevelContact.firstName, phone) ||
+    sanitizeContactName(localContact.first_name, phone) ||
+    cleanString(fullName.split(' ')[0])
+  const lastName = sanitizeContactName(highLevelContact.lastName, phone) ||
+    sanitizeContactName(localContact.last_name, phone) ||
+    cleanString(fullName.split(' ').slice(1).join(' '))
   const phoneUpsert = await prepareContactPhoneUpsert({ contactId: targetId, phone })
   const emailMergeFromContactId = await clearConflictingContactEmail({ targetId, email })
   const usePostgres = Boolean(process.env.DATABASE_URL)

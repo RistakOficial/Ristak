@@ -17,6 +17,7 @@ import {
   finalizePreparedPhoneUpsert,
   prepareContactPhoneUpsert
 } from './contactIdentityService.js'
+import { sanitizeContactName } from '../utils/phoneUtils.js'
 import GHLClient from './ghlClient.js'
 import {
   getLocalCalendar,
@@ -658,9 +659,9 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
          ON CONFLICT (id) DO UPDATE SET
           phone = EXCLUDED.phone,
           email = EXCLUDED.email,
-          full_name = EXCLUDED.full_name,
-          first_name = EXCLUDED.first_name,
-          last_name = EXCLUDED.last_name,
+          full_name = COALESCE(NULLIF(EXCLUDED.full_name, ''), contacts.full_name),
+          first_name = COALESCE(NULLIF(EXCLUDED.first_name, ''), contacts.first_name),
+          last_name = COALESCE(NULLIF(EXCLUDED.last_name, ''), contacts.last_name),
           source = EXCLUDED.source,
           attribution_url = EXCLUDED.attribution_url,
           attribution_session_source = EXCLUDED.attribution_session_source,
@@ -677,9 +678,9 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
          ON CONFLICT (id) DO UPDATE SET
           phone = excluded.phone,
           email = excluded.email,
-          full_name = excluded.full_name,
-          first_name = excluded.first_name,
-          last_name = excluded.last_name,
+          full_name = COALESCE(NULLIF(excluded.full_name, ''), contacts.full_name),
+          first_name = COALESCE(NULLIF(excluded.first_name, ''), contacts.first_name),
+          last_name = COALESCE(NULLIF(excluded.last_name, ''), contacts.last_name),
           source = excluded.source,
           attribution_url = excluded.attribution_url,
           attribution_session_source = excluded.attribution_session_source,
@@ -690,13 +691,21 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
           custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
           updated_at = excluded.updated_at`
 
+    // No guardar el teléfono como nombre (HighLevel a veces devuelve el
+    // teléfono en contactName cuando el contacto no tiene nombre real)
+    const contactPhoneForName = phoneUpsert.phone || contact.phone || ''
+    const safeFullName = sanitizeContactName(
+      contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
+      contactPhoneForName
+    )
+
     await db.run(query, [
       highLevelContactId,
       phoneUpsert.phone || null,
       contact.email,
-      contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
-      contact.firstName,
-      contact.lastName,
+      safeFullName,
+      sanitizeContactName(contact.firstName, contactPhoneForName),
+      sanitizeContactName(contact.lastName, contactPhoneForName),
       contact.source || 'gohighlevel',
       attribution.pageUrl || attribution.url || attributionSource.url,
       attribution.utmSessionSource || attributionSource.utmSessionSource,
@@ -843,9 +852,9 @@ async function syncHighLevelContacts(locationId, apiToken) {
            ON CONFLICT (id) DO UPDATE SET
             phone = EXCLUDED.phone,
             email = EXCLUDED.email,
-            full_name = EXCLUDED.full_name,
-            first_name = EXCLUDED.first_name,
-            last_name = EXCLUDED.last_name,
+            full_name = COALESCE(NULLIF(EXCLUDED.full_name, ''), contacts.full_name),
+            first_name = COALESCE(NULLIF(EXCLUDED.first_name, ''), contacts.first_name),
+            last_name = COALESCE(NULLIF(EXCLUDED.last_name, ''), contacts.last_name),
             source = EXCLUDED.source,
             attribution_url = EXCLUDED.attribution_url,
             attribution_session_source = EXCLUDED.attribution_session_source,
@@ -862,9 +871,9 @@ async function syncHighLevelContacts(locationId, apiToken) {
            ON CONFLICT (id) DO UPDATE SET
             phone = excluded.phone,
             email = excluded.email,
-            full_name = excluded.full_name,
-            first_name = excluded.first_name,
-            last_name = excluded.last_name,
+            full_name = COALESCE(NULLIF(excluded.full_name, ''), contacts.full_name),
+            first_name = COALESCE(NULLIF(excluded.first_name, ''), contacts.first_name),
+            last_name = COALESCE(NULLIF(excluded.last_name, ''), contacts.last_name),
             source = excluded.source,
             attribution_url = excluded.attribution_url,
             attribution_session_source = excluded.attribution_session_source,
@@ -875,13 +884,21 @@ async function syncHighLevelContacts(locationId, apiToken) {
             custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
             updated_at = excluded.updated_at`
 
+      // No guardar el teléfono como nombre (HighLevel a veces devuelve el
+      // teléfono en contactName cuando el contacto no tiene nombre real)
+      const contactPhoneForName = phoneUpsert.phone || contact.phone || ''
+      const safeFullName = sanitizeContactName(
+        contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
+        contactPhoneForName
+      )
+
       await db.run(query, [
         highLevelContactId,
         phoneUpsert.phone || null,
         contact.email,
-        contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
-        contact.firstName,
-        contact.lastName,
+        safeFullName,
+        sanitizeContactName(contact.firstName, contactPhoneForName),
+        sanitizeContactName(contact.lastName, contactPhoneForName),
         contact.source || 'gohighlevel',
         attribution.pageUrl || attribution.url || attributionSource.url,
         attribution.utmSessionSource || attributionSource.utmSessionSource,
@@ -956,13 +973,19 @@ async function upsertHighLevelContactLocallyFromWhatsApp({ localContact, highLev
   const targetId = highLevelContact.id || highLevelContact._id
   if (!targetId) throw new Error('HighLevel no devolvio id de contacto')
 
-  const fullName = highLevelContact.name ||
-    highLevelContact.contactName ||
-    `${highLevelContact.firstName || ''} ${highLevelContact.lastName || ''}`.trim() ||
-    localContact.full_name ||
-    localContact.phone
-  const firstName = highLevelContact.firstName || localContact.first_name || fullName?.split(' ')?.[0] || null
-  const lastName = highLevelContact.lastName || localContact.last_name || null
+  // Nunca usar el teléfono como nombre: searchContacts rellena `name` con el
+  // teléfono cuando el contacto de HighLevel no tiene nombre real.
+  const contactPhoneForName = highLevelContact.phone || localContact.phone || ''
+  const fullName = sanitizeContactName(highLevelContact.contactName, contactPhoneForName) ||
+    sanitizeContactName(`${highLevelContact.firstName || ''} ${highLevelContact.lastName || ''}`.trim(), contactPhoneForName) ||
+    sanitizeContactName(highLevelContact.name, contactPhoneForName) ||
+    sanitizeContactName(localContact.full_name, contactPhoneForName)
+  const firstName = sanitizeContactName(highLevelContact.firstName, contactPhoneForName) ||
+    sanitizeContactName(localContact.first_name, contactPhoneForName) ||
+    (fullName ? fullName.split(' ')[0] : null)
+  const lastName = sanitizeContactName(highLevelContact.lastName, contactPhoneForName) ||
+    sanitizeContactName(localContact.last_name, contactPhoneForName) ||
+    null
   const phoneUpsert = await prepareContactPhoneUpsert({
     contactId: targetId,
     phone: highLevelContact.phone || localContact.phone
@@ -1049,10 +1072,12 @@ async function syncWhatsAppContactsToHighLevel(locationId, apiToken) {
       if (highLevelContact) {
         matched += 1
       } else {
-        const fullName = contact.full_name ||
-          `${contact.first_name || ''} ${contact.last_name || ''}`.trim() ||
-          contact.phone ||
-          'Contacto WhatsApp'
+        // Si el contacto WhatsApp no tiene nombre real, se crea sin nombre en
+        // HighLevel (nunca con el teléfono como nombre)
+        const fullName = sanitizeContactName(
+          contact.full_name || `${contact.first_name || ''} ${contact.last_name || ''}`.trim(),
+          contact.phone
+        ) || ''
         const result = await client.createContact({
           name: fullName,
           email: contact.email || '',
@@ -1697,6 +1722,48 @@ export async function fetchAndSaveMetaConfig(locationId, apiToken) {
 }
 
 /**
+ * Reparación única: limpia contactos cuyo nombre quedó guardado como el
+ * número telefónico (o un email) por sincronizaciones anteriores. Al dejar
+ * el nombre en NULL, la siguiente sincronización lo rellena con el nombre
+ * real de HighLevel si existe, y la UI muestra el teléfono solo como fallback.
+ */
+export async function cleanupPhoneLikeContactNames() {
+  const FLAG_KEY = 'contacts_phone_name_cleanup_v1'
+
+  const alreadyDone = cleanString(await getAppConfig(FLAG_KEY).catch(() => ''))
+  if (alreadyDone === '1') return { cleaned: 0, skipped: true }
+
+  const rows = await db.all(`
+    SELECT id, phone, full_name, first_name, last_name
+    FROM contacts
+    WHERE COALESCE(full_name, '') != '' OR COALESCE(first_name, '') != '' OR COALESCE(last_name, '') != ''
+  `)
+
+  let cleaned = 0
+  for (const row of rows) {
+    const safeFullName = sanitizeContactName(row.full_name, row.phone)
+    const safeFirstName = sanitizeContactName(row.first_name, row.phone)
+    const safeLastName = sanitizeContactName(row.last_name, row.phone)
+
+    const needsUpdate =
+      (cleanString(row.full_name) && !safeFullName) ||
+      (cleanString(row.first_name) && !safeFirstName) ||
+      (cleanString(row.last_name) && !safeLastName)
+
+    if (!needsUpdate) continue
+
+    await db.run(
+      'UPDATE contacts SET full_name = ?, first_name = ?, last_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [safeFullName, safeFirstName, safeLastName, row.id]
+    )
+    cleaned++
+  }
+
+  await setAppConfig(FLAG_KEY, '1')
+  return { cleaned, skipped: false }
+}
+
+/**
  * Sincronización principal que ejecuta todos los pasos
  * @param {string} locationId - ID del location de HighLevel
  * @param {string} apiToken - Token de API de HighLevel
@@ -1723,6 +1790,16 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
     logger.info('===========================================')
     logger.info('INICIANDO SINCRONIZACIÓN COMPLETA HIGHLEVEL')
     logger.info('===========================================')
+
+    // 0. Reparación única: contactos con el teléfono guardado como nombre
+    try {
+      const nameCleanup = await cleanupPhoneLikeContactNames()
+      if (nameCleanup.cleaned > 0) {
+        logger.info(`🧽 Limpieza de nombres: ${nameCleanup.cleaned} contactos tenían el teléfono/email como nombre`)
+      }
+    } catch (error) {
+      logger.warn(`No se pudo ejecutar la limpieza de nombres de contactos: ${error.message}`)
+    }
 
     // 1. Configurar webhooks y obtener config de Meta
     const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3001}`
