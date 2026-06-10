@@ -365,10 +365,10 @@
   width: fit-content;
   max-width: 100%;
   padding: 0 11px;
-  border: 1px solid rgba(20, 184, 166, 0.18);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.18);
   border-radius: 8px;
   color: var(--color-text-secondary);
-  background: rgba(20, 184, 166, 0.07);
+  background: rgba(var(--color-primary-rgb), 0.07);
   font-size: 12px;
   font-weight: 650;
 }

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { KpiCard, Card, DateRangePicker, AreaChart, PageContainer, OriginDistributionCard, ConversionFunnelChart, ViewSelector, Loading, ContactDetailsModal, VisitorDetailsModal, TabList, Modal } from '@/components/common'
+import { KpiCard, Card, DateRangePicker, AreaChart, PageContainer, PageHeader, OriginDistributionCard, ConversionFunnelChart, ViewSelector, Loading, ContactDetailsModal, VisitorDetailsModal, TabList, Modal } from '@/components/common'
 import {
   DollarSign,
   Megaphone,
@@ -1566,20 +1566,24 @@ export const Dashboard: React.FC = () => {
     <>
       <PageContainer>
       <div data-ristak-dashboard className="flex flex-col" style={{ gap: '18px' }}>
-        <div data-dashboard-topbar className="flex flex-col items-start justify-between gap-3 md:flex-row md:items-end">
-          <div data-dashboard-heading className="flex flex-col items-start gap-1">
-            <h1 className="m-0 text-[24px] font-bold text-[var(--color-text-primary)]">Dashboard</h1>
-          </div>
-          <DateRangePicker
-            startDate={formatDateToISO(dateRange.start)}
-            endDate={formatDateToISO(dateRange.end)}
-            onChange={(start, end) => setDateRange({
-              start: parseLocalDateString(start),
-              end: parseLocalDateString(end),
-              preset: 'custom'
-            })}
-          />
-        </div>
+        {/* data-dashboard-topbar/-heading: hooks que usan los presets de diseño (index.css) */}
+        <PageHeader
+          data-dashboard-topbar
+          data-dashboard-heading
+          title="Dashboard"
+          subtitle="Resumen de ingresos, citas y rendimiento de tu negocio."
+          actions={(
+            <DateRangePicker
+              startDate={formatDateToISO(dateRange.start)}
+              endDate={formatDateToISO(dateRange.end)}
+              onChange={(start, end) => setDateRange({
+                start: parseLocalDateString(start),
+                end: parseLocalDateString(end),
+                preset: 'custom'
+              })}
+            />
+          )}
+        />
 
         <div data-dashboard-kpi-grid className="grid grid-cols-2 gap-4 sm:grid-cols-2 sm:gap-5 xl:grid-cols-4">
           <KpiCard
@@ -1651,7 +1655,7 @@ export const Dashboard: React.FC = () => {
         <Card data-dashboard-chart-card variant="glass" className="space-y-4">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex min-w-0 flex-1 flex-col gap-3 xl:flex-row xl:items-center xl:gap-4">
-              <h2 className="m-0 text-xl font-semibold text-[var(--color-text-primary)] sm:whitespace-nowrap">
+              <h2 className="m-0 text-lg font-semibold text-[var(--color-text-primary)] sm:whitespace-nowrap">
                 {activeChartLabel}
               </h2>
               <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">

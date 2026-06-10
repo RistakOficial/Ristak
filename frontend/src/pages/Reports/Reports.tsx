@@ -12,6 +12,7 @@ import {
   TransactionsModal,
   ViewSelector,
   PageContainer,
+  PageHeader,
   Loading
 } from '@/components/common'
 import type { Column } from '@/components/common'
@@ -2287,12 +2288,8 @@ export const Reports: React.FC = () => {
   return (
     <PageContainer size="wide">
       <div className={styles.container}>
-        <header className={styles.header}>
-          <div className={styles.titleBlock}>
-            <h1 className={styles.title}>Reportes</h1>
-            {metricsRangeLabel && <span className={styles.rangeLabel}>{metricsRangeLabel}</span>}
-          </div>
-          <div className={styles.filtersArea}>
+        <PageHeader title="Reportes" subtitle={metricsRangeLabel || undefined} />
+        <div className={styles.filtersArea}>
             {/* Cuando es rango personalizado, el selector va solo en su propia fila */}
             {viewType === 'month' && monthPreset === 'custom' && (
               <div className={styles.presetRow}>
@@ -2387,7 +2384,6 @@ export const Reports: React.FC = () => {
               </div>
             </div>
           </div>
-      </header>
 
       {displayMode === 'table' && summary && (
         <div className={styles.kpiRow}>

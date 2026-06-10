@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { KpiCard, Card, Button, PageContainer, AppointmentModal, BlockedSlotModal, TabList, Loading } from '@/components/common';
+import { KpiCard, Card, Button, PageContainer, PageHeader, AppointmentModal, BlockedSlotModal, TabList, Loading } from '@/components/common';
 import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Search, X, Settings, Bell, MessageSquare, Clock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
@@ -1314,7 +1314,10 @@ export const Appointments: React.FC = () => {
     <PageContainer>
       {/* Header */}
       <div className={styles.header}>
-        <h1 className={styles.title}>Calendarios</h1>
+        <PageHeader
+          title="Calendarios"
+          subtitle="Agenda, disponibilidad y citas de tus calendarios conectados."
+        />
 
         <div className={styles.headerControls}>
           {/* Selector de calendarios */}

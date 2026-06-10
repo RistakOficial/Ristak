@@ -12,53 +12,10 @@
   overflow: visible !important;
 }
 
-/* Header de página - estilo Dashboard */
-.pageHeader {
-  margin-bottom: var(--spacing-2xl);
-  padding-bottom: var(--spacing-xl);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.headerContent {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--spacing-xl);
-}
-
-.headerLeft {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-lg);
-  flex: 1;
-}
-
-.logoContainer {
-  height: 40px;
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.pageTitle {
-  font-size: var(--font-size-4xl);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-primary);
-  margin: 0;
-}
-
-.pageSubtitle {
-  font-size: var(--font-size-base);
-  color: var(--color-text-secondary);
-  margin: 0;
-  line-height: 1.5;
-}
-
-.headerRight {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-}
+/* OJO: este módulo lo comparten HighLevel, WebTracking, PaymentsConfiguration y
+   CalendarsConfiguration. El skin vigente (header de panel 18px, chips de estado,
+   secciones planas) vive AL FINAL del archivo y sobreescribe definiciones viejas
+   intermedias. Para cambiar el header/estados/secciones, edita el bloque final. */
 
 /* Status badges minimalistas */
 .statusConnected,
@@ -1470,7 +1427,7 @@ body.dark .warningBox {
 .filterInput:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  box-shadow: var(--ristak-focus-ring);
 }
 
 .filterInput:disabled {
@@ -1494,7 +1451,7 @@ body.dark .warningBox {
 .filterTypeSelect:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  box-shadow: var(--ristak-focus-ring);
 }
 
 .filterTypeSelect:disabled {

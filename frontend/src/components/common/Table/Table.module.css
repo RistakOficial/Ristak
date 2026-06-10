@@ -182,11 +182,14 @@
   z-index: 10;
 }
 
+/* Receta canónica de encabezado de tabla (ver frontend/DESIGN_SYSTEM.md):
+   12px uppercase, semibold, texto terciario sobre --design-table-head-bg.
+   Toda tabla nueva (compartida o local) debe reproducir esta receta. */
 .table th {
   padding: var(--spacing-md);
   text-align: left;
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
   font-family: var(--design-table-header-font, inherit);
   font-size: var(--font-size-xs);
   text-transform: uppercase;

@@ -5,6 +5,7 @@ import { useTimezone } from '../../contexts/TimezoneContext'
 import { useLabels } from '../../contexts/LabelsContext'
 import {
   PageContainer,
+  PageHeader,
   Card,
   KpiCard,
   DateRangePicker,
@@ -2102,10 +2103,14 @@ const Analytics: React.FC = () => {
 
   return (
     <PageContainer>
-      <div className="space-y-6">
+      {/* Ritmo vertical estándar entre secciones de página (DESIGN_SYSTEM.md) */}
+      <div className="flex flex-col gap-[18px]">
         {/* Header */}
-        <div className="space-y-4">
-          <h1 className="text-2xl font-bold">Analíticas</h1>
+        <div className="flex flex-col gap-4">
+          <PageHeader
+            title="Analíticas"
+            subtitle="Tráfico, visitantes y comportamiento de tu sitio en tiempo real."
+          />
 
           {/* Filtro en árbol, selector de fechas y vista */}
           <div className="flex flex-col gap-3">
@@ -2354,7 +2359,7 @@ const Analytics: React.FC = () => {
           {/* Top Plataformas */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold">Top Plataformas</h3>
+              <h3 className="text-base font-semibold">Top Plataformas</h3>
             </div>
             <div className="p-5 space-y-4">
               {platformsData.map((platform, index) => {
@@ -2383,7 +2388,7 @@ const Analytics: React.FC = () => {
           {/* Top Ubicaciones */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold">Top Ubicaciones</h3>
+              <h3 className="text-base font-semibold">Top Ubicaciones</h3>
             </div>
             <div className="p-5 space-y-4">
               {placementsData.map((placement, index) => {
@@ -2412,7 +2417,7 @@ const Analytics: React.FC = () => {
           {/* Top Dispositivos */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold">Top Dispositivos</h3>
+              <h3 className="text-base font-semibold">Top Dispositivos</h3>
             </div>
             <div className="p-5 space-y-4">
               {devicesData.map((device, index) => {
@@ -2441,7 +2446,7 @@ const Analytics: React.FC = () => {
           {/* Top Sistemas */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold">Top Sistemas</h3>
+              <h3 className="text-base font-semibold">Top Sistemas</h3>
             </div>
             <div className="p-5 space-y-4">
               {osData.map((os, index) => {
@@ -2470,7 +2475,7 @@ const Analytics: React.FC = () => {
           {/* Top Navegadores */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold">Top Navegadores</h3>
+              <h3 className="text-base font-semibold">Top Navegadores</h3>
             </div>
             <div className="p-5 space-y-4">
               {browserData.map((browser, index) => {
@@ -2499,7 +2504,7 @@ const Analytics: React.FC = () => {
           {/* Top Visitors */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold">Top Visitantes</h3>
+              <h3 className="text-base font-semibold">Top Visitantes</h3>
             </div>
             <div className="p-5">
               <div className="space-y-3">

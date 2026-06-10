@@ -239,23 +239,11 @@ export const APIAccessSettings: React.FC = () => {
 
         <div className={styles.panelSection}>
           <div style={{ marginBottom: '1.25rem' }}>
-            <h3 style={{
-              fontSize: '1rem',
-              fontWeight: 600,
-              color: 'var(--color-text-primary)',
-              margin: '0 0 0.5rem 0',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}>
-              <KeyRound size={18} />
+            <h3 className={styles.accountSectionTitle}>
+              <KeyRound size={16} />
               Credenciales externas
             </h3>
-            <p style={{
-              fontSize: '0.875rem',
-              color: 'var(--color-text-tertiary)',
-              margin: 0
-            }}>
+            <p className={styles.accountSectionDescription}>
               ID público de la app y token secreto revocable
             </p>
           </div>

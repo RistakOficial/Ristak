@@ -23,32 +23,33 @@
   align-items: flex-start;
 }
 
+/* Header de panel: misma receta que el resto de Settings (icono 42px neutro,
+   título 18px/700, descripción 14px). Ver frontend/DESIGN_SYSTEM.md. */
 .iconWrapper {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-lg);
-  background: rgba(59, 130, 246, 0.1);
-  color: #3b82f6;
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  color: var(--color-text-primary);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
 
-body.dark .iconWrapper {
-  background: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
-}
-
 .title {
-  font-size: 24px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
   color: var(--color-text-primary);
   margin: 0 0 4px 0;
 }
 
 .subtitle {
+  max-width: 720px;
   font-size: 14px;
+  line-height: 1.55;
   color: var(--color-text-secondary);
   margin: 0;
 }
@@ -124,7 +125,7 @@ body.dark .iconWrapper {
 }
 
 .switchControl input:checked + .switchTrack {
-  background: #047857;
+  background: var(--color-status-success);
 }
 
 .switchControl input:checked + .switchTrack::before {
@@ -132,7 +133,7 @@ body.dark .iconWrapper {
 }
 
 .switchControl input:focus-visible + .switchTrack {
-  box-shadow: 0 0 0 3px rgba(4, 120, 87, 0.18);
+  box-shadow: var(--ristak-focus-ring-strong);
 }
 
 .switchControl input:disabled + .switchTrack {
@@ -140,7 +141,7 @@ body.dark .iconWrapper {
   opacity: 0.6;
 }
 
-/* Info note */
+/* Info note: informativo neutro, usa el primario monocromático del tema */
 .infoNote {
   display: flex;
   align-items: flex-start;
@@ -148,8 +149,8 @@ body.dark .iconWrapper {
   padding: 11px 14px;
   margin-bottom: 18px;
   border-radius: 8px;
-  background: rgba(59, 130, 246, 0.07);
-  border: 1px solid rgba(59, 130, 246, 0.18);
+  background: rgba(var(--color-primary-rgb), 0.07);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.18);
   font-size: 13px;
   line-height: 1.55;
   color: var(--color-text-secondary);
@@ -158,12 +159,12 @@ body.dark .iconWrapper {
 .infoNote svg {
   flex-shrink: 0;
   margin-top: 2px;
-  color: #3b82f6;
+  color: var(--color-primary);
 }
 
 body.dark .infoNote {
-  background: rgba(59, 130, 246, 0.1);
-  border-color: rgba(59, 130, 246, 0.22);
+  background: rgba(var(--color-primary-rgb), 0.1);
+  border-color: rgba(var(--color-primary-rgb), 0.22);
 }
 
 /* Loading y Empty State */
@@ -276,12 +277,8 @@ body.dark .costChip:hover {
 .costValue {
   font-size: 24px;
   font-weight: 700;
-  color: #3b82f6;
+  color: var(--color-text-primary);
   margin-bottom: 4px;
-}
-
-body.dark .costValue {
-  color: #60a5fa;
 }
 
 .appliesTo {
@@ -424,13 +421,8 @@ body.dark .modal {
 .input:focus,
 .select:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-}
-
-body.dark .input:focus,
-body.dark .select:focus {
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+  border-color: var(--ristak-focus-border);
+  box-shadow: var(--ristak-focus-ring);
 }
 
 .inputWithPrefix {
