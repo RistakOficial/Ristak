@@ -1,3 +1,6 @@
+// Tokens TS (gráficas y temas). La fuente de verdad del sistema visual son las
+// variables CSS de src/styles/index.css y la guía docs/DESIGN_SYSTEM.md —
+// mantener ambos en sincronía si se cambia un color o radio aquí.
 export const themes = {
   light: {
     colors: {

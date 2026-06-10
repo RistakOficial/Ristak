@@ -5,6 +5,7 @@ import { useTimezone } from '../../contexts/TimezoneContext'
 import { useLabels } from '../../contexts/LabelsContext'
 import {
   PageContainer,
+  PageHeader,
   Card,
   KpiCard,
   DateRangePicker,
@@ -778,9 +779,28 @@ const Analytics: React.FC = () => {
   const [viewType, setViewType] = useState<ViewType>(routeState.viewType)
   const [monthPreset, setMonthPreset] = useState<MonthPreset>('last12')
   const [yearRange, setYearRange] = useState(defaultYearRange)
-  const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>('traffic')
-  const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>('registrations-customers')
+  const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>(routeState.mainChart)
+  const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>(routeState.conversionChart)
   const [conversionChartTouched, setConversionChartTouched] = useState(false)
+
+  const navigateAnalyticsView = useCallback((next?: {
+    viewType?: ViewType
+    mainChart?: AnalyticsMainChartView
+    conversionChart?: AnalyticsConversionChartView
+    replace?: boolean
+  }) => {
+    navigate(buildAnalyticsPath(
+      next?.viewType ?? viewType,
+      next?.mainChart ?? selectedMainChartView,
+      next?.conversionChart ?? selectedConversionChartView
+    ), { replace: next?.replace })
+  }, [navigate, selectedConversionChartView, selectedMainChartView, viewType])
+
+  useEffect(() => {
+    setViewType(current => current === routeState.viewType ? current : routeState.viewType)
+    setSelectedMainChartView(current => current === routeState.mainChart ? current : routeState.mainChart)
+    setSelectedConversionChartView(current => current === routeState.conversionChart ? current : routeState.conversionChart)
+  }, [routeState.conversionChart, routeState.mainChart, routeState.viewType])
 
   // Guardar el valor ORIGINAL de registros para restaurar al quitar filtros
   const [originalRegistros, setOriginalRegistros] = useState<number>(0)
@@ -1917,6 +1937,7 @@ const Analytics: React.FC = () => {
       selectedConversionChartView !== 'registrations-customers'
     ) {
       setSelectedConversionChartView('registrations-customers')
+      navigateAnalyticsView({ conversionChart: 'registrations-customers', replace: true })
       return
     }
 
@@ -1926,7 +1947,7 @@ const Analytics: React.FC = () => {
       setSelectedConversionChartView(nextChart)
       navigateAnalyticsView({ conversionChart: nextChart, replace: true })
     }
-  }, [conversionChartOptions, conversionChartTouched, selectedConversionChartView, webTrackingConfigured])
+  }, [conversionChartOptions, conversionChartTouched, navigateAnalyticsView, selectedConversionChartView, webTrackingConfigured])
 
   const sessionTrendData = React.useMemo(
     () => buildSessionTrendData(sessionsForCharts, viewType, convertToLocalTime),
@@ -2082,10 +2103,14 @@ const Analytics: React.FC = () => {
 
   return (
     <PageContainer>
-      <div className="space-y-6">
+      {/* Ritmo vertical estándar entre secciones de página (DESIGN_SYSTEM.md) */}
+      <div className="flex flex-col gap-[18px]">
         {/* Header */}
-        <div className="space-y-4">
-          <h1 className="text-2xl font-bold">Analíticas</h1>
+        <div className="flex flex-col gap-4">
+          <PageHeader
+            title="Analíticas"
+            subtitle="Tráfico, visitantes y comportamiento de tu sitio en tiempo real."
+          />
 
           {/* Filtro en árbol, selector de fechas y vista */}
           <div className="flex flex-col gap-3">
@@ -2277,7 +2302,10 @@ const Analytics: React.FC = () => {
                   value={selectedConversionChartView}
                   onChange={(value) => {
                     setConversionChartTouched(true)
-                    setSelectedConversionChartView(value as AnalyticsConversionChartView)
+                    if (isAnalyticsConversionChartView(value)) {
+                      setSelectedConversionChartView(value)
+                      navigateAnalyticsView({ conversionChart: value })
+                    }
                   }}
                 />
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
@@ -2331,7 +2359,7 @@ const Analytics: React.FC = () => {
           {/* Top Plataformas */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold">Top Plataformas</h3>
+              <h3 className="text-base font-semibold">Top Plataformas</h3>
             </div>
             <div className="p-5 space-y-4">
               {platformsData.map((platform, index) => {
@@ -2360,7 +2388,7 @@ const Analytics: React.FC = () => {
           {/* Top Ubicaciones */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold">Top Ubicaciones</h3>
+              <h3 className="text-base font-semibold">Top Ubicaciones</h3>
             </div>
             <div className="p-5 space-y-4">
               {placementsData.map((placement, index) => {
@@ -2389,7 +2417,7 @@ const Analytics: React.FC = () => {
           {/* Top Dispositivos */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold">Top Dispositivos</h3>
+              <h3 className="text-base font-semibold">Top Dispositivos</h3>
             </div>
             <div className="p-5 space-y-4">
               {devicesData.map((device, index) => {
@@ -2418,7 +2446,7 @@ const Analytics: React.FC = () => {
           {/* Top Sistemas */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold">Top Sistemas</h3>
+              <h3 className="text-base font-semibold">Top Sistemas</h3>
             </div>
             <div className="p-5 space-y-4">
               {osData.map((os, index) => {
@@ -2447,7 +2475,7 @@ const Analytics: React.FC = () => {
           {/* Top Navegadores */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold">Top Navegadores</h3>
+              <h3 className="text-base font-semibold">Top Navegadores</h3>
             </div>
             <div className="p-5 space-y-4">
               {browserData.map((browser, index) => {
@@ -2476,7 +2504,7 @@ const Analytics: React.FC = () => {
           {/* Top Visitors */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold">Top Visitantes</h3>
+              <h3 className="text-base font-semibold">Top Visitantes</h3>
             </div>
             <div className="p-5">
               <div className="space-y-3">

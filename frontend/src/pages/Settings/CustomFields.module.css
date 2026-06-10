@@ -120,8 +120,8 @@
 
 .folderItem.folderDropActive,
 .folderRow.folderDropActive button:first-child {
-  border-color: rgba(20, 184, 166, 0.5);
-  background: rgba(20, 184, 166, 0.1);
+  border-color: rgba(var(--color-primary-rgb), 0.5);
+  background: rgba(var(--color-primary-rgb), 0.1);
   color: var(--color-text-primary);
 }
 
@@ -326,9 +326,9 @@
   min-height: 44px;
   margin: -2px 0 12px;
   padding: 0 12px;
-  border: 1px solid rgba(20, 184, 166, 0.22);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.22);
   border-radius: 8px;
-  background: rgba(20, 184, 166, 0.08);
+  background: rgba(var(--color-primary-rgb), 0.08);
 }
 
 .selectionBar strong {
@@ -368,25 +368,27 @@
   border-collapse: collapse;
 }
 
+/* Encabezado de tabla: misma receta que Table.module.css (DESIGN_SYSTEM.md). */
 .table th {
   position: sticky;
   top: 0;
   z-index: 1;
   height: 42px;
   padding: 0 14px;
-  background: var(--color-background-primary);
+  background: var(--design-table-head-bg, var(--color-surface));
   color: var(--color-text-tertiary);
-  font-size: 11px;
-  font-weight: 760;
-  letter-spacing: 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--design-table-header-spacing, 0.025em);
   text-align: left;
   text-transform: uppercase;
+  border-bottom: 1px solid var(--design-table-border, rgba(148, 163, 184, 0.18));
 }
 
 .table td {
   height: 56px;
   padding: 8px 14px;
-  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  border-top: 1px solid var(--design-table-border, rgba(148, 163, 184, 0.14));
   color: var(--color-text-secondary);
   font-size: 13px;
   vertical-align: middle;
@@ -439,7 +441,7 @@
   width: 16px;
   height: 16px;
   margin: 0;
-  accent-color: rgb(20, 184, 166);
+  accent-color: var(--color-primary);
   cursor: pointer;
 }
 
@@ -464,7 +466,7 @@
 }
 
 .rowSelected {
-  background: rgba(20, 184, 166, 0.075);
+  background: rgba(var(--color-primary-rgb), 0.075);
 }
 
 .rowDragging {
@@ -508,9 +510,9 @@
   align-items: center;
   min-height: 24px;
   padding: 0 9px;
-  border: 1px solid rgba(20, 184, 166, 0.24);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.24);
   border-radius: 999px;
-  background: rgba(20, 184, 166, 0.08);
+  background: rgba(var(--color-primary-rgb), 0.08);
   color: var(--color-text-primary);
   font-size: 12px;
   font-weight: 720;
@@ -640,8 +642,8 @@
 .field select:focus,
 .field textarea:focus,
 .search:focus-within {
-  border-color: rgba(20, 184, 166, 0.52);
-  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
+  border-color: var(--ristak-focus-border);
+  box-shadow: var(--ristak-focus-ring);
 }
 
 .field input:disabled,

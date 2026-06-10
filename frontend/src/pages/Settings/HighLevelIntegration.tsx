@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { highLevelService } from '@/services/highLevelService'
 import { hiddenContactsService, type HiddenFilter } from '@/services/hiddenContactsService'
+import { getIntegrationsStatus } from '@/services/integrationsService'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { requestAIAgentClose } from '@/utils/aiAgentEvents'
@@ -64,9 +65,9 @@ export const HighLevelIntegration: React.FC = () => {
 
   const loadIntegrationStatus = async () => {
     try {
-      const response = await fetch('/api/integrations/status')
-      const data = await response.json()
-      setIntegrationStatus(data)
+      // En Ajustes siempre se consulta el estado fresco (sin caché compartido)
+      const data = await getIntegrationsStatus({ forceRefresh: true })
+      setIntegrationStatus(data as unknown as IntegrationStatus)
     } catch (error) {
       showToast('error', 'Error', 'No se pudo cargar el estado de integración')
     }

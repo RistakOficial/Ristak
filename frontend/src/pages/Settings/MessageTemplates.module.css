@@ -444,8 +444,8 @@
 .buttonEditorRow select:focus,
 .newFolder input:focus,
 .searchBox:focus-within {
-  border-color: rgba(20, 184, 166, 0.52);
-  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
+  border-color: var(--ristak-focus-border);
+  box-shadow: var(--ristak-focus-ring);
 }
 
 .clearFiltersButton {
@@ -474,9 +474,9 @@
   align-items: center;
   margin-bottom: 12px;
   padding: 10px;
-  border: 1px solid rgba(20, 184, 166, 0.22);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.22);
   border-radius: 8px;
-  background: rgba(20, 184, 166, 0.07);
+  background: rgba(var(--color-primary-rgb), 0.07);
 }
 
 .bulkBar strong {
@@ -524,27 +524,29 @@
   color: var(--color-text-primary);
 }
 
+/* Encabezado de tabla: misma receta que Table.module.css (DESIGN_SYSTEM.md). */
 .collectionTable th {
   position: sticky;
   top: 0;
   z-index: 1;
   padding: 12px 14px;
-  background: var(--color-background-primary);
+  background: var(--design-table-head-bg, var(--color-surface));
   color: var(--color-text-tertiary);
-  font-size: 11px;
-  font-weight: 760;
-  letter-spacing: 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--design-table-header-spacing, 0.025em);
   text-align: left;
   text-transform: uppercase;
   white-space: nowrap;
+  border-bottom: 1px solid var(--design-table-border, rgba(148, 163, 184, 0.18));
 }
 
 .collectionTable td {
   padding: 15px 14px;
-  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  border-top: 1px solid var(--design-table-border, rgba(148, 163, 184, 0.14));
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: var(--font-weight-medium);
   vertical-align: middle;
 }
 
@@ -561,7 +563,7 @@
 }
 
 .collectionRowSelected {
-  background: rgba(20, 184, 166, 0.07);
+  background: rgba(var(--color-primary-rgb), 0.07);
 }
 
 .selectionHead,

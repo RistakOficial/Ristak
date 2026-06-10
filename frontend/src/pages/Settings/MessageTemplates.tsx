@@ -10,7 +10,7 @@ import {
   FolderPlus,
   Globe2,
   GripVertical,
-  Hash,
+  Hash as HashIcon,
   Image,
   ListTree,
   Loader2,
@@ -1155,7 +1155,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                 setOpenFolderMenuId(null)
               }}
             >
-              <Hash size={16} />
+              <HashIcon size={16} />
               <span>Todas las plantillas</span>
               <b>{bundle.templates.length}</b>
             </button>
@@ -1175,7 +1175,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                 setOpenFolderMenuId(null)
               }}
             >
-              <Hash size={16} />
+              <HashIcon size={16} />
               <span>Sin carpeta</span>
               <b>{unfiledTemplateCount}</b>
             </button>

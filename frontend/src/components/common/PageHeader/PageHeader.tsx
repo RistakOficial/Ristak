@@ -2,7 +2,7 @@ import React from 'react'
 import { cn } from '@/utils/cn'
 import styles from './PageHeader.module.css'
 
-interface PageHeaderProps {
+interface PageHeaderProps extends Omit<React.HTMLAttributes<HTMLElement>, 'title'> {
   /** Small uppercase label rendered above the title (e.g. "Sistema"). */
   eyebrow?: React.ReactNode
   title: React.ReactNode
@@ -27,10 +27,11 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
   actions,
   as = 'h1',
   className,
+  ...rest
 }) => {
   const Title = as
   return (
-    <header className={cn(styles.header, className)}>
+    <header className={cn(styles.header, className)} data-ristak-page-header {...rest}>
       <div className={styles.heading}>
         {eyebrow ? <p className={styles.eyebrow}>{eyebrow}</p> : null}
         <Title className={styles.title}>{title}</Title>

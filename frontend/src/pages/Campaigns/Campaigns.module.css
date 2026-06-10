@@ -1,52 +1,12 @@
 .container {
   display: flex;
   flex-direction: column;
-  gap: calc(var(--spacing-md) * 0.75);
+  /* Ritmo vertical estandar entre secciones de pagina (DESIGN_SYSTEM.md) */
+  gap: 18px;
   padding-bottom: 4rem;
 }
 
-.pageHeader {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--spacing-xs);
-  align-items: start;
-}
-
-.pageTitle {
-  font-size: 24px;
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-primary);
-  margin: 0;
-}
-
-.pageSubtitle {
-  font-size: var(--font-size-base);
-  color: var(--color-text-secondary);
-  margin: 0;
-}
-
-
-.datePickerWrapper {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  justify-self: end;
-  gap: 12px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-@media (max-width: 767px) {
-  .pageHeader {
-    grid-template-columns: 1fr;
-  }
-
-  .datePickerWrapper {
-    margin-top: var(--spacing-sm);
-    justify-self: stretch;
-    justify-content: flex-start;
-  }
-}
+/* El header de página lo pinta el componente compartido <PageHeader/>. */
 
 .kpiRow {
   display: grid;
@@ -56,8 +16,9 @@
 
 /* .chartCard eliminado - no necesario ya que el container tiene gap */
 
+/* Título de card estándar: 18px/semibold (DESIGN_SYSTEM.md). */
 .chartTitle {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
   margin: 0 0 var(--spacing-lg) 0;

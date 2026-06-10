@@ -135,7 +135,7 @@ router.post('/api/oauth/register', async (req, res) => {
   }
 })
 
-router.get('/api/oauth/authorize', async (req, res) => {
+router.get('/api/oauth/authorize', (req, res) => {
   renderAuthorizeForm(req, res)
 })
 

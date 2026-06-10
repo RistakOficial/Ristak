@@ -9,7 +9,7 @@
     "dev": "node --watch src/server.js",
     "meta:update-version": "node scripts/update-meta-version.mjs",
     "sync:ghl-catalog": "node scripts/sync-highlevel-endpoint-catalog.mjs ../tmp/highlevel-api-docs src/data/highlevelEndpointCatalog.js",
-    "test": "node --test --test-concurrency=1 \"test/**/*.test.mjs\""
+    "test": "node --test --test-concurrency=1 test/"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc13",

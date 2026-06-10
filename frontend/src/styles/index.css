@@ -1,3 +1,20 @@
+/* ============================================================
+   RISTAK — HOJA DE ESTILOS GLOBAL (web de escritorio)
+
+   Guía de diseño obligatoria: docs/DESIGN_SYSTEM.md
+   - Estética: minimalista, monocromática (slate), sobria, profesional.
+   - Antes de inventar un estilo nuevo: revisa los tokens de este archivo
+     (:root y body[data-design-preset]) y los componentes compartidos en
+     src/components/common/ (PageHeader, Button, Card, Table, Badge, …).
+   - Títulos de página: <PageHeader/> (24px/760). Tablas: receta th/td de
+     Table.module.css. Foco: --ristak-focus-ring. Nada de colores hex
+     nuevos para acentos: usar --color-primary / tokens de status.
+   - body[data-phone-app] / [data-phone-chat-theme] = app móvil integrada,
+     con su propio sistema; los selectores globales de escritorio la
+     excluyen y debe seguir siendo así.
+   - Los atributos data-ristak-* son ganchos de los presets de diseño
+     (classic/atelier/editorial): no los elimines de los componentes.
+   ============================================================ */
 @import './tooltip-override.css';
 @import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap');
 

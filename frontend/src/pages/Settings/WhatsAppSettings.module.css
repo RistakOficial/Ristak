@@ -227,8 +227,8 @@
 
 .search:focus-within,
 .inputWrap:focus-within {
-  border-color: rgba(20, 184, 166, 0.52);
-  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
+  border-color: var(--ristak-focus-border);
+  box-shadow: var(--ristak-focus-ring);
 }
 
 .balancePill {
@@ -257,24 +257,26 @@
   border-collapse: collapse;
 }
 
+/* Encabezado de tabla: misma receta que Table.module.css (DESIGN_SYSTEM.md). */
 .table th {
   position: sticky;
   top: 0;
   z-index: 1;
   padding: 12px 14px;
-  background: var(--color-background-primary);
+  background: var(--design-table-head-bg, var(--color-surface));
   color: var(--color-text-tertiary);
-  font-size: 11px;
-  font-weight: 760;
-  letter-spacing: 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--design-table-header-spacing, 0.025em);
   text-align: left;
   text-transform: uppercase;
   white-space: nowrap;
+  border-bottom: 1px solid var(--design-table-border, rgba(148, 163, 184, 0.18));
 }
 
 .table td {
   padding: 15px 14px;
-  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  border-top: 1px solid var(--design-table-border, rgba(148, 163, 184, 0.14));
   color: var(--color-text-secondary);
   font-size: 13px;
   vertical-align: middle;
@@ -305,9 +307,9 @@
   display: inline-flex;
   min-height: 26px;
   align-items: center;
-  border: 1px solid rgba(20, 184, 166, 0.24);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.24);
   border-radius: 999px;
-  background: rgba(20, 184, 166, 0.08);
+  background: rgba(var(--color-primary-rgb), 0.08);
   color: var(--color-text-primary);
   padding: 0 9px;
   font-size: 12px;

@@ -2613,18 +2613,21 @@
   color: var(--color-text-primary);
 }
 
+/* Título de página: mismas métricas que PageHeader (24px/760 + subtítulo 13px). */
 .title {
   margin: 0;
   color: var(--color-text-primary);
   font-size: 24px;
-  font-weight: 800;
+  font-weight: 760;
+  line-height: 1.15;
   letter-spacing: 0;
 }
 
 .subtitle {
   margin: 6px 0 0;
   color: var(--color-text-secondary);
-  font-size: 0.98rem;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .headerActions,

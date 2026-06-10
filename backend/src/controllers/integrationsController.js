@@ -3,6 +3,53 @@ import { logger } from '../utils/logger.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
 
+// La verificación del token contra la API de HighLevel es costosa y este
+// endpoint se consulta varias veces por carga de página. Se cachea el
+// resultado por token/location durante un periodo corto.
+const GHL_VERIFY_TTL_MS = 60_000;
+let ghlVerifyCache = { key: null, verifiedAt: 0, connected: false, locationData: null };
+
+async function verifyHighLevelConnection(config) {
+  const cacheKey = `${config.location_id}:${config.api_token}`;
+  const now = Date.now();
+
+  if (ghlVerifyCache.key === cacheKey && now - ghlVerifyCache.verifiedAt < GHL_VERIFY_TTL_MS) {
+    return { connected: ghlVerifyCache.connected, locationData: ghlVerifyCache.locationData };
+  }
+
+  let connected = false;
+  let locationData = null;
+
+  try {
+    const response = await fetch(API_URLS.HIGHLEVEL_LOCATIONS(config.location_id), {
+      headers: {
+        'Authorization': `Bearer ${config.api_token}`,
+        'Version': '2021-07-28'
+      }
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      locationData = data.location || data;
+      connected = true;
+
+      // Actualizar datos del location si cambiaron
+      if (JSON.stringify(locationData) !== config.location_data) {
+        await db.run(
+          'UPDATE highlevel_config SET location_data = ? WHERE location_id = ?',
+          [JSON.stringify(locationData), config.location_id]
+        );
+      }
+    }
+  } catch (error) {
+    // Si hay error de red, consideramos que no está conectado
+    logger.warn('Error verificando conexión con HighLevel:', error.message);
+  }
+
+  ghlVerifyCache = { key: cacheKey, verifiedAt: now, connected, locationData };
+  return { connected, locationData };
+}
+
 /**
  * Obtiene el estado de las integraciones
  */
@@ -35,32 +82,10 @@ export const getStatus = async (req, res) => {
         }
       }
 
-      // Intentar verificar si el token sigue siendo válido
-      try {
-        const response = await fetch(API_URLS.HIGHLEVEL_LOCATIONS(config.location_id), {
-          headers: {
-            'Authorization': `Bearer ${config.api_token}`,
-            'Version': '2021-07-28'
-          }
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          const locationData = data.location || data;
-          highlevelStatus.connected = true;
-
-          // Actualizar datos del location si cambiaron
-          if (JSON.stringify(locationData) !== config.location_data) {
-            await db.run(
-              'UPDATE highlevel_config SET location_data = ? WHERE location_id = ?',
-              [JSON.stringify(locationData), config.location_id]
-            );
-            highlevelStatus.locationData = locationData;
-          }
-        }
-      } catch (error) {
-        // Si hay error de red, consideramos que no está conectado
-        logger.warn('Error verificando conexión con HighLevel:', error.message);
+      const verification = await verifyHighLevelConnection(config);
+      highlevelStatus.connected = verification.connected;
+      if (verification.locationData) {
+        highlevelStatus.locationData = verification.locationData;
       }
     }
 

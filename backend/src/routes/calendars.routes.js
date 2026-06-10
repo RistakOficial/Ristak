@@ -67,4 +67,7 @@ router.get('/:id', calendarsController.getCalendar);
 // Actualizar configuración de un calendario
 router.put('/:id', calendarsController.updateCalendar);
 
+// Eliminar un calendario local de Ristak
+router.delete('/:id', calendarsController.deleteCalendar);
+
 export default router;

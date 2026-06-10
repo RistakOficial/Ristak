@@ -141,16 +141,33 @@ async function getSessionById(sessionId: string): Promise<TrackingSession> {
   return response.session
 }
 
+// La config de tracking se consulta desde varios componentes a la vez (AppShell,
+// Dashboard, OriginDistributionCard...). Se comparte una sola petición con TTL
+// corto para no repetir la llamada en cada montaje.
+const TRACKING_CONFIG_TTL_MS = 60_000
+let trackingConfigCache: { promise: Promise<TrackingConfig>; fetchedAt: number } | null = null
+
 /**
  * Obtiene la configuración automática del tracking
  */
-async function getTrackingConfig(): Promise<TrackingConfig> {
+function getTrackingConfig(options: { forceRefresh?: boolean } = {}): Promise<TrackingConfig> {
+  const now = Date.now()
+  if (!options.forceRefresh && trackingConfigCache && now - trackingConfigCache.fetchedAt < TRACKING_CONFIG_TTL_MS) {
+    return trackingConfigCache.promise
+  }
+
   // Enviar el dominio actual del frontend como parámetro
   const currentDomain = window.location.hostname
-  const response = await apiClient.get<TrackingConfig>('/api/tracking/config', {
+  const promise = apiClient.get<TrackingConfig>('/api/tracking/config', {
     params: { frontendDomain: currentDomain }
+  }).catch(error => {
+    // No cachear errores para permitir reintentos
+    trackingConfigCache = null
+    throw error
   })
-  return response
+
+  trackingConfigCache = { promise, fetchedAt: now }
+  return promise
 }
 
 /**
@@ -162,6 +179,8 @@ async function configureTracking(): Promise<{ success: boolean; message: string;
   const response = await apiClient.post<any>('/api/tracking/configure', {
     frontendDomain: currentDomain
   })
+  // La config cambió en el backend: invalidar el caché compartido
+  trackingConfigCache = null
   return response
 }
 

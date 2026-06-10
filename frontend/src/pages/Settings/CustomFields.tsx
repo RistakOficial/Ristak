@@ -4,7 +4,7 @@ import {
   Edit3,
   Folder,
   FolderPlus,
-  Hash,
+  Hash as HashIcon,
   Loader2,
   MoreHorizontal,
   Plus,
@@ -539,7 +539,7 @@ export const CustomFields: React.FC = () => {
 
           <div className={`${styles.folderRow} ${styles.folderSystemRow} ${activeFolder === 'all' ? styles.folderSystemRowActive : ''}`}>
             <button type="button" onClick={() => setActiveFolder('all')}>
-              <Hash size={16} />
+              <HashIcon size={16} />
               <span>Todos los campos</span>
               <b>{fields.length}</b>
             </button>
@@ -626,7 +626,7 @@ export const CustomFields: React.FC = () => {
             </div>
           ) : visibleFields.length === 0 ? (
             <div className={styles.emptyState}>
-              <Hash size={26} />
+              <HashIcon size={26} />
               <strong>No hay campos en esta vista</strong>
               <span>Crea un campo nuevo o cambia de carpeta.</span>
             </div>

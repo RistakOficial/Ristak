@@ -684,6 +684,7 @@ const AppWithNotifications: React.FC = () => {
             <Route path="sites/*" element={<Sites />} />
             <Route path="analytics/*" element={<Analytics />} />
             <Route path="settings/*" element={<Settings />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>
         </Routes>
         <MobileNotificationOnboarding />

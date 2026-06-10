@@ -5,7 +5,7 @@ import {
   Cloud,
   ExternalLink,
   FileText,
-  Hash,
+  Hash as HashIcon,
   KeyRound,
   QrCode,
   RefreshCw,
@@ -584,7 +584,7 @@ export const WhatsAppSettings: React.FC = () => {
             <span>{formatMetric(phoneRows.length)} activos</span>
           </div>
           <button type="button" className={`${styles.sideItem} ${phoneFilter === 'all' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('all')}>
-            <Hash size={16} />
+            <HashIcon size={16} />
             <span>Todos los numeros</span>
             <b>{phoneRows.length}</b>
           </button>
@@ -705,7 +705,7 @@ export const WhatsAppSettings: React.FC = () => {
             </div>
           ) : (
             <div className={styles.emptyState}>
-              <Hash size={26} />
+              <HashIcon size={26} />
               <strong>No hay numeros en esta vista</strong>
               <span>Cambia el filtro o sincroniza WhatsApp API.</span>
             </div>
@@ -743,7 +743,7 @@ export const WhatsAppSettings: React.FC = () => {
             <span>{connectionAlertGroups.length} temas</span>
           </div>
           <button type="button" className={`${styles.sideItem} ${alertFilter === 'all' ? styles.sideItemActive : ''}`} onClick={() => setAlertFilter('all')}>
-            <Hash size={16} />
+            <HashIcon size={16} />
             <span>Todas las alertas</span>
             <b>{countBySeverity('all')}</b>
           </button>

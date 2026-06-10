@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Button } from '@/components/common'
+import { Card, Button, Badge } from '@/components/common'
 import { Check, Copy, Info, Loader2, RefreshCw, Activity } from 'lucide-react'
 import { trackingService } from '@/services/trackingService'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -32,7 +32,7 @@ export const WebTracking: React.FC = () => {
   const loadTrackingConfig = async () => {
     setLoadingConfig(true)
     try {
-      const config = await trackingService.getTrackingConfig()
+      const config = await trackingService.getTrackingConfig({ forceRefresh: true })
       setTrackingDomain(config.trackingDomain || '')
       setIsConfigured(config.isConfigured)
       setHasHighLevel(config.hasHighLevel)
@@ -98,23 +98,13 @@ export const WebTracking: React.FC = () => {
           <div className={styles.headerContent}>
             <div className={styles.headerLeft}>
               <div className={styles.logoContainer}>
-                <Activity size={40} color="var(--color-primary)" strokeWidth={2.5} />
+                <Activity size={22} />
               </div>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <h1 className={styles.pageTitle}>Rastreo Web</h1>
+                  <h2 className={styles.pageTitle}>Rastreo Web</h2>
                   {isOnRenderDomain && (
-                    <span style={{
-                      padding: '4px 12px',
-                      borderRadius: '6px',
-                      background: 'var(--color-surface)',
-                      color: 'var(--color-text-secondary)',
-                      fontSize: '0.875rem',
-                      fontWeight: 600,
-                      border: '1px solid var(--color-border)'
-                    }}>
-                      Dominio requerido
-                    </span>
+                    <Badge variant="neutral">Dominio requerido</Badge>
                   )}
                 </div>
                 <p className={styles.pageSubtitle}>

@@ -869,41 +869,71 @@ async function getMetaNotifications({ liveMetaCheck = true } = {}) {
   }
 
   if (liveMetaCheck && row?.ad_account_id) {
-    const metaConfig = await getMetaConfig().catch((error) => {
-      logger.warn(`No se pudo leer Meta para notificaciones: ${error.message}`)
-      notifications.push(createNotification({
-        id: 'meta:config-token-read',
-        source: 'Meta Ads',
-        severity: 'critical',
-        title: 'Meta necesita reconexion',
-        message: 'No se pudo leer el token guardado de Meta. Vuelve a conectar Meta para que Ristak pueda revisar anuncios, portafolio y eventos.',
-        updatedAt: new Date().toISOString(),
-        actionUrl: '/settings/meta-ads',
-        actionLabel: 'Revisar Meta'
-      }))
-      return null
-    })
+    notifications.push(...await getLiveMetaNotifications())
+  }
 
-    if (metaConfig?.access_token) {
-      const { account, notifications: accountNotifications } = await getMetaAccountNotifications(metaConfig)
-      notifications.push(...accountNotifications)
+  return notifications
+}
 
-      if (account) {
-        const [businessNotifications, deliveryNotifications, activityNotifications] = await Promise.all([
-          getMetaBusinessPortfolioNotifications(account, metaConfig),
-          getMetaDeliveryNotifications(metaConfig),
-          getMetaActivityNotifications(metaConfig)
-        ])
+// Los chequeos en vivo contra la API de Meta (cuenta, portafolio, entrega,
+// actividad) son varios requests por llamada y el Header los pide en cada
+// montaje/intervalo: sin caché, Meta regresa "User request limit reached".
+const LIVE_META_TTL_MS = 5 * 60 * 1000
+let liveMetaCache = { fetchedAt: 0, promise: null }
 
-        notifications.push(...businessNotifications, ...deliveryNotifications, ...activityNotifications)
-      }
+function getLiveMetaNotifications() {
+  const now = Date.now()
+  if (liveMetaCache.promise && now - liveMetaCache.fetchedAt < LIVE_META_TTL_MS) {
+    return liveMetaCache.promise
+  }
+
+  const promise = fetchLiveMetaNotifications().catch((error) => {
+    logger.warn(`No se pudieron obtener notificaciones en vivo de Meta: ${error.message}`)
+    liveMetaCache = { fetchedAt: 0, promise: null }
+    return []
+  })
+
+  liveMetaCache = { fetchedAt: now, promise }
+  return promise
+}
+
+async function fetchLiveMetaNotifications() {
+  const notifications = []
+
+  const metaConfig = await getMetaConfig().catch((error) => {
+    logger.warn(`No se pudo leer Meta para notificaciones: ${error.message}`)
+    notifications.push(createNotification({
+      id: 'meta:config-token-read',
+      source: 'Meta Ads',
+      severity: 'critical',
+      title: 'Meta necesita reconexion',
+      message: 'No se pudo leer el token guardado de Meta. Vuelve a conectar Meta para que Ristak pueda revisar anuncios, portafolio y eventos.',
+      updatedAt: new Date().toISOString(),
+      actionUrl: '/settings/meta-ads',
+      actionLabel: 'Revisar Meta'
+    }))
+    return null
+  })
+
+  if (metaConfig?.access_token) {
+    const { account, notifications: accountNotifications } = await getMetaAccountNotifications(metaConfig)
+    notifications.push(...accountNotifications)
+
+    if (account) {
+      const [businessNotifications, deliveryNotifications, activityNotifications] = await Promise.all([
+        getMetaBusinessPortfolioNotifications(account, metaConfig),
+        getMetaDeliveryNotifications(metaConfig),
+        getMetaActivityNotifications(metaConfig)
+      ])
+
+      notifications.push(...businessNotifications, ...deliveryNotifications, ...activityNotifications)
     }
   }
 
   return notifications
 }
 
-async function getStorageStatus() {
+export async function getStorageStatus() {
   const limitGB = STORAGE_LIMIT_GB > 0 ? STORAGE_LIMIT_GB : 1
 
   if (process.env.DATABASE_URL) {

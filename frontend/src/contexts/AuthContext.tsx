@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { ensureLocalDevAuth } from '@/services/authFetch'
+import { getIntegrationsStatus } from '@/services/integrationsService'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 
@@ -131,8 +132,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const fetchLocationData = async () => {
       try {
-        const response = await fetch(`${API_URL}/api/integrations/status`)
-        const data = await response.json()
+        const data = await getIntegrationsStatus()
 
         if (data.highlevel?.locationData) {
           const locationData = data.highlevel.locationData
