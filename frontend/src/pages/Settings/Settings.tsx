@@ -1,6 +1,6 @@
 import React from 'react'
 import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
-import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot, KeyRound, Globe2 } from 'lucide-react'
+import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot, KeyRound, Globe2, Hash as HashIcon } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { Costs } from './Costs'
@@ -79,7 +79,7 @@ export const Settings: React.FC = () => {
     {
       to: '/settings/custom-fields',
       label: 'Campos personalizados',
-      icon: <Hash size={18} />
+      icon: <HashIcon size={18} />
     },
     {
       to: '/settings/ai-agent',
