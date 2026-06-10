@@ -37,7 +37,8 @@ export async function verifyAndUpdateWebhooks() {
       'webhook_refunds': `${productionUrl}/webhook/refund`,
       'webhook_appointments': `${productionUrl}/webhook/appointment`,
       'webhook_appointment_showed': `${productionUrl}/webhook/appointment/showed`,
-      'webhook_whatsapp_attribution': `${productionUrl}/webhook/whatsapp/attribution`
+      'webhook_whatsapp_attribution': `${productionUrl}/webhook/whatsapp/attribution`,
+      'webhook_conversations': `${productionUrl}/webhook/conversation`
     }
 
     // Obtener custom values existentes

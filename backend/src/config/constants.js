@@ -54,6 +54,7 @@ export const CUSTOM_VALUE_KEYS = {
   WEBHOOK_APPOINTMENTS: 'webhook_appointments',
   WEBHOOK_APPOINTMENT_SHOWED: 'webhook_appointment_showed',
   WEBHOOK_WHATSAPP_ATTRIBUTION: 'webhook_whatsapp_attribution',
+  WEBHOOK_CONVERSATIONS: 'webhook_conversations',
   META_AD_ACCOUNT_ID: 'Facebook - Ad Account ID',
   META_ACCESS_TOKEN: 'Facebook - App Access Token',
   META_APP_ID: 'Facebook - App ID',
@@ -67,7 +68,8 @@ export const WEBHOOK_PATHS = {
   REFUND: '/webhook/refund',
   APPOINTMENT: '/webhook/appointment',
   APPOINTMENT_SHOWED: '/webhook/appointment/showed',
-  WHATSAPP_ATTRIBUTION: '/webhook/whatsapp/attribution'
+  WHATSAPP_ATTRIBUTION: '/webhook/whatsapp/attribution',
+  CONVERSATION: '/webhook/conversation'
 }
 
 export const PAGINATION = {
