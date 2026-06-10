@@ -621,53 +621,55 @@ export const Contacts: React.FC = () => {
     }
   }, [contacts, selectedContactIds])
 
-  // Cargar eventos de calendarios cuando se activa el filtro "Citados" o "Asistencias"
+  // Cargar eventos de calendarios cuando se activa el filtro "Citados" o "Asistencias".
+  // No depende de HighLevel: el backend sirve las citas locales aunque no haya GHL.
   useEffect(() => {
-    if (!['appointments', 'attendances'].includes(filter) || !locationId || !accessToken) {
+    if (!['appointments', 'attendances'].includes(filter)) {
       setAllEvents([])
       setLoadingEvents(false)
       return
     }
 
+    let cancelled = false
+
     const loadAllEvents = async () => {
       setLoadingEvents(true)
       try {
-        // Obtener todos los calendarios
-        const calendars = await calendarsService.getCalendars(locationId, accessToken)
-
         // Obtener eventos de TODOS los calendarios (sin filtro de fecha)
         const now = new Date()
         const past = new Date(now.getFullYear() - 10, 0, 1) // 10 años atrás
         const future = new Date(now.getFullYear() + 10, 11, 31) // 10 años adelante
 
-        const allEventsData: CalendarEvent[] = []
+        // Una sola llamada sin calendarId devuelve los eventos de todos los
+        // calendarios; se filtran los de calendarios inactivos.
+        const [calendars, events] = await Promise.all([
+          calendarsService.getCalendars(locationId, accessToken),
+          calendarsService.getEvents(
+            locationId || '',
+            past.getTime(),
+            future.getTime(),
+            accessToken || undefined
+          )
+        ])
 
-        for (const calendar of calendars) {
-          if (!calendar.isActive) continue
+        if (cancelled) return
 
-          try {
-            const events = await calendarsService.getEvents(
-              locationId,
-              past.getTime(),
-              future.getTime(),
-              accessToken,
-              calendar.id
-            )
-            allEventsData.push(...events)
-          } catch (error) {
-            // Ignorar errores de calendarios individuales
-          }
-        }
-
-        setAllEvents(allEventsData)
+        const inactiveCalendarIds = new Set(
+          calendars.filter(calendar => !calendar.isActive).map(calendar => calendar.id)
+        )
+        setAllEvents(events.filter(event => !inactiveCalendarIds.has(event.calendarId)))
       } catch (error) {
         // Error silencioso - el filtro seguirá funcionando con datos locales
       } finally {
-        setLoadingEvents(false)
+        if (!cancelled) setLoadingEvents(false)
       }
     }
 
     loadAllEvents()
+
+    return () => {
+      cancelled = true
+    }
   }, [filter, locationId, accessToken])
 
   useEffect(() => {

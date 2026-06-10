@@ -117,6 +117,18 @@ function metaSameLocalDayCondition(metaDateColumn, timestampColumn, timezone = '
   return `${metaDateExpression(metaDateColumn)} = ${timestampDateExpression(timestampColumn, timezone)}`;
 }
 
+function metaDayExpression(column) {
+  return isPostgres ? `TO_CHAR((${column})::date, 'YYYY-MM-DD')` : `DATE(${column})`;
+}
+
+// Rango [start, end] inclusivo sobre una expresión de fecha, con placeholders ?
+// compatibles con SQLite y PostgreSQL (la capa db convierte ? a $n en PG).
+function dateWindowCondition(dateExpr) {
+  return isPostgres
+    ? `${dateExpr} >= (?)::date AND ${dateExpr} <= (?)::date`
+    : `${dateExpr} >= DATE(?) AND ${dateExpr} <= DATE(?)`;
+}
+
 function createContactMetricAccumulator() {
   return {
     interestedKeys: new Set(),
@@ -919,7 +931,7 @@ export const getCampaigns = async (req, res) => {
         AVG(m.cpc) as cpc,
         AVG(m.cpm) as cpm
       FROM meta_ads m
-      WHERE m.date BETWEEN $1 AND $2
+      WHERE m.date BETWEEN ? AND ?
       GROUP BY m.campaign_id, m.campaign_name, m.adset_id, m.adset_name, m.ad_id, m.ad_name
       ORDER BY m.campaign_id, m.adset_id, m.ad_id
     `;
@@ -1132,13 +1144,13 @@ export const getSpendOverTime = async (req, res) => {
 
     logger.info(`Obteniendo gastos e ingresos desde ${start} hasta ${end}`);
 
-    // Query de gastos (PostgreSQL)
+    // Query de gastos (compatible con PostgreSQL y SQLite)
     const spendQuery = `
       SELECT
-        TO_CHAR(date::date, 'YYYY-MM-DD') as day,
+        ${metaDayExpression('date')} as day,
         SUM(spend) as spend
       FROM meta_ads
-      WHERE date::date >= $1::date AND date::date < ($2::date + INTERVAL '1 day')
+      WHERE ${dateWindowCondition(metaDateExpression('date'))}
       GROUP BY day
       ORDER BY day ASC
     `;
@@ -1160,8 +1172,7 @@ export const getSpendOverTime = async (req, res) => {
       FROM contacts c
       WHERE c.attribution_ad_id IS NOT NULL
         AND c.attribution_ad_id != ''
-        AND ${contactCreatedDate} >= $1::date
-        AND ${contactCreatedDate} < ($2::date + INTERVAL '1 day')
+        AND ${dateWindowCondition(contactCreatedDate)}
         AND EXISTS (
           SELECT 1 FROM meta_ads ma
           WHERE ma.ad_id = c.attribution_ad_id
@@ -1687,8 +1698,7 @@ export const getLeadsOverTime = async (req, res) => {
        FROM contacts
        WHERE attribution_ad_id IS NOT NULL
          AND attribution_ad_id != ''
-         AND ${contactsCreatedDate} >= $1::date
-         AND ${contactsCreatedDate} < ($2::date + INTERVAL '1 day')
+         AND ${dateWindowCondition(contactsCreatedDate)}
          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
        GROUP BY day
        ORDER BY day`;
@@ -1700,7 +1710,7 @@ export const getLeadsOverTime = async (req, res) => {
     let appointmentsParams = [startUtc, endUtc];
 
     if (attributionCalendarIds && attributionCalendarIds.length > 0) {
-      const calendarPlaceholders = attributionCalendarIds.map((_, i) => `$${i + 3}`).join(',');
+      const calendarPlaceholders = attributionCalendarIds.map(() => '?').join(',');
       appointmentsQuery = `SELECT
           ${cCreatedDay} as day,
           COUNT(DISTINCT ${dedupExprC}) as appointments
@@ -1708,8 +1718,7 @@ export const getLeadsOverTime = async (req, res) => {
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
            AND c.attribution_ad_id != ''
-           AND ${cCreatedDate} >= $1::date
-           AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
+           AND ${dateWindowCondition(cCreatedDate)}
            AND a.calendar_id IN (${calendarPlaceholders})
            ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day
@@ -1724,8 +1733,7 @@ export const getLeadsOverTime = async (req, res) => {
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
            AND c.attribution_ad_id != ''
-           AND ${cCreatedDate} >= $1::date
-           AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
+           AND ${dateWindowCondition(cCreatedDate)}
            ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day
          ORDER BY day`;
@@ -1806,7 +1814,7 @@ export const getAppointmentsOverTime = async (req, res) => {
     let appointmentsParams = [startUtc, endUtc];
 
     if (attributionCalendarIds && attributionCalendarIds.length > 0) {
-      const calendarPlaceholders = attributionCalendarIds.map((_, i) => `$${i + 3}`).join(',');
+      const calendarPlaceholders = attributionCalendarIds.map(() => '?').join(',');
       appointmentsQuery = `SELECT
           ${cCreatedDay} as day,
           COUNT(DISTINCT ${dedupExprC}) as appointments
@@ -1814,8 +1822,7 @@ export const getAppointmentsOverTime = async (req, res) => {
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
            AND c.attribution_ad_id != ''
-           AND ${cCreatedDate} >= $1::date
-           AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
+           AND ${dateWindowCondition(cCreatedDate)}
            AND a.calendar_id IN (${calendarPlaceholders})
            ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day
@@ -1830,8 +1837,7 @@ export const getAppointmentsOverTime = async (req, res) => {
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
            AND c.attribution_ad_id != ''
-           AND ${cCreatedDate} >= $1::date
-           AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
+           AND ${dateWindowCondition(cCreatedDate)}
            ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day
          ORDER BY day`;
@@ -1845,8 +1851,7 @@ export const getAppointmentsOverTime = async (req, res) => {
        WHERE attribution_ad_id IS NOT NULL
          AND attribution_ad_id != ''
          AND purchases_count > 0
-         AND ${contactsCreatedDate} >= $1::date
-         AND ${contactsCreatedDate} < ($2::date + INTERVAL '1 day')
+         AND ${dateWindowCondition(contactsCreatedDate)}
          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
        GROUP BY day
        ORDER BY day`;
@@ -1924,8 +1929,7 @@ export const getVisitorsOverTime = async (req, res) => {
        FROM sessions
        WHERE ad_id IS NOT NULL
          AND ad_id != ''
-         AND ${startedDate} >= $1::date
-         AND ${startedDate} < ($2::date + INTERVAL '1 day')
+         AND ${dateWindowCondition(startedDate)}
        GROUP BY day
        ORDER BY day`;
 
@@ -1936,8 +1940,7 @@ export const getVisitorsOverTime = async (req, res) => {
        FROM contacts
        WHERE attribution_ad_id IS NOT NULL
          AND attribution_ad_id != ''
-         AND ${contactsCreatedDate} >= $1::date
-         AND ${contactsCreatedDate} < ($2::date + INTERVAL '1 day')
+         AND ${dateWindowCondition(contactsCreatedDate)}
          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
        GROUP BY day
        ORDER BY day`;
@@ -2016,8 +2019,7 @@ export const getFunnelMetrics = async (req, res) => {
        FROM sessions
        WHERE ad_id IS NOT NULL
          AND ad_id != ''
-         AND ${startedDate} >= $1::date
-         AND ${startedDate} < ($2::date + INTERVAL '1 day')
+         AND ${dateWindowCondition(startedDate)}
        GROUP BY day`;
 
     // Query para leads CON attribution_ad_id validando que el anuncio existiera ese día en Meta
@@ -2027,8 +2029,7 @@ export const getFunnelMetrics = async (req, res) => {
        FROM contacts c
        WHERE c.attribution_ad_id IS NOT NULL
          AND c.attribution_ad_id != ''
-         AND ${cCreatedDate} >= $1::date
-         AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
+         AND ${dateWindowCondition(cCreatedDate)}
          AND EXISTS (
            SELECT 1 FROM meta_ads ma
            WHERE ma.ad_id = c.attribution_ad_id
@@ -2044,7 +2045,7 @@ export const getFunnelMetrics = async (req, res) => {
     let appointmentsParams = [startUtc, endUtc];
 
     if (attributionCalendarIds && attributionCalendarIds.length > 0) {
-      const calendarPlaceholders = attributionCalendarIds.map((_, i) => `$${i + 3}`).join(',');
+      const calendarPlaceholders = attributionCalendarIds.map(() => '?').join(',');
       appointmentsQuery = `SELECT
           ${cCreatedDay} as day,
           COUNT(DISTINCT ${dedupExprC}) as appointments
@@ -2052,8 +2053,7 @@ export const getFunnelMetrics = async (req, res) => {
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
            AND c.attribution_ad_id != ''
-           AND ${cCreatedDate} >= $1::date
-           AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
+           AND ${dateWindowCondition(cCreatedDate)}
            AND a.calendar_id IN (${calendarPlaceholders})
            AND EXISTS (
              SELECT 1 FROM meta_ads ma
@@ -2072,8 +2072,7 @@ export const getFunnelMetrics = async (req, res) => {
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
            AND c.attribution_ad_id != ''
-           AND ${cCreatedDate} >= $1::date
-           AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
+           AND ${dateWindowCondition(cCreatedDate)}
            AND EXISTS (
              SELECT 1 FROM meta_ads ma
              WHERE ma.ad_id = c.attribution_ad_id
@@ -2091,8 +2090,7 @@ export const getFunnelMetrics = async (req, res) => {
        WHERE c.attribution_ad_id IS NOT NULL
          AND c.attribution_ad_id != ''
          AND c.purchases_count > 0
-         AND ${cCreatedDate} >= $1::date
-         AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
+         AND ${dateWindowCondition(cCreatedDate)}
          AND EXISTS (
            SELECT 1 FROM meta_ads ma
            WHERE ma.ad_id = c.attribution_ad_id

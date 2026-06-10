@@ -1071,44 +1071,26 @@ export const Dashboard: React.FC = () => {
       const rangeEnd = new Date(dateRange.end)
       rangeEnd.setHours(23, 59, 59, 999)
 
-      const appointmentsPromise = locationId && accessToken
-        ? (async () => {
-            const calendars = await calendarsService.getCalendars(locationId, accessToken)
-            const activeCalendars = calendars.filter(calendar => calendar.isActive)
+      // Una sola llamada sin calendarId devuelve los eventos de todos los
+      // calendarios. No requiere HighLevel: el backend usa su config guardada
+      // y sirve las citas locales aunque no haya GHL.
+      const appointmentsPromise = (async () => {
+        const [calendars, events] = await Promise.all([
+          calendarsService.getCalendars(locationId, accessToken),
+          calendarsService.getEvents(
+            locationId || '',
+            rangeStart.getTime(),
+            rangeEnd.getTime(),
+            accessToken || undefined
+          )
+        ])
 
-            if (!activeCalendars.length) {
-              return calendarsService.getEvents(
-                locationId,
-                rangeStart.getTime(),
-                rangeEnd.getTime(),
-                accessToken
-              )
-            }
+        const inactiveCalendarIds = new Set(
+          calendars.filter(calendar => !calendar.isActive).map(calendar => calendar.id)
+        )
 
-            const results = await Promise.allSettled(
-              activeCalendars.map(calendar => calendarsService.getEvents(
-                locationId,
-                rangeStart.getTime(),
-                rangeEnd.getTime(),
-                accessToken,
-                calendar.id
-              ))
-            )
-
-            const uniqueEvents = new Map<string, CalendarEvent>()
-
-            results.forEach(result => {
-              if (result.status !== 'fulfilled') return
-
-              result.value.forEach(event => {
-                const eventKey = event.id || `${event.calendarId}-${event.startTime}-${event.title}`
-                uniqueEvents.set(eventKey, event)
-              })
-            })
-
-            return Array.from(uniqueEvents.values())
-          })()
-        : Promise.resolve<CalendarEvent[]>([])
+        return events.filter(event => !inactiveCalendarIds.has(event.calendarId))
+      })().catch(() => [] as CalendarEvent[])
 
       try {
         const [transactionsData, contactsResult, appointmentsData] = await Promise.all([

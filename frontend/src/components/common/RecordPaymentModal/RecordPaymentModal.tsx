@@ -23,6 +23,7 @@ import {
 import styles from './RecordPaymentModal.module.css'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig } from '@/hooks'
+import { getIntegrationsStatus } from '@/services/integrationsService'
 import { formatCurrency as formatMxCurrency } from '@/utils/format'
 import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { highLevelService } from '@/services/highLevelService'
@@ -599,12 +600,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const loadIntegrationStatus = async () => {
     try {
-      const response = await fetch('/api/integrations/status')
-      if (!response.ok) {
-        setHighLevelConnected(false)
-        return
-      }
-      const data = await response.json()
+      const data = await getIntegrationsStatus()
       setHighLevelConnected(Boolean(data?.highlevel?.connected))
     } catch (error) {
       setHighLevelConnected(false)

@@ -127,9 +127,10 @@ if (usePostgres) {
   })
 
   // Helper para convertir placeholders SQLite (?) a PostgreSQL ($1, $2, etc.)
+  // No toca los ? que van dentro de literales de texto '...' (p. ej. filtros LIKE)
   const convertPlaceholders = (sql) => {
     let index = 1
-    return sql.replace(/\?/g, () => `$${index++}`)
+    return sql.replace(/'(?:[^']|'')*'|\?/g, (match) => (match === '?' ? `$${index++}` : match))
   }
 
   db = {

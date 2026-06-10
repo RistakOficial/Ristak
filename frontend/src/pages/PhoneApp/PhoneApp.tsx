@@ -589,17 +589,16 @@ export const PhoneApp: React.FC = () => {
           safe(reportsService.getSummary({ from: startIso, to: endIso, scope: 'all' }), null)
         ])
 
-        let calendars: Calendar[] = []
-        let appointmentEvents: CalendarEvent[] = []
-
-        if (locationId && accessToken) {
-          calendars = await safe(calendarsService.getCalendars(locationId, accessToken), [] as Calendar[])
-          const rawEvents = await safe(
-            calendarsService.getEvents(locationId, startDate.getTime(), inclusiveEnd.getTime(), accessToken),
+        // No requiere HighLevel: el backend usa su config guardada y sirve
+        // las citas locales aunque no haya GHL.
+        const [calendars, rawEvents] = await Promise.all([
+          safe(calendarsService.getCalendars(locationId, accessToken), [] as Calendar[]),
+          safe(
+            calendarsService.getEvents(locationId || '', startDate.getTime(), inclusiveEnd.getTime(), accessToken || undefined),
             [] as CalendarEvent[]
           )
-          appointmentEvents = rawEvents.map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
-        }
+        ])
+        const appointmentEvents = rawEvents.map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
 
         if (cancelled) return
 

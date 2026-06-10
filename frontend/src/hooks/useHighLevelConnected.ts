@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
-
-const API_URL = import.meta.env.VITE_API_URL || ''
+import { getIntegrationsStatus } from '@/services/integrationsService'
 
 interface HighLevelConnection {
   connected: boolean
@@ -29,11 +28,7 @@ export function useHighLevelConnected(): HighLevelConnection {
 
     const loadStatus = async () => {
       try {
-        const response = await fetch(`${API_URL}/api/integrations/status`)
-        if (!response.ok) {
-          throw new Error('No se pudo obtener el estado de integraciones')
-        }
-        const data = await response.json()
+        const data = await getIntegrationsStatus()
         if (cancelled) return
         setConnected(Boolean(data?.highlevel?.connected))
         setConfigured(Boolean(data?.highlevel?.configured))

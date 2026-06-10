@@ -280,7 +280,7 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                         }
 
                         return (
-                          <g>
+                          <g key={`${serie.key}-dot-${props.index}`}>
                             <circle
                               cx={props.cx}
                               cy={props.cy}

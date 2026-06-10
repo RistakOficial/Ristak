@@ -32,7 +32,7 @@ export const WebTracking: React.FC = () => {
   const loadTrackingConfig = async () => {
     setLoadingConfig(true)
     try {
-      const config = await trackingService.getTrackingConfig()
+      const config = await trackingService.getTrackingConfig({ forceRefresh: true })
       setTrackingDomain(config.trackingDomain || '')
       setIsConfigured(config.isConfigured)
       setHasHighLevel(config.hasHighLevel)

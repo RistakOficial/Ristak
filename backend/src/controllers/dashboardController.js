@@ -10,6 +10,7 @@ import { DateTime } from 'luxon';
 import { getContactsWithAppointmentsHybrid, getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES, successfulPaymentStatusCondition } from '../utils/paymentMode.js';
+import { getStorageStatus as getDatabaseStorageStatus } from '../services/notificationsService.js';
 
 const isPostgres = Boolean(process.env.DATABASE_URL);
 
@@ -873,24 +874,18 @@ export const getSalesData = async (req, res) => {
  */
 export const getStorageStatus = async (req, res) => {
   try {
-    const STORAGE_LIMIT_GB = 1; // Límite configurado en render.yaml
     const WARNING_THRESHOLD = 0.8; // Alertar al 80%
 
-    // Obtener tamaño actual de la BD PostgreSQL
-    const result = await db.get(`
-      SELECT
-        pg_size_pretty(pg_database_size(current_database())) as size_pretty,
-        pg_database_size(current_database()) as size_bytes
-    `);
+    // Cálculo compartido con notificaciones: soporta PostgreSQL y SQLite
+    const storage = await getDatabaseStorageStatus();
 
-    const sizeGB = result.size_bytes / (1024 * 1024 * 1024);
-    const percentUsed = (sizeGB / STORAGE_LIMIT_GB) * 100;
+    const percentUsed = storage.percentUsed;
     const needsAttention = percentUsed >= WARNING_THRESHOLD * 100;
 
     res.json({
-      sizeGB: parseFloat(sizeGB.toFixed(2)),
-      sizePretty: result.size_pretty,
-      limitGB: STORAGE_LIMIT_GB,
+      sizeGB: parseFloat(storage.sizeGB.toFixed(2)),
+      sizePretty: storage.sizePretty,
+      limitGB: storage.limitGB,
       percentUsed: parseFloat(percentUsed.toFixed(1)),
       warningThreshold: WARNING_THRESHOLD * 100,
       needsAttention,

@@ -903,7 +903,7 @@ async function getMetaNotifications({ liveMetaCheck = true } = {}) {
   return notifications
 }
 
-async function getStorageStatus() {
+export async function getStorageStatus() {
   const limitGB = STORAGE_LIMIT_GB > 0 ? STORAGE_LIMIT_GB : 1
 
   if (process.env.DATABASE_URL) {

@@ -1321,13 +1321,18 @@ async function handleMessage(message) {
 }
 
 router.get('/', requireMcpAuth, async (req, res) => {
-  const tools = await getCombinedToolDefinitions()
+  try {
+    const tools = await getCombinedToolDefinitions()
 
-  res.json({
-    name: 'ristak',
-    protocolVersion: MCP_PROTOCOL_VERSION,
-    tools: tools.map(tool => tool.name)
-  })
+    res.json({
+      name: 'ristak',
+      protocolVersion: MCP_PROTOCOL_VERSION,
+      tools: tools.map(tool => tool.name)
+    })
+  } catch (error) {
+    logger.error(`[MCP] Error listando herramientas: ${error.message}`)
+    res.status(500).json({ error: 'No se pudieron listar las herramientas MCP' })
+  }
 })
 
 router.post('/', requireMcpAuth, async (req, res) => {
