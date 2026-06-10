@@ -8018,14 +8018,20 @@ export async function verifyPublicDomainConnection(domainValue) {
     return { verified: false, error: 'Dominio invalido' }
   }
 
-  const httpsCheck = await checkDomainHealth(domain, 'https')
-  if (httpsCheck.ok) {
-    return { verified: true, error: null, method: 'https_health', url: httpsCheck.url }
-  }
+  // Probamos el dominio tal cual y su variante con/sin www: en Render es comun
+  // que solo una de las dos este enrutada y la otra responda con redireccion.
+  const twin = domain.startsWith('www.') ? domain.slice(4) : `www.${domain}`
+  const candidates = [domain, ...(normalizeDomain(twin) && twin !== domain ? [twin] : [])]
+  const failures = []
 
-  const httpCheck = await checkDomainHealth(domain, 'http')
-  if (httpCheck.ok) {
-    return { verified: true, error: null, method: 'http_health', url: httpCheck.url }
+  for (const protocol of ['https', 'http']) {
+    for (const candidate of candidates) {
+      const check = await checkDomainHealth(candidate, protocol)
+      if (check.ok) {
+        return { verified: true, error: null, method: `${protocol}_health`, url: check.url }
+      }
+      failures.push(check.error)
+    }
   }
 
   const dnsInfo = await readDomainDns(domain)
@@ -8034,7 +8040,7 @@ export async function verifyPublicDomainConnection(domainValue) {
     error: describeDnsSignal(dnsInfo),
     details: {
       dns: dnsInfo,
-      checks: [httpsCheck.error, httpCheck.error].filter(Boolean)
+      checks: failures.filter(Boolean)
     }
   }
 }
@@ -8075,6 +8081,35 @@ async function findSiteByRoutePath(pathValue) {
   return mapSite(row)
 }
 
+// Para la raiz del dominio (sin slug) servimos el site publicado mas
+// representativo: primero landing pages, luego el publicado mas reciente.
+async function findDefaultPublishedSite() {
+  const row = await db.get(`
+    SELECT * FROM public_sites
+    WHERE status = 'published'
+    ORDER BY
+      CASE WHEN site_type = 'landing_page' THEN 0 ELSE 1 END,
+      COALESCE(published_at, updated_at) DESC
+    LIMIT 1
+  `)
+
+  return mapSite(row)
+}
+
+function stripWwwPrefix(hostValue) {
+  const host = normalizeDomain(hostValue)
+  return host.startsWith('www.') ? host.slice(4) : host
+}
+
+// El dominio configurado y el host entrante se consideran el mismo dominio
+// aunque uno lleve www. y el otro no (Render suele exponer ambas variantes).
+function matchesPublicDomain(hostValue, domainValue) {
+  const host = normalizeDomain(hostValue)
+  const domain = normalizeDomain(domainValue)
+  if (!host || !domain) return false
+  return host === domain || stripWwwPrefix(host) === stripWwwPrefix(domain)
+}
+
 export async function resolveConnectedPublicDomainForHost(hostValue, { forceRefresh = false } = {}) {
   const host = normalizeDomain(hostValue)
   if (!host) {
@@ -8082,7 +8117,7 @@ export async function resolveConnectedPublicDomainForHost(hostValue, { forceRefr
   }
 
   const config = await getSitesPublicDomainConfig()
-  if (!config.domain || config.domain !== host) {
+  if (!config.domain || !matchesPublicDomain(host, config.domain)) {
     return { ok: false, status: 404, reason: 'domain_not_configured', message: 'Dominio no configurado' }
   }
 
@@ -8149,7 +8184,10 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
   const domainResolution = await resolveConnectedPublicDomainForHost(host, { forceRefresh })
   if (!domainResolution.ok) return domainResolution
 
-  const site = await findSiteByRoutePath(path)
+  let site = await findSiteByRoutePath(path)
+  if (!site && !normalizePublicRouteSlug(path)) {
+    site = await findDefaultPublishedSite()
+  }
   if (!site) {
     return { ok: false, status: 404, reason: 'route_not_configured', message: 'Ruta publica no configurada' }
   }
