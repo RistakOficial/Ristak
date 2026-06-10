@@ -3,15 +3,15 @@
   gap: 18px;
 }
 
+/* Header de panel sin caja: misma receta que el resto de Settings
+   (icono + título 18px/700 + descripción, separado por borde inferior). */
 .header {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 14px;
-  align-items: center;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--color-background-secondary) 96%, var(--color-primary) 4%);
-  padding: 16px;
+  align-items: start;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
 }
 
 /* Header de panel: receta compartida de Settings (icono 42px, título 18px/700). */
@@ -41,26 +41,11 @@
 
 .header p,
 .domainMeta p,
-.infoBox span,
 .emptyState p {
   margin: 4px 0 0;
   color: var(--color-text-secondary);
   font-size: 14px;
   line-height: 1.5;
-}
-
-.infoBox {
-  display: grid;
-  gap: 5px;
-  border: 1px solid rgba(var(--color-primary-rgb), 0.18);
-  border-radius: 8px;
-  background: rgba(var(--color-primary-rgb), 0.07);
-  padding: 14px;
-}
-
-.infoBox strong {
-  color: var(--color-text-primary);
-  font-size: 0.92rem;
 }
 
 .domainList {

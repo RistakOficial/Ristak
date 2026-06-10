@@ -1,7 +1,5 @@
 import React from 'react'
-import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
-import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot, KeyRound, Globe2, Smartphone, Hash as HashIcon } from 'lucide-react'
-import { SiWhatsapp } from 'react-icons/si'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { Costs } from './Costs'
 import { PaymentsConfiguration } from './PaymentsConfiguration'
@@ -15,143 +13,34 @@ import { APIAccessSettings } from './APIAccessSettings'
 import { Domains } from './Domains'
 import { MobileAppSettings } from './MobileAppSettings'
 import { CustomFields } from './CustomFields'
-import { PageHeader } from '@/components/common'
-import { useTheme } from '@/contexts/ThemeContext'
 import styles from './Settings.module.css'
 
+// La navegación de Configuración vive en el sidebar principal (grupo
+// expandible); aquí solo se monta el contenido de cada sección.
+// Las rutas deben mantenerse en sincronía con settingsNav.ts.
 export const Settings: React.FC = () => {
-  const { theme } = useTheme()
-  const location = useLocation()
-  const isAccountPage = location.pathname.includes('/settings/account')
-
-  const settingsNavigation = [
-    {
-      to: '/settings/account',
-      label: 'Cuenta',
-      icon: <UserCircle size={18} />
-    },
-    {
-      to: '/settings/mobile-app',
-      label: 'Aplicación móvil',
-      icon: <Smartphone size={18} />
-    },
-    {
-      to: '/settings/calendars',
-      label: 'Calendarios',
-      icon: <Calendar size={18} />
-    },
-    {
-      to: '/settings/payments',
-      label: 'Pagos',
-      icon: <CreditCard size={18} />
-    },
-    {
-      to: '/settings/highlevel',
-      label: 'HighLevel',
-      icon: <Send size={18} />
-    },
-    {
-      to: '/settings/meta-ads',
-      label: 'Meta',
-      icon: (
-        <img
-          src={theme === 'dark'
-            ? 'https://img.icons8.com/ios-filled/150/FFFFFF/meta.png'
-            : 'https://img.icons8.com/ios-filled/150/meta.png'
-          }
-          alt=""
-          className={styles.settingsNavMetaIcon}
-        />
-      )
-    },
-    {
-      to: '/settings/whatsapp',
-      label: 'WhatsApp',
-      icon: <SiWhatsapp size={18} />
-    },
-    {
-      to: '/settings/tracking',
-      label: 'Rastreo Web',
-      icon: <Activity size={18} />
-    },
-    {
-      to: '/settings/domains',
-      label: 'Dominios',
-      icon: <Globe2 size={18} />
-    },
-    {
-      to: '/settings/costs',
-      label: 'Costos',
-      icon: <TrendingDown size={18} />
-    },
-    {
-      to: '/settings/custom-fields',
-      label: 'Campos personalizados',
-      icon: <HashIcon size={18} />
-    },
-    {
-      to: '/settings/ai-agent',
-      label: 'Agente AI',
-      icon: <Bot size={18} />
-    },
-    {
-      to: '/settings/api-access',
-      label: 'Acceso API',
-      icon: <KeyRound size={18} />
-    }
-  ]
-
   return (
     <div className={styles.container}>
-      <div className={styles.settingsLayout}>
-        <aside className={styles.settingsNavPanel} aria-label="Secciones de configuración">
-          <div className={styles.settingsNavHeader}>
-            <span className={styles.settingsNavEyebrow}>Configuración</span>
-            <strong className={styles.settingsNavTitle}>Secciones</strong>
-          </div>
-
-          <nav className={styles.settingsNavList}>
-            {settingsNavigation.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) => `${styles.settingsNavItem} ${isActive ? styles.settingsNavItemActive : ''}`}
-              >
-                <span className={styles.settingsNavIcon}>{item.icon}</span>
-                <span className={styles.settingsNavLabel}>{item.label}</span>
-              </NavLink>
-            ))}
-          </nav>
-        </aside>
-
-        <section className={styles.settingsPanel}>
-          {isAccountPage && (
-            <PageHeader
-              title="Configuración"
-              subtitle="Gestiona las integraciones y configuración de tu cuenta"
-            />
-          )}
-
-          <div className={styles.mainContent}>
-            <Routes>
-              <Route index element={<Navigate to="account" replace />} />
-              <Route path="highlevel" element={<HighLevelIntegration />} />
-              <Route path="costs/*" element={<Costs />} />
-              <Route path="meta-ads/*" element={<MetaAdsIntegration />} />
-              <Route path="whatsapp/*" element={<WhatsAppSettings />} />
-              <Route path="calendars/*" element={<CalendarsConfiguration />} />
-              <Route path="tracking/*" element={<WebTracking />} />
-              <Route path="domains/*" element={<Domains />} />
-              <Route path="payments/*" element={<PaymentsConfiguration />} />
-              <Route path="custom-fields/*" element={<CustomFields />} />
-              <Route path="ai-agent" element={<AIAgentSettings />} />
-              <Route path="api-access" element={<APIAccessSettings />} />
-              <Route path="mobile-app" element={<MobileAppSettings />} />
-              <Route path="account" element={<AccountSettings />} />
-            </Routes>
-          </div>
-        </section>
-      </div>
+      <section className={styles.settingsPanel}>
+        <div className={styles.mainContent}>
+          <Routes>
+            <Route index element={<Navigate to="account" replace />} />
+            <Route path="highlevel" element={<HighLevelIntegration />} />
+            <Route path="costs/*" element={<Costs />} />
+            <Route path="meta-ads/*" element={<MetaAdsIntegration />} />
+            <Route path="whatsapp/*" element={<WhatsAppSettings />} />
+            <Route path="calendars/*" element={<CalendarsConfiguration />} />
+            <Route path="tracking/*" element={<WebTracking />} />
+            <Route path="domains/*" element={<Domains />} />
+            <Route path="payments/*" element={<PaymentsConfiguration />} />
+            <Route path="custom-fields/*" element={<CustomFields />} />
+            <Route path="ai-agent" element={<AIAgentSettings />} />
+            <Route path="api-access" element={<APIAccessSettings />} />
+            <Route path="mobile-app" element={<MobileAppSettings />} />
+            <Route path="account" element={<AccountSettings />} />
+          </Routes>
+        </div>
+      </section>
     </div>
   )
 }

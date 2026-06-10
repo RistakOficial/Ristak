@@ -142,6 +142,12 @@ variante), nunca como un diseño independiente.
 - `<table>`, botones, inputs o modales re-estilizados desde cero cuando ya
   existe componente o receta.
 - Estilos inline en JSX para cosas que ya tienen clase o token.
+- Declarar en `:root` alias que referencien tokens temados (p. ej.
+  `--mi-alias: var(--color-background-secondary)`): las custom properties
+  sustituyen sus `var()` donde se declaran, así que el alias queda congelado
+  con los defaults oscuros aunque `body.light` cambie el token base. Esos
+  alias se declaran en `body` (ver el bloque `body { --ristak-dropdown-* }`
+  en `styles/index.css`).
 - Páginas que "parecen de otra app": antes de mergear, compara tu pantalla
   con Dashboard/Contactos y con esta guía.
 - Romper los atributos `data-ristak-*` (los presets de diseño dependen de

@@ -428,124 +428,14 @@ body.dark .select:focus {
   padding: var(--spacing-2xl) 1.5rem 4rem;
 }
 
-.settingsLayout {
-  display: grid;
-  grid-template-columns: 244px minmax(0, 1fr);
-  align-items: start;
-  gap: 28px;
-  width: 100%;
-  max-width: var(--app-page-max);
-  margin: 0 auto;
-}
-
-.settingsNavPanel {
-  position: sticky;
-  top: 24px;
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 14px;
-  padding: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 12px;
-  background: rgba(148, 163, 184, 0.055);
-}
-
-.settingsNavHeader {
-  padding: 2px 4px 10px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
-}
-
-.settingsNavEyebrow {
-  display: block;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  line-height: 1.2;
-  text-transform: uppercase;
-}
-
-.settingsNavTitle {
-  display: block;
-  margin-top: 5px;
-  color: var(--color-text-primary);
-  font-size: 16px;
-  font-weight: 750;
-  line-height: 1.2;
-}
-
-.settingsNavList {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.settingsNavItem {
-  position: relative;
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  min-height: 40px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 650;
-  text-decoration: none;
-  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.settingsNavItem:hover {
-  color: var(--color-text-primary);
-  background: rgba(148, 163, 184, 0.08);
-}
-
-.settingsNavItemActive {
-  color: var(--color-text-primary);
-  border-color: rgba(148, 163, 184, 0.22);
-  background: var(--color-background-primary);
-  box-shadow: 0 8px 20px -16px rgba(15, 23, 42, 0.45);
-}
-
-.settingsNavItemActive::before {
-  position: absolute;
-  top: 9px;
-  bottom: 9px;
-  left: 0;
-  width: 3px;
-  border-radius: 999px;
-  background: var(--color-primary);
-  content: '';
-}
-
-.settingsNavIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  color: currentColor;
-}
-
-.settingsNavMetaIcon {
-  width: 18px;
-  height: 18px;
-  object-fit: contain;
-}
-
-.settingsNavLabel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+/* La navegación de Configuración vive en el sidebar principal; el contenido
+   se centra con un ancho cómodo de lectura (equivalente al ancho que tenía
+   el panel cuando convivía con la sub-navegación lateral). */
 .settingsPanel {
   min-width: 0;
   width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
 }
 
 @media (min-width: 768px) {
@@ -1403,20 +1293,6 @@ body.dark .select:focus {
 }
 
 @media (max-width: 900px) {
-  .settingsLayout {
-    grid-template-columns: 1fr;
-    gap: 20px;
-  }
-
-  .settingsNavPanel {
-    position: static;
-    border-radius: 10px;
-  }
-
-  .settingsNavItem {
-    min-height: 38px;
-  }
-
   .panelHeader {
     flex-direction: column;
     align-items: stretch;

@@ -374,6 +374,29 @@ body.dark {
   --design-section-border: rgba(148, 163, 184, 0.16);
 }
 
+/* Los alias que referencian tokens de tema deben re-declararse en body, no
+   solo en :root: las custom properties sustituyen sus var() en el elemento
+   donde se declaran, así que en :root quedan congeladas con los defaults
+   oscuros aunque body.light cambie los tokens base (menús y superficies
+   salían oscuros en modo claro). */
+body {
+  --color-background: var(--color-background-secondary);
+  --color-surface: var(--color-background-tertiary);
+  --color-success: var(--color-status-success);
+  --color-error: var(--color-status-error);
+  --color-warning: var(--color-status-warning);
+  --color-info: var(--color-status-info);
+  --design-control-focus-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.12);
+  --ristak-dropdown-bg: var(--design-control-bg);
+  --ristak-dropdown-bg-hover: var(--design-control-bg-hover);
+  --ristak-dropdown-border: var(--design-control-border);
+  --ristak-dropdown-border-hover: var(--design-control-border-hover);
+  --ristak-dropdown-border-focus: var(--design-control-border-focus);
+  --ristak-dropdown-ring: var(--design-control-focus-shadow);
+  --ristak-focus-border: var(--design-control-border-focus);
+  --ristak-focus-ring: var(--design-control-focus-shadow);
+}
+
 body:not([data-phone-app='active']) :where(select):not(:where(.rstkCanvas select, .rstk-block-style select, .rstk-phone-input select)) {
   width: 100%;
   min-height: var(--ristak-dropdown-trigger-height) !important;

@@ -1793,16 +1793,19 @@ export const CalendarsConfiguration: React.FC = () => {
   const renderCalendarsTab = () => (
     <div className={pageStyles.tabPanel}>
       <div className={pageStyles.panelToolbar}>
-        <div className={pageStyles.toolbarActions}>
-          <Button variant="outline" size="small" onClick={() => {
+        {renderCalendarSourceSelect()}
+        <Button
+          className={pageStyles.toolbarCreate}
+          variant="outline"
+          size="small"
+          onClick={() => {
             setShowCreateModal(true)
             navigate('/settings/calendars/new')
-          }}>
-            <Plus size={16} />
-            Crear calendario
-          </Button>
-          {renderCalendarSourceSelect()}
-        </div>
+          }}
+        >
+          <Plus size={16} />
+          Crear calendario
+        </Button>
       </div>
 
       <details className={pageStyles.compactHelp}>

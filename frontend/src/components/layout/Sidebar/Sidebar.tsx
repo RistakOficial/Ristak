@@ -22,6 +22,7 @@ import { cn } from '@/utils/cn'
 import { useAppConfig, useIsRenderDomain } from '@/hooks'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/contexts/AuthContext'
+import { settingsNavigation } from '@/pages/Settings/settingsNav'
 import {
   DndContext,
   closestCenter,
@@ -114,6 +115,69 @@ const getNavLinkClasses = (isActive: boolean, extraClasses?: string) => cn(
     : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[rgba(148,163,184,0.12)]',
   extraClasses
 )
+
+interface SettingsNavGroupProps {
+  pathname: string
+  open: boolean
+  onToggle: () => void
+  onNavigate?: () => void
+}
+
+// Grupo expandible de Configuración (estilo Cloudflare): el padre vive en la
+// misma lista del sidebar y al expandirse muestra las secciones anidadas con
+// una guía vertical. El estado activo reutiliza la misma receta visual que el
+// resto de los items del panel.
+const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({ pathname, open, onToggle, onNavigate }) => {
+  const isSettingsRoute = pathname.startsWith('/settings')
+
+  return (
+    <div className="pt-2">
+      <div className="mb-2 border-t border-[rgba(148,163,184,0.12)]" />
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        data-ristak-sidebar-nav-item
+        data-active={isSettingsRoute && !open ? 'true' : undefined}
+        className={cn(getNavLinkClasses(isSettingsRoute && !open, 'w-full'))}
+      >
+        <Settings className="h-5 w-5 flex-shrink-0" />
+        <span className="flex-1 text-left">Configuración</span>
+        <ChevronDown
+          className={cn(
+            'h-4 w-4 flex-shrink-0 text-[var(--color-text-tertiary)] transition-transform',
+            open && 'rotate-180'
+          )}
+        />
+      </button>
+
+      {open && (
+        <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[rgba(148,163,184,0.16)] pl-2.5">
+          {settingsNavigation.map((item) => {
+            const isActive = pathname.startsWith(item.to)
+            return (
+              <Link
+                key={item.to}
+                to={item.to}
+                onClick={onNavigate}
+                data-ristak-sidebar-nav-item
+                data-active={isActive ? 'true' : undefined}
+                className={cn(
+                  'block rounded-md px-2.5 py-[7px] text-[13px] font-medium transition-colors',
+                  isActive
+                    ? 'bg-[rgba(148,163,184,0.16)] text-[var(--color-text-primary)]'
+                    : 'text-[var(--color-text-tertiary)] hover:bg-[rgba(148,163,184,0.1)] hover:text-[var(--color-text-primary)]'
+                )}
+              >
+                {item.label}
+              </Link>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const NavigationItem: React.FC<NavigationItemProps> = ({ item, isActive, onNavigate }) => {
   const Icon = item.icon
@@ -224,6 +288,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isEditMode, setIsEditMode] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
+  const isSettingsRoute = location.pathname.startsWith('/settings')
+  const [settingsOpen, setSettingsOpen] = useState(isSettingsRoute)
+
+  // Mantener el grupo abierto mientras se navega dentro de Configuración
+  useEffect(() => {
+    if (isSettingsRoute) setSettingsOpen(true)
+  }, [isSettingsRoute])
   const longPressTimerRef = React.useRef<number | null>(null)
   const longPressStartPos = React.useRef<{ x: number; y: number } | null>(null)
   const userMenuRef = React.useRef<HTMLDivElement>(null)
@@ -542,7 +613,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
 
       {/* Navigation */}
       <nav className={cn(
-        "flex-1 p-4 pt-3 transition-all duration-200",
+        "flex-1 min-h-0 overflow-y-auto p-4 pt-3 transition-all duration-200",
         isEditMode && "bg-white/[0.02] mx-2 rounded-lg"
       )}>
         {isEditMode && (
@@ -592,6 +663,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
                 </div>
               ) : null}
             </DragOverlay>
+
+            <SettingsNavGroup
+              pathname={location.pathname}
+              open={settingsOpen}
+              onToggle={() => setSettingsOpen((current) => !current)}
+              onNavigate={handleNavigate}
+            />
           </DndContext>
         ) : (
           <div
@@ -621,23 +699,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
                 />
               )
             })}
+
+            <SettingsNavGroup
+              pathname={location.pathname}
+              open={settingsOpen}
+              onToggle={() => setSettingsOpen((current) => !current)}
+              onNavigate={handleNavigate}
+            />
           </div>
         )}
       </nav>
-
-      {/* Settings */}
-      <div className="mt-auto p-4 border-t border-[rgba(148,163,184,0.12)]">
-        <Link
-          to="/settings"
-          onClick={handleNavigate}
-          data-ristak-sidebar-nav-item
-          data-active={location.pathname.startsWith('/settings') ? 'true' : undefined}
-          className={getNavLinkClasses(location.pathname.startsWith('/settings'))}
-        >
-          <Settings className="w-5 h-5" />
-          Configuración
-        </Link>
-      </div>
     </div>
   )
 }

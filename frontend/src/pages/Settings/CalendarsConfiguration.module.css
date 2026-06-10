@@ -207,20 +207,20 @@
   gap: 14px;
 }
 
+/* Toolbar de la lista: selector de origen a la izquierda y acción de crear
+   siempre alineada a la derecha (sin encimarse aunque falte el selector). */
 .panelToolbar {
   display: flex;
   align-items: center;
   justify-content: flex-start;
   gap: 10px;
+  flex-wrap: wrap;
   padding: 4px 0 2px;
 }
 
-.toolbarActions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 10px;
-  flex-wrap: wrap;
+.toolbarCreate {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .sourceControl {
@@ -1840,12 +1840,16 @@
     flex: 1 1 220px;
   }
 
-  .toolbarActions,
   .sourceControl,
   .sourceSelect,
   .formActions,
-  .supportLinks {
+  .supportLinks,
+  .toolbarCreate {
     width: 100%;
+  }
+
+  .toolbarCreate {
+    margin-left: 0;
   }
 
   .serviceEmailBox {

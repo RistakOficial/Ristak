@@ -1546,10 +1546,9 @@ export const MetaAdsIntegration: React.FC = () => {
               <section className={`${styles.section} ${styles.connectedSection}`}>
                 <div className={styles.connectedHeader}>
                   <span className={styles.connectedIcon} aria-hidden="true">
-                    <CheckCircle size={28} />
+                    <CheckCircle size={20} />
                   </span>
                   <div className={styles.connectedCopy}>
-                    <span className={styles.stepEyebrow}>Meta</span>
                     <h3 className={styles.connectedTitle}>Configuración activa</h3>
                     <p className={styles.connectedText}>
                       La cuenta está lista para reportes, eventos y mensajes nuevos de Meta.
@@ -1749,6 +1748,15 @@ export const MetaAdsIntegration: React.FC = () => {
                       Controles operativos para snippet y sincronización.
                     </p>
                   </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handleSyncMetaAds}
+                    disabled={isSyncingMetaAds}
+                  >
+                    <RefreshCw size={16} className={isSyncingMetaAds ? styles.spinning : ''} />
+                    {isSyncingMetaAds ? 'Sincronizando' : 'Sincronizar anuncios'}
+                  </Button>
                 </div>
 
                 <div className={styles.connectedExtrasRows}>
@@ -1784,16 +1792,6 @@ export const MetaAdsIntegration: React.FC = () => {
                       Sincronizando snippet...
                     </div>
                   )}
-
-                  <button
-                    type="button"
-                    className={styles.railButton}
-                    onClick={handleSyncMetaAds}
-                    disabled={isSyncingMetaAds}
-                  >
-                    <RefreshCw size={16} className={isSyncingMetaAds ? styles.spinning : ''} />
-                    {isSyncingMetaAds ? 'Sincronizando' : 'Sincronizar anuncios'}
-                  </button>
                 </div>
               </section>
             )}
