@@ -1546,6 +1546,16 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
     }
 
     if (highLevelComplete && !localComplete) {
+      // PRIORIDAD LOCAL: si Ristak ya tiene CUALQUIER credencial de Meta
+      // configurada, no se sobrescribe con la de HighLevel. Solo se adopta
+      // la configuración de HighLevel cuando no existe ninguna config local
+      // previa (o cuando el usuario lo pide explícitamente con prefer=highlevel).
+      if (prefer !== 'highlevel' && hasAnyMetaCredential(localCredentials)) {
+        result.action = 'kept_local'
+        result.message = 'Ya existe configuración local de Meta en Ristak; no se reemplazó con la de HighLevel'
+        return result
+      }
+
       const credentialsToSave = mergeMetaCredentials(highLevelCredentials)
       await saveMetaConfig(
         credentialsToSave.adAccountId,

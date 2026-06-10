@@ -428,11 +428,24 @@ export async function getCalendars(req, res) {
   try {
     const { locationId, accessToken } = await getHighLevelContext(req);
 
+    // LOCAL PRIMERO: si ya hay calendarios de GHL espejados en la base de
+    // datos, responder con lo local y refrescar desde HighLevel en segundo
+    // plano. Solo se espera a HighLevel cuando todavía no hay espejo local.
+    const hasMirroredGhlCalendars = locationId && accessToken
+      ? Boolean(await db.get("SELECT id FROM calendars WHERE source = 'ghl' AND COALESCE(ghl_calendar_id, '') != '' LIMIT 1").catch(() => null))
+      : false;
+
     if (locationId && accessToken) {
-      try {
-        await mirrorHighLevelCalendars(locationId, accessToken);
-      } catch (error) {
-        logger.warn(`[Calendars Controller] No se pudieron espejear calendarios GHL: ${error.message}`);
+      if (hasMirroredGhlCalendars) {
+        mirrorHighLevelCalendars(locationId, accessToken).catch(error => {
+          logger.warn(`[Calendars Controller] No se pudieron espejear calendarios GHL en segundo plano: ${error.message}`);
+        });
+      } else {
+        try {
+          await mirrorHighLevelCalendars(locationId, accessToken);
+        } catch (error) {
+          logger.warn(`[Calendars Controller] No se pudieron espejear calendarios GHL: ${error.message}`);
+        }
       }
     }
 
@@ -572,48 +585,73 @@ export async function getEvents(req, res) {
       });
     }
 
-    if (locationId && accessToken) {
-      try {
-        const localCalendar = calendarId ? await localCalendarService.getLocalCalendar(calendarId) : null;
-        const remoteCalendarId = localCalendar?.ghlCalendarId || calendarId || null;
-        const remoteEvents = await calendarService.getCalendarEvents(
-          locationId,
-          parseInt(startTime, 10),
-          parseInt(endTime, 10),
-          accessToken,
-          remoteCalendarId
-        );
+    // Refresca desde HighLevel y persiste todo en la tabla appointments.
+    const refreshFromHighLevel = async () => {
+      if (!locationId || !accessToken) return;
+      const localCalendar = calendarId ? await localCalendarService.getLocalCalendar(calendarId) : null;
+      const remoteCalendarId = localCalendar?.ghlCalendarId || calendarId || null;
+      const remoteEvents = await calendarService.getCalendarEvents(
+        locationId,
+        parseInt(startTime, 10),
+        parseInt(endTime, 10),
+        accessToken,
+        remoteCalendarId
+      );
 
-        for (const event of remoteEvents) {
-          const eventCalendar = event.calendarId
-            ? await localCalendarService.getLocalCalendar(event.calendarId)
-            : null;
-          await localCalendarService.upsertLocalAppointment(event, {
-            source: 'ghl',
-            ghlAppointmentId: event.id,
-            calendarId: eventCalendar?.id || localCalendar?.id || event.calendarId,
-            locationId,
-            syncStatus: 'synced'
-          });
-        }
+      for (const event of remoteEvents) {
+        const eventCalendar = event.calendarId
+          ? await localCalendarService.getLocalCalendar(event.calendarId)
+          : null;
+        await localCalendarService.upsertLocalAppointment(event, {
+          source: 'ghl',
+          ghlAppointmentId: event.id,
+          calendarId: eventCalendar?.id || localCalendar?.id || event.calendarId,
+          locationId,
+          syncStatus: 'synced'
+        });
+      }
+    };
+
+    const refreshFromGoogle = () => googleCalendarService.syncGoogleEventsToLocal({
+      startTime,
+      endTime,
+      calendarId
+    });
+
+    // LOCAL PRIMERO: la base de datos es la fuente de verdad de la app.
+    // Si ya hay citas guardadas para este rango, responder de inmediato y
+    // refrescar desde HighLevel/Google en segundo plano (sin bloquear la UI).
+    // Solo se espera a HighLevel cuando la BD todavía está vacía (primera carga).
+    let events = await localCalendarService.listLocalAppointments({
+      startTime,
+      endTime,
+      calendarId
+    });
+
+    if (events.length > 0) {
+      refreshFromHighLevel().catch(error => {
+        logger.warn(`[Calendars Controller] No se pudo refrescar eventos GHL en segundo plano: ${error.message}`);
+      });
+      refreshFromGoogle().catch(error => {
+        logger.warn(`[Calendars Controller] No se pudo refrescar eventos Google en segundo plano: ${error.message}`);
+      });
+    } else {
+      try {
+        await refreshFromHighLevel();
       } catch (error) {
         logger.warn(`[Calendars Controller] No se pudo refrescar eventos GHL, usando DB local: ${error.message}`);
       }
+
+      await refreshFromGoogle().catch(error => {
+        logger.warn(`[Calendars Controller] No se pudo refrescar eventos Google, usando DB local: ${error.message}`);
+      });
+
+      events = await localCalendarService.listLocalAppointments({
+        startTime,
+        endTime,
+        calendarId
+      });
     }
-
-    await googleCalendarService.syncGoogleEventsToLocal({
-      startTime,
-      endTime,
-      calendarId
-    }).catch(error => {
-      logger.warn(`[Calendars Controller] No se pudo refrescar eventos Google, usando DB local: ${error.message}`);
-    });
-
-    const events = await localCalendarService.listLocalAppointments({
-      startTime,
-      endTime,
-      calendarId
-    });
 
     res.json({
       success: true,

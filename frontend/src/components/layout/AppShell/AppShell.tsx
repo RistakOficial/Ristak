@@ -235,7 +235,7 @@ export const AppShell: React.FC = () => {
       {syncProgressVisible && <SyncProgressBar onClose={handleProgressBarClose} />}
 
       <div
-        className={`${styles.shell} ${aiAgentOpen ? styles.shellWithAIAgent : ''} ${aiAgentResizing ? styles.shellResizingAIAgent : ''} ${sitesEditorFocusMode ? styles.shellSitesEditorFocus : ''}`}
+        className={`${styles.shell} ${aiAgentOpen ? styles.shellWithAIAgent : ''} ${aiAgentResizing ? styles.shellResizingAIAgent : ''} ${sitesEditorFocusMode ? styles.shellSitesEditorFocus : ''} ${syncProgressVisible ? styles.shellWithSyncBar : ''}`}
         style={shellStyle}
       >
         <div className={styles.mainPane}>

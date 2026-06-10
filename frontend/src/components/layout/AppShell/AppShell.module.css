@@ -6,7 +6,21 @@
   min-width: 0;
   overflow: hidden;
   background: var(--color-bg-primary);
-  transition: grid-template-columns 0.28s ease;
+  transition: grid-template-columns 0.28s ease, padding-right 0.28s ease;
+}
+
+/* Cuando el panel de sincronización de HighLevel está visible, empuja el
+   contenido en vez de taparlo para poder seguir usando la app. El panel es
+   fixed de 480px a la derecha; en móvil ocupa todo el ancho y se mantiene
+   como overlay porque no hay espacio para empujar. */
+.shellWithSyncBar {
+  padding-right: 480px;
+}
+
+@media (max-width: 639px) {
+  .shellWithSyncBar {
+    padding-right: 0;
+  }
 }
 
 .shellWithAIAgent {

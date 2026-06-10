@@ -336,8 +336,10 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
   const formatNumber = (value?: number) =>
     typeof value === 'number' ? value.toLocaleString('es-MX') : '0'
 
+  // En escritorio el panel ocupa una columna completa a la derecha (el AppShell
+  // empuja el contenido con padding); en móvil se mantiene como overlay bajo el header.
   const containerClasses = cn(
-    'fixed top-[var(--header-height)] bottom-0 right-0 z-[1200] w-full sm:w-[480px] transition-all duration-300',
+    'fixed top-[var(--header-height)] sm:top-0 bottom-0 right-0 z-[1200] w-full sm:w-[480px] transition-all duration-300',
     isClosing ? 'translate-x-full opacity-0' : 'translate-x-0 opacity-100'
   )
 
