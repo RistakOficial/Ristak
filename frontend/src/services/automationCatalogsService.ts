@@ -114,6 +114,16 @@ async function loadForms(): Promise<CatalogOption[]> {
     .map((site) => ({ value: site.id || site.slug, label: site.name }))
 }
 
+/** Anuncios reales detectados en la atribución de los contactos */
+async function loadAds(): Promise<CatalogOption[]> {
+  const ads = await apiClient.get<Array<{ id: string; name: string }>>('/automations/catalogs/ads')
+  return (ads || []).map((ad) => ({
+    value: ad.name || ad.id,
+    label: ad.name || ad.id,
+    meta: ad.name && ad.id && ad.name !== ad.id ? ad.id : undefined
+  }))
+}
+
 async function loadWhatsAppNumbers(): Promise<CatalogOption[]> {
   const status = await whatsappApiService.getStatus()
   return (status.phoneNumbers || []).map((phone) => ({
@@ -183,7 +193,8 @@ const loaders: Record<CatalogKind, () => Promise<CatalogOption[]>> = {
   whatsappTemplates: loadWhatsAppTemplates,
   campaigns: async () => MOCK_CAMPAIGNS,
   links: async () => MOCK_LINKS,
-  products: async () => MOCK_PRODUCTS
+  products: async () => MOCK_PRODUCTS,
+  ads: loadAds
 }
 
 const fallbacks: Partial<Record<CatalogKind, CatalogOption[]>> = {
@@ -192,7 +203,8 @@ const fallbacks: Partial<Record<CatalogKind, CatalogOption[]>> = {
   calendars: [],
   forms: [],
   whatsappNumbers: [],
-  whatsappTemplates: []
+  whatsappTemplates: [],
+  ads: []
 }
 
 const cache = new Map<CatalogKind, Promise<CatalogOption[]>>()

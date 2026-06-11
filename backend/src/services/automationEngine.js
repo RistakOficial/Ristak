@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
 
 /**
  * Motor de ejecución de automatizaciones.
@@ -127,7 +128,7 @@ function filterFieldValue(filter, ctx) {
     case 'email': return contact.email || ''
     case 'phone': return contact.phone || ''
     case 'country': return contact.country || ''
-    case 'tag': return (contact.tags || []).join(' , ')
+    case 'tag': return (contact.tagKeys || contact.tags || []).join(' , ')
     case 'custom': return String((contact.customFields || {})[filter.customKey] ?? '')
     // Campos del evento (cita, pago, anuncio…)
     case 'calendar': return ctx.calendarId || null
@@ -202,8 +203,9 @@ function triggerMatches(trigger, eventType, ctx) {
       const operator = str(config.operator) || 'added'
       const tag = normalizeText(config.tag)
       if (!tag) return false
-      if (operator === 'contains') return (ctx.contact?.tags || []).map(normalizeText).includes(tag)
-      return ctx.tagAction === operator && normalizeText(ctx.tag) === tag
+      if (operator === 'contains') return (ctx.contact?.tagKeys || ctx.contact?.tags || []).map(normalizeText).includes(tag)
+      // El evento trae el nombre (ctx.tag) y el ID (ctx.tagId); la config puede tener cualquiera de los dos
+      return ctx.tagAction === operator && (normalizeText(ctx.tag) === tag || normalizeText(ctx.tagId) === tag)
     }
 
     case 'form-submitted': {
@@ -288,7 +290,7 @@ function ruleFieldValue(rule, ctx) {
     case 'conv-replied': return ctx.messageText ? 'true' : 'false'
     case 'tag-has':
     case 'tag-any-of':
-      return (contact.tags || []).join(' , ')
+      return (contact.tagKeys || contact.tags || []).join(' , ')
     default: return null
   }
 }
@@ -415,12 +417,17 @@ const DURATION_MS = {
 async function applyTagAction(node, ctx, remove) {
   const tag = str(node.config?.tag)
   if (!tag || !ctx.contact?.id) return `Etiqueta no aplicada (sin ${tag ? 'contacto' : 'etiqueta'})`
+  // La config puede traer el ID del catálogo (editor nuevo) o el nombre
+  // (automatizaciones viejas); siempre se guarda el ID en contacts.tags.
+  const [tagId] = await resolveTagIds([tag], { createMissing: !remove })
+  const [tagName] = tagId ? await tagNamesForIds([tagId]) : []
+  const displayName = tagName || tag
   const row = await db.get('SELECT tags FROM contacts WHERE id = ?', [ctx.contact.id])
   const tags = parseJson(row?.tags, [])
   const list = Array.isArray(tags) ? tags : []
   const next = remove
-    ? list.filter((candidate) => normalizeText(candidate) !== normalizeText(tag))
-    : [...new Set([...list, tag])]
+    ? list.filter((candidate) => candidate !== tagId && normalizeText(candidate) !== normalizeText(tag))
+    : [...new Set([...list, tagId].filter(Boolean))]
   await db.run('UPDATE contacts SET tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [
     JSON.stringify(next),
     ctx.contact.id
@@ -430,11 +437,12 @@ async function applyTagAction(node, ctx, remove) {
   setImmediate(() => {
     handleAutomationEvent('tag-changed', {
       contactId: ctx.contact.id,
-      tag,
+      tag: displayName,
+      tagId: tagId || null,
       tagAction: remove ? 'removed' : 'added'
     }).catch(() => undefined)
   })
-  return remove ? `Etiqueta "${tag}" quitada` : `Etiqueta "${tag}" añadida`
+  return remove ? `Etiqueta "${displayName}" quitada` : `Etiqueta "${displayName}" añadida`
 }
 
 /** Envía un bloque adjunto: si es un archivo subido a Ristak se manda como
@@ -730,6 +738,16 @@ async function loadContact(contactId, fallback = {}) {
   const row = contactId ? await db.get('SELECT * FROM contacts WHERE id = ?', [contactId]) : null
   const custom = parseJson(row?.custom_fields, {})
   const bag = typeof custom === 'object' && custom !== null && !Array.isArray(custom) ? custom : {}
+  const storedTags = (() => {
+    const parsed = parseJson(row?.tags, [])
+    return Array.isArray(parsed) ? parsed : []
+  })()
+  // tagKeys: IDs del catálogo + nombres (configs viejas guardaban el nombre) +
+  // etiquetas internas calculadas (Cliente, Cita agendada, Prospecto); es lo
+  // que usan filtros y condiciones para comparar.
+  const tagKeys = await buildTagMatchKeys(row?.id || contactId || null, storedTags)
+    .then((keys) => [...keys])
+    .catch(() => storedTags)
   return {
     id: row?.id || contactId || null,
     firstName: row?.first_name || '',
@@ -740,10 +758,8 @@ async function loadContact(contactId, fallback = {}) {
     source: row?.source || bag.source || '',
     country: row?.country || bag.country || '',
     customFields: bag,
-    tags: (() => {
-      const parsed = parseJson(row?.tags, [])
-      return Array.isArray(parsed) ? parsed : []
-    })()
+    tags: storedTags,
+    tagKeys
   }
 }
 
