@@ -64,7 +64,7 @@ import {
   pruneInvalidEdges,
   removeNode
 } from './flowUtils'
-import { AutomationLeftNav } from './AutomationLeftNav'
+import { AutomationLibrary } from '../AutomationLibrary'
 import { FlowSettingsPanel } from './FlowSettingsPanel'
 import { createEditorState, editorReducer } from './editorState'
 import { validateAutomationFlow } from './automationValidation'
@@ -1136,7 +1136,7 @@ export const AutomationEditor: React.FC = () => {
 
       {/* ------------------------------ Canvas ----------------------------- */}
       <div className={styles.editorMain}>
-        <AutomationLeftNav currentId={automation.id} />
+        <AutomationLibrary currentAutomationId={automation.id} />
         <AutomationCanvas
         nodes={nodes}
         edges={edges}
@@ -1173,17 +1173,18 @@ export const AutomationEditor: React.FC = () => {
           />
         )}
 
+        {/* Panel de configuración flotante junto al evento */}
+        {config && configNode && configDefinition && (
+          <NodeConfigBubble
+            definition={configDefinition}
+            config={(configTrigger ? configTrigger.config : configNode.config) || {}}
+            anchor={config.anchor}
+            bounds={canvasBounds}
+            onChange={handleConfigChange}
+            onClose={() => setConfig(null)}
+          />
+        )}
       </AutomationCanvas>
-
-      {/* Panel de configuración acoplado a la derecha (estilo ManyChat) */}
-      {config && configNode && configDefinition && (
-        <NodeConfigBubble
-          definition={configDefinition}
-          config={(configTrigger ? configTrigger.config : configNode.config) || {}}
-          onChange={handleConfigChange}
-          onClose={() => setConfig(null)}
-        />
-      )}
       </div>
 
       {/* ----------------------- Configuración del flujo --------------------- */}

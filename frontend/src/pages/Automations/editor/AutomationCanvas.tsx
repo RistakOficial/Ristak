@@ -354,9 +354,16 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
             if (node) actions.onMoveNode(currentDrag.nodeId, node.position, true)
           }
         } else if (!currentDrag.withModifier) {
-          // Clic simple sobre el evento: abre su configuración en el panel
+          // Clic simple sobre el evento: abre su configuración junto a la cajita
           const node = nodesRef.current.find((candidate) => candidate.id === currentDrag.nodeId)
-          if (node) actions.onOpenConfig(node, { x: 0, y: 0 })
+          if (node) {
+            const layout = layoutsRef.current[node.id]
+            const { x, y, zoom } = viewportRef.current
+            actions.onOpenConfig(node, {
+              x: (node.position.x + (layout?.width || NODE_WIDTH)) * zoom + x + 16,
+              y: node.position.y * zoom + y
+            })
+          }
         }
         return
       }

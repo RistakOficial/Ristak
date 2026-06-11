@@ -1523,11 +1523,16 @@
   color: var(--color-text-tertiary);
 }
 
-.leftNavSearch input {
+/* El input dentro de la búsqueda no debe tener su propio contenedor */
+.leftNavSearch input,
+.leftNavSearch input:focus {
   flex: 1;
   min-width: 0;
-  border: none;
-  background: transparent;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0;
+  padding: 0;
   color: var(--color-text-primary);
   font-size: 12px;
   outline: none;
@@ -1589,6 +1594,302 @@
   color: var(--color-text-tertiary);
   text-align: center;
   padding: 16px 8px;
+}
+
+/* ------------------ Librería tipo explorador de archivos ------------------ */
+
+.libPath {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px 7px;
+}
+
+.libPathBack {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.libPathBack:hover {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--color-text-primary);
+}
+
+.libPathText {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 7px;
+  padding: 3px 5px;
+}
+
+/* Fila de la librería (carpeta o automatización) */
+.libRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border-radius: 9px;
+  padding: 6px 4px 6px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.libRow:hover {
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.libRowActive {
+  background: rgba(var(--color-primary-rgb), 0.14);
+  font-weight: 600;
+}
+
+.libRowChecked {
+  background: rgba(var(--color-primary-rgb), 0.1);
+}
+
+.libRowName {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Icono ↔ checkbox al hover (como Contactos/Pagos) */
+.libRowLead {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+
+.libCheckbox {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid rgba(148, 163, 184, 0.55);
+  border-radius: 5px;
+  background: var(--color-background-primary);
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
+}
+
+.libRow:hover .libCheckbox,
+.libCheckboxOn {
+  display: inline-flex;
+}
+
+.libRow:hover .libRowIcon,
+.libRowChecked .libRowIcon {
+  visibility: hidden;
+}
+
+.libCheckboxOn {
+  background: rgb(var(--color-primary-rgb));
+  border-color: rgb(var(--color-primary-rgb));
+}
+
+.libRowMenu {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.libRow:hover .libRowMenu {
+  display: inline-flex;
+}
+
+.libRowMenu:hover {
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--color-text-primary);
+}
+
+/* Resaltado al arrastrar una fila sobre una carpeta o la ruta */
+.libDropTarget {
+  outline: 1.5px dashed rgba(var(--color-primary-rgb), 0.6);
+  outline-offset: -1.5px;
+  background: rgba(var(--color-primary-rgb), 0.1);
+}
+
+/* Barra de acciones en bloque */
+.libBulkBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 8px 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(var(--color-primary-rgb), 0.12);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.3);
+}
+
+.libBulkCount {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.libBulkButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.libBulkButton:hover {
+  background: rgba(148, 163, 184, 0.18);
+  color: var(--color-text-primary);
+}
+
+.libBulkDanger:hover {
+  background: rgba(220, 38, 38, 0.16);
+  color: var(--color-status-error);
+}
+
+/* --------------------- Página principal simplificada ---------------------- */
+
+.homeShell {
+  display: flex;
+  height: calc(100dvh - var(--header-height, 64px));
+  min-height: 0;
+}
+
+.homeMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  background: var(--color-background-tertiary);
+}
+
+.homeContent {
+  max-width: 640px;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.homeTitle {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 10px;
+}
+
+.homeSubtitle {
+  font-size: 13.5px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  margin: 0 0 26px;
+}
+
+.homeCards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 980px) {
+  .homeCards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.homeCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  border: 1.5px dashed rgba(148, 163, 184, 0.35);
+  border-radius: 16px;
+  background: var(--color-background-secondary);
+  padding: 22px 16px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.homeCard:hover:not(:disabled) {
+  border-color: rgba(var(--color-primary-rgb), 0.55);
+  transform: translateY(-2px);
+  box-shadow: 0 14px 30px -18px rgba(15, 23, 42, 0.4);
+}
+
+.homeCard:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.homeCardIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: rgba(var(--node-accent, 59, 130, 246), 0.14);
+  color: rgb(var(--node-accent, 59, 130, 246));
+}
+
+.homeCardIcon[data-accent='blue'] { --node-accent: 59, 130, 246; }
+.homeCardIcon[data-accent='green'] { --node-accent: 16, 185, 129; }
+.homeCardIcon[data-accent='purple'] { --node-accent: 139, 92, 246; }
+
+.homeCardTitle {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.homeCardDescription {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
 }
 
 /* ----------------------- Selección múltiple ------------------------------ */
@@ -2077,13 +2378,18 @@
 /* ------------- Panel de configuración acoplado a la derecha --------------- */
 
 .configPanel {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
   width: 372px;
-  flex-shrink: 0;
+  z-index: 42;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-left: 1px solid rgba(148, 163, 184, 0.16);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 14px;
   background: var(--color-background-primary);
+  box-shadow: 0 24px 60px -24px rgba(15, 23, 42, 0.5), 0 6px 18px -8px rgba(15, 23, 42, 0.18);
   animation: panelIn 0.16s ease;
 }
 

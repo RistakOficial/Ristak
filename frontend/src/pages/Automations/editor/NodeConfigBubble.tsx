@@ -29,9 +29,14 @@ type ConfigValue = Record<string, unknown>
 interface NodeConfigBubbleProps {
   definition: NodeDefinition
   config: ConfigValue
+  /** Posición sugerida (lado derecho del evento) en px del canvas */
+  anchor: { x: number; y: number }
+  bounds: { width: number; height: number }
   onChange: (config: ConfigValue) => void
   onClose: () => void
 }
+
+const PANEL_WIDTH = 372
 
 const str = (value: unknown): string =>
   typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
@@ -39,6 +44,8 @@ const str = (value: unknown): string =>
 export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
   definition,
   config,
+  anchor,
+  bounds,
   onChange,
   onClose
 }) => {
@@ -421,11 +428,16 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
     }
   }
 
+  // El panel aparece a la derecha del evento, casi a la altura completa del
+  // canvas, para que la edición no se sienta lejos de la cajita.
+  const left = Math.max(12, Math.min(anchor.x, bounds.width - PANEL_WIDTH - 12))
+
   return (
     <div
       ref={rootRef}
       data-automation-interactive="true"
       className={styles.configPanel}
+      style={{ left }}
       role="complementary"
       aria-label={`Configurar ${definition.label}`}
       onPointerDown={(event) => event.stopPropagation()}
