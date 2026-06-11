@@ -77,16 +77,15 @@
   text-align: center;
 }
 
+/* Mismas filas que el menú estándar de PhoneSelect (el de Registrar pago):
+   lista limpia con separadores finos, selección en acento con palomita. */
 .columnList {
   height: 264px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   display: grid;
-  gap: 4px;
   align-content: start;
-  padding: 4px;
-  border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.08));
-  border-radius: 14px;
-  background: var(--phone-chat-panel, #ffffff);
   scrollbar-width: none;
 }
 
@@ -95,21 +94,33 @@
 }
 
 .columnOption {
-  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 52px;
+  padding: 10px 2px;
   border: 0;
-  border-radius: 10px;
+  border-top: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.08));
   color: var(--phone-chat-text, #111111);
   background: transparent;
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 800;
+  line-height: 1.15;
   text-align: center;
   -webkit-tap-highlight-color: transparent;
 }
 
+.columnOption:first-child {
+  border-top: 0;
+}
+
+.columnOption svg {
+  flex: 0 0 auto;
+}
+
 .columnOptionSelected {
   color: var(--phone-chat-accent, #25d366);
-  background: color-mix(in srgb, var(--phone-chat-accent, #25d366) 14%, transparent);
-  font-weight: 820;
 }
 
 .doneButton {

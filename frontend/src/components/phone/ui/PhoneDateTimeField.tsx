@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { Check, ChevronDown } from 'lucide-react'
 import { PhoneSheet } from './PhoneSheet'
 import { formatTimeLabel } from './PhoneTimeField'
 import styles from './PhoneDateTimeField.module.css'
@@ -18,6 +18,8 @@ interface PhoneDateTimeFieldProps {
   className?: string
   buttonClassName?: string
 }
+
+const DEFAULT_YEARS_AHEAD = 10
 
 const MONTHS_SHORT = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
 
@@ -72,7 +74,13 @@ const PickerColumn: React.FC<{
   return (
     <div className={styles.column}>
       <span className={styles.columnLabel}>{label}</span>
-      <div ref={listRef} className={styles.columnList} role="listbox" aria-label={label}>
+      <div
+        ref={listRef}
+        className={styles.columnList}
+        role="listbox"
+        aria-label={label}
+        data-phone-scrollable="true"
+      >
         {options.map((option) => {
           const selected = option.value === value
           return (
@@ -85,7 +93,8 @@ const PickerColumn: React.FC<{
               className={`${styles.columnOption} ${selected ? styles.columnOptionSelected : ''}`.trim()}
               onClick={() => onSelect(option.value)}
             >
-              {option.label}
+              <span>{option.label}</span>
+              {selected && <Check size={16} aria-hidden="true" />}
             </button>
           )
         })}
@@ -106,7 +115,7 @@ export const PhoneDateTimeField: React.FC<PhoneDateTimeFieldProps> = ({
   dateLabel = 'Fecha',
   timeLabel = 'Hora',
   disabled = false,
-  yearsAhead = 2,
+  yearsAhead = DEFAULT_YEARS_AHEAD,
   className = '',
   buttonClassName = ''
 }) => {
