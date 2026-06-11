@@ -9940,26 +9940,6 @@ const ImportedHtmlEditorPanel: React.FC<{
   return (
     <div className={styles.importedEditorPanel}>
       <section className={styles.importedPreviewPane}>
-        <div className={styles.importedPreviewToolbar}>
-          <div>
-            <span>Vista editable</span>
-            <strong>{site.title || site.name}</strong>
-          </div>
-          <div className={styles.importedPreviewTools}>
-            <span>{device === 'mobile' ? 'Movil' : 'Escritorio'}</span>
-            <button
-              type="button"
-              className={styles.importedPreviewRefresh}
-              onClick={() => void loadInlinePreview()}
-              disabled={previewLoading}
-              title="Recargar vista previa"
-              aria-label="Recargar vista previa"
-            >
-              <RefreshCw size={15} />
-            </button>
-          </div>
-        </div>
-
         <div className={`${styles.importedPreviewStage} ${device === 'mobile' ? styles.importedPreviewStageMobile : ''}`}>
           {previewLoading && (
             <div className={styles.importedPreviewState}>
@@ -10000,6 +9980,42 @@ const ImportedHtmlEditorPanel: React.FC<{
       </section>
 
       <aside className={styles.importedSidePanel}>
+        {panelFormFields.length > 0 && !buttonEditor && !choiceEditor && !fieldEditor && (
+          <div className={styles.importedFormFieldsBox}>
+            <div className={styles.importedButtonActionHeader}>
+              <ListChecks size={17} />
+              <div>
+                <span>Formulario de esta pagina</span>
+                <strong>{panelFormFields.length} {panelFormFields.length === 1 ? 'campo' : 'campos'}</strong>
+              </div>
+            </div>
+            <p className={styles.importedFormFieldsHint}>
+              Edita cada campo desde aqui: etiqueta, opciones, obligatorio y acciones para calificar o descalificar.
+            </p>
+            <div className={styles.importedFormFieldsList}>
+              {panelFormFields.map(field => (
+                <button
+                  key={field.key}
+                  type="button"
+                  className={styles.importedFormFieldRow}
+                  onClick={() => openPanelFormField(field)}
+                  disabled={contentSaving}
+                >
+                  <span className={styles.importedFormFieldRowMain}>
+                    <strong>{field.label}</strong>
+                    <small>
+                      {field.typeLabel}
+                      {field.optionsCount > 0 ? ` · ${field.optionsCount} ${field.optionsCount === 1 ? 'opcion' : 'opciones'}` : ''}
+                    </small>
+                  </span>
+                  {field.hasDisqualify && <span className={styles.importedFormFieldBadge}>Descalifica</span>}
+                  <Pencil size={13} />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {aiAgentAvailable && (
           <div className={styles.importedAIRegionBox}>
             <div className={styles.importedButtonActionHeader}>
@@ -10131,49 +10147,6 @@ const ImportedHtmlEditorPanel: React.FC<{
             </div>
           </div>
         )}
-
-        {panelFormFields.length > 0 && !buttonEditor && !choiceEditor && !fieldEditor && (
-          <div className={styles.importedFormFieldsBox}>
-            <div className={styles.importedButtonActionHeader}>
-              <ListChecks size={17} />
-              <div>
-                <span>Formulario de esta pagina</span>
-                <strong>{panelFormFields.length} {panelFormFields.length === 1 ? 'campo' : 'campos'}</strong>
-              </div>
-            </div>
-            <p className={styles.importedFormFieldsHint}>
-              Edita cada campo desde aqui: etiqueta, opciones, obligatorio y acciones para calificar o descalificar.
-            </p>
-            <div className={styles.importedFormFieldsList}>
-              {panelFormFields.map(field => (
-                <button
-                  key={field.key}
-                  type="button"
-                  className={styles.importedFormFieldRow}
-                  onClick={() => openPanelFormField(field)}
-                  disabled={contentSaving}
-                >
-                  <span className={styles.importedFormFieldRowMain}>
-                    <strong>{field.label}</strong>
-                    <small>
-                      {field.typeLabel}
-                      {field.optionsCount > 0 ? ` · ${field.optionsCount} ${field.optionsCount === 1 ? 'opcion' : 'opciones'}` : ''}
-                    </small>
-                  </span>
-                  {field.hasDisqualify && <span className={styles.importedFormFieldBadge}>Descalifica</span>}
-                  <Pencil size={13} />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className={styles.importedSidePanelActions}>
-          <Button type="button" variant="secondary" onClick={onEditFields} disabled={loadingImportData}>
-            {loadingImportData ? <RefreshCw size={15} /> : <Settings2 size={15} />}
-            Editar ruta de datos
-          </Button>
-        </div>
 
         {buttonEditor && (
           <div className={styles.importedButtonActionBox}>
@@ -10410,6 +10383,13 @@ const ImportedHtmlEditorPanel: React.FC<{
             </div>
           </div>
         )}
+
+        <div className={styles.importedSidePanelActions}>
+          <Button type="button" variant="secondary" onClick={onEditFields} disabled={loadingImportData}>
+            {loadingImportData ? <RefreshCw size={15} /> : <Settings2 size={15} />}
+            Editar ruta de datos
+          </Button>
+        </div>
       </aside>
 
       <input

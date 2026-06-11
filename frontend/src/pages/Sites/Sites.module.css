@@ -22,73 +22,6 @@
   background: var(--color-background-primary);
 }
 
-.importedPreviewToolbar {
-  min-height: 54px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
-  padding: 10px 14px;
-}
-
-.importedPreviewToolbar div:first-child {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.importedPreviewToolbar span {
-  color: var(--color-text-tertiary);
-  font-size: 0.76rem;
-  font-weight: 850;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.importedPreviewToolbar strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-primary);
-  font-size: 0.98rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.importedPreviewTools {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-}
-
-.importedPreviewRefresh {
-  width: 34px;
-  height: 34px;
-  display: inline-grid;
-  place-items: center;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 8px;
-  background: var(--color-background-primary);
-  color: var(--color-text-secondary);
-  padding: 0;
-  cursor: pointer;
-}
-
-.importedPreviewRefresh:hover:not(:disabled) {
-  color: var(--color-text-primary);
-  background: rgba(148, 163, 184, 0.1);
-}
-
-.importedPreviewRefresh:disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
-}
-
-.importedPreviewRefresh:disabled svg {
-  animation: imported-preview-spin 0.9s linear infinite;
-}
-
 @keyframes imported-preview-spin {
   to {
     transform: rotate(360deg);
@@ -145,12 +78,23 @@
   max-height: calc(100vh - var(--header-height) - 32px);
   display: grid;
   align-content: start;
-  gap: 18px;
+  gap: 14px;
   overflow: auto;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 8px;
   background: var(--color-background-primary);
-  padding: 16px;
+  padding: 14px;
+}
+
+/* Every section separates with the same divider; the first one sits flush. */
+.importedSidePanel > * {
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  padding-top: 14px;
+}
+
+.importedSidePanel > *:first-child {
+  border-top: 0;
+  padding-top: 0;
 }
 
 .importedEditorCopy {
@@ -535,15 +479,11 @@
 .importedButtonActionBox {
   display: grid;
   gap: 14px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(148, 163, 184, 0.18);
 }
 
 .importedFormFieldsBox {
   display: grid;
   gap: 10px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(148, 163, 184, 0.18);
 }
 
 .importedFormFieldsHint {
@@ -620,19 +560,12 @@
 .importedAIRegionBox {
   display: grid;
   gap: 12px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(148, 163, 184, 0.18);
-}
-
-.importedSidePanel > .importedAIRegionBox:first-child {
-  padding-top: 0;
-  border-top: 0;
 }
 
 .importedAIRegionBox p {
   margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 0.84rem;
+  color: var(--color-text-tertiary);
+  font-size: 0.78rem;
   line-height: 1.45;
 }
 
@@ -743,11 +676,12 @@
 .importedActionField textarea {
   width: 100%;
   min-width: 0;
-  border: 1px solid rgba(148, 163, 184, 0.26);
+  min-height: 40px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 8px;
   background: var(--color-background-primary);
   color: var(--color-text-primary);
-  padding: 10px 11px;
+  padding: 9px 11px;
   font: inherit;
   font-size: 0.88rem;
   line-height: 1.35;
@@ -774,6 +708,18 @@
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* AI footer: mic + zone selector share a row; the primary action spans below. */
+.importedAIRegionFooter {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  justify-content: stretch;
+  gap: 8px;
+}
+
+.importedAIRegionFooter > button:last-child {
+  grid-column: 1 / -1;
 }
 
 .importedActionChain {
@@ -2632,15 +2578,6 @@
 @media (max-width: 760px) {
   .importedEditorCopy {
     grid-template-columns: 1fr;
-  }
-
-  .importedPreviewToolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .importedPreviewTools {
-    justify-content: space-between;
   }
 
   .importedPreviewStage {
