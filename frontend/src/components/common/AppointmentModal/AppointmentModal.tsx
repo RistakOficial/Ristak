@@ -6,8 +6,8 @@ import { TabList } from '../TabList';
 import { DateTimePicker } from '../DateTimePicker';
 import { CustomSelect } from '../CustomSelect';
 import { PhoneSelect } from '@/components/phone/PhoneSelect';
-import { PhoneDateField } from '@/components/phone/PhoneDateField';
-import { PhoneTimeField, formatTimeLabel } from '@/components/phone/ui/PhoneTimeField';
+import { PhoneDateTimeField } from '@/components/phone/ui/PhoneDateTimeField';
+import { formatTimeLabel } from '@/components/phone/ui/PhoneTimeField';
 import { PhoneDurationField, formatDurationLabel } from '@/components/phone/ui/PhoneDurationField';
 import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot } from '@/services/calendarsService';
 import { useNotification } from '@/contexts/NotificationContext';
@@ -295,7 +295,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   defaultTimeZone,
   defaultTitle,
   initialContact = null,
-  defaultScheduleMode = 'default',
+  defaultScheduleMode,
   accessToken,
   locationId,
   presentation = 'dialog',
@@ -338,7 +338,9 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [isClient, setIsClient] = useState(false);
 
   // Modo de selección de horario: 'default' = solo slots disponibles, 'custom' = libre
-  const [scheduleMode, setScheduleMode] = useState<'default' | 'custom'>(defaultScheduleMode);
+  // En celular el modo inicial es 'custom' (Personalizado) salvo que se indique otro.
+  const initialScheduleMode = defaultScheduleMode ?? (presentation === 'mobileSheet' ? 'custom' : 'default');
+  const [scheduleMode, setScheduleMode] = useState<'default' | 'custom'>(initialScheduleMode);
   // Duración elegida en el flujo móvil antes de tener fecha+hora completas
   const [pendingDuration, setPendingDuration] = useState<number | null>(null);
   const [freeSlots, setFreeSlots] = useState<FreeSlot[]>([]);
@@ -608,9 +610,9 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // Resetear scheduleMode al abrir el modal
   useEffect(() => {
     if (isOpen && isCreateMode) {
-      setScheduleMode(defaultScheduleMode);
+      setScheduleMode(initialScheduleMode);
     }
-  }, [isOpen, isCreateMode, defaultScheduleMode]);
+  }, [isOpen, isCreateMode, initialScheduleMode]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1258,28 +1260,18 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   const renderMobileCustomSchedule = () => (
     <div className={styles.mobileCustomSchedule}>
-      <PhoneDateField
-        value={customDatePart}
-        onChange={(date) => applyCustomSchedule(date, customTimePart || '09:00', effectiveDuration)}
-        min={localTodayInput()}
-        title="Fecha de la cita"
-        placeholder="Selecciona fecha"
+      <PhoneDateTimeField
+        dateValue={customDatePart}
+        timeValue={customTimePart}
+        onChange={(date, time) => applyCustomSchedule(date, time, effectiveDuration)}
       />
-      <div className={styles.mobileCustomScheduleRow}>
-        <PhoneTimeField
-          value={customTimePart}
-          onChange={(time) => applyCustomSchedule(customDatePart || localTodayInput(), time, effectiveDuration)}
-          title="Hora de inicio"
-          placeholder="Hora"
-        />
-        <PhoneDurationField
-          value={effectiveDuration}
-          onChange={(minutes) => {
-            setPendingDuration(minutes);
-            applyCustomSchedule(customDatePart, customTimePart, minutes);
-          }}
-        />
-      </div>
+      <PhoneDurationField
+        value={effectiveDuration}
+        onChange={(minutes) => {
+          setPendingDuration(minutes);
+          applyCustomSchedule(customDatePart, customTimePart, minutes);
+        }}
+      />
       {customTimePart && customEndTimePart && (
         <p className={styles.mobileCustomScheduleSummary}>
           De {formatTimeLabel(customTimePart)} a {formatTimeLabel(customEndTimePart)} · {formatDurationLabel(effectiveDuration)}
@@ -1287,6 +1279,19 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       )}
     </div>
   );
+
+  // En celular, modo Personalizado arranca con la fecha y hora actuales ya puestas
+  // (redondeadas al siguiente múltiplo de 5 minutos); el usuario solo ajusta lo que necesite.
+  useEffect(() => {
+    if (!isOpen || !isCreateMode || !isMobileSheet || scheduleMode !== 'custom') return;
+    if (formData.startTime) return;
+    const now = new Date();
+    now.setMinutes(Math.ceil(now.getMinutes() / 5) * 5, 0, 0);
+    const datePart = `${now.getFullYear()}-${padTwo(now.getMonth() + 1)}-${padTwo(now.getDate())}`;
+    const timePart = `${padTwo(now.getHours())}:${padTwo(now.getMinutes())}`;
+    applyCustomSchedule(datePart, timePart, effectiveDuration);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isCreateMode, isMobileSheet, scheduleMode, formData.startTime]);
 
   const handleTimeZoneChange = (newZone: string) => {
     setFormData((prev) => {
@@ -1764,6 +1769,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                       ]}
                       activeTab={scheduleMode}
                       onTabChange={(value) => setScheduleMode(value as 'default' | 'custom')}
+                      fullWidth={isMobileSheet}
                     />
                   </div>
 

@@ -10188,7 +10188,7 @@ export const PhoneChat: React.FC = () => {
         initialContact={initialContact}
         lockInitialContact={Boolean(initialContact?.id)}
         enableGuests
-        defaultScheduleMode="default"
+        defaultScheduleMode="custom"
         accessToken={accessToken || undefined}
         locationId={locationId || undefined}
         presentation="mobileSheet"
