@@ -11733,9 +11733,10 @@
   background: var(--color-background-primary);
 }
 
+/* Keep the page's own background (color/image/overlay) visible across the whole
+   canvas viewport so the editor matches what the live page looks like. */
 .pageFrame .containerFocused:has(.builder) :global(.canvasViewport) {
   border-color: var(--color-border-subtle, rgba(148, 163, 184, 0.18));
-  background: var(--color-background-tertiary);
   box-shadow: none;
 }
 
@@ -12029,6 +12030,12 @@
 .pageFrame .containerFocused .pagesDropdownItemActive {
   border-color: rgba(var(--color-primary-rgb), 0.28);
   background: rgba(var(--color-primary-rgb), 0.08);
+}
+
+/* Fixed result pages (thank you / disqualified) render a single full-width cell;
+   without this the focused-editor grid pushes their title into the 34px column. */
+.pageFrame .containerFocused .pagesDropdownItemFixedResult {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .pageFrame .containerFocused .pagesDropdownDragHandle {
