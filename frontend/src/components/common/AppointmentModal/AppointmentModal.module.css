@@ -531,11 +531,13 @@
   font-weight: 620;
 }
 
+/* Cajas sin contorno, como las del Registrar pago: solo el relleno oscuro
+   sobre la superficie las define. */
 .mobileSheetContainer .input,
 .mobileSheetContainer .select,
 .mobileSheetContainer .textarea {
   min-height: 44px;
-  border-color: var(--appointment-mobile-border);
+  border-color: transparent;
   border-radius: 12px;
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-panel);
@@ -546,7 +548,7 @@
 
 .mobileSheetContainer :global([data-ristak-dropdown-trigger]) {
   min-height: 44px;
-  border-color: var(--appointment-mobile-border) !important;
+  border-color: transparent !important;
   border-radius: 12px !important;
   color: var(--appointment-mobile-text) !important;
   background: var(--appointment-mobile-panel) !important;
@@ -638,7 +640,7 @@
   border-radius: 12px;
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-panel);
-  border-color: var(--appointment-mobile-border);
+  border-color: transparent;
   font-size: 16px;
   font-weight: 650;
 }
@@ -1188,7 +1190,7 @@
 
 /* Piel del segmentado igual a la del Registrar pago móvil */
 .mobileSheetContainer :global([data-ristak-tablist]) {
-  border: 1px solid var(--appointment-mobile-border);
+  border: 1px solid transparent;
   background: var(--appointment-mobile-panel);
   border-radius: 14px;
   padding: 4px;
