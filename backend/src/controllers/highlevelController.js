@@ -5,6 +5,7 @@ import { syncHighLevelData, getSyncProgress } from '../services/highlevelSyncSer
 import { syncSingleInvoice } from '../services/invoicesSyncService.js';
 import { logger } from '../utils/logger.js';
 import { API_URLS } from '../config/constants.js';
+import { syncWebhookCustomValues, getHighLevelConfig } from '../services/webhookSyncService.js';
 import { getGHLClient } from '../services/ghlClient.js';
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js';
 import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
@@ -1199,12 +1200,28 @@ export const syncCustomValues = async (req, res) => {
 
     logger.info(`Sincronizando custom values para subaccount: ${subaccountId}`);
 
-    // Por ahora solo registramos la acción
-    // En producción aquí se configurarían los webhooks con los custom values
+    const config = await getHighLevelConfig();
+    if (!config?.location_id || !config?.api_token) {
+      return res.status(400).json({
+        success: false,
+        error: 'Configuración de HighLevel no encontrada'
+      });
+    }
+
+    const { baseUrl, results, environment } = await syncWebhookCustomValues({ config });
+
+    const created = results.filter(r => r.status === 'created').length;
+    const updated = results.filter(r => r.status === 'updated').length;
+    const errors = results.filter(r => r.status === 'error');
 
     res.json({
-      success: true,
-      message: 'Custom values sincronizados exitosamente'
+      success: errors.length === 0,
+      message: errors.length === 0
+        ? `Custom values sincronizados: ${created} creados, ${updated} actualizados`
+        : `Sincronización con errores: ${errors.length} fallaron`,
+      baseUrl,
+      environment,
+      results
     });
 
   } catch (error) {
