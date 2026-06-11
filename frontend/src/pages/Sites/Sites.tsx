@@ -11156,7 +11156,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
                 <X size={17} />
               </button>
             </div>
-            <label className={styles.libraryRouteField}>
+            <label className={styles.libraryRouteField} data-ristak-unstyled>
               <span className={styles.libraryRouteDomain} title={getPublicDomainPreview(domainConfig)}>
                 {getPublicDomainPreview(domainConfig)}
               </span>
@@ -11531,7 +11531,7 @@ const DimensionField: React.FC<DimensionFieldProps> = ({ label, value, min, max,
     <label className={styles.dimensionField}>
       <span>{label}</span>
       <div className={styles.dimensionTextRow}>
-        <div className={styles.dimensionBox}>
+        <div className={styles.dimensionBox} data-ristak-unstyled>
           <NumberInput
             min={min}
             max={max}
@@ -11657,7 +11657,7 @@ const LinkedSpacingField: React.FC<LinkedSpacingFieldProps> = ({
       </div>
       <div className={styles.spacingGrid}>
         {spacingSides.map(side => (
-          <label key={side.id} className={styles.spacingBox}>
+          <label key={side.id} className={styles.spacingBox} data-ristak-unstyled>
             <span>{side.label}</span>
             <div>
               <NumberInput
@@ -11969,7 +11969,7 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
       <div className={styles.colorFieldHeader}>
         <span>{label}</span>
       </div>
-      <div className={styles.colorRow} data-open={open ? 'true' : 'false'}>
+      <div className={styles.colorRow} data-open={open ? 'true' : 'false'} data-ristak-unstyled>
         <button
           type="button"
           className={styles.colorSwatchButton}

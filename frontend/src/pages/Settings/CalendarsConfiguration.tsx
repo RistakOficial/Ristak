@@ -937,7 +937,7 @@ export const CalendarsConfiguration: React.FC = () => {
 
     return (
       <div className={`${pageStyles.calendarColorPicker} ${compact ? pageStyles.calendarColorPickerCompact : ''}`}>
-        <div className={pageStyles.calendarColorRow}>
+        <div className={pageStyles.calendarColorRow} data-ristak-unstyled>
           <span
             className={pageStyles.calendarColorPreview}
             style={{ backgroundColor: currentColor }}

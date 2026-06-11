@@ -811,12 +811,24 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :is(
   [tabindex]:not([tabindex='-1']),
   [contenteditable='true'],
   [data-ristak-focusable]
-):focus-visible {
+):focus-visible:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *, [data-ristak-unstyled], [data-ristak-unstyled] *)) {
   outline: none !important;
   border-color: var(--ristak-focus-border) !important;
   box-shadow: var(--ristak-focus-ring) !important;
   -webkit-box-shadow: var(--ristak-focus-ring) !important;
   -moz-box-shadow: var(--ristak-focus-ring) !important;
+}
+
+/* Inputs dentro de un wrapper propio (caja con icono): el wrapper pinta el foco
+   con :focus-within; el control interno no debe pintar borde ni anillo propio. */
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where([data-ristak-unstyled]) :is(input, select, textarea):focus,
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where([data-ristak-unstyled]) :is(input, select, textarea):focus-visible {
+  outline: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  -webkit-box-shadow: none !important;
+  -moz-box-shadow: none !important;
+  background: transparent !important;
 }
 
 body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :is(

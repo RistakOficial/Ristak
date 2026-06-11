@@ -1269,7 +1269,7 @@ const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, s
   }
 
   return (
-    <div className={styles.businessExpenseInputShell} onClick={(event) => event.stopPropagation()}>
+    <div className={styles.businessExpenseInputShell} data-ristak-unstyled onClick={(event) => event.stopPropagation()}>
       <span className={styles.businessExpensePrefix}>$</span>
       <input
         className={styles.businessExpenseInput}
