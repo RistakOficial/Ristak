@@ -128,7 +128,19 @@
   /* Cursor normal: la "manita" solo aparece al arrastrar de verdad */
   cursor: default;
   touch-action: none;
+  /* El texto del lienzo (nodos, tarjeta fantasma, etiquetas) nunca es
+     seleccionable: evita el "subrayado" de selección al arrastrar */
+  user-select: none;
+  -webkit-user-select: none;
   /* Puntos sutiles (el gradiente vive inline: su alpha depende del zoom) */
+}
+
+/* Los campos editables dentro del lienzo sí permiten seleccionar texto */
+.canvas input,
+.canvas textarea,
+.canvas [contenteditable='true'] {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .canvasPanning {
