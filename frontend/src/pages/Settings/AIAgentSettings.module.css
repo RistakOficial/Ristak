@@ -656,143 +656,26 @@
   }
 }
 
-/* Pestañas de la sección Agente AI (General / Agente conversacional) */
-.tabs {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 14px;
-  padding: 4px;
-  border-radius: 12px;
-  background: var(--surface-secondary, rgba(148, 163, 184, 0.12));
-  width: fit-content;
-  max-width: 100%;
-}
+/* ------------------------------------------------------------------ */
+/* Agente conversacional: contenedores de agentes                      */
+/* ------------------------------------------------------------------ */
 
-.tab {
-  appearance: none;
-  border: none;
-  background: transparent;
-  border-radius: 9px;
-  padding: 8px 14px;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--text-secondary, #64748b);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.tab:hover {
-  color: var(--text-primary, #0f172a);
-}
-
-.tabActive {
-  background: var(--surface-primary, #ffffff);
-  color: var(--text-primary, #0f172a);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
-}
-
-/* Conversación simulada para probar el agente conversacional */
-.testChatBox {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 12px;
-  padding: 14px;
-  border-radius: 14px;
-  background: var(--surface-secondary, rgba(148, 163, 184, 0.1));
-  min-height: 140px;
-  max-height: 340px;
-  overflow-y: auto;
-}
-
-.testChatEmpty {
-  margin: auto;
-  font-size: 13px;
-  color: var(--text-secondary, #64748b);
-  text-align: center;
-}
-
-.testChatMessage {
-  max-width: 82%;
-  padding: 8px 12px;
-  border-radius: 14px;
-  font-size: 14px;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.testChatUser {
-  align-self: flex-end;
-  background: var(--accent-primary, #2563eb);
-  color: #fff;
-  border-bottom-right-radius: 5px;
-}
-
-.testChatAssistant {
-  align-self: flex-start;
-  background: var(--surface-primary, #ffffff);
-  color: var(--text-primary, #0f172a);
-  border: 1px solid var(--border-primary, rgba(148, 163, 184, 0.3));
-  border-bottom-left-radius: 5px;
-}
-
-.testChatInternal {
-  background: transparent;
-  border: 1px dashed var(--border-primary, rgba(148, 163, 184, 0.5));
-  color: var(--text-secondary, #64748b);
-  font-size: 12.5px;
-  font-style: italic;
-}
-
-.testChatComposer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.testChatComposer .input {
-  flex: 1;
-}
-
-/* Estrategia de cierre predeterminada (solo lectura) */
-.systemPromptBox {
-  margin: 10px 0 6px;
-  padding: 14px;
-  border-radius: 12px;
-  border: 1px solid var(--border-primary, rgba(148, 163, 184, 0.3));
-  background: var(--surface-secondary, rgba(148, 163, 184, 0.08));
-  color: var(--text-primary, #0f172a);
-  font-family: inherit;
-  font-size: 13.5px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 360px;
-  overflow-y: auto;
-}
-
-/* Contenedores de agentes conversacionales */
 .agentCardHeader {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 
 .agentCardToggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   border: none;
   background: transparent;
   padding: 0;
   cursor: pointer;
-  color: var(--text-secondary, #64748b);
+  color: var(--color-text-tertiary);
 }
 
 .agentCardChevron {
@@ -810,153 +693,255 @@
 .agentNameInput {
   flex: 1;
   min-width: 0;
+  height: 38px;
   border: 1px solid transparent;
-  border-radius: 9px;
-  padding: 7px 10px;
-  font-size: 15.5px;
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 15px;
   font-weight: 700;
-  color: var(--text-primary, #0f172a);
+  color: var(--color-text-primary);
   background: transparent;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .agentNameInput:hover {
-  border-color: var(--border-primary, rgba(148, 163, 184, 0.3));
+  border-color: rgba(148, 163, 184, 0.22);
 }
 
 .agentNameInput:focus {
   outline: none;
-  border-color: var(--accent-primary, #2563eb);
-  background: var(--surface-primary, #ffffff);
+  border-color: rgba(148, 163, 184, 0.45);
+  background: var(--color-background-primary);
 }
 
 .agentCardActions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex-shrink: 0;
 }
 
 .agentCardSummary {
-  margin: 10px 2px 0;
+  margin: 10px 0 0;
   font-size: 13px;
-  color: var(--text-secondary, #64748b);
+  color: var(--color-text-tertiary);
 }
 
-/* Chips para frases clave y etiquetas */
-.chipsWrap {
+/* Secciones internas del agente: separadores sutiles, sin cajas extra */
+.agentSection {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 9px;
-  border: 1px solid var(--border-primary, rgba(148, 163, 184, 0.3));
-  border-radius: 10px;
-  background: var(--surface-primary, #ffffff);
-  min-height: 40px;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
 }
 
-.chipsWrap:focus-within {
-  border-color: var(--accent-primary, #2563eb);
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: var(--surface-secondary, rgba(148, 163, 184, 0.14));
-  color: var(--text-primary, #0f172a);
+.agentSectionHint {
+  margin: -6px 0 0;
   font-size: 12.5px;
-  font-weight: 600;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
 }
 
-.chipRemove {
+/* ------------------------------------------------------------------ */
+/* Constructor de reglas (filtros de entrada / salida)                 */
+/* ------------------------------------------------------------------ */
+
+.ruleGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ruleGroupTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.ruleRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  font-size: 13.5px;
+  color: var(--color-text-primary);
+}
+
+.rulePrefix {
+  flex-shrink: 0;
+  min-width: 52px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+.ruleSelect,
+.ruleInput {
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.ruleSelect:focus,
+.ruleInput:focus {
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.ruleInput {
+  flex: 1;
+  min-width: 120px;
+}
+
+.ruleDelete {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
   border: none;
+  border-radius: 7px;
   background: transparent;
-  padding: 1px;
+  color: var(--color-text-tertiary);
   cursor: pointer;
-  color: var(--text-secondary, #64748b);
+  transition: color 0.15s ease, background 0.15s ease;
 }
 
-.chipRemove:hover {
-  color: var(--text-primary, #0f172a);
+.ruleDelete:hover {
+  color: var(--color-text-primary);
+  background: rgba(148, 163, 184, 0.14);
 }
 
-.chipsInput {
-  flex: 1;
-  min-width: 130px;
-  border: none;
-  background: transparent;
-  font-size: 13.5px;
-  color: var(--text-primary, #0f172a);
+.ruleEmptyHint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-tertiary);
 }
 
-.chipsInput:focus {
-  outline: none;
+.ruleAddWrap {
+  position: relative;
+  align-self: flex-start;
 }
 
-/* Acciones adicionales al cumplir el objetivo */
-.extraRow {
-  display: grid;
-  grid-template-columns: minmax(170px, 220px) 1fr auto;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.extraRow:has(input + input) {
-  grid-template-columns: minmax(170px, 220px) 1fr 1fr auto;
-}
-
-.addRowButton {
+.ruleAddButton {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: 2px;
-  padding: 7px 11px;
-  border: 1px dashed var(--border-primary, rgba(148, 163, 184, 0.45));
-  border-radius: 9px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px dashed rgba(148, 163, 184, 0.4);
+  border-radius: 8px;
   background: transparent;
-  color: var(--text-secondary, #64748b);
+  color: var(--color-text-tertiary);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
 
-.addRowButton:hover {
-  color: var(--text-primary, #0f172a);
-  border-color: var(--text-secondary, #64748b);
+.ruleAddButton:hover {
+  color: var(--color-text-primary);
+  border-color: rgba(148, 163, 184, 0.7);
 }
 
-/* Encabezado de estrategia de cierre */
+.ruleAddMenu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 280px;
+  padding: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ruleAddMenuItem {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.ruleAddMenuItem:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+/* ------------------------------------------------------------------ */
+/* Acciones adicionales al cumplir el objetivo                         */
+/* ------------------------------------------------------------------ */
+
+.extraRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+}
+
+.extraRow .ruleSelect {
+  min-width: 200px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Estrategia de cierre                                                */
+/* ------------------------------------------------------------------ */
+
 .strategyHeaderRow {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 8px;
-}
-
-.strategyHeaderRow .sectionTitle {
-  margin: 0;
 }
 
 .strategyBadge {
   padding: 3px 9px;
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 700;
-  background: var(--surface-secondary, rgba(148, 163, 184, 0.14));
-  color: var(--text-secondary, #64748b);
+  letter-spacing: 0.03em;
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--color-text-tertiary);
 }
 
 .strategyBadgeCustom {
   background: rgba(37, 99, 235, 0.12);
-  color: #1d4ed8;
+  color: #3b82f6;
 }
 
 .resetStrategyButton {
@@ -964,17 +949,86 @@
   align-items: center;
   gap: 5px;
   margin-left: auto;
-  padding: 5px 10px;
-  border: 1px solid var(--border-primary, rgba(148, 163, 184, 0.35));
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 999px;
   background: transparent;
-  color: var(--text-secondary, #64748b);
+  color: var(--color-text-tertiary);
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
 
 .resetStrategyButton:hover {
-  color: var(--text-primary, #0f172a);
-  border-color: var(--text-secondary, #64748b);
+  color: var(--color-text-primary);
+  border-color: rgba(148, 163, 184, 0.6);
+}
+
+/* ------------------------------------------------------------------ */
+/* Conversación simulada para probar el agente                         */
+/* ------------------------------------------------------------------ */
+
+.testChatBox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  min-height: 130px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.testChatEmpty {
+  margin: auto;
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.testChatMessage {
+  max-width: 82%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.testChatUser {
+  align-self: flex-end;
+  background: #2563eb;
+  color: #ffffff;
+  border-bottom-right-radius: 4px;
+}
+
+.testChatAssistant {
+  align-self: flex-start;
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--color-text-primary);
+  border-bottom-left-radius: 4px;
+}
+
+.testChatInternal {
+  background: transparent;
+  border: 1px dashed rgba(148, 163, 184, 0.4);
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+  font-style: italic;
+}
+
+.testChatComposer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.testChatComposer .input {
+  flex: 1;
+  padding-right: 12px;
 }

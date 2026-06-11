@@ -161,26 +161,91 @@ function parseJsonField(text, fallback) {
   }
 }
 
-const EMPTY_ENTRY_FILTERS = {
-  channel: 'any',      // any | whatsapp | messenger | instagram
-  keywords: [],        // frases clave en el mensaje
-  match: 'contains',   // contains | exact | starts_with
-  tags: [],            // el contacto debe tener alguna de estas etiquetas
-  calendarId: ''       // el contacto debe tener cita próxima en este calendario
+/**
+ * Reglas dinámicas del agente (constructor tipo "+ Añadir filtro"):
+ * - entry: el agente inicia SOLO si se cumplen TODAS (Y)
+ * - exit:  el agente suelta la conversación si se cumple ALGUNA (O)
+ *
+ * Tipos de regla:
+ * - channel { channel }                        el mensaje viene de ese canal
+ * - message_contains { phrase, match }         el mensaje contiene/es/empieza con la frase
+ * - has_tag { tag }                            el contacto tiene la etiqueta
+ * - not_has_tag { tag }                        el contacto NO tiene la etiqueta
+ * - has_upcoming_appointment {}                el contacto tiene cita próxima (cualquier calendario)
+ * - has_appointment_in_calendar { calendarId } el contacto tiene cita próxima en ese calendario
+ * - no_upcoming_appointment {}                 el contacto NO tiene cita próxima
+ */
+const RULE_TYPES = new Set([
+  'channel',
+  'message_contains',
+  'has_tag',
+  'not_has_tag',
+  'has_upcoming_appointment',
+  'has_appointment_in_calendar',
+  'no_upcoming_appointment'
+])
+
+function normalizeRule(rule) {
+  if (!rule || !RULE_TYPES.has(rule.type)) return null
+  switch (rule.type) {
+    case 'channel': {
+      const channel = ['whatsapp', 'messenger', 'instagram'].includes(rule.channel) ? rule.channel : 'whatsapp'
+      return { type: 'channel', channel }
+    }
+    case 'message_contains': {
+      const phrase = String(rule.phrase || '').trim().slice(0, 200)
+      const match = ['contains', 'exact', 'starts_with'].includes(rule.match) ? rule.match : 'contains'
+      return { type: 'message_contains', phrase, match }
+    }
+    case 'has_tag':
+    case 'not_has_tag': {
+      const tag = String(rule.tag || '').trim().slice(0, 120)
+      return { type: rule.type, tag }
+    }
+    case 'has_appointment_in_calendar': {
+      const calendarId = String(rule.calendarId || '').trim()
+      return { type: 'has_appointment_in_calendar', calendarId }
+    }
+    default:
+      return { type: rule.type }
+  }
 }
 
-function normalizeEntryFilters(input) {
+function normalizeRuleList(input) {
+  if (!Array.isArray(input)) return []
+  return input.map(normalizeRule).filter(Boolean).slice(0, 20)
+}
+
+/** Convierte el formato viejo de filtros fijos al constructor de reglas. */
+function legacyFiltersToRules(raw) {
+  const rules = []
+  if (raw.channel && raw.channel !== 'any') {
+    rules.push({ type: 'channel', channel: raw.channel })
+  }
+  for (const keyword of Array.isArray(raw.keywords) ? raw.keywords : []) {
+    const phrase = String(keyword || '').trim()
+    if (phrase) rules.push({ type: 'message_contains', phrase, match: raw.match || 'contains' })
+  }
+  for (const tag of Array.isArray(raw.tags) ? raw.tags : []) {
+    const clean = String(tag || '').trim()
+    if (clean) rules.push({ type: 'has_tag', tag: clean })
+  }
+  if (raw.calendarId) {
+    rules.push({ type: 'has_appointment_in_calendar', calendarId: String(raw.calendarId).trim() })
+  }
+  return rules
+}
+
+function normalizeAgentFilters(input) {
   const raw = input && typeof input === 'object' ? input : {}
-  const channel = ['any', 'whatsapp', 'messenger', 'instagram'].includes(raw.channel) ? raw.channel : 'any'
-  const match = ['contains', 'exact', 'starts_with'].includes(raw.match) ? raw.match : 'contains'
-  const keywords = Array.isArray(raw.keywords)
-    ? raw.keywords.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 30)
-    : []
-  const tags = Array.isArray(raw.tags)
-    ? raw.tags.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 30)
-    : []
-  const calendarId = String(raw.calendarId || '').trim()
-  return { channel, keywords, match, tags, calendarId }
+  if (Array.isArray(raw.entry) || Array.isArray(raw.exit)) {
+    return {
+      entry: normalizeRuleList(raw.entry),
+      exit: normalizeRuleList(raw.exit)
+    }
+  }
+  // Formato viejo {channel, keywords, match, tags, calendarId}
+  return { entry: normalizeRuleList(legacyFiltersToRules(raw)), exit: [] }
 }
 
 const SUCCESS_EXTRA_TYPES = new Set(['add_tag', 'remove_tag', 'set_custom_field'])
@@ -217,7 +282,7 @@ function mapAgentRow(row) {
     defaultCalendarId: row.default_calendar_id || null,
     closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     closingStrategyCustom: row.closing_strategy_custom || '',
-    entryFilters: normalizeEntryFilters(parseJsonField(row.entry_filters, null)),
+    filters: normalizeAgentFilters(parseJsonField(row.entry_filters, null)),
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
   }
@@ -251,7 +316,7 @@ export async function ensureAgentsMigration() {
     legacy.default_calendar_id || null,
     legacy.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     legacy.closing_strategy_custom || '',
-    JSON.stringify(EMPTY_ENTRY_FILTERS)
+    JSON.stringify({ entry: [], exit: [] })
   ])
   logger.info('[Agente conversacional] Config previa migrada al contenedor "Agente principal"')
 }
@@ -288,7 +353,7 @@ function agentInputToRowValues(input, base) {
     closingStrategyCustom: input.closingStrategyCustom === undefined
       ? base.closingStrategyCustom
       : String(input.closingStrategyCustom || '').slice(0, 8000),
-    entryFilters: input.entryFilters === undefined ? base.entryFilters : normalizeEntryFilters(input.entryFilters)
+    filters: input.filters === undefined ? base.filters : normalizeAgentFilters(input.filters)
   }
   return next
 }
@@ -308,7 +373,7 @@ const DEFAULT_AGENT_BASE = {
   defaultCalendarId: null,
   closingStrategyMode: 'system',
   closingStrategyCustom: '',
-  entryFilters: { ...EMPTY_ENTRY_FILTERS }
+  filters: { entry: [], exit: [] }
 }
 
 export async function createConversationalAgent(input = {}) {
@@ -326,7 +391,7 @@ export async function createConversationalAgent(input = {}) {
     id, next.name, next.enabled ? 1 : 0, next.position, next.objective, next.customObjective,
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
     next.extraInstructions, next.allowEmojis ? 1 : 0, next.defaultCalendarId,
-    next.closingStrategyMode, next.closingStrategyCustom, JSON.stringify(next.entryFilters)
+    next.closingStrategyMode, next.closingStrategyCustom, JSON.stringify(next.filters)
   ])
   await recordConversationalAgentEvent({ eventType: 'agent_created', detail: { agentId: id, name: next.name } })
   return getConversationalAgent(id)
@@ -350,7 +415,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
     next.name, next.enabled ? 1 : 0, next.position, next.objective, next.customObjective,
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
     next.extraInstructions, next.allowEmojis ? 1 : 0, next.defaultCalendarId,
-    next.closingStrategyMode, next.closingStrategyCustom, JSON.stringify(next.entryFilters),
+    next.closingStrategyMode, next.closingStrategyCustom, JSON.stringify(next.filters),
     agentId
   ])
   return getConversationalAgent(agentId)
@@ -370,51 +435,84 @@ function normalizeMatchText(value) {
 }
 
 /**
- * Encuentra el primer agente habilitado cuyos filtros de entrada coinciden con
- * el mensaje/contacto (en orden de posición). Filtros vacíos = pasa.
+ * Construye una sola vez el contexto que necesitan las reglas (etiquetas del
+ * contacto y citas próximas) para evaluar varios agentes sin repetir consultas.
  */
-export async function matchAgentForMessage({ contactId, messageText = '', channel = 'whatsapp' } = {}) {
-  const agents = (await listConversationalAgents()).filter((agent) => agent.enabled)
-  if (!agents.length) return null
-
+export async function buildRuleContext({ contactId = null, messageText = '', channel = 'whatsapp' } = {}) {
   const contact = contactId
     ? await db.get('SELECT id, tags FROM contacts WHERE id = ?', [contactId]).catch(() => null)
     : null
-  const contactTags = parseJsonField(contact?.tags, []).map(normalizeMatchText)
-  const text = normalizeMatchText(messageText)
+  const contactTags = parseJsonField(contact?.tags, [])
+  const tags = (Array.isArray(contactTags) ? contactTags : []).map(normalizeMatchText)
+
+  const appointments = contactId
+    ? await db.all(`
+        SELECT calendar_id FROM appointments
+        WHERE contact_id = ? AND deleted_at IS NULL AND start_time >= ?
+          AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled', 'noshow')
+      `, [contactId, new Date().toISOString()]).catch(() => [])
+    : []
+
+  return {
+    channel,
+    text: normalizeMatchText(messageText),
+    tags,
+    upcomingCalendarIds: appointments.map((row) => String(row.calendar_id || ''))
+  }
+}
+
+function ruleMatches(rule, ctx) {
+  switch (rule.type) {
+    case 'channel':
+      return rule.channel === ctx.channel
+    case 'message_contains': {
+      const needle = normalizeMatchText(rule.phrase)
+      if (!needle) return true
+      if (rule.match === 'exact') return ctx.text === needle
+      if (rule.match === 'starts_with') return ctx.text.startsWith(needle)
+      return ctx.text.includes(needle)
+    }
+    case 'has_tag':
+      return Boolean(rule.tag) && ctx.tags.includes(normalizeMatchText(rule.tag))
+    case 'not_has_tag':
+      return !rule.tag || !ctx.tags.includes(normalizeMatchText(rule.tag))
+    case 'has_upcoming_appointment':
+      return ctx.upcomingCalendarIds.length > 0
+    case 'has_appointment_in_calendar':
+      return Boolean(rule.calendarId) && ctx.upcomingCalendarIds.includes(rule.calendarId)
+    case 'no_upcoming_appointment':
+      return ctx.upcomingCalendarIds.length === 0
+    default:
+      return false
+  }
+}
+
+/** Entrada: TODAS las reglas deben cumplirse (Y). Sin reglas = pasa. */
+export function entryRulesMatch(agent, ctx) {
+  return (agent.filters?.entry || []).every((rule) => ruleMatches(rule, ctx))
+}
+
+/** Salida: el agente suelta la conversación si se cumple ALGUNA regla (O). */
+export function exitRulesMatch(agent, ctx) {
+  const rules = agent.filters?.exit || []
+  if (!rules.length) return false
+  return rules.some((rule) => ruleMatches(rule, ctx))
+}
+
+/**
+ * Encuentra el primer agente habilitado (en orden de posición) cuyas reglas de
+ * entrada se cumplen y cuyas reglas de salida NO aplican ya de inicio.
+ */
+export async function matchAgentForMessage({ contactId, messageText = '', channel = 'whatsapp', excludeAgentId = null, ruleContext = null } = {}) {
+  const agents = (await listConversationalAgents()).filter((agent) => agent.enabled)
+  if (!agents.length) return null
+
+  const ctx = ruleContext || await buildRuleContext({ contactId, messageText, channel })
 
   for (const agent of agents) {
-    const filters = agent.entryFilters
-
-    if (filters.channel !== 'any' && filters.channel !== channel) continue
-
-    if (filters.keywords.length) {
-      const matched = filters.keywords.some((keyword) => {
-        const needle = normalizeMatchText(keyword)
-        if (!needle) return false
-        if (filters.match === 'exact') return text === needle
-        if (filters.match === 'starts_with') return text.startsWith(needle)
-        return text.includes(needle)
-      })
-      if (!matched) continue
-    }
-
-    if (filters.tags.length) {
-      const hasTag = filters.tags.some((tag) => contactTags.includes(normalizeMatchText(tag)))
-      if (!hasTag) continue
-    }
-
-    if (filters.calendarId) {
-      const appointment = contactId
-        ? await db.get(`
-            SELECT id FROM appointments
-            WHERE contact_id = ? AND calendar_id = ? AND deleted_at IS NULL AND start_time >= ?
-            LIMIT 1
-          `, [contactId, filters.calendarId, new Date().toISOString()]).catch(() => null)
-        : null
-      if (!appointment) continue
-    }
-
+    if (excludeAgentId && agent.id === excludeAgentId) continue
+    if (!entryRulesMatch(agent, ctx)) continue
+    if (exitRulesMatch(agent, ctx)) continue
     return agent
   }
 

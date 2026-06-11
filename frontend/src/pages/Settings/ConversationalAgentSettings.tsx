@@ -4,6 +4,8 @@ import { Button, Card, CustomSelect } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   conversationalAgentService,
+  type AgentRule,
+  type AgentRuleType,
   type AgentSuccessExtra,
   type ClosingStrategyMode,
   type ConversationalAgentConfig,
@@ -12,8 +14,8 @@ import {
   type ConversationalAgentTestResult,
   type ConversationalObjective,
   type ConversationalSuccessAction,
-  type EntryFilterChannel,
-  type EntryFilterMatch,
+  type RuleChannel,
+  type RuleMatch,
   type SuccessExtraType
 } from '@/services/conversationalAgentService'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
@@ -38,7 +40,6 @@ const successActionLabels: Record<ConversationalSuccessAction, { label: string; 
   none: { label: 'No hacer nada', description: 'Solo registra que se cumplió; la conversación no se mueve a prioridad.' }
 }
 
-// Acciones coherentes con cada objetivo: solo se ofrecen las que tienen sentido.
 const actionsByObjective: Record<ConversationalObjective, ConversationalSuccessAction[]> = {
   citas: ['book_appointment', 'ready_for_human', 'internal_signal', 'none'],
   ventas: ['ready_to_buy', 'ready_for_human', 'internal_signal', 'none'],
@@ -48,23 +49,33 @@ const actionsByObjective: Record<ConversationalObjective, ConversationalSuccessA
   custom: ['book_appointment', 'ready_to_buy', 'ready_for_human', 'internal_signal', 'none']
 }
 
-const channelOptions: Array<{ value: EntryFilterChannel; label: string }> = [
-  { value: 'any', label: 'Cualquier canal' },
+const extraTypeOptions: Array<{ value: SuccessExtraType; label: string }> = [
+  { value: 'add_tag', label: 'Agregar etiqueta' },
+  { value: 'remove_tag', label: 'Quitar etiqueta' },
+  { value: 'set_custom_field', label: 'Cambiar campo personalizado' }
+]
+
+// Catálogo del constructor de reglas (extensible: agregar aquí filtros futuros)
+const ruleCatalog: Array<{ type: AgentRuleType; menuLabel: string; defaults: AgentRule }> = [
+  { type: 'channel', menuLabel: 'Canal del mensaje', defaults: { type: 'channel', channel: 'whatsapp' } },
+  { type: 'message_contains', menuLabel: 'Mensaje contiene una frase', defaults: { type: 'message_contains', phrase: '', match: 'contains' } },
+  { type: 'has_tag', menuLabel: 'Contacto tiene una etiqueta', defaults: { type: 'has_tag', tag: '' } },
+  { type: 'not_has_tag', menuLabel: 'Contacto no tiene una etiqueta', defaults: { type: 'not_has_tag', tag: '' } },
+  { type: 'has_upcoming_appointment', menuLabel: 'Contacto tiene cita próxima', defaults: { type: 'has_upcoming_appointment' } },
+  { type: 'has_appointment_in_calendar', menuLabel: 'Contacto tiene cita en calendario específico', defaults: { type: 'has_appointment_in_calendar', calendarId: '' } },
+  { type: 'no_upcoming_appointment', menuLabel: 'Contacto no tiene cita próxima', defaults: { type: 'no_upcoming_appointment' } }
+]
+
+const channelRuleOptions: Array<{ value: RuleChannel; label: string }> = [
   { value: 'whatsapp', label: 'WhatsApp' },
   { value: 'messenger', label: 'Messenger' },
   { value: 'instagram', label: 'Instagram Direct' }
 ]
 
-const matchOptions: Array<{ value: EntryFilterMatch; label: string }> = [
-  { value: 'contains', label: 'Contiene' },
-  { value: 'exact', label: 'Coincidencia exacta' },
-  { value: 'starts_with', label: 'Empieza con' }
-]
-
-const extraTypeOptions: Array<{ value: SuccessExtraType; label: string }> = [
-  { value: 'add_tag', label: 'Agregar etiqueta' },
-  { value: 'remove_tag', label: 'Quitar etiqueta' },
-  { value: 'set_custom_field', label: 'Cambiar campo personalizado' }
+const matchRuleOptions: Array<{ value: RuleMatch; label: string }> = [
+  { value: 'contains', label: 'contenga' },
+  { value: 'exact', label: 'sea exactamente' },
+  { value: 'starts_with', label: 'empiece con' }
 ]
 
 type TestMessage = { role: 'user' | 'assistant'; content: string; internal?: boolean }
@@ -74,56 +85,161 @@ function agentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInpu
   return rest
 }
 
-const ChipsInput: React.FC<{
-  values: string[]
-  placeholder: string
-  disabled?: boolean
-  onChange: (values: string[]) => void
-}> = ({ values, placeholder, disabled, onChange }) => {
-  const [draft, setDraft] = useState('')
+/**
+ * Constructor de reglas tipo HighLevel: solo se muestran los filtros que el
+ * usuario agregó; cada uno es una fila compacta editable y eliminable.
+ */
+const RuleBuilder: React.FC<{
+  rules: AgentRule[]
+  mode: 'entry' | 'exit'
+  calendars: Calendar[]
+  onChange: (rules: AgentRule[]) => void
+}> = ({ rules, mode, calendars, onChange }) => {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement | null>(null)
 
-  const addDraft = () => {
-    const value = draft.trim()
-    if (!value) return
-    if (!values.some((item) => item.toLowerCase() === value.toLowerCase())) {
-      onChange([...values, value])
+  useEffect(() => {
+    if (!menuOpen) return
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false)
+      }
     }
-    setDraft('')
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [menuOpen])
+
+  const updateRule = (index: number, patch: Partial<AgentRule>) => {
+    onChange(rules.map((rule, i) => (i === index ? { ...rule, ...patch } : rule)))
+  }
+
+  const renderRuleControls = (rule: AgentRule, index: number) => {
+    switch (rule.type) {
+      case 'channel':
+        return (
+          <>
+            <span>el mensaje venga de</span>
+            <select
+              className={styles.ruleSelect}
+              value={rule.channel || 'whatsapp'}
+              onChange={(event) => updateRule(index, { channel: event.target.value as RuleChannel })}
+            >
+              {channelRuleOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </>
+        )
+      case 'message_contains':
+        return (
+          <>
+            <span>el mensaje</span>
+            <select
+              className={styles.ruleSelect}
+              value={rule.match || 'contains'}
+              onChange={(event) => updateRule(index, { match: event.target.value as RuleMatch })}
+            >
+              {matchRuleOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <input
+              className={styles.ruleInput}
+              value={rule.phrase || ''}
+              placeholder="Escribe la frase"
+              onChange={(event) => updateRule(index, { phrase: event.target.value })}
+            />
+          </>
+        )
+      case 'has_tag':
+      case 'not_has_tag':
+        return (
+          <>
+            <span>{rule.type === 'has_tag' ? 'el contacto tenga la etiqueta' : 'el contacto no tenga la etiqueta'}</span>
+            <input
+              className={styles.ruleInput}
+              value={rule.tag || ''}
+              placeholder="Nombre de la etiqueta"
+              onChange={(event) => updateRule(index, { tag: event.target.value })}
+            />
+          </>
+        )
+      case 'has_appointment_in_calendar':
+        return (
+          <>
+            <span>el contacto tenga cita próxima en</span>
+            <select
+              className={styles.ruleSelect}
+              value={rule.calendarId || ''}
+              onChange={(event) => updateRule(index, { calendarId: event.target.value })}
+            >
+              <option value="">Elige un calendario</option>
+              {calendars.map((calendar) => (
+                <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
+              ))}
+            </select>
+          </>
+        )
+      case 'has_upcoming_appointment':
+        return <span>el contacto tenga una cita próxima</span>
+      case 'no_upcoming_appointment':
+        return <span>el contacto no tenga citas próximas</span>
+      default:
+        return null
+    }
   }
 
   return (
-    <div className={styles.chipsWrap}>
-      {values.map((value) => (
-        <span key={value} className={styles.chip}>
-          {value}
+    <div className={styles.ruleGroup}>
+      {rules.length === 0 && (
+        <p className={styles.ruleEmptyHint}>
+          {mode === 'entry'
+            ? 'Sin filtros: este agente atiende cualquier conversación nueva.'
+            : 'Sin condiciones: el agente no suelta la conversación por reglas.'}
+        </p>
+      )}
+
+      {rules.map((rule, index) => (
+        <div key={index} className={styles.ruleRow}>
+          <span className={styles.rulePrefix}>
+            {index === 0 ? 'Cuando' : mode === 'entry' ? 'Y' : 'O'}
+          </span>
+          {renderRuleControls(rule, index)}
           <button
             type="button"
-            className={styles.chipRemove}
-            onClick={() => onChange(values.filter((item) => item !== value))}
-            aria-label={`Quitar ${value}`}
-            disabled={disabled}
+            className={styles.ruleDelete}
+            onClick={() => onChange(rules.filter((_, i) => i !== index))}
+            aria-label="Quitar filtro"
           >
-            <X size={12} />
+            <X size={14} />
           </button>
-        </span>
+        </div>
       ))}
-      <input
-        className={styles.chipsInput}
-        value={draft}
-        placeholder={values.length ? '' : placeholder}
-        disabled={disabled}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ',') {
-            event.preventDefault()
-            addDraft()
-          }
-          if (event.key === 'Backspace' && !draft && values.length) {
-            onChange(values.slice(0, -1))
-          }
-        }}
-        onBlur={addDraft}
-      />
+
+      <div className={styles.ruleAddWrap} ref={menuRef}>
+        <button type="button" className={styles.ruleAddButton} onClick={() => setMenuOpen((open) => !open)}>
+          <Plus size={14} />
+          Añadir filtro
+        </button>
+        {menuOpen && (
+          <div className={styles.ruleAddMenu} role="menu">
+            {ruleCatalog.map((item) => (
+              <button
+                key={item.type}
+                type="button"
+                role="menuitem"
+                className={styles.ruleAddMenuItem}
+                onClick={() => {
+                  onChange([...rules, { ...item.defaults }])
+                  setMenuOpen(false)
+                }}
+              >
+                {item.menuLabel}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -149,14 +265,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy,
   const selectedActionInfo = successActionLabels[agent.successAction] || successActionLabels.ready_for_human
   const strategyIsCustom = agent.closingStrategyMode === 'custom'
   const strategyText = strategyIsCustom ? agent.closingStrategyCustom : systemStrategy
-
-  const updateFilters = (patch: Partial<ConversationalAgentDef['entryFilters']>) => {
-    onChange({ entryFilters: { ...agent.entryFilters, ...patch } })
-  }
+  const entryCount = agent.filters.entry.length
+  const exitCount = agent.filters.exit.length
 
   const updateExtra = (index: number, patch: Partial<AgentSuccessExtra>) => {
-    const next = agent.successExtras.map((extra, i) => (i === index ? { ...extra, ...patch } : extra))
-    onChange({ successExtras: next })
+    onChange({ successExtras: agent.successExtras.map((extra, i) => (i === index ? { ...extra, ...patch } : extra)) })
   }
 
   const handleObjectiveChange = (objective: ConversationalObjective) => {
@@ -236,77 +349,44 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy,
       {!expanded && (
         <p className={styles.agentCardSummary}>
           {selectedObjective.label} · {selectedActionInfo.label}
-          {agent.entryFilters.keywords.length || agent.entryFilters.tags.length || agent.entryFilters.calendarId || agent.entryFilters.channel !== 'any'
-            ? ' · con filtros de entrada'
+          {entryCount > 0
+            ? ` · ${entryCount} ${entryCount === 1 ? 'filtro de inicio' : 'filtros de inicio'}`
             : ' · atiende todas las conversaciones'}
+          {exitCount > 0 ? ` · ${exitCount} de salida` : ''}
         </p>
       )}
 
       {expanded && (
         <>
-          <div className={styles.section}>
-            <h3 className={styles.sectionTitle}>Filtros de entrada</h3>
-            <p className={styles.helper}>
-              Quién entra con este agente. Si dejas todo vacío, atiende cualquier conversación nueva. Si hay varios agentes,
-              gana el primero (de arriba hacia abajo) cuyos filtros coincidan.
+          <div className={styles.agentSection}>
+            <h3 className={styles.sectionTitle}>Inicio del agente</h3>
+            <p className={styles.agentSectionHint}>
+              Este agente inicia solo si se cumplen todas estas condiciones. Si hay varios agentes, gana el primero
+              (de arriba hacia abajo) que coincida.
             </p>
-            <div className={styles.settingsGrid}>
-              <div className={styles.field}>
-                <label className={styles.label}>Canal del mensaje</label>
-                <CustomSelect
-                  value={agent.entryFilters.channel}
-                  onChange={(event) => updateFilters({ channel: event.target.value as EntryFilterChannel })}
-                >
-                  {channelOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </CustomSelect>
-              </div>
-              <div className={styles.field}>
-                <label className={styles.label}>El contacto tiene alguna de estas etiquetas</label>
-                <ChipsInput
-                  values={agent.entryFilters.tags}
-                  placeholder="Escribe la etiqueta y presiona Enter"
-                  onChange={(tags) => updateFilters({ tags })}
-                />
-              </div>
-              <div className={styles.field}>
-                <label className={styles.label}>El mensaje contiene alguna de estas frases</label>
-                <ChipsInput
-                  values={agent.entryFilters.keywords}
-                  placeholder="Escribe la frase y presiona Enter"
-                  onChange={(keywords) => updateFilters({ keywords })}
-                />
-              </div>
-              {agent.entryFilters.keywords.length > 0 && (
-                <div className={styles.field}>
-                  <label className={styles.label}>Coincidencia de frases</label>
-                  <CustomSelect
-                    value={agent.entryFilters.match}
-                    onChange={(event) => updateFilters({ match: event.target.value as EntryFilterMatch })}
-                  >
-                    {matchOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </CustomSelect>
-                </div>
-              )}
-              <div className={styles.field}>
-                <label className={styles.label}>El contacto tiene cita próxima en</label>
-                <CustomSelect
-                  value={agent.entryFilters.calendarId}
-                  onChange={(event) => updateFilters({ calendarId: event.target.value })}
-                >
-                  <option value="">Sin filtro de calendario</option>
-                  {calendars.map((calendar) => (
-                    <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
-                  ))}
-                </CustomSelect>
-              </div>
-            </div>
+            <RuleBuilder
+              rules={agent.filters.entry}
+              mode="entry"
+              calendars={calendars}
+              onChange={(entry) => onChange({ filters: { ...agent.filters, entry } })}
+            />
           </div>
 
-          <div className={styles.section}>
+          <div className={styles.agentSection}>
+            <h3 className={styles.sectionTitle}>Soltar la conversación</h3>
+            <p className={styles.agentSectionHint}>
+              El agente suelta el contacto cuando se cumpla alguna de estas condiciones (por ejemplo, al agendar su
+              cita o al recibir cierta etiqueta). Otro agente que coincida puede tomarla.
+            </p>
+            <RuleBuilder
+              rules={agent.filters.exit}
+              mode="exit"
+              calendars={calendars}
+              onChange={(exit) => onChange({ filters: { ...agent.filters, exit } })}
+            />
+          </div>
+
+          <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>Objetivo</h3>
             <div className={styles.settingsGrid}>
               <div className={styles.field}>
@@ -366,27 +446,28 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy,
             )}
 
             <div className={styles.fieldWide}>
-              <label className={styles.label}>Acciones adicionales al cumplir el objetivo</label>
+              <label className={styles.label}>Acciones adicionales al cumplir</label>
               {agent.successExtras.map((extra, index) => (
                 <div key={index} className={styles.extraRow}>
-                  <CustomSelect
+                  <select
+                    className={styles.ruleSelect}
                     value={extra.type}
                     onChange={(event) => updateExtra(index, { type: event.target.value as SuccessExtraType })}
                   >
                     {extraTypeOptions.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
-                  </CustomSelect>
+                  </select>
                   {extra.type === 'set_custom_field' ? (
                     <>
                       <input
-                        className={styles.input}
+                        className={styles.ruleInput}
                         value={extra.field || ''}
                         placeholder="Campo"
                         onChange={(event) => updateExtra(index, { field: event.target.value })}
                       />
                       <input
-                        className={styles.input}
+                        className={styles.ruleInput}
                         value={extra.value || ''}
                         placeholder="Valor"
                         onChange={(event) => updateExtra(index, { value: event.target.value })}
@@ -394,7 +475,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy,
                     </>
                   ) : (
                     <input
-                      className={styles.input}
+                      className={styles.ruleInput}
                       value={extra.tag || ''}
                       placeholder="Nombre de la etiqueta"
                       onChange={(event) => updateExtra(index, { tag: event.target.value })}
@@ -402,21 +483,21 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy,
                   )}
                   <button
                     type="button"
-                    className={styles.iconButton}
+                    className={styles.ruleDelete}
                     onClick={() => onChange({ successExtras: agent.successExtras.filter((_, i) => i !== index) })}
                     aria-label="Quitar acción"
                   >
-                    <X size={15} />
+                    <X size={14} />
                   </button>
                 </div>
               ))}
               <button
                 type="button"
-                className={styles.addRowButton}
+                className={styles.ruleAddButton}
                 onClick={() => onChange({ successExtras: [...agent.successExtras, { type: 'add_tag', tag: '' }] })}
               >
                 <Plus size={14} />
-                Agregar acción
+                Añadir acción
               </button>
               <p className={styles.helper}>
                 Se ejecutan en automático al cumplirse el objetivo: etiquetas y campos personalizados del contacto.
@@ -424,7 +505,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy,
             </div>
           </div>
 
-          <div className={styles.section}>
+          <div className={styles.agentSection}>
             <div className={styles.strategyHeaderRow}>
               <h3 className={styles.sectionTitle}>Estrategia de cierre</h3>
               <span className={`${styles.strategyBadge} ${strategyIsCustom ? styles.strategyBadgeCustom : ''}`}>
@@ -454,40 +535,41 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy,
             </p>
           </div>
 
-          <div className={styles.section}>
-            <h3 className={styles.sectionTitle}>Datos mínimos antes de cumplir el objetivo</h3>
-            <textarea
-              className={styles.textarea}
-              value={agent.requiredData}
-              placeholder={'Opcional. Ejemplo:\n- Nombre completo\n- Qué servicio le interesa\n- Para cuándo lo necesita'}
-              onChange={(event) => onChange({ requiredData: event.target.value })}
-              rows={4}
-            />
-            <p className={styles.helper}>
-              El agente los pide de uno en uno y los guarda en el contacto. No pidas datos que ya existen: los lee solo.
-            </p>
-          </div>
-
-          <div className={styles.section}>
-            <h3 className={styles.sectionTitle}>Casos que siempre van con un humano</h3>
-            <textarea
-              className={styles.textarea}
-              value={agent.handoffRules}
-              placeholder={'Opcional. Además de quejas, temas delicados, confusión fuerte e insultos (ya incluidos), agrega los tuyos:\n- Preguntas de facturación\n- Urgencias médicas'}
-              onChange={(event) => onChange({ handoffRules: event.target.value })}
-              rows={4}
-            />
-          </div>
-
-          <div className={styles.section}>
-            <h3 className={styles.sectionTitle}>Instrucciones extra del negocio</h3>
-            <textarea
-              className={styles.textarea}
-              value={agent.extraInstructions}
-              placeholder="Opcional. Reglas, promociones vigentes con justificante real, formas de hablar del negocio, etc."
-              onChange={(event) => onChange({ extraInstructions: event.target.value })}
-              rows={5}
-            />
+          <div className={styles.agentSection}>
+            <h3 className={styles.sectionTitle}>Reglas del negocio</h3>
+            <div className={styles.fieldWide}>
+              <label className={styles.label}>Datos mínimos antes de cumplir el objetivo</label>
+              <textarea
+                className={styles.textarea}
+                value={agent.requiredData}
+                placeholder={'Opcional. Ejemplo:\n- Nombre completo\n- Qué servicio le interesa\n- Para cuándo lo necesita'}
+                onChange={(event) => onChange({ requiredData: event.target.value })}
+                rows={4}
+              />
+              <p className={styles.helper}>
+                El agente los pide de uno en uno y los guarda en el contacto. No pidas datos que ya existen: los lee solo.
+              </p>
+            </div>
+            <div className={styles.fieldWide}>
+              <label className={styles.label}>Casos que siempre van con un humano</label>
+              <textarea
+                className={styles.textarea}
+                value={agent.handoffRules}
+                placeholder={'Opcional. Además de quejas, temas delicados, confusión fuerte e insultos (ya incluidos), agrega los tuyos:\n- Preguntas de facturación\n- Urgencias médicas'}
+                onChange={(event) => onChange({ handoffRules: event.target.value })}
+                rows={4}
+              />
+            </div>
+            <div className={styles.fieldWide}>
+              <label className={styles.label}>Instrucciones extra del negocio</label>
+              <textarea
+                className={styles.textarea}
+                value={agent.extraInstructions}
+                placeholder="Opcional. Reglas, promociones vigentes con justificante real, formas de hablar del negocio, etc."
+                onChange={(event) => onChange({ extraInstructions: event.target.value })}
+                rows={5}
+              />
+            </div>
             <label className={styles.inlineToggle}>
               <input
                 type="checkbox"
@@ -498,12 +580,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy,
             </label>
           </div>
 
-          <div className={styles.section}>
+          <div className={styles.agentSection}>
             <div className={styles.sectionHeading}>
               <Play size={17} />
               <h3 className={styles.sectionTitle}>Probar este agente</h3>
             </div>
-            <p className={styles.helper}>
+            <p className={styles.agentSectionHint}>
               Conversación simulada con la configuración de arriba. No envía WhatsApp, no crea citas ni cambia estados:
               las acciones internas se muestran marcadas con ⚙︎.
             </p>
@@ -689,7 +771,7 @@ export const ConversationalAgentSettings: React.FC = () => {
             <div>
               <h2 className={styles.title}>Agente conversacional</h2>
               <p className={styles.description}>
-                Atiende los chats con datos reales del negocio. Crea varios agentes con objetivos y filtros de entrada distintos.
+                Atiende los chats con datos reales del negocio. Crea varios agentes con objetivos y filtros distintos.
               </p>
             </div>
           </div>
@@ -734,7 +816,7 @@ export const ConversationalAgentSettings: React.FC = () => {
         <Card>
           <p className={styles.helper}>
             Aún no tienes agentes conversacionales. Crea el primero con "Nuevo agente": cada uno es un contenedor con su
-            objetivo, estrategia y filtros de entrada.
+            objetivo, estrategia y filtros de inicio y salida.
           </p>
         </Card>
       )}

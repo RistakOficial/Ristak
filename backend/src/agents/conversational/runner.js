@@ -17,7 +17,9 @@ import {
   getConversationalAgent,
   listConversationalAgents,
   matchAgentForMessage,
-  assignAgentToConversation
+  assignAgentToConversation,
+  buildRuleContext,
+  exitRulesMatch
 } from '../../services/conversationalAgentService.js'
 import { buildConversationalInstructions } from './prompt.js'
 import { createConversationalTools } from './tools.js'
@@ -203,13 +205,35 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       }
 
       // Resolver qué agente atiende esta conversación: el ya asignado o el
-      // primero cuyos filtros de entrada coincidan con el mensaje/contacto.
+      // primero cuyas reglas de entrada coincidan con el mensaje/contacto.
+      const ruleContext = await buildRuleContext({
+        contactId,
+        messageText: latest.message_text || '',
+        channel: 'whatsapp'
+      })
+
       let agentConfig = freshState.agentId ? await getConversationalAgent(freshState.agentId) : null
+      let releasedAgentId = null
+
+      // Reglas de salida: si alguna se cumple, este agente suelta el contacto.
+      if (agentConfig && exitRulesMatch(agentConfig, ruleContext)) {
+        releasedAgentId = agentConfig.id
+        await assignAgentToConversation(contactId, null)
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'agent_released',
+          detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'exit_rules' }
+        })
+        agentConfig = null
+      }
+
       if (!agentConfig || !agentConfig.enabled) {
         agentConfig = await matchAgentForMessage({
           contactId,
           messageText: latest.message_text || '',
-          channel: 'whatsapp'
+          channel: 'whatsapp',
+          excludeAgentId: releasedAgentId,
+          ruleContext
         })
         if (agentConfig) {
           await assignAgentToConversation(contactId, agentConfig.id)
@@ -221,7 +245,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         }
       }
       if (!agentConfig) {
-        // Ningún agente coincide con esta conversación: no responder.
+        // Ningún agente aplica a esta conversación: no responder.
         return
       }
 

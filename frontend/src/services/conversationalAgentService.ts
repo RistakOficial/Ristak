@@ -38,15 +38,32 @@ export interface ConversationalAgentConfigInput {
   closingStrategyCustom?: string
 }
 
-export type EntryFilterChannel = 'any' | 'whatsapp' | 'messenger' | 'instagram'
-export type EntryFilterMatch = 'contains' | 'exact' | 'starts_with'
+export type RuleChannel = 'whatsapp' | 'messenger' | 'instagram'
+export type RuleMatch = 'contains' | 'exact' | 'starts_with'
 
-export interface AgentEntryFilters {
-  channel: EntryFilterChannel
-  keywords: string[]
-  match: EntryFilterMatch
-  tags: string[]
-  calendarId: string
+export type AgentRuleType =
+  | 'channel'
+  | 'message_contains'
+  | 'has_tag'
+  | 'not_has_tag'
+  | 'has_upcoming_appointment'
+  | 'has_appointment_in_calendar'
+  | 'no_upcoming_appointment'
+
+export interface AgentRule {
+  type: AgentRuleType
+  channel?: RuleChannel
+  phrase?: string
+  match?: RuleMatch
+  tag?: string
+  calendarId?: string
+}
+
+export interface AgentFilters {
+  /** El agente inicia SOLO si se cumplen TODAS (Y) */
+  entry: AgentRule[]
+  /** El agente suelta la conversación si se cumple ALGUNA (O) */
+  exit: AgentRule[]
 }
 
 export type SuccessExtraType = 'add_tag' | 'remove_tag' | 'set_custom_field'
@@ -74,7 +91,7 @@ export interface ConversationalAgentDef {
   defaultCalendarId: string | null
   closingStrategyMode: ClosingStrategyMode
   closingStrategyCustom: string
-  entryFilters: AgentEntryFilters
+  filters: AgentFilters
   createdAt: string | null
   updatedAt: string | null
 }
