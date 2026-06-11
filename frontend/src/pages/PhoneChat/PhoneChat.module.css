@@ -1664,6 +1664,54 @@
   background: rgba(var(--phone-chat-accent-rgb), 0.16);
 }
 
+/* Pastilla del hero: desde qué número nuestro contactamos a esta persona */
+.contactInfoOurNumberPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 100%;
+  margin-top: 10px;
+  padding: 7px 14px;
+  border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.1));
+  border-radius: 999px;
+  color: var(--phone-chat-text);
+  background: color-mix(in srgb, var(--phone-chat-surface) 72%, transparent);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.contactInfoOurNumberPill:active {
+  transform: scale(0.985);
+}
+
+.contactInfoOurNumberPill > svg {
+  flex: 0 0 auto;
+  color: var(--phone-chat-muted);
+}
+
+.contactInfoOurNumberPillText {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  text-align: left;
+}
+
+.contactInfoOurNumberPillText small {
+  color: var(--phone-chat-muted);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.contactInfoOurNumberPillText strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 820;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .contactInfoLoading {
   color: #4b5563;
   background: color-mix(in srgb, var(--phone-chat-surface) 72%, transparent);

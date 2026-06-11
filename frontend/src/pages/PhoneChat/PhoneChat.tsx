@@ -11,6 +11,7 @@ import {
   Check,
   CheckCheck,
   ChevronLeft,
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   CircleDollarSign,
@@ -8279,6 +8280,25 @@ export const PhoneChat: React.FC = () => {
             {contactInfoStageBadge && (
               <span className={styles.contactInfoBadge}>{contactInfoStageBadge.text}</span>
             )}
+            {businessPhones.length > 0 && (
+              <button
+                type="button"
+                className={styles.contactInfoOurNumberPill}
+                onClick={() => setOurNumberSheetOpen(true)}
+                aria-label="Cambiar el número desde el que contactamos"
+              >
+                <Smartphone size={14} />
+                <span className={styles.contactInfoOurNumberPillText}>
+                  <small>Contactando desde</small>
+                  <strong>
+                    {contactInfoOurPhone
+                      ? (contactInfoOurPhone.display_phone_number || contactInfoOurPhone.phone_number || contactInfoOurPhone.id)
+                      : 'Sin número conectado'}
+                  </strong>
+                </span>
+                {businessPhones.length > 1 && <ChevronDown size={15} aria-hidden="true" />}
+              </button>
+            )}
             {contactInfoLoading && (
               <span className={styles.contactInfoLoading}>
                 <Loader2 size={14} className={styles.spinIcon} />
@@ -8438,24 +8458,6 @@ export const PhoneChat: React.FC = () => {
                   <button type="button" className={styles.contactInfoEditButton} onClick={handleStartContactPhoneEdit} aria-label="Editar número">
                     <Pencil size={15} />
                   </button>
-                </div>
-              )}
-              {businessPhones.length > 0 && (
-                <div className={styles.contactInfoEditableRow}>
-                  <span className={styles.contactInfoRowIcon}><Smartphone size={17} /></span>
-                  <button type="button" className={styles.contactInfoEditableText} onClick={() => setOurNumberSheetOpen(true)}>
-                    <small>Contactando desde</small>
-                    <strong>
-                      {contactInfoOurPhone
-                        ? (contactInfoOurPhone.display_phone_number || contactInfoOurPhone.phone_number || contactInfoOurPhone.id)
-                        : 'Sin número conectado'}
-                    </strong>
-                  </button>
-                  {businessPhones.length > 1 && (
-                    <button type="button" className={styles.contactInfoEditButton} onClick={() => setOurNumberSheetOpen(true)} aria-label="Cambiar el número desde el que contactamos">
-                      <Pencil size={15} />
-                    </button>
-                  )}
                 </div>
               )}
               {renderContactInfoRow('email', <Mail size={17} />, 'Correo', contactInfoData.email)}
