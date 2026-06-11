@@ -448,6 +448,7 @@ export function ContactDetailsModal({
       title=""
       size="lg"
       showCloseButton={false}
+      flushContent
     >
       <div className={styles.modalContainer}>
         {/* Header */}

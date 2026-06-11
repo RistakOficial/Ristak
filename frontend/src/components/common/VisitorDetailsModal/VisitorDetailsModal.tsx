@@ -208,6 +208,7 @@ export function VisitorDetailsModal({
       title=""
       size="lg"
       showCloseButton={false}
+      flushContent
     >
       <div className={styles.modalContainer}>
         {/* Header */}

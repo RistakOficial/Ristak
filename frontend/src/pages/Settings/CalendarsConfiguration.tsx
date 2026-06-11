@@ -989,6 +989,7 @@ export const CalendarsConfiguration: React.FC = () => {
       }}
       title="Crear calendario"
       size="md"
+      flushContent
     >
       <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
         <div className={styles.formField}>
@@ -1070,6 +1071,7 @@ export const CalendarsConfiguration: React.FC = () => {
       title="Calendario importado desde Google"
       size="md"
       showCloseButton={!savingGoogleDefaultPrompt}
+      flushContent
     >
       <div className={pageStyles.defaultPromptModal}>
         <div className={pageStyles.defaultPromptIcon}>
@@ -1124,6 +1126,7 @@ export const CalendarsConfiguration: React.FC = () => {
       title="Combinar calendarios"
       size="md"
       showCloseButton={!savingGoogleMergePrompt}
+      flushContent
     >
       <div className={pageStyles.defaultPromptModal}>
         <div className={pageStyles.defaultPromptIcon}>
@@ -1588,6 +1591,7 @@ export const CalendarsConfiguration: React.FC = () => {
       onClose={() => setShowNotificationsModal(false)}
       title="Notificaciones"
       size="md"
+      flushContent
     >
       <div className={pageStyles.notificationsModal}>
         <section className={pageStyles.notificationsHero}>

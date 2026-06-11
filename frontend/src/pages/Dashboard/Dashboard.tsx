@@ -1899,6 +1899,7 @@ export const Dashboard: React.FC = () => {
           title={chartInsightModal.title}
           size="xl"
           type="custom"
+          flushContent
         >
           <div className="space-y-5 p-6">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

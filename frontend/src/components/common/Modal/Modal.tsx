@@ -28,6 +28,10 @@ interface ModalProps {
   closeAriaLabel?: string
   draggableSheet?: boolean
   typeToConfirm?: string
+  /** Quita el padding global del contenido. Solo para modales que dibujan su
+   * propio layout de borde a borde (listas full-bleed, footers sticky propios);
+   * el resto hereda el padding estándar automáticamente. */
+  flushContent?: boolean
   children?: React.ReactNode
 }
 
@@ -88,6 +92,7 @@ export const Modal: React.FC<ModalProps> = ({
   closeAriaLabel = 'Cerrar modal',
   draggableSheet = false,
   typeToConfirm,
+  flushContent = false,
   children
 }) => {
   const [typedConfirmation, setTypedConfirmation] = useState('')
@@ -220,7 +225,7 @@ export const Modal: React.FC<ModalProps> = ({
         )}
 
         {(message || children) && (
-          <div className={`${styles.content} ${contentClassName}`.trim()} data-phone-scrollable="true">
+          <div className={`${styles.content} ${flushContent ? styles.flush : ''} ${contentClassName}`.trim()} data-phone-scrollable="true">
             {message && <p className={styles.message}>{message}</p>}
             {requiresTypedConfirmation && (
               <div className={styles.typeToConfirm}>

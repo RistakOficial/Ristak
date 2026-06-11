@@ -576,6 +576,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         title={isCreateMode ? 'Bloquear horario' : 'Editar horario bloqueado'}
         size="sm"
         type="custom"
+        flushContent
       >
         <div className={styles.modalContent}>
         {/* Formulario */}

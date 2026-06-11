@@ -249,11 +249,18 @@ body.dark .modal {
   flex-direction: column;
 }
 
+/* Los modales custom heredan el padding estándar de .content (responsive).
+   Los que dibujan su propio layout de borde a borde (listas full-bleed,
+   secciones con fondos, footers sticky propios) pasan flushContent al Modal
+   y reciben .flush para quitar el padding global. */
 .modal.custom .content {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   max-height: none;
+}
+
+.modal .content.flush {
   padding: 0;
 }
 

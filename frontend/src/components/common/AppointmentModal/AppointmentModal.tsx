@@ -1318,6 +1318,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         contentClassName={isMobileSheet ? styles.mobileSheetContent : undefined}
         showCloseButton={!isMobileSheet}
         draggableSheet={isMobileSheet}
+        flushContent
       >
         <div
           className={`${styles.container} ${isMobileSheet ? styles.mobileSheetContainer : ''}`}
