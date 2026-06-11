@@ -154,7 +154,9 @@ export const APIAccessSettings: React.FC = () => {
           void rotateApiToken()
         },
         'Generar token',
-        'Cancelar'
+        'Cancelar',
+        undefined,
+        { typeToConfirm: 'GENERAR' }
       )
       return
     }
@@ -210,7 +212,9 @@ export const APIAccessSettings: React.FC = () => {
         void revokeApiToken()
       },
       'Revocar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'REVOCAR' }
     )
   }
 

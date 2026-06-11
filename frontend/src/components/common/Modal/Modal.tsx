@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Info, AlertCircle, ShieldAlert } from 'lucide-react'
 import { useBottomSheetDismiss } from '@/hooks'
@@ -27,6 +27,7 @@ interface ModalProps {
   closeIcon?: React.ReactNode
   closeAriaLabel?: string
   draggableSheet?: boolean
+  typeToConfirm?: string
   children?: React.ReactNode
 }
 
@@ -86,8 +87,18 @@ export const Modal: React.FC<ModalProps> = ({
   closeIcon,
   closeAriaLabel = 'Cerrar modal',
   draggableSheet = false,
+  typeToConfirm,
   children
 }) => {
+  const [typedConfirmation, setTypedConfirmation] = useState('')
+  const requiresTypedConfirmation = type === 'confirm' && !!typeToConfirm
+  const typedConfirmationValid = !requiresTypedConfirmation ||
+    normalizeModalText(typedConfirmation) === normalizeModalText(typeToConfirm || '')
+
+  useEffect(() => {
+    if (!isOpen) setTypedConfirmation('')
+  }, [isOpen])
+
   const normalizedConfirmText = normalizeModalText(confirmText)
   const isGenericConfirmText = genericConfirmTexts.has(normalizedConfirmText)
   const isDestructiveConfirm = type === 'confirm' && (
@@ -180,6 +191,23 @@ export const Modal: React.FC<ModalProps> = ({
         {(message || children) && (
           <div className={`${styles.content} ${contentClassName}`.trim()} data-phone-scrollable="true">
             {message && <p className={styles.message}>{message}</p>}
+            {requiresTypedConfirmation && (
+              <div className={styles.typeToConfirm}>
+                <label className={styles.typeToConfirmLabel}>
+                  Escribe <strong>{typeToConfirm}</strong> para confirmar:
+                </label>
+                <input
+                  type="text"
+                  className={styles.typeToConfirmInput}
+                  value={typedConfirmation}
+                  onChange={(e) => setTypedConfirmation(e.target.value)}
+                  placeholder={typeToConfirm}
+                  autoFocus
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+            )}
             {children}
           </div>
         )}
@@ -197,7 +225,9 @@ export const Modal: React.FC<ModalProps> = ({
                 </Button>
                 <Button
                   variant={confirmButtonVariant}
+                  disabled={!typedConfirmationValid}
                   onClick={() => {
+                    if (!typedConfirmationValid) return
                     onConfirm?.()
                     onClose()
                   }}

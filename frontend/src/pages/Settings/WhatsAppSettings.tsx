@@ -349,7 +349,9 @@ export const WhatsAppSettings: React.FC = () => {
         }
       },
       'Desconectar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
     )
   }
 

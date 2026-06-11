@@ -239,6 +239,39 @@ body.dark .modal {
   margin: 0;
 }
 
+.typeToConfirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.typeToConfirmLabel {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.typeToConfirmLabel strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  user-select: none;
+}
+
+.typeToConfirmInput {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  outline: none;
+}
+
+.typeToConfirmInput:focus {
+  border-color: var(--color-danger, #ef4444);
+}
+
 .footer {
   display: flex;
   align-items: center;

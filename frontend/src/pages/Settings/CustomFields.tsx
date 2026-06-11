@@ -494,7 +494,7 @@ export const CustomFields: React.FC = () => {
   const handleArchiveField = (field: CustomFieldDefinition) => {
     showConfirm(
       'Eliminar campo',
-      `El campo "${field.label}" se quitara del sistema. Sus datos ya guardados se conservan y podras volver a usar el ID "${field.fieldKey || field.key}" si creas otro campo.`,
+      `El campo "${field.label}" se eliminara del sistema y tambien se borraran sus valores guardados en todos los contactos. Esta accion no se puede deshacer.`,
       () => {
         const archive = async () => {
           try {
@@ -508,7 +508,9 @@ export const CustomFields: React.FC = () => {
         void archive()
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 

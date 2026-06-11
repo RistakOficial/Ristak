@@ -664,7 +664,9 @@ export const CalendarsConfiguration: React.FC = () => {
         void disconnectGoogleIntegration()
       },
       'Desconectar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
     )
   }
 
@@ -919,7 +921,9 @@ export const CalendarsConfiguration: React.FC = () => {
         void deleteCalendar()
       },
       isExternalCalendar ? 'Entendido' : 'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      isExternalCalendar ? undefined : { typeToConfirm: 'ELIMINAR' }
     )
   }
 
