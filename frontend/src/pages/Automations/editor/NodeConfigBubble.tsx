@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, Pencil, Plus, Trash2, X } from 'lucide-react'
+import { Check, ChevronRight, Copy, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { CustomSelect } from './config/configPrimitives'
 import { validateNodeConfig, type ConfigField, type NodeDefinition } from './nodeRegistry'
@@ -20,6 +20,8 @@ import { WaitConfigEditor } from './config/WaitConfigEditor'
 import { GoalConfigEditor } from './config/GoalConfigEditor'
 import { WhatsAppConfigEditor } from './config/WhatsAppConfigEditor'
 import { MessageBlocksEditor } from './config/MessageBlocksEditor'
+import { TriggerFiltersEditor } from './config/TriggerFiltersEditor'
+import type { TriggerFilter } from './crmFields'
 import { MessageComposer, VariableTextInput } from './composer/MessageComposer'
 import type { MessageBlock } from './nodeRegistry'
 import styles from './AutomationEditor.module.css'
@@ -52,6 +54,7 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
   const rootRef = useRef<HTMLDivElement>(null)
   const [copied, setCopied] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [draftTitle, setDraftTitle] = useState('')
   const titleInputRef = useRef<HTMLInputElement>(null)
 
@@ -539,10 +542,48 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
           </>
         )}
 
-        {!definition.configComponent && definition.fields.length === 0 && (
+        {!definition.configComponent && definition.fields.length === 0 && definition.kind !== 'trigger' && (
           <p className={styles.configHelp}>Este paso no necesita configuración.</p>
         )}
-        {!definition.configComponent && definition.fields.map(renderField)}
+        {/* Solo los campos indispensables a la vista */}
+        {!definition.configComponent && definition.fields.filter((field) => !field.advanced).map(renderField)}
+
+        {/* Filtros avanzados del disparador (coincide / NO coincide) */}
+        {definition.kind === 'trigger' && (
+          <TriggerFiltersEditor
+            value={config.filters}
+            onChange={(filters: TriggerFilter[]) => setValue('filters', filters)}
+          />
+        )}
+
+        {/* Lo demás vive detrás de "Opciones avanzadas" */}
+        {!definition.configComponent && definition.fields.some((field) => field.advanced) && (
+          <>
+            <button
+              type="button"
+              className={styles.advancedToggle}
+              onClick={() => setShowAdvanced((value) => !value)}
+            >
+              <ChevronRight
+                size={12}
+                className={cn(styles.varCategoryChevron, showAdvanced && styles.varCategoryChevronOpen)}
+              />
+              Opciones avanzadas
+            </button>
+            {showAdvanced && definition.fields.filter((field) => field.advanced).map(renderField)}
+          </>
+        )}
+
+        {/* Vista previa en tiempo real: la regla en lenguaje natural */}
+        {(() => {
+          const sentence = definition.summary(config).text
+          return sentence ? (
+            <div className={styles.sentencePreview}>
+              <div className={styles.configSectionTitle}>Vista previa</div>
+              {sentence}
+            </div>
+          ) : null
+        })()}
 
 
         {/* Ramas extra del nodo (hasta 10 salidas) */}

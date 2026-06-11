@@ -150,8 +150,8 @@ export interface CrmOperator {
 
 export const OPERATORS_BY_TYPE: Record<CrmFieldType, CrmOperator[]> = {
   text: [
-    { value: 'is', label: 'es' },
-    { value: 'is_not', label: 'no es' },
+    { value: 'is', label: 'coincide con' },
+    { value: 'is_not', label: 'no coincide con' },
     { value: 'contains', label: 'contiene' },
     { value: 'not_contains', label: 'no contiene' },
     { value: 'starts_with', label: 'empieza con' },
@@ -187,8 +187,8 @@ export const OPERATORS_BY_TYPE: Record<CrmFieldType, CrmOperator[]> = {
     { value: 'none', label: 'no contiene ninguna' }
   ],
   select: [
-    { value: 'is', label: 'es' },
-    { value: 'is_not', label: 'no es' },
+    { value: 'is', label: 'coincide con' },
+    { value: 'is_not', label: 'no coincide con' },
     { value: 'empty', label: 'está vacío', noValue: true },
     { value: 'not_empty', label: 'no está vacío', noValue: true }
   ],
@@ -357,9 +357,9 @@ export function summarizeAdvancedCondition(config: unknown): string {
   if (!firstRule) return ''
   const field = getCrmField(firstRule.field)
   const operator = getOperatorsForField(firstRule.field).find((op) => op.value === firstRule.operator)
-  const base = [field?.label, operator?.label, operatorNeedsValue(firstRule.field, firstRule.operator) ? firstRule.value : '']
+  const base = `Si ${[field?.label.toLowerCase(), operator?.label, operatorNeedsValue(firstRule.field, firstRule.operator) ? `"${firstRule.value}"` : '']
     .filter(Boolean)
-    .join(' ')
+    .join(' ')}`
 
   const totalRules = branches.reduce(
     (sum, branch) => sum + (branch.groups || []).reduce((groupSum, group) => groupSum + (group.rules || []).filter((rule) => rule.field).length, 0),
@@ -428,4 +428,67 @@ export function summarizeCondition(config: unknown): string {
   if (rules.length === 1) return base
   const connector = conditions.match === 'any' ? 'o' : 'y'
   return `${base} ${connector} ${rules.length - 1} regla${rules.length > 2 ? 's' : ''} más`
+}
+
+
+// ---------------------------------------------------------------------------
+// Filtros avanzados de los disparadores ("+ Añadir filtro")
+// ---------------------------------------------------------------------------
+
+export interface TriggerFilter {
+  field: string
+  /** Campo personalizado elegido cuando field === 'custom' */
+  customKey?: string
+  customLabel?: string
+  match: 'is' | 'not'
+  value: string
+}
+
+export interface TriggerFilterField {
+  id: string
+  label: string
+  /** Frase con artículo para la oración ("la fuente", "el país"…) */
+  phrase: string
+  catalog?: 'tags' | 'contactFields' | 'users'
+}
+
+export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
+  { id: 'source', label: 'Fuente', phrase: 'la fuente' },
+  { id: 'tag', label: 'Etiqueta', phrase: 'la etiqueta', catalog: 'tags' },
+  { id: 'stage', label: 'Pipeline / etapa', phrase: 'la etapa' },
+  { id: 'country', label: 'País', phrase: 'el país' },
+  { id: 'email', label: 'Email (dato de contacto)', phrase: 'el email' },
+  { id: 'phone', label: 'Teléfono', phrase: 'el teléfono' },
+  { id: 'assigned', label: 'Usuario asignado', phrase: 'el usuario asignado', catalog: 'users' },
+  { id: 'custom', label: 'Campo personalizado…', phrase: 'el campo' }
+]
+
+export function asTriggerFilters(value: unknown): TriggerFilter[] {
+  return Array.isArray(value) ? (value as TriggerFilter[]) : []
+}
+
+export function validateTriggerFilters(value: unknown): string[] {
+  const errors: string[] = []
+  asTriggerFilters(value).forEach((filter, index) => {
+    if (!filter.field) errors.push(`Filtro ${index + 1}: elige el campo`)
+    else if (filter.field === 'custom' && !filter.customKey) errors.push(`Filtro ${index + 1}: elige el campo personalizado`)
+    if (!String(filter.value || '').trim()) errors.push(`Filtro ${index + 1}: captura el valor`)
+  })
+  return errors
+}
+
+/** ' y la fuente coincida con "Facebook" y el país NO coincida con "México"' */
+export function triggerFiltersSentence(value: unknown): string {
+  return asTriggerFilters(value)
+    .filter((filter) => filter.field && String(filter.value || '').trim())
+    .map((filter) => {
+      const field = TRIGGER_FILTER_FIELDS.find((candidate) => candidate.id === filter.field)
+      const phrase = filter.field === 'custom'
+        ? `el campo "${filter.customLabel || filter.customKey}"`
+        : field?.phrase || 'el campo'
+      return filter.match === 'not'
+        ? ` y ${phrase} NO coincida con "${filter.value}"`
+        : ` y ${phrase} coincida con "${filter.value}"`
+    })
+    .join('')
 }

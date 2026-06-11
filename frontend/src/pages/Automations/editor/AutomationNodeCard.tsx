@@ -288,12 +288,14 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
                     <TriggerIcon size={13} />
                   </span>
                   <span className={styles.triggerChipText}>
-                    <span className={styles.triggerChipTitle}>{triggerDefinition?.label || trigger.type}</span>
-                    <span className={styles.triggerChipDetail}>
-                      {triggerErrors.length > 0
-                        ? 'Falta configurar'
+                    <span className={styles.triggerChipTitle}>
+                      {triggerErrors.length > 0 || !triggerSummary(triggerDefinition, trigger.config)
+                        ? triggerDefinition?.label || trigger.type
                         : triggerSummary(triggerDefinition, trigger.config)}
                     </span>
+                    {triggerErrors.length > 0 && (
+                      <span className={styles.triggerChipDetail}>Falta configurar</span>
+                    )}
                   </span>
                   <span
                     role="button"

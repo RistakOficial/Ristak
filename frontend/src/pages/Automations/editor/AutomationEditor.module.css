@@ -1440,6 +1440,41 @@
   outline: none !important;
 }
 
+.sentencePreview {
+  margin-top: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  padding: 12px 10px 4px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--color-text-primary);
+  font-style: italic;
+}
+
+.advancedToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 6px 0;
+  margin: 2px 0 8px;
+}
+
+.advancedToggle:hover {
+  color: var(--color-text-primary);
+}
+
+.filterRow {
+  border: 1px dashed rgba(148, 163, 184, 0.3);
+  border-radius: 10px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
 .configDivider {
   border-top: 1px solid rgba(148, 163, 184, 0.14);
   margin: 2px 0 14px;
