@@ -346,7 +346,7 @@ export const EmailSettings: React.FC = () => {
           <div className={styles.summaryHeader}>
             <div className={styles.summaryIdentity}>
               <span className={styles.summaryAvatar}><Mail size={22} /></span>
-              <div>
+              <div className={styles.summaryText}>
                 <strong>{status.sender.fromName || status.sender.fromEmail}</strong>
                 <span>{status.sender.fromEmail}</span>
               </div>
