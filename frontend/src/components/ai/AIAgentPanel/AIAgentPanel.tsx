@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ArrowUp, Bot, Calendar, Check, Copy, CreditCard, Eraser, File as FileIcon, FileText, Image as ImageIcon, KeyRound, Megaphone, MessageCircle, Mic, Paperclip, Pause, Percent, SendHorizonal, Sparkles, TrendingUp, Users, Video as VideoIcon, X } from 'lucide-react'
+import { ArrowUp, Bot, Calendar, Check, Copy, CreditCard, Eraser, File as FileIcon, FileText, Image as ImageIcon, KeyRound, MessageCircle, Mic, Paperclip, Pause, Percent, SendHorizonal, Sparkles, TrendingUp, Users, Video as VideoIcon, X } from 'lucide-react'
 import { aiAgentService, type AIAgentAttachment, type AIAgentAttachmentKind, type AIAgentBusinessContextField, type AIAgentCategory, type AIAgentClarificationOption, type AIAgentConfigInput, type AIAgentConfigStatus, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import { sitesService, type SitesAICreationMessage } from '@/services/sitesService'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -21,7 +21,6 @@ const FALLBACK_AGENT_CATEGORIES: AIAgentCategory[] = [
   { id: 'pagos', label: 'Pagos', icon: 'credit-card', description: 'Registrar, editar y consultar pagos y transacciones.' },
   { id: 'redes', label: 'Redes sociales', icon: 'message-circle', description: 'Perfiles conectados, bandeja social y conversaciones.' },
   { id: 'anuncios', label: 'Anuncios', icon: 'trending-up', description: 'Métricas y análisis de campañas de Meta Ads.' },
-  { id: 'publicidad', label: 'Crear anuncios', icon: 'megaphone', description: 'Crear y modificar campañas, anuncios y públicos en Meta Ads.' },
   { id: 'contactos', label: 'Contactos', icon: 'users', description: 'Crear, editar, buscar y depurar contactos.' },
   { id: 'costos', label: 'Costos variables', icon: 'percent', description: 'Configurar comisiones y costos variables.' },
   { id: 'general', label: 'General', icon: 'sparkles', description: 'Asistente general con acceso a todas las áreas.' }
@@ -32,7 +31,6 @@ const AGENT_CATEGORY_ICONS: Record<string, typeof Sparkles> = {
   'credit-card': CreditCard,
   'message-circle': MessageCircle,
   'trending-up': TrendingUp,
-  megaphone: Megaphone,
   users: Users,
   percent: Percent,
   sparkles: Sparkles

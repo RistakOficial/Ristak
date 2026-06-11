@@ -4,7 +4,7 @@ import { AGENT_CATEGORIES, getAgentCategory, listAgentCategories } from '../src/
 import { invokeController, toToolResult } from '../src/agents/invokeController.js'
 import { buildInputItems } from '../src/agents/runner.js'
 
-const EXPECTED_CATEGORIES = ['citas', 'pagos', 'redes', 'anuncios', 'publicidad', 'contactos', 'costos', 'general']
+const EXPECTED_CATEGORIES = ['citas', 'pagos', 'redes', 'anuncios', 'contactos', 'costos', 'general']
 
 test('el registro tiene las 7 especialidades esperadas', () => {
   assert.deepEqual(AGENT_CATEGORIES.map((category) => category.id), EXPECTED_CATEGORIES)
@@ -59,16 +59,14 @@ test('pagos incluye los cobros avanzados portados del agente original', () => {
   }
 })
 
-test('publicidad incluye el toolset de creación de Meta Ads', () => {
-  const names = getAgentCategory('publicidad').tools.map((tool) => tool.name)
-  for (const required of ['create_campaign', 'create_ad_set', 'create_ad_creative', 'create_ad', 'create_custom_audience', 'create_lookalike_audience', 'search_targeting_interests', 'search_targeting_locations', 'update_entity_status', 'update_ad_set_budget', 'list_meta_pages']) {
-    assert.ok(names.includes(required), `publicidad sin ${required}`)
+test('ningún agente tiene herramientas de creación de anuncios en Meta (retiradas a propósito)', () => {
+  for (const category of AGENT_CATEGORIES) {
+    const names = category.tools.map((tool) => tool.name)
+    for (const removed of ['create_campaign', 'create_ad_set', 'create_ad', 'create_custom_audience']) {
+      assert.ok(!names.includes(removed), `${category.id} no debe incluir ${removed}`)
+    }
   }
-})
-
-test('la creación de anuncios está aislada: ni anuncios ni general crean campañas', () => {
-  assert.ok(!getAgentCategory('anuncios').tools.some((tool) => tool.name === 'create_campaign'), 'anuncios (análisis) no debe crear campañas')
-  assert.ok(!getAgentCategory('general').tools.some((tool) => tool.name === 'create_campaign'), 'general no debe crear campañas; transfiere a publicidad')
+  assert.equal(getAgentCategory('publicidad'), null, 'la categoría publicidad ya no existe')
 })
 
 test('citas incluye disponibilidad de horarios (get_free_slots)', () => {

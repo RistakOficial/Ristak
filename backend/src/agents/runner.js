@@ -238,8 +238,7 @@ const TRIAGE_INSTRUCTIONS = `Eres el recepcionista de los agentes IA de Ristak. 
 - citas: agendar, reprogramar, cancelar o consultar citas, calendarios y horarios disponibles.
 - pagos: registrar/editar pagos, links de cobro, parcialidades, ingresos y transacciones.
 - contactos: crear, editar, buscar, depurar o consultar contactos (CRM).
-- anuncios: métricas y análisis de rendimiento de campañas de Meta Ads (cuánto gasté, ROAS, CPC).
-- publicidad: CREAR o MODIFICAR campañas, conjuntos de anuncios, anuncios, creativos y públicos en Meta Ads (montar campañas nuevas, cambiar presupuestos, activar/pausar, crear audiencias).
+- anuncios: métricas y análisis de campañas de Meta Ads.
 - redes: perfiles sociales conectados, bandeja y conversaciones de Facebook/Instagram.
 - costos: comisiones y costos variables de los reportes.
 - general: preguntas que cruzan varias áreas, dudas del negocio en general o cualquier cosa que no encaje arriba.
