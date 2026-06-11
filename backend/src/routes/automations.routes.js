@@ -10,7 +10,9 @@ import {
   createFolderHandler,
   updateFolderHandler,
   reorderFoldersHandler,
-  deleteFolderHandler
+  deleteFolderHandler,
+  getEnrollmentsHandler,
+  getEnrollmentStatsHandler
 } from '../controllers/automationsController.js'
 
 const router = express.Router()
@@ -26,6 +28,8 @@ router.delete('/folders/:folderId', deleteFolderHandler)
 // Automatizaciones
 router.get('/', getAutomationsHandler)
 router.post('/', createAutomationHandler)
+router.get('/:automationId/enrollments', getEnrollmentsHandler)
+router.get('/:automationId/stats', getEnrollmentStatsHandler)
 router.get('/:automationId', getAutomationHandler)
 router.put('/:automationId', updateAutomationHandler)
 router.post('/:automationId/duplicate', duplicateAutomationHandler)

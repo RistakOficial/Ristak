@@ -9,7 +9,9 @@ import {
   createFolder,
   updateFolder,
   reorderFolders,
-  deleteFolder
+  deleteFolder,
+  listEnrollments,
+  getEnrollmentStats
 } from '../services/automationsService.js'
 
 function sendError(res, error, fallback = 'Error procesando la solicitud') {
@@ -114,5 +116,24 @@ export async function deleteFolderHandler(req, res) {
   } catch (error) {
     logger.error(`Error eliminando carpeta de automatizaciones: ${error.message}`)
     sendError(res, error, 'Error eliminando la carpeta')
+  }
+}
+
+
+export async function getEnrollmentsHandler(req, res) {
+  try {
+    res.json({ success: true, data: await listEnrollments(req.params.automationId) })
+  } catch (error) {
+    logger.error(`Error listando inscripciones: ${error.message}`)
+    sendError(res, error, 'Error listando inscripciones')
+  }
+}
+
+export async function getEnrollmentStatsHandler(req, res) {
+  try {
+    res.json({ success: true, data: await getEnrollmentStats(req.params.automationId) })
+  } catch (error) {
+    logger.error(`Error obteniendo estadísticas: ${error.message}`)
+    sendError(res, error, 'Error obteniendo estadísticas')
   }
 }

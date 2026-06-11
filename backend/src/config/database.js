@@ -2862,6 +2862,23 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_automations_status ON automations(status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_automation_folders_position ON automation_folders(position)')
 
+    // Inscripciones de contactos en automatizaciones (historial y posición
+    // actual en el flujo; las llena el motor de ejecución)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS automation_enrollments (
+        id TEXT PRIMARY KEY,
+        automation_id TEXT NOT NULL,
+        contact_id TEXT,
+        contact_name TEXT,
+        status TEXT DEFAULT 'active',
+        current_node_id TEXT,
+        log ${usePostgres ? "JSONB DEFAULT '[]'::jsonb" : "TEXT DEFAULT '[]'"},
+        entered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automation_enrollments_auto ON automation_enrollments(automation_id, status)')
+
     // Mensajes automáticos de citas (recordatorios y confirmaciones).
     // Cada fila es una "cajita" configurable desde la página de Calendarios.
     await db.run(`

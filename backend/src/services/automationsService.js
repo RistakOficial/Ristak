@@ -275,3 +275,53 @@ export async function getAutomationsOverview() {
   const [folders, automations] = await Promise.all([listFolders(), listAutomations()])
   return { folders, automations }
 }
+
+
+// ---------------------------------------------------------------------------
+// Inscripciones y registros de ejecución (los llena el motor al correr)
+// ---------------------------------------------------------------------------
+
+function parseLog(raw) {
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  try { return JSON.parse(raw) } catch { return [] }
+}
+
+export async function listEnrollments(automationId) {
+  const rows = await db.all(
+    `SELECT * FROM automation_enrollments WHERE automation_id = ? ORDER BY updated_at DESC LIMIT 200`,
+    [automationId]
+  )
+  return rows.map((row) => ({
+    id: row.id,
+    contactId: row.contact_id,
+    contactName: row.contact_name || 'Contacto',
+    status: row.status || 'active',
+    currentNodeId: row.current_node_id || null,
+    log: parseLog(row.log),
+    enteredAt: row.entered_at,
+    updatedAt: row.updated_at
+  }))
+}
+
+/** Conteo de contactos activos por nodo (para los badges del canvas) */
+export async function getEnrollmentStats(automationId) {
+  const rows = await db.all(
+    `SELECT current_node_id, COUNT(*) AS total
+     FROM automation_enrollments
+     WHERE automation_id = ? AND status = 'active'
+     GROUP BY current_node_id`,
+    [automationId]
+  )
+  const byNode = {}
+  let active = 0
+  rows.forEach((row) => {
+    if (row.current_node_id) byNode[row.current_node_id] = Number(row.total) || 0
+    active += Number(row.total) || 0
+  })
+  const totals = await db.get(
+    `SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ?`,
+    [automationId]
+  )
+  return { active, total: Number(totals?.total) || 0, byNode }
+}

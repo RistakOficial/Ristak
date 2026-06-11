@@ -82,6 +82,8 @@ interface AutomationCanvasProps {
   pendingEdge?: PendingEdge | null
   /** Incrementa para centrar el flujo desde fuera (tras ordenar) */
   fitSignal?: number
+  /** Contactos activos por nodo (badges con silueta) */
+  nodeStats?: Record<string, number>
   actions: CanvasActions
   children?: React.ReactNode
 }
@@ -136,6 +138,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   initialViewport,
   pendingEdge,
   fitSignal,
+  nodeStats,
   actions,
   children
 }) => {
@@ -747,6 +750,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
               errors={nodeErrors[node.id]}
               dropState={dropStateFor(node)}
               connectedOutputs={connectedOutputsByNode.get(node.id) || emptyOutputs}
+              activeContacts={nodeStats?.[node.id] || 0}
               zoom={viewport.zoom}
               onMeasure={handleMeasure}
               onPointerDownCard={handleNodeCardPointerDown}

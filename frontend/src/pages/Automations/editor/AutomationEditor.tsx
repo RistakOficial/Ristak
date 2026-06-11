@@ -66,6 +66,7 @@ import {
 } from './flowUtils'
 import { AutomationLibrary } from '../AutomationLibrary'
 import { FlowSettingsPanel } from './FlowSettingsPanel'
+import { EnrollmentRecordsModal, type RecordsTab } from './EnrollmentRecordsModal'
 import { createEditorState, editorReducer } from './editorState'
 import { validateAutomationFlow } from './automationValidation'
 import styles from './AutomationEditor.module.css'
@@ -132,6 +133,8 @@ export const AutomationEditor: React.FC = () => {
   const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set())
   const [flowSettings, setFlowSettings] = useState<FlowSettings>(defaultFlowSettings())
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [recordsTab, setRecordsTab] = useState<RecordsTab | null>(null)
+  const [nodeStats, setNodeStats] = useState<Record<string, number>>({})
   const [settingsRevision, setSettingsRevision] = useState(0)
   const [fitSignal, setFitSignal] = useState(0)
   const flowSettingsRef = useRef(flowSettings)
@@ -178,6 +181,26 @@ export const AutomationEditor: React.FC = () => {
   }, [automation])
 
   const { nodes, edges } = state.present
+
+  // Contactos activos por nodo (badges del canvas): se refresca cada 15s
+  useEffect(() => {
+    if (!automation) return
+    let cancelled = false
+    const load = () => {
+      void automationsService
+        .getEnrollmentStats(automation.id)
+        .then((stats) => {
+          if (!cancelled) setNodeStats(stats.byNode || {})
+        })
+        .catch(() => undefined)
+    }
+    load()
+    const interval = window.setInterval(load, 15000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [automation])
 
   // Variables congruentes con los disparadores del flujo (citas → Citas,
   // pagos → Pagos…). Contacto/personalizados/conversación siempre presentes.
@@ -1064,13 +1087,27 @@ export const AutomationEditor: React.FC = () => {
           >
             <Save size={14} />
           </button>
-          <button
-            type="button"
-            className={styles.iconButton}
-            title="Configuración del flujo (zona horaria, horarios, reingreso)"
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<SettingsIcon size={13} />}
             onClick={() => setSettingsOpen(true)}
           >
-            <SettingsIcon size={14} />
+            Configuración
+          </Button>
+          <button
+            type="button"
+            className={styles.toolbarTab}
+            onClick={() => setRecordsTab('enrollments')}
+          >
+            Historial de inscripciones
+          </button>
+          <button
+            type="button"
+            className={styles.toolbarTab}
+            onClick={() => setRecordsTab('executions')}
+          >
+            Registros de ejecución
           </button>
         </div>
 
@@ -1147,6 +1184,7 @@ export const AutomationEditor: React.FC = () => {
         initialViewport={automation.flow.viewport || { x: 0, y: 0, zoom: 1 }}
         pendingEdge={pendingEdge}
         fitSignal={fitSignal}
+        nodeStats={nodeStats}
         actions={canvasActions}
       >
         <button type="button" className={styles.fab} title="Agregar paso" onClick={handleFabClick}>
@@ -1186,6 +1224,15 @@ export const AutomationEditor: React.FC = () => {
         )}
       </AutomationCanvas>
       </div>
+
+      {/* ------------------ Inscripciones y registros ----------------------- */}
+      <EnrollmentRecordsModal
+        automationId={automation.id}
+        nodes={nodes}
+        open={recordsTab !== null}
+        initialTab={recordsTab || 'enrollments'}
+        onClose={() => setRecordsTab(null)}
+      />
 
       {/* ----------------------- Configuración del flujo --------------------- */}
       <FlowSettingsPanel

@@ -120,6 +120,30 @@ export interface Automation extends AutomationSummary {
   flow: AutomationFlow
 }
 
+export interface EnrollmentLogEntry {
+  nodeId: string
+  label?: string
+  status?: string
+  at?: string
+}
+
+export interface AutomationEnrollment {
+  id: string
+  contactId: string | null
+  contactName: string
+  status: 'active' | 'completed' | 'exited' | 'goal_met' | string
+  currentNodeId: string | null
+  log: EnrollmentLogEntry[]
+  enteredAt: string
+  updatedAt: string
+}
+
+export interface EnrollmentStats {
+  active: number
+  total: number
+  byNode: Record<string, number>
+}
+
 export interface AutomationsOverview {
   folders: AutomationFolder[]
   automations: AutomationSummary[]
@@ -182,6 +206,14 @@ export const automationsService = {
 
   async reorderFolders(orderedIds: string[]): Promise<AutomationFolder[]> {
     return apiClient.post<AutomationFolder[]>('/automations/folders/reorder', { orderedIds })
+  },
+
+  async getEnrollments(automationId: string): Promise<AutomationEnrollment[]> {
+    return apiClient.get<AutomationEnrollment[]>(`/automations/${automationId}/enrollments`)
+  },
+
+  async getEnrollmentStats(automationId: string): Promise<EnrollmentStats> {
+    return apiClient.get<EnrollmentStats>(`/automations/${automationId}/stats`)
   },
 
   async deleteFolder(folderId: string): Promise<void> {

@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { AlertCircle, Clock, Copy, FileText, GitBranch, Image, Link2, Music, Plus, Trash2, Video, X, Zap } from 'lucide-react'
+import { AlertCircle, Clock, Copy, FileText, GitBranch, Image, Link2, Music, Plus, Trash2, UserRound, Video, X, Zap } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import type { AutomationNode } from '@/services/automationsService'
 import {
@@ -30,6 +30,8 @@ interface AutomationNodeCardProps {
   /** Estado durante el arrastre de una conexión */
   dropState?: 'target' | 'forbidden' | null
   connectedOutputs: Set<string>
+  /** Contactos activos esperando o pasando por este paso */
+  activeContacts?: number
   zoom: number
   onMeasure: (nodeId: string, layout: NodeHandleLayout) => void
   /** Pointer down sobre la tarjeta (el canvas decide si inicia un arrastre) */
@@ -59,6 +61,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
   errors,
   dropState,
   connectedOutputs,
+  activeContacts = 0,
   zoom,
   onMeasure,
   onPointerDownCard,
@@ -182,6 +185,17 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
         if (!isStart) onOpenConfig(node)
       }}
     >
+      {/* Contactos activos en este paso */}
+      {activeContacts > 0 && (
+        <span
+          className={styles.nodeContactsBadge}
+          title={`${activeContacts} contacto${activeContacts > 1 ? 's' : ''} en este paso ahora`}
+        >
+          <UserRound size={11} />
+          {activeContacts}
+        </span>
+      )}
+
       {/* Conector de entrada */}
       {hasInput && (
         <span data-handle-in className={cn(styles.handle, styles.handleIn)} title="Entrada" />
