@@ -38,32 +38,56 @@ export interface ConversationalAgentConfigInput {
   closingStrategyCustom?: string
 }
 
-export type RuleChannel = 'whatsapp' | 'messenger' | 'instagram'
-export type RuleMatch = 'contains' | 'exact' | 'starts_with'
-
-export type AgentRuleType =
+export type ConditionCategory =
   | 'channel'
-  | 'message_contains'
-  | 'has_tag'
-  | 'not_has_tag'
-  | 'has_upcoming_appointment'
-  | 'has_appointment_in_calendar'
-  | 'no_upcoming_appointment'
+  | 'message'
+  | 'tags'
+  | 'appointments'
+  | 'payments'
+  | 'assignee'
+  | 'ads'
+  | 'contact'
+  | 'schedule'
+  | 'business_phone'
 
-export interface AgentRule {
-  type: AgentRuleType
-  channel?: RuleChannel
-  phrase?: string
-  match?: RuleMatch
-  tag?: string
+export type ConditionChannel = 'whatsapp' | 'instagram' | 'messenger' | 'webchat' | 'sms' | 'email'
+export type ConditionOffsetUnit = 'minutes' | 'hours' | 'days'
+
+/**
+ * Una condición del constructor: categoría → operador → valores.
+ * Los operadores válidos por categoría viven en el catálogo del componente
+ * (y se validan también en backend).
+ */
+export interface AgentCondition {
+  category: ConditionCategory
+  operator: string
+  value?: string
+  values?: string[]
   calendarId?: string
+  date?: string
+  dateEnd?: string
+  amount?: number
+  amountMax?: number
+  offsetValue?: number
+  offsetUnit?: ConditionOffsetUnit
+  timeStart?: string
+  timeEnd?: string
+}
+
+export interface AgentFilterOptions {
+  ads: Array<{ id: string; name: string; campaign: string | null; detected: boolean }>
+  businessPhones: Array<{ id: string; label: string }>
+}
+
+export interface ConditionGroup {
+  conditions: AgentCondition[]
 }
 
 export interface AgentFilters {
-  /** El agente inicia SOLO si se cumplen TODAS (Y) */
-  entry: AgentRule[]
-  /** El agente suelta la conversación si se cumple ALGUNA (O) */
-  exit: AgentRule[]
+  /** Inicia si ALGÚN grupo (O) cumple TODAS sus condiciones (Y). Sin grupos = siempre. */
+  entry: { groups: ConditionGroup[] }
+  /** Suelta la conversación si algún grupo se cumple completo. Sin grupos = nunca. */
+  exit: { groups: ConditionGroup[] }
 }
 
 export type SuccessExtraType = 'add_tag' | 'remove_tag' | 'set_custom_field'
@@ -177,6 +201,10 @@ export const conversationalAgentService = {
 
   listAgents(): Promise<ConversationalAgentDef[]> {
     return request<ConversationalAgentDef[]>('/agents')
+  },
+
+  getFilterOptions(): Promise<AgentFilterOptions> {
+    return request<AgentFilterOptions>('/filter-options')
   },
 
   createAgent(input: ConversationalAgentDefInput = {}): Promise<ConversationalAgentDef> {

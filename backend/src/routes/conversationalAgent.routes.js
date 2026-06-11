@@ -10,7 +10,8 @@ import {
   listAgents,
   createAgent,
   updateAgent,
-  deleteAgent
+  deleteAgent,
+  getFilterOptions
 } from '../controllers/conversationalAgentController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 
@@ -21,6 +22,7 @@ router.use(requireAuth)
 router.get('/config', getConfig)
 router.post('/config', saveConfig)
 router.get('/agents', listAgents)
+router.get('/filter-options', getFilterOptions)
 router.post('/agents', createAgent)
 router.put('/agents/:agentId', updateAgent)
 router.delete('/agents/:agentId', deleteAgent)

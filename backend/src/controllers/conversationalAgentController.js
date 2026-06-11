@@ -12,7 +12,8 @@ import {
   listConversationalAgents,
   createConversationalAgent,
   updateConversationalAgent,
-  deleteConversationalAgent
+  deleteConversationalAgent,
+  listAgentFilterOptions
 } from '../services/conversationalAgentService.js'
 import { runConversationalAgentPreview } from '../agents/conversational/runner.js'
 import { DEFAULT_CLOSING_STRATEGY } from '../agents/conversational/prompt.js'
@@ -123,6 +124,16 @@ export async function testAgent(req, res) {
   } catch (error) {
     logger.error('Error en prueba del agente conversacional:', error)
     res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al probar el agente conversacional' })
+  }
+}
+
+export async function getFilterOptions(req, res) {
+  try {
+    const options = await listAgentFilterOptions()
+    res.json({ success: true, data: options })
+  } catch (error) {
+    logger.error('Error listando catálogos de filtros del agente conversacional:', error)
+    res.status(500).json({ success: false, error: 'Error al cargar los catálogos de filtros' })
   }
 }
 

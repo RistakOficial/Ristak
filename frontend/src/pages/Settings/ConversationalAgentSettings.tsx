@@ -1,11 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Bot, ChevronDown, MessageCircle, Play, Plus, RotateCcw, Send, Trash2, X } from 'lucide-react'
-import { Button, Card, CustomSelect } from '@/components/common'
+import { Button, Card, CustomSelect, TagPicker } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   conversationalAgentService,
-  type AgentRule,
-  type AgentRuleType,
+  type AgentFilterOptions,
   type AgentSuccessExtra,
   type ClosingStrategyMode,
   type ConversationalAgentConfig,
@@ -14,11 +13,10 @@ import {
   type ConversationalAgentTestResult,
   type ConversationalObjective,
   type ConversationalSuccessAction,
-  type RuleChannel,
-  type RuleMatch,
   type SuccessExtraType
 } from '@/services/conversationalAgentService'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
+import { ConditionBuilder } from './ConditionBuilder'
 import styles from './AIAgentSettings.module.css'
 
 const AUTOSAVE_DELAY_MS = 900
@@ -55,29 +53,6 @@ const extraTypeOptions: Array<{ value: SuccessExtraType; label: string }> = [
   { value: 'set_custom_field', label: 'Cambiar campo personalizado' }
 ]
 
-// Catálogo del constructor de reglas (extensible: agregar aquí filtros futuros)
-const ruleCatalog: Array<{ type: AgentRuleType; menuLabel: string; defaults: AgentRule }> = [
-  { type: 'channel', menuLabel: 'Canal del mensaje', defaults: { type: 'channel', channel: 'whatsapp' } },
-  { type: 'message_contains', menuLabel: 'Mensaje contiene una frase', defaults: { type: 'message_contains', phrase: '', match: 'contains' } },
-  { type: 'has_tag', menuLabel: 'Contacto tiene una etiqueta', defaults: { type: 'has_tag', tag: '' } },
-  { type: 'not_has_tag', menuLabel: 'Contacto no tiene una etiqueta', defaults: { type: 'not_has_tag', tag: '' } },
-  { type: 'has_upcoming_appointment', menuLabel: 'Contacto tiene cita próxima', defaults: { type: 'has_upcoming_appointment' } },
-  { type: 'has_appointment_in_calendar', menuLabel: 'Contacto tiene cita en calendario específico', defaults: { type: 'has_appointment_in_calendar', calendarId: '' } },
-  { type: 'no_upcoming_appointment', menuLabel: 'Contacto no tiene cita próxima', defaults: { type: 'no_upcoming_appointment' } }
-]
-
-const channelRuleOptions: Array<{ value: RuleChannel; label: string }> = [
-  { value: 'whatsapp', label: 'WhatsApp' },
-  { value: 'messenger', label: 'Messenger' },
-  { value: 'instagram', label: 'Instagram Direct' }
-]
-
-const matchRuleOptions: Array<{ value: RuleMatch; label: string }> = [
-  { value: 'contains', label: 'contenga' },
-  { value: 'exact', label: 'sea exactamente' },
-  { value: 'starts_with', label: 'empiece con' }
-]
-
 type TestMessage = { role: 'user' | 'assistant'; content: string; internal?: boolean }
 
 function agentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInput {
@@ -85,168 +60,10 @@ function agentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInpu
   return rest
 }
 
-/**
- * Constructor de reglas tipo HighLevel: solo se muestran los filtros que el
- * usuario agregó; cada uno es una fila compacta editable y eliminable.
- */
-const RuleBuilder: React.FC<{
-  rules: AgentRule[]
-  mode: 'entry' | 'exit'
-  calendars: Calendar[]
-  onChange: (rules: AgentRule[]) => void
-}> = ({ rules, mode, calendars, onChange }) => {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [menuOpen])
-
-  const updateRule = (index: number, patch: Partial<AgentRule>) => {
-    onChange(rules.map((rule, i) => (i === index ? { ...rule, ...patch } : rule)))
-  }
-
-  const renderRuleControls = (rule: AgentRule, index: number) => {
-    switch (rule.type) {
-      case 'channel':
-        return (
-          <>
-            <span>el mensaje venga de</span>
-            <select
-              className={styles.ruleSelect}
-              value={rule.channel || 'whatsapp'}
-              onChange={(event) => updateRule(index, { channel: event.target.value as RuleChannel })}
-            >
-              {channelRuleOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </>
-        )
-      case 'message_contains':
-        return (
-          <>
-            <span>el mensaje</span>
-            <select
-              className={styles.ruleSelect}
-              value={rule.match || 'contains'}
-              onChange={(event) => updateRule(index, { match: event.target.value as RuleMatch })}
-            >
-              {matchRuleOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            <input
-              className={styles.ruleInput}
-              value={rule.phrase || ''}
-              placeholder="Escribe la frase"
-              onChange={(event) => updateRule(index, { phrase: event.target.value })}
-            />
-          </>
-        )
-      case 'has_tag':
-      case 'not_has_tag':
-        return (
-          <>
-            <span>{rule.type === 'has_tag' ? 'el contacto tenga la etiqueta' : 'el contacto no tenga la etiqueta'}</span>
-            <input
-              className={styles.ruleInput}
-              value={rule.tag || ''}
-              placeholder="Nombre de la etiqueta"
-              onChange={(event) => updateRule(index, { tag: event.target.value })}
-            />
-          </>
-        )
-      case 'has_appointment_in_calendar':
-        return (
-          <>
-            <span>el contacto tenga cita próxima en</span>
-            <select
-              className={styles.ruleSelect}
-              value={rule.calendarId || ''}
-              onChange={(event) => updateRule(index, { calendarId: event.target.value })}
-            >
-              <option value="">Elige un calendario</option>
-              {calendars.map((calendar) => (
-                <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
-              ))}
-            </select>
-          </>
-        )
-      case 'has_upcoming_appointment':
-        return <span>el contacto tenga una cita próxima</span>
-      case 'no_upcoming_appointment':
-        return <span>el contacto no tenga citas próximas</span>
-      default:
-        return null
-    }
-  }
-
-  return (
-    <div className={styles.ruleGroup}>
-      {rules.length === 0 && (
-        <p className={styles.ruleEmptyHint}>
-          {mode === 'entry'
-            ? 'Sin filtros: este agente atiende cualquier conversación nueva.'
-            : 'Sin condiciones: el agente no suelta la conversación por reglas.'}
-        </p>
-      )}
-
-      {rules.map((rule, index) => (
-        <div key={index} className={styles.ruleRow}>
-          <span className={styles.rulePrefix}>
-            {index === 0 ? 'Cuando' : mode === 'entry' ? 'Y' : 'O'}
-          </span>
-          {renderRuleControls(rule, index)}
-          <button
-            type="button"
-            className={styles.ruleDelete}
-            onClick={() => onChange(rules.filter((_, i) => i !== index))}
-            aria-label="Quitar filtro"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      ))}
-
-      <div className={styles.ruleAddWrap} ref={menuRef}>
-        <button type="button" className={styles.ruleAddButton} onClick={() => setMenuOpen((open) => !open)}>
-          <Plus size={14} />
-          Añadir filtro
-        </button>
-        {menuOpen && (
-          <div className={styles.ruleAddMenu} role="menu">
-            {ruleCatalog.map((item) => (
-              <button
-                key={item.type}
-                type="button"
-                role="menuitem"
-                className={styles.ruleAddMenuItem}
-                onClick={() => {
-                  onChange([...rules, { ...item.defaults }])
-                  setMenuOpen(false)
-                }}
-              >
-                {item.menuLabel}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 interface AgentCardProps {
   agent: ConversationalAgentDef
   calendars: Calendar[]
+  filterOptions?: AgentFilterOptions
   systemStrategy: string
   expanded: boolean
   onToggleExpanded: () => void
@@ -254,7 +71,7 @@ interface AgentCardProps {
   onDelete: () => void
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy, expanded, onToggleExpanded, onChange, onDelete }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, systemStrategy, expanded, onToggleExpanded, onChange, onDelete }) => {
   const { showToast } = useNotification()
   const [testMessages, setTestMessages] = useState<TestMessage[]>([])
   const [testInput, setTestInput] = useState('')
@@ -265,8 +82,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy,
   const selectedActionInfo = successActionLabels[agent.successAction] || successActionLabels.ready_for_human
   const strategyIsCustom = agent.closingStrategyMode === 'custom'
   const strategyText = strategyIsCustom ? agent.closingStrategyCustom : systemStrategy
-  const entryCount = agent.filters.entry.length
-  const exitCount = agent.filters.exit.length
+  const entryCount = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
+  const exitCount = agent.filters.exit.groups.reduce((total, group) => total + group.conditions.length, 0)
 
   const updateExtra = (index: number, patch: Partial<AgentSuccessExtra>) => {
     onChange({ successExtras: agent.successExtras.map((extra, i) => (i === index ? { ...extra, ...patch } : extra)) })
@@ -350,7 +167,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy,
         <p className={styles.agentCardSummary}>
           {selectedObjective.label} · {selectedActionInfo.label}
           {entryCount > 0
-            ? ` · ${entryCount} ${entryCount === 1 ? 'filtro de inicio' : 'filtros de inicio'}`
+            ? ` · ${entryCount} ${entryCount === 1 ? 'condición de inicio' : 'condiciones de inicio'}`
             : ' · atiende todas las conversaciones'}
           {exitCount > 0 ? ` · ${exitCount} de salida` : ''}
         </p>
@@ -361,28 +178,32 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy,
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>Inicio del agente</h3>
             <p className={styles.agentSectionHint}>
-              Este agente inicia solo si se cumplen todas estas condiciones. Si hay varios agentes, gana el primero
-              (de arriba hacia abajo) que coincida.
+              El agente inicia cuando un grupo cumple todas sus condiciones; los grupos se unen con "O".
+              Si hay varios agentes, gana el primero (de arriba hacia abajo) que coincida.
             </p>
-            <RuleBuilder
-              rules={agent.filters.entry}
+            <ConditionBuilder
+              groups={agent.filters.entry.groups}
               mode="entry"
               calendars={calendars}
-              onChange={(entry) => onChange({ filters: { ...agent.filters, entry } })}
+              options={filterOptions}
+              emptyText="Sin condiciones: este agente atiende cualquier conversación nueva."
+              onChange={(groups) => onChange({ filters: { ...agent.filters, entry: { groups } } })}
             />
           </div>
 
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>Soltar la conversación</h3>
             <p className={styles.agentSectionHint}>
-              El agente suelta el contacto cuando se cumpla alguna de estas condiciones (por ejemplo, al agendar su
-              cita o al recibir cierta etiqueta). Otro agente que coincida puede tomarla.
+              El agente suelta el contacto cuando algún grupo se cumple completo (por ejemplo, al agendar su cita o
+              al recibir cierta etiqueta). Otro agente que coincida puede tomarla.
             </p>
-            <RuleBuilder
-              rules={agent.filters.exit}
+            <ConditionBuilder
+              groups={agent.filters.exit.groups}
               mode="exit"
               calendars={calendars}
-              onChange={(exit) => onChange({ filters: { ...agent.filters, exit } })}
+              options={filterOptions}
+              emptyText="Sin condiciones: el agente no suelta la conversación por reglas."
+              onChange={(groups) => onChange({ filters: { ...agent.filters, exit: { groups } } })}
             />
           </div>
 
@@ -474,12 +295,16 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy,
                       />
                     </>
                   ) : (
-                    <input
-                      className={styles.ruleInput}
-                      value={extra.tag || ''}
-                      placeholder="Nombre de la etiqueta"
-                      onChange={(event) => updateExtra(index, { tag: event.target.value })}
-                    />
+                    <div className={styles.conditionTagPicker}>
+                      <TagPicker
+                        value={extra.tag || ''}
+                        onValueChange={(tagId) => updateExtra(index, { tag: tagId })}
+                        allowCreate
+                        portal
+                        placeholder="Elige una etiqueta"
+                        aria-label="Etiqueta de la acción"
+                      />
+                    </div>
                   )}
                   <button
                     type="button"
@@ -652,6 +477,7 @@ export const ConversationalAgentSettings: React.FC = () => {
   const [config, setConfig] = useState<ConversationalAgentConfig | null>(null)
   const [agents, setAgents] = useState<ConversationalAgentDef[]>([])
   const [calendars, setCalendars] = useState<Calendar[]>([])
+  const [filterOptions, setFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
@@ -664,15 +490,17 @@ export const ConversationalAgentSettings: React.FC = () => {
     const load = async () => {
       setLoading(true)
       try {
-        const [nextConfig, nextAgents, calendarList] = await Promise.all([
+        const [nextConfig, nextAgents, calendarList, nextOptions] = await Promise.all([
           conversationalAgentService.getConfig(),
           conversationalAgentService.listAgents(),
-          calendarsService.getCalendars()
+          calendarsService.getCalendars(),
+          conversationalAgentService.getFilterOptions().catch(() => undefined)
         ])
         if (cancelled) return
         setConfig(nextConfig)
         setAgents(nextAgents)
         setCalendars(calendarList.filter((cal) => cal.isActive !== false))
+        setFilterOptions(nextOptions)
         if (nextAgents.length === 1) {
           setExpandedIds(new Set([nextAgents[0].id]))
         }
@@ -826,6 +654,7 @@ export const ConversationalAgentSettings: React.FC = () => {
           key={agent.id}
           agent={agent}
           calendars={calendars}
+          filterOptions={filterOptions}
           systemStrategy={systemStrategy}
           expanded={expandedIds.has(agent.id)}
           onToggleExpanded={() => {

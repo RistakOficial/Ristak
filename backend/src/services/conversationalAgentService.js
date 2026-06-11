@@ -1,6 +1,8 @@
 import { randomUUID } from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { getAccountTimezone } from '../utils/dateUtils.js'
+import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
 
 /**
  * Servicio del agente conversacional: configuración global, estado por
@@ -162,90 +164,231 @@ function parseJsonField(text, fallback) {
 }
 
 /**
- * Reglas dinámicas del agente (constructor tipo "+ Añadir filtro"):
- * - entry: el agente inicia SOLO si se cumplen TODAS (Y)
- * - exit:  el agente suelta la conversación si se cumple ALGUNA (O)
+ * Constructor de condiciones del agente. Las condiciones se agrupan en bloques:
+ * dentro de un bloque todas deben cumplirse (Y) y entre bloques basta uno (O).
  *
- * Tipos de regla:
- * - channel { channel }                        el mensaje viene de ese canal
- * - message_contains { phrase, match }         el mensaje contiene/es/empieza con la frase
- * - has_tag { tag }                            el contacto tiene la etiqueta
- * - not_has_tag { tag }                        el contacto NO tiene la etiqueta
- * - has_upcoming_appointment {}                el contacto tiene cita próxima (cualquier calendario)
- * - has_appointment_in_calendar { calendarId } el contacto tiene cita próxima en ese calendario
- * - no_upcoming_appointment {}                 el contacto NO tiene cita próxima
+ *   filters = {
+ *     entry: { groups: [ { conditions: [cond, ...] }, ... ] },  // (A∧B) ∨ (C∧D)
+ *     exit:  { groups: [ ... ] }
+ *   }
+ *
+ * Cada condición: { category, operator, ...valores }. Categorías y operadores:
+ * - channel:      is | is_not                                   (value: canal)
+ * - message:      contains | not_contains | contains_any | contains_all |
+ *                 starts_with | ends_with | equals              (value | values[])
+ * - tags:         has | not_has | has_any | has_all | has_none  (value | values[])
+ * - appointments: has_appointment | no_appointment | has_upcoming | no_upcoming |
+ *                 has_past_due | has_cancelled | has_confirmed |
+ *                 in_calendar | not_in_calendar                 (calendarId)
+ *                 date_is | date_not | date_before | date_after | date_between (date, dateEnd)
+ *                 time_before | time_after                      (offsetValue, offsetUnit)
+ * - payments:     payment_received | payment_pending | payment_failed | payment_refunded |
+ *                 product_is | product_not | product_contains | product_not_contains (value)
+ *                 amount_eq | amount_gt | amount_lt | amount_between (amount, amountMax)
+ * - assignee:     assigned_to | not_assigned_to                 (value)
+ *                 has_assignee | no_assignee
  */
-const RULE_TYPES = new Set([
-  'channel',
-  'message_contains',
-  'has_tag',
-  'not_has_tag',
-  'has_upcoming_appointment',
-  'has_appointment_in_calendar',
-  'no_upcoming_appointment'
-])
+export const CONDITION_CATALOG = {
+  channel: ['is', 'is_not'],
+  message: ['contains', 'not_contains', 'contains_any', 'contains_all', 'starts_with', 'ends_with', 'equals'],
+  tags: ['has', 'not_has', 'has_any', 'has_all', 'has_none'],
+  appointments: [
+    'has_appointment', 'no_appointment', 'has_upcoming', 'no_upcoming',
+    'has_past_due', 'has_cancelled', 'has_confirmed',
+    'in_calendar', 'not_in_calendar',
+    'date_is', 'date_not', 'date_before', 'date_after', 'date_between',
+    'time_before', 'time_after'
+  ],
+  payments: [
+    'payment_received', 'payment_pending', 'payment_failed', 'payment_refunded',
+    'product_is', 'product_not', 'product_contains', 'product_not_contains',
+    'amount_eq', 'amount_gt', 'amount_lt', 'amount_between'
+  ],
+  assignee: ['assigned_to', 'not_assigned_to', 'has_assignee', 'no_assignee'],
+  // Vino de anuncio: clic de WhatsApp (CTWA) o anuncio específico detectado en sus mensajes
+  ads: ['from_ad', 'not_from_ad', 'ad_is', 'ad_is_not'],
+  // Perfil del contacto: cliente, email, origen y antigüedad
+  contact: ['is_customer', 'not_customer', 'has_email', 'no_email', 'source_is', 'source_contains', 'created_within'],
+  // Fecha y hora actuales en la zona del negocio (ej. responder solo fuera de horario)
+  schedule: ['time_between', 'time_outside', 'day_is'],
+  // Número de WhatsApp del negocio que recibió el mensaje (negocios multi-línea)
+  business_phone: ['is', 'is_not']
+}
 
-function normalizeRule(rule) {
-  if (!rule || !RULE_TYPES.has(rule.type)) return null
-  switch (rule.type) {
-    case 'channel': {
-      const channel = ['whatsapp', 'messenger', 'instagram'].includes(rule.channel) ? rule.channel : 'whatsapp'
-      return { type: 'channel', channel }
+const CONDITION_CHANNELS = new Set(['whatsapp', 'instagram', 'messenger', 'webchat', 'sms', 'email'])
+const OFFSET_UNITS = new Set(['minutes', 'hours', 'days'])
+const WEEKDAY_KEYS = new Set(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'])
+
+function cleanTime(value) {
+  const text = String(value || '').trim()
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(text) ? text : ''
+}
+
+function cleanValueList(input) {
+  if (!Array.isArray(input)) return []
+  return input.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20)
+}
+
+function cleanDate(value) {
+  const text = String(value || '').trim()
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : ''
+}
+
+function normalizeCondition(condition) {
+  if (!condition || typeof condition !== 'object') return null
+  const category = String(condition.category || '')
+  const operators = CONDITION_CATALOG[category]
+  if (!operators) return null
+  const operator = operators.includes(condition.operator) ? condition.operator : operators[0]
+
+  const base = { category, operator }
+  if (category === 'channel') {
+    base.value = CONDITION_CHANNELS.has(condition.value) ? condition.value : 'whatsapp'
+  } else if (category === 'message') {
+    if (operator === 'contains_any' || operator === 'contains_all') {
+      base.values = cleanValueList(condition.values)
+    } else {
+      base.value = String(condition.value || '').trim().slice(0, 200)
     }
+  } else if (category === 'tags') {
+    if (operator === 'has' || operator === 'not_has') {
+      base.value = String(condition.value || '').trim().slice(0, 120)
+    } else {
+      base.values = cleanValueList(condition.values)
+    }
+  } else if (category === 'appointments') {
+    if (operator === 'in_calendar' || operator === 'not_in_calendar') {
+      base.calendarId = String(condition.calendarId || '').trim()
+    } else if (operator.startsWith('date_')) {
+      base.date = cleanDate(condition.date)
+      if (operator === 'date_between') base.dateEnd = cleanDate(condition.dateEnd)
+    } else if (operator === 'time_before' || operator === 'time_after') {
+      base.offsetValue = Math.min(Math.max(Number(condition.offsetValue) || 0, 0), 100000)
+      base.offsetUnit = OFFSET_UNITS.has(condition.offsetUnit) ? condition.offsetUnit : 'minutes'
+    }
+  } else if (category === 'payments') {
+    if (operator.startsWith('product_')) {
+      base.value = String(condition.value || '').trim().slice(0, 200)
+    } else if (operator.startsWith('amount_')) {
+      base.amount = Number(condition.amount) || 0
+      if (operator === 'amount_between') base.amountMax = Number(condition.amountMax) || 0
+    }
+  } else if (category === 'assignee') {
+    if (operator === 'assigned_to' || operator === 'not_assigned_to') {
+      base.value = String(condition.value || '').trim().slice(0, 160)
+    }
+  } else if (category === 'ads') {
+    if (operator === 'ad_is' || operator === 'ad_is_not') {
+      base.value = String(condition.value || '').trim().slice(0, 160)
+    }
+  } else if (category === 'contact') {
+    if (operator === 'source_is' || operator === 'source_contains') {
+      base.value = String(condition.value || '').trim().slice(0, 200)
+    } else if (operator === 'created_within') {
+      base.offsetValue = Math.min(Math.max(Number(condition.offsetValue) || 0, 0), 100000)
+      base.offsetUnit = OFFSET_UNITS.has(condition.offsetUnit) ? condition.offsetUnit : 'days'
+    }
+  } else if (category === 'schedule') {
+    if (operator === 'time_between' || operator === 'time_outside') {
+      base.timeStart = cleanTime(condition.timeStart) || '09:00'
+      base.timeEnd = cleanTime(condition.timeEnd) || '18:00'
+    } else if (operator === 'day_is') {
+      base.values = cleanValueList(condition.values).map((day) => day.toLowerCase()).filter((day) => WEEKDAY_KEYS.has(day))
+    }
+  } else if (category === 'business_phone') {
+    base.value = String(condition.value || '').trim().slice(0, 120)
+  }
+  return base
+}
+
+function normalizeGroups(input) {
+  if (!Array.isArray(input)) return []
+  return input
+    .map((group) => ({
+      conditions: Array.isArray(group?.conditions)
+        ? group.conditions.map(normalizeCondition).filter(Boolean).slice(0, 20)
+        : []
+    }))
+    .filter((group) => group.conditions.length > 0)
+    .slice(0, 10)
+}
+
+/** Convierte la regla plana del formato anterior a una condición. */
+function legacyRuleToCondition(rule) {
+  switch (rule?.type) {
+    case 'channel':
+      return { category: 'channel', operator: 'is', value: rule.channel }
     case 'message_contains': {
-      const phrase = String(rule.phrase || '').trim().slice(0, 200)
-      const match = ['contains', 'exact', 'starts_with'].includes(rule.match) ? rule.match : 'contains'
-      return { type: 'message_contains', phrase, match }
+      const operator = rule.match === 'exact' ? 'equals' : rule.match === 'starts_with' ? 'starts_with' : 'contains'
+      return { category: 'message', operator, value: rule.phrase }
     }
     case 'has_tag':
-    case 'not_has_tag': {
-      const tag = String(rule.tag || '').trim().slice(0, 120)
-      return { type: rule.type, tag }
-    }
-    case 'has_appointment_in_calendar': {
-      const calendarId = String(rule.calendarId || '').trim()
-      return { type: 'has_appointment_in_calendar', calendarId }
-    }
+      return { category: 'tags', operator: 'has', value: rule.tag }
+    case 'not_has_tag':
+      return { category: 'tags', operator: 'not_has', value: rule.tag }
+    case 'has_upcoming_appointment':
+      return { category: 'appointments', operator: 'has_upcoming' }
+    case 'no_upcoming_appointment':
+      return { category: 'appointments', operator: 'no_upcoming' }
+    case 'has_appointment_in_calendar':
+      return { category: 'appointments', operator: 'in_calendar', calendarId: rule.calendarId }
     default:
-      return { type: rule.type }
+      return null
   }
 }
 
-function normalizeRuleList(input) {
-  if (!Array.isArray(input)) return []
-  return input.map(normalizeRule).filter(Boolean).slice(0, 20)
+function legacySideToGroups(rules) {
+  const conditions = (Array.isArray(rules) ? rules : []).map(legacyRuleToCondition).filter(Boolean)
+  return conditions.length ? [{ conditions }] : []
 }
 
-/** Convierte el formato viejo de filtros fijos al constructor de reglas. */
-function legacyFiltersToRules(raw) {
-  const rules = []
+/** Convierte el formato más viejo de filtros fijos a condiciones. */
+function legacyFixedFiltersToGroups(raw) {
+  const conditions = []
   if (raw.channel && raw.channel !== 'any') {
-    rules.push({ type: 'channel', channel: raw.channel })
+    conditions.push({ category: 'channel', operator: 'is', value: raw.channel })
   }
   for (const keyword of Array.isArray(raw.keywords) ? raw.keywords : []) {
     const phrase = String(keyword || '').trim()
-    if (phrase) rules.push({ type: 'message_contains', phrase, match: raw.match || 'contains' })
+    if (phrase) {
+      const operator = raw.match === 'exact' ? 'equals' : raw.match === 'starts_with' ? 'starts_with' : 'contains'
+      conditions.push({ category: 'message', operator, value: phrase })
+    }
   }
   for (const tag of Array.isArray(raw.tags) ? raw.tags : []) {
     const clean = String(tag || '').trim()
-    if (clean) rules.push({ type: 'has_tag', tag: clean })
+    if (clean) conditions.push({ category: 'tags', operator: 'has', value: clean })
   }
   if (raw.calendarId) {
-    rules.push({ type: 'has_appointment_in_calendar', calendarId: String(raw.calendarId).trim() })
+    conditions.push({ category: 'appointments', operator: 'in_calendar', calendarId: String(raw.calendarId).trim() })
   }
-  return rules
+  return conditions.length ? [{ conditions }] : []
 }
 
 function normalizeAgentFilters(input) {
   const raw = input && typeof input === 'object' ? input : {}
-  if (Array.isArray(raw.entry) || Array.isArray(raw.exit)) {
+
+  // Formato actual: { entry: { groups }, exit: { groups } }
+  if (raw.entry?.groups !== undefined || raw.exit?.groups !== undefined) {
     return {
-      entry: normalizeRuleList(raw.entry),
-      exit: normalizeRuleList(raw.exit)
+      entry: { groups: normalizeGroups(raw.entry?.groups) },
+      exit: { groups: normalizeGroups(raw.exit?.groups) }
     }
   }
-  // Formato viejo {channel, keywords, match, tags, calendarId}
-  return { entry: normalizeRuleList(legacyFiltersToRules(raw)), exit: [] }
+
+  // Formato anterior: { entry: [reglas], exit: [reglas] }
+  if (Array.isArray(raw.entry) || Array.isArray(raw.exit)) {
+    return {
+      entry: { groups: normalizeGroups(legacySideToGroups(raw.entry)) },
+      exit: { groups: normalizeGroups(legacySideToGroups(raw.exit)) }
+    }
+  }
+
+  // Formato más viejo: { channel, keywords, match, tags, calendarId }
+  return {
+    entry: { groups: normalizeGroups(legacyFixedFiltersToGroups(raw)) },
+    exit: { groups: [] }
+  }
 }
 
 const SUCCESS_EXTRA_TYPES = new Set(['add_tag', 'remove_tag', 'set_custom_field'])
@@ -434,69 +577,334 @@ function normalizeMatchText(value) {
   return String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
 }
 
+const CANCELLED_STATUSES = new Set(['cancelled', 'canceled'])
+const PAYMENT_STATUS_MAP = {
+  payment_received: new Set(['succeeded', 'paid', 'completed', 'success']),
+  payment_pending: new Set(['pending', 'sent', 'processing']),
+  payment_failed: new Set(['failed', 'declined', 'error']),
+  payment_refunded: new Set(['refunded', 'refund', 'partially_refunded'])
+}
+const OFFSET_MS = { minutes: 60000, hours: 3600000, days: 86400000 }
+
 /**
- * Construye una sola vez el contexto que necesitan las reglas (etiquetas del
- * contacto y citas próximas) para evaluar varios agentes sin repetir consultas.
+ * Construye una sola vez el contexto que necesitan las condiciones (etiquetas,
+ * citas, pagos y asignados del contacto) para evaluar varios agentes sin
+ * repetir consultas.
  */
 export async function buildRuleContext({ contactId = null, messageText = '', channel = 'whatsapp' } = {}) {
-  const contact = contactId
-    ? await db.get('SELECT id, tags FROM contacts WHERE id = ?', [contactId]).catch(() => null)
-    : null
-  const contactTags = parseJsonField(contact?.tags, [])
-  const tags = (Array.isArray(contactTags) ? contactTags : []).map(normalizeMatchText)
+  const nowIso = new Date().toISOString()
 
-  const appointments = contactId
-    ? await db.all(`
-        SELECT calendar_id FROM appointments
-        WHERE contact_id = ? AND deleted_at IS NULL AND start_time >= ?
-          AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled', 'noshow')
-      `, [contactId, new Date().toISOString()]).catch(() => [])
-    : []
+  const [contact, appointmentRows, paymentRows, adRows, latestInbound, timezone] = await Promise.all([
+    contactId ? db.get(`
+      SELECT id, tags, email, source, purchases_count, total_paid, created_at, attribution_session_source
+      FROM contacts WHERE id = ?
+    `, [contactId]).catch(() => null) : null,
+    contactId ? db.all(`
+      SELECT calendar_id, start_time, end_time, appointment_status, status, assigned_user_id
+      FROM appointments
+      WHERE contact_id = ? AND deleted_at IS NULL
+      ORDER BY start_time ASC
+    `, [contactId]).catch(() => []) : [],
+    contactId ? db.all(`
+      SELECT amount, status, title, description
+      FROM payments
+      WHERE contact_id = ?
+      ORDER BY COALESCE(date, created_at) DESC
+      LIMIT 100
+    `, [contactId]).catch(() => []) : [],
+    // Atribución de anuncios: clics CTWA y anuncios detectados en sus mensajes
+    contactId ? db.all(`
+      SELECT DISTINCT detected_ctwa_clid, detected_source_id
+      FROM whatsapp_api_messages
+      WHERE contact_id = ? AND direction = 'inbound'
+        AND (COALESCE(detected_ctwa_clid, '') != '' OR COALESCE(detected_source_id, '') != '')
+      LIMIT 50
+    `, [contactId]).catch(() => []) : [],
+    contactId ? db.get(`
+      SELECT business_phone_number_id
+      FROM whatsapp_api_messages
+      WHERE contact_id = ? AND direction = 'inbound'
+      ORDER BY COALESCE(message_timestamp, created_at) DESC
+      LIMIT 1
+    `, [contactId]).catch(() => null) : null,
+    getAccountTimezone().catch(() => 'America/Mexico_City')
+  ])
+
+  // Hora local del negocio (para condiciones de horario y día de la semana)
+  let localMinutes = 0
+  let localWeekday = 'mon'
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      weekday: 'short',
+      hour12: false
+    }).formatToParts(new Date())
+    const get = (type) => parts.find((part) => part.type === type)?.value || ''
+    localMinutes = (Number(get('hour')) % 24) * 60 + Number(get('minute'))
+    localWeekday = get('weekday').slice(0, 3).toLowerCase()
+  } catch { /* zona inválida: se queda el default */ }
+
+  // Claves de coincidencia de etiquetas: IDs del catálogo, nombres (las reglas
+  // viejas guardaban el nombre) y etiquetas internas calculadas (Cliente,
+  // Cita agendada, Prospecto).
+  const contactTags = parseJsonField(contact?.tags, [])
+  const tagKeys = await buildTagMatchKeys(contactId, Array.isArray(contactTags) ? contactTags : [])
+    .catch(() => new Set((Array.isArray(contactTags) ? contactTags : []).map(normalizeMatchText)))
+  const tags = [...tagKeys].map(normalizeMatchText)
+
+  const appointments = appointmentRows.map((row) => ({
+    calendarId: String(row.calendar_id || ''),
+    startTime: row.start_time,
+    endTime: row.end_time,
+    status: normalizeMatchText(row.appointment_status || row.status || ''),
+    assignedUserId: String(row.assigned_user_id || '')
+  }))
+
+  // Nombres de los usuarios asignados a citas del contacto (para "Contacto asignado")
+  const assigneeIds = [...new Set(appointments.map((appt) => appt.assignedUserId).filter(Boolean))]
+  let assigneeNames = []
+  if (assigneeIds.length) {
+    const placeholders = assigneeIds.map(() => '?').join(', ')
+    const users = await db.all(
+      `SELECT id, first_name, last_name, business_name, email FROM users WHERE CAST(id AS TEXT) IN (${placeholders})`,
+      assigneeIds
+    ).catch(() => [])
+    assigneeNames = users.map((user) => normalizeMatchText(
+      [user.first_name, user.last_name].filter(Boolean).join(' ') || user.business_name || user.email || ''
+    )).filter(Boolean)
+  }
 
   return {
+    now: Date.now(),
+    nowIso,
     channel,
     text: normalizeMatchText(messageText),
     tags,
-    upcomingCalendarIds: appointments.map((row) => String(row.calendar_id || ''))
+    appointments,
+    payments: paymentRows.map((row) => ({
+      amount: Number(row.amount) || 0,
+      status: normalizeMatchText(row.status || ''),
+      product: normalizeMatchText([row.title, row.description].filter(Boolean).join(' '))
+    })),
+    assigneeIds: assigneeIds.map(normalizeMatchText),
+    assigneeNames,
+    cameFromAd: adRows.some((row) => String(row.detected_ctwa_clid || '').trim() || String(row.detected_source_id || '').trim()),
+    adSourceIds: [...new Set(adRows.map((row) => String(row.detected_source_id || '').trim()).filter(Boolean))],
+    businessPhoneNumberId: String(latestInbound?.business_phone_number_id || ''),
+    contactInfo: contact ? {
+      email: String(contact.email || '').trim(),
+      source: normalizeMatchText(contact.source || ''),
+      attributionSource: normalizeMatchText(contact.attribution_session_source || ''),
+      purchasesCount: Number(contact.purchases_count) || 0,
+      totalPaid: Number(contact.total_paid) || 0,
+      createdAt: contact.created_at || null
+    } : null,
+    localMinutes,
+    localWeekday
   }
 }
 
-function ruleMatches(rule, ctx) {
-  switch (rule.type) {
-    case 'channel':
-      return rule.channel === ctx.channel
-    case 'message_contains': {
-      const needle = normalizeMatchText(rule.phrase)
-      if (!needle) return true
-      if (rule.match === 'exact') return ctx.text === needle
-      if (rule.match === 'starts_with') return ctx.text.startsWith(needle)
-      return ctx.text.includes(needle)
+function activeAppointments(ctx) {
+  return ctx.appointments.filter((appt) => !CANCELLED_STATUSES.has(appt.status))
+}
+
+function upcomingAppointments(ctx) {
+  return activeAppointments(ctx).filter((appt) => Date.parse(appt.startTime) > ctx.now)
+}
+
+function nextAppointment(ctx) {
+  return upcomingAppointments(ctx)[0] || null
+}
+
+function conditionMatches(condition, ctx) {
+  const { category, operator } = condition
+
+  if (category === 'channel') {
+    const matches = condition.value === ctx.channel
+    return operator === 'is_not' ? !matches : matches
+  }
+
+  if (category === 'message') {
+    const single = normalizeMatchText(condition.value)
+    const list = (condition.values || []).map(normalizeMatchText).filter(Boolean)
+    switch (operator) {
+      case 'contains': return !single || ctx.text.includes(single)
+      case 'not_contains': return !single || !ctx.text.includes(single)
+      case 'contains_any': return !list.length || list.some((phrase) => ctx.text.includes(phrase))
+      case 'contains_all': return !list.length || list.every((phrase) => ctx.text.includes(phrase))
+      case 'starts_with': return !single || ctx.text.startsWith(single)
+      case 'ends_with': return !single || ctx.text.endsWith(single)
+      case 'equals': return !single || ctx.text === single
+      default: return false
     }
-    case 'has_tag':
-      return Boolean(rule.tag) && ctx.tags.includes(normalizeMatchText(rule.tag))
-    case 'not_has_tag':
-      return !rule.tag || !ctx.tags.includes(normalizeMatchText(rule.tag))
-    case 'has_upcoming_appointment':
-      return ctx.upcomingCalendarIds.length > 0
-    case 'has_appointment_in_calendar':
-      return Boolean(rule.calendarId) && ctx.upcomingCalendarIds.includes(rule.calendarId)
-    case 'no_upcoming_appointment':
-      return ctx.upcomingCalendarIds.length === 0
-    default:
-      return false
   }
+
+  if (category === 'tags') {
+    const single = normalizeMatchText(condition.value)
+    const list = (condition.values || []).map(normalizeMatchText).filter(Boolean)
+    switch (operator) {
+      case 'has': return Boolean(single) && ctx.tags.includes(single)
+      case 'not_has': return !single || !ctx.tags.includes(single)
+      case 'has_any': return !list.length || list.some((tag) => ctx.tags.includes(tag))
+      case 'has_all': return !list.length || list.every((tag) => ctx.tags.includes(tag))
+      case 'has_none': return !list.length || !list.some((tag) => ctx.tags.includes(tag))
+      default: return false
+    }
+  }
+
+  if (category === 'appointments') {
+    switch (operator) {
+      case 'has_appointment': return activeAppointments(ctx).length > 0
+      case 'no_appointment': return activeAppointments(ctx).length === 0
+      case 'has_upcoming': return upcomingAppointments(ctx).length > 0
+      case 'no_upcoming': return upcomingAppointments(ctx).length === 0
+      case 'has_past_due':
+        return activeAppointments(ctx).some((appt) => Date.parse(appt.endTime || appt.startTime) < ctx.now)
+      case 'has_cancelled':
+        return ctx.appointments.some((appt) => CANCELLED_STATUSES.has(appt.status))
+      case 'has_confirmed':
+        return activeAppointments(ctx).some((appt) => appt.status === 'confirmed')
+      case 'in_calendar':
+        return Boolean(condition.calendarId) && activeAppointments(ctx).some((appt) => appt.calendarId === condition.calendarId)
+      case 'not_in_calendar':
+        return !condition.calendarId || !activeAppointments(ctx).some((appt) => appt.calendarId === condition.calendarId)
+      case 'date_is':
+      case 'date_not':
+      case 'date_before':
+      case 'date_after':
+      case 'date_between': {
+        const appt = nextAppointment(ctx)
+        if (!appt || !condition.date) return false
+        const apptDate = String(appt.startTime || '').slice(0, 10)
+        if (operator === 'date_is') return apptDate === condition.date
+        if (operator === 'date_not') return apptDate !== condition.date
+        if (operator === 'date_before') return apptDate < condition.date
+        if (operator === 'date_after') return apptDate > condition.date
+        return Boolean(condition.dateEnd) && apptDate >= condition.date && apptDate <= condition.dateEnd
+      }
+      case 'time_before': {
+        // Estamos dentro de la ventana de X antes del inicio de la cita próxima
+        const offset = (condition.offsetValue || 0) * (OFFSET_MS[condition.offsetUnit] || OFFSET_MS.minutes)
+        return upcomingAppointments(ctx).some((appt) => {
+          const start = Date.parse(appt.startTime)
+          return ctx.now >= start - offset && ctx.now < start
+        })
+      }
+      case 'time_after': {
+        // Estamos dentro de la ventana de X después del fin de la cita
+        const offset = (condition.offsetValue || 0) * (OFFSET_MS[condition.offsetUnit] || OFFSET_MS.minutes)
+        return activeAppointments(ctx).some((appt) => {
+          const end = Date.parse(appt.endTime || appt.startTime)
+          return ctx.now >= end && ctx.now <= end + offset
+        })
+      }
+      default: return false
+    }
+  }
+
+  if (category === 'payments') {
+    if (PAYMENT_STATUS_MAP[operator]) {
+      return ctx.payments.some((payment) => PAYMENT_STATUS_MAP[operator].has(payment.status))
+    }
+    const value = normalizeMatchText(condition.value)
+    switch (operator) {
+      case 'product_is': return Boolean(value) && ctx.payments.some((payment) => payment.product === value)
+      case 'product_not': return !value || !ctx.payments.some((payment) => payment.product === value)
+      case 'product_contains': return Boolean(value) && ctx.payments.some((payment) => payment.product.includes(value))
+      case 'product_not_contains': return !value || !ctx.payments.some((payment) => payment.product.includes(value))
+      case 'amount_eq': return ctx.payments.some((payment) => payment.amount === (condition.amount || 0))
+      case 'amount_gt': return ctx.payments.some((payment) => payment.amount > (condition.amount || 0))
+      case 'amount_lt': return ctx.payments.some((payment) => payment.amount > 0 && payment.amount < (condition.amount || 0))
+      case 'amount_between':
+        return ctx.payments.some((payment) => payment.amount >= (condition.amount || 0) && payment.amount <= (condition.amountMax || 0))
+      default: return false
+    }
+  }
+
+  if (category === 'assignee') {
+    const value = normalizeMatchText(condition.value)
+    const matchesValue = Boolean(value) && (ctx.assigneeNames.some((name) => name.includes(value)) || ctx.assigneeIds.includes(value))
+    switch (operator) {
+      case 'assigned_to': return matchesValue
+      case 'not_assigned_to': return !value || !matchesValue
+      case 'has_assignee': return ctx.assigneeIds.length > 0
+      case 'no_assignee': return ctx.assigneeIds.length === 0
+      default: return false
+    }
+  }
+
+  if (category === 'ads') {
+    switch (operator) {
+      case 'from_ad': return ctx.cameFromAd
+      case 'not_from_ad': return !ctx.cameFromAd
+      case 'ad_is': return Boolean(condition.value) && ctx.adSourceIds.includes(condition.value)
+      case 'ad_is_not': return !condition.value || !ctx.adSourceIds.includes(condition.value)
+      default: return false
+    }
+  }
+
+  if (category === 'contact') {
+    const info = ctx.contactInfo
+    if (!info) return false
+    const value = normalizeMatchText(condition.value)
+    switch (operator) {
+      case 'is_customer': return info.purchasesCount > 0 || info.totalPaid > 0
+      case 'not_customer': return info.purchasesCount === 0 && info.totalPaid === 0
+      case 'has_email': return Boolean(info.email)
+      case 'no_email': return !info.email
+      case 'source_is': return Boolean(value) && (info.source === value || info.attributionSource === value)
+      case 'source_contains': return Boolean(value) && (info.source.includes(value) || info.attributionSource.includes(value))
+      case 'created_within': {
+        if (!info.createdAt) return false
+        const offset = (condition.offsetValue || 0) * (OFFSET_MS[condition.offsetUnit] || OFFSET_MS.days)
+        return ctx.now - Date.parse(info.createdAt) <= offset
+      }
+      default: return false
+    }
+  }
+
+  if (category === 'schedule') {
+    if (operator === 'day_is') {
+      const days = (condition.values || []).map((day) => String(day).toLowerCase())
+      return !days.length || days.includes(ctx.localWeekday)
+    }
+    const [startHour, startMinute] = String(condition.timeStart || '09:00').split(':').map(Number)
+    const [endHour, endMinute] = String(condition.timeEnd || '18:00').split(':').map(Number)
+    const start = startHour * 60 + (startMinute || 0)
+    const end = endHour * 60 + (endMinute || 0)
+    // Soporta rangos que cruzan medianoche (ej. 22:00 a 06:00)
+    const inside = start <= end
+      ? ctx.localMinutes >= start && ctx.localMinutes <= end
+      : ctx.localMinutes >= start || ctx.localMinutes <= end
+    return operator === 'time_outside' ? !inside : inside
+  }
+
+  if (category === 'business_phone') {
+    const matches = Boolean(condition.value) && ctx.businessPhoneNumberId === condition.value
+    return operator === 'is_not' ? (!condition.value || !matches) : matches
+  }
+
+  return false
 }
 
-/** Entrada: TODAS las reglas deben cumplirse (Y). Sin reglas = pasa. */
+function groupsMatch(groups, ctx) {
+  return groups.some((group) => group.conditions.every((condition) => conditionMatches(condition, ctx)))
+}
+
+/** Entrada: basta UN grupo (O) donde se cumplan TODAS sus condiciones (Y). Sin grupos = pasa. */
 export function entryRulesMatch(agent, ctx) {
-  return (agent.filters?.entry || []).every((rule) => ruleMatches(rule, ctx))
+  const groups = agent.filters?.entry?.groups || []
+  if (!groups.length) return true
+  return groupsMatch(groups, ctx)
 }
 
-/** Salida: el agente suelta la conversación si se cumple ALGUNA regla (O). */
+/** Salida: el agente suelta la conversación si algún grupo se cumple completo. Sin grupos = nunca. */
 export function exitRulesMatch(agent, ctx) {
-  const rules = agent.filters?.exit || []
-  if (!rules.length) return false
-  return rules.some((rule) => ruleMatches(rule, ctx))
+  const groups = agent.filters?.exit?.groups || []
+  if (!groups.length) return false
+  return groupsMatch(groups, ctx)
 }
 
 /**
@@ -520,6 +928,65 @@ export async function matchAgentForMessage({ contactId, messageText = '', channe
 }
 
 /**
+ * Catálogos para el constructor de condiciones: anuncios de Meta con su nombre
+ * real (no solo el ID) y números de WhatsApp del negocio.
+ */
+export async function listAgentFilterOptions() {
+  const [metaAds, detectedRows, phoneRows] = await Promise.all([
+    db.all(`
+      SELECT ad_id, MAX(ad_name) AS ad_name, MAX(campaign_name) AS campaign_name, MAX(date) AS last_date
+      FROM meta_ads
+      WHERE COALESCE(ad_id, '') != ''
+      GROUP BY ad_id
+      ORDER BY last_date DESC
+      LIMIT 300
+    `).catch(() => []),
+    db.all(`
+      SELECT DISTINCT detected_source_id AS id
+      FROM whatsapp_api_messages
+      WHERE COALESCE(detected_source_id, '') != ''
+      LIMIT 200
+    `).catch(() => []),
+    db.all(`
+      SELECT id, label, verified_name, display_phone_number, phone_number
+      FROM whatsapp_api_phone_numbers
+      ORDER BY is_default_sender DESC, created_at ASC
+    `).catch(() => [])
+  ])
+
+  const adNameById = new Map()
+  for (const row of metaAds) {
+    adNameById.set(String(row.ad_id), {
+      name: row.ad_name || `Anuncio ${row.ad_id}`,
+      campaign: row.campaign_name || null
+    })
+  }
+
+  // Primero los anuncios ya detectados en mensajes (son los accionables);
+  // después el resto del catálogo de Meta.
+  const ads = []
+  const seen = new Set()
+  for (const row of detectedRows) {
+    const id = String(row.id)
+    const meta = adNameById.get(id)
+    ads.push({ id, name: meta?.name || `Anuncio ${id}`, campaign: meta?.campaign || null, detected: true })
+    seen.add(id)
+  }
+  for (const [id, meta] of adNameById) {
+    if (seen.has(id)) continue
+    ads.push({ id, name: meta.name, campaign: meta.campaign, detected: false })
+  }
+
+  return {
+    ads,
+    businessPhones: phoneRows.map((row) => ({
+      id: row.id,
+      label: row.label || row.verified_name || row.display_phone_number || row.phone_number || row.id
+    }))
+  }
+}
+
+/**
  * Aplica las acciones extra configuradas al cumplir el objetivo:
  * agregar/quitar etiqueta y cambiar campos personalizados del contacto.
  */
@@ -531,14 +998,18 @@ export async function applyAgentSuccessExtras(agent, contactId) {
   for (const extra of extras) {
     try {
       if (extra.type === 'add_tag' || extra.type === 'remove_tag') {
+        // extra.tag puede ser un ID del catálogo (configs nuevas) o un nombre
+        // (configs viejas); se resuelve a ID y se guarda siempre el ID.
+        const [tagId] = await resolveTagIds([extra.tag], { createMissing: extra.type === 'add_tag' })
         const row = await db.get('SELECT tags FROM contacts WHERE id = ?', [contactId])
         const tags = parseJsonField(row?.tags, [])
         const list = Array.isArray(tags) ? tags : []
         const next = extra.type === 'remove_tag'
-          ? list.filter((candidate) => normalizeMatchText(candidate) !== normalizeMatchText(extra.tag))
-          : [...new Set([...list, extra.tag])]
+          ? list.filter((candidate) => candidate !== tagId && normalizeMatchText(candidate) !== normalizeMatchText(extra.tag))
+          : [...new Set([...list, tagId].filter(Boolean))]
         await db.run('UPDATE contacts SET tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [JSON.stringify(next), contactId])
-        applied.push({ type: extra.type, tag: extra.tag })
+        const [tagName] = tagId ? await tagNamesForIds([tagId]) : [extra.tag]
+        applied.push({ type: extra.type, tag: tagName || extra.tag })
       } else if (extra.type === 'set_custom_field') {
         const row = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
         const fields = parseJsonField(row?.custom_fields, {})

@@ -1032,3 +1032,179 @@
   flex: 1;
   padding-right: 12px;
 }
+
+/* ------------------------------------------------------------------ */
+/* Constructor de condiciones (grupos Y unidos por O)                  */
+/* ------------------------------------------------------------------ */
+
+.conditionBuilder {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.conditionGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.05);
+}
+
+.orDivider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0;
+}
+
+.orDivider span {
+  flex: 1;
+  height: 1px;
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.orDivider strong {
+  flex-shrink: 0;
+  padding: 2px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+  background: var(--color-background-primary);
+}
+
+.conditionRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  font-size: 13.5px;
+  color: var(--color-text-primary);
+  transition: border-color 0.15s ease;
+}
+
+.conditionRow:hover {
+  border-color: rgba(148, 163, 184, 0.34);
+}
+
+.conditionRowEditing {
+  border-color: rgba(148, 163, 184, 0.45);
+}
+
+.conditionSentence {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conditionActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.conditionActions .ruleDelete {
+  margin-left: 0;
+}
+
+.conditionRow:not(.conditionRowEditing):not(:hover) .conditionActions {
+  opacity: 0.35;
+}
+
+.conditionActions {
+  transition: opacity 0.15s ease;
+}
+
+.conditionNumberInput {
+  flex: 0 0 auto;
+  width: 88px;
+  min-width: 0;
+}
+
+.conditionListEditor {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.conditionListEditor .ruleInput {
+  min-width: 140px;
+}
+
+.conditionListChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.conditionListChip button {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+}
+
+.conditionListChip button:hover {
+  color: var(--color-text-primary);
+}
+
+/* Selector de etiquetas dentro de filas de condiciones/acciones */
+.conditionTagPicker {
+  min-width: 220px;
+  flex: 1;
+}
+
+/* Selector de días de la semana en condiciones */
+.weekdayPicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.weekdayButton {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 7px;
+  background: var(--color-background-primary);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.weekdayButton:hover {
+  border-color: rgba(148, 163, 184, 0.55);
+  color: var(--color-text-primary);
+}
+
+.weekdayButtonActive {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.45);
+  color: #3b82f6;
+}
