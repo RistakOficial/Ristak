@@ -990,8 +990,8 @@ export const WhatsAppSettings: React.FC = () => {
                 ) : (
                   <div className={styles.qrModalState}>
                     <RefreshCw size={28} className={styles.qrModalSpinner} />
-                    <strong>Generando código QR…</strong>
-                    <span>Esto tarda unos segundos.</span>
+                    <strong>{qrModalGenerating ? 'Generando código QR…' : 'Conectando con WhatsApp…'}</strong>
+                    <span>{qrModalGenerating ? 'Esto tarda unos segundos.' : 'Estamos vinculando tu número. Esto tarda unos segundos.'}</span>
                   </div>
                 )}
                 <div className={styles.qrModalActions}>
