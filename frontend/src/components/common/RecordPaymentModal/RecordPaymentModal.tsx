@@ -2101,30 +2101,33 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           </div>
         )}
 
-        <div className={styles.summaryCard}>
-          <div className={styles.summaryHeader}>
-            <span>Resumen del cobro</span>
-            <span className={styles.summaryBadge}>
-              {chargeType === 'product' ? 'Producto' : 'Cobro directo'}
-            </span>
-          </div>
-          <div className={styles.summaryBody}>
-            <div className={styles.summaryRow}>
-              <span>Subtotal</span>
-              <span>{formatCurrency(subtotalAmount, currency)}</span>
+        {/* En embedded el total vive en la barra inferior fija; la tarjeta solo aplica en el modal de escritorio */}
+        {!isEmbedded && (
+          <div className={styles.summaryCard}>
+            <div className={styles.summaryHeader}>
+              <span>Resumen del cobro</span>
+              <span className={styles.summaryBadge}>
+                {chargeType === 'product' ? 'Producto' : 'Cobro directo'}
+              </span>
             </div>
-            {includeIVA && (
+            <div className={styles.summaryBody}>
               <div className={styles.summaryRow}>
-                <span>IVA (16%)</span>
-                <span className={styles.summaryTax}>+ {formatCurrency(taxAmount, currency)}</span>
+                <span>Subtotal</span>
+                <span>{formatCurrency(subtotalAmount, currency)}</span>
               </div>
-            )}
+              {includeIVA && (
+                <div className={styles.summaryRow}>
+                  <span>IVA (16%)</span>
+                  <span className={styles.summaryTax}>+ {formatCurrency(taxAmount, currency)}</span>
+                </div>
+              )}
+            </div>
+            <div className={styles.summaryFooter}>
+              <span>Total a cobrar</span>
+              <span className={styles.summaryTotal}>{formatCurrency(totalAmount, currency)}</span>
+            </div>
           </div>
-          <div className={styles.summaryFooter}>
-            <span>Total a cobrar</span>
-            <span className={styles.summaryTotal}>{formatCurrency(totalAmount, currency)}</span>
-          </div>
-        </div>
+        )}
       </div>
     )
   }
@@ -2505,14 +2508,30 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   if (variant === 'embedded') {
     if (!isOpen) return null
 
+    // En celular el contenido scrollea solo y la barra inferior (total + botón)
+    // es parte fija del layout: nunca flota encima de los campos ni queda
+    // detrás del dock de navegación.
     return (
       <div className={styles.embeddedRoot}>
         <div className={styles.embeddedScroll} data-phone-chat-scrollable="true" data-phone-scrollable="true">
           {step === 'processing' && renderProcessing()}
           {step === 'form' && renderForm()}
           {step === 'options' && renderPaymentOptions()}
-          {renderFooter()}
         </div>
+        {step !== 'processing' && (
+          <div className={styles.embeddedBar}>
+            {step === 'form' && (
+              <div className={styles.embeddedTotalRow}>
+                <span>
+                  Total a cobrar
+                  {includeIVA && <small>Incluye IVA · {formatCurrency(taxAmount, currency)}</small>}
+                </span>
+                <strong>{formatCurrency(totalAmount, currency)}</strong>
+              </div>
+            )}
+            {renderFooter()}
+          </div>
+        )}
       </div>
     )
   }

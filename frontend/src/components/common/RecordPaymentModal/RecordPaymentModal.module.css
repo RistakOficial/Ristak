@@ -1636,6 +1636,10 @@ body.dark .tooltipInfo {
   color: var(--record-payment-embedded-text);
   background: var(--record-payment-embedded-bg);
   overflow: hidden;
+  /* Deja la barra inferior por ENCIMA del dock de navegación de la página;
+     en el sheet del chat la variable no existe y solo respeta el safe-area. */
+  padding-bottom: var(--record-payment-footer-bottom-offset, env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
 }
 
 .embeddedScroll {
@@ -1666,7 +1670,7 @@ body.dark .tooltipInfo {
   box-sizing: border-box;
   width: min(100%, 430px);
   margin: 0 auto;
-  padding: 8px clamp(18px, 5vw, 24px) 8px;
+  padding: 8px clamp(18px, 5vw, 24px) 18px;
   gap: 15px;
   background: var(--record-payment-embedded-bg);
 }
@@ -1676,20 +1680,63 @@ body.dark .tooltipInfo {
   display: none;
 }
 
+/* El footer ya NO es sticky: vive dentro de la barra fija .embeddedBar,
+   así nunca flota encima de los campos ni tapa el resumen. */
 .embeddedRoot .footer {
-  position: sticky;
-  bottom: var(--record-payment-footer-bottom-offset, 0px);
-  z-index: 3;
+  position: static;
+  z-index: auto;
   box-sizing: border-box;
-  width: min(100%, 430px);
-  margin: 6px auto 0;
+  width: 100%;
+  margin: 0;
   justify-content: stretch;
-  padding: 10px clamp(18px, 5vw, 24px) calc(env(safe-area-inset-bottom, 0px) + 30px);
+  padding: 0;
   border-top: 0;
-  background: var(--record-payment-embedded-bg);
+  background: transparent;
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+/* Barra inferior fija del flujo embebido: total + botón, fuera del scroll */
+.embeddedBar {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 10px;
+  box-sizing: border-box;
+  width: min(100%, 430px);
+  margin: 0 auto;
+  padding: 12px clamp(18px, 5vw, 24px) 12px;
+  border-top: 1px solid var(--record-payment-embedded-border);
+  background: var(--record-payment-embedded-bg);
+}
+
+.embeddedTotalRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.embeddedTotalRow > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--record-payment-embedded-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.embeddedTotalRow small {
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.embeddedTotalRow strong {
+  flex: 0 0 auto;
+  color: var(--phone-chat-accent, #25d366);
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: -0.3px;
 }
 
 .embeddedRoot .footer > button,
@@ -1728,19 +1775,28 @@ body.dark .tooltipInfo {
 .embeddedRoot .textArea,
 .embeddedRoot .searchInput input {
   min-height: 44px;
+  border: 1px solid var(--record-payment-embedded-border);
   border-radius: 12px;
   color: var(--record-payment-embedded-text);
   background: var(--record-payment-embedded-panel);
-  border-color: var(--record-payment-embedded-border);
   font-size: 16px;
   font-weight: 650;
   box-shadow: none;
 }
 
+.embeddedRoot .input:focus,
+.embeddedRoot .textArea:focus {
+  border-color: var(--phone-chat-accent, #25d366);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #25d366) 14%, transparent);
+  outline: none;
+}
+
+/* El placeholder es una pista, no debe gritar igual que el texto escrito */
 .embeddedRoot .input::placeholder,
 .embeddedRoot .textArea::placeholder,
 .embeddedRoot .searchInput input::placeholder {
-  color: var(--record-payment-embedded-muted);
+  color: color-mix(in srgb, var(--record-payment-embedded-muted) 70%, transparent);
+  font-weight: 500;
 }
 
 .embeddedRoot .contactSearchBox {
@@ -1769,16 +1825,32 @@ body.dark .tooltipInfo {
   border-radius: 16px;
 }
 
+/* Segmentados (Tipo de cobro, IVA, etc.): nada de bordes brillantes ni
+   blur heredados del web; piel 100% del tema del celular en claro y oscuro. */
 .embeddedRoot .radioGroup,
 .embeddedRoot [data-ristak-tablist] {
-  border-color: var(--record-payment-embedded-border);
-  background: var(--record-payment-embedded-panel);
+  border: 1px solid var(--record-payment-embedded-border) !important;
+  background: var(--record-payment-embedded-panel) !important;
+  border-radius: 14px;
+  padding: 4px;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+.embeddedRoot [data-ristak-tablist-tab] {
+  min-height: 40px;
+  border-radius: 10px;
+  color: var(--record-payment-embedded-muted);
+  font-size: 14.5px;
+  font-weight: 750;
 }
 
 .embeddedRoot [data-ristak-tablist-tab][data-active="true"],
 .embeddedRoot .radioOptionActive {
   color: var(--record-payment-embedded-text);
-  background: var(--record-payment-embedded-soft);
+  background: var(--record-payment-embedded-soft) !important;
+  box-shadow: none !important;
 }
 
 .embeddedRoot .selectedContact,
