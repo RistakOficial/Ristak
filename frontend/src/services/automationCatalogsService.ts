@@ -1,7 +1,9 @@
+import apiClient from './apiClient'
 import { customFieldsService } from './customFieldsService'
 import { calendarsService } from './calendarsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from './whatsappApiService'
 import { sitesService } from './sitesService'
+import { contactTagsService } from './contactTagsService'
 
 /**
  * Catálogos de datos reales del CRM para los selectores del editor de
@@ -30,20 +32,11 @@ export type CatalogKind =
   | 'campaigns'
   | 'links'
   | 'products'
+  | 'ads'
 
 // ---------------------------------------------------------------------------
 // Mocks marcados (catálogos sin backend todavía)
 // ---------------------------------------------------------------------------
-
-// MOCK: no existe aún un endpoint de etiquetas de contacto. Reemplazar por el
-// catálogo real cuando exista (p. ej. GET /api/contacts/tags).
-const MOCK_TAGS: CatalogOption[] = [
-  { value: 'cliente', label: 'Cliente' },
-  { value: 'interesado', label: 'Interesado' },
-  { value: 'lead-frio', label: 'Lead frío' },
-  { value: 'vip', label: 'VIP' },
-  { value: 'no-contactar', label: 'No contactar' }
-]
 
 // MOCK: no existe aún un endpoint de usuarios del equipo.
 const MOCK_USERS: CatalogOption[] = [
@@ -83,6 +76,16 @@ export const STANDARD_CONTACT_FIELDS: CatalogOption[] = [
   { value: 'lastActivityAt', label: 'Última actividad', meta: 'fecha' },
   { value: 'lastChannel', label: 'Último canal de contacto', meta: 'texto' }
 ]
+
+/** Etiquetas reales del catálogo (incluye las internas, marcadas) */
+async function loadTags(): Promise<CatalogOption[]> {
+  const tags = await contactTagsService.getTags(true)
+  return tags.map((tag) => ({
+    value: tag.id,
+    label: tag.name,
+    meta: tag.isSystem ? 'interna' : undefined
+  }))
+}
 
 async function loadContactFields(): Promise<CatalogOption[]> {
   const catalog = await customFieldsService.listCatalog()
@@ -171,7 +174,7 @@ async function loadWhatsAppTemplates(): Promise<CatalogOption[]> {
 // ---------------------------------------------------------------------------
 
 const loaders: Record<CatalogKind, () => Promise<CatalogOption[]>> = {
-  tags: async () => MOCK_TAGS,
+  tags: loadTags,
   users: async () => MOCK_USERS,
   contactFields: loadContactFields,
   calendars: loadCalendars,
@@ -184,6 +187,7 @@ const loaders: Record<CatalogKind, () => Promise<CatalogOption[]>> = {
 }
 
 const fallbacks: Partial<Record<CatalogKind, CatalogOption[]>> = {
+  tags: [],
   contactFields: STANDARD_CONTACT_FIELDS,
   calendars: [],
   forms: [],

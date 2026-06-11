@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { logger } from '../utils/logger.js'
@@ -3003,6 +3004,19 @@ async function initTables() {
     // Etiquetas locales de contactos (array JSON), usadas por automatizaciones
     await db.run(`ALTER TABLE contacts ADD COLUMN tags TEXT DEFAULT '[]'`).catch(() => {})
 
+    // Catálogo de etiquetas de contactos: contacts.tags guarda los IDs, así el
+    // usuario puede renombrar una etiqueta sin romper filtros ni automatizaciones.
+    // Las etiquetas internas (Cliente, Cita agendada, Prospecto) no viven aquí:
+    // se calculan en contactTagsService según la actividad del contacto.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS contact_tags (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
     // Archivos adjuntos de automatizaciones (imágenes, videos, audios, docs)
     await db.run(`
       CREATE TABLE IF NOT EXISTS automation_assets (
@@ -3075,10 +3089,78 @@ async function initTables() {
       logger.warn('Advertencia al reconciliar teléfonos de contactos:', err.message)
     }
 
+    try {
+      await migrateLegacyContactTagsToCatalog()
+    } catch (err) {
+      logger.warn('Advertencia al migrar etiquetas de contactos al catálogo:', err.message)
+    }
+
     logger.success('Todas las tablas inicializadas correctamente')
   } catch (error) {
     logger.error('Error inicializando tablas:', error)
     throw error
+  }
+}
+
+/**
+ * Migración única: contacts.tags guardaba nombres sueltos; ahora guarda IDs del
+ * catálogo contact_tags. Crea las etiquetas que falten y reescribe los arrays.
+ * Idempotente: cuando todo ya son IDs (prefijo tag_) no toca nada.
+ * Vive aquí (y no en contactTagsService) para no crear un ciclo de imports
+ * durante el top-level await de initTables().
+ */
+async function migrateLegacyContactTagsToCatalog() {
+  const normalizeName = (value) => String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+
+  const rows = await db.all(
+    `SELECT id, tags FROM contacts WHERE tags IS NOT NULL AND tags != '[]' AND tags != ''`
+  ).catch(() => [])
+  if (!rows.length) return
+
+  const catalogRows = await db.all('SELECT id, name FROM contact_tags').catch(() => [])
+  const idsInCatalog = new Set(catalogRows.map((row) => row.id))
+  const idByName = new Map(catalogRows.map((row) => [normalizeName(row.name), row.id]))
+
+  let migrated = 0
+  for (const row of rows) {
+    let tags
+    try {
+      tags = JSON.parse(row.tags)
+    } catch {
+      continue
+    }
+    if (!Array.isArray(tags) || tags.length === 0) continue
+    if (tags.every((value) => String(value).startsWith('tag_') && (idsInCatalog.has(String(value)) || String(value).startsWith('tag_sys_')))) continue
+
+    const next = []
+    for (const value of tags) {
+      const raw = String(value || '').trim()
+      if (!raw) continue
+      if (idsInCatalog.has(raw)) {
+        next.push(raw)
+        continue
+      }
+      const existingId = idByName.get(normalizeName(raw))
+      if (existingId) {
+        next.push(existingId)
+        continue
+      }
+      const newId = `tag_${crypto.randomUUID()}`
+      await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [newId, raw.slice(0, 60)])
+      idsInCatalog.add(newId)
+      idByName.set(normalizeName(raw), newId)
+      next.push(newId)
+    }
+
+    await db.run('UPDATE contacts SET tags = ? WHERE id = ?', [JSON.stringify([...new Set(next)]), row.id])
+    migrated += 1
+  }
+  if (migrated > 0) {
+    logger.info(`Etiquetas de contactos migradas a IDs de catálogo en ${migrated} contactos`)
   }
 }
 

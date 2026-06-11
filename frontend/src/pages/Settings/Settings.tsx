@@ -15,6 +15,7 @@ import { APIAccessSettings } from './APIAccessSettings'
 import { Domains } from './Domains'
 import { MobileAppSettings } from './MobileAppSettings'
 import { CustomFields } from './CustomFields'
+import { TagsSettings } from './TagsSettings'
 import styles from './Settings.module.css'
 
 // La navegación de Configuración vive en el sidebar principal (grupo
@@ -37,6 +38,7 @@ export const Settings: React.FC = () => {
             <Route path="domains/*" element={<Domains />} />
             <Route path="payments/*" element={<PaymentsConfiguration />} />
             <Route path="custom-fields/*" element={<CustomFields />} />
+            <Route path="tags" element={<TagsSettings />} />
             <Route path="ai-agent" element={<AIAgentSettings />} />
             <Route path="ai-agent/conversational" element={<ConversationalAgentSettings />} />
             <Route path="api-access" element={<APIAccessSettings />} />

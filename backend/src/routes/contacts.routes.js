@@ -11,6 +11,7 @@ import {
   getContactsChart,
   syncContactsStats,
   updateContact,
+  bulkUpdateContactTags,
   updateContactCustomFieldDefinitionHandler,
   deleteContact,
   getContactJourney,
@@ -33,6 +34,7 @@ router.post('/custom-fields', createContactCustomFieldDefinition)
 router.put('/custom-fields/:definitionId', updateContactCustomFieldDefinitionHandler)
 router.post('/', createContact)
 router.post('/sync-stats', syncContactsStats)
+router.post('/bulk/tags', bulkUpdateContactTags)
 router.get('/:id', getContactById)
 router.get('/:id/journey', getContactJourney)
 router.get('/:id/whatsapp-routing-events', getContactWhatsAppRoutingEvents)

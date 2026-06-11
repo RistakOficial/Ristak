@@ -1280,36 +1280,6 @@ export const AutomationEditor: React.FC = () => {
             bounds={canvasBounds}
             onChange={handleConfigChange}
             onClose={() => setConfig(null)}
-            onDelete={
-              configTrigger
-                ? () => {
-                    const current = stateRef.current.present
-                    const nextNodes = current.nodes.map((node) =>
-                      node.id === configNode.id
-                        ? {
-                            ...node,
-                            config: {
-                              ...node.config,
-                              triggers: getStartTriggers(configNode).filter(
-                                (trigger) => trigger.id !== configTrigger.id
-                              )
-                            }
-                          }
-                        : node
-                    )
-                    commitFlow(nextNodes)
-                    setConfig(null)
-                  }
-                : !isStartNode(configNode)
-                  ? () => {
-                      const current = stateRef.current.present
-                      const result = removeNode(current.nodes, current.edges, configNode.id)
-                      dispatch({ type: 'commit', flow: result })
-                      setSelectedNodeId(null)
-                      setConfig(null)
-                    }
-                  : undefined
-            }
             showErrorsSignal={configErrorsSignal}
           />
         )}

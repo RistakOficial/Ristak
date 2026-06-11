@@ -177,4 +177,5 @@ export interface Contact {
   firstSession?: ContactFirstSession | null
   metaAttribution?: ContactMetaAttribution | null
   customFields?: ContactCustomField[]
+  tags?: string[]
 }

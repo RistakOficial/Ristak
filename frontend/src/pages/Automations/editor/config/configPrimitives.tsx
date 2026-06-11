@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { cn } from '@/utils/cn'
-import { CustomSelect as BaseCustomSelect } from '@/components/common'
+import { CustomSelect as BaseCustomSelect, TagPicker } from '@/components/common'
 
 /** CustomSelect con portal: el dropdown se dibuja por delante del panel
  *  de configuración (los contenedores con scroll lo recortaban). */
@@ -121,6 +121,21 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
 }) => {
   const { options, loading } = useCatalogOptions(catalog)
 
+  // Etiquetas: selector con buscador y "crear etiqueta" inline (catálogo real)
+  if (catalog === 'tags') {
+    return (
+      <TagPicker
+        value={value}
+        onValueChange={(next, label) => onChange(next, label)}
+        includeSystem
+        allowCreate
+        portal
+        placeholder={placeholder || 'Selecciona una etiqueta'}
+        aria-label={rest['aria-label']}
+      />
+    )
+  }
+
   if (loading) {
     return <span className={styles.configHelp}>Cargando opciones…</span>
   }
@@ -173,6 +188,20 @@ export const CatalogTags: React.FC<{
 }> = ({ catalog, values, onChange, ...rest }) => {
   const { options, loading } = useCatalogOptions(catalog)
   const remaining = options.filter((option) => !values.includes(option.value))
+
+  // Etiquetas: chips con buscador y "crear etiqueta" inline (catálogo real)
+  if (catalog === 'tags') {
+    return (
+      <TagPicker
+        multiple
+        selectedIds={values}
+        onChange={onChange}
+        allowCreate
+        portal
+        aria-label={rest['aria-label']}
+      />
+    )
+  }
 
   return (
     <div>

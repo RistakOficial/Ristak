@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { Modal, Icon, Badge, CustomSelect, type BadgeVariant } from '@/components/common'
+import { Modal, Icon, Badge, CustomSelect, TagPicker, type BadgeVariant } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
@@ -79,6 +79,7 @@ interface ContactDetail {
   is_sale?: boolean
   firstSession?: ContactFirstSession | null
   customFields?: ContactCustomField[]
+  tags?: string[]
   preferredWhatsAppPhoneNumberId?: string | null
   preferred_whatsapp_phone_number_id?: string | null
 }
@@ -101,6 +102,7 @@ interface ContactDetailsModalProps {
   loading: boolean
   type?: 'interesados' | 'sales' | 'appointments' | 'attendances' | null
   onUpdateCustomFields?: (contactId: string, customFields: ContactCustomField[]) => Promise<ContactCustomField[]>
+  onUpdateTags?: (contactId: string, tagIds: string[]) => Promise<string[] | void>
   whatsappPhoneNumbers?: WhatsAppPhoneOption[]
   onUpdatePreferredWhatsAppPhoneNumber?: (contactId: string, phoneNumberId: string) => Promise<Partial<ContactDetail> | void>
 }
@@ -226,6 +228,7 @@ export function ContactDetailsModal({
   loading,
   type,
   onUpdateCustomFields,
+  onUpdateTags,
   whatsappPhoneNumbers = [],
   onUpdatePreferredWhatsAppPhoneNumber
 }: ContactDetailsModalProps) {
@@ -240,6 +243,8 @@ export function ContactDetailsModal({
   const [customFieldError, setCustomFieldError] = useState<string | null>(null)
   const [savingWhatsAppPreference, setSavingWhatsAppPreference] = useState(false)
   const [whatsappPreferenceError, setWhatsappPreferenceError] = useState<string | null>(null)
+  const [savingTags, setSavingTags] = useState(false)
+  const [tagsError, setTagsError] = useState<string | null>(null)
   const { labels } = useLabels()
   const { formatLocalDateShort, formatLocalDateTime, timezone } = useTimezone()
   const visibleCustomFields = useMemo(
@@ -263,6 +268,8 @@ export function ContactDetailsModal({
       setCustomFieldError(null)
       setSavingWhatsAppPreference(false)
       setWhatsappPreferenceError(null)
+      setSavingTags(false)
+      setTagsError(null)
     }
   }, [isOpen, data])
 
@@ -276,6 +283,8 @@ export function ContactDetailsModal({
     setCustomFieldError(null)
     setSavingWhatsAppPreference(false)
     setWhatsappPreferenceError(null)
+    setSavingTags(false)
+    setTagsError(null)
   }, [selectedContact?.id])
 
   useEffect(() => {
@@ -392,6 +401,26 @@ export function ContactDetailsModal({
       setCustomFieldError(message)
     } finally {
       setSavingCustomField(null)
+    }
+  }
+
+  const updateContactTags = async (tagIds: string[]) => {
+    if (!selectedContact || !onUpdateTags) return
+    const previous = selectedContact.tags || []
+    // Optimista: el chip aparece/desaparece al instante
+    setSelectedContact(prev => prev?.id === selectedContact.id ? { ...prev, tags: tagIds } : prev)
+    setSavingTags(true)
+    setTagsError(null)
+    try {
+      const saved = await onUpdateTags(selectedContact.id, tagIds)
+      if (Array.isArray(saved)) {
+        setSelectedContact(prev => prev?.id === selectedContact.id ? { ...prev, tags: saved } : prev)
+      }
+    } catch (error) {
+      setSelectedContact(prev => prev?.id === selectedContact.id ? { ...prev, tags: previous } : prev)
+      setTagsError(error instanceof Error ? error.message : 'No se pudieron guardar las etiquetas.')
+    } finally {
+      setSavingTags(false)
     }
   }
 
@@ -634,6 +663,26 @@ export function ContactDetailsModal({
                       <span>{formatLocalDateShort(selectedContact.created_at)}</span>
                     </div>
                   </div>
+                </div>
+
+                {/* Etiquetas: la interna (según actividad) + las del usuario como chips */}
+                <div className={styles.detailSection}>
+                  <h5 className={styles.detailSectionTitle}>Etiquetas</h5>
+                  <TagPicker
+                    multiple
+                    selectedIds={selectedContact.tags || []}
+                    onChange={updateContactTags}
+                    lockedTags={(() => {
+                      const badge = resolveContactBadge(selectedContact)
+                      return badge ? [{ id: 'system', name: badge.text }] : []
+                    })()}
+                    allowCreate
+                    disabled={savingTags || !onUpdateTags}
+                    placeholder="Agregar etiqueta…"
+                    aria-label="Etiquetas del contacto"
+                  />
+                  {savingTags && <p className={styles.whatsappPreferenceHint}>Guardando etiquetas...</p>}
+                  {tagsError && <p className={styles.customFieldError}>{tagsError}</p>}
                 </div>
 
                 {whatsappPhoneNumbers.length > 0 && (

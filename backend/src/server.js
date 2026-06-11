@@ -27,6 +27,7 @@ import webhooksRoutes from './routes/webhooks.routes.js'
 import reportsRoutes from './routes/reports.routes.js'
 import webhookConfigRoutes from './routes/webhookConfig.routes.js'
 import contactsRoutes from './routes/contacts.routes.js'
+import contactTagsRoutes from './routes/contactTags.routes.js'
 import transactionsRoutes from './routes/transactions.routes.js'
 import integrationsRoutes from './routes/integrations.routes.js'
 import attributionRoutes from './routes/attribution.routes.js'
@@ -113,6 +114,7 @@ app.use('/api/meta', requireFeature('meta_ads'), metaRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/webhook-config', webhookConfigRoutes)
 app.use('/api/contacts', contactsRoutes)
+app.use('/api/contact-tags', contactTagsRoutes)
 app.use('/api/transactions', transactionsRoutes)
 app.use('/api/integrations', integrationsRoutes)
 app.use('/api/attribution', attributionRoutes)

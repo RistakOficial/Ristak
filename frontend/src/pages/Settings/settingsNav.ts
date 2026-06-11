@@ -27,6 +27,7 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/domains', label: 'Dominios' },
   { to: '/settings/costs', label: 'Costos' },
   { to: '/settings/custom-fields', label: 'Campos personalizados' },
+  { to: '/settings/tags', label: 'Etiquetas' },
   {
     to: '/settings/ai-agent',
     label: 'Agente AI',
