@@ -1799,8 +1799,12 @@ body.dark .tooltipInfo {
   font-weight: 500;
 }
 
+/* Misma piel que el resto de los campos: mismo borde, mismo radio */
 .embeddedRoot .contactSearchBox {
   min-height: 48px;
+  box-sizing: border-box;
+  border: 1px solid var(--record-payment-embedded-border);
+  border-radius: 12px;
   background: var(--record-payment-embedded-panel);
   color: var(--record-payment-embedded-muted);
 }
@@ -1833,17 +1837,26 @@ body.dark .tooltipInfo {
   background: var(--record-payment-embedded-panel) !important;
   border-radius: 14px;
   padding: 4px;
+  /* Sin esto, width:100% + padding + borde hacen que el control se salga del contenedor */
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   box-shadow: none !important;
 }
 
 .embeddedRoot [data-ristak-tablist-tab] {
+  min-width: 0;
   min-height: 40px;
+  padding-left: 10px;
+  padding-right: 10px;
   border-radius: 10px;
+  overflow: hidden;
   color: var(--record-payment-embedded-muted);
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 750;
+  text-overflow: ellipsis;
 }
 
 .embeddedRoot [data-ristak-tablist-tab][data-active="true"],
