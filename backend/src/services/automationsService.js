@@ -287,6 +287,26 @@ function parseLog(raw) {
   try { return JSON.parse(raw) } catch { return [] }
 }
 
+/**
+ * Anuncios reales detectados en la atribución de los contactos: alimenta el
+ * selector "Anuncio de origen" de los filtros de automatizaciones.
+ */
+export async function listAttributionAds() {
+  const rows = await db.all(
+    `SELECT attribution_ad_name AS name, attribution_ad_id AS id, COUNT(*) AS total
+     FROM contacts
+     WHERE (attribution_ad_name IS NOT NULL AND attribution_ad_name != '')
+        OR (attribution_ad_id IS NOT NULL AND attribution_ad_id != '')
+     GROUP BY attribution_ad_name, attribution_ad_id
+     ORDER BY total DESC
+     LIMIT 200`
+  )
+  return rows.map((row) => ({
+    id: String(row.id || row.name || ''),
+    name: String(row.name || row.id || '')
+  }))
+}
+
 export async function listEnrollments(automationId) {
   const rows = await db.all(
     `SELECT * FROM automation_enrollments WHERE automation_id = ? ORDER BY updated_at DESC LIMIT 200`,

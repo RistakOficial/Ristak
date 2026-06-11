@@ -9,28 +9,6 @@ import {
 } from './nodeRegistry'
 import styles from './AutomationEditor.module.css'
 
-const RECENT_STEPS_KEY = 'ristak.automations.recentSteps'
-const RECENT_LIMIT = 5
-
-export function readRecentSteps(): string[] {
-  try {
-    const raw = window.localStorage.getItem(RECENT_STEPS_KEY)
-    const parsed = raw ? JSON.parse(raw) : []
-    return Array.isArray(parsed) ? parsed.filter((value) => typeof value === 'string') : []
-  } catch {
-    return []
-  }
-}
-
-export function rememberRecentStep(type: string) {
-  try {
-    const next = [type, ...readRecentSteps().filter((value) => value !== type)].slice(0, RECENT_LIMIT)
-    window.localStorage.setItem(RECENT_STEPS_KEY, JSON.stringify(next))
-  } catch {
-    // almacenamiento no disponible: los recientes simplemente no se guardan
-  }
-}
-
 export interface StepPickerAnchor {
   /** Posición en píxeles relativa al contenedor del editor */
   x: number
@@ -95,19 +73,6 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
       (definition.brand || '').toLowerCase().includes(normalizedQuery)
 
     const result: PickerSection[] = []
-
-    const recents = readRecentSteps()
-      .map((type) => definitions.find((definition) => definition.type === type))
-      .filter((definition): definition is NodeDefinition => Boolean(definition))
-      .filter(matches)
-
-    if (recents.length > 0) {
-      result.push({
-        id: 'recent',
-        label: kind === 'trigger' ? 'Disparadores recientes' : 'Recientes',
-        items: recents
-      })
-    }
 
     getCategoriesForKind(kind).forEach((category) => {
       const items = definitions

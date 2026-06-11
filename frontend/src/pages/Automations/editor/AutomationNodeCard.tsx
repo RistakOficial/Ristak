@@ -291,7 +291,9 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
                   key={trigger.id}
                   type="button"
                   data-accent={triggerDefinition?.accent || 'green'}
-                  className={cn(styles.triggerChip, triggerErrors.length > 0 && styles.triggerChipError)}
+                  // El rojo solo aparece con errores confirmados (al publicar o al
+                  // intentar salir sin completar); mientras se configura, neutro
+                  className={cn(styles.triggerChip, hasErrors && triggerErrors.length > 0 && styles.triggerChipError)}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation()

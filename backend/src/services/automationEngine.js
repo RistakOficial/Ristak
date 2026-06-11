@@ -122,14 +122,25 @@ function keywordsMatch(config, messageText) {
 
 function filterFieldValue(filter, ctx) {
   const contact = ctx.contact || {}
+  const custom = contact.customFields || {}
   switch (filter.field) {
     case 'message': return ctx.messageText || ''
+    case 'channel': return ctx.channel || ''
+    case 'first_name': return contact.firstName || ''
+    case 'last_name': return contact.lastName || ''
     case 'source': return contact.source || ''
     case 'email': return contact.email || ''
     case 'phone': return contact.phone || ''
     case 'country': return contact.country || ''
+    case 'stage': return contact.stage || custom.stage || ''
+    case 'assigned': return contact.assignedUser || custom.assignedUser || ''
     case 'tag': return (contact.tagKeys || contact.tags || []).join(' , ')
-    case 'custom': return String((contact.customFields || {})[filter.customKey] ?? '')
+    case 'custom': return String(custom[filter.customKey] ?? '')
+    // Atribución de anuncios (vive en el contacto)
+    case 'ad': return contact.adName || contact.adId || ''
+    case 'ad_id': return contact.adId || ''
+    case 'attribution_url': return contact.attributionUrl || ''
+    case 'medium': return contact.attributionMedium || ''
     // Campos del evento (cita, pago, anuncio…)
     case 'calendar': return ctx.calendarId || null
     case 'appointment_type': return ctx.appointmentType || null
@@ -141,6 +152,9 @@ function filterFieldValue(filter, ctx) {
   }
 }
 
+/** Operadores de filtro que no comparan contra un valor capturado */
+const NO_VALUE_FILTER_OPERATORS = new Set(['empty', 'not_empty'])
+
 function evaluateFilter(filter, ctx) {
   const actualRaw = filterFieldValue(filter, ctx)
   if (actualRaw === null) return true
@@ -150,6 +164,10 @@ function evaluateFilter(filter, ctx) {
     case 'not': return actual !== expected
     case 'contains': return actual.includes(expected)
     case 'not_contains': return !actual.includes(expected)
+    case 'starts_with': return actual.startsWith(expected)
+    case 'ends_with': return actual.endsWith(expected)
+    case 'empty': return actual === ''
+    case 'not_empty': return actual !== ''
     default: return actual === expected
   }
 }
@@ -157,7 +175,9 @@ function evaluateFilter(filter, ctx) {
 export function filtersMatch(filters, ctx) {
   // Los filtros se unen en secuencia con Y / O (connector del propio filtro)
   const list = (Array.isArray(filters) ? filters : []).filter(
-    (filter) => filter?.field && String(filter.value || '').trim()
+    (filter) =>
+      filter?.field &&
+      (NO_VALUE_FILTER_OPERATORS.has(filter.match) || String(filter.value || '').trim())
   )
   return list.reduce((accumulated, filter, index) => {
     const met = evaluateFilter(filter, ctx)
@@ -757,6 +777,13 @@ async function loadContact(contactId, fallback = {}) {
     email: row?.email || '',
     source: row?.source || bag.source || '',
     country: row?.country || bag.country || '',
+    stage: row?.stage || bag.stage || '',
+    assignedUser: row?.assigned_user || bag.assignedUser || '',
+    // Atribución de anuncios (filtros "Anuncio de origen", "URL de origen"…)
+    adName: row?.attribution_ad_name || '',
+    adId: row?.attribution_ad_id || '',
+    attributionUrl: row?.attribution_url || '',
+    attributionMedium: row?.attribution_medium || '',
     customFields: bag,
     tags: storedTags,
     tagKeys

@@ -4,6 +4,7 @@ import {
   TRIGGER_FILTER_OPERATORS,
   asTriggerFilters,
   filterFieldsFor,
+  triggerOperatorNeedsValue,
   type TriggerFilter
 } from '../crmFields'
 import { CatalogSelect, TextInput, CustomSelect } from './configPrimitives'
@@ -110,23 +111,33 @@ export const TriggerFiltersEditor: React.FC<{
                     aria-label="Coincidencia"
                   />
                 </div>
-                <div className={styles.configRowGrow}>
-                  {field?.catalog ? (
-                    <CatalogSelect
-                      catalog={field.catalog}
-                      value={filter.value}
-                      onChange={(next) => update(index, { value: next })}
-                      placeholder="Valor"
-                      aria-label="Valor del filtro"
-                    />
-                  ) : (
-                    <TextInput
-                      value={filter.value}
-                      placeholder="Valor"
-                      onChange={(event) => update(index, { value: event.target.value })}
-                    />
-                  )}
-                </div>
+                {triggerOperatorNeedsValue(filter.match) && (
+                  <div className={styles.configRowGrow}>
+                    {field?.options ? (
+                      <CustomSelect
+                        options={field.options}
+                        value={filter.value}
+                        onValueChange={(next) => update(index, { value: next })}
+                        placeholder="Valor"
+                        aria-label="Valor del filtro"
+                      />
+                    ) : field?.catalog ? (
+                      <CatalogSelect
+                        catalog={field.catalog}
+                        value={filter.value}
+                        onChange={(next) => update(index, { value: next })}
+                        placeholder="Valor"
+                        aria-label="Valor del filtro"
+                      />
+                    ) : (
+                      <TextInput
+                        value={filter.value}
+                        placeholder="Valor"
+                        onChange={(event) => update(index, { value: event.target.value })}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

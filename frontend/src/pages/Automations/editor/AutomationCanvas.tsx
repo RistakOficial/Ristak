@@ -6,6 +6,7 @@ import {
   Copy,
   GitBranch,
   LayoutGrid,
+  MoreHorizontal,
   Shuffle,
   Target,
   Maximize,
@@ -73,6 +74,8 @@ export interface CanvasActions {
   onDeleteEdge: (edgeId: string) => void
   onDeleteNode: (node: AutomationNode) => void
   onDuplicateNode: (node: AutomationNode) => void
+  /** Alt + arrastrar: duplica el paso y devuelve la copia para arrastrarla */
+  onDuplicateNodeForDrag: (node: AutomationNode) => AutomationNode | null
   onOpenConfig: (node: AutomationNode, anchor: { x: number; y: number }) => void
   onPatchConfig: (node: AutomationNode, patch: Record<string, unknown>, openConfig?: boolean) => void
   onRequestPicker: (request: PickerRequest) => void
@@ -105,6 +108,8 @@ interface AutomationCanvasProps {
   fitSignal?: number
   /** Contactos activos por nodo (badges con silueta) */
   nodeStats?: Record<string, number>
+  /** Oculta la tarjeta "Elegir primer paso" (cuando el selector está abierto) */
+  hideFirstStepGhost?: boolean
   actions: CanvasActions
   children?: React.ReactNode
 }
@@ -160,6 +165,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   pendingEdge,
   fitSignal,
   nodeStats,
+  hideFirstStepGhost,
   actions,
   children
 }) => {
@@ -475,6 +481,23 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
       return
     }
 
+    // Alt + arrastrar = duplicar: la copia nace en el mismo punto y es la
+    // que se arrastra (el original se queda donde estaba)
+    if (event.altKey) {
+      const copy = actions.onDuplicateNodeForDrag(node)
+      if (copy) {
+        setDrag({
+          nodeId: copy.id,
+          pointerStart: { x: event.clientX, y: event.clientY },
+          nodeStart: { ...copy.position },
+          groupStart: null,
+          moved: false,
+          withModifier: true
+        })
+      }
+      return
+    }
+
     const group = multiSelectedRef.current
     const isGroupDrag = group.size > 1 && group.has(node.id)
     const groupStart: Record<string, { x: number; y: number }> | null = isGroupDrag
@@ -612,7 +635,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   // Tarjeta fantasma "Elegir primer paso": solo en automatizaciones vacías
   const startNodeOnly = nodes.length === 1 && nodes[0].type === 'start' && edges.length === 0 ? nodes[0] : null
   const firstStepGhost = useMemo(() => {
-    if (!startNodeOnly || !actions.onCreateFirstStep) return null
+    if (!startNodeOnly || !actions.onCreateFirstStep || hideFirstStepGhost) return null
     const layout = layouts[startNodeOnly.id]
     const sx = startNodeOnly.position.x + (layout?.width || NODE_WIDTH)
     const sy = startNodeOnly.position.y + (layout?.outputs.out ?? 40)
@@ -620,7 +643,19 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
     const y = startNodeOnly.position.y - 24
     return { x, y, geometry: edgePath(sx, sy, x - 6, y + 34) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startNodeOnly, layouts])
+  }, [startNodeOnly, layouts, hideFirstStepGhost])
+
+  // "Otros": reemplaza la tarjeta fantasma por el selector completo de pasos,
+  // conectado a la tarjeta inicial (igual que el globo del doble clic)
+  const openFirstStepPicker = () => {
+    if (!firstStepGhost || !startNodeOnly) return
+    const { x, y, zoom } = viewportRef.current
+    actions.onRequestPicker({
+      anchor: { x: firstStepGhost.x * zoom + x, y: firstStepGhost.y * zoom + y },
+      worldPoint: { x: firstStepGhost.x, y: firstStepGhost.y + 24 },
+      source: { nodeId: startNodeOnly.id, handle: 'out' }
+    })
+  }
 
   // Flecha fantasma: del conector de origen al punto exacto donde se soltó,
   // visible mientras el selector de pasos está abierto.
@@ -808,6 +843,13 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
                   {item.label}
                 </button>
               ))}
+              <div className={styles.firstStepSection}>Más</div>
+              <button type="button" className={styles.firstStepItem} onClick={openFirstStepPicker}>
+                <span className={styles.firstStepIcon} style={{ color: 'var(--color-text-tertiary)' }}>
+                  <MoreHorizontal size={15} />
+                </span>
+                Otros…
+              </button>
             </div>
           )}
 

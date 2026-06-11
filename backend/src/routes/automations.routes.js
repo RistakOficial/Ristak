@@ -13,6 +13,7 @@ import {
   deleteFolderHandler,
   getEnrollmentsHandler,
   getEnrollmentStatsHandler,
+  getAdsCatalogHandler,
   uploadAssetHandler,
   serveAssetHandler
 } from '../controllers/automationsController.js'
@@ -32,6 +33,9 @@ router.post('/folders', createFolderHandler)
 router.post('/folders/reorder', reorderFoldersHandler)
 router.put('/folders/:folderId', updateFolderHandler)
 router.delete('/folders/:folderId', deleteFolderHandler)
+
+// Catálogos para los filtros del editor (anuncios de atribución)
+router.get('/catalogs/ads', getAdsCatalogHandler)
 
 // Automatizaciones
 router.get('/', getAutomationsHandler)

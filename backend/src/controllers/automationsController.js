@@ -12,6 +12,7 @@ import {
   deleteFolder,
   listEnrollments,
   getEnrollmentStats,
+  listAttributionAds,
   saveAutomationAsset,
   getAutomationAsset
 } from '../services/automationsService.js'
@@ -121,6 +122,15 @@ export async function deleteFolderHandler(req, res) {
   }
 }
 
+
+export async function getAdsCatalogHandler(req, res) {
+  try {
+    res.json({ success: true, data: await listAttributionAds() })
+  } catch (error) {
+    logger.error(`Error listando anuncios de atribución: ${error.message}`)
+    sendError(res, error, 'Error listando los anuncios')
+  }
+}
 
 export async function getEnrollmentsHandler(req, res) {
   try {

@@ -435,30 +435,57 @@ export function summarizeCondition(config: unknown): string {
 // Filtros avanzados de los disparadores ("+ Añadir filtro")
 // ---------------------------------------------------------------------------
 
+export type TriggerFilterMatch =
+  | 'is'
+  | 'not'
+  | 'contains'
+  | 'not_contains'
+  | 'starts_with'
+  | 'ends_with'
+  | 'empty'
+  | 'not_empty'
+
 export interface TriggerFilter {
   field: string
   /** Campo personalizado elegido cuando field === 'custom' */
   customKey?: string
   customLabel?: string
-  match: 'is' | 'not' | 'contains' | 'not_contains'
+  match: TriggerFilterMatch
   value: string
   /** Cómo se une con el filtro anterior: Y (default) u O */
   connector?: 'and' | 'or'
 }
 
-export const TRIGGER_FILTER_OPERATORS: Array<{ value: TriggerFilter['match']; label: string }> = [
+export const TRIGGER_FILTER_OPERATORS: Array<{
+  value: TriggerFilterMatch
+  label: string
+  /** No requiere capturar valor (está vacío / no está vacío) */
+  noValue?: boolean
+}> = [
   { value: 'is', label: 'coincide con' },
   { value: 'not', label: 'NO coincide con' },
   { value: 'contains', label: 'contiene' },
-  { value: 'not_contains', label: 'NO contiene' }
+  { value: 'not_contains', label: 'NO contiene' },
+  { value: 'starts_with', label: 'empieza con' },
+  { value: 'ends_with', label: 'termina con' },
+  { value: 'empty', label: 'está vacío', noValue: true },
+  { value: 'not_empty', label: 'no está vacío', noValue: true }
 ]
+
+/** ¿El operador del filtro necesita capturar un valor? */
+export function triggerOperatorNeedsValue(match: unknown): boolean {
+  const operator = TRIGGER_FILTER_OPERATORS.find((candidate) => candidate.value === match)
+  return operator ? !operator.noValue : true
+}
 
 export interface TriggerFilterField {
   id: string
   label: string
   /** Frase con artículo para la oración ("la fuente", "el país"…) */
   phrase: string
-  catalog?: 'tags' | 'contactFields' | 'users' | 'calendars' | 'campaigns' | 'products'
+  catalog?: 'tags' | 'contactFields' | 'users' | 'calendars' | 'campaigns' | 'products' | 'ads'
+  /** Opciones fijas (el valor se elige de una lista, no texto libre) */
+  options?: Array<{ value: string; label: string }>
   /** Categoría del drill-down (Contacto, Mensaje, Citas…) */
   category: string
   /** Contextos donde aplica; sin lista = siempre (datos del contacto) */
@@ -468,6 +495,7 @@ export interface TriggerFilterField {
 export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   // Del evento (solo aparecen cuando el disparador los produce)
   { id: 'message', label: 'Mensaje', phrase: 'el mensaje', category: 'Mensaje', appliesTo: ['message'] },
+  { id: 'channel', label: 'Canal del mensaje', phrase: 'el canal', options: CHANNEL_FIELD_OPTIONS, category: 'Mensaje', appliesTo: ['message'] },
   { id: 'calendar', label: 'Calendario', phrase: 'el calendario', catalog: 'calendars', category: 'Cita', appliesTo: ['appointment'] },
   { id: 'appointment_type', label: 'Tipo de cita', phrase: 'el tipo de cita', category: 'Cita', appliesTo: ['appointment'] },
   { id: 'product', label: 'Producto / servicio', phrase: 'el producto', catalog: 'products', category: 'Pago', appliesTo: ['payment'] },
@@ -475,7 +503,14 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'provider', label: 'Proveedor de pago', phrase: 'el proveedor', category: 'Pago', appliesTo: ['payment'] },
   { id: 'campaign', label: 'Campaña', phrase: 'la campaña', catalog: 'campaigns', category: 'Anuncio', appliesTo: ['ads'] },
   { id: 'form_field', label: 'Campo del formulario', phrase: 'el campo del formulario', category: 'Formulario', appliesTo: ['form'] },
+  // Atribución de anuncios (vive en el contacto: disponible siempre)
+  { id: 'ad', label: 'Anuncio de origen', phrase: 'el anuncio de origen', catalog: 'ads', category: 'Anuncio' },
+  { id: 'ad_id', label: 'ID del anuncio', phrase: 'el ID del anuncio', category: 'Anuncio' },
+  { id: 'attribution_url', label: 'URL de origen', phrase: 'la URL de origen', category: 'Anuncio' },
+  { id: 'medium', label: 'Medio de atribución', phrase: 'el medio', category: 'Anuncio' },
   // Del contacto (siempre disponibles)
+  { id: 'first_name', label: 'Nombre', phrase: 'el nombre', category: 'Contacto' },
+  { id: 'last_name', label: 'Apellido', phrase: 'el apellido', category: 'Contacto' },
   { id: 'source', label: 'Fuente', phrase: 'la fuente', category: 'Contacto' },
   { id: 'tag', label: 'Etiqueta', phrase: 'la etiqueta', catalog: 'tags', category: 'Contacto' },
   { id: 'stage', label: 'Pipeline / etapa', phrase: 'la etapa', category: 'Contacto' },
@@ -523,7 +558,9 @@ export function validateTriggerFilters(value: unknown): string[] {
   asTriggerFilters(value).forEach((filter, index) => {
     if (!filter.field) errors.push(`Filtro ${index + 1}: elige el campo`)
     else if (filter.field === 'custom' && !filter.customKey) errors.push(`Filtro ${index + 1}: elige el campo personalizado`)
-    if (!String(filter.value || '').trim()) errors.push(`Filtro ${index + 1}: captura el valor`)
+    if (triggerOperatorNeedsValue(filter.match) && !String(filter.value || '').trim()) {
+      errors.push(`Filtro ${index + 1}: captura el valor`)
+    }
   })
   return errors
 }
@@ -531,7 +568,11 @@ export function validateTriggerFilters(value: unknown): string[] {
 /** ' y la fuente coincida con "Facebook" y el país NO coincida con "México"' */
 export function triggerFiltersSentence(value: unknown): string {
   return asTriggerFilters(value)
-    .filter((filter) => filter.field && String(filter.value || '').trim())
+    .filter(
+      (filter) =>
+        filter.field &&
+        (!triggerOperatorNeedsValue(filter.match) || String(filter.value || '').trim())
+    )
     .map((filter) => {
       const field = TRIGGER_FILTER_FIELDS.find((candidate) => candidate.id === filter.field)
       const phrase = filter.field === 'custom'
@@ -541,10 +582,15 @@ export function triggerFiltersSentence(value: unknown): string {
         is: 'coincida con',
         not: 'NO coincida con',
         contains: 'contenga',
-        not_contains: 'NO contenga'
+        not_contains: 'NO contenga',
+        starts_with: 'empiece con',
+        ends_with: 'termine con',
+        empty: 'esté vacío',
+        not_empty: 'no esté vacío'
       }
       const joiner = filter.connector === 'or' ? ' o ' : ' y '
-      return `${joiner}${phrase} ${verbs[filter.match] || 'coincida con'} "${filter.value}"`
+      const valuePart = triggerOperatorNeedsValue(filter.match) ? ` "${filter.value}"` : ''
+      return `${joiner}${phrase} ${verbs[filter.match] || 'coincida con'}${valuePart}`
     })
     .join('')
 }

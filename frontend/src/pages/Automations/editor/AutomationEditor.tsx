@@ -41,7 +41,7 @@ import automationsService, {
   type FlowSettings
 } from '@/services/automationsService'
 import { AutomationCanvas, type PendingEdge, type PickerRequest } from './AutomationCanvas'
-import { StepPickerBubble, rememberRecentStep } from './StepPickerBubble'
+import { StepPickerBubble } from './StepPickerBubble'
 import { NodeConfigBubble } from './NodeConfigBubble'
 import { VariableCategoriesContext } from './composer/MessageComposer'
 import { Settings as SettingsIcon } from 'lucide-react'
@@ -403,7 +403,6 @@ export const AutomationEditor: React.FC = () => {
   const handlePickStep = useCallback(
     (definition: NodeDefinition) => {
       if (!picker) return
-      rememberRecentStep(definition.type)
 
       const current = stateRef.current.present
 
@@ -601,6 +600,22 @@ export const AutomationEditor: React.FC = () => {
         }
         commitFlow([...current.nodes, copy])
         setSelectedNodeId(copy.id)
+      },
+      // Alt + arrastrar un paso: crea una copia en el mismo lugar y el
+      // arrastre continúa moviendo la copia (atajo para duplicar)
+      onDuplicateNodeForDrag: (node: AutomationNode): AutomationNode | null => {
+        if (isStartNode(node)) return null
+        const current = stateRef.current.present
+        const copy: AutomationNode = {
+          ...node,
+          id: genId('node'),
+          position: { ...node.position },
+          config: JSON.parse(JSON.stringify(node.config || {}))
+        }
+        commitFlow([...current.nodes, copy])
+        setSelectedNodeId(copy.id)
+        setMultiSelectedIds(new Set([copy.id]))
+        return copy
       },
       onOpenConfig: (node: AutomationNode, anchor: { x: number; y: number }) => {
         openConfigForNode(node, anchor)
@@ -1245,6 +1260,7 @@ export const AutomationEditor: React.FC = () => {
         pendingEdge={pendingEdge}
         fitSignal={fitSignal}
         nodeStats={nodeStats}
+        hideFirstStepGhost={Boolean(picker)}
         actions={canvasActions}
       >
         <button type="button" className={styles.fab} title="Agregar paso" onClick={handleFabClick}>
