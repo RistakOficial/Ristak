@@ -9262,6 +9262,128 @@ function scriptJson(value) {
     .replace(/\u2029/g, '\\u2029')
 }
 
+// Política estricta de preservación de parámetros de URL en páginas publicadas:
+// los query params de la visita (UTMs, fbclid, gclid, IDs de afiliado, variables
+// custom, etc.) nunca deben perderse al navegar entre páginas, enviar formularios
+// o redirigir. Este script persiste los params en sessionStorage, decora todos los
+// links/navegaciones internas con TODOS los params preservados y los redirects
+// externos con los params de tracking, y expone helpers globales para el resto
+// de los runtimes (window.ristakPreserveParams / window.ristakPreservedParams).
+function buildParamPreservationScript() {
+  return `
+  <script>
+    (() => {
+      const STORAGE_KEY = 'rstk:params';
+      const RESERVED_KEYS = ['page'];
+      const isTrackingKey = (key) => (
+        key.indexOf('utm_') === 0 ||
+        ['gclid', 'fbclid', 'msclkid', 'ttclid', 'wbraid', 'gbraid', 'campaign_id', 'adset_id', 'ad_id', 'campaign_name', 'adset_name', 'ad_name', 'placement', 'site_source_name', 'campaignid', 'adgroupid', 'creative', 'keyword', 'matchtype', 'network', 'device', 'target', 'ref', 'affiliate', 'affiliate_id', 'aff_id', 'sub_id', 'click_id', 'clickid'].includes(key)
+      );
+      const readStored = () => {
+        try {
+          const raw = window.sessionStorage.getItem(STORAGE_KEY);
+          const parsed = raw ? JSON.parse(raw) : {};
+          return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch (_) {
+          return {};
+        }
+      };
+      const writeStored = (value) => {
+        try {
+          window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+        } catch (_) {}
+      };
+      const currentParams = () => {
+        const params = {};
+        try {
+          new URLSearchParams(window.location.search || '').forEach((value, key) => {
+            if (RESERVED_KEYS.includes(key)) return;
+            params[key] = value;
+          });
+        } catch (_) {}
+        return params;
+      };
+      // Los params presentes en la URL actual ganan; los guardados en la sesión
+      // rellenan los que se hayan perdido en alguna navegación intermedia.
+      const preservedParams = () => Object.assign({}, readStored(), currentParams());
+      const persist = () => {
+        const merged = preservedParams();
+        if (Object.keys(merged).length) writeStored(merged);
+      };
+      const decorateUrl = (rawUrl) => {
+        const raw = String(rawUrl || '');
+        if (!raw || raw.charAt(0) === '#') return raw;
+        let target;
+        try {
+          target = new URL(raw, window.location.href);
+        } catch (_) {
+          return raw;
+        }
+        if (target.protocol !== 'http:' && target.protocol !== 'https:') return raw;
+        const internal = target.origin === window.location.origin;
+        const params = preservedParams();
+        let changed = false;
+        Object.keys(params).forEach((key) => {
+          if (RESERVED_KEYS.includes(key)) return;
+          if (!internal && !isTrackingKey(key)) return;
+          if (target.searchParams.has(key)) return;
+          target.searchParams.append(key, params[key]);
+          changed = true;
+        });
+        if (!changed) return raw;
+        if (internal && !/^https?:/i.test(raw) && raw.slice(0, 2) !== '//') {
+          return target.pathname + target.search + target.hash;
+        }
+        return target.toString();
+      };
+      const decorateAnchor = (anchor) => {
+        if (!anchor || !anchor.getAttribute) return;
+        const href = anchor.getAttribute('href') || '';
+        if (!href || href.charAt(0) === '#') return;
+        const decorated = decorateUrl(href);
+        if (decorated && decorated !== href) anchor.setAttribute('href', decorated);
+      };
+      const decorateAllAnchors = () => {
+        try {
+          Array.prototype.forEach.call(document.querySelectorAll('a[href]'), decorateAnchor);
+        } catch (_) {}
+      };
+      const handleAnchorEvent = (event) => {
+        const anchor = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+        if (anchor) decorateAnchor(anchor);
+      };
+      const patchHistory = (method) => {
+        const original = window.history && window.history[method];
+        if (typeof original !== 'function') return;
+        window.history[method] = function (state, title, url) {
+          let nextUrl = url;
+          if (typeof url === 'string' && url) {
+            try {
+              nextUrl = decorateUrl(url);
+            } catch (_) {
+              nextUrl = url;
+            }
+          }
+          return original.call(this, state, title, nextUrl);
+        };
+      };
+
+      persist();
+      window.ristakPreservedParams = preservedParams;
+      window.ristakPreserveParams = decorateUrl;
+      patchHistory('pushState');
+      patchHistory('replaceState');
+      document.addEventListener('click', handleAnchorEvent, true);
+      document.addEventListener('auxclick', handleAnchorEvent, true);
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', decorateAllAnchors);
+      } else {
+        decorateAllAnchors();
+      }
+    })();
+  </script>`
+}
+
 function buildNativeSiteTrackingScript(context) {
   return `
   <script>
@@ -9339,15 +9461,20 @@ function buildNativeSiteTrackingScript(context) {
 
       const getParams = () => {
         const params = {};
-        const searchParams = new URLSearchParams(window.location.search || '');
-        searchParams.forEach((value, key) => {
+        const collect = (value, key) => {
           if (
             key.indexOf('utm_') === 0 ||
             ['gclid', 'fbclid', 'msclkid', 'ttclid', 'wbraid', 'gbraid', 'campaign_id', 'adset_id', 'ad_id', 'campaign_name', 'adset_name', 'ad_name', 'placement', 'site_source_name', 'campaignid', 'adgroupid', 'creative', 'keyword', 'matchtype', 'network', 'device', 'target'].includes(key)
           ) {
             params[key] = value;
           }
-        });
+        };
+        // Primero los params preservados de la sesión y encima los de la URL
+        // actual, para no perder atribución si una navegación los quitó de la URL.
+        const stored = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
+        Object.keys(stored).forEach((key) => collect(stored[key], key));
+        const searchParams = new URLSearchParams(window.location.search || '');
+        searchParams.forEach(collect);
         return params;
       };
 
@@ -11445,11 +11572,14 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         return (document.cookie.match(new RegExp('(?:^|; )' + escaped + '=([^;]+)')) || [])[1] || null;
       };
       const getParams = () => {
+        // Params preservados de la sesión + los de la URL actual (estos ganan),
+        // para no perder atribución si una navegación intermedia los quitó.
+        const stored = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
+        let current = {};
         try {
-          return Object.fromEntries(new URL(window.location.href).searchParams.entries());
-        } catch (_) {
-          return {};
-        }
+          current = Object.fromEntries(new URL(window.location.href).searchParams.entries());
+        } catch (_) {}
+        return Object.assign({}, stored, current);
       };
       const getFieldKey = (field, fallback) => (
         field.getAttribute('data-ristack-field') ||
@@ -11668,11 +11798,16 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
     (() => {
       const PAGES = ${scriptJson(pages)};
       const CURRENT_PAGE_ID = ${scriptJson(pageId || DEFAULT_FUNNEL_PAGE_ID)};
+      // Conservar los params de la URL original (UTMs, fbclid, gclid, etc.)
+      // en cualquier navegación o redirect disparado por acciones de botones.
+      const preserveUrl = (value) => (
+        value && window.ristakPreserveParams ? window.ristakPreserveParams(value) : value
+      );
       const getPageHref = (targetPageId) => {
         if (!targetPageId) return '#';
         const nextUrl = new URL(window.location.href);
         nextUrl.searchParams.set('page', targetPageId);
-        return nextUrl.toString();
+        return preserveUrl(nextUrl.toString());
       };
       const getNextPageId = () => {
         const index = PAGES.findIndex(page => page.id === CURRENT_PAGE_ID);
@@ -11856,7 +11991,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
         if (!action) return;
         if (action.action === 'url') {
           const targetUrl = action.buttonUrl || (source.getAttribute ? source.getAttribute('href') : '') || '';
-          if (targetUrl) window.location.href = targetUrl;
+          if (targetUrl) window.location.href = preserveUrl(targetUrl);
           return;
         }
         if (action.action === 'next_page') {
@@ -11920,7 +12055,10 @@ async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabl
   const buttonActionScript = buildImportedButtonActionScript(site, { pageId: activePageId })
   const captureScript = buildImportedFormCaptureScript(site, imported, { pageId: activePageId })
   const popupHtml = renderSitePopup(site)
-  return `${metaPixelSnippet}${nativeTrackingScript}${buttonActionScript}${captureScript}${popupHtml}`
+  // El script de preservación de params va primero: define los helpers globales
+  // que usan el tracking, los botones y la captura de formularios.
+  const paramPreservationScript = buildParamPreservationScript()
+  return `${paramPreservationScript}${metaPixelSnippet}${nativeTrackingScript}${buttonActionScript}${captureScript}${popupHtml}`
 }
 
 function injectImportedHtmlRuntime(html = '', injection = '') {
@@ -12242,6 +12380,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       pageTitle: activePage?.title || ''
     })
     : ''
+  // En páginas publicadas (no preview) los params de URL se preservan siempre,
+  // aunque el tracking esté apagado: la atribución no debe perderse nunca.
+  const paramPreservationScript = preview ? '' : buildParamPreservationScript()
   const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, activePage)
   const headerTrackingCode = buildHeaderTrackingCode(site, activePage)
   const popupHtml = renderSitePopup(site, {
@@ -12284,6 +12425,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     </main>
   </div>
   ${popupHtml}
+  ${paramPreservationScript}
   ${siteNavHtml ? `<script>${SITE_NAV_SCRIPT}</script>` : ''}
   <script>
     (() => {
@@ -12452,11 +12594,17 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         });
       };
 
+      // Toda navegación o redirect debe conservar los params de la URL original
+      // (UTMs, fbclid, gclid, etc.); ristakPreserveParams los repone si faltan.
+      const preserveUrl = (value) => (
+        value && window.ristakPreserveParams ? window.ristakPreserveParams(value) : value
+      );
+
       const pageUrl = (targetPageId) => {
         if (!targetPageId) return '';
         const url = new URL(window.location.href);
         url.searchParams.set('page', targetPageId);
-        return url.toString();
+        return preserveUrl(url.toString());
       };
 
       const readSelectedRules = (field) => {
@@ -12551,7 +12699,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           ? pageUrl(targetPageId)
           : standardFormNextPageUrl;
         if (targetUrl) {
-          window.location.href = targetUrl;
+          window.location.href = preserveUrl(targetUrl);
         }
       });
 
@@ -12575,7 +12723,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           : getCurrentResponses();
 
         const url = new URL(window.location.href);
-        const params = Object.fromEntries(url.searchParams.entries());
+        const storedParams = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
+        const params = Object.assign({}, storedParams, Object.fromEntries(url.searchParams.entries()));
         const nativeIdentity = window.ristakNativeIdentity ? window.ristakNativeIdentity() : {};
         const nativeTracking = window.ristakNativeBuildData ? window.ristakNativeBuildData({ conversion_type: 'form_submit' }) : null;
         if (submitButton) submitButton.disabled = true;
@@ -12635,16 +12784,16 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           index = 0;
           renderStep();
           if (submission.redirectUrl) {
-            window.location.href = submission.redirectUrl;
+            window.location.href = preserveUrl(submission.redirectUrl);
             return;
           }
           const qualifies = submission.status !== 'disqualified';
           if (!qualifies && disqualifiedPageUrl && completionAction === 'next_page_if_qualified') {
-            window.location.href = disqualifiedPageUrl;
+            window.location.href = preserveUrl(disqualifiedPageUrl);
             return;
           }
           if (nextPageUrl && (completionAction === 'next_page' || (completionAction === 'next_page_if_qualified' && qualifies))) {
-            window.location.href = nextPageUrl;
+            window.location.href = preserveUrl(nextPageUrl);
             return;
           }
           if (message) message.textContent = (data && data.data && data.data.message) || ${JSON.stringify('Listo. Recibimos tu informacion.')};
