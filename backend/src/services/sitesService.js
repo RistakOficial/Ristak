@@ -918,7 +918,10 @@ function getNearbyText(html = '', startIndex = 0) {
   const before = html.slice(Math.max(0, startIndex - 360), startIndex)
   const headingMatch = before.match(/<(h1|h2|h3|legend|strong|b|p)\b[^>]*>([\s\S]*?)<\/\1>/gi)
   const lastHeading = headingMatch?.[headingMatch.length - 1] || ''
-  return stripHtmlTags(lastHeading || before.slice(-180))
+  // The raw slice can start mid-tag; drop the leading tag fragment (attribute
+  // soup ending in ">") so it does not leak into the visible title.
+  const fallback = before.slice(-180).replace(/^[^<>]*>/, '')
+  return limitString(stripHtmlTags(lastHeading || fallback), 120)
 }
 
 function getImportedFieldRequiredFromAttrs(attrs = {}) {

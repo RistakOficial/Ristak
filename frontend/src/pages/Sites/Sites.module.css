@@ -710,16 +710,18 @@
   flex-wrap: wrap;
 }
 
-/* AI footer: mic + zone selector share a row; the primary action spans below. */
+/* AI footer: mic + zone selector share a row; the primary action sits below,
+   right-aligned with its natural width (a full-width disabled button reads as
+   a stray gray slab). */
 .importedAIRegionFooter {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  justify-content: stretch;
   gap: 8px;
 }
 
 .importedAIRegionFooter > button:last-child {
   grid-column: 1 / -1;
+  justify-self: end;
 }
 
 .importedActionChain {
@@ -2288,13 +2290,24 @@
 .importReviewDialog {
   width: min(1040px, 100%);
   max-height: min(760px, calc(100dvh - 40px));
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border-radius: 10px;
   background: #ffffff;
   color: #0f172a;
   box-shadow: 0 28px 80px -36px rgba(15, 23, 42, 0.72);
+}
+
+/* The security note is optional; flex keeps the list as the only stretching
+   row so its scroll works with any combination of children. */
+.importReviewDialog > * {
+  flex: 0 0 auto;
+}
+
+.importReviewDialog > .importReviewForms {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .importReviewHeader {
@@ -11527,7 +11540,7 @@
     height: 100%;
     min-height: 0;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     box-sizing: border-box;
   }
 
