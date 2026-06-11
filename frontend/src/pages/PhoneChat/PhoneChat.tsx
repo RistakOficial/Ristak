@@ -61,6 +61,7 @@ import { AppointmentModal, Icon, Modal, RecordPaymentModal } from '@/components/
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
+import { PhoneSheet } from '@/components/phone/ui'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -2508,6 +2509,8 @@ export const PhoneChat: React.FC = () => {
   const [contactPhoneDraft, setContactPhoneDraft] = useState('')
   const [savingContactPhone, setSavingContactPhone] = useState(false)
   const [phoneConfirmOpen, setPhoneConfirmOpen] = useState(false)
+  const [ourNumberSheetOpen, setOurNumberSheetOpen] = useState(false)
+  const [changingOurNumberId, setChangingOurNumberId] = useState<string | null>(null)
   const [contactInfoArchiveOpen, setContactInfoArchiveOpen] = useState(false)
   const [contactInfoArchiveTab, setContactInfoArchiveTab] = useState<ContactInfoArchiveTab>('media')
   const [contactCustomFieldDefinitions, setContactCustomFieldDefinitions] = useState<ContactCustomFieldDefinition[]>([])
@@ -5729,6 +5732,43 @@ export const PhoneChat: React.FC = () => {
     ))
   ), [businessPhones, selectedBusinessPhone?.id])
 
+  // Número nuestro desde el que contactamos al contacto abierto en la info
+  const contactInfoPreferredPhoneId = (contactInfoData as ChatContact | null)?.preferredWhatsAppPhoneNumberId ||
+    (contactInfoData as Record<string, unknown> | null)?.preferred_whatsapp_phone_number_id as string | undefined
+  const contactInfoOurPhone = businessPhones.find((phone) => phone.id === contactInfoPreferredPhoneId) ||
+    (contactInfoData?.id === activeContact?.id ? selectedBusinessPhone : null) ||
+    businessPhones.find((phone) => phone.is_default_sender) ||
+    businessPhones[0] ||
+    null
+
+  const handleSelectOurNumber = async (targetPhone: WhatsAppApiPhoneNumber) => {
+    if (!contactInfoData || !targetPhone?.id) return
+    if (targetPhone.id === contactInfoOurPhone?.id) {
+      setOurNumberSheetOpen(false)
+      return
+    }
+
+    const targetLabel = targetPhone.display_phone_number || targetPhone.phone_number || 'el otro número'
+    setChangingOurNumberId(targetPhone.id)
+    try {
+      await contactsService.updateContact(contactInfoData.id, {
+        preferredWhatsAppPhoneNumberId: targetPhone.id,
+        routingSource: 'manual',
+        routingReason: 'Cambio manual desde la info del contacto'
+      } as Partial<Contact>)
+      applyContactInfoPatch({
+        preferredWhatsAppPhoneNumberId: targetPhone.id,
+        preferred_whatsapp_phone_number_id: targetPhone.id
+      } as Partial<Contact>)
+      setOurNumberSheetOpen(false)
+      showToast('success', 'Número cambiado', `Ahora contactas a este cliente desde ${targetLabel}.`)
+    } catch (error: any) {
+      showToast('error', 'No se pudo cambiar', getErrorMessage(error, 'Intenta otra vez.'))
+    } finally {
+      setChangingOurNumberId(null)
+    }
+  }
+
   const handleSwitchConversationNumber = useCallback(async (targetPhone: WhatsAppApiPhoneNumber) => {
     if (!activeContact || !targetPhone?.id) return
     const failingPhone = selectedBusinessPhone
@@ -8400,6 +8440,24 @@ export const PhoneChat: React.FC = () => {
                   </button>
                 </div>
               )}
+              {businessPhones.length > 0 && (
+                <div className={styles.contactInfoEditableRow}>
+                  <span className={styles.contactInfoRowIcon}><Smartphone size={17} /></span>
+                  <button type="button" className={styles.contactInfoEditableText} onClick={() => setOurNumberSheetOpen(true)}>
+                    <small>Contactando desde</small>
+                    <strong>
+                      {contactInfoOurPhone
+                        ? (contactInfoOurPhone.display_phone_number || contactInfoOurPhone.phone_number || contactInfoOurPhone.id)
+                        : 'Sin número conectado'}
+                    </strong>
+                  </button>
+                  {businessPhones.length > 1 && (
+                    <button type="button" className={styles.contactInfoEditButton} onClick={() => setOurNumberSheetOpen(true)} aria-label="Cambiar el número desde el que contactamos">
+                      <Pencil size={15} />
+                    </button>
+                  )}
+                </div>
+              )}
               {renderContactInfoRow('email', <Mail size={17} />, 'Correo', contactInfoData.email)}
               {renderContactInfoRow('created', <User size={17} />, 'Contacto creado', formatLocalDateTime(leadDate))}
               {renderContactInfoRow('stage', <Tag size={17} />, 'Estado', contactInfoStageBadge?.text || (contactInfoData.status === 'customer' ? customerLabel : leadLabel))}
@@ -10054,6 +10112,46 @@ export const PhoneChat: React.FC = () => {
           </p>
         </div>
       </Modal>
+
+      <PhoneSheet
+        isOpen={ourNumberSheetOpen}
+        onClose={() => setOurNumberSheetOpen(false)}
+        title="Contactar desde"
+        subtitle={contactInfoData ? getContactName(contactInfoData) : undefined}
+      >
+        <div className={styles.ourNumberList} role="listbox" aria-label="Números disponibles para contactar">
+          {businessPhones.map((phone) => {
+            const active = phone.id === contactInfoOurPhone?.id
+            const unavailable = Boolean(phone.availability && !phone.availability.available)
+            const changing = changingOurNumberId === phone.id
+
+            return (
+              <button
+                key={phone.id}
+                type="button"
+                role="option"
+                aria-selected={active}
+                className={`${styles.ourNumberOption} ${active ? styles.ourNumberOptionActive : ''}`}
+                disabled={Boolean(changingOurNumberId) || (unavailable && !isBusinessPhoneQrReady(phone))}
+                onClick={() => { void handleSelectOurNumber(phone) }}
+              >
+                <span>
+                  <strong>{phone.display_phone_number || phone.phone_number || phone.id}</strong>
+                  <small>
+                    {[
+                      phone.verified_name,
+                      unavailable
+                        ? (isBusinessPhoneQrReady(phone) ? 'API no disponible · respaldo QR listo' : 'No disponible ahora')
+                        : 'Disponible'
+                    ].filter(Boolean).join(' · ')}
+                  </small>
+                </span>
+                {changing ? <Loader2 size={18} className={styles.spinIcon} /> : active ? <Check size={18} /> : null}
+              </button>
+            )
+          })}
+        </div>
+      </PhoneSheet>
 
       <Modal
         isOpen={phoneConfirmOpen}

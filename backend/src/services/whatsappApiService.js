@@ -1618,17 +1618,46 @@ async function getOfficialApiRestrictionReason({ phoneRow, config } = {}) {
   if (!alertScopes.length) return ''
 
   const alerts = await db.all(`
-    SELECT alert_type, severity, title, message, entity_type, entity_id
+    SELECT alert_type, severity, title, message, entity_type, entity_id, updated_at
     FROM whatsapp_api_alerts
     WHERE status = 'active'
       AND (${alertScopes.join(' OR ')})
     ORDER BY updated_at DESC
   `, params).catch(() => [])
-  const blockingAlert = alerts.find(isBlockingOfficialApiAlert)
+  const blockingAlert = alerts.find(alert => (
+    isBlockingOfficialApiAlert(alert) && !isExpiredRestrictionAlert(alert)
+  ))
   if (!blockingAlert) return ''
 
   return cleanString(blockingAlert.message || blockingAlert.title) ||
     'WhatsApp API reporto una restriccion activa.'
+}
+
+// Una alerta de bloqueo que no se ha refrescado en este lapso deja de frenar
+// los envios por API: el siguiente envio funciona como sonda. Si la cuenta
+// sigue bloqueada, el fallo reactiva la alerta; si Meta ya la libero, el envio
+// sale y resolveOfficialApiRestrictionAlerts limpia la alerta. Sin esto, la
+// alerta bloquea el intento y nunca se entera de que la cuenta ya funciona.
+const RESTRICTION_ALERT_TTL_MS = 6 * 60 * 60 * 1000
+
+function isExpiredRestrictionAlert(alert = {}) {
+  const updatedAt = Date.parse(alert.updated_at || '')
+  if (!Number.isFinite(updatedAt)) return false
+  return (Date.now() - updatedAt) > RESTRICTION_ALERT_TTL_MS
+}
+
+// Contraparte de activateOfficialApiRestrictionFromFailedMessage: cuando la API
+// vuelve a aceptar mensajes de este numero/cuenta, las alertas de bloqueo ya no
+// reflejan la realidad y deben resolverse solas.
+async function resolveOfficialApiRestrictionAlerts({ businessPhoneNumberId, wabaId } = {}) {
+  const cleanWabaId = cleanString(wabaId)
+  if (businessPhoneNumberId) {
+    await resolveAlert({ alertType: 'phone_status', entityType: 'phone_number', entityId: businessPhoneNumberId })
+  }
+  if (cleanWabaId && cleanWabaId !== 'business_account') {
+    await resolveAlert({ alertType: 'business_account', entityType: 'business_account', entityId: cleanWabaId })
+  }
+  await resolveAlert({ alertType: 'business_account', entityType: 'business_account', entityId: 'business_account' })
 }
 
 function getOfficialApiErrorText(error) {
@@ -3268,6 +3297,21 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       messageText,
       reason: restrictionReason,
       existingMessage
+    })
+  }
+
+  // La API confirmo un envio saliente: cualquier alerta de bloqueo de este
+  // numero o de la cuenta quedo obsoleta y se resuelve sola.
+  if (
+    cleanTransport === 'api' &&
+    identity.direction === 'outbound' &&
+    ['sent', 'delivered', 'read'].includes(incomingStatus)
+  ) {
+    await resolveOfficialApiRestrictionAlerts({
+      businessPhoneNumberId,
+      wabaId: cleanString(message.wabaId || normalizedMessage.wabaId)
+    }).catch(error => {
+      logger.warn(`[WhatsApp API] No se pudieron resolver alertas de bloqueo: ${error.message}`)
     })
   }
 

@@ -1515,6 +1515,10 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  /* Compensa el ancho del lapicito (30px + gap) para que el nombre quede centrado */
+  padding-left: 38px;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .contactInfoNameRow span {
@@ -1561,6 +1565,68 @@
   font-size: 22px;
   font-weight: 860;
   letter-spacing: 0.4px;
+}
+
+/* Lista de números nuestros para elegir desde dónde contactar */
+.ourNumberList {
+  display: grid;
+}
+
+.ourNumberOption {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 2px;
+  border: 0;
+  border-top: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.08));
+  color: var(--phone-chat-text, #111111);
+  background: transparent;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ourNumberOption:first-child {
+  border-top: 0;
+}
+
+.ourNumberOption:disabled {
+  opacity: 0.45;
+}
+
+.ourNumberOption span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.ourNumberOption strong,
+.ourNumberOption small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ourNumberOption strong {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.ourNumberOption small {
+  color: var(--phone-chat-muted, #737373);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ourNumberOptionActive {
+  color: var(--phone-chat-accent, #25d366);
+}
+
+.ourNumberOptionActive svg {
+  justify-self: end;
 }
 
 .contactInfoHero p {
