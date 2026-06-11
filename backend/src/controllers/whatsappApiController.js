@@ -16,7 +16,9 @@ import {
   sendWhatsAppApiImageMessage,
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage,
-  setWhatsAppApiDefaultPhoneNumber
+  setWhatsAppApiDefaultPhoneNumber,
+  rerouteWhatsAppPhoneNumberContacts,
+  restoreWhatsAppPhoneNumberContacts
 } from '../services/whatsappApiService.js'
 import {
   cancelScheduledChatMessage,
@@ -119,6 +121,38 @@ export async function setWhatsAppApiDefaultPhoneNumberView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo marcar el numero principal'
+    })
+  }
+}
+
+export async function rerouteWhatsAppPhoneNumberContactsView(req, res) {
+  try {
+    const data = await rerouteWhatsAppPhoneNumberContacts({
+      phoneNumberId: req.params?.id,
+      targetPhoneNumberId: req.body?.targetPhoneNumberId,
+      reason: req.body?.reason
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error moviendo contactos de numero WhatsApp: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudieron mover los contactos a otro numero'
+    })
+  }
+}
+
+export async function restoreWhatsAppPhoneNumberContactsView(req, res) {
+  try {
+    const data = await restoreWhatsAppPhoneNumberContacts({
+      phoneNumberId: req.params?.id
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error restaurando contactos de numero WhatsApp: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudieron regresar los contactos a su numero original'
     })
   }
 }

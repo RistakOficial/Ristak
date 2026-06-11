@@ -9,7 +9,7 @@
 
 .importedEditorPanel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+  grid-template-columns: minmax(0, 1fr) minmax(350px, 410px);
   gap: 14px;
   align-items: start;
 }
@@ -539,6 +539,84 @@
   border-top: 1px solid rgba(148, 163, 184, 0.18);
 }
 
+.importedFormFieldsBox {
+  display: grid;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.importedFormFieldsHint {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.importedFormFieldsList {
+  display: grid;
+  gap: 6px;
+}
+
+.importedFormFieldRow {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.22));
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  padding: 8px 10px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.importedFormFieldRow:hover:not(:disabled) {
+  border-color: rgba(var(--color-primary-rgb), 0.34);
+  background: rgba(var(--color-primary-rgb), 0.06);
+  color: var(--color-text-primary);
+}
+
+.importedFormFieldRow:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.importedFormFieldRowMain {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.importedFormFieldRowMain strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 0.84rem;
+  font-weight: var(--font-weight-semibold, 600);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importedFormFieldRowMain small {
+  color: var(--color-text-tertiary);
+  font-size: 0.72rem;
+}
+
+.importedFormFieldBadge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--color-error, #ef4444);
+  padding: 3px 8px;
+  font-size: 0.68rem;
+  font-weight: var(--font-weight-semibold, 600);
+  white-space: nowrap;
+}
+
 .importedAIRegionBox {
   display: grid;
   gap: 12px;
@@ -845,6 +923,36 @@
   border-color: rgba(var(--color-primary-rgb), 0.36);
   color: var(--color-primary);
   background: rgba(var(--color-primary-rgb), 0.08);
+}
+
+.importedFieldOptionItem {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-background-primary) 88%, var(--color-background-tertiary) 12%);
+}
+
+.importedFieldOptionAction {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.importedFieldOptionAction > span {
+  color: var(--color-text-tertiary);
+  font-size: 0.74rem;
+  font-weight: var(--font-weight-semibold, 600);
+  white-space: nowrap;
+}
+
+.importedFieldOptionsHint {
+  margin: 4px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 0.74rem;
+  line-height: 1.45;
 }
 
 .importedFieldOptionRow {
@@ -1312,6 +1420,116 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.aiCreationStructureGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.aiCreationStructureCard {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 168px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.aiCreationStructureCard:hover {
+  border-color: rgba(22, 101, 52, 0.42);
+  box-shadow: 0 18px 44px -34px rgba(15, 23, 42, 0.7);
+  transform: translateY(-1px);
+}
+
+.aiCreationStructureBack {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  border: 0;
+  background: transparent;
+  color: #166534;
+  padding: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.aiCreationStructureBack:hover {
+  text-decoration: underline;
+}
+
+/* Website mockup: navbar with menu items, hero band and two content columns. */
+.aiCreationStructureMockupWebsite .aiCreationFunnelMockupTop {
+  width: 100%;
+  background:
+    linear-gradient(#0f172a 0 0) 0 50% / 26% 100% no-repeat,
+    linear-gradient(#94a3b8 0 0) 56% 50% / 10% 50% no-repeat,
+    linear-gradient(#94a3b8 0 0) 74% 50% / 10% 50% no-repeat,
+    linear-gradient(#22c55e 0 0) 100% 50% / 16% 100% no-repeat,
+    #e2e8f0;
+}
+
+.aiCreationStructureMockupWebsite .aiCreationFunnelMockupMain {
+  grid-template-rows: minmax(0, 1fr) 22px;
+}
+
+.aiCreationStructureMockupWebsite .aiCreationFunnelMockupMain > span:first-child {
+  background:
+    linear-gradient(#334155 0 0) 50% 16px / 64% 11px no-repeat,
+    linear-gradient(#cbd5e1 0 0) 50% 34px / 46% 7px no-repeat,
+    #f1f5f9;
+  border: 1px solid #e2e8f0;
+}
+
+.aiCreationStructureMockupWebsite .aiCreationFunnelMockupMain > span:last-child {
+  background:
+    linear-gradient(#e2e8f0 0 0) 0 50% / 31% 100% no-repeat,
+    linear-gradient(#e2e8f0 0 0) 50% 50% / 31% 100% no-repeat,
+    linear-gradient(#e2e8f0 0 0) 100% 50% / 31% 100% no-repeat;
+}
+
+.aiCreationStructureMockupWebsite .aiCreationFunnelMockupFooter {
+  width: 100%;
+  background: #cbd5e1;
+}
+
+/* Funnel mockup: narrow centered column with one CTA path. */
+.aiCreationStructureMockupFunnel {
+  justify-items: center;
+}
+
+.aiCreationStructureMockupFunnel .aiCreationFunnelMockupTop {
+  width: 52%;
+  background: #0f172a;
+}
+
+.aiCreationStructureMockupFunnel .aiCreationFunnelMockupMain {
+  width: 64%;
+  grid-template-rows: minmax(0, 1fr) 14px;
+  justify-items: center;
+}
+
+.aiCreationStructureMockupFunnel .aiCreationFunnelMockupMain > span:first-child {
+  width: 100%;
+  background: #111827;
+}
+
+.aiCreationStructureMockupFunnel .aiCreationFunnelMockupMain > span:last-child {
+  width: 72%;
+  background: #cbd5e1;
+}
+
+.aiCreationStructureMockupFunnel .aiCreationFunnelMockupFooter {
+  width: 44%;
+  background: #22c55e;
 }
 
 .aiCreationFunnelCard {
@@ -8563,20 +8781,7 @@
   height: var(--editor-control-h, 44px);
   display: inline-flex;
   align-items: center;
-  overflow: hidden;
-  border: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.26));
-  border-radius: 10px;
-  background: var(--color-background-primary);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.publicRouteBox:hover {
-  border-color: rgba(148, 163, 184, 0.42);
-}
-
-.publicRouteBox:focus-within {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.16);
+  gap: 8px;
 }
 
 .publicRouteDomain {
@@ -8585,40 +8790,39 @@
   height: 100%;
   display: inline-flex;
   align-items: center;
-  padding: 0 12px;
-  border-right: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.2));
-  background: color-mix(in srgb, var(--color-background-tertiary) 72%, var(--color-background-primary) 28%);
-  color: var(--color-text-tertiary);
-  font-size: 0.84rem;
-  font-weight: 850;
+  color: var(--color-text-secondary);
+  font-size: 0.94rem;
+  font-weight: var(--font-weight-semibold, 600);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   user-select: none;
 }
 
-.publicRouteSlash {
-  flex: 0 0 auto;
-  color: var(--color-text-secondary);
-  padding-left: 10px;
-  font-size: 0.9rem;
-  font-weight: 900;
-  user-select: none;
+.publicRouteBox input {
+  flex: 1 1 150px;
+  width: auto;
+  min-width: 110px;
+  height: 100%;
+  border: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.26));
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  padding: 0 12px;
+  font: inherit;
+  font-size: 0.94rem;
+  font-weight: var(--font-weight-semibold, 600);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.publicRouteBox input {
-  flex: 1 1 136px;
-  width: auto;
-  min-width: 92px;
-  height: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--color-text-primary);
-  padding: 0 12px 0 3px;
-  font: inherit;
-  font-size: 0.88rem;
-  font-weight: 800;
-  outline: none;
+.publicRouteBox input:hover {
+  border-color: rgba(148, 163, 184, 0.42);
+}
+
+.publicRouteBox input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.16);
 }
 
 .publicRouteBoxStandalone input {
@@ -8931,9 +9135,6 @@
 .editorHeaderMain .publicRouteDomain {
   height: 100%;
   max-width: min(360px, 58%);
-  padding: 0 12px;
-  border-right: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.2));
-  background: color-mix(in srgb, var(--color-background-tertiary) 72%, var(--color-background-primary) 28%);
   user-select: text;
 }
 
@@ -9318,19 +9519,13 @@
 
 .containerFocused:has(.builder) .publicRouteDomain {
   max-width: 240px;
-  padding: 0 9px;
-  font-size: 0.76rem;
-}
-
-.containerFocused:has(.builder) .publicRouteSlash {
-  padding-left: 7px;
-  font-size: 0.82rem;
+  font-size: 0.9rem;
 }
 
 .containerFocused:has(.builder) .publicRouteBox input {
   min-width: 78px;
-  padding: 0 10px 0 2px;
-  font-size: 0.82rem;
+  padding: 0 10px;
+  font-size: 0.9rem;
 }
 
 .containerFocused:has(.builder) .editorHeaderMain .editorTopControls .metaCard {
@@ -9738,20 +9933,14 @@
 
 .editorCompactToolbar .publicRouteDomain {
   max-width: 165px;
-  padding: 0 7px;
-  font-size: 0.71rem;
-}
-
-.editorCompactToolbar .publicRouteSlash {
-  padding-left: 5px;
-  font-size: 0.78rem;
+  font-size: 0.84rem;
 }
 
 .editorCompactToolbar .publicRouteBox input,
 .editorCompactToolbar .publicRouteBoxStandalone input {
   min-width: 58px;
-  padding: 0 7px 0 2px;
-  font-size: 0.77rem;
+  padding: 0 8px;
+  font-size: 0.84rem;
 }
 
 .editorCompactToolbar .metaCard {
@@ -10081,21 +10270,15 @@
 }
 
 .editorToolbarTop .publicRouteDomain {
-  max-width: 200px;
-  padding: 0 9px;
-  font-size: 0.72rem;
-}
-
-.editorToolbarTop .publicRouteSlash {
-  padding-left: 5px;
-  font-size: 0.8rem;
+  max-width: 260px;
+  font-size: 0.9rem;
 }
 
 .editorToolbarTop .publicRouteBox input,
 .editorToolbarTop .publicRouteBoxStandalone input {
   min-width: 72px;
-  padding: 0 9px 0 3px;
-  font-size: 0.78rem;
+  padding: 0 10px;
+  font-size: 0.9rem;
 }
 
 .editorToolbarTop .metaCard {
@@ -10903,7 +11086,7 @@
   width: 100%;
   min-height: 72px;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 50px;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
   border: 1px solid color-mix(in srgb, var(--color-border-subtle, rgba(148, 163, 184, 0.2)) 82%, transparent);
@@ -10911,9 +11094,10 @@
   background: color-mix(in srgb, var(--color-background-primary) 78%, var(--color-background-tertiary) 22%);
   color: var(--color-text-primary);
   padding: 0 16px;
-  cursor: default;
+  cursor: pointer;
   font-size: 1rem;
   font-weight: var(--font-weight-semibold, 600);
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .pagesDropdownItem:hover,
@@ -10993,7 +11177,6 @@
 }
 
 .pagesDropdownDragHandle:hover {
-  background: color-mix(in srgb, var(--color-background-tertiary) 82%, var(--color-primary) 18%);
   color: var(--color-text-secondary);
 }
 
@@ -11027,11 +11210,12 @@
   text-align: left;
   font: inherit;
   font-weight: var(--font-weight-semibold, 600);
+  cursor: pointer;
 }
 
 .pagesDropdownSelectButton:hover,
 .pagesDropdownSelectButton:focus-visible {
-  background: color-mix(in srgb, var(--color-background-tertiary) 82%, var(--color-primary) 18%);
+  background: transparent;
   outline: none;
 }
 
@@ -11060,29 +11244,50 @@
 
 .pagesDropdownActionWrap {
   position: relative;
-  width: 50px;
   height: 50px;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pagesDropdownSubpageButton {
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px dashed color-mix(in srgb, var(--color-border-subtle, rgba(148, 163, 184, 0.32)) 72%, var(--color-primary) 28%);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: var(--font-weight-semibold, 600);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.pagesDropdownSubpageButton:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 46%, var(--color-border-subtle, rgba(148, 163, 184, 0.28)) 54%);
+  color: var(--color-text-primary);
 }
 
 .pagesDropdownMenuButton {
-  width: 50px;
+  width: 40px;
   height: 50px;
   min-height: 50px;
   display: grid;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle, rgba(148, 163, 184, 0.22)) 82%, transparent);
+  border: 0;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-background-primary) 84%, var(--color-background-tertiary) 16%);
+  background: transparent;
   color: var(--color-text-secondary);
+  cursor: pointer;
 }
 
 .pagesDropdownMenuButton:hover,
 .pagesDropdownMenuButton[data-state="open"],
 .pagesDropdownMenuButton[aria-expanded="true"] {
-  border-color: color-mix(in srgb, var(--color-primary) 38%, var(--color-border-subtle, rgba(148, 163, 184, 0.28)) 62%);
-  background: color-mix(in srgb, var(--color-background-tertiary) 78%, var(--color-primary) 22%);
   color: var(--color-text-primary);
 }
 
@@ -11679,7 +11884,6 @@
   color: var(--color-primary);
 }
 
-.pageFrame .containerFocused:has(.builder) .publicRouteBox,
 .pageFrame .containerFocused:has(.builder) .deviceToggle,
 .pageFrame .containerFocused:has(.builder) .pageItem,
 .pageFrame .containerFocused:has(.builder) .addPageButton,
@@ -11747,9 +11951,10 @@
   background: var(--color-background-primary);
 }
 
+/* Keep the page's own background (color/image/overlay) visible across the whole
+   canvas viewport so the editor matches what the live page looks like. */
 .pageFrame .containerFocused:has(.builder) :global(.canvasViewport) {
   border-color: var(--color-border-subtle, rgba(148, 163, 184, 0.18));
-  background: var(--color-background-tertiary);
   box-shadow: none;
 }
 
@@ -11965,34 +12170,27 @@
 }
 
 .pageFrame .containerFocused .editorHeader .publicRouteBox {
-  border-color: transparent;
-  border-radius: 8px;
+  border: 0;
   background: transparent;
-  box-shadow: none;
-}
-
-.pageFrame .containerFocused .editorHeader .publicRouteBox:hover,
-.pageFrame .containerFocused .editorHeader .publicRouteBox:focus-within {
-  border-color: transparent;
-  background: var(--sites-editor-hover-bg);
   box-shadow: none;
 }
 
 .pageFrame .containerFocused .editorHeader .publicRouteDomain {
   border-right: 0;
   background: transparent;
-  color: var(--color-text-tertiary);
-}
-
-.pageFrame .containerFocused .editorHeader .publicRouteSlash {
-  color: var(--color-text-tertiary);
-  padding-left: 4px;
+  color: var(--color-text-secondary);
 }
 
 .pageFrame .containerFocused .editorHeader .publicRouteBox input {
-  border: 0;
-  background: transparent;
+  border: 1px solid var(--sites-editor-border);
+  border-radius: 8px;
+  background: var(--sites-editor-control-bg);
   box-shadow: none;
+}
+
+.pageFrame .containerFocused .editorHeader .publicRouteBox input:focus {
+  border-color: rgba(var(--color-primary-rgb), 0.36);
+  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.1);
 }
 
 .pageFrame .containerFocused .pagesDropdownTrigger {
@@ -12038,7 +12236,7 @@
 
 .pageFrame .containerFocused .pagesDropdownItem {
   min-height: 58px;
-  grid-template-columns: 34px minmax(0, 1fr) 40px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
   gap: 10px;
   border: 1px solid var(--sites-editor-border);
   border-radius: 8px;
@@ -12050,6 +12248,12 @@
 .pageFrame .containerFocused .pagesDropdownItemActive {
   border-color: rgba(var(--color-primary-rgb), 0.28);
   background: rgba(var(--color-primary-rgb), 0.08);
+}
+
+/* Fixed result pages (thank you / disqualified) render a single full-width cell;
+   without this the focused-editor grid pushes their title into the 34px column. */
+.pageFrame .containerFocused .pagesDropdownItemFixedResult {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .pageFrame .containerFocused .pagesDropdownDragHandle {
@@ -12067,16 +12271,15 @@
   width: 36px;
   height: 36px;
   min-height: 36px;
-  border-color: var(--sites-editor-border);
+  border: 0;
   border-radius: 7px;
-  background: var(--sites-editor-control-bg);
+  background: transparent;
 }
 
 .pageFrame .containerFocused .pagesDropdownMenuButton:hover,
 .pageFrame .containerFocused .pagesDropdownMenuButton[data-state="open"],
 .pageFrame .containerFocused .pagesDropdownMenuButton[aria-expanded="true"] {
-  border-color: rgba(var(--color-primary-rgb), 0.28);
-  background: rgba(var(--color-primary-rgb), 0.08);
+  color: var(--color-text-primary);
 }
 
 .pageFrame .containerFocused .pagesDropdownAddButton {

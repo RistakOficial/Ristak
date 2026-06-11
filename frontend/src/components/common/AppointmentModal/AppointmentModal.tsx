@@ -6,6 +6,9 @@ import { TabList } from '../TabList';
 import { DateTimePicker } from '../DateTimePicker';
 import { CustomSelect } from '../CustomSelect';
 import { PhoneSelect } from '@/components/phone/PhoneSelect';
+import { PhoneDateField } from '@/components/phone/PhoneDateField';
+import { PhoneTimeField, formatTimeLabel } from '@/components/phone/ui/PhoneTimeField';
+import { PhoneDurationField, formatDurationLabel } from '@/components/phone/ui/PhoneDurationField';
 import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot } from '@/services/calendarsService';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
@@ -257,6 +260,13 @@ const getTimezoneOffset = (date: Date, timeZone: string): number => {
 // ¿La cadena ya trae zona explícita (Z u offset ±HH:MM)? → es un instante absoluto.
 const isAbsoluteIso = (value: string): boolean => /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim());
 
+const padTwo = (value: number) => String(value).padStart(2, '0');
+
+const localTodayInput = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${padTwo(now.getMonth() + 1)}-${padTwo(now.getDate())}`;
+};
+
 /**
  * Convierte el valor del formulario a un ISO listo para guardar.
  * - Si ya es un instante absoluto (Z u offset, ej: slots de GHL o salida del
@@ -329,6 +339,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   // Modo de selección de horario: 'default' = solo slots disponibles, 'custom' = libre
   const [scheduleMode, setScheduleMode] = useState<'default' | 'custom'>(defaultScheduleMode);
+  // Duración elegida en el flujo móvil antes de tener fecha+hora completas
+  const [pendingDuration, setPendingDuration] = useState<number | null>(null);
   const [freeSlots, setFreeSlots] = useState<FreeSlot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>('');
@@ -1215,6 +1227,67 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       />
     )
   );
+  // --- Agendado móvil: fecha + hora de inicio + duración (el fin se calcula solo) ---
+  const fallbackDuration = calendar?.slotDuration || 60;
+  const startLocalValue = formData.startTime
+    ? (isAbsoluteIso(formData.startTime) ? toLocalInputValue(formData.startTime, formData.timeZone) : formData.startTime)
+    : '';
+  const endLocalValue = formData.endTime
+    ? (isAbsoluteIso(formData.endTime) ? toLocalInputValue(formData.endTime, formData.timeZone) : formData.endTime)
+    : '';
+  const customDatePart = startLocalValue.slice(0, 10);
+  const customTimePart = startLocalValue.slice(11, 16);
+  const customEndTimePart = endLocalValue.slice(11, 16);
+  const derivedDuration = (() => {
+    if (!startLocalValue || !endLocalValue) return fallbackDuration;
+    const startMs = new Date(startLocalValue).getTime();
+    const endMs = new Date(endLocalValue).getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return fallbackDuration;
+    return Math.round((endMs - startMs) / 60000);
+  })();
+  const effectiveDuration = startLocalValue && endLocalValue ? derivedDuration : (pendingDuration ?? fallbackDuration);
+
+  const applyCustomSchedule = (datePart: string, timePart: string, durationMinutes: number) => {
+    if (!datePart || !timePart) return;
+    const start = new Date(`${datePart}T${timePart}:00`);
+    if (Number.isNaN(start.getTime())) return;
+    const end = new Date(start.getTime() + durationMinutes * 60000);
+    const endLocal = `${end.getFullYear()}-${padTwo(end.getMonth() + 1)}-${padTwo(end.getDate())}T${padTwo(end.getHours())}:${padTwo(end.getMinutes())}`;
+    setFormData((prev) => ({ ...prev, startTime: `${datePart}T${timePart}`, endTime: endLocal }));
+  };
+
+  const renderMobileCustomSchedule = () => (
+    <div className={styles.mobileCustomSchedule}>
+      <PhoneDateField
+        value={customDatePart}
+        onChange={(date) => applyCustomSchedule(date, customTimePart || '09:00', effectiveDuration)}
+        min={localTodayInput()}
+        title="Fecha de la cita"
+        placeholder="Selecciona fecha"
+      />
+      <div className={styles.mobileCustomScheduleRow}>
+        <PhoneTimeField
+          value={customTimePart}
+          onChange={(time) => applyCustomSchedule(customDatePart || localTodayInput(), time, effectiveDuration)}
+          title="Hora de inicio"
+          placeholder="Hora"
+        />
+        <PhoneDurationField
+          value={effectiveDuration}
+          onChange={(minutes) => {
+            setPendingDuration(minutes);
+            applyCustomSchedule(customDatePart, customTimePart, minutes);
+          }}
+        />
+      </div>
+      {customTimePart && customEndTimePart && (
+        <p className={styles.mobileCustomScheduleSummary}>
+          De {formatTimeLabel(customTimePart)} a {formatTimeLabel(customEndTimePart)} · {formatDurationLabel(effectiveDuration)}
+        </p>
+      )}
+    </div>
+  );
+
   const handleTimeZoneChange = (newZone: string) => {
     setFormData((prev) => {
       const startIso = prev.startTime
@@ -1245,6 +1318,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         contentClassName={isMobileSheet ? styles.mobileSheetContent : undefined}
         showCloseButton={!isMobileSheet}
         draggableSheet={isMobileSheet}
+        flushContent
       >
         <div
           className={`${styles.container} ${isMobileSheet ? styles.mobileSheetContainer : ''}`}
@@ -1714,8 +1788,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                             <label className={styles.label}>
                               Fecha <span className={styles.required}>*</span>
                             </label>
-                            <CustomSelect
-                              options={[
+                            {renderSelect({
+                              title: 'Fecha',
+                              value: selectedDate,
+                              options: [
                                 { value: '', label: 'Seleccionar fecha...' },
                                 ...freeSlots.map((slot) => ({
                                   value: slot.date,
@@ -1727,14 +1803,13 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                                     timeZone: 'UTC'
                                   })
                                 }))
-                              ]}
-                              value={selectedDate}
-                              onValueChange={(value) => {
+                              ],
+                              onChange: (value) => {
                                 setSelectedDate(value);
                                 setSelectedSlot(''); // Reset slot cuando cambia la fecha
-                              }}
-                              placeholder="Seleccionar fecha..."
-                            />
+                              },
+                              placeholder: 'Seleccionar fecha...'
+                            })}
                           </div>
 
                           {/* Selector de horario */}
@@ -1742,22 +1817,21 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                             <label className={styles.label}>
                               Horario <span className={styles.required}>*</span>
                             </label>
-                            <CustomSelect
-                              options={
-                                selectedDate
-                                  ? [
-                                      { value: '', label: 'Seleccionar horario...' },
-                                      ...(freeSlots
-                                        .find((s) => s.date === selectedDate)
-                                        ?.slots.map((timeSlot) => ({
-                                          value: timeSlot,
-                                          label: formatSlotWithDuration(timeSlot, calendar?.slotDuration || 60, accountTimezone)
-                                        })) || [])
-                                    ]
-                                  : [{ value: '', label: 'Primero selecciona una fecha' }]
-                              }
-                              value={selectedSlot}
-                              onValueChange={(value) => {
+                            {renderSelect({
+                              title: 'Horario',
+                              value: selectedSlot,
+                              options: selectedDate
+                                ? [
+                                    { value: '', label: 'Seleccionar horario...' },
+                                    ...(freeSlots
+                                      .find((s) => s.date === selectedDate)
+                                      ?.slots.map((timeSlot) => ({
+                                        value: timeSlot,
+                                        label: formatSlotWithDuration(timeSlot, calendar?.slotDuration || 60, accountTimezone)
+                                      })) || [])
+                                  ]
+                                : [{ value: '', label: 'Primero selecciona una fecha' }],
+                              onChange: (value) => {
                                 setSelectedSlot(value);
 
                                 // Construir startTime y endTime en ISO format
@@ -1772,50 +1846,52 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                                     endTime: endDate.toISOString()
                                   });
                                 }
-                              }}
-                              disabled={!selectedDate}
-                              placeholder={!selectedDate ? 'Primero selecciona una fecha' : 'Seleccionar horario...'}
-                            />
+                              },
+                              disabled: !selectedDate,
+                              placeholder: !selectedDate ? 'Primero selecciona una fecha' : 'Seleccionar horario...'
+                            })}
                           </div>
                         </div>
                       )}
                     </div>
                   ) : (
-                    /* Modo Personalizado: DateTimePicker libre */
+                    /* Modo Personalizado: en celular fecha + hora + duración; en web DateTimePicker libre */
                     <div className={styles.slotsContent}>
-                      <div className={styles.fieldRow}>
-                        <div className={styles.field}>
-                          <DateTimePicker
-                            label="Inicio"
-                            value={formData.startTime}
-                            onChange={(value) => {
-                              // Cuando cambia el startTime, actualizar automáticamente el endTime
-                              // según la duración configurada del calendario (slotDuration)
-                              const duration = calendar?.slotDuration || 60; // Default 60 minutos
-                              const startDate = new Date(value);
-                              const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
+                      {isMobileSheet ? renderMobileCustomSchedule() : (
+                        <div className={styles.fieldRow}>
+                          <div className={styles.field}>
+                            <DateTimePicker
+                              label="Inicio"
+                              value={formData.startTime}
+                              onChange={(value) => {
+                                // Cuando cambia el startTime, actualizar automáticamente el endTime
+                                // según la duración configurada del calendario (slotDuration)
+                                const duration = calendar?.slotDuration || 60; // Default 60 minutos
+                                const startDate = new Date(value);
+                                const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
 
-                              setFormData({
-                                ...formData,
-                                startTime: value,
-                                endTime: endDate.toISOString()
-                              });
-                            }}
-                          />
-                        </div>
+                                setFormData({
+                                  ...formData,
+                                  startTime: value,
+                                  endTime: endDate.toISOString()
+                                });
+                              }}
+                            />
+                          </div>
 
-                        <div className={styles.field}>
-                          <DateTimePicker
-                            label="Fin"
-                            value={formData.endTime}
-                            onChange={(value) => {
-                              // Cuando el usuario cambia manualmente el endTime, NO tocamos startTime
-                              setFormData({ ...formData, endTime: value });
-                            }}
-                            minDate={formData.startTime}
-                          />
+                          <div className={styles.field}>
+                            <DateTimePicker
+                              label="Fin"
+                              value={formData.endTime}
+                              onChange={(value) => {
+                                // Cuando el usuario cambia manualmente el endTime, NO tocamos startTime
+                                setFormData({ ...formData, endTime: value });
+                              }}
+                              minDate={formData.startTime}
+                            />
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1824,36 +1900,43 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
             {/* Modo View: mostrar campos de fecha/hora normales (fuera de la sección) */}
             {!isCreateMode && (
-              <div className={styles.fieldRow}>
+              isMobileSheet ? (
                 <div className={styles.field}>
-                  <DateTimePicker
-                    label="Inicio"
-                    value={formData.startTime}
-                    onChange={(value) => {
-                      const duration = calendar?.slotDuration || 60;
-                      const startDate = new Date(value);
-                      const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
-
-                      setFormData({
-                        ...formData,
-                        startTime: value,
-                        endTime: endDate.toISOString()
-                      });
-                    }}
-                  />
+                  <label className={styles.label}>Fecha y hora</label>
+                  {renderMobileCustomSchedule()}
                 </div>
+              ) : (
+                <div className={styles.fieldRow}>
+                  <div className={styles.field}>
+                    <DateTimePicker
+                      label="Inicio"
+                      value={formData.startTime}
+                      onChange={(value) => {
+                        const duration = calendar?.slotDuration || 60;
+                        const startDate = new Date(value);
+                        const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
 
-                <div className={styles.field}>
-                  <DateTimePicker
-                    label="Fin"
-                    value={formData.endTime}
-                    onChange={(value) => {
-                      setFormData({ ...formData, endTime: value });
-                    }}
-                    minDate={formData.startTime}
-                  />
+                        setFormData({
+                          ...formData,
+                          startTime: value,
+                          endTime: endDate.toISOString()
+                        });
+                      }}
+                    />
+                  </div>
+
+                  <div className={styles.field}>
+                    <DateTimePicker
+                      label="Fin"
+                      value={formData.endTime}
+                      onChange={(value) => {
+                        setFormData({ ...formData, endTime: value });
+                      }}
+                      minDate={formData.startTime}
+                    />
+                  </div>
                 </div>
-              </div>
+              )
             )}
 
             {/* Validación de slots ELIMINADA - Como admin, puedes agendar en cualquier horario */}

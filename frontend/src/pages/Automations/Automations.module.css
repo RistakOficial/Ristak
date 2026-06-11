@@ -1,0 +1,384 @@
+/* Página de Automatizaciones: carpetas + listado */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.searchBox {
+  position: relative;
+  flex: 1;
+  min-width: 220px;
+  max-width: 360px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 10px;
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  padding: 8px 12px 8px 32px;
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: rgba(var(--color-primary-rgb), 0.45);
+}
+
+.filterChips {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filterChip {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.filterChip:hover {
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.filterChipActive {
+  background: rgba(var(--color-primary-rgb), 0.14);
+  border-color: rgba(var(--color-primary-rgb), 0.35);
+  color: var(--color-text-primary);
+}
+
+/* ------------------------------- Carpetas ------------------------------- */
+
+.sectionTitle {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+  margin: 4px 0 10px;
+}
+
+.folderGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.folderCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  background: var(--color-background-secondary);
+  padding: 12px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.folderCard:hover {
+  border-color: rgba(var(--color-primary-rgb), 0.35);
+  box-shadow: 0 8px 20px -14px rgba(15, 23, 42, 0.35);
+}
+
+.folderCardDragging {
+  opacity: 0.6;
+}
+
+.folderIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.14);
+  color: rgb(217, 156, 16);
+}
+
+.folderInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.folderName {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folderCount {
+  display: block;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  margin-top: 1px;
+}
+
+.dragHandle {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-tertiary);
+  cursor: grab;
+  padding: 2px;
+  border-radius: 6px;
+}
+
+.dragHandle:hover {
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.breadcrumbButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.breadcrumbButton:hover {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--color-text-primary);
+}
+
+.breadcrumbCurrent {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+/* -------------------------------- Listado ------------------------------- */
+
+.list {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 14px;
+  background: var(--color-background-secondary);
+  overflow: hidden;
+}
+
+.listHeader,
+.row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.6fr) 110px 130px 130px 44px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 16px;
+}
+
+.listHeader {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.row {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.row:hover {
+  background: rgba(148, 163, 184, 0.07);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.rowName {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rowIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: rgba(59, 130, 246, 0.12);
+  color: rgb(59, 130, 246);
+}
+
+.rowText {
+  min-width: 0;
+}
+
+.rowTitle {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowDescription {
+  display: block;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.rowDate {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.rowMenuButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.rowMenuButton:hover {
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--color-text-primary);
+}
+
+/* ------------------------------ Estado vacío ----------------------------- */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  padding: 56px 24px;
+  border: 1.5px dashed rgba(148, 163, 184, 0.3);
+  border-radius: 16px;
+  color: var(--color-text-tertiary);
+}
+
+.emptyIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: rgba(var(--color-primary-rgb), 0.12);
+  color: rgb(var(--color-primary-rgb));
+}
+
+.emptyTitle {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.emptyText {
+  font-size: 13px;
+  max-width: 380px;
+  line-height: 1.5;
+}
+
+/* ------------------------------- Formularios ----------------------------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.input {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  padding: 9px 12px;
+}
+
+.input:focus {
+  outline: none;
+  border-color: rgba(var(--color-primary-rgb), 0.45);
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+@media (max-width: 760px) {
+  .listHeader {
+    display: none;
+  }
+
+  .row {
+    grid-template-columns: 1fr 44px;
+  }
+
+  .rowDate,
+  .row > :nth-child(2) {
+    display: none;
+  }
+}

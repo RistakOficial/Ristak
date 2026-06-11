@@ -114,6 +114,31 @@
   cursor: grabbing;
 }
 
+/* Cierre por código: colapso suave en vez de desaparecer de golpe */
+.bottomSheetBackdropExiting {
+  pointer-events: none;
+}
+
+.bottomSheetBackdropExiting::before {
+  animation: bottomSheetBackdropOut 220ms ease-out both;
+  transition: none;
+}
+
+.bottomSheetModalExiting {
+  animation: bottomSheetSlideDown 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  pointer-events: none;
+}
+
+@keyframes bottomSheetBackdropOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes bottomSheetSlideDown {
+  from { transform: translateY(0); }
+  to { transform: translateY(104%); }
+}
+
 body.dark .modal {
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25),
               0 0 0 1px rgba(0, 0, 0, 0.03);
@@ -224,11 +249,18 @@ body.dark .modal {
   flex-direction: column;
 }
 
+/* Los modales custom heredan el padding estándar de .content (responsive).
+   Los que dibujan su propio layout de borde a borde (listas full-bleed,
+   secciones con fondos, footers sticky propios) pasan flushContent al Modal
+   y reciben .flush para quitar el padding global. */
 .modal.custom .content {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   max-height: none;
+}
+
+.modal .content.flush {
   padding: 0;
 }
 
@@ -237,6 +269,39 @@ body.dark .modal {
   color: var(--color-text-secondary);
   line-height: 1.5;
   margin: 0;
+}
+
+.typeToConfirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.typeToConfirmLabel {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.typeToConfirmLabel strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  user-select: none;
+}
+
+.typeToConfirmInput {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  outline: none;
+}
+
+.typeToConfirmInput:focus {
+  border-color: var(--color-danger, #ef4444);
 }
 
 .footer {

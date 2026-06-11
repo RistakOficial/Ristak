@@ -825,6 +825,58 @@ export async function updateContactCustomFieldDefinition(definitionId, input = {
   return mapDefinition(row)
 }
 
+async function removeCustomFieldValuesFromContacts(definition) {
+  const identifiers = new Set(
+    [definition.id, definition.definitionId, definition.key, definition.fieldKey]
+      .map(cleanString)
+      .filter(Boolean)
+  )
+  if (!identifiers.size) return 0
+
+  const usePostgres = !!process.env.DATABASE_URL
+  const column = usePostgres ? 'custom_fields::text' : 'custom_fields'
+  const likeParams = Array.from(identifiers).map((ident) => `%${ident}%`)
+  const rows = await db.all(`
+    SELECT id, custom_fields
+    FROM contacts
+    WHERE custom_fields IS NOT NULL
+      AND (${likeParams.map(() => `${column} LIKE ?`).join(' OR ')})
+  `, likeParams)
+
+  const matchesDefinition = (field, fallbackKey = '') => {
+    const keys = [
+      field?.id, field?.fieldId, field?.customFieldId,
+      field?.definitionId, field?.definition_id,
+      field?.key, field?.fieldKey, field?.field_key,
+      fallbackKey
+    ].map(cleanString)
+    return keys.some((key) => key && identifiers.has(key))
+  }
+
+  let updatedContacts = 0
+  for (const row of rows) {
+    const parsed = parseJsonSafe(row.custom_fields, [])
+    let next = null
+
+    if (Array.isArray(parsed)) {
+      const filtered = parsed.filter((field) => !matchesDefinition(field))
+      if (filtered.length !== parsed.length) next = filtered
+    } else if (parsed && typeof parsed === 'object') {
+      const entries = Object.entries(parsed).filter(([key, value]) => !matchesDefinition(value, key))
+      if (entries.length !== Object.keys(parsed).length) next = Object.fromEntries(entries)
+    }
+
+    if (next === null) continue
+    await db.run(
+      `UPDATE contacts SET custom_fields = ${usePostgres ? '?::jsonb' : '?'}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [JSON.stringify(next), row.id]
+    )
+    updatedContacts += 1
+  }
+
+  return updatedContacts
+}
+
 export async function deleteContactCustomFieldDefinition(definitionId) {
   const id = cleanString(definitionId)
   if (!id) return null
@@ -839,6 +891,7 @@ export async function deleteContactCustomFieldDefinition(definitionId) {
   if (!definition) return null
   assertEditableSystemField(definition)
 
+  await removeCustomFieldValuesFromContacts(definition)
   await db.run('DELETE FROM contact_custom_field_definition_sources WHERE definition_id = ?', [id])
   await db.run('DELETE FROM contact_custom_field_definitions WHERE id = ?', [id])
   return definition

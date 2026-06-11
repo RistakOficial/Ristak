@@ -479,7 +479,9 @@ export const AIAgentSettings: React.FC = () => {
       'Se eliminará el token guardado. El chat seguirá visible, pero quedará en modo configuración.',
       disconnect,
       'Desconectar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
     )
   }
 

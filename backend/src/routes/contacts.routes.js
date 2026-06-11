@@ -13,7 +13,8 @@ import {
   updateContact,
   updateContactCustomFieldDefinitionHandler,
   deleteContact,
-  getContactJourney
+  getContactJourney,
+  getContactWhatsAppRoutingEvents
 } from '../controllers/contactsController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 
@@ -34,6 +35,7 @@ router.post('/', createContact)
 router.post('/sync-stats', syncContactsStats)
 router.get('/:id', getContactById)
 router.get('/:id/journey', getContactJourney)
+router.get('/:id/whatsapp-routing-events', getContactWhatsAppRoutingEvents)
 router.put('/:id', updateContact)
 router.delete('/:id', deleteContact)
 

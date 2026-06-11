@@ -450,6 +450,13 @@
   align-items: stretch;
 }
 
+/* En vista de mes la fila del grid toma su altura del calendario; la columna
+   lateral no aporta altura propia para que la lista de citas haga scroll en
+   lugar de empujar la tarjeta de mensajes automáticos */
+.mainGridMonth .sideColumn {
+  contain: size;
+}
+
 .calendarColumn,
 .sideColumn {
   display: flex;
@@ -1876,6 +1883,109 @@
 .automationList {
   display: grid;
   gap: 0.65rem;
+  /* Con muchas cajitas la lista hace scroll en vez de crecer sin límite */
+  max-height: 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.automationHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.automationHeader h3 {
+  margin: 0;
+}
+
+.automationAddButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.automationAddButton:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-tertiary);
+}
+
+.automationAddButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.automationDetailsButton {
+  margin-top: 0.2rem;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-primary, #3b82f6);
+  cursor: pointer;
+}
+
+.automationDetailsButton:hover {
+  text-decoration: underline;
+}
+
+.automationSwitch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  width: 40px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+
+.automationSwitch input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.automationSwitchTrack {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: #cbd5e1;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.automationSwitchTrack::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--color-background-primary);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+  transition: transform 0.2s ease;
+}
+
+.automationSwitch input:checked + .automationSwitchTrack {
+  background: var(--color-status-success);
+}
+
+.automationSwitch input:checked + .automationSwitchTrack::before {
+  transform: translateX(16px);
 }
 
 .automationItem {

@@ -1,0 +1,83 @@
+.field {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.label {
+  color: var(--phone-chat-muted, #737373);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 14px;
+  border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.1));
+  border-radius: 999px;
+  background: var(--phone-chat-surface, #ffffff);
+}
+
+.controlArea {
+  align-items: stretch;
+  padding: 10px 14px;
+  border-radius: 18px;
+}
+
+.control:focus-within {
+  border-color: var(--phone-chat-accent, #25d366);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #25d366) 16%, transparent);
+}
+
+.leading {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--phone-chat-muted, #737373);
+}
+
+.control input,
+.control textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  color: var(--phone-chat-text, #111111);
+  background: transparent;
+  font: inherit;
+  /* 16px evita que iOS haga zoom al enfocar el campo */
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.control textarea {
+  resize: none;
+  line-height: 1.35;
+}
+
+.control input::placeholder,
+.control textarea::placeholder {
+  color: var(--phone-chat-muted, #737373);
+  font-weight: 650;
+}
+
+.invalid {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
+.disabled {
+  opacity: 0.55;
+}
+
+.hint {
+  color: var(--phone-chat-muted, #737373);
+  font-size: 12px;
+  font-weight: 650;
+}

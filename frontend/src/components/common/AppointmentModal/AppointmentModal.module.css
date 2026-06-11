@@ -1263,3 +1263,22 @@
   font-size: 0.875rem;
   color: var(--color-text-tertiary);
 }
+
+/* Agendado móvil: fecha + hora de inicio + duración */
+.mobileCustomSchedule {
+  display: grid;
+  gap: 12px;
+}
+
+.mobileCustomScheduleRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.mobileCustomScheduleSummary {
+  margin: 0;
+  color: var(--phone-chat-muted, var(--color-text-tertiary, #737373));
+  font-size: 13px;
+  font-weight: 750;
+}

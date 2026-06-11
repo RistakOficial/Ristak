@@ -1631,6 +1631,7 @@ async function initTables() {
         to_phone TEXT,
         business_phone TEXT,
         transport TEXT DEFAULT 'api',
+        routing_reason TEXT,
         direction TEXT,
         message_type TEXT,
         message_text TEXT,
@@ -1665,6 +1666,7 @@ async function initTables() {
     for (const [columnName, columnType] of [
       ['business_phone_number_id', 'TEXT'],
       ['transport', "TEXT DEFAULT 'api'"],
+      ['routing_reason', 'TEXT'],
       ['media_url', 'TEXT'],
       ['media_mime_type', 'TEXT'],
       ['media_filename', 'TEXT'],
@@ -1881,6 +1883,19 @@ async function initTables() {
       )
     `)
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_routing_events (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        previous_phone_number_id TEXT,
+        new_phone_number_id TEXT,
+        reason TEXT,
+        source TEXT DEFAULT 'manual',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      )
+    `)
+
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_phone_numbers_phone ON whatsapp_api_phone_numbers(phone_number)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_phone_numbers_default ON whatsapp_api_phone_numbers(is_default_sender)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_contacts_phone ON whatsapp_api_contacts(phone)')
@@ -1908,6 +1923,7 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_sessions_phone ON whatsapp_qr_sessions(phone_number_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_sessions_status ON whatsapp_qr_sessions(status, updated_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_auth_state_phone ON whatsapp_qr_auth_state(phone_number_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_routing_events_contact ON whatsapp_routing_events(contact_id, created_at)')
 
     // Tabla de versiones de Meta API (para auto-actualización)
     await db.run(`
@@ -2813,6 +2829,86 @@ async function initTables() {
     `)
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_report_manual_business_expenses_period ON report_manual_business_expenses(period_type, period_start)')
+
+    // Carpetas de automatizaciones (organización del listado)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS automation_folders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        parent_id TEXT,
+        position INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    // Automatizaciones: el flujo (nodos, conexiones y viewport) se guarda como
+    // JSON flexible para poder agregar nuevos tipos de nodos sin migraciones.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS automations (
+        id TEXT PRIMARY KEY,
+        folder_id TEXT,
+        name TEXT NOT NULL,
+        description TEXT,
+        status TEXT DEFAULT 'draft',
+        flow ${usePostgres ? "JSONB DEFAULT '{}'::jsonb" : "TEXT DEFAULT '{}'"},
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        published_at DATETIME
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automations_folder ON automations(folder_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automations_status ON automations(status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automation_folders_position ON automation_folders(position)')
+
+    // Mensajes automáticos de citas (recordatorios y confirmaciones).
+    // Cada fila es una "cajita" configurable desde la página de Calendarios.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS appointment_reminders (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        enabled INTEGER DEFAULT 1,
+        message_type TEXT DEFAULT 'reminder',
+        ai_enabled INTEGER DEFAULT 1,
+        channel TEXT DEFAULT 'whatsapp',
+        sender_mode TEXT DEFAULT 'contact',
+        sender_phone_number_id TEXT,
+        offset_value INTEGER DEFAULT 1,
+        offset_unit TEXT DEFAULT 'days',
+        message_text TEXT,
+        smart_enabled INTEGER DEFAULT 1,
+        smart_start TEXT DEFAULT '09:00',
+        smart_end TEXT DEFAULT '21:00',
+        smart_overflow TEXT DEFAULT 'before',
+        position INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    // Registro de envíos por (recordatorio, cita) para no duplicar mensajes y
+    // para que la IA pueda confirmar la cita cuando el contacto responde.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS appointment_reminder_sends (
+        id TEXT PRIMARY KEY,
+        reminder_id TEXT NOT NULL,
+        appointment_id TEXT NOT NULL,
+        contact_id TEXT,
+        status TEXT DEFAULT 'sent',
+        message_type TEXT,
+        ai_enabled INTEGER DEFAULT 0,
+        sent_message_id TEXT,
+        error_message TEXT,
+        send_at DATETIME,
+        sent_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(reminder_id, appointment_id)
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_appointment_reminder_sends_appointment ON appointment_reminder_sends(appointment_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_appointment_reminder_sends_contact ON appointment_reminder_sends(contact_id, status)')
 
     try {
       await cleanupWhatsAppApiSystemCustomFields()

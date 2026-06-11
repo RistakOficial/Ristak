@@ -11,6 +11,8 @@ import { startMetaSyncCron } from './jobs/metaSync.cron.js'
 import { startHighLevelSyncCron } from './jobs/highlevelSync.cron.js'
 import { startMetaVersionCron, updateMetaVersion } from './jobs/metaVersionCron.js'
 import { startScheduledChatMessagesCron } from './jobs/scheduledChatMessages.cron.js'
+import { startAppointmentRemindersCron } from './jobs/appointmentReminders.cron.js'
+import { startWhatsAppQrWatchdogCron } from './jobs/whatsappQrWatchdog.cron.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
@@ -45,6 +47,8 @@ import mcpRoutes from './routes/mcp.routes.js'
 import whatsappApiRoutes from './routes/whatsappApi.routes.js'
 import productsRoutes from './routes/products.routes.js'
 import sitesRoutes from './routes/sites.routes.js'
+import automationsRoutes from './routes/automations.routes.js'
+import appointmentRemindersRoutes from './routes/appointmentReminders.routes.js'
 import pushRoutes from './routes/push.routes.js'
 import licenseRoutes from './routes/license.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
@@ -79,7 +83,8 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    version: process.env.APP_VERSION || '0.0.0'
   })
 })
 
@@ -97,6 +102,8 @@ app.use('/', oauthRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/api-access', apiAccessRoutes)
 app.use('/api/sites', sitesRoutes)
+app.use('/api/automations', automationsRoutes)
+app.use('/api/appointment-reminders', appointmentRemindersRoutes)
 app.use('/api/reports', requireFeature('advanced_reports'), reportsRoutes)
 app.use('/api/highlevel', highlevelRoutes)
 app.use('/api/products', productsRoutes)
@@ -181,6 +188,8 @@ app.listen(PORT, '0.0.0.0', async () => {
   startHighLevelSyncCron()         // Sincroniza contactos, citas y pagos de HighLevel cada hora (silencioso)
   startMetaVersionCron()           // Revisa versión Meta API una vez al mes
   startScheduledChatMessagesCron() // Envía mensajes de chat cuando llegue su hora programada
+  startAppointmentRemindersCron()  // Envía recordatorios y confirmaciones de citas
+  startWhatsAppQrWatchdogCron()    // Reabre sesiones de WhatsApp Web al arrancar y las mantiene vivas
 })
 
 // Manejo de errores de proceso

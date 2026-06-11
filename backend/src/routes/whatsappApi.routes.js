@@ -18,7 +18,9 @@ import {
   sendWhatsAppApiImageMessageView,
   sendWhatsAppApiTemplateMessageView,
   sendWhatsAppApiTextMessageView,
-  setWhatsAppApiDefaultPhoneNumberView
+  setWhatsAppApiDefaultPhoneNumberView,
+  rerouteWhatsAppPhoneNumberContactsView,
+  restoreWhatsAppPhoneNumberContactsView
 } from '../controllers/whatsappApiController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 
@@ -30,6 +32,8 @@ router.get('/status', getWhatsAppApiConnectionStatus)
 router.post('/connect', connectWhatsAppApiView)
 router.post('/phone-numbers/preview', previewWhatsAppApiPhoneNumbersView)
 router.post('/phone-numbers/default', setWhatsAppApiDefaultPhoneNumberView)
+router.post('/phone-numbers/:id/reroute', rerouteWhatsAppPhoneNumberContactsView)
+router.post('/phone-numbers/:id/restore', restoreWhatsAppPhoneNumberContactsView)
 router.post('/refresh', refreshWhatsAppApiView)
 router.post('/disconnect', disconnectWhatsAppApiView)
 router.post('/reset', resetWhatsAppApiCredentialsView)

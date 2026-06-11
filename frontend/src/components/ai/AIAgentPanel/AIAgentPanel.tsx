@@ -2687,7 +2687,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                 </button>
               </div>
             ) : (
-              <div className={textComposerClassName}>
+              <div className={textComposerClassName} data-ristak-unstyled>
                 {attachments.length > 0 && renderAttachmentList(attachments, {
                   removable: true,
                   onRemove: removeAttachment

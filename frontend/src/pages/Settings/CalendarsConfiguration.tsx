@@ -664,7 +664,9 @@ export const CalendarsConfiguration: React.FC = () => {
         void disconnectGoogleIntegration()
       },
       'Desconectar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
     )
   }
 
@@ -919,7 +921,9 @@ export const CalendarsConfiguration: React.FC = () => {
         void deleteCalendar()
       },
       isExternalCalendar ? 'Entendido' : 'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      isExternalCalendar ? undefined : { typeToConfirm: 'ELIMINAR' }
     )
   }
 
@@ -933,7 +937,7 @@ export const CalendarsConfiguration: React.FC = () => {
 
     return (
       <div className={`${pageStyles.calendarColorPicker} ${compact ? pageStyles.calendarColorPickerCompact : ''}`}>
-        <div className={pageStyles.calendarColorRow}>
+        <div className={pageStyles.calendarColorRow} data-ristak-unstyled>
           <span
             className={pageStyles.calendarColorPreview}
             style={{ backgroundColor: currentColor }}
@@ -985,6 +989,7 @@ export const CalendarsConfiguration: React.FC = () => {
       }}
       title="Crear calendario"
       size="md"
+      flushContent
     >
       <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
         <div className={styles.formField}>
@@ -1066,6 +1071,7 @@ export const CalendarsConfiguration: React.FC = () => {
       title="Calendario importado desde Google"
       size="md"
       showCloseButton={!savingGoogleDefaultPrompt}
+      flushContent
     >
       <div className={pageStyles.defaultPromptModal}>
         <div className={pageStyles.defaultPromptIcon}>
@@ -1120,6 +1126,7 @@ export const CalendarsConfiguration: React.FC = () => {
       title="Combinar calendarios"
       size="md"
       showCloseButton={!savingGoogleMergePrompt}
+      flushContent
     >
       <div className={pageStyles.defaultPromptModal}>
         <div className={pageStyles.defaultPromptIcon}>
@@ -1584,6 +1591,7 @@ export const CalendarsConfiguration: React.FC = () => {
       onClose={() => setShowNotificationsModal(false)}
       title="Notificaciones"
       size="md"
+      flushContent
     >
       <div className={pageStyles.notificationsModal}>
         <section className={pageStyles.notificationsHero}>

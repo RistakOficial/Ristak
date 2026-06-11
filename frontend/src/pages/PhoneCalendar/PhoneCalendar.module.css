@@ -1127,11 +1127,11 @@
 .sheetHandle {
   position: relative;
   justify-self: center;
-  width: 44px;
+  width: 54px;
   height: 5px;
   margin: 2px 0 10px;
   border-radius: 999px;
-  background: rgba(142, 142, 147, 0.35);
+  background: color-mix(in srgb, var(--phone-chat-muted, #737373) 28%, transparent);
   cursor: grab;
   touch-action: none;
 }

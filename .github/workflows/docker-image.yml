@@ -1,6 +1,14 @@
 # Publica la imagen Docker de Ristak en GitHub Container Registry.
 # main → ghcr.io/ristakoficial/ristak:stable (+ :sha)
 # test → ghcr.io/ristakoficial/ristak:beta (+ :sha)
+#
+# Cada push genera una versión (v1.0.<número de build>) que:
+#  - se hornea en la imagen como APP_VERSION (visible en /health y en el menú de la app)
+#  - se reporta al portal instalador (página Actualizaciones) vía webhook
+#
+# Secrets necesarios para el webhook (Settings → Secrets and variables → Actions):
+#  - INSTALLER_WEBHOOK_URL    → ej. https://tu-portal.onrender.com
+#  - INSTALLER_WEBHOOK_SECRET → la API key de webhooks del panel admin
 name: docker-image
 
 on:
@@ -25,18 +33,48 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve image tags
+      - name: Resolve image tags and version
         id: tags
         run: |
           REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           CHANNEL=stable
-          if [ "${{ github.ref_name }}" = "test" ]; then CHANNEL=beta; fi
+          BRANCH=main
+          if [ "${{ github.ref_name }}" = "test" ]; then CHANNEL=beta; BRANCH=test; fi
+          VERSION="v1.0.${{ github.run_number }}"
           echo "tags=ghcr.io/${REPO_LC}:${CHANNEL},ghcr.io/${REPO_LC}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${REPO_LC}:${CHANNEL}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            APP_VERSION=${{ steps.tags.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Notificar al portal instalador (página Actualizaciones)
+        env:
+          WEBHOOK_URL: ${{ secrets.INSTALLER_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.INSTALLER_WEBHOOK_SECRET }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ] || [ -z "$WEBHOOK_SECRET" ]; then
+            echo "INSTALLER_WEBHOOK_URL / INSTALLER_WEBHOOK_SECRET no configurados: se omite el aviso al portal."
+            exit 0
+          fi
+          PAYLOAD=$(jq -n \
+            --arg channel "${{ steps.tags.outputs.branch }}" \
+            --arg image_url "${{ steps.tags.outputs.image }}" \
+            --arg version "${{ steps.tags.outputs.version }}" \
+            --arg commit "${{ github.sha }}" \
+            --arg commit_message "$COMMIT_MESSAGE" \
+            --arg branch "${{ steps.tags.outputs.branch }}" \
+            '{channel: $channel, image_url: $image_url, version: $version, commit: $commit, commit_message: $commit_message, branch: $branch}')
+          curl --fail-with-body -sS -X POST "${WEBHOOK_URL%/}/api/webhooks/deploy" \
+            -H "x-api-key: $WEBHOOK_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"

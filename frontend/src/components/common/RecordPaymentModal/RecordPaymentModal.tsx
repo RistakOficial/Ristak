@@ -2528,6 +2528,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       }
       size="md"
       type="custom"
+      flushContent
       showCloseButton={step !== 'processing'}
     >
       {step === 'processing' && renderProcessing()}

@@ -701,3 +701,121 @@
     grid-template-columns: 1fr;
   }
 }
+
+.defaultPickerOption {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.14));
+  border-radius: 12px;
+  background: var(--color-surface-2, rgba(255, 255, 255, 0.05));
+  color: var(--color-text-primary, #fff);
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.defaultPickerOption:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.defaultPickerOptionHint {
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.6));
+}
+
+/* Celda de QR: estado + botón grande de conectar/desconectar */
+.qrCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* Modal de QR en grande */
+.qrModalBody {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+}
+
+.qrModalImage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.qrModalImage img {
+  display: block;
+  width: min(320px, 70vw);
+  height: auto;
+  image-rendering: pixelated;
+}
+
+.qrModalSteps {
+  margin: 0;
+  padding-left: 20px;
+  text-align: left;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.qrModalHint {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.qrModalState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 12px;
+  color: var(--color-text-secondary);
+}
+
+.qrModalState strong {
+  color: var(--color-text-primary);
+  font-size: 16px;
+}
+
+.qrModalState span {
+  font-size: 14px;
+  max-width: 380px;
+}
+
+.qrModalSpinner {
+  animation: qrModalSpin 1s linear infinite;
+  color: var(--color-text-tertiary);
+}
+
+.qrModalSuccessIcon {
+  color: #22c55e;
+}
+
+.qrModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+@keyframes qrModalSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

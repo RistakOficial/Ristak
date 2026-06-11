@@ -1642,10 +1642,19 @@ body.dark .tooltipInfo {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* Sin overflow-x explícito, overflow-y:auto vuelve desplazable el eje X
+     cuando algo se desborda 1px y el formulario "se mueve a los lados". */
+  overflow-x: hidden;
+  max-width: 100%;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  overscroll-behavior-x: none;
   scrollbar-width: none;
+}
+
+.embeddedScroll > * {
+  max-width: 100%;
 }
 
 .embeddedScroll::-webkit-scrollbar {

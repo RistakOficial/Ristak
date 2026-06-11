@@ -176,14 +176,18 @@ type SitesAICreationModalSubmit = {
   siteKind: SitesAICreationKind
   prompt: string
   attachmentNotes: string[]
+  structureKind?: SiteStructureKind
   funnelStyle?: FunnelStyleId
+  websiteStyle?: WebsiteStyleId
   primaryAction?: FunnelPrimaryActionId
   chatgptModel?: string
   editSite?: PublicSite | null
   visualContext?: SitesAIPreviewVisualContext | null
 }
 
+type SiteStructureKind = 'funnel' | 'website'
 type FunnelStyleId = 'vsl' | 'lead_gen' | 'opt_in'
+type WebsiteStyleId = 'services' | 'personal' | 'business'
 type FunnelPrimaryActionId = 'buy' | 'schedule' | 'form' | 'whatsapp' | 'download'
 
 const sectionItems: Array<{ id: SitesSection; label: string; icon: React.ReactNode }> = [
@@ -2056,6 +2060,29 @@ const getDescendantPageIds = (pageId: string, pages: SitePage[]): string[] => {
   return result
 }
 
+// Height of a page's subtree relative to the page itself (0 = no subpages).
+const getPageSubtreeHeight = (pageId: string, pages: SitePage[]): number => {
+  const children = pages.filter(page => (page.parentPageId || '') === pageId)
+  if (!children.length) return 0
+  return 1 + Math.max(...children.map(child => getPageSubtreeHeight(child.id, pages)))
+}
+
+// A page can demote (become a subpage) when a previous sibling exists and the
+// moved subtree still fits within MAX_WEBSITE_PAGE_DEPTH.
+const getPreviousSiblingPage = (page: SitePage, pages: SitePage[]): SitePage | null => {
+  const siblings = pages.filter(item => (item.parentPageId || '') === (page.parentPageId || ''))
+  const index = siblings.findIndex(item => item.id === page.id)
+  return index > 0 ? siblings[index - 1] : null
+}
+
+const canPromoteWebsitePage = (page: SitePage, pages: SitePage[]) => getPageDepth(page, pages) > 0
+
+const canDemoteWebsitePage = (page: SitePage, pages: SitePage[]) => {
+  const previousSibling = getPreviousSiblingPage(page, pages)
+  if (!previousSibling) return false
+  return getPageDepth(page, pages) + 1 + getPageSubtreeHeight(page.id, pages) <= MAX_WEBSITE_PAGE_DEPTH
+}
+
 // Flatten pages into render order: each top-level page is followed by its
 // descendants (depth-first), so the dropdown can render an indented tree.
 const buildOrderedPageTree = (pages: SitePage[]): Array<{ page: SitePage; depth: number }> => {
@@ -2788,6 +2815,17 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     }
   }
 
+  if (blockType === 'image' || blockType === 'video') {
+    // Media blocks start with no URL; using the label as content would render a
+    // broken relative src in the canvas/public page.
+    return {
+      blockType,
+      label,
+      content: '',
+      settings: blockSettings()
+    }
+  }
+
   if (blockType === 'embed') {
     return {
       blockType,
@@ -3034,7 +3072,7 @@ export const Sites: React.FC = () => {
   const editorAIGenerating = Boolean(activeAIGeneration)
   const formCanvasHasFields = Boolean(editorSite && isFormSite(editorSite) && canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)))
   const formCanvasActionLabel = editorSite && activePage && isStandardForm(editorSite) && !isLastFormContentPage(editorSite, pages, activePage.id)
-    ? 'Continuar'
+    ? getThemeString(editorSite.theme, 'continueText') || 'Continuar'
     : undefined
   const seoValidation = editorSite ? getSeoValidationState(editorSite) : null
   const editorActive = Boolean(editorSite)
@@ -3836,6 +3874,56 @@ export const Sites: React.FC = () => {
     void persistFunnelPages(nextPages, nextPage.id)
   }
 
+  // Move a subtree right after another page's subtree in the flat list.
+  const movePageSubtreeAfter = (subtree: SitePage[], anchorPageId: string, remaining: SitePage[]) => {
+    const anchorSubtree = new Set([anchorPageId, ...getDescendantPageIds(anchorPageId, remaining)])
+    const anchorIndex = remaining.findIndex(page => page.id === anchorPageId)
+    let insertIndex = anchorIndex + 1
+    while (insertIndex < remaining.length && anchorSubtree.has(remaining[insertIndex].id)) insertIndex += 1
+    return [
+      ...remaining.slice(0, insertIndex),
+      ...subtree,
+      ...remaining.slice(insertIndex)
+    ]
+  }
+
+  const handlePromotePage = (pageId: string) => {
+    if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
+    if (getSitePageMode(selectedSite) !== 'website') return
+    const page = pages.find(item => item.id === pageId)
+    if (!page?.parentPageId) return
+    const parent = pages.find(item => item.id === page.parentPageId)
+    if (!parent) return
+
+    const subtreeIds = new Set([pageId, ...getDescendantPageIds(pageId, pages)])
+    const subtree = pages.filter(item => subtreeIds.has(item.id)).map(item => {
+      if (item.id !== pageId) return item
+      const promoted = { ...item, slug: undefined }
+      if (parent.parentPageId) promoted.parentPageId = parent.parentPageId
+      else delete promoted.parentPageId
+      return promoted
+    })
+    const remaining = pages.filter(item => !subtreeIds.has(item.id))
+    void persistFunnelPages(movePageSubtreeAfter(subtree, parent.id, remaining), activePageId)
+  }
+
+  const handleDemotePage = (pageId: string) => {
+    if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
+    if (getSitePageMode(selectedSite) !== 'website') return
+    const page = pages.find(item => item.id === pageId)
+    if (!page || !canDemoteWebsitePage(page, pages)) return
+    const previousSibling = getPreviousSiblingPage(page, pages)
+    if (!previousSibling) return
+
+    const subtreeIds = new Set([pageId, ...getDescendantPageIds(pageId, pages)])
+    const subtree = pages.filter(item => subtreeIds.has(item.id)).map(item => item.id === pageId
+      ? { ...item, parentPageId: previousSibling.id, slug: undefined }
+      : item
+    )
+    const remaining = pages.filter(item => !subtreeIds.has(item.id))
+    void persistFunnelPages(movePageSubtreeAfter(subtree, previousSibling.id, remaining), activePageId)
+  }
+
   const handleChangePageMode = async (mode: 'funnel' | 'website') => {
     if (!selectedSite || !isLanding(selectedSite) || isImportedHtmlSite(selectedSite)) return
     if (getSitePageMode(selectedSite) === mode) return
@@ -4150,13 +4238,17 @@ export const Sites: React.FC = () => {
     siteKind,
     prompt,
     attachmentNotes,
+    structureKind,
     funnelStyle,
+    websiteStyle,
     primaryAction,
     chatgptModel,
     editSite,
     visualContext
   }: SitesAICreationModalSubmit): Promise<string | null> => {
+    const selectedStructure = getSiteStructureOption(structureKind)
     const selectedFunnelStyle = getFunnelStyleOption(funnelStyle)
+    const selectedWebsiteStyle = getWebsiteStyleOption(websiteStyle)
     const selectedPrimaryAction = getFunnelPrimaryAction(primaryAction)
     const selectedChatGPTModel = getChatGPTSiteModelOption(chatgptModel, Boolean(editSite))
     const editVisualContext = editSite ? visualContext || importedPreviewContexts[editSite.id] || null : null
@@ -4164,7 +4256,9 @@ export const Sites: React.FC = () => {
       editSite
         ? `Modifica esta página importada con IA según la petición del usuario. Mantén formularios, campos, tracking y acciones de botones funcionando.`
         : `Crea una página completa con IA libre en HTML/CSS para importarla en Ristak.`,
+      selectedStructure ? selectedStructure.prompt : '',
       selectedFunnelStyle ? selectedFunnelStyle.prompt : '',
+      selectedWebsiteStyle ? selectedWebsiteStyle.prompt : '',
       selectedPrimaryAction ? selectedPrimaryAction.prompt : '',
       selectedChatGPTModel ? `ChatGPT seleccionado por el usuario: ${selectedChatGPTModel.label}.` : '',
       editVisualContext ? formatSitesAIPreviewVisualContextForPrompt(editVisualContext) : '',
@@ -4447,6 +4541,16 @@ export const Sites: React.FC = () => {
     }
   }
 
+  const handleOpenLiveEditorSite = () => {
+    if (!editorSite || !isPublicSiteLive(editorSite, domainConfig)) return
+    const liveWindow = window.open(buildLivePublicUrl(editorSite, domainConfig), '_blank')
+    if (!liveWindow) {
+      showToast('error', 'Ventana bloqueada', 'Permite popups para abrir el sitio en vivo.')
+      return
+    }
+    liveWindow.opener = null
+  }
+
   const handlePreviewSite = async () => {
     if (!editorSite) return
     const previewWindow = window.open('', '_blank')
@@ -4590,10 +4694,69 @@ export const Sites: React.FC = () => {
           return
         }
 
-        payload.settings = getPopupBlockSettings({
-          ...(payload.settings || {}),
-          ...initialSettings
-        })
+        // The popup follows the same rule as the page: content always lives
+        // inside a franja; if there is none yet, one is created automatically.
+        const popupSectionIds = new Set(popupBlocks.filter(isSectionBlock).map(block => block.id))
+        if (blockType === SECTION_BLOCK_TYPE) {
+          const columns = getSettingNumber(initialSettings, 'sectionColumns', 1, 1, 3)
+          payload.label = getSectionColumnLabel(columns)
+          payload.content = ''
+          payload.settings = getPopupBlockSettings({
+            ...(payload.settings || {}),
+            ...initialSettings,
+            sectionColumns: columns,
+            sectionGap: getSettingNumber(initialSettings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)
+          })
+        } else {
+          const selectedTarget = selectedBlock && isPopupBlock(selectedBlock)
+            ? isSectionBlock(selectedBlock)
+              ? { sectionId: selectedBlock.id, sectionColumn: 0 }
+              : getBlockSectionId(selectedBlock) && popupSectionIds.has(getBlockSectionId(selectedBlock))
+                ? { sectionId: getBlockSectionId(selectedBlock), sectionColumn: getBlockSectionColumn(selectedBlock) }
+                : null
+            : null
+          const singleSectionTarget = popupSectionIds.size === 1
+            ? { sectionId: [...popupSectionIds][0], sectionColumn: 0 }
+            : null
+          let targetSectionId = options.sectionId && popupSectionIds.has(options.sectionId)
+            ? options.sectionId
+            : selectedTarget?.sectionId || singleSectionTarget?.sectionId || ''
+          let targetColumn = Number.isFinite(Number(options.sectionColumn))
+            ? Math.min(2, Math.max(0, Math.round(Number(options.sectionColumn))))
+            : selectedTarget?.sectionColumn || singleSectionTarget?.sectionColumn || 0
+
+          if (!targetSectionId) {
+            const sectionPayload = defaultBlockPayload(SECTION_BLOCK_TYPE, selectedSite)
+            sectionPayload.label = getSectionColumnLabel(1)
+            sectionPayload.content = ''
+            sectionPayload.settings = getPopupBlockSettings({
+              ...(sectionPayload.settings || {}),
+              sectionColumns: 1,
+              sectionGap: DEFAULT_SECTION_GAP
+            })
+
+            const siteWithSection = await sitesService.createBlock(selectedSite.id, sectionPayload)
+            autoCreatedSection = [...(siteWithSection.blocks || [])]
+              .filter(block => !previousBlockIds.has(block.id))
+              .find(block => isSectionBlock(block) && isPopupBlock(block)) || null
+
+            if (!autoCreatedSection) {
+              throw new Error('No se pudo crear la franja para este contenido')
+            }
+
+            targetSectionId = autoCreatedSection.id
+            targetColumn = 0
+            blockIdsBeforeContent = new Set((siteWithSection.blocks || []).map(block => block.id))
+            syncSelectedSite(siteWithSection)
+          }
+
+          payload.settings = getPopupBlockSettings({
+            ...(payload.settings || {}),
+            ...initialSettings,
+            sectionId: targetSectionId,
+            sectionColumn: targetColumn
+          })
+        }
 
         let site = await sitesService.createBlock(selectedSite.id, payload)
         syncSelectedSite(site)
@@ -4605,11 +4768,13 @@ export const Sites: React.FC = () => {
           const popupSiteBlocks = [...(site.blocks || [])]
             .filter(isPopupBlock)
             .sort((a, b) => a.sortOrder - b.sortOrder)
-          const withoutInserted = popupSiteBlocks.filter(block => block.id !== added.id)
+          const insertedBlocks = autoCreatedSection ? [autoCreatedSection, added] : [added]
+          const insertedIds = new Set(insertedBlocks.map(block => block.id))
+          const withoutInserted = popupSiteBlocks.filter(block => !insertedIds.has(block.id))
           const boundedIndex = Math.max(0, Math.min(Number(options.insertIndex), withoutInserted.length))
           const orderedBlocks = [
             ...withoutInserted.slice(0, boundedIndex),
-            added,
+            ...insertedBlocks,
             ...withoutInserted.slice(boundedIndex)
           ]
 
@@ -5043,8 +5208,8 @@ export const Sites: React.FC = () => {
     }
   }
 
-  const getLandingColumnBlocksForMove = (block: SiteBlock) => {
-    for (const lane of landingSectionLanes) {
+  const getLandingColumnBlocksForMove = (block: SiteBlock, lanes: LandingSectionLane[] = landingSectionLanes) => {
+    for (const lane of lanes) {
       const column = lane.columnBlocks.find(columnBlocks => columnBlocks.some(item => item.id === block.id))
       if (column) return column
     }
@@ -5055,6 +5220,22 @@ export const Sites: React.FC = () => {
     if (!editorSite) return { canMoveUp: false, canMoveDown: false }
 
     if (isPopupBlock(block)) {
+      if (isLanding(editorSite)) {
+        if (isTopLevelLandingBlock(block)) {
+          const groups = buildLandingBlockOrderGroups(popupBlocks, popupSectionLanes)
+          const groupIndex = groups.findIndex(group => group.id === block.id)
+          return {
+            canMoveUp: groupIndex > 0,
+            canMoveDown: groupIndex >= 0 && groupIndex < groups.length - 1
+          }
+        }
+        const columnBlocks = getLandingColumnBlocksForMove(block, popupSectionLanes)
+        const columnIndex = columnBlocks.findIndex(item => item.id === block.id)
+        return {
+          canMoveUp: columnIndex > 0,
+          canMoveDown: columnIndex >= 0 && columnIndex < columnBlocks.length - 1
+        }
+      }
       const index = popupBlocks.findIndex(item => item.id === block.id)
       return {
         canMoveUp: index > 0,
@@ -5096,6 +5277,26 @@ export const Sites: React.FC = () => {
     let nextPageBlocks: SiteBlock[] | null = null
 
     if (isPopupBlock(block)) {
+      if (isLanding(selectedSite)) {
+        if (isTopLevelLandingBlock(block)) {
+          const groups = buildLandingBlockOrderGroups(popupBlocks, popupSectionLanes)
+          const groupIndex = groups.findIndex(group => group.id === block.id)
+          const nextGroupIndex = groupIndex + offset
+          if (groupIndex < 0 || nextGroupIndex < 0 || nextGroupIndex >= groups.length) return
+          await persistCanvasBlockOrder(arrayMove(groups, groupIndex, nextGroupIndex).flatMap(group => group.blocks), { popup: true })
+          return
+        }
+        const columnBlocks = getLandingColumnBlocksForMove(block, popupSectionLanes)
+        const columnIndex = columnBlocks.findIndex(item => item.id === block.id)
+        const nextColumnIndex = columnIndex + offset
+        const targetBlock = columnBlocks[nextColumnIndex]
+        if (columnIndex < 0 || !targetBlock) return
+        const oldIndex = popupBlocks.findIndex(item => item.id === block.id)
+        const newIndex = popupBlocks.findIndex(item => item.id === targetBlock.id)
+        if (oldIndex < 0 || newIndex < 0) return
+        await persistCanvasBlockOrder(arrayMove(popupBlocks, oldIndex, newIndex), { popup: true })
+        return
+      }
       const oldIndex = popupBlocks.findIndex(item => item.id === block.id)
       const newIndex = oldIndex + offset
       if (oldIndex < 0 || newIndex < 0 || newIndex >= popupBlocks.length) return
@@ -5164,7 +5365,10 @@ export const Sites: React.FC = () => {
     if (popupSurfaceSelected) {
       const popupSurface = (event.currentTarget as HTMLElement).querySelector('[data-rstk-popup-surface="true"]')
       if (!popupSurface) return popupBlocks.length
-      const blockNodes = Array.from(popupSurface.querySelectorAll<HTMLElement>('[data-rstk-block-index]'))
+      const popupSelector = editorSite && isLanding(editorSite) && isTopLevelLandingBlockType(payload?.blockType)
+        ? '[data-rstk-page-block="true"]'
+        : '[data-rstk-block-index]'
+      const blockNodes = Array.from(popupSurface.querySelectorAll<HTMLElement>(popupSelector))
       return getInsertIndexFromNodes(blockNodes, event.clientY, popupBlocks.length)
     }
 
@@ -5245,12 +5449,20 @@ export const Sites: React.FC = () => {
   }
 
   const getSectionFallbackInsertIndex = (sectionId: string) => {
-    const sectionIndex = canvasBlocks.findIndex(block => block.id === sectionId)
-    return sectionIndex >= 0 ? sectionIndex + 1 : canvasBlocks.length
+    const sourceBlocks = popupSurfaceSelected ? popupBlocks : canvasBlocks
+    const sectionIndex = sourceBlocks.findIndex(block => block.id === sectionId)
+    return sectionIndex >= 0 ? sectionIndex + 1 : sourceBlocks.length
   }
 
   const getPaletteDropPlacement = (event: React.DragEvent<HTMLDivElement>, payload: PaletteDragPayload) => {
     if (popupSurfaceSelected) {
+      if (editorSite && isLanding(editorSite) && !isTopLevelLandingBlockType(payload.blockType)) {
+        const target = getDropSectionTarget(event)
+        return {
+          insertIndex: target ? getSectionColumnInsertIndex(event, target) : popupBlocks.length,
+          target
+        }
+      }
       return {
         insertIndex: getPaletteInsertIndex(event, payload),
         target: null
@@ -5439,6 +5651,8 @@ export const Sites: React.FC = () => {
                           pageMode={getSitePageMode(editorSite)}
                           onChangeMode={isLanding(editorSite) && !isImportedHtmlSite(editorSite) ? handleChangePageMode : undefined}
                           onAddSubpage={handleAddSubpage}
+                          onPromotePage={handlePromotePage}
+                          onDemotePage={handleDemotePage}
                           getPageDepth={(page) => getPageDepth(page, pages)}
                           canDeletePage={(page) => isStandardForm(editorSite)
                             ? !isFormFinalPage(page) && getFormContentPages(pages).length > 1
@@ -5455,10 +5669,9 @@ export const Sites: React.FC = () => {
                       )}
                       <label className={styles.routeField}>
                         <span className={`${styles.publicRouteBox} ${domainConfig.domain ? '' : styles.publicRouteBoxStandalone}`}>
-                          <span className={styles.publicRouteDomain} title={getPublicDomainPreview(domainConfig)}>
-                            {getPublicDomainPreview(domainConfig)}
+                          <span className={styles.publicRouteDomain} title={`${getPublicDomainPreview(domainConfig)}/`}>
+                            {getPublicDomainPreview(domainConfig)}/
                           </span>
-                          <span className={styles.publicRouteSlash} aria-hidden="true">/</span>
                           <input
                             value={getRouteEditorValue(editorSite)}
                             aria-label="Ruta pública"
@@ -5481,6 +5694,12 @@ export const Sites: React.FC = () => {
                     <button type="button" className={styles.editorIconAction} onClick={() => setEditorFocus(true)} disabled={editorAIGenerating} title="Modo enfoque" aria-label="Modo enfoque">
                       <Maximize2 size={14} />
                     </button>
+                    {isPublicSiteLive(editorSite, domainConfig) && (
+                      <Button variant="secondary" size="lg" onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating}>
+                        <ExternalLink size={15} />
+                        Ver en vivo
+                      </Button>
+                    )}
                     <Button variant="secondary" size="lg" onClick={handlePreviewSite} disabled={editorAIGenerating}>
                       <Eye size={15} />
                       Previsualizar
@@ -5721,6 +5940,7 @@ export const Sites: React.FC = () => {
                             <PopupCanvasSurface
                               site={editorSite}
                               blocks={popupBlocks}
+                              lanes={popupSectionLanes}
                               selectedBlockId={selectedBlockId}
                               forms={forms}
                               calendars={calendars}
@@ -5729,6 +5949,8 @@ export const Sites: React.FC = () => {
                               selected={selectedBlockId === POPUP_SELECTED_ID}
                               palettePreviewBlock={canvasPalettePreviewBlock}
                               paletteInsertIndex={paletteInsertIndex}
+                              paletteSectionTarget={paletteSectionTarget}
+                              paletteDragging={paletteDragging}
                               onSelectPopup={() => selectEditorBlock(POPUP_SELECTED_ID)}
                               onClosePopup={() => selectEditorBlock(PAGE_SELECTED_ID)}
                               onSelectBlock={selectEditorBlock}
@@ -5937,6 +6159,99 @@ const AI_CREATION_VOICE_WAVE_MIN_HEIGHT = 4
 const AI_CREATION_VOICE_WAVE_MAX_HEIGHT = 28
 const AI_CREATION_VOICE_SILENCE_THRESHOLD = 4
 const AI_CREATION_VOICE_SIGNAL_RANGE = 30
+
+// Step 0 of the AI flow: what the user is building. Plain-language copy so
+// non-marketers understand the difference before picking.
+const siteStructureOptions: Array<{
+  id: SiteStructureKind
+  badge: string
+  title: string
+  subtitle: string
+  optimizes: string
+  prompt: string
+}> = [
+  {
+    id: 'website',
+    badge: 'Sitio web',
+    title: 'Sitio web completo',
+    subtitle: 'Como el local de tu negocio en internet: varias páginas con menú para que conozcan quién eres, qué haces y cómo contactarte.',
+    optimizes: 'Se optimiza para verte profesional, generar confianza y que te encuentren en Google.',
+    prompt: [
+      'Estructura elegida: SITIO WEB completo (no es un embudo).',
+      '- Crea un sitio multipagina y devuelvelo en page.pages: Inicio mas las paginas que apliquen (Servicios, Nosotros, Contacto, etc.), cada una con id, title y filename claros.',
+      '- Todas las paginas comparten un header con menu de navegacion y un footer con datos de contacto. Los enlaces del menu llevan a las otras paginas con data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la pagina destino.',
+      '- Optimiza para presentacion y confianza: un solo h1 por pagina, title y meta description propios por pagina, jerarquia clara y secciones escaneables.',
+      '- La pagina de Contacto incluye un formulario bien mapeado; el resto del sitio puede invitar a contactar sin presionar como un embudo.'
+    ].join('\n')
+  },
+  {
+    id: 'funnel',
+    badge: 'Embudo',
+    title: 'Embudo de ventas',
+    subtitle: 'Un camino directo, paso a paso, para que la persona haga UNA sola cosa: comprar, agendar o dejar sus datos.',
+    optimizes: 'Se optimiza para campañas y anuncios: sin menú ni distracciones, solo el siguiente paso.',
+    prompt: [
+      'Estructura elegida: EMBUDO de conversion.',
+      '- Una sola mision: llevar al visitante a UNA accion principal. Sin menu de navegacion ni enlaces que distraigan.',
+      '- CTA repetido hacia la misma accion a lo largo de la pagina.',
+      '- Si el flujo tiene pasos naturales (ej. registro → gracias), devuelve cada paso como pagina separada en page.pages.'
+    ].join('\n')
+  }
+]
+
+const getSiteStructureOption = (id?: SiteStructureKind | '') => siteStructureOptions.find(option => option.id === id) || null
+
+const websiteStyleOptions: Array<{
+  id: WebsiteStyleId
+  title: string
+  subtitle: string
+  badge: string
+  bestFor: string
+  prompt: string
+  sections: string[]
+}> = [
+  {
+    id: 'services',
+    title: 'Negocio de servicios',
+    subtitle: 'Para clínicas, despachos, agencias, restaurantes o cualquier negocio local.',
+    badge: 'Servicios',
+    bestFor: 'Mostrar tus servicios, dónde estás y cómo contactarte.',
+    prompt: [
+      'Tipo de sitio web elegido: Negocio de servicios.',
+      'Paginas esperadas: Inicio (hero con propuesta clara, servicios destacados, prueba social y CTA a contacto), Servicios (detalle de cada servicio con beneficios), Nosotros (historia, equipo, por que confiar) y Contacto (formulario, telefono, direccion y horarios).',
+      'El menu lleva a todas las paginas y el footer repite contacto y ubicacion.'
+    ].join('\n'),
+    sections: ['Inicio', 'Servicios', 'Nosotros', 'Contacto']
+  },
+  {
+    id: 'personal',
+    title: 'Marca personal',
+    subtitle: 'Para profesionales, creadores, coaches o consultores que venden con su nombre.',
+    badge: 'Personal',
+    bestFor: 'Presentarte, mostrar lo que haces y abrir la puerta a trabajar contigo.',
+    prompt: [
+      'Tipo de sitio web elegido: Marca personal.',
+      'Paginas esperadas: Inicio (quien eres y que resuelves, foto o presencia personal, CTA a contacto), Sobre mi (historia, trayectoria, autoridad), Lo que hago (servicios, proyectos o contenido) y Contacto (formulario y redes).',
+      'El tono es cercano y humano; la cara y la historia de la persona son protagonistas.'
+    ].join('\n'),
+    sections: ['Inicio', 'Sobre mí', 'Lo que hago', 'Contacto']
+  },
+  {
+    id: 'business',
+    title: 'Empresa o producto',
+    subtitle: 'Para empresas, marcas o productos que necesitan una presencia formal.',
+    badge: 'Empresa',
+    bestFor: 'Explicar tu producto, resolver dudas y canalizar interesados.',
+    prompt: [
+      'Tipo de sitio web elegido: Empresa o producto.',
+      'Paginas esperadas: Inicio (propuesta de valor, beneficios clave, prueba social), Producto o Soluciones (que hace, como funciona, para quien), Preguntas frecuentes (objeciones y dudas reales) y Contacto (formulario para interesados).',
+      'El diseño transmite solidez: jerarquia clara, datos concretos y llamados a contacto presentes sin ser agresivos.'
+    ].join('\n'),
+    sections: ['Inicio', 'Producto', 'Preguntas', 'Contacto']
+  }
+]
+
+const getWebsiteStyleOption = (id?: WebsiteStyleId | '') => websiteStyleOptions.find(option => option.id === id) || null
 
 const funnelStyleOptions: Array<{
   id: FunnelStyleId
@@ -6423,17 +6738,25 @@ const SitesAICreationModal: React.FC<{
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null)
   const [prompt, setPrompt] = useState('')
   const [attachments, setAttachments] = useState<SitesAICreationAttachment[]>([])
+  const [structureKind, setStructureKind] = useState<SiteStructureKind | ''>('')
   const [funnelStyle, setFunnelStyle] = useState<FunnelStyleId | ''>('')
+  const [websiteStyle, setWebsiteStyle] = useState<WebsiteStyleId | ''>('')
   const [primaryAction, setPrimaryAction] = useState<FunnelPrimaryActionId | ''>('')
   const [chatgptModel, setChatgptModel] = useState(() => getDefaultSiteChatGPTModel(editMode))
   const [attachmentError, setAttachmentError] = useState('')
   const [voiceError, setVoiceError] = useState('')
   const [assistantReply, setAssistantReply] = useState('')
   const [submitError, setSubmitError] = useState('')
-  const shouldPickFunnelStyle = state.siteKind === 'landing' && !editMode
+  // Landing creation walks: structure (web/embudo) → style of that structure → prompt.
+  const shouldPickStructure = state.siteKind === 'landing' && !editMode
+  const selectedStructure = getSiteStructureOption(structureKind)
+  const shouldPickFunnelStyle = shouldPickStructure && structureKind === 'funnel'
+  const shouldPickWebsiteStyle = shouldPickStructure && structureKind === 'website'
   const selectedFunnelStyle = getFunnelStyleOption(funnelStyle || undefined)
+  const selectedWebsiteStyle = getWebsiteStyleOption(websiteStyle || undefined)
+  const selectedStyleSummary = shouldPickFunnelStyle ? selectedFunnelStyle : shouldPickWebsiteStyle ? selectedWebsiteStyle : null
   const selectedChatGPTModel = getChatGPTSiteModelOption(chatgptModel, editMode)
-  const canWritePrompt = !shouldPickFunnelStyle || Boolean(selectedFunnelStyle)
+  const canWritePrompt = !shouldPickStructure || Boolean(selectedStyleSummary)
   const appendPromptText = useCallback((text: string) => {
     setPrompt(current => appendDictatedText(current, text))
   }, [])
@@ -6453,6 +6776,14 @@ const SitesAICreationModal: React.FC<{
     return () => window.clearTimeout(focusTimeout)
   }, [canWritePrompt])
 
+  const selectStructure = (nextStructure: SiteStructureKind) => {
+    setStructureKind(nextStructure)
+    setFunnelStyle('')
+    setWebsiteStyle('')
+    setSubmitError('')
+    setAssistantReply('')
+  }
+
   const selectFunnelStyle = (nextStyle: FunnelStyleId) => {
     setFunnelStyle(nextStyle)
     setPrimaryAction(current => {
@@ -6461,6 +6792,13 @@ const SitesAICreationModal: React.FC<{
       if (nextStyle === 'lead_gen') return 'form'
       return 'schedule'
     })
+    setSubmitError('')
+    setAssistantReply('')
+  }
+
+  const selectWebsiteStyle = (nextStyle: WebsiteStyleId) => {
+    setWebsiteStyle(nextStyle)
+    setPrimaryAction(current => current || 'form')
     setSubmitError('')
     setAssistantReply('')
   }
@@ -6504,13 +6842,25 @@ const SitesAICreationModal: React.FC<{
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (shouldPickStructure && !selectedStructure) {
+      setSubmitError('Primero elige si quieres un sitio web o un embudo.')
+      return
+    }
     if (shouldPickFunnelStyle && !selectedFunnelStyle) {
       setSubmitError('Primero elige qué tipo de embudo quieres crear.')
       return
     }
+    if (shouldPickWebsiteStyle && !selectedWebsiteStyle) {
+      setSubmitError('Primero elige qué tipo de sitio web quieres crear.')
+      return
+    }
     const cleanPrompt = prompt.trim()
     if (!cleanPrompt) {
-      setSubmitError(shouldPickFunnelStyle ? 'Ahora cuéntame de qué trata el embudo.' : 'Escribe qué quieres construir primero.')
+      setSubmitError(shouldPickWebsiteStyle
+        ? 'Ahora cuéntame de qué trata tu sitio web.'
+        : shouldPickFunnelStyle
+          ? 'Ahora cuéntame de qué trata el embudo.'
+          : 'Escribe qué quieres construir primero.')
       return
     }
     setSubmitError('')
@@ -6519,7 +6869,9 @@ const SitesAICreationModal: React.FC<{
       siteKind: state.siteKind,
       prompt: cleanPrompt,
       attachmentNotes: buildAttachmentNotes(),
+      structureKind: structureKind || undefined,
       funnelStyle: funnelStyle || undefined,
+      websiteStyle: websiteStyle || undefined,
       primaryAction: primaryAction || undefined,
       chatgptModel,
       editSite: state.editSite || null
@@ -6560,16 +6912,24 @@ const SitesAICreationModal: React.FC<{
                 <h2 id="ai-creation-title">
                   {editMode
                     ? 'Dime que cambio quieres'
-                    : shouldPickFunnelStyle && !selectedFunnelStyle
-                      ? 'Elige el tipo de embudo'
-                      : `Crear ${getSitesAICreationKindLabel(state.siteKind)}`}
+                    : shouldPickStructure && !selectedStructure
+                      ? '¿Sitio web o embudo?'
+                      : shouldPickFunnelStyle && !selectedFunnelStyle
+                        ? 'Elige el tipo de embudo'
+                        : shouldPickWebsiteStyle && !selectedWebsiteStyle
+                          ? 'Elige el tipo de sitio web'
+                          : `Crear ${getSitesAICreationKindLabel(state.siteKind)}`}
                 </h2>
                 <p>
                   {editMode
                     ? 'Ristak modifica esta página y vuelve a revisar sus formularios.'
-                    : shouldPickFunnelStyle && !selectedFunnelStyle
-                      ? 'Escoge la estructura y el ChatGPT que lo va a construir. Después nos dices el negocio y objetivo.'
-                      : 'Describe la página y Ristak la crea como código propio listo para revisar.'}
+                    : shouldPickStructure && !selectedStructure
+                      ? 'Cada uno sirve para algo distinto. Elige el que va con lo que necesitas hoy.'
+                      : shouldPickFunnelStyle && !selectedFunnelStyle
+                        ? 'Escoge la estructura y el ChatGPT que lo va a construir. Después nos dices el negocio y objetivo.'
+                        : shouldPickWebsiteStyle && !selectedWebsiteStyle
+                          ? 'Escoge cómo se va a organizar tu sitio. Después nos cuentas de tu negocio.'
+                          : 'Describe la página y Ristak la crea como código propio listo para revisar.'}
                 </p>
               </div>
               <button type="button" className={styles.aiCreationClose} onClick={onClose} aria-label="Cerrar">
@@ -6578,11 +6938,47 @@ const SitesAICreationModal: React.FC<{
             </header>
 
             <div className={styles.aiCreationBody}>
-              {shouldPickFunnelStyle && !selectedFunnelStyle ? (
+              {shouldPickStructure && !selectedStructure ? (
                 <div className={styles.aiCreationFunnelPicker}>
                   <div className={styles.aiCreationFunnelIntro}>
-                    <strong>¿Qué tipo de landing quieres crear?</strong>
+                    <strong>¿Qué quieres construir?</strong>
+                    <p>Piensa en qué necesitas que haga la gente cuando llegue a tu página.</p>
+                  </div>
+                  <div className={styles.aiCreationStructureGrid}>
+                    {siteStructureOptions.map(option => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={styles.aiCreationStructureCard}
+                        onClick={() => selectStructure(option.id)}
+                      >
+                        <span className={`${styles.aiCreationFunnelMockup} ${option.id === 'website' ? styles.aiCreationStructureMockupWebsite : styles.aiCreationStructureMockupFunnel}`}>
+                          <span className={styles.aiCreationFunnelMockupTop} />
+                          <span className={styles.aiCreationFunnelMockupMain}>
+                            <span />
+                            <span />
+                          </span>
+                          <span className={styles.aiCreationFunnelMockupFooter} />
+                        </span>
+                        <span className={styles.aiCreationFunnelCardBody}>
+                          <span>{option.badge}</span>
+                          <strong>{option.title}</strong>
+                          <p>{option.subtitle}</p>
+                          <small>{option.optimizes}</small>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : shouldPickFunnelStyle && !selectedFunnelStyle ? (
+                <div className={styles.aiCreationFunnelPicker}>
+                  <div className={styles.aiCreationFunnelIntro}>
+                    <strong>¿Qué tipo de embudo quieres crear?</strong>
                     <p>Elige una base visual y el ChatGPT que va a crear el embudo.</p>
+                    <button type="button" className={styles.aiCreationStructureBack} onClick={() => setStructureKind('')}>
+                      <ArrowLeft size={13} />
+                      Cambiar a sitio web
+                    </button>
                   </div>
                   {modelPicker}
                   <div className={styles.aiCreationFunnelGrid}>
@@ -6611,16 +7007,53 @@ const SitesAICreationModal: React.FC<{
                     ))}
                   </div>
                 </div>
+              ) : shouldPickWebsiteStyle && !selectedWebsiteStyle ? (
+                <div className={styles.aiCreationFunnelPicker}>
+                  <div className={styles.aiCreationFunnelIntro}>
+                    <strong>¿Qué tipo de sitio web quieres crear?</strong>
+                    <p>Elige cómo se va a organizar y el ChatGPT que lo va a construir.</p>
+                    <button type="button" className={styles.aiCreationStructureBack} onClick={() => setStructureKind('')}>
+                      <ArrowLeft size={13} />
+                      Cambiar a embudo
+                    </button>
+                  </div>
+                  {modelPicker}
+                  <div className={styles.aiCreationFunnelGrid}>
+                    {websiteStyleOptions.map(option => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={styles.aiCreationFunnelCard}
+                        onClick={() => selectWebsiteStyle(option.id)}
+                      >
+                        <span className={`${styles.aiCreationFunnelMockup} ${styles.aiCreationStructureMockupWebsite}`}>
+                          <span className={styles.aiCreationFunnelMockupTop} />
+                          <span className={styles.aiCreationFunnelMockupMain}>
+                            <span />
+                            <span />
+                          </span>
+                          <span className={styles.aiCreationFunnelMockupFooter} />
+                        </span>
+                        <span className={styles.aiCreationFunnelCardBody}>
+                          <span>{option.badge}</span>
+                          <strong>{option.title}</strong>
+                          <p>{option.subtitle}</p>
+                          <small>{option.bestFor}</small>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ) : (
                 <>
-                  {shouldPickFunnelStyle && selectedFunnelStyle && (
+                  {shouldPickStructure && selectedStructure && selectedStyleSummary && (
                     <div className={styles.aiCreationSelectedFunnel}>
                       <div>
-                        <span>{selectedFunnelStyle.badge}</span>
-                        <strong>{selectedFunnelStyle.title}</strong>
-                        <p>{selectedFunnelStyle.sections.join(' / ')}</p>
+                        <span>{selectedStructure.badge} · {selectedStyleSummary.badge}</span>
+                        <strong>{selectedStyleSummary.title}</strong>
+                        <p>{selectedStyleSummary.sections.join(' / ')}</p>
                       </div>
-                      <button type="button" onClick={() => setFunnelStyle('')}>
+                      <button type="button" onClick={() => { setFunnelStyle(''); setWebsiteStyle('') }}>
                         Cambiar tipo
                       </button>
                     </div>
@@ -6635,7 +7068,7 @@ const SitesAICreationModal: React.FC<{
                     </div>
                   )}
 
-                  {shouldPickFunnelStyle && selectedFunnelStyle && (
+                  {shouldPickStructure && selectedStyleSummary && (
                     <div className={styles.aiCreationActionPicker}>
                       <span>Acción principal</span>
                       <div>
@@ -6654,7 +7087,7 @@ const SitesAICreationModal: React.FC<{
                   )}
 
                   <label className={styles.aiCreationPrompt}>
-                    <span>{editMode ? 'Cambio que quieres hacer' : shouldPickFunnelStyle ? 'De qué trata este embudo' : 'Qué quieres construir'}</span>
+                    <span>{editMode ? 'Cambio que quieres hacer' : shouldPickWebsiteStyle ? 'De qué trata tu sitio web' : shouldPickFunnelStyle ? 'De qué trata este embudo' : 'Qué quieres construir'}</span>
                     <textarea
                       ref={promptInputRef}
                       value={prompt}
@@ -6823,7 +7256,7 @@ type ImportedChoiceEditorState = {
   actions: ImportedButtonActionStep[]
 }
 
-type ImportedFormFieldOption = { label: string; value: string }
+type ImportedFormFieldOption = { label: string; value: string; actions?: ImportedButtonActionStep[] }
 
 type ImportedFormFieldSelection = {
   editId: string
@@ -7195,6 +7628,7 @@ type ImportedButtonActionOption = { value: ImportedButtonAction; label: string; 
 
 const importedButtonActionOptions: ImportedButtonActionOption[] = [
   { value: 'submit', label: 'Enviar formulario' },
+  { value: 'disqualify', label: 'Descalificar (no califica)' },
   { value: 'next_page', label: 'Ir a la siguiente página' },
   { value: 'specific_page', label: 'Ir a una página específica' },
   { value: 'url', label: 'Abrir enlace' },
@@ -7204,7 +7638,21 @@ const importedButtonActionOptions: ImportedButtonActionOption[] = [
 ]
 
 const importedSelectableButtonActions = new Set<ImportedButtonAction>(importedButtonActionOptions.map(option => option.value))
-const importedButtonActions = new Set<ImportedButtonAction>(['none', ...importedSelectableButtonActions])
+// Actions valid on choice options (radio/checkbox/select) but not offered for buttons.
+const importedChoiceOnlyActions: ImportedButtonAction[] = ['disqualify_after_submit']
+const importedButtonActions = new Set<ImportedButtonAction>(['none', ...importedSelectableButtonActions, ...importedChoiceOnlyActions])
+
+// Quick per-option action selector for choice fields (filtering people).
+const importedChoiceQuickActions: Array<{ value: '' | ImportedButtonAction; label: string }> = [
+  { value: '', label: 'No hacer nada' },
+  { value: 'disqualify', label: 'Descalificar inmediatamente' },
+  { value: 'disqualify_after_submit', label: 'Descalificar al enviar formulario' },
+  { value: 'submit', label: 'Enviar formulario' }
+]
+
+const getImportedOptionQuickAction = (option: ImportedFormFieldOption): '' | ImportedButtonAction => (
+  option.actions?.find(step => importedChoiceQuickActions.some(item => item.value && item.value === step.action))?.action || ''
+)
 
 const importedSubmittableFieldSelector = [
   'form input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"])',
@@ -7223,8 +7671,9 @@ const hasImportedSubmittableFormFields = (html = '') => {
   }
 }
 
+// 'submit' and 'disqualify' only make sense on pages with a submittable form.
 const getImportedButtonActionOptionsForPage = (canSubmitForm: boolean) => (
-  importedButtonActionOptions.filter(option => option.value !== 'submit' || canSubmitForm)
+  importedButtonActionOptions.filter(option => !['submit', 'disqualify'].includes(option.value) || canSubmitForm)
 )
 
 const getImportedActionOptionSet = (actionOptions: ImportedButtonActionOption[]) => (
@@ -7264,9 +7713,17 @@ const parseImportedActionList = (rawValue: string): ImportedButtonActionStep[] =
   try {
     const parsed = JSON.parse(rawValue)
     if (!Array.isArray(parsed)) return []
-    return getUniqueImportedActionSteps(parsed
+    // Keep every known action unique by name; selector availability is decided
+    // by each editor, not here (dropping actions at parse time loses data).
+    const used = new Set<ImportedButtonAction>()
+    return parsed
       .map((item, index) => normalizeImportedActionStep(item, `action-${index + 1}`))
-      .filter((item): item is ImportedButtonActionStep => Boolean(item)))
+      .filter((item): item is ImportedButtonActionStep => Boolean(item))
+      .filter(step => {
+        if (used.has(step.action)) return false
+        used.add(step.action)
+        return true
+      })
   } catch {
     return []
   }
@@ -7418,6 +7875,19 @@ const getImportedFormFieldLabel = (element: HTMLElement, doc: Document) => {
   return element.getAttribute('placeholder') || element.getAttribute('name') || element.getAttribute('id') || 'Campo'
 }
 
+const readImportedOptionActions = (element: Element): ImportedButtonActionStep[] => (
+  parseImportedActionList(getImportedButtonAttribute(element as HTMLElement, [
+    'data-rstk-choice-actions',
+    'data-ristak-choice-actions',
+    'data-ristack-choice-actions'
+  ]))
+)
+
+const withImportedOptionActions = (option: ImportedFormFieldOption, element: Element): ImportedFormFieldOption => {
+  const actions = readImportedOptionActions(element)
+  return actions.length ? { ...option, actions } : option
+}
+
 const readImportedFormFieldOptions = (
   element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
   doc: Document
@@ -7425,12 +7895,19 @@ const readImportedFormFieldOptions = (
   const tagName = element.tagName.toLowerCase()
   if (tagName === 'select') {
     return Array.from((element as HTMLSelectElement).options || [])
-      .map(option => ({
-        label: (option.textContent || option.value || '').trim(),
-        value: (option.value || option.textContent || '').trim()
-      }))
-      .filter(option => option.label || option.value)
-      .filter(option => option.value || option.label.toLowerCase() !== 'selecciona una opcion')
+      .map(option => {
+        // Read the value ATTRIBUTE: the placeholder option uses value="" and the
+        // .value property would fall back to its text ("Selecciona una opción").
+        const rawValue = option.getAttribute('value')
+        const label = (option.textContent || '').trim()
+        return withImportedOptionActions({
+          label: label || (rawValue || '').trim(),
+          value: (rawValue !== null ? rawValue : label).trim()
+        }, option)
+      })
+      // Empty value = placeholder ("Selecciona una opción"); it is kept by the
+      // regenerator automatically and should not be editable as a real option.
+      .filter(option => option.value)
   }
 
   const input = element as HTMLInputElement
@@ -7438,19 +7915,19 @@ const readImportedFormFieldOptions = (
   if (!['radio', 'checkbox'].includes(inputType)) return []
 
   const choiceName = input.getAttribute('name') || input.getAttribute('id') || ''
-  if (!choiceName) return [{
+  if (!choiceName) return [withImportedOptionActions({
     label: getImportedChoiceLabel(input, doc),
     value: input.getAttribute('value') || getImportedChoiceLabel(input, doc)
-  }]
+  }, input)]
 
   const form = input.closest('form')
   return Array.from((form || doc).querySelectorAll<HTMLInputElement>(`input[type="${inputType}"][name="${choiceName.replace(/"/g, '\\"')}"]`))
     .map(optionInput => {
       const label = getImportedChoiceLabel(optionInput, doc)
-      return {
+      return withImportedOptionActions({
         label,
         value: optionInput.getAttribute('value') || label
-      }
+      }, optionInput)
     })
     .filter(option => option.label || option.value)
 }
@@ -7495,6 +7972,108 @@ const readImportedEditableSelection = (element: HTMLElement): ImportedEditableSe
     tagName: element.tagName.toLowerCase(),
     ...readImportedButtonSettings(element, editType)
   }
+}
+
+// --- Side-panel summary of the form fields detected on the current page ---
+interface ImportedPanelFormField {
+  key: string
+  kind: 'choice' | 'field'
+  label: string
+  typeLabel: string
+  optionsCount: number
+  hasDisqualify: boolean
+  fieldName: string
+  inputType: string
+  tagName: 'input' | 'textarea' | 'select'
+}
+
+const importedPanelFieldTypeLabels: Record<string, string> = {
+  text: 'Texto',
+  email: 'Email',
+  tel: 'Telefono',
+  number: 'Numero',
+  date: 'Fecha',
+  url: 'URL',
+  password: 'Contraseña',
+  textarea: 'Texto largo',
+  select: 'Desplegable',
+  radio: 'Opcion unica',
+  checkbox: 'Casillas'
+}
+
+const escapeImportedSelectorValue = (value: string) => value.replace(/"/g, '\\"')
+
+const importedDisqualifyActions = new Set<ImportedButtonAction>(['disqualify', 'disqualify_after_submit'])
+
+const readImportedChoiceGroupHasDisqualify = (input: HTMLInputElement, doc: Document) => {
+  const choiceName = input.getAttribute('name') || input.getAttribute('id') || ''
+  const groupInputs = choiceName
+    ? Array.from((input.closest('form') || doc).querySelectorAll<HTMLInputElement>(
+      `input[type="${input.type}"][name="${escapeImportedSelectorValue(choiceName)}"]`
+    ))
+    : [input]
+  return groupInputs.some(item => readImportedOptionActions(item).some(action => importedDisqualifyActions.has(action.action)))
+}
+
+const collectImportedPanelFormFields = (doc: Document): ImportedPanelFormField[] => {
+  const result: ImportedPanelFormField[] = []
+  const seenChoiceGroups = new Set<string>()
+  const elements = Array.from(doc.querySelectorAll<HTMLElement>('input, textarea, select'))
+
+  for (const element of elements) {
+    const tagName = element.tagName.toLowerCase() as ImportedPanelFormField['tagName']
+    const inputType = tagName === 'input' ? (element.getAttribute('type') || 'text').toLowerCase() : tagName
+    if (['hidden', 'submit', 'button', 'reset', 'image', 'file'].includes(inputType)) continue
+    const fieldName = element.getAttribute('name') || element.getAttribute('id') || ''
+
+    if (['radio', 'checkbox'].includes(inputType)) {
+      const groupKey = `${inputType}:${fieldName}`
+      if (fieldName && seenChoiceGroups.has(groupKey)) continue
+      if (fieldName) seenChoiceGroups.add(groupKey)
+      const input = element as HTMLInputElement
+      result.push({
+        key: `${groupKey}:${result.length}`,
+        kind: 'choice',
+        label: fieldName || getImportedChoiceLabel(input, doc) || 'Opciones',
+        typeLabel: importedPanelFieldTypeLabels[inputType],
+        optionsCount: readImportedFormFieldOptions(input, doc).length,
+        hasDisqualify: readImportedChoiceGroupHasDisqualify(input, doc),
+        fieldName,
+        inputType,
+        tagName: 'input'
+      })
+      continue
+    }
+
+    const fieldElement = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    const fieldOptions = tagName === 'select' ? readImportedFormFieldOptions(fieldElement, doc) : []
+    result.push({
+      key: `${tagName}:${fieldName}:${result.length}`,
+      kind: 'field',
+      label: getImportedFormFieldLabel(fieldElement, doc),
+      typeLabel: importedPanelFieldTypeLabels[inputType] || 'Campo',
+      optionsCount: fieldOptions.length,
+      hasDisqualify: fieldOptions.some(option => (option.actions || []).some(action => importedDisqualifyActions.has(action.action))),
+      fieldName,
+      inputType,
+      tagName
+    })
+  }
+
+  return result.slice(0, 40)
+}
+
+const findImportedPanelFieldElement = (field: ImportedPanelFormField, doc: Document): HTMLElement | null => {
+  const safeName = escapeImportedSelectorValue(field.fieldName)
+  if (field.kind === 'choice') {
+    return field.fieldName
+      ? doc.querySelector<HTMLElement>(`input[type="${field.inputType}"][name="${safeName}"], input[type="${field.inputType}"][id="${safeName}"]`)
+      : doc.querySelector<HTMLElement>(`input[type="${field.inputType}"]`)
+  }
+  if (field.fieldName) {
+    return doc.querySelector<HTMLElement>(`${field.tagName}[name="${safeName}"], ${field.tagName}[id="${safeName}"]`)
+  }
+  return doc.querySelector<HTMLElement>(field.tagName)
 }
 
 const importedAIRegionCandidateSelector = [
@@ -8131,6 +8710,20 @@ const ImportedActionChainEditor: React.FC<{
             </label>
           )}
 
+          {step.action === 'disqualify' && (
+            <label className={styles.importedActionField}>
+              <span>Mensaje al descalificar (opcional)</span>
+              <input
+                value={step.buttonMessage || ''}
+                placeholder="Gracias, por ahora no calificas"
+                disabled={disabled}
+                name={`rstk-imported-action-disqualify-${index}`}
+                {...importedEditorNoAutocompleteAttrs}
+                onChange={(event) => setAction(index, { buttonMessage: event.target.value })}
+              />
+            </label>
+          )}
+
           {step.action === 'automation' && (
             <label className={styles.importedActionField}>
               <span>Configuración demo</span>
@@ -8214,6 +8807,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [aiRegionError, setAiRegionError] = useState('')
   const [aiRegionLastAttempt, setAiRegionLastAttempt] = useState<ImportedAIRegionAttempt | null>(null)
   const [fieldEditor, setFieldEditor] = useState<ImportedFormFieldEditorState | null>(null)
+  const [panelFormFields, setPanelFormFields] = useState<ImportedPanelFormField[]>([])
   const [contentSaving, setContentSaving] = useState(false)
   const [contentError, setContentError] = useState('')
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
@@ -8377,6 +8971,28 @@ const ImportedHtmlEditorPanel: React.FC<{
     setChoiceEditor(null)
     setFieldEditor(null)
   }, [])
+
+  // Open a detected form field's editor from the side panel: locate it in the
+  // preview, highlight it and reuse the same choice/field editors as a click.
+  const openPanelFormField = useCallback((field: ImportedPanelFormField) => {
+    const doc = iframeRef.current?.contentDocument
+    if (!doc) return
+    const element = findImportedPanelFieldElement(field, doc)
+    if (!element) {
+      showToast('warning', 'Campo no encontrado', 'Recarga la vista previa e intentalo de nuevo.')
+      return
+    }
+    selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
+    const highlightTarget = (element.closest('label') as HTMLElement | null) || element
+    highlightTarget.classList.add('rstk-imported-selected')
+    selectedIframeElementRef.current = highlightTarget
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (field.kind === 'choice') {
+      openChoiceEditorForSelection(readImportedChoiceSelection(element as HTMLInputElement, doc))
+    } else {
+      openFieldEditorForSelection(readImportedFormFieldSelection(element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, doc))
+    }
+  }, [openChoiceEditorForSelection, openFieldEditorForSelection, showToast])
 
   const saveEditableContent = useCallback(async (
     selection: ImportedEditableSelection,
@@ -9077,6 +9693,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       doc.addEventListener('click', handleFrameClick, true)
       doc.addEventListener('auxclick', handleFrameClick, true)
       doc.addEventListener('submit', handleFrameSubmit, true)
+      setPanelFormFields(collectImportedPanelFormFields(doc))
       cleanupDocument = () => {
         doc.removeEventListener('mouseover', handleFrameMouseOver, true)
         doc.removeEventListener('mousedown', handleRegionMouseDown, true)
@@ -9161,9 +9778,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     choiceEditor.options.length > 0
   )
   const cleanChoiceOptions = (choiceEditor?.options || [])
-    .map(option => ({
+    .map((option): ImportedFormFieldOption => ({
       label: option.label.trim(),
-      value: (option.value || option.label).trim()
+      value: (option.value || option.label).trim(),
+      ...(option.actions?.length ? { actions: option.actions } : {})
     }))
     .filter(option => option.label || option.value)
   const patchChoiceOption = (index: number, patch: Partial<ImportedFormFieldOption>) => {
@@ -9199,9 +9817,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     (fieldEditor.selection.tagName === 'select' || ['radio', 'checkbox'].includes(fieldEditor.selection.inputType))
   )
   const cleanFieldOptions = (fieldEditor?.options || [])
-    .map(option => ({
+    .map((option): ImportedFormFieldOption => ({
       label: option.label.trim(),
-      value: (option.value || option.label).trim()
+      value: (option.value || option.label).trim(),
+      ...(option.actions?.length ? { actions: option.actions } : {})
     }))
     .filter(option => option.label || option.value)
   const canSaveFieldEditor = Boolean(
@@ -9257,11 +9876,13 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   const saveChoiceEditor = async () => {
     if (!choiceEditor) return
-    const choiceActions = getUniqueImportedActionSteps(choiceEditor.actions, currentPageActionOptions)
-    const selectedChoiceOption = cleanChoiceOptions[choiceEditor.selection.choiceIndex] || cleanChoiceOptions[0] || {
+    const selectedChoiceOption: ImportedFormFieldOption = cleanChoiceOptions[choiceEditor.selection.choiceIndex] || cleanChoiceOptions[0] || {
       label: choiceEditor.selection.label,
       value: choiceEditor.selection.choiceValue
     }
+    // Per-option actions travel in fieldOptions; choiceActions repeats the
+    // selected option's actions for the legacy single-option update path.
+    const choiceActions = selectedChoiceOption.actions || []
     await saveEditableContent({
       editId: choiceEditor.selection.editId,
       editType: 'choice_option' as ImportedEditableContentType,
@@ -9511,6 +10132,42 @@ const ImportedHtmlEditorPanel: React.FC<{
           </div>
         )}
 
+        {panelFormFields.length > 0 && !buttonEditor && !choiceEditor && !fieldEditor && (
+          <div className={styles.importedFormFieldsBox}>
+            <div className={styles.importedButtonActionHeader}>
+              <ListChecks size={17} />
+              <div>
+                <span>Formulario de esta pagina</span>
+                <strong>{panelFormFields.length} {panelFormFields.length === 1 ? 'campo' : 'campos'}</strong>
+              </div>
+            </div>
+            <p className={styles.importedFormFieldsHint}>
+              Edita cada campo desde aqui: etiqueta, opciones, obligatorio y acciones para calificar o descalificar.
+            </p>
+            <div className={styles.importedFormFieldsList}>
+              {panelFormFields.map(field => (
+                <button
+                  key={field.key}
+                  type="button"
+                  className={styles.importedFormFieldRow}
+                  onClick={() => openPanelFormField(field)}
+                  disabled={contentSaving}
+                >
+                  <span className={styles.importedFormFieldRowMain}>
+                    <strong>{field.label}</strong>
+                    <small>
+                      {field.typeLabel}
+                      {field.optionsCount > 0 ? ` · ${field.optionsCount} ${field.optionsCount === 1 ? 'opcion' : 'opciones'}` : ''}
+                    </small>
+                  </span>
+                  {field.hasDisqualify && <span className={styles.importedFormFieldBadge}>Descalifica</span>}
+                  <Pencil size={13} />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className={styles.importedSidePanelActions}>
           <Button type="button" variant="secondary" onClick={onEditFields} disabled={loadingImportData}>
             {loadingImportData ? <RefreshCw size={15} /> : <Settings2 size={15} />}
@@ -9581,40 +10238,52 @@ const ImportedHtmlEditorPanel: React.FC<{
                 </button>
               </div>
               {choiceEditor.options.map((option, index) => (
-                <div key={`${index}-${option.value}`} className={styles.importedFieldOptionRow}>
-                  <input
-                    value={option.label}
-                    disabled={contentSaving}
-                    placeholder={`Opción ${index + 1}`}
-                    name={`rstk-imported-choice-option-label-${index}`}
-                    {...importedEditorNoAutocompleteAttrs}
-                    onChange={(event) => patchChoiceOption(index, {
-                      label: event.target.value,
-                      value: option.value === option.label ? event.target.value : option.value
-                    })}
-                  />
-                  <input
-                    value={option.value}
-                    disabled={contentSaving}
-                    placeholder="valor"
-                    name={`rstk-imported-choice-option-value-${index}`}
-                    {...importedEditorNoAutocompleteAttrs}
-                    onChange={(event) => patchChoiceOption(index, { value: event.target.value })}
-                  />
-                  <button type="button" onClick={() => removeChoiceOption(index)} disabled={contentSaving || choiceEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
-                    <X size={13} />
-                  </button>
+                <div key={`${index}-${option.value}`} className={styles.importedFieldOptionItem}>
+                  <div className={styles.importedFieldOptionRow}>
+                    <input
+                      value={option.label}
+                      disabled={contentSaving}
+                      placeholder={`Opción ${index + 1}`}
+                      name={`rstk-imported-choice-option-label-${index}`}
+                      {...importedEditorNoAutocompleteAttrs}
+                      onChange={(event) => patchChoiceOption(index, {
+                        label: event.target.value,
+                        value: option.value === option.label ? event.target.value : option.value
+                      })}
+                    />
+                    <input
+                      value={option.value}
+                      disabled={contentSaving}
+                      placeholder="valor"
+                      name={`rstk-imported-choice-option-value-${index}`}
+                      {...importedEditorNoAutocompleteAttrs}
+                      onChange={(event) => patchChoiceOption(index, { value: event.target.value })}
+                    />
+                    <button type="button" onClick={() => removeChoiceOption(index)} disabled={contentSaving || choiceEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
+                      <X size={13} />
+                    </button>
+                  </div>
+                  <label className={styles.importedFieldOptionAction}>
+                    <span>Al elegirla</span>
+                    <CustomSelect
+                      value={getImportedOptionQuickAction(option)}
+                      disabled={contentSaving}
+                      onChange={(event) => {
+                        const action = event.target.value as '' | ImportedButtonAction
+                        patchChoiceOption(index, { actions: action ? [makeImportedActionStep(action)] : [] })
+                      }}
+                    >
+                      {importedChoiceQuickActions.map(item => (
+                        <option key={item.value || 'none'} value={item.value}>{item.label}</option>
+                      ))}
+                    </CustomSelect>
+                  </label>
                 </div>
               ))}
             </div>
-            <ImportedActionChainEditor
-              actions={choiceEditor.actions}
-              targetPages={targetImportedPages}
-              actionOptions={currentPageActionOptions}
-              disabled={contentSaving}
-              emptyLabel="No hacer nada especial"
-              onChange={(actions) => setChoiceEditor(current => current ? { ...current, actions } : current)}
-            />
+            <p className={styles.importedFieldOptionsHint}>
+              Usa "Descalificar" en las opciones que no son tu cliente ideal: Ristak marca el contacto como no calificado.
+            </p>
             <div className={styles.importedButtonActionFooter}>
               <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
                 Cancelar
@@ -9682,31 +10351,51 @@ const ImportedHtmlEditorPanel: React.FC<{
                   </button>
                 </div>
                 {fieldEditor.options.map((option, index) => (
-                  <div key={`${index}-${option.value}`} className={styles.importedFieldOptionRow}>
-                    <input
-                      value={option.label}
-                      disabled={contentSaving}
-                      placeholder={`Opción ${index + 1}`}
-                      name={`rstk-imported-field-option-label-${index}`}
-                      {...importedEditorNoAutocompleteAttrs}
-                      onChange={(event) => patchFieldOption(index, {
-                        label: event.target.value,
-                        value: option.value === option.label ? event.target.value : option.value
-                      })}
-                    />
-                    <input
-                      value={option.value}
-                      disabled={contentSaving}
-                      placeholder="valor"
-                      name={`rstk-imported-field-option-value-${index}`}
-                      {...importedEditorNoAutocompleteAttrs}
-                      onChange={(event) => patchFieldOption(index, { value: event.target.value })}
-                    />
-                    <button type="button" onClick={() => removeFieldOption(index)} disabled={contentSaving || fieldEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
-                      <X size={13} />
-                    </button>
+                  <div key={`${index}-${option.value}`} className={styles.importedFieldOptionItem}>
+                    <div className={styles.importedFieldOptionRow}>
+                      <input
+                        value={option.label}
+                        disabled={contentSaving}
+                        placeholder={`Opción ${index + 1}`}
+                        name={`rstk-imported-field-option-label-${index}`}
+                        {...importedEditorNoAutocompleteAttrs}
+                        onChange={(event) => patchFieldOption(index, {
+                          label: event.target.value,
+                          value: option.value === option.label ? event.target.value : option.value
+                        })}
+                      />
+                      <input
+                        value={option.value}
+                        disabled={contentSaving}
+                        placeholder="valor"
+                        name={`rstk-imported-field-option-value-${index}`}
+                        {...importedEditorNoAutocompleteAttrs}
+                        onChange={(event) => patchFieldOption(index, { value: event.target.value })}
+                      />
+                      <button type="button" onClick={() => removeFieldOption(index)} disabled={contentSaving || fieldEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
+                        <X size={13} />
+                      </button>
+                    </div>
+                    <label className={styles.importedFieldOptionAction}>
+                      <span>Al elegirla</span>
+                      <CustomSelect
+                        value={getImportedOptionQuickAction(option)}
+                        disabled={contentSaving}
+                        onChange={(event) => {
+                          const action = event.target.value as '' | ImportedButtonAction
+                          patchFieldOption(index, { actions: action ? [makeImportedActionStep(action)] : [] })
+                        }}
+                      >
+                        {importedChoiceQuickActions.map(item => (
+                          <option key={item.value || 'none'} value={item.value}>{item.label}</option>
+                        ))}
+                      </CustomSelect>
+                    </label>
                   </div>
                 ))}
+                <p className={styles.importedFieldOptionsHint}>
+                  Usa "Descalificar" en las opciones que no son tu cliente ideal: Ristak marca el contacto como no calificado.
+                </p>
               </div>
             )}
 
@@ -10544,7 +11233,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
                 <X size={17} />
               </button>
             </div>
-            <label className={styles.libraryRouteField}>
+            <label className={styles.libraryRouteField} data-ristak-unstyled>
               <span className={styles.libraryRouteDomain} title={getPublicDomainPreview(domainConfig)}>
                 {getPublicDomainPreview(domainConfig)}
               </span>
@@ -10919,7 +11608,7 @@ const DimensionField: React.FC<DimensionFieldProps> = ({ label, value, min, max,
     <label className={styles.dimensionField}>
       <span>{label}</span>
       <div className={styles.dimensionTextRow}>
-        <div className={styles.dimensionBox}>
+        <div className={styles.dimensionBox} data-ristak-unstyled>
           <NumberInput
             min={min}
             max={max}
@@ -11045,7 +11734,7 @@ const LinkedSpacingField: React.FC<LinkedSpacingFieldProps> = ({
       </div>
       <div className={styles.spacingGrid}>
         {spacingSides.map(side => (
-          <label key={side.id} className={styles.spacingBox}>
+          <label key={side.id} className={styles.spacingBox} data-ristak-unstyled>
             <span>{side.label}</span>
             <div>
               <NumberInput
@@ -11357,7 +12046,7 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
       <div className={styles.colorFieldHeader}>
         <span>{label}</span>
       </div>
-      <div className={styles.colorRow} data-open={open ? 'true' : 'false'}>
+      <div className={styles.colorRow} data-open={open ? 'true' : 'false'} data-ristak-unstyled>
         <button
           type="button"
           className={styles.colorSwatchButton}
@@ -12198,6 +12887,8 @@ interface FunnelPagesPanelProps {
   pageMode?: 'funnel' | 'website'
   onChangeMode?: (mode: 'funnel' | 'website') => void
   onAddSubpage?: (parentId: string) => void
+  onPromotePage?: (pageId: string) => void
+  onDemotePage?: (pageId: string) => void
   getPageDepth?: (page: SitePage) => number
   canDeletePage?: (page: SitePage) => boolean
   canDuplicatePage?: (page: SitePage) => boolean
@@ -12220,6 +12911,8 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   pageMode = 'funnel',
   onChangeMode,
   onAddSubpage,
+  onPromotePage,
+  onDemotePage,
   getPageDepth,
   canDeletePage = () => pages.length > 1,
   canDuplicatePage = () => true,
@@ -12247,7 +12940,10 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   useEffect(() => {
     if (!open) return
 
-    const handleDocumentClick = (event: MouseEvent) => {
+    // Listen on pointerdown (not click): with a Radix menu open the body loses
+    // pointer-events, so the click that follows releasing the trigger lands on
+    // <html> and would close the whole panel.
+    const handleDocumentPointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null
       if (!target) return
       if (dropdownRef.current?.contains(target)) return
@@ -12259,11 +12955,11 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
       if (event.key === 'Escape') setOpen(false)
     }
 
-    document.addEventListener('click', handleDocumentClick)
+    document.addEventListener('pointerdown', handleDocumentPointerDown)
     document.addEventListener('keydown', handleDocumentKeyDown)
 
     return () => {
-      document.removeEventListener('click', handleDocumentClick)
+      document.removeEventListener('pointerdown', handleDocumentPointerDown)
       document.removeEventListener('keydown', handleDocumentKeyDown)
     }
   }, [open])
@@ -12374,6 +13070,8 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                   const pageCanDuplicate = !locked && canDuplicatePage(page)
                   const pageDepth = getPageDepth ? getPageDepth(page) : depth
                   const canAddSubpage = websiteMode && !locked && Boolean(onAddSubpage) && pageDepth < MAX_WEBSITE_PAGE_DEPTH
+                  const pageCanPromote = websiteMode && !locked && Boolean(onPromotePage) && canPromoteWebsitePage(page, movablePages)
+                  const pageCanDemote = websiteMode && !locked && Boolean(onDemotePage) && canDemoteWebsitePage(page, movablePages)
                   const pageToneClass = colorFinalPages && page.id === FORM_THANK_YOU_PAGE_ID
                     ? styles.pagesDropdownItemThankYou
                     : colorFinalPages && page.id === FORM_DISQUALIFIED_PAGE_ID
@@ -12395,7 +13093,12 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       canDelete={pageCanDelete}
                       canDuplicate={pageCanDuplicate}
                       showAddSubpage={canAddSubpage}
+                      websiteMode={websiteMode}
+                      canPromote={pageCanPromote}
+                      canDemote={pageCanDemote}
                       onAddSubpage={onAddSubpage ? () => { onAddSubpage(page.id) } : undefined}
+                      onPromote={onPromotePage ? () => { onPromotePage(page.id) } : undefined}
+                      onDemote={onDemotePage ? () => { onDemotePage(page.id) } : undefined}
                       onSelect={() => handleSelectPage(page.id)}
                       onStartRename={() => {
                         onSelectPage(page.id)
@@ -12470,7 +13173,12 @@ interface FunnelPageDropdownItemProps {
   canDelete: boolean
   canDuplicate: boolean
   showAddSubpage?: boolean
+  websiteMode?: boolean
+  canPromote?: boolean
+  canDemote?: boolean
   onAddSubpage?: () => void
+  onPromote?: () => void
+  onDemote?: () => void
   onSelect: () => void
   onStartRename: () => void
   onDuplicate: () => void
@@ -12492,7 +13200,12 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   canDelete,
   canDuplicate,
   showAddSubpage = false,
+  websiteMode = false,
+  canPromote = false,
+  canDemote = false,
   onAddSubpage,
+  onPromote,
+  onDemote,
   onSelect,
   onStartRename,
   onDuplicate,
@@ -12554,7 +13267,21 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
 
         {!locked && (
           <div className={styles.pagesDropdownActionWrap}>
-            <DropdownMenu onOpenChange={setMenuOpen}>
+            {showAddSubpage && onAddSubpage && (
+              <button
+                type="button"
+                className={styles.pagesDropdownSubpageButton}
+                title="Agregar subpagina"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onAddSubpage()
+                }}
+              >
+                <Plus size={13} />
+                Subpagina
+              </button>
+            )}
+            <DropdownMenu modal={false} onOpenChange={setMenuOpen}>
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
@@ -12601,6 +13328,32 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                   >
                     <CornerDownRight size={14} />
                     Agregar subpagina
+                  </DropdownMenuItem>
+                )}
+                {websiteMode && onPromote && (
+                  <DropdownMenuItem
+                    className={styles.pagesDropdownActionItem}
+                    disabled={!canPromote}
+                    onSelect={(event) => {
+                      event.stopPropagation()
+                      onPromote()
+                    }}
+                  >
+                    <ArrowLeft size={14} />
+                    Subir de nivel
+                  </DropdownMenuItem>
+                )}
+                {websiteMode && onDemote && (
+                  <DropdownMenuItem
+                    className={styles.pagesDropdownActionItem}
+                    disabled={!canDemote}
+                    onSelect={(event) => {
+                      event.stopPropagation()
+                      onDemote()
+                    }}
+                  >
+                    <CornerDownRight size={14} />
+                    Bajar de nivel
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem
@@ -13063,6 +13816,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
 interface PopupCanvasSurfaceProps {
   site: PublicSite
   blocks: SiteBlock[]
+  lanes: LandingSectionLane[]
   selectedBlockId: string
   forms: PublicSite[]
   calendars: CalendarType[]
@@ -13071,6 +13825,8 @@ interface PopupCanvasSurfaceProps {
   selected: boolean
   palettePreviewBlock: SiteBlock | null
   paletteInsertIndex: number | null
+  paletteSectionTarget: PaletteSectionTarget | null
+  paletteDragging: boolean
   onSelectPopup: () => void
   onClosePopup: () => void
   onSelectBlock: (blockId: string) => void
@@ -13085,6 +13841,7 @@ interface PopupCanvasSurfaceProps {
 const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
   site,
   blocks,
+  lanes,
   selectedBlockId,
   forms,
   calendars,
@@ -13093,6 +13850,8 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
   selected,
   palettePreviewBlock,
   paletteInsertIndex,
+  paletteSectionTarget,
+  paletteDragging,
   onSelectPopup,
   onClosePopup,
   onSelectBlock,
@@ -13164,50 +13923,37 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
           {showCloseText && <strong>{closeText}</strong>}
         </button>
         <div className="rstkPopupEditorContent">
-          {palettePreviewBlock && paletteInsertIndex === 0 && (
-            <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
-          )}
           {blocks.length === 0 ? (
-            palettePreviewBlock ? null : (
+            palettePreviewBlock && isTopLevelLandingBlockType(palettePreviewBlock.blockType) ? (
+              <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
+            ) : (
               <div className="rstkDropEmpty rstkPopupDropEmpty">
                 <Plus size={22} />
-                <p>Arrastra bloques aqui o haz click en la barra izquierda.</p>
+                <p>Arrastra primero una franja de 1, 2 o 3 columnas.</p>
               </div>
             )
           ) : (
-            blocks.map((block, index) => {
-              const moveState = getBlockMoveState(block)
-              return (
-                <React.Fragment key={block.id}>
-                  <SortableCanvasBlock
-                    block={block}
-                    blocks={blocks}
-                    index={index}
-                    selected={selectedBlockId === block.id}
-                    site={site}
-                    forms={forms}
-                    calendars={calendars}
-                    pages={pages}
-                    activePageId={activePageId}
-                    canMoveUp={moveState.canMoveUp}
-                    canMoveDown={moveState.canMoveDown}
-                    onSelect={() => onSelectBlock(block.id)}
-                    onDelete={() => onDeleteBlock(block.id)}
-                    onMoveUp={() => onMoveBlock(block.id, 'up')}
-                    onMoveDown={() => onMoveBlock(block.id, 'down')}
-                    onPatchBlock={(patch) => onPatchBlock(block.id, patch)}
-                    onPatchSettings={(patch) => onPatchBlockSettings(block, patch)}
-                    onSave={() => onSaveBlock(block.id)}
-                  />
-                  {palettePreviewBlock && paletteInsertIndex === index + 1 && (
-                    <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
-                  )}
-                </React.Fragment>
-              )
-            })
-          )}
-          {palettePreviewBlock && blocks.length > 0 && paletteInsertIndex !== null && paletteInsertIndex >= blocks.length && (
-            <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
+            <LandingCanvasSections
+              lanes={lanes}
+              blocks={blocks}
+              selectedBlockId={selectedBlockId}
+              site={site}
+              forms={forms}
+              calendars={calendars}
+              pages={pages}
+              activePageId={activePageId}
+              palettePreviewBlock={palettePreviewBlock}
+              paletteInsertIndex={paletteInsertIndex}
+              paletteSectionTarget={paletteSectionTarget}
+              paletteDragging={paletteDragging}
+              onSelectBlock={onSelectBlock}
+              onDeleteBlock={onDeleteBlock}
+              onMoveBlock={onMoveBlock}
+              getBlockMoveState={getBlockMoveState}
+              onPatchBlock={onPatchBlock}
+              onPatchBlockSettings={onPatchBlockSettings}
+              onSaveBlock={onSaveBlock}
+            />
           )}
         </div>
       </section>
@@ -14189,16 +14935,20 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   }
 
   if (block.blockType === 'image') {
-    const mediaUrl = getSettingString(settings, 'mediaUrl') || block.content
+    const rawImageUrl = (getSettingString(settings, 'mediaUrl') || block.content || '').trim()
+    // Only real URLs: free text (e.g. the default "Imagen") would resolve as a relative path.
+    const mediaUrl = /^data:image\//i.test(rawImageUrl) || rawImageUrl.startsWith('/') ? rawImageUrl : safeEmbedUrl(rawImageUrl)
     return mediaUrl
       ? <figure className="rstk-media"><img src={mediaUrl} alt={block.label || 'Imagen'} loading="lazy" /></figure>
       : <div className="rstk-media rstk-media-empty">Imagen sin URL</div>
   }
 
   if (block.blockType === 'video') {
-    const videoUrl = getSettingString(settings, 'mediaUrl') || block.content
+    // Normalize watch/share URLs to embeddable players and drop anything that is
+    // not an absolute http(s) URL — a relative src would load the app itself.
+    const videoUrl = normalizeImportedVideoPreviewUrl(getSettingString(settings, 'mediaUrl') || block.content || '')
     return videoUrl
-      ? <div className="rstk-video"><iframe src={videoUrl} title={block.label || 'Video'} loading="lazy" allowFullScreen /></div>
+      ? <div className="rstk-video"><iframe src={videoUrl} title={block.label || 'Video'} loading="lazy" allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
       : <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
   }
 
@@ -14572,6 +15322,26 @@ const FormGlobalStyleControls: React.FC<{
           <input value={theme.submitSubtitle || ''} placeholder="Tarda menos de un minuto" onChange={(event) => onPatchTheme({ submitSubtitle: event.target.value })} onBlur={onSaveSite} />
         </label>
       </div>
+      {isStandardForm(site) && (
+        <div className={styles.twoColumn}>
+          <label className={styles.field}>
+            <span>Texto boton continuar</span>
+            <input value={theme.continueText || ''} placeholder="Continuar" onChange={(event) => onPatchTheme({ continueText: event.target.value })} onBlur={onSaveSite} />
+          </label>
+        </div>
+      )}
+      {isInteractiveForm(site) && (
+        <div className={styles.twoColumn}>
+          <label className={styles.field}>
+            <span>Texto boton siguiente</span>
+            <input value={theme.nextText || ''} placeholder="Siguiente" onChange={(event) => onPatchTheme({ nextText: event.target.value })} onBlur={onSaveSite} />
+          </label>
+          <label className={styles.field}>
+            <span>Texto boton anterior</span>
+            <input value={theme.backText || ''} placeholder="Anterior" onChange={(event) => onPatchTheme({ backText: event.target.value })} onBlur={onSaveSite} />
+          </label>
+        </div>
+      )}
       <div className={styles.twoColumn}>
         <ColorField label="Fondo boton" value={getThemePaint(theme, 'submitBg', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBg: value })} onCommit={onSaveSite} />
         <ColorField label="Texto boton" value={getThemePaint(theme, 'submitTextColor', onAccentFor(defaultAccent))} allowGradient onChange={(value) => onPatchTheme({ submitTextColor: value })} onCommit={onSaveSite} />

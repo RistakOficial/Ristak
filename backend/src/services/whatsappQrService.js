@@ -52,6 +52,34 @@ const qrSendAckWaiters = new Map()
 const qrRecentMessageAcks = new Map()
 let baileysRuntime = null
 
+// Cache de mensajes enviados para responder reintentos de descifrado
+// (getMessage de Baileys). Sin esto, cuando el receptor no puede descifrar un
+// mensaje y pide reenvio, no hay contenido que mandar y del otro lado se queda
+// el eterno "Esperando el mensaje".
+const QR_SENT_MESSAGE_CACHE_LIMIT = 500
+const qrSentMessageCache = new Map()
+
+function cacheSentQrMessage(response) {
+  const id = cleanString(response?.key?.id)
+  if (!id || !response?.message) return
+  qrSentMessageCache.set(id, response.message)
+  while (qrSentMessageCache.size > QR_SENT_MESSAGE_CACHE_LIMIT) {
+    qrSentMessageCache.delete(qrSentMessageCache.keys().next().value)
+  }
+}
+
+// Override de emergencia de la version de WhatsApp Web. Cuando WhatsApp
+// deprecia la version que Baileys trae integrada, TODAS las sesiones del mundo
+// con esa version caen a la vez con error 405 "Connection Failure". Con esta
+// variable se corrige sin esperar una release nueva de Baileys.
+// Formato: WHATSAPP_WEB_VERSION="2,3000,1037641644"
+function getWhatsAppWebVersionOverride() {
+  const raw = cleanString(process.env.WHATSAPP_WEB_VERSION)
+  if (!raw) return null
+  const parts = raw.split(/[.,]/).map(part => Number(part.trim())).filter(Number.isFinite)
+  return parts.length === 3 ? parts : null
+}
+
 function cleanString(value) {
   if (value === null || value === undefined) return ''
   return String(value).trim()
@@ -483,6 +511,118 @@ async function handleQrMessageUpdates(phone, updates = []) {
   }
 }
 
+let whatsappApiServiceModulePromise = null
+// Import dinámico para evitar el ciclo whatsappApiService -> whatsappQrService en la carga.
+function loadWhatsAppApiService() {
+  if (!whatsappApiServiceModulePromise) {
+    whatsappApiServiceModulePromise = import('./whatsappApiService.js')
+  }
+  return whatsappApiServiceModulePromise
+}
+
+function unwrapBaileysMessageContent(content = {}) {
+  let current = content
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    if (current.ephemeralMessage?.message) { current = current.ephemeralMessage.message; continue }
+    if (current.viewOnceMessage?.message) { current = current.viewOnceMessage.message; continue }
+    if (current.viewOnceMessageV2?.message) { current = current.viewOnceMessageV2.message; continue }
+    if (current.documentWithCaptionMessage?.message) { current = current.documentWithCaptionMessage.message; continue }
+    break
+  }
+  return current || {}
+}
+
+function describeBaileysMessageContent(content) {
+  if (!content || typeof content !== 'object') return null
+  const unwrapped = unwrapBaileysMessageContent(content)
+
+  if (cleanString(unwrapped.conversation)) return { type: 'text', text: cleanString(unwrapped.conversation) }
+  if (cleanString(unwrapped.extendedTextMessage?.text)) return { type: 'text', text: cleanString(unwrapped.extendedTextMessage.text) }
+  if (unwrapped.imageMessage) return { type: 'image', text: cleanString(unwrapped.imageMessage.caption) }
+  if (unwrapped.videoMessage) return { type: 'video', text: cleanString(unwrapped.videoMessage.caption) }
+  if (unwrapped.audioMessage) return { type: 'audio', text: '' }
+  if (unwrapped.documentMessage) {
+    return { type: 'document', text: cleanString(unwrapped.documentMessage.caption || unwrapped.documentMessage.fileName) }
+  }
+  if (unwrapped.stickerMessage) return { type: 'sticker', text: '' }
+  if (unwrapped.locationMessage) {
+    return { type: 'location', text: cleanString(unwrapped.locationMessage.name || unwrapped.locationMessage.address) }
+  }
+  if (unwrapped.contactMessage || unwrapped.contactsArrayMessage) {
+    return { type: 'contacts', text: cleanString(unwrapped.contactMessage?.displayName) }
+  }
+
+  // Reacciones, eventos de protocolo, encuestas y demás no forman parte del historial de chat.
+  return null
+}
+
+function getQrChatContactPhone(message = {}) {
+  const key = message.key || {}
+  const remoteJid = cleanString(key.remoteJid)
+  if (!remoteJid) return ''
+  if (remoteJid === 'status@broadcast') return ''
+  if (remoteJid.endsWith('@g.us') || remoteJid.endsWith('@broadcast') || remoteJid.endsWith('@newsletter')) return ''
+
+  const candidates = remoteJid.endsWith('@lid')
+    ? [cleanString(key.remoteJidAlt), cleanString(key.senderPn), cleanString(key.participantPn)]
+    : [remoteJid]
+
+  for (const candidate of candidates) {
+    if (!candidate || candidate.endsWith('@lid')) continue
+    const phone = normalizePhoneFromJid(candidate)
+    if (phone) return phone
+  }
+  return ''
+}
+
+function getBaileysMessageTimestampIso(message = {}) {
+  const raw = message.messageTimestamp
+  let seconds = 0
+  if (raw && typeof raw === 'object') {
+    seconds = typeof raw.toNumber === 'function' ? raw.toNumber() : Number(raw.low || 0)
+  } else {
+    seconds = Number(raw) || 0
+  }
+  return seconds > 0 ? new Date(seconds * 1000).toISOString() : nowIso()
+}
+
+async function handleQrIncomingMessages(phone, upsert = {}) {
+  const type = cleanString(upsert.type)
+  if (type && type !== 'notify' && type !== 'append') return
+
+  const messages = Array.isArray(upsert.messages) ? upsert.messages : []
+  for (const message of messages) {
+    try {
+      const key = message?.key || {}
+      const wamid = cleanString(key.id)
+      const contactPhone = getQrChatContactPhone(message)
+      if (!wamid || !contactPhone) continue
+
+      const content = describeBaileysMessageContent(message?.message)
+      if (!content) continue
+
+      const { captureQrChatMessage } = await loadWhatsAppApiService()
+      const result = await captureQrChatMessage({
+        phoneNumberId: phone.id,
+        businessPhone: phone.expectedPhone,
+        direction: key.fromMe ? 'outbound' : 'inbound',
+        wamid,
+        messageType: content.type,
+        text: content.text,
+        profileName: cleanString(message.pushName),
+        contactPhone,
+        timestamp: getBaileysMessageTimestampIso(message)
+      })
+
+      if (!result?.skipped && result?.isNew) {
+        logger.info(`[WhatsApp QR] Mensaje ${key.fromMe ? 'saliente' : 'entrante'} capturado por WhatsApp Web (${phone.id}): ${wamid}`)
+      }
+    } catch (error) {
+      logger.warn(`[WhatsApp QR] No se pudo capturar mensaje de WhatsApp Web (${phone.id}): ${error.message}`)
+    }
+  }
+}
+
 function waitForQrSendAck(messageId, response = {}) {
   const cleanMessageId = cleanString(messageId)
   if (!cleanMessageId) {
@@ -525,6 +665,7 @@ function waitForQrSendAck(messageId, response = {}) {
 }
 
 async function finalizeQrSendResponse({ response, recipient, externalId }) {
+  cacheSentQrMessage(response)
   const accepted = assertQrSendAccepted(response, recipient.jid)
   const ack = await waitForQrSendAck(accepted.messageId, response)
 
@@ -1159,6 +1300,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     deferred.reject(error)
   }
 
+  const versionOverride = getWhatsAppWebVersionOverride()
   const sock = makeWASocket({
     auth: {
       creds: state.creds,
@@ -1169,7 +1311,15 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     syncFullHistory: false,
     markOnlineOnConnect: false,
     qrTimeout: 60000,
-    browser: Browsers?.macOS ? Browsers.macOS('Desktop') : undefined
+    browser: Browsers?.macOS ? Browsers.macOS('Desktop') : undefined,
+    // Estabilidad 24/7: ping de keep-alive frecuente, timeouts explicitos y
+    // respuesta a reintentos de descifrado del receptor.
+    keepAliveIntervalMs: 10000,
+    connectTimeoutMs: 30000,
+    defaultQueryTimeoutMs: 60000,
+    retryRequestDelayMs: 250,
+    getMessage: async (key) => qrSentMessageCache.get(cleanString(key?.id)) || undefined,
+    ...(versionOverride ? { version: versionOverride } : {})
   })
 
   liveSessions.set(phone.id, {
@@ -1182,6 +1332,11 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
   sock.ev.on('messages.update', (updates) => {
     handleQrMessageUpdates(phone, updates).catch(error => {
       logger.warn(`[WhatsApp QR] No se pudieron procesar actualizaciones de mensajes ${phone.id}: ${error.message}`)
+    })
+  })
+  sock.ev.on('messages.upsert', (upsert) => {
+    handleQrIncomingMessages(phone, upsert).catch(error => {
+      logger.warn(`[WhatsApp QR] No se pudieron capturar mensajes de WhatsApp Web ${phone.id}: ${error.message}`)
     })
   })
   sock.ev.on('connection.update', async (update = {}) => {
@@ -1252,20 +1407,36 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       const badSession = isBadSessionDisconnect(statusCode, DisconnectReason)
       const connectionReplaced = isConnectionReplacedDisconnect(statusCode, DisconnectReason)
 
-      if (loggedOut || badSession || connectionReplaced) {
+      if (loggedOut || badSession) {
         await clearAuthState(phone.id).catch(error => {
           logger.warn(`[WhatsApp QR] No se pudo limpiar auth ${phone.id}: ${error.message}`)
         })
 
-        const finalStatus = connectionReplaced ? 'connection_replaced' : loggedOut ? 'logged_out' : 'bad_session'
-        const message = connectionReplaced
-          ? 'Otra sesion de WhatsApp tomo el control de esta conexion. Genera un QR nuevo para retomar.'
-          : badSession
-            ? 'La sesion QR se dano. Genera un QR nuevo para conectarlo otra vez.'
-            : lastError || 'WhatsApp cerro la sesion. Genera un QR nuevo para conectarlo otra vez.'
+        const finalStatus = loggedOut ? 'logged_out' : 'bad_session'
+        const message = badSession
+          ? 'La sesion QR se dano. Genera un QR nuevo para conectarlo otra vez.'
+          : lastError || 'WhatsApp cerro la sesion. Genera un QR nuevo para conectarlo otra vez.'
         await upsertSession(phone, {
           status: finalStatus,
           connectedPhone: null,
+          qrCode: null,
+          qrCodeDataUrl: null,
+          lastError: message,
+          lastDisconnectedAt: nowIso()
+        })
+        liveSessions.delete(phone.id)
+        rejectCurrentOpen(new Error(message))
+        return
+      }
+
+      if (connectionReplaced) {
+        // Otra instancia abrio la misma sesion (tipico durante un deploy con dos
+        // procesos vivos a la vez). Las credenciales SIGUEN siendo validas, asi
+        // que NO se borran: el watchdog reconecta solo cuando la otra instancia
+        // muera, sin pedir un QR nuevo.
+        const message = 'Otra sesion tomo el control de esta conexion. Se reconectara sola en unos minutos.'
+        await upsertSession(phone, {
+          status: 'connection_replaced',
           qrCode: null,
           qrCodeDataUrl: null,
           lastError: message,
@@ -1293,9 +1464,12 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
 
       const nextStatus = getReconnectStatus(statusCode, lastError, DisconnectReason)
       const nextReconnectAttempt = currentReconnectAttempt + 1
+      // Backoff exponencial con jitter: sin el jitter, varias sesiones caidas
+      // a la vez reintentan sincronizadas y WhatsApp las rechaza en rafaga.
       const reconnectDelay = nextStatus === 'restarting'
         ? 0
-        : Math.min(RECONNECT_BASE_DELAY_MS * (2 ** currentReconnectAttempt), RECONNECT_MAX_DELAY_MS)
+        : Math.min(RECONNECT_BASE_DELAY_MS * (2 ** currentReconnectAttempt), RECONNECT_MAX_DELAY_MS) +
+          Math.floor(Math.random() * 1500)
       logger.info(`[WhatsApp QR] ${nextStatus === 'restarting' ? 'Reiniciando' : 'Reconectando'} socket ${phone.id} (${nextReconnectAttempt}/${MAX_RECONNECT_ATTEMPTS})`)
       await upsertSession(phone, {
         status: nextStatus,
@@ -1684,6 +1858,66 @@ export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, d
     createTime: nowIso(),
     raw: sendResult.raw
   }
+}
+
+// Estados desde los que vale la pena reabrir una sesion con credenciales
+// guardadas. Los estados terminales (logged_out, bad_session, number_mismatch,
+// disconnected manual) requieren un QR nuevo y NO se tocan.
+const QR_RESUMABLE_STATUSES = new Set(['connected', 'reconnecting', 'restarting', 'connection_replaced'])
+// Tras un 440 (otra instancia tomo la sesion) se espera a que la otra
+// instancia muera de verdad antes de reconectar, para no entrar en una guerra
+// de reconexiones entre dos procesos (deploy viejo vs nuevo).
+const QR_REPLACED_COOLDOWN_MS = 10 * 60 * 1000
+
+/**
+ * Reabre las sesiones de WhatsApp Web que tienen credenciales guardadas y se
+ * quedaron sin socket vivo. Se llama al arrancar el servidor (los reinicios y
+ * deploys matan los sockets y nadie los volvia a abrir: la sesion quedaba
+ * "muerta" hasta que alguien intentaba enviar, y tras semanas sin conectarse
+ * WhatsApp desvincula el dispositivo) y periodicamente como watchdog para
+ * revivir sesiones que agotaron sus reintentos de reconexion.
+ */
+export async function resumeWhatsAppQrSessions({ source = 'watchdog' } = {}) {
+  if (process.env.WHATSAPP_QR_AUTO_RESUME === '0') {
+    return { resumed: 0, disabled: true }
+  }
+
+  const rows = await db.all(`
+    SELECT s.*
+    FROM whatsapp_qr_sessions s
+    JOIN whatsapp_api_phone_numbers p ON p.id = s.phone_number_id
+    WHERE p.qr_send_enabled = 1
+      AND s.consent_accepted = 1
+  `).catch(() => [])
+
+  let resumed = 0
+  for (const row of rows) {
+    const phoneNumberId = row.phone_number_id
+    const status = cleanString(row.status).toLowerCase()
+    const resumable = QR_RESUMABLE_STATUSES.has(status) || status.startsWith('disconnected_')
+    if (!resumable) continue
+    if (liveSessions.has(phoneNumberId)) continue
+    if (!(await hasSavedAuthState(phoneNumberId))) continue
+
+    if (status === 'connection_replaced') {
+      const lastDisconnect = Date.parse(row.last_disconnected_at || '')
+      if (Number.isFinite(lastDisconnect) && (Date.now() - lastDisconnect) < QR_REPLACED_COOLDOWN_MS) continue
+    }
+
+    try {
+      const phone = await getPhoneRow(phoneNumberId)
+      logger.info(`[WhatsApp QR] (${source}) Reabriendo sesion ${phoneNumberId} (estado previo: ${status})`)
+      const { openPromise } = await openSocket(phone, { requireConsent: false })
+      openPromise.catch(error => {
+        logger.warn(`[WhatsApp QR] (${source}) Reapertura pendiente/fallida ${phoneNumberId}: ${error.message}`)
+      })
+      resumed += 1
+    } catch (error) {
+      logger.warn(`[WhatsApp QR] (${source}) No se pudo reabrir ${phoneNumberId}: ${error.message}`)
+    }
+  }
+
+  return { resumed }
 }
 
 export { QR_CONSENT_TEXT }

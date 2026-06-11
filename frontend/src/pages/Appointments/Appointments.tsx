@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { KpiCard, Card, Button, PageContainer, PageHeader, AppointmentModal, BlockedSlotModal, TabList, Loading } from '@/components/common';
-import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Search, X, Settings, Bell, MessageSquare, Clock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Search, X, Settings, Bell, Sparkles } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -12,6 +12,15 @@ import { formatTime12h } from '@/utils/format'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { useTimezone } from '@/contexts/TimezoneContext';
 import { convertLocalToUTC } from '@/utils/timezone';
+import {
+  appointmentRemindersService,
+  formatReminderOffsetLabel,
+  type AppointmentReminder,
+  type AppointmentReminderInput,
+  type ReminderChannelOption,
+  type ReminderSenderOption
+} from '@/services/appointmentRemindersService';
+import AppointmentReminderModal from './AppointmentReminderModal';
 import styles from './Appointments.module.css';
 
 const LAST_SELECTED_CALENDAR_KEY = 'lastSelectedCalendarId';
@@ -32,24 +41,6 @@ const viewTabs = [
   { value: 'month', label: 'Mes' },
   { value: 'week', label: 'Semana' },
   { value: 'day', label: 'Día' }
-];
-
-const automaticMessageCards = [
-  {
-    title: '24 h antes',
-    detail: 'Recordatorio de cita',
-    Icon: Bell
-  },
-  {
-    title: '2 h antes',
-    detail: 'Confirmación rápida',
-    Icon: Clock
-  },
-  {
-    title: 'Después de la cita',
-    detail: 'Mensaje de seguimiento',
-    Icon: MessageSquare
-  }
 ];
 
 type ViewMode = 'month' | 'week' | 'day';
@@ -269,6 +260,14 @@ export const Appointments: React.FC = () => {
   });
   const [loading, setLoading] = useState(false);
 
+  // Mensajes automáticos de citas (recordatorios y confirmaciones)
+  const [reminders, setReminders] = useState<AppointmentReminder[]>([]);
+  const [reminderSenders, setReminderSenders] = useState<ReminderSenderOption[]>([]);
+  const [reminderChannels, setReminderChannels] = useState<ReminderChannelOption[]>([]);
+  const [selectedReminder, setSelectedReminder] = useState<AppointmentReminder | null>(null);
+  const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
+  const [creatingReminder, setCreatingReminder] = useState(false);
+
   // Modal de cita
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -305,6 +304,73 @@ export const Appointments: React.FC = () => {
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectionStart, setSelectionStart] = useState<{ date: Date; hour: number; minute: number } | null>(null);
   const [selectionEnd, setSelectionEnd] = useState<{ date: Date; hour: number; minute: number } | null>(null);
+
+  // Carga inicial de los mensajes automáticos del panel lateral.
+  useEffect(() => {
+    let cancelled = false;
+    appointmentRemindersService.getOverview()
+      .then(overview => {
+        if (cancelled) return;
+        setReminders(overview.reminders);
+        setReminderSenders(overview.senders);
+        setReminderChannels(overview.channels);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          showToast('error', 'Mensajes automáticos', 'No se pudieron cargar los mensajes automáticos.');
+        }
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleToggleReminder = useCallback(async (reminder: AppointmentReminder, enabled: boolean) => {
+    setReminders(prev => prev.map(item => item.id === reminder.id ? { ...item, enabled } : item));
+    try {
+      const updated = await appointmentRemindersService.updateReminder(reminder.id, { enabled });
+      setReminders(prev => prev.map(item => item.id === updated.id ? updated : item));
+    } catch {
+      setReminders(prev => prev.map(item => item.id === reminder.id ? { ...item, enabled: !enabled } : item));
+      showToast('error', 'Mensajes automáticos', 'No se pudo actualizar el mensaje automático.');
+    }
+  }, [showToast]);
+
+  const handleAddReminder = useCallback(async () => {
+    if (creatingReminder) return;
+    setCreatingReminder(true);
+    try {
+      const created = await appointmentRemindersService.createReminder({});
+      setReminders(prev => [...prev, created]);
+      setSelectedReminder(created);
+      setIsReminderModalOpen(true);
+    } catch {
+      showToast('error', 'Mensajes automáticos', 'No se pudo crear el mensaje automático.');
+    } finally {
+      setCreatingReminder(false);
+    }
+  }, [creatingReminder, showToast]);
+
+  const handleSaveReminder = useCallback(async (reminderId: string, input: AppointmentReminderInput) => {
+    try {
+      const updated = await appointmentRemindersService.updateReminder(reminderId, input);
+      setReminders(prev => prev.map(item => item.id === updated.id ? updated : item));
+      showToast('success', 'Mensajes automáticos', 'Cambios guardados.');
+    } catch (error) {
+      showToast('error', 'Mensajes automáticos', 'No se pudieron guardar los cambios.');
+      throw error;
+    }
+  }, [showToast]);
+
+  const handleDeleteReminder = useCallback(async (reminderId: string) => {
+    try {
+      await appointmentRemindersService.deleteReminder(reminderId);
+      setReminders(prev => prev.filter(item => item.id !== reminderId));
+      showToast('success', 'Mensajes automáticos', 'Mensaje automático eliminado.');
+    } catch (error) {
+      showToast('error', 'Mensajes automáticos', 'No se pudo eliminar el mensaje automático.');
+      throw error;
+    }
+  }, [showToast]);
 
   const persistLastSelectedCalendar = useCallback((calendarId: string | null) => {
     if (typeof window === 'undefined') return;
@@ -2194,23 +2260,63 @@ export const Appointments: React.FC = () => {
         </Card>
 
         <Card className={styles.automationCard}>
-          <div className={styles.cardHeader}>
+          <div className={`${styles.cardHeader} ${styles.automationHeader}`}>
             <h3>Mensajes automáticos</h3>
+            <button
+              type="button"
+              className={styles.automationAddButton}
+              onClick={handleAddReminder}
+              disabled={creatingReminder}
+              aria-label="Agregar mensaje automático"
+              title="Agregar mensaje automático"
+            >
+              <Plus size={16} aria-hidden="true" />
+            </button>
           </div>
 
           <div className={styles.automationList}>
-            {automaticMessageCards.map(({ title, detail, Icon }) => (
-              <div key={title} className={styles.automationItem}>
-                <div className={styles.automationIcon}>
-                  <Icon size={16} aria-hidden="true" />
-                </div>
-                <div className={styles.automationCopy}>
-                  <div className={styles.automationTitle}>{title}</div>
-                  <div className={styles.automationDetail}>{detail}</div>
-                </div>
-                <span className={styles.automationBadge}>Próximamente</span>
-              </div>
-            ))}
+            {reminders.length === 0 ? (
+              <p className={styles.emptyText}>Agrega un mensaje automático con el botón +</p>
+            ) : (
+              reminders.map((reminder) => {
+                const ReminderIcon = reminder.messageType === 'confirmation' ? Sparkles : Bell;
+                return (
+                  <div key={reminder.id} className={styles.automationItem}>
+                    <div className={styles.automationIcon}>
+                      <ReminderIcon size={16} aria-hidden="true" />
+                    </div>
+                    <div className={styles.automationCopy}>
+                      <div className={styles.automationTitle}>
+                        {formatReminderOffsetLabel(reminder.offsetValue, reminder.offsetUnit)}
+                      </div>
+                      <div className={styles.automationDetail}>
+                        {reminder.messageType === 'confirmation'
+                          ? `Confirmación de cita${reminder.aiEnabled ? ' · IA' : ''}`
+                          : 'Recordatorio de cita'}
+                      </div>
+                      <button
+                        type="button"
+                        className={styles.automationDetailsButton}
+                        onClick={() => {
+                          setSelectedReminder(reminder);
+                          setIsReminderModalOpen(true);
+                        }}
+                      >
+                        Ver detalles
+                      </button>
+                    </div>
+                    <label className={styles.automationSwitch} title={reminder.enabled ? 'Desactivar' : 'Activar'}>
+                      <input
+                        type="checkbox"
+                        checked={reminder.enabled}
+                        onChange={(e) => handleToggleReminder(reminder, e.target.checked)}
+                      />
+                      <span className={styles.automationSwitchTrack} />
+                    </label>
+                  </div>
+                );
+              })
+            )}
           </div>
         </Card>
         </aside>
@@ -2265,6 +2371,20 @@ export const Appointments: React.FC = () => {
         locationId={locationId ?? undefined}
         onSave={handleSaveBlockedSlot}
         onDelete={handleDeleteBlockedSlot}
+      />
+
+      {/* Modal de detalles de mensaje automático */}
+      <AppointmentReminderModal
+        isOpen={isReminderModalOpen}
+        reminder={selectedReminder}
+        senders={reminderSenders}
+        channels={reminderChannels}
+        onClose={() => {
+          setIsReminderModalOpen(false);
+          setSelectedReminder(null);
+        }}
+        onSave={handleSaveReminder}
+        onDelete={handleDeleteReminder}
       />
     </PageContainer>
   );

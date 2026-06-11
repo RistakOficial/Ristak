@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
+import React, { useEffect, useMemo, useState } from 'react'
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useBottomSheetDismiss } from '@/hooks'
+import { PhoneSheet } from './ui/PhoneSheet'
 import styles from './PhoneDateField.module.css'
 
 interface PhoneDateFieldProps {
@@ -98,24 +97,11 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
   const [viewDate, setViewDate] = useState<Date>(() => selectedDate || minDate || new Date())
   const days = useMemo(() => getCalendarDays(viewDate), [viewDate])
   const today = useMemo(() => new Date(), [])
-  const closeDateSheetNow = useCallback(() => setOpen(false), [])
-  const sheetDismiss = useBottomSheetDismiss({
-    isOpen: open,
-    onClose: closeDateSheetNow
-  })
-  const closeSheet = sheetDismiss.requestClose
 
   useEffect(() => {
     if (!open) return
-
     setViewDate(selectedDate || minDate || new Date())
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeSheet()
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [closeSheet, minDate, open, selectedDate])
+  }, [minDate, open, selectedDate])
 
   const changeMonth = (delta: number) => {
     setViewDate((current) => {
@@ -128,29 +114,37 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
   const selectDate = (date: Date) => {
     if (minDate && date < minDate) return
     onChange(formatDateInput(date))
-    closeSheet()
+    setOpen(false)
   }
-  const sheetMoving = sheetDismiss.dragging || sheetDismiss.closing || sheetDismiss.dragOffset > 0
-  const sheetDragging = sheetDismiss.dragging || sheetDismiss.dragOffset > 0
 
-  const sheet = open ? (
-    <div className={`${styles.overlay} ${sheetDragging ? styles.overlayInteractive : ''} ${sheetDismiss.closing ? styles.overlayClosing : ''}`} style={sheetDismiss.backdropStyle} role="presentation" onClick={closeSheet}>
-      <div
-        className={`${styles.sheet} ${sheetMoving ? styles.sheetInteractive : ''}`}
-        style={sheetDismiss.sheetStyle}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onClick={(event) => event.stopPropagation()}
-        {...sheetDismiss.sheetDragProps}
+  return (
+    <div className={`${styles.host} ${className}`}>
+      <button
+        type="button"
+        className={`${styles.trigger} ${buttonClassName}`}
+        disabled={disabled}
+        aria-label={ariaLabel || title}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => !disabled && setOpen(true)}
       >
-        <div className={styles.handle} aria-hidden="true" />
-        <div className={styles.header}>
-          <strong>{title}</strong>
+        <CalendarDays size={17} />
+        <span className={selectedDate ? styles.value : styles.placeholder}>
+          {formatDisplayDate(value, placeholder)}
+        </span>
+      </button>
+
+      <PhoneSheet
+        isOpen={open}
+        onClose={() => setOpen(false)}
+        title={title}
+        ariaLabel={ariaLabel || title}
+        headerRight={(
           <button type="button" className={styles.todayButton} onClick={() => selectDate(new Date())}>
             Hoy
           </button>
-        </div>
+        )}
+      >
         <div className={styles.monthRow}>
           <button type="button" onClick={() => changeMonth(-1)} aria-label="Mes anterior">
             <ChevronLeft size={20} />
@@ -187,27 +181,7 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
             )
           })}
         </div>
-      </div>
-    </div>
-  ) : null
-
-  return (
-    <div className={`${styles.host} ${className}`}>
-      <button
-        type="button"
-        className={`${styles.trigger} ${buttonClassName}`}
-        disabled={disabled}
-        aria-label={ariaLabel || title}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={() => !disabled && setOpen(true)}
-      >
-        <CalendarDays size={17} />
-        <span className={selectedDate ? styles.value : styles.placeholder}>
-          {formatDisplayDate(value, placeholder)}
-        </span>
-      </button>
-      {typeof document !== 'undefined' ? createPortal(sheet, document.body) : null}
+      </PhoneSheet>
     </div>
   )
 }

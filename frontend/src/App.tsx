@@ -18,6 +18,7 @@ import { APIDocumentation } from '@/pages/Settings/APIDocumentation'
 import { Appointments } from '@/pages/Appointments'
 import { Analytics } from '@/pages/Analytics'
 import { Sites } from '@/pages/Sites'
+import { Automations } from '@/pages/Automations'
 import { PhoneAgentChat } from '@/pages/PhoneAgentChat'
 import { PhoneApp } from '@/pages/PhoneApp'
 import { PhoneAnalytics } from '@/pages/PhoneAnalytics'
@@ -684,6 +685,7 @@ const AppWithNotifications: React.FC = () => {
             <Route path="contacts/*" element={<Contacts />} />
             <Route path="appointments/*" element={<Appointments />} />
             <Route path="sites/*" element={<Sites />} />
+            <Route path="automations/*" element={<Automations />} />
             <Route path="analytics/*" element={<Analytics />} />
             <Route path="settings/*" element={<Settings />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
@@ -703,6 +705,7 @@ const AppWithNotifications: React.FC = () => {
         cancelText={modal.cancelText}
         onConfirm={modal.onConfirm}
         onCancel={modal.onCancel}
+        typeToConfirm={modal.typeToConfirm}
       />
     </>
   )

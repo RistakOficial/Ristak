@@ -1,0 +1,47 @@
+import {
+  ensureDefaultAppointmentReminder,
+  processDueAppointmentReminders
+} from '../services/appointmentRemindersService.js'
+import { logger } from '../utils/logger.js'
+
+const APPOINTMENT_REMINDERS_INTERVAL_MS = 60 * 1000
+
+let started = false
+let running = false
+
+async function runAppointmentRemindersDispatch(source = 'interval') {
+  if (running) return
+  running = true
+
+  try {
+    const { sent, errors, skipped } = await processDueAppointmentReminders()
+    if (sent || errors || skipped) {
+      logger.info(`[Citas] Mensajes automáticos (${source}): ${sent} enviados, ${errors} con error, ${skipped} omitidos`)
+    }
+  } catch (error) {
+    logger.error(`[Citas] Error procesando mensajes automáticos: ${error.message}`)
+  } finally {
+    running = false
+  }
+}
+
+export function startAppointmentRemindersCron() {
+  if (started) return
+  started = true
+
+  logger.info('Iniciando mensajes automáticos de citas')
+
+  ensureDefaultAppointmentReminder().catch(error => {
+    logger.warn(`[Citas] No se pudo crear el recordatorio por defecto: ${error.message}`)
+  })
+
+  setInterval(() => {
+    runAppointmentRemindersDispatch().catch(error => {
+      logger.error(`[Citas] Error no manejado en mensajes automáticos: ${error.message}`)
+    })
+  }, APPOINTMENT_REMINDERS_INTERVAL_MS)
+
+  runAppointmentRemindersDispatch('startup').catch(error => {
+    logger.error(`[Citas] Error inicial en mensajes automáticos: ${error.message}`)
+  })
+}

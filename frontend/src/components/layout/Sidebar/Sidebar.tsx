@@ -10,6 +10,7 @@ import {
   Settings,
   BarChart3,
   PanelTop,
+  Workflow,
   GripVertical,
   Check,
   ChevronDown,
@@ -19,7 +20,7 @@ import {
   Sun
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
-import { useAppConfig, useIsRenderDomain } from '@/hooks'
+import { useAppConfig, useAppVersion, useIsRenderDomain } from '@/hooks'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { settingsNavigation } from '@/pages/Settings/settingsNav'
@@ -66,6 +67,7 @@ const baseNavigation: NavItem[] = [
   { id: 'divider-1', name: '', href: '#', icon: LayoutDashboard, isDivider: true }, // Divisor visual
   { id: 'campaigns', name: 'Publicidad', href: '/campaigns/classic', icon: Megaphone },
   { id: 'sites', name: 'Sitios', href: '/sites', icon: PanelTop },
+  { id: 'automations', name: 'Automatizaciones', href: '/automations', icon: Workflow },
   { id: 'reports', name: 'Reportes', href: '/reports/table/month/cashflow', icon: FileBarChart }
 ]
 
@@ -284,6 +286,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
   const [analyticsEnabled] = useAppConfig<boolean>('show_analytics', false)
   const [sidebarOrder, setSidebarOrder] = useAppConfig<string[]>('sidebar_navigation_order', [])
   const isRenderDomain = useIsRenderDomain() // Detectar si es dominio .onrender.com
+  const appVersion = useAppVersion() // Versión instalada (se muestra al pie del menú de usuario)
   const [navigation, setNavigation] = useState<NavItem[]>(() => getNavigationItems(false, isRenderDomain))
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isEditMode, setIsEditMode] = useState(false)
@@ -605,6 +608,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
                   <LogOut className="h-4 w-4" />
                   Cerrar sesión
                 </button>
+
+                {appVersion && (
+                  <>
+                    <div className="mx-4 my-2 border-t border-[rgba(148,163,184,0.12)]" />
+                    <p className="px-4 pb-1 pt-0.5 text-xs text-[var(--color-text-tertiary)]">
+                      Versión {appVersion}
+                    </p>
+                  </>
+                )}
               </div>
             </div>
           )}

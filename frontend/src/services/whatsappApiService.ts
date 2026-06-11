@@ -22,6 +22,21 @@ export interface WhatsAppApiPhoneNumber {
   qr_last_disconnected_at?: string | null
   qr_last_error?: string | null
   updated_at?: string | null
+  availability?: WhatsAppApiPhoneNumberAvailability
+}
+
+export interface WhatsAppApiPhoneNumberAvailability {
+  apiAvailable: boolean
+  apiReason?: string
+  qrReady: boolean
+  available: boolean
+}
+
+export interface WhatsAppApiPendingRestore {
+  phoneNumberId: string
+  phone: string
+  verifiedName?: string
+  contactCount: number
 }
 
 export interface WhatsAppApiBalance {
@@ -91,6 +106,8 @@ export interface WhatsAppApiStatus {
   }
   phoneNumbers: WhatsAppApiPhoneNumber[]
   selectedPhone?: WhatsAppApiPhoneNumber | null
+  needsDefaultSelection?: boolean
+  pendingRestores?: WhatsAppApiPendingRestore[]
   balance?: WhatsAppApiBalance | null
   templates?: {
     total: number
@@ -310,6 +327,12 @@ export const whatsappApiService = {
   connect: (payload: WhatsAppApiConnectPayload) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/connect', payload),
   previewPhoneNumbers: (apiKey?: string) => apiClient.post<WhatsAppApiPhoneNumbersPreviewResponse>('/whatsapp-api/phone-numbers/preview', { apiKey }),
   setDefaultPhoneNumber: (phoneNumberId: string) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/phone-numbers/default', { phoneNumberId }),
+  rerouteContacts: (phoneNumberId: string, targetPhoneNumberId: string, reason?: string) => (
+    apiClient.post<{ moved: number; from: string; to: string }>(`/whatsapp-api/phone-numbers/${encodeURIComponent(phoneNumberId)}/reroute`, { targetPhoneNumberId, reason })
+  ),
+  restoreContacts: (phoneNumberId: string) => (
+    apiClient.post<{ restored: number; phoneNumberId: string }>(`/whatsapp-api/phone-numbers/${encodeURIComponent(phoneNumberId)}/restore`)
+  ),
   refresh: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/refresh'),
   disconnect: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/disconnect'),
   reset: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/reset'),

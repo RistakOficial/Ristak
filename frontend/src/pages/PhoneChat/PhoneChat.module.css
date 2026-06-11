@@ -1511,6 +1511,124 @@
   white-space: nowrap;
 }
 
+.contactInfoNameRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  /* Compensa el ancho del lapicito (30px + gap) para que el nombre quede centrado */
+  padding-left: 38px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.contactInfoNameRow span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contactInfoNameEditButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-surface-soft, rgba(0, 0, 0, 0.05));
+  -webkit-tap-highlight-color: transparent;
+}
+
+.contactInfoNameInput {
+  width: min(100%, 320px);
+  margin: 8px 0 0;
+  padding: 6px 14px;
+  box-sizing: border-box;
+  border: 1px solid var(--phone-chat-accent, #25d366);
+  border-radius: 14px;
+  outline: none;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #25d366) 14%, transparent);
+  font: inherit;
+  font-size: 22px;
+  font-weight: 860;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.phoneConfirmNumber {
+  margin: 2px 0;
+  font-size: 22px;
+  font-weight: 860;
+  letter-spacing: 0.4px;
+}
+
+/* Lista de números nuestros para elegir desde dónde contactar */
+.ourNumberList {
+  display: grid;
+}
+
+.ourNumberOption {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 2px;
+  border: 0;
+  border-top: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.08));
+  color: var(--phone-chat-text, #111111);
+  background: transparent;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ourNumberOption:first-child {
+  border-top: 0;
+}
+
+.ourNumberOption:disabled {
+  opacity: 0.45;
+}
+
+.ourNumberOption span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.ourNumberOption strong,
+.ourNumberOption small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ourNumberOption strong {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.ourNumberOption small {
+  color: var(--phone-chat-muted, #737373);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ourNumberOptionActive {
+  color: var(--phone-chat-accent, #25d366);
+}
+
+.ourNumberOptionActive svg {
+  justify-self: end;
+}
+
 .contactInfoHero p {
   max-width: 100%;
   margin: 0;
@@ -4434,11 +4552,12 @@
 
 .sheetHandle {
   position: relative;
-  width: 42px;
+  width: 54px;
   height: 5px;
+  margin: 3px 0;
   justify-self: center;
   border-radius: 999px;
-  background: rgba(107, 114, 128, 0.42);
+  background: color-mix(in srgb, var(--phone-chat-muted, #737373) 28%, transparent);
   cursor: grab;
   touch-action: none;
 }
@@ -6183,4 +6302,67 @@
     animation-duration: 1ms;
     transition-duration: 1ms !important;
   }
+}
+
+.numberIssueBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 2px;
+}
+
+.numberIssueReason {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.72));
+}
+
+.numberIssueSectionTitle {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.72));
+}
+
+.numberIssueApplyAll {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.72));
+}
+
+.numberIssueOption {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.14));
+  border-radius: 12px;
+  background: var(--color-surface-2, rgba(255, 255, 255, 0.05));
+  color: var(--color-text-primary, #fff);
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.numberIssueOption:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.numberIssueOptionSecondary {
+  background: transparent;
+  font-weight: 500;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.72));
+}
+
+.numberIssueOptionHint {
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.6));
 }

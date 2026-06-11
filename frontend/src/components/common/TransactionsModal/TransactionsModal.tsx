@@ -68,6 +68,7 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
       title={title}
       size="md"
       type="custom"
+      flushContent
     >
       <div className={styles.container}>
         {loading ? (

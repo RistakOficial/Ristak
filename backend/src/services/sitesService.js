@@ -942,9 +942,25 @@ function normalizeImportedFieldOptionValue(option = {}, index = 0) {
   const label = limitString(stripHtmlTags(source.label || source.text || source.value || `Opcion ${index + 1}`), 140)
   const value = limitString(cleanString(source.value || source.label || source.text || label), 140)
   if (!label && !value) return null
+
+  // Per-option actions (e.g. disqualify when selecting this option).
+  const actions = []
+  if (Array.isArray(source.actions)) {
+    for (const [actionIndex, item] of source.actions.entries()) {
+      if (actions.length >= 3) break
+      try {
+        const step = normalizeImportedActionStep(item, actionIndex)
+        if (step) actions.push(step)
+      } catch {
+        // Skip invalid steps instead of failing the whole option update.
+      }
+    }
+  }
+
   return {
     label: label || value,
-    value: value || label
+    value: value || label,
+    ...(actions.length ? { actions } : {})
   }
 }
 
@@ -1215,8 +1231,15 @@ function addImportedSectionAttributesToTag(tagName = 'section', attrsText = '', 
 
 function isSimpleEditableTextHtml(innerHtml = '') {
   const text = stripHtmlTags(innerHtml)
-  if (!text || text.length > 700) return false
+  if (!text || text.length > 1200) return false
   return !/<(script|style|form|fieldset|input|textarea|select|option|button|a|img|picture|svg|video|iframe|table|ul|ol|li|section|article|header|footer|main|div)\b/i.test(innerHtml)
+}
+
+// Containers (div/span/li/...) only qualify as editable text when they hold
+// plain inline text — not when they wrap headings/paragraphs/labels, which are
+// annotated on their own.
+function isSimpleEditableInlineTextHtml(innerHtml = '') {
+  return isSimpleEditableTextHtml(innerHtml) && !/<(p|h[1-6]|label|blockquote|figcaption|span)\b/i.test(innerHtml)
 }
 
 function getImportedElementLabel(tagName = '', attrs = {}, fallback = '') {
@@ -1241,7 +1264,7 @@ function getImportedTextEditType(tagName = '', attrs = {}) {
   if (tag === 'button') return 'button'
   if (tag === 'a') {
     const buttonHint = `${attrs.role || ''} ${attrs.class || ''} ${attrs.id || ''}`.toLowerCase()
-    return /\b(button|btn|cta|call|action)\b/.test(buttonHint) ? 'button' : 'text'
+    return /\b(button|btn|boton|cta|call|action)\b/.test(buttonHint) ? 'button' : 'text'
   }
   return 'text'
 }
@@ -1257,6 +1280,32 @@ function annotateImportedTextTags(html = '', usedIds = new Set()) {
     })
     return `${openTag}${innerHtml}</${tagName}>`
   })
+}
+
+// Modern pages carry visible copy in generic containers (Tailwind spans/divs,
+// list items, table cells). Annotate the innermost ones that hold simple text so
+// they are editable too. The tempered pattern (no same-tag nesting inside the
+// match) keeps the regex anchored to innermost elements.
+const IMPORTED_SIMPLE_TEXT_CONTAINER_TAGS = ['span', 'li', 'td', 'th', 'blockquote', 'figcaption', 'div']
+
+function annotateImportedSimpleTextContainers(html = '', usedIds = new Set()) {
+  let nextHtml = String(html || '')
+  for (const tag of IMPORTED_SIMPLE_TEXT_CONTAINER_TAGS) {
+    const pattern = new RegExp(`<${tag}\\b([^>]*)>((?:(?!<${tag}\\b|</${tag})[\\s\\S])*?)</${tag}>`, 'gi')
+    nextHtml = nextHtml.replace(pattern, (match, attrsText = '', innerHtml = '') => {
+      const attrs = parseHtmlAttributes(attrsText)
+      if (hasImportedEditableAttr(attrs, 'editable') || hasImportedEditableAttr(attrs, 'type')) return match
+      if (!isSimpleEditableInlineTextHtml(innerHtml)) return match
+      if (isLikelyImportedVideoElement(tag, attrs)) return match
+      const openTag = addImportedEditableAttributesToTag(tag, attrsText, '', {
+        type: 'text',
+        label: getImportedElementLabel(tag, attrs, stripHtmlTags(innerHtml)),
+        usedIds
+      })
+      return `${openTag}${innerHtml}</${tag}>`
+    })
+  }
+  return nextHtml
 }
 
 function annotateImportedInputs(html = '', usedIds = new Set()) {
@@ -1409,6 +1458,7 @@ function annotateImportedEditableHtml(html = '') {
   const usedIds = collectImportedEditableIds(html)
   let nextHtml = annotateImportedSections(html)
   nextHtml = annotateImportedTextTags(nextHtml, usedIds)
+  nextHtml = annotateImportedSimpleTextContainers(nextHtml, usedIds)
   nextHtml = annotateImportedInputs(nextHtml, usedIds)
   nextHtml = annotateImportedImages(nextHtml, usedIds)
   nextHtml = annotateImportedVideos(nextHtml, usedIds)
@@ -1752,6 +1802,7 @@ const IMPORTED_BUTTON_ACTIONS = new Set([
   'close_popup',
   'submit',
   'disqualify',
+  'disqualify_after_submit',
   'automation',
   'notify_team',
   'add_tag',
@@ -1979,7 +2030,12 @@ function buildImportedSelectOptions(options = [], existingBody = '') {
 
   return [
     emptyOption,
-    ...normalizedOptions.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+    ...normalizedOptions.map(option => {
+      const optionActions = Array.isArray(option.actions) && option.actions.length
+        ? ` data-rstk-choice-actions="${escapeHtml(jsonString(option.actions))}"`
+        : ''
+      return `<option value="${escapeHtml(option.value)}"${optionActions}>${escapeHtml(option.label)}</option>`
+    })
   ].join('\n')
 }
 
@@ -1994,7 +2050,10 @@ function buildImportedChoiceGroupHtml({ type = 'radio', name = '', options = [],
     const optionId = `${normalizeImportedFieldKey(cleanName, 'field')}_${index + 1}`
     const inputRequired = required && index === 0 ? ' required="required" aria-required="true" data-rstk-field-required="true"' : ` aria-required="${required ? 'true' : 'false'}" data-rstk-field-required="${required ? 'true' : 'false'}"`
     const optionEditId = `${editId || cleanName}_${index + 1}`
-    return `<label${baseAttrs ? ` ${baseAttrs}` : ''}><input type="${cleanType}" name="${escapeHtml(cleanName)}" id="${escapeHtml(optionId)}" value="${escapeHtml(option.value)}"${inputRequired} data-rstk-editable="true" data-rstk-edit-type="form_field" data-rstk-edit-id="${escapeHtml(optionEditId)}" data-rstk-label="${escapeHtml(option.label)}"> ${escapeHtml(option.label)}</label>`
+    const optionActions = Array.isArray(option.actions) && option.actions.length
+      ? ` data-rstk-choice-actions="${escapeHtml(jsonString(option.actions))}"`
+      : ''
+    return `<label${baseAttrs ? ` ${baseAttrs}` : ''}><input type="${cleanType}" name="${escapeHtml(cleanName)}" id="${escapeHtml(optionId)}" value="${escapeHtml(option.value)}"${inputRequired} data-rstk-editable="true" data-rstk-edit-type="form_field" data-rstk-edit-id="${escapeHtml(optionEditId)}" data-rstk-label="${escapeHtml(option.label)}"${optionActions}> ${escapeHtml(option.label)}</label>`
   }).join('\n')
 }
 
@@ -2244,6 +2303,21 @@ function applyImportedEditableContentUpdate(html = '', input = {}) {
       updated = true
       return `<${tagName}${attrsText}>${escapeHtml(value)}</${tagName}>`
     })
+    // Generic containers annotated as editable text (innermost match, see
+    // annotateImportedSimpleTextContainers).
+    if (!updated) {
+      for (const tag of IMPORTED_SIMPLE_TEXT_CONTAINER_TAGS) {
+        if (updated) break
+        const pattern = new RegExp(`<${tag}\\b([^>]*)>((?:(?!<${tag}\\b|</${tag})[\\s\\S])*?)</${tag}>`, 'gi')
+        nextHtml = nextHtml.replace(pattern, (match, attrsText = '') => {
+          if (updated || !hasImportedEditId(attrsText, editId)) return match
+          const currentType = getImportedEditTypeFromAttrs(attrsText)
+          if (currentType && currentType !== editType) return match
+          updated = true
+          return `<${tag}${attrsText}>${escapeHtml(value)}</${tag}>`
+        })
+      }
+    }
   }
 
   if (!updated) {
@@ -4588,6 +4662,11 @@ Reglas duras:
 - No escondas campos importantes ni uses inputs sin name.
 - No metas tarjetas dentro de tarjetas sin necesidad; usa secciones limpias, buena jerarquia y aire visual.
 - Tipo solicitado: ${targetSiteType}.
+
+Estructuras de landing (el mensaje del usuario te dice cual eligio; respetala):
+- EMBUDO: una sola mision de conversion. SIN menu de navegacion ni enlaces que saquen del flujo. CTA repetido hacia la misma accion. Si el flujo tiene pasos (ej. registro → gracias), cada paso es una pagina de page.pages enlazada con data-rstk-button-page-id.
+- SITIO WEB: presentacion completa del negocio en varias paginas de page.pages (Inicio, Servicios, Nosotros, Contacto u otras que apliquen). TODAS las paginas comparten un header con menu de navegacion cuyos enlaces usan data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la pagina destino, y un footer con datos de contacto. Un solo h1 por pagina y title + meta description propios de cada pagina. El formulario principal vive en Contacto; el resto del sitio invita sin presionar.
+- Si el usuario no especifica estructura, usa EMBUDO para peticiones de venta/captura y SITIO WEB cuando pida presencia, varias paginas o "sitio web".
 
 Marcado para edicion rapida:
 - Marca los elementos importantes que el usuario podria querer cambiar sin tocar codigo.
@@ -8222,6 +8301,47 @@ function safeUrl(value) {
   }
 }
 
+// Watch/share URLs (YouTube, Vimeo, Loom, Wistia) refuse to load inside an
+// iframe; convert them to their embeddable player URL.
+function normalizeVideoEmbedUrl(value) {
+  const wistiaMediaId = getWistiaMediaIdFromValue(value)
+  if (wistiaMediaId) return buildWistiaIframeUrl(wistiaMediaId)
+
+  const url = safeUrl(value)
+  if (!url) return ''
+
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase()
+    const pathParts = parsed.pathname.split('/').filter(Boolean)
+
+    if (host === 'youtu.be' && pathParts[0]) {
+      return `https://www.youtube.com/embed/${encodeURIComponent(pathParts[0])}`
+    }
+
+    if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
+      const videoId = parsed.searchParams.get('v')
+        || (pathParts[0] === 'shorts' ? pathParts[1] : '')
+        || (pathParts[0] === 'embed' ? pathParts[1] : '')
+      return videoId ? `https://www.youtube.com/embed/${encodeURIComponent(videoId)}` : url
+    }
+
+    if (host.endsWith('vimeo.com')) {
+      const videoId = pathParts[0] === 'video' ? pathParts[1] : pathParts[0]
+      return videoId && /^\d+$/.test(videoId) ? `https://player.vimeo.com/video/${encodeURIComponent(videoId)}` : url
+    }
+
+    if (host.endsWith('loom.com')) {
+      const videoId = pathParts[0] === 'embed' ? pathParts[1] : pathParts[0] === 'share' ? pathParts[1] : ''
+      return videoId ? `https://www.loom.com/embed/${encodeURIComponent(videoId)}` : url
+    }
+
+    return url
+  } catch {
+    return ''
+  }
+}
+
 function normalizePopupTrigger(theme = {}) {
   const trigger = cleanString(theme.popupTrigger ?? theme.popup_trigger)
   if (trigger === 'never' || trigger === 'delay' || trigger === 'exit_intent') return trigger
@@ -9843,9 +9963,9 @@ function renderContentBlock(block, context = {}) {
   }
 
   if (block.blockType === 'video') {
-    const videoUrl = safeUrl(settings.mediaUrl || block.content)
+    const videoUrl = normalizeVideoEmbedUrl(settings.mediaUrl || block.content)
     return videoUrl
-      ? `<div class="rstk-video"><iframe src="${escapeHtml(videoUrl)}" loading="lazy" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe></div>`
+      ? `<div class="rstk-video"><iframe src="${escapeHtml(videoUrl)}" loading="lazy" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
       : `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
   }
 
@@ -11390,6 +11510,17 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
             });
           });
         });
+        Array.from(form.querySelectorAll('select')).forEach((select) => {
+          Array.from(select.selectedOptions || []).forEach((option) => {
+            parseChoiceActions(option).forEach(action => {
+              actions.push({
+                ...action,
+                choiceName: select.getAttribute('name') || select.getAttribute('id') || '',
+                choiceValue: option.value || option.textContent || ''
+              });
+            });
+          });
+        });
         return actions;
       };
       const resolveFormId = (form, index) => (
@@ -11416,6 +11547,25 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
 
       Array.from(document.querySelectorAll('form')).forEach((form, index) => {
         form.setAttribute('data-rstk-import-form', 'true');
+        // "Descalificar inmediatamente": selecting the option submits right away
+        // so the contact queda registrado como no calificado sin esperar al envio.
+        form.addEventListener('change', (event) => {
+          const target = event.target;
+          if (!target || !target.matches) return;
+          let immediate = null;
+          if (target.matches('input[type="radio"], input[type="checkbox"]') && target.checked) {
+            immediate = parseChoiceActions(target).find(item => item.action === 'disqualify') || null;
+          } else if (target.tagName === 'SELECT') {
+            const selected = Array.from(target.selectedOptions || []);
+            for (const option of selected) {
+              immediate = parseChoiceActions(option).find(item => item.action === 'disqualify') || null;
+              if (immediate) break;
+            }
+          }
+          if (!immediate) return;
+          if (typeof form.requestSubmit === 'function') form.requestSubmit();
+          else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        });
         form.addEventListener('submit', async (event) => {
           event.preventDefault();
           const submitter = event.submitter || form.querySelector('[type="submit"], button');
@@ -11424,7 +11574,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           try {
             const rawFields = collectRawFields(form);
             const selectedChoiceActions = collectSelectedChoiceActions(form);
-            const disqualifyingAction = selectedChoiceActions.find(item => item.action === 'disqualify') || null;
+            const disqualifyingAction = selectedChoiceActions.find(item => item.action === 'disqualify' || item.action === 'disqualify_after_submit') || null;
             const response = await fetch('/api/sites/public/submit', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -11984,7 +12134,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const completionAction = isLandingType
     ? getFormCompletionAction(blocks)
     : isStandardFormType
-      ? normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page')
+      ? normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page_if_qualified')
       : 'form_default'
   const nextPage = (isLandingType || isStandardFormType) ? getNextPage(site, activePage?.id) : null
   const nextPageUrl = nextPage ? buildPageHref(nextPage.id, { site, linkStyle }) : ''
@@ -11993,6 +12143,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	  const disqualifiedPageUrl = disqualifiedPage ? pageHref(disqualifiedPage.id) : ''
 	  const submitText = cleanString(theme.submitText) || 'Enviar'
 	  const submitSubtitle = cleanString(theme.submitSubtitle || theme.submitSubtext || theme.formButtonSubtitle)
+	  const continueText = cleanString(theme.continueText) || 'Continuar'
+	  const nextText = cleanString(theme.nextText) || 'Siguiente'
+	  const backText = cleanString(theme.backText) || 'Anterior'
 	  const storedPageMaxWidth = Number(theme && theme.pageMaxWidth)
   const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
     ? 1440
@@ -12055,9 +12208,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const submitArea = hasForm && !isLandingType
     ? `
       <div class="rstk-actions">
-        ${isInteractive && interactivePageCount > 1 ? '<button type="button" class="rstk-secondary" data-back hidden>Anterior</button>' : ''}
-        ${isInteractive && interactivePageCount > 1 ? '<button type="button" data-next>Siguiente</button>' : ''}
-        ${isStandardFormIntermediatePage ? '<button type="button" data-form-next>Continuar</button>' : ''}
+        ${isInteractive && interactivePageCount > 1 ? `<button type="button" class="rstk-secondary" data-back hidden>${escapeHtml(backText)}</button>` : ''}
+        ${isInteractive && interactivePageCount > 1 ? `<button type="button" data-next>${escapeHtml(nextText)}</button>` : ''}
+        ${isStandardFormIntermediatePage ? `<button type="button" data-form-next>${escapeHtml(continueText)}</button>` : ''}
 	        <button type="submit" ${isInteractive && interactivePageCount > 1 || isStandardFormIntermediatePage ? 'hidden' : ''} data-submit>${renderSubmitButtonContent(submitText, submitSubtitle)}</button>
       </div>
       <p class="rstk-submit-message" data-message role="status"></p>

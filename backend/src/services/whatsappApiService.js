@@ -8,6 +8,7 @@ import fetch from 'node-fetch'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { findContactByPhoneCandidates } from './contactIdentityService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
+import { maybeConfirmAppointmentFromReply } from './appointmentConfirmationService.js'
 import {
   QR_CONSENT_TEXT,
   disconnectWhatsAppQrConnection,
@@ -1617,17 +1618,46 @@ async function getOfficialApiRestrictionReason({ phoneRow, config } = {}) {
   if (!alertScopes.length) return ''
 
   const alerts = await db.all(`
-    SELECT alert_type, severity, title, message, entity_type, entity_id
+    SELECT alert_type, severity, title, message, entity_type, entity_id, updated_at
     FROM whatsapp_api_alerts
     WHERE status = 'active'
       AND (${alertScopes.join(' OR ')})
     ORDER BY updated_at DESC
   `, params).catch(() => [])
-  const blockingAlert = alerts.find(isBlockingOfficialApiAlert)
+  const blockingAlert = alerts.find(alert => (
+    isBlockingOfficialApiAlert(alert) && !isExpiredRestrictionAlert(alert)
+  ))
   if (!blockingAlert) return ''
 
   return cleanString(blockingAlert.message || blockingAlert.title) ||
     'WhatsApp API reporto una restriccion activa.'
+}
+
+// Una alerta de bloqueo que no se ha refrescado en este lapso deja de frenar
+// los envios por API: el siguiente envio funciona como sonda. Si la cuenta
+// sigue bloqueada, el fallo reactiva la alerta; si Meta ya la libero, el envio
+// sale y resolveOfficialApiRestrictionAlerts limpia la alerta. Sin esto, la
+// alerta bloquea el intento y nunca se entera de que la cuenta ya funciona.
+const RESTRICTION_ALERT_TTL_MS = 6 * 60 * 60 * 1000
+
+function isExpiredRestrictionAlert(alert = {}) {
+  const updatedAt = Date.parse(alert.updated_at || '')
+  if (!Number.isFinite(updatedAt)) return false
+  return (Date.now() - updatedAt) > RESTRICTION_ALERT_TTL_MS
+}
+
+// Contraparte de activateOfficialApiRestrictionFromFailedMessage: cuando la API
+// vuelve a aceptar mensajes de este numero/cuenta, las alertas de bloqueo ya no
+// reflejan la realidad y deben resolverse solas.
+async function resolveOfficialApiRestrictionAlerts({ businessPhoneNumberId, wabaId } = {}) {
+  const cleanWabaId = cleanString(wabaId)
+  if (businessPhoneNumberId) {
+    await resolveAlert({ alertType: 'phone_status', entityType: 'phone_number', entityId: businessPhoneNumberId })
+  }
+  if (cleanWabaId && cleanWabaId !== 'business_account') {
+    await resolveAlert({ alertType: 'business_account', entityType: 'business_account', entityId: cleanWabaId })
+  }
+  await resolveAlert({ alertType: 'business_account', entityType: 'business_account', entityId: 'business_account' })
 }
 
 function getOfficialApiErrorText(error) {
@@ -1638,12 +1668,31 @@ function getOfficialApiErrorText(error) {
   ].map(cleanString).filter(Boolean).join(' ')
 }
 
-function getOfficialApiRestrictionErrorReason(error) {
-  const statusCode = Number(error?.statusCode || 0)
+// Errores que pertenecen a UNA conversacion, no al numero ni a la cuenta:
+// 131047 = ventana de 24 horas vencida, 131026 = destinatario no puede recibir,
+// 131021 = enviarse a si mismo, 470 = fuera de ventana (codigo legado).
+const API_CONVERSATION_SCOPED_ERROR_CODES = /\b(131047|131026|131021|470)\b/
+
+function getOfficialApiConversationWindowReason(error) {
   const text = getOfficialApiErrorText(error)
   if (!text) return ''
+  if (/\b(131047|470)\b/.test(text) || /24.?HOUR|24 HORAS|CUSTOMER SERVICE WINDOW|OUTSIDE.*WINDOW/i.test(text)) {
+    return 'La conversacion lleva mas de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.'
+  }
+  return ''
+}
 
-  const hasBusinessScope = /\b(WABA|BUSINESS ACCOUNT|PHONE NUMBER|SENDER|FROM|ACCOUNT|QUALITY|MESSAGING LIMIT)\b/i.test(text)
+function getOfficialApiRestrictionErrorReason(error) {
+  const statusCode = Number(error?.statusCode || 0)
+  // OJO: para decidir el ALCANCE del error se usa solo el mensaje del error,
+  // nunca el JSON crudo del webhook: ese JSON siempre trae "from" y "wabaId",
+  // hacia que todo error pareciera "de cuenta" y un simple 131047 (ventana de
+  // 24 horas) terminaba marcando el numero y la cuenta como bloqueados.
+  const text = cleanString(error?.message) || getOfficialApiErrorText(error)
+  if (!text) return ''
+
+  if (API_CONVERSATION_SCOPED_ERROR_CODES.test(text)) return ''
+  const hasBusinessScope = /\b(WABA|BUSINESS ACCOUNT|PHONE NUMBER|SENDER|QUALITY|MESSAGING LIMIT)\b/i.test(text)
   if (API_FALLBACK_RECIPIENT_ERROR_PATTERN.test(text) && !hasBusinessScope) return ''
   if (statusCode === 429) return 'WhatsApp API rechazo el envio por limite de volumen.'
   if (API_FALLBACK_ERROR_PATTERN.test(text)) {
@@ -1656,7 +1705,10 @@ async function getOfficialApiFallbackDecision({ config, fromPhone, phoneNumberId
   const phoneRow = await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone })
   const signalReason = await getOfficialApiRestrictionReason({ phoneRow, config })
   const errorReason = error ? getOfficialApiRestrictionErrorReason(error) : ''
-  const reason = errorReason || signalReason
+  // La ventana de 24 horas tambien amerita respaldo QR, pero es un asunto de
+  // ESTA conversacion: decide el fallback sin marcar nada como restringido.
+  const windowReason = error && !errorReason ? getOfficialApiConversationWindowReason(error) : ''
+  const reason = errorReason || windowReason || signalReason
 
   return {
     phoneRow,
@@ -2084,6 +2136,120 @@ async function getStats() {
   }
 }
 
+// Contactos cuyo último evento de ruteo es una contingencia: si el número original ya volvió,
+// se le ofrece al usuario regresarlos. Los cambiados manualmente después quedan fuera porque
+// su último evento ya no es 'contingency'.
+async function getPendingContingencyRestoreCounts() {
+  const rows = await db.all(`
+    SELECT e.previous_phone_number_id, COUNT(*) AS contact_count
+    FROM whatsapp_routing_events e
+    JOIN (
+      SELECT contact_id, MAX(created_at) AS max_created
+      FROM whatsapp_routing_events
+      GROUP BY contact_id
+    ) latest ON latest.contact_id = e.contact_id AND latest.max_created = e.created_at
+    WHERE e.source = 'contingency'
+      AND e.previous_phone_number_id IS NOT NULL
+    GROUP BY e.previous_phone_number_id
+  `).catch(() => [])
+
+  const counts = new Map()
+  for (const row of rows) {
+    counts.set(cleanString(row.previous_phone_number_id), Number(row.contact_count) || 0)
+  }
+  return counts
+}
+
+export async function rerouteWhatsAppPhoneNumberContacts({ phoneNumberId, targetPhoneNumberId, reason } = {}) {
+  const sourceId = cleanString(phoneNumberId)
+  const targetId = cleanString(targetPhoneNumberId)
+  if (!sourceId || !targetId) throw new Error('Faltan el número de origen y el número destino')
+  if (sourceId === targetId) throw new Error('Elige un número distinto al que no está disponible')
+
+  const target = await db.get('SELECT id FROM whatsapp_api_phone_numbers WHERE id = ?', [targetId])
+  if (!target) throw new Error('Ese número destino no está conectado')
+
+  // Contactos operando por el número caído: con preferencia explícita hacia él, o sin
+  // preferencia pero cuyo último mensaje entrante llegó por él.
+  const contacts = await db.all(`
+    SELECT c.id, c.preferred_whatsapp_phone_number_id
+    FROM contacts c
+    WHERE c.preferred_whatsapp_phone_number_id = ?
+       OR (
+         COALESCE(c.preferred_whatsapp_phone_number_id, '') = ''
+         AND (
+           SELECT m.business_phone_number_id
+           FROM whatsapp_api_messages m
+           WHERE m.contact_id = c.id
+             AND m.direction = 'inbound'
+             AND m.business_phone_number_id IS NOT NULL
+           ORDER BY COALESCE(m.message_timestamp, m.created_at) DESC
+           LIMIT 1
+         ) = ?
+       )
+  `, [sourceId, sourceId]).catch(() => [])
+
+  const cleanReason = cleanString(reason) || 'Cambio temporal: el número original no está disponible'
+  let moved = 0
+  for (const contact of contacts) {
+    await db.run(
+      'UPDATE contacts SET preferred_whatsapp_phone_number_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [targetId, contact.id]
+    )
+    await db.run(`
+      INSERT INTO whatsapp_routing_events (id, contact_id, previous_phone_number_id, new_phone_number_id, reason, source)
+      VALUES (?, ?, ?, ?, ?, 'contingency')
+    `, [
+      crypto.randomUUID(),
+      contact.id,
+      cleanString(contact.preferred_whatsapp_phone_number_id) || sourceId,
+      targetId,
+      cleanReason
+    ])
+    moved += 1
+  }
+
+  return { moved, from: sourceId, to: targetId }
+}
+
+export async function restoreWhatsAppPhoneNumberContacts({ phoneNumberId } = {}) {
+  const sourceId = cleanString(phoneNumberId)
+  if (!sourceId) throw new Error('Falta el número a restaurar')
+
+  const rows = await db.all(`
+    SELECT e.contact_id, e.previous_phone_number_id, e.new_phone_number_id
+    FROM whatsapp_routing_events e
+    JOIN (
+      SELECT contact_id, MAX(created_at) AS max_created
+      FROM whatsapp_routing_events
+      GROUP BY contact_id
+    ) latest ON latest.contact_id = e.contact_id AND latest.max_created = e.created_at
+    WHERE e.source = 'contingency'
+      AND e.previous_phone_number_id = ?
+  `, [sourceId]).catch(() => [])
+
+  let restored = 0
+  for (const row of rows) {
+    await db.run(
+      'UPDATE contacts SET preferred_whatsapp_phone_number_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [sourceId, row.contact_id]
+    )
+    await db.run(`
+      INSERT INTO whatsapp_routing_events (id, contact_id, previous_phone_number_id, new_phone_number_id, reason, source)
+      VALUES (?, ?, ?, ?, ?, 'restore')
+    `, [
+      crypto.randomUUID(),
+      row.contact_id,
+      cleanString(row.new_phone_number_id) || null,
+      sourceId,
+      'El número original volvió a estar disponible'
+    ])
+    restored += 1
+  }
+
+  return { restored, phoneNumberId: sourceId }
+}
+
 export async function getWhatsAppApiStatus() {
   const config = await loadConfig()
   const [stats, phoneNumbers, balance, templates, alerts, qrSessions] = await Promise.all([
@@ -2100,10 +2266,45 @@ export async function getWhatsAppApiStatus() {
 
   const connected = Boolean(config.enabled && config.hasApiKey && config.webhookEndpointId)
   const requiresPhoneSelection = false
-  const selectedPhone = phoneNumbers.find(phone => phone.id === config.phoneNumberId) ||
-    phoneNumbers.find(phone => phone.phone_number === config.senderPhone) ||
-    phoneNumbers.find(phone => Number(phone.is_default_sender || 0) === 1) ||
-    phoneNumbers[0] ||
+
+  // Disponibilidad operativa por número: API oficial sana, respaldo QR listo, o nada.
+  const phoneNumbersWithAvailability = await Promise.all(phoneNumbers.map(async (phone) => {
+    const apiRestrictionReason = connected
+      ? await getOfficialApiRestrictionReason({ phoneRow: phone, config }).catch(() => '')
+      : 'WhatsApp API no está conectado.'
+    const apiAvailable = connected && !apiRestrictionReason
+    const qrReady = isQrFallbackReady(phone)
+    return {
+      ...phone,
+      availability: {
+        apiAvailable,
+        apiReason: apiAvailable ? '' : (apiRestrictionReason || 'WhatsApp API no está conectado.'),
+        qrReady,
+        available: apiAvailable || qrReady
+      }
+    }
+  }))
+
+  const needsDefaultSelection = Boolean(
+    connected &&
+    phoneNumbersWithAvailability.length > 1 &&
+    !phoneNumbersWithAvailability.some(phone => Number(phone.is_default_sender || 0) === 1)
+  )
+
+  const pendingRestoreCounts = await getPendingContingencyRestoreCounts().catch(() => new Map())
+  const pendingRestores = phoneNumbersWithAvailability
+    .filter(phone => (pendingRestoreCounts.get(phone.id) || 0) > 0 && phone.availability.apiAvailable)
+    .map(phone => ({
+      phoneNumberId: phone.id,
+      phone: phone.phone_number || phone.display_phone_number || '',
+      verifiedName: phone.verified_name || '',
+      contactCount: pendingRestoreCounts.get(phone.id) || 0
+    }))
+
+  const selectedPhone = phoneNumbersWithAvailability.find(phone => phone.id === config.phoneNumberId) ||
+    phoneNumbersWithAvailability.find(phone => phone.phone_number === config.senderPhone) ||
+    phoneNumbersWithAvailability.find(phone => Number(phone.is_default_sender || 0) === 1) ||
+    phoneNumbersWithAvailability[0] ||
     null
   const highestSeverity = alerts.reduce((highest, alert) => {
     return !highest || alertSeverityRank(alert.severity) > alertSeverityRank(highest) ? alert.severity : highest
@@ -2137,8 +2338,10 @@ export async function getWhatsAppApiStatus() {
       status: config.webhookStatus || '',
       enabledEvents: REQUIRED_WEBHOOK_EVENTS
     },
-    phoneNumbers,
+    phoneNumbers: phoneNumbersWithAvailability,
     selectedPhone,
+    needsDefaultSelection,
+    pendingRestores,
     balance,
     templates: {
       total: stats.templates,
@@ -2957,6 +3160,12 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const normalizedMessage = normalizeWebhookMessage(message)
   const identity = getMessageIdentity({ payload, direction, message: normalizedMessage, businessPhoneHints })
   const cleanTransport = cleanString(normalizedMessage.transport || payload.transport || transport || 'api').toLowerCase() || 'api'
+  const routingReason = cleanString(
+    normalizedMessage.fallbackReason ||
+    normalizedMessage.routingReason ||
+    payload.fallbackReason ||
+    payload.routingReason
+  )
   const messageText = extractMessageText(normalizedMessage)
   const messageTimestamp = toDateTime(normalizedMessage.sendTime || normalizedMessage.createTime || normalizedMessage.updateTime || payload.createTime) || nowIso()
   const profileName = normalizedMessage.customerProfile?.name || normalizedMessage.profile?.name || ''
@@ -3004,14 +3213,14 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     INSERT INTO whatsapp_api_messages (
       id, ycloud_message_id, wamid, waba_id, business_phone_number_id,
       whatsapp_api_contact_id, contact_id,
-      phone, from_phone, to_phone, business_phone, transport, direction, message_type,
+      phone, from_phone, to_phone, business_phone, transport, routing_reason, direction, message_type,
       message_text, media_url, media_mime_type, media_filename, media_duration_ms,
       status, error_code, error_message, message_timestamp,
       raw_payload_json, context_json, referral_json,
       detected_ctwa_clid, detected_source_id, detected_source_url, detected_source_type,
       detected_source_app, detected_entry_point, detected_headline, detected_body,
       detected_conversion_data, detected_ctwa_payload, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       business_phone_number_id = COALESCE(excluded.business_phone_number_id, whatsapp_api_messages.business_phone_number_id),
       whatsapp_api_contact_id = COALESCE(excluded.whatsapp_api_contact_id, whatsapp_api_messages.whatsapp_api_contact_id),
@@ -3021,6 +3230,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       to_phone = COALESCE(NULLIF(excluded.to_phone, ''), whatsapp_api_messages.to_phone),
       business_phone = COALESCE(NULLIF(excluded.business_phone, ''), whatsapp_api_messages.business_phone),
       transport = COALESCE(NULLIF(excluded.transport, ''), whatsapp_api_messages.transport),
+      routing_reason = COALESCE(NULLIF(excluded.routing_reason, ''), whatsapp_api_messages.routing_reason),
       direction = COALESCE(NULLIF(excluded.direction, ''), whatsapp_api_messages.direction),
       message_type = COALESCE(NULLIF(excluded.message_type, ''), whatsapp_api_messages.message_type),
       message_text = COALESCE(NULLIF(excluded.message_text, ''), whatsapp_api_messages.message_text),
@@ -3059,6 +3269,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     identity.toPhone || null,
     identity.businessPhone || null,
     cleanTransport,
+    routingReason || null,
     identity.direction,
     messageType,
     messageText || null,
@@ -3085,20 +3296,26 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     attribution.ctwaPayload || null
   ])
 
+  const failureText = `${errorCode} ${errorMessage}`.trim()
   const restrictionReason = incomingStatus === 'failed'
-    ? getOfficialApiRestrictionErrorReason({
-        message: `${errorCode} ${errorMessage}`.trim(),
-        ycloud: normalizedMessage
-      })
+    ? getOfficialApiRestrictionErrorReason({ message: failureText })
+    : ''
+  // Ventana de 24 horas (131047 y parecidos): el mensaje se reintenta por QR,
+  // pero NO se crea ninguna alerta de bloqueo porque el numero y la cuenta
+  // estan perfectamente sanos.
+  const conversationWindowReason = incomingStatus === 'failed' && !restrictionReason
+    ? getOfficialApiConversationWindowReason({ message: failureText })
     : ''
 
-  if (cleanTransport === 'api' && identity.direction === 'outbound' && restrictionReason) {
-    await activateOfficialApiRestrictionFromFailedMessage({
-      normalizedMessage,
-      businessPhoneNumberId,
-      businessPhone: identity.businessPhone,
-      reason: restrictionReason
-    })
+  if (cleanTransport === 'api' && identity.direction === 'outbound' && (restrictionReason || conversationWindowReason)) {
+    if (restrictionReason) {
+      await activateOfficialApiRestrictionFromFailedMessage({
+        normalizedMessage,
+        businessPhoneNumberId,
+        businessPhone: identity.businessPhone,
+        reason: restrictionReason
+      })
+    }
     await retryFailedOfficialApiMessageViaQr({
       normalizedMessage,
       identity,
@@ -3106,8 +3323,23 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       messageId,
       messageType,
       messageText,
-      reason: restrictionReason,
+      reason: restrictionReason || conversationWindowReason,
       existingMessage
+    })
+  }
+
+  // La API confirmo un envio saliente: cualquier alerta de bloqueo de este
+  // numero o de la cuenta quedo obsoleta y se resuelve sola.
+  if (
+    cleanTransport === 'api' &&
+    identity.direction === 'outbound' &&
+    ['sent', 'delivered', 'read'].includes(incomingStatus)
+  ) {
+    await resolveOfficialApiRestrictionAlerts({
+      businessPhoneNumberId,
+      wabaId: cleanString(message.wabaId || normalizedMessage.wabaId)
+    }).catch(error => {
+      logger.warn(`[WhatsApp API] No se pudieron resolver alertas de bloqueo: ${error.message}`)
     })
   }
 
@@ -3177,6 +3409,119 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     isNew: !existingMessage,
     messageTimestamp
   }
+}
+
+// Persiste en el historial unificado un mensaje visto por la sesión de WhatsApp Web (Baileys).
+// Solo captura cuando la API oficial de ese número no está operando (desactivada, restringida o
+// sin configurar); si la API está sana, el webhook de YCloud ya registra el mensaje y guardarlo
+// aquí duplicaría el chat.
+export async function captureQrChatMessage({
+  phoneNumberId,
+  businessPhone,
+  direction,
+  wamid,
+  messageType = 'text',
+  text = '',
+  profileName = '',
+  contactPhone,
+  timestamp,
+  raw = null
+} = {}) {
+  const cleanDirection = direction === 'outbound' ? 'outbound' : 'inbound'
+  const cleanBusinessPhone = normalizePhoneForStorage(businessPhone) || cleanString(businessPhone)
+  const cleanContactPhone = normalizePhoneForStorage(contactPhone) || cleanString(contactPhone)
+  const cleanWamid = cleanString(wamid)
+  if (!cleanContactPhone || !cleanWamid) {
+    return { skipped: true, reason: 'missing_identity' }
+  }
+
+  const config = await loadConfig({ includeSecrets: true })
+  const phoneRow = await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone: cleanBusinessPhone })
+  const officialApiOperational = Boolean(config.enabled && config.apiKey) &&
+    Boolean(phoneRow?.id) &&
+    Number(phoneRow.api_send_enabled ?? 1) === 1 &&
+    !(await getOfficialApiRestrictionReason({ phoneRow, config }))
+  if (officialApiOperational) {
+    return { skipped: true, reason: 'official_api_active' }
+  }
+
+  const messageText = cleanString(text)
+  const messageTimestamp = toDateTime(timestamp) || nowIso()
+
+  // Dedupe difusa: el mismo mensaje pudo entrar por webhook con otro wamid durante una transición.
+  if (messageText) {
+    const duplicate = await db.get(`
+      SELECT id
+      FROM whatsapp_api_messages
+      WHERE phone = ?
+        AND direction = ?
+        AND message_text = ?
+        AND COALESCE(wamid, '') != ?
+        AND COALESCE(message_timestamp, created_at) BETWEEN datetime(?, '-2 minutes') AND datetime(?, '+2 minutes')
+      LIMIT 1
+    `, [cleanContactPhone, cleanDirection, messageText, cleanWamid, messageTimestamp, messageTimestamp]).catch(() => null)
+    if (duplicate) {
+      return { skipped: true, reason: 'duplicate_recent', messageId: duplicate.id }
+    }
+  }
+
+  const result = await upsertMessage({
+    payload: {
+      id: cleanWamid,
+      type: cleanDirection === 'inbound' ? 'whatsapp.qr.message.received' : 'whatsapp.qr.message.synced',
+      transport: 'qr',
+      routingReason: cleanDirection === 'inbound' ? '' : 'Capturado desde la sesión de WhatsApp Web.',
+      createTime: messageTimestamp
+    },
+    message: {
+      id: '',
+      wamid: cleanWamid,
+      from: cleanDirection === 'inbound' ? cleanContactPhone : cleanBusinessPhone,
+      to: cleanDirection === 'inbound' ? cleanBusinessPhone : cleanContactPhone,
+      type: messageType,
+      ...(messageText ? { text: { body: messageText } } : {}),
+      ...(cleanDirection === 'inbound' && profileName ? { profileName } : {}),
+      transport: 'qr',
+      sendTime: messageTimestamp,
+      createTime: messageTimestamp,
+      ...(raw ? { qrRaw: raw } : {})
+    },
+    direction: cleanDirection,
+    businessPhoneHints: [cleanBusinessPhone].filter(Boolean),
+    transport: 'qr'
+  })
+
+  if (!result.businessPhoneNumberId && phoneRow?.id && result.messageId) {
+    await db.run(`
+      UPDATE whatsapp_api_messages
+      SET business_phone_number_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND business_phone_number_id IS NULL
+    `, [phoneRow.id, result.messageId]).catch(() => {})
+  }
+
+  if (cleanDirection === 'inbound' && result.isNew) {
+    await maybeConfirmAppointmentFromReply({
+      contactId: result.contactId,
+      text: result.messageText
+    }).catch(error => {
+      logger.warn(`[Citas] No se pudo evaluar confirmación automática (QR): ${error.message}`)
+    })
+
+    await sendChatMessageNotification({
+      contactId: result.contactId,
+      contactName: result.contactName,
+      phone: result.phone,
+      profileName: result.profileName,
+      text: result.messageText,
+      messageType: result.messageType,
+      messageId: result.messageId,
+      timestamp: result.messageTimestamp
+    }).catch(error => {
+      logger.warn(`[Push] No se pudo avisar mensaje WhatsApp QR ${result.messageId || ''}: ${error.message}`)
+    })
+  }
+
+  return { skipped: false, ...result }
 }
 
 function directionFromCandidatePath(path = [], payload = {}) {
@@ -3477,6 +3822,15 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
       payload?.whatsappMessage
       ? await processWhatsAppMessageEventPayload({ payload, businessPhoneHints })
       : []
+
+    await Promise.all(messageResults
+      .filter(result => result?.direction === 'inbound' && result?.isNew !== false)
+      .map(result => maybeConfirmAppointmentFromReply({
+        contactId: result.contactId,
+        text: result.messageText
+      }).catch(error => {
+        logger.warn(`[Citas] No se pudo evaluar confirmación automática: ${error.message}`)
+      })))
 
     await Promise.all(messageResults
       .filter(result => result?.direction === 'inbound' && result?.isNew !== false)

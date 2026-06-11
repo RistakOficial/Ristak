@@ -27,6 +27,7 @@ import {
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizePhoneForAccount } from '../utils/accountLocale.js'
 import fetch from 'node-fetch'
+import { randomUUID } from 'crypto'
 
 const normalizePhone = (phone) => {
   if (!phone) return null
@@ -404,6 +405,9 @@ const mapChatContactRowForResponse = (contact = {}) => ({
   lastBusinessPhoneNumberId: contact.last_business_phone_number_id || '',
   lastInboundBusinessPhone: contact.last_inbound_business_phone || '',
   lastInboundBusinessPhoneNumberId: contact.last_inbound_business_phone_number_id || '',
+  firstInboundBusinessPhone: contact.first_inbound_business_phone || '',
+  firstInboundBusinessPhoneNumberId: contact.first_inbound_business_phone_number_id || '',
+  lastMessageTransport: contact.last_message_transport || '',
   messageCount: Number(contact.message_count || 0),
   unreadCount: Number(contact.unread_count || 0)
 })
@@ -749,6 +753,7 @@ export const getChatContacts = async (req, res) => {
           direction,
           business_phone,
           business_phone_number_id,
+          transport,
           COALESCE(message_timestamp, created_at) AS message_date,
           created_at,
           'whatsapp' AS message_channel
@@ -764,6 +769,7 @@ export const getChatContacts = async (req, res) => {
           direction,
           NULL AS business_phone,
           NULL AS business_phone_number_id,
+          NULL AS transport,
           COALESCE(message_timestamp, created_at) AS message_date,
           created_at,
           platform AS message_channel
@@ -849,8 +855,11 @@ ${CONTACT_META_PROFILE_SELECT},
         lm.direction AS last_message_direction,
         lm.business_phone AS last_business_phone,
         lm.business_phone_number_id AS last_business_phone_number_id,
+        lm.transport AS last_message_transport,
         lim.business_phone AS last_inbound_business_phone,
         lim.business_phone_number_id AS last_inbound_business_phone_number_id,
+        fim.business_phone AS first_inbound_business_phone,
+        fim.business_phone_number_id AS first_inbound_business_phone_number_id,
         0 AS unread_count
       FROM chat_stats
       JOIN contacts c ON c.id = chat_stats.contact_id
@@ -869,6 +878,15 @@ ${CONTACT_META_PROFILE_SELECT},
           AND direction = 'inbound'
           AND (business_phone_number_id IS NOT NULL OR business_phone IS NOT NULL)
         ORDER BY message_date DESC, created_at DESC
+        LIMIT 1
+      )
+      LEFT JOIN message_rows fim ON fim.message_row_id = (
+        SELECT message_row_id
+        FROM message_rows
+        WHERE contact_id = c.id
+          AND direction = 'inbound'
+          AND (business_phone_number_id IS NOT NULL OR business_phone IS NOT NULL)
+        ORDER BY message_date ASC, created_at ASC
         LIMIT 1
       )
       ${whereClause}
@@ -1943,6 +1961,42 @@ export const syncContactsStats = async (req, res) => {
 }
 
 /**
+ * Historial de cambios de número de WhatsApp de un contacto (manuales y de contingencia)
+ */
+export const getContactWhatsAppRoutingEvents = async (req, res) => {
+  try {
+    const { id } = req.params
+    const events = await db.all(`
+      SELECT
+        e.id,
+        e.contact_id,
+        e.previous_phone_number_id,
+        e.new_phone_number_id,
+        e.reason,
+        e.source,
+        e.created_at,
+        prev.display_phone_number AS previous_phone_display,
+        prev.phone_number AS previous_phone,
+        next.display_phone_number AS new_phone_display,
+        next.phone_number AS new_phone
+      FROM whatsapp_routing_events e
+      LEFT JOIN whatsapp_api_phone_numbers prev ON prev.id = e.previous_phone_number_id
+      LEFT JOIN whatsapp_api_phone_numbers next ON next.id = e.new_phone_number_id
+      WHERE e.contact_id = ?
+      ORDER BY e.created_at DESC
+    `, [id])
+
+    res.json({ success: true, data: events })
+  } catch (error) {
+    logger.error(`Error obteniendo cambios de número del contacto: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error obteniendo los cambios de número del contacto'
+    })
+  }
+}
+
+/**
  * Actualiza un contacto
  */
 export const updateContact = async (req, res) => {
@@ -1967,7 +2021,7 @@ export const updateContact = async (req, res) => {
       : req.body.preferred_whatsapp_phone_number_id
 
     // Verificar que el contacto existe
-    const existing = await db.get('SELECT id, custom_fields FROM contacts WHERE id = ?', [id])
+    const existing = await db.get('SELECT id, custom_fields, preferred_whatsapp_phone_number_id FROM contacts WHERE id = ?', [id])
     if (!existing) {
       return res.status(404).json({
         success: false,
@@ -2106,6 +2160,31 @@ export const updateContact = async (req, res) => {
 
       const query = `UPDATE contacts SET ${updates.join(', ')} WHERE id = ?`
       await db.run(query, params)
+    }
+
+    // Dejar rastro cuando la conversación se mueve manualmente a otro número
+    if (hasPreferredWhatsAppPhoneNumberUpdate) {
+      const previousPreferredId = cleanString(existing.preferred_whatsapp_phone_number_id)
+      const newPreferredId = cleanString(preferredWhatsAppPhoneNumberInput)
+      if (previousPreferredId !== newPreferredId) {
+        const routingReason = cleanString(req.body.routingReason || req.body.preferredWhatsAppPhoneNumberReason)
+        // 'contingency' = movido porque su número no estaba disponible (elegible para
+        // restauración automática); 'manual' = decisión deliberada del usuario.
+        const routingSource = cleanString(req.body.routingSource) === 'contingency' ? 'contingency' : 'manual'
+        await db.run(`
+          INSERT INTO whatsapp_routing_events (id, contact_id, previous_phone_number_id, new_phone_number_id, reason, source)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [
+          randomUUID(),
+          id,
+          previousPreferredId || null,
+          newPreferredId || null,
+          routingReason || 'Cambio manual de número preferido',
+          routingSource
+        ]).catch(error => {
+          logger.warn(`No se pudo registrar el cambio de número de ${id}: ${error.message}`)
+        })
+      }
     }
 
     // Obtener el contacto actualizado
@@ -2451,6 +2530,7 @@ export const getContactJourney = async (req, res) => {
           msg.business_phone,
           msg.business_phone_number_id,
           msg.transport,
+          msg.routing_reason,
           msg.direction,
           msg.status,
           msg.error_code,
@@ -2495,6 +2575,7 @@ export const getContactJourney = async (req, res) => {
         business_phone: msg.business_phone,
         business_phone_number_id: msg.business_phone_number_id,
         transport: msg.transport || 'api',
+        routing_reason: msg.routing_reason || null,
         message_text: msg.message_text,
         message_type: msg.message_type,
         ...media,

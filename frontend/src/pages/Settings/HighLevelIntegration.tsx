@@ -559,6 +559,7 @@ export const HighLevelIntegration: React.FC = () => {
         confirmText="Desconectar"
         cancelText="Cancelar"
         onConfirm={handleDisconnect}
+        typeToConfirm="DESCONECTAR"
       />
 
       {/* Modal de Contactos Ocultos */}
