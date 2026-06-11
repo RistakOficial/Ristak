@@ -1837,7 +1837,7 @@
 .libPathText {
   flex: 1;
   min-width: 0;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--color-text-primary);
   overflow: hidden;
@@ -1894,7 +1894,7 @@
 .libRowName {
   flex: 1;
   min-width: 0;
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
