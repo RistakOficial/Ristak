@@ -942,9 +942,25 @@ function normalizeImportedFieldOptionValue(option = {}, index = 0) {
   const label = limitString(stripHtmlTags(source.label || source.text || source.value || `Opcion ${index + 1}`), 140)
   const value = limitString(cleanString(source.value || source.label || source.text || label), 140)
   if (!label && !value) return null
+
+  // Per-option actions (e.g. disqualify when selecting this option).
+  const actions = []
+  if (Array.isArray(source.actions)) {
+    for (const [actionIndex, item] of source.actions.entries()) {
+      if (actions.length >= 3) break
+      try {
+        const step = normalizeImportedActionStep(item, actionIndex)
+        if (step) actions.push(step)
+      } catch {
+        // Skip invalid steps instead of failing the whole option update.
+      }
+    }
+  }
+
   return {
     label: label || value,
-    value: value || label
+    value: value || label,
+    ...(actions.length ? { actions } : {})
   }
 }
 
@@ -1786,6 +1802,7 @@ const IMPORTED_BUTTON_ACTIONS = new Set([
   'close_popup',
   'submit',
   'disqualify',
+  'disqualify_after_submit',
   'automation',
   'notify_team',
   'add_tag',
@@ -2013,7 +2030,12 @@ function buildImportedSelectOptions(options = [], existingBody = '') {
 
   return [
     emptyOption,
-    ...normalizedOptions.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+    ...normalizedOptions.map(option => {
+      const optionActions = Array.isArray(option.actions) && option.actions.length
+        ? ` data-rstk-choice-actions="${escapeHtml(jsonString(option.actions))}"`
+        : ''
+      return `<option value="${escapeHtml(option.value)}"${optionActions}>${escapeHtml(option.label)}</option>`
+    })
   ].join('\n')
 }
 
@@ -2028,7 +2050,10 @@ function buildImportedChoiceGroupHtml({ type = 'radio', name = '', options = [],
     const optionId = `${normalizeImportedFieldKey(cleanName, 'field')}_${index + 1}`
     const inputRequired = required && index === 0 ? ' required="required" aria-required="true" data-rstk-field-required="true"' : ` aria-required="${required ? 'true' : 'false'}" data-rstk-field-required="${required ? 'true' : 'false'}"`
     const optionEditId = `${editId || cleanName}_${index + 1}`
-    return `<label${baseAttrs ? ` ${baseAttrs}` : ''}><input type="${cleanType}" name="${escapeHtml(cleanName)}" id="${escapeHtml(optionId)}" value="${escapeHtml(option.value)}"${inputRequired} data-rstk-editable="true" data-rstk-edit-type="form_field" data-rstk-edit-id="${escapeHtml(optionEditId)}" data-rstk-label="${escapeHtml(option.label)}"> ${escapeHtml(option.label)}</label>`
+    const optionActions = Array.isArray(option.actions) && option.actions.length
+      ? ` data-rstk-choice-actions="${escapeHtml(jsonString(option.actions))}"`
+      : ''
+    return `<label${baseAttrs ? ` ${baseAttrs}` : ''}><input type="${cleanType}" name="${escapeHtml(cleanName)}" id="${escapeHtml(optionId)}" value="${escapeHtml(option.value)}"${inputRequired} data-rstk-editable="true" data-rstk-edit-type="form_field" data-rstk-edit-id="${escapeHtml(optionEditId)}" data-rstk-label="${escapeHtml(option.label)}"${optionActions}> ${escapeHtml(option.label)}</label>`
   }).join('\n')
 }
 
@@ -11485,6 +11510,17 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
             });
           });
         });
+        Array.from(form.querySelectorAll('select')).forEach((select) => {
+          Array.from(select.selectedOptions || []).forEach((option) => {
+            parseChoiceActions(option).forEach(action => {
+              actions.push({
+                ...action,
+                choiceName: select.getAttribute('name') || select.getAttribute('id') || '',
+                choiceValue: option.value || option.textContent || ''
+              });
+            });
+          });
+        });
         return actions;
       };
       const resolveFormId = (form, index) => (
@@ -11511,6 +11547,25 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
 
       Array.from(document.querySelectorAll('form')).forEach((form, index) => {
         form.setAttribute('data-rstk-import-form', 'true');
+        // "Descalificar inmediatamente": selecting the option submits right away
+        // so the contact queda registrado como no calificado sin esperar al envio.
+        form.addEventListener('change', (event) => {
+          const target = event.target;
+          if (!target || !target.matches) return;
+          let immediate = null;
+          if (target.matches('input[type="radio"], input[type="checkbox"]') && target.checked) {
+            immediate = parseChoiceActions(target).find(item => item.action === 'disqualify') || null;
+          } else if (target.tagName === 'SELECT') {
+            const selected = Array.from(target.selectedOptions || []);
+            for (const option of selected) {
+              immediate = parseChoiceActions(option).find(item => item.action === 'disqualify') || null;
+              if (immediate) break;
+            }
+          }
+          if (!immediate) return;
+          if (typeof form.requestSubmit === 'function') form.requestSubmit();
+          else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        });
         form.addEventListener('submit', async (event) => {
           event.preventDefault();
           const submitter = event.submitter || form.querySelector('[type="submit"], button');
@@ -11519,7 +11574,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           try {
             const rawFields = collectRawFields(form);
             const selectedChoiceActions = collectSelectedChoiceActions(form);
-            const disqualifyingAction = selectedChoiceActions.find(item => item.action === 'disqualify') || null;
+            const disqualifyingAction = selectedChoiceActions.find(item => item.action === 'disqualify' || item.action === 'disqualify_after_submit') || null;
             const response = await fetch('/api/sites/public/submit', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },

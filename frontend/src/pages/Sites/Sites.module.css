@@ -9,7 +9,7 @@
 
 .importedEditorPanel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+  grid-template-columns: minmax(0, 1fr) minmax(350px, 410px);
   gap: 14px;
   align-items: start;
 }
@@ -923,6 +923,36 @@
   border-color: rgba(var(--color-primary-rgb), 0.36);
   color: var(--color-primary);
   background: rgba(var(--color-primary-rgb), 0.08);
+}
+
+.importedFieldOptionItem {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-background-primary) 88%, var(--color-background-tertiary) 12%);
+}
+
+.importedFieldOptionAction {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.importedFieldOptionAction > span {
+  color: var(--color-text-tertiary);
+  font-size: 0.74rem;
+  font-weight: var(--font-weight-semibold, 600);
+  white-space: nowrap;
+}
+
+.importedFieldOptionsHint {
+  margin: 4px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 0.74rem;
+  line-height: 1.45;
 }
 
 .importedFieldOptionRow {

@@ -7256,7 +7256,7 @@ type ImportedChoiceEditorState = {
   actions: ImportedButtonActionStep[]
 }
 
-type ImportedFormFieldOption = { label: string; value: string }
+type ImportedFormFieldOption = { label: string; value: string; actions?: ImportedButtonActionStep[] }
 
 type ImportedFormFieldSelection = {
   editId: string
@@ -7638,7 +7638,21 @@ const importedButtonActionOptions: ImportedButtonActionOption[] = [
 ]
 
 const importedSelectableButtonActions = new Set<ImportedButtonAction>(importedButtonActionOptions.map(option => option.value))
-const importedButtonActions = new Set<ImportedButtonAction>(['none', ...importedSelectableButtonActions])
+// Actions valid on choice options (radio/checkbox/select) but not offered for buttons.
+const importedChoiceOnlyActions: ImportedButtonAction[] = ['disqualify_after_submit']
+const importedButtonActions = new Set<ImportedButtonAction>(['none', ...importedSelectableButtonActions, ...importedChoiceOnlyActions])
+
+// Quick per-option action selector for choice fields (filtering people).
+const importedChoiceQuickActions: Array<{ value: '' | ImportedButtonAction; label: string }> = [
+  { value: '', label: 'No hacer nada' },
+  { value: 'disqualify', label: 'Descalificar inmediatamente' },
+  { value: 'disqualify_after_submit', label: 'Descalificar al enviar formulario' },
+  { value: 'submit', label: 'Enviar formulario' }
+]
+
+const getImportedOptionQuickAction = (option: ImportedFormFieldOption): '' | ImportedButtonAction => (
+  option.actions?.find(step => importedChoiceQuickActions.some(item => item.value && item.value === step.action))?.action || ''
+)
 
 const importedSubmittableFieldSelector = [
   'form input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"])',
@@ -7699,9 +7713,17 @@ const parseImportedActionList = (rawValue: string): ImportedButtonActionStep[] =
   try {
     const parsed = JSON.parse(rawValue)
     if (!Array.isArray(parsed)) return []
-    return getUniqueImportedActionSteps(parsed
+    // Keep every known action unique by name; selector availability is decided
+    // by each editor, not here (dropping actions at parse time loses data).
+    const used = new Set<ImportedButtonAction>()
+    return parsed
       .map((item, index) => normalizeImportedActionStep(item, `action-${index + 1}`))
-      .filter((item): item is ImportedButtonActionStep => Boolean(item)))
+      .filter((item): item is ImportedButtonActionStep => Boolean(item))
+      .filter(step => {
+        if (used.has(step.action)) return false
+        used.add(step.action)
+        return true
+      })
   } catch {
     return []
   }
@@ -7853,6 +7875,19 @@ const getImportedFormFieldLabel = (element: HTMLElement, doc: Document) => {
   return element.getAttribute('placeholder') || element.getAttribute('name') || element.getAttribute('id') || 'Campo'
 }
 
+const readImportedOptionActions = (element: Element): ImportedButtonActionStep[] => (
+  parseImportedActionList(getImportedButtonAttribute(element as HTMLElement, [
+    'data-rstk-choice-actions',
+    'data-ristak-choice-actions',
+    'data-ristack-choice-actions'
+  ]))
+)
+
+const withImportedOptionActions = (option: ImportedFormFieldOption, element: Element): ImportedFormFieldOption => {
+  const actions = readImportedOptionActions(element)
+  return actions.length ? { ...option, actions } : option
+}
+
 const readImportedFormFieldOptions = (
   element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
   doc: Document
@@ -7860,10 +7895,10 @@ const readImportedFormFieldOptions = (
   const tagName = element.tagName.toLowerCase()
   if (tagName === 'select') {
     return Array.from((element as HTMLSelectElement).options || [])
-      .map(option => ({
+      .map(option => withImportedOptionActions({
         label: (option.textContent || option.value || '').trim(),
         value: (option.value || option.textContent || '').trim()
-      }))
+      }, option))
       .filter(option => option.label || option.value)
       .filter(option => option.value || option.label.toLowerCase() !== 'selecciona una opcion')
   }
@@ -7873,19 +7908,19 @@ const readImportedFormFieldOptions = (
   if (!['radio', 'checkbox'].includes(inputType)) return []
 
   const choiceName = input.getAttribute('name') || input.getAttribute('id') || ''
-  if (!choiceName) return [{
+  if (!choiceName) return [withImportedOptionActions({
     label: getImportedChoiceLabel(input, doc),
     value: input.getAttribute('value') || getImportedChoiceLabel(input, doc)
-  }]
+  }, input)]
 
   const form = input.closest('form')
   return Array.from((form || doc).querySelectorAll<HTMLInputElement>(`input[type="${inputType}"][name="${choiceName.replace(/"/g, '\\"')}"]`))
     .map(optionInput => {
       const label = getImportedChoiceLabel(optionInput, doc)
-      return {
+      return withImportedOptionActions({
         label,
         value: optionInput.getAttribute('value') || label
-      }
+      }, optionInput)
     })
     .filter(option => option.label || option.value)
 }
@@ -7961,6 +7996,8 @@ const importedPanelFieldTypeLabels: Record<string, string> = {
 
 const escapeImportedSelectorValue = (value: string) => value.replace(/"/g, '\\"')
 
+const importedDisqualifyActions = new Set<ImportedButtonAction>(['disqualify', 'disqualify_after_submit'])
+
 const readImportedChoiceGroupHasDisqualify = (input: HTMLInputElement, doc: Document) => {
   const choiceName = input.getAttribute('name') || input.getAttribute('id') || ''
   const groupInputs = choiceName
@@ -7968,11 +8005,7 @@ const readImportedChoiceGroupHasDisqualify = (input: HTMLInputElement, doc: Docu
       `input[type="${input.type}"][name="${escapeImportedSelectorValue(choiceName)}"]`
     ))
     : [input]
-  return groupInputs.some(item => parseImportedActionList(getImportedButtonAttribute(item, [
-    'data-rstk-choice-actions',
-    'data-ristak-choice-actions',
-    'data-ristack-choice-actions'
-  ])).some(action => action.action === 'disqualify'))
+  return groupInputs.some(item => readImportedOptionActions(item).some(action => importedDisqualifyActions.has(action.action)))
 }
 
 const collectImportedPanelFormFields = (doc: Document): ImportedPanelFormField[] => {
@@ -8006,13 +8039,14 @@ const collectImportedPanelFormFields = (doc: Document): ImportedPanelFormField[]
     }
 
     const fieldElement = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    const fieldOptions = tagName === 'select' ? readImportedFormFieldOptions(fieldElement, doc) : []
     result.push({
       key: `${tagName}:${fieldName}:${result.length}`,
       kind: 'field',
       label: getImportedFormFieldLabel(fieldElement, doc),
       typeLabel: importedPanelFieldTypeLabels[inputType] || 'Campo',
-      optionsCount: tagName === 'select' ? readImportedFormFieldOptions(fieldElement, doc).length : 0,
-      hasDisqualify: false,
+      optionsCount: fieldOptions.length,
+      hasDisqualify: fieldOptions.some(option => (option.actions || []).some(action => importedDisqualifyActions.has(action.action))),
       fieldName,
       inputType,
       tagName
@@ -9737,9 +9771,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     choiceEditor.options.length > 0
   )
   const cleanChoiceOptions = (choiceEditor?.options || [])
-    .map(option => ({
+    .map((option): ImportedFormFieldOption => ({
       label: option.label.trim(),
-      value: (option.value || option.label).trim()
+      value: (option.value || option.label).trim(),
+      ...(option.actions?.length ? { actions: option.actions } : {})
     }))
     .filter(option => option.label || option.value)
   const patchChoiceOption = (index: number, patch: Partial<ImportedFormFieldOption>) => {
@@ -9775,9 +9810,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     (fieldEditor.selection.tagName === 'select' || ['radio', 'checkbox'].includes(fieldEditor.selection.inputType))
   )
   const cleanFieldOptions = (fieldEditor?.options || [])
-    .map(option => ({
+    .map((option): ImportedFormFieldOption => ({
       label: option.label.trim(),
-      value: (option.value || option.label).trim()
+      value: (option.value || option.label).trim(),
+      ...(option.actions?.length ? { actions: option.actions } : {})
     }))
     .filter(option => option.label || option.value)
   const canSaveFieldEditor = Boolean(
@@ -9833,11 +9869,13 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   const saveChoiceEditor = async () => {
     if (!choiceEditor) return
-    const choiceActions = getUniqueImportedActionSteps(choiceEditor.actions, currentPageActionOptions)
-    const selectedChoiceOption = cleanChoiceOptions[choiceEditor.selection.choiceIndex] || cleanChoiceOptions[0] || {
+    const selectedChoiceOption: ImportedFormFieldOption = cleanChoiceOptions[choiceEditor.selection.choiceIndex] || cleanChoiceOptions[0] || {
       label: choiceEditor.selection.label,
       value: choiceEditor.selection.choiceValue
     }
+    // Per-option actions travel in fieldOptions; choiceActions repeats the
+    // selected option's actions for the legacy single-option update path.
+    const choiceActions = selectedChoiceOption.actions || []
     await saveEditableContent({
       editId: choiceEditor.selection.editId,
       editType: 'choice_option' as ImportedEditableContentType,
@@ -10193,40 +10231,52 @@ const ImportedHtmlEditorPanel: React.FC<{
                 </button>
               </div>
               {choiceEditor.options.map((option, index) => (
-                <div key={`${index}-${option.value}`} className={styles.importedFieldOptionRow}>
-                  <input
-                    value={option.label}
-                    disabled={contentSaving}
-                    placeholder={`Opción ${index + 1}`}
-                    name={`rstk-imported-choice-option-label-${index}`}
-                    {...importedEditorNoAutocompleteAttrs}
-                    onChange={(event) => patchChoiceOption(index, {
-                      label: event.target.value,
-                      value: option.value === option.label ? event.target.value : option.value
-                    })}
-                  />
-                  <input
-                    value={option.value}
-                    disabled={contentSaving}
-                    placeholder="valor"
-                    name={`rstk-imported-choice-option-value-${index}`}
-                    {...importedEditorNoAutocompleteAttrs}
-                    onChange={(event) => patchChoiceOption(index, { value: event.target.value })}
-                  />
-                  <button type="button" onClick={() => removeChoiceOption(index)} disabled={contentSaving || choiceEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
-                    <X size={13} />
-                  </button>
+                <div key={`${index}-${option.value}`} className={styles.importedFieldOptionItem}>
+                  <div className={styles.importedFieldOptionRow}>
+                    <input
+                      value={option.label}
+                      disabled={contentSaving}
+                      placeholder={`Opción ${index + 1}`}
+                      name={`rstk-imported-choice-option-label-${index}`}
+                      {...importedEditorNoAutocompleteAttrs}
+                      onChange={(event) => patchChoiceOption(index, {
+                        label: event.target.value,
+                        value: option.value === option.label ? event.target.value : option.value
+                      })}
+                    />
+                    <input
+                      value={option.value}
+                      disabled={contentSaving}
+                      placeholder="valor"
+                      name={`rstk-imported-choice-option-value-${index}`}
+                      {...importedEditorNoAutocompleteAttrs}
+                      onChange={(event) => patchChoiceOption(index, { value: event.target.value })}
+                    />
+                    <button type="button" onClick={() => removeChoiceOption(index)} disabled={contentSaving || choiceEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
+                      <X size={13} />
+                    </button>
+                  </div>
+                  <label className={styles.importedFieldOptionAction}>
+                    <span>Al elegirla</span>
+                    <CustomSelect
+                      value={getImportedOptionQuickAction(option)}
+                      disabled={contentSaving}
+                      onChange={(event) => {
+                        const action = event.target.value as '' | ImportedButtonAction
+                        patchChoiceOption(index, { actions: action ? [makeImportedActionStep(action)] : [] })
+                      }}
+                    >
+                      {importedChoiceQuickActions.map(item => (
+                        <option key={item.value || 'none'} value={item.value}>{item.label}</option>
+                      ))}
+                    </CustomSelect>
+                  </label>
                 </div>
               ))}
             </div>
-            <ImportedActionChainEditor
-              actions={choiceEditor.actions}
-              targetPages={targetImportedPages}
-              actionOptions={currentPageActionOptions}
-              disabled={contentSaving}
-              emptyLabel="No hacer nada especial"
-              onChange={(actions) => setChoiceEditor(current => current ? { ...current, actions } : current)}
-            />
+            <p className={styles.importedFieldOptionsHint}>
+              Usa "Descalificar" en las opciones que no son tu cliente ideal: Ristak marca el contacto como no calificado.
+            </p>
             <div className={styles.importedButtonActionFooter}>
               <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
                 Cancelar
@@ -10294,31 +10344,51 @@ const ImportedHtmlEditorPanel: React.FC<{
                   </button>
                 </div>
                 {fieldEditor.options.map((option, index) => (
-                  <div key={`${index}-${option.value}`} className={styles.importedFieldOptionRow}>
-                    <input
-                      value={option.label}
-                      disabled={contentSaving}
-                      placeholder={`Opción ${index + 1}`}
-                      name={`rstk-imported-field-option-label-${index}`}
-                      {...importedEditorNoAutocompleteAttrs}
-                      onChange={(event) => patchFieldOption(index, {
-                        label: event.target.value,
-                        value: option.value === option.label ? event.target.value : option.value
-                      })}
-                    />
-                    <input
-                      value={option.value}
-                      disabled={contentSaving}
-                      placeholder="valor"
-                      name={`rstk-imported-field-option-value-${index}`}
-                      {...importedEditorNoAutocompleteAttrs}
-                      onChange={(event) => patchFieldOption(index, { value: event.target.value })}
-                    />
-                    <button type="button" onClick={() => removeFieldOption(index)} disabled={contentSaving || fieldEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
-                      <X size={13} />
-                    </button>
+                  <div key={`${index}-${option.value}`} className={styles.importedFieldOptionItem}>
+                    <div className={styles.importedFieldOptionRow}>
+                      <input
+                        value={option.label}
+                        disabled={contentSaving}
+                        placeholder={`Opción ${index + 1}`}
+                        name={`rstk-imported-field-option-label-${index}`}
+                        {...importedEditorNoAutocompleteAttrs}
+                        onChange={(event) => patchFieldOption(index, {
+                          label: event.target.value,
+                          value: option.value === option.label ? event.target.value : option.value
+                        })}
+                      />
+                      <input
+                        value={option.value}
+                        disabled={contentSaving}
+                        placeholder="valor"
+                        name={`rstk-imported-field-option-value-${index}`}
+                        {...importedEditorNoAutocompleteAttrs}
+                        onChange={(event) => patchFieldOption(index, { value: event.target.value })}
+                      />
+                      <button type="button" onClick={() => removeFieldOption(index)} disabled={contentSaving || fieldEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
+                        <X size={13} />
+                      </button>
+                    </div>
+                    <label className={styles.importedFieldOptionAction}>
+                      <span>Al elegirla</span>
+                      <CustomSelect
+                        value={getImportedOptionQuickAction(option)}
+                        disabled={contentSaving}
+                        onChange={(event) => {
+                          const action = event.target.value as '' | ImportedButtonAction
+                          patchFieldOption(index, { actions: action ? [makeImportedActionStep(action)] : [] })
+                        }}
+                      >
+                        {importedChoiceQuickActions.map(item => (
+                          <option key={item.value || 'none'} value={item.value}>{item.label}</option>
+                        ))}
+                      </CustomSelect>
+                    </label>
                   </div>
                 ))}
+                <p className={styles.importedFieldOptionsHint}>
+                  Usa "Descalificar" en las opciones que no son tu cliente ideal: Ristak marca el contacto como no calificado.
+                </p>
               </div>
             )}
 

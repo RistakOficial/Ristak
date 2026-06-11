@@ -391,6 +391,7 @@ export type ImportedButtonAction =
   | 'close_popup'
   | 'submit'
   | 'disqualify'
+  | 'disqualify_after_submit'
   | 'automation'
   | 'notify_team'
   | 'add_tag'
@@ -426,7 +427,7 @@ export interface ImportedEditableContentUpdate {
   fieldLabel?: string
   fieldPlaceholder?: string
   fieldRequired?: boolean
-  fieldOptions?: Array<{ label: string; value: string }>
+  fieldOptions?: Array<{ label: string; value: string; actions?: ImportedButtonActionStep[] }>
   fieldName?: string
   fieldHtmlId?: string
   fieldTag?: string
