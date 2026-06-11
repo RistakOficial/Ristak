@@ -1,5 +1,5 @@
 import React, { useLayoutEffect, useRef } from 'react'
-import { AlertCircle, Copy, Plus, Trash2, X, Zap } from 'lucide-react'
+import { AlertCircle, Copy, Plus, Settings2, Trash2, X, Zap } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import type { AutomationNode } from '@/services/automationsService'
 import { getNodeDefinition, validateNodeConfig, type NodeDefinition } from './nodeRegistry'
@@ -24,7 +24,8 @@ interface AutomationNodeCardProps {
   connectedOutputs: Set<string>
   zoom: number
   onMeasure: (nodeId: string, layout: NodeHandleLayout) => void
-  onPointerDownHeader: (event: React.PointerEvent, node: AutomationNode) => void
+  /** Pointer down sobre la tarjeta (el canvas decide si inicia un arrastre) */
+  onPointerDownCard: (event: React.PointerEvent, node: AutomationNode) => void
   onSelect: (node: AutomationNode) => void
   onOpenConfig: (node: AutomationNode) => void
   onDuplicate: (node: AutomationNode) => void
@@ -50,7 +51,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
   connectedOutputs,
   zoom,
   onMeasure,
-  onPointerDownHeader,
+  onPointerDownCard,
   onSelect,
   onOpenConfig,
   onDuplicate,
@@ -98,8 +99,13 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
 
   const accent = isStart ? 'blue' : definition?.accent || 'blue'
   const Icon = isStart ? Zap : definition?.icon || Zap
-  const summary = !isStart && definition ? definition.summary(node.config || {}) : undefined
+  const config = node.config || {}
+  const summary = !isStart && definition ? definition.summary(config) : undefined
+  const configErrors = !isStart && definition ? validateNodeConfig(definition, config) : []
+  const configured = configErrors.length === 0
   const hasErrors = Boolean(errors && errors.length > 0)
+  const customName = typeof config.name === 'string' && config.name.trim() ? config.name.trim() : ''
+  const title = isStart ? 'Cuando...' : customName || definition?.label || node.label || node.type
 
   return (
     <div
@@ -119,6 +125,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
       onPointerDown={(event) => {
         event.stopPropagation()
         onSelect(node)
+        onPointerDownCard(event, node)
       }}
       onDoubleClick={(event) => {
         event.stopPropagation()
@@ -127,27 +134,39 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
     >
       {/* Conector de entrada */}
       {hasInput && (
-        <span
-          data-handle-in
-          className={cn(styles.handle, styles.handleIn)}
-          title="Entrada"
-        />
+        <span data-handle-in className={cn(styles.handle, styles.handleIn)} title="Entrada" />
       )}
 
       {/* Encabezado */}
-      <div
-        className={cn(styles.nodeHeader, definition?.tintedHeader && styles.nodeHeaderTinted)}
-        onPointerDown={(event) => onPointerDownHeader(event, node)}
-      >
+      <div className={cn(styles.nodeHeader, definition?.tintedHeader && styles.nodeHeaderTinted)}>
         <span className={styles.nodeHeaderIcon}>
           <Icon size={15} />
         </span>
         <span className={styles.nodeHeaderText}>
           {!isStart && definition?.brand && <span className={styles.nodeBrand}>{definition.brand}</span>}
-          <span className={styles.nodeTitle}>{isStart ? 'Cuando...' : definition?.label || node.label || node.type}</span>
+          <span className={styles.nodeTitle}>{title}</span>
         </span>
         {!isStart && (
+          <span
+            className={styles.nodeStatusDot}
+            data-state={hasErrors ? 'error' : configured ? 'ok' : 'incomplete'}
+            title={hasErrors ? 'Con errores' : configured ? 'Configurado' : 'Falta configurar'}
+          />
+        )}
+        {!isStart && (
           <span className={styles.nodeQuickActions}>
+            <button
+              type="button"
+              className={styles.nodeQuickButton}
+              title="Configurar paso"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                onOpenConfig(node)
+              }}
+            >
+              <Settings2 size={13} />
+            </button>
             <button
               type="button"
               className={styles.nodeQuickButton}
@@ -247,9 +266,26 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
           <>
             {summary?.text && <p className={styles.nodeSummaryText}>{summary.text}</p>}
             {summary?.box && <div className={styles.nodeSummaryBox}>{summary.box}</div>}
-            {!summary?.text && !summary?.box && (
-              <p className={styles.nodeEmpty}>{summary?.empty || 'Toca un paso para editar'}</p>
+
+            {/* CTA contextual: cada nodo invita a configurarse desde su cajita */}
+            {!configured && definition && (
+              <button
+                type="button"
+                className={styles.nodeCtaButton}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onOpenConfig(node)
+                }}
+              >
+                <Plus size={12} />
+                {definition.addButtonLabel || 'Configurar paso'}
+              </button>
             )}
+            {configured && !summary?.text && !summary?.box && (
+              <p className={styles.nodeEmpty}>{summary?.empty || 'Doble clic para editar'}</p>
+            )}
+
             {hasErrors && (
               <span className={styles.nodeErrorHint}>
                 <AlertCircle size={12} />

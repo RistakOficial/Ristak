@@ -19,6 +19,12 @@ export interface PickerRequest {
   source?: { nodeId: string; handle: string }
 }
 
+/** Conexión pendiente mientras el selector está abierto tras soltar en el fondo */
+export interface PendingEdge {
+  source: { nodeId: string; handle: string }
+  point: { x: number; y: number }
+}
+
 export interface CanvasActions {
   onSelectNode: (nodeId: string | null) => void
   onSelectEdge: (edgeId: string | null) => void
@@ -43,8 +49,15 @@ interface AutomationCanvasProps {
   selectedEdgeId: string | null
   nodeErrors: Record<string, string[]>
   initialViewport: AutomationViewport
+  /** Flecha fantasma hacia el punto donde se soltó el conector */
+  pendingEdge?: PendingEdge | null
   actions: CanvasActions
   children?: React.ReactNode
+}
+
+/** ¿El evento ocurrió dentro de un contenedor interactivo (globos, inputs…)? */
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return Boolean((target as HTMLElement | null)?.closest?.('[data-automation-interactive="true"]'))
 }
 
 interface DragState {
@@ -80,6 +93,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   selectedEdgeId,
   nodeErrors,
   initialViewport,
+  pendingEdge,
   actions,
   children
 }) => {
@@ -148,6 +162,10 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
     if (!element) return
 
     const handleWheel = (event: WheelEvent) => {
+      // El scroll dentro de globos, selectores e inputs es scroll interno:
+      // el canvas no se mueve ni hace zoom.
+      if (isInteractiveTarget(event.target)) return
+
       event.preventDefault()
       const { x, y, zoom } = viewportRef.current
 
@@ -160,13 +178,13 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
         const worldX = (cursorX - x) / zoom
         const worldY = (cursorY - y) / zoom
         setAndReportViewport({
-          x: cursorX - worldX * nextZoom,
-          y: cursorY - worldY * nextZoom,
+          x: Math.round(cursorX - worldX * nextZoom),
+          y: Math.round(cursorY - worldY * nextZoom),
           zoom: nextZoom
         })
       } else {
-        // Desplazamiento con dos dedos / rueda: pan
-        setAndReportViewport({ x: x - event.deltaX, y: y - event.deltaY, zoom })
+        // Desplazamiento con dos dedos / rueda: pan (redondeado para nitidez)
+        setAndReportViewport({ x: Math.round(x - event.deltaX), y: Math.round(y - event.deltaY), zoom })
       }
     }
 
@@ -181,9 +199,10 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
     const handleMove = (event: PointerEvent) => {
       const panState = panStateRef.current
       if (panState) {
+        // Redondeado a píxeles enteros: evita texto borroso durante el pan
         setViewport({
-          x: panState.pan.x + (event.clientX - panState.pointer.x),
-          y: panState.pan.y + (event.clientY - panState.pointer.y),
+          x: Math.round(panState.pan.x + (event.clientX - panState.pointer.x)),
+          y: Math.round(panState.pan.y + (event.clientY - panState.pointer.y)),
           zoom: viewportRef.current.zoom
         })
         return
@@ -288,6 +307,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   // ------------------------------------------------------------------
   const handleCanvasPointerDown = (event: React.PointerEvent) => {
     if (event.button !== 0 && event.button !== 1) return
+    if (isInteractiveTarget(event.target)) return
     actions.onSelectNode(null)
     actions.onSelectEdge(null)
     panStateRef.current = {
@@ -303,10 +323,18 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
     actions.onRequestPicker({ anchor: editorPoint, worldPoint })
   }
 
-  const handleNodeHeaderPointerDown = (event: React.PointerEvent, node: AutomationNode) => {
+  // Un clic selecciona; mantener y arrastrar mueve el nodo. Los elementos
+  // interactivos internos (botones, inputs, conectores) nunca inician drag.
+  const handleNodeCardPointerDown = (event: React.PointerEvent, node: AutomationNode) => {
     if (event.button !== 0) return
-    event.stopPropagation()
-    actions.onSelectNode(node.id)
+    const target = event.target as HTMLElement | null
+    if (
+      target?.closest(
+        'button, input, textarea, select, [data-handle-out], [data-handle-in], [data-automation-interactive="true"]'
+      )
+    ) {
+      return
+    }
     setDrag({
       nodeId: node.id,
       pointerStart: { x: event.clientX, y: event.clientY },
@@ -342,7 +370,11 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
     const centerY = bounds.height / 2
     const worldX = (centerX - x) / zoom
     const worldY = (centerY - y) / zoom
-    setAndReportViewport({ x: centerX - worldX * nextZoom, y: centerY - worldY * nextZoom, zoom: nextZoom })
+    setAndReportViewport({
+      x: Math.round(centerX - worldX * nextZoom),
+      y: Math.round(centerY - worldY * nextZoom),
+      zoom: nextZoom
+    })
   }
 
   const fitView = useCallback(() => {
@@ -367,8 +399,8 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
       Math.max(MIN_ZOOM, Math.min((bounds.width - padding * 2) / width, (bounds.height - padding * 2) / height, 1))
     )
     setAndReportViewport({
-      x: (bounds.width - width * zoom) / 2 - minX * zoom,
-      y: (bounds.height - height * zoom) / 2 - minY * zoom,
+      x: Math.round((bounds.width - width * zoom) / 2 - minX * zoom),
+      y: Math.round((bounds.height - height * zoom) / 2 - minY * zoom),
       zoom
     })
   }, [getBounds, setAndReportViewport])
@@ -407,6 +439,18 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
 
   const draftGeometry = draft ? edgePath(draft.from.x, draft.from.y, draft.to.x, draft.to.y) : null
 
+  // Flecha fantasma: del conector de origen al punto exacto donde se soltó,
+  // visible mientras el selector de pasos está abierto.
+  const pendingGeometry = useMemo(() => {
+    if (!pendingEdge) return null
+    const source = nodes.find((node) => node.id === pendingEdge.source.nodeId)
+    if (!source) return null
+    const layout = layouts[source.id]
+    const sx = source.position.x + (layout?.width || NODE_WIDTH)
+    const sy = source.position.y + (layout?.outputs[pendingEdge.source.handle] ?? 40)
+    return edgePath(sx, sy, pendingEdge.point.x, pendingEdge.point.y)
+  }, [pendingEdge, nodes, layouts])
+
   const dropStateFor = (node: AutomationNode): 'target' | 'forbidden' | null => {
     if (!draft || !draft.hoveredNodeId || draft.hoveredNodeId !== node.id) return null
     const check = canConnect(nodes, edges, draft.sourceNodeId, draft.sourceHandle, node.id)
@@ -414,7 +458,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   }
 
   return (
-    <div ref={wrapRef} className={styles.canvasWrap}>
+    <div ref={wrapRef} data-automation-canvas-wrap className={styles.canvasWrap}>
       <div
         className={cn(styles.canvas, panning && styles.canvasPanning, draft && styles.canvasConnecting)}
         style={{
@@ -482,6 +526,18 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
             ))}
 
             {draftGeometry && <path className={styles.edgeDraft} d={draftGeometry.path} markerEnd="url(#automation-arrow)" />}
+
+            {pendingGeometry && pendingEdge && (
+              <g>
+                <path className={styles.edgeDraft} d={pendingGeometry.path} markerEnd="url(#automation-arrow)" />
+                <circle
+                  className={styles.pendingTargetDot}
+                  cx={pendingEdge.point.x}
+                  cy={pendingEdge.point.y}
+                  r="7"
+                />
+              </g>
+            )}
           </svg>
 
           {nodes.map((node) => (
@@ -495,7 +551,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
               connectedOutputs={connectedOutputsByNode.get(node.id) || emptyOutputs}
               zoom={viewport.zoom}
               onMeasure={handleMeasure}
-              onPointerDownHeader={handleNodeHeaderPointerDown}
+              onPointerDownCard={handleNodeCardPointerDown}
               onSelect={(selected) => actions.onSelectNode(selected.id)}
               onOpenConfig={(target) => {
                 const layout = layoutsRef.current[target.id]

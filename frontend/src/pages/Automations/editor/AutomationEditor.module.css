@@ -125,13 +125,18 @@
 .canvas {
   position: absolute;
   inset: 0;
-  cursor: grab;
+  /* Cursor normal: la "manita" solo aparece al arrastrar de verdad */
+  cursor: default;
   touch-action: none;
   background-image: radial-gradient(rgba(148, 163, 184, 0.35) 1.1px, transparent 1.1px);
 }
 
 .canvasPanning {
   cursor: grabbing;
+}
+
+.canvasPanning * {
+  cursor: grabbing !important;
 }
 
 .canvasConnecting {
@@ -199,6 +204,15 @@
   stroke-width: 2;
   stroke-dasharray: 6 6;
   animation: edgeFlow 0.8s linear infinite;
+  pointer-events: none;
+}
+
+/* Punto fantasma donde se soltó la conexión (mientras eliges el paso) */
+.pendingTargetDot {
+  fill: rgba(59, 130, 246, 0.18);
+  stroke: rgb(59, 130, 246);
+  stroke-width: 2;
+  stroke-dasharray: 3 3;
   pointer-events: none;
 }
 
@@ -289,7 +303,13 @@
 
 .nodeDragging {
   cursor: grabbing;
+  /* Sin transiciones durante el arrastre: movimiento 1:1 sin lag ni blur */
+  transition: none;
   box-shadow: 0 24px 44px -18px rgba(15, 23, 42, 0.5);
+}
+
+.nodeDragging * {
+  cursor: grabbing !important;
 }
 
 .nodeHeader {
@@ -298,7 +318,27 @@
   gap: 10px;
   padding: 10px 12px;
   border-radius: 12.5px 12.5px 0 0;
+  /* Zona de agarre visual del nodo */
   cursor: grab;
+}
+
+.nodeStatusDot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.nodeStatusDot[data-state='ok'] {
+  background: var(--color-status-success);
+}
+
+.nodeStatusDot[data-state='incomplete'] {
+  background: var(--color-status-warning);
+}
+
+.nodeStatusDot[data-state='error'] {
+  background: var(--color-status-error);
 }
 
 .nodeHeaderTinted {
@@ -416,6 +456,28 @@
   gap: 6px;
   font-size: 11px;
   color: var(--color-status-error);
+}
+
+/* CTA contextual dentro de la cajita ("+ Agregar mensaje", etc.) */
+.nodeCtaButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1.5px dashed rgba(var(--node-accent, 59, 130, 246), 0.55);
+  background: transparent;
+  color: rgb(var(--node-accent, 59, 130, 246));
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.nodeCtaButton:hover {
+  background: rgba(var(--node-accent, 59, 130, 246), 0.08);
 }
 
 /* Filas de salida (Siguiente paso / ramas) */
@@ -675,8 +737,8 @@
 .bubble {
   position: absolute;
   z-index: 40;
-  width: 320px;
-  max-height: min(480px, calc(100% - 24px));
+  width: 380px;
+  max-height: min(560px, calc(100% - 24px));
   display: flex;
   flex-direction: column;
   border-radius: 14px;
@@ -684,6 +746,26 @@
   border: 1px solid rgba(148, 163, 184, 0.22);
   box-shadow: 0 24px 60px -24px rgba(15, 23, 42, 0.5), 0 6px 18px -8px rgba(15, 23, 42, 0.18);
   animation: bubbleIn 0.14s ease;
+  cursor: default;
+}
+
+/* Panel amplio anclado a la derecha (botón "+"): overlay sin reflow */
+.bubbleDocked {
+  max-height: none;
+  border-radius: 16px;
+}
+
+.bubbleExpanded {
+  max-height: min(86vh, calc(100% - 24px));
+}
+
+.bubbleSearchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  flex-shrink: 0;
 }
 
 @keyframes bubbleIn {
@@ -742,6 +824,8 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* El scroll vive dentro del globo: nunca mueve el canvas de atrás */
+  overscroll-behavior: contain;
   padding: 10px 12px 14px;
 }
 
@@ -836,15 +920,15 @@
   color: var(--color-text-tertiary);
 }
 
-.proBadge {
+.newBadge {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  margin-left: 6px;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: rgb(37, 99, 235);
-  background: rgba(59, 130, 246, 0.14);
+  color: rgb(139, 92, 246);
+  background: rgba(139, 92, 246, 0.14);
   border-radius: 6px;
   padding: 2px 6px;
 }
@@ -1085,6 +1169,189 @@
 
 .toggleSwitchOn::after {
   transform: translateX(14px);
+}
+
+/* ------------------- Secciones y bloques de configuración ----------------- */
+
+.configSection {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 11px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.configSectionTitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  margin-bottom: 8px;
+}
+
+.configWarning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--color-status-warning);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 9px;
+  padding: 7px 9px;
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+/* Tarjetas de modo del nodo "Esperar" */
+.modeCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 11px;
+  background: transparent;
+  padding: 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.modeCard:hover {
+  border-color: rgba(var(--color-primary-rgb), 0.4);
+  background: rgba(var(--color-primary-rgb), 0.05);
+}
+
+.modeCardIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: rgba(244, 99, 91, 0.14);
+  color: rgb(244, 99, 91);
+}
+
+.modeCardText {
+  flex: 1;
+  min-width: 0;
+}
+
+.modeCardTitle {
+  display: flex;
+  align-items: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  line-height: 1.3;
+}
+
+.modeCardExample {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  line-height: 1.35;
+  margin-top: 1px;
+}
+
+.modeBackButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 6px;
+  margin: -2px 0 8px -6px;
+  border-radius: 7px;
+}
+
+.modeBackButton:hover {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--color-text-primary);
+}
+
+/* Reglas del constructor de condiciones */
+.conditionRule {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
+  padding: 9px;
+  margin-bottom: 8px;
+}
+
+.conditionRuleHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.conditionRuleTitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.conditionValue {
+  margin-top: 6px;
+}
+
+/* Días de la semana */
+.weekdayRow {
+  display: flex;
+  gap: 4px;
+}
+
+.weekdayButton {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 0;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.weekdayButton:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.weekdayButtonActive {
+  background: rgba(var(--color-primary-rgb), 0.16);
+  border-color: rgba(var(--color-primary-rgb), 0.4);
+  color: var(--color-text-primary);
+}
+
+/* Vista previa de WhatsApp */
+.waPreview {
+  background: rgba(20, 184, 166, 0.08);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.waPreviewBubble {
+  background: var(--color-background-secondary);
+  border: 1px solid rgba(20, 184, 166, 0.3);
+  border-radius: 10px 10px 10px 3px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 140px;
+  overflow: hidden;
 }
 
 .configErrors {

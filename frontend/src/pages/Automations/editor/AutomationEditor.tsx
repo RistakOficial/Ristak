@@ -37,7 +37,7 @@ import automationsService, {
   type AutomationStatus,
   type AutomationViewport
 } from '@/services/automationsService'
-import { AutomationCanvas, type PickerRequest } from './AutomationCanvas'
+import { AutomationCanvas, type PendingEdge, type PickerRequest } from './AutomationCanvas'
 import { StepPickerBubble, rememberRecentStep } from './StepPickerBubble'
 import { NodeConfigBubble } from './NodeConfigBubble'
 import {
@@ -53,6 +53,7 @@ import {
   getNodeOutputs,
   getStartTriggers,
   isStartNode,
+  migrateLegacyFlow,
   nextNodePosition,
   NODE_WIDTH,
   pruneInvalidEdges,
@@ -77,6 +78,8 @@ type SaveState = 'saved' | 'dirty' | 'saving' | 'error'
 
 interface PickerState {
   kind: NodeKind
+  /** anchored: globo cerca del punto · docked: panel amplio a la derecha */
+  variant: 'anchored' | 'docked'
   anchor: { x: number; y: number }
   worldPoint: { x: number; y: number }
   /** Conexión obligada (el globo se abrió desde una salida) */
@@ -133,6 +136,31 @@ export const AutomationEditor: React.FC = () => {
   const automationRef = useRef(automation)
   automationRef.current = automation
 
+  // Tamaño real del canvas (los globos se posicionan dentro de él)
+  const [canvasBounds, setCanvasBounds] = useState({ width: 1200, height: 700 })
+  const canvasBoundsRef = useRef(canvasBounds)
+  canvasBoundsRef.current = canvasBounds
+
+  useEffect(() => {
+    const measure = () => {
+      const wrap = document.querySelector('[data-automation-canvas-wrap]')
+      if (!wrap) return
+      const rect = wrap.getBoundingClientRect()
+      setCanvasBounds((current) =>
+        Math.abs(current.width - rect.width) > 1 || Math.abs(current.height - rect.height) > 1
+          ? { width: rect.width, height: rect.height }
+          : current
+      )
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    const interval = window.setInterval(measure, 1200)
+    return () => {
+      window.removeEventListener('resize', measure)
+      window.clearInterval(interval)
+    }
+  }, [automation])
+
   const { nodes, edges } = state.present
 
   // ------------------------------------------------------------------
@@ -158,7 +186,11 @@ export const AutomationEditor: React.FC = () => {
         setAutomation(data)
         setName(data.name)
         viewportRef.current = data.flow.viewport || { x: 0, y: 0, zoom: 1 }
-        dispatch({ type: 'init', flow: { nodes: data.flow.nodes, edges: data.flow.edges } })
+        // Migra nodos de versiones anteriores (If/Else, Telegram, canales retirados)
+        dispatch({
+          type: 'init',
+          flow: { nodes: migrateLegacyFlow(data.flow.nodes), edges: data.flow.edges }
+        })
         savedRevisionRef.current = 0
         setSaveState('saved')
       })
@@ -298,8 +330,12 @@ export const AutomationEditor: React.FC = () => {
       const source = picker.source || (picker.connectEnabled ? picker.offerConnect || undefined : undefined)
       const sourceNode = source ? current.nodes.find((node) => node.id === source.nodeId) : undefined
 
+      // Con conexión pendiente, el conector de entrada del nodo nuevo cae
+      // exactamente en el punto donde se soltó la flecha (entrada ≈ y+24).
       const position = picker.placeAtWorldPoint || !sourceNode
-        ? picker.worldPoint
+        ? picker.source
+          ? { x: picker.worldPoint.x, y: picker.worldPoint.y - 24 }
+          : picker.worldPoint
         : nextNodePosition(sourceNode, source?.handle || 'out', current.nodes)
 
       const node = createNode(definition.type, position)
@@ -322,7 +358,7 @@ export const AutomationEditor: React.FC = () => {
       commitFlow([...current.nodes, node], nextEdges)
       setPicker(null)
       setSelectedNodeId(node.id)
-      if (definition.fields.length > 0) {
+      if (definition.fields.length > 0 || definition.configComponent) {
         openConfigForNode(node)
       }
     },
@@ -412,6 +448,7 @@ export const AutomationEditor: React.FC = () => {
         if (request.source) {
           setPicker({
             kind: 'action',
+            variant: 'anchored',
             anchor: request.anchor,
             worldPoint: request.worldPoint,
             source: request.source,
@@ -431,6 +468,7 @@ export const AutomationEditor: React.FC = () => {
         const freeHandle = selected ? findFreeOutput(selected) : null
         setPicker({
           kind: 'action',
+          variant: 'anchored',
           anchor: request.anchor,
           worldPoint: request.worldPoint,
           offerConnect: selected && freeHandle ? { nodeId: selected.id, handle: freeHandle } : null,
@@ -444,6 +482,7 @@ export const AutomationEditor: React.FC = () => {
         setSelectedNodeId(node.id)
         setPicker({
           kind: 'trigger',
+          variant: 'anchored',
           anchor,
           worldPoint: node.position,
           connectEnabled: false,
@@ -484,10 +523,11 @@ export const AutomationEditor: React.FC = () => {
     const selected = selectedNodeId ? current.nodes.find((node) => node.id === selectedNodeId) : undefined
     const freeHandle = selected ? findFreeOutput(selected) : null
     const viewport = viewportRef.current
-    const bounds = { width: window.innerWidth, height: window.innerHeight }
+    const bounds = canvasBoundsRef.current
     setPicker({
       kind: 'action',
-      anchor: { x: bounds.width - 420, y: 70 },
+      variant: 'docked',
+      anchor: { x: 0, y: 0 },
       worldPoint: {
         x: (bounds.width / 2 - viewport.x) / viewport.zoom - NODE_WIDTH / 2,
         y: (bounds.height / 2 - viewport.y) / viewport.zoom - 80
@@ -760,7 +800,12 @@ export const AutomationEditor: React.FC = () => {
   }
 
   const status = automation.status
-  const editorBounds = { width: window.innerWidth, height: window.innerHeight - 56 }
+
+  // Flecha fantasma mientras el selector está abierto tras soltar el conector
+  const pendingEdge: PendingEdge | null =
+    picker && picker.source && picker.placeAtWorldPoint
+      ? { source: picker.source, point: picker.worldPoint }
+      : null
 
   return (
     <div className={styles.editorShell}>
@@ -900,6 +945,7 @@ export const AutomationEditor: React.FC = () => {
         selectedEdgeId={selectedEdgeId}
         nodeErrors={nodeErrors}
         initialViewport={automation.flow.viewport || { x: 0, y: 0, zoom: 1 }}
+        pendingEdge={pendingEdge}
         actions={canvasActions}
       >
         <button type="button" className={styles.fab} title="Agregar paso" onClick={handleFabClick}>
@@ -909,8 +955,9 @@ export const AutomationEditor: React.FC = () => {
         {picker && (
           <StepPickerBubble
             kind={picker.kind}
+            variant={picker.variant}
             anchor={picker.anchor}
-            bounds={editorBounds}
+            bounds={canvasBounds}
             connectLabel={
               picker.offerConnect && picker.kind === 'action'
                 ? 'Conectar con el paso seleccionado'
@@ -930,8 +977,7 @@ export const AutomationEditor: React.FC = () => {
             definition={configDefinition}
             config={(configTrigger ? configTrigger.config : configNode.config) || {}}
             anchor={config.anchor}
-            bounds={editorBounds}
-            excludeAutomationId={automation.id}
+            bounds={canvasBounds}
             onChange={handleConfigChange}
             onClose={() => setConfig(null)}
           />

@@ -10,6 +10,10 @@ const MAX_FLOW_BYTES = 2 * 1024 * 1024 // 2MB: límite defensivo para el JSON de
 
 export const START_NODE_TYPE = 'start'
 
+// Únicos canales conversacionales soportados (sin SMS ni Email)
+export const ALLOWED_CHANNELS = ['whatsapp', 'messenger', 'instagram']
+const CHANNEL_CONFIG_KEYS = ['channel', 'replyChannel', 'conversationChannel', 'actionChannel']
+
 function asArray(value) {
   return Array.isArray(value) ? value : []
 }
@@ -143,6 +147,27 @@ export function validateFlowForPublish(flow) {
         errors.push('Las ramas del aleatorizador deben sumar 100%')
       }
     })
+
+  // Canales no soportados (SMS, Email…) en cualquier configuración
+  const invalidChannels = new Set()
+  const collectChannels = (config) => {
+    if (!isPlainObject(config)) return
+    CHANNEL_CONFIG_KEYS.forEach((key) => {
+      const value = config[key]
+      if (typeof value === 'string' && value && value !== 'any' && !ALLOWED_CHANNELS.includes(value)) {
+        invalidChannels.add(value)
+      }
+    })
+  }
+  nodes.forEach((node) => {
+    collectChannels(node.config)
+    asArray(node.config?.triggers).forEach((trigger) => collectChannels(trigger?.config))
+  })
+  if (invalidChannels.size > 0) {
+    errors.push(
+      `Canales no soportados en el flujo (${[...invalidChannels].join(', ')}): usa WhatsApp, Messenger o Instagram Direct`
+    )
+  }
 
   if (detectCycle(nodes, edges)) {
     errors.push('El flujo tiene un ciclo: una rama regresa a un paso anterior')

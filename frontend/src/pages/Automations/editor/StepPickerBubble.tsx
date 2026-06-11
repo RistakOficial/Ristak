@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronRight, Crown, Link2, Play, Search, X } from 'lucide-react'
+import { ChevronRight, Link2, Play, Search, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import {
   getCategoriesForKind,
@@ -39,10 +39,14 @@ export interface StepPickerAnchor {
 
 interface StepPickerBubbleProps {
   kind: NodeKind
+  /**
+   * anchored: globo cerca del punto (drop, doble clic, disparadores).
+   * docked: panel amplio fijo del lado derecho (botón "+").
+   */
+  variant: 'anchored' | 'docked'
   anchor: StepPickerAnchor
   /** Tamaño del contenedor para no salirse de la pantalla */
   bounds: { width: number; height: number }
-  title?: string
   /** Opción "conectar automáticamente" (cuando aplica) */
   connectLabel?: string
   connectEnabled?: boolean
@@ -60,14 +64,14 @@ interface PickerSection {
   items: NodeDefinition[]
 }
 
-const BUBBLE_WIDTH = 320
-const BUBBLE_MAX_HEIGHT = 480
+const ANCHORED_WIDTH = 400
+const DOCKED_WIDTH = 460
 
 export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
   kind,
+  variant,
   anchor,
   bounds,
-  title,
   connectLabel,
   connectEnabled,
   onToggleConnect,
@@ -172,25 +176,50 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
     }
   }
 
-  // Posicionamiento: cerca del ancla, sin salirse del contenedor
-  const left = Math.max(12, Math.min(anchor.x, bounds.width - BUBBLE_WIDTH - 12))
-  const top = Math.max(12, Math.min(anchor.y, bounds.height - Math.min(BUBBLE_MAX_HEIGHT, bounds.height - 24) - 12))
+  // Posicionamiento overlay: nunca empuja el layout ni mueve el canvas.
+  const dockedStyle: React.CSSProperties = {
+    right: 16,
+    top: '50%',
+    transform: 'translateY(-50%)',
+    width: Math.min(DOCKED_WIDTH, bounds.width - 32),
+    height: Math.min(bounds.height * 0.84, bounds.height - 32)
+  }
+  const anchoredStyle: React.CSSProperties = {
+    left: Math.max(12, Math.min(anchor.x, bounds.width - ANCHORED_WIDTH - 12)),
+    top: Math.max(12, Math.min(anchor.y, bounds.height - Math.min(540, bounds.height - 24) - 12)),
+    width: ANCHORED_WIDTH,
+    maxHeight: Math.min(540, bounds.height - 24)
+  }
 
   let runningIndex = -1
 
   return (
     <div
       ref={rootRef}
-      className={styles.bubble}
-      style={{ left, top }}
+      data-automation-interactive="true"
+      className={cn(styles.bubble, variant === 'docked' && styles.bubbleDocked)}
+      style={variant === 'docked' ? dockedStyle : anchoredStyle}
       role="dialog"
-      aria-label={title || 'Elegir paso'}
+      aria-label="Agregar paso"
       onKeyDown={handleKeyDown}
       onPointerDown={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
-      onWheel={(event) => event.stopPropagation()}
     >
       <div className={styles.bubbleHeader}>
+        <div className={styles.bubbleTitle}>
+          {kind === 'trigger' ? 'Agregar disparador' : 'Agregar paso'}
+          <div className={styles.bubbleSubtitle}>
+            {kind === 'trigger'
+              ? 'Elige el evento que inicia la automatización'
+              : 'Elige el siguiente paso del flujo'}
+          </div>
+        </div>
+        <button type="button" className={styles.bubbleClose} onClick={onClose} title="Cerrar (Esc)">
+          <X size={14} />
+        </button>
+      </div>
+
+      <div className={styles.bubbleSearchRow}>
         <Search size={14} style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} />
         <input
           ref={searchRef}
@@ -200,9 +229,6 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
           onChange={(event) => setQuery(event.target.value)}
           aria-label="Buscar paso"
         />
-        <button type="button" className={styles.bubbleClose} onClick={onClose} title="Cerrar (Esc)">
-          <X size={14} />
-        </button>
       </div>
 
       <div className={styles.bubbleBody}>
@@ -256,12 +282,6 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
                       <span className={styles.pickerItemDescription}>{definition.description}</span>
                     )}
                   </span>
-                  {definition.pro && (
-                    <span className={styles.proBadge}>
-                      <Crown size={9} />
-                      PRO
-                    </span>
-                  )}
                   <ChevronRight size={13} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
                 </button>
               )

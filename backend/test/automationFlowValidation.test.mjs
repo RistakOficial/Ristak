@@ -92,6 +92,45 @@ test('el aleatorizador debe sumar 100%', () => {
   assert.deepEqual(validateFlowForPublish(flow), [])
 })
 
+test('publicar rechaza canales no soportados (SMS/Email)', () => {
+  const smsNode = {
+    id: 's1',
+    type: 'channel-whatsapp',
+    position: { x: 0, y: 0 },
+    config: { channel: 'sms' }
+  }
+  const flow = {
+    nodes: [startNode(), smsNode],
+    edges: [edge('e1', 'start', 's1')]
+  }
+  const errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('Canales no soportados')))
+  assert.ok(errors.some((message) => message.includes('sms')))
+
+  smsNode.config = { channel: 'whatsapp' }
+  assert.deepEqual(validateFlowForPublish(flow), [])
+})
+
+test('publicar acepta el canal "any" y canales permitidos en disparadores', () => {
+  const flow = {
+    nodes: [
+      startNode([
+        { id: 't1', type: 'trigger-customer-replied', config: { channel: 'any' } },
+        { id: 't2', type: 'trigger-click-to-whatsapp', config: { channel: 'whatsapp' } }
+      ])
+    ],
+    edges: []
+  }
+  assert.deepEqual(validateFlowForPublish(flow), [])
+
+  const badFlow = {
+    nodes: [startNode([{ id: 't1', type: 'trigger-customer-replied', config: { channel: 'email' } }])],
+    edges: []
+  }
+  const errors = validateFlowForPublish(badFlow)
+  assert.ok(errors.some((message) => message.includes('email')))
+})
+
 test('publicar detecta ciclos en el flujo', () => {
   const flow = {
     nodes: [startNode(), actionNode('a1'), actionNode('a2')],

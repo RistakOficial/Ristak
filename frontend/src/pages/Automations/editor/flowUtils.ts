@@ -222,6 +222,102 @@ export function pruneInvalidEdges(nodes: AutomationNode[], edges: AutomationEdge
   })
 }
 
+// ---------------------------------------------------------------------------
+// Migración de flujos guardados con tipos/configs de versiones anteriores
+// ---------------------------------------------------------------------------
+
+interface LegacyConditionRow {
+  field?: string
+  operator?: string
+  value?: string
+}
+
+const LEGACY_OPERATOR_MAP: Record<string, string> = {
+  equals: 'is',
+  not_equals: 'is_not',
+  contains: 'contains',
+  not_contains: 'not_contains',
+  greater: 'gt',
+  less: 'lt',
+  empty: 'empty',
+  not_empty: 'not_empty'
+}
+
+function migrateLegacyConditions(rows: LegacyConditionRow[]): Record<string, unknown> {
+  return {
+    match: 'all',
+    rules: rows
+      .filter((row) => row && (row.field || row.value))
+      .map((row) => ({
+        field: 'contact-custom-field',
+        customKey: row.field || '',
+        operator: LEGACY_OPERATOR_MAP[row.operator || ''] || 'contains',
+        value: row.value || ''
+      }))
+  }
+}
+
+const LEGACY_CHANNELS: Record<string, string> = { sms: 'any', email: 'any', telegram: 'whatsapp' }
+
+/**
+ * Convierte nodos guardados por versiones anteriores del editor al modelo
+ * actual: If/Else → Condición, Telegram/Canal → WhatsApp, esperas con el
+ * modelo viejo, y canales que ya no existen (SMS/Email) → "cualquier canal".
+ */
+export function migrateLegacyFlow(nodes: AutomationNode[]): AutomationNode[] {
+  return nodes.map((node) => {
+    let next = node
+    const config = { ...(node.config || {}) }
+
+    // Canales retirados en configs sueltas
+    ;['channel', 'replyChannel'].forEach((key) => {
+      const value = config[key]
+      if (typeof value === 'string' && LEGACY_CHANNELS[value]) {
+        config[key] = LEGACY_CHANNELS[value]
+        next = { ...next, config }
+      }
+    })
+
+    if (node.type === 'logic-if-else' || (node.type === 'logic-condition' && Array.isArray(config.conditions))) {
+      const migrated = migrateLegacyConditions((config.conditions as LegacyConditionRow[]) || [])
+      return { ...next, type: 'logic-condition', label: 'Condición', config: migrated }
+    }
+
+    if (node.type === 'channel-telegram' || node.type === 'channel-generic') {
+      const channel = typeof config.channel === 'string' ? config.channel : 'whatsapp'
+      const target =
+        channel === 'messenger'
+          ? 'channel-messenger'
+          : channel === 'instagram'
+            ? 'channel-instagram'
+            : 'channel-whatsapp'
+      const message = typeof config.message === 'string' ? config.message : ''
+      const migrated =
+        target === 'channel-whatsapp'
+          ? { sender: 'default', messageType: 'text', message }
+          : { message }
+      return { ...next, type: target, label: undefined, config: migrated }
+    }
+
+    if (node.type === 'logic-wait' && (config.mode === 'until' || (config.mode === 'duration' && config.untilDate !== undefined && !('name' in config)))) {
+      return {
+        ...next,
+        config: {
+          ...config,
+          name: 'Esperar',
+          mode: config.mode === 'until' ? 'datetime' : 'duration'
+        }
+      }
+    }
+
+    if (node.type === 'logic-goal' && typeof config.goal === 'string' && !('goalType' in config)) {
+      return { ...next, config: { name: config.goal, goalType: '' } }
+    }
+
+    return next
+  })
+}
+
 export interface EdgeGeometry {
   path: string
   midX: number
