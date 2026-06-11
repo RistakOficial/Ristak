@@ -450,6 +450,13 @@
   align-items: stretch;
 }
 
+/* En vista de mes la fila del grid toma su altura del calendario; la columna
+   lateral no aporta altura propia para que la lista de citas haga scroll en
+   lugar de empujar la tarjeta de mensajes automáticos */
+.mainGridMonth .sideColumn {
+  contain: size;
+}
+
 .calendarColumn,
 .sideColumn {
   display: flex;
