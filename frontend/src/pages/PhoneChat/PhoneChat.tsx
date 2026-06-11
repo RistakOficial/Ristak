@@ -377,6 +377,9 @@ interface ChatContact extends Contact {
   lastBusinessPhoneNumberId?: string
   lastInboundBusinessPhone?: string
   lastInboundBusinessPhoneNumberId?: string
+  firstInboundBusinessPhone?: string
+  firstInboundBusinessPhoneNumberId?: string
+  lastMessageTransport?: string
   messageCount?: number
   unreadCount?: number
   profilePhotoUrl?: string | null

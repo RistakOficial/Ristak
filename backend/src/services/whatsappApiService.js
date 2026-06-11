@@ -2957,6 +2957,12 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const normalizedMessage = normalizeWebhookMessage(message)
   const identity = getMessageIdentity({ payload, direction, message: normalizedMessage, businessPhoneHints })
   const cleanTransport = cleanString(normalizedMessage.transport || payload.transport || transport || 'api').toLowerCase() || 'api'
+  const routingReason = cleanString(
+    normalizedMessage.fallbackReason ||
+    normalizedMessage.routingReason ||
+    payload.fallbackReason ||
+    payload.routingReason
+  )
   const messageText = extractMessageText(normalizedMessage)
   const messageTimestamp = toDateTime(normalizedMessage.sendTime || normalizedMessage.createTime || normalizedMessage.updateTime || payload.createTime) || nowIso()
   const profileName = normalizedMessage.customerProfile?.name || normalizedMessage.profile?.name || ''
@@ -3004,14 +3010,14 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     INSERT INTO whatsapp_api_messages (
       id, ycloud_message_id, wamid, waba_id, business_phone_number_id,
       whatsapp_api_contact_id, contact_id,
-      phone, from_phone, to_phone, business_phone, transport, direction, message_type,
+      phone, from_phone, to_phone, business_phone, transport, routing_reason, direction, message_type,
       message_text, media_url, media_mime_type, media_filename, media_duration_ms,
       status, error_code, error_message, message_timestamp,
       raw_payload_json, context_json, referral_json,
       detected_ctwa_clid, detected_source_id, detected_source_url, detected_source_type,
       detected_source_app, detected_entry_point, detected_headline, detected_body,
       detected_conversion_data, detected_ctwa_payload, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       business_phone_number_id = COALESCE(excluded.business_phone_number_id, whatsapp_api_messages.business_phone_number_id),
       whatsapp_api_contact_id = COALESCE(excluded.whatsapp_api_contact_id, whatsapp_api_messages.whatsapp_api_contact_id),
@@ -3021,6 +3027,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       to_phone = COALESCE(NULLIF(excluded.to_phone, ''), whatsapp_api_messages.to_phone),
       business_phone = COALESCE(NULLIF(excluded.business_phone, ''), whatsapp_api_messages.business_phone),
       transport = COALESCE(NULLIF(excluded.transport, ''), whatsapp_api_messages.transport),
+      routing_reason = COALESCE(NULLIF(excluded.routing_reason, ''), whatsapp_api_messages.routing_reason),
       direction = COALESCE(NULLIF(excluded.direction, ''), whatsapp_api_messages.direction),
       message_type = COALESCE(NULLIF(excluded.message_type, ''), whatsapp_api_messages.message_type),
       message_text = COALESCE(NULLIF(excluded.message_text, ''), whatsapp_api_messages.message_text),
@@ -3059,6 +3066,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     identity.toPhone || null,
     identity.businessPhone || null,
     cleanTransport,
+    routingReason || null,
     identity.direction,
     messageType,
     messageText || null,
@@ -3177,6 +3185,112 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     isNew: !existingMessage,
     messageTimestamp
   }
+}
+
+// Persiste en el historial unificado un mensaje visto por la sesión de WhatsApp Web (Baileys).
+// Solo captura cuando la API oficial de ese número no está operando (desactivada, restringida o
+// sin configurar); si la API está sana, el webhook de YCloud ya registra el mensaje y guardarlo
+// aquí duplicaría el chat.
+export async function captureQrChatMessage({
+  phoneNumberId,
+  businessPhone,
+  direction,
+  wamid,
+  messageType = 'text',
+  text = '',
+  profileName = '',
+  contactPhone,
+  timestamp,
+  raw = null
+} = {}) {
+  const cleanDirection = direction === 'outbound' ? 'outbound' : 'inbound'
+  const cleanBusinessPhone = normalizePhoneForStorage(businessPhone) || cleanString(businessPhone)
+  const cleanContactPhone = normalizePhoneForStorage(contactPhone) || cleanString(contactPhone)
+  const cleanWamid = cleanString(wamid)
+  if (!cleanContactPhone || !cleanWamid) {
+    return { skipped: true, reason: 'missing_identity' }
+  }
+
+  const config = await loadConfig({ includeSecrets: true })
+  const phoneRow = await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone: cleanBusinessPhone })
+  const officialApiOperational = Boolean(config.enabled && config.apiKey) &&
+    Boolean(phoneRow?.id) &&
+    Number(phoneRow.api_send_enabled ?? 1) === 1 &&
+    !(await getOfficialApiRestrictionReason({ phoneRow, config }))
+  if (officialApiOperational) {
+    return { skipped: true, reason: 'official_api_active' }
+  }
+
+  const messageText = cleanString(text)
+  const messageTimestamp = toDateTime(timestamp) || nowIso()
+
+  // Dedupe difusa: el mismo mensaje pudo entrar por webhook con otro wamid durante una transición.
+  if (messageText) {
+    const duplicate = await db.get(`
+      SELECT id
+      FROM whatsapp_api_messages
+      WHERE phone = ?
+        AND direction = ?
+        AND message_text = ?
+        AND COALESCE(wamid, '') != ?
+        AND COALESCE(message_timestamp, created_at) BETWEEN datetime(?, '-2 minutes') AND datetime(?, '+2 minutes')
+      LIMIT 1
+    `, [cleanContactPhone, cleanDirection, messageText, cleanWamid, messageTimestamp, messageTimestamp]).catch(() => null)
+    if (duplicate) {
+      return { skipped: true, reason: 'duplicate_recent', messageId: duplicate.id }
+    }
+  }
+
+  const result = await upsertMessage({
+    payload: {
+      id: cleanWamid,
+      type: cleanDirection === 'inbound' ? 'whatsapp.qr.message.received' : 'whatsapp.qr.message.synced',
+      transport: 'qr',
+      routingReason: cleanDirection === 'inbound' ? '' : 'Capturado desde la sesión de WhatsApp Web.',
+      createTime: messageTimestamp
+    },
+    message: {
+      id: '',
+      wamid: cleanWamid,
+      from: cleanDirection === 'inbound' ? cleanContactPhone : cleanBusinessPhone,
+      to: cleanDirection === 'inbound' ? cleanBusinessPhone : cleanContactPhone,
+      type: messageType,
+      ...(messageText ? { text: { body: messageText } } : {}),
+      ...(cleanDirection === 'inbound' && profileName ? { profileName } : {}),
+      transport: 'qr',
+      sendTime: messageTimestamp,
+      createTime: messageTimestamp,
+      ...(raw ? { qrRaw: raw } : {})
+    },
+    direction: cleanDirection,
+    businessPhoneHints: [cleanBusinessPhone].filter(Boolean),
+    transport: 'qr'
+  })
+
+  if (!result.businessPhoneNumberId && phoneRow?.id && result.messageId) {
+    await db.run(`
+      UPDATE whatsapp_api_messages
+      SET business_phone_number_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND business_phone_number_id IS NULL
+    `, [phoneRow.id, result.messageId]).catch(() => {})
+  }
+
+  if (cleanDirection === 'inbound' && result.isNew) {
+    await sendChatMessageNotification({
+      contactId: result.contactId,
+      contactName: result.contactName,
+      phone: result.phone,
+      profileName: result.profileName,
+      text: result.messageText,
+      messageType: result.messageType,
+      messageId: result.messageId,
+      timestamp: result.messageTimestamp
+    }).catch(error => {
+      logger.warn(`[Push] No se pudo avisar mensaje WhatsApp QR ${result.messageId || ''}: ${error.message}`)
+    })
+  }
+
+  return { skipped: false, ...result }
 }
 
 function directionFromCandidatePath(path = [], payload = {}) {

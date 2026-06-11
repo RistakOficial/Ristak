@@ -483,6 +483,118 @@ async function handleQrMessageUpdates(phone, updates = []) {
   }
 }
 
+let whatsappApiServiceModulePromise = null
+// Import dinámico para evitar el ciclo whatsappApiService -> whatsappQrService en la carga.
+function loadWhatsAppApiService() {
+  if (!whatsappApiServiceModulePromise) {
+    whatsappApiServiceModulePromise = import('./whatsappApiService.js')
+  }
+  return whatsappApiServiceModulePromise
+}
+
+function unwrapBaileysMessageContent(content = {}) {
+  let current = content
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    if (current.ephemeralMessage?.message) { current = current.ephemeralMessage.message; continue }
+    if (current.viewOnceMessage?.message) { current = current.viewOnceMessage.message; continue }
+    if (current.viewOnceMessageV2?.message) { current = current.viewOnceMessageV2.message; continue }
+    if (current.documentWithCaptionMessage?.message) { current = current.documentWithCaptionMessage.message; continue }
+    break
+  }
+  return current || {}
+}
+
+function describeBaileysMessageContent(content) {
+  if (!content || typeof content !== 'object') return null
+  const unwrapped = unwrapBaileysMessageContent(content)
+
+  if (cleanString(unwrapped.conversation)) return { type: 'text', text: cleanString(unwrapped.conversation) }
+  if (cleanString(unwrapped.extendedTextMessage?.text)) return { type: 'text', text: cleanString(unwrapped.extendedTextMessage.text) }
+  if (unwrapped.imageMessage) return { type: 'image', text: cleanString(unwrapped.imageMessage.caption) }
+  if (unwrapped.videoMessage) return { type: 'video', text: cleanString(unwrapped.videoMessage.caption) }
+  if (unwrapped.audioMessage) return { type: 'audio', text: '' }
+  if (unwrapped.documentMessage) {
+    return { type: 'document', text: cleanString(unwrapped.documentMessage.caption || unwrapped.documentMessage.fileName) }
+  }
+  if (unwrapped.stickerMessage) return { type: 'sticker', text: '' }
+  if (unwrapped.locationMessage) {
+    return { type: 'location', text: cleanString(unwrapped.locationMessage.name || unwrapped.locationMessage.address) }
+  }
+  if (unwrapped.contactMessage || unwrapped.contactsArrayMessage) {
+    return { type: 'contacts', text: cleanString(unwrapped.contactMessage?.displayName) }
+  }
+
+  // Reacciones, eventos de protocolo, encuestas y demás no forman parte del historial de chat.
+  return null
+}
+
+function getQrChatContactPhone(message = {}) {
+  const key = message.key || {}
+  const remoteJid = cleanString(key.remoteJid)
+  if (!remoteJid) return ''
+  if (remoteJid === 'status@broadcast') return ''
+  if (remoteJid.endsWith('@g.us') || remoteJid.endsWith('@broadcast') || remoteJid.endsWith('@newsletter')) return ''
+
+  const candidates = remoteJid.endsWith('@lid')
+    ? [cleanString(key.remoteJidAlt), cleanString(key.senderPn), cleanString(key.participantPn)]
+    : [remoteJid]
+
+  for (const candidate of candidates) {
+    if (!candidate || candidate.endsWith('@lid')) continue
+    const phone = normalizePhoneFromJid(candidate)
+    if (phone) return phone
+  }
+  return ''
+}
+
+function getBaileysMessageTimestampIso(message = {}) {
+  const raw = message.messageTimestamp
+  let seconds = 0
+  if (raw && typeof raw === 'object') {
+    seconds = typeof raw.toNumber === 'function' ? raw.toNumber() : Number(raw.low || 0)
+  } else {
+    seconds = Number(raw) || 0
+  }
+  return seconds > 0 ? new Date(seconds * 1000).toISOString() : nowIso()
+}
+
+async function handleQrIncomingMessages(phone, upsert = {}) {
+  const type = cleanString(upsert.type)
+  if (type && type !== 'notify' && type !== 'append') return
+
+  const messages = Array.isArray(upsert.messages) ? upsert.messages : []
+  for (const message of messages) {
+    try {
+      const key = message?.key || {}
+      const wamid = cleanString(key.id)
+      const contactPhone = getQrChatContactPhone(message)
+      if (!wamid || !contactPhone) continue
+
+      const content = describeBaileysMessageContent(message?.message)
+      if (!content) continue
+
+      const { captureQrChatMessage } = await loadWhatsAppApiService()
+      const result = await captureQrChatMessage({
+        phoneNumberId: phone.id,
+        businessPhone: phone.expectedPhone,
+        direction: key.fromMe ? 'outbound' : 'inbound',
+        wamid,
+        messageType: content.type,
+        text: content.text,
+        profileName: cleanString(message.pushName),
+        contactPhone,
+        timestamp: getBaileysMessageTimestampIso(message)
+      })
+
+      if (!result?.skipped && result?.isNew) {
+        logger.info(`[WhatsApp QR] Mensaje ${key.fromMe ? 'saliente' : 'entrante'} capturado por WhatsApp Web (${phone.id}): ${wamid}`)
+      }
+    } catch (error) {
+      logger.warn(`[WhatsApp QR] No se pudo capturar mensaje de WhatsApp Web (${phone.id}): ${error.message}`)
+    }
+  }
+}
+
 function waitForQrSendAck(messageId, response = {}) {
   const cleanMessageId = cleanString(messageId)
   if (!cleanMessageId) {
@@ -1182,6 +1294,11 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
   sock.ev.on('messages.update', (updates) => {
     handleQrMessageUpdates(phone, updates).catch(error => {
       logger.warn(`[WhatsApp QR] No se pudieron procesar actualizaciones de mensajes ${phone.id}: ${error.message}`)
+    })
+  })
+  sock.ev.on('messages.upsert', (upsert) => {
+    handleQrIncomingMessages(phone, upsert).catch(error => {
+      logger.warn(`[WhatsApp QR] No se pudieron capturar mensajes de WhatsApp Web ${phone.id}: ${error.message}`)
     })
   })
   sock.ev.on('connection.update', async (update = {}) => {
