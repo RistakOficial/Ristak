@@ -428,13 +428,13 @@ body.dark .select:focus {
   padding: var(--spacing-2xl) 1.5rem 4rem;
 }
 
-/* La navegación de Configuración vive en el sidebar principal; el contenido
-   se centra con un ancho cómodo de lectura (equivalente al ancho que tenía
-   el panel cuando convivía con la sub-navegación lateral). */
+/* El contenido de Configuración usa el mismo ancho global que el resto de
+   páginas (Dashboard, Citas, Pagos, etc.) mediante la variable --app-page-max,
+   para mantener consistencia en toda la app. */
 .settingsPanel {
   min-width: 0;
   width: 100%;
-  max-width: 1080px;
+  max-width: var(--app-page-max);
   margin: 0 auto;
 }
 
