@@ -315,8 +315,8 @@ export const EmailSettings: React.FC = () => {
       </div>
       {status?.lastError && <p className={styles.errorText}>{status.lastError}</p>}
       <div className={styles.connectContent}>
-        {renderForm()}
         {renderGuide()}
+        {renderForm()}
       </div>
     </section>
   )
@@ -333,8 +333,8 @@ export const EmailSettings: React.FC = () => {
             <span>Cambia el servidor, las credenciales o el remitente. Ristak verificará la conexión antes de guardar.</span>
           </div>
           <div className={styles.connectContent}>
-            {renderForm()}
             {renderGuide()}
+            {renderForm()}
           </div>
         </section>
       )

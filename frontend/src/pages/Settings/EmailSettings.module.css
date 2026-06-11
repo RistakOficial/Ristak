@@ -53,9 +53,10 @@
   max-width: 640px;
 }
 
+/* Guía rápida a la izquierda, conexión a la derecha */
 .connectContent {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.72fr);
+  grid-template-columns: minmax(300px, 0.72fr) minmax(0, 1fr);
   gap: 24px;
   align-items: start;
 }

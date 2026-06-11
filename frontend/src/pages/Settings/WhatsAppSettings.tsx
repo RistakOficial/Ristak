@@ -539,8 +539,8 @@ export const WhatsAppSettings: React.FC = () => {
         </div>
         {apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
         <div className={styles.connectContent}>
-          {renderApiForm()}
           {renderYCloudGuide()}
+          {renderApiForm()}
         </div>
       </section>
     )
