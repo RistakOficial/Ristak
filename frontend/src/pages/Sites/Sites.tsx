@@ -7895,12 +7895,19 @@ const readImportedFormFieldOptions = (
   const tagName = element.tagName.toLowerCase()
   if (tagName === 'select') {
     return Array.from((element as HTMLSelectElement).options || [])
-      .map(option => withImportedOptionActions({
-        label: (option.textContent || option.value || '').trim(),
-        value: (option.value || option.textContent || '').trim()
-      }, option))
-      .filter(option => option.label || option.value)
-      .filter(option => option.value || option.label.toLowerCase() !== 'selecciona una opcion')
+      .map(option => {
+        // Read the value ATTRIBUTE: the placeholder option uses value="" and the
+        // .value property would fall back to its text ("Selecciona una opción").
+        const rawValue = option.getAttribute('value')
+        const label = (option.textContent || '').trim()
+        return withImportedOptionActions({
+          label: label || (rawValue || '').trim(),
+          value: (rawValue !== null ? rawValue : label).trim()
+        }, option)
+      })
+      // Empty value = placeholder ("Selecciona una opción"); it is kept by the
+      // regenerator automatically and should not be editable as a real option.
+      .filter(option => option.value)
   }
 
   const input = element as HTMLInputElement
