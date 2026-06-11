@@ -3171,3 +3171,53 @@
   width: 22px;
   flex-shrink: 0;
 }
+
+/* ----------------- Retraso compacto + popover lateral ----------------- */
+
+.delayPill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border: 1.5px solid rgba(16, 185, 129, 0.55);
+  border-radius: 12px;
+  background: rgba(16, 185, 129, 0.06);
+  color: rgb(5, 150, 105);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.delayPill:hover {
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.delayPopover {
+  position: fixed;
+  z-index: 4200;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 13px;
+  background: var(--color-background-primary);
+  box-shadow: 0 18px 44px -16px rgba(15, 23, 42, 0.5);
+}
+
+.delayPopoverHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 10px;
+}
+
+.delayPopoverLabel {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-bottom: 6px;
+}

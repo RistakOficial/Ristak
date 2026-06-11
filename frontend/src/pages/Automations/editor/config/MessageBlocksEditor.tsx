@@ -1,4 +1,5 @@
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   DndContext,
   PointerSensor,
@@ -13,6 +14,7 @@ import {
   AlignLeft,
   Clock,
   GripVertical,
+  X as XIcon,
   FileText,
   Image,
   Link2,
@@ -83,6 +85,84 @@ function newBlock(type: MessageBlockType): MessageBlock {
   return { id: genId('blk'), type, url: '', caption: '' }
 }
 
+/** Popover flotante para configurar el retraso (como ManyChat): se abre al
+    lado de la pastilla, hacia donde haya espacio. */
+const DelayPopover: React.FC<{
+  anchor: DOMRect
+  amount: number
+  unit: string
+  showTyping: boolean
+  onChange: (patch: Partial<MessageBlock>) => void
+  onClose: () => void
+}> = ({ anchor, amount, unit, showTyping, onChange, onClose }) => {
+  const ref = useRef<HTMLDivElement>(null)
+  const WIDTH = 260
+  const openRight = window.innerWidth - anchor.right > WIDTH + 28
+  const left = openRight ? anchor.right + 14 : Math.max(8, anchor.left - WIDTH - 14)
+  const top = Math.max(8, Math.min(anchor.top - 8, window.innerHeight - 220))
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (ref.current?.contains(event.target as Node)) return
+      onClose()
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('keydown', onKey, true)
+    }
+  }, [onClose])
+
+  return createPortal(
+    <div
+      ref={ref}
+      className={styles.delayPopover}
+      style={{ left, top, width: WIDTH }}
+      data-automation-interactive="true"
+    >
+      <div className={styles.delayPopoverHeader}>
+        <span>Retraso</span>
+        <button type="button" className={styles.configIconButtonPlain} title="Cerrar" onClick={onClose}>
+          <XIcon size={13} />
+        </button>
+      </div>
+      <div className={styles.delayPopoverLabel}>Duración del retraso</div>
+      <div className={styles.configRow}>
+        <TextInput
+          type="number"
+          min={1}
+          style={{ width: 76 }}
+          value={amount}
+          onChange={(event) => onChange({ amount: Number(event.target.value) })}
+        />
+        <div className={styles.configRowGrow}>
+          <CustomSelect
+            options={[
+              { value: 'seconds', label: 'Segundos' },
+              { value: 'minutes', label: 'Minutos' }
+            ]}
+            value={unit}
+            onValueChange={(next) => onChange({ unit: next === 'minutes' ? 'minutes' : 'seconds' })}
+            aria-label="Unidad"
+          />
+        </div>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <Toggle
+          checked={showTyping}
+          onChange={(checked) => onChange({ showTyping: checked })}
+          label='Mostrar "escribiendo…" durante el retraso'
+        />
+      </div>
+    </div>,
+    document.body
+  )
+}
+
 /** Envoltorio arrastrable de un bloque: asa + basura al hover, animación dnd-kit */
 const SortableBlock: React.FC<{
   id: string
@@ -130,6 +210,9 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
   const removeBlock = (index: number) => onChange(blocks.filter((_, candidate) => candidate !== index))
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+
+  // Retraso abierto en popover: id del bloque + rect de su pastilla
+  const [delayEditor, setDelayEditor] = useState<{ id: string; anchor: DOMRect } | null>(null)
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
@@ -228,39 +311,32 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
         }
 
         if (block.type === 'delay') {
+          const unitLabel = block.unit === 'minutes' ? 'min' : 'seg'
           return (
             <SortableBlock key={block.id} id={block.id} onRemove={() => removeBlock(index)}>
-            <div className={styles.panelDelay}>
-              <div className={styles.panelDelayTitle}>
-                <Clock size={13} />
-                Retraso
-              </div>
-              <div className={styles.configRow}>
-                <TextInput
-                  type="number"
-                  min={1}
-                  style={{ width: 80 }}
-                  value={Number(block.amount) || 0}
-                  onChange={(event) => updateBlock(index, { amount: Number(event.target.value) })}
+              {/* Pastilla compacta: la configuración vive en un popover lateral */}
+              <button
+                type="button"
+                className={styles.delayPill}
+                title="Configurar el retraso"
+                onClick={(event) =>
+                  setDelayEditor({ id: block.id, anchor: (event.currentTarget as HTMLElement).getBoundingClientRect() })
+                }
+              >
+                {block.showTyping !== false ? 'Escribiendo' : 'Espera'}
+                <Clock size={12} />
+                {Number(block.amount) || 0} {unitLabel}
+              </button>
+              {delayEditor?.id === block.id && (
+                <DelayPopover
+                  anchor={delayEditor.anchor}
+                  amount={Number(block.amount) || 0}
+                  unit={block.unit || 'seconds'}
+                  showTyping={block.showTyping !== false}
+                  onChange={(patch) => updateBlock(index, patch)}
+                  onClose={() => setDelayEditor(null)}
                 />
-                <div className={styles.configRowGrow}>
-                  <CustomSelect
-                    options={[
-                      { value: 'seconds', label: 'Segundos' },
-                      { value: 'minutes', label: 'Minutos' }
-                    ]}
-                    value={block.unit || 'seconds'}
-                    onValueChange={(next) => updateBlock(index, { unit: next === 'minutes' ? 'minutes' : 'seconds' })}
-                    aria-label="Unidad"
-                  />
-                </div>
-              </div>
-              <Toggle
-                checked={block.showTyping !== false}
-                onChange={(checked) => updateBlock(index, { showTyping: checked })}
-                label='Mostrar "escribiendo…" durante el retraso'
-              />
-            </div>
+              )}
             </SortableBlock>
           )
         }
