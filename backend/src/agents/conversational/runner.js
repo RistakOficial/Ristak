@@ -13,7 +13,11 @@ import {
   getConversationalAgentConfig,
   getConversationState,
   ensureConversationState,
-  recordConversationalAgentEvent
+  recordConversationalAgentEvent,
+  getConversationalAgent,
+  listConversationalAgents,
+  matchAgentForMessage,
+  assignAgentToConversation
 } from '../../services/conversationalAgentService.js'
 import { buildConversationalInstructions } from './prompt.js'
 import { createConversationalTools } from './tools.js'
@@ -198,12 +202,35 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         return
       }
 
+      // Resolver qué agente atiende esta conversación: el ya asignado o el
+      // primero cuyos filtros de entrada coincidan con el mensaje/contacto.
+      let agentConfig = freshState.agentId ? await getConversationalAgent(freshState.agentId) : null
+      if (!agentConfig || !agentConfig.enabled) {
+        agentConfig = await matchAgentForMessage({
+          contactId,
+          messageText: latest.message_text || '',
+          channel: 'whatsapp'
+        })
+        if (agentConfig) {
+          await assignAgentToConversation(contactId, agentConfig.id)
+          await recordConversationalAgentEvent({
+            contactId,
+            eventType: 'agent_assigned',
+            detail: { agentId: agentConfig.id, name: agentConfig.name }
+          })
+        }
+      }
+      if (!agentConfig) {
+        // Ningún agente coincide con esta conversación: no responder.
+        return
+      }
+
       const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
       const messages = await loadConversationHistory(contactId)
       if (!messages.length) return
 
       const { agent, ctx, model } = await buildAgentForRun({
-        config,
+        config: agentConfig,
         contactId,
         contactName: contact?.full_name || null,
         dryRun: false
@@ -241,7 +268,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       await recordConversationalAgentEvent({
         contactId,
         eventType: 'reply_sent',
-        detail: { messageId: latest.id, replyPreview: reply.slice(0, 280), actions: ctx.actions }
+        detail: { messageId: latest.id, agentId: agentConfig.id || null, replyPreview: reply.slice(0, 280), actions: ctx.actions }
       })
     } finally {
       runningContacts.delete(contactId)
@@ -262,15 +289,25 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
  * No envía WhatsApp, no toca estados ni crea citas: las acciones internas
  * se devuelven como lista para mostrarlas en la prueba.
  */
-export async function runConversationalAgentPreview({ messages = [], configOverride = null }) {
+export async function runConversationalAgentPreview({ messages = [], configOverride = null, agentId = null }) {
   const apiKey = await getOpenAIApiKey()
   if (!apiKey) {
-    const error = new Error('Primero configura una API Key válida de OpenAI en la pestaña General')
+    const error = new Error('Primero configura una API Key válida de OpenAI en la sección General del Agente AI')
     error.statusCode = 409
     throw error
   }
 
-  const baseConfig = await getConversationalAgentConfig()
+  let baseConfig = agentId ? await getConversationalAgent(agentId) : null
+  if (!baseConfig) {
+    baseConfig = (await listConversationalAgents())[0] || null
+  }
+  if (!baseConfig) {
+    baseConfig = {
+      name: 'Agente', objective: 'citas', customObjective: '', successAction: 'ready_for_human',
+      successExtras: [], requiredData: '', handoffRules: '', extraInstructions: '',
+      allowEmojis: false, defaultCalendarId: null, closingStrategyMode: 'system', closingStrategyCustom: ''
+    }
+  }
   const config = configOverride ? { ...baseConfig, ...configOverride } : baseConfig
 
   const cleanMessages = (Array.isArray(messages) ? messages : [])

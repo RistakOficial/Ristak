@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Bot, CheckCircle, Eye, EyeOff, Globe2, ListChecks, MessageCircle, Trash2, XCircle } from 'lucide-react'
+import { AlertTriangle, Bot, CheckCircle, Eye, EyeOff, Globe2, ListChecks, Trash2, XCircle } from 'lucide-react'
 import { Button, Card, CustomSelect } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { aiAgentService, type AIAgentConfigStatus, type AIAgentRecommendationMode, type AIAgentResponseStyle } from '@/services/aiAgentService'
-import { ConversationalAgentSettings } from './ConversationalAgentSettings'
 import styles from './AIAgentSettings.module.css'
 
 const DEFAULT_AI_MODEL = 'gpt-5.4-nano'
@@ -245,10 +244,7 @@ const recommendationModeOptions: Array<{
   }
 ]
 
-type AIAgentSettingsTab = 'general' | 'conversational'
-
 export const AIAgentSettings: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<AIAgentSettingsTab>('general')
   const { showToast, showConfirm } = useNotification()
   const [status, setStatus] = useState<AIAgentConfigStatus>(emptyStatus)
   const [form, setForm] = useState(emptyForm)
@@ -489,43 +485,8 @@ export const AIAgentSettings: React.FC = () => {
     )
   }
 
-  const tabsBar = (
-    <div className={styles.tabs} role="tablist" aria-label="Secciones del agente AI">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={activeTab === 'general'}
-        className={`${styles.tab} ${activeTab === 'general' ? styles.tabActive : ''}`}
-        onClick={() => setActiveTab('general')}
-      >
-        <Bot size={15} />
-        General
-      </button>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={activeTab === 'conversational'}
-        className={`${styles.tab} ${activeTab === 'conversational' ? styles.tabActive : ''}`}
-        onClick={() => setActiveTab('conversational')}
-      >
-        <MessageCircle size={15} />
-        Agente conversacional
-      </button>
-    </div>
-  )
-
-  if (activeTab === 'conversational') {
-    return (
-      <div className={styles.container}>
-        {tabsBar}
-        <ConversationalAgentSettings />
-      </div>
-    )
-  }
-
   return (
     <div className={styles.container}>
-      {tabsBar}
       <Card>
         <div className={styles.header}>
           <div className={styles.headerLeft}>

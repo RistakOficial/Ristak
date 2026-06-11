@@ -2728,6 +2728,32 @@ async function initTables() {
       }
     }
 
+    // Varios agentes conversacionales: cada uno con su objetivo, estrategia,
+    // acciones al cumplir y filtros de entrada (etiquetas, frases, canal, calendario).
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agents (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        enabled INTEGER DEFAULT 1,
+        position INTEGER DEFAULT 0,
+        objective TEXT DEFAULT 'citas',
+        custom_objective TEXT,
+        success_action TEXT DEFAULT 'ready_for_human',
+        success_extras TEXT,
+        required_data TEXT,
+        handoff_rules TEXT,
+        extra_instructions TEXT,
+        allow_emojis INTEGER DEFAULT 0,
+        default_calendar_id TEXT,
+        closing_strategy_mode TEXT DEFAULT 'system',
+        closing_strategy_custom TEXT,
+        entry_filters TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conversational_agents_enabled ON conversational_agents(enabled, position)')
+
     await db.run(`
       CREATE TABLE IF NOT EXISTS conversational_agent_state (
         contact_id TEXT PRIMARY KEY,
@@ -2739,6 +2765,7 @@ async function initTables() {
         last_inbound_message_id TEXT,
         last_reply_at DATETIME,
         updated_by TEXT,
+        agent_id TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
@@ -2746,6 +2773,17 @@ async function initTables() {
     `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_state_signal ON conversational_agent_state(signal, signal_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_state_status ON conversational_agent_state(status, updated_at)')
+
+    // Columna agregada al pasar a varios agentes: qué agente atiende cada conversación
+    try {
+      if (usePostgres) {
+        await db.run('ALTER TABLE conversational_agent_state ADD COLUMN IF NOT EXISTS agent_id TEXT')
+      } else {
+        await db.run('ALTER TABLE conversational_agent_state ADD COLUMN agent_id TEXT')
+      }
+    } catch (err) {
+      // La columna ya existe.
+    }
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS conversational_agent_events (

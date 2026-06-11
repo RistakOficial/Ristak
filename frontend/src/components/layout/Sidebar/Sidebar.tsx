@@ -157,23 +157,58 @@ const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({ pathname, open, onT
       {open && (
         <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[rgba(148,163,184,0.16)] pl-2.5">
           {settingsNavigation.map((item) => {
-            const isActive = pathname.startsWith(item.to)
+            const hasChildren = Boolean(item.children?.length)
+            const sectionOpen = pathname.startsWith(item.to)
+            const isActive = hasChildren ? sectionOpen : pathname.startsWith(item.to)
             return (
-              <Link
-                key={item.to}
-                to={item.to}
-                onClick={onNavigate}
-                data-ristak-sidebar-nav-item
-                data-active={isActive ? 'true' : undefined}
-                className={cn(
-                  'block rounded-md px-2.5 py-[7px] text-[13px] font-medium transition-colors',
-                  isActive
-                    ? 'bg-[rgba(148,163,184,0.16)] text-[var(--color-text-primary)]'
-                    : 'text-[var(--color-text-tertiary)] hover:bg-[rgba(148,163,184,0.1)] hover:text-[var(--color-text-primary)]'
+              <React.Fragment key={item.to}>
+                <Link
+                  to={item.to}
+                  onClick={onNavigate}
+                  data-ristak-sidebar-nav-item
+                  data-active={isActive ? 'true' : undefined}
+                  className={cn(
+                    'flex items-center justify-between rounded-md px-2.5 py-[7px] text-[13px] font-medium transition-colors',
+                    isActive
+                      ? 'bg-[rgba(148,163,184,0.16)] text-[var(--color-text-primary)]'
+                      : 'text-[var(--color-text-tertiary)] hover:bg-[rgba(148,163,184,0.1)] hover:text-[var(--color-text-primary)]'
+                  )}
+                >
+                  {item.label}
+                  {hasChildren && (
+                    <ChevronDown
+                      className={cn(
+                        'h-3.5 w-3.5 flex-shrink-0 text-[var(--color-text-tertiary)] transition-transform',
+                        sectionOpen && 'rotate-180'
+                      )}
+                    />
+                  )}
+                </Link>
+                {hasChildren && sectionOpen && (
+                  <div className="ml-2.5 space-y-0.5 border-l border-[rgba(148,163,184,0.16)] pl-2">
+                    {item.children!.map((child) => {
+                      const childActive = child.end ? pathname === child.to : pathname.startsWith(child.to)
+                      return (
+                        <Link
+                          key={`${child.to}-${child.label}`}
+                          to={child.to}
+                          onClick={onNavigate}
+                          data-ristak-sidebar-nav-item
+                          data-active={childActive ? 'true' : undefined}
+                          className={cn(
+                            'block rounded-md px-2.5 py-[6px] text-[12.5px] font-medium transition-colors',
+                            childActive
+                              ? 'bg-[rgba(148,163,184,0.16)] text-[var(--color-text-primary)]'
+                              : 'text-[var(--color-text-tertiary)] hover:bg-[rgba(148,163,184,0.1)] hover:text-[var(--color-text-primary)]'
+                          )}
+                        >
+                          {child.label}
+                        </Link>
+                      )
+                    })}
+                  </div>
                 )}
-              >
-                {item.label}
-              </Link>
+              </React.Fragment>
             )
           })}
         </div>

@@ -1,9 +1,17 @@
 // Definición única de las secciones de Configuración.
 // La consume el Sidebar (grupo expandible) y debe mantenerse en sincronía
 // con las rutas declaradas en Settings.tsx.
+export interface SettingsNavChildItem {
+  to: string
+  label: string
+  /** true => activo solo con coincidencia exacta de ruta */
+  end?: boolean
+}
+
 export interface SettingsNavItem {
   to: string
   label: string
+  children?: SettingsNavChildItem[]
 }
 
 export const settingsNavigation: SettingsNavItem[] = [
@@ -19,6 +27,13 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/domains', label: 'Dominios' },
   { to: '/settings/costs', label: 'Costos' },
   { to: '/settings/custom-fields', label: 'Campos personalizados' },
-  { to: '/settings/ai-agent', label: 'Agente AI' },
+  {
+    to: '/settings/ai-agent',
+    label: 'Agente AI',
+    children: [
+      { to: '/settings/ai-agent', label: 'General', end: true },
+      { to: '/settings/ai-agent/conversational', label: 'Agente conversacional' }
+    ]
+  },
   { to: '/settings/api-access', label: 'Acceso API' }
 ]

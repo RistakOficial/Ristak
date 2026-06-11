@@ -31,7 +31,8 @@ export const SUCCESS_ACTIONS = [
   { id: 'book_appointment', label: 'Agendar directamente' },
   { id: 'ready_for_human', label: 'Marcar lista para humano' },
   { id: 'ready_to_buy', label: 'Marcar lista para comprar' },
-  { id: 'internal_signal', label: 'Solo crear señal interna' }
+  { id: 'internal_signal', label: 'Solo crear señal interna' },
+  { id: 'none', label: 'No hacer nada' }
 ]
 
 const VALID_OBJECTIVES = new Set(CONVERSATIONAL_OBJECTIVES.map((item) => item.id))
@@ -146,6 +147,323 @@ export async function saveConversationalAgentConfig(input = {}) {
   return getConversationalAgentConfig()
 }
 
+// ---------------------------------------------------------------------------
+// Varios agentes conversacionales (contenedores con filtros de entrada)
+// ---------------------------------------------------------------------------
+
+function parseJsonField(text, fallback) {
+  if (!text) return fallback
+  try {
+    const parsed = JSON.parse(text)
+    return parsed === null || parsed === undefined ? fallback : parsed
+  } catch {
+    return fallback
+  }
+}
+
+const EMPTY_ENTRY_FILTERS = {
+  channel: 'any',      // any | whatsapp | messenger | instagram
+  keywords: [],        // frases clave en el mensaje
+  match: 'contains',   // contains | exact | starts_with
+  tags: [],            // el contacto debe tener alguna de estas etiquetas
+  calendarId: ''       // el contacto debe tener cita próxima en este calendario
+}
+
+function normalizeEntryFilters(input) {
+  const raw = input && typeof input === 'object' ? input : {}
+  const channel = ['any', 'whatsapp', 'messenger', 'instagram'].includes(raw.channel) ? raw.channel : 'any'
+  const match = ['contains', 'exact', 'starts_with'].includes(raw.match) ? raw.match : 'contains'
+  const keywords = Array.isArray(raw.keywords)
+    ? raw.keywords.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 30)
+    : []
+  const tags = Array.isArray(raw.tags)
+    ? raw.tags.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 30)
+    : []
+  const calendarId = String(raw.calendarId || '').trim()
+  return { channel, keywords, match, tags, calendarId }
+}
+
+const SUCCESS_EXTRA_TYPES = new Set(['add_tag', 'remove_tag', 'set_custom_field'])
+
+function normalizeSuccessExtras(input) {
+  if (!Array.isArray(input)) return []
+  return input
+    .filter((extra) => extra && SUCCESS_EXTRA_TYPES.has(extra.type))
+    .map((extra) => ({
+      type: extra.type,
+      tag: String(extra.tag || '').trim().slice(0, 120),
+      field: String(extra.field || '').trim().slice(0, 120),
+      value: String(extra.value || '').trim().slice(0, 400)
+    }))
+    .filter((extra) => (extra.type === 'set_custom_field' ? Boolean(extra.field) : Boolean(extra.tag)))
+    .slice(0, 12)
+}
+
+function mapAgentRow(row) {
+  if (!row) return null
+  return {
+    id: row.id,
+    name: row.name || 'Agente',
+    enabled: toBoolean(row.enabled),
+    position: Number(row.position) || 0,
+    objective: VALID_OBJECTIVES.has(row.objective) ? row.objective : 'citas',
+    customObjective: row.custom_objective || '',
+    successAction: VALID_SUCCESS_ACTIONS.has(row.success_action) ? row.success_action : 'ready_for_human',
+    successExtras: normalizeSuccessExtras(parseJsonField(row.success_extras, [])),
+    requiredData: row.required_data || '',
+    handoffRules: row.handoff_rules || '',
+    extraInstructions: row.extra_instructions || '',
+    allowEmojis: toBoolean(row.allow_emojis),
+    defaultCalendarId: row.default_calendar_id || null,
+    closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
+    closingStrategyCustom: row.closing_strategy_custom || '',
+    entryFilters: normalizeEntryFilters(parseJsonField(row.entry_filters, null)),
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
+  }
+}
+
+/**
+ * Si todavía no hay agentes pero la config global vieja (de un solo agente)
+ * tiene datos, crea el "Agente principal" a partir de ella.
+ */
+export async function ensureAgentsMigration() {
+  const existing = await db.get('SELECT COUNT(*) AS total FROM conversational_agents')
+  if (Number(existing?.total) > 0) return
+  const legacy = await db.get('SELECT * FROM conversational_agent_config WHERE id = 1')
+  if (!legacy) return
+  await db.run(`
+    INSERT INTO conversational_agents (
+      id, name, enabled, position, objective, custom_objective, success_action,
+      success_extras, required_data, handoff_rules, extra_instructions,
+      allow_emojis, default_calendar_id, closing_strategy_mode, closing_strategy_custom, entry_filters
+    ) VALUES (?, ?, 1, 0, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    `cagent_${randomUUID()}`,
+    'Agente principal',
+    VALID_OBJECTIVES.has(legacy.objective) ? legacy.objective : 'citas',
+    legacy.custom_objective || '',
+    VALID_SUCCESS_ACTIONS.has(legacy.success_action) ? legacy.success_action : 'ready_for_human',
+    legacy.required_data || '',
+    legacy.handoff_rules || '',
+    legacy.extra_instructions || '',
+    toBoolean(legacy.allow_emojis) ? 1 : 0,
+    legacy.default_calendar_id || null,
+    legacy.closing_strategy_mode === 'custom' ? 'custom' : 'system',
+    legacy.closing_strategy_custom || '',
+    JSON.stringify(EMPTY_ENTRY_FILTERS)
+  ])
+  logger.info('[Agente conversacional] Config previa migrada al contenedor "Agente principal"')
+}
+
+export async function listConversationalAgents() {
+  await ensureAgentsMigration()
+  const rows = await db.all('SELECT * FROM conversational_agents ORDER BY position ASC, created_at ASC')
+  return rows.map(mapAgentRow)
+}
+
+export async function getConversationalAgent(agentId) {
+  if (!agentId) return null
+  const row = await db.get('SELECT * FROM conversational_agents WHERE id = ?', [agentId])
+  return mapAgentRow(row)
+}
+
+function agentInputToRowValues(input, base) {
+  const next = {
+    name: input.name === undefined ? base.name : String(input.name || 'Agente').trim().slice(0, 120) || 'Agente',
+    enabled: input.enabled === undefined ? base.enabled : toBoolean(input.enabled),
+    position: input.position === undefined ? base.position : Number(input.position) || 0,
+    objective: VALID_OBJECTIVES.has(input.objective) ? input.objective : base.objective,
+    customObjective: input.customObjective === undefined ? base.customObjective : String(input.customObjective || '').slice(0, 2000),
+    successAction: VALID_SUCCESS_ACTIONS.has(input.successAction) ? input.successAction : base.successAction,
+    successExtras: input.successExtras === undefined ? base.successExtras : normalizeSuccessExtras(input.successExtras),
+    requiredData: input.requiredData === undefined ? base.requiredData : String(input.requiredData || '').slice(0, 2000),
+    handoffRules: input.handoffRules === undefined ? base.handoffRules : String(input.handoffRules || '').slice(0, 4000),
+    extraInstructions: input.extraInstructions === undefined ? base.extraInstructions : String(input.extraInstructions || '').slice(0, 8000),
+    allowEmojis: input.allowEmojis === undefined ? base.allowEmojis : toBoolean(input.allowEmojis),
+    defaultCalendarId: input.defaultCalendarId === undefined ? base.defaultCalendarId : (String(input.defaultCalendarId || '').trim() || null),
+    closingStrategyMode: input.closingStrategyMode === undefined
+      ? base.closingStrategyMode
+      : (input.closingStrategyMode === 'custom' ? 'custom' : 'system'),
+    closingStrategyCustom: input.closingStrategyCustom === undefined
+      ? base.closingStrategyCustom
+      : String(input.closingStrategyCustom || '').slice(0, 8000),
+    entryFilters: input.entryFilters === undefined ? base.entryFilters : normalizeEntryFilters(input.entryFilters)
+  }
+  return next
+}
+
+const DEFAULT_AGENT_BASE = {
+  name: 'Agente',
+  enabled: true,
+  position: 0,
+  objective: 'citas',
+  customObjective: '',
+  successAction: 'ready_for_human',
+  successExtras: [],
+  requiredData: '',
+  handoffRules: '',
+  extraInstructions: '',
+  allowEmojis: false,
+  defaultCalendarId: null,
+  closingStrategyMode: 'system',
+  closingStrategyCustom: '',
+  entryFilters: { ...EMPTY_ENTRY_FILTERS }
+}
+
+export async function createConversationalAgent(input = {}) {
+  await ensureAgentsMigration()
+  const maxPosition = await db.get('SELECT COALESCE(MAX(position), -1) AS max_pos FROM conversational_agents')
+  const next = agentInputToRowValues(input, { ...DEFAULT_AGENT_BASE, position: Number(maxPosition?.max_pos ?? -1) + 1 })
+  const id = `cagent_${randomUUID()}`
+  await db.run(`
+    INSERT INTO conversational_agents (
+      id, name, enabled, position, objective, custom_objective, success_action,
+      success_extras, required_data, handoff_rules, extra_instructions,
+      allow_emojis, default_calendar_id, closing_strategy_mode, closing_strategy_custom, entry_filters
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    id, next.name, next.enabled ? 1 : 0, next.position, next.objective, next.customObjective,
+    next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
+    next.extraInstructions, next.allowEmojis ? 1 : 0, next.defaultCalendarId,
+    next.closingStrategyMode, next.closingStrategyCustom, JSON.stringify(next.entryFilters)
+  ])
+  await recordConversationalAgentEvent({ eventType: 'agent_created', detail: { agentId: id, name: next.name } })
+  return getConversationalAgent(id)
+}
+
+export async function updateConversationalAgent(agentId, input = {}) {
+  const current = await getConversationalAgent(agentId)
+  if (!current) {
+    throw Object.assign(new Error('Agente conversacional no encontrado'), { statusCode: 404 })
+  }
+  const next = agentInputToRowValues(input, current)
+  await db.run(`
+    UPDATE conversational_agents
+    SET name = ?, enabled = ?, position = ?, objective = ?, custom_objective = ?,
+        success_action = ?, success_extras = ?, required_data = ?, handoff_rules = ?,
+        extra_instructions = ?, allow_emojis = ?, default_calendar_id = ?,
+        closing_strategy_mode = ?, closing_strategy_custom = ?, entry_filters = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    next.name, next.enabled ? 1 : 0, next.position, next.objective, next.customObjective,
+    next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
+    next.extraInstructions, next.allowEmojis ? 1 : 0, next.defaultCalendarId,
+    next.closingStrategyMode, next.closingStrategyCustom, JSON.stringify(next.entryFilters),
+    agentId
+  ])
+  return getConversationalAgent(agentId)
+}
+
+export async function deleteConversationalAgent(agentId) {
+  const current = await getConversationalAgent(agentId)
+  if (!current) return false
+  await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId])
+  await db.run('UPDATE conversational_agent_state SET agent_id = NULL WHERE agent_id = ?', [agentId]).catch(() => {})
+  await recordConversationalAgentEvent({ eventType: 'agent_deleted', detail: { agentId, name: current.name } })
+  return true
+}
+
+function normalizeMatchText(value) {
+  return String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+}
+
+/**
+ * Encuentra el primer agente habilitado cuyos filtros de entrada coinciden con
+ * el mensaje/contacto (en orden de posición). Filtros vacíos = pasa.
+ */
+export async function matchAgentForMessage({ contactId, messageText = '', channel = 'whatsapp' } = {}) {
+  const agents = (await listConversationalAgents()).filter((agent) => agent.enabled)
+  if (!agents.length) return null
+
+  const contact = contactId
+    ? await db.get('SELECT id, tags FROM contacts WHERE id = ?', [contactId]).catch(() => null)
+    : null
+  const contactTags = parseJsonField(contact?.tags, []).map(normalizeMatchText)
+  const text = normalizeMatchText(messageText)
+
+  for (const agent of agents) {
+    const filters = agent.entryFilters
+
+    if (filters.channel !== 'any' && filters.channel !== channel) continue
+
+    if (filters.keywords.length) {
+      const matched = filters.keywords.some((keyword) => {
+        const needle = normalizeMatchText(keyword)
+        if (!needle) return false
+        if (filters.match === 'exact') return text === needle
+        if (filters.match === 'starts_with') return text.startsWith(needle)
+        return text.includes(needle)
+      })
+      if (!matched) continue
+    }
+
+    if (filters.tags.length) {
+      const hasTag = filters.tags.some((tag) => contactTags.includes(normalizeMatchText(tag)))
+      if (!hasTag) continue
+    }
+
+    if (filters.calendarId) {
+      const appointment = contactId
+        ? await db.get(`
+            SELECT id FROM appointments
+            WHERE contact_id = ? AND calendar_id = ? AND deleted_at IS NULL AND start_time >= ?
+            LIMIT 1
+          `, [contactId, filters.calendarId, new Date().toISOString()]).catch(() => null)
+        : null
+      if (!appointment) continue
+    }
+
+    return agent
+  }
+
+  return null
+}
+
+/**
+ * Aplica las acciones extra configuradas al cumplir el objetivo:
+ * agregar/quitar etiqueta y cambiar campos personalizados del contacto.
+ */
+export async function applyAgentSuccessExtras(agent, contactId) {
+  const extras = normalizeSuccessExtras(agent?.successExtras)
+  if (!extras.length || !contactId) return []
+
+  const applied = []
+  for (const extra of extras) {
+    try {
+      if (extra.type === 'add_tag' || extra.type === 'remove_tag') {
+        const row = await db.get('SELECT tags FROM contacts WHERE id = ?', [contactId])
+        const tags = parseJsonField(row?.tags, [])
+        const list = Array.isArray(tags) ? tags : []
+        const next = extra.type === 'remove_tag'
+          ? list.filter((candidate) => normalizeMatchText(candidate) !== normalizeMatchText(extra.tag))
+          : [...new Set([...list, extra.tag])]
+        await db.run('UPDATE contacts SET tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [JSON.stringify(next), contactId])
+        applied.push({ type: extra.type, tag: extra.tag })
+      } else if (extra.type === 'set_custom_field') {
+        const row = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
+        const fields = parseJsonField(row?.custom_fields, {})
+        const map = fields && typeof fields === 'object' && !Array.isArray(fields) ? fields : {}
+        map[extra.field] = extra.value
+        await db.run('UPDATE contacts SET custom_fields = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [JSON.stringify(map), contactId])
+        applied.push({ type: extra.type, field: extra.field, value: extra.value })
+      }
+    } catch (error) {
+      logger.warn(`[Agente conversacional] No se pudo aplicar acción extra ${extra.type}: ${error.message}`)
+    }
+  }
+
+  if (applied.length) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'success_extras_applied',
+      detail: { agentId: agent?.id || null, applied }
+    })
+  }
+  return applied
+}
+
 function mapStateRow(row) {
   if (!row) return null
   return {
@@ -158,8 +476,18 @@ function mapStateRow(row) {
     lastInboundMessageId: row.last_inbound_message_id || null,
     lastReplyAt: row.last_reply_at || null,
     updatedBy: row.updated_by || null,
+    agentId: row.agent_id || null,
     updatedAt: row.updated_at || null
   }
+}
+
+export async function assignAgentToConversation(contactId, agentId) {
+  await ensureConversationState(contactId)
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET agent_id = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE contact_id = ?
+  `, [agentId, contactId])
 }
 
 export async function getConversationState(contactId) {

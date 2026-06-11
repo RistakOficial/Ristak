@@ -74,6 +74,7 @@ import {
   type ConversationAgentState,
   type ConversationStateAction,
   type ConversationalAgentConfig,
+  type ConversationalAgentDef,
   type ConversationalObjective,
   type ConversationalSuccessAction
 } from '@/services/conversationalAgentService'
@@ -2443,6 +2444,7 @@ export const PhoneChat: React.FC = () => {
   const [archivedViewOpen, setArchivedViewOpen] = useState(false)
   const [agentPriorityViewOpen, setAgentPriorityViewOpen] = useState(false)
   const [agentConfig, setAgentConfig] = useState<ConversationalAgentConfig | null>(null)
+  const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>([])
   const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>({})
   const [agentMenuSection, setAgentMenuSection] = useState<AgentMenuSection>('menu')
   const [agentConfigSaving, setAgentConfigSaving] = useState(false)
@@ -3277,11 +3279,13 @@ export const PhoneChat: React.FC = () => {
 
   const loadAgentData = useCallback(async () => {
     try {
-      const [config, states] = await Promise.all([
+      const [config, states, defs] = await Promise.all([
         conversationalAgentService.getConfig(),
-        conversationalAgentService.listStates()
+        conversationalAgentService.listStates(),
+        conversationalAgentService.listAgents().catch(() => [] as ConversationalAgentDef[])
       ])
       setAgentConfig(config)
+      setAgentDefs(defs)
       setAgentStates(() => {
         const next: Record<string, ConversationAgentState> = {}
         for (const state of states) {
@@ -3301,8 +3305,6 @@ export const PhoneChat: React.FC = () => {
 
   const saveAgentConfigPatch = useCallback(async (patch: Partial<{
     enabled: boolean
-    objective: ConversationalObjective
-    successAction: ConversationalSuccessAction
     hideAttended: boolean
   }>) => {
     setAgentConfigSaving(true)
@@ -3315,6 +3317,24 @@ export const PhoneChat: React.FC = () => {
       setAgentConfigSaving(false)
     }
   }, [showToast])
+
+  // El menú móvil edita el primer agente (la lista completa vive en la web)
+  const saveFirstAgentPatch = useCallback(async (patch: Partial<{
+    objective: ConversationalObjective
+    successAction: ConversationalSuccessAction
+  }>) => {
+    const first = agentDefs[0]
+    if (!first) return
+    setAgentConfigSaving(true)
+    try {
+      const next = await conversationalAgentService.updateAgent(first.id, patch)
+      setAgentDefs((current) => current.map((agent) => (agent.id === next.id ? next : agent)))
+    } catch (error: any) {
+      showToast('error', 'Agente conversacional', error?.message || 'No se pudo guardar el cambio')
+    } finally {
+      setAgentConfigSaving(false)
+    }
+  }, [agentDefs, showToast])
 
   const handleAgentStateAction = useCallback(async (contactId: string, action: ConversationStateAction, successMessage: string) => {
     try {
@@ -9812,12 +9832,23 @@ export const PhoneChat: React.FC = () => {
     { value: 'custom', label: 'Objetivo personalizado' }
   ]
 
-  const agentSuccessActionOptions: Array<{ value: ConversationalSuccessAction; label: string }> = [
-    { value: 'book_appointment', label: 'Agendar directamente' },
-    { value: 'ready_for_human', label: 'Mandar a prioridad (humano)' },
-    { value: 'ready_to_buy', label: 'Mandar a prioridad (compra)' },
-    { value: 'internal_signal', label: 'Solo señal interna' }
-  ]
+  const agentSuccessActionLabels: Record<ConversationalSuccessAction, string> = {
+    book_appointment: 'Agendar directamente',
+    ready_for_human: 'Mandar a prioridad (humano)',
+    ready_to_buy: 'Mandar a prioridad (compra)',
+    internal_signal: 'Solo señal interna',
+    none: 'No hacer nada'
+  }
+
+  // Acciones coherentes con cada objetivo (mismo criterio que la config web)
+  const agentActionsByObjective: Record<ConversationalObjective, ConversationalSuccessAction[]> = {
+    citas: ['book_appointment', 'ready_for_human', 'internal_signal', 'none'],
+    ventas: ['ready_to_buy', 'ready_for_human', 'internal_signal', 'none'],
+    datos: ['ready_for_human', 'internal_signal', 'none'],
+    filtrar: ['ready_for_human', 'internal_signal', 'none'],
+    detectar: ['ready_to_buy', 'ready_for_human', 'internal_signal', 'none'],
+    custom: ['book_appointment', 'ready_to_buy', 'ready_for_human', 'internal_signal', 'none']
+  }
 
   const agentSignalLabels: Record<string, string> = {
     ready_for_human: 'Lista para humano',
@@ -9905,6 +9936,7 @@ export const PhoneChat: React.FC = () => {
 
     const readyHumanCount = agentPriorityStates.filter((state) => state.signal === 'ready_for_human').length
     const readyAdvanceCount = agentPriorityStates.filter((state) => state.signal === 'ready_to_schedule' || state.signal === 'ready_to_buy' || state.signal === 'appointment_booked').length
+    const firstAgentDef = agentDefs[0] || null
 
     return (
       <div className={styles.agentMenuBody}>
@@ -9921,31 +9953,52 @@ export const PhoneChat: React.FC = () => {
           />
         </label>
 
-        <label className={styles.agentMenuField}>
-          <span>Objetivo del agente</span>
-          <PhoneSelect
-            value={agentConfig?.objective || 'citas'}
-            onChange={(value) => saveAgentConfigPatch({ objective: value as ConversationalObjective })}
-            ariaLabel="Objetivo del agente conversacional"
-            options={agentObjectiveOptions}
-            title="Objetivo"
-            placeholder="Objetivo"
-            disabled={agentConfigSaving || !agentConfig}
-          />
-        </label>
+        {firstAgentDef ? (
+          <>
+            <label className={styles.agentMenuField}>
+              <span>{agentDefs.length > 1 ? `Objetivo de "${firstAgentDef.name}"` : 'Objetivo del agente'}</span>
+              <PhoneSelect
+                value={firstAgentDef.objective}
+                onChange={(value) => {
+                  const objective = value as ConversationalObjective
+                  const allowed = agentActionsByObjective[objective] || agentActionsByObjective.custom
+                  saveFirstAgentPatch({
+                    objective,
+                    ...(allowed.includes(firstAgentDef.successAction) ? {} : { successAction: allowed[0] })
+                  })
+                }}
+                ariaLabel="Objetivo del agente conversacional"
+                options={agentObjectiveOptions}
+                title="Objetivo"
+                placeholder="Objetivo"
+                disabled={agentConfigSaving}
+              />
+            </label>
 
-        <label className={styles.agentMenuField}>
-          <span>Cuando cumpla el objetivo</span>
-          <PhoneSelect
-            value={agentConfig?.successAction || 'ready_for_human'}
-            onChange={(value) => saveAgentConfigPatch({ successAction: value as ConversationalSuccessAction })}
-            ariaLabel="Acción al cumplir el objetivo"
-            options={agentSuccessActionOptions}
-            title="Al cumplir el objetivo"
-            placeholder="Acción"
-            disabled={agentConfigSaving || !agentConfig}
-          />
-        </label>
+            <label className={styles.agentMenuField}>
+              <span>Cuando cumpla el objetivo</span>
+              <PhoneSelect
+                value={firstAgentDef.successAction}
+                onChange={(value) => saveFirstAgentPatch({ successAction: value as ConversationalSuccessAction })}
+                ariaLabel="Acción al cumplir el objetivo"
+                options={(agentActionsByObjective[firstAgentDef.objective] || agentActionsByObjective.custom)
+                  .map((action) => ({ value: action, label: agentSuccessActionLabels[action] }))}
+                title="Al cumplir el objetivo"
+                placeholder="Acción"
+                disabled={agentConfigSaving}
+              />
+            </label>
+            {agentDefs.length > 1 && (
+              <p className={styles.agentMenuHint}>
+                Tienes {agentDefs.length} agentes; aquí editas el primero. Los demás se administran en la configuración web.
+              </p>
+            )}
+          </>
+        ) : (
+          <p className={styles.agentMenuHint}>
+            Aún no hay agentes creados. Créalos en Configuración → Agente AI → Agente conversacional.
+          </p>
+        )}
 
         <label className={styles.toggleRow}>
           <span>

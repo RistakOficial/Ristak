@@ -1,5 +1,5 @@
 export type ConversationalObjective = 'citas' | 'ventas' | 'datos' | 'filtrar' | 'detectar' | 'custom'
-export type ConversationalSuccessAction = 'book_appointment' | 'ready_for_human' | 'ready_to_buy' | 'internal_signal'
+export type ConversationalSuccessAction = 'book_appointment' | 'ready_for_human' | 'ready_to_buy' | 'internal_signal' | 'none'
 export type ConversationStatus = 'active' | 'paused' | 'human' | 'skipped' | 'completed' | 'discarded'
 export type ConversationSignal = 'ready_for_human' | 'ready_to_schedule' | 'ready_to_buy' | 'appointment_booked' | 'discarded'
 export type ClosingStrategyMode = 'system' | 'custom'
@@ -37,6 +37,49 @@ export interface ConversationalAgentConfigInput {
   closingStrategyMode?: ClosingStrategyMode
   closingStrategyCustom?: string
 }
+
+export type EntryFilterChannel = 'any' | 'whatsapp' | 'messenger' | 'instagram'
+export type EntryFilterMatch = 'contains' | 'exact' | 'starts_with'
+
+export interface AgentEntryFilters {
+  channel: EntryFilterChannel
+  keywords: string[]
+  match: EntryFilterMatch
+  tags: string[]
+  calendarId: string
+}
+
+export type SuccessExtraType = 'add_tag' | 'remove_tag' | 'set_custom_field'
+
+export interface AgentSuccessExtra {
+  type: SuccessExtraType
+  tag?: string
+  field?: string
+  value?: string
+}
+
+export interface ConversationalAgentDef {
+  id: string
+  name: string
+  enabled: boolean
+  position: number
+  objective: ConversationalObjective
+  customObjective: string
+  successAction: ConversationalSuccessAction
+  successExtras: AgentSuccessExtra[]
+  requiredData: string
+  handoffRules: string
+  extraInstructions: string
+  allowEmojis: boolean
+  defaultCalendarId: string | null
+  closingStrategyMode: ClosingStrategyMode
+  closingStrategyCustom: string
+  entryFilters: AgentEntryFilters
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, 'id' | 'createdAt' | 'updatedAt'>>
 
 export interface ConversationAgentState {
   contactId: string
@@ -115,6 +158,28 @@ export const conversationalAgentService = {
     })
   },
 
+  listAgents(): Promise<ConversationalAgentDef[]> {
+    return request<ConversationalAgentDef[]>('/agents')
+  },
+
+  createAgent(input: ConversationalAgentDefInput = {}): Promise<ConversationalAgentDef> {
+    return request<ConversationalAgentDef>('/agents', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    })
+  },
+
+  updateAgent(agentId: string, input: ConversationalAgentDefInput): Promise<ConversationalAgentDef> {
+    return request<ConversationalAgentDef>(`/agents/${encodeURIComponent(agentId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(input)
+    })
+  },
+
+  async deleteAgent(agentId: string): Promise<void> {
+    await request(`/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' })
+  },
+
   listStates(params: { signal?: string; statuses?: string[] } = {}): Promise<ConversationAgentState[]> {
     const search = new URLSearchParams()
     if (params.signal) search.set('signal', params.signal)
@@ -136,11 +201,15 @@ export const conversationalAgentService = {
 
   testAgent(
     messages: Array<{ role: 'user' | 'assistant'; content: string }>,
-    config?: ConversationalAgentConfigInput
+    options: { config?: ConversationalAgentDefInput; agentId?: string } = {}
   ): Promise<ConversationalAgentTestResult> {
     return request<ConversationalAgentTestResult>('/test', {
       method: 'POST',
-      body: JSON.stringify({ messages, ...(config ? { config } : {}) })
+      body: JSON.stringify({
+        messages,
+        ...(options.config ? { config: options.config } : {}),
+        ...(options.agentId ? { agentId: options.agentId } : {})
+      })
     })
   },
 

@@ -8,7 +8,8 @@ import { listCalendarsTool, getFreeSlotsTool } from '../tools/appointmentTools.j
 import {
   setConversationSignal,
   setConversationStatus,
-  recordConversationalAgentEvent
+  recordConversationalAgentEvent,
+  applyAgentSuccessExtras
 } from '../../services/conversationalAgentService.js'
 
 /**
@@ -28,6 +29,7 @@ function pushAction(ctx, type, detail = {}) {
 }
 
 function resolveAdvanceSignal(config) {
+  if (config.successAction === 'none') return null
   if (config.successAction === 'ready_for_human') return 'ready_for_human'
   if (config.successAction === 'ready_to_buy') return 'ready_to_buy'
   if (config.successAction === 'book_appointment') return 'ready_to_schedule'
@@ -265,6 +267,7 @@ export function createConversationalTools(ctx) {
           eventType: 'appointment_booked',
           detail: { appointmentId: toolResult.data?.id, startTime: start.toISOString(), calendarId }
         })
+        await applyAgentSuccessExtras(config, ctx.contactId)
       }
       return toolResult
     }
@@ -281,15 +284,26 @@ export function createConversationalTools(ctx) {
     }),
     execute: async ({ intencionDetectada, resumen, urgencia, siguientePaso }) => {
       const signal = resolveAdvanceSignal(config)
-      pushAction(ctx, 'mark_ready_to_advance', { signal, intencionDetectada, urgencia })
+      pushAction(ctx, 'mark_ready_to_advance', { signal, intencionDetectada, urgencia, extras: config.successExtras || [] })
       if (ctx.dryRun) return { ok: true, simulated: true, signal }
 
-      await setConversationSignal(ctx.contactId, signal, {
-        reason: `${intencionDetectada} (urgencia ${urgencia})`,
-        summary: [resumen, siguientePaso ? `Siguiente paso: ${siguientePaso}` : ''].filter(Boolean).join(' · '),
-        status: 'completed'
-      })
-      return { ok: true, signal, note: 'Señal interna creada. Cierra con una frase mínima o no respondas más.' }
+      if (signal) {
+        await setConversationSignal(ctx.contactId, signal, {
+          reason: `${intencionDetectada} (urgencia ${urgencia})`,
+          summary: [resumen, siguientePaso ? `Siguiente paso: ${siguientePaso}` : ''].filter(Boolean).join(' · '),
+          status: 'completed'
+        })
+      } else {
+        // Acción "no hacer nada": el agente cumplió y solo deja registro
+        await setConversationStatus(ctx.contactId, 'completed', { updatedBy: 'agent' })
+        await recordConversationalAgentEvent({
+          contactId: ctx.contactId,
+          eventType: 'objective_completed',
+          detail: { intencionDetectada, urgencia, resumen }
+        })
+      }
+      await applyAgentSuccessExtras(config, ctx.contactId)
+      return { ok: true, signal, note: 'Objetivo registrado. Cierra con una frase mínima o no respondas más.' }
     }
   })
 

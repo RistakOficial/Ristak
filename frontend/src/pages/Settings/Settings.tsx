@@ -10,6 +10,7 @@ import { WebTracking } from './WebTracking'
 import { CalendarsConfiguration } from './CalendarsConfiguration'
 import { AccountSettings } from './AccountSettings'
 import { AIAgentSettings } from './AIAgentSettings'
+import { ConversationalAgentSettings } from './ConversationalAgentSettings'
 import { APIAccessSettings } from './APIAccessSettings'
 import { Domains } from './Domains'
 import { MobileAppSettings } from './MobileAppSettings'
@@ -37,6 +38,7 @@ export const Settings: React.FC = () => {
             <Route path="payments/*" element={<PaymentsConfiguration />} />
             <Route path="custom-fields/*" element={<CustomFields />} />
             <Route path="ai-agent" element={<AIAgentSettings />} />
+            <Route path="ai-agent/conversational" element={<ConversationalAgentSettings />} />
             <Route path="api-access" element={<APIAccessSettings />} />
             <Route path="mobile-app" element={<MobileAppSettings />} />
             <Route path="account" element={<AccountSettings />} />

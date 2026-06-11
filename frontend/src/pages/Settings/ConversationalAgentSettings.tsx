@@ -1,22 +1,25 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { Bot, MessageCircle, Play, Send, Trash2 } from 'lucide-react'
-import { Card, CustomSelect } from '@/components/common'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { Bot, ChevronDown, MessageCircle, Play, Plus, RotateCcw, Send, Trash2, X } from 'lucide-react'
+import { Button, Card, CustomSelect } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   conversationalAgentService,
+  type AgentSuccessExtra,
   type ClosingStrategyMode,
   type ConversationalAgentConfig,
-  type ConversationalAgentConfigInput,
+  type ConversationalAgentDef,
+  type ConversationalAgentDefInput,
   type ConversationalAgentTestResult,
   type ConversationalObjective,
-  type ConversationalSuccessAction
+  type ConversationalSuccessAction,
+  type EntryFilterChannel,
+  type EntryFilterMatch,
+  type SuccessExtraType
 } from '@/services/conversationalAgentService'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
 import styles from './AIAgentSettings.module.css'
 
 const AUTOSAVE_DELAY_MS = 900
-
-type SaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'error'
 
 const objectiveOptions: Array<{ value: ConversationalObjective; label: string; description: string }> = [
   { value: 'citas', label: 'Cerrar citas', description: 'Lleva la conversación a agendar una cita.' },
@@ -27,158 +30,143 @@ const objectiveOptions: Array<{ value: ConversationalObjective; label: string; d
   { value: 'custom', label: 'Objetivo personalizado', description: 'Define tú mismo el objetivo del agente.' }
 ]
 
-const successActionOptions: Array<{ value: ConversationalSuccessAction; label: string; description: string }> = [
-  { value: 'book_appointment', label: 'Agendar directamente', description: 'Usa los calendarios y la disponibilidad real para crear la cita.' },
-  { value: 'ready_for_human', label: 'Marcar lista para humano', description: 'Crea la señal interna y mueve el chat a prioridad para que lo tome una persona.' },
-  { value: 'ready_to_buy', label: 'Marcar lista para comprar', description: 'Crea la señal interna de compra y mueve el chat a prioridad.' },
-  { value: 'internal_signal', label: 'Solo señal interna', description: 'Crea la señal según el objetivo, sin mensajes finales largos.' }
+const successActionLabels: Record<ConversationalSuccessAction, { label: string; description: string }> = {
+  book_appointment: { label: 'Agendar directamente', description: 'Usa los calendarios y la disponibilidad real para crear la cita.' },
+  ready_for_human: { label: 'Mandar a humano', description: 'Crea la señal interna y mueve el chat a prioridad para que lo tome una persona.' },
+  ready_to_buy: { label: 'Marcar lista para comprar', description: 'Crea la señal interna de compra y mueve el chat a prioridad.' },
+  internal_signal: { label: 'Solo señal interna', description: 'Crea la señal según el objetivo, sin mensajes finales largos.' },
+  none: { label: 'No hacer nada', description: 'Solo registra que se cumplió; la conversación no se mueve a prioridad.' }
+}
+
+// Acciones coherentes con cada objetivo: solo se ofrecen las que tienen sentido.
+const actionsByObjective: Record<ConversationalObjective, ConversationalSuccessAction[]> = {
+  citas: ['book_appointment', 'ready_for_human', 'internal_signal', 'none'],
+  ventas: ['ready_to_buy', 'ready_for_human', 'internal_signal', 'none'],
+  datos: ['ready_for_human', 'internal_signal', 'none'],
+  filtrar: ['ready_for_human', 'internal_signal', 'none'],
+  detectar: ['ready_to_buy', 'ready_for_human', 'internal_signal', 'none'],
+  custom: ['book_appointment', 'ready_to_buy', 'ready_for_human', 'internal_signal', 'none']
+}
+
+const channelOptions: Array<{ value: EntryFilterChannel; label: string }> = [
+  { value: 'any', label: 'Cualquier canal' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'messenger', label: 'Messenger' },
+  { value: 'instagram', label: 'Instagram Direct' }
 ]
 
-const emptyConfig: ConversationalAgentConfig = {
-  enabled: false,
-  objective: 'citas',
-  customObjective: '',
-  successAction: 'ready_for_human',
-  requiredData: '',
-  handoffRules: '',
-  extraInstructions: '',
-  allowEmojis: false,
-  hideAttended: false,
-  defaultCalendarId: null,
-  closingStrategyMode: 'system',
-  closingStrategyCustom: '',
-  updatedAt: null
-}
+const matchOptions: Array<{ value: EntryFilterMatch; label: string }> = [
+  { value: 'contains', label: 'Contiene' },
+  { value: 'exact', label: 'Coincidencia exacta' },
+  { value: 'starts_with', label: 'Empieza con' }
+]
+
+const extraTypeOptions: Array<{ value: SuccessExtraType; label: string }> = [
+  { value: 'add_tag', label: 'Agregar etiqueta' },
+  { value: 'remove_tag', label: 'Quitar etiqueta' },
+  { value: 'set_custom_field', label: 'Cambiar campo personalizado' }
+]
 
 type TestMessage = { role: 'user' | 'assistant'; content: string; internal?: boolean }
 
-function formToInput(form: ConversationalAgentConfig): ConversationalAgentConfigInput {
-  return {
-    enabled: form.enabled,
-    objective: form.objective,
-    customObjective: form.customObjective,
-    successAction: form.successAction,
-    requiredData: form.requiredData,
-    handoffRules: form.handoffRules,
-    extraInstructions: form.extraInstructions,
-    allowEmojis: form.allowEmojis,
-    hideAttended: form.hideAttended,
-    defaultCalendarId: form.defaultCalendarId,
-    closingStrategyMode: form.closingStrategyMode,
-    closingStrategyCustom: form.closingStrategyCustom
+function agentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInput {
+  const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = agent
+  return rest
+}
+
+const ChipsInput: React.FC<{
+  values: string[]
+  placeholder: string
+  disabled?: boolean
+  onChange: (values: string[]) => void
+}> = ({ values, placeholder, disabled, onChange }) => {
+  const [draft, setDraft] = useState('')
+
+  const addDraft = () => {
+    const value = draft.trim()
+    if (!value) return
+    if (!values.some((item) => item.toLowerCase() === value.toLowerCase())) {
+      onChange([...values, value])
+    }
+    setDraft('')
   }
+
+  return (
+    <div className={styles.chipsWrap}>
+      {values.map((value) => (
+        <span key={value} className={styles.chip}>
+          {value}
+          <button
+            type="button"
+            className={styles.chipRemove}
+            onClick={() => onChange(values.filter((item) => item !== value))}
+            aria-label={`Quitar ${value}`}
+            disabled={disabled}
+          >
+            <X size={12} />
+          </button>
+        </span>
+      ))}
+      <input
+        className={styles.chipsInput}
+        value={draft}
+        placeholder={values.length ? '' : placeholder}
+        disabled={disabled}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ',') {
+            event.preventDefault()
+            addDraft()
+          }
+          if (event.key === 'Backspace' && !draft && values.length) {
+            onChange(values.slice(0, -1))
+          }
+        }}
+        onBlur={addDraft}
+      />
+    </div>
+  )
 }
 
-function getSignature(form: ConversationalAgentConfig) {
-  return JSON.stringify(formToInput(form))
+interface AgentCardProps {
+  agent: ConversationalAgentDef
+  calendars: Calendar[]
+  systemStrategy: string
+  expanded: boolean
+  onToggleExpanded: () => void
+  onChange: (patch: ConversationalAgentDefInput) => void
+  onDelete: () => void
 }
 
-export const ConversationalAgentSettings: React.FC = () => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, systemStrategy, expanded, onToggleExpanded, onChange, onDelete }) => {
   const { showToast } = useNotification()
-  const [form, setForm] = useState<ConversationalAgentConfig>(emptyConfig)
-  const [loading, setLoading] = useState(true)
-  const [saveState, setSaveState] = useState<SaveState>('idle')
-  const [saveError, setSaveError] = useState('')
-  const [calendars, setCalendars] = useState<Calendar[]>([])
-
   const [testMessages, setTestMessages] = useState<TestMessage[]>([])
   const [testInput, setTestInput] = useState('')
   const [testing, setTesting] = useState(false)
 
-  const hydratedRef = useRef(false)
-  const autosaveTimerRef = useRef<number | null>(null)
-  const activeSaveIdRef = useRef(0)
-  const lastSavedSignatureRef = useRef(getSignature(emptyConfig))
+  const allowedActions = actionsByObjective[agent.objective] || actionsByObjective.custom
+  const selectedObjective = objectiveOptions.find((option) => option.value === agent.objective) || objectiveOptions[0]
+  const selectedActionInfo = successActionLabels[agent.successAction] || successActionLabels.ready_for_human
+  const strategyIsCustom = agent.closingStrategyMode === 'custom'
+  const strategyText = strategyIsCustom ? agent.closingStrategyCustom : systemStrategy
 
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      setLoading(true)
-      try {
-        const [config, calendarList] = await Promise.all([
-          conversationalAgentService.getConfig(),
-          calendarsService.getCalendars()
-        ])
-        if (cancelled) return
-        setForm({ ...emptyConfig, ...config })
-        setCalendars(calendarList.filter((cal) => cal.isActive !== false))
-        lastSavedSignatureRef.current = getSignature({ ...emptyConfig, ...config })
-        setSaveState('saved')
-      } catch (error: any) {
-        if (!cancelled) {
-          showToast('error', 'Error', error?.message || 'No se pudo cargar el agente conversacional')
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false)
-          hydratedRef.current = true
-        }
-      }
-    }
-    load()
-    return () => {
-      cancelled = true
-    }
-  }, [showToast])
-
-  useEffect(() => {
-    if (!hydratedRef.current || loading) return
-
-    if (autosaveTimerRef.current !== null) {
-      window.clearTimeout(autosaveTimerRef.current)
-      autosaveTimerRef.current = null
-    }
-
-    const signature = getSignature(form)
-    if (signature === lastSavedSignatureRef.current) {
-      setSaveState('saved')
-      setSaveError('')
-      return
-    }
-
-    const saveId = activeSaveIdRef.current + 1
-    activeSaveIdRef.current = saveId
-    setSaveState('pending')
-    setSaveError('')
-
-    autosaveTimerRef.current = window.setTimeout(async () => {
-      setSaveState('saving')
-      try {
-        const next = await conversationalAgentService.saveConfig(formToInput(form))
-        if (activeSaveIdRef.current !== saveId) return
-        lastSavedSignatureRef.current = getSignature({ ...emptyConfig, ...next })
-        setSaveState('saved')
-      } catch (error: any) {
-        if (activeSaveIdRef.current !== saveId) return
-        const message = error?.message || 'No se pudo guardar la configuración'
-        setSaveState('error')
-        setSaveError(message)
-        showToast('error', 'No se pudo guardar', message)
-      }
-    }, AUTOSAVE_DELAY_MS)
-
-    return () => {
-      if (autosaveTimerRef.current !== null) {
-        window.clearTimeout(autosaveTimerRef.current)
-        autosaveTimerRef.current = null
-      }
-    }
-  }, [form, loading, showToast])
-
-  const updateField = <K extends keyof ConversationalAgentConfig>(field: K, value: ConversationalAgentConfig[K]) => {
-    setForm((current) => ({ ...current, [field]: value }))
+  const updateFilters = (patch: Partial<ConversationalAgentDef['entryFilters']>) => {
+    onChange({ entryFilters: { ...agent.entryFilters, ...patch } })
   }
 
-  const selectedObjective = objectiveOptions.find((option) => option.value === form.objective) || objectiveOptions[0]
-  const selectedAction = successActionOptions.find((option) => option.value === form.successAction) || successActionOptions[1]
+  const updateExtra = (index: number, patch: Partial<AgentSuccessExtra>) => {
+    const next = agent.successExtras.map((extra, i) => (i === index ? { ...extra, ...patch } : extra))
+    onChange({ successExtras: next })
+  }
 
-  const saveStatusText = loading
-    ? 'Cargando...'
-    : saveState === 'saving' || saveState === 'pending'
-      ? 'Guardando en automático...'
-      : saveState === 'error'
-        ? saveError || 'No se pudo guardar'
-        : 'Guardado automático'
+  const handleObjectiveChange = (objective: ConversationalObjective) => {
+    const allowed = actionsByObjective[objective] || actionsByObjective.custom
+    const patch: ConversationalAgentDefInput = { objective }
+    if (!allowed.includes(agent.successAction)) {
+      patch.successAction = allowed[0]
+    }
+    onChange(patch)
+  }
 
   const handleSendTestMessage = async () => {
     const content = testInput.trim()
@@ -192,7 +180,7 @@ export const ConversationalAgentSettings: React.FC = () => {
     try {
       const result: ConversationalAgentTestResult = await conversationalAgentService.testAgent(
         nextMessages.map(({ role, content: text }) => ({ role, content: text })),
-        formToInput(form)
+        { config: agentToInput(agent) }
       )
 
       setTestMessages((current) => {
@@ -216,6 +204,483 @@ export const ConversationalAgentSettings: React.FC = () => {
 
   return (
     <Card>
+      <div className={styles.agentCardHeader}>
+        <button type="button" className={styles.agentCardToggle} onClick={onToggleExpanded} aria-expanded={expanded}>
+          <span className={`${styles.iconBox} ${agent.enabled ? '' : styles.iconBoxMuted}`}>
+            <Bot size={20} />
+          </span>
+          <ChevronDown size={17} className={`${styles.agentCardChevron} ${expanded ? styles.agentCardChevronOpen : ''}`} />
+        </button>
+        <input
+          className={styles.agentNameInput}
+          value={agent.name}
+          onChange={(event) => onChange({ name: event.target.value })}
+          placeholder="Nombre del agente"
+          aria-label="Nombre del agente"
+        />
+        <div className={styles.agentCardActions}>
+          <label className={styles.inlineToggle}>
+            <input
+              type="checkbox"
+              checked={agent.enabled}
+              onChange={(event) => onChange({ enabled: event.target.checked })}
+            />
+            <span>{agent.enabled ? 'Activo' : 'Apagado'}</span>
+          </label>
+          <button type="button" className={styles.iconButton} onClick={onDelete} aria-label={`Eliminar ${agent.name}`}>
+            <Trash2 size={16} />
+          </button>
+        </div>
+      </div>
+
+      {!expanded && (
+        <p className={styles.agentCardSummary}>
+          {selectedObjective.label} · {selectedActionInfo.label}
+          {agent.entryFilters.keywords.length || agent.entryFilters.tags.length || agent.entryFilters.calendarId || agent.entryFilters.channel !== 'any'
+            ? ' · con filtros de entrada'
+            : ' · atiende todas las conversaciones'}
+        </p>
+      )}
+
+      {expanded && (
+        <>
+          <div className={styles.section}>
+            <h3 className={styles.sectionTitle}>Filtros de entrada</h3>
+            <p className={styles.helper}>
+              Quién entra con este agente. Si dejas todo vacío, atiende cualquier conversación nueva. Si hay varios agentes,
+              gana el primero (de arriba hacia abajo) cuyos filtros coincidan.
+            </p>
+            <div className={styles.settingsGrid}>
+              <div className={styles.field}>
+                <label className={styles.label}>Canal del mensaje</label>
+                <CustomSelect
+                  value={agent.entryFilters.channel}
+                  onChange={(event) => updateFilters({ channel: event.target.value as EntryFilterChannel })}
+                >
+                  {channelOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </CustomSelect>
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>El contacto tiene alguna de estas etiquetas</label>
+                <ChipsInput
+                  values={agent.entryFilters.tags}
+                  placeholder="Escribe la etiqueta y presiona Enter"
+                  onChange={(tags) => updateFilters({ tags })}
+                />
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>El mensaje contiene alguna de estas frases</label>
+                <ChipsInput
+                  values={agent.entryFilters.keywords}
+                  placeholder="Escribe la frase y presiona Enter"
+                  onChange={(keywords) => updateFilters({ keywords })}
+                />
+              </div>
+              {agent.entryFilters.keywords.length > 0 && (
+                <div className={styles.field}>
+                  <label className={styles.label}>Coincidencia de frases</label>
+                  <CustomSelect
+                    value={agent.entryFilters.match}
+                    onChange={(event) => updateFilters({ match: event.target.value as EntryFilterMatch })}
+                  >
+                    {matchOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </CustomSelect>
+                </div>
+              )}
+              <div className={styles.field}>
+                <label className={styles.label}>El contacto tiene cita próxima en</label>
+                <CustomSelect
+                  value={agent.entryFilters.calendarId}
+                  onChange={(event) => updateFilters({ calendarId: event.target.value })}
+                >
+                  <option value="">Sin filtro de calendario</option>
+                  {calendars.map((calendar) => (
+                    <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
+                  ))}
+                </CustomSelect>
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.section}>
+            <h3 className={styles.sectionTitle}>Objetivo</h3>
+            <div className={styles.settingsGrid}>
+              <div className={styles.field}>
+                <label className={styles.label}>Objetivo principal</label>
+                <CustomSelect
+                  value={agent.objective}
+                  onChange={(event) => handleObjectiveChange(event.target.value as ConversationalObjective)}
+                >
+                  {objectiveOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </CustomSelect>
+                <p className={styles.helper}>{selectedObjective.description}</p>
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Cuando cumpla el objetivo</label>
+                <CustomSelect
+                  value={agent.successAction}
+                  onChange={(event) => onChange({ successAction: event.target.value as ConversationalSuccessAction })}
+                >
+                  {allowedActions.map((action) => (
+                    <option key={action} value={action}>{successActionLabels[action].label}</option>
+                  ))}
+                </CustomSelect>
+                <p className={styles.helper}>{selectedActionInfo.description}</p>
+              </div>
+
+              {agent.successAction === 'book_appointment' && (
+                <div className={styles.field}>
+                  <label className={styles.label}>Calendario preferido</label>
+                  <CustomSelect
+                    value={agent.defaultCalendarId || ''}
+                    onChange={(event) => onChange({ defaultCalendarId: event.target.value || null })}
+                  >
+                    <option value="">El agente elige entre los calendarios activos</option>
+                    {calendars.map((calendar) => (
+                      <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
+                    ))}
+                  </CustomSelect>
+                  <p className={styles.helper}>Solo agenda con la disponibilidad real; nunca inventa horarios.</p>
+                </div>
+              )}
+            </div>
+
+            {agent.objective === 'custom' && (
+              <div className={styles.fieldWide}>
+                <label className={styles.label}>Describe el objetivo personalizado</label>
+                <textarea
+                  className={styles.textarea}
+                  value={agent.customObjective}
+                  placeholder="Ejemplo: que la persona pida una propuesta formal para su empresa."
+                  onChange={(event) => onChange({ customObjective: event.target.value })}
+                  rows={3}
+                />
+              </div>
+            )}
+
+            <div className={styles.fieldWide}>
+              <label className={styles.label}>Acciones adicionales al cumplir el objetivo</label>
+              {agent.successExtras.map((extra, index) => (
+                <div key={index} className={styles.extraRow}>
+                  <CustomSelect
+                    value={extra.type}
+                    onChange={(event) => updateExtra(index, { type: event.target.value as SuccessExtraType })}
+                  >
+                    {extraTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </CustomSelect>
+                  {extra.type === 'set_custom_field' ? (
+                    <>
+                      <input
+                        className={styles.input}
+                        value={extra.field || ''}
+                        placeholder="Campo"
+                        onChange={(event) => updateExtra(index, { field: event.target.value })}
+                      />
+                      <input
+                        className={styles.input}
+                        value={extra.value || ''}
+                        placeholder="Valor"
+                        onChange={(event) => updateExtra(index, { value: event.target.value })}
+                      />
+                    </>
+                  ) : (
+                    <input
+                      className={styles.input}
+                      value={extra.tag || ''}
+                      placeholder="Nombre de la etiqueta"
+                      onChange={(event) => updateExtra(index, { tag: event.target.value })}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    className={styles.iconButton}
+                    onClick={() => onChange({ successExtras: agent.successExtras.filter((_, i) => i !== index) })}
+                    aria-label="Quitar acción"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                className={styles.addRowButton}
+                onClick={() => onChange({ successExtras: [...agent.successExtras, { type: 'add_tag', tag: '' }] })}
+              >
+                <Plus size={14} />
+                Agregar acción
+              </button>
+              <p className={styles.helper}>
+                Se ejecutan en automático al cumplirse el objetivo: etiquetas y campos personalizados del contacto.
+              </p>
+            </div>
+          </div>
+
+          <div className={styles.section}>
+            <div className={styles.strategyHeaderRow}>
+              <h3 className={styles.sectionTitle}>Estrategia de cierre</h3>
+              <span className={`${styles.strategyBadge} ${strategyIsCustom ? styles.strategyBadgeCustom : ''}`}>
+                {strategyIsCustom ? 'Personalizada' : 'Predeterminada del sistema'}
+              </span>
+              {strategyIsCustom && (
+                <button
+                  type="button"
+                  className={styles.resetStrategyButton}
+                  onClick={() => onChange({ closingStrategyMode: 'system', closingStrategyCustom: '' })}
+                >
+                  <RotateCcw size={13} />
+                  Volver al preestablecido
+                </button>
+              )}
+            </div>
+            <textarea
+              className={`${styles.textarea} ${styles.actionTextarea}`}
+              value={strategyText}
+              onChange={(event) => onChange({ closingStrategyMode: 'custom' as ClosingStrategyMode, closingStrategyCustom: event.target.value })}
+              rows={11}
+            />
+            <p className={styles.helper}>
+              {strategyIsCustom
+                ? 'El agente sigue esta estrategia editada. Con "Volver al preestablecido" recuperas la del sistema.'
+                : 'Esta es la estrategia exacta del sistema. Puedes editarla directamente: al cambiar cualquier letra se vuelve personalizada.'}
+            </p>
+          </div>
+
+          <div className={styles.section}>
+            <h3 className={styles.sectionTitle}>Datos mínimos antes de cumplir el objetivo</h3>
+            <textarea
+              className={styles.textarea}
+              value={agent.requiredData}
+              placeholder={'Opcional. Ejemplo:\n- Nombre completo\n- Qué servicio le interesa\n- Para cuándo lo necesita'}
+              onChange={(event) => onChange({ requiredData: event.target.value })}
+              rows={4}
+            />
+            <p className={styles.helper}>
+              El agente los pide de uno en uno y los guarda en el contacto. No pidas datos que ya existen: los lee solo.
+            </p>
+          </div>
+
+          <div className={styles.section}>
+            <h3 className={styles.sectionTitle}>Casos que siempre van con un humano</h3>
+            <textarea
+              className={styles.textarea}
+              value={agent.handoffRules}
+              placeholder={'Opcional. Además de quejas, temas delicados, confusión fuerte e insultos (ya incluidos), agrega los tuyos:\n- Preguntas de facturación\n- Urgencias médicas'}
+              onChange={(event) => onChange({ handoffRules: event.target.value })}
+              rows={4}
+            />
+          </div>
+
+          <div className={styles.section}>
+            <h3 className={styles.sectionTitle}>Instrucciones extra del negocio</h3>
+            <textarea
+              className={styles.textarea}
+              value={agent.extraInstructions}
+              placeholder="Opcional. Reglas, promociones vigentes con justificante real, formas de hablar del negocio, etc."
+              onChange={(event) => onChange({ extraInstructions: event.target.value })}
+              rows={5}
+            />
+            <label className={styles.inlineToggle}>
+              <input
+                type="checkbox"
+                checked={agent.allowEmojis}
+                onChange={(event) => onChange({ allowEmojis: event.target.checked })}
+              />
+              <span>Permitir emojis en las respuestas</span>
+            </label>
+          </div>
+
+          <div className={styles.section}>
+            <div className={styles.sectionHeading}>
+              <Play size={17} />
+              <h3 className={styles.sectionTitle}>Probar este agente</h3>
+            </div>
+            <p className={styles.helper}>
+              Conversación simulada con la configuración de arriba. No envía WhatsApp, no crea citas ni cambia estados:
+              las acciones internas se muestran marcadas con ⚙︎.
+            </p>
+
+            <div className={styles.testChatBox}>
+              {testMessages.length === 0 && (
+                <p className={styles.testChatEmpty}>Escribe como si fueras un prospecto para ver cómo responde.</p>
+              )}
+              {testMessages.map((message, index) => (
+                <div
+                  key={index}
+                  className={`${styles.testChatMessage} ${message.role === 'user' ? styles.testChatUser : styles.testChatAssistant} ${message.internal ? styles.testChatInternal : ''}`}
+                >
+                  {message.content}
+                </div>
+              ))}
+              {testing && <div className={`${styles.testChatMessage} ${styles.testChatAssistant}`}>Escribiendo…</div>}
+            </div>
+
+            <div className={styles.testChatComposer}>
+              <input
+                className={styles.input}
+                value={testInput}
+                placeholder="Mensaje del prospecto..."
+                onChange={(event) => setTestInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault()
+                    handleSendTestMessage()
+                  }
+                }}
+                disabled={testing}
+              />
+              <button
+                type="button"
+                className={styles.inlineActionButton}
+                onClick={handleSendTestMessage}
+                disabled={testing || !testInput.trim()}
+              >
+                <Send size={14} />
+                Enviar
+              </button>
+              {testMessages.length > 0 && (
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  onClick={() => setTestMessages([])}
+                  aria-label="Limpiar conversación de prueba"
+                  disabled={testing}
+                >
+                  <Trash2 size={15} />
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </Card>
+  )
+}
+
+export const ConversationalAgentSettings: React.FC = () => {
+  const { showToast, showConfirm } = useNotification()
+  const [config, setConfig] = useState<ConversationalAgentConfig | null>(null)
+  const [agents, setAgents] = useState<ConversationalAgentDef[]>([])
+  const [calendars, setCalendars] = useState<Calendar[]>([])
+  const [loading, setLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const saveTimersRef = useRef<Map<string, number>>(new Map())
+  const agentsRef = useRef<ConversationalAgentDef[]>([])
+  agentsRef.current = agents
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      setLoading(true)
+      try {
+        const [nextConfig, nextAgents, calendarList] = await Promise.all([
+          conversationalAgentService.getConfig(),
+          conversationalAgentService.listAgents(),
+          calendarsService.getCalendars()
+        ])
+        if (cancelled) return
+        setConfig(nextConfig)
+        setAgents(nextAgents)
+        setCalendars(calendarList.filter((cal) => cal.isActive !== false))
+        if (nextAgents.length === 1) {
+          setExpandedIds(new Set([nextAgents[0].id]))
+        }
+      } catch (error: any) {
+        if (!cancelled) {
+          showToast('error', 'Error', error?.message || 'No se pudo cargar el agente conversacional')
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [showToast])
+
+  useEffect(() => {
+    const timers = saveTimersRef.current
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer))
+      timers.clear()
+    }
+  }, [])
+
+  const scheduleAgentSave = useCallback((agentId: string) => {
+    const timers = saveTimersRef.current
+    const existing = timers.get(agentId)
+    if (existing) window.clearTimeout(existing)
+    timers.set(agentId, window.setTimeout(async () => {
+      timers.delete(agentId)
+      const agent = agentsRef.current.find((item) => item.id === agentId)
+      if (!agent) return
+      try {
+        await conversationalAgentService.updateAgent(agentId, agentToInput(agent))
+      } catch (error: any) {
+        showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración del agente')
+      }
+    }, AUTOSAVE_DELAY_MS))
+  }, [showToast])
+
+  const handleAgentChange = (agentId: string, patch: ConversationalAgentDefInput) => {
+    setAgents((current) => current.map((agent) => (agent.id === agentId ? { ...agent, ...patch } as ConversationalAgentDef : agent)))
+    scheduleAgentSave(agentId)
+  }
+
+  const handleGlobalChange = async (patch: { enabled?: boolean; hideAttended?: boolean }) => {
+    try {
+      const next = await conversationalAgentService.saveConfig(patch)
+      setConfig(next)
+    } catch (error: any) {
+      showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración')
+    }
+  }
+
+  const handleCreateAgent = async () => {
+    setCreating(true)
+    try {
+      const agent = await conversationalAgentService.createAgent({ name: `Agente ${agents.length + 1}` })
+      setAgents((current) => [...current, agent])
+      setExpandedIds((current) => new Set([...current, agent.id]))
+    } catch (error: any) {
+      showToast('error', 'No se pudo crear', error?.message || 'Error al crear el agente')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleDeleteAgent = (agent: ConversationalAgentDef) => {
+    showConfirm(
+      `Eliminar "${agent.name}"`,
+      'Las conversaciones que atendía quedarán libres para que otro agente (o un humano) las tome.',
+      async () => {
+        try {
+          await conversationalAgentService.deleteAgent(agent.id)
+          setAgents((current) => current.filter((item) => item.id !== agent.id))
+        } catch (error: any) {
+          showToast('error', 'No se pudo eliminar', error?.message || 'Error al eliminar el agente')
+        }
+      },
+      'Eliminar',
+      'Cancelar'
+    )
+  }
+
+  const systemStrategy = config?.systemClosingStrategy || ''
+
+  return (
+    <div className={styles.container}>
+      <Card>
         <div className={styles.header}>
           <div className={styles.headerLeft}>
             <div className={styles.iconBox}>
@@ -224,7 +689,7 @@ export const ConversationalAgentSettings: React.FC = () => {
             <div>
               <h2 className={styles.title}>Agente conversacional</h2>
               <p className={styles.description}>
-                Atiende los chats de WhatsApp con datos reales del negocio y lleva al prospecto al objetivo.
+                Atiende los chats con datos reales del negocio. Crea varios agentes con objetivos y filtros de entrada distintos.
               </p>
             </div>
           </div>
@@ -232,255 +697,67 @@ export const ConversationalAgentSettings: React.FC = () => {
             <label className={styles.inlineToggle}>
               <input
                 type="checkbox"
-                checked={form.enabled}
-                onChange={(event) => updateField('enabled', event.target.checked)}
-                disabled={loading}
+                checked={Boolean(config?.enabled)}
+                disabled={loading || !config}
+                onChange={(event) => handleGlobalChange({ enabled: event.target.checked })}
               />
               <span>
                 <Bot size={16} />
-                {form.enabled ? 'Agente activado' : 'Agente desactivado'}
+                {config?.enabled ? 'Activado' : 'Desactivado'}
               </span>
             </label>
+            <Button onClick={handleCreateAgent} loading={creating} disabled={loading || creating}>
+              <Plus size={16} />
+              Nuevo agente
+            </Button>
           </div>
         </div>
 
-        <div className={`${styles.saveStatus} ${saveState === 'error' ? styles.saveStatusError : saveState === 'pending' || saveState === 'saving' ? styles.saveStatusWorking : styles.saveStatusSaved}`}>
-          <span className={styles.saveDot} />
-          {saveStatusText}
-        </div>
-
-        <div className={styles.settingsGrid}>
-          <div className={styles.field}>
-            <label className={styles.label}>Objetivo principal</label>
-            <CustomSelect
-              value={form.objective}
-              onChange={(event) => updateField('objective', event.target.value as ConversationalObjective)}
-              disabled={loading}
-            >
-              {objectiveOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </CustomSelect>
-            <p className={styles.helper}>{selectedObjective.description}</p>
-          </div>
-
-          <div className={styles.field}>
-            <label className={styles.label}>Cuando cumpla el objetivo</label>
-            <CustomSelect
-              value={form.successAction}
-              onChange={(event) => updateField('successAction', event.target.value as ConversationalSuccessAction)}
-              disabled={loading}
-            >
-              {successActionOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </CustomSelect>
-            <p className={styles.helper}>{selectedAction.description}</p>
-          </div>
-
-          {form.successAction === 'book_appointment' && (
-            <div className={styles.field}>
-              <label className={styles.label}>Calendario preferido</label>
-              <CustomSelect
-                value={form.defaultCalendarId || ''}
-                onChange={(event) => updateField('defaultCalendarId', event.target.value || null)}
-                disabled={loading}
-              >
-                <option value="">El agente elige entre los calendarios activos</option>
-                {calendars.map((calendar) => (
-                  <option key={calendar.id} value={calendar.id}>
-                    {calendar.name}
-                  </option>
-                ))}
-              </CustomSelect>
-              <p className={styles.helper}>
-                Solo agenda con la disponibilidad real de tus calendarios; nunca inventa horarios.
-              </p>
-            </div>
-          )}
-        </div>
-
-        {form.objective === 'custom' && (
-          <div className={styles.section}>
-            <h3 className={styles.sectionTitle}>Objetivo personalizado</h3>
-            <textarea
-              className={styles.textarea}
-              value={form.customObjective}
-              placeholder="Ejemplo: que la persona pida una propuesta formal para su empresa."
-              onChange={(event) => updateField('customObjective', event.target.value)}
-              disabled={loading}
-              rows={3}
-            />
-          </div>
-        )}
-
-        <div className={styles.section}>
-          <h3 className={styles.sectionTitle}>Estrategia de cierre</h3>
-          <p className={styles.helper}>
-            El paso a paso que el agente sigue para llevar la conversación al objetivo y manejar objeciones.
-          </p>
-          <div className={styles.field}>
-            <CustomSelect
-              value={form.closingStrategyMode}
-              onChange={(event) => updateField('closingStrategyMode', event.target.value as ClosingStrategyMode)}
-              disabled={loading}
-            >
-              <option value="system">Predeterminada del sistema</option>
-              <option value="custom">Personalizada</option>
-            </CustomSelect>
-          </div>
-          {form.closingStrategyMode === 'system' ? (
-            <>
-              <pre className={styles.systemPromptBox}>{form.systemClosingStrategy || 'Cargando estrategia del sistema...'}</pre>
-              <p className={styles.helper}>
-                Esta es la estrategia exacta que usa el agente. Para cambiarla, elige "Personalizada" y escribe la tuya.
-              </p>
-            </>
-          ) : (
-            <>
-              <textarea
-                className={`${styles.textarea} ${styles.actionTextarea}`}
-                value={form.closingStrategyCustom}
-                placeholder={'Escribe el paso a paso que debe seguir el agente. Ejemplo:\n\n1. Pregunta qué busca resolver la persona.\n2. Si pregunta el valor, dáselo y pregunta qué resultado espera.\n3. Aporta una recomendación breve según su caso.\n4. Si muestra intención real, ejecuta la acción de avance.\n\nManejo de objeciones:\n- "Está caro" → pregunta qué le hace más ruido, el valor o no saber si le sirve.'}
-                onChange={(event) => updateField('closingStrategyCustom', event.target.value)}
-                disabled={loading}
-                rows={10}
-              />
-              <p className={styles.helper}>
-                {form.closingStrategyCustom.trim()
-                  ? 'El agente seguirá esta estrategia en lugar de la predeterminada.'
-                  : 'Si la dejas vacía, el agente usará la estrategia predeterminada del sistema.'}
-              </p>
-            </>
-          )}
-        </div>
-
-        <div className={styles.section}>
-          <h3 className={styles.sectionTitle}>Datos mínimos antes de cumplir el objetivo</h3>
-          <textarea
-            className={styles.textarea}
-            value={form.requiredData}
-            placeholder={'Opcional. Ejemplo:\n- Nombre completo\n- Qué servicio le interesa\n- Para cuándo lo necesita'}
-            onChange={(event) => updateField('requiredData', event.target.value)}
-            disabled={loading}
-            rows={4}
+        <label className={styles.inlineToggle}>
+          <input
+            type="checkbox"
+            checked={Boolean(config?.hideAttended)}
+            disabled={loading || !config}
+            onChange={(event) => handleGlobalChange({ hideAttended: event.target.checked })}
           />
+          <span>Ocultar conversaciones atendidas por el agente (reaparecen al cumplir el objetivo o al necesitar humano)</span>
+        </label>
+      </Card>
+
+      {loading && (
+        <Card>
+          <p className={styles.helper}>Cargando agentes...</p>
+        </Card>
+      )}
+
+      {!loading && agents.length === 0 && (
+        <Card>
           <p className={styles.helper}>
-            El agente los pide de uno en uno y los guarda en el contacto. No pidas datos que ya existen: el agente los lee solo.
+            Aún no tienes agentes conversacionales. Crea el primero con "Nuevo agente": cada uno es un contenedor con su
+            objetivo, estrategia y filtros de entrada.
           </p>
-        </div>
+        </Card>
+      )}
 
-        <div className={styles.section}>
-          <h3 className={styles.sectionTitle}>Casos que siempre van con un humano</h3>
-          <textarea
-            className={styles.textarea}
-            value={form.handoffRules}
-            placeholder={'Opcional. Además de quejas, temas delicados, confusión fuerte e insultos (ya incluidos), agrega los tuyos:\n- Preguntas de facturación\n- Urgencias médicas'}
-            onChange={(event) => updateField('handoffRules', event.target.value)}
-            disabled={loading}
-            rows={4}
-          />
-        </div>
-
-        <div className={styles.section}>
-          <h3 className={styles.sectionTitle}>Instrucciones extra del negocio</h3>
-          <textarea
-            className={styles.textarea}
-            value={form.extraInstructions}
-            placeholder="Opcional. Reglas, promociones vigentes con justificante real, formas de hablar del negocio, etc."
-            onChange={(event) => updateField('extraInstructions', event.target.value)}
-            disabled={loading}
-            rows={5}
-          />
-        </div>
-
-        <div className={styles.section}>
-          <h3 className={styles.sectionTitle}>Comportamiento</h3>
-          <label className={styles.inlineToggle}>
-            <input
-              type="checkbox"
-              checked={form.allowEmojis}
-              onChange={(event) => updateField('allowEmojis', event.target.checked)}
-              disabled={loading}
-            />
-            <span>Permitir emojis en las respuestas</span>
-          </label>
-          <label className={styles.inlineToggle}>
-            <input
-              type="checkbox"
-              checked={form.hideAttended}
-              onChange={(event) => updateField('hideAttended', event.target.checked)}
-              disabled={loading}
-            />
-            <span>Ocultar conversaciones atendidas por el agente (reaparecen al cumplir el objetivo o al necesitar humano)</span>
-          </label>
-        </div>
-
-        <div className={styles.section}>
-          <div className={styles.sectionHeading}>
-            <Play size={17} />
-            <h3 className={styles.sectionTitle}>Probar el agente</h3>
-          </div>
-          <p className={styles.helper}>
-            Conversación simulada con la configuración de arriba. No envía WhatsApp, no crea citas ni cambia estados:
-            las acciones internas se muestran marcadas con ⚙︎.
-          </p>
-
-          <div className={styles.testChatBox}>
-            {testMessages.length === 0 && (
-              <p className={styles.testChatEmpty}>Escribe como si fueras un prospecto para ver cómo responde.</p>
-            )}
-            {testMessages.map((message, index) => (
-              <div
-                key={index}
-                className={`${styles.testChatMessage} ${message.role === 'user' ? styles.testChatUser : styles.testChatAssistant} ${message.internal ? styles.testChatInternal : ''}`}
-              >
-                {message.content}
-              </div>
-            ))}
-            {testing && <div className={`${styles.testChatMessage} ${styles.testChatAssistant}`}>Escribiendo…</div>}
-          </div>
-
-          <div className={styles.testChatComposer}>
-            <input
-              className={styles.input}
-              value={testInput}
-              placeholder="Mensaje del prospecto..."
-              onChange={(event) => setTestInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault()
-                  handleSendTestMessage()
-                }
-              }}
-              disabled={loading || testing}
-            />
-            <button
-              type="button"
-              className={styles.inlineActionButton}
-              onClick={handleSendTestMessage}
-              disabled={loading || testing || !testInput.trim()}
-            >
-              <Send size={14} />
-              Enviar
-            </button>
-            {testMessages.length > 0 && (
-              <button
-                type="button"
-                className={styles.iconButton}
-                onClick={() => setTestMessages([])}
-                aria-label="Limpiar conversación de prueba"
-                disabled={testing}
-              >
-                <Trash2 size={15} />
-              </button>
-            )}
-          </div>
-      </div>
-    </Card>
+      {agents.map((agent) => (
+        <AgentCard
+          key={agent.id}
+          agent={agent}
+          calendars={calendars}
+          systemStrategy={systemStrategy}
+          expanded={expandedIds.has(agent.id)}
+          onToggleExpanded={() => {
+            setExpandedIds((current) => {
+              const next = new Set(current)
+              if (next.has(agent.id)) next.delete(agent.id)
+              else next.add(agent.id)
+              return next
+            })
+          }}
+          onChange={(patch) => handleAgentChange(agent.id, patch)}
+          onDelete={() => handleDeleteAgent(agent)}
+        />
+      ))}
+    </div>
   )
 }

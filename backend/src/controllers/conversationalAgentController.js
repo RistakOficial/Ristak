@@ -8,7 +8,11 @@ import {
   setConversationStatus,
   clearConversationSignal,
   listConversationStates,
-  listConversationalAgentEvents
+  listConversationalAgentEvents,
+  listConversationalAgents,
+  createConversationalAgent,
+  updateConversationalAgent,
+  deleteConversationalAgent
 } from '../services/conversationalAgentService.js'
 import { runConversationalAgentPreview } from '../agents/conversational/runner.js'
 import { DEFAULT_CLOSING_STRATEGY } from '../agents/conversational/prompt.js'
@@ -112,12 +116,56 @@ export async function testAgent(req, res) {
   try {
     const result = await runConversationalAgentPreview({
       messages: req.body?.messages,
-      configOverride: req.body?.config || null
+      configOverride: req.body?.config || null,
+      agentId: req.body?.agentId || null
     })
     res.json({ success: true, data: result })
   } catch (error) {
     logger.error('Error en prueba del agente conversacional:', error)
     res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al probar el agente conversacional' })
+  }
+}
+
+export async function listAgents(req, res) {
+  try {
+    const agents = await listConversationalAgents()
+    res.json({ success: true, data: agents })
+  } catch (error) {
+    logger.error('Error listando agentes conversacionales:', error)
+    res.status(500).json({ success: false, error: 'Error al listar los agentes conversacionales' })
+  }
+}
+
+export async function createAgent(req, res) {
+  try {
+    const agent = await createConversationalAgent(req.body || {})
+    res.status(201).json({ success: true, data: agent })
+  } catch (error) {
+    logger.error('Error creando agente conversacional:', error)
+    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al crear el agente' })
+  }
+}
+
+export async function updateAgent(req, res) {
+  try {
+    const agent = await updateConversationalAgent(req.params?.agentId, req.body || {})
+    res.json({ success: true, data: agent })
+  } catch (error) {
+    logger.error('Error actualizando agente conversacional:', error)
+    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al actualizar el agente' })
+  }
+}
+
+export async function deleteAgent(req, res) {
+  try {
+    const removed = await deleteConversationalAgent(req.params?.agentId)
+    if (!removed) {
+      return res.status(404).json({ success: false, error: 'Agente conversacional no encontrado' })
+    }
+    res.json({ success: true })
+  } catch (error) {
+    logger.error('Error eliminando agente conversacional:', error)
+    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al eliminar el agente' })
   }
 }
 
