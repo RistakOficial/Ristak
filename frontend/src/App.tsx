@@ -9,6 +9,8 @@ import { LabelsProvider } from '@/contexts/LabelsContext'
 import { usePhoneTheme, usePhoneWakeLock } from '@/hooks'
 import { AppShell } from '@/components/layout/AppShell'
 import { Dashboard } from '@/pages/Dashboard'
+import { Initialization } from '@/pages/Initialization'
+import { useInitialization } from '@/contexts/InitializationContext'
 import { Reports } from '@/pages/Reports'
 import { Campaigns } from '@/pages/Campaigns'
 import { Transactions } from '@/pages/Transactions'
@@ -245,6 +247,29 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   }
 
   return <>{children}</>
+}
+
+// Redirección de la raíz (/): mientras el onboarding de integraciones no esté
+// completo (ni oculto), se lleva al usuario a /initialization; si ya está dado
+// de alta, va al dashboard. Se monta dentro del AppShell (InitializationProvider).
+const HomeRedirect: React.FC = () => {
+  const { loading, isInitialized } = useInitialization()
+
+  if (loading) {
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '60vh',
+        color: 'var(--color-text-tertiary)'
+      }}>
+        Cargando...
+      </div>
+    )
+  }
+
+  return <Navigate to={isInitialized ? '/dashboard' : '/initialization'} replace />
 }
 
 const PhoneRouteEffects: React.FC = () => {
@@ -677,7 +702,8 @@ const AppWithNotifications: React.FC = () => {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route index element={<HomeRedirect />} />
+            <Route path="initialization/*" element={<Initialization />} />
             <Route path="dashboard/*" element={<Dashboard />} />
             <Route path="reports/*" element={<Reports />} />
             <Route path="campaigns/*" element={<Campaigns />} />

@@ -17,12 +17,14 @@ import {
   LogOut,
   Moon,
   Palette,
+  Rocket,
   Sun
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { useAppConfig, useAppVersion, useIsRenderDomain } from '@/hooks'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/contexts/AuthContext'
+import { useInitialization } from '@/contexts/InitializationContext'
 import { settingsNavigation } from '@/pages/Settings/settingsNav'
 import {
   DndContext,
@@ -77,6 +79,15 @@ const analyticsNavigation: NavItem = {
   name: 'Analíticas',
   href: '/analytics',
   icon: BarChart3
+}
+
+// La pestaña de Inicialización siempre va primera y solo se muestra mientras el
+// onboarding de integraciones no esté completo (o el usuario no lo haya ocultado).
+const initializationNavigation: NavItem = {
+  id: 'initialization',
+  name: 'Inicialización',
+  href: '/initialization',
+  icon: Rocket
 }
 
 const getNavigationItems = (_showAnalytics: boolean, _isRenderDomain: boolean): NavItem[] => {
@@ -327,6 +338,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
     designPresets
   } = useTheme()
   const { user } = useAuth()
+  const { isInitialized } = useInitialization()
   const [analyticsEnabled] = useAppConfig<boolean>('show_analytics', false)
   const [sidebarOrder, setSidebarOrder] = useAppConfig<string[]>('sidebar_navigation_order', [])
   const isRenderDomain = useIsRenderDomain() // Detectar si es dominio .onrender.com
@@ -457,11 +469,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
     }
   }, [showUserMenu])
 
+  // Prepone Inicialización (siempre primero) cuando el onboarding no está completo.
+  const withInitialization = (items: NavItem[]): NavItem[] =>
+    isInitialized ? items : [initializationNavigation, ...items]
+
   useEffect(() => {
     const showAnalytics = Boolean(analyticsEnabled)
     const items = getNavigationItems(showAnalytics, isRenderDomain)
-    setNavigation(applyOrder(items, sidebarOrder))
-  }, [analyticsEnabled, sidebarOrder, isRenderDomain])
+    setNavigation(withInitialization(applyOrder(items, sidebarOrder)))
+  }, [analyticsEnabled, sidebarOrder, isRenderDomain, isInitialized])
 
   useEffect(() => {
     const handleAnalyticsChange = (event: Event) => {
@@ -469,7 +485,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
       if (typeof customEvent.detail?.showAnalytics === 'boolean') {
         const showAnalytics = customEvent.detail.showAnalytics
         const items = getNavigationItems(showAnalytics, isRenderDomain)
-        setNavigation(applyOrder(items, sidebarOrder))
+        setNavigation(withInitialization(applyOrder(items, sidebarOrder)))
       }
     }
 
@@ -478,7 +494,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
     return () => {
       window.removeEventListener('analytics-preference-changed', handleAnalyticsChange)
     }
-  }, [sidebarOrder, isRenderDomain])
+  }, [sidebarOrder, isRenderDomain, isInitialized])
 
   const handleDragStart = (event: DragStartEvent) => {
     if (!isEditMode) {

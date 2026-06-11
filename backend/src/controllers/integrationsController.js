@@ -2,6 +2,8 @@ import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
+import { getAIAgentStatus } from '../services/aiAgentService.js';
+import { getGoogleCalendarConfig } from '../services/googleCalendarService.js';
 
 // La verificación del token contra la API de HighLevel es costosa y este
 // endpoint se consulta varias veces por carga de página. Se cachea el
@@ -90,20 +92,71 @@ export const getStatus = async (req, res) => {
     }
 
     const metaConfig = await db.get(
-      'SELECT ad_account_id, access_token, pixel_id FROM meta_config LIMIT 1'
+      'SELECT ad_account_id, access_token, pixel_id, page_id, instagram_account_id FROM meta_config LIMIT 1'
     );
 
     const metaStatus = {
       configured: Boolean(metaConfig?.ad_account_id && metaConfig?.access_token),
       connected: Boolean(metaConfig?.ad_account_id && metaConfig?.access_token),
       adAccountId: metaConfig?.ad_account_id || null,
-      pixelId: metaConfig?.pixel_id || null
+      pixelId: metaConfig?.pixel_id || null,
+      pageId: metaConfig?.page_id || null,
+      instagramAccountId: metaConfig?.instagram_account_id || null
     };
+
+    // WhatsApp: se lee directo de app_config (ligero) para no disparar el
+    // status completo, que es costoso. Conectado = habilitado + API key + webhook.
+    let whatsappStatus = { configured: false, connected: false };
+    try {
+      const waRows = await db.all(
+        `SELECT config_key, config_value FROM app_config
+         WHERE config_key IN ('whatsapp_api_enabled', 'whatsapp_api_key', 'whatsapp_api_webhook_endpoint_id')`
+      );
+      const wa = {};
+      for (const row of waRows || []) wa[row.config_key] = row.config_value;
+      const enabled = wa['whatsapp_api_enabled'] !== '0';
+      const hasApiKey = Boolean(wa['whatsapp_api_key']);
+      const hasWebhook = Boolean(wa['whatsapp_api_webhook_endpoint_id']);
+      whatsappStatus = {
+        configured: hasApiKey,
+        connected: Boolean(enabled && hasApiKey && hasWebhook)
+      };
+    } catch (error) {
+      logger.warn(`Error obteniendo estado de WhatsApp: ${error.message}`);
+    }
+
+    // OpenAI (Agente AI)
+    let openaiStatus = { configured: false, connected: false };
+    try {
+      const aiStatus = await getAIAgentStatus({});
+      openaiStatus = {
+        configured: Boolean(aiStatus?.configured),
+        connected: Boolean(aiStatus?.configured),
+        credentialStatus: aiStatus?.credentialStatus || 'missing'
+      };
+    } catch (error) {
+      logger.warn(`Error obteniendo estado de OpenAI: ${error.message}`);
+    }
+
+    // Google Calendar
+    let googleCalendarStatus = { configured: false, connected: false };
+    try {
+      const calConfig = await getGoogleCalendarConfig();
+      googleCalendarStatus = {
+        configured: Boolean(calConfig?.connected),
+        connected: Boolean(calConfig?.connected)
+      };
+    } catch (error) {
+      logger.warn(`Error obteniendo estado de Google Calendar: ${error.message}`);
+    }
 
     // Respuesta con estructura mejorada
     res.json({
       highlevel: highlevelStatus,
-      meta: metaStatus
+      meta: metaStatus,
+      whatsapp: whatsappStatus,
+      openai: openaiStatus,
+      googleCalendar: googleCalendarStatus
     });
 
   } catch (error) {
@@ -120,6 +173,9 @@ export const getStatus = async (req, res) => {
         connected: false,
         configured: false
       },
+      whatsapp: { configured: false, connected: false },
+      openai: { configured: false, connected: false },
+      googleCalendar: { configured: false, connected: false },
       error: 'Error al obtener estado de integraciones'
     });
   }

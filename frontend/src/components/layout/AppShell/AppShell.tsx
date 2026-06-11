@@ -6,6 +6,7 @@ import { Header } from '@/components/layout/Header'
 import { SyncProgressBar } from '@/components/common/SyncProgressBar'
 import { AIAgentPanel } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
+import { InitializationProvider } from '@/contexts/InitializationContext'
 import { useAppConfig, useDomainFeatureSync } from '@/hooks'
 import { requestAIAgentClose } from '@/utils/aiAgentEvents'
 import { HIGHLEVEL_SYNC_STARTED_EVENT } from '@/services/highLevelService'
@@ -231,7 +232,7 @@ export const AppShell: React.FC = () => {
   } as React.CSSProperties
 
   return (
-    <>
+    <InitializationProvider>
       {syncProgressVisible && <SyncProgressBar onClose={handleProgressBarClose} />}
 
       <div
@@ -275,6 +276,6 @@ export const AppShell: React.FC = () => {
           </div>
         )}
       </div>
-    </>
+    </InitializationProvider>
   )
 }
