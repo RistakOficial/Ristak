@@ -5,6 +5,7 @@ import { Costs } from './Costs'
 import { PaymentsConfiguration } from './PaymentsConfiguration'
 import { MetaAdsIntegration } from './MetaAdsIntegration'
 import { WhatsAppSettings } from './WhatsAppSettings'
+import { EmailSettings } from './EmailSettings'
 import { WebTracking } from './WebTracking'
 import { CalendarsConfiguration } from './CalendarsConfiguration'
 import { AccountSettings } from './AccountSettings'
@@ -29,6 +30,7 @@ export const Settings: React.FC = () => {
             <Route path="costs/*" element={<Costs />} />
             <Route path="meta-ads/*" element={<MetaAdsIntegration />} />
             <Route path="whatsapp/*" element={<WhatsAppSettings />} />
+            <Route path="email" element={<EmailSettings />} />
             <Route path="calendars/*" element={<CalendarsConfiguration />} />
             <Route path="tracking/*" element={<WebTracking />} />
             <Route path="domains/*" element={<Domains />} />

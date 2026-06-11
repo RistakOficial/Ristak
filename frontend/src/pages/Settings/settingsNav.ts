@@ -14,6 +14,7 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/highlevel', label: 'HighLevel' },
   { to: '/settings/meta-ads', label: 'Meta' },
   { to: '/settings/whatsapp', label: 'WhatsApp' },
+  { to: '/settings/email', label: 'Correos' },
   { to: '/settings/tracking', label: 'Rastreo Web' },
   { to: '/settings/domains', label: 'Dominios' },
   { to: '/settings/costs', label: 'Costos' },

@@ -45,6 +45,7 @@ import searchRoutes from './routes/search.routes.js'
 import externalRoutes from './routes/external.routes.js'
 import mcpRoutes from './routes/mcp.routes.js'
 import whatsappApiRoutes from './routes/whatsappApi.routes.js'
+import emailRoutes from './routes/email.routes.js'
 import productsRoutes from './routes/products.routes.js'
 import sitesRoutes from './routes/sites.routes.js'
 import automationsRoutes from './routes/automations.routes.js'
@@ -127,6 +128,7 @@ app.use('/api/search', searchRoutes)
 app.use('/api/external', externalRoutes)
 app.use('/api/mcp', mcpRoutes)
 app.use('/api/whatsapp-api', requireFeature('whatsapp'), whatsappApiRoutes)
+app.use('/api/email', emailRoutes)
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
 
