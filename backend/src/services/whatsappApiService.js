@@ -8,6 +8,7 @@ import fetch from 'node-fetch'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { findContactByPhoneCandidates } from './contactIdentityService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
+import { maybeConfirmAppointmentFromReply } from './appointmentConfirmationService.js'
 import {
   QR_CONSENT_TEXT,
   disconnectWhatsAppQrConnection,
@@ -3427,6 +3428,13 @@ export async function captureQrChatMessage({
   }
 
   if (cleanDirection === 'inbound' && result.isNew) {
+    await maybeConfirmAppointmentFromReply({
+      contactId: result.contactId,
+      text: result.messageText
+    }).catch(error => {
+      logger.warn(`[Citas] No se pudo evaluar confirmación automática (QR): ${error.message}`)
+    })
+
     await sendChatMessageNotification({
       contactId: result.contactId,
       contactName: result.contactName,
@@ -3742,6 +3750,15 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
       payload?.whatsappMessage
       ? await processWhatsAppMessageEventPayload({ payload, businessPhoneHints })
       : []
+
+    await Promise.all(messageResults
+      .filter(result => result?.direction === 'inbound' && result?.isNew !== false)
+      .map(result => maybeConfirmAppointmentFromReply({
+        contactId: result.contactId,
+        text: result.messageText
+      }).catch(error => {
+        logger.warn(`[Citas] No se pudo evaluar confirmación automática: ${error.message}`)
+      })))
 
     await Promise.all(messageResults
       .filter(result => result?.direction === 'inbound' && result?.isNew !== false)

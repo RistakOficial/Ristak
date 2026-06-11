@@ -8222,6 +8222,47 @@ function safeUrl(value) {
   }
 }
 
+// Watch/share URLs (YouTube, Vimeo, Loom, Wistia) refuse to load inside an
+// iframe; convert them to their embeddable player URL.
+function normalizeVideoEmbedUrl(value) {
+  const wistiaMediaId = getWistiaMediaIdFromValue(value)
+  if (wistiaMediaId) return buildWistiaIframeUrl(wistiaMediaId)
+
+  const url = safeUrl(value)
+  if (!url) return ''
+
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase()
+    const pathParts = parsed.pathname.split('/').filter(Boolean)
+
+    if (host === 'youtu.be' && pathParts[0]) {
+      return `https://www.youtube.com/embed/${encodeURIComponent(pathParts[0])}`
+    }
+
+    if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
+      const videoId = parsed.searchParams.get('v')
+        || (pathParts[0] === 'shorts' ? pathParts[1] : '')
+        || (pathParts[0] === 'embed' ? pathParts[1] : '')
+      return videoId ? `https://www.youtube.com/embed/${encodeURIComponent(videoId)}` : url
+    }
+
+    if (host.endsWith('vimeo.com')) {
+      const videoId = pathParts[0] === 'video' ? pathParts[1] : pathParts[0]
+      return videoId && /^\d+$/.test(videoId) ? `https://player.vimeo.com/video/${encodeURIComponent(videoId)}` : url
+    }
+
+    if (host.endsWith('loom.com')) {
+      const videoId = pathParts[0] === 'embed' ? pathParts[1] : pathParts[0] === 'share' ? pathParts[1] : ''
+      return videoId ? `https://www.loom.com/embed/${encodeURIComponent(videoId)}` : url
+    }
+
+    return url
+  } catch {
+    return ''
+  }
+}
+
 function normalizePopupTrigger(theme = {}) {
   const trigger = cleanString(theme.popupTrigger ?? theme.popup_trigger)
   if (trigger === 'never' || trigger === 'delay' || trigger === 'exit_intent') return trigger
@@ -9843,9 +9884,9 @@ function renderContentBlock(block, context = {}) {
   }
 
   if (block.blockType === 'video') {
-    const videoUrl = safeUrl(settings.mediaUrl || block.content)
+    const videoUrl = normalizeVideoEmbedUrl(settings.mediaUrl || block.content)
     return videoUrl
-      ? `<div class="rstk-video"><iframe src="${escapeHtml(videoUrl)}" loading="lazy" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe></div>`
+      ? `<div class="rstk-video"><iframe src="${escapeHtml(videoUrl)}" loading="lazy" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
       : `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
   }
 

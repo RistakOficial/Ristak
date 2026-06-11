@@ -2811,6 +2811,17 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     }
   }
 
+  if (blockType === 'image' || blockType === 'video') {
+    // Media blocks start with no URL; using the label as content would render a
+    // broken relative src in the canvas/public page.
+    return {
+      blockType,
+      label,
+      content: '',
+      settings: blockSettings()
+    }
+  }
+
   if (blockType === 'embed') {
     return {
       blockType,
@@ -14447,16 +14458,20 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   }
 
   if (block.blockType === 'image') {
-    const mediaUrl = getSettingString(settings, 'mediaUrl') || block.content
+    const rawImageUrl = (getSettingString(settings, 'mediaUrl') || block.content || '').trim()
+    // Only real URLs: free text (e.g. the default "Imagen") would resolve as a relative path.
+    const mediaUrl = /^data:image\//i.test(rawImageUrl) || rawImageUrl.startsWith('/') ? rawImageUrl : safeEmbedUrl(rawImageUrl)
     return mediaUrl
       ? <figure className="rstk-media"><img src={mediaUrl} alt={block.label || 'Imagen'} loading="lazy" /></figure>
       : <div className="rstk-media rstk-media-empty">Imagen sin URL</div>
   }
 
   if (block.blockType === 'video') {
-    const videoUrl = getSettingString(settings, 'mediaUrl') || block.content
+    // Normalize watch/share URLs to embeddable players and drop anything that is
+    // not an absolute http(s) URL — a relative src would load the app itself.
+    const videoUrl = normalizeImportedVideoPreviewUrl(getSettingString(settings, 'mediaUrl') || block.content || '')
     return videoUrl
-      ? <div className="rstk-video"><iframe src={videoUrl} title={block.label || 'Video'} loading="lazy" allowFullScreen /></div>
+      ? <div className="rstk-video"><iframe src={videoUrl} title={block.label || 'Video'} loading="lazy" allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
       : <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
   }
 
