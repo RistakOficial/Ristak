@@ -54,10 +54,55 @@ export interface AutomationViewport {
   zoom: number
 }
 
+/** Configuración global del flujo (zona horaria, horarios, reingreso…) */
+export interface FlowSettings {
+  description?: string
+  /** Zona horaria global: los nodos (p. ej. Esperar) la heredan */
+  timezone: string
+  allowedSchedule: {
+    enabled: boolean
+    daysOfWeek: string[]
+    startTime: string
+    endTime: string
+    outsideWindowBehavior: 'wait_until_next_window' | 'continue_immediately' | 'pause_until_next_allowed_day'
+  }
+  /** Permitir que el contacto vuelva a entrar al flujo (default: activado) */
+  allowReentry: boolean
+  preventDuplicateActiveEnrollment: boolean
+  /** Sacar al contacto si responde por WhatsApp/Messenger/Instagram */
+  stopOnContactResponse: boolean
+  maxEnrollments?: number | null
+  defaultSenders: {
+    whatsappSenderId?: string
+    messengerPageId?: string
+    instagramAccountId?: string
+  }
+}
+
+export function defaultFlowSettings(): FlowSettings {
+  return {
+    description: '',
+    timezone: '',
+    allowedSchedule: {
+      enabled: false,
+      daysOfWeek: [],
+      startTime: '09:00',
+      endTime: '18:00',
+      outsideWindowBehavior: 'wait_until_next_window'
+    },
+    allowReentry: true,
+    preventDuplicateActiveEnrollment: true,
+    stopOnContactResponse: false,
+    maxEnrollments: null,
+    defaultSenders: {}
+  }
+}
+
 export interface AutomationFlow {
   nodes: AutomationNode[]
   edges: AutomationEdge[]
   viewport: AutomationViewport
+  settings?: FlowSettings
 }
 
 export interface AutomationSummary {

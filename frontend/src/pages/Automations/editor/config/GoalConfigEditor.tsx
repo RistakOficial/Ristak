@@ -2,6 +2,8 @@ import React from 'react'
 import { CustomSelect } from '@/components/common'
 import { CHANNEL_OPTIONS_WITH_ANY } from '../nodeRegistry'
 import { CatalogSelect, ConfigSection, DurationInput, Field, TextInput } from './configPrimitives'
+import { AdvancedConditionBuilder } from './AdvancedConditionBuilder'
+import type { AdvancedConditionConfig } from '../crmFields'
 
 /**
  * Configurador del nodo "Evento objetivo": una meta real (etiqueta, pago,
@@ -23,7 +25,8 @@ const GOAL_TYPES = [
   { value: 'conversation', label: 'Conversación' },
   { value: 'contact', label: 'Contacto / CRM' },
   { value: 'ads', label: 'Ads / campañas' },
-  { value: 'custom', label: 'Evento personalizado' }
+  { value: 'custom', label: 'Evento personalizado' },
+  { value: 'advanced', label: 'Condición avanzada (grupos Y/O)' }
 ]
 
 export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Config) => void }> = ({
@@ -345,6 +348,15 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
             />
           </Field>
         </>
+      )}
+
+      {goalType === 'advanced' && (
+        <ConfigSection title="El objetivo se cumple cuando el contacto cumple">
+          <AdvancedConditionBuilder
+            value={config.advancedCondition}
+            onChange={(advancedCondition: AdvancedConditionConfig) => set({ advancedCondition })}
+          />
+        </ConfigSection>
       )}
 
       {/* -------------------- evaluación y comportamiento -------------------- */}

@@ -1437,7 +1437,29 @@ async function syncLocalMessageTemplateFromYCloud(template) {
 }
 
 async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
-  for (const item of phoneNumbers.map(normalizePhoneNumberRecord)) {
+  const normalized = phoneNumbers.map(normalizePhoneNumberRecord)
+
+  // Cuando recibimos la lista COMPLETA desde YCloud (pruneMissing) borramos las
+  // filas en caché que YCloud ya no devuelve (números eliminados / WABA dado de baja),
+  // así no se quedan apareciendo números fantasma en la app. Protegemos los números
+  // que estén conectados por QR (WhatsApp Web), que no salen del API de YCloud.
+  if (options.pruneMissing) {
+    const keepIds = normalized.map(item => item.id).filter(Boolean)
+    const placeholders = keepIds.map(() => '?').join(', ')
+    const stale = await db.all(`
+      SELECT id, phone_number, verified_name
+      FROM whatsapp_api_phone_numbers
+      WHERE LOWER(COALESCE(qr_status, '')) NOT IN ('connected', 'reconnecting', 'restarting')
+        ${keepIds.length ? `AND id NOT IN (${placeholders})` : ''}
+    `, keepIds)
+
+    for (const row of stale) {
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [row.id])
+      logger.info(`WhatsApp API: número eliminado de YCloud, borrado de caché local: ${row.phone_number || row.id} (${row.verified_name || 'sin nombre'})`)
+    }
+  }
+
+  for (const item of normalized) {
     await db.run(`
       INSERT INTO whatsapp_api_phone_numbers (
         id, waba_id, phone_number, display_phone_number, verified_name,
@@ -2394,7 +2416,7 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       })
     ])
     const enrichedPhoneNumbers = await enrichPhoneNumbersWithProfiles(cleanApiKey, phoneNumbers)
-    await syncPhoneNumbers(enrichedPhoneNumbers)
+    await syncPhoneNumbers(enrichedPhoneNumbers, { pruneMissing: true })
     if (balance) await syncBalance(balance)
     await syncTemplates(templates)
     await syncYCloudContacts(ycloudContacts)
@@ -2471,7 +2493,7 @@ export async function refreshWhatsAppApi() {
       })
     ])
     const enrichedPhoneNumbers = await enrichPhoneNumbersWithProfiles(config.apiKey, phoneNumbers)
-    await syncPhoneNumbers(enrichedPhoneNumbers)
+    await syncPhoneNumbers(enrichedPhoneNumbers, { pruneMissing: true })
     if (config.phoneNumberId) {
       await setDefaultSenderPhoneNumber(config.phoneNumberId)
     }

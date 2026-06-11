@@ -73,7 +73,11 @@ export function normalizeFlow(rawFlow) {
     throw error
   }
 
-  const flow = { nodes, edges, viewport }
+  // Configuración global del flujo (zona horaria, horarios, reingreso…):
+  // se preserva tal cual, es un objeto flexible definido por el editor.
+  const settings = isPlainObject(rawFlow.settings) ? rawFlow.settings : undefined
+
+  const flow = settings ? { nodes, edges, viewport, settings } : { nodes, edges, viewport }
   const size = Buffer.byteLength(JSON.stringify(flow), 'utf8')
   if (size > MAX_FLOW_BYTES) {
     const error = new Error('El flujo de la automatización es demasiado grande para guardarse')
@@ -167,6 +171,31 @@ export function validateFlowForPublish(flow) {
     errors.push(
       `Canales no soportados en el flujo (${[...invalidChannels].join(', ')}): usa WhatsApp, Messenger o Instagram Direct`
     )
+  }
+
+  // Máximo 10 ramas (salidas distintas conectadas) por nodo
+  const handlesBySource = new Map()
+  edges.forEach((edge) => {
+    const set = handlesBySource.get(edge.sourceNodeId) || new Set()
+    set.add(edge.sourceHandle || 'out')
+    handlesBySource.set(edge.sourceNodeId, set)
+  })
+  for (const [, handles] of handlesBySource) {
+    if (handles.size > 10) {
+      errors.push('Máximo 10 ramas por paso')
+      break
+    }
+  }
+
+  // Horario global del flujo: si está activo necesita días y horas válidas
+  const schedule = flow?.settings?.allowedSchedule
+  if (isPlainObject(schedule) && schedule.enabled) {
+    if (!Array.isArray(schedule.daysOfWeek) || schedule.daysOfWeek.length === 0) {
+      errors.push('El horario del flujo necesita al menos un día permitido')
+    }
+    if (!schedule.startTime || !schedule.endTime) {
+      errors.push('El horario del flujo necesita hora de inicio y fin')
+    }
   }
 
   if (detectCycle(nodes, edges)) {

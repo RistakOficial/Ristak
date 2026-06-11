@@ -32,20 +32,25 @@ import {
 import { useNotification } from '@/contexts/NotificationContext'
 import automationsService, {
   AUTOMATION_STATUS_LABELS,
+  defaultFlowSettings,
   type Automation,
   type AutomationNode,
   type AutomationStatus,
-  type AutomationViewport
+  type AutomationViewport,
+  type FlowSettings
 } from '@/services/automationsService'
 import { AutomationCanvas, type PendingEdge, type PickerRequest } from './AutomationCanvas'
 import { StepPickerBubble, rememberRecentStep } from './StepPickerBubble'
 import { NodeConfigBubble } from './NodeConfigBubble'
+import { VariableCategoriesContext } from './composer/MessageComposer'
+import { Settings as SettingsIcon } from 'lucide-react'
 import {
   getNodeDefinition,
   type NodeDefinition,
   type NodeKind
 } from './nodeRegistry'
 import {
+  autoLayoutFlow,
   canConnect,
   connectNodes,
   createNode,
@@ -59,6 +64,8 @@ import {
   pruneInvalidEdges,
   removeNode
 } from './flowUtils'
+import { AutomationLeftNav } from './AutomationLeftNav'
+import { FlowSettingsPanel } from './FlowSettingsPanel'
 import { createEditorState, editorReducer } from './editorState'
 import { validateAutomationFlow } from './automationValidation'
 import styles from './AutomationEditor.module.css'
@@ -122,6 +129,13 @@ export const AutomationEditor: React.FC = () => {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   const [picker, setPicker] = useState<PickerState | null>(null)
+  const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set())
+  const [flowSettings, setFlowSettings] = useState<FlowSettings>(defaultFlowSettings())
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsRevision, setSettingsRevision] = useState(0)
+  const [fitSignal, setFitSignal] = useState(0)
+  const flowSettingsRef = useRef(flowSettings)
+  flowSettingsRef.current = flowSettings
   const [config, setConfig] = useState<ConfigState | null>(null)
   const [nodeErrors, setNodeErrors] = useState<Record<string, string[]>>({})
   const [saveState, setSaveState] = useState<SaveState>('saved')
@@ -135,6 +149,8 @@ export const AutomationEditor: React.FC = () => {
   stateRef.current = state
   const automationRef = useRef(automation)
   automationRef.current = automation
+  const multiSelectedRefEditor = useRef(multiSelectedIds)
+  multiSelectedRefEditor.current = multiSelectedIds
 
   // Tamaño real del canvas (los globos se posicionan dentro de él)
   const [canvasBounds, setCanvasBounds] = useState({ width: 1200, height: 700 })
@@ -163,6 +179,28 @@ export const AutomationEditor: React.FC = () => {
 
   const { nodes, edges } = state.present
 
+  // Variables congruentes con los disparadores del flujo (citas → Citas,
+  // pagos → Pagos…). Contacto/personalizados/conversación siempre presentes.
+  const variableCategories = useMemo(() => {
+    const TRIGGER_CATEGORY_MAP: Record<string, string> = {
+      'trigger-appointment-status': 'appointment',
+      'trigger-appointment-booked': 'appointment',
+      'trigger-payment-received': 'payment',
+      'trigger-refund': 'payment',
+      'trigger-form-submitted': 'form'
+    }
+    const startNode = nodes.find(isStartNode)
+    const triggers = startNode ? getStartTriggers(startNode) : []
+    const contextual = [
+      ...new Set(
+        triggers
+          .map((trigger) => TRIGGER_CATEGORY_MAP[trigger.type])
+          .filter((category): category is string => Boolean(category))
+      )
+    ]
+    return [...contextual, 'contact', 'custom', 'conversation', 'automation']
+  }, [nodes])
+
   // ------------------------------------------------------------------
   // Carga inicial + modo editor a pantalla completa
   // ------------------------------------------------------------------
@@ -186,6 +224,7 @@ export const AutomationEditor: React.FC = () => {
         setAutomation(data)
         setName(data.name)
         viewportRef.current = data.flow.viewport || { x: 0, y: 0, zoom: 1 }
+        setFlowSettings({ ...defaultFlowSettings(), ...(data.flow.settings || {}) })
         // Migra nodos de versiones anteriores (If/Else, Telegram, canales retirados)
         dispatch({
           type: 'init',
@@ -215,7 +254,8 @@ export const AutomationEditor: React.FC = () => {
         flow: {
           nodes: stateRef.current.present.nodes,
           edges: stateRef.current.present.edges,
-          viewport: viewportRef.current
+          viewport: viewportRef.current,
+          settings: flowSettingsRef.current
         }
       })
       savedRevisionRef.current = revision
@@ -230,14 +270,14 @@ export const AutomationEditor: React.FC = () => {
 
   useEffect(() => {
     if (!automation) return
-    if (state.revision === savedRevisionRef.current) return
+    if (state.revision === savedRevisionRef.current && settingsRevision === 0) return
     setSaveState('dirty')
     setNodeErrors({})
     const timer = window.setTimeout(() => {
       void persistFlow()
     }, 1200)
     return () => window.clearTimeout(timer)
-  }, [automation, persistFlow, state.revision])
+  }, [automation, persistFlow, state.revision, settingsRevision])
 
   // Al desmontar: guardar lo pendiente sin bloquear la navegación
   useEffect(() => {
@@ -250,7 +290,8 @@ export const AutomationEditor: React.FC = () => {
             flow: {
               nodes: stateRef.current.present.nodes,
               edges: stateRef.current.present.edges,
-              viewport: viewportRef.current
+              viewport: viewportRef.current,
+              settings: flowSettingsRef.current
             }
           })
           .catch(() => undefined)
@@ -382,11 +423,33 @@ export const AutomationEditor: React.FC = () => {
     () => ({
       onSelectNode: (nodeId: string | null) => {
         setSelectedNodeId(nodeId)
+        setMultiSelectedIds(nodeId ? new Set([nodeId]) : new Set())
         if (nodeId === null) {
           setSelectedEdgeId(null)
           setPicker(null)
           setConfig(null)
         }
+      },
+      // Shift/Cmd + clic alterna el nodo dentro de la selección múltiple
+      onToggleSelect: (nodeId: string) => {
+        setMultiSelectedIds((current) => {
+          const next = new Set(current)
+          if (next.has(nodeId)) {
+            next.delete(nodeId)
+          } else {
+            next.add(nodeId)
+          }
+          if (selectedNodeId && !next.has(selectedNodeId)) {
+            // mantiene el primario dentro de la selección
+            next.add(selectedNodeId)
+          }
+          return next
+        })
+        setSelectedNodeId(nodeId)
+      },
+      onMarqueeSelect: (nodeIds: string[]) => {
+        setMultiSelectedIds(new Set(nodeIds))
+        setSelectedNodeId(nodeIds[0] || null)
       },
       onSelectEdge: (edgeId: string | null) => setSelectedEdgeId(edgeId),
       onMoveNode: (nodeId: string, position: { x: number; y: number }, commitMove: boolean) => {
@@ -395,6 +458,23 @@ export const AutomationEditor: React.FC = () => {
           node.id === nodeId ? { ...node, position } : node
         )
         dispatch({ type: commitMove ? 'commit' : 'replace', flow: { nodes: nextNodes, edges: current.edges } })
+      },
+      // Mueve todo el grupo seleccionado a la vez
+      onMoveNodes: (positions: Record<string, { x: number; y: number }>, commitMove: boolean) => {
+        const current = stateRef.current.present
+        const nextNodes = current.nodes.map((node) =>
+          positions[node.id] ? { ...node, position: positions[node.id] } : node
+        )
+        dispatch({ type: commitMove ? 'commit' : 'replace', flow: { nodes: nextNodes, edges: current.edges } })
+      },
+      // Parche de configuración directo desde la tarjeta (+ mensaje, + rama…)
+      onPatchConfig: (node: AutomationNode, patch: Record<string, unknown>, openAfter?: boolean) => {
+        const merged = { ...(node.config || {}), ...patch }
+        updateNodeConfig(node.id, merged, true)
+        if (openAfter) {
+          const fresh = stateRef.current.present.nodes.find((candidate) => candidate.id === node.id)
+          openConfigForNode(fresh ? { ...fresh, config: merged } : { ...node, config: merged })
+        }
       },
       onConnect: (sourceNodeId: string, sourceHandle: string, targetNodeId: string) => {
         const current = stateRef.current.present
@@ -509,6 +589,108 @@ export const AutomationEditor: React.FC = () => {
       onViewportChange: (viewport: AutomationViewport) => {
         viewportRef.current = viewport
         viewportDirtyRef.current = true
+      },
+      // ----------------- selección múltiple -----------------
+      onClearSelection: () => {
+        setMultiSelectedIds(new Set())
+        setSelectedNodeId(null)
+      },
+      onDeleteSelected: () => {
+        const ids = [...multiSelectedRefEditor.current].filter((id) => {
+          const node = stateRef.current.present.nodes.find((candidate) => candidate.id === id)
+          return node && !isStartNode(node)
+        })
+        if (ids.length === 0) return
+        showConfirm(
+          'Eliminar pasos seleccionados',
+          `¿Eliminar ${ids.length} paso${ids.length > 1 ? 's' : ''} y sus conexiones? Puedes deshacer con Ctrl+Z.`,
+          () => {
+            const current = stateRef.current.present
+            const idSet = new Set(ids)
+            dispatch({
+              type: 'commit',
+              flow: {
+                nodes: current.nodes.filter((node) => !idSet.has(node.id)),
+                edges: current.edges.filter(
+                  (edge) => !idSet.has(edge.sourceNodeId) && !idSet.has(edge.targetNodeId)
+                )
+              }
+            })
+            setMultiSelectedIds(new Set())
+            setSelectedNodeId(null)
+          },
+          'Eliminar',
+          'Cancelar'
+        )
+      },
+      onDuplicateSelected: () => {
+        const current = stateRef.current.present
+        const selected = current.nodes.filter(
+          (node) => multiSelectedRefEditor.current.has(node.id) && !isStartNode(node)
+        )
+        if (selected.length === 0) return
+        const copies = selected.map((node) => ({
+          ...node,
+          id: genId('node'),
+          position: { x: node.position.x + 48, y: node.position.y + 56 },
+          config: JSON.parse(JSON.stringify(node.config || {}))
+        }))
+        dispatch({ type: 'commit', flow: { nodes: [...current.nodes, ...copies], edges: current.edges } })
+        setMultiSelectedIds(new Set(copies.map((copy) => copy.id)))
+        setSelectedNodeId(copies[0]?.id || null)
+      },
+      onAlignSelected: (axis: 'horizontal' | 'vertical') => {
+        const current = stateRef.current.present
+        const selected = current.nodes.filter((node) => multiSelectedRefEditor.current.has(node.id))
+        if (selected.length < 2) return
+        const minY = Math.min(...selected.map((node) => node.position.y))
+        const minX = Math.min(...selected.map((node) => node.position.x))
+        const nextNodes = current.nodes.map((node) =>
+          multiSelectedRefEditor.current.has(node.id)
+            ? {
+                ...node,
+                position:
+                  axis === 'horizontal'
+                    ? { x: node.position.x, y: minY }
+                    : { x: minX, y: node.position.y }
+              }
+            : node
+        )
+        dispatch({ type: 'commit', flow: { nodes: nextNodes, edges: current.edges } })
+      },
+      onDistributeSelected: (axis: 'horizontal' | 'vertical') => {
+        const current = stateRef.current.present
+        const selected = current.nodes
+          .filter((node) => multiSelectedRefEditor.current.has(node.id))
+          .sort((a, b) => (axis === 'horizontal' ? a.position.x - b.position.x : a.position.y - b.position.y))
+        if (selected.length < 3) return
+        const first = selected[0]
+        const last = selected[selected.length - 1]
+        const start = axis === 'horizontal' ? first.position.x : first.position.y
+        const end = axis === 'horizontal' ? last.position.x : last.position.y
+        const step = (end - start) / (selected.length - 1)
+        const positions = new Map(
+          selected.map((node, index) => [
+            node.id,
+            axis === 'horizontal'
+              ? { x: Math.round(start + step * index), y: node.position.y }
+              : { x: node.position.x, y: Math.round(start + step * index) }
+          ])
+        )
+        const nextNodes = current.nodes.map((node) =>
+          positions.has(node.id) ? { ...node, position: positions.get(node.id) as { x: number; y: number } } : node
+        )
+        dispatch({ type: 'commit', flow: { nodes: nextNodes, edges: current.edges } })
+      },
+      // Botón "Ordenar flujo": selección si hay varias; si no, todo el flujo
+      onAutoLayout: (heights: Record<string, number>) => {
+        const current = stateRef.current.present
+        const selection =
+          multiSelectedRefEditor.current.size > 1 ? multiSelectedRefEditor.current : undefined
+        const nextNodes = autoLayoutFlow(current.nodes, current.edges, heights, selection)
+        dispatch({ type: 'commit', flow: { nodes: nextNodes, edges: current.edges } })
+        if (!selection) setFitSignal((value) => value + 1)
+        showToast('success', 'Flujo ordenado', 'Puedes deshacer con Ctrl+Z')
       }
     }),
     [commitFlow, findFreeOutput, openConfigForNode, selectedNodeId, showToast]
@@ -572,6 +754,7 @@ export const AutomationEditor: React.FC = () => {
         } else {
           setSelectedNodeId(null)
           setSelectedEdgeId(null)
+          setMultiSelectedIds(new Set())
         }
         return
       }
@@ -580,6 +763,11 @@ export const AutomationEditor: React.FC = () => {
         if (selectedEdgeId) {
           event.preventDefault()
           canvasActions.onDeleteEdge(selectedEdgeId)
+          return
+        }
+        if (multiSelectedIds.size > 1) {
+          event.preventDefault()
+          canvasActions.onDeleteSelected()
           return
         }
         if (selectedNodeId) {
@@ -594,7 +782,7 @@ export const AutomationEditor: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [canvasActions, config, picker, selectedEdgeId, selectedNodeId])
+  }, [canvasActions, config, picker, selectedEdgeId, selectedNodeId, multiSelectedIds])
 
   // ------------------------------------------------------------------
   // Nombre, estado, publicar, vista previa
@@ -808,6 +996,7 @@ export const AutomationEditor: React.FC = () => {
       : null
 
   return (
+    <VariableCategoriesContext.Provider value={variableCategories}>
     <div className={styles.editorShell}>
       {/* ----------------------------- Toolbar ---------------------------- */}
       <header className={styles.toolbar}>
@@ -875,6 +1064,14 @@ export const AutomationEditor: React.FC = () => {
           >
             <Save size={14} />
           </button>
+          <button
+            type="button"
+            className={styles.iconButton}
+            title="Configuración del flujo (zona horaria, horarios, reingreso)"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <SettingsIcon size={14} />
+          </button>
         </div>
 
         <div className={styles.toolbarGroup}>
@@ -938,14 +1135,18 @@ export const AutomationEditor: React.FC = () => {
       </header>
 
       {/* ------------------------------ Canvas ----------------------------- */}
-      <AutomationCanvas
+      <div className={styles.editorMain}>
+        <AutomationLeftNav currentId={automation.id} />
+        <AutomationCanvas
         nodes={nodes}
         edges={edges}
         selectedNodeId={selectedNodeId}
+        multiSelectedIds={multiSelectedIds}
         selectedEdgeId={selectedEdgeId}
         nodeErrors={nodeErrors}
         initialViewport={automation.flow.viewport || { x: 0, y: 0, zoom: 1 }}
         pendingEdge={pendingEdge}
+        fitSignal={fitSignal}
         actions={canvasActions}
       >
         <button type="button" className={styles.fab} title="Agregar paso" onClick={handleFabClick}>
@@ -972,17 +1173,34 @@ export const AutomationEditor: React.FC = () => {
           />
         )}
 
-        {config && configNode && configDefinition && (
-          <NodeConfigBubble
-            definition={configDefinition}
-            config={(configTrigger ? configTrigger.config : configNode.config) || {}}
-            anchor={config.anchor}
-            bounds={canvasBounds}
-            onChange={handleConfigChange}
-            onClose={() => setConfig(null)}
-          />
-        )}
       </AutomationCanvas>
+
+      {/* Panel de configuración acoplado a la derecha (estilo ManyChat) */}
+      {config && configNode && configDefinition && (
+        <NodeConfigBubble
+          definition={configDefinition}
+          config={(configTrigger ? configTrigger.config : configNode.config) || {}}
+          onChange={handleConfigChange}
+          onClose={() => setConfig(null)}
+        />
+      )}
+      </div>
+
+      {/* ----------------------- Configuración del flujo --------------------- */}
+      <FlowSettingsPanel
+        open={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false)
+          void saveName()
+        }}
+        name={name}
+        onRename={setName}
+        settings={flowSettings}
+        onChange={(next) => {
+          setFlowSettings(next)
+          setSettingsRevision((value) => value + 1)
+        }}
+      />
 
       {/* ---------------------------- Vista previa -------------------------- */}
       <Modal
@@ -1012,5 +1230,6 @@ export const AutomationEditor: React.FC = () => {
         )}
       </Modal>
     </div>
+    </VariableCategoriesContext.Provider>
   )
 }

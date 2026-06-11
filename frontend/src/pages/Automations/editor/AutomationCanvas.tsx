@@ -1,5 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Maximize, Minus, Plus } from 'lucide-react'
+import {
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  Copy,
+  LayoutGrid,
+  Maximize,
+  Minus,
+  Plus,
+  StretchHorizontal,
+  StretchVertical,
+  Trash2,
+  X
+} from 'lucide-react'
 import { cn } from '@/utils/cn'
 import type {
   AutomationEdge,
@@ -27,44 +39,62 @@ export interface PendingEdge {
 
 export interface CanvasActions {
   onSelectNode: (nodeId: string | null) => void
+  /** Shift/Cmd + clic sobre un nodo alterna su selección */
+  onToggleSelect: (nodeId: string) => void
+  /** Selección por caja (Shift + arrastrar) */
+  onMarqueeSelect: (nodeIds: string[]) => void
   onSelectEdge: (edgeId: string | null) => void
   onMoveNode: (nodeId: string, position: { x: number; y: number }, commit: boolean) => void
+  /** Mueve un grupo de nodos seleccionados a la vez */
+  onMoveNodes: (positions: Record<string, { x: number; y: number }>, commit: boolean) => void
   onConnect: (sourceNodeId: string, sourceHandle: string, targetNodeId: string) => void
   onInvalidConnection: (reason: string) => void
   onDeleteEdge: (edgeId: string) => void
   onDeleteNode: (node: AutomationNode) => void
   onDuplicateNode: (node: AutomationNode) => void
   onOpenConfig: (node: AutomationNode, anchor: { x: number; y: number }) => void
+  onPatchConfig: (node: AutomationNode, patch: Record<string, unknown>, openConfig?: boolean) => void
   onRequestPicker: (request: PickerRequest) => void
   onAddTrigger: (node: AutomationNode, anchor: { x: number; y: number }) => void
   onEditTrigger: (node: AutomationNode, triggerId: string, anchor: { x: number; y: number }) => void
   onRemoveTrigger: (node: AutomationNode, triggerId: string) => void
   onViewportChange: (viewport: AutomationViewport) => void
+  /** Barra contextual de selección múltiple */
+  onDeleteSelected: () => void
+  onDuplicateSelected: () => void
+  onAlignSelected: (axis: 'horizontal' | 'vertical') => void
+  onDistributeSelected: (axis: 'horizontal' | 'vertical') => void
+  onClearSelection: () => void
+  /** Botón "Ordenar flujo" (recibe las alturas medidas de los nodos) */
+  onAutoLayout: (heights: Record<string, number>) => void
 }
 
 interface AutomationCanvasProps {
   nodes: AutomationNode[]
   edges: AutomationEdge[]
   selectedNodeId: string | null
+  /** Selección múltiple (incluye al nodo primario cuando hay varios) */
+  multiSelectedIds: Set<string>
   selectedEdgeId: string | null
   nodeErrors: Record<string, string[]>
   initialViewport: AutomationViewport
   /** Flecha fantasma hacia el punto donde se soltó el conector */
   pendingEdge?: PendingEdge | null
+  /** Incrementa para centrar el flujo desde fuera (tras ordenar) */
+  fitSignal?: number
   actions: CanvasActions
   children?: React.ReactNode
-}
-
-/** ¿El evento ocurrió dentro de un contenedor interactivo (globos, inputs…)? */
-function isInteractiveTarget(target: EventTarget | null): boolean {
-  return Boolean((target as HTMLElement | null)?.closest?.('[data-automation-interactive="true"]'))
 }
 
 interface DragState {
   nodeId: string
   pointerStart: { x: number; y: number }
   nodeStart: { x: number; y: number }
+  /** Posiciones originales del grupo cuando se arrastran varios nodos */
+  groupStart: Record<string, { x: number; y: number }> | null
   moved: boolean
+  /** Shift/Cmd al iniciar: el clic alterna selección, no abre configuración */
+  withModifier: boolean
 }
 
 interface ConnectionDraft {
@@ -74,6 +104,11 @@ interface ConnectionDraft {
   to: { x: number; y: number }
   moved: boolean
   hoveredNodeId: string | null
+}
+
+interface MarqueeState {
+  start: { x: number; y: number }
+  end: { x: number; y: number }
 }
 
 const layoutsEqual = (a: NodeHandleLayout | undefined, b: NodeHandleLayout): boolean => {
@@ -86,14 +121,21 @@ const layoutsEqual = (a: NodeHandleLayout | undefined, b: NodeHandleLayout): boo
   return bKeys.every((key) => Math.abs((a.outputs[key] ?? -1) - b.outputs[key]) <= 0.5)
 }
 
+/** ¿El evento ocurrió dentro de un contenedor interactivo (globos, inputs…)? */
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return Boolean((target as HTMLElement | null)?.closest?.('[data-automation-interactive="true"]'))
+}
+
 export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   nodes,
   edges,
   selectedNodeId,
+  multiSelectedIds,
   selectedEdgeId,
   nodeErrors,
   initialViewport,
   pendingEdge,
+  fitSignal,
   actions,
   children
 }) => {
@@ -113,6 +155,10 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   const draftRef = useRef(draft)
   draftRef.current = draft
 
+  const [marquee, setMarquee] = useState<MarqueeState | null>(null)
+  const marqueeRef = useRef(marquee)
+  marqueeRef.current = marquee
+
   const [layouts, setLayouts] = useState<Record<string, NodeHandleLayout>>({})
   const layoutsRef = useRef(layouts)
   layoutsRef.current = layouts
@@ -121,6 +167,8 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   nodesRef.current = nodes
   const edgesRef = useRef(edges)
   edgesRef.current = edges
+  const multiSelectedRef = useRef(multiSelectedIds)
+  multiSelectedRef.current = multiSelectedIds
 
   const setAndReportViewport = useCallback(
     (next: AutomationViewport) => {
@@ -193,7 +241,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   }, [setAndReportViewport])
 
   // ------------------------------------------------------------------
-  // Interacciones globales (pan, arrastre de nodos, conexión)
+  // Interacciones globales (pan, marquee, arrastre de nodos, conexión)
   // ------------------------------------------------------------------
   useEffect(() => {
     const handleMove = (event: PointerEvent) => {
@@ -208,6 +256,12 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
         return
       }
 
+      const currentMarquee = marqueeRef.current
+      if (currentMarquee) {
+        setMarquee({ ...currentMarquee, end: clientToWorld(event.clientX, event.clientY) })
+        return
+      }
+
       const currentDrag = dragRef.current
       if (currentDrag) {
         const zoom = viewportRef.current.zoom
@@ -218,11 +272,20 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
           setDrag({ ...currentDrag, moved })
           dragRef.current = { ...currentDrag, moved }
         }
-        actions.onMoveNode(
-          currentDrag.nodeId,
-          { x: Math.round(currentDrag.nodeStart.x + dx), y: Math.round(currentDrag.nodeStart.y + dy) },
-          false
-        )
+        if (currentDrag.groupStart) {
+          // Arrastre de grupo: todos los nodos seleccionados se mueven juntos
+          const positions: Record<string, { x: number; y: number }> = {}
+          Object.entries(currentDrag.groupStart).forEach(([nodeId, start]) => {
+            positions[nodeId] = { x: Math.round(start.x + dx), y: Math.round(start.y + dy) }
+          })
+          actions.onMoveNodes(positions, false)
+        } else {
+          actions.onMoveNode(
+            currentDrag.nodeId,
+            { x: Math.round(currentDrag.nodeStart.x + dx), y: Math.round(currentDrag.nodeStart.y + dy) },
+            false
+          )
+        }
         return
       }
 
@@ -251,12 +314,49 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
         return
       }
 
+      const currentMarquee = marqueeRef.current
+      if (currentMarquee) {
+        setMarquee(null)
+        const minX = Math.min(currentMarquee.start.x, currentMarquee.end.x)
+        const maxX = Math.max(currentMarquee.start.x, currentMarquee.end.x)
+        const minY = Math.min(currentMarquee.start.y, currentMarquee.end.y)
+        const maxY = Math.max(currentMarquee.start.y, currentMarquee.end.y)
+        const hits = nodesRef.current
+          .filter((node) => {
+            const layout = layoutsRef.current[node.id]
+            const width = layout?.width || NODE_WIDTH
+            const height = layout?.height || 160
+            return (
+              node.position.x < maxX &&
+              node.position.x + width > minX &&
+              node.position.y < maxY &&
+              node.position.y + height > minY
+            )
+          })
+          .map((node) => node.id)
+        actions.onMarqueeSelect(hits)
+        return
+      }
+
       const currentDrag = dragRef.current
       if (currentDrag) {
         setDrag(null)
         if (currentDrag.moved) {
+          if (currentDrag.groupStart) {
+            const positions: Record<string, { x: number; y: number }> = {}
+            Object.keys(currentDrag.groupStart).forEach((nodeId) => {
+              const node = nodesRef.current.find((candidate) => candidate.id === nodeId)
+              if (node) positions[nodeId] = node.position
+            })
+            actions.onMoveNodes(positions, true)
+          } else {
+            const node = nodesRef.current.find((candidate) => candidate.id === currentDrag.nodeId)
+            if (node) actions.onMoveNode(currentDrag.nodeId, node.position, true)
+          }
+        } else if (!currentDrag.withModifier) {
+          // Clic simple sobre el evento: abre su configuración en el panel
           const node = nodesRef.current.find((candidate) => candidate.id === currentDrag.nodeId)
-          if (node) actions.onMoveNode(currentDrag.nodeId, node.position, true)
+          if (node) actions.onOpenConfig(node, { x: 0, y: 0 })
         }
         return
       }
@@ -308,6 +408,14 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   const handleCanvasPointerDown = (event: React.PointerEvent) => {
     if (event.button !== 0 && event.button !== 1) return
     if (isInteractiveTarget(event.target)) return
+
+    // Shift + arrastrar sobre el fondo = caja de selección (sin pan)
+    if (event.shiftKey) {
+      const start = clientToWorld(event.clientX, event.clientY)
+      setMarquee({ start, end: start })
+      return
+    }
+
     actions.onSelectNode(null)
     actions.onSelectEdge(null)
     panStateRef.current = {
@@ -323,8 +431,8 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
     actions.onRequestPicker({ anchor: editorPoint, worldPoint })
   }
 
-  // Un clic selecciona; mantener y arrastrar mueve el nodo. Los elementos
-  // interactivos internos (botones, inputs, conectores) nunca inician drag.
+  // Un clic selecciona; mantener y arrastrar mueve el nodo (o el grupo).
+  // Los elementos interactivos internos nunca inician drag.
   const handleNodeCardPointerDown = (event: React.PointerEvent, node: AutomationNode) => {
     if (event.button !== 0) return
     const target = event.target as HTMLElement | null
@@ -335,11 +443,24 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
     ) {
       return
     }
+
+    const group = multiSelectedRef.current
+    const isGroupDrag = group.size > 1 && group.has(node.id)
+    const groupStart: Record<string, { x: number; y: number }> | null = isGroupDrag
+      ? Object.fromEntries(
+          nodesRef.current
+            .filter((candidate) => group.has(candidate.id))
+            .map((candidate) => [candidate.id, { ...candidate.position }])
+        )
+      : null
+
     setDrag({
       nodeId: node.id,
       pointerStart: { x: event.clientX, y: event.clientY },
       nodeStart: { ...node.position },
-      moved: false
+      groupStart,
+      moved: false,
+      withModifier: event.shiftKey || event.metaKey || event.ctrlKey
     })
   }
 
@@ -360,7 +481,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   }
 
   // ------------------------------------------------------------------
-  // Controles de zoom
+  // Controles de zoom + ordenar flujo
   // ------------------------------------------------------------------
   const zoomBy = (factor: number) => {
     const bounds = getBounds()
@@ -404,6 +525,24 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
       zoom
     })
   }, [getBounds, setAndReportViewport])
+
+  // Centrar al recibir la señal externa (después de "Ordenar flujo")
+  const lastFitSignal = useRef(fitSignal)
+  useEffect(() => {
+    if (fitSignal !== undefined && fitSignal !== lastFitSignal.current) {
+      lastFitSignal.current = fitSignal
+      const timer = window.setTimeout(fitView, 80)
+      return () => window.clearTimeout(timer)
+    }
+  }, [fitSignal, fitView])
+
+  const handleAutoLayout = () => {
+    const heights: Record<string, number> = {}
+    Object.entries(layoutsRef.current).forEach(([nodeId, layout]) => {
+      heights[nodeId] = layout.height
+    })
+    actions.onAutoLayout(heights)
+  }
 
   // ------------------------------------------------------------------
   // Geometría de las conexiones
@@ -457,6 +596,42 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
     return check.valid ? 'target' : 'forbidden'
   }
 
+  // ------------------------------------------------------------------
+  // Barra contextual de selección múltiple (sobre el grupo seleccionado)
+  // ------------------------------------------------------------------
+  const multiToolbar = useMemo(() => {
+    if (multiSelectedIds.size < 2) return null
+    const selected = nodes.filter((node) => multiSelectedIds.has(node.id))
+    if (selected.length < 2) return null
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    selected.forEach((node) => {
+      const layout = layouts[node.id]
+      minX = Math.min(minX, node.position.x)
+      maxX = Math.max(maxX, node.position.x + (layout?.width || NODE_WIDTH))
+      minY = Math.min(minY, node.position.y)
+    })
+    const { x, y, zoom } = viewport
+    const screenX = ((minX + maxX) / 2) * zoom + x
+    const screenY = minY * zoom + y - 52
+    const bounds = getBounds()
+    return {
+      count: selected.length,
+      left: Math.max(180, Math.min(screenX, bounds.width - 180)),
+      top: Math.max(12, Math.min(screenY, bounds.height - 60))
+    }
+  }, [multiSelectedIds, nodes, layouts, viewport, getBounds])
+
+  const marqueeRect = marquee
+    ? {
+        left: Math.min(marquee.start.x, marquee.end.x),
+        top: Math.min(marquee.start.y, marquee.end.y),
+        width: Math.abs(marquee.end.x - marquee.start.x),
+        height: Math.abs(marquee.end.y - marquee.start.y)
+      }
+    : null
+
   return (
     <div ref={wrapRef} data-automation-canvas-wrap className={styles.canvasWrap}>
       <div
@@ -477,13 +652,14 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
               <marker
                 id="automation-arrow"
                 viewBox="0 0 10 10"
-                refX="8"
+                refX="9"
                 refY="5"
                 markerWidth="7"
                 markerHeight="7"
                 orient="auto-start-reverse"
               >
-                <path d="M 0 1 L 8 5 L 0 9" fill="none" stroke="rgba(100,116,139,0.9)" strokeWidth="1.6" strokeLinecap="round" />
+                {/* Triángulo relleno */}
+                <path d="M 0 0.5 L 9.5 5 L 0 9.5 Z" fill="rgba(100, 116, 139, 0.95)" />
               </marker>
             </defs>
 
@@ -540,19 +716,40 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
             )}
           </svg>
 
+          {/* Caja de selección (Shift + arrastrar) */}
+          {marqueeRect && (
+            <div
+              className={styles.selectionMarquee}
+              style={{
+                left: marqueeRect.left,
+                top: marqueeRect.top,
+                width: marqueeRect.width,
+                height: marqueeRect.height
+              }}
+            />
+          )}
+
           {nodes.map((node) => (
             <AutomationNodeCard
               key={node.id}
               node={node}
-              selected={selectedNodeId === node.id}
-              dragging={drag?.nodeId === node.id && drag.moved}
+              selected={selectedNodeId === node.id || multiSelectedIds.has(node.id)}
+              dragging={Boolean(
+                drag?.moved && (drag.nodeId === node.id || drag.groupStart?.[node.id])
+              )}
               errors={nodeErrors[node.id]}
               dropState={dropStateFor(node)}
               connectedOutputs={connectedOutputsByNode.get(node.id) || emptyOutputs}
               zoom={viewport.zoom}
               onMeasure={handleMeasure}
               onPointerDownCard={handleNodeCardPointerDown}
-              onSelect={(selected) => actions.onSelectNode(selected.id)}
+              onSelect={(selected, event) => {
+                if (event && (event.shiftKey || event.metaKey || event.ctrlKey)) {
+                  actions.onToggleSelect(selected.id)
+                } else if (!multiSelectedIds.has(selected.id)) {
+                  actions.onSelectNode(selected.id)
+                }
+              }}
               onOpenConfig={(target) => {
                 const layout = layoutsRef.current[target.id]
                 const { x, y, zoom } = viewportRef.current
@@ -561,6 +758,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
                   y: target.position.y * zoom + y
                 })
               }}
+              onPatchConfig={actions.onPatchConfig}
               onDuplicate={actions.onDuplicateNode}
               onDelete={actions.onDeleteNode}
               onStartConnection={handleStartConnection}
@@ -577,7 +775,51 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
           ))}
         </div>
 
-        {/* Controles de zoom */}
+        {/* Barra contextual de selección múltiple */}
+        {multiToolbar && (
+          <div
+            className={styles.multiToolbar}
+            data-automation-interactive="true"
+            style={{ left: multiToolbar.left, top: multiToolbar.top }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+          >
+            <span className={styles.multiToolbarCount}>
+              {multiToolbar.count} elementos seleccionados
+            </span>
+            <span className={styles.multiToolbarDivider} />
+            <button type="button" className={styles.multiToolbarButton} title="Alinear horizontalmente" onClick={() => actions.onAlignSelected('horizontal')}>
+              <AlignCenterHorizontal size={13} />
+            </button>
+            <button type="button" className={styles.multiToolbarButton} title="Alinear verticalmente" onClick={() => actions.onAlignSelected('vertical')}>
+              <AlignCenterVertical size={13} />
+            </button>
+            <button type="button" className={styles.multiToolbarButton} title="Distribuir horizontalmente" onClick={() => actions.onDistributeSelected('horizontal')}>
+              <StretchHorizontal size={13} />
+            </button>
+            <button type="button" className={styles.multiToolbarButton} title="Distribuir verticalmente" onClick={() => actions.onDistributeSelected('vertical')}>
+              <StretchVertical size={13} />
+            </button>
+            <span className={styles.multiToolbarDivider} />
+            <button type="button" className={styles.multiToolbarButton} title="Duplicar seleccionados" onClick={actions.onDuplicateSelected}>
+              <Copy size={13} />
+            </button>
+            <button
+              type="button"
+              className={cn(styles.multiToolbarButton, styles.multiToolbarDanger)}
+              title="Eliminar seleccionados"
+              onClick={actions.onDeleteSelected}
+            >
+              <Trash2 size={13} />
+            </button>
+            <span className={styles.multiToolbarDivider} />
+            <button type="button" className={styles.multiToolbarButton} title="Cancelar selección (Esc)" onClick={actions.onClearSelection}>
+              <X size={13} />
+            </button>
+          </div>
+        )}
+
+        {/* Controles de zoom + ordenar flujo */}
         <div className={styles.zoomControls} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
           <button type="button" className={styles.zoomButton} title="Acercar" onClick={() => zoomBy(1.2)}>
             <Plus size={14} />
@@ -588,6 +830,14 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
           </button>
           <button type="button" className={styles.zoomButton} title="Centrar flujo" onClick={fitView}>
             <Maximize size={13} />
+          </button>
+          <button
+            type="button"
+            className={styles.zoomButton}
+            title="Ordenar flujo (alinea los pasos de izquierda a derecha)"
+            onClick={handleAutoLayout}
+          >
+            <LayoutGrid size={13} />
           </button>
         </div>
 

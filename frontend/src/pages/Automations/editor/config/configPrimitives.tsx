@@ -36,8 +36,8 @@ export const Toggle: React.FC<{ checked: boolean; onChange: (checked: boolean) =
   onChange,
   label
 }) => (
+  // Switch alineado a la izquierda con el texto a su derecha
   <div className={cn(styles.configField, styles.toggleField)}>
-    <label className={styles.configLabel}>{label}</label>
     <button
       type="button"
       role="switch"
@@ -46,6 +46,9 @@ export const Toggle: React.FC<{ checked: boolean; onChange: (checked: boolean) =
       className={cn(styles.toggleSwitch, checked && styles.toggleSwitchOn)}
       onClick={() => onChange(!checked)}
     />
+    <label className={styles.toggleLabel} onClick={() => onChange(!checked)}>
+      {label}
+    </label>
   </div>
 )
 

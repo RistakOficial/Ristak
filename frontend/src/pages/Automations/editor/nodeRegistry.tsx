@@ -22,12 +22,10 @@ import {
   Rss,
   Shuffle,
   Sparkles,
-  Split,
   StickyNote,
   Tag,
   Tags,
   Target,
-  Timer,
   UserCheck,
   UserCog,
   UserMinus,
@@ -38,7 +36,11 @@ import {
   Zap
 } from 'lucide-react'
 import type { CatalogKind } from '@/services/automationCatalogsService'
-import { summarizeCondition, validateConditionRules, emptyConditionConfig } from './crmFields'
+import {
+  emptyAdvancedCondition,
+  summarizeAdvancedCondition,
+  validateAdvancedCondition
+} from './crmFields'
 
 // ---------------------------------------------------------------------------
 // Registro central de tipos de nodos del editor de automatizaciones.
@@ -120,7 +122,124 @@ export interface NodeSummaryData {
 }
 
 /** Configuradores con UI propia (más allá del formulario declarativo) */
-export type NodeConfigComponent = 'conditions' | 'wait' | 'goal' | 'whatsapp'
+export type NodeConfigComponent = 'conditions' | 'wait' | 'goal' | 'whatsapp' | 'message'
+
+// ---------------------------------------------------------------------------
+// Bloques de mensaje tipo ManyChat (varios globos dentro de una cajita)
+// ---------------------------------------------------------------------------
+
+export interface MessageButton {
+  id: string
+  label: string
+  /** branch: crea una salida propia del nodo · url: abre un enlace */
+  action: 'branch' | 'url'
+  url?: string
+}
+
+export type MessageBlockType = 'text' | 'delay' | 'image' | 'video' | 'audio' | 'file'
+
+export interface MessageBlock {
+  id: string
+  type: MessageBlockType
+  /** Texto compilado con tokens {{contact.x}} (en UI se ven como chips) */
+  compiledText?: string
+  buttons?: MessageButton[]
+  quickReplies?: MessageButton[]
+  /** Para bloques de espera interna entre mensajes */
+  amount?: number
+  unit?: 'seconds' | 'minutes'
+  /** Mostrar "escribiendo…" durante el retraso */
+  showTyping?: boolean
+  /** Adjuntos (imagen, video, audio, archivo): URL del recurso.
+   *  ADAPTADOR PENDIENTE: cuando exista subida de archivos, reemplazar por
+   *  el selector de medios real. */
+  url?: string
+  caption?: string
+}
+
+export const MEDIA_BLOCK_TYPES: MessageBlockType[] = ['image', 'video', 'audio', 'file']
+
+/** Máximo de salidas/ramas por nodo (incluye botones y quick replies) */
+export const MAX_BRANCHES = 10
+export const MAX_BUTTONS_PER_MESSAGE = 3
+
+export const asMessageBlocks = (value: unknown): MessageBlock[] =>
+  Array.isArray(value) ? (value as MessageBlock[]) : []
+
+/** Salidas que generan los botones/quick replies con acción de rama */
+export function messageBlockHandles(config: Record<string, unknown>): NodeOutputHandle[] {
+  const handles: NodeOutputHandle[] = []
+  asMessageBlocks(config.messageBlocks).forEach((block) => {
+    ;[...(block.buttons || []), ...(block.quickReplies || [])].forEach((button) => {
+      if (button.action === 'branch' && button.id) {
+        handles.push({ id: `btn_${button.id}`, label: button.label || 'Botón' })
+      }
+    })
+  })
+  return handles
+}
+
+/** Ramas adicionales creadas por el usuario desde la cajita ("+ Agregar rama") */
+export function extraBranchHandles(config: Record<string, unknown>): NodeOutputHandle[] {
+  const branches = Array.isArray(config.extraBranches)
+    ? (config.extraBranches as Array<{ id?: unknown; label?: unknown }>)
+    : []
+  return branches.map((branch, index) => ({
+    id: typeof branch.id === 'string' && branch.id ? branch.id : `extra-${index + 1}`,
+    label: typeof branch.label === 'string' && branch.label ? branch.label : `Rama ${index + 1}`
+  }))
+}
+
+/** Combina salidas base + botones + ramas extra, con tope de 10 */
+export function withBranches(
+  base: NodeOutputHandle[],
+  config: Record<string, unknown>,
+  { includeMessageButtons = false }: { includeMessageButtons?: boolean } = {}
+): NodeOutputHandle[] {
+  const all = [
+    ...base,
+    ...(includeMessageButtons ? messageBlockHandles(config) : []),
+    ...extraBranchHandles(config)
+  ]
+  return all.slice(0, MAX_BRANCHES)
+}
+
+function firstTextBlock(config: Record<string, unknown>): string {
+  const block = asMessageBlocks(config.messageBlocks).find(
+    (candidate) => candidate.type === 'text' && (candidate.compiledText || '').trim()
+  )
+  return block?.compiledText || ''
+}
+
+function validateMessageBlocks(config: Record<string, unknown>): string[] {
+  const blocks = asMessageBlocks(config.messageBlocks)
+  const errors: string[] = []
+  const hasContent = blocks.some(
+    (block) =>
+      (block.type === 'text' && (block.compiledText || '').trim()) ||
+      (MEDIA_BLOCK_TYPES.includes(block.type) && (block.url || '').trim())
+  )
+  if (!hasContent) {
+    errors.push('Agrega al menos un mensaje con contenido')
+  }
+  blocks.forEach((block, index) => {
+    if (block.type === 'delay' && (Number(block.amount) || 0) <= 0) {
+      errors.push(`La espera interna del bloque ${index + 1} debe ser mayor a cero`)
+    }
+    if (MEDIA_BLOCK_TYPES.includes(block.type) && !(block.url || '').trim()) {
+      errors.push(`El adjunto del bloque ${index + 1} necesita una URL`)
+    }
+    ;[...(block.buttons || []), ...(block.quickReplies || [])].forEach((button) => {
+      if (!String(button.label || '').trim()) {
+        errors.push(`Hay un botón sin nombre en el mensaje ${index + 1}`)
+      }
+      if (button.action === 'url' && !String(button.url || '').trim()) {
+        errors.push(`El botón "${button.label || 'sin nombre'}" necesita URL`)
+      }
+    })
+  })
+  return errors
+}
 
 export interface NodeDefinition {
   type: string
@@ -140,6 +259,15 @@ export interface NodeDefinition {
   allowedChannels?: string[]
   /** Configurador con componente propio */
   configComponent?: NodeConfigComponent
+  /** Permite agregar ramas extra desde la cajita ("+ Agregar rama") */
+  supportsMultipleBranches?: boolean
+  maxBranches?: number
+  /** Nodo de mensaje con varios globos (texto, espera, botones) */
+  supportsMessageBlocks?: boolean
+  /** Quick replies disponibles (Messenger / Instagram Direct) */
+  supportsQuickReplies?: boolean
+  supportsVariables?: boolean
+  supportsEmoji?: boolean
   defaultConfig: () => Record<string, unknown>
   fields: ConfigField[]
   /** Salidas del nodo según su configuración. [] = sin salidas (comentario) */
@@ -764,6 +892,74 @@ const TRIGGERS: NodeDefinition[] = [
 // Contenido / Canales (WhatsApp, Messenger, Instagram Direct, Facebook)
 // ---------------------------------------------------------------------------
 
+interface ChannelNodeOptions {
+  type: string
+  label: string
+  brand: string
+  icon: LucideIcon
+  accent: NodeAccent
+  description: string
+  addButtonLabel: string
+  channel: 'whatsapp' | 'messenger' | 'instagram'
+  supportsQuickReplies: boolean
+  senderKey?: 'page' | 'account'
+  senderLabel?: string
+}
+
+/** Fabrica los nodos de mensaje con bloques (Messenger, Instagram, Facebook) */
+function channelMessageNode({
+  type,
+  label,
+  brand,
+  icon,
+  accent,
+  description,
+  addButtonLabel,
+  channel,
+  supportsQuickReplies,
+  senderKey,
+  senderLabel
+}: ChannelNodeOptions): NodeDefinition {
+  return {
+    type,
+    kind: 'action',
+    label,
+    brand,
+    category: 'action-content',
+    description,
+    icon,
+    accent,
+    addButtonLabel,
+    allowedChannels: [channel],
+    configComponent: 'message',
+    supportsMessageBlocks: true,
+    supportsQuickReplies,
+    supportsMultipleBranches: true,
+    maxBranches: MAX_BRANCHES,
+    supportsVariables: true,
+    supportsEmoji: true,
+    defaultConfig: () => ({
+      messageBlocks: [],
+      extraBranches: [],
+      ...(senderKey ? { [senderKey]: '' } : {})
+    }),
+    fields: senderKey
+      ? [{ key: senderKey, label: senderLabel || 'Remitente (opcional)', type: 'text', placeholder: 'Cuenta conectada por defecto' }]
+      : [],
+    outputs: (config) => withBranches(SINGLE_OUTPUT, config, { includeMessageButtons: true }),
+    validate: validateMessageBlocks,
+    summary: (config) => {
+      const blocks = asMessageBlocks(config.messageBlocks)
+      const textBlocks = blocks.filter((block) => block.type === 'text').length
+      return {
+        text: textBlocks > 1 ? `${textBlocks} mensajes en secuencia` : undefined,
+        box: firstTextBlock(config) || undefined,
+        empty: 'Agrega el primer mensaje'
+      }
+    }
+  }
+}
+
 const CHANNEL_NODES: NodeDefinition[] = [
   {
     type: 'channel-whatsapp',
@@ -771,18 +967,25 @@ const CHANNEL_NODES: NodeDefinition[] = [
     label: 'WhatsApp',
     brand: 'WhatsApp',
     category: 'action-content',
-    description: 'Envía un mensaje de WhatsApp',
+    description: 'Envía mensajes de WhatsApp',
     icon: MessageSquareText,
     accent: 'teal',
     addButtonLabel: 'Agregar mensaje',
     allowedChannels: ['whatsapp'],
     configComponent: 'whatsapp',
+    supportsMessageBlocks: true,
+    supportsQuickReplies: false,
+    supportsMultipleBranches: true,
+    maxBranches: MAX_BRANCHES,
+    supportsVariables: true,
+    supportsEmoji: true,
     defaultConfig: () => ({
       sender: 'default',
       senderNumberId: '',
       senderNumberLabel: '',
       messageType: 'text',
-      message: '',
+      messageBlocks: [],
+      extraBranches: [],
       templateId: '',
       templateName: '',
       templateLanguage: '',
@@ -790,13 +993,13 @@ const CHANNEL_NODES: NodeDefinition[] = [
       saveAs: ''
     }),
     fields: [],
-    outputs: () => SINGLE_OUTPUT,
+    outputs: (config) => withBranches(SINGLE_OUTPUT, config, { includeMessageButtons: true }),
     validate: (config) => {
       const errors: string[] = []
       if (str(config.messageType) === 'template') {
         if (!str(config.templateId)) errors.push('Selecciona la plantilla de WhatsApp')
-      } else if (!str(config.message).trim()) {
-        errors.push('Escribe el mensaje de WhatsApp')
+      } else {
+        errors.push(...validateMessageBlocks(config))
       }
       if (str(config.sender) === 'specific' && !str(config.senderNumberId)) {
         errors.push('Selecciona el número de WhatsApp remitente')
@@ -810,100 +1013,53 @@ const CHANNEL_NODES: NodeDefinition[] = [
         specific: str(config.senderNumberLabel) || 'Número seleccionado'
       }
       const isTemplate = str(config.messageType) === 'template'
+      const blocks = asMessageBlocks(config.messageBlocks).filter((block) => block.type === 'text').length
       return {
-        text: `${senderLabels[str(config.sender)] || 'Número principal'}${isTemplate ? ' · Plantilla' : ''}`,
-        box: isTemplate ? str(config.templateName) || undefined : str(config.message) || undefined,
+        text: `${senderLabels[str(config.sender)] || 'Número principal'}${isTemplate ? ' · Plantilla' : blocks > 1 ? ` · ${blocks} mensajes` : ''}`,
+        box: isTemplate ? str(config.templateName) || undefined : firstTextBlock(config) || undefined,
         empty: 'Configura el mensaje de WhatsApp'
       }
     }
   },
-  {
+  channelMessageNode({
     type: 'channel-messenger',
-    kind: 'action',
     label: 'Messenger',
     brand: 'Facebook',
-    category: 'action-content',
-    description: 'Envía un mensaje por Messenger',
     icon: MessageCircle,
     accent: 'blue',
+    description: 'Envía mensajes por Messenger',
     addButtonLabel: 'Agregar mensaje',
-    allowedChannels: ['messenger'],
-    defaultConfig: () => ({ message: '', page: '' }),
-    fields: [
-      {
-        key: 'message',
-        label: 'Texto del mensaje',
-        type: 'textarea',
-        placeholder: 'Escribe el mensaje…',
-        required: true,
-        showVariables: true
-      },
-      { key: 'page', label: 'Página remitente (opcional)', type: 'text', placeholder: 'Página conectada por defecto' }
-    ],
-    outputs: () => SINGLE_OUTPUT,
-    summary: (config) => ({
-      box: str(config.message) || undefined,
-      empty: 'Escribe el mensaje de Messenger'
-    })
-  },
-  {
+    channel: 'messenger',
+    supportsQuickReplies: true,
+    senderKey: 'page',
+    senderLabel: 'Página remitente (opcional)'
+  }),
+  channelMessageNode({
     type: 'channel-instagram',
-    kind: 'action',
     label: 'Instagram Direct',
     brand: 'Instagram',
-    category: 'action-content',
-    description: 'Envía un DM por Instagram',
     icon: Instagram,
     accent: 'pink',
+    description: 'Envía DMs por Instagram',
     addButtonLabel: 'Agregar DM',
-    allowedChannels: ['instagram'],
-    defaultConfig: () => ({ message: '', account: '' }),
-    fields: [
-      {
-        key: 'message',
-        label: 'Texto del DM',
-        type: 'textarea',
-        placeholder: 'Escribe el mensaje…',
-        required: true,
-        showVariables: true
-      },
-      { key: 'account', label: 'Cuenta de Instagram (opcional)', type: 'text', placeholder: 'Cuenta conectada por defecto' }
-    ],
-    outputs: () => SINGLE_OUTPUT,
-    summary: (config) => ({
-      box: str(config.message) || undefined,
-      empty: 'Escribe el DM de Instagram'
-    })
-  },
-  {
+    channel: 'instagram',
+    supportsQuickReplies: true,
+    senderKey: 'account',
+    senderLabel: 'Cuenta de Instagram (opcional)'
+  }),
+  channelMessageNode({
     type: 'channel-facebook-message',
-    kind: 'action',
     label: 'Enviar mensaje',
     brand: 'Facebook',
-    category: 'action-content',
-    description: 'Envía un mensaje por Facebook (Messenger)',
     icon: Facebook,
     accent: 'blue',
+    description: 'Envía un mensaje por Facebook (Messenger)',
     addButtonLabel: 'Agregar mensaje',
-    allowedChannels: ['messenger'],
-    defaultConfig: () => ({ message: '', page: '' }),
-    fields: [
-      {
-        key: 'message',
-        label: 'Texto del mensaje',
-        type: 'textarea',
-        placeholder: 'Escribe el mensaje…',
-        required: true,
-        showVariables: true
-      },
-      { key: 'page', label: 'Página remitente (opcional)', type: 'text', placeholder: 'Página conectada por defecto' }
-    ],
-    outputs: () => SINGLE_OUTPUT,
-    summary: (config) => ({
-      box: str(config.message) || undefined,
-      empty: 'Escribe el mensaje'
-    })
-  }
+    channel: 'messenger',
+    supportsQuickReplies: true,
+    senderKey: 'page',
+    senderLabel: 'Página remitente (opcional)'
+  })
 ]
 
 // ---------------------------------------------------------------------------
@@ -1252,21 +1408,38 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     kind: 'action',
     label: 'Condición',
     category: 'action-logic',
-    description: 'Divide el flujo según datos reales del CRM',
+    description: 'Divide el flujo con grupos de reglas del CRM (Y/O combinables)',
     icon: Filter,
     accent: 'purple',
     tintedHeader: true,
     addButtonLabel: 'Agregar regla',
     configComponent: 'conditions',
-    defaultConfig: () => ({ ...emptyConditionConfig() }),
+    supportsVariables: true,
+    maxBranches: MAX_BRANCHES,
+    defaultConfig: () => ({ ...emptyAdvancedCondition() }),
     fields: [],
-    outputs: () => [
-      { id: 'yes', label: 'Sí' },
-      { id: 'no', label: 'No' }
-    ],
-    validate: (config) => validateConditionRules(config),
+    outputs: (config) => {
+      const branches = Array.isArray(config.branches)
+        ? (config.branches as Array<{ id?: unknown; name?: unknown }>)
+        : []
+      if (branches.length <= 1) {
+        return [
+          { id: 'yes', label: 'Sí' },
+          { id: 'no', label: 'No' }
+        ]
+      }
+      // Multi-rama: una salida por rama + "Ninguna" cuando nada coincide
+      return [
+        ...branches.slice(0, MAX_BRANCHES - 1).map((branch, index) => ({
+          id: str(branch.id) || `branch-${index + 1}`,
+          label: str(branch.name) || `Rama ${index + 1}`
+        })),
+        { id: 'none', label: 'Ninguna' }
+      ]
+    },
+    validate: (config) => validateAdvancedCondition(config),
     summary: (config) => ({
-      text: summarizeCondition(config) || undefined,
+      text: summarizeAdvancedCondition(config) || undefined,
       empty: 'Define las reglas de la condición'
     })
   },
@@ -1288,10 +1461,8 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       // periodo establecido
       amount: 1,
       unit: 'days',
-      // fecha específica
+      // fecha específica (la zona horaria viene de la configuración del flujo)
       untilDate: '',
-      timezone: '',
-      useContactTimezone: false,
       // recurrente
       recurrence: 'weekly',
       weekdays: [],
@@ -1315,18 +1486,17 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       actionResource: '',
       actionChannel: 'any',
       // condiciones
-      conditions: emptyConditionConfig(),
+      conditions: emptyAdvancedCondition(),
       evaluation: 'continuous',
       // timeout compartido (respuesta/acción/condiciones)
       timeoutEnabled: false,
       timeoutAmount: 2,
       timeoutUnit: 'days',
-      // ventana horaria
+      // ventana horaria (usa la zona horaria global del flujo)
       windowEnabled: false,
       windowDays: [],
       windowStart: '09:00',
       windowEnd: '18:00',
-      windowTimezone: '',
       outsideWindow: 'next-window'
     }),
     fields: [],
@@ -1391,7 +1561,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         errors.push('Selecciona la acción esperada')
       }
       if (mode === 'conditions') {
-        errors.push(...validateConditionRules(config.conditions).map((error) => `Condición: ${error}`))
+        errors.push(...validateAdvancedCondition(config.conditions).map((error) => `Condición: ${error}`))
       }
       if (config.timeoutEnabled && (Number(config.timeoutAmount) || 0) <= 0) {
         errors.push('El tiempo máximo de espera debe ser mayor a cero')
@@ -1443,7 +1613,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         return { text: `Espera a que ${actions[str(config.expectedAction)] || 'realice una acción'}${timeoutText}` }
       }
       if (mode === 'conditions') {
-        const summary = summarizeCondition(config.conditions)
+        const summary = summarizeAdvancedCondition(config.conditions)
         return { text: `Espera hasta que ${summary || 'se cumpla una condición'}${timeoutText}` }
       }
       return { empty: 'Selecciona el tipo de espera' }
@@ -1501,6 +1671,8 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       // evento personalizado
       customEventName: '',
       payloadContains: '',
+      // condición avanzada (grupos Y/O combinables)
+      advancedCondition: emptyAdvancedCondition(),
       // evaluación y comportamiento
       evaluate: 'during-automation',
       onMet: 'end-automation',
@@ -1547,6 +1719,9 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       if (goalType === 'custom' && !str(config.customEventName).trim()) {
         errors.push('Indica el nombre del evento personalizado')
       }
+      if (goalType === 'advanced') {
+        errors.push(...validateAdvancedCondition(config.advancedCondition).map((error) => `Condición: ${error}`))
+      }
       if (str(config.windowMode) === 'duration' && (Number(config.windowAmount) || 0) <= 0) {
         errors.push('La ventana de tiempo debe ser mayor a cero')
       }
@@ -1585,7 +1760,8 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         conversation: () => `Respondió por ${channelLabel(str(config.conversationChannel) || 'any')}`,
         contact: () => 'Cambio en el contacto',
         ads: () => (str(config.adsEvent) === 'ctwa' ? 'Click to WhatsApp ads' : 'Clic en anuncio de Facebook'),
-        custom: () => `Evento "${str(config.customEventName)}"`
+        custom: () => `Evento "${str(config.customEventName)}"`,
+        advanced: () => summarizeAdvancedCondition(config.advancedCondition) || 'Condición avanzada'
       }
       const detail = summaries[goalType]?.()
       return {
@@ -1593,38 +1769,6 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         empty: 'Configura la meta de este objetivo'
       }
     }
-  },
-  {
-    type: 'logic-split',
-    kind: 'action',
-    label: 'Dividir',
-    category: 'action-logic',
-    description: 'Crea múltiples ramas con nombre',
-    icon: Split,
-    accent: 'purple',
-    tintedHeader: true,
-    addButtonLabel: 'Agregar rama',
-    defaultConfig: () => ({
-      branches: [
-        { id: 'branch-1', label: 'Rama 1' },
-        { id: 'branch-2', label: 'Rama 2' }
-      ]
-    }),
-    fields: [
-      { key: 'branches', label: 'Ramas', type: 'branches', required: true }
-    ],
-    outputs: (config) =>
-      arr<{ id?: unknown; label?: unknown }>(config.branches).map((branch, index) => ({
-        id: str(branch.id) || `branch-${index + 1}`,
-        label: str(branch.label) || `Rama ${index + 1}`
-      })),
-    validate: (config) => {
-      const branches = arr<{ label?: unknown }>(config.branches)
-      if (branches.length < 2) return ['Agrega al menos dos ramas']
-      if (branches.some((branch) => !str(branch.label).trim())) return ['Ponle nombre a todas las ramas']
-      return []
-    },
-    summary: (config) => ({ text: `${arr(config.branches).length} ramas` })
   },
   {
     type: 'randomizer',
@@ -1658,55 +1802,6 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       return []
     },
     summary: (config) => ({ text: `${arr(config.branches).length} ramas al azar` })
-  },
-  {
-    type: 'logic-smart-pause',
-    kind: 'action',
-    label: 'Pausa inteligente',
-    category: 'action-logic',
-    description: 'Espera respetando una ventana horaria y días permitidos',
-    icon: Timer,
-    accent: 'coral',
-    tintedHeader: true,
-    addButtonLabel: 'Configurar pausa',
-    defaultConfig: () => ({
-      amount: 23,
-      unit: 'hours',
-      windowEnabled: false,
-      windowDays: [],
-      windowStart: '09:00',
-      windowEnd: '18:00',
-      timezone: ''
-    }),
-    fields: [
-      { key: 'amount', label: 'Duración', type: 'duration' },
-      { key: 'windowEnabled', label: 'Limitar a una ventana horaria', type: 'toggle' },
-      {
-        key: 'windowDays',
-        label: 'Días permitidos',
-        type: 'weekdays',
-        showIf: (config) => Boolean(config.windowEnabled)
-      },
-      { key: 'windowStart', label: 'Desde', type: 'time', showIf: (config) => Boolean(config.windowEnabled) },
-      { key: 'windowEnd', label: 'Hasta', type: 'time', showIf: (config) => Boolean(config.windowEnabled) },
-      {
-        key: 'timezone',
-        label: 'Zona horaria (opcional)',
-        type: 'text',
-        placeholder: 'Zona horaria de la cuenta',
-        showIf: (config) => Boolean(config.windowEnabled)
-      }
-    ],
-    outputs: () => SINGLE_OUTPUT,
-    validate: (config) => ((Number(config.amount) || 0) <= 0 ? ['La duración debe ser mayor a cero'] : []),
-    summary: (config) => {
-      const base = `Espera ${durationLabel(Number(config.amount) || 0, str(config.unit) || 'hours')} y luego continúa`
-      return {
-        text: config.windowEnabled
-          ? `${base} (${str(config.windowStart) || '09:00'}–${str(config.windowEnd) || '18:00'})`
-          : base
-      }
-    }
   },
   {
     type: 'logic-actions-group',
@@ -1838,12 +1933,33 @@ const OTHER_ACTIONS: NodeDefinition[] = [
 // API del registro
 // ---------------------------------------------------------------------------
 
+// Nodos cuyas salidas son semánticas y no admiten ramas extra del usuario
+const NO_EXTRA_BRANCH_TYPES = new Set(['logic-condition', 'randomizer', 'logic-wait', 'logic-goal', 'extra-comment'])
+
+/**
+ * Cualquier nodo de acción puede tener hasta 10 ramas: al ensamblar el
+ * registro envolvemos sus salidas para incluir las ramas extra del usuario
+ * (config.extraBranches). Los nodos de mensaje ya las incluyen junto con
+ * las salidas de sus botones.
+ */
+function withMultiBranchSupport(definition: NodeDefinition): NodeDefinition {
+  if (definition.kind !== 'action' || NO_EXTRA_BRANCH_TYPES.has(definition.type)) return definition
+  if (definition.supportsMessageBlocks) return definition
+  const baseOutputs = definition.outputs
+  return {
+    ...definition,
+    supportsMultipleBranches: true,
+    maxBranches: MAX_BRANCHES,
+    outputs: (config) => withBranches(baseOutputs(config), config)
+  }
+}
+
 export const NODE_DEFINITIONS: NodeDefinition[] = [
   ...TRIGGERS,
   ...CHANNEL_NODES,
   ...CONTACT_ACTIONS,
   ...OTHER_ACTIONS
-]
+].map(withMultiBranchSupport)
 
 const definitionsByType = new Map(NODE_DEFINITIONS.map((definition) => [definition.type, definition]))
 
@@ -1880,6 +1996,13 @@ export function validateNodeConfig(definition: NodeDefinition, config: Record<st
 
   if (definition.validate) {
     errors.push(...definition.validate(config))
+  }
+
+  // Límite de ramas por nodo (salidas base + botones + ramas extra)
+  const rawBranchCount =
+    1 + messageBlockHandles(config).length + extraBranchHandles(config).length
+  if (rawBranchCount > (definition.maxBranches || MAX_BRANCHES)) {
+    errors.push(`Máximo ${definition.maxBranches || MAX_BRANCHES} ramas por paso`)
   }
 
   // Canales: nunca permitir SMS/Email u otros canales no soportados

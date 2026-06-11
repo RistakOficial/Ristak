@@ -1178,16 +1178,11 @@
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
 }
 
+/* En celular el TabList ocupa todo el ancho del formulario */
 .mobileSheetContainer .tabListWrapper {
-  justify-content: flex-start;
-  overflow-x: auto;
+  justify-content: stretch;
   border-bottom: 0;
   padding-bottom: 0;
-  scrollbar-width: none;
-}
-
-.mobileSheetContainer .tabListWrapper::-webkit-scrollbar {
-  display: none;
 }
 
 .mobileSheetContainer :global([data-ristak-tablist]) {
@@ -1268,12 +1263,6 @@
 .mobileCustomSchedule {
   display: grid;
   gap: 12px;
-}
-
-.mobileCustomScheduleRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px;
 }
 
 .mobileCustomScheduleSummary {
