@@ -4,6 +4,7 @@ import { Card, CustomSelect } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   conversationalAgentService,
+  type ClosingStrategyMode,
   type ConversationalAgentConfig,
   type ConversationalAgentConfigInput,
   type ConversationalAgentTestResult,
@@ -44,6 +45,8 @@ const emptyConfig: ConversationalAgentConfig = {
   allowEmojis: false,
   hideAttended: false,
   defaultCalendarId: null,
+  closingStrategyMode: 'system',
+  closingStrategyCustom: '',
   updatedAt: null
 }
 
@@ -60,7 +63,9 @@ function formToInput(form: ConversationalAgentConfig): ConversationalAgentConfig
     extraInstructions: form.extraInstructions,
     allowEmojis: form.allowEmojis,
     hideAttended: form.hideAttended,
-    defaultCalendarId: form.defaultCalendarId
+    defaultCalendarId: form.defaultCalendarId,
+    closingStrategyMode: form.closingStrategyMode,
+    closingStrategyCustom: form.closingStrategyCustom
   }
 }
 
@@ -312,6 +317,47 @@ export const ConversationalAgentSettings: React.FC = () => {
             />
           </div>
         )}
+
+        <div className={styles.section}>
+          <h3 className={styles.sectionTitle}>Estrategia de cierre</h3>
+          <p className={styles.helper}>
+            El paso a paso que el agente sigue para llevar la conversación al objetivo y manejar objeciones.
+          </p>
+          <div className={styles.field}>
+            <CustomSelect
+              value={form.closingStrategyMode}
+              onChange={(event) => updateField('closingStrategyMode', event.target.value as ClosingStrategyMode)}
+              disabled={loading}
+            >
+              <option value="system">Predeterminada del sistema</option>
+              <option value="custom">Personalizada</option>
+            </CustomSelect>
+          </div>
+          {form.closingStrategyMode === 'system' ? (
+            <>
+              <pre className={styles.systemPromptBox}>{form.systemClosingStrategy || 'Cargando estrategia del sistema...'}</pre>
+              <p className={styles.helper}>
+                Esta es la estrategia exacta que usa el agente. Para cambiarla, elige "Personalizada" y escribe la tuya.
+              </p>
+            </>
+          ) : (
+            <>
+              <textarea
+                className={`${styles.textarea} ${styles.actionTextarea}`}
+                value={form.closingStrategyCustom}
+                placeholder={'Escribe el paso a paso que debe seguir el agente. Ejemplo:\n\n1. Pregunta qué busca resolver la persona.\n2. Si pregunta el valor, dáselo y pregunta qué resultado espera.\n3. Aporta una recomendación breve según su caso.\n4. Si muestra intención real, ejecuta la acción de avance.\n\nManejo de objeciones:\n- "Está caro" → pregunta qué le hace más ruido, el valor o no saber si le sirve.'}
+                onChange={(event) => updateField('closingStrategyCustom', event.target.value)}
+                disabled={loading}
+                rows={10}
+              />
+              <p className={styles.helper}>
+                {form.closingStrategyCustom.trim()
+                  ? 'El agente seguirá esta estrategia en lugar de la predeterminada.'
+                  : 'Si la dejas vacía, el agente usará la estrategia predeterminada del sistema.'}
+              </p>
+            </>
+          )}
+        </div>
 
         <div className={styles.section}>
           <h3 className={styles.sectionTitle}>Datos mínimos antes de cumplir el objetivo</h3>

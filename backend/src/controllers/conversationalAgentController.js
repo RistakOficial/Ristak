@@ -11,6 +11,7 @@ import {
   listConversationalAgentEvents
 } from '../services/conversationalAgentService.js'
 import { runConversationalAgentPreview } from '../agents/conversational/runner.js'
+import { DEFAULT_CLOSING_STRATEGY } from '../agents/conversational/prompt.js'
 
 export async function getConfig(req, res) {
   try {
@@ -20,7 +21,8 @@ export async function getConfig(req, res) {
       data: {
         ...config,
         objectives: CONVERSATIONAL_OBJECTIVES,
-        successActions: SUCCESS_ACTIONS
+        successActions: SUCCESS_ACTIONS,
+        systemClosingStrategy: DEFAULT_CLOSING_STRATEGY
       }
     })
   } catch (error) {
@@ -32,7 +34,11 @@ export async function getConfig(req, res) {
 export async function saveConfig(req, res) {
   try {
     const config = await saveConversationalAgentConfig(req.body || {})
-    res.json({ success: true, message: 'Agente conversacional guardado', data: config })
+    res.json({
+      success: true,
+      message: 'Agente conversacional guardado',
+      data: { ...config, systemClosingStrategy: DEFAULT_CLOSING_STRATEGY }
+    })
   } catch (error) {
     logger.error('Error guardando configuración del agente conversacional:', error)
     res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al guardar la configuración' })

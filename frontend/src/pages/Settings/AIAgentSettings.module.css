@@ -758,3 +758,20 @@
 .testChatComposer .input {
   flex: 1;
 }
+
+/* Estrategia de cierre predeterminada (solo lectura) */
+.systemPromptBox {
+  margin: 10px 0 6px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-primary, rgba(148, 163, 184, 0.3));
+  background: var(--surface-secondary, rgba(148, 163, 184, 0.08));
+  color: var(--text-primary, #0f172a);
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 360px;
+  overflow-y: auto;
+}

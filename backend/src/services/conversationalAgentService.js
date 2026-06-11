@@ -55,6 +55,8 @@ function mapConfigRow(row) {
       allowEmojis: false,
       hideAttended: false,
       defaultCalendarId: null,
+      closingStrategyMode: 'system',
+      closingStrategyCustom: '',
       updatedAt: null
     }
   }
@@ -70,6 +72,8 @@ function mapConfigRow(row) {
     allowEmojis: toBoolean(row.allow_emojis),
     hideAttended: toBoolean(row.hide_attended),
     defaultCalendarId: row.default_calendar_id || null,
+    closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
+    closingStrategyCustom: row.closing_strategy_custom || '',
     updatedAt: row.updated_at || null
   }
 }
@@ -92,7 +96,13 @@ export async function saveConversationalAgentConfig(input = {}) {
     extraInstructions: input.extraInstructions === undefined ? current.extraInstructions : String(input.extraInstructions || '').slice(0, 8000),
     allowEmojis: input.allowEmojis === undefined ? current.allowEmojis : toBoolean(input.allowEmojis),
     hideAttended: input.hideAttended === undefined ? current.hideAttended : toBoolean(input.hideAttended),
-    defaultCalendarId: input.defaultCalendarId === undefined ? current.defaultCalendarId : (String(input.defaultCalendarId || '').trim() || null)
+    defaultCalendarId: input.defaultCalendarId === undefined ? current.defaultCalendarId : (String(input.defaultCalendarId || '').trim() || null),
+    closingStrategyMode: input.closingStrategyMode === undefined
+      ? current.closingStrategyMode
+      : (input.closingStrategyMode === 'custom' ? 'custom' : 'system'),
+    closingStrategyCustom: input.closingStrategyCustom === undefined
+      ? current.closingStrategyCustom
+      : String(input.closingStrategyCustom || '').slice(0, 8000)
   }
 
   const existing = await db.get('SELECT id FROM conversational_agent_config WHERE id = 1')
@@ -102,24 +112,28 @@ export async function saveConversationalAgentConfig(input = {}) {
       SET enabled = ?, objective = ?, custom_objective = ?, success_action = ?,
           required_data = ?, handoff_rules = ?, extra_instructions = ?,
           allow_emojis = ?, hide_attended = ?, default_calendar_id = ?,
+          closing_strategy_mode = ?, closing_strategy_custom = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = 1
     `, [
       next.enabled ? 1 : 0, next.objective, next.customObjective, next.successAction,
       next.requiredData, next.handoffRules, next.extraInstructions,
-      next.allowEmojis ? 1 : 0, next.hideAttended ? 1 : 0, next.defaultCalendarId
+      next.allowEmojis ? 1 : 0, next.hideAttended ? 1 : 0, next.defaultCalendarId,
+      next.closingStrategyMode, next.closingStrategyCustom
     ])
   } else {
     await db.run(`
       INSERT INTO conversational_agent_config (
         id, enabled, objective, custom_objective, success_action,
         required_data, handoff_rules, extra_instructions,
-        allow_emojis, hide_attended, default_calendar_id
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        allow_emojis, hide_attended, default_calendar_id,
+        closing_strategy_mode, closing_strategy_custom
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       next.enabled ? 1 : 0, next.objective, next.customObjective, next.successAction,
       next.requiredData, next.handoffRules, next.extraInstructions,
-      next.allowEmojis ? 1 : 0, next.hideAttended ? 1 : 0, next.defaultCalendarId
+      next.allowEmojis ? 1 : 0, next.hideAttended ? 1 : 0, next.defaultCalendarId,
+      next.closingStrategyMode, next.closingStrategyCustom
     ])
   }
 

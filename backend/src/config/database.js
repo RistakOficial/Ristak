@@ -2705,10 +2705,28 @@ async function initTables() {
         allow_emojis INTEGER DEFAULT 0,
         hide_attended INTEGER DEFAULT 0,
         default_calendar_id TEXT,
+        closing_strategy_mode TEXT DEFAULT 'system',
+        closing_strategy_custom TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+
+    // Columnas agregadas después del despliegue inicial del agente conversacional
+    for (const [columnName, columnType] of [
+      ['closing_strategy_mode', "TEXT DEFAULT 'system'"],
+      ['closing_strategy_custom', 'TEXT']
+    ]) {
+      try {
+        if (usePostgres) {
+          await db.run(`ALTER TABLE conversational_agent_config ADD COLUMN IF NOT EXISTS ${columnName} ${columnType}`)
+        } else {
+          await db.run(`ALTER TABLE conversational_agent_config ADD COLUMN ${columnName} ${columnType}`)
+        }
+      } catch (err) {
+        // La columna ya existe.
+      }
+    }
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS conversational_agent_state (

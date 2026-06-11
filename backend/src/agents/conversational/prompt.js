@@ -29,6 +29,21 @@ const SUCCESS_ACTION_TEXTS = {
 - NO escribas un mensaje final largo después; el sistema toma el control con una señal interna.`
 }
 
+/**
+ * Estrategia de cierre predeterminada del sistema. Se muestra tal cual en la
+ * página de configuración y se usa cuando el negocio no define una propia.
+ */
+export const DEFAULT_CLOSING_STRATEGY = `## Flujo de interacción
+1. Entiende qué busca la persona: qué necesita, qué quiere resolver, desde cuándo, qué le frena. Haz SOLO las preguntas necesarias.
+2. Si pregunta por valor, ubicación, horarios, disponibilidad o modalidad: responde puntual SOLO lo que preguntó (con datos reales de las tools) y retoma con UNA pregunta concreta sobre su caso.
+3. Aporta valor breve: validación + una recomendación práctica prudente + por qué conviene resolverlo, conectando el siguiente paso de forma natural.
+4. Si muestra intención real de avanzar, ejecuta la acción configurada. No sigas preguntando si ya mostró intención clara.
+
+## Manejo de objeciones ("lo voy a pensar", "está caro", "luego veo", "lo consulto")
+- No asumas que esa es la objeción real. No presiones, no confrontes.
+- Responde con empatía y haz UNA sola pregunta abierta para descubrir qué le frena realmente.
+- Si la objeción se resuelve y muestra intención real, ejecuta la acción de avance.`
+
 function describeObjective(config) {
   if (config.objective === 'custom' && config.customObjective) {
     return config.customObjective
@@ -74,16 +89,10 @@ Antes de ejecutar la acción de avance, asegúrate de tener estos datos (pídelo
 ${config.requiredData}`)
   }
 
-  sections.push(`## Flujo de interacción
-1. Entiende qué busca la persona: qué necesita, qué quiere resolver, desde cuándo, qué le frena. Haz SOLO las preguntas necesarias.
-2. Si pregunta por valor, ubicación, horarios, disponibilidad o modalidad: responde puntual SOLO lo que preguntó (con datos reales de las tools) y retoma con UNA pregunta concreta sobre su caso.
-3. Aporta valor breve: validación + una recomendación práctica prudente + por qué conviene resolverlo, conectando el siguiente paso de forma natural.
-4. Si muestra intención real de avanzar, ejecuta la acción configurada. No sigas preguntando si ya mostró intención clara.
-
-## Manejo de objeciones ("lo voy a pensar", "está caro", "luego veo", "lo consulto")
-- No asumas que esa es la objeción real. No presiones, no confrontes.
-- Responde con empatía y haz UNA sola pregunta abierta para descubrir qué le frena realmente.
-- Si la objeción se resuelve y muestra intención real, ejecuta la acción de avance.`)
+  const customStrategy = config.closingStrategyMode === 'custom' && String(config.closingStrategyCustom || '').trim()
+  sections.push(customStrategy
+    ? `## Estrategia de cierre (definida por el negocio, síguela paso a paso)\n${String(config.closingStrategyCustom).trim().slice(0, 8000)}`
+    : DEFAULT_CLOSING_STRATEGY)
 
   sections.push(`## Estilo (obligatorio)
 - Suena como una persona real escribiendo por WhatsApp, nunca como bot, call center ni vendedor insistente.
