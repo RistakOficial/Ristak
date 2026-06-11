@@ -131,6 +131,53 @@ test('publicar acepta el canal "any" y canales permitidos en disparadores', () =
   assert.ok(errors.some((message) => message.includes('email')))
 })
 
+test('normalizeFlow preserva la configuración global del flujo', () => {
+  const flow = normalizeFlow({
+    nodes: [],
+    edges: [],
+    viewport: { x: 0, y: 0, zoom: 1 },
+    settings: { timezone: 'America/Mexico_City', allowReentry: true }
+  })
+  assert.equal(flow.settings.timezone, 'America/Mexico_City')
+  assert.equal(flow.settings.allowReentry, true)
+
+  const sinSettings = normalizeFlow({ nodes: [], edges: [] })
+  assert.equal('settings' in sinSettings, false)
+})
+
+test('publicar limita a 10 ramas por nodo', () => {
+  const hub = actionNode('hub')
+  const targets = Array.from({ length: 11 }, (_, index) => actionNode(`t${index}`))
+  const edges = [
+    edge('e0', 'start', 'hub'),
+    ...targets.map((target, index) => edge(`b${index}`, 'hub', target.id, `branch-${index}`))
+  ]
+  const flow = { nodes: [startNode(), hub, ...targets], edges }
+  const errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('Máximo 10 ramas')))
+})
+
+test('publicar valida el horario global del flujo', () => {
+  const flow = {
+    nodes: [startNode()],
+    edges: [],
+    settings: {
+      allowedSchedule: { enabled: true, daysOfWeek: [], startTime: '', endTime: '18:00' }
+    }
+  }
+  const errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('al menos un día permitido')))
+  assert.ok(errors.some((message) => message.includes('hora de inicio y fin')))
+
+  flow.settings.allowedSchedule = {
+    enabled: true,
+    daysOfWeek: ['mon', 'tue'],
+    startTime: '09:00',
+    endTime: '18:00'
+  }
+  assert.deepEqual(validateFlowForPublish(flow), [])
+})
+
 test('publicar detecta ciclos en el flujo', () => {
   const flow = {
     nodes: [startNode(), actionNode('a1'), actionNode('a2')],

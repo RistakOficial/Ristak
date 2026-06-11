@@ -1,9 +1,17 @@
-import React, { useLayoutEffect, useRef } from 'react'
-import { AlertCircle, Copy, Plus, Settings2, Trash2, X, Zap } from 'lucide-react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { AlertCircle, Clock, Copy, GitBranch, Link2, Plus, Settings2, Trash2, X, Zap } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import type { AutomationNode } from '@/services/automationsService'
-import { getNodeDefinition, validateNodeConfig, type NodeDefinition } from './nodeRegistry'
-import { getNodeOutputs, getStartTriggers, isStartNode, nodeHasInput } from './flowUtils'
+import {
+  asMessageBlocks,
+  getNodeDefinition,
+  validateNodeConfig,
+  MAX_BRANCHES,
+  type MessageBlock,
+  type NodeDefinition
+} from './nodeRegistry'
+import { genId, getNodeOutputs, getStartTriggers, isStartNode, nodeHasInput } from './flowUtils'
+import { compiledToReadable } from './composer/MessageComposer'
 import styles from './AutomationEditor.module.css'
 
 /** Posiciones locales (en px del nodo) de los conectores, para dibujar flechas */
@@ -26,8 +34,10 @@ interface AutomationNodeCardProps {
   onMeasure: (nodeId: string, layout: NodeHandleLayout) => void
   /** Pointer down sobre la tarjeta (el canvas decide si inicia un arrastre) */
   onPointerDownCard: (event: React.PointerEvent, node: AutomationNode) => void
-  onSelect: (node: AutomationNode) => void
+  onSelect: (node: AutomationNode, event?: React.PointerEvent) => void
   onOpenConfig: (node: AutomationNode) => void
+  /** Parche directo de configuración desde la tarjeta (+ mensaje, + rama…) */
+  onPatchConfig: (node: AutomationNode, patch: Record<string, unknown>, openConfig?: boolean) => void
   onDuplicate: (node: AutomationNode) => void
   onDelete: (node: AutomationNode) => void
   onStartConnection: (event: React.PointerEvent, node: AutomationNode, handleId: string) => void
@@ -54,6 +64,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
   onPointerDownCard,
   onSelect,
   onOpenConfig,
+  onPatchConfig,
   onDuplicate,
   onDelete,
   onStartConnection,
@@ -104,8 +115,65 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
   const configErrors = !isStart && definition ? validateNodeConfig(definition, config) : []
   const configured = configErrors.length === 0
   const hasErrors = Boolean(errors && errors.length > 0)
-  const customName = typeof config.name === 'string' && config.name.trim() ? config.name.trim() : ''
-  const title = isStart ? 'Cuando...' : customName || definition?.label || node.label || node.type
+
+  // ------------------------------------------------------------------
+  // Título editable (doble clic · máx. 80 caracteres · vacío = default)
+  // ------------------------------------------------------------------
+  const customTitle =
+    (typeof config.customTitle === 'string' && config.customTitle.trim()) ||
+    (typeof config.name === 'string' && config.name.trim()) ||
+    ''
+  const defaultTitle = isStart ? 'Cuando...' : definition?.label || node.label || node.type
+  const title = customTitle || defaultTitle
+
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [draftTitle, setDraftTitle] = useState(title)
+  const titleInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (editingTitle) {
+      setDraftTitle(customTitle || '')
+      window.setTimeout(() => titleInputRef.current?.focus(), 0)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingTitle])
+
+  const commitTitle = () => {
+    setEditingTitle(false)
+    const trimmed = draftTitle.trim().slice(0, 80)
+    // Vacío → regresa al nombre por defecto
+    const patch: Record<string, unknown> = { customTitle: trimmed }
+    if (typeof config.name === 'string' && node.type === 'logic-wait') {
+      patch.name = trimmed || 'Esperar'
+      patch.customTitle = ''
+    }
+    onPatchConfig(node, patch)
+  }
+
+  // ------------------------------------------------------------------
+  // Bloques de mensaje (globos tipo chat dentro de la cajita)
+  // ------------------------------------------------------------------
+  const isTemplateMode = node.type === 'channel-whatsapp' && config.messageType === 'template'
+  const showBlocks = Boolean(definition?.supportsMessageBlocks) && !isTemplateMode
+  const blocks = showBlocks ? asMessageBlocks(config.messageBlocks) : []
+
+  const addMessageBlock = () => {
+    const block: MessageBlock = { id: genId('blk'), type: 'text', compiledText: '', buttons: [], quickReplies: [] }
+    onPatchConfig(node, { messageBlocks: [...asMessageBlocks(config.messageBlocks), block] }, true)
+  }
+
+  const branchCount = outputs.length
+  const canAddBranch =
+    Boolean(definition?.supportsMultipleBranches) && branchCount < (definition?.maxBranches || MAX_BRANCHES)
+
+  const addBranch = () => {
+    const branches = Array.isArray(config.extraBranches)
+      ? (config.extraBranches as Array<{ id: string; label: string }>)
+      : []
+    onPatchConfig(node, {
+      extraBranches: [...branches, { id: genId('extra'), label: `Rama ${branches.length + 1}` }]
+    })
+  }
 
   return (
     <div
@@ -124,7 +192,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
       style={{ left: node.position.x, top: node.position.y }}
       onPointerDown={(event) => {
         event.stopPropagation()
-        onSelect(node)
+        onSelect(node, event)
         onPointerDownCard(event, node)
       }}
       onDoubleClick={(event) => {
@@ -144,7 +212,34 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
         </span>
         <span className={styles.nodeHeaderText}>
           {!isStart && definition?.brand && <span className={styles.nodeBrand}>{definition.brand}</span>}
-          <span className={styles.nodeTitle}>{title}</span>
+          {editingTitle ? (
+            <input
+              ref={titleInputRef}
+              className={styles.nodeTitleInput}
+              value={draftTitle}
+              maxLength={80}
+              placeholder={defaultTitle}
+              onChange={(event) => setDraftTitle(event.target.value)}
+              onBlur={commitTitle}
+              onKeyDown={(event) => {
+                event.stopPropagation()
+                if (event.key === 'Enter') commitTitle()
+                if (event.key === 'Escape') setEditingTitle(false)
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+            />
+          ) : (
+            <span
+              className={styles.nodeTitle}
+              title="Doble clic para renombrar"
+              onDoubleClick={(event) => {
+                event.stopPropagation()
+                if (!isStart) setEditingTitle(true)
+              }}
+            >
+              {title}
+            </span>
+          )}
         </span>
         {!isStart && (
           <span
@@ -262,12 +357,108 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
               Nuevo disparador
             </button>
           </>
+        ) : showBlocks ? (
+          <>
+            {/* Mini-secuencia de globos tipo chat: clic en un globo = editar */}
+            {blocks.map((block) =>
+              block.type === 'text' ? (
+                <button
+                  key={block.id}
+                  type="button"
+                  className={styles.chatBubble}
+                  title="Editar este mensaje"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onOpenConfig(node)
+                  }}
+                >
+                  <span className={styles.chatBubbleText}>
+                    {compiledToReadable(block.compiledText || '') || 'Mensaje vacío…'}
+                  </span>
+                  {[...(block.buttons || []), ...(block.quickReplies || [])].length > 0 && (
+                    <span className={styles.chatBubbleButtons}>
+                      {[...(block.buttons || []), ...(block.quickReplies || [])].map((button) => (
+                        <span key={button.id} className={styles.chatBubbleButtonPill}>
+                          {button.action === 'url' ? <Link2 size={9} /> : <GitBranch size={9} />}
+                          {button.label || 'Botón'}
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                </button>
+              ) : (
+                <button
+                  key={block.id}
+                  type="button"
+                  className={styles.chatDelayRow}
+                  title="Editar la espera interna"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onOpenConfig(node)
+                  }}
+                >
+                  <Clock size={11} />
+                  Espera {Number(block.amount) || 0} {block.unit === 'minutes' ? 'min' : 'seg'}
+                </button>
+              )
+            )}
+
+            {summary?.text && <p className={styles.nodeSummaryText}>{summary.text}</p>}
+
+            <button
+              type="button"
+              className={styles.nodeCtaButton}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                addMessageBlock()
+              }}
+            >
+              <Plus size={12} />
+              {definition?.addButtonLabel || 'Agregar mensaje'}
+            </button>
+
+            {hasErrors && (
+              <span className={styles.nodeErrorHint}>
+                <AlertCircle size={12} />
+                {errors?.[0]}
+              </span>
+            )}
+          </>
         ) : (
           <>
-            {summary?.text && <p className={styles.nodeSummaryText}>{summary.text}</p>}
-            {summary?.box && <div className={styles.nodeSummaryBox}>{summary.box}</div>}
+            {/* Clic en el contenido configurado abre la configuración directa */}
+            {summary?.text && (
+              <button
+                type="button"
+                className={styles.nodeSummaryClickable}
+                title="Editar configuración"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onOpenConfig(node)
+                }}
+              >
+                <p className={styles.nodeSummaryText}>{summary.text}</p>
+              </button>
+            )}
+            {summary?.box && (
+              <button
+                type="button"
+                className={cn(styles.nodeSummaryClickable, styles.nodeSummaryBox)}
+                title="Editar contenido"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onOpenConfig(node)
+                }}
+              >
+                {compiledToReadable(summary.box)}
+              </button>
+            )}
 
-            {/* CTA contextual: cada nodo invita a configurarse desde su cajita */}
             {!configured && definition && (
               <button
                 type="button"
@@ -293,6 +484,22 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
               </span>
             )}
           </>
+        )}
+
+        {/* CTA para crear ramas adicionales (hasta 10 salidas por nodo) */}
+        {!isStart && canAddBranch && (
+          <button
+            type="button"
+            className={cn(styles.nodeCtaButton, styles.nodeCtaButtonSubtle)}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              addBranch()
+            }}
+          >
+            <GitBranch size={11} />
+            Agregar rama
+          </button>
         )}
       </div>
 

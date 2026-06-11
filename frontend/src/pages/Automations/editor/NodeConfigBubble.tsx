@@ -15,10 +15,13 @@ import {
   VariableChips,
   WeekdaysPicker
 } from './config/configPrimitives'
-import { ConditionRulesEditor } from './config/ConditionRulesEditor'
+import { AdvancedConditionBuilder } from './config/AdvancedConditionBuilder'
 import { WaitConfigEditor } from './config/WaitConfigEditor'
 import { GoalConfigEditor } from './config/GoalConfigEditor'
 import { WhatsAppConfigEditor } from './config/WhatsAppConfigEditor'
+import { MessageBlocksEditor } from './config/MessageBlocksEditor'
+import { MessageComposer, VariableTextInput } from './composer/MessageComposer'
+import type { MessageBlock } from './nodeRegistry'
 import styles from './AutomationEditor.module.css'
 
 type ConfigValue = Record<string, unknown>
@@ -92,24 +95,41 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
       case 'text':
         return (
           <Field key={field.key} label={field.label} help={field.help}>
-            <TextInput
-              value={str(config[field.key])}
-              placeholder={field.placeholder}
-              onChange={(event) => setValue(field.key, event.target.value)}
-            />
-            {field.showVariables && <VariableChips onInsert={(variable) => insertVariable(field.key, variable)} />}
+            {field.showVariables ? (
+              <VariableTextInput
+                value={str(config[field.key])}
+                onChange={(compiled) => setValue(field.key, compiled)}
+                placeholder={field.placeholder}
+                aria-label={field.label}
+              />
+            ) : (
+              <TextInput
+                value={str(config[field.key])}
+                placeholder={field.placeholder}
+                onChange={(event) => setValue(field.key, event.target.value)}
+              />
+            )}
           </Field>
         )
 
       case 'textarea':
         return (
           <Field key={field.key} label={field.label} help={field.help}>
-            <TextArea
-              value={str(config[field.key])}
-              placeholder={field.placeholder}
-              onChange={(event) => setValue(field.key, event.target.value)}
-            />
-            {field.showVariables && <VariableChips onInsert={(variable) => insertVariable(field.key, variable)} />}
+            {field.showVariables ? (
+              <MessageComposer
+                value={str(config[field.key])}
+                onChange={(compiled) => setValue(field.key, compiled)}
+                placeholder={field.placeholder}
+                showEmoji={Boolean(definition.supportsEmoji)}
+                aria-label={field.label}
+              />
+            ) : (
+              <TextArea
+                value={str(config[field.key])}
+                placeholder={field.placeholder}
+                onChange={(event) => setValue(field.key, event.target.value)}
+              />
+            )}
           </Field>
         )
 
@@ -478,18 +498,100 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
         )}
 
         {definition.configComponent === 'conditions' && (
-          <ConditionRulesEditor value={config} onChange={(next) => onChange({ ...config, ...next })} />
+          <AdvancedConditionBuilder
+            value={config}
+            onChange={(next) => onChange({ ...config, ...next })}
+            allowBranches
+          />
         )}
         {definition.configComponent === 'wait' && <WaitConfigEditor config={config} onChange={onChange} />}
         {definition.configComponent === 'goal' && <GoalConfigEditor config={config} onChange={onChange} />}
         {definition.configComponent === 'whatsapp' && (
           <WhatsAppConfigEditor config={config} onChange={onChange} />
         )}
+        {definition.configComponent === 'message' && (
+          <>
+            {definition.fields.map(renderField)}
+            <MessageBlocksEditor
+              value={config.messageBlocks}
+              onChange={(messageBlocks: MessageBlock[]) => onChange({ ...config, messageBlocks })}
+              supportsQuickReplies={Boolean(definition.supportsQuickReplies)}
+              addMessageLabel={definition.addButtonLabel || 'Agregar mensaje'}
+            />
+          </>
+        )}
 
         {!definition.configComponent && definition.fields.length === 0 && (
           <p className={styles.configHelp}>Este paso no necesita configuración.</p>
         )}
         {!definition.configComponent && definition.fields.map(renderField)}
+
+        {/* Nombre personalizado del paso (el título de la cajita) */}
+        {definition.configComponent !== 'wait' && (
+          <Field label="Nombre del paso (opcional)" help="Identifica qué hace esta cajita en el canvas">
+            <TextInput
+              value={str(config.customTitle)}
+              maxLength={80}
+              placeholder={definition.label}
+              onChange={(event) => setValue('customTitle', event.target.value)}
+            />
+          </Field>
+        )}
+
+        {/* Ramas extra del nodo (hasta 10 salidas) */}
+        {definition.supportsMultipleBranches && (
+          <Field label="Ramas del paso" help="Cada rama es una salida propia que puedes conectar a pasos distintos">
+            {(Array.isArray(config.extraBranches) ? (config.extraBranches as Array<{ id: string; label: string }>) : []).map(
+              (branch, index) => (
+                <div key={branch.id || index} className={styles.configRow} style={{ marginBottom: 6 }}>
+                  <TextInput
+                    className={styles.configRowGrow}
+                    value={branch.label || ''}
+                    maxLength={40}
+                    placeholder={`Rama ${index + 1}`}
+                    onChange={(event) => {
+                      const branches = (config.extraBranches as Array<{ id: string; label: string }>).map(
+                        (candidate, candidateIndex) =>
+                          candidateIndex === index ? { ...candidate, label: event.target.value } : candidate
+                      )
+                      setValue('extraBranches', branches)
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className={styles.configIconButton}
+                    title="Quitar rama (también elimina su conexión)"
+                    onClick={() => {
+                      const branches = (config.extraBranches as Array<{ id: string; label: string }>).filter(
+                        (_, candidateIndex) => candidateIndex !== index
+                      )
+                      setValue('extraBranches', branches)
+                    }}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              )
+            )}
+            <button
+              type="button"
+              className={styles.configSmallButton}
+              disabled={validateNodeConfig(definition, config).some((error) => error.includes('Máximo'))}
+              onClick={() => {
+                const branches = Array.isArray(config.extraBranches)
+                  ? (config.extraBranches as Array<{ id: string; label: string }>)
+                  : []
+                setValue('extraBranches', [
+                  ...branches,
+                  { id: genId('extra'), label: `Rama ${branches.length + 1}` }
+                ])
+              }}
+            >
+              <Plus size={11} />
+              Agregar rama
+            </button>
+          </Field>
+        )}
       </div>
     </div>
   )

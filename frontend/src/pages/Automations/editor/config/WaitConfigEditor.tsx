@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { CustomSelect } from '@/components/common'
 import { CHANNEL_OPTIONS_WITH_ANY } from '../nodeRegistry'
-import type { ConditionConfig } from '../crmFields'
+import type { AdvancedConditionConfig } from '../crmFields'
 import {
   CatalogSelect,
   ConfigSection,
@@ -22,7 +22,7 @@ import {
   Toggle,
   WeekdaysPicker
 } from './configPrimitives'
-import { ConditionRulesEditor } from './ConditionRulesEditor'
+import { AdvancedConditionBuilder } from './AdvancedConditionBuilder'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -143,18 +143,9 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
               onChange={(event) => set({ untilDate: event.target.value })}
             />
           </Field>
-          <Toggle
-            checked={Boolean(config.useContactTimezone)}
-            onChange={(checked) => set({ useContactTimezone: checked })}
-            label="Usar la zona horaria del contacto si existe"
-          />
-          <Field label="Zona horaria (opcional)">
-            <TextInput
-              value={str(config.timezone)}
-              placeholder="Zona horaria de la cuenta"
-              onChange={(event) => set({ timezone: event.target.value })}
-            />
-          </Field>
+          <p className={styles.configHelp} style={{ marginTop: -6, marginBottom: 12 }}>
+            Usa la zona horaria configurada en este flujo.
+          </p>
         </>
       )}
 
@@ -206,9 +197,9 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
               </Field>
             </div>
           </div>
-          <Field label="Zona horaria (opcional)">
-            <TextInput value={str(config.timezone)} placeholder="Zona horaria de la cuenta" onChange={(event) => set({ timezone: event.target.value })} />
-          </Field>
+          <p className={styles.configHelp} style={{ marginTop: -6, marginBottom: 12 }}>
+            Usa la zona horaria configurada en este flujo.
+          </p>
         </>
       )}
 
@@ -361,9 +352,9 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
             />
           </Field>
           <ConfigSection title="El contacto debe cumplir estas condiciones">
-            <ConditionRulesEditor
+            <AdvancedConditionBuilder
               value={config.conditions}
-              onChange={(conditions: ConditionConfig) => set({ conditions })}
+              onChange={(conditions: AdvancedConditionConfig) => set({ conditions })}
             />
           </ConfigSection>
         </>
@@ -393,54 +384,47 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
       )}
 
       {/* ------------------------- ventana horaria --------------------------- */}
-      <ConfigSection title="Ventana de continuación">
-        <Toggle
-          checked={Boolean(config.windowEnabled)}
-          onChange={(checked) => set({ windowEnabled: checked })}
-          label="Continuar solo en ciertos días y horarios"
-        />
-        {Boolean(config.windowEnabled) && (
-          <>
-            <Field label="Días permitidos">
-              <WeekdaysPicker
-                values={Array.isArray(config.windowDays) ? (config.windowDays as string[]) : []}
-                onChange={(windowDays) => set({ windowDays })}
-              />
-            </Field>
-            <div className={styles.configRow}>
-              <div className={styles.configRowGrow}>
-                <Field label="Desde">
-                  <TextInput type="time" value={str(config.windowStart) || '09:00'} onChange={(event) => set({ windowStart: event.target.value })} />
-                </Field>
-              </div>
-              <div className={styles.configRowGrow}>
-                <Field label="Hasta">
-                  <TextInput type="time" value={str(config.windowEnd) || '18:00'} onChange={(event) => set({ windowEnd: event.target.value })} />
-                </Field>
-              </div>
+      {/* El switch vive solo; el contenedor de días/horas aparece al activarlo */}
+      <Toggle
+        checked={Boolean(config.windowEnabled)}
+        onChange={(checked) => set({ windowEnabled: checked })}
+        label="Continuar solo en ciertos días u horarios"
+      />
+      {Boolean(config.windowEnabled) && (
+        <ConfigSection title="Ventana de continuación">
+          <Field label="Días permitidos">
+            <WeekdaysPicker
+              values={Array.isArray(config.windowDays) ? (config.windowDays as string[]) : []}
+              onChange={(windowDays) => set({ windowDays })}
+            />
+          </Field>
+          <div className={styles.configRow}>
+            <div className={styles.configRowGrow}>
+              <Field label="Desde">
+                <TextInput type="time" value={str(config.windowStart) || '09:00'} onChange={(event) => set({ windowStart: event.target.value })} />
+              </Field>
             </div>
-            <Field label="Si está fuera del horario">
-              <CustomSelect
-                options={[
-                  { value: 'next-window', label: 'Esperar hasta la siguiente ventana disponible' },
-                  { value: 'continue', label: 'Continuar inmediatamente' },
-                  { value: 'next-business-day', label: 'Pausar hasta el siguiente día hábil' }
-                ]}
-                value={str(config.outsideWindow) || 'next-window'}
-                onValueChange={(next) => set({ outsideWindow: next })}
-                aria-label="Fuera del horario"
-              />
-            </Field>
-            <Field label="Zona horaria (opcional)">
-              <TextInput
-                value={str(config.windowTimezone)}
-                placeholder="Zona horaria de la cuenta"
-                onChange={(event) => set({ windowTimezone: event.target.value })}
-              />
-            </Field>
-          </>
-        )}
-      </ConfigSection>
+            <div className={styles.configRowGrow}>
+              <Field label="Hasta">
+                <TextInput type="time" value={str(config.windowEnd) || '18:00'} onChange={(event) => set({ windowEnd: event.target.value })} />
+              </Field>
+            </div>
+          </div>
+          <Field label="Si está fuera del horario">
+            <CustomSelect
+              options={[
+                { value: 'next-window', label: 'Esperar hasta la siguiente ventana disponible' },
+                { value: 'continue', label: 'Continuar inmediatamente' },
+                { value: 'next-business-day', label: 'Pausar hasta el siguiente día permitido' }
+              ]}
+              value={str(config.outsideWindow) || 'next-window'}
+              onValueChange={(next) => set({ outsideWindow: next })}
+              aria-label="Fuera del horario"
+            />
+          </Field>
+          <p className={styles.configHelp}>Usa la zona horaria configurada en este flujo.</p>
+        </ConfigSection>
+      )}
     </div>
   )
 }

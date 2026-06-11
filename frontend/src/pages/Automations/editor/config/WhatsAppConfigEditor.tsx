@@ -5,11 +5,11 @@ import {
   CatalogSelect,
   ConfigSection,
   Field,
-  TextArea,
   TextInput,
-  VariableChips,
   useCatalogOptions
 } from './configPrimitives'
+import { MessageBlocksEditor } from './MessageBlocksEditor'
+import type { MessageBlock } from '../nodeRegistry'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -83,18 +83,12 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
         </Field>
 
         {messageType === 'text' && (
-          <Field label="Texto del mensaje">
-            <TextArea
-              value={str(config.message)}
-              placeholder="Hola {{nombre}}, ¿cómo estás?"
-              onChange={(event) => set({ message: event.target.value })}
-            />
-            <VariableChips
-              onInsert={(variable) =>
-                set({ message: str(config.message) ? `${str(config.message)} ${variable}` : variable })
-              }
-            />
-          </Field>
+          <MessageBlocksEditor
+            value={config.messageBlocks}
+            onChange={(messageBlocks: MessageBlock[]) => set({ messageBlocks })}
+            supportsQuickReplies={false}
+            addMessageLabel="Agregar mensaje"
+          />
         )}
 
         {messageType === 'template' && (
@@ -173,13 +167,11 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
       </ConfigSection>
 
       {/* ------------------------------- Preview ------------------------------ */}
-      {(str(config.message) || str(config.templateName)) && (
+      {messageType === 'template' && str(config.templateName) && (
         <ConfigSection title="Vista previa">
           <div className={styles.waPreview}>
             <div className={styles.waPreviewBubble}>
-              {messageType === 'template'
-                ? `Plantilla: ${str(config.templateName)}${str(config.templateLanguage) ? ` (${str(config.templateLanguage)})` : ''}`
-                : str(config.message)}
+              {`Plantilla: ${str(config.templateName)}${str(config.templateLanguage) ? ` (${str(config.templateLanguage)})` : ''}`}
             </div>
           </div>
         </ConfigSection>

@@ -222,11 +222,153 @@ export interface ConditionRule {
   valueTo?: string
   /** Unidad para operadores de duración (more_than/less_than, last_days…) */
   unit?: string
+  /** Valor fijo o variable dinámica ({{contact.x}}) */
+  valueMode?: 'fixed' | 'variable'
 }
 
 export interface ConditionConfig {
   match: 'all' | 'any'
   rules: ConditionRule[]
+}
+
+// ---------------------------------------------------------------------------
+// Condición avanzada: ramas → grupos (AND/OR, negables) → reglas
+// ---------------------------------------------------------------------------
+
+export interface ConditionGroup {
+  id: string
+  /** Cómo se combinan las reglas dentro del grupo */
+  operator: 'AND' | 'OR'
+  /** "No se cumple": niega el resultado del grupo completo */
+  negate?: boolean
+  rules: ConditionRule[]
+}
+
+export interface ConditionBranch {
+  id: string
+  name: string
+  /** Cómo se combinan los grupos entre sí */
+  groupsOperator: 'AND' | 'OR'
+  groups: ConditionGroup[]
+}
+
+export interface AdvancedConditionConfig {
+  branches: ConditionBranch[]
+}
+
+let branchSeq = 0
+function nextId(prefix: string): string {
+  branchSeq += 1
+  return `${prefix}_${Date.now().toString(36)}${branchSeq}`
+}
+
+export function emptyConditionGroup(): ConditionGroup {
+  return { id: nextId('grp'), operator: 'AND', negate: false, rules: [{ field: '', operator: '', value: '' }] }
+}
+
+export function emptyConditionBranch(name = 'Sí'): ConditionBranch {
+  return { id: nextId('branch'), name, groupsOperator: 'AND', groups: [emptyConditionGroup()] }
+}
+
+export function emptyAdvancedCondition(): AdvancedConditionConfig {
+  return { branches: [emptyConditionBranch()] }
+}
+
+/** Migra el modelo simple { match, rules } al modelo avanzado con grupos */
+export function migrateSimpleCondition(config: Partial<ConditionConfig>): AdvancedConditionConfig {
+  const rules = Array.isArray(config.rules) && config.rules.length > 0
+    ? config.rules
+    : [{ field: '', operator: '', value: '' }]
+  return {
+    branches: [
+      {
+        id: nextId('branch'),
+        name: 'Sí',
+        groupsOperator: 'AND',
+        groups: [{ id: nextId('grp'), operator: config.match === 'any' ? 'OR' : 'AND', negate: false, rules }]
+      }
+    ]
+  }
+}
+
+/** Valida la condición avanzada; errores claros en español */
+export function validateAdvancedCondition(config: unknown): string[] {
+  const errors: string[] = []
+  const advanced = (config || {}) as Partial<AdvancedConditionConfig>
+  const branches = Array.isArray(advanced.branches) ? advanced.branches : []
+
+  if (branches.length === 0) return ['Agrega al menos una rama de condición']
+
+  branches.forEach((branch, branchIndex) => {
+    const branchLabel = branches.length > 1 ? `Rama "${branch.name || branchIndex + 1}"` : 'Condición'
+    if (branches.length > 1 && !String(branch.name || '').trim()) {
+      errors.push(`La rama ${branchIndex + 1} necesita nombre`)
+    }
+    const groups = Array.isArray(branch.groups) ? branch.groups : []
+    if (groups.length === 0) {
+      errors.push(`${branchLabel}: agrega al menos un grupo de reglas`)
+      return
+    }
+    groups.forEach((group, groupIndex) => {
+      const prefix = groups.length > 1 ? `${branchLabel} · grupo ${groupIndex + 1}` : branchLabel
+      const rules = Array.isArray(group.rules) ? group.rules : []
+      if (rules.length === 0) {
+        errors.push(`${prefix}: agrega al menos una regla`)
+        return
+      }
+      rules.forEach((rule, ruleIndex) => {
+        const position = `${prefix} · regla ${ruleIndex + 1}`
+        if (!rule.field) {
+          errors.push(`${position}: selecciona un campo`)
+          return
+        }
+        const field = getCrmField(rule.field)
+        if (!field) {
+          errors.push(`${position}: el campo seleccionado ya no existe`)
+          return
+        }
+        if (field.needsCustomKey && !String(rule.customKey || '').trim()) {
+          errors.push(`${position}: indica el campo personalizado`)
+        }
+        if (!rule.operator) {
+          errors.push(`${position}: selecciona un operador`)
+          return
+        }
+        if (operatorNeedsValue(rule.field, rule.operator) && !String(rule.value ?? '').trim()) {
+          errors.push(`${position}: captura el valor a comparar`)
+        }
+        if (rule.operator === 'between' && !String(rule.valueTo ?? '').trim()) {
+          errors.push(`${position}: captura el segundo valor del rango`)
+        }
+      })
+    })
+  })
+
+  return errors
+}
+
+/** Resumen corto de la condición avanzada para la tarjeta */
+export function summarizeAdvancedCondition(config: unknown): string {
+  const advanced = (config || {}) as Partial<AdvancedConditionConfig>
+  const branches = Array.isArray(advanced.branches) ? advanced.branches : []
+  if (branches.length === 0) return ''
+
+  const firstRule = branches[0]?.groups?.[0]?.rules?.find((rule) => rule.field)
+  if (!firstRule) return ''
+  const field = getCrmField(firstRule.field)
+  const operator = getOperatorsForField(firstRule.field).find((op) => op.value === firstRule.operator)
+  const base = [field?.label, operator?.label, operatorNeedsValue(firstRule.field, firstRule.operator) ? firstRule.value : '']
+    .filter(Boolean)
+    .join(' ')
+
+  const totalRules = branches.reduce(
+    (sum, branch) => sum + (branch.groups || []).reduce((groupSum, group) => groupSum + (group.rules || []).filter((rule) => rule.field).length, 0),
+    0
+  )
+  const extras: string[] = []
+  if (totalRules > 1) extras.push(`${totalRules - 1} regla${totalRules > 2 ? 's' : ''} más`)
+  if (branches.length > 1) extras.push(`${branches.length} ramas`)
+  return extras.length > 0 ? `${base} (+${extras.join(', ')})` : base
 }
 
 export function emptyConditionConfig(): ConditionConfig {
