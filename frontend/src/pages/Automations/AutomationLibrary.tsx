@@ -336,6 +336,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
       <div className={styles.leftNavSearch}>
         <Search size={12} />
         <input
+          data-ristak-unstyled
           value={query}
           placeholder="Buscar…"
           onChange={(event) => setQuery(event.target.value)}

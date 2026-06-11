@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Braces, Search, Smile, X } from 'lucide-react'
+import { Braces, ChevronRight, Search, Smile, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import {
   BASE_VARIABLES,
@@ -69,6 +69,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   const [variables, setVariables] = useState<FlowVariable[]>(BASE_VARIABLES)
   const [pickerOpen, setPickerOpen] = useState<'variables' | 'emoji' | null>(null)
   const [query, setQuery] = useState('')
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -214,6 +215,25 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
     [emit]
   )
 
+  // Al abrir el picker, expande la primera categoría disponible
+  useEffect(() => {
+    if (pickerOpen === 'variables' && filteredByCategory.length > 0) {
+      setExpanded((current) =>
+        current.size === 0 ? new Set([filteredByCategory[0].category.id]) : current
+      )
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickerOpen])
+
+  const toggleCategory = (id: string) => {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   const insertVariable = (variable: FlowVariable) => {
     insertNodeAtCursor(buildChip(variable.fieldId, variable.label))
     setPickerOpen(null)
@@ -337,9 +357,11 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
       {pickerOpen === 'variables' && (
         <div ref={popoverRef} className={styles.composerPopover} role="dialog" aria-label="Insertar variable">
           <div className={styles.composerPopoverSearch}>
-            <Search size={12} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
+            <Search size={12} />
             <input
+              data-ristak-unstyled
               autoFocus
+              className={styles.cleanSearchInput}
               value={query}
               placeholder="Buscar variable…"
               onChange={(event) => setQuery(event.target.value)}
@@ -360,21 +382,36 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
             {filteredByCategory.length === 0 && (
               <p className={styles.pickerEmpty}>Sin variables que coincidan</p>
             )}
-            {filteredByCategory.map(({ category, items }) => (
-              <div key={category.id}>
-                <div className={styles.composerPopoverCategory}>{category.label}</div>
-                {items.map((variable) => (
+            {filteredByCategory.map(({ category, items }) => {
+              // Al buscar, todas las categorías con resultados se expanden
+              const isOpen = query.trim() !== '' || expanded.has(category.id)
+              return (
+                <div key={category.id}>
                   <button
-                    key={variable.fieldId}
                     type="button"
-                    className={styles.composerPopoverItem}
-                    onClick={() => insertVariable(variable)}
+                    className={styles.varCategoryHeader}
+                    onClick={() => toggleCategory(category.id)}
                   >
-                    <span className={styles.variableTokenChip}>{variable.label}</span>
+                    {category.label}
+                    <ChevronRight
+                      size={12}
+                      className={cn(styles.varCategoryChevron, isOpen && styles.varCategoryChevronOpen)}
+                    />
                   </button>
-                ))}
-              </div>
-            ))}
+                  {isOpen &&
+                    items.map((variable) => (
+                      <button
+                        key={variable.fieldId}
+                        type="button"
+                        className={styles.varItem}
+                        onClick={() => insertVariable(variable)}
+                      >
+                        {variable.label}
+                      </button>
+                    ))}
+                </div>
+              )
+            })}
           </div>
         </div>
       )}

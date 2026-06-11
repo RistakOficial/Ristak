@@ -394,10 +394,9 @@ const TRIGGERS: NodeDefinition[] = [
     icon: ClipboardList,
     accent: 'green',
     addButtonLabel: 'Seleccionar formulario',
-    defaultConfig: () => ({ form: '', formName: '', conditions: '' }),
+    defaultConfig: () => ({ form: '', formName: '' }),
     fields: [
-      { key: 'form', label: 'Formulario', type: 'catalogSelect', catalog: 'forms', required: true },
-      { key: 'conditions', label: 'Condiciones (opcional)', type: 'textarea', placeholder: 'Ej. campo "interés" = demo' }
+      { key: 'form', label: 'Formulario', type: 'catalogSelect', catalog: 'forms', required: true }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => ({
@@ -523,10 +522,9 @@ const TRIGGERS: NodeDefinition[] = [
     icon: UserCog,
     accent: 'green',
     addButtonLabel: 'Seleccionar campo',
-    defaultConfig: () => ({ field: '', fieldName: '', condition: '' }),
+    defaultConfig: () => ({ field: '', fieldName: '' }),
     fields: [
-      { key: 'field', label: 'Campo modificado', type: 'catalogSelect', catalog: 'contactFields', required: true },
-      { key: 'condition', label: 'Condición (opcional)', type: 'text', placeholder: 'Ej. etapa = cliente' }
+      { key: 'field', label: 'Campo modificado', type: 'catalogSelect', catalog: 'contactFields', required: true }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => ({
@@ -580,7 +578,7 @@ const TRIGGERS: NodeDefinition[] = [
     icon: Clock,
     accent: 'green',
     addButtonLabel: 'Programar horario',
-    defaultConfig: () => ({ datetime: '', recurrence: 'none', timezone: '', weekdays: [] }),
+    defaultConfig: () => ({ datetime: '', recurrence: 'none', weekdays: [] }),
     fields: [
       { key: 'datetime', label: 'Fecha y hora', type: 'datetime', required: true },
       {
@@ -599,8 +597,7 @@ const TRIGGERS: NodeDefinition[] = [
         label: 'Días permitidos',
         type: 'weekdays',
         showIf: (config) => str(config.recurrence) === 'daily' || str(config.recurrence) === 'weekly'
-      },
-      { key: 'timezone', label: 'Zona horaria (opcional)', type: 'text', placeholder: 'Ej. America/Mexico_City' }
+      }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => {
@@ -647,9 +644,8 @@ const TRIGGERS: NodeDefinition[] = [
     icon: Receipt,
     accent: 'green',
     addButtonLabel: 'Configurar pago',
-    defaultConfig: () => ({ provider: '', product: '', amountOperator: 'any', amount: '', currency: '', status: '' }),
+    defaultConfig: () => ({ product: '', amountOperator: 'any', amount: '' }),
     fields: [
-      { key: 'provider', label: 'Proveedor (opcional)', type: 'text', placeholder: 'Ej. Stripe' },
       { key: 'product', label: 'Producto (opcional)', type: 'catalogSelect', catalog: 'products' },
       {
         key: 'amountOperator',
@@ -668,9 +664,7 @@ const TRIGGERS: NodeDefinition[] = [
         type: 'number',
         placeholder: '0',
         showIf: (config) => str(config.amountOperator) !== 'any' && str(config.amountOperator) !== ''
-      },
-      { key: 'currency', label: 'Moneda (opcional)', type: 'text', placeholder: 'MXN' },
-      { key: 'status', label: 'Estado (opcional)', type: 'text', placeholder: 'Ej. pagado' }
+      }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => {
@@ -850,13 +844,10 @@ const TRIGGERS: NodeDefinition[] = [
     icon: RotateCcw,
     accent: 'green',
     addButtonLabel: 'Configurar reembolso',
-    defaultConfig: () => ({ provider: '', product: '', amount: '', currency: '', reason: '' }),
+    defaultConfig: () => ({ product: '', amount: '' }),
     fields: [
-      { key: 'provider', label: 'Proveedor (opcional)', type: 'text', placeholder: 'Ej. Stripe' },
       { key: 'product', label: 'Producto (opcional)', type: 'catalogSelect', catalog: 'products' },
-      { key: 'amount', label: 'Monto mínimo (opcional)', type: 'number', placeholder: '0' },
-      { key: 'currency', label: 'Moneda (opcional)', type: 'text', placeholder: 'MXN' },
-      { key: 'reason', label: 'Motivo (opcional)', type: 'text', placeholder: 'Cualquier motivo' }
+      { key: 'amount', label: 'Monto mínimo (opcional)', type: 'number', placeholder: '0' }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => ({
@@ -980,17 +971,15 @@ const CHANNEL_NODES: NodeDefinition[] = [
     supportsVariables: true,
     supportsEmoji: true,
     defaultConfig: () => ({
-      sender: 'default',
+      // Por defecto responde por el mismo número donde escribió el contacto
+      sender: 'last-channel',
       senderNumberId: '',
       senderNumberLabel: '',
       messageType: 'text',
       messageBlocks: [],
       extraBranches: [],
       templateId: '',
-      templateName: '',
-      templateLanguage: '',
-      templateVariables: [],
-      saveAs: ''
+      templateName: ''
     }),
     fields: [],
     outputs: (config) => withBranches(SINGLE_OUTPUT, config, { includeMessageButtons: true }),
@@ -1008,9 +997,9 @@ const CHANNEL_NODES: NodeDefinition[] = [
     },
     summary: (config) => {
       const senderLabels: Record<string, string> = {
-        'last-channel': 'Último número que usó el contacto',
+        'last-channel': 'Responde donde te escribió',
         default: 'Número principal',
-        specific: str(config.senderNumberLabel) || 'Número seleccionado'
+        specific: str(config.senderNumberLabel) || 'Número elegido'
       }
       const isTemplate = str(config.messageType) === 'template'
       const blocks = asMessageBlocks(config.messageBlocks).filter((block) => block.type === 'text').length

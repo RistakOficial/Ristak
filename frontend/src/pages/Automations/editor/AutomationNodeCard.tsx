@@ -121,10 +121,10 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
   // ------------------------------------------------------------------
   const customTitle =
     (typeof config.customTitle === 'string' && config.customTitle.trim()) ||
-    (typeof config.name === 'string' && config.name.trim()) ||
+    (typeof config.name === 'string' && config.name.trim() !== 'Esperar' && config.name.trim()) ||
     ''
-  const defaultTitle = isStart ? 'Cuando...' : definition?.label || node.label || node.type
-  const title = customTitle || defaultTitle
+  // El nombre de la acción nunca se reemplaza: el título del usuario va debajo
+  const title = isStart ? 'Cuando...' : definition?.label || node.label || node.type
 
   const [editingTitle, setEditingTitle] = useState(false)
   const [draftTitle, setDraftTitle] = useState(title)
@@ -140,14 +140,8 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
 
   const commitTitle = () => {
     setEditingTitle(false)
-    const trimmed = draftTitle.trim().slice(0, 80)
-    // Vacío → regresa al nombre por defecto
-    const patch: Record<string, unknown> = { customTitle: trimmed }
-    if (typeof config.name === 'string' && node.type === 'logic-wait') {
-      patch.name = trimmed || 'Esperar'
-      patch.customTitle = ''
-    }
-    onPatchConfig(node, patch)
+    // Vacío → solo queda el nombre de la acción
+    onPatchConfig(node, { customTitle: draftTitle.trim().slice(0, 80) })
   }
 
   // ------------------------------------------------------------------
@@ -206,7 +200,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
               className={styles.nodeTitleInput}
               value={draftTitle}
               maxLength={80}
-              placeholder={defaultTitle}
+              placeholder="Título de acción"
               onChange={(event) => setDraftTitle(event.target.value)}
               onBlur={commitTitle}
               onKeyDown={(event) => {
@@ -217,16 +211,19 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
               onPointerDown={(event) => event.stopPropagation()}
             />
           ) : (
-            <span
-              className={styles.nodeTitle}
-              title="Doble clic para renombrar"
-              onDoubleClick={(event) => {
-                event.stopPropagation()
-                if (!isStart) setEditingTitle(true)
-              }}
-            >
-              {title}
-            </span>
+            <>
+              <span
+                className={styles.nodeTitle}
+                title="Doble clic para ponerle título"
+                onDoubleClick={(event) => {
+                  event.stopPropagation()
+                  if (!isStart) setEditingTitle(true)
+                }}
+              >
+                {title}
+              </span>
+              {customTitle && <span className={styles.nodeSubtitle}>{customTitle}</span>}
+            </>
           )}
         </span>
         {!isStart && (

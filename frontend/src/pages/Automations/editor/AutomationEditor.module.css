@@ -370,6 +370,16 @@
   line-height: 1.2;
 }
 
+.nodeSubtitle {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .nodeTitle {
   display: block;
   font-size: 13px;
@@ -771,12 +781,21 @@
 }
 
 .bubbleSearchRow {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
   padding: 8px 14px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.14);
   flex-shrink: 0;
+}
+
+.bubbleSearchRow > svg {
+  position: absolute;
+  left: 23px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--color-text-tertiary);
 }
 
 @keyframes bubbleIn {
@@ -1378,6 +1397,11 @@
   overflow: hidden;
 }
 
+.configDivider {
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  margin: 2px 0 14px;
+}
+
 .configErrors {
   display: flex;
   flex-direction: column;
@@ -1444,7 +1468,7 @@
 }
 
 .leftNav {
-  width: 232px;
+  width: 280px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -1513,29 +1537,43 @@
 }
 
 .leftNavSearch {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  position: relative;
   margin: 0 10px 8px;
-  padding: 6px 9px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 9px;
-  color: var(--color-text-tertiary);
 }
 
-/* El input dentro de la búsqueda no debe tener su propio contenedor */
-.leftNavSearch input,
-.leftNavSearch input:focus {
-  flex: 1;
-  min-width: 0;
-  border: none !important;
-  background: transparent !important;
+.leftNavSearch > svg {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+.leftNavSearch input {
+  width: 100%;
+}
+
+/* Input de búsqueda estándar (librería, selector de pasos, variables) */
+.cleanSearchInput,
+.leftNavSearch input {
+  appearance: none;
+  height: 30px;
+  border: 1px solid rgba(148, 163, 184, 0.22) !important;
+  border-radius: 9px !important;
+  background: var(--color-background-secondary) !important;
   box-shadow: none !important;
-  border-radius: 0;
-  padding: 0;
   color: var(--color-text-primary);
   font-size: 12px;
-  outline: none;
+  padding: 0 10px 0 28px !important;
+  outline: none !important;
+}
+
+.cleanSearchInput:focus,
+.leftNavSearch input:focus {
+  border-color: rgba(var(--color-primary-rgb), 0.45) !important;
+  box-shadow: none !important;
+  outline: none !important;
 }
 
 .leftNavList {
@@ -1728,7 +1766,8 @@
   cursor: pointer;
 }
 
-.libRow:hover .libRowMenu {
+.libRow:hover .libRowMenu,
+.libRowMenu[data-state='open'] {
   display: inline-flex;
 }
 
@@ -2225,8 +2264,8 @@
   z-index: 60;
   right: 0;
   bottom: calc(100% + 6px);
-  width: 264px;
-  max-height: 260px;
+  width: 318px;
+  max-height: 400px;
   display: flex;
   flex-direction: column;
   border-radius: 12px;
@@ -2236,6 +2275,7 @@
 }
 
 .composerPopoverSearch {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2243,14 +2283,69 @@
   border-bottom: 1px solid rgba(148, 163, 184, 0.14);
 }
 
+.composerPopoverSearch > svg {
+  position: absolute;
+  left: 19px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--color-text-tertiary);
+}
+
 .composerPopoverSearch input {
   flex: 1;
   min-width: 0;
+}
+
+/* Categorías expandibles del picker de variables */
+.varCategoryHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
   border: none;
+  border-radius: 8px;
   background: transparent;
+  padding: 8px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.varCategoryHeader:hover {
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.varCategoryChevron {
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+  transition: transform 0.15s ease;
+}
+
+.varCategoryChevronOpen {
+  transform: rotate(90deg);
+}
+
+.varItem {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  padding: 7px 10px 7px 22px;
+  font-size: 12.5px;
   color: var(--color-text-primary);
-  font-size: 12px;
-  outline: none;
+  cursor: pointer;
+}
+
+.varItem:hover {
+  background: rgba(139, 92, 246, 0.12);
 }
 
 .composerPopoverBody {
@@ -2380,7 +2475,7 @@
 .configPanel {
   position: absolute;
   top: 12px;
-  bottom: 12px;
+  max-height: calc(100% - 24px);
   width: 372px;
   z-index: 42;
   display: flex;
@@ -2409,7 +2504,8 @@
 }
 
 .configPanel .bubbleBody {
-  padding: 12px 14px 18px;
+  flex: 0 1 auto;
+  padding: 12px 14px 16px;
 }
 
 /* Globo de mensaje dentro del panel (estilo ManyChat) */

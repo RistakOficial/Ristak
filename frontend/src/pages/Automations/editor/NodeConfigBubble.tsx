@@ -464,6 +464,18 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
       </div>
 
       <div className={styles.bubbleBody}>
+        {/* Título de acción: siempre arriba; se muestra debajo del nombre
+            de la acción en la cajita (no lo reemplaza) */}
+        <Field label="Título de acción (opcional)">
+          <TextInput
+            value={str(config.customTitle)}
+            maxLength={80}
+            placeholder={definition.label}
+            onChange={(event) => setValue('customTitle', event.target.value)}
+          />
+        </Field>
+        <div className={styles.configDivider} />
+
         {errors.length > 0 && (
           <div className={styles.configErrors}>
             {errors.map((error) => (
@@ -502,17 +514,6 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
         )}
         {!definition.configComponent && definition.fields.map(renderField)}
 
-        {/* Nombre personalizado del paso (el título de la cajita) */}
-        {definition.configComponent !== 'wait' && (
-          <Field label="Nombre del paso (opcional)" help="Identifica qué hace esta cajita en el canvas">
-            <TextInput
-              value={str(config.customTitle)}
-              maxLength={80}
-              placeholder={definition.label}
-              onChange={(event) => setValue('customTitle', event.target.value)}
-            />
-          </Field>
-        )}
 
         {/* Ramas extra del nodo (hasta 10 salidas) */}
         {definition.supportsMultipleBranches && (

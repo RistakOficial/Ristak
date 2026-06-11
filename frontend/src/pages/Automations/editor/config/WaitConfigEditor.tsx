@@ -75,12 +75,6 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
   if (!mode) {
     return (
       <div>
-        <Field label="Nombre de la acción">
-          <TextInput
-            value={str(config.name) || 'Esperar'}
-            onChange={(event) => set({ name: event.target.value })}
-          />
-        </Field>
         <div className={styles.configLabel} style={{ marginBottom: 8 }}>
           Seleccione el tipo para comenzar
         </div>
@@ -117,10 +111,6 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
         <ArrowLeft size={12} />
         Atrás · {activeMode?.title}
       </button>
-
-      <Field label="Nombre de la acción">
-        <TextInput value={str(config.name) || 'Esperar'} onChange={(event) => set({ name: event.target.value })} />
-      </Field>
 
       {/* ----------------------------- por modo ----------------------------- */}
 

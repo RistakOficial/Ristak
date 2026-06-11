@@ -1,11 +1,10 @@
 import React from 'react'
-import { AlertTriangle, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import { CustomSelect } from '@/components/common'
 import {
   CatalogSelect,
   ConfigSection,
   Field,
-  TextInput,
   useCatalogOptions
 } from './configPrimitives'
 import { MessageBlocksEditor } from './MessageBlocksEditor'
@@ -29,10 +28,6 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   const { options: numbers, loading: loadingNumbers } = useCatalogOptions('whatsappNumbers')
   const messageType = str(config.messageType) || 'text'
 
-  const templateVariables = Array.isArray(config.templateVariables)
-    ? (config.templateVariables as Array<{ key?: string; value?: string }>)
-    : []
-
   return (
     <div>
       {/* ------------------------------ Remitente ----------------------------- */}
@@ -43,14 +38,17 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
             No hay números de WhatsApp conectados. Conéctalos en Configuración → WhatsApp.
           </div>
         )}
-        <Field label="Enviar desde">
+        <Field
+          label="Enviar desde"
+          help="Recomendado: responder por el mismo número donde el contacto te escribió"
+        >
           <CustomSelect
             options={[
-              { value: 'last-channel', label: 'Último número por el que contactó el contacto' },
-              { value: 'default', label: 'Número principal de la cuenta' },
-              { value: 'specific', label: 'Número específico…' }
+              { value: 'last-channel', label: 'El número donde te escribió el contacto (recomendado)' },
+              { value: 'default', label: 'El número principal de tu cuenta' },
+              { value: 'specific', label: 'Elegir un número específico…' }
             ]}
-            value={str(config.sender) || 'default'}
+            value={str(config.sender) || 'last-channel'}
             onValueChange={(next) => set({ sender: next })}
             aria-label="Remitente"
           />
@@ -101,66 +99,9 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
                 aria-label="Plantilla"
               />
             </Field>
-            <Field label="Idioma de la plantilla">
-              <TextInput
-                value={str(config.templateLanguage)}
-                placeholder="es_MX"
-                onChange={(event) => set({ templateLanguage: event.target.value })}
-              />
-            </Field>
-            <Field label="Variables de la plantilla">
-              {templateVariables.map((variable, index) => (
-                <div key={index} className={styles.configRow} style={{ marginBottom: 6 }}>
-                  <TextInput
-                    className={styles.configRowGrow}
-                    placeholder={`{{${index + 1}}}`}
-                    value={str(variable.key) || `{{${index + 1}}}`}
-                    onChange={(event) => {
-                      const next = templateVariables.map((candidate, candidateIndex) =>
-                        candidateIndex === index ? { ...candidate, key: event.target.value } : candidate
-                      )
-                      set({ templateVariables: next })
-                    }}
-                  />
-                  <TextInput
-                    className={styles.configRowGrow}
-                    placeholder="Valor (ej. {{nombre}})"
-                    value={str(variable.value)}
-                    onChange={(event) => {
-                      const next = templateVariables.map((candidate, candidateIndex) =>
-                        candidateIndex === index ? { ...candidate, value: event.target.value } : candidate
-                      )
-                      set({ templateVariables: next })
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className={styles.configIconButton}
-                    title="Quitar variable"
-                    onClick={() =>
-                      set({ templateVariables: templateVariables.filter((_, candidateIndex) => candidateIndex !== index) })
-                    }
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                className={styles.configSmallButton}
-                onClick={() =>
-                  set({
-                    templateVariables: [
-                      ...templateVariables,
-                      { key: `{{${templateVariables.length + 1}}}`, value: '' }
-                    ]
-                  })
-                }
-              >
-                <Plus size={11} />
-                Agregar variable
-              </button>
-            </Field>
+            <p className={styles.configHelp}>
+              La plantilla ya incluye su idioma y sus variables configuradas: solo elígela y listo.
+            </p>
           </>
         )}
       </ConfigSection>
@@ -176,13 +117,6 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
         </ConfigSection>
       )}
 
-      <Field label="Guardar respuesta en variable (opcional)">
-        <TextInput
-          value={str(config.saveAs)}
-          placeholder="Ej. respuesta_whatsapp"
-          onChange={(event) => set({ saveAs: event.target.value })}
-        />
-      </Field>
     </div>
   )
 }

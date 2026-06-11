@@ -220,10 +220,12 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
       </div>
 
       <div className={styles.bubbleSearchRow}>
-        <Search size={14} style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} />
+        <Search size={13} />
         <input
+          data-ristak-unstyled
           ref={searchRef}
-          className={styles.bubbleSearch}
+          className={styles.cleanSearchInput}
+          style={{ flex: 1, minWidth: 0 }}
           placeholder={kind === 'trigger' ? 'Buscar disparador…' : 'Buscar paso…'}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
