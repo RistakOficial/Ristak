@@ -168,6 +168,9 @@ export interface SiteTheme {
   popupCloseText?: string
   submitText?: string
   submitSubtitle?: string
+  continueText?: string
+  nextText?: string
+  backText?: string
   submitBg?: string
   submitTextColor?: string
   submitBorderColor?: string

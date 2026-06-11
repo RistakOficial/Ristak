@@ -12025,7 +12025,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const completionAction = isLandingType
     ? getFormCompletionAction(blocks)
     : isStandardFormType
-      ? normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page')
+      ? normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page_if_qualified')
       : 'form_default'
   const nextPage = (isLandingType || isStandardFormType) ? getNextPage(site, activePage?.id) : null
   const nextPageUrl = nextPage ? buildPageHref(nextPage.id, { site, linkStyle }) : ''
@@ -12034,6 +12034,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	  const disqualifiedPageUrl = disqualifiedPage ? pageHref(disqualifiedPage.id) : ''
 	  const submitText = cleanString(theme.submitText) || 'Enviar'
 	  const submitSubtitle = cleanString(theme.submitSubtitle || theme.submitSubtext || theme.formButtonSubtitle)
+	  const continueText = cleanString(theme.continueText) || 'Continuar'
+	  const nextText = cleanString(theme.nextText) || 'Siguiente'
+	  const backText = cleanString(theme.backText) || 'Anterior'
 	  const storedPageMaxWidth = Number(theme && theme.pageMaxWidth)
   const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
     ? 1440
@@ -12096,9 +12099,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const submitArea = hasForm && !isLandingType
     ? `
       <div class="rstk-actions">
-        ${isInteractive && interactivePageCount > 1 ? '<button type="button" class="rstk-secondary" data-back hidden>Anterior</button>' : ''}
-        ${isInteractive && interactivePageCount > 1 ? '<button type="button" data-next>Siguiente</button>' : ''}
-        ${isStandardFormIntermediatePage ? '<button type="button" data-form-next>Continuar</button>' : ''}
+        ${isInteractive && interactivePageCount > 1 ? `<button type="button" class="rstk-secondary" data-back hidden>${escapeHtml(backText)}</button>` : ''}
+        ${isInteractive && interactivePageCount > 1 ? `<button type="button" data-next>${escapeHtml(nextText)}</button>` : ''}
+        ${isStandardFormIntermediatePage ? `<button type="button" data-form-next>${escapeHtml(continueText)}</button>` : ''}
 	        <button type="submit" ${isInteractive && interactivePageCount > 1 || isStandardFormIntermediatePage ? 'hidden' : ''} data-submit>${renderSubmitButtonContent(submitText, submitSubtitle)}</button>
       </div>
       <p class="rstk-submit-message" data-message role="status"></p>

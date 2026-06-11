@@ -3068,7 +3068,7 @@ export const Sites: React.FC = () => {
   const editorAIGenerating = Boolean(activeAIGeneration)
   const formCanvasHasFields = Boolean(editorSite && isFormSite(editorSite) && canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)))
   const formCanvasActionLabel = editorSite && activePage && isStandardForm(editorSite) && !isLastFormContentPage(editorSite, pages, activePage.id)
-    ? 'Continuar'
+    ? getThemeString(editorSite.theme, 'continueText') || 'Continuar'
     : undefined
   const seoValidation = editorSite ? getSeoValidationState(editorSite) : null
   const editorActive = Boolean(editorSite)
@@ -14845,6 +14845,26 @@ const FormGlobalStyleControls: React.FC<{
           <input value={theme.submitSubtitle || ''} placeholder="Tarda menos de un minuto" onChange={(event) => onPatchTheme({ submitSubtitle: event.target.value })} onBlur={onSaveSite} />
         </label>
       </div>
+      {isStandardForm(site) && (
+        <div className={styles.twoColumn}>
+          <label className={styles.field}>
+            <span>Texto boton continuar</span>
+            <input value={theme.continueText || ''} placeholder="Continuar" onChange={(event) => onPatchTheme({ continueText: event.target.value })} onBlur={onSaveSite} />
+          </label>
+        </div>
+      )}
+      {isInteractiveForm(site) && (
+        <div className={styles.twoColumn}>
+          <label className={styles.field}>
+            <span>Texto boton siguiente</span>
+            <input value={theme.nextText || ''} placeholder="Siguiente" onChange={(event) => onPatchTheme({ nextText: event.target.value })} onBlur={onSaveSite} />
+          </label>
+          <label className={styles.field}>
+            <span>Texto boton anterior</span>
+            <input value={theme.backText || ''} placeholder="Anterior" onChange={(event) => onPatchTheme({ backText: event.target.value })} onBlur={onSaveSite} />
+          </label>
+        </div>
+      )}
       <div className={styles.twoColumn}>
         <ColorField label="Fondo boton" value={getThemePaint(theme, 'submitBg', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBg: value })} onCommit={onSaveSite} />
         <ColorField label="Texto boton" value={getThemePaint(theme, 'submitTextColor', onAccentFor(defaultAccent))} allowGradient onChange={(value) => onPatchTheme({ submitTextColor: value })} onCommit={onSaveSite} />
