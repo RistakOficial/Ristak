@@ -369,7 +369,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
                   <MoreHorizontal size={14} />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" side="top">
                 <DropdownMenuItem
                   onSelect={() => setNameModal({ kind: 'rename-folder', targetId: folder.id, value: folder.name })}
                 >
@@ -442,7 +442,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
                     <MoreHorizontal size={14} />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+                <DropdownMenuContent align="end" side="top">
                   <DropdownMenuItem onSelect={() => navigate(`/automations/${automation.id}`)}>
                     <Settings2 size={13} style={{ marginRight: 8 }} />
                     Configuración
