@@ -1264,6 +1264,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         dateValue={customDatePart}
         timeValue={customTimePart}
         onChange={(date, time) => applyCustomSchedule(date, time, effectiveDuration)}
+        buttonClassName={styles.mobilePhoneSelectButton}
       />
       <PhoneDurationField
         value={effectiveDuration}
@@ -1271,6 +1272,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           setPendingDuration(minutes);
           applyCustomSchedule(customDatePart, customTimePart, minutes);
         }}
+        buttonClassName={styles.mobilePhoneSelectButton}
       />
       {customTimePart && customEndTimePart && (
         <p className={styles.mobileCustomScheduleSummary}>
