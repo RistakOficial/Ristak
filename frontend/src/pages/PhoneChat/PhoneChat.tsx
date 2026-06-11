@@ -2501,6 +2501,13 @@ export const PhoneChat: React.FC = () => {
   const [contactInfoLoading, setContactInfoLoading] = useState(false)
   const [contactInfoError, setContactInfoError] = useState('')
   const [contactInfoDetailPanel, setContactInfoDetailPanel] = useState<ContactInfoDetailPanel>(null)
+  const [contactNameEditing, setContactNameEditing] = useState(false)
+  const [contactNameDraft, setContactNameDraft] = useState('')
+  const [savingContactName, setSavingContactName] = useState(false)
+  const [contactPhoneEditing, setContactPhoneEditing] = useState(false)
+  const [contactPhoneDraft, setContactPhoneDraft] = useState('')
+  const [savingContactPhone, setSavingContactPhone] = useState(false)
+  const [phoneConfirmOpen, setPhoneConfirmOpen] = useState(false)
   const [contactInfoArchiveOpen, setContactInfoArchiveOpen] = useState(false)
   const [contactInfoArchiveTab, setContactInfoArchiveTab] = useState<ContactInfoArchiveTab>('media')
   const [contactCustomFieldDefinitions, setContactCustomFieldDefinitions] = useState<ContactCustomFieldDefinition[]>([])
@@ -4415,6 +4422,91 @@ export const PhoneChat: React.FC = () => {
       setContactInfoError('No se pudo cargar todo el detalle. Te muestro lo que ya está guardado en este chat.')
     } finally {
       setContactInfoLoading(false)
+    }
+  }
+
+  // Actualiza el contacto en el panel de info, la lista de chats y el caché diario
+  const applyContactInfoPatch = (patch: Partial<Contact>) => {
+    if (!contactInfoData) return
+    const nextContact = { ...contactInfoData, ...patch }
+    const cacheKey = getPhoneDailyCacheKey('phone-chat', 'contact-info', locationId || 'default', contactInfoData.id)
+
+    setContactInfoContact(nextContact as Contact)
+    setChats((current) => current.map((contact) => (
+      contact.id === contactInfoData.id ? { ...contact, ...patch } : contact
+    )))
+    writePhoneDailyCache(cacheKey, nextContact, { maxEntryChars: 220_000 })
+  }
+
+  const handleStartContactNameEdit = () => {
+    if (!contactInfoData || savingContactName) return
+    setContactNameDraft(getContactName(contactInfoData))
+    setContactNameEditing(true)
+  }
+
+  const handleSaveContactName = async () => {
+    setContactNameEditing(false)
+    if (!contactInfoData) return
+
+    const nextName = contactNameDraft.trim()
+    if (!nextName || nextName === getContactName(contactInfoData)) return
+
+    setSavingContactName(true)
+    try {
+      await contactsService.updateContact(contactInfoData.id, { full_name: nextName } as unknown as Partial<Contact>)
+      applyContactInfoPatch({ name: nextName })
+      showToast('success', 'Nombre actualizado', `El contacto ahora se llama ${nextName}.`)
+    } catch (error: any) {
+      showToast('error', 'No se guardó el nombre', error?.message || 'Intenta otra vez.')
+    } finally {
+      setSavingContactName(false)
+    }
+  }
+
+  const normalizeContactPhoneDraft = (value: string) => {
+    const cleaned = value.replace(/[^\d+]/g, '')
+    return cleaned.startsWith('+') ? `+${cleaned.slice(1).replace(/\D/g, '')}` : cleaned.replace(/\D/g, '')
+  }
+
+  const handleStartContactPhoneEdit = () => {
+    if (!contactInfoData || savingContactPhone) return
+    setContactPhoneDraft(contactInfoData.phone || '')
+    setContactPhoneEditing(true)
+  }
+
+  const handleRequestContactPhoneSave = () => {
+    if (!contactInfoData) return
+
+    const normalized = normalizeContactPhoneDraft(contactPhoneDraft)
+    if (!normalized || normalized === contactInfoData.phone) {
+      setContactPhoneEditing(false)
+      return
+    }
+
+    if (!/^\+?\d{7,15}$/.test(normalized)) {
+      showToast('warning', 'Número incompleto', 'Revisa que el número tenga lada y entre 7 y 15 dígitos.')
+      return
+    }
+
+    setContactPhoneDraft(normalized)
+    setPhoneConfirmOpen(true)
+  }
+
+  const handleSaveContactPhone = async () => {
+    if (!contactInfoData) return
+
+    const normalized = normalizeContactPhoneDraft(contactPhoneDraft)
+    setPhoneConfirmOpen(false)
+    setSavingContactPhone(true)
+    try {
+      await contactsService.updateContact(contactInfoData.id, { phone: normalized } as Partial<Contact>)
+      applyContactInfoPatch({ phone: normalized })
+      setContactPhoneEditing(false)
+      showToast('success', 'Número actualizado', `Este chat ahora usa ${normalized}.`)
+    } catch (error: any) {
+      showToast('error', 'No se guardó el número', error?.message || 'Intenta otra vez.')
+    } finally {
+      setSavingContactPhone(false)
     }
   }
 
@@ -8109,7 +8201,40 @@ export const PhoneChat: React.FC = () => {
             <span className={styles.contactInfoAvatar}>
               {renderAvatar(contactInfoData)}
             </span>
-            <h2>{getContactName(contactInfoData)}</h2>
+            {contactNameEditing ? (
+              <input
+                className={styles.contactInfoNameInput}
+                value={contactNameDraft}
+                autoFocus
+                autoComplete="off"
+                spellCheck={false}
+                aria-label="Nombre del contacto"
+                onChange={(event) => setContactNameDraft(event.target.value)}
+                onBlur={() => void handleSaveContactName()}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    ;(event.target as HTMLInputElement).blur()
+                  }
+                  if (event.key === 'Escape') {
+                    setContactNameDraft(getContactName(contactInfoData))
+                    setContactNameEditing(false)
+                  }
+                }}
+              />
+            ) : (
+              <h2 className={styles.contactInfoNameRow}>
+                <span>{getContactName(contactInfoData)}</span>
+                <button
+                  type="button"
+                  className={styles.contactInfoNameEditButton}
+                  onClick={handleStartContactNameEdit}
+                  aria-label="Editar nombre del contacto"
+                >
+                  {savingContactName ? <Loader2 size={15} className={styles.spinIcon} /> : <Pencil size={15} />}
+                </button>
+              </h2>
+            )}
             <p>{getContactDetail(contactInfoData)}</p>
             {contactInfoStageBadge && (
               <span className={styles.contactInfoBadge}>{contactInfoStageBadge.text}</span>
@@ -8225,7 +8350,56 @@ export const PhoneChat: React.FC = () => {
           <section className={styles.contactInfoSection}>
             <h3>Datos principales</h3>
             <div className={styles.contactInfoRows}>
-              {renderContactInfoRow('phone', <Phone size={17} />, 'Número', contactInfoData.phone)}
+              {contactPhoneEditing ? (
+                <form
+                  className={`${styles.contactInfoEditableRow} ${styles.contactInfoCustomFieldEditing}`}
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    handleRequestContactPhoneSave()
+                  }}
+                >
+                  <span className={styles.contactInfoRowIcon}><Phone size={17} /></span>
+                  <div className={styles.contactInfoCustomFieldEditor}>
+                    <small>Número</small>
+                    <span className={styles.contactInfoCustomFieldControl}>
+                      <input
+                        type="tel"
+                        inputMode="tel"
+                        value={contactPhoneDraft}
+                        autoFocus
+                        autoComplete="off"
+                        placeholder="+52..."
+                        aria-label="Número del contacto"
+                        onChange={(event) => setContactPhoneDraft(event.target.value)}
+                      />
+                      <button
+                        type="submit"
+                        className={styles.contactInfoCustomFieldSaveButton}
+                        disabled={savingContactPhone}
+                        aria-label="Guardar número"
+                      >
+                        {savingContactPhone ? <Loader2 size={16} className={styles.spinIcon} /> : <Check size={16} />}
+                      </button>
+                    </span>
+                  </div>
+                  <span className={styles.contactInfoCustomFieldActions}>
+                    <button type="button" disabled={savingContactPhone} onClick={() => setContactPhoneEditing(false)} aria-label="Cancelar edición de número">
+                      <X size={16} />
+                    </button>
+                  </span>
+                </form>
+              ) : (
+                <div className={styles.contactInfoEditableRow}>
+                  <span className={styles.contactInfoRowIcon}><Phone size={17} /></span>
+                  <button type="button" className={styles.contactInfoEditableText} onClick={handleStartContactPhoneEdit}>
+                    <small>Número</small>
+                    <strong>{contactInfoData.phone || 'Sin número'}</strong>
+                  </button>
+                  <button type="button" className={styles.contactInfoEditButton} onClick={handleStartContactPhoneEdit} aria-label="Editar número">
+                    <Pencil size={15} />
+                  </button>
+                </div>
+              )}
               {renderContactInfoRow('email', <Mail size={17} />, 'Correo', contactInfoData.email)}
               {renderContactInfoRow('created', <User size={17} />, 'Contacto creado', formatLocalDateTime(leadDate))}
               {renderContactInfoRow('stage', <Tag size={17} />, 'Estado', contactInfoStageBadge?.text || (contactInfoData.status === 'customer' ? customerLabel : leadLabel))}
@@ -9878,6 +10052,27 @@ export const PhoneChat: React.FC = () => {
           <p className={styles.numberIssueOptionHint}>
             Los contactos que cambiaste manualmente se quedarán como están.
           </p>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={phoneConfirmOpen}
+        onClose={() => setPhoneConfirmOpen(false)}
+        title="Confirmar nuevo número"
+        type="confirm"
+        size="sm"
+        draggableSheet
+        confirmText="Sí, cambiar número"
+        cancelText="Cancelar"
+        onConfirm={() => { void handleSaveContactPhone() }}
+        onCancel={() => setPhoneConfirmOpen(false)}
+      >
+        <div className={styles.numberIssueBody}>
+          <p>Revisa que el número esté bien escrito antes de guardarlo:</p>
+          <p className={styles.phoneConfirmNumber}>{contactPhoneDraft}</p>
+          {contactInfoData?.phone && (
+            <p className={styles.numberIssueOptionHint}>Número actual: {contactInfoData.phone}</p>
+          )}
         </div>
       </Modal>
 

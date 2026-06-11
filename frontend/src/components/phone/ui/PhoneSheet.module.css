@@ -1,0 +1,212 @@
+/*
+ * Estilos estándar del bottom sheet móvil.
+ * Cualquier menú que sale de abajo hacia arriba debe usar PhoneSheet para
+ * que el sombreado, el asa, el arrastre y el colapso sean idénticos en toda la app.
+ */
+
+.overlay {
+  --bottom-sheet-backdrop-bg:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.2), rgba(15, 23, 42, 0.72)),
+    rgba(15, 23, 42, 0.58);
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  isolation: isolate;
+}
+
+.overlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--bottom-sheet-backdrop-bg);
+  opacity: var(--bottom-sheet-progress, 1);
+  animation: phoneSheetFadeIn 240ms ease-out both;
+  pointer-events: none;
+  transition: opacity 260ms ease;
+  will-change: opacity;
+}
+
+.overlayInteractive::before {
+  animation: none;
+  transition: none;
+}
+
+.overlayClosing,
+.overlayExiting {
+  pointer-events: none;
+}
+
+.overlayClosing::before {
+  animation: none;
+  transition: opacity 180ms ease-out;
+}
+
+.overlayExiting::before {
+  animation: phoneSheetFadeOut 220ms ease-out both;
+  transition: none;
+}
+
+.sheet {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: min(100%, 560px);
+  max-height: min(78dvh, 620px);
+  overflow: hidden;
+  border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.08));
+  border-bottom: 0;
+  border-radius: 24px 24px 0 0;
+  color: var(--phone-chat-text, #111111);
+  background: var(--phone-chat-surface, #ffffff);
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.22);
+  touch-action: pan-y;
+  animation: phoneSheetSlideUp 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform;
+}
+
+.auto {
+  max-height: min(78dvh, 620px);
+}
+
+.tall {
+  height: min(86dvh, 820px);
+  max-height: min(86dvh, 820px);
+}
+
+.full {
+  height: min(92dvh, 900px);
+  max-height: min(92dvh, 900px);
+}
+
+.sheetInteractive {
+  animation: none;
+}
+
+.sheetExiting {
+  animation: phoneSheetSlideDown 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  pointer-events: none;
+}
+
+.handle {
+  position: relative;
+  justify-self: center;
+  width: 54px;
+  height: 5px;
+  margin: 10px 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--phone-chat-muted, #737373) 28%, transparent);
+  cursor: grab;
+  touch-action: none;
+}
+
+.handle::before {
+  content: '';
+  position: absolute;
+  inset: -12px -120px;
+}
+
+.handle:active {
+  cursor: grabbing;
+}
+
+.header {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 6px;
+  min-height: 50px;
+  padding: 0 10px 8px;
+}
+
+.headerSide {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.headerSideEnd {
+  justify-content: flex-end;
+}
+
+.headerText {
+  min-width: 0;
+  text-align: center;
+}
+
+.headerText p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--phone-chat-muted, #737373);
+  font-size: 12px;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headerText strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--phone-chat-text, #111111);
+  font-size: 20px;
+  font-weight: 860;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.content,
+.contentScrollable {
+  min-height: 0;
+  padding: 0 14px calc(env(safe-area-inset-bottom) + 14px);
+  overflow-x: hidden;
+}
+
+.contentScrollable {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  overscroll-behavior-x: none;
+  scrollbar-width: none;
+}
+
+.contentScrollable::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes phoneSheetFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes phoneSheetFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes phoneSheetSlideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes phoneSheetSlideDown {
+  from { transform: translateY(0); }
+  to { transform: translateY(104%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay,
+  .sheet {
+    animation-duration: 1ms;
+    transition-duration: 1ms !important;
+  }
+}

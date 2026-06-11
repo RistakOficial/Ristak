@@ -44,119 +44,24 @@
   color: var(--phone-chat-muted, #737373);
 }
 
-.overlay {
-  --bottom-sheet-backdrop-bg:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.2), rgba(15, 23, 42, 0.72)),
-    rgba(15, 23, 42, 0.58);
-  position: fixed;
-  inset: 0;
-  z-index: 2147483000;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding: 0;
-  overflow: hidden;
-  background: transparent;
-  isolation: isolate;
-}
-
-.overlay::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background: var(--bottom-sheet-backdrop-bg);
-  opacity: var(--bottom-sheet-progress, 1);
-  animation: fadeIn 240ms ease-out both;
-  pointer-events: none;
-  transition: opacity 260ms ease;
-  will-change: opacity;
-}
-
-.overlayInteractive::before {
-  animation: none;
-  transition: none;
-}
-
-.overlayClosing {
-  pointer-events: none;
-}
-
-.overlayClosing::before {
-  animation: none;
-  transition: opacity 180ms ease-out;
-}
-
-.sheet {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  width: min(100%, 520px);
-  max-height: min(78dvh, 620px);
-  overflow: hidden;
-  border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.08));
-  border-bottom: 0;
-  border-radius: 24px 24px 0 0;
-  color: var(--phone-chat-text, #111111);
-  background: var(--phone-chat-surface, #ffffff);
-  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.22);
-  touch-action: pan-y;
-  animation: slideUp 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  will-change: transform;
-}
-
-.sheetInteractive {
-  animation: none;
-}
-
-.handle {
-  position: relative;
-  justify-self: center;
-  width: 54px;
-  height: 5px;
-  margin: 10px 0 8px;
+.todayButton {
+  min-height: 36px;
+  padding: 0 13px;
+  border: 0;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--phone-chat-muted, #737373) 28%, transparent);
-  cursor: grab;
-  touch-action: none;
+  color: var(--phone-chat-accent, #25d366);
+  background: var(--phone-chat-surface-soft, #f4f4f4);
+  font-size: 14px;
+  font-weight: 840;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.handle::before {
-  content: '';
-  position: absolute;
-  inset: -12px -120px;
-}
-
-.handle:active {
-  cursor: grabbing;
-}
-
-.header {
+.monthRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
   align-items: center;
   gap: 8px;
-  min-height: 50px;
-  padding: 0 12px 8px;
-}
-
-.header strong {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 20px;
-  font-weight: 860;
-  line-height: 1.1;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.todayButton,
-.monthRow button {
-  border: 0;
-  color: var(--phone-chat-text, #111111);
-  background: var(--phone-chat-surface-soft, #f4f4f4);
-  -webkit-tap-highlight-color: transparent;
+  padding: 0 0 10px;
 }
 
 .monthRow button {
@@ -165,24 +70,11 @@
   justify-content: center;
   width: 38px;
   height: 38px;
+  border: 0;
   border-radius: 999px;
-}
-
-.todayButton {
-  min-height: 36px;
-  padding: 0 13px;
-  border-radius: 999px;
-  color: var(--phone-chat-accent, #25d366);
-  font-size: 14px;
-  font-weight: 840;
-}
-
-.monthRow {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 40px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 14px 10px;
+  color: var(--phone-chat-text, #111111);
+  background: var(--phone-chat-surface-soft, #f4f4f4);
+  -webkit-tap-highlight-color: transparent;
 }
 
 .monthRow span {
@@ -194,15 +86,20 @@
   white-space: nowrap;
 }
 
+/*
+ * El encabezado de días y la cuadrícula usan EXACTAMENTE las mismas columnas,
+ * el mismo gap y el mismo padding: si difieren, el calendario se ve chueco.
+ */
 .weekdays,
 .days {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  padding: 0;
 }
 
 .weekdays {
-  gap: 2px;
-  padding: 0 14px 6px;
+  padding-bottom: 6px;
 }
 
 .weekdays span {
@@ -214,8 +111,7 @@
 }
 
 .days {
-  gap: 4px;
-  padding: 0 14px calc(env(safe-area-inset-bottom) + 18px);
+  padding-bottom: 4px;
 }
 
 .days button {
@@ -249,26 +145,4 @@
 .selected {
   color: var(--phone-chat-text-on-primary, #ffffff) !important;
   background: var(--phone-chat-accent, #25d366) !important;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes slideUp {
-  from {
-    transform: translateY(100%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .overlay,
-  .sheet {
-    animation-duration: 1ms;
-    transition-duration: 1ms !important;
-  }
 }

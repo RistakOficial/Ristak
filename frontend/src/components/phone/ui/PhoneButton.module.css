@@ -1,0 +1,64 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 820;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.button:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.button:disabled {
+  opacity: 0.55;
+}
+
+.lg {
+  min-height: 52px;
+  font-size: 16px;
+  font-weight: 850;
+}
+
+.fullWidth {
+  width: 100%;
+}
+
+.primary {
+  color: var(--phone-chat-text-on-primary, #07140d);
+  background: var(--phone-chat-accent, #25d366);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
+}
+
+.secondary {
+  color: var(--phone-chat-text, #111111);
+  background: var(--phone-chat-panel, #f0f0f0);
+  border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.1));
+}
+
+.danger {
+  color: #ffffff;
+  background: #ef4444;
+}
+
+.ghost {
+  color: var(--phone-chat-accent, #25d366);
+  background: transparent;
+}
+
+.spin {
+  animation: phoneButtonSpin 0.9s linear infinite;
+}
+
+@keyframes phoneButtonSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
