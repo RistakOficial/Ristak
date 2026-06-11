@@ -84,9 +84,9 @@
   height: min(86dvh, 820px);
   max-height: min(86dvh, 820px) !important;
   margin: 0;
-  border-right: 0;
-  border-bottom: 0;
-  border-left: 0;
+  /* Sin borde, igual que el sheet del Registrar pago */
+  border: 0;
+  box-shadow: none;
   border-radius: 24px 24px 0 0;
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-bg);
