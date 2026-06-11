@@ -1,134 +1,31 @@
 import fetch from 'node-fetch'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { syncWebhookCustomValues, getWebhookBaseUrl, getHighLevelConfig } from '../services/webhookSyncService.js'
+import { OBSOLETE_WEBHOOK_NAMES } from '../config/constants.js'
 
 /**
- * Obtiene la URL base correcta según el entorno
- */
-function getWebhookBaseUrl() {
-  // En producción (Render), usar la URL externa
-  if (process.env.RENDER_EXTERNAL_URL) {
-    logger.info(`Usando URL de producción: ${process.env.RENDER_EXTERNAL_URL}`)
-    return process.env.RENDER_EXTERNAL_URL
-  }
-
-  // En desarrollo, usar localhost
-  const port = process.env.PORT || 3001
-  logger.info(`Usando URL de desarrollo: http://localhost:${port}`)
-  return `http://localhost:${port}`
-}
-
-/**
- * Actualiza los custom values de webhooks en HighLevel
+ * Actualiza los custom values de webhooks en HighLevel.
+ * Delega en la fuente única de verdad (webhookSyncService).
  */
 export const updateWebhooks = async (req, res) => {
   try {
-    // Obtener configuración de HighLevel
-    const config = await db.get(
-      'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
-    )
+    const config = await getHighLevelConfig()
 
-    if (!config) {
+    if (!config?.location_id || !config?.api_token) {
       return res.status(400).json({
         success: false,
         error: 'Configuración de HighLevel no encontrada'
       })
     }
 
-    const baseUrl = getWebhookBaseUrl()
-    logger.info('Actualizando webhooks con URL base:', baseUrl)
-
-    // Definir los webhooks que necesitamos - Usar nombres EXACTOS que HighLevel espera
-    const webhooks = {
-      'webhook_contacts': `${baseUrl}/webhook/contact`,
-      'webhook_payments': `${baseUrl}/webhook/payment`,
-      'webhook_invoice': `${baseUrl}/webhook/invoice`,
-      'webhook_refunds': `${baseUrl}/webhook/refund`,
-      'webhook_appointments': `${baseUrl}/webhook/appointment`,
-      'webhook_appointment_showed': `${baseUrl}/webhook/appointment/showed`,
-      'webhook_whatsapp_attribution': `${baseUrl}/webhook/whatsapp/attribution`,
-      'webhook_conversations': `${baseUrl}/webhook/conversation`
-    }
-
-    // Obtener custom values existentes
-    const getUrl = `https://services.leadconnectorhq.com/locations/${config.location_id}/customValues`
-    const getResponse = await fetch(getUrl, {
-      headers: {
-        'Authorization': `Bearer ${config.api_token}`,
-        'Version': '2021-07-28'
-      }
-    })
-
-    let existingCustomValues = []
-    if (getResponse.ok) {
-      const getData = await getResponse.json()
-      existingCustomValues = getData.customValues || []
-      logger.info(`Encontrados ${existingCustomValues.length} custom values existentes`)
-    }
-
-    const results = []
-
-    // Actualizar o crear cada webhook
-    for (const [name, value] of Object.entries(webhooks)) {
-      try {
-        const existing = existingCustomValues.find(cv => cv.name === name)
-
-        if (existing) {
-          // Actualizar existente con PUT
-          logger.info(`Actualizando webhook: ${name}`)
-          const updateUrl = `https://services.leadconnectorhq.com/locations/${config.location_id}/customValues/${existing.id}`
-          const updateResponse = await fetch(updateUrl, {
-            method: 'PUT',
-            headers: {
-              'Authorization': `Bearer ${config.api_token}`,
-              'Version': '2021-07-28',
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ name, value })
-          })
-
-          if (updateResponse.ok) {
-            results.push({ name, status: 'updated', value })
-            logger.info(`✅ Webhook actualizado: ${name}`)
-          } else {
-            const errorData = await updateResponse.json()
-            results.push({ name, status: 'error', error: errorData })
-            logger.error(`❌ Error actualizando ${name}:`, errorData)
-          }
-        } else {
-          // Crear nuevo con POST
-          logger.info(`Creando webhook: ${name}`)
-          const createUrl = `https://services.leadconnectorhq.com/locations/${config.location_id}/customValues`
-          const createResponse = await fetch(createUrl, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${config.api_token}`,
-              'Version': '2021-07-28',
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ name, value })
-          })
-
-          if (createResponse.ok) {
-            results.push({ name, status: 'created', value })
-            logger.info(`✅ Webhook creado: ${name}`)
-          } else {
-            const errorData = await createResponse.json()
-            results.push({ name, status: 'error', error: errorData })
-            logger.error(`❌ Error creando ${name}:`, errorData)
-          }
-        }
-      } catch (err) {
-        results.push({ name, status: 'error', error: err.message })
-        logger.error(`Error configurando ${name}:`, err)
-      }
-    }
+    const { baseUrl, results, environment } = await syncWebhookCustomValues({ config })
 
     res.json({
-      success: true,
+      success: results.every(r => r.status !== 'error'),
       baseUrl,
       results,
-      environment: process.env.RENDER_EXTERNAL_URL ? 'production' : 'development'
+      environment
     })
 
   } catch (error) {
@@ -237,25 +134,8 @@ export const cleanupWebhooks = async (req, res) => {
     const data = await response.json()
     const customValues = data.customValues || []
 
-    // Identificar webhooks duplicados o vacíos
-    const toDelete = []
-
-    // Webhooks obsoletos (NO incluir los que sí necesitamos)
-    const obsoleteNames = [
-      'test_webhook_contacts',
-      'Webhook - Contacts',
-      'Webhook - Payments',
-      'Webhook - Refunds',
-      'Webhook - Appointments',
-      'Webhook - WhatsApp Attribution'
-    ]
-
-    for (const cv of customValues) {
-      // Eliminar solo webhooks obsoletos (no los vacíos que podríamos necesitar)
-      if (obsoleteNames.includes(cv.name)) {
-        toDelete.push(cv)
-      }
-    }
+    // Identificar webhooks obsoletos (NO incluir los que sí necesitamos)
+    const toDelete = customValues.filter(cv => OBSOLETE_WEBHOOK_NAMES.includes(cv.name))
 
     const results = []
 

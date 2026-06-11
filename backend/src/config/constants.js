@@ -54,6 +54,7 @@ export const CUSTOM_VALUE_KEYS = {
   WEBHOOK_APPOINTMENTS: 'webhook_appointments',
   WEBHOOK_APPOINTMENT_SHOWED: 'webhook_appointment_showed',
   WEBHOOK_WHATSAPP_ATTRIBUTION: 'webhook_whatsapp_attribution',
+  WEBHOOK_CONVERSATIONS: 'webhook_conversations',
   META_AD_ACCOUNT_ID: 'Facebook - Ad Account ID',
   META_ACCESS_TOKEN: 'Facebook - App Access Token',
   META_APP_ID: 'Facebook - App ID',
@@ -67,8 +68,33 @@ export const WEBHOOK_PATHS = {
   REFUND: '/webhook/refund',
   APPOINTMENT: '/webhook/appointment',
   APPOINTMENT_SHOWED: '/webhook/appointment/showed',
-  WHATSAPP_ATTRIBUTION: '/webhook/whatsapp/attribution'
+  WHATSAPP_ATTRIBUTION: '/webhook/whatsapp/attribution',
+  CONVERSATION: '/webhook/conversation'
 }
+
+// Fuente única de verdad: qué custom values de webhook debe tener HighLevel.
+// Cada entrada mapea el nombre del custom value -> path del endpoint del backend.
+// Usado por: syncCustomValues (botón), updateWebhooks (manual) y la verificación de arranque.
+export const WEBHOOK_CUSTOM_VALUE_MAP = [
+  { name: CUSTOM_VALUE_KEYS.WEBHOOK_CONTACTS, path: WEBHOOK_PATHS.CONTACT },
+  { name: CUSTOM_VALUE_KEYS.WEBHOOK_PAYMENTS, path: WEBHOOK_PATHS.PAYMENT },
+  { name: CUSTOM_VALUE_KEYS.WEBHOOK_INVOICE, path: WEBHOOK_PATHS.INVOICE },
+  { name: CUSTOM_VALUE_KEYS.WEBHOOK_REFUNDS, path: WEBHOOK_PATHS.REFUND },
+  { name: CUSTOM_VALUE_KEYS.WEBHOOK_APPOINTMENTS, path: WEBHOOK_PATHS.APPOINTMENT },
+  { name: CUSTOM_VALUE_KEYS.WEBHOOK_APPOINTMENT_SHOWED, path: WEBHOOK_PATHS.APPOINTMENT_SHOWED },
+  { name: CUSTOM_VALUE_KEYS.WEBHOOK_WHATSAPP_ATTRIBUTION, path: WEBHOOK_PATHS.WHATSAPP_ATTRIBUTION },
+  { name: CUSTOM_VALUE_KEYS.WEBHOOK_CONVERSATIONS, path: WEBHOOK_PATHS.CONVERSATION }
+]
+
+// Nombres antiguos/duplicados de custom values que deben eliminarse al sincronizar.
+export const OBSOLETE_WEBHOOK_NAMES = [
+  'test_webhook_contacts',
+  'Webhook - Contacts',
+  'Webhook - Payments',
+  'Webhook - Refunds',
+  'Webhook - Appointments',
+  'Webhook - WhatsApp Attribution'
+]
 
 export const PAGINATION = {
   HIGHLEVEL_CONTACTS_LIMIT: 100,
