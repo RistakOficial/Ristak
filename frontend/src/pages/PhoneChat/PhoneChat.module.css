@@ -1567,6 +1567,57 @@
   letter-spacing: 0.4px;
 }
 
+/* Menú de acciones rápidas al dejar picado un chat de la lista */
+.chatQuickActions {
+  display: grid;
+}
+
+.chatQuickActions button {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 58px;
+  padding: 8px 2px;
+  border: 0;
+  border-top: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.08));
+  color: var(--phone-chat-text, #111111);
+  background: transparent;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 780;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.chatQuickActions button:first-child {
+  border-top: 0;
+}
+
+.chatQuickActions button > svg {
+  justify-self: end;
+  color: var(--phone-chat-muted, #737373);
+}
+
+.chatQuickActionIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  color: var(--phone-chat-accent, #25d366);
+  background: var(--phone-chat-accent-soft, rgba(37, 211, 102, 0.14));
+}
+
+.chatQuickActionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Lista de números nuestros para elegir desde dónde contactar */
 .ourNumberList {
   display: grid;

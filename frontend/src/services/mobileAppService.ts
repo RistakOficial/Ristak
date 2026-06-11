@@ -217,6 +217,28 @@ function waitForNativePushToken(calendarIds: string[] = []): Promise<PushSubscri
   })
 }
 
+/**
+ * Vibración ligera para gestos (long-press, confirmaciones).
+ * En la app nativa usa el motor háptico real (Capacitor); en web cae a
+ * navigator.vibrate (Android); en iOS web no hay soporte y no hace nada.
+ */
+export async function triggerLightHapticFeedback() {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await Haptics.impact({ style: ImpactStyle.Light })
+      return
+    } catch {
+      // sin soporte háptico nativo, probar vibración web
+    }
+  }
+
+  try {
+    navigator.vibrate?.(14)
+  } catch {
+    // intentionally ignore
+  }
+}
+
 export const mobileAppService = {
   isNative() {
     return Capacitor.isNativePlatform()

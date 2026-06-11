@@ -78,7 +78,7 @@ import {
   type MessageTemplateCategory,
   type MessageTemplatePayload
 } from '@/services/messageTemplatesService'
-import { mobileAppService, type MobileChatAttachment, type MobileDocumentAttachment, type MobilePhotoAttachment } from '@/services/mobileAppService'
+import { mobileAppService, triggerLightHapticFeedback, type MobileChatAttachment, type MobileDocumentAttachment, type MobilePhotoAttachment } from '@/services/mobileAppService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
@@ -117,7 +117,6 @@ const MESSAGE_INFO_SWIPE_ACTIVATE_THRESHOLD = 9
 const MESSAGE_INFO_SWIPE_RENDER_STEP = 2
 const MESSAGE_ACTION_LONG_PRESS_MS = 460
 const MESSAGE_ACTION_MOVE_TOLERANCE = 9
-const MESSAGE_ACTION_LONG_PRESS_VIBRATION_MS = 14
 const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024
 const DOCUMENT_ATTACHMENT_ACCEPT = [
@@ -1446,12 +1445,8 @@ function getMessageActionText(message: ChatMessage) {
 }
 
 function triggerMessageActionHapticFeedback() {
-  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return
-  try {
-    navigator.vibrate(MESSAGE_ACTION_LONG_PRESS_VIBRATION_MS)
-  } catch {
-    // intentionally ignore
-  }
+  // Háptico nativo en la app instalada, vibración web como respaldo.
+  void triggerLightHapticFeedback()
 }
 
 async function copyTextToClipboard(text: string) {
@@ -2445,6 +2440,8 @@ export const PhoneChat: React.FC = () => {
   const [closingSwipeChatId, setClosingSwipeChatId] = useState<string | null>(null)
   const [chatSwipeSuppressed, setChatSwipeSuppressed] = useState(false)
   const [chatActionContactId, setChatActionContactId] = useState<string | null>(null)
+  const [chatQuickActionsContact, setChatQuickActionsContact] = useState<ChatContact | null>(null)
+  const chatLongPressRef = useRef<{ contactId: string; timerId: number } | null>(null)
   const [contactQuery, setContactQuery] = useState('')
   const [contactResults, setContactResults] = useState<Contact[]>([])
   const [contactsLoading, setContactsLoading] = useState(false)
@@ -4684,9 +4681,56 @@ export const PhoneChat: React.FC = () => {
     closeSwipeActions()
   }
 
+  const clearChatLongPress = () => {
+    if (chatLongPressRef.current) {
+      window.clearTimeout(chatLongPressRef.current.timerId)
+      chatLongPressRef.current = null
+    }
+  }
+
+  const openChatQuickActions = (contact: ChatContact) => {
+    if (contact.id === AI_AGENT_CHAT_ID) return
+    triggerMessageActionHapticFeedback()
+    clearChatLongPress()
+    chatSwipeGestureRef.current = null
+    setDraggingSwipe(null)
+    closeSwipeActions()
+    // Evita que al soltar el dedo se abra el chat debajo del menú
+    ignoreNextChatClickRef.current = true
+    window.setTimeout(() => {
+      ignoreNextChatClickRef.current = false
+    }, 420)
+    setChatQuickActionsContact(contact)
+  }
+
+  const handleChatQuickAction = (action: 'appointment' | 'payment' | 'more') => {
+    const contact = chatQuickActionsContact
+    setChatQuickActionsContact(null)
+    if (!contact) return
+
+    if (action === 'appointment') {
+      handleOpenAppointmentForm(contact)
+    } else if (action === 'payment') {
+      handleChatMoreAction(contact, 'payment')
+    } else {
+      handleOpenChatMore(contact)
+    }
+  }
+
   const handleChatTouchStart = (contactId: string, event: React.TouchEvent<HTMLDivElement>) => {
     const touch = event.touches[0]
     if (!touch) return
+
+    // Dejar picado un chat abre el menú de acciones rápidas (con vibración)
+    clearChatLongPress()
+    if (contactId !== AI_AGENT_CHAT_ID && !conversationOpen) {
+      const timerId = window.setTimeout(() => {
+        chatLongPressRef.current = null
+        const contact = chats.find((item) => item.id === contactId)
+        if (contact) openChatQuickActions(contact)
+      }, MESSAGE_ACTION_LONG_PRESS_MS)
+      chatLongPressRef.current = { contactId, timerId }
+    }
 
     const currentOffset = draggingSwipe?.contactId === contactId
       ? draggingSwipe.offset
@@ -4715,12 +4759,18 @@ export const PhoneChat: React.FC = () => {
     if (gesture.generation !== chatSwipeGenerationRef.current || conversationOpen || chatSwipeSuppressed) {
       chatSwipeGestureRef.current = null
       setDraggingSwipe(null)
+      clearChatLongPress()
       return
     }
 
     const deltaX = touch.clientX - gesture.startX
     const deltaY = touch.clientY - gesture.startY
     const horizontalDistance = Math.abs(deltaX)
+
+    // Si el dedo se mueve (scroll o swipe), ya no es un long-press
+    if (chatLongPressRef.current && (horizontalDistance > MESSAGE_ACTION_MOVE_TOLERANCE || Math.abs(deltaY) > MESSAGE_ACTION_MOVE_TOLERANCE)) {
+      clearChatLongPress()
+    }
 
     if (!gesture.active) {
       if (horizontalDistance < CHAT_SWIPE_ACTIVATE_THRESHOLD || horizontalDistance <= Math.abs(deltaY)) return
@@ -4743,6 +4793,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleChatTouchEnd = () => {
+    clearChatLongPress()
     const gesture = chatSwipeGestureRef.current
     if (!gesture) return
     if (gesture.generation !== chatSwipeGenerationRef.current || conversationOpen || chatSwipeSuppressed) {
@@ -4812,17 +4863,31 @@ export const PhoneChat: React.FC = () => {
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
 
-    const rect = element.getBoundingClientRect()
     const viewportWidth = Math.max(320, window.innerWidth || document.documentElement.clientWidth || 390)
     const viewportHeight = Math.max(480, window.innerHeight || document.documentElement.clientHeight || 740)
-    const bubbleWidth = Math.min(Math.max(96, Math.round(rect.width)), viewportWidth - 24)
     const scheduled = message.direction === 'outbound' && isMessageScheduled(message)
+    const estimatedMenuHeight = scheduled ? 126 : 300
+
+    // El menú SIEMPRE abre debajo del globo. Si el globo está tan abajo que el
+    // menú no cabría completo, primero subimos el mensaje (scroll de la
+    // conversación) hasta más o menos media pantalla y medimos de nuevo: así
+    // el menú nunca sale recortado ni se despega del mensaje.
+    let rect = element.getBoundingClientRect()
+    if (rect.bottom + estimatedMenuHeight + 16 > viewportHeight) {
+      const scroller = element.closest('[data-phone-chat-scrollable="true"], [data-phone-scrollable="true"]')
+      if (scroller instanceof HTMLElement) {
+        const targetTop = Math.max(86, Math.round(viewportHeight * 0.32))
+        scroller.scrollTop += Math.round(rect.top - targetTop)
+        rect = element.getBoundingClientRect()
+      }
+    }
+
+    const bubbleWidth = Math.min(Math.max(96, Math.round(rect.width)), viewportWidth - 24)
     const menuWidth = Math.min(Math.max(bubbleWidth, scheduled ? 252 : 246), viewportWidth - 24)
     const align: MessageActionMenuAlign = message.direction === 'outbound' ? 'end' : 'start'
     const preferredLeft = align === 'end' ? rect.right - menuWidth : rect.left
     const left = Math.max(12, Math.min(Math.round(preferredLeft), viewportWidth - menuWidth - 12))
-    const estimatedMenuHeight = scheduled ? 126 : 300
-    const maxSafeTop = viewportHeight - estimatedMenuHeight - 12
+    const maxSafeTop = viewportHeight - (Math.round(rect.height) + estimatedMenuHeight) - 12
     const top = Math.max(12, Math.min(Math.round(rect.top), Math.max(12, Math.round(maxSafeTop))))
 
     setMessageActionMenu({
@@ -6617,6 +6682,10 @@ export const PhoneChat: React.FC = () => {
         onTouchMove={swipeLocked ? undefined : handleChatTouchMove}
         onTouchEnd={swipeLocked ? undefined : handleChatTouchEnd}
         onTouchCancel={swipeLocked ? undefined : handleChatTouchEnd}
+        onContextMenu={contact.id === AI_AGENT_CHAT_ID ? undefined : (event) => {
+          event.preventDefault()
+          openChatQuickActions(contact)
+        }}
       >
         {showSwipeActions && (
           <div className={styles.chatSwipeActions} aria-hidden={!swipeActionsInteractive}>
@@ -10114,6 +10183,31 @@ export const PhoneChat: React.FC = () => {
           </p>
         </div>
       </Modal>
+
+      <PhoneSheet
+        isOpen={Boolean(chatQuickActionsContact)}
+        onClose={() => setChatQuickActionsContact(null)}
+        title={chatQuickActionsContact ? getContactName(chatQuickActionsContact) : 'Chat'}
+        subtitle="Acciones rápidas"
+      >
+        <div className={styles.chatQuickActions}>
+          <button type="button" onClick={() => handleChatQuickAction('appointment')}>
+            <span className={styles.chatQuickActionIcon}><CalendarDays size={19} /></span>
+            <span className={styles.chatQuickActionLabel}>Agendar cita</span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => handleChatQuickAction('payment')}>
+            <span className={styles.chatQuickActionIcon}><CreditCard size={19} /></span>
+            <span className={styles.chatQuickActionLabel}>Registrar pago</span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => handleChatQuickAction('more')}>
+            <span className={styles.chatQuickActionIcon}><MoreHorizontal size={19} /></span>
+            <span className={styles.chatQuickActionLabel}>Más opciones</span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+        </div>
+      </PhoneSheet>
 
       <PhoneSheet
         isOpen={ourNumberSheetOpen}
