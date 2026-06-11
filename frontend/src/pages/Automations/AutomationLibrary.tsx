@@ -344,6 +344,32 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
         />
       </div>
 
+      {/* Acciones en bloque (aparecen arriba de la lista al seleccionar) */}
+      {selectionActive && (
+        <div className={styles.libBulkBar}>
+          <span className={styles.libBulkCount}>{selected.size} seleccionadas</span>
+          <button
+            type="button"
+            className={styles.libBulkButton}
+            title="Mover a carpeta"
+            onClick={() => setMoveModal({ ids: [...selected], folderId: '' })}
+          >
+            <FolderInput size={13} />
+          </button>
+          <button
+            type="button"
+            className={cn(styles.libBulkButton, styles.libBulkDanger)}
+            title="Eliminar seleccionadas"
+            onClick={() => deleteAutomations([...selected])}
+          >
+            <Trash2 size={13} />
+          </button>
+          <button type="button" className={styles.libBulkButton} title="Cancelar" onClick={() => setSelected(new Set())}>
+            ×
+          </button>
+        </div>
+      )}
+
       {/* Lista unificada */}
       <div className={styles.leftNavList}>
         {visibleFolders.map((folder) => (
@@ -480,32 +506,6 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
           </p>
         )}
       </div>
-
-      {/* Acciones en bloque */}
-      {selectionActive && (
-        <div className={styles.libBulkBar}>
-          <span className={styles.libBulkCount}>{selected.size} seleccionadas</span>
-          <button
-            type="button"
-            className={styles.libBulkButton}
-            title="Mover a carpeta"
-            onClick={() => setMoveModal({ ids: [...selected], folderId: '' })}
-          >
-            <FolderInput size={13} />
-          </button>
-          <button
-            type="button"
-            className={cn(styles.libBulkButton, styles.libBulkDanger)}
-            title="Eliminar seleccionadas"
-            onClick={() => deleteAutomations([...selected])}
-          >
-            <Trash2 size={13} />
-          </button>
-          <button type="button" className={styles.libBulkButton} title="Cancelar" onClick={() => setSelected(new Set())}>
-            ×
-          </button>
-        </div>
-      )}
 
       {/* Modal: crear carpeta / renombrar */}
       <Modal
