@@ -1344,7 +1344,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               disabled: calendarsLoading || !calendars?.length,
               placeholder: 'Elige calendario'
             })}
-            <p className={styles.helpText}>Elige dónde quieres guardar esta cita.</p>
           </div>
         )}
 
@@ -1716,21 +1715,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
           {/* COLUMNA DERECHA: Configuración de la cita */}
           <div className={styles.rightColumn}>
-            <h4 className={styles.columnTitle}>Configuración de la cita</h4>
-
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="title">
-                Título
-              </label>
-              <input
-                id="title"
-                type="text"
-                className={styles.input}
-                value={formData.title}
-                placeholder="Ej. Consulta inicial con cliente"
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-              />
-            </div>
 
             <div className={styles.field}>
               <label className={styles.label}>

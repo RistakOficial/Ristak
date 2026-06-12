@@ -98,7 +98,6 @@ const PickerColumn: React.FC<{
 
   return (
     <div className={styles.column}>
-      <span className={styles.columnLabel}>{label}</span>
       <div
         ref={listRef}
         className={styles.columnList}
@@ -127,6 +126,7 @@ const PickerColumn: React.FC<{
           )
         })}
       </div>
+      <span className={styles.columnLabel}>{label}</span>
     </div>
   )
 }
