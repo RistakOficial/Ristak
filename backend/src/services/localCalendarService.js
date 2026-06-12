@@ -99,7 +99,8 @@ function normalizeCalendarSource(value) {
 
 function normalizeCalendarSourcePreference(value) {
   const normalized = cleanString(value).toLowerCase()
-  if (['combined', 'ristak', 'ghl', 'google'].includes(normalized)) {
+  if (normalized === 'google') return 'combined'
+  if (['combined', 'ristak', 'ghl'].includes(normalized)) {
     return normalized
   }
   return 'combined'
@@ -136,7 +137,7 @@ async function getConnectedSourceFlags() {
   const googleCalendarId = cleanString(googleConfigData?.calendarId)
 
   return {
-    google: Boolean(googleCalendarId && googleConfigData?.credentialsEncrypted),
+    google: Boolean(googleConfigData?.credentialsEncrypted),
     googleCalendarId,
     ghl: Boolean(highlevelConfig)
   }
@@ -455,6 +456,9 @@ function calendarRowToApi(row = {}) {
     ghlCalendarId: row.ghl_calendar_id || null,
     googleCalendarId: rawJson?.googleCalendarId || rawJson?.google_calendar_id || '',
     googleAccessRole: rawJson?.accessRole || rawJson?.access_role || '',
+    googleCalendarSummary: rawJson?.googleCalendarSummary || rawJson?.google_calendar_summary || rawJson?.summary || '',
+    googleCalendarTimeZone: rawJson?.googleCalendarTimeZone || rawJson?.google_calendar_time_zone || rawJson?.timeZone || rawJson?.time_zone || '',
+    googleSyncEnabled: Boolean(rawJson?.googleCalendarId || rawJson?.google_calendar_id),
     locationId: row.location_id || '',
     groupId: row.group_id || undefined,
     name: row.name || 'Calendario',
@@ -1126,6 +1130,19 @@ export async function listLocalCalendars({ sourcePreference = 'combined' } = {})
   const appointmentCounts = await getCalendarAppointmentCounts(calendars.map(calendar => calendar.id))
   const visibleCalendars = calendars.filter(calendar => !isEmptySeedRistakCalendar(calendar, appointmentCounts))
   return visibleCalendars.length ? visibleCalendars : calendars
+}
+
+export async function listGoogleLinkedLocalCalendars({ includeInactive = false } = {}) {
+  const rows = await db.all(`
+    SELECT *
+    FROM calendars
+    ${includeInactive ? '' : 'WHERE COALESCE(is_active, 1) != 0'}
+    ORDER BY is_active DESC, LOWER(name) ASC
+  `)
+
+  return rows
+    .map(calendarRowToApi)
+    .filter(calendar => cleanString(calendar.googleCalendarId))
 }
 
 export async function updateLocalCalendar(calendarId, updateData = {}, { syncStatus = 'pending' } = {}) {

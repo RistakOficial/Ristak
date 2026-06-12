@@ -78,6 +78,9 @@ export interface Calendar {
   source?: 'ristak' | 'ghl' | 'google';
   googleCalendarId?: string;
   googleAccessRole?: string;
+  googleCalendarSummary?: string;
+  googleCalendarTimeZone?: string;
+  googleSyncEnabled?: boolean;
   syncStatus?: 'pending' | 'synced' | 'error';
   syncError?: string | null;
   publicBookingPath?: string;
@@ -138,6 +141,19 @@ export interface GoogleCalendarIntegrationStatus {
 
 export interface GoogleCalendarServiceAccountReveal {
   serviceAccountJson: string;
+}
+
+export interface GoogleCalendarOption {
+  id: string;
+  summary: string;
+  name: string;
+  description?: string;
+  timeZone?: string;
+  accessRole?: string;
+  primary?: boolean;
+  selected?: boolean;
+  backgroundColor?: string;
+  foregroundColor?: string;
 }
 
 export interface GoogleCalendarMergeCalendar extends Calendar {
@@ -216,8 +232,13 @@ export const calendarsService = {
     return apiClient.get<GoogleCalendarServiceAccountReveal>('/calendars/google-integration/reveal/service-account');
   },
 
+  async getGoogleCalendarOptions(): Promise<GoogleCalendarOption[]> {
+    const data = await apiClient.get<GoogleCalendarOption[]>('/calendars/google-integration/calendars');
+    return Array.isArray(data) ? data : [];
+  },
+
   async saveGoogleIntegration(payload: {
-    calendarId: string;
+    calendarId?: string;
     serviceAccountJson: string;
   }): Promise<GoogleCalendarIntegrationStatus> {
     return apiClient.put<GoogleCalendarIntegrationStatus>('/calendars/google-integration', payload);
@@ -243,6 +264,12 @@ export const calendarsService = {
 
   async deleteGoogleIntegration(): Promise<GoogleCalendarIntegrationStatus> {
     return apiClient.delete<GoogleCalendarIntegrationStatus>('/calendars/google-integration');
+  },
+
+  async updateCalendarGoogleSync(calendarId: string, googleCalendarId: string): Promise<Calendar | null> {
+    return apiClient.put<Calendar>(`/calendars/${calendarId}/google-sync`, {
+      googleCalendarId
+    });
   },
 
   /**

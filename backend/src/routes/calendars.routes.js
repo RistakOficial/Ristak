@@ -23,6 +23,7 @@ router.post('/', calendarsController.createCalendar);
 
 // Integración Google Calendar por Service Account
 router.get('/google-integration', calendarsController.getGoogleCalendarIntegration);
+router.get('/google-integration/calendars', calendarsController.listGoogleCalendarOptions);
 router.get('/google-integration/reveal/service-account', calendarsController.revealGoogleCalendarServiceAccount);
 router.put('/google-integration', calendarsController.saveGoogleCalendarIntegration);
 router.post('/google-integration/test', calendarsController.testGoogleCalendarIntegration);
@@ -65,6 +66,7 @@ router.delete('/block-slots/:id', calendarsController.deleteBlockedSlot);
 router.get('/:id', calendarsController.getCalendar);
 
 // Actualizar configuración de un calendario
+router.put('/:id/google-sync', calendarsController.updateCalendarGoogleSync);
 router.put('/:id', calendarsController.updateCalendar);
 
 // Eliminar un calendario local de Ristak

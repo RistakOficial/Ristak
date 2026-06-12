@@ -927,6 +927,12 @@
   text-transform: uppercase;
 }
 
+.editorField small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .editorFieldWide {
   grid-column: span 2;
 }
@@ -939,6 +945,24 @@
   display: grid;
   grid-template-columns: minmax(72px, 0.8fr) minmax(116px, 1.2fr);
   gap: 8px;
+}
+
+.googleSyncHint {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+  max-width: 480px;
+  padding-top: 23px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.googleSyncHint svg {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  margin-top: 1px;
 }
 
 .colorInput {
