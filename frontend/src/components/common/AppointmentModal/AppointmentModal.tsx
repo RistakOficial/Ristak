@@ -1313,6 +1313,301 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     });
   };
 
+  const isRoundRobinCalendar = calendar?.calendarType === 'round_robin';
+  const shouldShowAssignmentPanel = showGuestsSection || (
+    showContactAssignment && (
+      (isCreateMode && (isRoundRobinCalendar || loadingUsers || users.length > 0)) ||
+      (!isCreateMode && Boolean(formData.assignedUserId))
+    )
+  );
+
+  const renderContactField = () => {
+    if (!showContactAssignment) return null;
+
+    return (
+      <div className={styles.field}>
+        <label className={styles.label}>
+          Contacto {isCreateMode && <span className={styles.required}>*</span>}
+        </label>
+
+        {selectedContact ? (
+          <div className={styles.selectedContact}>
+            <div className={styles.contactInfo}>
+              <p className={styles.contactName}>{selectedContact.name || 'Sin nombre'}</p>
+              <p className={styles.contactDetail}>
+                {selectedContact.email || selectedContact.phone || 'Sin datos de contacto'}
+              </p>
+            </div>
+            {isCreateMode && (
+              <button
+                type="button"
+                onClick={handleClearContact}
+                className={styles.clearButton}
+                title="Cambiar contacto"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+        ) : isCreateMode ? (
+          <div className={styles.searchWrapper}>
+            <div className={styles.searchInput}>
+              <Search size={16} className={styles.searchIcon} />
+              <input
+                type="text"
+                placeholder="Buscar por nombre, correo o teléfono..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className={styles.input}
+              />
+              {searchingContact && <Loader2 size={16} className={styles.loadingIcon} />}
+            </div>
+
+            {showContactDropdown && (
+              <div className={styles.dropdown} data-ristak-dropdown-panel>
+                {searchingContact && contacts.length === 0 ? (
+                  <div className={styles.dropdownEmpty}>
+                    Buscando contactos...
+                  </div>
+                ) : contacts.length > 0 ? (
+                  contacts.map((contact) => (
+                    <button
+                      key={contact.id}
+                      type="button"
+                      className={styles.dropdownItem}
+                      data-ristak-dropdown-item
+                      onClick={() => handleSelectContact(contact)}
+                    >
+                      <p className={styles.dropdownName}>{contact.name || 'Sin nombre'}</p>
+                      <p className={styles.dropdownDetail}>
+                        {contact.email || contact.phone || 'Sin información de contacto'}
+                      </p>
+                    </button>
+                  ))
+                ) : (
+                  <div className={styles.dropdownEmpty}>
+                    No se encontraron contactos
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className={styles.helpText}>Sin contacto asignado</p>
+        )}
+      </div>
+    );
+  };
+
+  const renderGuestsSection = () => {
+    if (!showGuestsSection) return null;
+
+    return (
+      <div className={`${styles.sectionBlock} ${styles.guestsSectionCompact}`}>
+        <div className={styles.guestToggleHeader}>
+          <div>
+            <label className={styles.label}>¿Agregar invitados?</label>
+            {appointmentGuests.length > 0 && (
+              <p className={styles.helpText}>{appointmentGuests.length} agregado{appointmentGuests.length === 1 ? '' : 's'}</p>
+            )}
+          </div>
+          <div className={styles.guestToggleChips} role="group" aria-label="Agregar invitados">
+            <button
+              type="button"
+              className={guestsEnabled ? styles.guestToggleChipActive : ''}
+              onClick={() => handleToggleGuestsEnabled(true)}
+              aria-pressed={guestsEnabled}
+            >
+              Sí
+            </button>
+            <button
+              type="button"
+              className={!guestsEnabled ? styles.guestToggleChipActive : ''}
+              onClick={() => handleToggleGuestsEnabled(false)}
+              aria-pressed={!guestsEnabled}
+            >
+              No
+            </button>
+          </div>
+        </div>
+
+        {guestsEnabled && (
+          <>
+            <p className={styles.helpText}>Busca un contacto guardado o agrega uno nuevo para esta cita.</p>
+
+            <div className={styles.searchWrapper}>
+              <div className={styles.searchInput}>
+                <Search size={16} className={styles.searchIcon} />
+                <input
+                  type="text"
+                  placeholder="Buscar en contactos..."
+                  value={guestSearchQuery}
+                  onChange={(e) => setGuestSearchQuery(e.target.value)}
+                  className={styles.input}
+                />
+                {searchingGuest && <Loader2 size={16} className={styles.loadingIcon} />}
+              </div>
+
+              {showGuestDropdown && (
+                <div className={styles.dropdown} data-ristak-dropdown-panel>
+                  {searchingGuest && guestContacts.length === 0 ? (
+                    <div className={styles.dropdownEmpty}>
+                      Buscando invitados...
+                    </div>
+                  ) : guestContacts.length > 0 ? (
+                    guestContacts.map((contact) => (
+                      <button
+                        key={contact.id}
+                        type="button"
+                        className={styles.dropdownItem}
+                        data-ristak-dropdown-item
+                        onClick={() => handleSelectGuestContact(contact)}
+                      >
+                        <p className={styles.dropdownName}>{getContactDisplayName(contact)}</p>
+                        <p className={styles.dropdownDetail}>
+                          {getContactDelivery(contact) || 'Sin WhatsApp ni correo'}
+                        </p>
+                      </button>
+                    ))
+                  ) : (
+                    <div className={styles.dropdownEmpty}>
+                      No se encontraron contactos
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className={styles.guestBuilder}>
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor="guestName">
+                  Nombre completo <span className={styles.required}>*</span>
+                </label>
+                <input
+                  id="guestName"
+                  type="text"
+                  className={styles.input}
+                  value={guestName}
+                  placeholder="Ej. Ana López"
+                  onChange={(event) => setGuestName(event.target.value)}
+                />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor="guestContact">
+                  Num Whats o correo <span className={styles.required}>*</span>
+                </label>
+                <input
+                  id="guestContact"
+                  type="text"
+                  className={styles.input}
+                  value={guestContact}
+                  placeholder="Ej. +52 656 000 0000 o correo@dominio.com"
+                  onChange={(event) => setGuestContact(event.target.value)}
+                />
+              </div>
+
+              <button type="button" className={styles.guestAddButton} onClick={handleAddManualGuest}>
+                Agregar invitado
+              </button>
+            </div>
+
+            {appointmentGuests.length > 0 ? (
+              <div className={styles.guestList} aria-label="Invitados agregados">
+                {appointmentGuests.map((guest) => (
+                  <div key={guest.id} className={styles.guestItem}>
+                    <span>
+                      <strong>{guest.name}</strong>
+                      <small>{guest.contact}</small>
+                    </span>
+                    <button type="button" onClick={() => handleRemoveGuest(guest.id)} aria-label={`Quitar ${guest.name}`}>
+                      <X size={15} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className={styles.helpText}>Todavía no agregas invitados.</p>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const renderAssignmentSection = () => {
+    if (!showContactAssignment) return null;
+
+    if (!isCreateMode && formData.assignedUserId) {
+      return (
+        <div className={styles.sectionBlock}>
+          <label className={styles.label}>
+            {isRoundRobinCalendar ? 'Miembro del equipo' : 'Persona asignada'}
+          </label>
+          <div className={styles.selectedContact}>
+            <div className={styles.contactInfo}>
+              <p className={styles.contactName}>
+                {loadingUsers ? 'Cargando...' : assignedUserLabel}
+              </p>
+              {assignedUser?.email && <p className={styles.contactDetail}>{assignedUser.email}</p>}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (!isCreateMode) return null;
+
+    if (loadingUsers) {
+      return (
+        <div className={styles.sectionBlock}>
+          <p className={styles.helpText}>Cargando equipo disponible...</p>
+        </div>
+      );
+    }
+
+    if (isRoundRobinCalendar && users.length === 0) {
+      return (
+        <div className={styles.sectionBlock}>
+          <p className={styles.helpText}>
+            No pudimos cargar al equipo. Cierra esta ventana y vuelve a intentar.
+          </p>
+        </div>
+      );
+    }
+
+    if (users.length === 0) return null;
+
+    return (
+      <div className={styles.sectionBlock}>
+        <label className={styles.label}>
+          {isRoundRobinCalendar ? (
+            <>
+              Elegir miembro del equipo <span className={styles.required}>*</span>
+            </>
+          ) : (
+            'Persona asignada (opcional)'
+          )}
+        </label>
+
+        {isRoundRobinCalendar && (
+          <p className={styles.helpText}>
+            Este calendario reparte citas entre el equipo. Selecciona quién atenderá esta cita.
+          </p>
+        )}
+
+        {renderSelect({
+          title: 'Persona asignada',
+          value: formData.assignedUserId,
+          options: assignedUserOptions,
+          onChange: (value) => setFormData({ ...formData, assignedUserId: value }),
+          disabled: loadingUsers,
+          placeholder: 'Seleccionar...'
+        })}
+      </div>
+    );
+  };
+
   return (
     <>
       <Modal
@@ -1320,7 +1615,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         onClose={onClose}
         title={modalTitle}
         size="lg"
-        className={isMobileSheet ? styles.mobileSheetModal : undefined}
+        className={isMobileSheet ? styles.mobileSheetModal : styles.appointmentDialogModal}
         backdropClassName={isMobileSheet ? styles.mobileSheetBackdrop : undefined}
         contentClassName={isMobileSheet ? styles.mobileSheetContent : undefined}
         showCloseButton={!isMobileSheet}
@@ -1424,301 +1719,28 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
             </div>
           </section>
         ) : (
-		        <div className={styles.twoColumnLayout}>
-	          {/* COLUMNA IZQUIERDA: Contacto o invitados */}
-	          <div className={styles.leftColumn}>
+		        <div className={`${styles.appointmentFormLayout} ${shouldShowAssignmentPanel ? '' : styles.appointmentFormLayoutSingle}`}>
+	          {/* Panel lateral: invitados o asignación del equipo */}
+	          {shouldShowAssignmentPanel && (
+	          <aside className={styles.assignmentPanel}>
 	            <h4 className={styles.columnTitle}>
 	              <UserPlus size={18} />
 	              {showGuestsSection ? 'Invitados' : 'Asignación'}
 	            </h4>
 
-	            {/* Contacto asignado */}
-	            {showContactAssignment && (
-	            <div className={styles.sectionBlock}>
+	            {renderGuestsSection()}
+	            {renderAssignmentSection()}
+	          </aside>
+	          )}
+
+	          {/* Formulario principal de la cita */}
+	          <div className={styles.formMain}>
+
+              {renderContactField()}
+
+	            <div className={styles.field}>
 	              <label className={styles.label}>
-	                Contacto {isCreateMode && <span className={styles.required}>*</span>}
-	              </label>
-
-              {selectedContact ? (
-                <div className={styles.selectedContact}>
-                  <div className={styles.contactInfo}>
-                    <p className={styles.contactName}>{selectedContact.name || 'Sin nombre'}</p>
-                    <p className={styles.contactDetail}>{selectedContact.email || selectedContact.phone}</p>
-                  </div>
-                  {isCreateMode && (
-                    <button
-                      type="button"
-                      onClick={handleClearContact}
-                      className={styles.clearButton}
-                      title="Cambiar contacto"
-                    >
-                      <X size={16} />
-                    </button>
-                  )}
-                </div>
-              ) : isCreateMode ? (
-                <div className={styles.searchWrapper}>
-                  <div className={styles.searchInput}>
-                    <Search size={16} className={styles.searchIcon} />
-                    <input
-                      type="text"
-                      placeholder="Buscar por nombre, correo o teléfono..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className={styles.input}
-                    />
-                    {searchingContact && <Loader2 size={16} className={styles.loadingIcon} />}
-                  </div>
-
-                  {showContactDropdown && (
-                    <div className={styles.dropdown} data-ristak-dropdown-panel>
-                      {searchingContact && contacts.length === 0 ? (
-                        <div className={styles.dropdownEmpty}>
-                          Buscando contactos...
-                        </div>
-                      ) : contacts.length > 0 ? (
-                        contacts.map((contact) => (
-                          <button
-                            key={contact.id}
-                            type="button"
-                            className={styles.dropdownItem}
-                            data-ristak-dropdown-item
-                            onClick={() => handleSelectContact(contact)}
-                          >
-                            <p className={styles.dropdownName}>{contact.name || 'Sin nombre'}</p>
-                            <p className={styles.dropdownDetail}>
-                              {contact.email || contact.phone || 'Sin información de contacto'}
-                            </p>
-                          </button>
-                        ))
-                      ) : (
-                        <div className={styles.dropdownEmpty}>
-                          No se encontraron contactos
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-	                <p className={styles.helpText}>Sin contacto asignado</p>
-	              )}
-	            </div>
-	            )}
-
-	            {showGuestsSection && (
-	              <div className={`${styles.sectionBlock} ${styles.guestsSectionCompact}`}>
-	                <div className={styles.guestToggleHeader}>
-	                  <div>
-	                    <label className={styles.label}>¿Agregar invitados?</label>
-	                    {appointmentGuests.length > 0 && (
-	                      <p className={styles.helpText}>{appointmentGuests.length} agregado{appointmentGuests.length === 1 ? '' : 's'}</p>
-	                    )}
-	                  </div>
-	                  <div className={styles.guestToggleChips} role="group" aria-label="Agregar invitados">
-	                    <button
-	                      type="button"
-	                      className={guestsEnabled ? styles.guestToggleChipActive : ''}
-	                      onClick={() => handleToggleGuestsEnabled(true)}
-	                      aria-pressed={guestsEnabled}
-	                    >
-	                      Sí
-	                    </button>
-	                    <button
-	                      type="button"
-	                      className={!guestsEnabled ? styles.guestToggleChipActive : ''}
-	                      onClick={() => handleToggleGuestsEnabled(false)}
-	                      aria-pressed={!guestsEnabled}
-	                    >
-	                      No
-	                    </button>
-	                  </div>
-	                </div>
-
-	                {guestsEnabled && (
-	                  <>
-	                    <p className={styles.helpText}>Busca un contacto guardado o agrega uno nuevo para esta cita.</p>
-
-	                    <div className={styles.searchWrapper}>
-	                      <div className={styles.searchInput}>
-	                        <Search size={16} className={styles.searchIcon} />
-	                        <input
-	                          type="text"
-	                          placeholder="Buscar en contactos..."
-	                          value={guestSearchQuery}
-	                          onChange={(e) => setGuestSearchQuery(e.target.value)}
-	                          className={styles.input}
-	                        />
-	                        {searchingGuest && <Loader2 size={16} className={styles.loadingIcon} />}
-	                      </div>
-
-	                      {showGuestDropdown && (
-		                        <div className={styles.dropdown} data-ristak-dropdown-panel>
-	                          {searchingGuest && guestContacts.length === 0 ? (
-	                            <div className={styles.dropdownEmpty}>
-	                              Buscando invitados...
-	                            </div>
-	                          ) : guestContacts.length > 0 ? (
-	                            guestContacts.map((contact) => (
-	                              <button
-	                                key={contact.id}
-		                                type="button"
-		                                className={styles.dropdownItem}
-		                                data-ristak-dropdown-item
-		                                onClick={() => handleSelectGuestContact(contact)}
-	                              >
-	                                <p className={styles.dropdownName}>{getContactDisplayName(contact)}</p>
-	                                <p className={styles.dropdownDetail}>
-	                                  {getContactDelivery(contact) || 'Sin WhatsApp ni correo'}
-	                                </p>
-	                              </button>
-	                            ))
-	                          ) : (
-	                            <div className={styles.dropdownEmpty}>
-	                              No se encontraron contactos
-	                            </div>
-	                          )}
-	                        </div>
-	                      )}
-	                    </div>
-
-	                    <div className={styles.guestBuilder}>
-	                      <div className={styles.field}>
-	                        <label className={styles.label} htmlFor="guestName">
-	                          Nombre completo <span className={styles.required}>*</span>
-	                        </label>
-	                        <input
-	                          id="guestName"
-	                          type="text"
-	                          className={styles.input}
-	                          value={guestName}
-	                          placeholder="Ej. Ana López"
-	                          onChange={(event) => setGuestName(event.target.value)}
-	                        />
-	                      </div>
-
-	                      <div className={styles.field}>
-	                        <label className={styles.label} htmlFor="guestContact">
-	                          Num Whats o correo <span className={styles.required}>*</span>
-	                        </label>
-	                        <input
-	                          id="guestContact"
-	                          type="text"
-	                          className={styles.input}
-	                          value={guestContact}
-	                          placeholder="Ej. +52 656 000 0000 o correo@dominio.com"
-	                          onChange={(event) => setGuestContact(event.target.value)}
-	                        />
-	                      </div>
-
-	                      <button type="button" className={styles.guestAddButton} onClick={handleAddManualGuest}>
-	                        Agregar invitado
-	                      </button>
-	                    </div>
-
-	                    {appointmentGuests.length > 0 ? (
-	                      <div className={styles.guestList} aria-label="Invitados agregados">
-	                        {appointmentGuests.map((guest) => (
-	                          <div key={guest.id} className={styles.guestItem}>
-	                            <span>
-	                              <strong>{guest.name}</strong>
-	                              <small>{guest.contact}</small>
-	                            </span>
-	                            <button type="button" onClick={() => handleRemoveGuest(guest.id)} aria-label={`Quitar ${guest.name}`}>
-	                              <X size={15} />
-	                            </button>
-	                          </div>
-	                        ))}
-	                      </div>
-	                    ) : (
-	                      <p className={styles.helpText}>Todavía no agregas invitados.</p>
-	                    )}
-	                  </>
-	                )}
-	              </div>
-	            )}
-
-	            {/* Usuario asignado */}
-	            {showContactAssignment && (() => {
-              const isRoundRobin = calendar?.calendarType === 'round_robin';
-
-              // En modo view, si hay usuario asignado, buscarlo y mostrarlo
-              if (!isCreateMode && formData.assignedUserId && users.length > 0) {
-                const assignedUser = users.find(u => u.id === formData.assignedUserId);
-                if (assignedUser) {
-                  return (
-                    <div className={styles.sectionBlock}>
-                      <label className={styles.label}>
-                        {isRoundRobin ? 'Miembro del equipo' : 'Persona asignada'}
-                      </label>
-                      <div className={styles.selectedContact}>
-                        <div className={styles.contactInfo}>
-                          <p className={styles.contactName}>{assignedUser.name || assignedUser.email || 'Persona'}</p>
-                          <p className={styles.contactDetail}>{assignedUser.email || ''}</p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
-              }
-
-              // En modo crear, mostrar selector solo si hay usuarios cargados
-              if (isCreateMode) {
-                // Si reparte citas entre el equipo y no hay usuarios, mostrar error
-                if (isRoundRobin && users.length === 0 && !loadingUsers) {
-                  return (
-                    <div className={styles.sectionBlock}>
-                      <p className={styles.helpText}>
-                        No pudimos cargar al equipo. Cierra esta ventana y vuelve a intentar.
-                      </p>
-                    </div>
-                  );
-                }
-
-                // Si no hay usuarios cargados (calendarios normales), no mostrar nada
-                if (users.length === 0) {
-                  return null;
-                }
-
-                return (
-                  <div className={styles.sectionBlock}>
-                    <label className={styles.label}>
-                      {isRoundRobin ? (
-                        <>
-                          Elegir miembro del equipo <span className={styles.required}>*</span>
-                        </>
-                      ) : (
-                        'Persona asignada (opcional)'
-                      )}
-                    </label>
-
-                    {isRoundRobin && (
-                      <p className={styles.helpText}>
-                        Este calendario reparte citas entre el equipo. Selecciona quién atenderá esta cita.
-                      </p>
-                    )}
-
-                    {renderSelect({
-                      title: 'Persona asignada',
-                      value: formData.assignedUserId,
-                      options: assignedUserOptions,
-                      onChange: (value) => setFormData({ ...formData, assignedUserId: value }),
-                      disabled: loadingUsers,
-                      placeholder: 'Seleccionar...'
-                    })}
-                  </div>
-                );
-              }
-
-              return null;
-            })()}
-          </div>
-
-          {/* COLUMNA DERECHA: Configuración de la cita */}
-          <div className={styles.rightColumn}>
-
-            <div className={styles.field}>
-              <label className={styles.label}>
-                Estado
+	                Estado
               </label>
               {renderSelect({
                 title: 'Estado',
@@ -1755,7 +1777,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                       ]}
                       activeTab={scheduleMode}
                       onTabChange={(value) => setScheduleMode(value as 'default' | 'custom')}
-                      fullWidth={isMobileSheet}
+	                      fullWidth
                     />
                   </div>
 
