@@ -226,7 +226,7 @@ type ChatSettingsSection = 'appearance' | 'templates' | 'numbers' | 'notificatio
 type WhatsAppNumberMode = 'merged' | 'separated'
 type ConversationSortMode = 'recent' | 'unread'
 type PhotoPickDestination = 'chat' | 'cameraShare'
-type ContactInfoDetailPanel = 'payments' | 'appointments' | null
+type ContactInfoDetailPanel = 'payments' | 'appointments' | 'journey' | null
 type ContactInfoArchiveTab = 'media' | 'links' | 'documents'
 type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
 type MessageActionMenuMode = 'main' | 'more'
@@ -4011,6 +4011,7 @@ export const PhoneChat: React.FC = () => {
     setContactInfoContact(null)
     setContactInfoError('')
     setContactInfoLoading(false)
+    setContactInfoArchiveOpen(false)
     setMessages([])
     setContactJourney([])
     setDraftAttachments([])
@@ -4022,6 +4023,7 @@ export const PhoneChat: React.FC = () => {
     setContactInfoContact(null)
     setContactInfoError('')
     setContactInfoLoading(false)
+    setContactInfoArchiveOpen(false)
     setContactInfoDetailPanel(null)
     setEditingCustomFieldId(null)
     setCustomFieldDrafts({})
@@ -8484,6 +8486,102 @@ export const PhoneChat: React.FC = () => {
       )
     }
 
+    if (contactInfoDetailPanel) {
+      const detailTitle = contactInfoDetailPanel === 'payments'
+        ? 'Pagos totales'
+        : contactInfoDetailPanel === 'appointments'
+          ? 'Citas'
+          : 'Viaje del cliente'
+
+      return (
+        <section
+          className={`${styles.contactInfoScreen} ${contactInfoOpen ? styles.contactInfoScreenOpen : ''}`}
+          aria-label={detailTitle}
+          aria-hidden={!contactInfoOpen}
+        >
+          <header className={styles.contactInfoTopbar}>
+            <button type="button" className={styles.backButton} onClick={() => setContactInfoDetailPanel(null)} aria-label="Volver a info del contacto">
+              <ChevronLeft size={32} />
+            </button>
+            <strong>{detailTitle}</strong>
+            <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
+          </header>
+
+          <div className={`${styles.contactInfoContent} ${styles.contactInfoDetailContent}`} data-phone-chat-scrollable="true">
+            {contactInfoDetailPanel === 'payments' && (
+              <section className={styles.contactInfoDetailSection}>
+                <div className={styles.contactInfoRows}>
+                  {renderContactInfoRow(
+                    'payments-total-detail',
+                    <CircleDollarSign size={17} />,
+                    'Total pagado',
+                    formatCurrency(Number(contactInfoData.ltv || 0) || revenueTotal),
+                    `${paymentsCount} pago${paymentsCount === 1 ? '' : 's'} registrado${paymentsCount === 1 ? '' : 's'}`
+                  )}
+                  {contactInfoPayments.map((payment) => renderContactInfoRow(
+                    `payment-detail-${payment.id}`,
+                    <CreditCard size={17} />,
+                    formatLocalDateShort(payment.date),
+                    formatCurrency(payment.amount),
+                    formatPlainStatus(payment.status)
+                  ))}
+                </div>
+                {contactInfoPayments.length === 0 && (
+                  <p className={styles.contactInfoDetailEmpty}>
+                    {paymentsCount > 0
+                      ? `Hay ${paymentsCount} pago${paymentsCount === 1 ? '' : 's'} registrado${paymentsCount === 1 ? '' : 's'}, pero todavía no se cargó el detalle.`
+                      : 'Aún no hay pagos guardados para este contacto.'}
+                  </p>
+                )}
+              </section>
+            )}
+
+            {contactInfoDetailPanel === 'appointments' && (
+              <section className={styles.contactInfoDetailSection}>
+                {contactInfoAppointments.length > 0 ? (
+                  <div className={styles.contactInfoRows}>
+                    {contactInfoAppointments.map((appointment) => renderContactInfoRow(
+                      `appointment-detail-${appointment.id}`,
+                      <CalendarDays size={17} />,
+                      appointment.title,
+                      formatLocalDateTime(appointment.startTime),
+                      formatPlainStatus(appointment.status)
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.contactInfoDetailEmpty}>Aún no hay citas guardadas para este contacto.</p>
+                )}
+              </section>
+            )}
+
+            {contactInfoDetailPanel === 'journey' && (
+              <section className={styles.contactInfoDetailSection}>
+                {contactInfoJourneyEvents.length > 0 ? (
+                  <div className={styles.contactInfoTimeline}>
+                    {contactInfoJourneyEvents.map((event, index) => (
+                      <div key={`${event.type}-${event.date}-${index}`} className={styles.contactInfoTimelineItem}>
+                        <span className={`${styles.contactInfoTimelineIcon} ${getJourneyEventIconClass(event)}`}>
+                          {getJourneyEventIcon(event)}
+                          {getJourneyEventNetworkBadge(event)}
+                        </span>
+                        <div>
+                          <strong>{getJourneyEventLabel(event, leadLabel)}</strong>
+                          <small>{getJourneyEventDescription(event)}</small>
+                          <em>{formatLocalDateTime(event.date)}</em>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.contactInfoDetailEmpty}>Aún no hay actividad guardada para este contacto.</p>
+                )}
+              </section>
+            )}
+          </div>
+        </section>
+      )
+    }
+
     return (
       <section
         className={`${styles.contactInfoScreen} ${contactInfoOpen ? styles.contactInfoScreenOpen : ''}`}
@@ -8573,76 +8671,40 @@ export const PhoneChat: React.FC = () => {
             <div className={styles.contactInfoMetrics} role="group" aria-label="Resumen del contacto">
               <button
                 type="button"
-                className={`${styles.contactInfoMetricCard} ${contactInfoDetailPanel === 'payments' ? styles.contactInfoMetricCardActive : ''}`}
-                onClick={() => setContactInfoDetailPanel((current) => current === 'payments' ? null : 'payments')}
-                aria-expanded={contactInfoDetailPanel === 'payments'}
+                className={styles.contactInfoMetricCard}
+                onClick={() => {
+                  setContactInfoArchiveOpen(false)
+                  setContactInfoDetailPanel('payments')
+                }}
+                aria-label="Ver pagos totales"
               >
                 <span className={styles.contactInfoMetricTitle}>Total</span>
                 <strong>{formatCurrency(Number(contactInfoData.ltv || 0) || revenueTotal)}</strong>
                 <em>{paymentsCount} pago{paymentsCount === 1 ? '' : 's'}</em>
                 <span className={styles.contactInfoMetricAction}>
-                  {contactInfoDetailPanel === 'payments' ? 'Ocultar' : 'Ver'}
+                  Ver
                   <ChevronRight size={15} />
                 </span>
               </button>
 
               <button
                 type="button"
-                className={`${styles.contactInfoMetricCard} ${contactInfoDetailPanel === 'appointments' ? styles.contactInfoMetricCardActive : ''}`}
-                onClick={() => setContactInfoDetailPanel((current) => current === 'appointments' ? null : 'appointments')}
-                aria-expanded={contactInfoDetailPanel === 'appointments'}
+                className={styles.contactInfoMetricCard}
+                onClick={() => {
+                  setContactInfoArchiveOpen(false)
+                  setContactInfoDetailPanel('appointments')
+                }}
+                aria-label="Ver citas"
               >
                 <span className={styles.contactInfoMetricTitle}>Citas</span>
                 <strong>{contactInfoAppointments.length}</strong>
                 <em>{contactInfoActiveAppointments.length} activa{contactInfoActiveAppointments.length === 1 ? '' : 's'}</em>
                 <span className={styles.contactInfoMetricAction}>
-                  {contactInfoDetailPanel === 'appointments' ? 'Ocultar' : 'Ver'}
+                  Ver
                   <ChevronRight size={15} />
                 </span>
               </button>
             </div>
-
-            {contactInfoDetailPanel === 'payments' && (
-              <div className={styles.contactInfoDetailPanel}>
-                <h3>Pagos realizados</h3>
-                {contactInfoPayments.length > 0 ? (
-                  <div className={styles.contactInfoRows}>
-                    {contactInfoPayments.map((payment) => renderContactInfoRow(
-                      `payment-detail-${payment.id}`,
-                      <CreditCard size={17} />,
-                      formatLocalDateShort(payment.date),
-                      formatCurrency(payment.amount),
-                      formatPlainStatus(payment.status)
-                    ))}
-                  </div>
-                ) : (
-                  <p className={styles.contactInfoDetailEmpty}>
-                    {paymentsCount > 0
-                      ? `Hay ${paymentsCount} pago${paymentsCount === 1 ? '' : 's'} registrado${paymentsCount === 1 ? '' : 's'}, pero todavía no se cargó el detalle.`
-                      : 'Aún no hay pagos guardados para este contacto.'}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {contactInfoDetailPanel === 'appointments' && (
-              <div className={styles.contactInfoDetailPanel}>
-                <h3>Historial de citas</h3>
-                {contactInfoAppointments.length > 0 ? (
-                  <div className={styles.contactInfoRows}>
-                    {contactInfoAppointments.map((appointment) => renderContactInfoRow(
-                      `appointment-detail-${appointment.id}`,
-                      <CalendarDays size={17} />,
-                      appointment.title,
-                      formatLocalDateTime(appointment.startTime),
-                      formatPlainStatus(appointment.status)
-                    ))}
-                  </div>
-                ) : (
-                  <p className={styles.contactInfoDetailEmpty}>Aún no hay citas guardadas para este contacto.</p>
-                )}
-              </div>
-            )}
           </section>
 
           <section className={`${styles.contactInfoSection} ${styles.contactInfoArchiveSection}`}>
@@ -8753,9 +8815,34 @@ export const PhoneChat: React.FC = () => {
                       'Convirtió',
                       `${firstAppointment.title} · ${formatLocalDateTime(firstAppointment.startTime)}`,
                       contactInfoSource
-                    )
-                  : renderContactInfoRow('conversion-empty', <DollarSign size={17} />, 'Convirtió', 'Aún sin conversión registrada')}
+                  )
+                : renderContactInfoRow('conversion-empty', <DollarSign size={17} />, 'Convirtió', 'Aún sin conversión registrada')}
             </div>
+            <button
+              type="button"
+              className={styles.contactInfoJourneyButton}
+              onClick={() => {
+                setContactInfoArchiveOpen(false)
+                setContactInfoDetailPanel('journey')
+              }}
+              aria-label="Ver viaje del cliente"
+            >
+              <span className={styles.contactInfoArchiveSummaryIcon}>
+                <MousePointerClick size={18} />
+              </span>
+              <span className={styles.contactInfoArchiveSummaryText}>
+                <strong>Viaje del cliente</strong>
+                <small>
+                  {contactInfoJourneyEvents.length > 0
+                    ? `${contactInfoJourneyEvents.length} evento${contactInfoJourneyEvents.length === 1 ? '' : 's'} · De más viejo a más nuevo`
+                    : 'Aún sin actividad guardada'}
+                </small>
+              </span>
+              <span className={styles.contactInfoArchiveSummaryAction}>
+                Ver
+                <ChevronRight size={16} />
+              </span>
+            </button>
           </section>
 
           {(nextAppointment || contactInfoPayments.length > 0) && (
@@ -8797,26 +8884,6 @@ export const PhoneChat: React.FC = () => {
             </div>
           </section>
 
-          {contactInfoJourneyEvents.length > 0 && (
-            <section className={styles.contactInfoSection}>
-              <h3>Viaje del cliente</h3>
-              <div className={styles.contactInfoTimeline}>
-                {contactInfoJourneyEvents.map((event, index) => (
-                  <div key={`${event.type}-${event.date}-${index}`} className={styles.contactInfoTimelineItem}>
-                    <span className={`${styles.contactInfoTimelineIcon} ${getJourneyEventIconClass(event)}`}>
-                      {getJourneyEventIcon(event)}
-                      {getJourneyEventNetworkBadge(event)}
-                    </span>
-                    <div>
-                      <strong>{getJourneyEventLabel(event, leadLabel)}</strong>
-                      <small>{getJourneyEventDescription(event)}</small>
-                      <em>{formatLocalDateTime(event.date)}</em>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
         </div>
       </section>
     )

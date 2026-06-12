@@ -1869,10 +1869,6 @@
   transform: scale(0.98);
 }
 
-.contactInfoMetricCardActive {
-  color: var(--phone-chat-accent-strong);
-}
-
 .contactInfoMetricTitle {
   display: grid;
   justify-items: center;
@@ -1917,10 +1913,6 @@
   transition: transform 160ms ease;
 }
 
-.contactInfoMetricCardActive .contactInfoMetricAction svg {
-  transform: rotate(90deg);
-}
-
 .contactInfoMetricCard strong {
   overflow: hidden;
   max-width: 100%;
@@ -1931,12 +1923,6 @@
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.contactInfoDetailPanel {
-  display: grid;
-  gap: 10px;
-  padding-top: 2px;
 }
 
 .contactInfoDetailEmpty {
@@ -1950,7 +1936,8 @@
   gap: 0;
 }
 
-.contactInfoArchiveSummaryButton {
+.contactInfoArchiveSummaryButton,
+.contactInfoJourneyButton {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr) auto;
   gap: 10px;
@@ -1963,6 +1950,12 @@
   background: transparent !important;
   box-shadow: none !important;
   text-align: left;
+}
+
+.contactInfoJourneyButton {
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--phone-chat-border);
 }
 
 .contactInfoArchiveSummaryIcon {
@@ -2011,11 +2004,13 @@
   white-space: nowrap;
 }
 
-.contactInfoArchiveDetailContent {
+.contactInfoArchiveDetailContent,
+.contactInfoDetailContent {
   padding-top: 10px;
 }
 
-.contactInfoArchiveDetailSection {
+.contactInfoArchiveDetailSection,
+.contactInfoDetailSection {
   display: grid;
   gap: 12px;
   padding: 0 14px 18px;
