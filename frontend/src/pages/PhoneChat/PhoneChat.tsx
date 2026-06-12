@@ -114,6 +114,39 @@ const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
 const AI_AGENT_MESSAGES_KEY = 'ristak_phone_chat_ai_agent_messages_v1'
+const AGENT_STATUS_PHRASE_ROTATION_MS = 4400
+const AGENT_STATUS_PHRASES = [
+  'Modo chamba: leyendo chats.',
+  'Ando cazando mensajes nuevos.',
+  'Checando el chisme del cliente.',
+  'Aquí atento como compa de guardia.',
+  'Leyendo y armando respuesta.',
+  'Si preguntan, aquí estoy.',
+  'Revisando tono y urgencia.',
+  'Atento al chat, sin drama.',
+  'Sacando la respuesta fina.',
+  'No se me va ni un mensaje.',
+  'En vivo y con café digital.',
+  'Este chat ya lo traigo.',
+  'Buscando la mejor jugada.',
+  'Leyendo entre líneas, jefe.',
+  'Ojo puesto en prospectos.',
+  'Midiendo si quiere comprar.',
+  'Listo para entrar al quite.',
+  'Afinando respuesta con flow.',
+  'Aquí, chambeando bonito.',
+  'Escaneando mensajes pendientes.',
+  'Si se pone bueno, aviso.',
+  'Traigo radar de citas prendido.',
+  'Viendo quién necesita ayuda.',
+  'Procesando el cotorreo.',
+  'Poniéndome trucha con este chat.',
+  'Revisando señales de compra.',
+  'No descanso, nomás cargo pila.',
+  'Cuidando la bandeja, compa.',
+  'Leyendo rápido y sin hacer show.',
+  'Listo para responder como pro.'
+]
 const CHAT_SWIPE_ACTION_WIDTH = 184
 const CHAT_SWIPE_TRANSITION_MS = 260
 const CHAT_SWIPE_OPEN_THRESHOLD = 44
@@ -2448,6 +2481,7 @@ export const PhoneChat: React.FC = () => {
   const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>({})
   const [agentMenuSection, setAgentMenuSection] = useState<AgentMenuSection>('menu')
   const [agentConfigSaving, setAgentConfigSaving] = useState(false)
+  const [agentStatusPhraseIndex, setAgentStatusPhraseIndex] = useState(0)
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_ARCHIVED_STATE_KEY))
   const [mutedChatIds, setMutedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_MUTED_STATE_KEY))
   const [starredMessageIds, setStarredMessageIds] = useState<string[]>(() => readStoredChatIds(CHAT_STARRED_MESSAGES_KEY))
@@ -3058,6 +3092,20 @@ export const PhoneChat: React.FC = () => {
     [agentPriorityStates]
   )
   const agentPriorityCount = agentPriorityStates.length
+  useEffect(() => {
+    if (!agentEnabled) {
+      setAgentStatusPhraseIndex(0)
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      setAgentStatusPhraseIndex((current) => (current + 1) % AGENT_STATUS_PHRASES.length)
+    }, AGENT_STATUS_PHRASE_ROTATION_MS)
+
+    return () => window.clearInterval(intervalId)
+  }, [agentEnabled])
+  const agentStatusPhrase = AGENT_STATUS_PHRASES[agentStatusPhraseIndex % AGENT_STATUS_PHRASES.length]
+
   const agentHiddenChatIdSet = useMemo(() => {
     if (!agentEnabled || !agentConfig?.hideAttended) return new Set<string>()
     return new Set(
@@ -10124,14 +10172,32 @@ export const PhoneChat: React.FC = () => {
                 >
                   {agentEnabled && (
                     <>
-                      <span className={styles.agentBotRing} aria-hidden="true" />
-                      <span className={styles.agentBotSpark1} aria-hidden="true" />
-                      <span className={styles.agentBotSpark2} aria-hidden="true" />
-                      <span className={styles.agentBotSpark3} aria-hidden="true" />
+                      <span className={styles.agentBotOrbit} aria-hidden="true" />
+                      <span className={styles.agentBotSparkle} aria-hidden="true" />
                     </>
                   )}
-                  <Bot size={24} className={agentEnabled ? styles.agentBotIconLive : undefined} />
+                  <span className={styles.agentRobot} aria-hidden="true">
+                    <span className={styles.agentRobotAntenna} />
+                    <span className={styles.agentRobotHead}>
+                      <span className={styles.agentRobotEyes}>
+                        <span className={styles.agentRobotEye} />
+                        <span className={styles.agentRobotEye} />
+                      </span>
+                      <span className={styles.agentRobotMouth} />
+                    </span>
+                  </span>
                 </button>
+                {agentEnabled && (
+                  <div className={styles.agentStatusBubble} aria-hidden="true">
+                    <span className={styles.agentStatusLabel}>
+                      <span className={styles.agentStatusDot} />
+                      Activo
+                    </span>
+                    <span key={agentStatusPhraseIndex} className={styles.agentStatusPhrase}>
+                      {agentStatusPhrase}
+                    </span>
+                  </div>
+                )}
                 {renderChatHeaderActions()}
               </div>
             )}
