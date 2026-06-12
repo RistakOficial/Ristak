@@ -103,6 +103,7 @@ interface RecordPaymentModalProps {
   initialPaymentMode?: PaymentMode
   initialContact?: Partial<Contact> | null
   lockInitialContact?: boolean
+  showEmbeddedBackButton?: boolean
   /**
    * 'modal' (default) renderiza dentro del overlay Modal.
    * 'embedded' renderiza el mismo flujo sin overlay, para incrustarlo en una
@@ -363,6 +364,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   initialPaymentMode = 'single',
   initialContact = null,
   lockInitialContact = false,
+  showEmbeddedBackButton = true,
   variant = 'modal'
 }) => {
   const [loading, setLoading] = useState(false)
@@ -674,8 +676,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     const query = searchQuery.trim()
+    const shouldLoadRecentContacts = isEmbedded && contactPickerOpen && query.length < 2
 
-    if (query.length < 2) {
+    if (query.length < 2 && !shouldLoadRecentContacts) {
       setContacts([])
       setShowContactDropdown(false)
       setSearchingContact(false)
@@ -691,7 +694,37 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       try {
         let formattedContacts: Contact[]
 
-        if (highLevelConnected) {
+        if (shouldLoadRecentContacts) {
+          const params = new URLSearchParams({
+            page: '1',
+            limit: '60',
+            sortBy: 'created_at',
+            sortOrder: 'DESC'
+          })
+          const response = await fetch(`/api/contacts?${params.toString()}`, {
+            signal: controller.signal
+          })
+          if (!response.ok) {
+            throw new Error('Error al cargar contactos')
+          }
+          const data = await response.json()
+          const recentContacts = Array.isArray(data)
+            ? data
+            : Array.isArray(data.data)
+              ? data.data
+              : Array.isArray(data.contacts)
+                ? data.contacts
+                : []
+
+          formattedContacts = recentContacts.map((contact: any) => ({
+            id: contact.id,
+            name: contact.full_name || contact.name || 'Sin nombre',
+            email: contact.email || '',
+            phone: contact.phone || '',
+            firstName: contact.firstName || contact.first_name || '',
+            lastName: contact.lastName || contact.last_name || ''
+          }))
+        } else if (highLevelConnected) {
           const response = await fetch('/api/highlevel/contacts/search', {
             method: 'POST',
             headers: {
@@ -750,7 +783,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           setSearchingContact(false)
         }
       }
-    }, CONTACT_SEARCH_DELAY_MS)
+    }, shouldLoadRecentContacts ? 0 : CONTACT_SEARCH_DELAY_MS)
 
     return () => {
       window.clearTimeout(timer)
@@ -2678,8 +2711,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (!isOpen) return null
 
     return (
-      <div className={styles.embeddedRoot}>
-        {step !== 'processing' && (
+      <div className={`${styles.embeddedRoot} ${showEmbeddedBackButton ? '' : styles.embeddedRootNoBack}`}>
+        {showEmbeddedBackButton && step !== 'processing' && (
           <button
             type="button"
             className={styles.embeddedBackButton}

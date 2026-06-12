@@ -1642,6 +1642,10 @@ body.dark .tooltipInfo {
   box-sizing: border-box;
 }
 
+.embeddedRootNoBack {
+  --record-payment-embedded-top-padding: 8px;
+}
+
 .embeddedBackButton {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 14px);

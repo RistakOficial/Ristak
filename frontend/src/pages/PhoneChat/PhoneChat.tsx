@@ -10885,14 +10885,11 @@ export const PhoneChat: React.FC = () => {
             {...actionSheetDismiss.sheetDragProps}
           >
             <div className={styles.sheetHandle} aria-hidden="true" />
-            {sheet !== 'attachments' && (
+            {sheet !== 'attachments' && sheet !== 'payment' && (
               <div className={styles.sheetHeader}>
                 <div>
-                  {sheet !== 'payment' && (
-                    <p>{activeContact ? getContactName(activeContact) : aiAgentConversationOpen ? 'Agente de IA' : 'Ristak'}</p>
-                  )}
+                  <p>{activeContact ? getContactName(activeContact) : aiAgentConversationOpen ? 'Agente de IA' : 'Ristak'}</p>
                   <h2>
-                    {sheet === 'payment' && 'Registrar pago'}
                     {sheet === 'templates' && 'Plantillas'}
                     {sheet === 'clabe' && 'CLABE'}
                     {sheet === 'settings' && 'Ajustes del chat'}
@@ -10942,6 +10939,7 @@ export const PhoneChat: React.FC = () => {
                     initialPaymentMode={activePhonePaymentMode}
                     initialContact={initialContact}
                     lockInitialContact={Boolean(initialContact?.id)}
+                    showEmbeddedBackButton={false}
                     onClose={actionSheetDismiss.requestClose}
                     onSuccess={() => {
                       actionSheetDismiss.requestClose()
