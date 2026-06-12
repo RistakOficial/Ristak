@@ -28,6 +28,10 @@ import {
   getMetaWebhookVerifyToken,
   processMetaSocialWebhook
 } from '../services/metaSocialMessagingService.js';
+import {
+  buildInvoiceReferenceCandidates,
+  normalizeInvoiceReference
+} from '../utils/invoiceIdentity.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
@@ -305,14 +309,7 @@ function normalizeLookupText(value) {
 }
 
 function parseInvoiceNumberFromReference(reference) {
-  const cleanReference = normalizeLookupText(reference);
-  const match = cleanReference.match(/invoice\s*#?\s*([A-Za-z0-9-]+)/i);
-  if (match?.[1]) return match[1];
-
-  const standaloneInvoiceNumber = cleanReference.match(/\b((?:FACTURA|FACT|FAC|INV)[-\s#]*[A-Za-z0-9-]+)\b/i);
-  if (standaloneInvoiceNumber?.[1]) return standaloneInvoiceNumber[1].replace(/[\s#]+/g, '-');
-
-  return match?.[1] || null;
+  return normalizeInvoiceReference(reference);
 }
 
 function getFirstInvoiceItem(invoice = {}) {
@@ -373,22 +370,24 @@ async function findExistingInvoicePayment({ invoiceId, paymentId, contactId, amo
     if (existing) return existing;
   }
 
-  const resolvedInvoiceNumber = invoiceNumber || parseInvoiceNumberFromReference(reference);
+  const resolvedInvoiceNumber = normalizeInvoiceReference(invoiceNumber) || parseInvoiceNumberFromReference(reference);
   if (contactId && resolvedInvoiceNumber) {
+    const referenceCandidates = buildInvoiceReferenceCandidates(resolvedInvoiceNumber);
+    const referencePlaceholders = referenceCandidates.map(() => '?').join(', ');
+    const normalizedCandidates = referenceCandidates.map(value => value.toLowerCase());
     const existingByNumber = await db.get(
       `SELECT id, contact_id, ghl_invoice_id, payment_mode
        FROM payments
        WHERE contact_id = ?
          AND (
-           invoice_number = ?
-           OR reference = ?
-           OR reference = ?
+           LOWER(COALESCE(invoice_number, '')) IN (${referencePlaceholders})
+           OR LOWER(COALESCE(reference, '')) IN (${referencePlaceholders})
          )
          AND (ghl_invoice_id IS NOT NULL OR invoice_number IS NOT NULL)
          AND id != ?
        ORDER BY created_at DESC
        LIMIT 1`,
-      [contactId, resolvedInvoiceNumber, resolvedInvoiceNumber, `Invoice #${resolvedInvoiceNumber}`, paymentId]
+      [contactId, ...normalizedCandidates, ...normalizedCandidates, paymentId]
     );
 
     if (existingByNumber) return existingByNumber;

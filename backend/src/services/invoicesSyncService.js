@@ -25,6 +25,10 @@ import {
   isSuccessfulPaymentStatus,
   triggerWhatsappFirstPurchaseEvent
 } from './metaWhatsappEventsService.js'
+import {
+  buildInvoiceReferenceCandidates,
+  normalizeInvoiceNumber
+} from '../utils/invoiceIdentity.js'
 
 const PAID_INVOICE_STATUSES = new Set(['paid', 'succeeded', 'completed'])
 const PAID_STATUS_DOWNGRADE_PROTECTED_STATUSES = new Set(['draft', 'sent', 'pending', 'overdue', 'payment_processing'])
@@ -533,20 +537,24 @@ async function findExistingPaymentForInvoice({ invoiceId, contactId, invoiceNumb
 
   if (existingByInvoiceId) return existingByInvoiceId
 
-  if (!contactId || !invoiceNumber) return null
+  const normalizedInvoiceNumber = normalizeInvoiceNumber(invoiceNumber)
+  if (!contactId || !normalizedInvoiceNumber) return null
+
+  const referenceCandidates = buildInvoiceReferenceCandidates(normalizedInvoiceNumber)
+  const referencePlaceholders = referenceCandidates.map(() => '?').join(', ')
+  const normalizedCandidates = referenceCandidates.map(value => value.toLowerCase())
 
   return await db.get(
     `SELECT id, contact_id, status, payment_mode, ghl_invoice_id
      FROM payments
      WHERE contact_id = ?
        AND (
-         invoice_number = ?
-         OR reference = ?
-         OR reference = ?
+         LOWER(COALESCE(invoice_number, '')) IN (${referencePlaceholders})
+         OR LOWER(COALESCE(reference, '')) IN (${referencePlaceholders})
        )
      ORDER BY created_at DESC
      LIMIT 1`,
-    [contactId, invoiceNumber, invoiceNumber, `Invoice #${invoiceNumber}`]
+    [contactId, ...normalizedCandidates, ...normalizedCandidates]
   )
 }
 
@@ -877,21 +885,25 @@ export async function syncAllInvoices({ contactId } = {}) {
           continue
         }
 
+        // Resolver antes de buscar duplicados: los webhooks guardan el ID local.
+        const localContactId = await ensureLocalContactForInvoice(ghlClient, contactId)
+
         const existing = await findExistingPaymentForInvoice({
           invoiceId: ghlInvoiceId,
-          contactId,
+          contactId: localContactId || contactId,
           invoiceNumber,
           importedLocalPaymentId
         })
 
-        if (!contactId) {
+        if (!localContactId) {
+          logger.warn(`⚠️ Ignorando invoice ${ghlInvoiceId}: contacto ${contactId} no existe en HighLevel ni localmente`)
           skipped++
           continue
         }
 
         // Datos comunes del invoice
         const invoiceData = {
-          contact_id: contactId,
+          contact_id: localContactId,
           amount: invoice.total || invoice.amount || 0,
           currency: invoice.currency || 'MXN',
           status: mapInvoiceStatus(invoice.status),
@@ -938,17 +950,6 @@ export async function syncAllInvoices({ contactId } = {}) {
           )
           updated++
         } else {
-          // Verificar si el contacto existe (si no, descargarlo desde HighLevel)
-          if (invoiceData.contact_id) {
-            const contactAvailable = await ensureLocalContactForInvoice(ghlClient, invoiceData.contact_id)
-
-            if (!contactAvailable) {
-              logger.warn(`⚠️ Ignorando invoice ${ghlInvoiceId}: contacto ${invoiceData.contact_id} no existe en HighLevel ni localmente`)
-              skipped++
-              continue
-            }
-          }
-
           // Crear nuevo invoice en BD
           await db.run(
             `INSERT INTO payments (
