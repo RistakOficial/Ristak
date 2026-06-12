@@ -70,11 +70,12 @@ const baseNavigation: NavItem[] = [
   { id: 'appointments', name: 'Citas', href: '/appointments', icon: Calendar },
   { id: 'transactions', name: 'Pagos', href: '/transactions', icon: Banknote },
   { id: 'contacts', name: 'Contactos', href: '/contacts', icon: Users },
+  { id: 'divider-contacts', name: '', href: '#', icon: LayoutDashboard, isDivider: true },
   { id: 'reports', name: 'Reportes', href: '/reports/table/month/cashflow', icon: FileBarChart },
   { id: 'analytics', name: 'Analíticas', href: '/analytics', icon: BarChart3 },
   { id: 'divider-1', name: '', href: '#', icon: LayoutDashboard, isDivider: true },
   { id: 'campaigns', name: 'Publicidad', href: '/campaigns/classic', icon: Megaphone },
-  { id: 'automations', name: 'Automatizaciones', href: '/automations', icon: Workflow },
+  { id: 'automations', name: 'Automatizaciones', href: '/automations', icon: BotMessageSquare },
   { id: 'sites', name: 'Sitios', href: '/sites', icon: PanelTop },
 ]
 
