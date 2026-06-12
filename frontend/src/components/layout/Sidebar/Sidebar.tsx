@@ -350,9 +350,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
   const isSettingsRoute = location.pathname.startsWith('/settings')
   const [settingsOpen, setSettingsOpen] = useState(isSettingsRoute)
 
-  // Mantener el grupo abierto mientras se navega dentro de Configuración
+  // Sincronizar el estado del grupo con la ruta actual
   useEffect(() => {
-    if (isSettingsRoute) setSettingsOpen(true)
+    setSettingsOpen(isSettingsRoute)
   }, [isSettingsRoute])
   const longPressTimerRef = React.useRef<number | null>(null)
   const longPressStartPos = React.useRef<{ x: number; y: number } | null>(null)
