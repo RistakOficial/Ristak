@@ -805,26 +805,47 @@
 
 .avatarChannelBadge {
   position: absolute;
-  right: -4px;
-  bottom: -3px;
+  right: -2px;
+  bottom: -1px;
   z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 20px;
   height: 20px;
-  border: 2px solid var(--phone-chat-bg);
+  border: 0;
   border-radius: 999px;
   color: #ffffff;
-  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.2),
+    0 4px 9px rgba(15, 23, 42, 0.2),
+    0 1px 2px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.avatarChannelBadge::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  left: 3px;
+  height: 38%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0));
+  opacity: 0.72;
   pointer-events: none;
 }
 
 .avatarChannelBadge svg {
+  position: relative;
+  z-index: 1;
   display: block;
   width: 12px;
   height: 12px;
   stroke-width: 2.5;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.2));
 }
 
 .chatItem > .avatar .avatarChannelBadge {
@@ -838,11 +859,11 @@
 }
 
 .avatarChannelBadgeWhatsapp {
-  background: #25d366;
+  background: linear-gradient(145deg, #66f28f 0%, #25d366 46%, #0aa65b 100%);
 }
 
 .avatarChannelBadgeMessenger {
-  background: #0084ff;
+  background: linear-gradient(145deg, #59c8ff 0%, #0084ff 50%, #075bd8 100%);
 }
 
 .avatarChannelBadgeInstagram {
@@ -850,16 +871,19 @@
 }
 
 .avatarChannelBadgeEmail {
-  background: #ea4335;
+  background: linear-gradient(145deg, #ff7a70 0%, #ea4335 48%, #b42318 100%);
 }
 
 .avatarChannelBadgeSms {
-  background: #475569;
+  background: linear-gradient(145deg, #94a3b8 0%, #475569 52%, #1e293b 100%);
 }
 
 :global(body[data-phone-chat-tone="dark"]) .avatarChannelBadge {
-  border-color: var(--phone-chat-surface-soft);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.36);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.26),
+    0 4px 11px rgba(0, 0, 0, 0.38),
+    0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .aiAgentAvatar {
