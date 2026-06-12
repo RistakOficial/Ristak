@@ -1141,8 +1141,8 @@
 
 .conditionGroup {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  flex-wrap: wrap;
   gap: 8px;
   padding: 12px;
   border: 1px solid rgba(148, 163, 184, 0.18);
@@ -1151,7 +1151,7 @@
 }
 
 .conditionGroup > .ruleAddWrap {
-  align-self: center;
+  align-self: flex-start;
   flex: 0 0 auto;
 }
 
@@ -1184,9 +1184,9 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  flex: 1 1 460px;
+  width: 100%;
   gap: 8px;
-  min-width: min(100%, 360px);
+  min-width: 0;
   padding: 7px 9px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 8px;
@@ -1210,7 +1210,6 @@
 
 .conditionRowEditing {
   border-color: rgba(148, 163, 184, 0.45);
-  flex-basis: 780px;
 }
 
 .conditionSentence {
