@@ -42,28 +42,24 @@ export type ConditionCategory =
   | 'channel'
   | 'message'
   | 'tags'
+  | 'contact'
   | 'appointments'
   | 'payments'
-  | 'assignee'
   | 'ads'
-  | 'contact'
   | 'schedule'
-  | 'business_phone'
 
 export type ConditionChannel = 'whatsapp' | 'instagram' | 'messenger' | 'webchat' | 'sms' | 'email'
 export type ConditionOffsetUnit = 'minutes' | 'hours' | 'days'
 
 /**
- * Una condición del constructor: categoría → operador → valores.
- * Los operadores válidos por categoría viven en el catálogo del componente
- * (y se validan también en backend).
+ * Parámetro opcional de una condición: subcategoría (field) → operador → valor.
+ * En Citas y Pagos los parámetros se evalúan en conjunto sobre el mismo registro.
  */
-export interface AgentCondition {
-  category: ConditionCategory
+export interface AgentConditionParam {
+  field: string
   operator: string
   value?: string
   values?: string[]
-  calendarId?: string
   date?: string
   dateEnd?: string
   amount?: number
@@ -72,11 +68,22 @@ export interface AgentCondition {
   offsetUnit?: ConditionOffsetUnit
   timeStart?: string
   timeEnd?: string
+  fieldKey?: string
+}
+
+/**
+ * Condición jerárquica: la categoría sola ya dispara con su significado base
+ * ("agendó una cita", "vino de anuncio"); los params la afinan opcionalmente.
+ */
+export interface AgentCondition {
+  category: ConditionCategory
+  params: AgentConditionParam[]
 }
 
 export interface AgentFilterOptions {
   ads: Array<{ id: string; name: string; campaign: string | null; detected: boolean }>
   businessPhones: Array<{ id: string; label: string }>
+  customFields: Array<{ key: string; label: string }>
 }
 
 export interface ConditionGroup {

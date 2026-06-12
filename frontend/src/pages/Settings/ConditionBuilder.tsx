@@ -1,37 +1,68 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Check, Copy, Pencil, Plus, X } from 'lucide-react'
-import type { AgentCondition, AgentFilterOptions, ConditionCategory, ConditionGroup, ConditionOffsetUnit } from '@/services/conversationalAgentService'
+import type {
+  AgentCondition,
+  AgentConditionParam,
+  AgentFilterOptions,
+  ConditionCategory,
+  ConditionGroup,
+  ConditionOffsetUnit
+} from '@/services/conversationalAgentService'
 import type { Calendar } from '@/services/calendarsService'
 import { TagPicker, useContactTags } from '@/components/common'
 import { contactTagsService } from '@/services/contactTagsService'
 import styles from './AIAgentSettings.module.css'
 
 /**
- * Constructor de condiciones profesional para los agentes conversacionales.
+ * Constructor de condiciones jerárquico (estilo disparadores de workflow):
  *
- * Estructura: bloques unidos por O; dentro de cada bloque las condiciones se
- * unen por Y. Cada condición se muestra como fila compacta (frase legible) con
- * editar / duplicar / eliminar; al editar se eligen categoría → operador →
- * valor. Para agregar categorías u operadores futuros basta con extender el
- * catálogo de abajo (el backend valida contra el suyo propio).
+ * - La CATEGORÍA sola ya dispara con su significado base ("agendó una cita",
+ *   "vino de un anuncio", "recibió un mensaje").
+ * - Cada PARÁMETRO agregado la afina de forma opcional y apilable:
+ *   Citas → en calendario X → y confirmada → y 30 min antes.
+ * - Los bloques se unen con O; dentro de un bloque todo es Y.
+ *
+ * Para agregar categorías o parámetros futuros basta con extender el catálogo
+ * (el backend valida contra su propio CONDITION_SCHEMA espejo).
  */
 
 type ValueKind =
-  | 'none' | 'channel' | 'text' | 'list' | 'calendar' | 'date' | 'dateRange'
-  | 'offset' | 'amount' | 'amountRange' | 'ad' | 'businessPhone' | 'timeRange' | 'weekdays'
+  | 'none' | 'channel' | 'text' | 'list' | 'tag' | 'tagList' | 'calendar'
+  | 'date' | 'dateRange' | 'offset' | 'amount' | 'amountRange'
+  | 'ad' | 'businessPhone' | 'timeRange' | 'weekdays' | 'customField' | 'customFieldValue'
 
 interface OperatorDef {
   id: string
   label: string
   valueKind: ValueKind
-  /** placeholder del input de texto/lista */
   placeholder?: string
+  /** arma la frase del resumen; si falta se usa label + valor */
+  phrase?: (param: AgentConditionParam, helpers: SummaryHelpers) => string
+}
+
+interface ParamDef {
+  field: string
+  /** etiqueta en el menú "+ Añadir parámetro" */
+  menuLabel: string
+  operators: OperatorDef[]
 }
 
 interface CategoryDef {
   id: ConditionCategory
   label: string
-  operators: OperatorDef[]
+  /** frase base cuando no hay parámetros */
+  baseLabel: string
+  params: ParamDef[]
+  /** parámetros con los que nace la condición (ej. Canal necesita uno) */
+  defaultParams?: AgentConditionParam[]
+}
+
+interface SummaryHelpers {
+  calendarName: (id?: string) => string
+  adName: (id?: string) => string
+  phoneLabel: (id?: string) => string
+  tagName: (id?: string) => string
+  customFieldLabel: (key?: string) => string
 }
 
 const CHANNEL_OPTIONS: Array<{ value: string; label: string }> = [
@@ -59,222 +90,384 @@ const WEEKDAY_OPTIONS: Array<{ value: string; label: string; short: string }> = 
   { value: 'sun', label: 'domingo', short: 'D' }
 ]
 
+function offsetPhrase(param: AgentConditionParam, suffix: string) {
+  const unit = OFFSET_UNIT_OPTIONS.find((option) => option.value === param.offsetUnit)?.label || 'minutos'
+  return `${param.offsetValue || 0} ${unit} ${suffix}`
+}
+
 export const CONDITION_CATEGORIES: CategoryDef[] = [
   {
     id: 'channel',
     label: 'Canal',
-    operators: [
-      { id: 'is', label: 'es', valueKind: 'channel' },
-      { id: 'is_not', label: 'no es', valueKind: 'channel' }
+    baseLabel: 'llegó por cualquier canal',
+    defaultParams: [{ field: 'channel', operator: 'is', value: 'whatsapp' }],
+    params: [
+      {
+        field: 'channel',
+        menuLabel: 'Canal',
+        operators: [
+          { id: 'is', label: 'es', valueKind: 'channel', phrase: (p) => `es ${channelLabel(p.value)}` },
+          { id: 'is_not', label: 'no es', valueKind: 'channel', phrase: (p) => `no es ${channelLabel(p.value)}` }
+        ]
+      }
     ]
   },
   {
     id: 'message',
     label: 'Mensaje',
-    operators: [
-      { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'Texto a buscar' },
-      { id: 'not_contains', label: 'no contiene', valueKind: 'text', placeholder: 'Texto a evitar' },
-      { id: 'contains_any', label: 'contiene alguna de estas frases', valueKind: 'list', placeholder: 'Frase y Enter' },
-      { id: 'contains_all', label: 'contiene todas estas frases', valueKind: 'list', placeholder: 'Frase y Enter' },
-      { id: 'starts_with', label: 'empieza con', valueKind: 'text', placeholder: 'Inicio del mensaje' },
-      { id: 'ends_with', label: 'termina con', valueKind: 'text', placeholder: 'Final del mensaje' },
-      { id: 'equals', label: 'coincide exactamente con', valueKind: 'text', placeholder: 'Mensaje exacto' }
+    baseLabel: 'recibió un mensaje',
+    params: [
+      {
+        field: 'text',
+        menuLabel: 'Texto del mensaje',
+        operators: [
+          { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'Texto a buscar', phrase: (p) => `contiene "${p.value || '…'}"` },
+          { id: 'not_contains', label: 'no contiene', valueKind: 'text', placeholder: 'Texto a evitar', phrase: (p) => `no contiene "${p.value || '…'}"` },
+          { id: 'contains_any', label: 'contiene alguna de estas frases', valueKind: 'list', placeholder: 'Frase y Enter', phrase: (p) => `contiene alguna de: ${(p.values || []).join(', ') || '…'}` },
+          { id: 'contains_all', label: 'contiene todas estas frases', valueKind: 'list', placeholder: 'Frase y Enter', phrase: (p) => `contiene todas: ${(p.values || []).join(', ') || '…'}` },
+          { id: 'starts_with', label: 'empieza con', valueKind: 'text', placeholder: 'Inicio del mensaje', phrase: (p) => `empieza con "${p.value || '…'}"` },
+          { id: 'ends_with', label: 'termina con', valueKind: 'text', placeholder: 'Final del mensaje', phrase: (p) => `termina con "${p.value || '…'}"` },
+          { id: 'equals', label: 'coincide exactamente con', valueKind: 'text', placeholder: 'Mensaje exacto', phrase: (p) => `es exactamente "${p.value || '…'}"` }
+        ]
+      },
+      {
+        field: 'business_phone',
+        menuLabel: 'Número del negocio que lo recibió',
+        operators: [
+          { id: 'is', label: 'llegó al número', valueKind: 'businessPhone', phrase: (p, h) => `al número ${h.phoneLabel(p.value)}` },
+          { id: 'is_not', label: 'no llegó al número', valueKind: 'businessPhone', phrase: (p, h) => `no al número ${h.phoneLabel(p.value)}` }
+        ]
+      }
     ]
   },
   {
     id: 'tags',
     label: 'Etiquetas',
-    operators: [
-      { id: 'has', label: 'tiene la etiqueta', valueKind: 'text', placeholder: 'Nombre de la etiqueta' },
-      { id: 'not_has', label: 'no tiene la etiqueta', valueKind: 'text', placeholder: 'Nombre de la etiqueta' },
-      { id: 'has_any', label: 'tiene cualquiera de estas etiquetas', valueKind: 'list', placeholder: 'Etiqueta y Enter' },
-      { id: 'has_all', label: 'tiene todas estas etiquetas', valueKind: 'list', placeholder: 'Etiqueta y Enter' },
-      { id: 'has_none', label: 'no tiene ninguna de estas etiquetas', valueKind: 'list', placeholder: 'Etiqueta y Enter' }
+    baseLabel: 'tiene alguna etiqueta',
+    params: [
+      {
+        field: 'tag',
+        menuLabel: 'Etiqueta',
+        operators: [
+          { id: 'has', label: 'tiene la etiqueta', valueKind: 'tag', phrase: (p, h) => `tiene "${h.tagName(p.value)}"` },
+          { id: 'not_has', label: 'no tiene la etiqueta', valueKind: 'tag', phrase: (p, h) => `no tiene "${h.tagName(p.value)}"` },
+          { id: 'has_any', label: 'tiene cualquiera de', valueKind: 'tagList', phrase: (p, h) => `tiene cualquiera de: ${(p.values || []).map(h.tagName).join(', ') || '…'}` },
+          { id: 'has_all', label: 'tiene todas', valueKind: 'tagList', phrase: (p, h) => `tiene todas: ${(p.values || []).map(h.tagName).join(', ') || '…'}` },
+          { id: 'has_none', label: 'no tiene ninguna de', valueKind: 'tagList', phrase: (p, h) => `no tiene ninguna de: ${(p.values || []).map(h.tagName).join(', ') || '…'}` }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'contact',
+    label: 'Contacto',
+    baseLabel: 'cualquier contacto',
+    params: [
+      {
+        field: 'name',
+        menuLabel: 'Nombre',
+        operators: [
+          { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'Parte del nombre', phrase: (p) => `el nombre contiene "${p.value || '…'}"` },
+          { id: 'is', label: 'es', valueKind: 'text', placeholder: 'Nombre exacto', phrase: (p) => `el nombre es "${p.value || '…'}"` }
+        ]
+      },
+      {
+        field: 'email',
+        menuLabel: 'Correo',
+        operators: [
+          { id: 'has', label: 'tiene correo registrado', valueKind: 'none', phrase: () => 'tiene correo' },
+          { id: 'no_has', label: 'no tiene correo', valueKind: 'none', phrase: () => 'no tiene correo' },
+          { id: 'is', label: 'el correo es', valueKind: 'text', placeholder: 'correo@ejemplo.com', phrase: (p) => `el correo es ${p.value || '…'}` },
+          { id: 'contains', label: 'el correo contiene', valueKind: 'text', placeholder: 'ej. @gmail.com', phrase: (p) => `el correo contiene "${p.value || '…'}"` }
+        ]
+      },
+      {
+        field: 'phone',
+        menuLabel: 'Teléfono',
+        operators: [
+          { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'ej. 33 o +52', phrase: (p) => `el teléfono contiene "${p.value || '…'}"` }
+        ]
+      },
+      {
+        field: 'custom_field',
+        menuLabel: 'Campo personalizado',
+        operators: [
+          { id: 'is', label: 'es', valueKind: 'customFieldValue', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} es "${p.value || '…'}"` },
+          { id: 'contains', label: 'contiene', valueKind: 'customFieldValue', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} contiene "${p.value || '…'}"` },
+          { id: 'has_value', label: 'tiene valor (se llenó)', valueKind: 'customField', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} tiene valor` },
+          { id: 'empty', label: 'está vacío', valueKind: 'customField', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} está vacío` }
+        ]
+      },
+      {
+        field: 'source',
+        menuLabel: 'Origen del contacto',
+        operators: [
+          { id: 'is', label: 'es', valueKind: 'text', placeholder: 'ej. meta_ads, google', phrase: (p) => `el origen es "${p.value || '…'}"` },
+          { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'Parte del origen', phrase: (p) => `el origen contiene "${p.value || '…'}"` }
+        ]
+      },
+      {
+        field: 'customer',
+        menuLabel: 'Es cliente',
+        operators: [
+          { id: 'is_customer', label: 'es cliente (tiene compras)', valueKind: 'none', phrase: () => 'es cliente' },
+          { id: 'not_customer', label: 'no es cliente todavía', valueKind: 'none', phrase: () => 'no es cliente' }
+        ]
+      },
+      {
+        field: 'created',
+        menuLabel: 'Antigüedad',
+        operators: [
+          { id: 'within', label: 'se creó hace menos de', valueKind: 'offset', phrase: (p) => `creado hace menos de ${offsetPhrase(p, '')}`.trim() }
+        ]
+      },
+      {
+        field: 'assigned',
+        menuLabel: 'Asignación',
+        operators: [
+          { id: 'to', label: 'está asignado a', valueKind: 'text', placeholder: 'Nombre del usuario', phrase: (p) => `asignado a ${p.value || '…'}` },
+          { id: 'not_to', label: 'no está asignado a', valueKind: 'text', placeholder: 'Nombre del usuario', phrase: (p) => `no asignado a ${p.value || '…'}` },
+          { id: 'any', label: 'tiene cualquier asignado', valueKind: 'none', phrase: () => 'tiene asignado' },
+          { id: 'none', label: 'no tiene asignado', valueKind: 'none', phrase: () => 'sin asignar' }
+        ]
+      }
     ]
   },
   {
     id: 'appointments',
     label: 'Calendarios y citas',
-    operators: [
-      { id: 'has_appointment', label: 'tiene cita', valueKind: 'none' },
-      { id: 'no_appointment', label: 'no tiene cita', valueKind: 'none' },
-      { id: 'has_upcoming', label: 'tiene cita próxima', valueKind: 'none' },
-      { id: 'no_upcoming', label: 'no tiene cita próxima', valueKind: 'none' },
-      { id: 'has_past_due', label: 'tiene cita vencida', valueKind: 'none' },
-      { id: 'has_cancelled', label: 'tiene cita cancelada', valueKind: 'none' },
-      { id: 'has_confirmed', label: 'tiene cita confirmada', valueKind: 'none' },
-      { id: 'in_calendar', label: 'está agendado en', valueKind: 'calendar' },
-      { id: 'not_in_calendar', label: 'no está agendado en', valueKind: 'calendar' },
-      { id: 'date_is', label: 'la cita es exactamente el', valueKind: 'date' },
-      { id: 'date_not', label: 'la cita no es el', valueKind: 'date' },
-      { id: 'date_before', label: 'la cita es antes del', valueKind: 'date' },
-      { id: 'date_after', label: 'la cita es después del', valueKind: 'date' },
-      { id: 'date_between', label: 'la cita es entre', valueKind: 'dateRange' },
-      { id: 'time_before', label: 'antes de la cita', valueKind: 'offset' },
-      { id: 'time_after', label: 'después de la cita', valueKind: 'offset' }
+    baseLabel: 'agendó una cita',
+    params: [
+      {
+        field: 'presence',
+        menuLabel: 'Tiene / no tiene cita',
+        operators: [
+          { id: 'has', label: 'tiene cita', valueKind: 'none', phrase: () => 'tiene cita' },
+          { id: 'none', label: 'no tiene cita', valueKind: 'none', phrase: () => 'NO tiene cita (con estos filtros)' }
+        ]
+      },
+      {
+        field: 'calendar',
+        menuLabel: 'Calendario específico',
+        operators: [
+          { id: 'is', label: 'está agendado en', valueKind: 'calendar', phrase: (p, h) => `en ${h.calendarName(p.value)}` },
+          { id: 'is_not', label: 'no está agendado en', valueKind: 'calendar', phrase: (p, h) => `no en ${h.calendarName(p.value)}` }
+        ]
+      },
+      {
+        field: 'status',
+        menuLabel: 'Estado de la cita',
+        operators: [
+          { id: 'confirmed', label: 'confirmada', valueKind: 'none', phrase: () => 'confirmada' },
+          { id: 'pending', label: 'pendiente de confirmar', valueKind: 'none', phrase: () => 'pendiente' },
+          { id: 'cancelled', label: 'cancelada', valueKind: 'none', phrase: () => 'cancelada' },
+          { id: 'showed', label: 'asistió', valueKind: 'none', phrase: () => 'asistió' },
+          { id: 'noshow', label: 'no asistió', valueKind: 'none', phrase: () => 'no asistió' }
+        ]
+      },
+      {
+        field: 'timing',
+        menuLabel: 'Cuándo es la cita',
+        operators: [
+          { id: 'upcoming', label: 'es próxima (futura)', valueKind: 'none', phrase: () => 'próxima' },
+          { id: 'past_due', label: 'ya venció (pasada)', valueKind: 'none', phrase: () => 'vencida' },
+          { id: 'today', label: 'es hoy', valueKind: 'none', phrase: () => 'es hoy' }
+        ]
+      },
+      {
+        field: 'date',
+        menuLabel: 'Fecha de la cita',
+        operators: [
+          { id: 'is', label: 'es exactamente el', valueKind: 'date', phrase: (p) => `el ${p.date || '…'}` },
+          { id: 'not', label: 'no es el', valueKind: 'date', phrase: (p) => `no el ${p.date || '…'}` },
+          { id: 'before', label: 'antes del', valueKind: 'date', phrase: (p) => `antes del ${p.date || '…'}` },
+          { id: 'after', label: 'después del', valueKind: 'date', phrase: (p) => `después del ${p.date || '…'}` },
+          { id: 'between', label: 'entre', valueKind: 'dateRange', phrase: (p) => `entre ${p.date || '…'} y ${p.dateEnd || '…'}` }
+        ]
+      },
+      {
+        field: 'window',
+        menuLabel: 'Tiempo relativo a la cita',
+        operators: [
+          { id: 'before', label: 'antes de la cita', valueKind: 'offset', phrase: (p) => offsetPhrase(p, 'antes de la cita') },
+          { id: 'after', label: 'después de la cita', valueKind: 'offset', phrase: (p) => offsetPhrase(p, 'después de la cita') }
+        ]
+      }
     ]
   },
   {
     id: 'payments',
     label: 'Pagos',
-    operators: [
-      { id: 'payment_received', label: 'pago recibido', valueKind: 'none' },
-      { id: 'payment_pending', label: 'pago pendiente', valueKind: 'none' },
-      { id: 'payment_failed', label: 'pago fallido', valueKind: 'none' },
-      { id: 'payment_refunded', label: 'pago reembolsado', valueKind: 'none' },
-      { id: 'product_is', label: 'producto es', valueKind: 'text', placeholder: 'Nombre del producto' },
-      { id: 'product_not', label: 'producto no es', valueKind: 'text', placeholder: 'Nombre del producto' },
-      { id: 'product_contains', label: 'producto contiene', valueKind: 'text', placeholder: 'Parte del nombre' },
-      { id: 'product_not_contains', label: 'producto no contiene', valueKind: 'text', placeholder: 'Parte del nombre' },
-      { id: 'amount_eq', label: 'monto igual a', valueKind: 'amount' },
-      { id: 'amount_gt', label: 'monto mayor que', valueKind: 'amount' },
-      { id: 'amount_lt', label: 'monto menor que', valueKind: 'amount' },
-      { id: 'amount_between', label: 'monto entre', valueKind: 'amountRange' }
-    ]
-  },
-  {
-    id: 'assignee',
-    label: 'Contacto asignado',
-    operators: [
-      { id: 'assigned_to', label: 'está asignado a', valueKind: 'text', placeholder: 'Nombre del usuario' },
-      { id: 'not_assigned_to', label: 'no está asignado a', valueKind: 'text', placeholder: 'Nombre del usuario' },
-      { id: 'has_assignee', label: 'tiene cualquier asignado', valueKind: 'none' },
-      { id: 'no_assignee', label: 'no tiene asignado', valueKind: 'none' }
+    baseLabel: 'tiene un pago',
+    params: [
+      {
+        field: 'presence',
+        menuLabel: 'Tiene / no tiene pago',
+        operators: [
+          { id: 'has', label: 'tiene pago', valueKind: 'none', phrase: () => 'tiene pago' },
+          { id: 'none', label: 'no tiene pagos', valueKind: 'none', phrase: () => 'NO tiene pagos (con estos filtros)' }
+        ]
+      },
+      {
+        field: 'status',
+        menuLabel: 'Estado del pago',
+        operators: [
+          { id: 'received', label: 'recibido', valueKind: 'none', phrase: () => 'recibido' },
+          { id: 'pending', label: 'pendiente', valueKind: 'none', phrase: () => 'pendiente' },
+          { id: 'failed', label: 'fallido', valueKind: 'none', phrase: () => 'fallido' },
+          { id: 'refunded', label: 'reembolsado', valueKind: 'none', phrase: () => 'reembolsado' }
+        ]
+      },
+      {
+        field: 'product',
+        menuLabel: 'Producto',
+        operators: [
+          { id: 'is', label: 'es', valueKind: 'text', placeholder: 'Nombre del producto', phrase: (p) => `producto "${p.value || '…'}"` },
+          { id: 'is_not', label: 'no es', valueKind: 'text', placeholder: 'Nombre del producto', phrase: (p) => `producto distinto de "${p.value || '…'}"` },
+          { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'Parte del nombre', phrase: (p) => `producto contiene "${p.value || '…'}"` },
+          { id: 'not_contains', label: 'no contiene', valueKind: 'text', placeholder: 'Parte del nombre', phrase: (p) => `producto no contiene "${p.value || '…'}"` }
+        ]
+      },
+      {
+        field: 'amount',
+        menuLabel: 'Monto',
+        operators: [
+          { id: 'eq', label: 'igual a', valueKind: 'amount', phrase: (p) => `monto igual a ${money(p.amount)}` },
+          { id: 'gt', label: 'mayor que', valueKind: 'amount', phrase: (p) => `monto mayor que ${money(p.amount)}` },
+          { id: 'lt', label: 'menor que', valueKind: 'amount', phrase: (p) => `monto menor que ${money(p.amount)}` },
+          { id: 'between', label: 'entre', valueKind: 'amountRange', phrase: (p) => `monto entre ${money(p.amount)} y ${money(p.amountMax)}` }
+        ]
+      }
     ]
   },
   {
     id: 'ads',
     label: 'Anuncios',
-    operators: [
-      { id: 'from_ad', label: 'vino de un anuncio (clic de WhatsApp)', valueKind: 'none' },
-      { id: 'not_from_ad', label: 'no vino de anuncio', valueKind: 'none' },
-      { id: 'ad_is', label: 'el anuncio es', valueKind: 'ad' },
-      { id: 'ad_is_not', label: 'el anuncio no es', valueKind: 'ad' }
-    ]
-  },
-  {
-    id: 'contact',
-    label: 'Perfil del contacto',
-    operators: [
-      { id: 'is_customer', label: 'es cliente (tiene compras)', valueKind: 'none' },
-      { id: 'not_customer', label: 'no es cliente todavía', valueKind: 'none' },
-      { id: 'has_email', label: 'tiene email registrado', valueKind: 'none' },
-      { id: 'no_email', label: 'no tiene email', valueKind: 'none' },
-      { id: 'source_is', label: 'el origen es', valueKind: 'text', placeholder: 'ej. meta_ads, google, referido' },
-      { id: 'source_contains', label: 'el origen contiene', valueKind: 'text', placeholder: 'Parte del origen' },
-      { id: 'created_within', label: 'se creó hace menos de', valueKind: 'offset' }
+    baseLabel: 'vino de un anuncio (clic de WhatsApp)',
+    params: [
+      {
+        field: 'presence',
+        menuLabel: 'Vino / no vino de anuncio',
+        operators: [
+          { id: 'from_ad', label: 'vino de anuncio', valueKind: 'none', phrase: () => 'vino de anuncio' },
+          { id: 'not_from_ad', label: 'no vino de anuncio', valueKind: 'none', phrase: () => 'NO vino de anuncio' }
+        ]
+      },
+      {
+        field: 'ad',
+        menuLabel: 'Anuncio específico',
+        operators: [
+          { id: 'is', label: 'el anuncio es', valueKind: 'ad', phrase: (p, h) => `el anuncio es "${h.adName(p.value)}"` },
+          { id: 'is_not', label: 'el anuncio no es', valueKind: 'ad', phrase: (p, h) => `el anuncio no es "${h.adName(p.value)}"` }
+        ]
+      }
     ]
   },
   {
     id: 'schedule',
     label: 'Fecha y hora',
-    operators: [
-      { id: 'time_between', label: 'la hora actual está entre', valueKind: 'timeRange' },
-      { id: 'time_outside', label: 'la hora actual está fuera de', valueKind: 'timeRange' },
-      { id: 'day_is', label: 'el día es', valueKind: 'weekdays' }
-    ]
-  },
-  {
-    id: 'business_phone',
-    label: 'Número del negocio',
-    operators: [
-      { id: 'is', label: 'el mensaje llegó al número', valueKind: 'businessPhone' },
-      { id: 'is_not', label: 'el mensaje no llegó al número', valueKind: 'businessPhone' }
+    baseLabel: 'en cualquier momento',
+    defaultParams: [{ field: 'time', operator: 'between', timeStart: '09:00', timeEnd: '18:00' }],
+    params: [
+      {
+        field: 'time',
+        menuLabel: 'Hora del día',
+        operators: [
+          { id: 'between', label: 'la hora está entre', valueKind: 'timeRange', phrase: (p) => `entre ${p.timeStart || '…'} y ${p.timeEnd || '…'}` },
+          { id: 'outside', label: 'la hora está fuera de', valueKind: 'timeRange', phrase: (p) => `fuera de ${p.timeStart || '…'} a ${p.timeEnd || '…'}` }
+        ]
+      },
+      {
+        field: 'day',
+        menuLabel: 'Día de la semana',
+        operators: [
+          { id: 'is', label: 'el día es', valueKind: 'weekdays', phrase: (p) => `los días ${(p.values || []).map((d) => WEEKDAY_OPTIONS.find((w) => w.value === d)?.label || d).join(', ') || '…'}` }
+        ]
+      }
     ]
   }
 ]
+
+function channelLabel(value?: string) {
+  return CHANNEL_OPTIONS.find((option) => option.value === value)?.label || value || '…'
+}
+
+function money(value?: number) {
+  return `$${Number(value || 0).toLocaleString('es-MX')}`
+}
 
 function getCategory(categoryId: string): CategoryDef {
   return CONDITION_CATEGORIES.find((category) => category.id === categoryId) || CONDITION_CATEGORIES[0]
 }
 
-function getOperator(categoryId: string, operatorId: string): OperatorDef {
+function getParamDef(categoryId: string, field: string): ParamDef {
   const category = getCategory(categoryId)
-  return category.operators.find((operator) => operator.id === operatorId) || category.operators[0]
+  return category.params.find((param) => param.field === field) || category.params[0]
+}
+
+function getOperatorDef(categoryId: string, field: string, operatorId: string): OperatorDef {
+  const paramDef = getParamDef(categoryId, field)
+  return paramDef.operators.find((operator) => operator.id === operatorId) || paramDef.operators[0]
+}
+
+function defaultParamFor(categoryId: ConditionCategory, field: string): AgentConditionParam {
+  const operator = getParamDef(categoryId, field).operators[0]
+  const param: AgentConditionParam = { field, operator: operator.id }
+  if (operator.valueKind === 'channel') param.value = 'whatsapp'
+  if (operator.valueKind === 'list' || operator.valueKind === 'tagList' || operator.valueKind === 'weekdays') param.values = []
+  if (operator.valueKind === 'offset') {
+    param.offsetValue = field === 'created' ? 7 : 30
+    param.offsetUnit = field === 'created' ? 'days' : 'minutes'
+  }
+  if (operator.valueKind === 'timeRange') {
+    param.timeStart = '09:00'
+    param.timeEnd = '18:00'
+  }
+  return param
 }
 
 function defaultCondition(categoryId: ConditionCategory): AgentCondition {
-  const operator = getCategory(categoryId).operators[0]
-  const condition: AgentCondition = { category: categoryId, operator: operator.id }
-  if (operator.valueKind === 'channel') condition.value = 'whatsapp'
-  if (operator.valueKind === 'list' || operator.valueKind === 'weekdays') condition.values = []
-  if (operator.valueKind === 'offset') {
-    condition.offsetValue = 30
-    condition.offsetUnit = categoryId === 'contact' ? 'days' : 'minutes'
+  const category = getCategory(categoryId)
+  return {
+    category: categoryId,
+    params: (category.defaultParams || []).map((param) => ({ ...param }))
   }
-  if (operator.valueKind === 'timeRange') {
-    condition.timeStart = '09:00'
-    condition.timeEnd = '18:00'
-  }
-  return condition
 }
 
-function formatAmount(value?: number) {
-  return `$${Number(value || 0).toLocaleString('es-MX')}`
-}
-
-/** Nombre legible de una etiqueta: las condiciones guardan el ID del catálogo */
-function tagDisplayName(value: string): string {
-  const tag = (contactTagsService.getCachedTags() || []).find((item) => item.id === value)
-  return tag?.name || value
-}
-
-/** Frase legible de una condición para la fila compacta. */
+/** Frase legible de una condición: base + parámetros unidos con " · ". */
 export function conditionSummary(condition: AgentCondition, calendars: Calendar[], options?: AgentFilterOptions): string {
   const category = getCategory(condition.category)
-  const operator = getOperator(condition.category, condition.operator)
-  const isTagCondition = condition.category === 'tags'
-
-  switch (operator.valueKind) {
-    case 'ad': {
-      const ad = options?.ads.find((item) => item.id === condition.value)
-      return `${category.label}: ${operator.label} "${ad?.name || condition.value || '…'}"`
-    }
-    case 'businessPhone': {
-      const phone = options?.businessPhones.find((item) => item.id === condition.value)
-      return `${category.label}: ${operator.label} ${phone?.label || condition.value || '…'}`
-    }
-    case 'timeRange':
-      return `${category.label}: ${operator.label} ${condition.timeStart || '…'} y ${condition.timeEnd || '…'}`
-    case 'weekdays': {
-      const days = (condition.values || [])
-        .map((value) => WEEKDAY_OPTIONS.find((option) => option.value === value)?.label || value)
-      return `${category.label}: ${operator.label} ${days.length ? days.join(', ') : '…'}`
-    }
-    case 'channel': {
-      const channel = CHANNEL_OPTIONS.find((option) => option.value === condition.value)
-      return `${category.label} ${operator.label} ${channel?.label || condition.value || '…'}`
-    }
-    case 'text': {
-      const display = isTagCondition ? tagDisplayName(condition.value || '') : condition.value
-      return `${category.label} ${operator.label} "${display || '…'}"`
-    }
-    case 'list': {
-      const list = (condition.values || []).filter(Boolean).map((value) => (isTagCondition ? tagDisplayName(value) : value))
-      return `${category.label} ${operator.label}: ${list.length ? list.join(', ') : '…'}`
-    }
-    case 'calendar': {
-      const calendar = calendars.find((item) => item.id === condition.calendarId)
-      return `${category.label} ${operator.label} ${calendar?.name || '…'}`
-    }
-    case 'date':
-      return `${category.label}: ${operator.label} ${condition.date || '…'}`
-    case 'dateRange':
-      return `${category.label}: ${operator.label} ${condition.date || '…'} y ${condition.dateEnd || '…'}`
-    case 'offset': {
-      const unit = OFFSET_UNIT_OPTIONS.find((option) => option.value === condition.offsetUnit)
-      return `${category.label}: ${condition.offsetValue || 0} ${unit?.label || 'minutos'} ${operator.label}`
-    }
-    case 'amount':
-      return `${category.label}: ${operator.label} ${formatAmount(condition.amount)}`
-    case 'amountRange':
-      return `${category.label}: ${operator.label} ${formatAmount(condition.amount)} y ${formatAmount(condition.amountMax)}`
-    default:
-      return `${category.label}: ${operator.label}`
+  const helpers: SummaryHelpers = {
+    calendarName: (id) => calendars.find((item) => item.id === id)?.name || '…',
+    adName: (id) => options?.ads.find((item) => item.id === id)?.name || id || '…',
+    phoneLabel: (id) => options?.businessPhones.find((item) => item.id === id)?.label || id || '…',
+    tagName: (id) => {
+      const tag = (contactTagsService.getCachedTags() || []).find((item) => item.id === id)
+      return tag?.name || id || '…'
+    },
+    customFieldLabel: (key) => options?.customFields?.find((item) => item.key === key)?.label || key || 'el campo'
   }
+
+  const params = condition.params || []
+
+  // El parámetro presence reemplaza la frase base
+  const presence = params.find((param) => param.field === 'presence')
+  let base = category.baseLabel
+  if (presence) {
+    base = getOperatorDef(condition.category, 'presence', presence.operator).phrase?.(presence, helpers) || base
+  }
+
+  const phrases = params
+    .filter((param) => param.field !== 'presence')
+    .map((param) => {
+      const operator = getOperatorDef(condition.category, param.field, param.operator)
+      return operator.phrase ? operator.phrase(param, helpers) : operator.label
+    })
+
+  return [`${category.label}: ${base}`, ...phrases].join(' · ')
 }
 
-/** Editor compacto de listas de frases/etiquetas dentro de la fila en edición. */
+/** Editor compacto de listas de frases dentro del parámetro en edición. */
 const ListEditor: React.FC<{
   values: string[]
   placeholder: string
@@ -321,10 +514,12 @@ const ListEditor: React.FC<{
   )
 }
 
-const AddConditionMenu: React.FC<{
+const DropdownMenu: React.FC<{
   label: string
-  onSelect: (category: ConditionCategory) => void
-}> = ({ label, onSelect }) => {
+  items: Array<{ id: string; label: string }>
+  small?: boolean
+  onSelect: (id: string) => void
+}> = ({ label, items, small, onSelect }) => {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
@@ -341,24 +536,28 @@ const AddConditionMenu: React.FC<{
 
   return (
     <div className={styles.ruleAddWrap} ref={wrapRef}>
-      <button type="button" className={styles.ruleAddButton} onClick={() => setOpen((current) => !current)}>
-        <Plus size={14} />
+      <button
+        type="button"
+        className={`${styles.ruleAddButton} ${small ? styles.ruleAddButtonSmall : ''}`}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Plus size={small ? 12 : 14} />
         {label}
       </button>
       {open && (
         <div className={styles.ruleAddMenu} role="menu">
-          {CONDITION_CATEGORIES.map((category) => (
+          {items.map((item) => (
             <button
-              key={category.id}
+              key={item.id}
               type="button"
               role="menuitem"
               className={styles.ruleAddMenuItem}
               onClick={() => {
-                onSelect(category.id)
+                onSelect(item.id)
                 setOpen(false)
               }}
             >
-              {category.label}
+              {item.label}
             </button>
           ))}
         </div>
@@ -376,8 +575,8 @@ interface ConditionBuilderProps {
   onChange: (groups: ConditionGroup[]) => void
 }
 
-export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode, calendars, options, emptyText, onChange }) => {
-  // Carga el catálogo de etiquetas para que las frases muestren nombres y no IDs
+export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, calendars, options, emptyText, onChange }) => {
+  // Carga el catálogo de etiquetas para mostrar nombres y no IDs
   useContactTags()
   // Filas en edición, identificadas por "grupo:índice"
   const [editingKeys, setEditingKeys] = useState<Set<string>>(new Set())
@@ -391,22 +590,28 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
     })
   }
 
-  const updateCondition = (groupIndex: number, conditionIndex: number, patch: Partial<AgentCondition>) => {
-    onChange(groups.map((group, gi) => (
-      gi !== groupIndex ? group : {
-        conditions: group.conditions.map((condition, ci) => (
-          ci !== conditionIndex ? condition : { ...condition, ...patch }
-        ))
-      }
-    )))
-  }
-
-  const replaceCondition = (groupIndex: number, conditionIndex: number, next: AgentCondition) => {
+  const updateCondition = (groupIndex: number, conditionIndex: number, next: AgentCondition) => {
     onChange(groups.map((group, gi) => (
       gi !== groupIndex ? group : {
         conditions: group.conditions.map((condition, ci) => (ci !== conditionIndex ? condition : next))
       }
     )))
+  }
+
+  const updateParam = (groupIndex: number, conditionIndex: number, paramIndex: number, patch: Partial<AgentConditionParam>) => {
+    const condition = groups[groupIndex].conditions[conditionIndex]
+    updateCondition(groupIndex, conditionIndex, {
+      ...condition,
+      params: condition.params.map((param, pi) => (pi !== paramIndex ? param : { ...param, ...patch }))
+    })
+  }
+
+  const replaceParam = (groupIndex: number, conditionIndex: number, paramIndex: number, next: AgentConditionParam) => {
+    const condition = groups[groupIndex].conditions[conditionIndex]
+    updateCondition(groupIndex, conditionIndex, {
+      ...condition,
+      params: condition.params.map((param, pi) => (pi !== paramIndex ? param : next))
+    })
   }
 
   const removeCondition = (groupIndex: number, conditionIndex: number) => {
@@ -420,11 +625,16 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
   }
 
   const duplicateCondition = (groupIndex: number, conditionIndex: number) => {
+    const source = groups[groupIndex].conditions[conditionIndex]
+    const clone: AgentCondition = {
+      category: source.category,
+      params: source.params.map((param) => ({ ...param, values: param.values ? [...param.values] : undefined }))
+    }
     onChange(groups.map((group, gi) => (
       gi !== groupIndex ? group : {
         conditions: [
           ...group.conditions.slice(0, conditionIndex + 1),
-          { ...group.conditions[conditionIndex], values: group.conditions[conditionIndex].values ? [...group.conditions[conditionIndex].values!] : undefined },
+          clone,
           ...group.conditions.slice(conditionIndex + 1)
         ]
       }
@@ -441,20 +651,19 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
   }
 
   const addGroup = (category: ConditionCategory) => {
-    const condition = defaultCondition(category)
-    onChange([...groups, { conditions: [condition] }])
+    onChange([...groups, { conditions: [defaultCondition(category)] }])
     setEditing(`${groups.length}:0`, true)
   }
 
-  const renderValueControls = (condition: AgentCondition, groupIndex: number, conditionIndex: number) => {
-    const operator = getOperator(condition.category, condition.operator)
+  const renderParamValue = (condition: AgentCondition, param: AgentConditionParam, groupIndex: number, conditionIndex: number, paramIndex: number) => {
+    const operator = getOperatorDef(condition.category, param.field, param.operator)
     switch (operator.valueKind) {
       case 'channel':
         return (
           <select
             className={styles.ruleSelect}
-            value={condition.value || 'whatsapp'}
-            onChange={(event) => updateCondition(groupIndex, conditionIndex, { value: event.target.value })}
+            value={param.value || 'whatsapp'}
+            onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { value: event.target.value })}
           >
             {CHANNEL_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
@@ -462,59 +671,56 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
           </select>
         )
       case 'text':
-        // Etiquetas: selector con buscador y "crear etiqueta" inline; guarda el ID
-        if (condition.category === 'tags') {
-          return (
-            <div className={styles.conditionTagPicker}>
-              <TagPicker
-                value={condition.value || ''}
-                onValueChange={(tagId) => updateCondition(groupIndex, conditionIndex, { value: tagId })}
-                includeSystem
-                allowCreate
-                portal
-                placeholder="Elige una etiqueta"
-                aria-label="Etiqueta de la condición"
-              />
-            </div>
-          )
-        }
         return (
           <input
             className={styles.ruleInput}
-            value={condition.value || ''}
+            value={param.value || ''}
             placeholder={operator.placeholder || 'Valor'}
-            onChange={(event) => updateCondition(groupIndex, conditionIndex, { value: event.target.value })}
+            onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { value: event.target.value })}
           />
         )
       case 'list':
-        if (condition.category === 'tags') {
-          return (
-            <div className={styles.conditionTagPicker}>
-              <TagPicker
-                multiple
-                selectedIds={condition.values || []}
-                onChange={(values) => updateCondition(groupIndex, conditionIndex, { values })}
-                includeSystem
-                allowCreate
-                portal
-                aria-label="Etiquetas de la condición"
-              />
-            </div>
-          )
-        }
         return (
           <ListEditor
-            values={condition.values || []}
+            values={param.values || []}
             placeholder={operator.placeholder || 'Valor y Enter'}
-            onChange={(values) => updateCondition(groupIndex, conditionIndex, { values })}
+            onChange={(values) => updateParam(groupIndex, conditionIndex, paramIndex, { values })}
           />
+        )
+      case 'tag':
+        return (
+          <div className={styles.conditionTagPicker}>
+            <TagPicker
+              value={param.value || ''}
+              onValueChange={(tagId) => updateParam(groupIndex, conditionIndex, paramIndex, { value: tagId })}
+              includeSystem
+              allowCreate
+              portal
+              placeholder="Elige una etiqueta"
+              aria-label="Etiqueta de la condición"
+            />
+          </div>
+        )
+      case 'tagList':
+        return (
+          <div className={styles.conditionTagPicker}>
+            <TagPicker
+              multiple
+              selectedIds={param.values || []}
+              onChange={(values) => updateParam(groupIndex, conditionIndex, paramIndex, { values })}
+              includeSystem
+              allowCreate
+              portal
+              aria-label="Etiquetas de la condición"
+            />
+          </div>
         )
       case 'calendar':
         return (
           <select
             className={styles.ruleSelect}
-            value={condition.calendarId || ''}
-            onChange={(event) => updateCondition(groupIndex, conditionIndex, { calendarId: event.target.value })}
+            value={param.value || ''}
+            onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { value: event.target.value })}
           >
             <option value="">Elige un calendario</option>
             {calendars.map((calendar) => (
@@ -527,8 +733,8 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
           <input
             type="date"
             className={styles.ruleInput}
-            value={condition.date || ''}
-            onChange={(event) => updateCondition(groupIndex, conditionIndex, { date: event.target.value })}
+            value={param.date || ''}
+            onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { date: event.target.value })}
           />
         )
       case 'dateRange':
@@ -537,15 +743,15 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
             <input
               type="date"
               className={styles.ruleInput}
-              value={condition.date || ''}
-              onChange={(event) => updateCondition(groupIndex, conditionIndex, { date: event.target.value })}
+              value={param.date || ''}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { date: event.target.value })}
             />
             <span>y</span>
             <input
               type="date"
               className={styles.ruleInput}
-              value={condition.dateEnd || ''}
-              onChange={(event) => updateCondition(groupIndex, conditionIndex, { dateEnd: event.target.value })}
+              value={param.dateEnd || ''}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { dateEnd: event.target.value })}
             />
           </>
         )
@@ -556,13 +762,13 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
               type="number"
               min={1}
               className={`${styles.ruleInput} ${styles.conditionNumberInput}`}
-              value={condition.offsetValue ?? 30}
-              onChange={(event) => updateCondition(groupIndex, conditionIndex, { offsetValue: Number(event.target.value) || 0 })}
+              value={param.offsetValue ?? 30}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { offsetValue: Number(event.target.value) || 0 })}
             />
             <select
               className={styles.ruleSelect}
-              value={condition.offsetUnit || 'minutes'}
-              onChange={(event) => updateCondition(groupIndex, conditionIndex, { offsetUnit: event.target.value as ConditionOffsetUnit })}
+              value={param.offsetUnit || 'minutes'}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { offsetUnit: event.target.value as ConditionOffsetUnit })}
             >
               {OFFSET_UNIT_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
@@ -576,9 +782,9 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
             type="number"
             min={0}
             className={`${styles.ruleInput} ${styles.conditionNumberInput}`}
-            value={condition.amount ?? ''}
+            value={param.amount ?? ''}
             placeholder="0"
-            onChange={(event) => updateCondition(groupIndex, conditionIndex, { amount: Number(event.target.value) || 0 })}
+            onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { amount: Number(event.target.value) || 0 })}
           />
         )
       case 'amountRange':
@@ -588,18 +794,18 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
               type="number"
               min={0}
               className={`${styles.ruleInput} ${styles.conditionNumberInput}`}
-              value={condition.amount ?? ''}
+              value={param.amount ?? ''}
               placeholder="Mínimo"
-              onChange={(event) => updateCondition(groupIndex, conditionIndex, { amount: Number(event.target.value) || 0 })}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { amount: Number(event.target.value) || 0 })}
             />
             <span>y</span>
             <input
               type="number"
               min={0}
               className={`${styles.ruleInput} ${styles.conditionNumberInput}`}
-              value={condition.amountMax ?? ''}
+              value={param.amountMax ?? ''}
               placeholder="Máximo"
-              onChange={(event) => updateCondition(groupIndex, conditionIndex, { amountMax: Number(event.target.value) || 0 })}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { amountMax: Number(event.target.value) || 0 })}
             />
           </>
         )
@@ -607,8 +813,8 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
         return (
           <select
             className={styles.ruleSelect}
-            value={condition.value || ''}
-            onChange={(event) => updateCondition(groupIndex, conditionIndex, { value: event.target.value })}
+            value={param.value || ''}
+            onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { value: event.target.value })}
           >
             <option value="">Elige un anuncio</option>
             {(options?.ads || []).map((ad) => (
@@ -622,8 +828,8 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
         return (
           <select
             className={styles.ruleSelect}
-            value={condition.value || ''}
-            onChange={(event) => updateCondition(groupIndex, conditionIndex, { value: event.target.value })}
+            value={param.value || ''}
+            onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { value: event.target.value })}
           >
             <option value="">Elige un número</option>
             {(options?.businessPhones || []).map((phone) => (
@@ -637,48 +843,136 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
             <input
               type="time"
               className={`${styles.ruleInput} ${styles.conditionNumberInput}`}
-              value={condition.timeStart || '09:00'}
-              onChange={(event) => updateCondition(groupIndex, conditionIndex, { timeStart: event.target.value })}
+              value={param.timeStart || '09:00'}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { timeStart: event.target.value })}
             />
             <span>y</span>
             <input
               type="time"
               className={`${styles.ruleInput} ${styles.conditionNumberInput}`}
-              value={condition.timeEnd || '18:00'}
-              onChange={(event) => updateCondition(groupIndex, conditionIndex, { timeEnd: event.target.value })}
+              value={param.timeEnd || '18:00'}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { timeEnd: event.target.value })}
             />
           </>
         )
-      case 'weekdays': {
-        const selected = condition.values || []
+      case 'customField':
+      case 'customFieldValue':
         return (
-          <span className={styles.weekdayPicker}>
-            {WEEKDAY_OPTIONS.map((day) => {
-              const active = selected.includes(day.value)
-              return (
-                <button
-                  key={day.value}
-                  type="button"
-                  className={`${styles.weekdayButton} ${active ? styles.weekdayButtonActive : ''}`}
-                  aria-pressed={active}
-                  title={day.label}
-                  onClick={() => updateCondition(groupIndex, conditionIndex, {
-                    values: active ? selected.filter((value) => value !== day.value) : [...selected, day.value]
-                  })}
-                >
-                  {day.short}
-                </button>
-              )
-            })}
-          </span>
+          <>
+            <select
+              className={styles.ruleSelect}
+              value={param.fieldKey || ''}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { fieldKey: event.target.value })}
+            >
+              <option value="">Elige el campo</option>
+              {(options?.customFields || []).map((field) => (
+                <option key={field.key} value={field.key}>{field.label}</option>
+              ))}
+            </select>
+            {operator.valueKind === 'customFieldValue' && (
+              <input
+                className={styles.ruleInput}
+                value={param.value || ''}
+                placeholder="Valor"
+                onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { value: event.target.value })}
+              />
+            )}
+          </>
         )
-      }
       default:
         return null
     }
   }
 
-  const connectorLabel = useMemo(() => (mode === 'entry' ? 'Y' : 'Y'), [mode])
+  const renderEditingCondition = (condition: AgentCondition, groupIndex: number, conditionIndex: number, key: string) => {
+    const category = getCategory(condition.category)
+    const usedPresence = condition.params.some((param) => param.field === 'presence')
+    const paramMenuItems = category.params
+      .filter((param) => param.field !== 'presence' || !usedPresence)
+      .map((param) => ({ id: param.field, label: param.menuLabel }))
+
+    return (
+      <div className={styles.conditionEditPanel}>
+        <div className={styles.conditionEditHeader}>
+          <select
+            className={styles.ruleSelect}
+            value={condition.category}
+            onChange={(event) => updateCondition(groupIndex, conditionIndex, defaultCondition(event.target.value as ConditionCategory))}
+          >
+            {CONDITION_CATEGORIES.map((item) => (
+              <option key={item.id} value={item.id}>{item.label}</option>
+            ))}
+          </select>
+          <span className={styles.conditionBaseHint}>{category.baseLabel}</span>
+          <button type="button" className={styles.ruleDelete} onClick={() => setEditing(key, false)} aria-label="Listo">
+            <Check size={14} />
+          </button>
+        </div>
+
+        {condition.params.map((param, paramIndex) => {
+          const paramDef = getParamDef(condition.category, param.field)
+          return (
+            <div key={paramIndex} className={styles.conditionParamRow}>
+              <select
+                className={styles.ruleSelect}
+                value={param.field}
+                onChange={(event) => replaceParam(groupIndex, conditionIndex, paramIndex, defaultParamFor(condition.category, event.target.value))}
+              >
+                {category.params.map((item) => (
+                  <option key={item.field} value={item.field}>{item.menuLabel}</option>
+                ))}
+              </select>
+              {paramDef.operators.length > 1 && (
+                <select
+                  className={styles.ruleSelect}
+                  value={param.operator}
+                  onChange={(event) => {
+                    const nextOperator = getOperatorDef(condition.category, param.field, event.target.value)
+                    const fresh = defaultParamFor(condition.category, param.field)
+                    fresh.operator = nextOperator.id
+                    // Conserva los valores cuando el tipo de dato coincide
+                    if (nextOperator.valueKind === getOperatorDef(condition.category, param.field, param.operator).valueKind) {
+                      replaceParam(groupIndex, conditionIndex, paramIndex, { ...param, operator: nextOperator.id })
+                    } else {
+                      replaceParam(groupIndex, conditionIndex, paramIndex, fresh)
+                    }
+                  }}
+                >
+                  {paramDef.operators.map((item) => (
+                    <option key={item.id} value={item.id}>{item.label}</option>
+                  ))}
+                </select>
+              )}
+              {renderParamValue(condition, param, groupIndex, conditionIndex, paramIndex)}
+              <button
+                type="button"
+                className={styles.ruleDelete}
+                onClick={() => updateCondition(groupIndex, conditionIndex, {
+                  ...condition,
+                  params: condition.params.filter((_, pi) => pi !== paramIndex)
+                })}
+                aria-label="Quitar parámetro"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          )
+        })}
+
+        <DropdownMenu
+          label="Añadir parámetro"
+          small
+          items={paramMenuItems}
+          onSelect={(field) => updateCondition(groupIndex, conditionIndex, {
+            ...condition,
+            params: [...condition.params, defaultParamFor(condition.category, field)]
+          })}
+        />
+      </div>
+    )
+  }
+
+  const categoryMenuItems = CONDITION_CATEGORIES.map((category) => ({ id: category.id, label: category.label }))
 
   return (
     <div className={styles.conditionBuilder}>
@@ -698,53 +992,15 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
             {group.conditions.map((condition, conditionIndex) => {
               const key = `${groupIndex}:${conditionIndex}`
               const editing = editingKeys.has(key)
-              const category = getCategory(condition.category)
-              const operator = getOperator(condition.category, condition.operator)
 
               return (
                 <div key={key} className={`${styles.conditionRow} ${editing ? styles.conditionRowEditing : ''}`}>
                   <span className={styles.rulePrefix}>
-                    {conditionIndex === 0 ? 'Si' : connectorLabel}
+                    {conditionIndex === 0 ? 'Si' : 'Y'}
                   </span>
 
                   {editing ? (
-                    <>
-                      <select
-                        className={styles.ruleSelect}
-                        value={condition.category}
-                        onChange={(event) => {
-                          replaceCondition(groupIndex, conditionIndex, defaultCondition(event.target.value as ConditionCategory))
-                        }}
-                      >
-                        {CONDITION_CATEGORIES.map((item) => (
-                          <option key={item.id} value={item.id}>{item.label}</option>
-                        ))}
-                      </select>
-                      <select
-                        className={styles.ruleSelect}
-                        value={operator.id}
-                        onChange={(event) => {
-                          const nextOperator = getOperator(condition.category, event.target.value)
-                          const next = defaultCondition(condition.category)
-                          next.operator = nextOperator.id
-                          // Conserva el valor cuando el tipo de dato coincide
-                          if (nextOperator.valueKind === getOperator(condition.category, condition.operator).valueKind) {
-                            Object.assign(next, condition, { operator: nextOperator.id })
-                          }
-                          replaceCondition(groupIndex, conditionIndex, next)
-                        }}
-                      >
-                        {category.operators.map((item) => (
-                          <option key={item.id} value={item.id}>{item.label}</option>
-                        ))}
-                      </select>
-                      {renderValueControls(condition, groupIndex, conditionIndex)}
-                      <div className={styles.conditionActions}>
-                        <button type="button" className={styles.ruleDelete} onClick={() => setEditing(key, false)} aria-label="Listo">
-                          <Check size={14} />
-                        </button>
-                      </div>
-                    </>
+                    renderEditingCondition(condition, groupIndex, conditionIndex, key)
                   ) : (
                     <>
                       <span className={styles.conditionSentence}>{conditionSummary(condition, calendars, options)}</span>
@@ -765,14 +1021,15 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, mode
               )
             })}
 
-            <AddConditionMenu label="Añadir condición" onSelect={(category) => addCondition(groupIndex, category)} />
+            <DropdownMenu label="Añadir condición" items={categoryMenuItems} onSelect={(id) => addCondition(groupIndex, id as ConditionCategory)} />
           </div>
         </React.Fragment>
       ))}
 
-      <AddConditionMenu
+      <DropdownMenu
         label={groups.length ? 'Añadir grupo "O"' : 'Añadir condición'}
-        onSelect={addGroup}
+        items={categoryMenuItems}
+        onSelect={(id) => addGroup(id as ConditionCategory)}
       />
     </div>
   )

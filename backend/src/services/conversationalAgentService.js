@@ -172,47 +172,66 @@ function parseJsonField(text, fallback) {
  *     exit:  { groups: [ ... ] }
  *   }
  *
- * Cada condición: { category, operator, ...valores }. Categorías y operadores:
- * - channel:      is | is_not                                   (value: canal)
- * - message:      contains | not_contains | contains_any | contains_all |
- *                 starts_with | ends_with | equals              (value | values[])
- * - tags:         has | not_has | has_any | has_all | has_none  (value | values[])
- * - appointments: has_appointment | no_appointment | has_upcoming | no_upcoming |
- *                 has_past_due | has_cancelled | has_confirmed |
- *                 in_calendar | not_in_calendar                 (calendarId)
- *                 date_is | date_not | date_before | date_after | date_between (date, dateEnd)
- *                 time_before | time_after                      (offsetValue, offsetUnit)
- * - payments:     payment_received | payment_pending | payment_failed | payment_refunded |
- *                 product_is | product_not | product_contains | product_not_contains (value)
- *                 amount_eq | amount_gt | amount_lt | amount_between (amount, amountMax)
- * - assignee:     assigned_to | not_assigned_to                 (value)
- *                 has_assignee | no_assignee
+ * Modelo jerárquico (estilo disparadores de workflow): la categoría SOLA ya
+ * dispara con su significado base ("agendó una cita", "vino de anuncio") y
+ * cada parámetro agregado la afina de forma opcional y apilable:
+ *
+ *   cond = { category, params: [ { field, operator, ...valores }, ... ] }
+ *
+ * En Citas y Pagos los parámetros se evalúan EN CONJUNTO: "calendario es X" +
+ * "estado confirmada" exige UNA MISMA cita que cumpla ambos.
  */
-export const CONDITION_CATALOG = {
-  channel: ['is', 'is_not'],
-  message: ['contains', 'not_contains', 'contains_any', 'contains_all', 'starts_with', 'ends_with', 'equals'],
-  tags: ['has', 'not_has', 'has_any', 'has_all', 'has_none'],
-  appointments: [
-    'has_appointment', 'no_appointment', 'has_upcoming', 'no_upcoming',
-    'has_past_due', 'has_cancelled', 'has_confirmed',
-    'in_calendar', 'not_in_calendar',
-    'date_is', 'date_not', 'date_before', 'date_after', 'date_between',
-    'time_before', 'time_after'
-  ],
-  payments: [
-    'payment_received', 'payment_pending', 'payment_failed', 'payment_refunded',
-    'product_is', 'product_not', 'product_contains', 'product_not_contains',
-    'amount_eq', 'amount_gt', 'amount_lt', 'amount_between'
-  ],
-  assignee: ['assigned_to', 'not_assigned_to', 'has_assignee', 'no_assignee'],
-  // Vino de anuncio: clic de WhatsApp (CTWA) o anuncio específico detectado en sus mensajes
-  ads: ['from_ad', 'not_from_ad', 'ad_is', 'ad_is_not'],
-  // Perfil del contacto: cliente, email, origen y antigüedad
-  contact: ['is_customer', 'not_customer', 'has_email', 'no_email', 'source_is', 'source_contains', 'created_within'],
-  // Fecha y hora actuales en la zona del negocio (ej. responder solo fuera de horario)
-  schedule: ['time_between', 'time_outside', 'day_is'],
-  // Número de WhatsApp del negocio que recibió el mensaje (negocios multi-línea)
-  business_phone: ['is', 'is_not']
+export const CONDITION_SCHEMA = {
+  // base: llegó un mensaje (siempre cierto al evaluar un mensaje entrante)
+  channel: {
+    channel: ['is', 'is_not']
+  },
+  // base: recibió un mensaje
+  message: {
+    text: ['contains', 'not_contains', 'contains_any', 'contains_all', 'starts_with', 'ends_with', 'equals'],
+    business_phone: ['is', 'is_not']
+  },
+  // base: tiene alguna etiqueta
+  tags: {
+    tag: ['has', 'not_has', 'has_any', 'has_all', 'has_none']
+  },
+  // base: es un contacto (siempre cierto); los parámetros afinan su perfil
+  contact: {
+    name: ['contains', 'is'],
+    email: ['has', 'no_has', 'is', 'contains'],
+    phone: ['contains'],
+    source: ['is', 'contains'],
+    customer: ['is_customer', 'not_customer'],
+    created: ['within'],
+    assigned: ['to', 'not_to', 'any', 'none'],
+    custom_field: ['is', 'contains', 'has_value', 'empty']
+  },
+  // base: agendó/tiene una cita (presence cambia el sentido a "no tiene")
+  appointments: {
+    presence: ['has', 'none'],
+    calendar: ['is', 'is_not'],
+    status: ['confirmed', 'pending', 'cancelled', 'showed', 'noshow'],
+    timing: ['upcoming', 'past_due', 'today'],
+    date: ['is', 'not', 'before', 'after', 'between'],
+    window: ['before', 'after']
+  },
+  // base: tiene algún pago
+  payments: {
+    presence: ['has', 'none'],
+    status: ['received', 'pending', 'failed', 'refunded'],
+    product: ['is', 'is_not', 'contains', 'not_contains'],
+    amount: ['eq', 'gt', 'lt', 'between']
+  },
+  // base: vino de un anuncio (clic CTWA de WhatsApp)
+  ads: {
+    presence: ['from_ad', 'not_from_ad'],
+    ad: ['is', 'is_not']
+  },
+  // base: siempre cierto; los parámetros acotan hora/día actuales del negocio
+  schedule: {
+    time: ['between', 'outside'],
+    day: ['is']
+  }
 }
 
 const CONDITION_CHANNELS = new Set(['whatsapp', 'instagram', 'messenger', 'webchat', 'sms', 'email'])
@@ -234,71 +253,158 @@ function cleanDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : ''
 }
 
+function normalizeParam(category, param) {
+  if (!param || typeof param !== 'object') return null
+  const fields = CONDITION_SCHEMA[category]
+  if (!fields) return null
+  const field = String(param.field || '')
+  const operators = fields[field]
+  if (!operators) return null
+  const operator = operators.includes(param.operator) ? param.operator : operators[0]
+
+  const base = { field, operator }
+
+  const wantsList = (
+    (field === 'text' && (operator === 'contains_any' || operator === 'contains_all')) ||
+    (field === 'tag' && (operator === 'has_any' || operator === 'has_all' || operator === 'has_none')) ||
+    (field === 'day')
+  )
+  if (wantsList) {
+    base.values = cleanValueList(param.values)
+    if (field === 'day') base.values = base.values.map((day) => day.toLowerCase()).filter((day) => WEEKDAY_KEYS.has(day))
+    return base
+  }
+
+  if (field === 'channel') {
+    base.value = CONDITION_CHANNELS.has(param.value) ? param.value : 'whatsapp'
+  } else if (field === 'date') {
+    base.date = cleanDate(param.date)
+    if (operator === 'between') base.dateEnd = cleanDate(param.dateEnd)
+  } else if (field === 'window' || field === 'created') {
+    base.offsetValue = Math.min(Math.max(Number(param.offsetValue) || 0, 0), 100000)
+    base.offsetUnit = OFFSET_UNITS.has(param.offsetUnit) ? param.offsetUnit : (field === 'created' ? 'days' : 'minutes')
+  } else if (field === 'amount') {
+    base.amount = Number(param.amount) || 0
+    if (operator === 'between') base.amountMax = Number(param.amountMax) || 0
+  } else if (field === 'time') {
+    base.timeStart = cleanTime(param.timeStart) || '09:00'
+    base.timeEnd = cleanTime(param.timeEnd) || '18:00'
+  } else if (field === 'custom_field') {
+    base.fieldKey = String(param.fieldKey || '').trim().slice(0, 160)
+    base.value = String(param.value || '').trim().slice(0, 400)
+  } else {
+    base.value = String(param.value || '').trim().slice(0, 240)
+  }
+  return base
+}
+
 function normalizeCondition(condition) {
   if (!condition || typeof condition !== 'object') return null
   const category = String(condition.category || '')
-  const operators = CONDITION_CATALOG[category]
-  if (!operators) return null
-  const operator = operators.includes(condition.operator) ? condition.operator : operators[0]
-
-  const base = { category, operator }
-  if (category === 'channel') {
-    base.value = CONDITION_CHANNELS.has(condition.value) ? condition.value : 'whatsapp'
-  } else if (category === 'message') {
-    if (operator === 'contains_any' || operator === 'contains_all') {
-      base.values = cleanValueList(condition.values)
-    } else {
-      base.value = String(condition.value || '').trim().slice(0, 200)
-    }
-  } else if (category === 'tags') {
-    if (operator === 'has' || operator === 'not_has') {
-      base.value = String(condition.value || '').trim().slice(0, 120)
-    } else {
-      base.values = cleanValueList(condition.values)
-    }
-  } else if (category === 'appointments') {
-    if (operator === 'in_calendar' || operator === 'not_in_calendar') {
-      base.calendarId = String(condition.calendarId || '').trim()
-    } else if (operator.startsWith('date_')) {
-      base.date = cleanDate(condition.date)
-      if (operator === 'date_between') base.dateEnd = cleanDate(condition.dateEnd)
-    } else if (operator === 'time_before' || operator === 'time_after') {
-      base.offsetValue = Math.min(Math.max(Number(condition.offsetValue) || 0, 0), 100000)
-      base.offsetUnit = OFFSET_UNITS.has(condition.offsetUnit) ? condition.offsetUnit : 'minutes'
-    }
-  } else if (category === 'payments') {
-    if (operator.startsWith('product_')) {
-      base.value = String(condition.value || '').trim().slice(0, 200)
-    } else if (operator.startsWith('amount_')) {
-      base.amount = Number(condition.amount) || 0
-      if (operator === 'amount_between') base.amountMax = Number(condition.amountMax) || 0
-    }
-  } else if (category === 'assignee') {
-    if (operator === 'assigned_to' || operator === 'not_assigned_to') {
-      base.value = String(condition.value || '').trim().slice(0, 160)
-    }
-  } else if (category === 'ads') {
-    if (operator === 'ad_is' || operator === 'ad_is_not') {
-      base.value = String(condition.value || '').trim().slice(0, 160)
-    }
-  } else if (category === 'contact') {
-    if (operator === 'source_is' || operator === 'source_contains') {
-      base.value = String(condition.value || '').trim().slice(0, 200)
-    } else if (operator === 'created_within') {
-      base.offsetValue = Math.min(Math.max(Number(condition.offsetValue) || 0, 0), 100000)
-      base.offsetUnit = OFFSET_UNITS.has(condition.offsetUnit) ? condition.offsetUnit : 'days'
-    }
-  } else if (category === 'schedule') {
-    if (operator === 'time_between' || operator === 'time_outside') {
-      base.timeStart = cleanTime(condition.timeStart) || '09:00'
-      base.timeEnd = cleanTime(condition.timeEnd) || '18:00'
-    } else if (operator === 'day_is') {
-      base.values = cleanValueList(condition.values).map((day) => day.toLowerCase()).filter((day) => WEEKDAY_KEYS.has(day))
-    }
-  } else if (category === 'business_phone') {
-    base.value = String(condition.value || '').trim().slice(0, 120)
+  if (!CONDITION_SCHEMA[category]) {
+    // Compatibilidad: categorías retiradas del formato anterior
+    const converted = legacyConditionToParams(condition)
+    return converted ? normalizeCondition(converted) : null
   }
-  return base
+
+  // Formato anterior (category + operator plano) → params
+  if (condition.operator && !Array.isArray(condition.params)) {
+    const converted = legacyConditionToParams(condition)
+    return converted ? normalizeCondition(converted) : null
+  }
+
+  const params = (Array.isArray(condition.params) ? condition.params : [])
+    .map((param) => normalizeParam(category, param))
+    .filter(Boolean)
+    .slice(0, 10)
+
+  return { category, params }
+}
+
+/** Convierte una condición del formato anterior (operator plano) a params. */
+function legacyConditionToParams(cond) {
+  const { category, operator } = cond
+  if (category === 'channel') {
+    return { category: 'channel', params: [{ field: 'channel', operator, value: cond.value }] }
+  }
+  if (category === 'message') {
+    return { category: 'message', params: [{ field: 'text', operator, value: cond.value, values: cond.values }] }
+  }
+  if (category === 'business_phone') {
+    return { category: 'message', params: [{ field: 'business_phone', operator, value: cond.value }] }
+  }
+  if (category === 'tags') {
+    return { category: 'tags', params: [{ field: 'tag', operator, value: cond.value, values: cond.values }] }
+  }
+  if (category === 'assignee') {
+    const map = { assigned_to: 'to', not_assigned_to: 'not_to', has_assignee: 'any', no_assignee: 'none' }
+    return { category: 'contact', params: [{ field: 'assigned', operator: map[operator] || 'any', value: cond.value }] }
+  }
+  if (category === 'contact') {
+    const map = {
+      is_customer: { field: 'customer', operator: 'is_customer' },
+      not_customer: { field: 'customer', operator: 'not_customer' },
+      has_email: { field: 'email', operator: 'has' },
+      no_email: { field: 'email', operator: 'no_has' },
+      source_is: { field: 'source', operator: 'is', value: cond.value },
+      source_contains: { field: 'source', operator: 'contains', value: cond.value },
+      created_within: { field: 'created', operator: 'within', offsetValue: cond.offsetValue, offsetUnit: cond.offsetUnit }
+    }
+    return map[operator] ? { category: 'contact', params: [map[operator]] } : null
+  }
+  if (category === 'appointments') {
+    const map = {
+      has_appointment: [],
+      no_appointment: [{ field: 'presence', operator: 'none' }],
+      has_upcoming: [{ field: 'timing', operator: 'upcoming' }],
+      no_upcoming: [{ field: 'presence', operator: 'none' }, { field: 'timing', operator: 'upcoming' }],
+      has_past_due: [{ field: 'timing', operator: 'past_due' }],
+      has_cancelled: [{ field: 'status', operator: 'cancelled' }],
+      has_confirmed: [{ field: 'status', operator: 'confirmed' }],
+      in_calendar: [{ field: 'calendar', operator: 'is', value: cond.calendarId }],
+      not_in_calendar: [{ field: 'presence', operator: 'none' }, { field: 'calendar', operator: 'is', value: cond.calendarId }],
+      date_is: [{ field: 'date', operator: 'is', date: cond.date }],
+      date_not: [{ field: 'date', operator: 'not', date: cond.date }],
+      date_before: [{ field: 'date', operator: 'before', date: cond.date }],
+      date_after: [{ field: 'date', operator: 'after', date: cond.date }],
+      date_between: [{ field: 'date', operator: 'between', date: cond.date, dateEnd: cond.dateEnd }],
+      time_before: [{ field: 'window', operator: 'before', offsetValue: cond.offsetValue, offsetUnit: cond.offsetUnit }],
+      time_after: [{ field: 'window', operator: 'after', offsetValue: cond.offsetValue, offsetUnit: cond.offsetUnit }]
+    }
+    return map[operator] ? { category: 'appointments', params: map[operator] } : null
+  }
+  if (category === 'payments') {
+    const statusMap = { payment_received: 'received', payment_pending: 'pending', payment_failed: 'failed', payment_refunded: 'refunded' }
+    if (statusMap[operator]) {
+      return { category: 'payments', params: [{ field: 'status', operator: statusMap[operator] }] }
+    }
+    if (operator.startsWith('product_')) {
+      const opMap = { product_is: 'is', product_not: 'is_not', product_contains: 'contains', product_not_contains: 'not_contains' }
+      return { category: 'payments', params: [{ field: 'product', operator: opMap[operator], value: cond.value }] }
+    }
+    if (operator.startsWith('amount_')) {
+      return { category: 'payments', params: [{ field: 'amount', operator: operator.replace('amount_', ''), amount: cond.amount, amountMax: cond.amountMax }] }
+    }
+    return null
+  }
+  if (category === 'ads') {
+    const map = {
+      from_ad: [],
+      not_from_ad: [{ field: 'presence', operator: 'not_from_ad' }],
+      ad_is: [{ field: 'ad', operator: 'is', value: cond.value }],
+      ad_is_not: [{ field: 'ad', operator: 'is_not', value: cond.value }]
+    }
+    return map[operator] ? { category: 'ads', params: map[operator] } : null
+  }
+  if (category === 'schedule') {
+    const map = {
+      time_between: [{ field: 'time', operator: 'between', timeStart: cond.timeStart, timeEnd: cond.timeEnd }],
+      time_outside: [{ field: 'time', operator: 'outside', timeStart: cond.timeStart, timeEnd: cond.timeEnd }],
+      day_is: [{ field: 'day', operator: 'is', values: cond.values }]
+    }
+    return map[operator] ? { category: 'schedule', params: map[operator] } : null
+  }
+  return null
 }
 
 function normalizeGroups(input) {
@@ -596,7 +702,8 @@ export async function buildRuleContext({ contactId = null, messageText = '', cha
 
   const [contact, appointmentRows, paymentRows, adRows, latestInbound, timezone] = await Promise.all([
     contactId ? db.get(`
-      SELECT id, tags, email, source, purchases_count, total_paid, created_at, attribution_session_source
+      SELECT id, tags, full_name, phone, email, source, purchases_count, total_paid,
+             created_at, attribution_session_source, custom_fields
       FROM contacts WHERE id = ?
     `, [contactId]).catch(() => null) : null,
     contactId ? db.all(`
@@ -694,6 +801,8 @@ export async function buildRuleContext({ contactId = null, messageText = '', cha
     adSourceIds: [...new Set(adRows.map((row) => String(row.detected_source_id || '').trim()).filter(Boolean))],
     businessPhoneNumberId: String(latestInbound?.business_phone_number_id || ''),
     contactInfo: contact ? {
+      name: normalizeMatchText(contact.full_name || ''),
+      phone: String(contact.phone || '').trim(),
       email: String(contact.email || '').trim(),
       source: normalizeMatchText(contact.source || ''),
       attributionSource: normalizeMatchText(contact.attribution_session_source || ''),
@@ -701,9 +810,29 @@ export async function buildRuleContext({ contactId = null, messageText = '', cha
       totalPaid: Number(contact.total_paid) || 0,
       createdAt: contact.created_at || null
     } : null,
+    customFields: normalizeCustomFieldsMap(parseJsonField(contact?.custom_fields, null)),
     localMinutes,
     localWeekday
   }
+}
+
+/**
+ * Mapa de campos personalizados con claves normalizadas. contacts.custom_fields
+ * puede ser objeto {clave: valor} o lista [{key/field_key, value}].
+ */
+function normalizeCustomFieldsMap(raw) {
+  const map = {}
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const key = String(item?.key || item?.field_key || item?.id || '').trim()
+      if (key) map[normalizeMatchText(key)] = String(item?.value ?? '')
+    }
+  } else if (raw && typeof raw === 'object') {
+    for (const [key, value] of Object.entries(raw)) {
+      map[normalizeMatchText(key)] = typeof value === 'object' ? JSON.stringify(value) : String(value ?? '')
+    }
+  }
+  return map
 }
 
 function activeAppointments(ctx) {
@@ -718,172 +847,244 @@ function nextAppointment(ctx) {
   return upcomingAppointments(ctx)[0] || null
 }
 
+function textMatches(operator, ctx, param) {
+  const single = normalizeMatchText(param.value)
+  const list = (param.values || []).map(normalizeMatchText).filter(Boolean)
+  switch (operator) {
+    case 'contains': return !single || ctx.text.includes(single)
+    case 'not_contains': return !single || !ctx.text.includes(single)
+    case 'contains_any': return !list.length || list.some((phrase) => ctx.text.includes(phrase))
+    case 'contains_all': return !list.length || list.every((phrase) => ctx.text.includes(phrase))
+    case 'starts_with': return !single || ctx.text.startsWith(single)
+    case 'ends_with': return !single || ctx.text.endsWith(single)
+    case 'equals': return !single || ctx.text === single
+    default: return false
+  }
+}
+
+/**
+ * Citas: los parámetros filtran un MISMO conjunto de citas candidatas
+ * ("calendario X" + "confirmada" exige una cita que cumpla ambos) y el
+ * parámetro presence decide si debe existir alguna (has) o ninguna (none).
+ */
+function appointmentsConditionMatches(params, ctx) {
+  const presence = params.find((param) => param.field === 'presence')?.operator || 'has'
+  const wantsCancelled = params.some((param) => param.field === 'status' && param.operator === 'cancelled')
+
+  let candidates = wantsCancelled ? ctx.appointments : activeAppointments(ctx)
+
+  for (const param of params) {
+    if (param.field === 'calendar') {
+      if (!param.calendarId && !param.value) continue
+      const calendarId = param.calendarId || param.value
+      candidates = param.operator === 'is_not'
+        ? candidates.filter((appt) => appt.calendarId !== calendarId)
+        : candidates.filter((appt) => appt.calendarId === calendarId)
+    } else if (param.field === 'status') {
+      const wanted = param.operator
+      candidates = candidates.filter((appt) => (
+        wanted === 'cancelled' ? CANCELLED_STATUSES.has(appt.status) : appt.status === wanted
+      ))
+    } else if (param.field === 'timing') {
+      if (param.operator === 'upcoming') {
+        candidates = candidates.filter((appt) => Date.parse(appt.startTime) > ctx.now)
+      } else if (param.operator === 'past_due') {
+        candidates = candidates.filter((appt) => Date.parse(appt.endTime || appt.startTime) < ctx.now)
+      } else if (param.operator === 'today') {
+        const today = ctx.nowIso.slice(0, 10)
+        candidates = candidates.filter((appt) => String(appt.startTime || '').slice(0, 10) === today)
+      }
+    } else if (param.field === 'date') {
+      if (!param.date) continue
+      candidates = candidates.filter((appt) => {
+        const apptDate = String(appt.startTime || '').slice(0, 10)
+        if (param.operator === 'is') return apptDate === param.date
+        if (param.operator === 'not') return apptDate !== param.date
+        if (param.operator === 'before') return apptDate < param.date
+        if (param.operator === 'after') return apptDate > param.date
+        return Boolean(param.dateEnd) && apptDate >= param.date && apptDate <= param.dateEnd
+      })
+    } else if (param.field === 'window') {
+      const offset = (param.offsetValue || 0) * (OFFSET_MS[param.offsetUnit] || OFFSET_MS.minutes)
+      candidates = candidates.filter((appt) => {
+        if (param.operator === 'before') {
+          const start = Date.parse(appt.startTime)
+          return ctx.now >= start - offset && ctx.now < start
+        }
+        const end = Date.parse(appt.endTime || appt.startTime)
+        return ctx.now >= end && ctx.now <= end + offset
+      })
+    }
+  }
+
+  return presence === 'none' ? candidates.length === 0 : candidates.length > 0
+}
+
+/** Pagos: misma mecánica conjunta que las citas. */
+function paymentsConditionMatches(params, ctx) {
+  const presence = params.find((param) => param.field === 'presence')?.operator || 'has'
+  let candidates = ctx.payments
+
+  for (const param of params) {
+    if (param.field === 'status') {
+      const statusSet = PAYMENT_STATUS_MAP[`payment_${param.operator}`]
+      if (statusSet) candidates = candidates.filter((payment) => statusSet.has(payment.status))
+    } else if (param.field === 'product') {
+      const value = normalizeMatchText(param.value)
+      if (!value) continue
+      candidates = candidates.filter((payment) => {
+        if (param.operator === 'is') return payment.product === value
+        if (param.operator === 'is_not') return payment.product !== value
+        if (param.operator === 'contains') return payment.product.includes(value)
+        return !payment.product.includes(value)
+      })
+    } else if (param.field === 'amount') {
+      candidates = candidates.filter((payment) => {
+        if (param.operator === 'eq') return payment.amount === (param.amount || 0)
+        if (param.operator === 'gt') return payment.amount > (param.amount || 0)
+        if (param.operator === 'lt') return payment.amount > 0 && payment.amount < (param.amount || 0)
+        return payment.amount >= (param.amount || 0) && payment.amount <= (param.amountMax || 0)
+      })
+    }
+  }
+
+  return presence === 'none' ? candidates.length === 0 : candidates.length > 0
+}
+
+function contactParamMatches(param, ctx) {
+  const info = ctx.contactInfo
+  if (!info) return false
+  const value = normalizeMatchText(param.value)
+  switch (param.field) {
+    case 'name':
+      if (!value) return true
+      return param.operator === 'is' ? info.name === value : info.name.includes(value)
+    case 'email':
+      if (param.operator === 'has') return Boolean(info.email)
+      if (param.operator === 'no_has') return !info.email
+      if (!value) return true
+      return param.operator === 'is'
+        ? normalizeMatchText(info.email) === value
+        : normalizeMatchText(info.email).includes(value)
+    case 'phone':
+      return !value || normalizeMatchText(info.phone).includes(value)
+    case 'source':
+      if (!value) return true
+      return param.operator === 'is'
+        ? (info.source === value || info.attributionSource === value)
+        : (info.source.includes(value) || info.attributionSource.includes(value))
+    case 'customer':
+      return param.operator === 'is_customer'
+        ? (info.purchasesCount > 0 || info.totalPaid > 0)
+        : (info.purchasesCount === 0 && info.totalPaid === 0)
+    case 'created': {
+      if (!info.createdAt) return false
+      const offset = (param.offsetValue || 0) * (OFFSET_MS[param.offsetUnit] || OFFSET_MS.days)
+      return ctx.now - Date.parse(info.createdAt) <= offset
+    }
+    case 'assigned': {
+      const matchesValue = Boolean(value) && (ctx.assigneeNames.some((name) => name.includes(value)) || ctx.assigneeIds.includes(value))
+      if (param.operator === 'to') return matchesValue
+      if (param.operator === 'not_to') return !value || !matchesValue
+      if (param.operator === 'any') return ctx.assigneeIds.length > 0
+      return ctx.assigneeIds.length === 0
+    }
+    case 'custom_field': {
+      if (!param.fieldKey) return true
+      const fieldValue = normalizeMatchText(ctx.customFields[normalizeMatchText(param.fieldKey)] ?? ctx.customFields[param.fieldKey] ?? '')
+      if (param.operator === 'has_value') return Boolean(fieldValue)
+      if (param.operator === 'empty') return !fieldValue
+      if (!value) return true
+      return param.operator === 'is' ? fieldValue === value : fieldValue.includes(value)
+    }
+    default:
+      return false
+  }
+}
+
+function scheduleParamMatches(param, ctx) {
+  if (param.field === 'day') {
+    const days = (param.values || []).map((day) => String(day).toLowerCase())
+    return !days.length || days.includes(ctx.localWeekday)
+  }
+  const [startHour, startMinute] = String(param.timeStart || '09:00').split(':').map(Number)
+  const [endHour, endMinute] = String(param.timeEnd || '18:00').split(':').map(Number)
+  const start = startHour * 60 + (startMinute || 0)
+  const end = endHour * 60 + (endMinute || 0)
+  // Soporta rangos que cruzan medianoche (ej. 22:00 a 06:00)
+  const inside = start <= end
+    ? ctx.localMinutes >= start && ctx.localMinutes <= end
+    : ctx.localMinutes >= start || ctx.localMinutes <= end
+  return param.operator === 'outside' ? !inside : inside
+}
+
 function conditionMatches(condition, ctx) {
-  const { category, operator } = condition
+  const { category } = condition
+  const params = condition.params || []
 
   if (category === 'channel') {
-    const matches = condition.value === ctx.channel
-    return operator === 'is_not' ? !matches : matches
+    return params.every((param) => {
+      const matches = param.value === ctx.channel
+      return param.operator === 'is_not' ? !matches : matches
+    })
   }
 
   if (category === 'message') {
-    const single = normalizeMatchText(condition.value)
-    const list = (condition.values || []).map(normalizeMatchText).filter(Boolean)
-    switch (operator) {
-      case 'contains': return !single || ctx.text.includes(single)
-      case 'not_contains': return !single || !ctx.text.includes(single)
-      case 'contains_any': return !list.length || list.some((phrase) => ctx.text.includes(phrase))
-      case 'contains_all': return !list.length || list.every((phrase) => ctx.text.includes(phrase))
-      case 'starts_with': return !single || ctx.text.startsWith(single)
-      case 'ends_with': return !single || ctx.text.endsWith(single)
-      case 'equals': return !single || ctx.text === single
-      default: return false
-    }
+    // Base: llegó un mensaje (cierto al evaluar); los parámetros lo afinan
+    return params.every((param) => {
+      if (param.field === 'text') return textMatches(param.operator, ctx, param)
+      if (param.field === 'business_phone') {
+        const matches = Boolean(param.value) && ctx.businessPhoneNumberId === param.value
+        return param.operator === 'is_not' ? (!param.value || !matches) : matches
+      }
+      return false
+    })
   }
 
   if (category === 'tags') {
-    const single = normalizeMatchText(condition.value)
-    const list = (condition.values || []).map(normalizeMatchText).filter(Boolean)
-    switch (operator) {
-      case 'has': return Boolean(single) && ctx.tags.includes(single)
-      case 'not_has': return !single || !ctx.tags.includes(single)
-      case 'has_any': return !list.length || list.some((tag) => ctx.tags.includes(tag))
-      case 'has_all': return !list.length || list.every((tag) => ctx.tags.includes(tag))
-      case 'has_none': return !list.length || !list.some((tag) => ctx.tags.includes(tag))
-      default: return false
-    }
-  }
-
-  if (category === 'appointments') {
-    switch (operator) {
-      case 'has_appointment': return activeAppointments(ctx).length > 0
-      case 'no_appointment': return activeAppointments(ctx).length === 0
-      case 'has_upcoming': return upcomingAppointments(ctx).length > 0
-      case 'no_upcoming': return upcomingAppointments(ctx).length === 0
-      case 'has_past_due':
-        return activeAppointments(ctx).some((appt) => Date.parse(appt.endTime || appt.startTime) < ctx.now)
-      case 'has_cancelled':
-        return ctx.appointments.some((appt) => CANCELLED_STATUSES.has(appt.status))
-      case 'has_confirmed':
-        return activeAppointments(ctx).some((appt) => appt.status === 'confirmed')
-      case 'in_calendar':
-        return Boolean(condition.calendarId) && activeAppointments(ctx).some((appt) => appt.calendarId === condition.calendarId)
-      case 'not_in_calendar':
-        return !condition.calendarId || !activeAppointments(ctx).some((appt) => appt.calendarId === condition.calendarId)
-      case 'date_is':
-      case 'date_not':
-      case 'date_before':
-      case 'date_after':
-      case 'date_between': {
-        const appt = nextAppointment(ctx)
-        if (!appt || !condition.date) return false
-        const apptDate = String(appt.startTime || '').slice(0, 10)
-        if (operator === 'date_is') return apptDate === condition.date
-        if (operator === 'date_not') return apptDate !== condition.date
-        if (operator === 'date_before') return apptDate < condition.date
-        if (operator === 'date_after') return apptDate > condition.date
-        return Boolean(condition.dateEnd) && apptDate >= condition.date && apptDate <= condition.dateEnd
+    // Base: tiene alguna etiqueta
+    if (!params.length) return ctx.tags.length > 0
+    return params.every((param) => {
+      const single = normalizeMatchText(param.value)
+      const list = (param.values || []).map(normalizeMatchText).filter(Boolean)
+      switch (param.operator) {
+        case 'has': return Boolean(single) && ctx.tags.includes(single)
+        case 'not_has': return !single || !ctx.tags.includes(single)
+        case 'has_any': return !list.length || list.some((tag) => ctx.tags.includes(tag))
+        case 'has_all': return !list.length || list.every((tag) => ctx.tags.includes(tag))
+        case 'has_none': return !list.length || !list.some((tag) => ctx.tags.includes(tag))
+        default: return false
       }
-      case 'time_before': {
-        // Estamos dentro de la ventana de X antes del inicio de la cita próxima
-        const offset = (condition.offsetValue || 0) * (OFFSET_MS[condition.offsetUnit] || OFFSET_MS.minutes)
-        return upcomingAppointments(ctx).some((appt) => {
-          const start = Date.parse(appt.startTime)
-          return ctx.now >= start - offset && ctx.now < start
-        })
-      }
-      case 'time_after': {
-        // Estamos dentro de la ventana de X después del fin de la cita
-        const offset = (condition.offsetValue || 0) * (OFFSET_MS[condition.offsetUnit] || OFFSET_MS.minutes)
-        return activeAppointments(ctx).some((appt) => {
-          const end = Date.parse(appt.endTime || appt.startTime)
-          return ctx.now >= end && ctx.now <= end + offset
-        })
-      }
-      default: return false
-    }
-  }
-
-  if (category === 'payments') {
-    if (PAYMENT_STATUS_MAP[operator]) {
-      return ctx.payments.some((payment) => PAYMENT_STATUS_MAP[operator].has(payment.status))
-    }
-    const value = normalizeMatchText(condition.value)
-    switch (operator) {
-      case 'product_is': return Boolean(value) && ctx.payments.some((payment) => payment.product === value)
-      case 'product_not': return !value || !ctx.payments.some((payment) => payment.product === value)
-      case 'product_contains': return Boolean(value) && ctx.payments.some((payment) => payment.product.includes(value))
-      case 'product_not_contains': return !value || !ctx.payments.some((payment) => payment.product.includes(value))
-      case 'amount_eq': return ctx.payments.some((payment) => payment.amount === (condition.amount || 0))
-      case 'amount_gt': return ctx.payments.some((payment) => payment.amount > (condition.amount || 0))
-      case 'amount_lt': return ctx.payments.some((payment) => payment.amount > 0 && payment.amount < (condition.amount || 0))
-      case 'amount_between':
-        return ctx.payments.some((payment) => payment.amount >= (condition.amount || 0) && payment.amount <= (condition.amountMax || 0))
-      default: return false
-    }
-  }
-
-  if (category === 'assignee') {
-    const value = normalizeMatchText(condition.value)
-    const matchesValue = Boolean(value) && (ctx.assigneeNames.some((name) => name.includes(value)) || ctx.assigneeIds.includes(value))
-    switch (operator) {
-      case 'assigned_to': return matchesValue
-      case 'not_assigned_to': return !value || !matchesValue
-      case 'has_assignee': return ctx.assigneeIds.length > 0
-      case 'no_assignee': return ctx.assigneeIds.length === 0
-      default: return false
-    }
-  }
-
-  if (category === 'ads') {
-    switch (operator) {
-      case 'from_ad': return ctx.cameFromAd
-      case 'not_from_ad': return !ctx.cameFromAd
-      case 'ad_is': return Boolean(condition.value) && ctx.adSourceIds.includes(condition.value)
-      case 'ad_is_not': return !condition.value || !ctx.adSourceIds.includes(condition.value)
-      default: return false
-    }
+    })
   }
 
   if (category === 'contact') {
-    const info = ctx.contactInfo
-    if (!info) return false
-    const value = normalizeMatchText(condition.value)
-    switch (operator) {
-      case 'is_customer': return info.purchasesCount > 0 || info.totalPaid > 0
-      case 'not_customer': return info.purchasesCount === 0 && info.totalPaid === 0
-      case 'has_email': return Boolean(info.email)
-      case 'no_email': return !info.email
-      case 'source_is': return Boolean(value) && (info.source === value || info.attributionSource === value)
-      case 'source_contains': return Boolean(value) && (info.source.includes(value) || info.attributionSource.includes(value))
-      case 'created_within': {
-        if (!info.createdAt) return false
-        const offset = (condition.offsetValue || 0) * (OFFSET_MS[condition.offsetUnit] || OFFSET_MS.days)
-        return ctx.now - Date.parse(info.createdAt) <= offset
-      }
-      default: return false
-    }
+    if (!ctx.contactInfo) return false
+    return params.every((param) => contactParamMatches(param, ctx))
+  }
+
+  if (category === 'appointments') {
+    return appointmentsConditionMatches(params, ctx)
+  }
+
+  if (category === 'payments') {
+    return paymentsConditionMatches(params, ctx)
+  }
+
+  if (category === 'ads') {
+    const presence = params.find((param) => param.field === 'presence')?.operator || 'from_ad'
+    if (presence === 'not_from_ad') return !ctx.cameFromAd
+    if (!ctx.cameFromAd) return false
+    return params.every((param) => {
+      if (param.field !== 'ad') return true
+      if (!param.value) return true
+      const matches = ctx.adSourceIds.includes(param.value)
+      return param.operator === 'is_not' ? !matches : matches
+    })
   }
 
   if (category === 'schedule') {
-    if (operator === 'day_is') {
-      const days = (condition.values || []).map((day) => String(day).toLowerCase())
-      return !days.length || days.includes(ctx.localWeekday)
-    }
-    const [startHour, startMinute] = String(condition.timeStart || '09:00').split(':').map(Number)
-    const [endHour, endMinute] = String(condition.timeEnd || '18:00').split(':').map(Number)
-    const start = startHour * 60 + (startMinute || 0)
-    const end = endHour * 60 + (endMinute || 0)
-    // Soporta rangos que cruzan medianoche (ej. 22:00 a 06:00)
-    const inside = start <= end
-      ? ctx.localMinutes >= start && ctx.localMinutes <= end
-      : ctx.localMinutes >= start || ctx.localMinutes <= end
-    return operator === 'time_outside' ? !inside : inside
-  }
-
-  if (category === 'business_phone') {
-    const matches = Boolean(condition.value) && ctx.businessPhoneNumberId === condition.value
-    return operator === 'is_not' ? (!condition.value || !matches) : matches
+    return params.every((param) => scheduleParamMatches(param, ctx))
   }
 
   return false
@@ -932,7 +1133,7 @@ export async function matchAgentForMessage({ contactId, messageText = '', channe
  * real (no solo el ID) y números de WhatsApp del negocio.
  */
 export async function listAgentFilterOptions() {
-  const [metaAds, detectedRows, phoneRows] = await Promise.all([
+  const [metaAds, detectedRows, phoneRows, customFieldRows] = await Promise.all([
     db.all(`
       SELECT ad_id, MAX(ad_name) AS ad_name, MAX(campaign_name) AS campaign_name, MAX(date) AS last_date
       FROM meta_ads
@@ -951,6 +1152,12 @@ export async function listAgentFilterOptions() {
       SELECT id, label, verified_name, display_phone_number, phone_number
       FROM whatsapp_api_phone_numbers
       ORDER BY is_default_sender DESC, created_at ASC
+    `).catch(() => []),
+    db.all(`
+      SELECT field_key, label
+      FROM contact_custom_field_definitions
+      ORDER BY label ASC
+      LIMIT 300
     `).catch(() => [])
   ])
 
@@ -982,6 +1189,10 @@ export async function listAgentFilterOptions() {
     businessPhones: phoneRows.map((row) => ({
       id: row.id,
       label: row.label || row.verified_name || row.display_phone_number || row.phone_number || row.id
+    })),
+    customFields: customFieldRows.map((row) => ({
+      key: row.field_key,
+      label: row.label || row.field_key
     }))
   }
 }

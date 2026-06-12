@@ -1208,3 +1208,52 @@
   border-color: rgba(37, 99, 235, 0.45);
   color: #3b82f6;
 }
+
+/* Panel de edición jerárquico de una condición (categoría + parámetros) */
+.conditionEditPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.conditionEditHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.conditionBaseHint {
+  font-size: 12.5px;
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.conditionEditHeader .ruleDelete {
+  margin-left: auto;
+}
+
+.conditionParamRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px dashed rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.05);
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.conditionParamRow .ruleDelete {
+  margin-left: auto;
+}
+
+.ruleAddButtonSmall {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
