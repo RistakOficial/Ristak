@@ -42,7 +42,7 @@ interface OperatorDef {
 
 interface ParamDef {
   field: string
-  /** etiqueta en el menú "+ Añadir parámetro" */
+  /** etiqueta base del criterio dentro de la categoría */
   menuLabel: string
   operators: OperatorDef[]
 }
@@ -149,11 +149,11 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
         field: 'tag',
         menuLabel: 'Etiqueta',
         operators: [
-          { id: 'has', label: 'tiene la etiqueta', valueKind: 'tag', phrase: (p, h) => `tiene la etiqueta "${h.tagName(p.value)}"` },
-          { id: 'not_has', label: 'no tiene la etiqueta', valueKind: 'tag', phrase: (p, h) => `no tiene la etiqueta "${h.tagName(p.value)}"` },
-          { id: 'has_any', label: 'tiene alguna de estas etiquetas', valueKind: 'tagList', phrase: (p, h) => `tiene alguna de: ${(p.values || []).map(h.tagName).join(', ') || '…'}` },
-          { id: 'has_all', label: 'tiene todas estas etiquetas', valueKind: 'tagList', phrase: (p, h) => `tiene todas: ${(p.values || []).map(h.tagName).join(', ') || '…'}` },
-          { id: 'has_none', label: 'no tiene ninguna de estas etiquetas', valueKind: 'tagList', phrase: (p, h) => `no tiene ninguna de: ${(p.values || []).map(h.tagName).join(', ') || '…'}` }
+          { id: 'has', label: 'Tiene', valueKind: 'tag', phrase: (p, h) => `tiene la etiqueta "${h.tagName(p.value)}"` },
+          { id: 'not_has', label: 'No tiene', valueKind: 'tag', phrase: (p, h) => `no tiene la etiqueta "${h.tagName(p.value)}"` },
+          { id: 'has_any', label: 'Tiene alguna', valueKind: 'tagList', phrase: (p, h) => `tiene alguna de: ${(p.values || []).map(h.tagName).join(', ') || '…'}` },
+          { id: 'has_all', label: 'Tiene todas', valueKind: 'tagList', phrase: (p, h) => `tiene todas: ${(p.values || []).map(h.tagName).join(', ') || '…'}` },
+          { id: 'has_none', label: 'No tiene ninguna', valueKind: 'tagList', phrase: (p, h) => `no tiene ninguna de: ${(p.values || []).map(h.tagName).join(', ') || '…'}` }
         ]
       }
     ]
@@ -410,8 +410,33 @@ function getOperatorDef(categoryId: string, field: string, operatorId: string): 
   return paramDef.operators.find((operator) => operator.id === operatorId) || paramDef.operators[0]
 }
 
-function defaultParamFor(categoryId: ConditionCategory, field: string): AgentConditionParam {
-  const operator = getParamDef(categoryId, field).operators[0]
+const CONDITION_CRITERION_SEPARATOR = '::'
+
+function conditionCriterionId(field: string, operator: string) {
+  return `${field}${CONDITION_CRITERION_SEPARATOR}${operator}`
+}
+
+function parseConditionCriterionId(id: string) {
+  const [field, operator] = id.split(CONDITION_CRITERION_SEPARATOR)
+  return { field, operator }
+}
+
+function conditionCriterionLabel(category: CategoryDef, param: ParamDef, operator: OperatorDef) {
+  if (category.params.length === 1) return operator.label
+  return `${param.menuLabel}: ${operator.label}`
+}
+
+function getConditionCriterionOptions(category: CategoryDef) {
+  return category.params.flatMap((param) => param.operators.map((operator) => ({
+    id: conditionCriterionId(param.field, operator.id),
+    field: param.field,
+    operator: operator.id,
+    label: conditionCriterionLabel(category, param, operator)
+  })))
+}
+
+function defaultParamFor(categoryId: ConditionCategory, field: string, operatorId?: string): AgentConditionParam {
+  const operator = operatorId ? getOperatorDef(categoryId, field, operatorId) : getParamDef(categoryId, field).operators[0]
   const param: AgentConditionParam = { field, operator: operator.id }
   if (operator.valueKind === 'channel') param.value = 'whatsapp'
   if (operator.valueKind === 'list' || operator.valueKind === 'tagList' || operator.valueKind === 'weekdays') param.values = []
@@ -430,7 +455,11 @@ function defaultCondition(categoryId: ConditionCategory): AgentCondition {
   const category = getCategory(categoryId)
   return {
     category: categoryId,
-    params: (category.defaultParams || []).map((param) => ({ ...param }))
+    params: category.defaultParams
+      ? category.defaultParams.map((param) => ({ ...param }))
+      : category.params[0]
+        ? [defaultParamFor(categoryId, category.params[0].field)]
+        : []
   }
 }
 
@@ -892,16 +921,21 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
   const renderEditingCondition = (condition: AgentCondition, groupIndex: number, conditionIndex: number, key: string) => {
     const category = getCategory(condition.category)
     const usedPresence = condition.params.some((param) => param.field === 'presence')
-    const paramMenuItems = category.params
-      .filter((param) => param.field !== 'presence' || !usedPresence)
-      .map((param) => ({ id: param.field, label: param.menuLabel }))
+    const criterionOptions = getConditionCriterionOptions(category)
+    const canAddCriterion = category.params.length > 1 || condition.params.length === 0
+    const criterionMenuItems = canAddCriterion
+      ? criterionOptions
+        .filter((item) => item.field !== 'presence' || !usedPresence)
+        .map((item) => ({ id: item.id, label: item.label }))
+      : []
 
     return (
       <div className={styles.conditionEditPanel}>
         <div className={styles.conditionEditHeader}>
           <span className={styles.conditionPrefix}>{conditionIndex === 0 ? 'Si' : 'Y'}</span>
           <select
-            className={styles.ruleSelect}
+            className={`${styles.ruleSelect} ${styles.conditionTypeSelect}`}
+            aria-label="Tipo de condición"
             value={condition.category}
             onChange={(event) => updateCondition(groupIndex, conditionIndex, defaultCondition(event.target.value as ConditionCategory))}
           >
@@ -909,46 +943,36 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
               <option key={item.id} value={item.id}>{item.label}</option>
             ))}
           </select>
-          <span className={styles.conditionBaseHint}>{category.baseLabel}</span>
+          {condition.params.length === 0 && <span className={styles.conditionBaseHint}>{category.baseLabel}</span>}
           <button type="button" className={styles.ruleDelete} onClick={() => setEditing(key, false)} aria-label="Listo">
             <Check size={14} />
           </button>
         </div>
 
         {condition.params.map((param, paramIndex) => {
-          const paramDef = getParamDef(condition.category, param.field)
+          const currentOperator = getOperatorDef(condition.category, param.field, param.operator)
+          const currentCriterionId = conditionCriterionId(param.field, currentOperator.id)
           return (
             <div key={paramIndex} className={styles.conditionParamRow}>
               <select
-                className={styles.ruleSelect}
-                value={param.field}
-                onChange={(event) => replaceParam(groupIndex, conditionIndex, paramIndex, defaultParamFor(condition.category, event.target.value))}
+                className={`${styles.ruleSelect} ${styles.conditionCriterionSelect}`}
+                aria-label="Condición"
+                value={currentCriterionId}
+                onChange={(event) => {
+                  const nextCriterion = parseConditionCriterionId(event.target.value)
+                  const nextOperator = getOperatorDef(condition.category, nextCriterion.field, nextCriterion.operator)
+                  const fresh = defaultParamFor(condition.category, nextCriterion.field, nextOperator.id)
+                  if (nextCriterion.field === param.field && nextOperator.valueKind === currentOperator.valueKind) {
+                    replaceParam(groupIndex, conditionIndex, paramIndex, { ...param, operator: nextOperator.id })
+                  } else {
+                    replaceParam(groupIndex, conditionIndex, paramIndex, fresh)
+                  }
+                }}
               >
-                {category.params.map((item) => (
-                  <option key={item.field} value={item.field}>{item.menuLabel}</option>
+                {criterionOptions.map((item) => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
                 ))}
               </select>
-              {paramDef.operators.length > 1 && (
-                <select
-                  className={styles.ruleSelect}
-                  value={param.operator}
-                  onChange={(event) => {
-                    const nextOperator = getOperatorDef(condition.category, param.field, event.target.value)
-                    const fresh = defaultParamFor(condition.category, param.field)
-                    fresh.operator = nextOperator.id
-                    // Conserva los valores cuando el tipo de dato coincide
-                    if (nextOperator.valueKind === getOperatorDef(condition.category, param.field, param.operator).valueKind) {
-                      replaceParam(groupIndex, conditionIndex, paramIndex, { ...param, operator: nextOperator.id })
-                    } else {
-                      replaceParam(groupIndex, conditionIndex, paramIndex, fresh)
-                    }
-                  }}
-                >
-                  {paramDef.operators.map((item) => (
-                    <option key={item.id} value={item.id}>{item.label}</option>
-                  ))}
-                </select>
-              )}
               {renderParamValue(condition, param, groupIndex, conditionIndex, paramIndex)}
               <button
                 type="button"
@@ -965,15 +989,20 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
           )
         })}
 
-        <DropdownMenu
-          label="Añadir parámetro"
-          small
-          items={paramMenuItems}
-          onSelect={(field) => updateCondition(groupIndex, conditionIndex, {
-            ...condition,
-            params: [...condition.params, defaultParamFor(condition.category, field)]
-          })}
-        />
+        {criterionMenuItems.length > 0 && (
+          <DropdownMenu
+            label="Añadir criterio"
+            small
+            items={criterionMenuItems}
+            onSelect={(id) => {
+              const nextCriterion = parseConditionCriterionId(id)
+              updateCondition(groupIndex, conditionIndex, {
+                ...condition,
+                params: [...condition.params, defaultParamFor(condition.category, nextCriterion.field, nextCriterion.operator)]
+              })
+            }}
+          />
+        )}
       </div>
     )
   }
