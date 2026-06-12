@@ -1951,11 +1951,18 @@
   flex: 0 0 auto;
 }
 
-.automationSwitch input {
-  position: absolute;
+.automationSwitch input[type="checkbox"] {
+  position: absolute !important;
   inset: 0;
-  opacity: 0;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  opacity: 0 !important;
   cursor: pointer;
+  z-index: 1;
+  appearance: none !important;
+  -webkit-appearance: none !important;
 }
 
 .automationSwitchTrack {

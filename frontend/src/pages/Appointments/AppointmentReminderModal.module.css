@@ -220,18 +220,18 @@
   margin-top: 2px;
 }
 
-.switchControl input {
-  position: absolute;
+.switchControl input[type="checkbox"] {
+  position: absolute !important;
   inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  opacity: 0;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  opacity: 0 !important;
   cursor: pointer;
   z-index: 1;
-  appearance: none;
-  -webkit-appearance: none;
+  appearance: none !important;
+  -webkit-appearance: none !important;
 }
 
 .switchTrack {
