@@ -821,7 +821,7 @@
     inset 0 -2px 4px rgba(0, 0, 0, 0.2),
     0 4px 9px rgba(15, 23, 42, 0.2),
     0 1px 2px rgba(15, 23, 42, 0.18);
-  overflow: hidden;
+  overflow: visible;
   pointer-events: none;
 }
 
@@ -860,6 +860,18 @@
 
 .avatarChannelBadgeWhatsapp {
   background: linear-gradient(145deg, #66f28f 0%, #25d366 46%, #0aa65b 100%);
+}
+
+.avatarChannelBadgeWhatsapp svg {
+  width: 14px;
+  height: 14px;
+}
+
+.avatarChannelBadgeWhatsapp svg path {
+  stroke: currentColor;
+  stroke-linejoin: round;
+  stroke-width: 0.7px;
+  paint-order: stroke fill;
 }
 
 .avatarChannelBadgeMessenger {
@@ -1099,6 +1111,11 @@
 .conversationHeader .avatar .avatarChannelBadge svg {
   width: 11px;
   height: 11px;
+}
+
+.conversationHeader .avatar .avatarChannelBadgeWhatsapp svg {
+  width: 12px;
+  height: 12px;
 }
 
 .conversationContactButton {
