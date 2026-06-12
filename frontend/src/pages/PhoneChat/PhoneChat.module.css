@@ -166,7 +166,7 @@
   min-width: 0;
   min-height: 0;
   backface-visibility: hidden;
-  contain: layout paint;
+  contain: layout;
   transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -181,6 +181,7 @@
   z-index: 2;
   grid-template-rows: auto minmax(0, 1fr) auto;
   background: var(--phone-chat-conversation-bg);
+  contain: layout paint;
   pointer-events: none;
   transform: translate3d(100%, 0, 0);
 }
@@ -439,13 +440,16 @@
 .filterChips {
   display: flex;
   gap: 8px;
+  width: calc(100% + 28px);
   min-width: 0;
   max-height: 36px;
-  margin-right: -16px;
-  padding: 0 16px 2px 0;
+  margin-inline: -14px;
+  padding: 0 18px 2px 14px;
   overflow-x: auto;
+  overflow-y: visible;
   opacity: 1;
   overscroll-behavior-x: contain;
+  scroll-padding-inline: 14px;
   scrollbar-width: none;
   scroll-snap-type: x proximity;
   touch-action: pan-x;
@@ -505,6 +509,9 @@
   font-size: 14px;
   font-weight: 760;
   letter-spacing: 0;
+  line-height: 1;
+  scroll-snap-align: start;
+  white-space: nowrap;
 }
 
 .filterChips .filterChipActive {
@@ -6552,7 +6559,7 @@
     0 0 0 1px rgba(255, 255, 255, 0.38) inset,
     0 8px 18px rgba(37, 99, 235, 0.24);
   isolation: isolate;
-  animation: agentBotButtonBreath 3.8s ease-in-out infinite;
+  animation: agentBotButtonBreath 4.2s ease-in-out infinite;
 }
 
 .agentBotButtonActive::before,
@@ -6595,7 +6602,7 @@
 }
 
 .agentBotButtonActive .agentRobot {
-  animation: agentRobotAlive 5.6s ease-in-out infinite;
+  animation: agentRobotAlive 6.2s ease-in-out infinite;
 }
 
 .agentRobotHead {
@@ -6609,6 +6616,11 @@
     linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 48%),
     rgba(8, 35, 89, 0.9);
   box-shadow: 0 2px 7px rgba(2, 6, 23, 0.28);
+  transform-origin: 50% 60%;
+}
+
+.agentBotButtonActive .agentRobotHead {
+  animation: agentRobotHeadTrack 4.8s ease-in-out infinite;
 }
 
 .agentRobotHead::before,
@@ -6643,7 +6655,7 @@
 }
 
 .agentBotButtonActive .agentRobotAntenna {
-  animation: agentRobotAntenna 3.1s ease-in-out infinite;
+  animation: agentRobotAntenna 3.8s ease-in-out infinite;
 }
 
 .agentRobotAntenna::after {
@@ -6662,9 +6674,9 @@
 .agentRobotEyes {
   position: absolute;
   top: 6px;
-  left: 5px;
+  left: 6px;
   display: inline-flex;
-  gap: 5px;
+  gap: 4px;
   transform: translateX(0);
 }
 
@@ -6730,16 +6742,17 @@
 .agentStatusBubble {
   position: absolute;
   top: 50%;
-  right: 100px;
-  left: 52px;
+  right: 96px;
+  left: 50px;
   z-index: 4;
-  display: grid;
-  align-content: center;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
-  min-height: 36px;
-  padding: 5px 10px 5px 12px;
+  min-height: 31px;
+  padding: 4px 8px 4px 10px;
   border: 1px solid rgba(20, 184, 166, 0.18);
-  border-radius: 18px;
+  border-radius: 16px;
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(238, 253, 247, 0.94));
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
@@ -6765,9 +6778,13 @@
 .agentStatusLabel {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  flex: 0 0 auto;
+  gap: 3px;
+  padding: 3px 5px 3px 4px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.12);
   color: #047857;
-  font-size: 8.5px;
+  font-size: 7.5px;
   font-weight: 850;
   letter-spacing: 0;
   line-height: 1;
@@ -6775,21 +6792,22 @@
 }
 
 .agentStatusDot {
-  width: 5px;
-  height: 5px;
+  flex: 0 0 auto;
+  width: 4px;
+  height: 4px;
   border-radius: 999px;
   background: #22c55e;
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15), 0 0 10px rgba(34, 197, 94, 0.8);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.14), 0 0 8px rgba(34, 197, 94, 0.72);
   animation: agentStatusDotPulse 1.6s ease-in-out infinite;
 }
 
 .agentStatusPhrase {
   display: -webkit-box;
   min-width: 0;
-  margin-top: 2px;
+  margin-top: 0;
   overflow: hidden;
   color: #0f172a;
-  font-size: 10.8px;
+  font-size: 10.2px;
   font-weight: 780;
   letter-spacing: 0;
   line-height: 1.08;
@@ -6816,9 +6834,9 @@
 
 @keyframes agentBotButtonBreath {
   0%, 100% { transform: scale(1); }
-  44% { transform: scale(1.06); }
-  58% { transform: scale(0.98); }
-  72% { transform: scale(1.08); }
+  44% { transform: scale(1.035); }
+  58% { transform: scale(0.99); }
+  72% { transform: scale(1.045); }
   82% { transform: scale(1); }
 }
 
@@ -6843,26 +6861,33 @@
 
 @keyframes agentRobotAlive {
   0%, 16%, 100% { transform: translateY(0) rotate(0deg) scale(1); }
-  24% { transform: translateY(-2px) rotate(-4deg) scale(1.06); }
-  34% { transform: translateY(0) rotate(3deg) scale(1); }
-  58% { transform: translateY(-1px) rotate(0deg) scale(1.08); }
+  24% { transform: translateY(-1.4px) rotate(-2deg) scale(1.04); }
+  34% { transform: translateY(0) rotate(1.6deg) scale(1); }
+  58% { transform: translateY(-1px) rotate(0deg) scale(1.045); }
   72% { transform: translateY(0) rotate(0deg) scale(1); }
-  82% { transform: translateY(-4px) rotate(-12deg) scale(1.12); }
-  87% { transform: translateY(-2px) rotate(13deg) scale(1.09); }
+  82% { transform: translateY(-2.4px) rotate(-5deg) scale(1.06); }
+  87% { transform: translateY(-1px) rotate(5deg) scale(1.04); }
   92% { transform: translateY(0) rotate(0deg) scale(1); }
+}
+
+@keyframes agentRobotHeadTrack {
+  0%, 18%, 100% { transform: translate(0, 0) rotate(0deg); }
+  28%, 40% { transform: translate(-0.8px, 0) rotate(-2deg); }
+  52%, 66% { transform: translate(0.9px, 0) rotate(2.2deg); }
+  78%, 88% { transform: translate(-0.4px, 0.2px) rotate(-1deg); }
 }
 
 @keyframes agentRobotAntenna {
   0%, 100% { transform: translate(-50%, -5px) rotate(0deg); }
-  42% { transform: translate(-50%, -5px) rotate(-12deg); }
-  58% { transform: translate(-50%, -5px) rotate(10deg); }
+  42% { transform: translate(-50%, -5px) rotate(-7deg); }
+  58% { transform: translate(-50%, -5px) rotate(6deg); }
 }
 
 @keyframes agentRobotLookAround {
   0%, 18%, 100% { transform: translateX(0); }
-  28%, 40% { transform: translateX(-2px); }
-  52%, 66% { transform: translateX(3px); }
-  78%, 88% { transform: translateX(-1px); }
+  28%, 40% { transform: translateX(-1px); }
+  52%, 66% { transform: translateX(1.2px); }
+  78%, 88% { transform: translateX(-0.5px); }
 }
 
 @keyframes agentRobotBlink {
@@ -6883,7 +6908,7 @@
 
 @keyframes agentStatusDotPulse {
   0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.32); opacity: 0.72; }
+  50% { transform: scale(1.22); opacity: 0.72; }
 }
 
 @keyframes agentStatusPhraseSwap {
@@ -6893,14 +6918,20 @@
 
 @media (max-width: 360px) {
   .agentStatusBubble {
-    right: 94px;
+    right: 92px;
     left: 48px;
-    padding-right: 8px;
-    padding-left: 10px;
+    gap: 5px;
+    padding-right: 7px;
+    padding-left: 8px;
+  }
+
+  .agentStatusLabel {
+    padding-inline: 4px;
+    font-size: 7px;
   }
 
   .agentStatusPhrase {
-    font-size: 10px;
+    font-size: 9.7px;
   }
 }
 
@@ -6909,6 +6940,7 @@
   .agentBotButtonActive::before,
   .agentBotButtonActive::after,
   .agentBotButtonActive .agentRobot,
+  .agentBotButtonActive .agentRobotHead,
   .agentBotButtonActive .agentRobotAntenna,
   .agentBotButtonActive .agentRobotEyes,
   .agentBotButtonActive .agentRobotEye,
