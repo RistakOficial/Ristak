@@ -194,8 +194,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                     [
                       { value: 'no_action', label: 'No hacer nada' },
                       { value: 'cancel_appointment', label: 'Cancelar la cita' },
-                      { value: 'notify_phone', label: 'Notificación al celular' },
-                      { value: 'notify_push', label: 'Notificación push' }
+                      { value: 'notify_push', label: 'Enviarme una notificación' }
                     ] as { value: ReminderNoConfirmAction; label: string }[]
                   ).map(({ value, label }) => (
                     <label key={value} className={styles.radioRow}>

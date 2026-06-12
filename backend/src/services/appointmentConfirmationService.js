@@ -242,7 +242,7 @@ async function executeNoConfirmAction({ contactId, appointmentId, action, result
     logger.info(`[Confirmación IA] Cita ${appointmentId} cancelada por acción automática (resultado: ${result})`)
   }
 
-  if (action === 'notify_push' || action === 'notify_phone') {
+  if (action === 'notify_push') {
     const resultLabels = {
       reschedule: 'quiere reagendar',
       cancel: 'cancela',

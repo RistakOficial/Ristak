@@ -27,7 +27,7 @@ const MESSAGE_TYPES = new Set(['reminder', 'confirmation'])
 const OFFSET_UNITS = new Set(['minutes', 'hours', 'days'])
 const SENDER_MODES = new Set(['contact', 'default', 'specific'])
 const SMART_OVERFLOWS = new Set(['before', 'next_day'])
-const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_phone', 'notify_push'])
+const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_push'])
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
