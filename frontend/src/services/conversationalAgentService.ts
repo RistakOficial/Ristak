@@ -163,7 +163,81 @@ export interface ConversationalAgentEvent {
   createdAt: string
 }
 
+export interface ConversationalAgentLiveCache {
+  config: ConversationalAgentConfig | null
+  states: ConversationAgentState[]
+  agents: ConversationalAgentDef[]
+  savedAt: number
+}
+
+export const CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT = 'ristak-conversational-agent-live-cache'
+
+const LIVE_CACHE_KEY = 'ristak_conversational_agent_live_cache_v1'
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
+
+function getLocalStorage() {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
+
+export function readConversationalAgentLiveCache(): ConversationalAgentLiveCache | null {
+  const storage = getLocalStorage()
+  if (!storage) return null
+
+  try {
+    const parsed = JSON.parse(storage.getItem(LIVE_CACHE_KEY) || 'null') as Partial<ConversationalAgentLiveCache> | null
+    if (!parsed || typeof parsed !== 'object') return null
+    return {
+      config: parsed.config || null,
+      states: Array.isArray(parsed.states) ? parsed.states : [],
+      agents: Array.isArray(parsed.agents) ? parsed.agents : [],
+      savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0
+    }
+  } catch {
+    storage.removeItem(LIVE_CACHE_KEY)
+    return null
+  }
+}
+
+function writeConversationalAgentLiveCache(
+  patch: Partial<Omit<ConversationalAgentLiveCache, 'savedAt'>>,
+  options: { notify?: boolean } = {}
+) {
+  const storage = getLocalStorage()
+  if (!storage) return
+
+  const current = readConversationalAgentLiveCache()
+  const next: ConversationalAgentLiveCache = {
+    config: patch.config !== undefined ? patch.config : current?.config || null,
+    states: patch.states !== undefined ? patch.states : current?.states || [],
+    agents: patch.agents !== undefined ? patch.agents : current?.agents || [],
+    savedAt: Date.now()
+  }
+
+  try {
+    storage.setItem(LIVE_CACHE_KEY, JSON.stringify(next))
+    if (options.notify) {
+      window.dispatchEvent(new CustomEvent(CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT, { detail: next }))
+    }
+  } catch {
+    // La API sigue siendo la fuente de verdad; el cache solo evita parpadeos.
+  }
+}
+
+function updateCachedAgentState(state: ConversationAgentState) {
+  const current = readConversationalAgentLiveCache()
+  const states = current?.states || []
+  writeConversationalAgentLiveCache({
+    states: [
+      state,
+      ...states.filter((item) => item.contactId !== state.contactId)
+    ]
+  }, { notify: true })
+}
 
 function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem('auth_token')
@@ -197,60 +271,88 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 }
 
 export const conversationalAgentService = {
-  getConfig(): Promise<ConversationalAgentConfig> {
-    return request<ConversationalAgentConfig>('/config')
+  async getConfig(): Promise<ConversationalAgentConfig> {
+    const config = await request<ConversationalAgentConfig>('/config')
+    writeConversationalAgentLiveCache({ config })
+    return config
   },
 
-  saveConfig(config: ConversationalAgentConfigInput): Promise<ConversationalAgentConfig> {
-    return request<ConversationalAgentConfig>('/config', {
+  async saveConfig(config: ConversationalAgentConfigInput): Promise<ConversationalAgentConfig> {
+    const next = await request<ConversationalAgentConfig>('/config', {
       method: 'POST',
       body: JSON.stringify(config)
     })
+    writeConversationalAgentLiveCache({ config: next }, { notify: true })
+    return next
   },
 
-  listAgents(): Promise<ConversationalAgentDef[]> {
-    return request<ConversationalAgentDef[]>('/agents')
+  async listAgents(): Promise<ConversationalAgentDef[]> {
+    const agents = await request<ConversationalAgentDef[]>('/agents')
+    writeConversationalAgentLiveCache({ agents })
+    return agents
   },
 
   getFilterOptions(): Promise<AgentFilterOptions> {
     return request<AgentFilterOptions>('/filter-options')
   },
 
-  createAgent(input: ConversationalAgentDefInput = {}): Promise<ConversationalAgentDef> {
-    return request<ConversationalAgentDef>('/agents', {
+  async createAgent(input: ConversationalAgentDefInput = {}): Promise<ConversationalAgentDef> {
+    const agent = await request<ConversationalAgentDef>('/agents', {
       method: 'POST',
       body: JSON.stringify(input)
     })
+    const current = readConversationalAgentLiveCache()
+    writeConversationalAgentLiveCache({ agents: [...(current?.agents || []), agent] }, { notify: true })
+    return agent
   },
 
-  updateAgent(agentId: string, input: ConversationalAgentDefInput): Promise<ConversationalAgentDef> {
-    return request<ConversationalAgentDef>(`/agents/${encodeURIComponent(agentId)}`, {
+  async updateAgent(agentId: string, input: ConversationalAgentDefInput): Promise<ConversationalAgentDef> {
+    const agent = await request<ConversationalAgentDef>(`/agents/${encodeURIComponent(agentId)}`, {
       method: 'PUT',
       body: JSON.stringify(input)
     })
+    const current = readConversationalAgentLiveCache()
+    if (current) {
+      writeConversationalAgentLiveCache({
+        agents: current.agents.map((item) => (item.id === agent.id ? agent : item))
+      }, { notify: true })
+    }
+    return agent
   },
 
   async deleteAgent(agentId: string): Promise<void> {
     await request(`/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' })
+    const current = readConversationalAgentLiveCache()
+    if (current) {
+      writeConversationalAgentLiveCache({
+        agents: current.agents.filter((agent) => agent.id !== agentId)
+      }, { notify: true })
+    }
   },
 
-  listStates(params: { signal?: string; statuses?: string[] } = {}): Promise<ConversationAgentState[]> {
+  async listStates(params: { signal?: string; statuses?: string[] } = {}): Promise<ConversationAgentState[]> {
     const search = new URLSearchParams()
     if (params.signal) search.set('signal', params.signal)
     if (params.statuses?.length) search.set('statuses', params.statuses.join(','))
     const query = search.toString()
-    return request<ConversationAgentState[]>(`/states${query ? `?${query}` : ''}`)
+    const states = await request<ConversationAgentState[]>(`/states${query ? `?${query}` : ''}`)
+    if (!params.signal && !params.statuses?.length) {
+      writeConversationalAgentLiveCache({ states })
+    }
+    return states
   },
 
   getState(contactId: string): Promise<ConversationAgentState | null> {
     return request<ConversationAgentState | null>(`/states/${encodeURIComponent(contactId)}`)
   },
 
-  updateState(contactId: string, action: ConversationStateAction): Promise<ConversationAgentState> {
-    return request<ConversationAgentState>(`/states/${encodeURIComponent(contactId)}`, {
+  async updateState(contactId: string, action: ConversationStateAction): Promise<ConversationAgentState> {
+    const state = await request<ConversationAgentState>(`/states/${encodeURIComponent(contactId)}`, {
       method: 'POST',
       body: JSON.stringify({ action })
     })
+    updateCachedAgentState(state)
+    return state
   },
 
   testAgent(

@@ -70,7 +70,10 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig, useBottomSheetDismiss, useHighLevelConnected, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import {
+  CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT,
   conversationalAgentService,
+  readConversationalAgentLiveCache,
+  type ConversationalAgentLiveCache,
   type ConversationAgentState,
   type ConversationStateAction,
   type ConversationalAgentConfig,
@@ -592,6 +595,14 @@ function readAIAgentMobileMessages(): AIAgentMessage[] {
 function writeAIAgentMobileMessages(messages: AIAgentMessage[]) {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(AI_AGENT_MESSAGES_KEY, JSON.stringify(messages.slice(-60)))
+}
+
+function mapAgentStatesByContactId(states: ConversationAgentState[] = []) {
+  const next: Record<string, ConversationAgentState> = {}
+  for (const state of states) {
+    next[state.contactId] = state
+  }
+  return next
 }
 
 function getAIAgentMessagePreview(message?: AIAgentMessage | null) {
@@ -2554,9 +2565,11 @@ export const PhoneChat: React.FC = () => {
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
   const [archivedViewOpen, setArchivedViewOpen] = useState(false)
   const [agentPriorityViewOpen, setAgentPriorityViewOpen] = useState(false)
-  const [agentConfig, setAgentConfig] = useState<ConversationalAgentConfig | null>(null)
-  const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>([])
-  const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>({})
+  const [initialAgentLiveCache] = useState(() => readConversationalAgentLiveCache())
+  const [agentConfig, setAgentConfig] = useState<ConversationalAgentConfig | null>(() => initialAgentLiveCache?.config || null)
+  const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>(() => initialAgentLiveCache?.agents || [])
+  const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>(() => mapAgentStatesByContactId(initialAgentLiveCache?.states || []))
+  const [agentDataHydrated, setAgentDataHydrated] = useState(() => Boolean(initialAgentLiveCache))
   const [agentMenuSection, setAgentMenuSection] = useState<AgentMenuSection>('menu')
   const [agentConfigSaving, setAgentConfigSaving] = useState(false)
   const [agentStatusPhraseIndex, setAgentStatusPhraseIndex] = useState(0)
@@ -2678,6 +2691,7 @@ export const PhoneChat: React.FC = () => {
   const activeContactIdRef = useRef<string | null>(null)
   const conversationOpenRef = useRef(false)
   const conversationLoadGenerationRef = useRef(0)
+  const agentLoadGenerationRef = useRef(0)
   const conversationInitialBottomLockRef = useRef({
     contactId: null as string | null,
     expiresAt: 0
@@ -3194,10 +3208,10 @@ export const PhoneChat: React.FC = () => {
   const agentStatusPhrase = AGENT_STATUS_PHRASES[agentStatusPhraseIndex % AGENT_STATUS_PHRASES.length]
 
   useEffect(() => {
-    if (!agentEnabled && chatFilter === 'agent') {
+    if (agentDataHydrated && !agentEnabled && chatFilter === 'agent') {
       setChatFilter('all')
     }
-  }, [agentEnabled, chatFilter])
+  }, [agentDataHydrated, agentEnabled, chatFilter])
 
   const agentHiddenChatIdSet = useMemo(() => {
     if (!agentEnabled || !agentConfig?.hideAttended) return new Set<string>()
@@ -3426,31 +3440,53 @@ export const PhoneChat: React.FC = () => {
     selectedChatPhoneFilterActive
   ])
 
-  const loadAgentData = useCallback(async () => {
+  const applyAgentLiveCache = useCallback((cache: ConversationalAgentLiveCache | null) => {
+    if (!cache) return
+    setAgentConfig(cache.config)
+    setAgentDefs(cache.agents)
+    setAgentStates(mapAgentStatesByContactId(cache.states))
+    setAgentDataHydrated(true)
+  }, [])
+
+  const loadAgentData = useCallback(async (options: { includeDefinitions?: boolean } = {}) => {
+    const requestGeneration = agentLoadGenerationRef.current + 1
+    agentLoadGenerationRef.current = requestGeneration
+    const includeDefinitions = options.includeDefinitions !== false
+
     try {
       const [config, states, defs] = await Promise.all([
         conversationalAgentService.getConfig(),
         conversationalAgentService.listStates(),
-        conversationalAgentService.listAgents().catch(() => [] as ConversationalAgentDef[])
+        includeDefinitions
+          ? conversationalAgentService.listAgents().catch(() => [] as ConversationalAgentDef[])
+          : Promise.resolve(null)
       ])
+      if (agentLoadGenerationRef.current !== requestGeneration) return
       setAgentConfig(config)
-      setAgentDefs(defs)
-      setAgentStates(() => {
-        const next: Record<string, ConversationAgentState> = {}
-        for (const state of states) {
-          next[state.contactId] = state
-        }
-        return next
-      })
+      if (defs) setAgentDefs(defs)
+      setAgentStates(mapAgentStatesByContactId(states))
     } catch {
       // El agente conversacional puede no estar disponible (feature apagada);
       // el chat sigue funcionando normal sin él.
+    } finally {
+      if (agentLoadGenerationRef.current === requestGeneration) {
+        setAgentDataHydrated(true)
+      }
     }
   }, [])
 
   useEffect(() => {
     loadAgentData()
   }, [loadAgentData])
+
+  useEffect(() => {
+    const handleAgentLiveCache = (event: Event) => {
+      applyAgentLiveCache((event as CustomEvent<ConversationalAgentLiveCache>).detail || null)
+    }
+
+    window.addEventListener(CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT, handleAgentLiveCache)
+    return () => window.removeEventListener(CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT, handleAgentLiveCache)
+  }, [applyAgentLiveCache])
 
   const saveAgentConfigPatch = useCallback(async (patch: Partial<{
     enabled: boolean
@@ -3988,11 +4024,13 @@ export const PhoneChat: React.FC = () => {
     const refreshVisibleChats = () => {
       if (document.visibilityState === 'visible') {
         loadChats({ silent: true, useCache: false })
+        loadAgentData({ includeDefinitions: false })
       }
     }
     const refreshInterval = window.setInterval(() => {
       if (document.visibilityState === 'visible' && !chatQuery.trim()) {
         loadChats({ silent: true, useCache: false })
+        loadAgentData({ includeDefinitions: false })
       }
     }, 20000)
 
@@ -4004,7 +4042,7 @@ export const PhoneChat: React.FC = () => {
       window.removeEventListener('focus', refreshVisibleChats)
       document.removeEventListener('visibilitychange', refreshVisibleChats)
     }
-  }, [accessState, chatQuery, loadChats])
+  }, [accessState, chatQuery, loadAgentData, loadChats])
 
   useEffect(() => {
     if (accessState !== 'allowed') return
