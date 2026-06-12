@@ -30,8 +30,13 @@ test('filtersMatch: coincide / NO coincide / contiene / NO contiene', () => {
   assert.equal(filtersMatch([{ field: 'message', match: 'contains', value: 'PRECIO' }], ctx), true)
   assert.equal(filtersMatch([{ field: 'message', match: 'not_contains', value: 'precio' }], ctx), false)
   assert.equal(filtersMatch([{ field: 'custom', customKey: 'ciudad', match: 'is', value: 'cdmx' }], ctx), true)
-  // Filtro incompleto o campo sin dato local: no bloquea
-  assert.equal(filtersMatch([{ field: '', match: 'is', value: 'x' }, { field: 'stage', match: 'is', value: 'x' }], ctx), true)
+  // Un filtro incompleto (sin campo) se ignora: por sí solo no bloquea
+  assert.equal(filtersMatch([{ field: '', match: 'is', value: 'x' }], ctx), true)
+  // Un campo del evento sin dato en este contexto (p. ej. calendario en un
+  // mensaje) no bloquea: se trata como desconocido
+  assert.equal(filtersMatch([{ field: 'calendar', match: 'is', value: 'x' }], ctx), true)
+  // Un campo de contacto reconocido cuyo valor no coincide sí bloquea
+  assert.equal(filtersMatch([{ field: 'stage', match: 'is', value: 'x' }], ctx), false)
 })
 
 test('evaluateConditionNode: una rama → Sí/No', () => {
