@@ -15,15 +15,29 @@ import { logger } from '../utils/logger.js'
  */
 
 export const SYSTEM_TAGS = [
-  { id: 'tag_sys_customer', name: 'Cliente' },
-  { id: 'tag_sys_appointment', name: 'Cita agendada' },
-  { id: 'tag_sys_lead', name: 'Prospecto' }
+  { id: 'client', name: 'Cliente' },
+  { id: 'booked', name: 'Cita agendada' },
+  { id: 'lead', name: 'Prospecto' }
 ]
+
+/** IDs viejos de las internas (configs guardadas antes del cambio a slugs) */
+export const LEGACY_SYSTEM_TAG_ALIASES = {
+  tag_sys_customer: 'client',
+  tag_sys_appointment: 'booked',
+  tag_sys_lead: 'lead'
+}
 
 const SYSTEM_TAG_IDS = new Set(SYSTEM_TAGS.map((tag) => tag.id))
 
 export function isSystemTagId(id) {
-  return SYSTEM_TAG_IDS.has(String(id || ''))
+  const clean = String(id || '')
+  return SYSTEM_TAG_IDS.has(clean) || Boolean(LEGACY_SYSTEM_TAG_ALIASES[clean])
+}
+
+/** Devuelve el ID interno actual (acepta los alias viejos tag_sys_*) */
+export function canonicalSystemTagId(id) {
+  const clean = String(id || '')
+  return LEGACY_SYSTEM_TAG_ALIASES[clean] || clean
 }
 
 export function normalizeTagName(value) {
@@ -32,6 +46,15 @@ export function normalizeTagName(value) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .trim()
+}
+
+/** Slug legible para el ID de una etiqueta: "Carromagic" → carromagic */
+export function slugifyTagId(value) {
+  const slug = normalizeTagName(value)
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60)
+  return slug || 'etiqueta'
 }
 
 function parseJsonArray(raw) {
@@ -85,7 +108,7 @@ async function findCustomTagByName(name) {
 
 export async function getContactTag(id) {
   if (isSystemTagId(id)) {
-    const system = SYSTEM_TAGS.find((tag) => tag.id === id)
+    const system = SYSTEM_TAGS.find((tag) => tag.id === canonicalSystemTagId(id))
     return { ...system, isSystem: true }
   }
   const row = await db.get('SELECT * FROM contact_tags WHERE id = ?', [id])
@@ -114,7 +137,14 @@ export async function createContactTag(name, { folderId = null } = {}) {
   const existing = await findCustomTagByName(clean)
   if (existing) return mapRow(existing)
 
-  const id = `tag_${crypto.randomUUID()}`
+  // ID legible derivado del nombre; con sufijo numérico si ya está ocupado
+  const rows = await db.all('SELECT id FROM contact_tags')
+  const taken = new Set(rows.map((row) => row.id))
+  const base = slugifyTagId(clean)
+  let id = base
+  for (let n = 2; taken.has(id) || isSystemTagId(id); n += 1) {
+    id = `${base}_${n}`
+  }
   const cleanFolderId = await resolveFolderId(folderId)
   await db.run('INSERT INTO contact_tags (id, name, folder_id) VALUES (?, ?, ?)', [id, clean, cleanFolderId])
   logger.info(`Etiqueta de contacto creada: ${clean} (${id})`)
@@ -295,7 +325,7 @@ export async function tagNamesForIds(ids) {
  * Cliente (tiene compras), Cita agendada (tiene citas activas) o Prospecto.
  */
 export async function computeSystemTagIds(contactId) {
-  if (!contactId) return ['tag_sys_lead']
+  if (!contactId) return ['lead']
   const purchase = await db.get(
     `SELECT 1 AS found FROM payments
      WHERE contact_id = ? AND amount > 0
@@ -303,7 +333,7 @@ export async function computeSystemTagIds(contactId) {
      LIMIT 1`,
     [contactId]
   ).catch(() => null)
-  if (purchase) return ['tag_sys_customer']
+  if (purchase) return ['client']
 
   const appointment = await db.get(
     `SELECT 1 AS found FROM appointments
@@ -312,9 +342,9 @@ export async function computeSystemTagIds(contactId) {
      LIMIT 1`,
     [contactId]
   ).catch(() => null)
-  if (appointment) return ['tag_sys_appointment']
+  if (appointment) return ['booked']
 
-  return ['tag_sys_lead']
+  return ['lead']
 }
 
 /**
@@ -349,34 +379,12 @@ export async function buildTagMatchKeys(contactId, storedTags = null) {
     keys.add(systemId)
     const system = SYSTEM_TAGS.find((tag) => tag.id === systemId)
     if (system) keys.add(normalizeTagName(system.name))
+    // Alias viejo (tag_sys_*) para filtros guardados antes del cambio de IDs
+    for (const [legacy, canonical] of Object.entries(LEGACY_SYSTEM_TAG_ALIASES)) {
+      if (canonical === systemId) keys.add(legacy)
+    }
   }
 
   return keys
 }
 
-/**
- * Migración única: contacts.tags guardaba nombres sueltos; ahora guarda IDs.
- * Crea las etiquetas que falten en el catálogo y reescribe los arrays.
- * Es idempotente: en corridas posteriores todo ya son IDs y no toca nada.
- */
-export async function migrateLegacyContactTags() {
-  const rows = await db.all(
-    `SELECT id, tags FROM contacts WHERE tags IS NOT NULL AND tags != '[]' AND tags != ''`
-  ).catch(() => [])
-  if (!rows.length) return
-
-  let migrated = 0
-  for (const row of rows) {
-    const tags = parseJsonArray(row.tags)
-    if (!tags.length) continue
-    const needsMigration = tags.some((value) => !String(value).startsWith('tag_'))
-    if (!needsMigration) continue
-
-    const ids = await resolveTagIds(tags, { createMissing: true })
-    await db.run('UPDATE contacts SET tags = ? WHERE id = ?', [JSON.stringify(ids), row.id])
-    migrated += 1
-  }
-  if (migrated > 0) {
-    logger.info(`Etiquetas de contactos migradas a IDs de catálogo en ${migrated} contactos`)
-  }
-}

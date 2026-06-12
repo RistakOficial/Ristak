@@ -3106,6 +3106,12 @@ async function initTables() {
       logger.warn('Advertencia al migrar etiquetas de contactos al catálogo:', err.message)
     }
 
+    try {
+      await migrateTagIdsToSlugs()
+    } catch (err) {
+      logger.warn('Advertencia al migrar IDs de etiquetas a slugs:', err.message)
+    }
+
     logger.success('Todas las tablas inicializadas correctamente')
   } catch (error) {
     logger.error('Error inicializando tablas:', error)
@@ -3116,10 +3122,37 @@ async function initTables() {
 /**
  * Migración única: contacts.tags guardaba nombres sueltos; ahora guarda IDs del
  * catálogo contact_tags. Crea las etiquetas que falten y reescribe los arrays.
- * Idempotente: cuando todo ya son IDs (prefijo tag_) no toca nada.
+ * Idempotente: cuando todo ya son IDs del catálogo no toca nada.
  * Vive aquí (y no en contactTagsService) para no crear un ciclo de imports
  * durante el top-level await de initTables().
  */
+
+// IDs de las etiquetas internas calculadas (viven en contactTagsService; se
+// duplican aquí para no crear un ciclo de imports durante initTables)
+const SYSTEM_TAG_SLUG_IDS = new Set(['client', 'booked', 'lead'])
+
+/** Slug legible para el ID de una etiqueta: "Carromagic" → carromagic */
+function tagSlug(name) {
+  const slug = String(name || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60)
+  return slug || 'etiqueta'
+}
+
+/** Slug único: agrega sufijo numérico si ya está ocupado o es una interna */
+function uniqueTagSlug(name, takenIds) {
+  const base = tagSlug(name)
+  let candidate = base
+  for (let n = 2; takenIds.has(candidate) || SYSTEM_TAG_SLUG_IDS.has(candidate); n += 1) {
+    candidate = `${base}_${n}`
+  }
+  return candidate
+}
+
 async function migrateLegacyContactTagsToCatalog() {
   const normalizeName = (value) => String(value || '')
     .toLowerCase()
@@ -3145,13 +3178,13 @@ async function migrateLegacyContactTagsToCatalog() {
       continue
     }
     if (!Array.isArray(tags) || tags.length === 0) continue
-    if (tags.every((value) => String(value).startsWith('tag_') && (idsInCatalog.has(String(value)) || String(value).startsWith('tag_sys_')))) continue
+    if (tags.every((value) => idsInCatalog.has(String(value)) || SYSTEM_TAG_SLUG_IDS.has(String(value)) || String(value).startsWith('tag_sys_'))) continue
 
     const next = []
     for (const value of tags) {
       const raw = String(value || '').trim()
       if (!raw) continue
-      if (idsInCatalog.has(raw)) {
+      if (idsInCatalog.has(raw) || SYSTEM_TAG_SLUG_IDS.has(raw)) {
         next.push(raw)
         continue
       }
@@ -3160,7 +3193,7 @@ async function migrateLegacyContactTagsToCatalog() {
         next.push(existingId)
         continue
       }
-      const newId = `tag_${crypto.randomUUID()}`
+      const newId = uniqueTagSlug(normalizeName(raw), idsInCatalog)
       await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [newId, raw.slice(0, 60)])
       idsInCatalog.add(newId)
       idByName.set(normalizeName(raw), newId)
@@ -3173,6 +3206,82 @@ async function migrateLegacyContactTagsToCatalog() {
   if (migrated > 0) {
     logger.info(`Etiquetas de contactos migradas a IDs de catálogo en ${migrated} contactos`)
   }
+}
+
+/**
+ * Migración única: los IDs de etiquetas pasaron de tag_<uuid> a slugs legibles
+ * derivados del nombre ("Carromagic" → carromagic). Reescribe el catálogo,
+ * los arrays de contacts.tags y las referencias guardadas en automatizaciones
+ * y agentes conversacionales. Idempotente: sin IDs con formato uuid no hace nada.
+ */
+async function migrateTagIdsToSlugs() {
+  const UUID_TAG_ID = /^tag_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+  const rows = await db.all('SELECT id, name FROM contact_tags').catch(() => [])
+  const legacyRows = rows.filter((row) => UUID_TAG_ID.test(String(row.id)))
+  if (!legacyRows.length) return
+
+  const taken = new Set(rows.map((row) => row.id))
+  const renames = []
+  for (const row of legacyRows) {
+    const newId = uniqueTagSlug(row.name, taken)
+    taken.delete(row.id)
+    taken.add(newId)
+    renames.push({ oldId: row.id, newId })
+  }
+
+  for (const { oldId, newId } of renames) {
+    await db.run('UPDATE contact_tags SET id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newId, oldId])
+  }
+
+  // contacts.tags: reemplazar ID viejo → slug en cada array
+  for (const { oldId, newId } of renames) {
+    const contacts = await db.all('SELECT id, tags FROM contacts WHERE tags LIKE ?', [`%${oldId}%`]).catch(() => [])
+    for (const contact of contacts) {
+      let tags
+      try {
+        tags = JSON.parse(contact.tags)
+      } catch {
+        continue
+      }
+      if (!Array.isArray(tags)) continue
+      const next = [...new Set(tags.map((value) => (value === oldId ? newId : value)))]
+      await db.run('UPDATE contacts SET tags = ? WHERE id = ?', [JSON.stringify(next), contact.id])
+    }
+  }
+
+  // Referencias guardadas en JSON: flujos de automatizaciones y reglas de los
+  // agentes conversacionales (los uuid son únicos: el replace textual es seguro)
+  const jsonTargets = [
+    { table: 'automations', key: 'id', columns: ['flow'] },
+    { table: 'conversational_agents', key: 'id', columns: ['entry_filters', 'success_extras', 'handoff_rules', 'required_data'] },
+    { table: 'conversational_agent_config', key: 'id', columns: ['handoff_rules', 'required_data'] }
+  ]
+  for (const target of jsonTargets) {
+    const tableRows = await db.all(`SELECT * FROM ${target.table}`).catch(() => [])
+    for (const row of tableRows) {
+      const updates = []
+      const params = []
+      for (const column of target.columns) {
+        const raw = row[column]
+        if (typeof raw !== 'string' || !raw) continue
+        let next = raw
+        for (const { oldId, newId } of renames) {
+          if (next.includes(oldId)) next = next.split(oldId).join(newId)
+        }
+        if (next !== raw) {
+          updates.push(`${column} = ?`)
+          params.push(next)
+        }
+      }
+      if (updates.length > 0) {
+        params.push(row[target.key])
+        await db.run(`UPDATE ${target.table} SET ${updates.join(', ')} WHERE ${target.key} = ?`, params)
+      }
+    }
+  }
+
+  logger.info(`IDs de etiquetas migrados a slugs legibles: ${renames.length} etiqueta${renames.length === 1 ? '' : 's'}`)
 }
 
 // Inicializar al importar
