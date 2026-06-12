@@ -284,6 +284,7 @@ export const Appointments: React.FC = () => {
     title: ''
   });
   const [createScheduleMode, setCreateScheduleMode] = useState<'default' | 'custom'>('default');
+  const createModalCloseGuardRef = useRef(false);
 
   // Modal de blocked slot
   const [selectedBlockedSlot, setSelectedBlockedSlot] = useState<(BlockedSlot & { id?: string }) | null>(null);
@@ -397,6 +398,12 @@ export const Appointments: React.FC = () => {
     const nextCalendarId = next?.calendarId ?? selectedCalendar?.id ?? routeState.calendarId;
     navigate(buildAppointmentsPath(nextViewMode, nextDate, nextCalendarId), { replace: next?.replace });
   }, [currentDate, navigate, routeState.calendarId, selectedCalendar?.id, viewMode]);
+
+  const closeCreateModal = useCallback(() => {
+    createModalCloseGuardRef.current = true;
+    setIsCreateModalOpen(false);
+    navigateCalendarView({ replace: true });
+  }, [navigateCalendarView]);
 
   const setCalendarView = useCallback((nextViewMode: ViewMode, nextDate = currentDate) => {
     setViewMode(nextViewMode);
@@ -849,6 +856,7 @@ export const Appointments: React.FC = () => {
       title: selectedCalendar?.eventTitle || ''
     });
     setCreateScheduleMode('default'); // Botón normal usa modo por defecto
+    createModalCloseGuardRef.current = false;
     setIsCreateModalOpen(true);
     navigate('/appointments/new');
   };
@@ -870,6 +878,7 @@ export const Appointments: React.FC = () => {
       title: selectedCalendar?.eventTitle || ''
     });
     setCreateScheduleMode('custom'); // Doble click en día usa modo personalizado
+    createModalCloseGuardRef.current = false;
     setIsCreateModalOpen(true);
     navigate('/appointments/new');
   };
@@ -897,8 +906,7 @@ export const Appointments: React.FC = () => {
         accessToken || undefined
       );
       showToast('success', 'Cita programada', accessToken ? 'La nueva cita se creó correctamente.' : 'La cita quedó guardada en Ristak y se sincronizará cuando conectes HighLevel.');
-      setIsCreateModalOpen(false);
-      navigateCalendarView({ replace: true });
+      closeCreateModal();
       await loadEvents();
       await loadUpcomingEvents();
     } catch (error) {
@@ -909,7 +917,11 @@ export const Appointments: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!routeState.create) return;
+    if (!routeState.create) {
+      createModalCloseGuardRef.current = false;
+      return;
+    }
+    if (createModalCloseGuardRef.current) return;
     if (!selectedCalendar || isCreateModalOpen) return;
 
     const { start: startISO, end: endISO } = buildCreateDefaultTimes(currentDate, 0);
@@ -920,6 +932,7 @@ export const Appointments: React.FC = () => {
       title: selectedCalendar?.eventTitle || ''
     });
     setCreateScheduleMode('default');
+    createModalCloseGuardRef.current = false;
     setIsCreateModalOpen(true);
   }, [currentDate, isCreateModalOpen, routeState.create, selectedCalendar, timezone]);
 
@@ -1307,6 +1320,7 @@ export const Appointments: React.FC = () => {
       title: selectedCalendar.eventTitle || ''
     });
     setCreateScheduleMode('custom'); // Selección de tiempo usa modo personalizado
+    createModalCloseGuardRef.current = false;
     setIsCreateModalOpen(true);
     navigate('/appointments/new');
   }, [isSelecting, navigate, selectionStart, selectionEnd, selectedCalendar, timezone]);
@@ -1346,6 +1360,7 @@ export const Appointments: React.FC = () => {
       title: selectedCalendar?.eventTitle || ''
     });
     setCreateScheduleMode('custom'); // Doble click en hora usa modo personalizado
+    createModalCloseGuardRef.current = false;
     setIsCreateModalOpen(true);
     navigate('/appointments/new');
   };
@@ -2338,10 +2353,7 @@ export const Appointments: React.FC = () => {
       {/* Modal de creación de cita */}
       <AppointmentModal
         isOpen={isCreateModalOpen}
-        onClose={() => {
-          setIsCreateModalOpen(false);
-          navigateCalendarView({ replace: true });
-        }}
+        onClose={closeCreateModal}
         calendar={selectedCalendar}
         mode="create"
         defaultStart={createDefaults.start}
