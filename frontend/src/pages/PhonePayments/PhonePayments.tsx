@@ -730,17 +730,15 @@ export const PhonePayments: React.FC = () => {
     )
   }
 
-  const isForm = view !== 'select'
   const isPaymentForm = view === 'single' || view === 'partial'
   const formMode = view === 'partial' ? 'partial' : 'single'
-  const formTitle = view === 'products' ? 'Precios Guardados' : view === 'partial' ? 'Plan de pago' : 'Registrar pago'
   const selectedRecentPeriod = RECENT_PAYMENT_PERIODS.find((period) => period.id === recentPaymentsPeriod) || RECENT_PAYMENT_PERIODS[2]
   const selectedRecentPayment = recentPayments.find((payment) => payment.id === selectedRecentPaymentId) || null
 
   return (
     <main className={styles.phonePage} aria-label="Pagos móviles de Ristak">
       <PhonePageTransition active="payments" className={styles.phoneFrame}>
-        {isForm && (
+        {view === 'products' && (
           <header className={styles.header}>
             <button
               type="button"
@@ -750,7 +748,6 @@ export const PhonePayments: React.FC = () => {
               <ArrowLeft size={18} />
               <span>Atrás</span>
             </button>
-            <h2 className={styles.headerFormTitle}>{formTitle}</h2>
           </header>
         )}
 

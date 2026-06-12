@@ -32,7 +32,7 @@
   z-index: 1;
   isolation: isolate;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   width: 100%;
   max-width: none;
   min-height: 0;
@@ -43,18 +43,20 @@
 
 /* Header content sits in the safe area without painting a separate top panel. */
 .header {
-  position: relative;
-  grid-row: 1;
-  z-index: 2;
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
+  left: max(14px, env(safe-area-inset-left, 0px));
+  z-index: 12;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  width: auto;
   min-width: 0;
-  min-height: calc(74px + env(safe-area-inset-top));
-  padding: calc(env(safe-area-inset-top) + 14px) 14px 12px;
+  min-height: 0;
+  padding: 0;
   background: transparent;
   backdrop-filter: none;
+  pointer-events: none;
 }
 
 .headerMain {
@@ -138,6 +140,7 @@
   font-size: 16px;
   font-weight: 650;
   cursor: pointer;
+  pointer-events: auto;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -157,13 +160,13 @@
 
 /* Host del formulario embebido */
 .formHost {
-  --record-payment-footer-bottom-offset: calc(76px + env(safe-area-inset-bottom, 0px));
-  grid-row: 2;
+  --record-payment-embedded-top-padding: calc(env(safe-area-inset-top, 0px) + 74px);
+  grid-row: 1 / -1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  background: var(--phone-payments-surface);
+  background: var(--phone-frame-bg);
   overflow: hidden;
 }
 
@@ -501,12 +504,12 @@
 }
 
 .productsHost {
-  grid-row: 2;
+  grid-row: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 0 16px calc(132px + env(safe-area-inset-bottom, 0px));
+  padding: calc(env(safe-area-inset-top, 0px) + 76px) 16px calc(132px + env(safe-area-inset-bottom, 0px));
   background: var(--phone-payments-surface);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
