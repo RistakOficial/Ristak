@@ -229,10 +229,11 @@ const convertLocalInputToISO = (value: string, timeZone: string): string | null 
 
   // Extraer componentes
   const [year, month, day] = datePart.split('-');
-  const [hour, minute] = timePart.split(':');
+  const [hour, minute, second = '00'] = timePart.split(':');
+  const safeSecond = String(Math.min(59, Math.max(0, Number(second) || 0))).padStart(2, '0');
 
   // Crear fecha en la timezone especificada para obtener el offset correcto
-  const dateInTz = new Date(`${year}-${month}-${day}T${hour}:${minute}:00`);
+  const dateInTz = new Date(`${year}-${month}-${day}T${hour}:${minute}:${safeSecond}`);
 
   // Obtener el offset usando Intl.DateTimeFormat
   const offsetMinutes = getTimezoneOffset(dateInTz, timeZone);
@@ -244,7 +245,7 @@ const convertLocalInputToISO = (value: string, timeZone: string): string | null 
   const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMins).padStart(2, '0')}`;
 
   // Construir ISO 8601: 2025-10-18T14:30:00-06:00
-  return `${year}-${month}-${day}T${hour}:${minute}:00${offsetStr}`;
+  return `${year}-${month}-${day}T${hour}:${minute}:${safeSecond}${offsetStr}`;
 };
 
 // Helper para obtener el offset de timezone en minutos (formato: -360 para -06:00)
@@ -1230,7 +1231,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     )
   );
   // --- Agendado móvil: fecha + hora de inicio + duración (el fin se calcula solo) ---
-  const fallbackDuration = calendar?.slotDuration || 60;
+  const fallbackDuration = Math.max(1, Number(calendar?.slotDuration || 60) || 60);
   const startLocalValue = formData.startTime
     ? (isAbsoluteIso(formData.startTime) ? toLocalInputValue(formData.startTime, formData.timeZone) : formData.startTime)
     : '';
@@ -1239,13 +1240,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     : '';
   const customDatePart = startLocalValue.slice(0, 10);
   const customTimePart = startLocalValue.slice(11, 16);
-  const customEndTimePart = endLocalValue.slice(11, 16);
   const derivedDuration = (() => {
     if (!startLocalValue || !endLocalValue) return fallbackDuration;
     const startMs = new Date(startLocalValue).getTime();
     const endMs = new Date(endLocalValue).getTime();
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return fallbackDuration;
-    return Math.round((endMs - startMs) / 60000);
+    return (endMs - startMs) / 60000;
   })();
   const effectiveDuration = startLocalValue && endLocalValue ? derivedDuration : (pendingDuration ?? fallbackDuration);
 
@@ -1253,9 +1253,24 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     if (!datePart || !timePart) return;
     const start = new Date(`${datePart}T${timePart}:00`);
     if (Number.isNaN(start.getTime())) return;
-    const end = new Date(start.getTime() + durationMinutes * 60000);
-    const endLocal = `${end.getFullYear()}-${padTwo(end.getMonth() + 1)}-${padTwo(end.getDate())}T${padTwo(end.getHours())}:${padTwo(end.getMinutes())}`;
+    const durationMs = Math.max(1000, Math.round(durationMinutes * 60000));
+    const end = new Date(start.getTime() + durationMs);
+    const includeSeconds = end.getSeconds() > 0 || durationMs % 60000 !== 0;
+    const endLocal = `${end.getFullYear()}-${padTwo(end.getMonth() + 1)}-${padTwo(end.getDate())}T${padTwo(end.getHours())}:${padTwo(end.getMinutes())}${includeSeconds ? `:${padTwo(end.getSeconds())}` : ''}`;
     setFormData((prev) => ({ ...prev, startTime: `${datePart}T${timePart}`, endTime: endLocal }));
+  };
+
+  const formatLocalScheduleTime = (localValue: string) => {
+    const match = /T(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(localValue);
+    if (!match) return '';
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    const second = Number(match[3] || 0);
+    const period = hour >= 12 ? 'p.m.' : 'a.m.';
+    const hour12 = hour % 12 || 12;
+    return second > 0
+      ? `${hour12}:${padTwo(minute)}:${padTwo(second)} ${period}`
+      : `${hour12}:${padTwo(minute)} ${period}`;
   };
 
   const renderMobileCustomSchedule = () => (
@@ -1274,9 +1289,9 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         }}
         buttonClassName={styles.mobilePhoneSelectButton}
       />
-      {customTimePart && customEndTimePart && (
+      {customTimePart && endLocalValue && (
         <p className={styles.mobileCustomScheduleSummary}>
-          De {formatTimeLabel(customTimePart)} a {formatTimeLabel(customEndTimePart)} · {formatDurationLabel(effectiveDuration)}
+          De {formatTimeLabel(customTimePart)} a {formatLocalScheduleTime(endLocalValue)} · {formatDurationLabel(effectiveDuration)}
         </p>
       )}
     </div>

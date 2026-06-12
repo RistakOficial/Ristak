@@ -42,11 +42,6 @@ function parseTime(value: string): { hour: number; minute: number } | null {
   return { hour, minute }
 }
 
-function formatHourLabel(hour: number): string {
-  const period = hour >= 12 ? 'p.m.' : 'a.m.'
-  return `${hour % 12 || 12} ${period}`
-}
-
 /** Tick háptico corto, tipo carrete de tragamonedas (donde el navegador lo soporte). */
 function hapticTick() {
   if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
@@ -57,6 +52,14 @@ function hapticTick() {
 interface PickerOption {
   value: number
   label: string
+}
+
+const toHour12 = (hour24: number) => hour24 % 12 || 12
+
+const toHour24 = (hour12: number, period: number) => {
+  if (period === 1 && hour12 !== 12) return hour12 + 12
+  if (period === 0 && hour12 === 12) return 0
+  return hour12
 }
 
 /** Columna desplazable del picker; centra la opción elegida al abrir. */
@@ -173,17 +176,34 @@ export const PhoneDateTimeField: React.FC<PhoneDateTimeFieldProps> = ({
     label: String(baseYear + index)
   }))
 
-  const hourOptions: PickerOption[] = Array.from({ length: 24 }, (_, hour) => ({
-    value: hour,
-    label: formatHourLabel(hour)
-  }))
+  const hour12 = toHour12(time.hour)
+  const period = time.hour >= 12 ? 1 : 0
+  const hourOptions: PickerOption[] = Array.from({ length: 12 }, (_, index) => {
+    const hour = index === 0 ? 12 : index
+    return {
+      value: hour,
+      label: String(hour)
+    }
+  })
+
+  const periodOptions: PickerOption[] = [
+    { value: 0, label: 'AM' },
+    { value: 1, label: 'PM' }
+  ]
+
+  const emitTimeParts = (nextHour12: number, nextMinute: number, nextPeriod: number) => {
+    emit(date.year, date.month, date.day, toHour24(nextHour12, nextPeriod), nextMinute)
+  }
 
   const minuteValues = Array.from({ length: 12 }, (_, index) => index * 5)
   if (!minuteValues.includes(time.minute)) {
     minuteValues.push(time.minute)
     minuteValues.sort((a, b) => a - b)
   }
-  const minuteOptions: PickerOption[] = minuteValues.map((minute) => ({ value: minute, label: `:${padTwo(minute)}` }))
+  const minuteOptions: PickerOption[] = minuteValues.map((minute) => ({
+    value: minute,
+    label: padTwo(minute)
+  }))
 
   const dateText = `${date.day} ${MONTHS_SHORT[date.month]} ${date.year}`
   const timeText = formatTimeLabel(`${padTwo(time.hour)}:${padTwo(time.minute)}`)
@@ -258,14 +278,20 @@ export const PhoneDateTimeField: React.FC<PhoneDateTimeFieldProps> = ({
               <PickerColumn
                 label="Hora"
                 options={hourOptions}
-                value={time.hour}
-                onSelect={(hour) => emit(date.year, date.month, date.day, hour, time.minute)}
+                value={hour12}
+                onSelect={(hour) => emitTimeParts(hour, time.minute, period)}
               />
               <PickerColumn
                 label="Minutos"
                 options={minuteOptions}
                 value={time.minute}
-                onSelect={(minute) => emit(date.year, date.month, date.day, time.hour, minute)}
+                onSelect={(minute) => emitTimeParts(hour12, minute, period)}
+              />
+              <PickerColumn
+                label="AM/PM"
+                options={periodOptions}
+                value={period}
+                onSelect={(nextPeriod) => emitTimeParts(hour12, time.minute, nextPeriod)}
               />
             </div>
             <button type="button" className={styles.doneButton} onClick={() => setOpenTime(false)}>
