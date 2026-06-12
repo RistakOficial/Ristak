@@ -5625,6 +5625,17 @@ export const Sites: React.FC = () => {
                         <span>Header</span>
                       </button>
                     )}
+                    {metaPixelConnected && isLanding(editorSite) && activePage && (
+                      <MetaPageConversionToolbar
+                        site={editorSite}
+                        pages={pages}
+                        activePage={activePage}
+                        disabled={editorAIGenerating}
+                        onPatchSite={updateSelectedSite}
+                        onPatchTheme={patchSiteTheme}
+                        onSaveSite={() => handleSaveSite(undefined, { silent: true })}
+                      />
+                    )}
                     {canConfigurePopup && (
                       <button
                         type="button"
@@ -12784,6 +12795,102 @@ const HeaderBlockControls: React.FC<{
   )
 }
 
+const MetaPageConversionToolbar: React.FC<{
+  site: PublicSite
+  pages: SitePage[]
+  activePage: SitePage
+  disabled?: boolean
+  onPatchSite: (patch: Partial<PublicSite>) => void
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void | Promise<void>
+}> = ({
+  site,
+  pages,
+  activePage,
+  disabled,
+  onPatchSite,
+  onPatchTheme,
+  onSaveSite
+}) => {
+  const metaEnabled = Boolean(site.metaCapiEnabled)
+  const activePageEventName = activePage.metaCapiEnabled
+    ? normalizeMetaEventName(activePage.metaEventName, 'none')
+    : 'none'
+  const activePageHasConversion = activePageEventName !== 'none'
+
+  const saveSoon = () => {
+    window.setTimeout(() => { void onSaveSite() }, 0)
+  }
+
+  const patchActivePage = (patch: Partial<SitePage>) => {
+    onPatchTheme({
+      pages: normalizePagesForSave(pages.map(page => (
+        page.id === activePage.id ? { ...page, ...patch } : page
+      )))
+    })
+  }
+
+  return (
+    <div
+      className={`${styles.metaConversionToolbar} ${metaEnabled && activePageHasConversion ? styles.metaConversionToolbarActive : ''}`}
+      title={metaEnabled ? 'Conversion de Meta para esta pagina' : 'Activa Meta para configurar conversiones'}
+    >
+      <span className={styles.metaMark} aria-hidden="true">∞</span>
+      <label className={styles.metaSwitch}>
+        <input
+          type="checkbox"
+          checked={metaEnabled}
+          disabled={disabled}
+          aria-label="Activar medicion de Meta"
+          onChange={(event) => {
+            onPatchSite({ metaCapiEnabled: event.target.checked })
+            saveSoon()
+          }}
+        />
+        <span className={styles.metaSwitchTrack} />
+      </label>
+      <label className={styles.metaConversionField}>
+        <span>Cuando</span>
+        <CustomSelect
+          className={styles.metaConversionSelect}
+          value={normalizeMetaTrigger(activePage.metaTrigger)}
+          disabled={disabled || !metaEnabled || !activePageHasConversion}
+          portal
+          onChange={(event) => {
+            patchActivePage({ metaTrigger: event.target.value as SiteMetaTrigger })
+            saveSoon()
+          }}
+        >
+          {metaTriggerOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
+      <label className={`${styles.metaConversionField} ${styles.metaConversionEventField}`}>
+        <span>Evento</span>
+        <CustomSelect
+          className={styles.metaConversionSelect}
+          value={activePageEventName}
+          disabled={disabled || !metaEnabled}
+          portal
+          onChange={(event) => {
+            const metaEventName = event.target.value
+            patchActivePage({
+              metaEventName,
+              metaCapiEnabled: metaEventName !== 'none'
+            })
+            saveSoon()
+          }}
+        >
+          {metaEventOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
+    </div>
+  )
+}
+
 const HeaderToolbarModal: React.FC<{
   site: PublicSite
   pages: SitePage[]
@@ -15535,22 +15642,8 @@ const PageInspector: React.FC<{
   onSaveSite: () => void
 }> = ({ site, pages, activePageId, metaPixelConnected, onPatchSite, onPatchTheme, onSaveSite }) => {
   const theme = site.theme || {}
-  const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
-  const activePageEventName = activePage?.metaCapiEnabled
-    ? normalizeMetaEventName(activePage.metaEventName, 'none')
-    : 'none'
-  const activePageHasConversion = activePageEventName !== 'none'
   const formEventName = normalizeMetaEventName(site.metaEventName, 'none')
   const formHasConversion = formEventName !== 'none'
-  const patchActivePage = (patch: Partial<SitePage>) => {
-    if (!activePage) return
-
-    onPatchTheme({
-      pages: normalizePagesForSave(pages.map(page => (
-        page.id === activePage.id ? { ...page, ...patch } : page
-      )))
-    })
-  }
   return (
     <aside className={styles.propertiesPanel}>
       <div className={styles.panelHeader}>
@@ -15666,52 +15759,6 @@ const PageInspector: React.FC<{
               onCommit={onSaveSite}
             />
           </div>
-          {metaPixelConnected && isLanding(site) && activePage && (
-            <>
-              <div className={styles.panelSubheader}>Conversion de esta pagina</div>
-              <div className={`${styles.metaCard} ${activePageHasConversion && site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
-                <span className={styles.metaMark} aria-hidden="true">∞</span>
-                <div className={styles.metaCardInfo}>
-                  <strong>{activePageHasConversion ? 'Evento configurado' : 'Sin evento'}</strong>
-                  <small>{!site.metaCapiEnabled ? 'Requiere Meta del sitio' : activePageHasConversion ? 'Se envia desde esta pagina' : 'Solo PageView global'}</small>
-                </div>
-              </div>
-              <div className={styles.twoColumn}>
-                <label className={styles.field}>
-                  <span>Cuando</span>
-                  <CustomSelect
-                    value={normalizeMetaTrigger(activePage.metaTrigger)}
-                    disabled={!site.metaCapiEnabled || !activePageHasConversion}
-                    onChange={(event) => patchActivePage({ metaTrigger: event.target.value as SiteMetaTrigger })}
-                    onBlur={onSaveSite}
-                  >
-                    {metaTriggerOptions.map(option => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </CustomSelect>
-                </label>
-                <label className={styles.field}>
-                  <span>Evento</span>
-                  <CustomSelect
-                    value={activePageEventName}
-                    disabled={!site.metaCapiEnabled}
-                    onChange={(event) => {
-                      const metaEventName = event.target.value
-                      patchActivePage({
-                        metaEventName,
-                        metaCapiEnabled: metaEventName !== 'none'
-                      })
-                    }}
-                    onBlur={onSaveSite}
-                  >
-                    {metaEventOptions.map(option => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </CustomSelect>
-                </label>
-              </div>
-            </>
-          )}
           {metaPixelConnected && isFormSite(site) && (
             <>
               <div className={styles.panelSubheader}>Conversion del formulario</div>
