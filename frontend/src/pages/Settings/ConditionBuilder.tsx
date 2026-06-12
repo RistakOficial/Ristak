@@ -106,8 +106,8 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
         field: 'channel',
         menuLabel: 'Canal',
         operators: [
-          { id: 'is', label: 'es', valueKind: 'channel', phrase: (p) => `es ${channelLabel(p.value)}` },
-          { id: 'is_not', label: 'no es', valueKind: 'channel', phrase: (p) => `no es ${channelLabel(p.value)}` }
+          { id: 'is', label: 'es', valueKind: 'channel', phrase: (p) => `llegó por ${channelLabel(p.value)}` },
+          { id: 'is_not', label: 'no es', valueKind: 'channel', phrase: (p) => `no llegó por ${channelLabel(p.value)}` }
         ]
       }
     ]
@@ -115,27 +115,27 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
   {
     id: 'message',
     label: 'Mensaje',
-    baseLabel: 'recibió un mensaje',
+    baseLabel: 'llegó cualquier mensaje',
     params: [
       {
         field: 'text',
         menuLabel: 'Texto del mensaje',
         operators: [
-          { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'Texto a buscar', phrase: (p) => `contiene "${p.value || '…'}"` },
-          { id: 'not_contains', label: 'no contiene', valueKind: 'text', placeholder: 'Texto a evitar', phrase: (p) => `no contiene "${p.value || '…'}"` },
-          { id: 'contains_any', label: 'contiene alguna de estas frases', valueKind: 'list', placeholder: 'Frase y Enter', phrase: (p) => `contiene alguna de: ${(p.values || []).join(', ') || '…'}` },
-          { id: 'contains_all', label: 'contiene todas estas frases', valueKind: 'list', placeholder: 'Frase y Enter', phrase: (p) => `contiene todas: ${(p.values || []).join(', ') || '…'}` },
-          { id: 'starts_with', label: 'empieza con', valueKind: 'text', placeholder: 'Inicio del mensaje', phrase: (p) => `empieza con "${p.value || '…'}"` },
-          { id: 'ends_with', label: 'termina con', valueKind: 'text', placeholder: 'Final del mensaje', phrase: (p) => `termina con "${p.value || '…'}"` },
-          { id: 'equals', label: 'coincide exactamente con', valueKind: 'text', placeholder: 'Mensaje exacto', phrase: (p) => `es exactamente "${p.value || '…'}"` }
+          { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'Texto a buscar', phrase: (p) => `el mensaje contiene "${p.value || '…'}"` },
+          { id: 'not_contains', label: 'no contiene', valueKind: 'text', placeholder: 'Texto a evitar', phrase: (p) => `el mensaje no contiene "${p.value || '…'}"` },
+          { id: 'contains_any', label: 'contiene alguna de estas palabras', valueKind: 'list', placeholder: 'Palabra y Enter', phrase: (p) => `el mensaje contiene alguna de: ${(p.values || []).join(', ') || '…'}` },
+          { id: 'contains_all', label: 'contiene todas estas palabras', valueKind: 'list', placeholder: 'Palabra y Enter', phrase: (p) => `el mensaje contiene todas: ${(p.values || []).join(', ') || '…'}` },
+          { id: 'starts_with', label: 'empieza con', valueKind: 'text', placeholder: 'Primeras palabras', phrase: (p) => `el mensaje empieza con "${p.value || '…'}"` },
+          { id: 'ends_with', label: 'termina con', valueKind: 'text', placeholder: 'Últimas palabras', phrase: (p) => `el mensaje termina con "${p.value || '…'}"` },
+          { id: 'equals', label: 'es exactamente', valueKind: 'text', placeholder: 'Mensaje exacto', phrase: (p) => `el mensaje es "${p.value || '…'}"` }
         ]
       },
       {
         field: 'business_phone',
-        menuLabel: 'Número del negocio que lo recibió',
+        menuLabel: 'Número donde llegó el mensaje',
         operators: [
-          { id: 'is', label: 'llegó al número', valueKind: 'businessPhone', phrase: (p, h) => `al número ${h.phoneLabel(p.value)}` },
-          { id: 'is_not', label: 'no llegó al número', valueKind: 'businessPhone', phrase: (p, h) => `no al número ${h.phoneLabel(p.value)}` }
+          { id: 'is', label: 'llegó al número', valueKind: 'businessPhone', phrase: (p, h) => `llegó al número ${h.phoneLabel(p.value)}` },
+          { id: 'is_not', label: 'no llegó al número', valueKind: 'businessPhone', phrase: (p, h) => `no llegó al número ${h.phoneLabel(p.value)}` }
         ]
       }
     ]
@@ -149,11 +149,11 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
         field: 'tag',
         menuLabel: 'Etiqueta',
         operators: [
-          { id: 'has', label: 'tiene la etiqueta', valueKind: 'tag', phrase: (p, h) => `tiene "${h.tagName(p.value)}"` },
-          { id: 'not_has', label: 'no tiene la etiqueta', valueKind: 'tag', phrase: (p, h) => `no tiene "${h.tagName(p.value)}"` },
-          { id: 'has_any', label: 'tiene cualquiera de', valueKind: 'tagList', phrase: (p, h) => `tiene cualquiera de: ${(p.values || []).map(h.tagName).join(', ') || '…'}` },
-          { id: 'has_all', label: 'tiene todas', valueKind: 'tagList', phrase: (p, h) => `tiene todas: ${(p.values || []).map(h.tagName).join(', ') || '…'}` },
-          { id: 'has_none', label: 'no tiene ninguna de', valueKind: 'tagList', phrase: (p, h) => `no tiene ninguna de: ${(p.values || []).map(h.tagName).join(', ') || '…'}` }
+          { id: 'has', label: 'tiene la etiqueta', valueKind: 'tag', phrase: (p, h) => `tiene la etiqueta "${h.tagName(p.value)}"` },
+          { id: 'not_has', label: 'no tiene la etiqueta', valueKind: 'tag', phrase: (p, h) => `no tiene la etiqueta "${h.tagName(p.value)}"` },
+          { id: 'has_any', label: 'tiene alguna de estas etiquetas', valueKind: 'tagList', phrase: (p, h) => `tiene alguna de: ${(p.values || []).map(h.tagName).join(', ') || '…'}` },
+          { id: 'has_all', label: 'tiene todas estas etiquetas', valueKind: 'tagList', phrase: (p, h) => `tiene todas: ${(p.values || []).map(h.tagName).join(', ') || '…'}` },
+          { id: 'has_none', label: 'no tiene ninguna de estas etiquetas', valueKind: 'tagList', phrase: (p, h) => `no tiene ninguna de: ${(p.values || []).map(h.tagName).join(', ') || '…'}` }
         ]
       }
     ]
@@ -165,25 +165,25 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
     params: [
       {
         field: 'name',
-        menuLabel: 'Nombre',
+        menuLabel: 'Nombre del contacto',
         operators: [
           { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'Parte del nombre', phrase: (p) => `el nombre contiene "${p.value || '…'}"` },
-          { id: 'is', label: 'es', valueKind: 'text', placeholder: 'Nombre exacto', phrase: (p) => `el nombre es "${p.value || '…'}"` }
+          { id: 'is', label: 'es exactamente', valueKind: 'text', placeholder: 'Nombre exacto', phrase: (p) => `el nombre es "${p.value || '…'}"` }
         ]
       },
       {
         field: 'email',
-        menuLabel: 'Correo',
+        menuLabel: 'Correo electrónico',
         operators: [
-          { id: 'has', label: 'tiene correo registrado', valueKind: 'none', phrase: () => 'tiene correo' },
-          { id: 'no_has', label: 'no tiene correo', valueKind: 'none', phrase: () => 'no tiene correo' },
+          { id: 'has', label: 'tiene correo registrado', valueKind: 'none', phrase: () => 'tiene correo registrado' },
+          { id: 'no_has', label: 'no tiene correo', valueKind: 'none', phrase: () => 'no tiene correo registrado' },
           { id: 'is', label: 'el correo es', valueKind: 'text', placeholder: 'correo@ejemplo.com', phrase: (p) => `el correo es ${p.value || '…'}` },
           { id: 'contains', label: 'el correo contiene', valueKind: 'text', placeholder: 'ej. @gmail.com', phrase: (p) => `el correo contiene "${p.value || '…'}"` }
         ]
       },
       {
         field: 'phone',
-        menuLabel: 'Teléfono',
+        menuLabel: 'Número de teléfono',
         operators: [
           { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'ej. 33 o +52', phrase: (p) => `el teléfono contiene "${p.value || '…'}"` }
         ]
@@ -194,15 +194,15 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
         operators: [
           { id: 'is', label: 'es', valueKind: 'customFieldValue', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} es "${p.value || '…'}"` },
           { id: 'contains', label: 'contiene', valueKind: 'customFieldValue', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} contiene "${p.value || '…'}"` },
-          { id: 'has_value', label: 'tiene valor (se llenó)', valueKind: 'customField', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} tiene valor` },
+          { id: 'has_value', label: 'tiene algún valor', valueKind: 'customField', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} tiene valor` },
           { id: 'empty', label: 'está vacío', valueKind: 'customField', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} está vacío` }
         ]
       },
       {
         field: 'source',
-        menuLabel: 'Origen del contacto',
+        menuLabel: 'De dónde vino el contacto',
         operators: [
-          { id: 'is', label: 'es', valueKind: 'text', placeholder: 'ej. meta_ads, google', phrase: (p) => `el origen es "${p.value || '…'}"` },
+          { id: 'is', label: 'es', valueKind: 'text', placeholder: 'ej. meta_ads, google', phrase: (p) => `vino de "${p.value || '…'}"` },
           { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'Parte del origen', phrase: (p) => `el origen contiene "${p.value || '…'}"` }
         ]
       },
@@ -210,25 +210,25 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
         field: 'customer',
         menuLabel: 'Es cliente',
         operators: [
-          { id: 'is_customer', label: 'es cliente (tiene compras)', valueKind: 'none', phrase: () => 'es cliente' },
-          { id: 'not_customer', label: 'no es cliente todavía', valueKind: 'none', phrase: () => 'no es cliente' }
+          { id: 'is_customer', label: 'ya es cliente (hizo una compra)', valueKind: 'none', phrase: () => 'es cliente' },
+          { id: 'not_customer', label: 'todavía no es cliente', valueKind: 'none', phrase: () => 'no es cliente aún' }
         ]
       },
       {
         field: 'created',
-        menuLabel: 'Antigüedad',
+        menuLabel: 'Qué tan nuevo es el contacto',
         operators: [
-          { id: 'within', label: 'se creó hace menos de', valueKind: 'offset', phrase: (p) => `creado hace menos de ${offsetPhrase(p, '')}`.trim() }
+          { id: 'within', label: 'se registró hace menos de', valueKind: 'offset', phrase: (p) => `se registró hace menos de ${offsetPhrase(p, '')}`.trim() }
         ]
       },
       {
         field: 'assigned',
-        menuLabel: 'Asignación',
+        menuLabel: 'Quién lo atiende',
         operators: [
-          { id: 'to', label: 'está asignado a', valueKind: 'text', placeholder: 'Nombre del usuario', phrase: (p) => `asignado a ${p.value || '…'}` },
-          { id: 'not_to', label: 'no está asignado a', valueKind: 'text', placeholder: 'Nombre del usuario', phrase: (p) => `no asignado a ${p.value || '…'}` },
-          { id: 'any', label: 'tiene cualquier asignado', valueKind: 'none', phrase: () => 'tiene asignado' },
-          { id: 'none', label: 'no tiene asignado', valueKind: 'none', phrase: () => 'sin asignar' }
+          { id: 'to', label: 'lo atiende', valueKind: 'text', placeholder: 'Nombre del usuario', phrase: (p) => `lo atiende ${p.value || '…'}` },
+          { id: 'not_to', label: 'no lo atiende', valueKind: 'text', placeholder: 'Nombre del usuario', phrase: (p) => `no lo atiende ${p.value || '…'}` },
+          { id: 'any', label: 'tiene a alguien asignado', valueKind: 'none', phrase: () => 'tiene asignado' },
+          { id: 'none', label: 'no tiene a nadie asignado', valueKind: 'none', phrase: () => 'sin asignar' }
         ]
       }
     ]
@@ -236,58 +236,58 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
   {
     id: 'appointments',
     label: 'Calendarios y citas',
-    baseLabel: 'agendó una cita',
+    baseLabel: 'tiene una cita agendada',
     params: [
       {
         field: 'presence',
-        menuLabel: 'Tiene / no tiene cita',
+        menuLabel: 'Tiene o no tiene cita',
         operators: [
-          { id: 'has', label: 'tiene cita', valueKind: 'none', phrase: () => 'tiene cita' },
-          { id: 'none', label: 'no tiene cita', valueKind: 'none', phrase: () => 'NO tiene cita (con estos filtros)' }
+          { id: 'has', label: 'sí tiene cita', valueKind: 'none', phrase: () => 'tiene una cita' },
+          { id: 'none', label: 'no tiene ninguna cita', valueKind: 'none', phrase: () => 'no tiene ninguna cita' }
         ]
       },
       {
         field: 'calendar',
         menuLabel: 'Calendario específico',
         operators: [
-          { id: 'is', label: 'está agendado en', valueKind: 'calendar', phrase: (p, h) => `en ${h.calendarName(p.value)}` },
-          { id: 'is_not', label: 'no está agendado en', valueKind: 'calendar', phrase: (p, h) => `no en ${h.calendarName(p.value)}` }
+          { id: 'is', label: 'la cita está en', valueKind: 'calendar', phrase: (p, h) => `cita en "${h.calendarName(p.value)}"` },
+          { id: 'is_not', label: 'la cita no está en', valueKind: 'calendar', phrase: (p, h) => `cita fuera de "${h.calendarName(p.value)}"` }
         ]
       },
       {
         field: 'status',
         menuLabel: 'Estado de la cita',
         operators: [
-          { id: 'confirmed', label: 'confirmada', valueKind: 'none', phrase: () => 'confirmada' },
-          { id: 'pending', label: 'pendiente de confirmar', valueKind: 'none', phrase: () => 'pendiente' },
-          { id: 'cancelled', label: 'cancelada', valueKind: 'none', phrase: () => 'cancelada' },
-          { id: 'showed', label: 'asistió', valueKind: 'none', phrase: () => 'asistió' },
-          { id: 'noshow', label: 'no asistió', valueKind: 'none', phrase: () => 'no asistió' }
+          { id: 'confirmed', label: 'confirmada', valueKind: 'none', phrase: () => 'cita confirmada' },
+          { id: 'pending', label: 'pendiente de confirmar', valueKind: 'none', phrase: () => 'cita pendiente' },
+          { id: 'cancelled', label: 'cancelada', valueKind: 'none', phrase: () => 'cita cancelada' },
+          { id: 'showed', label: 'asistió a la cita', valueKind: 'none', phrase: () => 'asistió' },
+          { id: 'noshow', label: 'no asistió a la cita', valueKind: 'none', phrase: () => 'no asistió' }
         ]
       },
       {
         field: 'timing',
         menuLabel: 'Cuándo es la cita',
         operators: [
-          { id: 'upcoming', label: 'es próxima (futura)', valueKind: 'none', phrase: () => 'próxima' },
-          { id: 'past_due', label: 'ya venció (pasada)', valueKind: 'none', phrase: () => 'vencida' },
-          { id: 'today', label: 'es hoy', valueKind: 'none', phrase: () => 'es hoy' }
+          { id: 'upcoming', label: 'es en el futuro', valueKind: 'none', phrase: () => 'cita futura' },
+          { id: 'past_due', label: 'ya pasó', valueKind: 'none', phrase: () => 'cita pasada' },
+          { id: 'today', label: 'es hoy', valueKind: 'none', phrase: () => 'cita hoy' }
         ]
       },
       {
         field: 'date',
         menuLabel: 'Fecha de la cita',
         operators: [
-          { id: 'is', label: 'es exactamente el', valueKind: 'date', phrase: (p) => `el ${p.date || '…'}` },
-          { id: 'not', label: 'no es el', valueKind: 'date', phrase: (p) => `no el ${p.date || '…'}` },
-          { id: 'before', label: 'antes del', valueKind: 'date', phrase: (p) => `antes del ${p.date || '…'}` },
-          { id: 'after', label: 'después del', valueKind: 'date', phrase: (p) => `después del ${p.date || '…'}` },
-          { id: 'between', label: 'entre', valueKind: 'dateRange', phrase: (p) => `entre ${p.date || '…'} y ${p.dateEnd || '…'}` }
+          { id: 'is', label: 'es exactamente el', valueKind: 'date', phrase: (p) => `cita el ${p.date || '…'}` },
+          { id: 'not', label: 'no es el', valueKind: 'date', phrase: (p) => `cita no el ${p.date || '…'}` },
+          { id: 'before', label: 'es antes del', valueKind: 'date', phrase: (p) => `cita antes del ${p.date || '…'}` },
+          { id: 'after', label: 'es después del', valueKind: 'date', phrase: (p) => `cita después del ${p.date || '…'}` },
+          { id: 'between', label: 'está entre', valueKind: 'dateRange', phrase: (p) => `cita entre ${p.date || '…'} y ${p.dateEnd || '…'}` }
         ]
       },
       {
         field: 'window',
-        menuLabel: 'Tiempo relativo a la cita',
+        menuLabel: 'Tiempo antes o después de la cita',
         operators: [
           { id: 'before', label: 'antes de la cita', valueKind: 'offset', phrase: (p) => offsetPhrase(p, 'antes de la cita') },
           { id: 'after', label: 'después de la cita', valueKind: 'offset', phrase: (p) => offsetPhrase(p, 'después de la cita') }
@@ -298,44 +298,44 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
   {
     id: 'payments',
     label: 'Pagos',
-    baseLabel: 'tiene un pago',
+    baseLabel: 'tiene un pago registrado',
     params: [
       {
         field: 'presence',
-        menuLabel: 'Tiene / no tiene pago',
+        menuLabel: 'Tiene o no tiene pago',
         operators: [
-          { id: 'has', label: 'tiene pago', valueKind: 'none', phrase: () => 'tiene pago' },
-          { id: 'none', label: 'no tiene pagos', valueKind: 'none', phrase: () => 'NO tiene pagos (con estos filtros)' }
+          { id: 'has', label: 'sí tiene pago', valueKind: 'none', phrase: () => 'tiene un pago' },
+          { id: 'none', label: 'no tiene ningún pago', valueKind: 'none', phrase: () => 'no tiene ningún pago' }
         ]
       },
       {
         field: 'status',
         menuLabel: 'Estado del pago',
         operators: [
-          { id: 'received', label: 'recibido', valueKind: 'none', phrase: () => 'recibido' },
-          { id: 'pending', label: 'pendiente', valueKind: 'none', phrase: () => 'pendiente' },
-          { id: 'failed', label: 'fallido', valueKind: 'none', phrase: () => 'fallido' },
-          { id: 'refunded', label: 'reembolsado', valueKind: 'none', phrase: () => 'reembolsado' }
+          { id: 'received', label: 'pago recibido', valueKind: 'none', phrase: () => 'pago recibido' },
+          { id: 'pending', label: 'pago pendiente', valueKind: 'none', phrase: () => 'pago pendiente' },
+          { id: 'failed', label: 'pago fallido', valueKind: 'none', phrase: () => 'pago fallido' },
+          { id: 'refunded', label: 'pago devuelto', valueKind: 'none', phrase: () => 'pago devuelto' }
         ]
       },
       {
         field: 'product',
-        menuLabel: 'Producto',
+        menuLabel: 'Producto comprado',
         operators: [
           { id: 'is', label: 'es', valueKind: 'text', placeholder: 'Nombre del producto', phrase: (p) => `producto "${p.value || '…'}"` },
-          { id: 'is_not', label: 'no es', valueKind: 'text', placeholder: 'Nombre del producto', phrase: (p) => `producto distinto de "${p.value || '…'}"` },
+          { id: 'is_not', label: 'no es', valueKind: 'text', placeholder: 'Nombre del producto', phrase: (p) => `no es "${p.value || '…'}"` },
           { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'Parte del nombre', phrase: (p) => `producto contiene "${p.value || '…'}"` },
           { id: 'not_contains', label: 'no contiene', valueKind: 'text', placeholder: 'Parte del nombre', phrase: (p) => `producto no contiene "${p.value || '…'}"` }
         ]
       },
       {
         field: 'amount',
-        menuLabel: 'Monto',
+        menuLabel: 'Monto del pago',
         operators: [
-          { id: 'eq', label: 'igual a', valueKind: 'amount', phrase: (p) => `monto igual a ${money(p.amount)}` },
-          { id: 'gt', label: 'mayor que', valueKind: 'amount', phrase: (p) => `monto mayor que ${money(p.amount)}` },
-          { id: 'lt', label: 'menor que', valueKind: 'amount', phrase: (p) => `monto menor que ${money(p.amount)}` },
-          { id: 'between', label: 'entre', valueKind: 'amountRange', phrase: (p) => `monto entre ${money(p.amount)} y ${money(p.amountMax)}` }
+          { id: 'eq', label: 'es igual a', valueKind: 'amount', phrase: (p) => `monto de ${money(p.amount)}` },
+          { id: 'gt', label: 'es mayor que', valueKind: 'amount', phrase: (p) => `monto mayor que ${money(p.amount)}` },
+          { id: 'lt', label: 'es menor que', valueKind: 'amount', phrase: (p) => `monto menor que ${money(p.amount)}` },
+          { id: 'between', label: 'está entre', valueKind: 'amountRange', phrase: (p) => `monto entre ${money(p.amount)} y ${money(p.amountMax)}` }
         ]
       }
     ]
@@ -343,45 +343,45 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
   {
     id: 'ads',
     label: 'Anuncios',
-    baseLabel: 'vino de un anuncio (clic de WhatsApp)',
+    baseLabel: 'llegó desde un anuncio de Meta',
     params: [
       {
         field: 'presence',
-        menuLabel: 'Vino / no vino de anuncio',
+        menuLabel: 'Viene o no de un anuncio',
         operators: [
-          { id: 'from_ad', label: 'vino de anuncio', valueKind: 'none', phrase: () => 'vino de anuncio' },
-          { id: 'not_from_ad', label: 'no vino de anuncio', valueKind: 'none', phrase: () => 'NO vino de anuncio' }
+          { id: 'from_ad', label: 'sí llegó de un anuncio', valueKind: 'none', phrase: () => 'llegó de un anuncio' },
+          { id: 'not_from_ad', label: 'no llegó de ningún anuncio', valueKind: 'none', phrase: () => 'no llegó de ningún anuncio' }
         ]
       },
       {
         field: 'ad',
         menuLabel: 'Anuncio específico',
         operators: [
-          { id: 'is', label: 'el anuncio es', valueKind: 'ad', phrase: (p, h) => `el anuncio es "${h.adName(p.value)}"` },
-          { id: 'is_not', label: 'el anuncio no es', valueKind: 'ad', phrase: (p, h) => `el anuncio no es "${h.adName(p.value)}"` }
+          { id: 'is', label: 'el anuncio es', valueKind: 'ad', phrase: (p, h) => `desde el anuncio "${h.adName(p.value)}"` },
+          { id: 'is_not', label: 'el anuncio no es', valueKind: 'ad', phrase: (p, h) => `no desde "${h.adName(p.value)}"` }
         ]
       }
     ]
   },
   {
     id: 'schedule',
-    label: 'Fecha y hora',
-    baseLabel: 'en cualquier momento',
+    label: 'Horario',
+    baseLabel: 'a cualquier hora',
     defaultParams: [{ field: 'time', operator: 'between', timeStart: '09:00', timeEnd: '18:00' }],
     params: [
       {
         field: 'time',
-        menuLabel: 'Hora del día',
+        menuLabel: 'Rango de horas',
         operators: [
-          { id: 'between', label: 'la hora está entre', valueKind: 'timeRange', phrase: (p) => `entre ${p.timeStart || '…'} y ${p.timeEnd || '…'}` },
-          { id: 'outside', label: 'la hora está fuera de', valueKind: 'timeRange', phrase: (p) => `fuera de ${p.timeStart || '…'} a ${p.timeEnd || '…'}` }
+          { id: 'between', label: 'la hora está entre', valueKind: 'timeRange', phrase: (p) => `entre las ${p.timeStart || '…'} y las ${p.timeEnd || '…'}` },
+          { id: 'outside', label: 'la hora está fuera de', valueKind: 'timeRange', phrase: (p) => `fuera de las ${p.timeStart || '…'} a las ${p.timeEnd || '…'}` }
         ]
       },
       {
         field: 'day',
         menuLabel: 'Día de la semana',
         operators: [
-          { id: 'is', label: 'el día es', valueKind: 'weekdays', phrase: (p) => `los días ${(p.values || []).map((d) => WEEKDAY_OPTIONS.find((w) => w.value === d)?.label || d).join(', ') || '…'}` }
+          { id: 'is', label: 'el día es', valueKind: 'weekdays', phrase: (p) => `los días: ${(p.values || []).map((d) => WEEKDAY_OPTIONS.find((w) => w.value === d)?.label || d).join(', ') || '…'}` }
         ]
       }
     ]
@@ -450,21 +450,26 @@ export function conditionSummary(condition: AgentCondition, calendars: Calendar[
 
   const params = condition.params || []
 
-  // El parámetro presence reemplaza la frase base
   const presence = params.find((param) => param.field === 'presence')
   let base = category.baseLabel
   if (presence) {
     base = getOperatorDef(condition.category, 'presence', presence.operator).phrase?.(presence, helpers) || base
   }
 
-  const phrases = params
+  const otherPhrases = params
     .filter((param) => param.field !== 'presence')
     .map((param) => {
       const operator = getOperatorDef(condition.category, param.field, param.operator)
       return operator.phrase ? operator.phrase(param, helpers) : operator.label
     })
 
-  return [`${category.label}: ${base}`, ...phrases].join(' · ')
+  // Si hay parámetros específicos y no hay presence, los parámetros YA describen
+  // la condición completa — la frase base sería redundante.
+  if (otherPhrases.length > 0 && !presence) {
+    return `${category.label}: ${otherPhrases.join(' · ')}`
+  }
+
+  return [`${category.label}: ${base}`, ...otherPhrases].join(' · ')
 }
 
 /** Editor compacto de listas de frases dentro del parámetro en edición. */
@@ -894,6 +899,7 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
     return (
       <div className={styles.conditionEditPanel}>
         <div className={styles.conditionEditHeader}>
+          <span className={styles.conditionPrefix}>{conditionIndex === 0 ? 'Si' : 'Y'}</span>
           <select
             className={styles.ruleSelect}
             value={condition.category}
@@ -994,30 +1000,28 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
               const editing = editingKeys.has(key)
 
               return (
-                <div key={key} className={styles.conditionRowWrapper}>
-                  <span className={styles.rulePrefix}>
-                    {conditionIndex === 0 ? 'Si' : 'Y'}
-                  </span>
-                  <div className={`${styles.conditionRow} ${editing ? styles.conditionRowEditing : ''}`}>
-                    {editing ? (
-                      renderEditingCondition(condition, groupIndex, conditionIndex, key)
-                    ) : (
-                      <>
-                        <span className={styles.conditionSentence}>{conditionSummary(condition, calendars, options)}</span>
-                        <div className={styles.conditionActions}>
-                          <button type="button" className={styles.ruleDelete} onClick={() => setEditing(key, true)} aria-label="Editar condición">
-                            <Pencil size={13} />
-                          </button>
-                          <button type="button" className={styles.ruleDelete} onClick={() => duplicateCondition(groupIndex, conditionIndex)} aria-label="Duplicar condición">
-                            <Copy size={13} />
-                          </button>
-                          <button type="button" className={styles.ruleDelete} onClick={() => removeCondition(groupIndex, conditionIndex)} aria-label="Eliminar condición">
-                            <X size={14} />
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
+                <div key={key} className={`${styles.conditionRow} ${editing ? styles.conditionRowEditing : ''}`}>
+                  {editing ? (
+                    renderEditingCondition(condition, groupIndex, conditionIndex, key)
+                  ) : (
+                    <>
+                      <span className={styles.conditionSentence}>
+                        <span className={styles.conditionPrefix}>{conditionIndex === 0 ? 'Si ' : 'Y '}</span>
+                        {conditionSummary(condition, calendars, options)}
+                      </span>
+                      <div className={styles.conditionActions}>
+                        <button type="button" className={styles.ruleDelete} onClick={() => setEditing(key, true)} aria-label="Editar condición">
+                          <Pencil size={13} />
+                        </button>
+                        <button type="button" className={styles.ruleDelete} onClick={() => duplicateCondition(groupIndex, conditionIndex)} aria-label="Duplicar condición">
+                          <Copy size={13} />
+                        </button>
+                        <button type="button" className={styles.ruleDelete} onClick={() => removeCondition(groupIndex, conditionIndex)} aria-label="Eliminar condición">
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )
             })}

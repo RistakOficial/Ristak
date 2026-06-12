@@ -1078,15 +1078,7 @@
   background: var(--color-background-primary);
 }
 
-.conditionRowWrapper {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .conditionRow {
-  flex: 1;
-  min-width: 0;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -1098,6 +1090,14 @@
   font-size: 13.5px;
   color: var(--color-text-primary);
   transition: border-color 0.15s ease;
+}
+
+.conditionPrefix {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
 }
 
 .conditionRow:hover {
