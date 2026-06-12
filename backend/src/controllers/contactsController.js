@@ -4,7 +4,7 @@ import { updateContactsStats } from '../utils/updateContactsStats.js'
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { buildContactStats } from '../services/analyticsService.js'
 import { getGHLClient } from '../services/ghlClient.js'
-import { findContactByPhoneCandidates, prepareContactPhoneUpsert } from '../services/contactIdentityService.js'
+import { findContactByPhoneCandidates, getGhlContactIdForLocalContact, prepareContactPhoneUpsert } from '../services/contactIdentityService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
@@ -2136,10 +2136,12 @@ export const updateContact = async (req, res) => {
       })
     }
 
-    // Actualizar en HighLevel (el id del contacto ES el id de HighLevel)
+    // Actualizar en HighLevel usando el ID ligado en ghl_contact_id
+    // (los contactos solo-locales sin vínculo no se mandan a GHL)
     let mergedCustomFields = null
     try {
-      const ghlClient = await getGHLClient()
+      const ghlContactId = await getGhlContactIdForLocalContact(id)
+      const ghlClient = ghlContactId ? await getGHLClient() : null
       const ghlUpdateData = {}
 
       if (full_name) ghlUpdateData.name = full_name
@@ -2154,9 +2156,9 @@ export const updateContact = async (req, res) => {
         if (dndSettings) ghlUpdateData.dndSettings = dndSettings
       }
 
-      if (Object.keys(ghlUpdateData).length > 0) {
-        await ghlClient.updateContact(id, ghlUpdateData)
-        logger.info(`Contacto actualizado en HighLevel: ${id}`)
+      if (ghlContactId && ghlClient && Object.keys(ghlUpdateData).length > 0) {
+        await ghlClient.updateContact(ghlContactId, ghlUpdateData)
+        logger.info(`Contacto actualizado en HighLevel: ${id} (GHL ${ghlContactId})`)
       }
     } catch (error) {
       if (shouldSyncHighLevelCustomFields) {
@@ -2372,11 +2374,15 @@ export const deleteContact = async (req, res) => {
       })
     }
 
-    // Eliminar en HighLevel (el id del contacto ES el id de HighLevel)
+    // Eliminar en HighLevel usando el ID ligado en ghl_contact_id
+    // (los contactos solo-locales sin vínculo no existen en GHL)
     try {
-      const ghlClient = await getGHLClient()
-      await ghlClient.deleteContact(id)
-      logger.info(`Contacto eliminado de HighLevel: ${id}`)
+      const ghlContactId = await getGhlContactIdForLocalContact(id)
+      if (ghlContactId) {
+        const ghlClient = await getGHLClient()
+        await ghlClient.deleteContact(ghlContactId)
+        logger.info(`Contacto eliminado de HighLevel: ${id} (GHL ${ghlContactId})`)
+      }
     } catch (error) {
       logger.warn(`No se pudo eliminar el contacto de HighLevel: ${error.message}`)
       // Continuar con la eliminación local aunque falle en GHL

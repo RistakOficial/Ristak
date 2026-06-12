@@ -17,7 +17,9 @@ import { markPaymentFlowInvoicePaid } from './paymentFlowService.js'
 import {
   finalizePreparedPhoneUpsert,
   mergeContactIds,
-  prepareContactPhoneUpsert
+  prepareContactPhoneUpsert,
+  resolveContactIdByGhlId,
+  resolveOrCreateContactForGhl
 } from './contactIdentityService.js'
 import {
   isSuccessfulPaymentStatus,
@@ -245,8 +247,36 @@ async function clearConflictingContactEmail({ targetId, email }) {
 }
 
 async function upsertHighLevelContactLocallyForPayment({ localContact, highLevelContact }) {
-  const targetId = highLevelContact.id || highLevelContact._id
-  if (!targetId) throw new Error('HighLevel no devolvió id de contacto')
+  const ghlContactId = highLevelContact.id || highLevelContact._id
+  if (!ghlContactId) throw new Error('HighLevel no devolvió id de contacto')
+
+  // El contacto conserva su ID local de Ristak; el ID de GHL solo se liga en
+  // ghl_contact_id. Si otro contacto local ya estaba ligado a ese ID de GHL,
+  // se fusiona conservando el contacto del pago.
+  let targetId = localContact.contact_local_id || localContact.contact_id || null
+  const alreadyLinkedId = await resolveContactIdByGhlId(ghlContactId)
+
+  if (!targetId) {
+    targetId = alreadyLinkedId
+  } else if (alreadyLinkedId && alreadyLinkedId !== targetId) {
+    targetId = await mergeContactIds({
+      fromId: alreadyLinkedId,
+      toId: targetId,
+      canonicalPhone: cleanString(localContact.contact_phone) || null
+    })
+  }
+
+  if (!targetId) {
+    const { contactId: createdId } = await resolveOrCreateContactForGhl({
+      ghlContactId,
+      phone: highLevelContact.phone || localContact.contact_phone,
+      email: highLevelContact.email || localContact.contact_email,
+      fullName: highLevelContact.name || highLevelContact.contactName || localContact.contact_name,
+      source: localContact.contact_source || highLevelContact.source || 'ristak',
+      createdAt: localContact.contact_created_at || null
+    })
+    targetId = createdId
+  }
 
   const fullName = getContactName({
     contact_name: highLevelContact.name || highLevelContact.contactName || localContact.contact_name,
@@ -261,49 +291,28 @@ async function upsertHighLevelContactLocallyForPayment({ localContact, highLevel
   const phone = cleanString(highLevelContact.phone || localContact.contact_phone) || null
   const phoneUpsert = await prepareContactPhoneUpsert({ contactId: targetId, phone })
   const emailMergeFromContactId = await clearConflictingContactEmail({ targetId, email })
-  const usePostgres = Boolean(process.env.DATABASE_URL)
-  const customFieldsPlaceholder = usePostgres ? '?::jsonb' : '?'
 
   try {
     await db.run(`
-      INSERT INTO contacts (
-        id, phone, email, full_name, first_name, last_name, source, visitor_id,
-        attribution_url, attribution_session_source, attribution_medium, attribution_ctwa_clid,
-        attribution_ad_name, attribution_ad_id, custom_fields, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${customFieldsPlaceholder}, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
-      ON CONFLICT (id) DO UPDATE SET
-        phone = COALESCE(excluded.phone, contacts.phone),
-        email = COALESCE(excluded.email, contacts.email),
-        full_name = COALESCE(excluded.full_name, contacts.full_name),
-        first_name = COALESCE(excluded.first_name, contacts.first_name),
-        last_name = COALESCE(excluded.last_name, contacts.last_name),
-        source = COALESCE(excluded.source, contacts.source),
-        visitor_id = COALESCE(excluded.visitor_id, contacts.visitor_id),
-        attribution_url = COALESCE(excluded.attribution_url, contacts.attribution_url),
-        attribution_session_source = COALESCE(excluded.attribution_session_source, contacts.attribution_session_source),
-        attribution_medium = COALESCE(excluded.attribution_medium, contacts.attribution_medium),
-        attribution_ctwa_clid = COALESCE(excluded.attribution_ctwa_clid, contacts.attribution_ctwa_clid),
-        attribution_ad_name = COALESCE(excluded.attribution_ad_name, contacts.attribution_ad_name),
-        attribution_ad_id = COALESCE(excluded.attribution_ad_id, contacts.attribution_ad_id),
-        custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
+      UPDATE contacts SET
+        ghl_contact_id = ?,
+        phone = COALESCE(?, phone),
+        email = COALESCE(?, email),
+        full_name = COALESCE(?, full_name),
+        first_name = COALESCE(?, first_name),
+        last_name = COALESCE(?, last_name),
+        source = COALESCE(NULLIF(source, ''), ?),
         updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
     `, [
-      targetId,
+      ghlContactId,
       phoneUpsert.phone || phone || null,
       email,
       fullName || null,
       firstName || null,
       lastName || null,
       localContact.contact_source || highLevelContact.source || 'ristak',
-      localContact.visitor_id || null,
-      localContact.attribution_url || null,
-      localContact.attribution_session_source || null,
-      localContact.attribution_medium || null,
-      localContact.attribution_ctwa_clid || null,
-      localContact.attribution_ad_name || null,
-      localContact.attribution_ad_id || null,
-      serializeCustomFields(localContact.custom_fields),
-      localContact.contact_created_at || null
+      targetId
     ])
 
     await finalizePreparedPhoneUpsert(phoneUpsert, targetId)
@@ -321,7 +330,7 @@ async function upsertHighLevelContactLocallyForPayment({ localContact, highLevel
     throw error
   }
 
-  return targetId
+  return { localContactId: targetId, ghlContactId }
 }
 
 async function ensureHighLevelContactForLocalPayment(client, payment) {
@@ -389,14 +398,15 @@ function buildInvoicePayloadForLocalPayment({ payment, contactId, context }) {
 }
 
 async function exportSingleLocalPaymentToHighLevel({ client, payment, context }) {
-  const contactId = await ensureHighLevelContactForLocalPayment(client, payment)
+  // El payload remoto usa el ID de GHL; los registros locales conservan el ID Ristak.
+  const { localContactId, ghlContactId } = await ensureHighLevelContactForLocalPayment(client, payment)
   const paymentMode = normalizeLocalPaymentMode(payment.payment_mode, context.paymentMode)
   const paymentContext = {
     ...context,
     liveMode: paymentMode === 'live',
     paymentMode
   }
-  const invoicePayload = buildInvoicePayloadForLocalPayment({ payment, contactId, context: paymentContext })
+  const invoicePayload = buildInvoicePayloadForLocalPayment({ payment, contactId: ghlContactId, context: paymentContext })
   const createdResponse = await client.createInvoice(invoicePayload)
   const createdInvoice = createdResponse.invoice || createdResponse
   const ghlInvoiceId = createdInvoice.id || createdInvoice._id
@@ -414,7 +424,7 @@ async function exportSingleLocalPaymentToHighLevel({ client, payment, context })
      SET contact_id = ?, ghl_invoice_id = ?, invoice_number = COALESCE(?, invoice_number),
          payment_mode = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
-    [contactId, ghlInvoiceId, invoiceNumber, paymentMode, payment.id]
+    [localContactId, ghlInvoiceId, invoiceNumber, paymentMode, payment.id]
   )
 
   if (shouldRecordPayment) {
@@ -440,11 +450,11 @@ async function exportSingleLocalPaymentToHighLevel({ client, payment, context })
     )
   }
 
-  await updateContactStats(contactId)
+  await updateContactStats(localContactId)
 
   return {
     paymentId: payment.id,
-    contactId,
+    contactId: localContactId,
     invoiceId: ghlInvoiceId,
     invoiceNumber,
     recordedPayment: shouldRecordPayment
@@ -496,16 +506,14 @@ export async function syncLocalPaymentsToHighLevel({ paymentId, limit = 100 } = 
  * @returns {Promise<boolean>} - true si el contacto existe o se creó
  */
 async function ensureLocalContactForInvoice(ghlClient, contactId) {
-  if (!contactId) return false
+  if (!contactId) return null
 
-  const exists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId])
-  if (exists) return true
+  const resolved = await resolveContactIdByGhlId(contactId)
+  if (resolved) return resolved
 
   const usePostgres = Boolean(process.env.DATABASE_URL)
-  await ensureContactExists(contactId, ghlClient.apiToken, usePostgres, ghlClient.locationId)
-
-  const created = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId])
-  return Boolean(created)
+  const ensured = await ensureContactExists(contactId, ghlClient.apiToken, usePostgres, ghlClient.locationId)
+  return ensured.localContactId || null
 }
 
 async function findExistingPaymentForInvoice({ invoiceId, contactId, invoiceNumber, importedLocalPaymentId = null }) {
@@ -649,16 +657,20 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
           continue
         }
 
+        // Resolver el ID local de Ristak del contacto (descargándolo de GHL si
+        // hace falta); los pagos siempre guardan el ID local, no el de GHL.
+        const localContactId = await ensureLocalContactForInvoice(ghlClient, contactId)
+
         const existing = await findExistingPaymentForInvoice({
           invoiceId: ghlInvoiceId,
-          contactId,
+          contactId: localContactId || contactId,
           invoiceNumber,
           importedLocalPaymentId
         })
 
         // Datos comunes del invoice
         const invoiceData = {
-          contact_id: contactId,
+          contact_id: localContactId || contactId,
           amount: invoice.total || invoice.amount || 0,
           currency: invoice.currency || 'MXN',
           status: mapInvoiceStatus(invoice.status),
@@ -707,15 +719,11 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
           logger.info(`Invoice actualizado: ${ghlInvoiceId} (${savedInvoiceStatus})`)
         } else {
           // Verificar si el contacto existe antes de crear el invoice
-          // (si no existe localmente, se descarga desde HighLevel)
-          if (invoiceData.contact_id) {
-            const contactAvailable = await ensureLocalContactForInvoice(ghlClient, invoiceData.contact_id)
-
-            if (!contactAvailable) {
-              logger.warn(`⚠️ Ignorando invoice ${ghlInvoiceId}: contacto ${invoiceData.contact_id} no existe en HighLevel ni localmente`)
-              skipped++
-              continue
-            }
+          // (si no existe localmente, ya se intentó descargar desde HighLevel)
+          if (!localContactId) {
+            logger.warn(`⚠️ Ignorando invoice ${ghlInvoiceId}: contacto ${contactId} no existe en HighLevel ni localmente`)
+            skipped++
+            continue
           }
 
           // Crear nuevo invoice en BD
@@ -1046,15 +1054,18 @@ export async function syncSingleInvoice(invoiceId) {
       return { success: true, invoiceId: ghlInvoiceId, skipped: true, reason: 'accidental_local_export_duplicate' }
     }
 
+    // Resolver el ID local de Ristak del contacto; los pagos guardan el ID local.
+    const localContactId = await ensureLocalContactForInvoice(ghlClient, contactId)
+
     const existing = await findExistingPaymentForInvoice({
       invoiceId: ghlInvoiceId,
-      contactId,
+      contactId: localContactId || contactId,
       invoiceNumber,
       importedLocalPaymentId
     })
 
     const invoiceData = {
-      contact_id: contactId || null,
+      contact_id: localContactId || contactId || null,
       amount: invoice.total || invoice.amount || 0,
       currency: invoice.currency || 'MXN',
       status: ghlStatus,

@@ -5,7 +5,7 @@ import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizeToUtcIso, getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
-import { finalizePreparedPhoneUpsert, prepareContactPhoneUpsert } from './contactIdentityService.js'
+import { isRistakContactId, linkContactToGhl } from './contactIdentityService.js'
 import GHLClient from './ghlClient.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
 import { getSitesPublicDomain } from './sitesService.js'
@@ -1729,15 +1729,26 @@ export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
   return { total: rows.length, created, updated, matched, failed }
 }
 
+// Devuelve el ID de HighLevel a usar en el payload remoto de la cita.
+// La cita y el contacto conservan SIEMPRE su ID local de Ristak; el ID de GHL
+// solo se liga en contacts.ghl_contact_id.
 async function ensureHighLevelContactForAppointment(client, appointment = {}) {
   if (!appointment.contactId) return null
 
-  if (!String(appointment.contactId).startsWith('rstk_') && !String(appointment.contactId).startsWith('waapi_contact_')) {
+  const contact = await db.get('SELECT * FROM contacts WHERE id = ?', [appointment.contactId])
+  if (!contact) {
+    // Datos legacy: la cita puede traer directamente un ID de GHL
     return appointment.contactId
   }
 
-  const contact = await db.get('SELECT * FROM contacts WHERE id = ?', [appointment.contactId])
-  if (!contact) return appointment.contactId
+  if (String(contact.ghl_contact_id || '').trim()) {
+    return contact.ghl_contact_id
+  }
+
+  if (!isRistakContactId(contact.id)) {
+    // Legacy: la primary key era el ID de GHL
+    return contact.id
+  }
 
   const searches = []
   if (contact.email) searches.push({ email: contact.email })
@@ -1747,7 +1758,7 @@ async function ensureHighLevelContactForAppointment(client, appointment = {}) {
     const result = await client.searchContacts({ ...search, limit: 5 }).catch(() => null)
     const match = result?.contacts?.find(candidate => candidate.id)
     if (match?.id) {
-      await db.run('UPDATE appointments SET contact_id = ? WHERE contact_id = ?', [match.id, appointment.contactId])
+      await linkContactToGhl(contact.id, match.id)
       return match.id
     }
   }
@@ -1762,39 +1773,11 @@ async function ensureHighLevelContactForAppointment(client, appointment = {}) {
   const targetId = highLevelContact.id
 
   if (targetId) {
-    const phoneUpsert = await prepareContactPhoneUpsert({
-      contactId: targetId,
-      phone: highLevelContact.phone || contact.phone
-    })
-
-    await db.run(`
-      INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
-      ON CONFLICT (id) DO UPDATE SET
-        phone = COALESCE(excluded.phone, contacts.phone),
-        email = COALESCE(excluded.email, contacts.email),
-        full_name = COALESCE(excluded.full_name, contacts.full_name),
-        first_name = COALESCE(excluded.first_name, contacts.first_name),
-        last_name = COALESCE(excluded.last_name, contacts.last_name),
-        source = COALESCE(excluded.source, contacts.source),
-        updated_at = CURRENT_TIMESTAMP
-    `, [
-      targetId,
-      phoneUpsert.phone || null,
-      highLevelContact.email || contact.email || null,
-      highLevelContact.name || fullName,
-      highLevelContact.firstName || contact.first_name || null,
-      highLevelContact.lastName || contact.last_name || null,
-      contact.source || 'ristak',
-      contact.created_at || null
-    ])
-
-    await finalizePreparedPhoneUpsert(phoneUpsert, targetId)
-    await db.run('UPDATE appointments SET contact_id = ? WHERE contact_id = ?', [targetId, appointment.contactId])
+    await linkContactToGhl(contact.id, targetId)
     return targetId
   }
 
-  return appointment.contactId
+  return null
 }
 
 export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {

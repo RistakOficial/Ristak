@@ -262,12 +262,63 @@ const CONTACT_PHONE_REFERENCE_TABLES = [
   { table: 'sessions', column: 'contact_id' }
 ]
 
-function getContactPhoneScore(contact = {}, canonicalPhone = '') {
-  let score = 0
+// Tablas que NO referencian contacts.id aunque tengan columna contact_id propia
+// (hoy no existe ninguna; las columnas tipo whatsapp_api_contact_id ya quedan
+// fuera porque la búsqueda es por nombre exacto de columna).
+let contactReferenceTablesCache = null
+
+// Descubre dinámicamente todas las tablas con columna contact_id (FK lógica a
+// contacts.id). Evita que merges/migraciones dejen referencias huérfanas cuando
+// se agregan tablas nuevas y nadie actualiza las listas estáticas.
+export async function getContactReferenceTables() {
+  if (contactReferenceTablesCache) return contactReferenceTablesCache
+
+  const names = []
+  try {
+    if (usePostgres) {
+      const rows = await db.all(`
+        SELECT c.table_name AS name
+        FROM information_schema.columns c
+        JOIN information_schema.tables t
+          ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+        WHERE c.column_name = 'contact_id'
+          AND c.table_schema = 'public'
+          AND t.table_type = 'BASE TABLE'
+      `)
+      for (const row of rows) names.push(row.name)
+    } else {
+      const tables = await db.all(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+      for (const table of tables) {
+        const columns = await db.all(`PRAGMA table_info("${table.name}")`)
+        if (columns.some(column => column.name === 'contact_id')) names.push(table.name)
+      }
+    }
+  } catch (err) {
+    logger.warn(`No se pudieron descubrir tablas con contact_id, usando lista estática: ${err.message}`)
+    return CONTACT_PHONE_REFERENCE_TABLES.map(reference => ({
+      table: reference.table,
+      deleteOnConflict: Boolean(reference.deleteOnConflict)
+    }))
+  }
+
+  contactReferenceTablesCache = names
+    .filter(name => name !== 'contacts')
+    .map(name => ({ table: name, deleteOnConflict: name === 'appointment_attendance_signals' }))
+
+  return contactReferenceTablesCache
+}
+
+export function isWhatsAppAutoCreatedContact(contact = {}) {
   const id = String(contact.id || '')
   const source = String(contact.source || '').toLowerCase()
+  return id.startsWith('waapi_contact_') || source === 'whatsapp_api'
+}
 
-  if (!id.startsWith('waapi_contact_')) score += 1000
+function getContactPhoneScore(contact = {}, canonicalPhone = '') {
+  let score = 0
+  const source = String(contact.source || '').toLowerCase()
+
+  if (!isWhatsAppAutoCreatedContact(contact)) score += 1000
   if (Number(contact.total_paid || 0) > 0) score += 500
   if (Number(contact.purchases_count || 0) > 0) score += 250
   if (source.includes('gohighlevel') || source.includes('highlevel')) score += 150
@@ -285,19 +336,21 @@ function pickContactPhoneWinner(contacts = [], canonicalPhone = '') {
 }
 
 async function updateContactReferences(fromId, toId) {
-  for (const reference of CONTACT_PHONE_REFERENCE_TABLES) {
+  const references = await getContactReferenceTables()
+
+  for (const reference of references) {
     try {
       await db.run(
-        `UPDATE ${reference.table} SET ${reference.column} = ? WHERE ${reference.column} = ?`,
+        `UPDATE ${reference.table} SET contact_id = ? WHERE contact_id = ?`,
         [toId, fromId]
       )
     } catch (err) {
       if (reference.deleteOnConflict) {
-        await db.run(`DELETE FROM ${reference.table} WHERE ${reference.column} = ?`, [fromId])
+        await db.run(`DELETE FROM ${reference.table} WHERE contact_id = ?`, [fromId])
         continue
       }
 
-      logger.warn(`Advertencia al fusionar referencias ${reference.table}.${reference.column}: ${err.message}`)
+      logger.warn(`Advertencia al fusionar referencias ${reference.table}.contact_id: ${err.message}`)
     }
   }
 }
@@ -426,6 +479,91 @@ async function reconcileCanonicalContactPhones() {
 
   if (changed > 0) {
     logger.success(`✅ Migración: ${changed} contactos normalizados/fusionados por teléfono`)
+  }
+}
+
+// Prefijos de IDs generados por Ristak. Cualquier contacto cuyo id NO tenga uno
+// de estos prefijos se asume keyed por el ID de HighLevel (comportamiento legacy:
+// el sync usaba el ID de GHL como primary key local).
+const RISTAK_CONTACT_ID_PREFIXES = ['rstk_', 'waapi_', 'manual_contact_', 'meta_social_contact_', 'site_contact_']
+
+// Copia el ID de GHL (que era la primary key) a la columna ghl_contact_id para
+// que el vínculo con HighLevel sea explícito y deje de depender de la PK.
+async function backfillGhlContactIds() {
+  const exclusions = RISTAK_CONTACT_ID_PREFIXES.map(prefix => `id NOT LIKE '${prefix}%'`).join(' AND ')
+  const result = await db.run(`
+    UPDATE contacts
+    SET ghl_contact_id = id
+    WHERE (ghl_contact_id IS NULL OR ghl_contact_id = '')
+      AND ${exclusions}
+  `)
+
+  if (result?.changes > 0) {
+    logger.success(`✅ Migración: ${result.changes} contactos de HighLevel ligados vía ghl_contact_id`)
+  }
+}
+
+// Re-identifica los contactos creados por WhatsApp (waapi_contact_<hash>) con el
+// ID propio de Ristak (rstk_contact_<uuid>), re-apuntando todas las tablas que
+// los referencian. El orden insertar-copia → mover referencias → borrar original
+// es seguro tanto en SQLite como en PostgreSQL con FKs activas.
+async function migrateWhatsAppContactIdsToRistak() {
+  const legacyRows = await db.all(`SELECT id FROM contacts WHERE id LIKE 'waapi_contact_%'`)
+  if (!legacyRows.length) return
+
+  const referenceTables = await getContactReferenceTables()
+  let migrated = 0
+
+  for (const legacy of legacyRows) {
+    const contact = await db.get('SELECT * FROM contacts WHERE id = ?', [legacy.id])
+    if (!contact) continue
+
+    const newId = `rstk_contact_${crypto.randomUUID()}`
+    const columns = Object.keys(contact)
+    const values = columns.map(column => {
+      if (column === 'id') return newId
+      // phone/email se insertan NULL y se restauran al final para no chocar con
+      // sus constraints UNIQUE mientras conviven la copia y el original.
+      if (column === 'phone' || column === 'email') return null
+      const value = contact[column]
+      if (value instanceof Date) return value
+      if (value && typeof value === 'object') {
+        try { return JSON.stringify(value) } catch { return null }
+      }
+      return value
+    })
+
+    try {
+      await db.run(
+        `INSERT INTO contacts (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+        values
+      )
+
+      for (const reference of referenceTables) {
+        try {
+          await db.run(`UPDATE ${reference.table} SET contact_id = ? WHERE contact_id = ?`, [newId, legacy.id])
+        } catch (err) {
+          if (reference.deleteOnConflict) {
+            await db.run(`DELETE FROM ${reference.table} WHERE contact_id = ?`, [legacy.id])
+            continue
+          }
+          logger.warn(`No se pudo reasignar ${reference.table}.contact_id de ${legacy.id} a ${newId}: ${err.message}`)
+        }
+      }
+
+      await db.run('DELETE FROM contacts WHERE id = ?', [legacy.id])
+      await db.run(
+        'UPDATE contacts SET phone = ?, email = ? WHERE id = ?',
+        [contact.phone || null, contact.email || null, newId]
+      )
+      migrated += 1
+    } catch (err) {
+      logger.warn(`No se pudo migrar el contacto ${legacy.id} a ID Ristak: ${err.message}`)
+    }
+  }
+
+  if (migrated > 0) {
+    logger.success(`✅ Migración: ${migrated} contactos WhatsApp ahora usan ID propio rstk_contact_*`)
   }
 }
 
@@ -942,6 +1080,7 @@ async function initTables() {
         meta_purchase_event_sent_at DATETIME,
         meta_purchase_event_id TEXT,
         preferred_whatsapp_phone_number_id TEXT,
+        ghl_contact_id TEXT,
         custom_fields ${usePostgres ? "JSONB DEFAULT '[]'::jsonb" : "TEXT DEFAULT '[]'"},
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -954,7 +1093,14 @@ async function initTables() {
       // Columna ya existe, ignorar.
     }
 
+    try {
+      await db.run('ALTER TABLE contacts ADD COLUMN ghl_contact_id TEXT')
+    } catch (err) {
+      // Columna ya existe, ignorar.
+    }
+
     // Índices para contacts
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_ghl_contact_id ON contacts(ghl_contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at)')
@@ -3098,6 +3244,18 @@ async function initTables() {
       await reconcileCanonicalContactPhones()
     } catch (err) {
       logger.warn('Advertencia al reconciliar teléfonos de contactos:', err.message)
+    }
+
+    try {
+      await backfillGhlContactIds()
+    } catch (err) {
+      logger.warn('Advertencia al ligar contactos con ghl_contact_id:', err.message)
+    }
+
+    try {
+      await migrateWhatsAppContactIdsToRistak()
+    } catch (err) {
+      logger.warn('Advertencia al migrar IDs de contactos WhatsApp a Ristak:', err.message)
     }
 
     try {

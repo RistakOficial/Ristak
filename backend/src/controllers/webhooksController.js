@@ -18,7 +18,8 @@ import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js';
 import {
   finalizePreparedPhoneUpsert,
   findContactByPhoneCandidates,
-  prepareContactPhoneUpsert
+  prepareContactPhoneUpsert,
+  resolveOrCreateContactForGhl
 } from '../services/contactIdentityService.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js';
@@ -533,13 +534,25 @@ export const handleContactWebhook = async (req, res) => {
       : null;
 
     const usePostgres = process.env.DATABASE_URL ? true : false;
-    const phoneUpsert = await prepareContactPhoneUpsert({ contactId, phone });
+
+    // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
+    // queda ligado en ghl_contact_id, nunca como primary key.
+    const { contactId: localContactId, created: contactCreatedNow } = await resolveOrCreateContactForGhl({
+      ghlContactId: contactId,
+      phone,
+      email,
+      fullName: data.full_name || data.contactName || `${data.first_name || data.firstName || ''} ${data.last_name || data.lastName || ''}`.trim(),
+      source: data.source || 'gohighlevel',
+      createdAt: data.date_created || data.dateCreated || data.createdAt || null
+    });
+    const phoneUpsert = await prepareContactPhoneUpsert({ contactId: localContactId, phone });
 
     const query = usePostgres
-      ? `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source, created_at,
+      ? `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, first_name, last_name, source, created_at,
           attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name, visitor_id, custom_fields)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE($15::jsonb, '[]'::jsonb))
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, COALESCE($16::jsonb, '[]'::jsonb))
          ON CONFLICT (id) DO UPDATE SET
+          ghl_contact_id = COALESCE(EXCLUDED.ghl_contact_id, contacts.ghl_contact_id),
           phone = EXCLUDED.phone, email = EXCLUDED.email, full_name = EXCLUDED.full_name,
           first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name,
           source = EXCLUDED.source,
@@ -551,10 +564,11 @@ export const handleContactWebhook = async (req, res) => {
           visitor_id = COALESCE(EXCLUDED.visitor_id, contacts.visitor_id),
           custom_fields = COALESCE(EXCLUDED.custom_fields, contacts.custom_fields),
           updated_at = CURRENT_TIMESTAMP`
-      : `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source, created_at,
+      : `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, first_name, last_name, source, created_at,
           attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name, visitor_id, custom_fields)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '[]'))
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '[]'))
          ON CONFLICT (id) DO UPDATE SET
+          ghl_contact_id = COALESCE(excluded.ghl_contact_id, contacts.ghl_contact_id),
           phone = excluded.phone,
           email = excluded.email,
           full_name = excluded.full_name,
@@ -570,9 +584,10 @@ export const handleContactWebhook = async (req, res) => {
           custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
           updated_at = CURRENT_TIMESTAMP`;
 
-    const contactExistedBefore = !!(await db.get('SELECT id FROM contacts WHERE id = ?', [contactId]));
+    const contactExistedBefore = !contactCreatedNow;
 
     await db.run(query, [
+      localContactId,
       contactId,
       phoneUpsert.phone || null,
       data.email,
@@ -589,44 +604,44 @@ export const handleContactWebhook = async (req, res) => {
       visitorId,
       customFieldsJson
     ]);
-    await finalizePreparedPhoneUpsert(phoneUpsert, contactId);
+    await finalizePreparedPhoneUpsert(phoneUpsert, localContactId);
 
     // Si viene visitor_id, vincular histórico de sesiones
-    if (visitorId && contactId) {
+    if (visitorId && localContactId) {
       const fullName = data.full_name || data.contactName || `${data.first_name || data.firstName || ''} ${data.last_name || data.lastName || ''}`.trim();
 
       if (fullName && fullName !== 'Sin nombre') {
         const { linkVisitorToContact, unifyVisitorIds } = await import('../services/trackingService.js');
 
         // Ejecutar en background sin esperar
-        linkVisitorToContact(visitorId, contactId, fullName)
+        linkVisitorToContact(visitorId, localContactId, fullName)
           .then(() => {
             // Después de vincular, unificar todos los visitor_ids al más viejo
-            return unifyVisitorIds(contactId);
+            return unifyVisitorIds(localContactId);
           })
           .catch(err => {
-            logger.error(`Error vinculando/unificando visitor para contact ${contactId}:`, err);
+            logger.error(`Error vinculando/unificando visitor para contact ${localContactId}:`, err);
           });
       }
     }
 
     // Si NO viene visitor_id en el webhook pero el contacto tiene sesiones, unificarlas
-    if (!visitorId && contactId) {
+    if (!visitorId && localContactId) {
       const { unifyVisitorIds } = await import('../services/trackingService.js');
 
       // Ejecutar en background sin esperar
-      unifyVisitorIds(contactId).catch(err => {
-        logger.error(`Error unificando visitor_ids para contact ${contactId}:`, err);
+      unifyVisitorIds(localContactId).catch(err => {
+        logger.error(`Error unificando visitor_ids para contact ${localContactId}:`, err);
       });
     }
 
-    logger.info(`✅ Contacto ${contactId} procesado exitosamente${visitorId ? ` (visitor_id: ${visitorId})` : ''}`);
+    logger.info(`✅ Contacto ${localContactId} (GHL ${contactId}) procesado exitosamente${visitorId ? ` (visitor_id: ${visitorId})` : ''}`);
     res.status(200).json({ success: true, message: 'Contacto procesado' });
 
     import('../services/automationEngine.js')
       .then(engine => engine.handleAutomationEvent(
         contactExistedBefore ? 'contact-updated' : 'contact-created',
-        { contactId, changedFields: [] }
+        { contactId: localContactId, changedFields: [] }
       ))
       .catch(() => {});
 
@@ -647,7 +662,7 @@ export const handlePaymentWebhook = async (req, res) => {
 
     // HighLevel manda el ID en payment.transaction_id
     const paymentId = payment.transaction_id || payment.transactionId || payment._id || payment.id || data.id;
-    const contactId = firstValue(
+    let contactId = firstValue(
       data.contact_id,
       data.contactId,
       payment.contact_id,
@@ -668,27 +683,18 @@ export const handlePaymentWebhook = async (req, res) => {
 
     const usePostgres = process.env.DATABASE_URL ? true : false;
 
-    // Verificar si el contacto existe, si no crearlo con datos básicos
-    const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId]);
-    if (!contactExists && contactId) {
-      logger.info(`Contacto ${contactId} no existe, creando con datos básicos...`);
-      const basicPhoneUpsert = await prepareContactPhoneUpsert({
-        contactId,
-        phone: payment.customer?.phone || data.phone
-      });
-
-      const contactQuery = usePostgres
-        ? `INSERT INTO contacts (id, full_name, phone, source, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`
-        : `INSERT OR IGNORE INTO contacts (id, full_name, phone, source, created_at) VALUES (?, ?, ?, ?, ?)`;
-
-      await db.run(contactQuery, [
-        contactId,
-        payment.customer?.name || data.full_name || data.contactName || 'Contacto sin nombre',
-        basicPhoneUpsert.phone || null,
-        'payment-webhook',
-        data.date_created || new Date().toISOString()
-      ]);
-      await finalizePreparedPhoneUpsert(basicPhoneUpsert, contactId);
+    // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
+    // queda ligado en ghl_contact_id. El resto del handler usa el ID local.
+    const { contactId: resolvedContactId } = await resolveOrCreateContactForGhl({
+      ghlContactId: contactId,
+      phone: payment.customer?.phone || data.phone,
+      email: payment.customer?.email || data.email,
+      fullName: payment.customer?.name || data.full_name || data.contactName || 'Contacto sin nombre',
+      source: 'payment-webhook',
+      createdAt: data.date_created || null
+    });
+    if (resolvedContactId) {
+      contactId = resolvedContactId;
     }
 
     // Extraer método de pago
@@ -926,7 +932,7 @@ export const handlePaymentPlanWebhook = async (req, res) => {
       scheduleConfig.items
     );
     const firstItem = items[0] || {};
-    const contactId = firstValue(
+    let contactId = firstValue(
       data.contact_id,
       data.contactId,
       plan.contact_id,
@@ -952,20 +958,18 @@ export const handlePaymentPlanWebhook = async (req, res) => {
     const raw = plan && typeof plan === 'object' ? plan : data;
 
     if (contactId) {
-      const existingContact = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId]);
-      if (!existingContact) {
-        const usePostgres = process.env.DATABASE_URL ? true : false;
-        const contactQuery = usePostgres
-          ? `INSERT INTO contacts (id, full_name, phone, source, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`
-          : `INSERT OR IGNORE INTO contacts (id, full_name, phone, source, created_at) VALUES (?, ?, ?, ?, ?)`;
-
-        await db.run(contactQuery, [
-          contactId,
-          contactName || 'Contacto sin nombre',
-          phone,
-          'payment-plan-webhook',
-          createdAt || new Date().toISOString()
-        ]);
+      // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
+      // queda ligado en ghl_contact_id. El plan se guarda con el ID local.
+      const { contactId: resolvedContactId } = await resolveOrCreateContactForGhl({
+        ghlContactId: contactId,
+        phone,
+        email: firstValue(contact.email, plan.email, data.email) || null,
+        fullName: contactName || 'Contacto sin nombre',
+        source: 'payment-plan-webhook',
+        createdAt: createdAt || null
+      });
+      if (resolvedContactId) {
+        contactId = resolvedContactId;
       }
     }
 
@@ -1063,31 +1067,22 @@ export const handleAppointmentWebhook = async (req, res) => {
       return res.status(200).json({ success: true, message: 'Webhook recibido' });
     }
 
-    const contactId = data.contact_id || data.contactId;
+    let contactId = data.contact_id || data.contactId;
     const usePostgres = process.env.DATABASE_URL ? true : false;
 
-    // Verificar si el contacto existe, si no crearlo con datos básicos
+    // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
+    // queda ligado en ghl_contact_id. La cita se guarda con el ID local.
     if (contactId) {
-      const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId]);
-      if (!contactExists) {
-        logger.info(`Contacto ${contactId} no existe, creando con datos básicos...`);
-        const basicPhoneUpsert = await prepareContactPhoneUpsert({
-          contactId,
-          phone: data.phone
-        });
-
-        const contactQuery = usePostgres
-          ? `INSERT INTO contacts (id, full_name, phone, source, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`
-          : `INSERT OR IGNORE INTO contacts (id, full_name, phone, source, created_at) VALUES (?, ?, ?, ?, ?)`;
-
-        await db.run(contactQuery, [
-          contactId,
-          data.full_name || data.contactName || 'Contacto sin nombre',
-          basicPhoneUpsert.phone || null,
-          'appointment-webhook',
-          data.date_created || new Date().toISOString()
-        ]);
-        await finalizePreparedPhoneUpsert(basicPhoneUpsert, contactId);
+      const { contactId: resolvedContactId } = await resolveOrCreateContactForGhl({
+        ghlContactId: contactId,
+        phone: data.phone,
+        email: data.email || null,
+        fullName: data.full_name || data.contactName || 'Contacto sin nombre',
+        source: 'appointment-webhook',
+        createdAt: data.date_created || null
+      });
+      if (resolvedContactId) {
+        contactId = resolvedContactId;
       }
     }
 
@@ -1205,7 +1200,7 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
       || data.event_id
       || data.id;
 
-    const contactId = data.contact_id
+    let contactId = data.contact_id
       || data.contactId
       || data.contact?.id
       || appointment.contactId
@@ -1221,24 +1216,18 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
     const usePostgres = process.env.DATABASE_URL ? true : false;
 
     if (contactId) {
-      const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId]);
-      if (!contactExists) {
-        const basicPhoneUpsert = await prepareContactPhoneUpsert({
-          contactId,
-          phone: data.phone || data.contactPhone || data.contact?.phone
-        });
-        const contactQuery = usePostgres
-          ? `INSERT INTO contacts (id, full_name, phone, source, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`
-          : `INSERT OR IGNORE INTO contacts (id, full_name, phone, source, created_at) VALUES (?, ?, ?, ?, ?)`;
-
-        await db.run(contactQuery, [
-          contactId,
-          data.full_name || data.contactName || data.contact?.name || 'Contacto sin nombre',
-          basicPhoneUpsert.phone || null,
-          'appointment-showed-webhook',
-          data.date_created || data.dateCreated || new Date().toISOString()
-        ]);
-        await finalizePreparedPhoneUpsert(basicPhoneUpsert, contactId);
+      // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
+      // queda ligado en ghl_contact_id.
+      const { contactId: resolvedContactId } = await resolveOrCreateContactForGhl({
+        ghlContactId: contactId,
+        phone: data.phone || data.contactPhone || data.contact?.phone,
+        email: data.email || data.contact?.email || null,
+        fullName: data.full_name || data.contactName || data.contact?.name || 'Contacto sin nombre',
+        source: 'appointment-showed-webhook',
+        createdAt: data.date_created || data.dateCreated || null
+      });
+      if (resolvedContactId) {
+        contactId = resolvedContactId;
       }
     }
 

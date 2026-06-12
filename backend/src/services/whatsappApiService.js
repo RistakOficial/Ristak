@@ -6,7 +6,7 @@ import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import fetch from 'node-fetch'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
-import { findContactByPhoneCandidates } from './contactIdentityService.js'
+import { findContactByPhoneCandidates, generateContactId } from './contactIdentityService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { maybeConfirmAppointmentFromReply } from './appointmentConfirmationService.js'
 import {
@@ -2795,7 +2795,9 @@ async function upsertLocalContact({ phone, profileName, messageTimestamp, attrib
   const fullName = contactName || GENERIC_CONTACT_NAME
 
   if (!existing) {
-    const contactId = hashId('waapi_contact', canonicalPhone)
+    // ID propio de Ristak: el teléfono/perfil de WhatsApp queda como referencia
+    // (contacts.phone y whatsapp_api_contacts), nunca como primary key.
+    const contactId = generateContactId()
     await db.run(`
       INSERT INTO contacts (
         id, phone, full_name, first_name, source, attribution_url, attribution_session_source,
