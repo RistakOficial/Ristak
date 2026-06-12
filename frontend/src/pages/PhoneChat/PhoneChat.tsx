@@ -227,6 +227,7 @@ type WhatsAppNumberMode = 'merged' | 'separated'
 type ConversationSortMode = 'recent' | 'unread'
 type PhotoPickDestination = 'chat' | 'cameraShare'
 type ContactInfoDetailPanel = 'payments' | 'appointments' | 'journey' | null
+type ContactInfoRecordDetail = { type: 'payment'; id: string } | { type: 'appointment'; id: string } | null
 type ContactInfoArchiveTab = 'media' | 'links' | 'documents'
 type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
 type MessageActionMenuMode = 'main' | 'more'
@@ -468,6 +469,7 @@ interface ContactInfoPayment {
   amount: number
   status?: string | null
   date: string
+  title?: string | null
 }
 
 interface ContactInfoAppointment {
@@ -475,6 +477,8 @@ interface ContactInfoAppointment {
   title: string
   status?: string | null
   startTime: string
+  endTime?: string | null
+  notes?: string | null
 }
 
 interface ContactInfoArchiveItem {
@@ -499,11 +503,6 @@ interface ContactInfoCustomFieldView {
   options?: unknown[]
   field?: ContactCustomField | null
   definition?: ContactCustomFieldDefinition | null
-}
-
-interface ContactInfoJourneyDetail {
-  label: string
-  value: string
 }
 
 function getPhoneChatDeviceMode(): PhoneChatDeviceMode {
@@ -1666,7 +1665,8 @@ function getContactInfoPayments(contact?: Contact | null, journey: JourneyEvent[
       id: String(payment.id || `${contact?.id || 'contact'}-payment-${index}`),
       amount: Number(payment.amount || 0),
       status: payment.status,
-      date: payment.date || contact?.createdAt || new Date().toISOString()
+      date: payment.date || contact?.createdAt || new Date().toISOString(),
+      title: null
     }))
 
   if (contactPayments.length > 0) {
@@ -1679,7 +1679,8 @@ function getContactInfoPayments(contact?: Contact | null, journey: JourneyEvent[
       id: String(event.data?.id || `${contact?.id || 'contact'}-journey-payment-${index}`),
       amount: Number(event.data?.amount || 0),
       status: event.data?.status || null,
-      date: event.date
+      date: event.date,
+      title: event.data?.title || event.data?.type || null
     }))
     .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
 }
@@ -1690,7 +1691,9 @@ function getContactInfoAppointments(contact?: Contact | null, journey: JourneyEv
       id: String(appointment.id || `${contact?.id || 'contact'}-appointment-${index}`),
       title: appointment.title || 'Cita',
       status: appointment.appointment_status || appointment.status || null,
-      startTime: appointment.start_time || appointment.end_time || contact?.createdAt || new Date().toISOString()
+      startTime: appointment.start_time || appointment.end_time || contact?.createdAt || new Date().toISOString(),
+      endTime: appointment.end_time || null,
+      notes: appointment.notes || null
     }))
 
   if (contactAppointments.length > 0) {
@@ -1703,7 +1706,9 @@ function getContactInfoAppointments(contact?: Contact | null, journey: JourneyEv
       id: String(event.data?.id || `${contact?.id || 'contact'}-journey-appointment-${index}`),
       title: String(event.data?.title || 'Cita'),
       status: event.data?.status || null,
-      startTime: String(event.data?.start_time || event.date)
+      startTime: String(event.data?.start_time || event.date),
+      endTime: event.data?.end_time ? String(event.data.end_time) : null,
+      notes: event.data?.notes ? String(event.data.notes) : null
     }))
     .sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime))
 }
@@ -2265,137 +2270,6 @@ function getJourneyEventDescription(event: JourneyEvent) {
   return ''
 }
 
-function getJourneyDetailText(value: unknown) {
-  if (value === null || value === undefined) return ''
-  if (typeof value === 'boolean') return value ? 'Sí' : 'No'
-  if (typeof value === 'number') return getReadableValue(value)
-
-  const normalized = String(value).trim()
-  if (!normalized || ['null', 'undefined', 'nan'].includes(normalized.toLowerCase())) return ''
-
-  return getReadableValue(normalized)
-}
-
-function addJourneyDetail(
-  details: ContactInfoJourneyDetail[],
-  seen: Set<string>,
-  label: string,
-  value: unknown
-) {
-  const text = getJourneyDetailText(value)
-  if (!text) return
-
-  const key = `${label}:${text}`.toLowerCase()
-  if (seen.has(key)) return
-
-  seen.add(key)
-  details.push({ label, value: text })
-}
-
-function addJourneyDateDetail(
-  details: ContactInfoJourneyDetail[],
-  seen: Set<string>,
-  label: string,
-  value: unknown,
-  formatDateTime: (value: string) => string
-) {
-  const text = getJourneyDetailText(value)
-  if (!text) return
-
-  const time = Date.parse(text)
-  addJourneyDetail(details, seen, label, Number.isFinite(time) ? formatDateTime(text) : text)
-}
-
-function getJourneyDirectionLabel(value?: string | null) {
-  const normalized = String(value || '').toLowerCase()
-  if (normalized === 'outbound') return 'Enviado por ti'
-  if (normalized === 'inbound') return 'Enviado por el contacto'
-  return ''
-}
-
-function getJourneyLocationLabel(data: Record<string, any>) {
-  return [data.geo_city, data.geo_region, data.geo_country]
-    .map((value) => getReadableValue(value))
-    .filter(Boolean)
-    .join(', ')
-}
-
-function getJourneyEventDetails(
-  event: JourneyEvent,
-  formatDateTime: (value: string) => string
-): ContactInfoJourneyDetail[] {
-  const data = event.data || {}
-  const details: ContactInfoJourneyDetail[] = []
-  const seen = new Set<string>()
-
-  if (event.type === 'page_visit') {
-    addJourneyDetail(details, seen, 'Formulario', data.form_site_name)
-    addJourneyDetail(details, seen, 'Página', data.public_page_title || getPageName(data.page_url || data.landing_page))
-    addJourneyDetail(details, seen, 'Sitio', data.site_name || data.site_slug)
-    addJourneyDetail(details, seen, 'Origen', getJourneyPlatformLabel(event) || data.site_source_name || data.utm_source)
-    addJourneyDetail(details, seen, 'Medio', data.utm_medium)
-    addJourneyDetail(details, seen, 'Campaña', data.campaign_name || data.utm_campaign)
-    addJourneyDetail(details, seen, 'Anuncio', data.ad_name || data.utm_content)
-    addJourneyDetail(details, seen, 'Dispositivo', [data.device_type, data.browser].map((value) => getReadableValue(value)).filter(Boolean).join(' · '))
-    addJourneyDetail(details, seen, 'Ubicación', getJourneyLocationLabel(data))
-    addJourneyDetail(details, seen, 'Conversión', data.conversion_type)
-    addJourneyDetail(details, seen, 'Envío', data.submission_id)
-    return details
-  }
-
-  if (event.type === 'contact_created') {
-    addJourneyDetail(details, seen, 'Nombre', data.name)
-    addJourneyDetail(details, seen, 'Teléfono', data.phone)
-    addJourneyDetail(details, seen, 'Correo', data.email)
-    addJourneyDetail(details, seen, 'Fuente', data.source)
-    addJourneyDetail(details, seen, 'Campaña', data.campaign_name)
-    addJourneyDetail(details, seen, 'Conjunto', data.adset_name)
-    addJourneyDetail(details, seen, 'Anuncio', data.attribution_ad_name || data.meta_ad_name)
-    return details
-  }
-
-  if (event.type === 'appointment') {
-    addJourneyDetail(details, seen, 'Cita', data.title)
-    addJourneyDateDetail(details, seen, 'Inicio', data.start_time, formatDateTime)
-    addJourneyDateDetail(details, seen, 'Fin', data.end_time, formatDateTime)
-    addJourneyDetail(details, seen, 'Estado', formatPlainStatus(data.status))
-    addJourneyDetail(details, seen, 'Ubicación', data.address)
-    addJourneyDetail(details, seen, 'Notas', data.notes)
-    return details
-  }
-
-  if (event.type === 'payment') {
-    const amount = Number(data.amount || 0)
-    addJourneyDetail(details, seen, 'Monto', amount > 0 ? formatCurrency(amount) : '')
-    addJourneyDetail(details, seen, 'Estado', formatPlainStatus(data.status))
-    addJourneyDetail(details, seen, 'Concepto', data.title)
-    addJourneyDetail(details, seen, 'Tipo', data.type)
-    addJourneyDetail(details, seen, 'Proveedor', data.payment_provider)
-    return details
-  }
-
-  if (event.type === 'whatsapp_message' || event.type === 'meta_message') {
-    const messageText = data.message_text || data.message || data.body
-    addJourneyDetail(details, seen, 'Dirección', getJourneyDirectionLabel(data.direction))
-    addJourneyDetail(details, seen, 'Mensaje', messageText)
-    addJourneyDetail(details, seen, 'Tipo', getMessageTypeLabel(String(data.message_type || ''), 'Mensaje'))
-    addJourneyDetail(details, seen, 'Estado', formatPlainStatus(data.status))
-    addJourneyDetail(details, seen, 'Canal', getJourneyPlatformLabel(event) || getHighLevelChatChannelLabel(data.transport) || data.transport || data.source)
-    addJourneyDetail(details, seen, 'Contacto', data.profile_name || data.username || data.phone)
-    addJourneyDetail(details, seen, 'De', data.from_phone || data.sender_id)
-    addJourneyDetail(details, seen, 'Para', data.to_phone || data.recipient_id)
-    addJourneyDetail(details, seen, 'Número negocio', data.business_phone)
-    addJourneyDetail(details, seen, 'Campaña', data.campaign_name)
-    addJourneyDetail(details, seen, 'Conjunto', data.adset_name)
-    addJourneyDetail(details, seen, 'Anuncio', data.attribution_ad_name || data.ad_name || data.referral_headline)
-    addJourneyDetail(details, seen, 'CTA', data.referral_body)
-    addJourneyDetail(details, seen, 'Origen anuncio', data.referral_source_url)
-    addJourneyDetail(details, seen, 'Error', data.error_message || data.error_code)
-  }
-
-  return details
-}
-
 function getResolvedMetaAttribution(contact?: Contact | null, journey: JourneyEvent[] = []): Contact['metaAttribution'] | null {
   const direct = contact?.metaAttribution
   if (direct && (direct.campaignName || direct.adsetName || direct.adName || direct.adId)) {
@@ -2754,6 +2628,7 @@ export const PhoneChat: React.FC = () => {
   const [contactInfoLoading, setContactInfoLoading] = useState(false)
   const [contactInfoError, setContactInfoError] = useState('')
   const [contactInfoDetailPanel, setContactInfoDetailPanel] = useState<ContactInfoDetailPanel>(null)
+  const [contactInfoRecordDetail, setContactInfoRecordDetail] = useState<ContactInfoRecordDetail>(null)
   const [contactNameEditing, setContactNameEditing] = useState(false)
   const [contactNameDraft, setContactNameDraft] = useState('')
   const [savingContactName, setSavingContactName] = useState(false)
@@ -3852,6 +3727,7 @@ export const PhoneChat: React.FC = () => {
   useEffect(() => {
     if (!contactInfoOpen) {
       setContactInfoArchiveOpen(false)
+      setContactInfoRecordDetail(null)
       setEditingCustomFieldId(null)
       setCustomFieldDrafts({})
       setSavingCustomFieldId(null)
@@ -3860,6 +3736,7 @@ export const PhoneChat: React.FC = () => {
 
   useEffect(() => {
     setContactInfoArchiveOpen(false)
+    setContactInfoRecordDetail(null)
   }, [activeContactId])
 
   useLayoutEffect(() => {
@@ -4238,6 +4115,8 @@ export const PhoneChat: React.FC = () => {
     setContactInfoError('')
     setContactInfoLoading(false)
     setContactInfoArchiveOpen(false)
+    setContactInfoDetailPanel(null)
+    setContactInfoRecordDetail(null)
     setMessages([])
     setContactJourney([])
     setDraftAttachments([])
@@ -4251,6 +4130,7 @@ export const PhoneChat: React.FC = () => {
     setContactInfoLoading(false)
     setContactInfoArchiveOpen(false)
     setContactInfoDetailPanel(null)
+    setContactInfoRecordDetail(null)
     setEditingCustomFieldId(null)
     setCustomFieldDrafts({})
     setSavingCustomFieldId(null)
@@ -8531,6 +8411,32 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const renderContactInfoActionRow = (
+    key: string,
+    icon: React.ReactNode,
+    label: string,
+    value: React.ReactNode,
+    detail: React.ReactNode,
+    onClick: () => void,
+    ariaLabel: string
+  ) => (
+    <button
+      key={key}
+      type="button"
+      className={styles.contactInfoActionRow}
+      onClick={onClick}
+      aria-label={ariaLabel}
+    >
+      <span className={styles.contactInfoRowIcon}>{icon}</span>
+      <span className={styles.contactInfoRowText}>
+        <small>{label}</small>
+        <strong>{value}</strong>
+        {detail && <em>{detail}</em>}
+      </span>
+      <ChevronRight size={18} className={styles.contactInfoActionChevron} aria-hidden="true" />
+    </button>
+  )
+
   const renderCustomFieldInput = (customField: ContactInfoCustomFieldView) => {
     const draftValue = customFieldDrafts[customField.id] ?? customField.editValue
     const options = getCustomFieldOptionItems(customField.options || [])
@@ -8739,6 +8645,116 @@ export const PhoneChat: React.FC = () => {
         : contactInfoDetailPanel === 'appointments'
           ? 'Citas'
           : 'Viaje del cliente'
+      const selectedPayment = contactInfoDetailPanel === 'payments' && contactInfoRecordDetail?.type === 'payment'
+        ? contactInfoPayments.find((payment) => payment.id === contactInfoRecordDetail.id) || null
+        : null
+      const selectedAppointment = contactInfoDetailPanel === 'appointments' && contactInfoRecordDetail?.type === 'appointment'
+        ? contactInfoAppointments.find((appointment) => appointment.id === contactInfoRecordDetail.id) || null
+        : null
+
+      if (selectedPayment) {
+        return (
+          <section
+            className={`${styles.contactInfoScreen} ${contactInfoOpen ? styles.contactInfoScreenOpen : ''}`}
+            aria-label="Detalle de pago"
+            aria-hidden={!contactInfoOpen}
+          >
+            <header className={styles.contactInfoTopbar}>
+              <button type="button" className={styles.backButton} onClick={() => setContactInfoRecordDetail(null)} aria-label="Volver a pagos">
+                <ChevronLeft size={32} />
+              </button>
+              <strong>Detalle de pago</strong>
+              <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
+            </header>
+
+            <div className={`${styles.contactInfoContent} ${styles.contactInfoDetailContent}`} data-phone-chat-scrollable="true">
+              <section className={styles.contactInfoDetailSection}>
+                <div className={styles.contactInfoRows}>
+                  {renderContactInfoRow(
+                    'selected-payment-amount',
+                    <CircleDollarSign size={17} />,
+                    'Monto',
+                    formatCurrency(selectedPayment.amount)
+                  )}
+                  {renderContactInfoRow(
+                    'selected-payment-date',
+                    <Clock size={17} />,
+                    'Fecha',
+                    formatLocalDateTime(selectedPayment.date)
+                  )}
+                  {renderContactInfoRow(
+                    'selected-payment-status',
+                    <Check size={17} />,
+                    'Estado',
+                    formatPlainStatus(selectedPayment.status)
+                  )}
+                  {renderContactInfoRow(
+                    'selected-payment-title',
+                    <ReceiptText size={17} />,
+                    'Concepto',
+                    selectedPayment.title || ''
+                  )}
+                </div>
+              </section>
+            </div>
+          </section>
+        )
+      }
+
+      if (selectedAppointment) {
+        return (
+          <section
+            className={`${styles.contactInfoScreen} ${contactInfoOpen ? styles.contactInfoScreenOpen : ''}`}
+            aria-label="Detalle de cita"
+            aria-hidden={!contactInfoOpen}
+          >
+            <header className={styles.contactInfoTopbar}>
+              <button type="button" className={styles.backButton} onClick={() => setContactInfoRecordDetail(null)} aria-label="Volver a citas">
+                <ChevronLeft size={32} />
+              </button>
+              <strong>Detalle de cita</strong>
+              <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
+            </header>
+
+            <div className={`${styles.contactInfoContent} ${styles.contactInfoDetailContent}`} data-phone-chat-scrollable="true">
+              <section className={styles.contactInfoDetailSection}>
+                <div className={styles.contactInfoRows}>
+                  {renderContactInfoRow(
+                    'selected-appointment-title',
+                    <CalendarDays size={17} />,
+                    'Cita',
+                    selectedAppointment.title
+                  )}
+                  {renderContactInfoRow(
+                    'selected-appointment-start',
+                    <Clock size={17} />,
+                    'Inicio',
+                    formatLocalDateTime(selectedAppointment.startTime)
+                  )}
+                  {renderContactInfoRow(
+                    'selected-appointment-end',
+                    <Clock size={17} />,
+                    'Fin',
+                    selectedAppointment.endTime ? formatLocalDateTime(selectedAppointment.endTime) : ''
+                  )}
+                  {renderContactInfoRow(
+                    'selected-appointment-status',
+                    <Check size={17} />,
+                    'Estado',
+                    formatPlainStatus(selectedAppointment.status)
+                  )}
+                  {renderContactInfoRow(
+                    'selected-appointment-notes',
+                    <FileText size={17} />,
+                    'Notas',
+                    selectedAppointment.notes || ''
+                  )}
+                </div>
+              </section>
+            </div>
+          </section>
+        )
+      }
 
       return (
         <section
@@ -8747,7 +8763,15 @@ export const PhoneChat: React.FC = () => {
           aria-hidden={!contactInfoOpen}
         >
           <header className={styles.contactInfoTopbar}>
-            <button type="button" className={styles.backButton} onClick={() => setContactInfoDetailPanel(null)} aria-label="Volver a info del contacto">
+            <button
+              type="button"
+              className={styles.backButton}
+              onClick={() => {
+                setContactInfoRecordDetail(null)
+                setContactInfoDetailPanel(null)
+              }}
+              aria-label="Volver a info del contacto"
+            >
               <ChevronLeft size={32} />
             </button>
             <strong>{detailTitle}</strong>
@@ -8765,12 +8789,14 @@ export const PhoneChat: React.FC = () => {
                     formatCurrency(Number(contactInfoData.ltv || 0) || revenueTotal),
                     `${paymentsCount} pago${paymentsCount === 1 ? '' : 's'} registrado${paymentsCount === 1 ? '' : 's'}`
                   )}
-                  {contactInfoPayments.map((payment) => renderContactInfoRow(
+                  {contactInfoPayments.map((payment) => renderContactInfoActionRow(
                     `payment-detail-${payment.id}`,
                     <CreditCard size={17} />,
                     formatLocalDateShort(payment.date),
                     formatCurrency(payment.amount),
-                    formatPlainStatus(payment.status)
+                    formatPlainStatus(payment.status),
+                    () => setContactInfoRecordDetail({ type: 'payment', id: payment.id }),
+                    `Ver detalle de pago de ${formatCurrency(payment.amount)}`
                   ))}
                 </div>
                 {contactInfoPayments.length === 0 && (
@@ -8787,12 +8813,14 @@ export const PhoneChat: React.FC = () => {
               <section className={styles.contactInfoDetailSection}>
                 {contactInfoAppointments.length > 0 ? (
                   <div className={styles.contactInfoRows}>
-                    {contactInfoAppointments.map((appointment) => renderContactInfoRow(
+                    {contactInfoAppointments.map((appointment) => renderContactInfoActionRow(
                       `appointment-detail-${appointment.id}`,
                       <CalendarDays size={17} />,
                       appointment.title,
                       formatLocalDateTime(appointment.startTime),
-                      formatPlainStatus(appointment.status)
+                      formatPlainStatus(appointment.status),
+                      () => setContactInfoRecordDetail({ type: 'appointment', id: appointment.id }),
+                      `Ver detalle de ${appointment.title}`
                     ))}
                   </div>
                 ) : (
@@ -8805,33 +8833,19 @@ export const PhoneChat: React.FC = () => {
               <section className={styles.contactInfoDetailSection}>
                 {contactInfoJourneyEvents.length > 0 ? (
                   <div className={styles.contactInfoTimeline}>
-                    {contactInfoJourneyEvents.map((event, index) => {
-                      const details = getJourneyEventDetails(event, formatLocalDateTime)
-
-                      return (
-                        <div key={`${event.type}-${event.date}-${index}`} className={styles.contactInfoTimelineItem}>
-                          <span className={`${styles.contactInfoTimelineIcon} ${getJourneyEventIconClass(event)}`}>
-                            {getJourneyEventIcon(event)}
-                            {getJourneyEventNetworkBadge(event)}
-                          </span>
-                          <div>
-                            <strong>{getJourneyEventLabel(event, leadLabel)}</strong>
-                            <small>{getJourneyEventDescription(event)}</small>
-                            <em>{formatLocalDateTime(event.date)}</em>
-                            {details.length > 0 && (
-                              <dl className={styles.contactInfoTimelineDetails}>
-                                {details.map((detail) => (
-                                  <div key={`${detail.label}-${detail.value}`}>
-                                    <dt>{detail.label}</dt>
-                                    <dd>{detail.value}</dd>
-                                  </div>
-                                ))}
-                              </dl>
-                            )}
-                          </div>
+                    {contactInfoJourneyEvents.map((event, index) => (
+                      <div key={`${event.type}-${event.date}-${index}`} className={styles.contactInfoTimelineItem}>
+                        <span className={`${styles.contactInfoTimelineIcon} ${getJourneyEventIconClass(event)}`}>
+                          {getJourneyEventIcon(event)}
+                          {getJourneyEventNetworkBadge(event)}
+                        </span>
+                        <div>
+                          <strong>{getJourneyEventLabel(event, leadLabel)}</strong>
+                          <small>{getJourneyEventDescription(event)}</small>
+                          <em>{formatLocalDateTime(event.date)}</em>
                         </div>
-                      )
-                    })}
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <p className={styles.contactInfoDetailEmpty}>Aún no hay actividad guardada para este contacto.</p>
@@ -8935,6 +8949,7 @@ export const PhoneChat: React.FC = () => {
                 className={styles.contactInfoMetricCard}
                 onClick={() => {
                   setContactInfoArchiveOpen(false)
+                  setContactInfoRecordDetail(null)
                   setContactInfoDetailPanel('payments')
                 }}
                 aria-label="Ver pagos totales"
@@ -8953,6 +8968,7 @@ export const PhoneChat: React.FC = () => {
                 className={styles.contactInfoMetricCard}
                 onClick={() => {
                   setContactInfoArchiveOpen(false)
+                  setContactInfoRecordDetail(null)
                   setContactInfoDetailPanel('appointments')
                 }}
                 aria-label="Ver citas"
@@ -9084,6 +9100,7 @@ export const PhoneChat: React.FC = () => {
               className={styles.contactInfoJourneyButton}
               onClick={() => {
                 setContactInfoArchiveOpen(false)
+                setContactInfoRecordDetail(null)
                 setContactInfoDetailPanel('journey')
               }}
               aria-label="Ver viaje del cliente"

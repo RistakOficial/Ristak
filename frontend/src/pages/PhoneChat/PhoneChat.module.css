@@ -2326,6 +2326,36 @@
   border-top: 1px solid var(--phone-chat-border);
 }
 
+.contactInfoActionRow {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 18px;
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 0;
+  border: 0;
+  color: var(--phone-chat-text);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+
+.contactInfoActionRow + .contactInfoActionRow,
+.contactInfoRow + .contactInfoActionRow,
+.contactInfoActionRow + .contactInfoRow {
+  border-top: 1px solid var(--phone-chat-border);
+}
+
+.contactInfoActionRow:active {
+  transform: scale(0.992);
+}
+
+.contactInfoActionChevron {
+  align-self: center;
+  color: var(--phone-chat-muted);
+}
+
 .contactInfoEditableRow {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) 34px;
@@ -2718,53 +2748,8 @@
   line-height: 1.35;
 }
 
-.contactInfoTimelineDetails {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-  margin: 6px 0 0;
-  padding: 0;
-}
-
-.contactInfoTimelineDetails div {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-  max-width: 100%;
-  min-width: 0;
-  padding: 4px 7px;
-  border: 1px solid color-mix(in srgb, var(--phone-chat-border) 78%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--phone-chat-surface-soft) 74%, transparent);
-}
-
-.contactInfoTimelineDetails dt,
-.contactInfoTimelineDetails dd {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
-  font-size: 11.5px;
-  line-height: 1.2;
-}
-
-.contactInfoTimelineDetails dt {
-  flex: 0 0 auto;
-  color: var(--phone-chat-muted);
-  font-weight: 820;
-}
-
-.contactInfoTimelineDetails dd {
-  color: var(--phone-chat-text);
-  font-weight: 760;
-}
-
 :global(body[data-phone-chat-tone="dark"]) .contactInfoTimelineItem::before {
   background: color-mix(in srgb, var(--phone-chat-border) 72%, var(--phone-chat-accent) 28%);
-}
-
-:global(body[data-phone-chat-tone="dark"]) .contactInfoTimelineDetails div {
-  background: color-mix(in srgb, var(--phone-chat-surface) 82%, transparent);
 }
 
 .messagesPane {
