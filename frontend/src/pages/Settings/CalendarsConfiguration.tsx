@@ -1303,15 +1303,20 @@ export const CalendarsConfiguration: React.FC = () => {
 
               <div className={pageStyles.editorField}>
                 <span>Estado</span>
-                <button
-                  type="button"
-                  className={`${pageStyles.editorToggle} ${selectedCalendar.isActive ? pageStyles.editorToggleActive : ''}`}
-                  onClick={() => updateSelectedCalendar({ isActive: !selectedCalendar.isActive })}
-                  aria-pressed={selectedCalendar.isActive}
-                >
-                  <span />
-                  {selectedCalendar.isActive ? 'Activo' : 'Inactivo'}
-                </button>
+                <div className={styles.toggleContainer}>
+                  <button
+                    type="button"
+                    className={`${styles.toggle} ${selectedCalendar.isActive ? styles.toggleActive : ''}`}
+                    onClick={() => updateSelectedCalendar({ isActive: !selectedCalendar.isActive })}
+                    aria-pressed={selectedCalendar.isActive}
+                    aria-label={selectedCalendar.isActive ? 'Desactivar calendario' : 'Activar calendario'}
+                  >
+                    <span className={styles.toggleThumb} />
+                  </button>
+                  <span className={`${styles.toggleLabel} ${selectedCalendar.isActive ? styles.toggleLabelActive : ''}`}>
+                    {selectedCalendar.isActive ? 'Activo' : 'Inactivo'}
+                  </span>
+                </div>
               </div>
             </div>
           </section>
@@ -1605,15 +1610,20 @@ export const CalendarsConfiguration: React.FC = () => {
             </div>
           </div>
 
-          <button
-            type="button"
-            className={`${pageStyles.editorToggle} ${calendarPushEnabled ? pageStyles.editorToggleActive : ''}`}
-            onClick={handleCalendarPushEnabledToggle}
-            aria-pressed={calendarPushEnabled}
-          >
-            <span />
-            {calendarPushEnabled ? 'Encendidos' : 'Apagados'}
-          </button>
+          <div className={styles.toggleContainer}>
+            <button
+              type="button"
+              className={`${styles.toggle} ${calendarPushEnabled ? styles.toggleActive : ''}`}
+              onClick={handleCalendarPushEnabledToggle}
+              aria-pressed={calendarPushEnabled}
+              aria-label={calendarPushEnabled ? 'Desactivar notificaciones' : 'Activar notificaciones'}
+            >
+              <span className={styles.toggleThumb} />
+            </button>
+            <span className={`${styles.toggleLabel} ${calendarPushEnabled ? styles.toggleLabelActive : ''}`}>
+              {calendarPushEnabled ? 'Encendidos' : 'Apagados'}
+            </span>
+          </div>
         </section>
 
         <section className={pageStyles.notificationSettingsSection}>

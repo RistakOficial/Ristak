@@ -5,6 +5,7 @@ import {
   type AppointmentReminder,
   type AppointmentReminderInput,
   type ReminderChannelOption,
+  type ReminderNoConfirmAction,
   type ReminderSenderOption,
   formatReminderOffsetLabel
 } from '@/services/appointmentRemindersService'
@@ -55,7 +56,8 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       smartEnabled: reminder.smartEnabled,
       smartStart: reminder.smartStart,
       smartEnd: reminder.smartEnd,
-      smartOverflow: reminder.smartOverflow
+      smartOverflow: reminder.smartOverflow,
+      noConfirmAction: reminder.noConfirmAction
     })
     setSaving(false)
     setDeleting(false)
@@ -158,6 +160,32 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                     </span>
                   </span>
                 </label>
+              </div>
+            )}
+
+            {isConfirmation && (
+              <div className={styles.noConfirmBox}>
+                <span className={styles.noConfirmTitle}>Si el contacto no confirma</span>
+                <div className={styles.radioGroup}>
+                  {(
+                    [
+                      { value: 'no_action', label: 'No hacer nada' },
+                      { value: 'cancel_appointment', label: 'Cancelar la cita' },
+                      { value: 'notify_phone', label: 'Notificación al celular' },
+                      { value: 'notify_push', label: 'Notificación push' }
+                    ] as { value: ReminderNoConfirmAction; label: string }[]
+                  ).map(({ value, label }) => (
+                    <label key={value} className={styles.radioRow}>
+                      <input
+                        type="radio"
+                        name="noConfirmAction"
+                        checked={(draft.noConfirmAction || 'no_action') === value}
+                        onChange={() => set('noConfirmAction', value)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             )}
           </section>

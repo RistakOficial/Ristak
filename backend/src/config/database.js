@@ -3270,6 +3270,10 @@ async function initTables() {
       logger.warn('Advertencia al migrar IDs de etiquetas a slugs:', err.message)
     }
 
+    try {
+      await db.run("ALTER TABLE appointment_reminders ADD COLUMN no_confirm_action TEXT DEFAULT 'no_action'")
+    } catch (_) { /* columna ya existe */ }
+
     logger.success('Todas las tablas inicializadas correctamente')
   } catch (error) {
     logger.error('Error inicializando tablas:', error)
