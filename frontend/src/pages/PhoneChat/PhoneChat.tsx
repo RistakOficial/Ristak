@@ -9939,7 +9939,7 @@ export const PhoneChat: React.FC = () => {
     const firstAgentDef = agentDefs[0] || null
 
     return (
-      <div className={styles.agentMenuBody}>
+      <div className={styles.agentMenuBody} data-phone-chat-scrollable="true">
         <label className={styles.toggleRow}>
           <span>
             <strong>Agente conversacional</strong>

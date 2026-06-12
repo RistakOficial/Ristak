@@ -6513,8 +6513,14 @@
 
 .agentMenuBody {
   display: grid;
+  align-content: start;
   gap: 12px;
+  min-height: 0;
+  max-height: min(66dvh, 580px);
   padding-bottom: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .agentMenuField {
