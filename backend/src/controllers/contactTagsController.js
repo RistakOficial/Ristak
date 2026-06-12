@@ -1,9 +1,12 @@
 import {
   listContactTags,
   createContactTag,
-  renameContactTag,
+  updateContactTag,
   deleteContactTag,
-  getContactTagUsage
+  getContactTagUsage,
+  listContactTagFolders,
+  createContactTagFolder,
+  deleteContactTagFolder
 } from '../services/contactTagsService.js'
 import { logger } from '../utils/logger.js'
 
@@ -26,10 +29,31 @@ export const getContactTags = async (req, res) => {
   }
 }
 
+/** GET /api/contact-tags/catalog — etiquetas (con uso) + carpetas en una llamada */
+export const getContactTagsCatalog = async (req, res) => {
+  try {
+    const [tags, folders, usage] = await Promise.all([
+      listContactTags(),
+      listContactTagFolders(),
+      getContactTagUsage()
+    ])
+    res.json({
+      success: true,
+      data: {
+        tags: tags.map((tag) => ({ ...tag, usageCount: usage[tag.id] || 0 })),
+        folders
+      }
+    })
+  } catch (error) {
+    logger.error(`Error cargando catálogo de etiquetas: ${error.message}`)
+    res.status(500).json({ success: false, error: 'No se pudo cargar el catálogo de etiquetas' })
+  }
+}
+
 /** POST /api/contact-tags — crea (o devuelve la existente con ese nombre) */
 export const createContactTagHandler = async (req, res) => {
   try {
-    const tag = await createContactTag(req.body?.name)
+    const tag = await createContactTag(req.body?.name, { folderId: req.body?.folderId })
     res.status(201).json({ success: true, data: tag })
   } catch (error) {
     logger.error(`Error creando etiqueta de contacto: ${error.message}`)
@@ -40,13 +64,16 @@ export const createContactTagHandler = async (req, res) => {
   }
 }
 
-/** PUT /api/contact-tags/:id — renombra sin cambiar el ID */
+/** PUT /api/contact-tags/:id — renombra y/o mueve de carpeta sin cambiar el ID */
 export const updateContactTagHandler = async (req, res) => {
   try {
-    const tag = await renameContactTag(req.params.id, req.body?.name)
+    const patch = {}
+    if (req.body?.name !== undefined) patch.name = req.body.name
+    if (req.body?.folderId !== undefined) patch.folderId = req.body.folderId
+    const tag = await updateContactTag(req.params.id, patch)
     res.json({ success: true, data: tag })
   } catch (error) {
-    logger.error(`Error renombrando etiqueta ${req.params.id}: ${error.message}`)
+    logger.error(`Error actualizando etiqueta ${req.params.id}: ${error.message}`)
     res.status(error.statusCode || 500).json({
       success: false,
       error: error.statusCode ? error.message : 'No se pudo actualizar la etiqueta'
@@ -67,6 +94,40 @@ export const deleteContactTagHandler = async (req, res) => {
     res.status(error.statusCode || 500).json({
       success: false,
       error: error.statusCode ? error.message : 'No se pudo eliminar la etiqueta'
+    })
+  }
+}
+
+/** POST /api/contact-tags/folders — crea una carpeta de etiquetas */
+export const createContactTagFolderHandler = async (req, res) => {
+  try {
+    const folder = await createContactTagFolder({
+      name: req.body?.name,
+      description: req.body?.description
+    })
+    res.status(201).json({ success: true, data: folder })
+  } catch (error) {
+    logger.error(`Error creando carpeta de etiquetas: ${error.message}`)
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'No se pudo crear la carpeta'
+    })
+  }
+}
+
+/** DELETE /api/contact-tags/folders/:id — borra la carpeta; las etiquetas quedan sin carpeta */
+export const deleteContactTagFolderHandler = async (req, res) => {
+  try {
+    const deleted = await deleteContactTagFolder(req.params.id)
+    if (!deleted) {
+      return res.status(404).json({ success: false, error: 'Carpeta no encontrada' })
+    }
+    res.json({ success: true })
+  } catch (error) {
+    logger.error(`Error eliminando carpeta de etiquetas ${req.params.id}: ${error.message}`)
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'No se pudo eliminar la carpeta'
     })
   }
 }

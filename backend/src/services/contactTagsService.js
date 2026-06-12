@@ -49,7 +49,18 @@ function mapRow(row) {
   return {
     id: row.id,
     name: row.name,
+    folderId: row.folder_id || null,
     isSystem: false,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
+function mapFolderRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -81,11 +92,21 @@ export async function getContactTag(id) {
   return row ? mapRow(row) : null
 }
 
+async function resolveFolderId(folderId) {
+  const clean = String(folderId || '').trim()
+  if (!clean) return null
+  const folder = await db.get('SELECT id FROM contact_tag_folders WHERE id = ?', [clean])
+  if (!folder) {
+    throw Object.assign(new Error('Esa carpeta no existe'), { statusCode: 400 })
+  }
+  return clean
+}
+
 /**
  * Crea una etiqueta. Si ya existe una con el mismo nombre (normalizado),
  * devuelve la existente en vez de duplicar.
  */
-export async function createContactTag(name) {
+export async function createContactTag(name, { folderId = null } = {}) {
   const clean = String(name || '').trim().slice(0, 60)
   if (!clean) {
     throw Object.assign(new Error('El nombre de la etiqueta no puede estar vacío'), { statusCode: 400 })
@@ -94,13 +115,16 @@ export async function createContactTag(name) {
   if (existing) return mapRow(existing)
 
   const id = `tag_${crypto.randomUUID()}`
-  await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [id, clean])
+  const cleanFolderId = await resolveFolderId(folderId)
+  await db.run('INSERT INTO contact_tags (id, name, folder_id) VALUES (?, ?, ?)', [id, clean, cleanFolderId])
   logger.info(`Etiqueta de contacto creada: ${clean} (${id})`)
   return getContactTag(id)
 }
 
-/** Renombra una etiqueta sin tocar su ID (las referencias siguen vivas). */
-export async function renameContactTag(id, name) {
+/**
+ * Actualiza nombre y/o carpeta sin tocar el ID (las referencias siguen vivas).
+ */
+export async function updateContactTag(id, { name, folderId } = {}) {
   if (isSystemTagId(id)) {
     throw Object.assign(new Error('Las etiquetas internas no se pueden editar'), { statusCode: 400 })
   }
@@ -108,16 +132,77 @@ export async function renameContactTag(id, name) {
   if (!current) {
     throw Object.assign(new Error('Etiqueta no encontrada'), { statusCode: 404 })
   }
-  const clean = String(name || '').trim().slice(0, 60)
-  if (!clean) {
-    throw Object.assign(new Error('El nombre de la etiqueta no puede estar vacío'), { statusCode: 400 })
+
+  const updates = []
+  const params = []
+
+  if (name !== undefined) {
+    const clean = String(name || '').trim().slice(0, 60)
+    if (!clean) {
+      throw Object.assign(new Error('El nombre de la etiqueta no puede estar vacío'), { statusCode: 400 })
+    }
+    const duplicate = await findCustomTagByName(clean)
+    if (duplicate && duplicate.id !== id) {
+      throw Object.assign(new Error('Ya existe una etiqueta con ese nombre'), { statusCode: 409 })
+    }
+    updates.push('name = ?')
+    params.push(clean)
   }
-  const duplicate = await findCustomTagByName(clean)
-  if (duplicate && duplicate.id !== id) {
-    throw Object.assign(new Error('Ya existe una etiqueta con ese nombre'), { statusCode: 409 })
+
+  if (folderId !== undefined) {
+    updates.push('folder_id = ?')
+    params.push(await resolveFolderId(folderId))
   }
-  await db.run('UPDATE contact_tags SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [clean, id])
+
+  if (updates.length > 0) {
+    params.push(id)
+    await db.run(`UPDATE contact_tags SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, params)
+  }
   return getContactTag(id)
+}
+
+/** Alias retrocompatible (renombrar era la única edición antes de carpetas). */
+export async function renameContactTag(id, name) {
+  return updateContactTag(id, { name })
+}
+
+// ---------------------------------------------------------------------------
+// Carpetas de etiquetas (mismo patrón que carpetas de campos personalizados)
+// ---------------------------------------------------------------------------
+
+export async function listContactTagFolders() {
+  const rows = await db.all('SELECT * FROM contact_tag_folders ORDER BY name COLLATE NOCASE ASC')
+    .catch(async () => db.all('SELECT * FROM contact_tag_folders ORDER BY LOWER(name) ASC'))
+  return rows.map(mapFolderRow)
+}
+
+export async function createContactTagFolder({ name, description = '' } = {}) {
+  const clean = String(name || '').trim().slice(0, 80)
+  if (!clean) {
+    throw Object.assign(new Error('El nombre de la carpeta no puede estar vacío'), { statusCode: 400 })
+  }
+  const rows = await db.all('SELECT id, name FROM contact_tag_folders')
+  if (rows.some((row) => normalizeTagName(row.name) === normalizeTagName(clean))) {
+    throw Object.assign(new Error('Ya existe una carpeta con ese nombre'), { statusCode: 409 })
+  }
+  const id = `tagfolder_${crypto.randomUUID()}`
+  await db.run('INSERT INTO contact_tag_folders (id, name, description) VALUES (?, ?, ?)', [
+    id,
+    clean,
+    String(description || '').trim().slice(0, 300) || null
+  ])
+  const row = await db.get('SELECT * FROM contact_tag_folders WHERE id = ?', [id])
+  return mapFolderRow(row)
+}
+
+/** Borra la carpeta; las etiquetas dentro quedan sin carpeta (no se borran). */
+export async function deleteContactTagFolder(id) {
+  const current = await db.get('SELECT * FROM contact_tag_folders WHERE id = ?', [id])
+  if (!current) return false
+  await db.run('UPDATE contact_tags SET folder_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE folder_id = ?', [id])
+  await db.run('DELETE FROM contact_tag_folders WHERE id = ?', [id])
+  logger.info(`Carpeta de etiquetas eliminada: ${current.name} (${id})`)
+  return true
 }
 
 /** Elimina la etiqueta del catálogo y la quita de todos los contactos. */

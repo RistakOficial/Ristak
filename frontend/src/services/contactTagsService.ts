@@ -10,9 +10,23 @@ export interface ContactTag {
   id: string
   name: string
   isSystem: boolean
+  folderId?: string | null
   usageCount?: number
   createdAt?: string
   updatedAt?: string
+}
+
+export interface ContactTagFolder {
+  id: string
+  name: string
+  description?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ContactTagsCatalog {
+  tags: ContactTag[]
+  folders: ContactTagFolder[]
 }
 
 type TagsListener = (tags: ContactTag[]) => void
@@ -52,16 +66,37 @@ export const contactTagsService = {
     return list
   },
 
-  async createTag(name: string): Promise<ContactTag> {
-    const tag = await apiClient.post<ContactTag>('/contact-tags', { name })
+  /** Etiquetas (con conteo de uso) + carpetas en una sola llamada */
+  async getCatalog(): Promise<ContactTagsCatalog> {
+    const catalog = await apiClient.get<ContactTagsCatalog>('/contact-tags/catalog')
+    const tags = Array.isArray(catalog?.tags) ? catalog.tags : []
+    notify(tags)
+    return { tags, folders: Array.isArray(catalog?.folders) ? catalog.folders : [] }
+  },
+
+  async createTag(name: string, folderId?: string): Promise<ContactTag> {
+    const tag = await apiClient.post<ContactTag>('/contact-tags', { name, folderId })
+    await contactTagsService.getTags(true)
+    return tag
+  },
+
+  async updateTag(id: string, patch: { name?: string; folderId?: string }): Promise<ContactTag> {
+    const tag = await apiClient.put<ContactTag>(`/contact-tags/${id}`, patch)
     await contactTagsService.getTags(true)
     return tag
   },
 
   async renameTag(id: string, name: string): Promise<ContactTag> {
-    const tag = await apiClient.put<ContactTag>(`/contact-tags/${id}`, { name })
+    return contactTagsService.updateTag(id, { name })
+  },
+
+  async createFolder(input: { name: string; description?: string }): Promise<ContactTagFolder> {
+    return apiClient.post<ContactTagFolder>('/contact-tags/folders', input)
+  },
+
+  async deleteFolder(id: string): Promise<void> {
+    await apiClient.delete(`/contact-tags/folders/${id}`)
     await contactTagsService.getTags(true)
-    return tag
   },
 
   async deleteTag(id: string): Promise<void> {

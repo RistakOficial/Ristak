@@ -3016,6 +3016,17 @@ async function initTables() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+    // Carpetas para organizar etiquetas (mismo patrón que campos personalizados)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS contact_tag_folders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run(`ALTER TABLE contact_tags ADD COLUMN folder_id TEXT`).catch(() => {})
 
     // Archivos adjuntos de automatizaciones (imágenes, videos, audios, docs)
     await db.run(`

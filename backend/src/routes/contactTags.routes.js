@@ -1,15 +1,23 @@
 import express from 'express'
 import {
   getContactTags,
+  getContactTagsCatalog,
   createContactTagHandler,
   updateContactTagHandler,
-  deleteContactTagHandler
+  deleteContactTagHandler,
+  createContactTagFolderHandler,
+  deleteContactTagFolderHandler
 } from '../controllers/contactTagsController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
 
 router.use(requireAuth)
+
+// Las rutas fijas van antes de '/:id'
+router.get('/catalog', getContactTagsCatalog)
+router.post('/folders', createContactTagFolderHandler)
+router.delete('/folders/:id', deleteContactTagFolderHandler)
 
 router.get('/', getContactTags)
 router.post('/', createContactTagHandler)
