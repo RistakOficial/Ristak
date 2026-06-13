@@ -282,6 +282,7 @@ interface ChatSwipeGesture {
   offset: number
   lastRenderedOffset: number
   active: boolean
+  verticalScroll: boolean
 }
 
 interface MessageInfoSwipeGesture {
@@ -2818,6 +2819,23 @@ export const PhoneChat: React.FC = () => {
   const chatSwipeGenerationRef = useRef(0)
   const chatSwipeCloseTimerRef = useRef<number | null>(null)
   const ignoreNextChatClickRef = useRef(false)
+  const ignoreNextChatClickTimerRef = useRef<number | null>(null)
+  const suppressNextChatClick = useCallback((duration = 320) => {
+    if (ignoreNextChatClickTimerRef.current !== null) {
+      window.clearTimeout(ignoreNextChatClickTimerRef.current)
+    }
+    ignoreNextChatClickRef.current = true
+    ignoreNextChatClickTimerRef.current = window.setTimeout(() => {
+      ignoreNextChatClickRef.current = false
+      ignoreNextChatClickTimerRef.current = null
+    }, duration)
+  }, [])
+  const clearChatClickSuppressTimer = useCallback(() => {
+    if (ignoreNextChatClickTimerRef.current === null) return
+    window.clearTimeout(ignoreNextChatClickTimerRef.current)
+    ignoreNextChatClickTimerRef.current = null
+    ignoreNextChatClickRef.current = false
+  }, [])
   const clearChatSwipeCloseTimer = useCallback(() => {
     if (chatSwipeCloseTimerRef.current === null) return
     window.clearTimeout(chatSwipeCloseTimerRef.current)
@@ -3751,9 +3769,10 @@ export const PhoneChat: React.FC = () => {
     if (payload.scrollable.getAttribute('data-phone-chat-list-scroll') !== 'true') return
     if (conversationVisible || chatsLoading || chatsRefreshing) return
 
+    suppressNextChatClick(520)
     triggerLightHapticFeedback()
     refreshChatInboxNow({ showIndicator: true }).catch(() => undefined)
-  }, [chatsLoading, chatsRefreshing, conversationVisible, refreshChatInboxNow])
+  }, [chatsLoading, chatsRefreshing, conversationVisible, refreshChatInboxNow, suppressNextChatClick])
 
   chatPullRefreshHandlerRef.current = handleChatPullRefreshRelease
 
@@ -3919,7 +3938,8 @@ export const PhoneChat: React.FC = () => {
 
   useEffect(() => () => {
     clearChatSwipeCloseTimer()
-  }, [clearChatSwipeCloseTimer])
+    clearChatClickSuppressTimer()
+  }, [clearChatClickSuppressTimer, clearChatSwipeCloseTimer])
 
   useEffect(() => {
     if (showArchivedChats) return
@@ -5154,10 +5174,7 @@ export const PhoneChat: React.FC = () => {
     setDraggingSwipe(null)
     closeSwipeActions()
     // Evita que al soltar el dedo se abra el chat debajo del menú
-    ignoreNextChatClickRef.current = true
-    window.setTimeout(() => {
-      ignoreNextChatClickRef.current = false
-    }, 420)
+    suppressNextChatClick(420)
     setChatQuickActionsContact(contact)
   }
 
@@ -5206,7 +5223,8 @@ export const PhoneChat: React.FC = () => {
       startOffset: currentOffset,
       offset: currentOffset,
       lastRenderedOffset: currentOffset,
-      active: false
+      active: false,
+      verticalScroll: false
     }
   }
 
@@ -5224,14 +5242,20 @@ export const PhoneChat: React.FC = () => {
     const deltaX = touch.clientX - gesture.startX
     const deltaY = touch.clientY - gesture.startY
     const horizontalDistance = Math.abs(deltaX)
+    const verticalDistance = Math.abs(deltaY)
 
     // Si el dedo se mueve (scroll o swipe), ya no es un long-press
-    if (chatLongPressRef.current && (horizontalDistance > MESSAGE_ACTION_MOVE_TOLERANCE || Math.abs(deltaY) > MESSAGE_ACTION_MOVE_TOLERANCE)) {
+    if (chatLongPressRef.current && (horizontalDistance > MESSAGE_ACTION_MOVE_TOLERANCE || verticalDistance > MESSAGE_ACTION_MOVE_TOLERANCE)) {
       clearChatLongPress()
     }
 
+    if (!gesture.active && (gesture.verticalScroll || (verticalDistance > MESSAGE_ACTION_MOVE_TOLERANCE && verticalDistance >= horizontalDistance))) {
+      gesture.verticalScroll = true
+      return
+    }
+
     if (!gesture.active) {
-      if (horizontalDistance < CHAT_SWIPE_ACTIVATE_THRESHOLD || horizontalDistance <= Math.abs(deltaY)) return
+      if (horizontalDistance < CHAT_SWIPE_ACTIVATE_THRESHOLD || horizontalDistance <= verticalDistance) return
       gesture.active = true
     }
 
@@ -5260,6 +5284,13 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
+    if (gesture.verticalScroll) {
+      setDraggingSwipe(null)
+      chatSwipeGestureRef.current = null
+      suppressNextChatClick(360)
+      return
+    }
+
     if (gesture.active) {
       const openThreshold = gesture.startOffset > 0 ? CHAT_SWIPE_CLOSE_THRESHOLD : CHAT_SWIPE_OPEN_THRESHOLD
       const shouldOpenSwipe = gesture.offset >= openThreshold
@@ -5273,10 +5304,7 @@ export const PhoneChat: React.FC = () => {
         setOpenSwipeChatId(null)
       }
       setDraggingSwipe(null)
-      ignoreNextChatClickRef.current = true
-      window.setTimeout(() => {
-        ignoreNextChatClickRef.current = false
-      }, 240)
+      suppressNextChatClick(240)
     }
 
     chatSwipeGestureRef.current = null
@@ -5291,6 +5319,12 @@ export const PhoneChat: React.FC = () => {
 
     handleSelectContact(contact)
   }
+
+  const handleChatListClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!ignoreNextChatClickRef.current) return
+    event.preventDefault()
+    event.stopPropagation()
+  }, [])
 
   const handleChatRowKeyDown = (event: React.KeyboardEvent<HTMLElement>, action: () => void) => {
     if (event.key !== 'Enter' && event.key !== ' ') return
@@ -10825,7 +10859,12 @@ export const PhoneChat: React.FC = () => {
             </div>
           </header>
 
-          <div className={styles.chatList} data-phone-chat-scrollable="true" data-phone-chat-list-scroll="true">
+          <div
+            className={styles.chatList}
+            data-phone-chat-scrollable="true"
+            data-phone-chat-list-scroll="true"
+            onClickCapture={handleChatListClickCapture}
+          >
             <div className={styles.chatListElasticContent} data-phone-elastic-target="true">
               {renderChats()}
             </div>
