@@ -34,6 +34,7 @@ import attributionRoutes from './routes/attribution.routes.js'
 import settingsRoutes from './routes/settings.routes.js'
 import calendarsRoutes from './routes/calendars.routes.js'
 import trackingRoutes, { publicTrackingRoutes } from './routes/tracking.routes.js'
+import triggerLinksRoutes from './routes/triggerLinks.routes.js'
 import configRoutes from './routes/config.routes.js'
 import costsRoutes from './routes/costs.routes.js'
 import maintenanceRoutes from './routes/maintenance.routes.js'
@@ -104,6 +105,7 @@ app.get('/health', (req, res) => {
 // Deben existir antes del host router de Sites para no capturar estas rutas como dominios públicos.
 app.use('/media', mediaRoutes)
 app.use('/internal', internalStorageRoutes)
+app.use('/trigger-links', triggerLinksRoutes)
 
 // Host router para Sites públicos. Debe correr antes de APIs privadas/static.
 app.use(publicSiteHostMiddleware)

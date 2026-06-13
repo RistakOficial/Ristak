@@ -13,6 +13,13 @@ import {
 import { getNotificationsView } from '../controllers/notificationsController.js';
 import { requireAuth } from '../middleware/authMiddleware.js';
 import {
+  createTriggerLinkHandler,
+  deleteTriggerLinkHandler,
+  listTriggerLinkEventsHandler,
+  listTriggerLinksHandler,
+  updateTriggerLinkHandler
+} from '../controllers/triggerLinksController.js';
+import {
   createMessageTemplateView,
   createTemplateCustomFieldView,
   createTemplateFolderView,
@@ -49,6 +56,13 @@ router.delete('/custom-fields/:definitionId', deleteCustomField);
 router.post('/custom-field-folders', createCustomFieldFolder);
 router.put('/custom-field-folders/:folderId', updateCustomFieldFolder);
 router.delete('/custom-field-folders/:folderId', archiveCustomFieldFolder);
+
+// Trigger links / enlaces de disparo
+router.get('/trigger-links', listTriggerLinksHandler);
+router.post('/trigger-links', createTriggerLinkHandler);
+router.put('/trigger-links/:triggerLinkId', updateTriggerLinkHandler);
+router.delete('/trigger-links/:triggerLinkId', deleteTriggerLinkHandler);
+router.get('/trigger-links/:triggerLinkId/events', listTriggerLinkEventsHandler);
 
 // GET /api/settings/notifications
 router.get('/notifications', getNotificationsView);

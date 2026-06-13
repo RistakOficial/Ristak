@@ -9,6 +9,7 @@ import { whatsappApiService, type WhatsAppApiTemplate } from './whatsappApiServi
 import { sitesService } from './sitesService'
 import { contactTagsService } from './contactTagsService'
 import { campaignsService, type ConnectedSocialProfile } from './campaignsService'
+import { triggerLinksService } from './triggerLinksService'
 
 /**
  * Catálogos de datos reales del CRM para los selectores del editor de
@@ -51,11 +52,6 @@ export type CatalogKind =
 // MOCK: no existe aún un endpoint de usuarios del equipo.
 const MOCK_USERS: CatalogOption[] = [
   { value: 'owner', label: 'Cuenta principal' }
-]
-
-// MOCK: no existe aún catálogo de enlaces rastreables.
-const MOCK_LINKS: CatalogOption[] = [
-  { value: 'activation', label: 'Enlace de activación' }
 ]
 
 // MOCK: el catálogo de productos aún no está expuesto en el frontend.
@@ -127,6 +123,17 @@ async function loadForms(): Promise<CatalogOption[]> {
   return (sites || [])
     .filter((site) => String(site.siteType || '').includes('form'))
     .map((site) => ({ value: site.id || site.slug, label: site.name }))
+}
+
+async function loadTriggerLinks(): Promise<CatalogOption[]> {
+  const links = await triggerLinksService.list()
+  return (links || [])
+    .filter((link) => link.active)
+    .map((link) => ({
+      value: link.id,
+      label: link.name,
+      meta: link.publicId
+    }))
 }
 
 interface MetaAdsCatalogItem {
@@ -282,7 +289,7 @@ const loaders: Record<CatalogKind, () => Promise<CatalogOption[]>> = {
   whatsappTemplates: loadWhatsAppTemplates,
   campaigns: loadCampaigns,
   adsets: loadAdsets,
-  links: async () => MOCK_LINKS,
+  links: loadTriggerLinks,
   products: async () => MOCK_PRODUCTS,
   ads: loadAds,
   adIds: loadAdIds,
@@ -296,6 +303,7 @@ const fallbacks: Partial<Record<CatalogKind, CatalogOption[]>> = {
   customFields: [],
   calendars: [],
   forms: [],
+  links: [],
   whatsappNumbers: [],
   whatsappTemplates: [],
   campaigns: [],

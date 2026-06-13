@@ -89,6 +89,11 @@ function buildVariableMap(ctx) {
     'contact.email': contact.email || '',
     'conversation.last_message': ctx.messageText || '',
     'message.text': ctx.messageText || '',
+    'enlace_disparo.id_enlace': ctx.triggerLinkPublicId || ctx.triggerLinkId || '',
+    'enlace_disparo.nombre_enlace': ctx.triggerLinkName || '',
+    'enlace_disparo.url_publica': ctx.triggerLinkUrl || '',
+    'enlace_disparo.destino_final': ctx.destinationUrl || '',
+    'enlace_disparo.fecha_disparo': ctx.clickedAt || '',
     'automation.name': ctx.automationName || ''
   }
   Object.entries(custom).forEach(([key, value]) => {
@@ -148,6 +153,9 @@ function filterFieldValue(filter, ctx) {
     case 'currency': return ctx.currency || null
     case 'provider': return ctx.provider || null
     case 'campaign': return ctx.campaign || null
+    case 'link': return ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ''
+    case 'trigger_link': return ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ''
+    case 'destination_url': return ctx.destinationUrl || ''
     default: return null // campo sin dato local: no bloquea
   }
 }
@@ -274,6 +282,20 @@ function triggerMatches(trigger, eventType, ctx) {
       return !endpointId || endpointId === str(ctx.endpointId)
     }
 
+    case 'trigger-link-clicked': {
+      if (trigger.type !== 'trigger-activation-link' && trigger.type !== 'trigger-link-clicked') return false
+      const configured = str(config.link || config.triggerLinkId || config.publicId)
+      if (!configured) return true
+      const wanted = normalizeText(configured)
+      return [
+        ctx.triggerLinkId,
+        ctx.triggerLinkPublicId,
+        ctx.triggerLinkName,
+        ctx.publicId,
+        ctx.link
+      ].map(normalizeText).includes(wanted)
+    }
+
     default:
       return false
   }
@@ -289,7 +311,8 @@ const EVENT_DESCRIPTIONS = {
   'appointment-status': (ctx) => `la cita cambió a ${ctx.status}`,
   'payment-received': (ctx) => `se recibió un pago${ctx.amount ? ` de $${ctx.amount}` : ''}`,
   refund: () => 'se procesó un reembolso',
-  'webhook-received': () => 'se recibió un webhook'
+  'webhook-received': () => 'se recibió un webhook',
+  'trigger-link-clicked': (ctx) => `abrió el enlace de disparo${ctx.triggerLinkName ? ` "${ctx.triggerLinkName}"` : ''}`
 }
 
 // ---------------------------------------------------------------------------
@@ -410,14 +433,24 @@ async function createEnrollment(automation, contact, ctx) {
     context: {
       messageText: ctx.messageText || '',
       channel: ctx.channel || '',
-      businessPhoneNumberId: ctx.businessPhoneNumberId || null
+      businessPhoneNumberId: ctx.businessPhoneNumberId || null,
+      triggerLinkId: ctx.triggerLinkId || null,
+      triggerLinkPublicId: ctx.triggerLinkPublicId || null,
+      triggerLinkName: ctx.triggerLinkName || null,
+      triggerLinkUrl: ctx.triggerLinkUrl || null,
+      destinationUrl: ctx.destinationUrl || null,
+      visitorId: ctx.visitorId || null,
+      referrer: ctx.referrer || null,
+      eventId: ctx.eventId || null,
+      clickedAt: ctx.clickedAt || null,
+      query: ctx.query || null
     }
   }
   await db.run(
     `INSERT INTO automation_enrollments
        (id, automation_id, contact_id, contact_name, status, current_node_id, log, context)
-     VALUES (?, ?, ?, ?, 'active', 'start', '[]', '{}')`,
-    [id, automation.id, contact.id || null, contact.fullName || contact.phone || 'Contacto']
+     VALUES (?, ?, ?, ?, 'active', 'start', '[]', ?)`,
+    [id, automation.id, contact.id || null, contact.fullName || contact.phone || 'Contacto', JSON.stringify(enrollment.context)]
   )
   return enrollment
 }
@@ -972,6 +1005,7 @@ export async function processDueResumes() {
       }
       const contact = await loadContact(row.contact_id)
       const ctx = {
+        ...enrollment.context,
         contact,
         messageText: enrollment.context.messageText || '',
         channel: enrollment.context.channel || 'whatsapp',

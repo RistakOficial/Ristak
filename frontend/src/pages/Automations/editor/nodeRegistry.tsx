@@ -430,6 +430,14 @@ const FORM_FIELDS: VariableSchemaField[] = [
   field('Fecha de envío', 'fecha_de_envio')
 ]
 
+const TRIGGER_LINK_FIELDS: VariableSchemaField[] = [
+  field('ID del enlace', 'id_enlace'),
+  field('Nombre del enlace', 'nombre_enlace'),
+  field('URL pública', 'url_publica'),
+  field('Destino final', 'destino_final'),
+  field('Fecha del disparo', 'fecha_disparo')
+]
+
 const CONTACT_OUTPUT_FIELDS: VariableSchemaField[] = [
   field('ID del contacto', 'id_contacto'),
   field('Nombre', 'nombre'),
@@ -756,20 +764,29 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-activation-link',
     kind: 'trigger',
-    label: 'Se ha hecho clic en el enlace de activación',
+    label: 'Enlace de disparo',
     category: 'trigger-events',
-    description: 'Se activa cuando el contacto abre tu enlace',
+    description: 'Se activa cuando alguien abre una URL pública de disparo',
     icon: MousePointerClick,
     accent: 'green',
     addButtonLabel: 'Seleccionar enlace',
-    defaultConfig: () => ({ link: '' }),
+    defaultConfig: () => ({ link: '', linkName: '' }),
     fields: [
-      { key: 'link', label: 'Enlace o identificador', type: 'text', placeholder: 'Ej. enlace-promo', required: true }
+      { key: 'link', label: 'Enlace de disparo', type: 'catalogSelect', catalog: 'links', required: true }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: (config) => ({
+      baseId: 'enlace_disparo',
+      baseLabel: str(config.linkName) || str(config.link)
+        ? `Enlace de disparo - ${str(config.linkName) || str(config.link)}`
+        : 'Enlace de disparo',
+      fields: TRIGGER_LINK_FIELDS
+    }),
     summary: (config) => ({
-      text: str(config.link) ? `Cuando alguien haga clic en el enlace "${str(config.link)}"${triggerFiltersSentence(config.filters)}` : undefined,
-      empty: 'Define el enlace a rastrear'
+      text: str(config.linkName) || str(config.link)
+        ? `Cuando alguien abra el enlace "${str(config.linkName) || str(config.link)}"${triggerFiltersSentence(config.filters)}`
+        : undefined,
+      empty: 'Selecciona el enlace de disparo'
     })
   },
   {
