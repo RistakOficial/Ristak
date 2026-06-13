@@ -9743,7 +9743,7 @@ function themePaint(theme, key) {
 
 function blockHorizontalAlign(settings, key, fallback = 'left') {
   const value = cleanString(settings && settings[key])
-  return ['left', 'center', 'right'].includes(value) ? value : fallback
+  return ['left', 'center', 'right', 'justify'].includes(value) ? value : fallback
 }
 
 function blockButtonAlign(settings, fallback = 'center') {
@@ -9754,14 +9754,25 @@ function blockButtonAlign(settings, fallback = 'center') {
 function justifyForAlign(align) {
   if (align === 'center') return 'center'
   if (align === 'right') return 'end'
-  if (align === 'full') return 'stretch'
+  if (align === 'full' || align === 'justify') return 'stretch'
   return 'start'
 }
 
 function marginForAlign(align) {
   if (align === 'center') return { left: 'auto', right: 'auto' }
   if (align === 'right') return { left: 'auto', right: '0' }
+  if (align === 'justify') return { left: '0', right: '0' }
   return { left: '0', right: align === 'full' ? '0' : 'auto' }
+}
+
+function blockTextDecoration(value) {
+  const tokens = cleanString(value).split(/\s+/).filter(token => token === 'underline' || token === 'line-through')
+  return [...new Set(tokens)].join(' ')
+}
+
+function blockTextTransform(value) {
+  const normalized = cleanString(value)
+  return normalized === 'uppercase' || normalized === 'capitalize' ? normalized : ''
 }
 
 function renderBlockStyleVars(block) {
@@ -9797,6 +9808,12 @@ function renderBlockStyleVars(block) {
   const buttonPaddingX = blockSettingNumber(settings, 'buttonPaddingX', 8, 72)
   const buttonFontSize = blockSettingNumber(settings, 'buttonFontSize', 11, 32)
   const buttonBorderWidth = blockSettingNumber(settings, 'buttonBorderWidth', 0, 8)
+  const lineHeight = blockSettingNumber(settings, 'lineHeight', 0.8, 2.6)
+  const buttonLineHeight = blockSettingNumber(settings, 'buttonLineHeight', 0.8, 2.6)
+  const textDecoration = blockTextDecoration(settings.textDecoration)
+  const buttonTextDecoration = blockTextDecoration(settings.buttonTextDecoration)
+  const textTransform = blockTextTransform(settings.textTransform)
+  const buttonTextTransform = blockTextTransform(settings.buttonTextTransform)
   const mediaWidth = blockSettingNumber(settings, 'mediaWidth', 30, 100)
   const mediaRadius = blockSettingNumber(settings, 'mediaRadius', 0, 48)
   const embedHeight = blockSettingNumber(settings, 'embedHeight', EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)
@@ -9842,7 +9859,9 @@ function renderBlockStyleVars(block) {
   if (fontFamily) vars.push(`--rstk-block-font:${fontFamily.replace(/[;"{}<>]/g, '')}`)
   if (buttonFontFamily) vars.push(`--rstk-button-font:${buttonFontFamily.replace(/[;"{}<>]/g, '')}`)
   if (settings.fontStyle === 'italic') vars.push('--rstk-block-font-style:italic')
-  if (settings.textDecoration === 'underline') vars.push('--rstk-block-text-decoration:underline')
+  if (textDecoration) vars.push(`--rstk-block-text-decoration:${textDecoration}`)
+  if (textTransform) vars.push(`--rstk-block-text-transform:${textTransform}`)
+  if (cleanString(settings.lineHeight) && lineHeight !== null) vars.push(`--rstk-block-line-height:${lineHeight}`)
   if (textStrokeWidth !== null) vars.push(`--rstk-text-stroke-width:${textStrokeWidth}px`)
   if (textStrokeColor) vars.push(`--rstk-text-stroke-color:${paintFallbackColor(textStrokeColor, '#111827')}`)
   if (settings.fontWeight === 'bold') vars.push('--rstk-block-weight:850')
@@ -9885,7 +9904,9 @@ function renderBlockStyleVars(block) {
   if (settings.buttonFontWeight === 'bold') vars.push('--rstk-button-weight:850')
   if (settings.buttonFontWeight === 'normal') vars.push('--rstk-button-weight:400')
   if (settings.buttonFontStyle === 'italic') vars.push('--rstk-button-font-style:italic')
-  if (settings.buttonTextDecoration === 'underline') vars.push('--rstk-button-text-decoration:underline')
+  if (buttonTextDecoration) vars.push(`--rstk-button-text-decoration:${buttonTextDecoration}`)
+  if (buttonTextTransform) vars.push(`--rstk-button-text-transform:${buttonTextTransform}`)
+  if (cleanString(settings.buttonLineHeight) && buttonLineHeight !== null) vars.push(`--rstk-button-line-height:${buttonLineHeight}`)
   if (mediaWidth !== null) vars.push(`--rstk-media-width:${mediaWidth}%`)
   if (settings.mediaAlign !== undefined) {
     const align = blockHorizontalAlign(settings, 'mediaAlign', 'center')
@@ -9923,7 +9944,9 @@ function renderBlockStyleClassName(block) {
     settings.fontSize !== undefined ? 'rstkSizeOverride' : '',
     settings.fontWeight === 'bold' || settings.fontWeight === 'normal' ? 'rstkWeightOverride' : '',
     settings.fontStyle === 'italic' ? 'rstkItalicOverride' : '',
-    settings.textDecoration === 'underline' ? 'rstkUnderlineOverride' : '',
+    blockTextDecoration(settings.textDecoration) ? 'rstkUnderlineOverride' : '',
+    blockTextTransform(settings.textTransform) ? 'rstkTextTransformOverride' : '',
+    settings.lineHeight !== undefined && cleanString(settings.lineHeight) ? 'rstkLineHeightOverride' : '',
     settings.textStrokeWidth !== undefined ? 'rstkStrokeOverride' : ''
   ].filter(Boolean)
 
@@ -11028,8 +11051,8 @@ const RSTK_BASE_CSS = `
     min-height:var(--rstk-button-height,50px);display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
     border:var(--rstk-button-border-width,1px) solid var(--rstk-button-border,var(--rstk-button-bg,var(--rstk-accent)));border-radius:var(--rstk-block-button-radius,var(--rstk-btn-radius));
     background:var(--rstk-button-bg,var(--rstk-accent));color:var(--rstk-button-text,var(--rstk-on-accent));
-    font-family:var(--rstk-button-font,inherit);font-weight:var(--rstk-button-weight,var(--rstk-btn-weight));font-size:var(--rstk-button-size,1.02rem);font-style:var(--rstk-button-font-style,normal);line-height:1.08;
-    padding:8px var(--rstk-button-pad-x,22px);text-decoration:var(--rstk-button-text-decoration,none);
+    font-family:var(--rstk-button-font,inherit);font-weight:var(--rstk-button-weight,var(--rstk-btn-weight));font-size:var(--rstk-button-size,1.02rem);font-style:var(--rstk-button-font-style,normal);line-height:var(--rstk-button-line-height,1.08);
+    padding:8px var(--rstk-button-pad-x,22px);text-decoration:var(--rstk-button-text-decoration,none);text-transform:var(--rstk-button-text-transform,none);
     transition:background .15s ease,border-color .15s ease,transform .04s ease,box-shadow .15s ease;
   }
 	  .rstk-button-link{justify-self:var(--rstk-button-justify,center);width:var(--rstk-button-width,fit-content);margin-left:var(--rstk-button-margin-left,auto);margin-right:var(--rstk-button-margin-right,auto)}
@@ -11221,7 +11244,7 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-cta h2{font-size:clamp(2rem,4vw,3.1rem)}
   .rstk-kind-landing .rstk-cta p{font-size:1.1rem;max-width:var(--rstk-content-max,52ch);margin-left:var(--rstk-content-margin-left,auto);margin-right:var(--rstk-content-margin-right,auto)}
 
-  .rstk-kind-landing .rstk-button-link{border-radius:var(--rstk-block-button-radius,999px);min-height:var(--rstk-button-height,54px);padding:0 var(--rstk-button-pad-x,28px);font-family:var(--rstk-display);font-weight:600;transition:transform .25s var(--rstk-ease),box-shadow .25s var(--rstk-ease),background .2s ease}
+  .rstk-kind-landing .rstk-button-link{border-radius:var(--rstk-block-button-radius,999px);min-height:var(--rstk-button-height,54px);padding:0 var(--rstk-button-pad-x,28px);font-family:var(--rstk-button-font,var(--rstk-display));font-weight:var(--rstk-button-weight,600);transition:transform .25s var(--rstk-ease),box-shadow .25s var(--rstk-ease),background .2s ease}
   .rstk-kind-landing .rstk-button-link:hover{transform:none;box-shadow:none}
 
   .rstk-kind-landing .rstk-media,.rstk-kind-landing .rstk-video,.rstk-kind-landing .rstk-embed{border-radius:var(--rstk-media-radius,var(--rstk-block-radius,clamp(16px,2vw,22px)));box-shadow:none}
@@ -11232,6 +11255,8 @@ const RSTK_BASE_CSS = `
   .rstkWeightOverride .rstk-headline,.rstkWeightOverride .rstk-subheading,.rstkWeightOverride .rstk-text,.rstkWeightOverride h2,.rstkWeightOverride label,.rstkWeightOverride .rstk-help,.rstkWeightOverride .rstk-list-grid strong,.rstkWeightOverride .rstk-check-body strong{font-weight:var(--rstk-block-weight,850)}
   .rstkItalicOverride .rstk-headline,.rstkItalicOverride .rstk-subheading,.rstkItalicOverride .rstk-text,.rstkItalicOverride h2,.rstkItalicOverride label,.rstkItalicOverride .rstk-help,.rstkItalicOverride .rstk-list-grid strong,.rstkItalicOverride .rstk-list-grid p,.rstkItalicOverride .rstk-check-body strong,.rstkItalicOverride .rstk-check-body span{font-style:var(--rstk-block-font-style,italic)}
   .rstkUnderlineOverride .rstk-headline,.rstkUnderlineOverride .rstk-subheading,.rstkUnderlineOverride .rstk-text,.rstkUnderlineOverride h2,.rstkUnderlineOverride label,.rstkUnderlineOverride .rstk-help,.rstkUnderlineOverride .rstk-list-grid strong,.rstkUnderlineOverride .rstk-list-grid p,.rstkUnderlineOverride .rstk-check-body strong,.rstkUnderlineOverride .rstk-check-body span{text-decoration:var(--rstk-block-text-decoration,underline)}
+  .rstkTextTransformOverride .rstk-headline,.rstkTextTransformOverride .rstk-subheading,.rstkTextTransformOverride .rstk-text,.rstkTextTransformOverride h2,.rstkTextTransformOverride label,.rstkTextTransformOverride .rstk-help,.rstkTextTransformOverride .rstk-list-grid strong,.rstkTextTransformOverride .rstk-list-grid p,.rstkTextTransformOverride .rstk-check-body strong,.rstkTextTransformOverride .rstk-check-body span{text-transform:var(--rstk-block-text-transform,none)}
+  .rstkLineHeightOverride .rstk-headline,.rstkLineHeightOverride .rstk-subheading,.rstkLineHeightOverride .rstk-text,.rstkLineHeightOverride h2,.rstkLineHeightOverride label,.rstkLineHeightOverride .rstk-help,.rstkLineHeightOverride .rstk-list-grid strong,.rstkLineHeightOverride .rstk-list-grid p,.rstkLineHeightOverride .rstk-check-body strong,.rstkLineHeightOverride .rstk-check-body span{line-height:var(--rstk-block-line-height)}
   .rstkStrokeOverride .rstk-headline,.rstkStrokeOverride .rstk-subheading,.rstkStrokeOverride .rstk-text,.rstkStrokeOverride h2,.rstkStrokeOverride label,.rstkStrokeOverride .rstk-help,.rstkStrokeOverride .rstk-list-grid strong,.rstkStrokeOverride .rstk-list-grid p,.rstkStrokeOverride .rstk-check-body strong,.rstkStrokeOverride .rstk-check-body span{-webkit-text-stroke:var(--rstk-text-stroke-width,0) var(--rstk-text-stroke-color,currentColor)}
   .rstkTextGradient .rstk-headline,.rstkTextGradient .rstk-subheading,.rstkTextGradient .rstk-text,.rstkTextGradient h2,.rstkTextGradient label,.rstkTextGradient .rstk-help,.rstkTextGradient .rstk-site-panel-copy,.rstkTextGradient .rstk-list-grid strong,.rstkTextGradient .rstk-list-grid p,.rstkTextGradient .rstk-check-body strong,.rstkTextGradient .rstk-check-body span,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-headline,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-subheading,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-text,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) h2,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) label,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-help,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-site-panel-copy,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-list-grid strong,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-list-grid p,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-check-body strong,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-check-body span{background-image:var(--rstk-block-text-paint,var(--rstk-page-text-paint));background-clip:text;-webkit-background-clip:text;color:transparent !important;-webkit-text-fill-color:transparent}
   .rstkButtonTextGradient .rstk-button-label{background-image:var(--rstk-button-text-paint);background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent}

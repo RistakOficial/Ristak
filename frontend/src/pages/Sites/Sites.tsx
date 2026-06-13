@@ -22,6 +22,7 @@ import { CSS } from '@dnd-kit/utilities'
 import {
   AlertTriangle,
   AlignCenter,
+  AlignJustify,
   AlignLeft,
   AlignRight,
   ArrowDown,
@@ -49,7 +50,9 @@ import {
   Italic,
   LayoutTemplate,
   Link2,
+  List,
   ListChecks,
+  ListOrdered,
   Maximize2,
   Mic,
   Monitor,
@@ -69,6 +72,7 @@ import {
   Settings2,
   Sparkles,
   Smartphone,
+  Strikethrough,
   Trash2,
   Type,
   Underline,
@@ -1414,7 +1418,7 @@ const spacingSides = [
 ] as const
 
 type SpacingBase = 'blockPadding' | 'blockMargin'
-type HorizontalAlign = 'left' | 'center' | 'right'
+type HorizontalAlign = 'left' | 'center' | 'right' | 'justify'
 type ButtonAlign = HorizontalAlign | 'full'
 type SocialPlatform = 'facebook' | 'instagram' | 'tiktok' | 'threads'
 type FormChoiceStyle = NonNullable<SiteTheme['formChoiceStyle']>
@@ -1423,11 +1427,12 @@ type FormSelectStyle = NonNullable<SiteTheme['formSelectStyle']>
 const horizontalAlignOptions: Array<{ value: HorizontalAlign; label: string; icon: React.ReactNode }> = [
   { value: 'left', label: 'Izquierda', icon: <AlignLeft size={14} /> },
   { value: 'center', label: 'Centro', icon: <AlignCenter size={14} /> },
-  { value: 'right', label: 'Derecha', icon: <AlignRight size={14} /> }
+  { value: 'right', label: 'Derecha', icon: <AlignRight size={14} /> },
+  { value: 'justify', label: 'Justificar', icon: <AlignJustify size={14} /> }
 ]
 
 const buttonAlignOptions: Array<{ value: ButtonAlign; label: string; icon: React.ReactNode }> = [
-  ...horizontalAlignOptions,
+  ...horizontalAlignOptions.filter(option => option.value !== 'justify'),
   { value: 'full', label: 'Completo', icon: <Maximize2 size={14} /> }
 ]
 
@@ -1577,7 +1582,7 @@ const getBackgroundSizeCss = (value: string) => {
 }
 
 const isHorizontalAlign = (value: unknown): value is HorizontalAlign =>
-  value === 'left' || value === 'center' || value === 'right'
+  value === 'left' || value === 'center' || value === 'right' || value === 'justify'
 
 const isButtonAlign = (value: unknown): value is ButtonAlign =>
   isHorizontalAlign(value) || value === 'full'
@@ -1595,13 +1600,14 @@ const getButtonAlign = (settings: Record<string, unknown>, fallback: ButtonAlign
 const justifyForAlign = (align: HorizontalAlign | ButtonAlign) => {
   if (align === 'center') return 'center'
   if (align === 'right') return 'end'
-  if (align === 'full') return 'stretch'
+  if (align === 'full' || align === 'justify') return 'stretch'
   return 'start'
 }
 
 const marginVarsForAlign = (align: HorizontalAlign | ButtonAlign) => {
   if (align === 'center') return { left: 'auto', right: 'auto' }
   if (align === 'right') return { left: 'auto', right: '0' }
+  if (align === 'justify') return { left: '0', right: '0' }
   return { left: '0', right: align === 'full' ? '0' : 'auto' }
 }
 
@@ -1692,6 +1698,9 @@ const getInheritedBlockStyleSettings = (site: PublicSite, block: SiteBlock, bloc
     'fontWeight',
     'fontStyle',
     'textDecoration',
+    'textTransform',
+    'lineHeight',
+    'textListStyle',
     'textStrokeColor',
     'textStrokeWidth',
     'textAlign'
@@ -1728,6 +1737,7 @@ const getPanelStyleSettings = (site: PublicSite, block: SiteBlock, blocks: SiteB
     buttonHeight: 54,
     buttonPaddingX: 28,
     buttonFontSize: 16,
+    buttonLineHeight: '',
     buttonBorderWidth: 1
   }
 
@@ -1814,6 +1824,10 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   const fontFamily = getSettingString(settings, 'fontFamily')
   const buttonFontFamily = getSettingString(settings, 'buttonFontFamily')
   const textStrokeColor = getSettingString(settings, 'textStrokeColor')
+  const textDecoration = getTextDecorationTokens(settings.textDecoration).join(' ')
+  const buttonTextDecoration = getTextDecorationTokens(settings.buttonTextDecoration).join(' ')
+  const textTransform = getTextTransformValue(settings.textTransform)
+  const buttonTextTransform = getTextTransformValue(settings.buttonTextTransform)
   const fieldBg = getSettingString(settings, 'fieldBg')
   const fieldBorder = getSettingString(settings, 'fieldBorder')
   const blockBorder = getSettingString(settings, 'blockBorderColor')
@@ -1856,7 +1870,11 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   if (fontFamily) style['--rstk-block-font'] = fontFamily.replace(/[;"{}<>]/g, '')
   if (buttonFontFamily) style['--rstk-button-font'] = buttonFontFamily.replace(/[;"{}<>]/g, '')
   if (settings.fontStyle === 'italic') style['--rstk-block-font-style'] = 'italic'
-  if (settings.textDecoration === 'underline') style['--rstk-block-text-decoration'] = 'underline'
+  if (textDecoration) style['--rstk-block-text-decoration'] = textDecoration
+  if (textTransform) style['--rstk-block-text-transform'] = textTransform
+  if (settings.lineHeight !== undefined && getSettingString(settings, 'lineHeight')) {
+    style['--rstk-block-line-height'] = `${getSettingNumber(settings, 'lineHeight', 1.5, 0.8, 2.6)}`
+  }
   if (settings.textStrokeWidth !== undefined) style['--rstk-text-stroke-width'] = `${getSettingNumber(settings, 'textStrokeWidth', 0, 0, 12)}px`
   if (isCssPaint(textStrokeColor)) style['--rstk-text-stroke-color'] = paintFallbackColor(normalizeCssPaint(textStrokeColor, '#111827'), '#111827')
   if (isCssPaint(fieldBg)) style['--rstk-field-bg'] = normalizeCssPaint(fieldBg, '#ffffff')
@@ -1917,7 +1935,11 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   if (settings.buttonFontWeight === 'bold') style['--rstk-button-weight'] = '850'
   if (settings.buttonFontWeight === 'normal') style['--rstk-button-weight'] = '400'
   if (settings.buttonFontStyle === 'italic') style['--rstk-button-font-style'] = 'italic'
-  if (settings.buttonTextDecoration === 'underline') style['--rstk-button-text-decoration'] = 'underline'
+  if (buttonTextDecoration) style['--rstk-button-text-decoration'] = buttonTextDecoration
+  if (buttonTextTransform) style['--rstk-button-text-transform'] = buttonTextTransform
+  if (settings.buttonLineHeight !== undefined && getSettingString(settings, 'buttonLineHeight')) {
+    style['--rstk-button-line-height'] = `${getSettingNumber(settings, 'buttonLineHeight', 1.08, 0.8, 2.6)}`
+  }
   if (settings.mediaWidth !== undefined) style['--rstk-media-width'] = `${getSettingNumber(settings, 'mediaWidth', 100, 30, 100)}%`
   if (settings.mediaAlign !== undefined) {
     const align = getHorizontalAlign(settings, 'mediaAlign', 'center')
@@ -1955,7 +1977,9 @@ const getBlockStyleClassName = (block: SiteBlock, extra = '') => {
     settings.fontSize !== undefined ? 'rstkSizeOverride' : '',
     settings.fontWeight === 'bold' || settings.fontWeight === 'normal' ? 'rstkWeightOverride' : '',
     settings.fontStyle === 'italic' ? 'rstkItalicOverride' : '',
-    settings.textDecoration === 'underline' ? 'rstkUnderlineOverride' : '',
+    getTextDecorationTokens(settings.textDecoration).length ? 'rstkUnderlineOverride' : '',
+    getTextTransformValue(settings.textTransform) ? 'rstkTextTransformOverride' : '',
+    settings.lineHeight !== undefined && getSettingString(settings, 'lineHeight') ? 'rstkLineHeightOverride' : '',
     settings.textStrokeWidth !== undefined ? 'rstkStrokeOverride' : '',
     extra
   ].filter(Boolean).join(' ')
@@ -15010,6 +15034,243 @@ const InlineButtonRouting: React.FC<{
   </div>
 )
 
+type TypographyTarget = 'text' | 'button'
+type TextDecorationToken = 'underline' | 'line-through'
+
+const fontWeightEditorOptions = [
+  { value: 'normal', label: 'Normal' },
+  { value: 'bold', label: 'Negrita' }
+] as const
+
+const textStylePresetOptions = [
+  { value: '', label: 'Ninguno' },
+  { value: 'uppercase', label: 'Mayusculas' },
+  { value: 'capitalize', label: 'Capitalizado' }
+] as const
+
+const lineHeightEditorOptions = [
+  { value: '', label: 'Automatico' },
+  { value: '1', label: '1.0 - Sencillo' },
+  { value: '1.2', label: '1.2 - Compacto' },
+  { value: '1.5', label: '1.5 - Comodo' },
+  { value: '1.75', label: '1.75 - Amplio' },
+  { value: '2', label: '2.0 - Doble' }
+] as const
+
+const listStyleEditorOptions = [
+  { value: '', label: 'Ninguno' },
+  { value: 'disc', label: 'Vinetas' },
+  { value: 'decimal', label: 'Numerada' }
+] as const
+
+const getFontOptionsWithCurrent = (currentFontFamily: string) =>
+  currentFontFamily && !GOOGLE_FONT_OPTIONS.some(option => option.value === currentFontFamily)
+    ? [...GOOGLE_FONT_OPTIONS, { label: 'Fuente actual', value: currentFontFamily }]
+    : GOOGLE_FONT_OPTIONS
+
+const getTextDecorationTokens = (value: unknown): TextDecorationToken[] => {
+  const raw = String(value || '')
+  return (['underline', 'line-through'] as TextDecorationToken[]).filter(token => raw.split(/\s+/).includes(token))
+}
+
+const toggleTextDecorationToken = (value: unknown, token: TextDecorationToken) => {
+  const tokens = new Set(getTextDecorationTokens(value))
+  if (tokens.has(token)) tokens.delete(token)
+  else tokens.add(token)
+  return Array.from(tokens).join(' ')
+}
+
+const getTextTransformValue = (value: unknown) => {
+  const raw = String(value || '')
+  return raw === 'uppercase' || raw === 'capitalize' ? raw : ''
+}
+
+const TypographyFormatInspector: React.FC<{
+  target: TypographyTarget
+  settings: Record<string, unknown>
+  fontOptions: Array<{ label: string; value: string }>
+  fontSizeFallback: number
+  alignValue: HorizontalAlign | ButtonAlign
+  alignOptions: Array<{ value: HorizontalAlign | ButtonAlign; label: string; icon: React.ReactNode }>
+  colorLabel: string
+  colorValue: string
+  allowGradient?: boolean
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({
+  target,
+  settings,
+  fontOptions,
+  fontSizeFallback,
+  alignValue,
+  alignOptions,
+  colorLabel,
+  colorValue,
+  allowGradient = true,
+  onPatchSettings,
+  onSave
+}) => {
+  const isButton = target === 'button'
+  const fontFamilyKey = isButton ? 'buttonFontFamily' : 'fontFamily'
+  const fontWeightKey = isButton ? 'buttonFontWeight' : 'fontWeight'
+  const fontStyleKey = isButton ? 'buttonFontStyle' : 'fontStyle'
+  const textDecorationKey = isButton ? 'buttonTextDecoration' : 'textDecoration'
+  const fontSizeKey = isButton ? 'buttonFontSize' : 'fontSize'
+  const lineHeightKey = isButton ? 'buttonLineHeight' : 'lineHeight'
+  const textTransformKey = isButton ? 'buttonTextTransform' : 'textTransform'
+  const colorKey = isButton ? 'buttonTextColor' : 'blockText'
+  const fontFamily = getSettingString(settings, fontFamilyKey)
+  const textDecoration = settings[textDecorationKey]
+  const isBold = settings[fontWeightKey] === 'bold'
+  const isItalic = settings[fontStyleKey] === 'italic'
+  const isUnderline = getTextDecorationTokens(textDecoration).includes('underline')
+  const isStrike = getTextDecorationTokens(textDecoration).includes('line-through')
+  const lineHeightValue = getSettingString(settings, lineHeightKey)
+
+  const patchAndSave = (patch: Record<string, unknown>) => {
+    onPatchSettings(patch)
+    window.setTimeout(onSave, 0)
+  }
+
+  return (
+    <div className={styles.typographyInspector} onClick={(event) => event.stopPropagation()}>
+      <div className={styles.typographyInspectorTitle}>Tipo de letra</div>
+
+      <CustomSelect
+        value={fontFamily}
+        className={styles.typographyFullSelect}
+        onChange={(event) => onPatchSettings({ [fontFamilyKey]: event.target.value })}
+        onBlur={onSave}
+      >
+        {fontOptions.map(option => (
+          <option key={option.label} value={option.value}>{option.label}</option>
+        ))}
+      </CustomSelect>
+
+      <div className={styles.typographyFontRow}>
+        <CustomSelect
+          value={settings[fontWeightKey] === 'bold' ? 'bold' : 'normal'}
+          className={styles.typographyWeightSelect}
+          onChange={(event) => patchAndSave({ [fontWeightKey]: event.target.value })}
+          onBlur={onSave}
+        >
+          {fontWeightEditorOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+        <DimensionField
+          label=""
+          value={getSettingNumber(settings, fontSizeKey, fontSizeFallback, isButton ? 10 : 10, isButton ? 48 : 120)}
+          min={isButton ? 10 : 10}
+          max={isButton ? 48 : 120}
+          unit="px"
+          onChange={(value) => onPatchSettings({ [fontSizeKey]: value })}
+          onCommit={onSave}
+        />
+      </div>
+
+      <div className={styles.typographyButtonRow}>
+        <div className={styles.typographySegmented} role="group" aria-label={isButton ? 'Formato del boton' : 'Formato de texto'}>
+          <button type="button" className={isBold ? styles.typographyActive : ''} aria-pressed={isBold} title="Negrita" onClick={() => patchAndSave({ [fontWeightKey]: isBold ? 'normal' : 'bold' })}>
+            <Bold size={14} />
+          </button>
+          <button type="button" className={isItalic ? styles.typographyActive : ''} aria-pressed={isItalic} title="Italica" onClick={() => patchAndSave({ [fontStyleKey]: isItalic ? '' : 'italic' })}>
+            <Italic size={14} />
+          </button>
+          <button type="button" className={isUnderline ? styles.typographyActive : ''} aria-pressed={isUnderline} title="Subrayado" onClick={() => patchAndSave({ [textDecorationKey]: toggleTextDecorationToken(textDecoration, 'underline') })}>
+            <Underline size={14} />
+          </button>
+          <button type="button" className={isStrike ? styles.typographyActive : ''} aria-pressed={isStrike} title="Tachado" onClick={() => patchAndSave({ [textDecorationKey]: toggleTextDecorationToken(textDecoration, 'line-through') })}>
+            <Strikethrough size={14} />
+          </button>
+        </div>
+        <div className={styles.typographyMiniMenu} aria-label="Opciones tipograficas">
+          <Type size={14} />
+          <ChevronDown size={13} />
+        </div>
+      </div>
+
+      <label className={styles.typographySelectRow}>
+        <span>Estilos</span>
+        <CustomSelect
+          value={getSettingString(settings, textTransformKey)}
+          onChange={(event) => patchAndSave({ [textTransformKey]: event.target.value })}
+          onBlur={onSave}
+        >
+          {textStylePresetOptions.map(option => (
+            <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
+
+      <div className={styles.typographyDivider} />
+
+      <ColorField
+        label={colorLabel}
+        value={colorValue}
+        allowGradient={allowGradient}
+        onChange={(value) => onPatchSettings({ [colorKey]: value })}
+        onCommit={onSave}
+      />
+
+      <div className={styles.typographyAlignGrid} role="group" aria-label={isButton ? 'Alineacion del boton' : 'Alineacion de texto'}>
+        {alignOptions.map(option => {
+          const active = alignValue === option.value
+          return (
+            <button
+              key={option.value}
+              type="button"
+              className={active ? styles.typographyActive : ''}
+              title={option.label}
+              aria-label={option.label}
+              aria-pressed={active}
+              onClick={() => patchAndSave(isButton ? { buttonAlign: option.value } : { textAlign: option.value })}
+            >
+              {option.icon}
+            </button>
+          )
+        })}
+      </div>
+
+      {!isButton && (
+        <div className={styles.typographyIndentGrid} aria-label="Sangria">
+          <button type="button" disabled><List size={14} /></button>
+          <button type="button" disabled><ListOrdered size={14} /></button>
+          <button type="button" disabled><ChevronRight size={14} /></button>
+        </div>
+      )}
+
+      <label className={styles.typographySelectRow}>
+        <span>Espaciado</span>
+        <CustomSelect
+          value={lineHeightValue}
+          onChange={(event) => patchAndSave({ [lineHeightKey]: event.target.value })}
+          onBlur={onSave}
+        >
+          {lineHeightEditorOptions.map(option => (
+            <option key={option.value || 'auto'} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
+
+      {!isButton && (
+        <label className={styles.typographySelectRow}>
+          <span>Vinetas y listas</span>
+          <CustomSelect
+            value={getSettingString(settings, 'textListStyle')}
+            onChange={(event) => patchAndSave({ textListStyle: event.target.value })}
+            onBlur={onSave}
+          >
+            {listStyleEditorOptions.map(option => (
+              <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+      )}
+    </div>
+  )
+}
+
 const InlineBlockStyleControls: React.FC<{
   site: PublicSite
   block: SiteBlock
@@ -15029,90 +15290,29 @@ const InlineBlockStyleControls: React.FC<{
   const supportsCards = ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
   const defaultBorderWidth = getBlockBorderWidthFallback(site, block)
   const blockTextPaint = getSettingPaint(settings, 'blockText', getPageTextPaint(site))
-  const isBold = settings.fontWeight === 'bold'
-  const isItalic = settings.fontStyle === 'italic'
-  const isUnderline = settings.textDecoration === 'underline'
-  const isButtonBold = settings.buttonFontWeight === 'bold'
-  const isButtonItalic = settings.buttonFontStyle === 'italic'
-  const isButtonUnderline = settings.buttonTextDecoration === 'underline'
   const currentFontFamily = getSettingString(settings, 'fontFamily')
   const currentButtonFontFamily = getSettingString(settings, 'buttonFontFamily')
-  const fontOptions = currentFontFamily && !GOOGLE_FONT_OPTIONS.some(option => option.value === currentFontFamily)
-    ? [...GOOGLE_FONT_OPTIONS, { label: 'Fuente actual', value: currentFontFamily }]
-    : GOOGLE_FONT_OPTIONS
-  const buttonFontOptions = currentButtonFontFamily && !GOOGLE_FONT_OPTIONS.some(option => option.value === currentButtonFontFamily)
-    ? [...GOOGLE_FONT_OPTIONS, { label: 'Fuente actual', value: currentButtonFontFamily }]
-    : GOOGLE_FONT_OPTIONS
-  const patchTextFormat = (patch: Record<string, unknown>) => {
-    onPatchSettings(patch)
-    window.setTimeout(onSave, 0)
-  }
+  const fontOptions = getFontOptionsWithCurrent(currentFontFamily)
+  const buttonFontOptions = getFontOptionsWithCurrent(currentButtonFontFamily)
 
   return (
     <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
       {supportsTextStyle && (
         <>
-          <div className={styles.panelSubheader}>Personalizacion del texto</div>
+          <TypographyFormatInspector
+            target="text"
+            settings={settings}
+            fontOptions={fontOptions}
+            fontSizeFallback={getBlockFontSizeFallback(site, block)}
+            alignValue={getHorizontalAlign(settings, 'textAlign', getBlockTextAlignFallback(site, block, blocks))}
+            alignOptions={horizontalAlignOptions}
+            colorLabel="Color de texto"
+            colorValue={blockTextPaint}
+            onPatchSettings={onPatchSettings}
+            onSave={onSave}
+          />
           <div className={styles.textFormatPanel}>
-            <div className={styles.textToolbar}>
-              <label className={styles.textFontSelect}>
-                <span>Fuente</span>
-                <CustomSelect value={currentFontFamily} onChange={(event) => onPatchSettings({ fontFamily: event.target.value })} onBlur={onSave}>
-                  {fontOptions.map(option => (
-                    <option key={option.label} value={option.value}>{option.label}</option>
-                  ))}
-                </CustomSelect>
-              </label>
-              <div className={styles.textFormatButtons} role="group" aria-label="Formato de texto">
-                <button
-                  type="button"
-                  className={isBold ? styles.textFormatActive : ''}
-                  aria-pressed={isBold}
-                  title="Negrita"
-                  aria-label="Negrita"
-                  onClick={() => patchTextFormat({ fontWeight: isBold ? 'normal' : 'bold' })}
-                >
-                  <Bold size={15} />
-                </button>
-                <button
-                  type="button"
-                  className={isItalic ? styles.textFormatActive : ''}
-                  aria-pressed={isItalic}
-                  title="Italica"
-                  aria-label="Italica"
-                  onClick={() => patchTextFormat({ fontStyle: isItalic ? '' : 'italic' })}
-                >
-                  <Italic size={15} />
-                </button>
-                <button
-                  type="button"
-                  className={isUnderline ? styles.textFormatActive : ''}
-                  aria-pressed={isUnderline}
-                  title="Subrayado"
-                  aria-label="Subrayado"
-                  onClick={() => patchTextFormat({ textDecoration: isUnderline ? '' : 'underline' })}
-                >
-                  <Underline size={15} />
-                </button>
-              </div>
-            </div>
-            <AlignmentControl
-              label="Alineacion"
-              value={getHorizontalAlign(settings, 'textAlign', getBlockTextAlignFallback(site, block, blocks))}
-              options={horizontalAlignOptions}
-              onChange={(value) => onPatchSettings({ textAlign: value })}
-              onCommit={onSave}
-            />
             <div className={styles.twoColumn}>
-              <DimensionField
-                label="Tamano de letra"
-                value={getSettingNumber(settings, 'fontSize', getBlockFontSizeFallback(site, block), 12, 96)}
-                min={12}
-                max={96}
-                unit="px"
-                onChange={(value) => onPatchSettings({ fontSize: value })}
-                onCommit={onSave}
-              />
               <DimensionField
                 label="Ancho texto"
                 value={getSettingNumber(settings, 'contentMaxWidth', getBlockContentMaxWidthFallback(site, block), 10, 120)}
@@ -15123,22 +15323,13 @@ const InlineBlockStyleControls: React.FC<{
                 onCommit={onSave}
               />
             </div>
-            <div className={styles.twoColumn}>
-              <ColorField
-                label="Color"
-                value={blockTextPaint}
-                allowGradient
-                onChange={(value) => onPatchSettings({ blockText: value })}
-                onCommit={onSave}
-              />
-              <ColorField
-                label="Color contorno"
-                value={getSettingPaint(settings, 'textStrokeColor', paintFallbackColor(blockTextPaint, '#111827'))}
-                allowGradient
-                onChange={(value) => onPatchSettings({ textStrokeColor: value })}
-                onCommit={onSave}
-              />
-            </div>
+            <ColorField
+              label="Color contorno"
+              value={getSettingPaint(settings, 'textStrokeColor', paintFallbackColor(blockTextPaint, '#111827'))}
+              allowGradient
+              onChange={(value) => onPatchSettings({ textStrokeColor: value })}
+              onCommit={onSave}
+            />
             <DimensionField
               label="Contorno"
               value={getSettingNumber(settings, 'textStrokeWidth', 0, 0, 12)}
@@ -15154,57 +15345,17 @@ const InlineBlockStyleControls: React.FC<{
 
       {supportsButton && (
         <>
-          <div className={styles.panelSubheader}>Personalizacion del boton</div>
-          <div className={styles.textFormatPanel}>
-            <div className={styles.textToolbar}>
-              <label className={styles.textFontSelect}>
-                <span>Fuente boton</span>
-                <CustomSelect value={currentButtonFontFamily} onChange={(event) => onPatchSettings({ buttonFontFamily: event.target.value })} onBlur={onSave}>
-                  {buttonFontOptions.map(option => (
-                    <option key={option.label} value={option.value}>{option.label}</option>
-                  ))}
-                </CustomSelect>
-              </label>
-              <div className={styles.textFormatButtons} role="group" aria-label="Formato del boton">
-                <button
-                  type="button"
-                  className={isButtonBold ? styles.textFormatActive : ''}
-                  aria-pressed={isButtonBold}
-                  title="Negrita"
-                  aria-label="Negrita"
-                  onClick={() => patchTextFormat({ buttonFontWeight: isButtonBold ? 'normal' : 'bold' })}
-                >
-                  <Bold size={15} />
-                </button>
-                <button
-                  type="button"
-                  className={isButtonItalic ? styles.textFormatActive : ''}
-                  aria-pressed={isButtonItalic}
-                  title="Italica"
-                  aria-label="Italica"
-                  onClick={() => patchTextFormat({ buttonFontStyle: isButtonItalic ? '' : 'italic' })}
-                >
-                  <Italic size={15} />
-                </button>
-                <button
-                  type="button"
-                  className={isButtonUnderline ? styles.textFormatActive : ''}
-                  aria-pressed={isButtonUnderline}
-                  title="Subrayado"
-                  aria-label="Subrayado"
-                  onClick={() => patchTextFormat({ buttonTextDecoration: isButtonUnderline ? '' : 'underline' })}
-                >
-                  <Underline size={15} />
-                </button>
-              </div>
-            </div>
-          </div>
-          <AlignmentControl
-            label="Alineacion"
-            value={getButtonAlign(settings, 'center')}
-            options={buttonAlignOptions}
-            onChange={(value) => onPatchSettings({ buttonAlign: value })}
-            onCommit={onSave}
+          <TypographyFormatInspector
+            target="button"
+            settings={settings}
+            fontOptions={buttonFontOptions}
+            fontSizeFallback={16}
+            alignValue={getButtonAlign(settings, 'center')}
+            alignOptions={buttonAlignOptions}
+            colorLabel="Color de texto"
+            colorValue={getSettingPaint(settings, 'buttonTextColor', onAccentFor(defaultAccent))}
+            onPatchSettings={onPatchSettings}
+            onSave={onSave}
           />
           <div className={styles.twoColumn}>
             <ColorField

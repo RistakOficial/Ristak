@@ -227,8 +227,8 @@
   min-height: var(--rstk-button-height, 50px); display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
   border: var(--rstk-button-border-width, 1px) solid var(--rstk-button-border, var(--rstk-button-bg, var(--rstk-accent))); border-radius: var(--rstk-block-button-radius, var(--rstk-btn-radius));
   background: var(--rstk-button-bg, var(--rstk-accent)); color: var(--rstk-button-text, var(--rstk-on-accent));
-  font-family: var(--rstk-button-font, inherit); font-weight: var(--rstk-button-weight, var(--rstk-btn-weight)); font-size: var(--rstk-button-size, 1.02rem); font-style: var(--rstk-button-font-style, normal); line-height: 1.08;
-  padding: 8px var(--rstk-button-pad-x, 22px); text-decoration: var(--rstk-button-text-decoration, none);
+  font-family: var(--rstk-button-font, inherit); font-weight: var(--rstk-button-weight, var(--rstk-btn-weight)); font-size: var(--rstk-button-size, 1.02rem); font-style: var(--rstk-button-font-style, normal); line-height: var(--rstk-button-line-height, 1.08);
+  padding: 8px var(--rstk-button-pad-x, 22px); text-decoration: var(--rstk-button-text-decoration, none); text-transform: var(--rstk-button-text-transform, none);
 }
 .rstkCanvas .rstk-button-link {
   justify-self: var(--rstk-button-justify, center);
@@ -672,7 +672,7 @@ html body .rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option input[type='
 .rstkCanvas.rstk-kind-landing .rstk-cta h2 { font-size: clamp(2rem, 4vw, 3.1rem); }
 .rstkCanvas.rstk-kind-landing .rstk-cta p { font-size: 1.1rem; max-width: var(--rstk-content-max, 52ch); margin-left: var(--rstk-content-margin-left, auto); margin-right: var(--rstk-content-margin-right, auto); }
 
-.rstkCanvas.rstk-kind-landing .rstk-button-link { border-radius: var(--rstk-block-button-radius, 999px); min-height: var(--rstk-button-height, 54px); padding: 0 var(--rstk-button-pad-x, 28px); font-family: var(--rstk-display); font-weight: 600; }
+.rstkCanvas.rstk-kind-landing .rstk-button-link { border-radius: var(--rstk-block-button-radius, 999px); min-height: var(--rstk-button-height, 54px); padding: 0 var(--rstk-button-pad-x, 28px); font-family: var(--rstk-button-font, var(--rstk-display)); font-weight: var(--rstk-button-weight, 600); }
 .rstkCanvas.rstk-kind-landing .rstk-media, .rstkCanvas.rstk-kind-landing .rstk-video, .rstkCanvas.rstk-kind-landing .rstk-embed { border-radius: var(--rstk-media-radius, var(--rstk-block-radius, clamp(16px, 2vw, 22px))); box-shadow: none; }
 .rstkCanvas.rstk-kind-landing .rstk-embedded-form { padding: clamp(24px, 3vw, 40px); border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, transparent); border-radius: var(--rstk-block-radius, 0); background: var(--rstk-block-bg, transparent); width: 100%; margin-inline: auto; }
 
@@ -1128,6 +1128,32 @@ html body .rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option input[type='
 .rstkCanvas .rstkUnderlineOverride .rstk-check-body strong,
 .rstkCanvas .rstkUnderlineOverride .rstk-check-body span {
   text-decoration: var(--rstk-block-text-decoration, underline);
+}
+
+.rstkCanvas .rstkTextTransformOverride .rstk-headline,
+.rstkCanvas .rstkTextTransformOverride .rstk-subheading,
+.rstkCanvas .rstkTextTransformOverride .rstk-text,
+.rstkCanvas .rstkTextTransformOverride h2,
+.rstkCanvas .rstkTextTransformOverride label,
+.rstkCanvas .rstkTextTransformOverride .rstk-help,
+.rstkCanvas .rstkTextTransformOverride .rstk-list-grid strong,
+.rstkCanvas .rstkTextTransformOverride .rstk-list-grid p,
+.rstkCanvas .rstkTextTransformOverride .rstk-check-body strong,
+.rstkCanvas .rstkTextTransformOverride .rstk-check-body span {
+  text-transform: var(--rstk-block-text-transform, none);
+}
+
+.rstkCanvas .rstkLineHeightOverride .rstk-headline,
+.rstkCanvas .rstkLineHeightOverride .rstk-subheading,
+.rstkCanvas .rstkLineHeightOverride .rstk-text,
+.rstkCanvas .rstkLineHeightOverride h2,
+.rstkCanvas .rstkLineHeightOverride label,
+.rstkCanvas .rstkLineHeightOverride .rstk-help,
+.rstkCanvas .rstkLineHeightOverride .rstk-list-grid strong,
+.rstkCanvas .rstkLineHeightOverride .rstk-list-grid p,
+.rstkCanvas .rstkLineHeightOverride .rstk-check-body strong,
+.rstkCanvas .rstkLineHeightOverride .rstk-check-body span {
+  line-height: var(--rstk-block-line-height);
 }
 
 .rstkCanvas .rstkStrokeOverride .rstk-headline,
