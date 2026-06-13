@@ -28,6 +28,10 @@ import {
 import { buildConversationalInstructions } from './prompt.js'
 import { createConversationalTools } from './tools.js'
 import { buildInputItems } from '../runner.js'
+import {
+  splitMessageIntoBubbles,
+  splitMessageIntoBubblesFallback
+} from './messageSplitter.js'
 
 const HISTORY_LIMIT = 20
 const MAX_TURNS = 10
@@ -39,7 +43,6 @@ const PENDING_INBOUND_SCAN_LIMIT = 30
 const PENDING_RECOVERY_SCAN_LIMIT = 80
 const PENDING_RECOVERY_SCHEDULE_LIMIT = 10
 const PENDING_RECOVERY_MAX_AGE_MS = Number(process.env.CONVERSATIONAL_AGENT_PENDING_RECOVERY_MAX_AGE_MS || 60 * 60 * 1000)
-const MAX_REPLY_PARTS = 6
 
 // Conversaciones que el agente está procesando ahora mismo (instancia única).
 const runningContacts = new Set()
@@ -106,84 +109,11 @@ function cleanMessageText(row) {
     '(mensaje vacío)'
 }
 
-function splitLongSegment(segment, targetChars) {
-  const words = String(segment || '').trim().split(/\s+/).filter(Boolean)
-  const parts = []
-  let current = ''
-
-  for (const word of words) {
-    if (word.length > targetChars) {
-      if (current) {
-        parts.push(current)
-        current = ''
-      }
-      for (let index = 0; index < word.length; index += targetChars) {
-        parts.push(word.slice(index, index + targetChars))
-      }
-      continue
-    }
-
-    const next = current ? `${current} ${word}` : word
-    if (next.length > targetChars && current) {
-      parts.push(current)
-      current = word
-    } else {
-      current = next
-    }
-  }
-
-  if (current) parts.push(current)
-  return parts
-}
-
-function splitReplySegments(text) {
-  return String(text || '')
-    .split(/\n{2,}/)
-    .flatMap((paragraph) => paragraph.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) || [paragraph])
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-}
-
 export function splitReplyIntoParts(reply, deliveryInput = {}) {
-  const text = String(reply || '').trim()
-  if (!text) return []
-
-  const delivery = normalizeAgentReplyDelivery(deliveryInput?.replyDelivery || deliveryInput)
-  if (delivery.mode !== 'split' || text.length <= Math.round(delivery.targetChars * 1.15)) {
-    return [text]
-  }
-
-  const parts = []
-  let current = ''
-
-  const pushPart = (part) => {
-    const clean = String(part || '').trim()
-    if (clean) parts.push(clean)
-  }
-
-  for (const segment of splitReplySegments(text)) {
-    const subSegments = segment.length > delivery.targetChars
-      ? splitLongSegment(segment, delivery.targetChars)
-      : [segment]
-
-    for (const subSegment of subSegments) {
-      const next = current ? `${current} ${subSegment}` : subSegment
-      if (next.length > delivery.targetChars && current) {
-        pushPart(current)
-        current = subSegment
-      } else {
-        current = next
-      }
-    }
-  }
-
-  pushPart(current)
-
-  if (parts.length <= MAX_REPLY_PARTS) return parts
-  return [
-    ...parts.slice(0, MAX_REPLY_PARTS - 1),
-    parts.slice(MAX_REPLY_PARTS - 1).join(' ')
-  ].filter(Boolean)
+  return splitMessageIntoBubblesFallback({
+    text: reply,
+    settings: deliveryInput?.replyDelivery || deliveryInput
+  }).messages
 }
 
 export function buildPendingReplyContextMessage(pendingMessages = []) {
@@ -375,11 +305,32 @@ async function loadNewerInboundMessage(contactId, handledMessageId) {
   return latest && latest.id !== handledMessageId ? latest : null
 }
 
-async function sendReplyParts({ contactId, phone, latest, agentConfig, reply }) {
-  const parts = splitReplyIntoParts(reply, agentConfig.replyDelivery)
+async function sendReplyParts({ contactId, phone, latest, agentConfig, reply, apiKey, model }) {
+  const splitResult = await splitMessageIntoBubbles({
+    text: reply,
+    settings: agentConfig.replyDelivery,
+    apiKey,
+    model
+  })
+  const parts = splitResult.messages
   if (!parts.length) return { parts: [], sentParts: 0, interruptedBy: null }
 
   const { sendWhatsAppApiTextMessage } = await import('../../services/whatsappApiService.js')
+
+  const delivery = normalizeAgentReplyDelivery(agentConfig.replyDelivery)
+  if (delivery.splitMessagesEnabled) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'reply_splitter_result',
+      detail: {
+        messageId: latest.id,
+        agentId: agentConfig.id || null,
+        source: splitResult.source,
+        reason: splitResult.reason,
+        partCount: parts.length
+      }
+    })
+  }
 
   for (let index = 0; index < parts.length; index += 1) {
     if (index > 0) {
@@ -615,7 +566,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         return
       }
 
-      const delivery = await sendReplyParts({ contactId, phone, latest, agentConfig, reply })
+      const delivery = await sendReplyParts({ contactId, phone, latest, agentConfig, reply, apiKey, model })
       if (delivery.interruptedBy) {
         await recordConversationalAgentEvent({
           contactId,
@@ -773,9 +724,18 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
 
   const reply = await executeAgent({ agent, apiKey, messages: cleanMessages, contactId: null, model })
 
+  const splitResult = ctx.suppressReply
+    ? { messages: [] }
+    : await splitMessageIntoBubbles({
+      text: reply,
+      settings: config.replyDelivery,
+      apiKey,
+      model
+    })
+
   return {
     reply: ctx.suppressReply ? '' : reply,
-    replyParts: ctx.suppressReply ? [] : splitReplyIntoParts(reply, config.replyDelivery),
+    replyParts: splitResult.messages,
     suppressed: ctx.suppressReply,
     actions: ctx.actions,
     model

@@ -56,9 +56,16 @@ const DEFAULT_RESPONSE_DELAY_CONFIG = {
 const REPLY_DELIVERY_MODES = new Set(['single', 'split'])
 const DEFAULT_REPLY_DELIVERY_CONFIG = {
   mode: 'single',
-  targetChars: 280,
+  splitMessagesEnabled: false,
+  minMessageLengthToSplit: 120,
+  maxBubbles: 5,
+  minBubbleLength: 20,
+  maxBubbleLength: 350,
+  targetChars: 350,
+  randomizeSplitting: true,
+  delayBetweenBubblesEnabled: true,
   minDelaySeconds: 2,
-  maxDelaySeconds: 6
+  maxDelaySeconds: 7
 }
 
 function toBoolean(value) {
@@ -613,7 +620,23 @@ function clampInteger(value, min, max, fallback) {
 
 export function normalizeAgentReplyDelivery(input) {
   const raw = input && typeof input === 'object' ? input : {}
-  const mode = REPLY_DELIVERY_MODES.has(raw.mode) ? raw.mode : DEFAULT_REPLY_DELIVERY_CONFIG.mode
+  const requestedMode = REPLY_DELIVERY_MODES.has(raw.mode) ? raw.mode : DEFAULT_REPLY_DELIVERY_CONFIG.mode
+  const splitMessagesEnabled = raw.splitMessagesEnabled === undefined
+    ? requestedMode === 'split'
+    : toBoolean(raw.splitMessagesEnabled)
+  const mode = splitMessagesEnabled ? 'split' : 'single'
+  const maxBubbleLength = clampInteger(
+    raw.maxBubbleLength === undefined ? raw.targetChars : raw.maxBubbleLength,
+    80,
+    1000,
+    DEFAULT_REPLY_DELIVERY_CONFIG.maxBubbleLength
+  )
+  const minBubbleLength = clampInteger(
+    raw.minBubbleLength,
+    1,
+    Math.min(200, maxBubbleLength),
+    DEFAULT_REPLY_DELIVERY_CONFIG.minBubbleLength
+  )
   let minDelaySeconds = clampInteger(raw.minDelaySeconds, 0, 60, DEFAULT_REPLY_DELIVERY_CONFIG.minDelaySeconds)
   let maxDelaySeconds = clampInteger(raw.maxDelaySeconds, 0, 60, DEFAULT_REPLY_DELIVERY_CONFIG.maxDelaySeconds)
 
@@ -625,7 +648,23 @@ export function normalizeAgentReplyDelivery(input) {
 
   return {
     mode,
-    targetChars: clampInteger(raw.targetChars, 120, 700, DEFAULT_REPLY_DELIVERY_CONFIG.targetChars),
+    splitMessagesEnabled,
+    minMessageLengthToSplit: clampInteger(
+      raw.minMessageLengthToSplit,
+      0,
+      2000,
+      DEFAULT_REPLY_DELIVERY_CONFIG.minMessageLengthToSplit
+    ),
+    maxBubbles: clampInteger(raw.maxBubbles, 1, 10, DEFAULT_REPLY_DELIVERY_CONFIG.maxBubbles),
+    minBubbleLength,
+    maxBubbleLength,
+    targetChars: clampInteger(raw.targetChars === undefined ? maxBubbleLength : raw.targetChars, 80, 1000, maxBubbleLength),
+    randomizeSplitting: raw.randomizeSplitting === undefined
+      ? DEFAULT_REPLY_DELIVERY_CONFIG.randomizeSplitting
+      : toBoolean(raw.randomizeSplitting),
+    delayBetweenBubblesEnabled: raw.delayBetweenBubblesEnabled === undefined
+      ? DEFAULT_REPLY_DELIVERY_CONFIG.delayBetweenBubblesEnabled
+      : toBoolean(raw.delayBetweenBubblesEnabled),
     minDelaySeconds,
     maxDelaySeconds
   }
@@ -633,7 +672,7 @@ export function normalizeAgentReplyDelivery(input) {
 
 export function getAgentReplyDeliveryPartDelayMs(agentConfig = {}) {
   const delivery = normalizeAgentReplyDelivery(agentConfig.replyDelivery)
-  if (delivery.mode !== 'split') return 0
+  if (delivery.mode !== 'split' || !delivery.delayBetweenBubblesEnabled) return 0
   const minMs = delivery.minDelaySeconds * 1000
   const maxMs = delivery.maxDelaySeconds * 1000
   if (maxMs <= minMs) return minMs

@@ -399,6 +399,11 @@
   align-items: center;
 }
 
+.replyOptionToggle {
+  min-height: 40px;
+  padding-right: 4px;
+}
+
 .delayNumberField {
   flex: 0 0 116px;
 }
@@ -413,6 +418,10 @@
 
 .delayNumberInput {
   padding-right: 12px;
+}
+
+.mutedField {
+  opacity: 0.58;
 }
 
 .responseDelayHelp {
@@ -635,6 +644,23 @@
   .actions {
     justify-content: stretch;
   }
+
+  .responseDelayControls,
+  .replyDeliveryControls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .replyOptionToggle,
+  .delayNumberField,
+  .replyPartSizeField,
+  .delayUnitField {
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+    flex: 1 1 auto;
+  }
 }
 
 @media (max-width: 640px) {
@@ -647,6 +673,11 @@
     min-width: 0;
     padding: 16px !important;
     border-radius: 10px !important;
+  }
+
+  .responseDelayControls,
+  .replyDeliveryControls {
+    grid-template-columns: 1fr;
   }
 
   .header {

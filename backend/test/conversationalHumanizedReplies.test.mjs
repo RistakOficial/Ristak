@@ -10,17 +10,23 @@ import {
   shouldRecoverPendingInbound,
   splitReplyIntoParts
 } from '../src/agents/conversational/runner.js'
+import {
+  splitMessageIntoBubbles
+} from '../src/agents/conversational/messageSplitter.js'
 
 test('normaliza la entrega de respuestas en partes', () => {
   const delivery = normalizeAgentReplyDelivery({
     mode: 'split',
-    targetChars: 40,
+    maxBubbleLength: 40,
     minDelaySeconds: 12,
-    maxDelaySeconds: 3
+    maxDelaySeconds: 3,
+    maxBubbles: 20
   })
 
   assert.equal(delivery.mode, 'split')
-  assert.equal(delivery.targetChars, 120)
+  assert.equal(delivery.splitMessagesEnabled, true)
+  assert.equal(delivery.maxBubbleLength, 80)
+  assert.equal(delivery.maxBubbles, 10)
   assert.equal(delivery.minDelaySeconds, 3)
   assert.equal(delivery.maxDelaySeconds, 12)
 })
@@ -29,7 +35,8 @@ test('calcula una pausa entre partes dentro del rango configurado', () => {
   const delayMs = getAgentReplyDeliveryPartDelayMs({
     replyDelivery: {
       mode: 'split',
-      targetChars: 180,
+      maxBubbleLength: 180,
+      delayBetweenBubblesEnabled: true,
       minDelaySeconds: 2,
       maxDelaySeconds: 2
     }
@@ -41,7 +48,7 @@ test('calcula una pausa entre partes dentro del rango configurado', () => {
 test('mantiene una sola respuesta cuando la entrega está en modo normal', () => {
   const parts = splitReplyIntoParts('hola, te explico rápido. este mensaje podría dividirse, pero no debe.', {
     mode: 'single',
-    targetChars: 120,
+    maxBubbleLength: 120,
     minDelaySeconds: 1,
     maxDelaySeconds: 3
   })
@@ -58,7 +65,9 @@ test('parte respuestas largas respetando el máximo de segmentos', () => {
 
   const parts = splitReplyIntoParts(longReply, {
     mode: 'split',
-    targetChars: 120,
+    minMessageLengthToSplit: 1,
+    maxBubbleLength: 120,
+    maxBubbles: 6,
     minDelaySeconds: 1,
     maxDelaySeconds: 3
   })
@@ -67,6 +76,164 @@ test('parte respuestas largas respetando el máximo de segmentos', () => {
   assert.ok(parts.length <= 6)
   assert.ok(parts.every((part) => part.trim().length > 0))
   assert.equal(parts.join(' '), longReply)
+})
+
+test('switch apagado envia una sola respuesta aunque el texto sea largo', async () => {
+  const result = await splitMessageIntoBubbles({
+    text: 'Este mensaje es suficientemente largo para partirse, pero el modo esta apagado y debe salir completo.',
+    settings: { mode: 'single', splitMessagesEnabled: false, maxBubbleLength: 80 },
+    aiSplitter: async () => ({ messages: ['no deberia usarse'] })
+  })
+
+  assert.equal(result.source, 'disabled')
+  assert.deepEqual(result.messages, ['Este mensaje es suficientemente largo para partirse, pero el modo esta apagado y debe salir completo.'])
+})
+
+test('mensaje corto se queda en un solo globo', async () => {
+  const result = await splitMessageIntoBubbles({
+    text: 'Ok, listo.',
+    settings: { mode: 'split', minMessageLengthToSplit: 120, minBubbleLength: 20 },
+    aiSplitter: async () => ({ messages: ['Ok', 'listo.'] }),
+    random: () => 0.99
+  })
+
+  assert.equal(result.source, 'threshold')
+  assert.deepEqual(result.messages, ['Ok, listo.'])
+})
+
+test('mensaje casual se divide en globos humanos con IA', async () => {
+  const original = 'Sí bro, ya puedes poner esa publicidad. Lo ideal sería que primero subas unos videos mostrando el servicio. Después activamos la campaña y vamos midiendo qué personas escriben para ajustar el anuncio. No te preocupes, yo te voy diciendo paso a paso qué hacer.'
+  const result = await splitMessageIntoBubbles({
+    text: original,
+    settings: { mode: 'split', minMessageLengthToSplit: 1, maxBubbles: 5, minBubbleLength: 20, maxBubbleLength: 140 },
+    aiSplitter: async () => ({
+      messages: [
+        'Sí bro, ya puedes poner esa publicidad.',
+        'Lo ideal sería que primero subas unos videos mostrando el servicio.',
+        'Después activamos la campaña y vamos midiendo qué personas escriben para ajustar el anuncio.',
+        'No te preocupes, yo te voy diciendo paso a paso qué hacer.'
+      ]
+    })
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.equal(result.messages.length, 4)
+  assert.equal(result.messages[0], 'Sí bro, ya puedes poner esa publicidad.')
+})
+
+test('mensaje largo respeta el máximo de globos', async () => {
+  const original = [
+    'Primero revisamos el objetivo de la campaña para que no se gaste presupuesto en mensajes que no sirven.',
+    'Luego validamos que el anuncio tenga una oferta clara y que el primer mensaje de WhatsApp conteste rápido.',
+    'Después medimos qué contactos avanzan, cuáles preguntan precio y cuáles necesitan seguimiento manual.',
+    'Con esa información ajustamos el texto, el público y el presupuesto sin cambiar todo a ciegas.',
+    'Al final te digo qué decisión tomar y qué parte conviene escalar.'
+  ].join(' ')
+
+  const result = await splitMessageIntoBubbles({
+    text: original,
+    settings: { mode: 'split', minMessageLengthToSplit: 1, maxBubbles: 3, minBubbleLength: 20, maxBubbleLength: 140 },
+    aiSplitter: async () => ({
+      messages: original.split('. ').map((part) => (part.endsWith('.') ? part : `${part}.`))
+    })
+  })
+
+  assert.equal(result.messages.length, 3)
+  assert.ok(result.messages.every((message) => message.trim()))
+})
+
+test('no rompe URLs al dividir', async () => {
+  const original = 'Claro, entra a https://ristak.com/demo?source=whatsapp para revisar la demo. Después dime si quieres que la conectemos con tu campaña actual.'
+  const result = await splitMessageIntoBubbles({
+    text: original,
+    settings: { mode: 'split', minMessageLengthToSplit: 1, maxBubbles: 4, minBubbleLength: 20, maxBubbleLength: 90 },
+    aiSplitter: async () => ({
+      messages: [
+        'Claro, entra a https://ristak.com/demo?source=whatsapp para revisar la demo.',
+        'Después dime si quieres que la conectemos con tu campaña actual.'
+      ]
+    })
+  })
+
+  assert.ok(result.messages.some((message) => message.includes('https://ristak.com/demo?source=whatsapp')))
+})
+
+test('no rompe teléfono ni precio al dividir', async () => {
+  const original = 'Perfecto, el anticipo sería de $1,500 MXN y el teléfono para confirmar es +52 656 123 4567. Ya con eso apartamos tu lugar.'
+  const result = await splitMessageIntoBubbles({
+    text: original,
+    settings: { mode: 'split', minMessageLengthToSplit: 1, maxBubbles: 4, minBubbleLength: 20, maxBubbleLength: 90 },
+    aiSplitter: async () => ({
+      messages: [
+        'Perfecto, el anticipo sería de $1,500 MXN y el teléfono para confirmar es +52 656 123 4567.',
+        'Ya con eso apartamos tu lugar.'
+      ]
+    })
+  })
+
+  assert.ok(result.messages.some((message) => message.includes('$1,500 MXN')))
+  assert.ok(result.messages.some((message) => message.includes('+52 656 123 4567')))
+})
+
+test('conserva pasos enumerados en orden', async () => {
+  const original = '1. Manda el video. 2. Confirmamos el presupuesto. 3. Activamos la campaña. 4. Revisamos resultados mañana.'
+  const result = await splitMessageIntoBubbles({
+    text: original,
+    settings: { mode: 'split', minMessageLengthToSplit: 1, maxBubbles: 4, minBubbleLength: 10, maxBubbleLength: 80 },
+    aiSplitter: async () => ({
+      messages: [
+        '1. Manda el video.',
+        '2. Confirmamos el presupuesto.',
+        '3. Activamos la campaña.',
+        '4. Revisamos resultados mañana.'
+      ]
+    })
+  })
+
+  assert.deepEqual(result.messages.map((message) => message.match(/^\d/)?.[0]), ['1', '2', '3', '4'])
+})
+
+test('falla de JSON de la IA usa fallback con el texto original', async () => {
+  const original = 'Esta respuesta debe quedarse completa si el divisor devuelve basura.'
+  const result = await splitMessageIntoBubbles({
+    text: original,
+    settings: { mode: 'split', minMessageLengthToSplit: 1, maxBubbles: 5 },
+    aiSplitter: async () => 'no soy json'
+  })
+
+  assert.equal(result.source, 'fallback')
+  assert.deepEqual(result.messages, [original])
+})
+
+test('pausas entre globos se pueden apagar', () => {
+  const delayMs = getAgentReplyDeliveryPartDelayMs({
+    replyDelivery: {
+      mode: 'split',
+      delayBetweenBubblesEnabled: false,
+      minDelaySeconds: 2,
+      maxDelaySeconds: 7
+    }
+  })
+
+  assert.equal(delayMs, 0)
+})
+
+test('mensaje formal conserva tono formal', async () => {
+  const original = 'Con gusto. Para poder avanzar, necesitamos confirmar la fecha de la cita y el servicio requerido. En cuanto me comparta esos datos, le indico la disponibilidad.'
+  const result = await splitMessageIntoBubbles({
+    text: original,
+    settings: { mode: 'split', minMessageLengthToSplit: 1, maxBubbles: 3, minBubbleLength: 20, maxBubbleLength: 120 },
+    aiSplitter: async () => ({
+      messages: [
+        'Con gusto. Para poder avanzar, necesitamos confirmar la fecha de la cita y el servicio requerido.',
+        'En cuanto me comparta esos datos, le indico la disponibilidad.'
+      ]
+    })
+  })
+
+  assert.equal(result.messages.length, 2)
+  assert.match(result.messages.join(' '), /Con gusto/)
+  assert.match(result.messages.join(' '), /le indico/)
 })
 
 test('construye contexto interno con mensajes pendientes sin exponerlo al cliente', () => {

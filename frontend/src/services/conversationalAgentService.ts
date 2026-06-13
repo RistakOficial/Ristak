@@ -18,7 +18,14 @@ export interface AgentResponseDelayConfig {
 
 export interface AgentReplyDeliveryConfig {
   mode: AgentReplyDeliveryMode
+  splitMessagesEnabled: boolean
+  minMessageLengthToSplit: number
+  maxBubbles: number
+  minBubbleLength: number
+  maxBubbleLength: number
   targetChars: number
+  randomizeSplitting: boolean
+  delayBetweenBubblesEnabled: boolean
   minDelaySeconds: number
   maxDelaySeconds: number
 }

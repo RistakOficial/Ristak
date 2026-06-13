@@ -81,9 +81,16 @@ const defaultResponseDelay: AgentResponseDelayConfig = {
 
 const defaultReplyDelivery: AgentReplyDeliveryConfig = {
   mode: 'single',
-  targetChars: 280,
+  splitMessagesEnabled: false,
+  minMessageLengthToSplit: 120,
+  maxBubbles: 5,
+  minBubbleLength: 20,
+  maxBubbleLength: 350,
+  targetChars: 350,
+  randomizeSplitting: true,
+  delayBetweenBubblesEnabled: true,
   minDelaySeconds: 2,
-  maxDelaySeconds: 6
+  maxDelaySeconds: 7
 }
 
 type TestMessage = { role: 'user' | 'assistant'; content: string; internal?: boolean }
@@ -127,8 +134,11 @@ function getResponseDelayHelp(delay: AgentResponseDelayConfig) {
 }
 
 function getReplyDeliveryHelp(delivery: AgentReplyDeliveryConfig) {
-  if (delivery.mode === 'split') {
-    return `Si la respuesta se alarga, la parte en WhatsApps de unas ${delivery.targetChars} letras y espera de ${delivery.minDelaySeconds} a ${delivery.maxDelaySeconds} segundos entre cada uno.`
+  if (delivery.splitMessagesEnabled || delivery.mode === 'split') {
+    const delayText = delivery.delayBetweenBubblesEnabled
+      ? `con pausas de ${delivery.minDelaySeconds} a ${delivery.maxDelaySeconds} segundos`
+      : 'sin pausa entre globos'
+    return `Usa IA para partir respuestas desde ${delivery.minMessageLengthToSplit} letras en máximo ${delivery.maxBubbles} globos, ${delayText}.`
   }
   return 'Envía cada respuesta completa en un solo WhatsApp.'
 }
@@ -257,7 +267,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
             : ' · entra con cualquier chat'}
           {exitCount > 0 ? ` · se suelta con ${exitCount}` : ''}
           {responseDelaySummary ? ` · espera ${responseDelaySummary}` : ''}
-          {replyDelivery.mode === 'split' ? ' · responde en partes' : ''}
+          {replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split' ? ' · responde en partes' : ''}
         </p>
       )}
 
@@ -567,27 +577,88 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
               <label className={`${styles.inlineToggle} ${styles.replyDeliveryToggle}`}>
                 <input
                   type="checkbox"
-                  checked={replyDelivery.mode === 'split'}
-                  onChange={(event) => updateReplyDelivery({ mode: (event.target.checked ? 'split' : 'single') as AgentReplyDeliveryMode })}
+                  checked={replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split'}
+                  onChange={(event) => {
+                    const enabled = event.target.checked
+                    updateReplyDelivery({
+                      mode: (enabled ? 'split' : 'single') as AgentReplyDeliveryMode,
+                      splitMessagesEnabled: enabled
+                    })
+                  }}
                 />
-                <span>Dividir respuestas largas en varios mensajes</span>
+                <span>Modo mensajes humanos</span>
               </label>
 
-              {replyDelivery.mode === 'split' && (
+              {(replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split') && (
                 <div className={styles.replyDeliveryControls}>
+                  <label className={`${styles.inlineToggle} ${styles.replyOptionToggle}`}>
+                    <input
+                      type="checkbox"
+                      checked={replyDelivery.randomizeSplitting}
+                      onChange={(event) => updateReplyDelivery({ randomizeSplitting: event.target.checked })}
+                    />
+                    <span>Variar cortes</span>
+                  </label>
+                  <label className={`${styles.inlineToggle} ${styles.replyOptionToggle}`}>
+                    <input
+                      type="checkbox"
+                      checked={replyDelivery.delayBetweenBubblesEnabled}
+                      onChange={(event) => updateReplyDelivery({ delayBetweenBubblesEnabled: event.target.checked })}
+                    />
+                    <span>Pausas entre globos</span>
+                  </label>
                   <div className={`${styles.field} ${styles.replyPartSizeField}`}>
-                    <label className={styles.label}>Tamaño aprox.</label>
+                    <label className={styles.label}>Dividir desde</label>
                     <input
                       className={`${styles.input} ${styles.delayNumberInput}`}
                       type="number"
-                      min={120}
-                      max={700}
+                      min={0}
+                      max={2000}
                       step={10}
-                      value={replyDelivery.targetChars}
-                      onChange={(event) => updateReplyDelivery({ targetChars: Number(event.target.value) || defaultReplyDelivery.targetChars })}
+                      value={replyDelivery.minMessageLengthToSplit}
+                      onChange={(event) => updateReplyDelivery({ minMessageLengthToSplit: Number(event.target.value) || 0 })}
                     />
                   </div>
                   <div className={`${styles.field} ${styles.delayNumberField}`}>
+                    <label className={styles.label}>Máx. globos</label>
+                    <input
+                      className={`${styles.input} ${styles.delayNumberInput}`}
+                      type="number"
+                      min={1}
+                      max={10}
+                      step={1}
+                      value={replyDelivery.maxBubbles}
+                      onChange={(event) => updateReplyDelivery({ maxBubbles: Number(event.target.value) || defaultReplyDelivery.maxBubbles })}
+                    />
+                  </div>
+                  <div className={`${styles.field} ${styles.replyPartSizeField}`}>
+                    <label className={styles.label}>Globo mín.</label>
+                    <input
+                      className={`${styles.input} ${styles.delayNumberInput}`}
+                      type="number"
+                      min={1}
+                      max={200}
+                      step={10}
+                      value={replyDelivery.minBubbleLength}
+                      onChange={(event) => updateReplyDelivery({ minBubbleLength: Number(event.target.value) || defaultReplyDelivery.minBubbleLength })}
+                    />
+                  </div>
+                  <div className={`${styles.field} ${styles.replyPartSizeField}`}>
+                    <label className={styles.label}>Globo máx.</label>
+                    <input
+                      className={`${styles.input} ${styles.delayNumberInput}`}
+                      type="number"
+                      min={80}
+                      max={1000}
+                      step={10}
+                      value={replyDelivery.maxBubbleLength}
+                      onChange={(event) => {
+                        const maxBubbleLength = Number(event.target.value) || defaultReplyDelivery.maxBubbleLength
+                        updateReplyDelivery({ maxBubbleLength, targetChars: maxBubbleLength })
+                      }}
+                    />
+                  </div>
+                  <div className={`${styles.field} ${styles.delayNumberField} ${replyDelivery.delayBetweenBubblesEnabled ? '' : styles.mutedField}`}>
                     <label className={styles.label}>Pausa mín.</label>
                     <input
                       className={`${styles.input} ${styles.delayNumberInput}`}
@@ -596,10 +667,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
                       max={60}
                       step={1}
                       value={replyDelivery.minDelaySeconds}
+                      disabled={!replyDelivery.delayBetweenBubblesEnabled}
                       onChange={(event) => updateReplyDelivery({ minDelaySeconds: Number(event.target.value) || 0 })}
                     />
                   </div>
-                  <div className={`${styles.field} ${styles.delayNumberField}`}>
+                  <div className={`${styles.field} ${styles.delayNumberField} ${replyDelivery.delayBetweenBubblesEnabled ? '' : styles.mutedField}`}>
                     <label className={styles.label}>Pausa máx.</label>
                     <input
                       className={`${styles.input} ${styles.delayNumberInput}`}
@@ -608,6 +680,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
                       max={60}
                       step={1}
                       value={replyDelivery.maxDelaySeconds}
+                      disabled={!replyDelivery.delayBetweenBubblesEnabled}
                       onChange={(event) => updateReplyDelivery({ maxDelaySeconds: Number(event.target.value) || 0 })}
                     />
                   </div>
