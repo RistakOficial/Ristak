@@ -34,7 +34,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
     : []
 
   return (
-    <div>
+    <div className={styles.whatsappConfig}>
       {/* ------------------------------ Remitente ----------------------------- */}
       <ConfigSection title="Remitente">
         {!loadingNumbers && numbers.length === 0 && (
