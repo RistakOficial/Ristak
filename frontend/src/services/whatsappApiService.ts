@@ -23,7 +23,7 @@ export interface WhatsAppApiPhoneNumber {
   qr_last_error?: string | null
   updated_at?: string | null
   availability?: WhatsAppApiPhoneNumberAvailability
-  provider?: 'ycloud' | 'meta_direct' | string
+  provider?: 'ycloud' | string
 }
 
 export interface WhatsAppApiPhoneNumberAvailability {
@@ -85,7 +85,6 @@ export interface WhatsAppApiAlert {
 
 export interface WhatsAppApiStatus {
   provider: 'ycloud' | string
-  activeProvider?: 'ycloud' | 'meta_direct' | string
   source: 'WhatsApp_API' | string
   connected: boolean
   configured: boolean
@@ -127,7 +126,6 @@ export interface WhatsAppApiStatus {
     consentText: string
     sessions: WhatsAppQrSession[]
   }
-  metaDirect?: WhatsAppMetaDirectStatus
   stats: {
     phoneNumbers: number
     contacts: number
@@ -148,43 +146,6 @@ export interface WhatsAppApiStatus {
     lastSyncedAt?: string | null
   }
   lastError?: string | null
-}
-
-export interface WhatsAppMetaDirectStatus {
-  provider: 'meta_direct' | string
-  connected: boolean
-  configured: boolean
-  status: 'connected' | 'disconnected' | string
-  appId?: string | null
-  businessId?: string | null
-  wabaId?: string | null
-  phoneNumberId?: string | null
-  displayPhoneNumber?: string | null
-  coexistenceEnabled?: boolean
-  webhookMode?: string | null
-  installerWebhookUrl?: string | null
-  installerOAuthCallbackUrl?: string | null
-  connectedAt?: string | null
-  disconnectedAt?: string | null
-  lastWebhookReceivedAt?: string | null
-  lastRelayReceivedAt?: string | null
-  lastError?: string | null
-  datasetId?: string | null
-  adAccountId?: string | null
-  hasSystemUserToken?: boolean
-}
-
-export interface WhatsAppMetaDirectConnectUrlResponse {
-  url: string
-  expiresAt?: string
-}
-
-export interface WhatsAppMetaDirectTestResponse {
-  ok?: boolean
-  phone?: Record<string, unknown>
-  synced?: boolean
-  status?: string
-  message?: string
 }
 
 export interface WhatsAppApiConnectPayload {
@@ -364,12 +325,6 @@ export interface WhatsAppQrConnectPayload {
 
 export const whatsappApiService = {
   getStatus: () => apiClient.get<WhatsAppApiStatus>('/whatsapp-api/status'),
-  getMetaConnectUrl: () => apiClient.get<WhatsAppMetaDirectConnectUrlResponse>('/whatsapp-api/meta/connect-url'),
-  setProvider: (provider: 'ycloud' | 'meta_direct') => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/meta/provider', { provider }),
-  testMetaDirect: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/test'),
-  sendMetaDirectTestMessage: (payload: { to: string; text?: string }) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/messages/test', payload),
-  syncMetaDirectHistory: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/sync-history'),
-  disconnectMetaDirect: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/meta/disconnect'),
   connect: (payload: WhatsAppApiConnectPayload) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/connect', payload),
   previewPhoneNumbers: (apiKey?: string) => apiClient.post<WhatsAppApiPhoneNumbersPreviewResponse>('/whatsapp-api/phone-numbers/preview', { apiKey }),
   setDefaultPhoneNumber: (phoneNumberId: string) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/phone-numbers/default', { phoneNumberId }),
