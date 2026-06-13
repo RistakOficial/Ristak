@@ -13619,6 +13619,95 @@
   border-radius: calc(var(--design-control-radius, 8px) - 2px);
 }
 
+.pageFrame .containerFocused .sitesShellFocused .propertiesPanel {
+  --sites-inspector-label-size: 0.75rem;
+  --sites-inspector-label-weight: 700;
+  --sites-inspector-control-size: 0.875rem;
+  --sites-inspector-control-weight: 400;
+  --sites-inspector-control-line: 1.25rem;
+  --sites-inspector-section-size: 0.72rem;
+  --sites-inspector-section-weight: 760;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .field span,
+  .inlineField span,
+  .compactField span,
+  .dimensionField > span,
+  .colorField > span,
+  .colorFieldHeader > span,
+  .alignmentControl > span,
+  .textFontSelect span,
+  .spacingHeader > span,
+  .spacingBox > span,
+  .typographySelectRow > span,
+  .typographyInspectorTitle,
+  .metaCardField > span,
+  .editorSettingsField > span,
+  .metaConversionField > span
+) {
+  font-size: var(--sites-inspector-label-size) !important;
+  font-weight: var(--sites-inspector-label-weight) !important;
+  letter-spacing: 0 !important;
+  line-height: 1.15 !important;
+  text-transform: none !important;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .field input,
+  .field textarea,
+  .field select,
+  .inlineField input,
+  .inlineField select,
+  .compactField input,
+  .dimensionBox input,
+  .spacingBox > div input,
+  .colorRow .colorHex,
+  .textFontSelect select,
+  .typographyFullSelect button,
+  .typographyWeightSelect button,
+  .typographySelectRow > div > button,
+  .editorSettingsField [data-ristak-dropdown-trigger],
+  .metaConversionSelect [data-ristak-dropdown-trigger],
+  [data-ristak-dropdown-trigger]
+) {
+  font-family: inherit !important;
+  font-size: var(--sites-inspector-control-size) !important;
+  font-weight: var(--sites-inspector-control-weight) !important;
+  letter-spacing: 0 !important;
+  line-height: var(--sites-inspector-control-line) !important;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .dimensionBox small,
+  .spacingBox small,
+  .alignmentControl button,
+  .alignmentControl button small,
+  .textFormatButtons button,
+  .metaParametersToggle,
+  .editorSettingsInlineToggle
+) {
+  font-family: inherit !important;
+  font-size: 0.75rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .propertiesBody .panelSubheader {
+  font-size: var(--sites-inspector-section-size) !important;
+  font-weight: var(--sites-inspector-section-weight) !important;
+  letter-spacing: 0.045em !important;
+  text-transform: uppercase !important;
+}
+
+.pageFrame .containerFocused .sitesShellFocused [data-ristak-dropdown-panel] [data-ristak-dropdown-item] {
+  font-family: inherit !important;
+  font-size: var(--sites-inspector-control-size) !important;
+  font-weight: var(--sites-inspector-control-weight) !important;
+  letter-spacing: 0 !important;
+  line-height: var(--sites-inspector-control-line) !important;
+}
+
 .pageFrame .containerFocused .sitesShellFocused :is(.alignmentActive, .textFormatActive, .spacingLinkButtonActive) {
   background: rgba(var(--color-primary-rgb), 0.12) !important;
   color: var(--color-primary) !important;

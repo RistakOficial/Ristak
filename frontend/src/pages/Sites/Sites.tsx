@@ -989,13 +989,16 @@ type BlockMoveState = {
   canMoveUp: boolean
   canMoveDown: boolean
 }
+type EmbeddedFormActiveElement = 'field' | 'submit'
 type EmbeddedFormCanvasEditorBridge = {
   parentBlockId: string
   activeFieldId: string
+  submitSelected: boolean
   activePageId: string
   pages: SitePage[]
   insertIndex: number | null
   onSelectField: (fieldId: string) => void
+  onSelectSubmit: () => void
   onPatchField: (fieldId: string, patch: Partial<SiteBlock>) => void
   onSaveField: () => void
   onDragOverField: (event: React.DragEvent<HTMLElement>, insertIndex: number) => void
@@ -3483,6 +3486,7 @@ function FormEmbedEditorPanel({
   forms,
   fields,
   activeField,
+  activeElement,
   customFields,
   pages,
   activePageId,
@@ -3506,6 +3510,7 @@ function FormEmbedEditorPanel({
   forms: PublicSite[]
   fields: SiteBlock[]
   activeField: SiteBlock | null
+  activeElement: EmbeddedFormActiveElement
   customFields: CustomFieldDefinition[]
   pages: SitePage[]
   activePageId: string
@@ -3551,6 +3556,7 @@ function FormEmbedEditorPanel({
     }
     patchActiveField({ blockType: nextType, settings: nextSettings })
   }
+  const isSubmitSelected = activeElement === 'submit'
 
   const selectedFieldContent = (
     <div className={styles.settingsGroup}>
@@ -3677,22 +3683,34 @@ function FormEmbedEditorPanel({
             />
           )}
 
-          <div className={styles.panelSubheader}>Apariencia del campo</div>
-          <InlineBlockStyleControls
-            site={site}
-            block={activeField}
-            blocks={fields}
-            onPatchSettings={patchActiveFieldSettings}
-            onSave={onSave}
-          />
         </>
       )}
     </div>
   )
 
+  const selectedSubmitContent = (
+    <div className={styles.settingsGroup}>
+      <div className={styles.formFieldEditorHeader}>
+        <div>
+          <strong>Botón de envío</strong>
+          <small>Texto, navegación y acción final del formulario</small>
+        </div>
+      </div>
+      <FormSubmitContentControls
+        site={site}
+        settings={settings}
+        embedded
+        onPatchTheme={onPatchTheme}
+        onPatchSettings={onPatchSettings}
+        onSaveSite={onSaveSite}
+        onSaveSettings={onSave}
+      />
+    </div>
+  )
+
   const editContent = (
     <>
-      {selectedFieldContent}
+      {isSubmitSelected ? selectedSubmitContent : selectedFieldContent}
       <div className={styles.settingsGroup}>
         <div className={styles.panelSubheader}>Contenido del formulario</div>
         <label className={styles.field}>
@@ -3708,14 +3726,6 @@ function FormEmbedEditorPanel({
           <CustomSelect value={selectedFormId} onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined, embeddedPages: undefined })} onBlur={onSave}>
             <option value="">Componente editable</option>
             {forms.filter(form => form.id !== site.id).map(form => <option key={form.id} value={form.id}>{form.name}</option>)}
-          </CustomSelect>
-        </label>
-        <label className={styles.field}>
-          <span>Al terminar</span>
-          <CustomSelect value={getFormCompletionAction(settings)} onChange={(event) => onPatchSettings({ completionAction: event.target.value })} onBlur={onSave}>
-            <option value="next_page">Ir a la siguiente página</option>
-            <option value="next_page_if_qualified">Siguiente página solo si califica</option>
-            <option value="form_default">Mostrar mensaje del formulario</option>
           </CustomSelect>
         </label>
       </div>
@@ -3761,8 +3771,25 @@ function FormEmbedEditorPanel({
 
   const designContent = (
     <>
-      <InlineBlockStyleControls site={site} block={block} blocks={[block]} onPatchSettings={onPatchSettings} onSave={onSave} />
-      <FormGlobalStyleControls site={site} embedded onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      <div className={styles.settingsGroup}>
+        {isSubmitSelected ? (
+          <FormSubmitGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+        ) : activeField ? (
+          <>
+            <FormTypographyGlobalControls site={site} title="Tipografía de campos" onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+            <FormFieldGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+            {isChoiceBlock(activeField.blockType) && (
+              <FormOptionGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+            )}
+          </>
+        ) : (
+          <InspectorEmptyState>Selecciona un campo o el botón de envío dentro del formulario.</InspectorEmptyState>
+        )}
+      </div>
+      <div className={styles.settingsGroup}>
+        <div className={styles.panelSubheader}>Contenedor del formulario</div>
+        <InlineBlockStyleControls site={site} block={block} blocks={[block]} surfaceOnly onPatchSettings={onPatchSettings} onSave={onSave} />
+      </div>
     </>
   )
 
@@ -3842,6 +3869,7 @@ export const Sites: React.FC = () => {
   const [paletteInsertIndex, setPaletteInsertIndex] = useState<number | null>(null)
   const [embeddedFieldInsertIndex, setEmbeddedFieldInsertIndex] = useState<number | null>(null)
   const [activeEmbeddedFormFieldId, setActiveEmbeddedFormFieldId] = useState('')
+  const [activeEmbeddedFormSubmitSelected, setActiveEmbeddedFormSubmitSelected] = useState(false)
   const [activeEmbeddedFormPageId, setActiveEmbeddedFormPageId] = useState('')
   const [paletteSectionTarget, setPaletteSectionTarget] = useState<PaletteSectionTarget | null>(null)
   const [paletteDragPosition, setPaletteDragPosition] = useState<PaletteDragPosition | null>(null)
@@ -4008,6 +4036,7 @@ export const Sites: React.FC = () => {
   useEffect(() => {
     if (!formEditMode) {
       setActiveEmbeddedFormFieldId('')
+      setActiveEmbeddedFormSubmitSelected(false)
       setActiveEmbeddedFormPageId('')
       setEmbeddedFieldInsertIndex(null)
       return
@@ -4021,13 +4050,15 @@ export const Sites: React.FC = () => {
     }
 
     const visibleFields = getEmbeddedFormPageFields(formEditFields, formEditPages, nextPageId)
+    if (activeEmbeddedFormSubmitSelected) return
+
     if (!visibleFields.length) {
       setActiveEmbeddedFormFieldId('')
       return
     }
 
     setActiveEmbeddedFormFieldId(current => visibleFields.some(field => field.id === current) ? current : visibleFields[0].id)
-  }, [activeEmbeddedFormPageId, formEditMode, formEditBlock?.id, formEditFields, formEditPages])
+  }, [activeEmbeddedFormPageId, activeEmbeddedFormSubmitSelected, formEditMode, formEditBlock?.id, formEditFields, formEditPages])
   const importedPopupDetected = useMemo(
     () => isImportedHtmlSite(editorSite) && importedHtmlHasPopup(selectedImportData),
     [editorSite, selectedImportData]
@@ -6826,10 +6857,17 @@ export const Sites: React.FC = () => {
   const embeddedFormEditorBridge: EmbeddedFormCanvasEditorBridge | null = formEditBlock ? {
     parentBlockId: formEditBlock.id,
     activeFieldId: activeEmbeddedFormFieldId,
+    submitSelected: activeEmbeddedFormSubmitSelected,
     activePageId: activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID,
     pages: formEditPages,
     insertIndex: embeddedFieldInsertIndex,
-    onSelectField: setActiveEmbeddedFormFieldId,
+    onSelectField: (fieldId) => {
+      setActiveEmbeddedFormSubmitSelected(false)
+      setActiveEmbeddedFormFieldId(fieldId)
+    },
+    onSelectSubmit: () => {
+      setActiveEmbeddedFormSubmitSelected(true)
+    },
     onPatchField: patchEmbeddedFormField,
     onSaveField: () => { void handleSaveBlock(formEditBlock.id) },
     onDragOverField: handleEmbeddedFormFieldDragOver,
@@ -7337,6 +7375,7 @@ export const Sites: React.FC = () => {
                     forms={forms}
                     fields={formEditFields}
                     activeField={activeEmbeddedFormField}
+                    activeElement={activeEmbeddedFormSubmitSelected ? 'submit' : 'field'}
                     customFields={customFields}
                     pages={formEditPages}
                     activePageId={activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID}
@@ -16668,19 +16707,20 @@ const InlineBlockStyleControls: React.FC<{
   site: PublicSite
   block: SiteBlock
   blocks: SiteBlock[]
+  surfaceOnly?: boolean
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ site, block, blocks, onPatchSettings, onSave }) => {
+}> = ({ site, block, blocks, surfaceOnly = false, onPatchSettings, onSave }) => {
   const settings = getPanelStyleSettings(site, block, blocks)
   const defaultAccent = defaultAccentForSite(site)
   const isSection = block.blockType === SECTION_BLOCK_TYPE
   const isLandingContent = isLanding(site) && !isSection
-  const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed'
-  const supportsField = fieldBlockTypes.has(block.blockType)
+  const supportsButton = !surfaceOnly && (block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed')
+  const supportsField = !surfaceOnly && fieldBlockTypes.has(block.blockType)
   const isHardEmbed = block.blockType === 'embed' || block.blockType === 'calendar_embed'
-  const supportsTextStyle = supportsField || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType)
-  const supportsMedia = block.blockType === 'image' || block.blockType === 'video'
-  const supportsCards = ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
+  const supportsTextStyle = !surfaceOnly && (supportsField || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType))
+  const supportsMedia = !surfaceOnly && (block.blockType === 'image' || block.blockType === 'video')
+  const supportsCards = !surfaceOnly && ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
   const defaultBorderWidth = getBlockBorderWidthFallback(site, block)
   const blockTextPaint = getSettingPaint(settings, 'blockText', getPageTextPaint(site))
   const currentFontFamily = getSettingString(settings, 'fontFamily')
@@ -17382,8 +17422,17 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         ) : (
           fields.map(field => <FieldStaticPreview key={field.id} block={field} />)
         )}
-        <div className="rstk-actions rstk-embed-actions">
-          <button type="button" data-submit><SubmitButtonContent theme={site?.theme} /></button>
+        <div className={`rstk-actions rstk-embed-actions ${embeddedFormEditor?.submitSelected ? 'rstkEmbeddedFormSubmitActive' : ''}`}>
+          <button
+            type="button"
+            data-submit
+            onClick={embeddedFormEditor ? (event) => {
+              event.stopPropagation()
+              embeddedFormEditor.onSelectSubmit()
+            } : undefined}
+          >
+            <SubmitButtonContent theme={site?.theme} />
+          </button>
         </div>
       </section>
     )
@@ -17595,7 +17644,7 @@ const EmbeddedFormCanvasFields: React.FC<{
       <>
         <EmbeddedFormCanvasDropZone active={editor.insertIndex === 0} insertIndex={0} editor={editor} />
         {fields.map((field, index) => {
-          const selected = editor.activeFieldId === field.id
+          const selected = !editor.submitSelected && editor.activeFieldId === field.id
           return (
             <React.Fragment key={field.id}>
               <section
@@ -17706,6 +17755,238 @@ interface PropertiesPanelProps {
   onPatchCategorySettings: (block: SiteBlock, patch: Record<string, unknown>) => void
   onSaveCategory: (block: SiteBlock) => void
   onSave: () => void
+}
+
+const FormTypographyGlobalControls: React.FC<{
+  site: PublicSite
+  title?: string
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ site, title = 'Tipografía del formulario', onPatchTheme, onSaveSite }) => {
+  const theme = site.theme || {}
+  const currentFontFamily = getThemeString(theme, 'formFontFamily')
+  const fontOptions = currentFontFamily && !GOOGLE_FONT_OPTIONS.some(option => option.value === currentFontFamily)
+    ? [...GOOGLE_FONT_OPTIONS, { label: 'Fuente actual', value: currentFontFamily }]
+    : GOOGLE_FONT_OPTIONS
+  const isBold = theme.formFontWeight === 'bold'
+  const isItalic = theme.formFontStyle === 'italic'
+  const isUnderline = theme.formTextDecoration === 'underline'
+  const patchTextFormat = (patch: Partial<SiteTheme>) => {
+    onPatchTheme(patch)
+    window.setTimeout(onSaveSite, 0)
+  }
+
+  return (
+    <>
+      <div className={styles.panelSubheader}>{title}</div>
+      <div className={styles.textFormatPanel}>
+        <div className={styles.textToolbar}>
+          <label className={styles.textFontSelect}>
+            <span>Tipografía</span>
+            <CustomSelect value={currentFontFamily} onChange={(event) => onPatchTheme({ formFontFamily: event.target.value })} onBlur={onSaveSite}>
+              {fontOptions.map(option => (
+                <option key={option.label} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </label>
+          <div className={styles.textFormatButtons} role="group" aria-label="Formato global de formulario">
+            <button type="button" className={isBold ? styles.textFormatActive : ''} aria-pressed={isBold} title="Negrita" aria-label="Negrita" onClick={() => patchTextFormat({ formFontWeight: isBold ? 'normal' : 'bold' })}>
+              <Bold size={15} />
+            </button>
+            <button type="button" className={isItalic ? styles.textFormatActive : ''} aria-pressed={isItalic} title="Itálica" aria-label="Itálica" onClick={() => patchTextFormat({ formFontStyle: isItalic ? 'normal' : 'italic' })}>
+              <Italic size={15} />
+            </button>
+            <button type="button" className={isUnderline ? styles.textFormatActive : ''} aria-pressed={isUnderline} title="Subrayado" aria-label="Subrayado" onClick={() => patchTextFormat({ formTextDecoration: isUnderline ? 'none' : 'underline' })}>
+              <Underline size={15} />
+            </button>
+          </div>
+        </div>
+        <div className={styles.twoColumn}>
+          <DimensionField label="Texto pregunta" value={getThemeNumber(theme, 'formLabelSize', 15, 11, 28)} min={11} max={28} onChange={(value) => onPatchTheme({ formLabelSize: value })} onCommit={onSaveSite} />
+          <DimensionField label="Texto respuesta" value={getThemeNumber(theme, 'formInputSize', 16, 11, 28)} min={11} max={28} onChange={(value) => onPatchTheme({ formInputSize: value })} onCommit={onSaveSite} />
+        </div>
+        <DimensionField label="Texto ayuda" value={getThemeNumber(theme, 'formHelpSize', 14, 10, 24)} min={10} max={24} onChange={(value) => onPatchTheme({ formHelpSize: value })} onCommit={onSaveSite} />
+      </div>
+    </>
+  )
+}
+
+const FormFieldGlobalStyleControls: React.FC<{
+  site: PublicSite
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ site, onPatchTheme, onSaveSite }) => {
+  const theme = site.theme || {}
+  const inputText = isSiteDark(site) ? '#ffffff' : '#111827'
+
+  return (
+    <>
+      <div className={styles.panelSubheader}>Diseño global de campos</div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Pregunta" value={getThemePaint(theme, 'formLabelColor', getThemePaint(theme, 'textColor', inputText))} allowGradient onChange={(value) => onPatchTheme({ formLabelColor: value })} onCommit={onSaveSite} />
+        <ColorField label="Ayuda" value={getThemePaint(theme, 'formHelpColor', '#64748b')} allowGradient onChange={(value) => onPatchTheme({ formHelpColor: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Caja" value={getThemePaint(theme, 'formFieldBg', 'transparent')} allowGradient onChange={(value) => onPatchTheme({ formFieldBg: value })} onCommit={onSaveSite} />
+        <ColorField label="Texto caja" value={getThemePaint(theme, 'formFieldText', inputText)} allowGradient onChange={(value) => onPatchTheme({ formFieldText: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Borde caja" value={getThemePaint(theme, 'formFieldBorder', '#dbe3ef')} allowGradient onChange={(value) => onPatchTheme({ formFieldBorder: value })} onCommit={onSaveSite} />
+        <ColorField label="Placeholder" value={getThemePaint(theme, 'formPlaceholderColor', '#94a3b8')} allowGradient onChange={(value) => onPatchTheme({ formPlaceholderColor: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField label="Alto caja" value={getThemeNumber(theme, 'formFieldHeight', 50, 34, 96)} min={34} max={96} onChange={(value) => onPatchTheme({ formFieldHeight: value })} onCommit={onSaveSite} />
+        <DimensionField label="Radio caja" value={getThemeNumber(theme, 'formFieldRadius', 12, 0, 36)} min={0} max={36} onChange={(value) => onPatchTheme({ formFieldRadius: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField label="Borde caja" value={getThemeNumber(theme, 'formFieldBorderWidth', 1, 0, 8)} min={0} max={8} onChange={(value) => onPatchTheme({ formFieldBorderWidth: value })} onCommit={onSaveSite} />
+        <DimensionField label="Relleno lados" value={getThemeNumber(theme, 'formFieldPaddingX', 14, 6, 48)} min={6} max={48} onChange={(value) => onPatchTheme({ formFieldPaddingX: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField label="Relleno vertical" value={getThemeNumber(theme, 'formFieldPaddingY', 13, 6, 36)} min={6} max={36} onChange={(value) => onPatchTheme({ formFieldPaddingY: value })} onCommit={onSaveSite} />
+        <DimensionField label="Ancho cajas" value={getThemeNumber(theme, 'formFieldWidth', 560, 240, 900)} min={240} max={900} step={10} onChange={(value) => onPatchTheme({ formFieldWidth: value })} onCommit={onSaveSite} />
+      </div>
+    </>
+  )
+}
+
+const FormOptionGlobalStyleControls: React.FC<{
+  site: PublicSite
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ site, onPatchTheme, onSaveSite }) => {
+  const theme = site.theme || {}
+  const defaultAccent = defaultAccentForSite(site)
+  const accentRgb = cssColorToHex(defaultAccent, '#111827').replace('#', '').match(/.{2}/g)?.map(hex => parseInt(hex, 16)).join(', ') || '17, 24, 39'
+  const defaultChoiceSelectedBg = `rgba(${accentRgb}, 0.10)`
+
+  return (
+    <>
+      <div className={styles.panelSubheader}>Diseño global de opciones</div>
+      <div className={styles.twoColumn}>
+        <label className={styles.field}>
+          <span>Radio y checks</span>
+          <CustomSelect value={normalizeFormChoiceStyle(theme.formChoiceStyle)} onChange={(event) => onPatchTheme({ formChoiceStyle: event.target.value as FormChoiceStyle })} onBlur={onSaveSite}>
+            {formChoiceStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </CustomSelect>
+        </label>
+        <label className={styles.field}>
+          <span>Desplegable</span>
+          <CustomSelect value={normalizeFormSelectStyle(theme.formSelectStyle)} onChange={(event) => onPatchTheme({ formSelectStyle: event.target.value as FormSelectStyle })} onBlur={onSaveSite}>
+            {formSelectStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </CustomSelect>
+        </label>
+      </div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Opción activa" value={getThemePaint(theme, 'formChoiceSelectedBg', defaultChoiceSelectedBg)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBg: value })} onCommit={onSaveSite} />
+        <ColorField label="Borde activo" value={getThemePaint(theme, 'formChoiceSelectedBorder', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBorder: value })} onCommit={onSaveSite} />
+      </div>
+    </>
+  )
+}
+
+const FormSubmitContentControls: React.FC<{
+  site: PublicSite
+  settings?: Record<string, unknown>
+  embedded?: boolean
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onPatchSettings?: (patch: Record<string, unknown>) => void
+  onSaveSite: () => void
+  onSaveSettings?: () => void
+}> = ({ site, settings = {}, embedded = false, onPatchTheme, onPatchSettings, onSaveSite, onSaveSettings }) => {
+  const theme = site.theme || {}
+  return (
+    <>
+      <div className={styles.panelSubheader}>Contenido del botón</div>
+      <div className={styles.twoColumn}>
+        <label className={styles.field}>
+          <span>Texto del botón</span>
+          <input value={theme.submitText || ''} placeholder="Enviar" onChange={(event) => onPatchTheme({ submitText: event.target.value })} onBlur={onSaveSite} />
+        </label>
+        <label className={styles.field}>
+          <span>Subtexto</span>
+          <input value={theme.submitSubtitle || ''} placeholder="Tarda menos de un minuto" onChange={(event) => onPatchTheme({ submitSubtitle: event.target.value })} onBlur={onSaveSite} />
+        </label>
+      </div>
+      {(isInteractiveForm(site) || embedded) && (
+        <div className={styles.twoColumn}>
+          <label className={styles.field}>
+            <span>Texto siguiente</span>
+            <input value={theme.nextText || ''} placeholder="Siguiente" onChange={(event) => onPatchTheme({ nextText: event.target.value })} onBlur={onSaveSite} />
+          </label>
+          <label className={styles.field}>
+            <span>Texto anterior</span>
+            <input value={theme.backText || ''} placeholder="Anterior" onChange={(event) => onPatchTheme({ backText: event.target.value })} onBlur={onSaveSite} />
+          </label>
+        </div>
+      )}
+      {isStandardForm(site) && (
+        <label className={styles.field}>
+          <span>Texto continuar</span>
+          <input value={theme.continueText || ''} placeholder="Continuar" onChange={(event) => onPatchTheme({ continueText: event.target.value })} onBlur={onSaveSite} />
+        </label>
+      )}
+      {embedded && onPatchSettings && (
+        <label className={styles.field}>
+          <span>Al enviar</span>
+          <CustomSelect value={getFormCompletionAction(settings)} onChange={(event) => onPatchSettings({ completionAction: event.target.value })} onBlur={onSaveSettings || onSaveSite}>
+            <option value="next_page">Ir a la siguiente página</option>
+            <option value="next_page_if_qualified">Siguiente página solo si califica</option>
+            <option value="form_default">Mostrar mensaje del formulario</option>
+          </CustomSelect>
+        </label>
+      )}
+    </>
+  )
+}
+
+const FormSubmitGlobalStyleControls: React.FC<{
+  site: PublicSite
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ site, onPatchTheme, onSaveSite }) => {
+  const theme = site.theme || {}
+  const defaultAccent = defaultAccentForSite(site)
+
+  return (
+    <>
+      <div className={styles.panelSubheader}>Diseño global del botón</div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Fondo botón" value={getThemePaint(theme, 'submitBg', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBg: value })} onCommit={onSaveSite} />
+        <ColorField label="Texto botón" value={getThemePaint(theme, 'submitTextColor', onAccentFor(defaultAccent))} allowGradient onChange={(value) => onPatchTheme({ submitTextColor: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Borde botón" value={getThemePaint(theme, 'submitBorderColor', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBorderColor: value })} onCommit={onSaveSite} />
+        <DimensionField label="Radio botón" value={getThemeNumber(theme, 'submitRadius', 12, 0, 80)} min={0} max={80} onChange={(value) => onPatchTheme({ submitRadius: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField label="Alto botón" value={getThemeNumber(theme, 'submitHeight', 50, 34, 96)} min={34} max={96} onChange={(value) => onPatchTheme({ submitHeight: value })} onCommit={onSaveSite} />
+        <DimensionField label="Texto botón" value={getThemeNumber(theme, 'submitFontSize', 16, 11, 32)} min={11} max={32} onChange={(value) => onPatchTheme({ submitFontSize: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField label="Relleno botón" value={getThemeNumber(theme, 'submitPaddingX', 22, 8, 72)} min={8} max={72} onChange={(value) => onPatchTheme({ submitPaddingX: value })} onCommit={onSaveSite} />
+        <DimensionField label="Borde botón" value={getThemeNumber(theme, 'submitBorderWidth', 1, 0, 8)} min={0} max={8} onChange={(value) => onPatchTheme({ submitBorderWidth: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <AlignmentControl
+          label="Alineación botón"
+          value={getThemeButtonAlign(theme, 'submitAlign', 'center')}
+          options={buttonAlignOptions}
+          onChange={(value) => onPatchTheme({ submitAlign: value as SiteTheme['submitAlign'] })}
+          onCommit={onSaveSite}
+        />
+        <DimensionField
+          label="Ancho botón"
+          value={getThemeNumber(theme, 'submitWidth', 0, 0, 100)}
+          min={0}
+          max={100}
+          unit="%"
+          onChange={(value) => onPatchTheme({ submitWidth: value })}
+          onCommit={onSaveSite}
+        />
+      </div>
+    </>
+  )
 }
 
 const FormGlobalStyleControls: React.FC<{

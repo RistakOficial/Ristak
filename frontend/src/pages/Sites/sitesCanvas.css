@@ -379,6 +379,20 @@
 .rstkCanvas .rstkEmbeddedFormFieldActive {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--rstk-accent) 20%, transparent);
 }
+.rstkCanvas .rstk-embed-actions {
+  border: 1px solid transparent;
+  border-radius: calc(var(--rstk-submit-radius, var(--rstk-radius)) + 6px);
+  padding: 8px;
+  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+.rstkCanvas .rstk-embed-actions:hover,
+.rstkCanvas .rstkEmbeddedFormSubmitActive {
+  border-color: color-mix(in srgb, var(--rstk-accent) 62%, transparent);
+  background: color-mix(in srgb, var(--rstk-accent) 7%, transparent);
+}
+.rstkCanvas .rstkEmbeddedFormSubmitActive {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--rstk-accent) 20%, transparent);
+}
 .rstkCanvas .rstkEmbeddedFormFieldTools {
   position: absolute;
   top: 7px;
