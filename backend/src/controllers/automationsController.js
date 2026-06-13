@@ -9,7 +9,8 @@ import {
   createFolder,
   updateFolder,
   reorderFolders,
-  deleteFolder
+  deleteFolder,
+  saveAutomationAsset
 } from '../services/automationsService.js'
 
 function sendError(res, error, fallback = 'Error procesando la solicitud') {
@@ -114,5 +115,18 @@ export async function deleteFolderHandler(req, res) {
   } catch (error) {
     logger.error(`Error eliminando carpeta de automatizaciones: ${error.message}`)
     sendError(res, error, 'Error eliminando la carpeta')
+  }
+}
+
+export async function uploadAssetHandler(req, res) {
+  try {
+    const asset = await saveAutomationAsset({
+      ...(req.body || {}),
+      userId: req.user?.userId || req.user?.id || null
+    })
+    res.status(201).json({ success: true, data: asset })
+  } catch (error) {
+    logger.error(`Error subiendo archivo de automatización: ${error.message}`)
+    sendError(res, error, 'Error subiendo el archivo')
   }
 }

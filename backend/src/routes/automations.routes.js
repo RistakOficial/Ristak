@@ -10,12 +10,16 @@ import {
   createFolderHandler,
   updateFolderHandler,
   reorderFoldersHandler,
-  deleteFolderHandler
+  deleteFolderHandler,
+  uploadAssetHandler
 } from '../controllers/automationsController.js'
 
 const router = express.Router()
 
 router.use(requireAuth)
+
+// Subida de archivos de bloques (imagen, video, audio, documento)
+router.post('/assets', express.json({ limit: '30mb' }), uploadAssetHandler)
 
 // Carpetas (antes de /:automationId para que "folders" no se interprete como id)
 router.post('/folders', createFolderHandler)

@@ -275,3 +275,25 @@ export async function getAutomationsOverview() {
   const [folders, automations] = await Promise.all([listFolders(), listAutomations()])
   return { folders, automations }
 }
+
+export async function saveAutomationAsset({ fileBase64, filename, userId }) {
+  const { uploadMediaAssetFromDataUrl } = await import('./mediaStorageService.js')
+  const asset = await uploadMediaAssetFromDataUrl({
+    fileBase64,
+    filename,
+    userId,
+    module: 'automations',
+    isPublic: true
+  })
+
+  return {
+    id: asset.id,
+    url: asset.publicUrl,
+    contentType: asset.mimeType,
+    sizeBytes: asset.sizeProcessed,
+    originalSizeBytes: asset.sizeOriginal,
+    compression: asset.metadata?.compression || 'original',
+    status: asset.status,
+    mediaType: asset.mediaType
+  }
+}
