@@ -793,24 +793,24 @@
 .bubbleHeader {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px 10px;
+  gap: 12px;
+  padding: 16px 18px 14px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.14);
 }
 
 .bubbleTitle {
   flex: 1;
   min-width: 0;
-  font-size: 13.5px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 700;
   color: var(--color-text-primary);
 }
 
 .bubbleSubtitle {
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--color-text-tertiary);
   line-height: 1.4;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .bubbleClose {
@@ -959,13 +959,13 @@
 .configField {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  margin-bottom: 12px;
+  gap: 7px;
+  margin-bottom: 16px;
 }
 
 .configLabel {
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 650;
   color: var(--color-text-secondary);
 }
 
@@ -973,18 +973,18 @@
 .configTextarea {
   width: 100%;
   border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 9px;
+  border-radius: 10px;
   background: var(--color-background-primary);
   color: var(--color-text-primary);
-  font-size: 12.5px;
-  padding: 7px 10px;
+  font-size: 14.5px;
+  padding: 10px 12px;
   font-family: inherit;
 }
 
 .configTextarea {
   resize: vertical;
-  min-height: 64px;
-  line-height: 1.45;
+  min-height: 88px;
+  line-height: 1.5;
 }
 
 .configInput:focus,
@@ -994,17 +994,17 @@
 }
 
 .configHelp {
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--color-text-tertiary);
-  line-height: 1.4;
+  line-height: 1.45;
 }
 
 .configInfo {
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--color-text-secondary);
   background: rgba(148, 163, 184, 0.1);
-  border-radius: 9px;
-  padding: 8px 10px;
+  border-radius: 10px;
+  padding: 10px 12px;
   white-space: pre-wrap;
   font-family: ui-monospace, monospace;
   line-height: 1.5;
@@ -1014,7 +1014,7 @@
 .configRow {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .configRow > * {
@@ -1029,20 +1029,31 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 6px;
   border: 1px dashed rgba(148, 163, 184, 0.4);
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 600;
-  padding: 6px 10px;
+  padding: 8px 12px;
   cursor: pointer;
 }
 
 .configSmallButton:hover {
   background: rgba(148, 163, 184, 0.1);
   color: var(--color-text-primary);
+}
+
+.configPanel [data-ristak-dropdown-trigger] {
+  min-height: 46px !important;
+  padding: 0 14px;
+  font-size: 14.5px;
+}
+
+.configPanel [data-ristak-dropdown-trigger] svg {
+  width: 18px;
+  height: 18px;
 }
 
 .configIconButton {
@@ -1125,12 +1136,12 @@
 .webhookUrlBox {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 9px;
+  border-radius: 10px;
   background: rgba(148, 163, 184, 0.08);
-  padding: 7px 10px;
-  font-size: 11.5px;
+  padding: 9px 12px;
+  font-size: 13px;
   font-family: ui-monospace, monospace;
   color: var(--color-text-secondary);
 }
@@ -1170,13 +1181,13 @@
 
 .webhookTestStatus {
   color: var(--color-text-primary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
 .webhookTestHint {
   color: var(--color-text-tertiary);
-  font-size: 11.5px;
+  font-size: 12.5px;
   line-height: 1.35;
 }
 
@@ -1188,7 +1199,7 @@
   background: rgba(15, 23, 42, 0.08);
   color: var(--color-text-secondary);
   font-family: ui-monospace, monospace;
-  font-size: 11px;
+  font-size: 12.5px;
   line-height: 1.5;
   padding: 8px;
   white-space: pre-wrap;
@@ -1249,24 +1260,24 @@
   border: none;
   border-top: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 0;
-  padding: 12px 0 0;
-  margin: 14px 0 12px;
+  padding: 16px 0 0;
+  margin: 18px 0 16px;
 }
 
 .configSectionTitle {
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--color-text-tertiary);
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .configWarning {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11.5px;
+  gap: 8px;
+  font-size: 13px;
   color: var(--color-status-warning);
   background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.3);
@@ -1441,7 +1452,7 @@
 }
 
 .configErrorLine {
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--color-status-error);
   line-height: 1.35;
 }
@@ -1896,12 +1907,12 @@
 }
 
 .composerEditor {
-  min-height: 64px;
-  max-height: 180px;
+  min-height: 86px;
+  max-height: 220px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 8px 10px 26px;
-  font-size: 12.5px;
+  padding: 12px 12px 34px;
+  font-size: 14.5px;
   line-height: 1.55;
   color: var(--color-text-primary);
   white-space: pre-wrap;
@@ -1962,9 +1973,9 @@
   background: rgba(139, 92, 246, 0.16);
   color: rgb(139, 92, 246);
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 600;
-  padding: 1px 6px;
+  padding: 2px 7px;
   margin: 0 1px;
   white-space: nowrap;
   user-select: none;
@@ -2001,7 +2012,7 @@
   border: none;
   background: transparent;
   color: var(--color-text-primary);
-  font-size: 12px;
+  font-size: 13.5px;
   outline: none;
 }
 
@@ -2019,16 +2030,16 @@
   align-items: center;
   gap: 5px;
   width: 100%;
-  min-height: 28px;
+  min-height: 32px;
   border: none;
   border-radius: 8px;
   background: transparent;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--color-text-tertiary);
-  padding: 5px 6px;
+  padding: 7px 8px;
   cursor: pointer;
 }
 
@@ -2048,11 +2059,11 @@
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.12);
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1;
-  padding: 3px 6px;
+  padding: 4px 7px;
 }
 
 .composerPopoverSubcategory {
@@ -2060,12 +2071,12 @@
   align-items: center;
   gap: 4px;
   width: 100%;
-  min-height: 24px;
+  min-height: 30px;
   border: none;
   border-radius: 8px;
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 650;
   text-align: left;
   cursor: pointer;
@@ -2089,7 +2100,7 @@
   border: none;
   border-radius: 8px;
   background: transparent;
-  padding: 4px 6px;
+  padding: 6px 8px;
   cursor: pointer;
 }
 
@@ -2200,7 +2211,7 @@
 /* ------------- Panel de configuración acoplado a la derecha --------------- */
 
 .configPanel {
-  width: clamp(440px, 34vw, 540px);
+  width: clamp(520px, 42vw, 680px);
   height: min(760px, calc(100% - 32px));
   align-self: center;
   flex-shrink: 0;
@@ -2232,7 +2243,7 @@
 }
 
 .configPanel .bubbleBody {
-  padding: 12px 14px 18px;
+  padding: 18px 20px 22px;
   scrollbar-gutter: stable;
 }
 
@@ -2241,9 +2252,9 @@
   position: relative;
   background: rgba(148, 163, 184, 0.08);
   border: 1px solid rgba(148, 163, 184, 0.14);
-  border-radius: 12px;
-  padding: 8px;
-  margin-bottom: 12px;
+  border-radius: 14px;
+  padding: 12px;
+  margin-bottom: 16px;
 }
 
 .panelBubble:hover {
@@ -2259,15 +2270,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
-  margin-top: 6px;
-  padding: 7px 10px;
-  border-radius: 9px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
   border: 1.5px dashed rgba(148, 163, 184, 0.4);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -2303,7 +2314,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--color-text-primary);
   margin-bottom: 8px;
@@ -2348,9 +2359,9 @@
   border-radius: 999px;
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13.5px;
   font-weight: 600;
-  padding: 6px 14px;
+  padding: 8px 16px;
   cursor: pointer;
 }
 
@@ -2361,22 +2372,22 @@
 
 /* Lista "Añade uno de los bloques de contenido" */
 .contentBlocksTitle {
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--color-text-tertiary);
-  margin: 14px 0 8px;
+  margin: 18px 0 10px;
 }
 
 .contentBlockCard {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
   text-align: left;
   border: 1.5px dashed rgba(148, 163, 184, 0.35);
-  border-radius: 12px;
+  border-radius: 14px;
   background: transparent;
-  padding: 9px 10px;
-  margin-bottom: 7px;
+  padding: 12px;
+  margin-bottom: 9px;
   cursor: pointer;
   transition: border-color 0.13s ease, background 0.13s ease;
 }
@@ -2390,10 +2401,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
-  border-radius: 9px;
+  border-radius: 10px;
   background: rgba(148, 163, 184, 0.14);
   color: var(--color-text-secondary);
 }
@@ -2404,17 +2415,17 @@
 
 .contentBlockTitle {
   display: block;
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 650;
   color: var(--color-text-primary);
   line-height: 1.3;
 }
 
 .contentBlockDescription {
   display: block;
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--color-text-tertiary);
-  line-height: 1.35;
+  line-height: 1.4;
 }
 
 /* ------------------- Configuración global del flujo ----------------------- */
