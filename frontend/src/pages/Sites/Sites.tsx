@@ -364,6 +364,7 @@ const embeddedFormFieldTypes: SiteBlockType[] = [
   'checkboxes',
   'date'
 ]
+const embeddedFormFreeFieldTypes = embeddedFormFieldTypes.filter(type => type !== 'email' && type !== 'phone')
 
 type SystemFormFieldKey =
   | 'full_name'
@@ -3409,7 +3410,7 @@ function FormModePalette({
     { label: 'Sistema', items: systemFormFieldPaletteItems },
     {
       label: 'Campos libres',
-      items: embeddedFormFieldTypes.map(blockType => ({
+      items: embeddedFormFreeFieldTypes.map(blockType => ({
         id: blockType,
         label: blockLabels[blockType] || 'Campo',
         blockType
@@ -3476,10 +3477,16 @@ function FormEmbedEditorPanel({
   site,
   block,
   forms,
+  fields,
+  activeField,
+  customFields,
   pages,
   activePageId,
   onPatchBlock,
   onPatchSettings,
+  onPatchField,
+  onPatchFieldSettings,
+  onDeleteField,
   onSave,
   onActivePageChange,
   onAddPage,
@@ -3489,10 +3496,16 @@ function FormEmbedEditorPanel({
   site: PublicSite
   block: SiteBlock
   forms: PublicSite[]
+  fields: SiteBlock[]
+  activeField: SiteBlock | null
+  customFields: CustomFieldDefinition[]
   pages: SitePage[]
   activePageId: string
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
+  onPatchField: (fieldId: string, patch: Partial<SiteBlock>) => void
+  onPatchFieldSettings: (field: SiteBlock, patch: Record<string, unknown>) => void
+  onDeleteField: (fieldId: string) => void
   onSave: () => void
   onActivePageChange: (pageId: string) => void
   onAddPage: () => void
@@ -3502,9 +3515,164 @@ function FormEmbedEditorPanel({
   const settings = block.settings || {}
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
   const selectedFormId = getSettingString(settings, 'formSiteId')
+  const activeFieldSettings = activeField?.settings || {}
+  const activeFieldSystemPreset = getSystemFormFieldPresetForBlock(activeField)
+  const activeFieldPageId = activeField ? getBlockPageId(activeField, pages) : activePage?.id || DEFAULT_FUNNEL_PAGE_ID
+  const patchActiveField = (patch: Partial<SiteBlock>) => {
+    if (!activeField) return
+    onPatchField(activeField.id, patch)
+  }
+  const patchActiveFieldSettings = (patch: Record<string, unknown>) => {
+    if (!activeField) return
+    onPatchFieldSettings(activeField, patch)
+  }
+  const changeActiveFieldType = (nextType: SiteBlockType) => {
+    if (!activeField || activeFieldSystemPreset) return
+    const nextSettings = {
+      ...activeFieldSettings,
+      validation: nextType === 'email' ? 'email' : nextType === 'phone' ? 'phone' : '',
+      ...(nextType === 'phone' ? { phoneCountrySelectorEnabled: true } : {}),
+      customFieldDefinitionId: '',
+      customFieldKey: '',
+      customFieldLabel: '',
+      customFieldDataType: ''
+    }
+    patchActiveField({ blockType: nextType, settings: nextSettings })
+  }
+
+  const selectedFieldContent = (
+    <div className={styles.settingsGroup}>
+      <div className={styles.formFieldEditorHeader}>
+        <div>
+          <strong>Campo seleccionado</strong>
+          <small>{activeField ? blockLabels[activeField.blockType] : 'Selecciona un campo en el formulario'}</small>
+        </div>
+        {activeField && (
+          <div className={styles.formFieldActions}>
+            <button type="button" onClick={() => onDeleteField(activeField.id)} aria-label="Eliminar campo">
+              <Trash2 size={14} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {!activeField ? (
+        <InspectorEmptyState>Selecciona un campo del formulario para editar su texto, reglas y guardado.</InspectorEmptyState>
+      ) : (
+        <>
+          <label className={styles.field}>
+            <span>Pregunta visible</span>
+            <input value={activeField.label} onChange={(event) => patchActiveField({ label: event.target.value })} onBlur={onSave} />
+          </label>
+
+          <label className={styles.field}>
+            <span>Texto de ayuda</span>
+            <textarea rows={2} value={activeField.content} onChange={(event) => patchActiveField({ content: event.target.value })} onBlur={onSave} />
+          </label>
+
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Tipo de campo</span>
+              <CustomSelect
+                value={activeField.blockType}
+                disabled={Boolean(activeFieldSystemPreset)}
+                onChange={(event) => changeActiveFieldType(event.target.value as SiteBlockType)}
+                onBlur={onSave}
+              >
+                {embeddedFormFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
+              </CustomSelect>
+            </label>
+            <label className={styles.field}>
+              <span>Página</span>
+              <CustomSelect
+                value={activeFieldPageId}
+                onChange={(event) => patchActiveFieldSettings({ pageId: event.target.value })}
+                onBlur={onSave}
+              >
+                {pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Página'}</option>)}
+              </CustomSelect>
+            </label>
+          </div>
+
+          {!isChoiceBlock(activeField.blockType) && (
+            <label className={styles.field}>
+              <span>Texto dentro del campo</span>
+              <input value={activeField.placeholder} onChange={(event) => patchActiveField({ placeholder: event.target.value })} onBlur={onSave} />
+            </label>
+          )}
+
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Validación</span>
+              <CustomSelect
+                value={getSettingString(activeFieldSettings, 'validation')}
+                disabled={Boolean(activeFieldSystemPreset?.validation)}
+                onChange={(event) => patchActiveFieldSettings({ validation: event.target.value })}
+                onBlur={onSave}
+              >
+                <option value="">Ninguna</option>
+                <option value="email">Correo</option>
+                <option value="phone">Teléfono</option>
+                <option value="number">Número</option>
+                <option value="currency">Moneda</option>
+                <option value="date">Fecha</option>
+              </CustomSelect>
+            </label>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={Boolean(activeField.required)}
+                onChange={(event) => {
+                  patchActiveField({ required: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Campo requerido</span>
+            </label>
+          </div>
+
+          {activeField.blockType === 'phone' && (
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={isPhoneCountrySelectorEnabled(activeField)}
+                disabled={Boolean(activeFieldSystemPreset)}
+                onChange={(event) => {
+                  patchActiveFieldSettings({ phoneCountrySelectorEnabled: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Mostrar país y lada</span>
+            </label>
+          )}
+
+          <CustomFieldBindingControl
+            block={activeField}
+            customFields={customFields}
+            onPatchSettings={patchActiveFieldSettings}
+            onSave={onSave}
+          />
+
+          {isChoiceBlock(activeField.blockType) && (
+            <OptionsRulesEditor block={activeField} blocks={fields} pages={pages} onPatchBlock={patchActiveField} onSave={onSave} />
+          )}
+
+          <div className={styles.panelSubheader}>Apariencia del campo</div>
+          <InlineBlockStyleControls
+            site={site}
+            block={activeField}
+            blocks={fields}
+            onPatchSettings={patchActiveFieldSettings}
+            onSave={onSave}
+          />
+        </>
+      )}
+    </div>
+  )
 
   const editContent = (
     <>
+      {selectedFieldContent}
       <div className={styles.settingsGroup}>
         <div className={styles.panelSubheader}>Contenido del formulario</div>
         <label className={styles.field}>
@@ -3586,7 +3754,7 @@ function FormEmbedEditorPanel({
           <span className={styles.formModeIcon}><FormInput size={18} /></span>
           <div>
             <strong>Componente de formulario</strong>
-            <small>Campos editables en el lienzo</small>
+            <small>Configura campos desde este panel</small>
           </div>
         </div>
       )}
@@ -3809,6 +3977,10 @@ export const Sites: React.FC = () => {
   const formEditVisibleFields = useMemo(
     () => getEmbeddedFormPageFields(formEditFields, formEditPages, activeEmbeddedFormPage?.id),
     [activeEmbeddedFormPage?.id, formEditFields, formEditPages]
+  )
+  const activeEmbeddedFormField = useMemo(
+    () => formEditFields.find(field => field.id === activeEmbeddedFormFieldId) || null,
+    [activeEmbeddedFormFieldId, formEditFields]
   )
   useEffect(() => {
     if (!formEditMode) {
@@ -7140,10 +7312,16 @@ export const Sites: React.FC = () => {
                     site={editorSite}
                     block={formEditBlock}
                     forms={forms}
+                    fields={formEditFields}
+                    activeField={activeEmbeddedFormField}
+                    customFields={customFields}
                     pages={formEditPages}
                     activePageId={activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID}
                     onPatchBlock={(patch) => patchSelectedBlock(patch)}
                     onPatchSettings={(patch) => patchSelectedBlockSettings(patch)}
+                    onPatchField={patchEmbeddedFormField}
+                    onPatchFieldSettings={patchEmbeddedFormFieldSettings}
+                    onDeleteField={removeEmbeddedFormField}
                     onSave={() => handleSaveBlock()}
                     onActivePageChange={selectEmbeddedFormPage}
                     onAddPage={addEmbeddedFormPage}
@@ -13551,7 +13729,7 @@ const paletteGroups: Array<{ label: string; items: PaletteItem[] }> = [
   },
   {
     label: 'Campos',
-    items: ['short_text', 'paragraph', 'email', 'phone', 'number', 'currency', 'date', 'dropdown', 'radio', 'checkboxes', 'description']
+    items: ['short_text', 'paragraph', 'number', 'currency', 'date', 'dropdown', 'radio', 'checkboxes', 'description']
       .map(blockType => ({ id: blockType, label: blockLabels[blockType as SiteBlockType], blockType: blockType as SiteBlockType }))
   }
 ]
@@ -16473,7 +16651,7 @@ const InlineBlockStyleControls: React.FC<{
   const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta'
   const supportsField = fieldBlockTypes.has(block.blockType)
   const isHardEmbed = block.blockType === 'embed' || block.blockType === 'calendar_embed'
-  const supportsTextStyle = isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType)
+  const supportsTextStyle = supportsField || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType)
   const supportsMedia = block.blockType === 'image' || block.blockType === 'video'
   const supportsCards = ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
   const defaultBorderWidth = getBlockBorderWidthFallback(site, block)
@@ -17382,7 +17560,6 @@ const EmbeddedFormCanvasFields: React.FC<{
         <EmbeddedFormCanvasDropZone active={editor.insertIndex === 0} insertIndex={0} editor={editor} />
         {fields.map((field, index) => {
           const selected = editor.activeFieldId === field.id
-          const systemPreset = getSystemFormFieldPresetForBlock(field)
           return (
             <React.Fragment key={field.id}>
               <section
@@ -17428,57 +17605,10 @@ const EmbeddedFormCanvasFields: React.FC<{
                 </div>
                 <FieldPreview
                   block={field}
-                  editable
+                  editable={false}
                   onPatchBlock={(patch) => editor.onPatchField(field.id, patch)}
                   onSave={editor.onSaveField}
                 />
-                {selected && (
-                  <div className="rstkEmbeddedFormInlineControls" onClick={(event) => event.stopPropagation()}>
-                    <select
-                      value={field.blockType}
-                      aria-label="Tipo de campo"
-                      disabled={Boolean(systemPreset)}
-                      onChange={(event) => editor.onPatchField(field.id, { blockType: event.target.value as SiteBlockType })}
-                      onBlur={editor.onSaveField}
-                    >
-                      {embeddedFormFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
-                    </select>
-                    {systemPreset && (
-                      <span className="rstkEmbeddedFormSystemBadge">
-                        <Lock size={12} />
-                        {systemPreset.destinationLabel}
-                      </span>
-                    )}
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={Boolean(field.required)}
-                        onChange={(event) => editor.onPatchField(field.id, { required: event.target.checked })}
-                        onBlur={editor.onSaveField}
-                      />
-                      <span>Requerido</span>
-                    </label>
-                    {editor.pages.length > 1 && (
-                      <select
-                        value={getBlockPageId(field, editor.pages)}
-                        aria-label="Pagina del campo"
-                        onChange={(event) => editor.onPatchField(field.id, { settings: { ...(field.settings || {}), pageId: event.target.value } })}
-                        onBlur={editor.onSaveField}
-                      >
-                        {editor.pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Pagina'}</option>)}
-                      </select>
-                    )}
-                    {!isChoiceBlock(field.blockType) && (
-                      <input
-                        value={field.placeholder || ''}
-                        placeholder="Placeholder"
-                        aria-label="Placeholder del campo"
-                        onChange={(event) => editor.onPatchField(field.id, { placeholder: event.target.value })}
-                        onBlur={editor.onSaveField}
-                      />
-                    )}
-                  </div>
-                )}
               </section>
               <EmbeddedFormCanvasDropZone active={editor.insertIndex === index + 1} insertIndex={index + 1} editor={editor} />
             </React.Fragment>

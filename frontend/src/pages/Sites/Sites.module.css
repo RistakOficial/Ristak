@@ -3789,8 +3789,10 @@
 .propertiesPanel {
   position: sticky;
   top: calc(var(--header-height) + 16px);
+  box-sizing: border-box;
   max-height: calc(100vh - var(--header-height) - 32px);
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .pagesRail,
@@ -14046,7 +14048,7 @@
 .pageFrame .containerFocused:has(.builder) .blocksRail {
   overflow-y: scroll;
   overflow-x: hidden;
-  scrollbar-gutter: stable both-edges;
+  scrollbar-gutter: stable;
   padding-bottom: 24px;
 }
 
@@ -14072,7 +14074,7 @@
 .builderGridFormMode,
 .containerFocused .builderGridFormMode,
 .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
-  grid-template-columns: minmax(198px, 216px) minmax(300px, 1fr) minmax(340px, 380px);
+  grid-template-columns: minmax(286px, 324px) minmax(280px, 1fr) minmax(440px, 500px);
 }
 
 .builderGridFormMode > .formModeRail {
@@ -14134,16 +14136,20 @@
 
 .formModeRail,
 .formModePanel {
+  box-sizing: border-box;
   border-color: rgba(var(--color-primary-rgb), 0.22);
   background:
     linear-gradient(180deg, rgba(var(--color-primary-rgb), 0.075), transparent 220px),
     var(--color-background-secondary);
+  scrollbar-gutter: stable;
 }
 
 .formModePalette {
   display: grid;
   gap: 14px;
   min-width: 0;
+  box-sizing: border-box;
+  scrollbar-gutter: stable;
 }
 
 .formModePaletteHeader,
@@ -14261,7 +14267,12 @@
 
 .formModePanel {
   overflow-y: auto;
+  box-sizing: border-box;
   scrollbar-gutter: stable;
+}
+
+.formModePanel .blockStyleControls {
+  padding-top: 0;
 }
 
 .formModePanelHeader {
