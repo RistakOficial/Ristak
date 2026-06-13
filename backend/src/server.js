@@ -155,11 +155,17 @@ if (process.env.NODE_ENV === 'production') {
   const frontendPath = join(__dirname, '../../frontend/dist')
   app.use(express.static(frontendPath))
 
+  app.get('/assets/*', (req, res) => {
+    res.set('Cache-Control', 'no-store')
+    res.status(404).type('text/plain').send('Static asset not found')
+  })
+
   app.get('*', (req, res) => {
     // No servir index.html para rutas de API o webhooks
     if (req.path.startsWith('/api') || req.path.startsWith('/webhook')) {
       return res.status(404).json({ error: 'Endpoint no encontrado' })
     }
+    res.set('Cache-Control', 'no-cache')
     res.sendFile(join(frontendPath, 'index.html'))
   })
 }
