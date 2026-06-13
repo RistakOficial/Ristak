@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Braces, Search, Smile, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Braces, ChevronDown, ChevronRight, Search, Smile, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import {
   BASE_VARIABLES,
@@ -105,6 +106,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   ...rest
 }) => {
   const editorRef = useRef<HTMLDivElement>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
   const lastEmittedRef = useRef<string>('')
   // Último rango del cursor dentro del editor (se pierde al hacer clic en
   // los pickers, así que lo recordamos para insertar donde estaba escribiendo)
@@ -112,6 +114,15 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   const [variables, setVariables] = useState<FlowVariable[]>(BASE_VARIABLES)
   const [pickerOpen, setPickerOpen] = useState<'variables' | 'emoji' | null>(null)
   const [query, setQuery] = useState('')
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(() => new Set())
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set())
+  const [popoverPosition, setPopoverPosition] = useState<{
+    top: number
+    left: number
+    width: number
+    maxHeight: number
+    transform?: string
+  } | null>(null)
   const flowVariables = React.useContext(FlowVariablesContext)
 
   useEffect(() => {
@@ -274,8 +285,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
 
   const insertVariable = (variable: FlowVariable) => {
     insertNodeAtCursor(buildChip(variable.fieldId, variable.label))
-    setPickerOpen(null)
-    setQuery('')
+    closePicker()
   }
 
   const insertEmoji = (emoji: string) => {
@@ -303,11 +313,52 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
             (!normalized ||
               variable.label.toLowerCase().includes(normalized) ||
               (variable.pathLabels || []).join(' ').toLowerCase().includes(normalized) ||
+              variable.fieldId.toLowerCase().includes(normalized) ||
+              tokenFor(variable).toLowerCase().includes(normalized) ||
               (variable.categoryLabel || category.label).toLowerCase().includes(normalized))
         )
       }))
       .filter((group) => group.items.length > 0 || Boolean(group.category.unavailableReason))
   }, [allVariables, flowVariables.categories, query, allowedCategories])
+
+  const isSearchingVariables = query.trim().length > 0
+
+  const closePicker = useCallback(() => {
+    setPickerOpen(null)
+    setQuery('')
+    setExpandedCategories(new Set())
+    setExpandedNodes(new Set())
+    setPopoverPosition(null)
+  }, [])
+
+  const togglePicker = (nextPicker: 'variables' | 'emoji') => {
+    if (pickerOpen === nextPicker) {
+      closePicker()
+      return
+    }
+    setPickerOpen(nextPicker)
+    setQuery('')
+    setExpandedCategories(new Set())
+    setExpandedNodes(new Set())
+  }
+
+  const toggleCategory = (categoryId: string) => {
+    setExpandedCategories((current) => {
+      const next = new Set(current)
+      if (next.has(categoryId)) next.delete(categoryId)
+      else next.add(categoryId)
+      return next
+    })
+  }
+
+  const toggleNode = (nodeId: string) => {
+    setExpandedNodes((current) => {
+      const next = new Set(current)
+      if (next.has(nodeId)) next.delete(nodeId)
+      else next.add(nodeId)
+      return next
+    })
+  }
 
   const renderVariableTree = (nodes: PickerTreeNode[], depth = 0): React.ReactNode =>
     nodes.map((node) => {
@@ -317,41 +368,173 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
             key={node.id}
             type="button"
             className={styles.composerPopoverItem}
-            style={{ paddingLeft: 6 + depth * 12 }}
+            style={{ paddingLeft: 22 + depth * 14 }}
+            onPointerDown={(event) => event.preventDefault()}
             onClick={() => node.variable && insertVariable(node.variable)}
           >
             <span className={styles.variableTokenChip}>{node.label}</span>
           </button>
         )
       }
+      const expanded = isSearchingVariables || expandedNodes.has(node.id)
       return (
         <div key={node.id}>
-          <div className={styles.composerPopoverSubcategory} style={{ paddingLeft: 6 + depth * 12 }}>
-            {node.label}
-          </div>
-          {renderVariableTree(node.children, depth + 1)}
+          <button
+            type="button"
+            className={styles.composerPopoverSubcategory}
+            style={{ paddingLeft: 6 + depth * 14 }}
+            aria-expanded={expanded}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => toggleNode(node.id)}
+          >
+            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <span>{node.label}</span>
+          </button>
+          {expanded && renderVariableTree(node.children, depth + 1)}
         </div>
       )
     })
 
   const popoverRef = useRef<HTMLDivElement>(null)
+  const updatePopoverPosition = useCallback(() => {
+    const wrap = wrapRef.current
+    if (!wrap || !pickerOpen) return
+
+    const rect = wrap.getBoundingClientRect()
+    const margin = 12
+    const gap = 8
+    const preferredWidth = pickerOpen === 'variables' ? 390 : 272
+    const width = Math.min(preferredWidth, window.innerWidth - margin * 2)
+    const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin))
+    const spaceBelow = window.innerHeight - rect.bottom - margin
+    const spaceAbove = rect.top - margin
+    const openBelow = spaceBelow >= 260 || spaceBelow > spaceAbove
+    const availableHeight = Math.max(220, (openBelow ? spaceBelow : spaceAbove) - gap)
+    const maxHeight = Math.min(pickerOpen === 'variables' ? 420 : 300, availableHeight)
+    const top = openBelow ? rect.bottom + gap : rect.top - gap
+
+    setPopoverPosition({
+      top,
+      left,
+      width,
+      maxHeight,
+      ...(openBelow ? {} : { transform: 'translateY(-100%)' })
+    })
+  }, [pickerOpen])
+
+  useEffect(() => {
+    if (!pickerOpen) return
+    updatePopoverPosition()
+    window.addEventListener('resize', updatePopoverPosition)
+    window.addEventListener('scroll', updatePopoverPosition, true)
+    return () => {
+      window.removeEventListener('resize', updatePopoverPosition)
+      window.removeEventListener('scroll', updatePopoverPosition, true)
+    }
+  }, [pickerOpen, updatePopoverPosition])
+
   useEffect(() => {
     if (!pickerOpen) return
     const handlePointerDown = (event: PointerEvent) => {
-      const root = popoverRef.current?.parentElement
-      if (root && !root.contains(event.target as Node)) {
-        setPickerOpen(null)
-        setQuery('')
+      const target = event.target as Node
+      const wrap = wrapRef.current
+      const popover = popoverRef.current
+      if (!wrap?.contains(target) && !popover?.contains(target)) {
+        closePicker()
       }
     }
     document.addEventListener('pointerdown', handlePointerDown, true)
     return () => document.removeEventListener('pointerdown', handlePointerDown, true)
-  }, [pickerOpen])
+  }, [closePicker, pickerOpen])
 
   const isEmpty = !value || !value.replace(new RegExp(escapeRegExp('​'), 'g'), '').trim()
 
+  const variablePopover = pickerOpen === 'variables' && popoverPosition && (
+    <div
+      ref={popoverRef}
+      className={styles.composerPopover}
+      role="dialog"
+      aria-label="Insertar variable"
+      style={popoverPosition}
+    >
+      <div className={styles.composerPopoverSearch}>
+        <Search size={12} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
+        <input
+          autoFocus
+          value={query}
+          placeholder="Buscar variable o ruta…"
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              event.stopPropagation()
+              closePicker()
+            }
+          }}
+        />
+        <button type="button" className={styles.composerToolButton} onClick={closePicker} title="Cerrar">
+          <X size={12} />
+        </button>
+      </div>
+      <div className={styles.composerPopoverBody}>
+        {filteredByCategory.length === 0 && (
+          <p className={styles.pickerEmpty}>Sin variables que coincidan</p>
+        )}
+        {filteredByCategory.map(({ category, items }) => {
+          const expanded = isSearchingVariables || expandedCategories.has(category.id)
+          return (
+            <div key={category.id}>
+              <button
+                type="button"
+                className={styles.composerPopoverCategory}
+                aria-expanded={expanded}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => toggleCategory(category.id)}
+              >
+                {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                <span>{category.label}</span>
+                {items.length > 0 && <span className={styles.composerPopoverCategoryCount}>{items.length}</span>}
+              </button>
+              {expanded && (
+                category.unavailableReason ? (
+                  <p className={styles.pickerWarning}>{category.unavailableReason}</p>
+                ) : (
+                  renderVariableTree(buildVariableTree(items))
+                )
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  const emojiPopover = pickerOpen === 'emoji' && popoverPosition && (
+    <div
+      ref={popoverRef}
+      className={styles.composerPopover}
+      role="dialog"
+      aria-label="Insertar emoji"
+      style={popoverPosition}
+    >
+      <div className={styles.composerEmojiGrid}>
+        {EMOJIS.map((emoji) => (
+          <button
+            key={emoji}
+            type="button"
+            className={styles.composerEmojiButton}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => insertEmoji(emoji)}
+          >
+            {emoji}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+
   return (
-    <div className={styles.composerWrap} data-automation-interactive="true">
+    <div ref={wrapRef} className={styles.composerWrap} data-automation-interactive="true">
       <div
         ref={editorRef}
         contentEditable
@@ -403,7 +586,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
             className={cn(styles.composerToolButton, pickerOpen === 'variables' && styles.composerToolButtonActive)}
             title="Insertar variable"
             onPointerDown={(event) => event.preventDefault()}
-            onClick={() => setPickerOpen(pickerOpen === 'variables' ? null : 'variables')}
+            onClick={() => togglePicker('variables')}
           >
             <Braces size={13} />
           </button>
@@ -414,70 +597,15 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
             className={cn(styles.composerToolButton, pickerOpen === 'emoji' && styles.composerToolButtonActive)}
             title="Insertar emoji"
             onPointerDown={(event) => event.preventDefault()}
-            onClick={() => setPickerOpen(pickerOpen === 'emoji' ? null : 'emoji')}
+            onClick={() => togglePicker('emoji')}
           >
             <Smile size={13} />
           </button>
         )}
       </div>
 
-      {pickerOpen === 'variables' && (
-        <div ref={popoverRef} className={styles.composerPopover} role="dialog" aria-label="Insertar variable">
-          <div className={styles.composerPopoverSearch}>
-            <Search size={12} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
-            <input
-              autoFocus
-              value={query}
-              placeholder="Buscar variable…"
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  setPickerOpen(null)
-                  setQuery('')
-                }
-              }}
-            />
-            <button type="button" className={styles.composerToolButton} onClick={() => setPickerOpen(null)} title="Cerrar">
-              <X size={12} />
-            </button>
-          </div>
-          <div className={styles.composerPopoverBody}>
-            {filteredByCategory.length === 0 && (
-              <p className={styles.pickerEmpty}>Sin variables que coincidan</p>
-            )}
-            {filteredByCategory.map(({ category, items }) => (
-              <div key={category.id}>
-                <div className={styles.composerPopoverCategory}>{category.label}</div>
-                {category.unavailableReason ? (
-                  <p className={styles.pickerWarning}>{category.unavailableReason}</p>
-                ) : (
-                  renderVariableTree(buildVariableTree(items))
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {pickerOpen === 'emoji' && (
-        <div ref={popoverRef} className={styles.composerPopover} role="dialog" aria-label="Insertar emoji">
-          <div className={styles.composerEmojiGrid}>
-            {EMOJIS.map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                className={styles.composerEmojiButton}
-                onPointerDown={(event) => event.preventDefault()}
-                onClick={() => insertEmoji(emoji)}
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {typeof document !== 'undefined' && variablePopover ? createPortal(variablePopover, document.body) : null}
+      {typeof document !== 'undefined' && emojiPopover ? createPortal(emojiPopover, document.body) : null}
     </div>
   )
 }
