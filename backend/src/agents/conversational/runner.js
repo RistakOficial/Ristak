@@ -2,7 +2,12 @@ import { Agent, Runner, OpenAIProvider } from '@openai/agents'
 import { db } from '../../config/database.js'
 import { logger } from '../../utils/logger.js'
 import { getAccountTimezone } from '../../utils/dateUtils.js'
-import { getAIAgentConfig, getOpenAIApiKey } from '../../services/aiAgentService.js'
+import {
+  buildBusinessProfilePromptParameters,
+  getAIAgentConfig,
+  getBusinessProfileSnapshot,
+  getOpenAIApiKey
+} from '../../services/aiAgentService.js'
 import {
   startAgentRun,
   updateAgentRun,
@@ -197,9 +202,11 @@ function summarizeLocation(location = {}) {
   return parts.join(', ')
 }
 
-function summarizeBusinessInfo({ businessContext, businessName, location, productSummary }) {
+function summarizeBusinessInfo({ businessContext, businessName, location, productSummary, businessProfile = null }) {
+  const profileSummary = compactText(businessProfile?.summary, 1800)
   const parts = [
     businessName ? `Negocio: ${businessName}` : '',
+    profileSummary ? `Perfil estructurado: ${profileSummary}` : '',
     productSummary ? `Servicios/productos: ${productSummary}` : '',
     summarizeLocation(location) ? `Ubicación: ${summarizeLocation(location)}` : '',
     compactText(businessContext, 1000)
@@ -207,11 +214,25 @@ function summarizeBusinessInfo({ businessContext, businessName, location, produc
   return parts.join(' · ')
 }
 
+function buildRuntimeBusinessContext(rawContext = '', businessProfile = null) {
+  const parts = []
+  const profileSummary = compactText(businessProfile?.summary, 2400)
+  if (businessProfile?.configured && profileSummary) {
+    parts.push(`Perfil estructurado del negocio:\n${profileSummary}`)
+  }
+  const cleanRawContext = compactText(rawContext, 4000)
+  if (cleanRawContext) {
+    parts.push(`Contexto original guardado por el negocio:\n${cleanRawContext}`)
+  }
+  return parts.join('\n\n').trim()
+}
+
 async function loadAdvancedClosingRuntimeContext({
   contactId,
   config,
   businessName,
   businessContext,
+  businessProfile = null,
   timezone,
   nowIso,
   channel = 'whatsapp',
@@ -252,6 +273,16 @@ async function loadAdvancedClosingRuntimeContext({
   const learned = safeJsonParse(state?.closing_context_json, {})
   const productSummary = summarizeProducts(products)
   const locationSummary = summarizeLocation(location)
+  const profileParameters = businessProfile?.configured
+    ? buildBusinessProfilePromptParameters(businessProfile.profile, businessProfile.promptParameters)
+    : {}
+  const profileBusinessName = firstText(profileParameters.NOMBRE_DEL_NEGOCIO, businessProfile?.businessName)
+  const profileIndustry = firstText(profileParameters.INDUSTRIA, businessProfile?.industry)
+  const profileOffering = firstText(profileParameters.PRODUCTO_O_SERVICIO, businessProfile?.offeringsSummary)
+  const profileValue = firstText(profileParameters.VALOR, businessProfile?.pricingSummary)
+  const profileLocation = firstText(profileParameters.UBICACION_O_MODALIDAD, businessProfile?.locationSummary)
+  const profileAvailability = firstText(profileParameters.DISPONIBILIDAD)
+  const profileConditions = firstText(profileParameters.CONDICIONES_IMPORTANTES, businessProfile?.paymentSummary, businessProfile?.contactSummary)
   const channelLabel = getChannelLabel(channel)
   const cameFromAd = ruleContext?.cameFromAd || Boolean(contact?.attribution_ad_name || contact?.attribution_ad_id)
   const arrivalSource = firstText(
@@ -273,13 +304,30 @@ async function loadAdvancedClosingRuntimeContext({
     ? `consulta disponibilidad real con list_calendars/get_free_slots; calendarios activos: ${calendars.map((calendar) => calendar.name || calendar.id).filter(Boolean).slice(0, 5).join(', ')}`
     : 'consulta disponibilidad real con list_calendars/get_free_slots antes de proponer horarios'
 
+  const businessInfoSummary = summarizeBusinessInfo({
+    businessContext,
+    businessName: firstText(profileBusinessName, businessName),
+    location,
+    productSummary: firstText(profileOffering, productSummary),
+    businessProfile
+  })
+  const businessConditions = [
+    profileConditions,
+    conditions
+  ].map((item) => compactText(item, 900)).filter(Boolean).join(' · ')
+  const fullAvailability = [
+    profileAvailability,
+    availability
+  ].map((item) => compactText(item, 700)).filter(Boolean).join(' · ')
+
   const parameters = {
-    NOMBRE_DEL_NEGOCIO: businessName || 'este negocio',
-    ESCRIBIR_NOMBRE_DEL_NEGOCIO: businessName || 'este negocio',
-    INDUSTRIA: businessContext ? 'la industria descrita en el contexto del negocio' : 'no especificada',
-    ESCRIBIR_INDUSTRIA: businessContext ? 'la industria descrita en el contexto del negocio' : 'no especificada',
-    PRODUCTO_O_SERVICIO: firstText(learned.productInterest, productSummary, 'los servicios del negocio'),
-    ESCRIBIR_PRODUCTO_O_SERVICIO: firstText(learned.productInterest, productSummary, 'los servicios del negocio'),
+    ...profileParameters,
+    NOMBRE_DEL_NEGOCIO: firstText(profileBusinessName, businessName, 'este negocio'),
+    ESCRIBIR_NOMBRE_DEL_NEGOCIO: firstText(profileBusinessName, businessName, 'este negocio'),
+    INDUSTRIA: firstText(profileIndustry, businessContext ? 'la industria descrita en el perfil estructurado del negocio' : 'no especificada'),
+    ESCRIBIR_INDUSTRIA: firstText(profileIndustry, businessContext ? 'la industria descrita en el perfil estructurado del negocio' : 'no especificada'),
+    PRODUCTO_O_SERVICIO: firstText(learned.productInterest, profileOffering, productSummary, 'los servicios del negocio'),
+    ESCRIBIR_PRODUCTO_O_SERVICIO: firstText(learned.productInterest, profileOffering, productSummary, 'los servicios del negocio'),
     TIPO_DE_PERSONA: personType,
     ESCRIBIR_TIPO_DE_CLIENTE: personType,
     OBJETIVO_FINAL: describeObjectiveFinal(config),
@@ -290,17 +338,17 @@ async function loadAdvancedClosingRuntimeContext({
     ESCRIBIR_TOOL_DE_AVANCE: resolveAdvanceToolName(config),
     HERRAMIENTA_INTERNA_DE_DESCARTE: 'discard_conversation',
     ESCRIBIR_TOOL_DE_DESCARTE: 'discard_conversation',
-    INFO_GENERAL_DEL_NEGOCIO: summarizeBusinessInfo({ businessContext, businessName, location, productSummary }) || 'consulta get_business_profile y list_products para información real del negocio',
-    PEGAR_INFO_DEL_NEGOCIO: summarizeBusinessInfo({ businessContext, businessName, location, productSummary }) || 'consulta get_business_profile y list_products para información real del negocio',
-    VALOR: productSummary || 'consulta list_products antes de hablar de valor',
-    VALOR_DEL_PRODUCTO_O_SERVICIO: productSummary || 'consulta list_products antes de hablar de valor',
-    UBICACION_O_MODALIDAD: locationSummary || 'modalidad no especificada; consulta get_business_profile si hace falta',
-    PRESENCIAL_ONLINE_AMBAS_UBICACION: locationSummary || 'modalidad no especificada; consulta get_business_profile si hace falta',
-    MODALIDAD: locationSummary || 'modalidad no especificada',
-    UBICACION: locationSummary || 'ubicación no especificada',
-    DISPONIBILIDAD: availability,
-    CONDICIONES_IMPORTANTES: conditions || 'sin condiciones adicionales configuradas',
-    CONDICIONES_DEL_NEGOCIO: conditions || 'sin condiciones adicionales configuradas',
+    INFO_GENERAL_DEL_NEGOCIO: businessInfoSummary || 'consulta get_business_profile y list_products para información real del negocio',
+    PEGAR_INFO_DEL_NEGOCIO: businessInfoSummary || 'consulta get_business_profile y list_products para información real del negocio',
+    VALOR: firstText(profileValue, productSummary, 'consulta list_products antes de hablar de valor'),
+    VALOR_DEL_PRODUCTO_O_SERVICIO: firstText(profileValue, productSummary, 'consulta list_products antes de hablar de valor'),
+    UBICACION_O_MODALIDAD: firstText(profileLocation, locationSummary, 'modalidad no especificada; consulta get_business_profile si hace falta'),
+    PRESENCIAL_ONLINE_AMBAS_UBICACION: firstText(profileLocation, locationSummary, 'modalidad no especificada; consulta get_business_profile si hace falta'),
+    MODALIDAD: firstText(profileLocation, locationSummary, 'modalidad no especificada'),
+    UBICACION: firstText(profileLocation, locationSummary, 'ubicación no especificada'),
+    DISPONIBILIDAD: fullAvailability || availability,
+    CONDICIONES_IMPORTANTES: businessConditions || 'sin condiciones adicionales configuradas',
+    CONDICIONES_DEL_NEGOCIO: businessConditions || 'sin condiciones adicionales configuradas',
     ORIGEN_CONTACTO: arrivalSource,
     ETIQUETAS_CONTACTO: tagNames.length ? tagNames.join(', ') : 'sin etiquetas registradas',
     FECHA_REGISTRO_CONTACTO: contact?.created_at || 'no disponible',
@@ -330,6 +378,7 @@ async function loadAdvancedClosingRuntimeContext({
     contact?.attribution_ad_name || contact?.attribution_ad_id ? `Anuncio detectado: ${[contact.attribution_ad_name, contact.attribution_ad_id].filter(Boolean).join(' / ')}` : '',
     ruleContext?.businessPhoneNumberId ? `Número de WhatsApp del negocio: ${ruleContext.businessPhoneNumberId}` : '',
     productSummary ? `Productos/servicios activos: ${productSummary}` : '',
+    businessProfile?.summary ? `Perfil estructurado del negocio: ${businessProfile.summary}` : '',
     locationSummary ? `Ubicación registrada: ${locationSummary}` : '',
     `Zona horaria: ${timezone}`,
     `Fecha/hora para interpretar relativos: ${nowIso}`
@@ -441,9 +490,10 @@ async function loadLatestInboundMessage(contactId) {
 }
 
 async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null }) {
-  const [aiConfig, timezone] = await Promise.all([
+  const [aiConfig, timezone, businessProfile] = await Promise.all([
     getAIAgentConfig({}),
-    getAccountTimezone().catch(() => 'America/Mexico_City')
+    getAccountTimezone().catch(() => 'America/Mexico_City'),
+    getBusinessProfileSnapshot().catch(() => null)
   ])
 
   const model = normalizeConversationalAgentModel(conversationModel || config?.model || DEFAULT_MODEL)
@@ -461,11 +511,13 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
 
   const ctx = { contactId, config, dryRun, actions: [], suppressReply: false }
   const tools = createConversationalTools(ctx)
+  const runtimeBusinessContext = buildRuntimeBusinessContext(aiConfig?.business_context || '', businessProfile)
   const advancedClosingContext = await loadAdvancedClosingRuntimeContext({
     contactId,
     config,
     businessName,
-    businessContext: String(aiConfig?.business_context || '').trim().slice(0, 6000),
+    businessContext: runtimeBusinessContext.slice(0, 6000),
+    businessProfile,
     timezone,
     nowIso,
     channel,
@@ -474,7 +526,7 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
 
   const instructions = buildConversationalInstructions({
     config,
-    businessContext: String(aiConfig?.business_context || '').trim().slice(0, 6000),
+    businessContext: runtimeBusinessContext.slice(0, 6000),
     brandVoice: String(aiConfig?.brand_voice || '').trim().slice(0, 2000),
     businessName,
     timezone,

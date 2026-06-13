@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import { db, getAppConfig, getHighLevelConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
@@ -53,6 +54,10 @@ const OPENAI_CREDENTIAL_RECONNECT_CODE = 'OPENAI_CREDENTIAL_RECONNECT_REQUIRED'
 const OPENAI_CREDENTIAL_RECONNECT_MESSAGE = 'OpenAI necesita reconectarse. Ve a Configuración > Agente AI y pega nuevamente tu API token.'
 const REQUEST_TIMEOUT_MS = 45000
 const BUSINESS_CONTEXT_LIMIT = 12000
+const BUSINESS_PROFILE_CONTEXT_MIN_LENGTH = 40
+const BUSINESS_PROFILE_TEXT_LIMIT = 1200
+const BUSINESS_PROFILE_SUMMARY_LIMIT = 2400
+const BUSINESS_PROFILE_SOURCE_LIMIT = 12000
 const VIEW_CONTEXT_LIMIT = 6000
 const MESSAGE_HISTORY_LIMIT = 12
 const MAX_MODEL_QUERIES = 6
@@ -15840,6 +15845,643 @@ function buildUnifiedBusinessContext(source = {}) {
   )
 }
 
+function getBusinessContextHash(value = '') {
+  return crypto
+    .createHash('sha256')
+    .update(String(value || ''), 'utf8')
+    .digest('hex')
+}
+
+function parseStoredJson(value, fallback) {
+  if (value === null || value === undefined || value === '') return fallback
+  if (typeof value === 'object') return value
+
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function parseJsonObjectFromAI(text, errorMessage = 'La IA no devolvió JSON válido') {
+  const raw = String(text || '').trim()
+
+  try {
+    return JSON.parse(raw)
+  } catch {
+    const start = raw.indexOf('{')
+    const end = raw.lastIndexOf('}')
+
+    if (start >= 0 && end > start) {
+      return JSON.parse(raw.slice(start, end + 1))
+    }
+
+    throw new Error(errorMessage)
+  }
+}
+
+function cleanBusinessProfileText(value, maxLength = BUSINESS_PROFILE_TEXT_LIMIT) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'boolean') return value ? 'sí' : 'no'
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : ''
+  return cleanConfigText(String(value), maxLength)
+}
+
+function normalizeBusinessProfileType(value) {
+  const normalized = cleanBusinessProfileText(value, 80).toLowerCase()
+  if (['product', 'producto', 'productos'].includes(normalized)) return 'product'
+  if (['service', 'servicio', 'servicios'].includes(normalized)) return 'service'
+  if (['mixed', 'mixto', 'ambos', 'hibrido', 'híbrido'].includes(normalized)) return 'mixed'
+  return 'unknown'
+}
+
+function normalizeBusinessProfileArray(value, maxItems = 12) {
+  const source = Array.isArray(value)
+    ? value
+    : (value === null || value === undefined || value === '' ? [] : [value])
+
+  return source
+    .map((item) => {
+      if (item === null || item === undefined) return null
+      if (typeof item !== 'object' || Array.isArray(item)) {
+        const text = cleanBusinessProfileText(item, 400)
+        return text ? { name: text } : null
+      }
+
+      const output = {}
+      for (const [key, rawValue] of Object.entries(item)) {
+        if (rawValue === null || rawValue === undefined || rawValue === '') continue
+        if (Array.isArray(rawValue)) {
+          const values = rawValue
+            .map((entry) => cleanBusinessProfileText(entry, 220))
+            .filter(Boolean)
+            .slice(0, 10)
+          if (values.length) output[key] = values
+          continue
+        }
+        if (typeof rawValue === 'object') {
+          const nested = {}
+          for (const [nestedKey, nestedValue] of Object.entries(rawValue)) {
+            const clean = cleanBusinessProfileText(nestedValue, 220)
+            if (clean) nested[nestedKey] = clean
+          }
+          if (Object.keys(nested).length) output[key] = nested
+          continue
+        }
+        const clean = cleanBusinessProfileText(rawValue, 360)
+        if (clean) output[key] = clean
+      }
+      return Object.keys(output).length ? output : null
+    })
+    .filter(Boolean)
+    .slice(0, maxItems)
+}
+
+function normalizeBusinessProfileObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+
+  const output = {}
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (rawValue === null || rawValue === undefined || rawValue === '') continue
+    if (Array.isArray(rawValue)) {
+      const list = rawValue
+        .map((entry) => cleanBusinessProfileText(entry, 240))
+        .filter(Boolean)
+        .slice(0, 12)
+      if (list.length) output[key] = list
+      continue
+    }
+    if (typeof rawValue === 'object') {
+      const nested = normalizeBusinessProfileObject(rawValue)
+      if (Object.keys(nested).length) output[key] = nested
+      continue
+    }
+    const clean = cleanBusinessProfileText(rawValue, 500)
+    if (clean) output[key] = clean
+  }
+  return output
+}
+
+function summarizeObjectValues(value, maxLength = 700) {
+  if (!value || typeof value !== 'object') return ''
+
+  const parts = []
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (rawValue === null || rawValue === undefined || rawValue === '') continue
+    if (Array.isArray(rawValue)) {
+      const joined = rawValue.map((item) => cleanBusinessProfileText(item, 160)).filter(Boolean).join(', ')
+      if (joined) parts.push(`${key}: ${joined}`)
+      continue
+    }
+    if (typeof rawValue === 'object') {
+      const nested = summarizeObjectValues(rawValue, 240)
+      if (nested) parts.push(`${key}: ${nested}`)
+      continue
+    }
+    const clean = cleanBusinessProfileText(rawValue, 220)
+    if (clean) parts.push(`${key}: ${clean}`)
+  }
+
+  return cleanBusinessProfileText(parts.join(' · '), maxLength)
+}
+
+function summarizeOfferings(offerings = []) {
+  return normalizeBusinessProfileArray(offerings, 12)
+    .map((item) => {
+      const name = cleanBusinessProfileText(item.name || item.nombre || item.product || item.service || item.title, 120)
+      const description = cleanBusinessProfileText(item.description || item.descripcion || item.summary || item.resumen, 220)
+      const cadence = cleanBusinessProfileText(item.cadence || item.frequency || item.frecuencia || item.cadaCuanto, 140)
+      const price = cleanBusinessProfileText(item.price || item.precio || item.priceRange || item.rangoPrecio, 160)
+      const type = cleanBusinessProfileText(item.type || item.tipo, 80)
+      return [name || type, description, cadence ? `frecuencia: ${cadence}` : '', price ? `valor: ${price}` : '']
+        .filter(Boolean)
+        .join(' · ')
+    })
+    .filter(Boolean)
+    .slice(0, 8)
+    .join('; ')
+}
+
+function summarizeLocations(locations = []) {
+  return normalizeBusinessProfileArray(locations, 8)
+    .map((item) => {
+      const parts = [
+        item.name || item.nombre,
+        item.address || item.direccion,
+        item.city || item.ciudad,
+        item.state || item.estado,
+        item.country || item.pais,
+        item.postalCode || item.codigoPostal,
+        item.googleMapsUrl || item.mapsUrl,
+        item.modality || item.modalidad
+      ].map((entry) => cleanBusinessProfileText(entry, 160)).filter(Boolean)
+      return parts.join(', ')
+    })
+    .filter(Boolean)
+    .slice(0, 5)
+    .join(' | ')
+}
+
+function normalizePromptParameters(parameters = {}) {
+  const output = {}
+  if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) return output
+
+  for (const [key, value] of Object.entries(parameters)) {
+    const normalizedKey = String(key || '').trim()
+    const clean = cleanBusinessProfileText(value, 1200)
+    if (normalizedKey && clean) output[normalizedKey] = clean
+  }
+  return output
+}
+
+function firstBusinessProfileValue(...values) {
+  return values.map((value) => cleanBusinessProfileText(value, 1200)).find(Boolean) || ''
+}
+
+function buildBusinessProfileFallback(businessContext = '') {
+  return {
+    businessName: '',
+    industry: '',
+    businessNature: '',
+    businessType: 'unknown',
+    description: cleanBusinessProfileText(businessContext, BUSINESS_PROFILE_SUMMARY_LIMIT),
+    offerings: [],
+    locations: [],
+    hours: {},
+    contacts: {},
+    payments: {},
+    pricingSummary: '',
+    targetCustomers: '',
+    differentiators: '',
+    importantConditions: '',
+    languageTone: '',
+    missingData: []
+  }
+}
+
+function normalizeBusinessProfile(profile = {}, { businessContext = '' } = {}) {
+  const raw = profile && typeof profile === 'object' && !Array.isArray(profile) ? profile : {}
+  const fallback = buildBusinessProfileFallback(businessContext)
+  const offerings = normalizeBusinessProfileArray(raw.offerings || raw.products || raw.services || raw.ofertas || raw.servicios || raw.productos, 14)
+  const locations = normalizeBusinessProfileArray(raw.locations || raw.ubicaciones || raw.location || raw.ubicacion, 8)
+  const hours = normalizeBusinessProfileObject(raw.hours || raw.horarios || raw.businessHours || {})
+  const contacts = normalizeBusinessProfileObject(raw.contacts || raw.contact || raw.contacto || raw.telefonos || {})
+  const payments = normalizeBusinessProfileObject(raw.payments || raw.paymentMethods || raw.pagos || raw.metodosPago || {})
+
+  return {
+    businessName: firstBusinessProfileValue(raw.businessName, raw.name, raw.nombreNegocio, raw.nombre),
+    industry: firstBusinessProfileValue(raw.industry, raw.industria, raw.niche, raw.nicho, raw.giro),
+    businessNature: firstBusinessProfileValue(raw.businessNature, raw.naturaleza, raw.giro, raw.category, raw.categoria),
+    businessType: normalizeBusinessProfileType(raw.businessType || raw.type || raw.tipoNegocio || raw.tipo),
+    description: firstBusinessProfileValue(raw.description, raw.descripcion, raw.summary, raw.resumen, fallback.description),
+    offerings,
+    locations,
+    hours,
+    contacts,
+    payments,
+    pricingSummary: firstBusinessProfileValue(raw.pricingSummary, raw.precios, raw.priceSummary, raw.prices, summarizeOfferings(offerings)),
+    targetCustomers: firstBusinessProfileValue(raw.targetCustomers, raw.clienteIdeal, raw.idealCustomer, raw.publicoObjetivo),
+    differentiators: firstBusinessProfileValue(raw.differentiators, raw.diferenciadores, raw.ventajas, raw.valueProposition),
+    importantConditions: firstBusinessProfileValue(raw.importantConditions, raw.conditions, raw.condiciones, raw.restricciones),
+    languageTone: firstBusinessProfileValue(raw.languageTone, raw.tono, raw.brandVoice),
+    missingData: Array.isArray(raw.missingData || raw.datosFaltantes)
+      ? (raw.missingData || raw.datosFaltantes).map((item) => cleanBusinessProfileText(item, 180)).filter(Boolean).slice(0, 12)
+      : []
+  }
+}
+
+function buildProfileDerivedSummaries(profile = {}, businessContext = '') {
+  const offeringsSummary = summarizeOfferings(profile.offerings)
+  const locationSummary = summarizeLocations(profile.locations)
+  const hoursSummary = summarizeObjectValues(profile.hours, 500)
+  const paymentSummary = summarizeObjectValues(profile.payments, 500)
+  const contactSummary = summarizeObjectValues(profile.contacts, 500)
+  const pricingSummary = firstBusinessProfileValue(profile.pricingSummary, offeringsSummary)
+  const profileSummary = [
+    profile.businessName ? `Negocio: ${profile.businessName}` : '',
+    profile.industry ? `Industria: ${profile.industry}` : '',
+    profile.businessNature ? `Giro: ${profile.businessNature}` : '',
+    profile.description ? `Descripción: ${profile.description}` : '',
+    offeringsSummary ? `Oferta: ${offeringsSummary}` : '',
+    pricingSummary ? `Precios/valor: ${pricingSummary}` : '',
+    locationSummary ? `Ubicación/modalidad: ${locationSummary}` : '',
+    hoursSummary ? `Horarios: ${hoursSummary}` : '',
+    paymentSummary ? `Pagos/facturación: ${paymentSummary}` : '',
+    contactSummary ? `Contacto: ${contactSummary}` : '',
+    profile.targetCustomers ? `Cliente ideal: ${profile.targetCustomers}` : '',
+    profile.differentiators ? `Diferenciadores: ${profile.differentiators}` : '',
+    profile.importantConditions ? `Condiciones: ${profile.importantConditions}` : ''
+  ].filter(Boolean).join('\n')
+
+  return {
+    profileSummary: cleanBusinessProfileText(profileSummary || businessContext, BUSINESS_PROFILE_SUMMARY_LIMIT),
+    offeringsSummary: cleanBusinessProfileText(offeringsSummary, 1200),
+    pricingSummary: cleanBusinessProfileText(pricingSummary, 1200),
+    locationSummary: cleanBusinessProfileText(locationSummary, 1200),
+    hoursSummary,
+    paymentSummary: cleanBusinessProfileText(paymentSummary, 1200),
+    contactSummary: cleanBusinessProfileText(contactSummary, 1200)
+  }
+}
+
+export function buildBusinessProfilePromptParameters(profile = {}, extraParameters = {}) {
+  const normalizedProfile = normalizeBusinessProfile(profile)
+  const summaries = buildProfileDerivedSummaries(normalizedProfile)
+  const businessName = normalizedProfile.businessName || 'este negocio'
+  const industry = firstBusinessProfileValue(normalizedProfile.industry, normalizedProfile.businessNature, 'industria no especificada')
+  const offering = firstBusinessProfileValue(summaries.offeringsSummary, normalizedProfile.description, 'los productos o servicios del negocio')
+  const location = firstBusinessProfileValue(summaries.locationSummary, 'ubicación o modalidad no especificada')
+  const availability = firstBusinessProfileValue(summaries.hoursSummary, 'horarios no especificados; consulta disponibilidad real antes de prometer horarios')
+  const value = firstBusinessProfileValue(summaries.pricingSummary, summaries.offeringsSummary, 'valor no especificado; consulta productos/precios reales antes de hablar de precio')
+  const conditions = [
+    normalizedProfile.importantConditions,
+    summaries.paymentSummary ? `Pagos/facturación: ${summaries.paymentSummary}` : '',
+    summaries.contactSummary ? `Contacto del negocio: ${summaries.contactSummary}` : ''
+  ].filter(Boolean).join(' · ') || 'sin condiciones adicionales configuradas'
+
+  const baseParameters = {
+    NOMBRE_DEL_NEGOCIO: businessName,
+    ESCRIBIR_NOMBRE_DEL_NEGOCIO: businessName,
+    INDUSTRIA: industry,
+    ESCRIBIR_INDUSTRIA: industry,
+    PRODUCTO_O_SERVICIO: offering,
+    ESCRIBIR_PRODUCTO_O_SERVICIO: offering,
+    INFO_GENERAL_DEL_NEGOCIO: summaries.profileSummary || normalizedProfile.description || offering,
+    PEGAR_INFO_DEL_NEGOCIO: summaries.profileSummary || normalizedProfile.description || offering,
+    VALOR: value,
+    VALOR_DEL_PRODUCTO_O_SERVICIO: value,
+    UBICACION_O_MODALIDAD: location,
+    PRESENCIAL_ONLINE_AMBAS_UBICACION: location,
+    MODALIDAD: location,
+    UBICACION: location,
+    DISPONIBILIDAD: availability,
+    CONDICIONES_IMPORTANTES: conditions,
+    CONDICIONES_DEL_NEGOCIO: conditions
+  }
+
+  return {
+    ...baseParameters,
+    ...normalizePromptParameters(extraParameters)
+  }
+}
+
+export function normalizeBusinessProfileExtraction(payload = {}, { businessContext = '' } = {}) {
+  const raw = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+  const profile = normalizeBusinessProfile(raw.profile || raw.businessProfile || raw, { businessContext })
+  const promptParameters = buildBusinessProfilePromptParameters(
+    profile,
+    raw.promptParameters || raw.prompt_parameters || profile.promptParameters || {}
+  )
+
+  return {
+    sameBusinessWithPrevious: raw.sameBusinessWithPrevious === false ? false : true,
+    profile,
+    promptParameters
+  }
+}
+
+async function getBusinessProfileRow() {
+  return db.get(`
+    SELECT
+      source_context,
+      source_hash,
+      profile_json,
+      prompt_parameters_json,
+      profile_summary,
+      business_name,
+      industry,
+      business_type,
+      offerings_summary,
+      pricing_summary,
+      location_summary,
+      payment_summary,
+      contact_summary,
+      extraction_status,
+      extraction_error,
+      extracted_at,
+      updated_at
+    FROM ai_business_profile
+    ORDER BY id ASC
+    LIMIT 1
+  `).catch(() => null)
+}
+
+export async function getBusinessProfileSnapshot() {
+  const row = await getBusinessProfileRow()
+  if (!row) {
+    return {
+      configured: false,
+      status: 'empty',
+      extractionStatus: 'empty',
+      extractionError: null,
+      profile: buildBusinessProfileFallback(''),
+      promptParameters: buildBusinessProfilePromptParameters({}),
+      sourceHash: null,
+      updatedAt: null
+    }
+  }
+
+  const profile = normalizeBusinessProfile(parseStoredJson(row.profile_json, {}), {
+    businessContext: row.source_context || ''
+  })
+  const promptParameters = {
+    ...buildBusinessProfilePromptParameters(profile),
+    ...normalizePromptParameters(parseStoredJson(row.prompt_parameters_json, {}))
+  }
+
+  return {
+    configured: Boolean(row.source_context),
+    status: row.extraction_status || 'empty',
+    extractionStatus: row.extraction_status || 'empty',
+    extractionError: row.extraction_error || null,
+    profile,
+    promptParameters,
+    sourceContext: row.source_context || '',
+    sourceHash: row.source_hash || null,
+    summary: row.profile_summary || buildProfileDerivedSummaries(profile, row.source_context || '').profileSummary,
+    businessName: row.business_name || profile.businessName || null,
+    industry: row.industry || profile.industry || null,
+    businessType: row.business_type || profile.businessType || 'unknown',
+    offeringsSummary: row.offerings_summary || '',
+    pricingSummary: row.pricing_summary || '',
+    locationSummary: row.location_summary || '',
+    paymentSummary: row.payment_summary || '',
+    contactSummary: row.contact_summary || '',
+    extractedAt: row.extracted_at || null,
+    updatedAt: row.updated_at || null
+  }
+}
+
+async function upsertBusinessProfileRecord({
+  businessContext,
+  sourceHash,
+  profile,
+  promptParameters,
+  status,
+  error = null
+} = {}) {
+  const normalizedProfile = normalizeBusinessProfile(profile, { businessContext })
+  const finalPromptParameters = {
+    ...buildBusinessProfilePromptParameters(normalizedProfile),
+    ...normalizePromptParameters(promptParameters)
+  }
+  const summaries = buildProfileDerivedSummaries(normalizedProfile, businessContext)
+
+  await db.run(`
+    INSERT INTO ai_business_profile (
+      id,
+      source_context,
+      source_hash,
+      profile_json,
+      prompt_parameters_json,
+      profile_summary,
+      business_name,
+      industry,
+      business_type,
+      offerings_summary,
+      pricing_summary,
+      location_summary,
+      payment_summary,
+      contact_summary,
+      extraction_status,
+      extraction_error,
+      extracted_at,
+      updated_at
+    )
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      source_context = excluded.source_context,
+      source_hash = excluded.source_hash,
+      profile_json = excluded.profile_json,
+      prompt_parameters_json = excluded.prompt_parameters_json,
+      profile_summary = excluded.profile_summary,
+      business_name = excluded.business_name,
+      industry = excluded.industry,
+      business_type = excluded.business_type,
+      offerings_summary = excluded.offerings_summary,
+      pricing_summary = excluded.pricing_summary,
+      location_summary = excluded.location_summary,
+      payment_summary = excluded.payment_summary,
+      contact_summary = excluded.contact_summary,
+      extraction_status = excluded.extraction_status,
+      extraction_error = excluded.extraction_error,
+      extracted_at = excluded.extracted_at,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    cleanConfigText(businessContext, BUSINESS_PROFILE_SOURCE_LIMIT),
+    sourceHash || getBusinessContextHash(businessContext),
+    JSON.stringify(normalizedProfile),
+    JSON.stringify(finalPromptParameters),
+    summaries.profileSummary,
+    normalizedProfile.businessName,
+    normalizedProfile.industry,
+    normalizedProfile.businessType,
+    summaries.offeringsSummary,
+    summaries.pricingSummary,
+    summaries.locationSummary,
+    summaries.paymentSummary,
+    summaries.contactSummary,
+    status || 'ready',
+    error ? cleanConfigText(error, 800) : null
+  ])
+
+  return getBusinessProfileSnapshot()
+}
+
+function buildBusinessProfileExtractionInstructions() {
+  return [
+    'Eres un extractor de parámetros de negocio para Ristak.',
+    'Tu trabajo es leer el contexto libre del negocio y convertirlo en un perfil estructurado para que un agente conversacional pueda responder con datos reales.',
+    'No inventes datos. Si un dato no aparece, déjalo vacío, como arreglo vacío o explica que falta en missingData.',
+    'Si existe un perfil anterior, decide si el contexto nuevo habla del mismo negocio.',
+    'Si es el mismo negocio, mezcla datos: conserva lo anterior cuando siga vigente y agrega o corrige con lo nuevo.',
+    'Si claramente es otro negocio, reemplaza el perfil anterior y usa sólo el contexto nuevo.',
+    'Detecta nombre del negocio, industria, giro/naturaleza, si vende productos, servicios o ambos, ubicaciones, horarios, teléfonos, extensiones, persona encargada, precios, métodos de pago, facturación, productos/servicios, frecuencia/cadencia, condiciones, cliente ideal y tono útil.',
+    'Devuelve solamente JSON válido, sin markdown, sin explicación y sin texto fuera del JSON.',
+    'Schema esperado:',
+    JSON.stringify({
+      sameBusinessWithPrevious: true,
+      profile: {
+        businessName: '',
+        industry: '',
+        businessNature: '',
+        businessType: 'service|product|mixed|unknown',
+        description: '',
+        offerings: [{
+          name: '',
+          type: '',
+          description: '',
+          cadence: '',
+          price: '',
+          conditions: ''
+        }],
+        locations: [{
+          name: '',
+          address: '',
+          city: '',
+          state: '',
+          country: '',
+          postalCode: '',
+          googleMapsUrl: '',
+          modality: ''
+        }],
+        hours: { summary: '' },
+        contacts: { mainPhone: '', extension: '', whatsapp: '', email: '', personInCharge: '' },
+        payments: { online: '', transfer: '', card: '', cash: '', invoice: '', summary: '' },
+        pricingSummary: '',
+        targetCustomers: '',
+        differentiators: '',
+        importantConditions: '',
+        languageTone: '',
+        missingData: []
+      },
+      promptParameters: {
+        NOMBRE_DEL_NEGOCIO: '',
+        INDUSTRIA: '',
+        PRODUCTO_O_SERVICIO: '',
+        INFO_GENERAL_DEL_NEGOCIO: '',
+        VALOR: '',
+        UBICACION_O_MODALIDAD: '',
+        DISPONIBILIDAD: '',
+        CONDICIONES_IMPORTANTES: ''
+      }
+    }, null, 2)
+  ].join('\n')
+}
+
+async function extractBusinessProfileWithAI({ apiKey, model, businessContext, previousSnapshot } = {}) {
+  const { text } = await callOpenAIResponse(apiKey, {
+    model: normalizeAIAgentModel(model),
+    maxOutputTokens: 3200,
+    instructions: buildBusinessProfileExtractionInstructions(),
+    input: JSON.stringify({
+      contextoNuevoDelNegocio: businessContext,
+      perfilAnterior: previousSnapshot?.configured
+        ? {
+            status: previousSnapshot.extractionStatus,
+            sourceContext: previousSnapshot.sourceContext,
+            profile: previousSnapshot.profile
+          }
+        : null
+    }, null, 2),
+    temperature: 0.1,
+    topP: 0.9
+  })
+
+  return normalizeBusinessProfileExtraction(parseJsonObjectFromAI(text, 'La IA no devolvió JSON válido para el perfil del negocio'), {
+    businessContext
+  })
+}
+
+async function syncBusinessProfileFromContext({ businessContext, model } = {}) {
+  const normalizedContext = cleanConfigText(businessContext, BUSINESS_PROFILE_SOURCE_LIMIT)
+  if (!normalizedContext) {
+    await db.run('DELETE FROM ai_business_profile').catch(() => undefined)
+    return getBusinessProfileSnapshot()
+  }
+
+  const sourceHash = getBusinessContextHash(normalizedContext)
+  const previousSnapshot = await getBusinessProfileSnapshot()
+  if (previousSnapshot.sourceHash === sourceHash && previousSnapshot.extractionStatus === 'ready') {
+    return previousSnapshot
+  }
+
+  const fallbackProfile = buildBusinessProfileFallback(normalizedContext)
+  if (normalizedContext.length < BUSINESS_PROFILE_CONTEXT_MIN_LENGTH) {
+    return upsertBusinessProfileRecord({
+      businessContext: normalizedContext,
+      sourceHash,
+      profile: fallbackProfile,
+      status: 'needs_more_context',
+      error: 'El contexto del negocio aún es demasiado corto para extraer parámetros confiables.'
+    })
+  }
+
+  let apiKey = null
+  try {
+    apiKey = await getOpenAIApiKey()
+  } catch (error) {
+    logger.warn(`[Agente AI] No se pudo leer OpenAI para extraer perfil del negocio: ${error.message}`)
+  }
+
+  if (!apiKey) {
+    return upsertBusinessProfileRecord({
+      businessContext: normalizedContext,
+      sourceHash,
+      profile: fallbackProfile,
+      status: 'needs_openai',
+      error: 'Falta una API Key válida de OpenAI para extraer parámetros automáticamente.'
+    })
+  }
+
+  try {
+    const extraction = await extractBusinessProfileWithAI({
+      apiKey,
+      model,
+      businessContext: normalizedContext,
+      previousSnapshot
+    })
+
+    return upsertBusinessProfileRecord({
+      businessContext: normalizedContext,
+      sourceHash,
+      profile: extraction.profile,
+      promptParameters: extraction.promptParameters,
+      status: 'ready',
+      error: null
+    })
+  } catch (error) {
+    logger.warn(`[Agente AI] No se pudo extraer perfil estructurado del negocio: ${error.message}`)
+    return upsertBusinessProfileRecord({
+      businessContext: normalizedContext,
+      sourceHash,
+      profile: fallbackProfile,
+      status: 'failed',
+      error: error.message || 'Error extrayendo perfil del negocio'
+    })
+  }
+}
+
 function normalizeUserId(value) {
   const numericValue = Number(value)
   return Number.isInteger(numericValue) && numericValue > 0 ? numericValue : null
@@ -15949,10 +16591,12 @@ export async function getAIAgentConfig({ userId } = {}) {
 export async function getAIAgentStatus({ userId } = {}) {
   const config = await getAIAgentConfig({ userId })
   const businessContext = buildUnifiedBusinessContext(config)
+  const businessProfile = await getBusinessProfileSnapshot()
   const baseStatus = {
     model: normalizeAIAgentModel(config?.model),
     tokenPreview: null,
     businessContext,
+    businessProfile,
     marketContext: '',
     idealCustomer: '',
     locationContext: '',
@@ -16077,6 +16721,11 @@ export async function saveAIAgentConfig({
     actionCustomizations
   })
 
+  await syncBusinessProfileFromContext({
+    businessContext: unifiedBusinessContext,
+    model: normalizeAIAgentModel(model)
+  })
+
   return getAIAgentStatus({ userId })
 }
 
@@ -16152,6 +16801,7 @@ export async function saveRefinedAIAgentBusinessContextAnswer({ field, answer } 
 
 export async function deleteAIAgentConfig({ userId } = {}) {
   await db.run('DELETE FROM ai_agent_config')
+  await db.run('DELETE FROM ai_business_profile').catch(() => undefined)
   const normalizedUserId = normalizeUserId(userId)
   if (normalizedUserId) {
     await db.run('DELETE FROM ai_agent_user_preferences WHERE user_id = ?', [normalizedUserId])

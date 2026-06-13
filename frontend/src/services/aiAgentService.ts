@@ -99,6 +99,19 @@ export interface AIAgentConfigStatus {
   connectionIssue?: string | null
   connectionIssueCode?: string | null
   businessContext: string
+  businessProfile?: {
+    configured?: boolean
+    status?: string
+    extractionStatus?: string
+    extractionError?: string | null
+    summary?: string | null
+    businessName?: string | null
+    industry?: string | null
+    businessType?: string | null
+    profile?: unknown
+    promptParameters?: Record<string, string>
+    updatedAt?: string | null
+  }
   marketContext: string
   idealCustomer: string
   locationContext: string

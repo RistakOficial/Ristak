@@ -6,6 +6,7 @@ import { createAppointment } from '../../controllers/calendarsController.js'
 import { updateContact } from '../../controllers/contactsController.js'
 import { listCalendarsTool, getFreeSlotsTool } from '../tools/appointmentTools.js'
 import { createSinglePaymentLink } from '../../services/paymentFlowService.js'
+import { getBusinessProfileSnapshot } from '../../services/aiAgentService.js'
 import {
   setConversationSignal,
   setConversationStatus,
@@ -79,13 +80,14 @@ export function createConversationalTools(ctx) {
 
   const getBusinessProfileTool = tool({
     name: 'get_business_profile',
-    description: 'Devuelve los datos generales reales del negocio: nombre, dirección/ubicación, teléfono, email y zona horaria. Úsala antes de responder preguntas de ubicación o datos de contacto del negocio.',
+    description: 'Devuelve los datos reales y estructurados del negocio: giro, oferta, ubicación, horarios, teléfonos, pagos, facturación, precios resumidos y calendarios. Úsala antes de responder preguntas del negocio.',
     parameters: z.object({}),
     execute: async () => {
-      const [hlRow, userRow, calendars] = await Promise.all([
+      const [hlRow, userRow, calendars, businessProfile] = await Promise.all([
         db.get('SELECT location_data FROM highlevel_config LIMIT 1').catch(() => null),
         db.get('SELECT business_name FROM users ORDER BY id ASC LIMIT 1').catch(() => null),
-        db.all("SELECT id, name, is_active FROM calendars WHERE is_active = 1 ORDER BY name ASC LIMIT 20").catch(() => [])
+        db.all("SELECT id, name, is_active FROM calendars WHERE is_active = 1 ORDER BY name ASC LIMIT 20").catch(() => []),
+        getBusinessProfileSnapshot().catch(() => null)
       ])
 
       let location = null
@@ -96,13 +98,24 @@ export function createConversationalTools(ctx) {
       return {
         ok: true,
         business: {
-          name: location?.name || userRow?.business_name || null,
+          name: businessProfile?.businessName || businessProfile?.profile?.businessName || location?.name || userRow?.business_name || null,
+          industry: businessProfile?.industry || businessProfile?.profile?.industry || null,
+          businessType: businessProfile?.businessType || businessProfile?.profile?.businessType || null,
+          summary: businessProfile?.summary || null,
+          offeringsSummary: businessProfile?.offeringsSummary || null,
+          pricingSummary: businessProfile?.pricingSummary || null,
+          locationSummary: businessProfile?.locationSummary || null,
+          paymentSummary: businessProfile?.paymentSummary || null,
+          contactSummary: businessProfile?.contactSummary || null,
           address: location?.address || null,
           city: location?.city || null,
           phone: location?.phone || null,
           email: location?.email || null,
-          timezone: location?.timezone || null
+          timezone: location?.timezone || null,
+          structuredProfile: businessProfile?.profile || null
         },
+        promptParameters: businessProfile?.promptParameters || null,
+        profileStatus: businessProfile?.extractionStatus || businessProfile?.status || 'empty',
         calendars: (calendars || []).map((cal) => ({ id: cal.id, name: cal.name }))
       }
     }

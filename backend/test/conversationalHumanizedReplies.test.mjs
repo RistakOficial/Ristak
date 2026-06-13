@@ -24,6 +24,10 @@ import {
   buildConversationalInstructions,
   renderClosingStrategyTemplate
 } from '../src/agents/conversational/prompt.js'
+import {
+  buildBusinessProfilePromptParameters,
+  normalizeBusinessProfileExtraction
+} from '../src/services/aiAgentService.js'
 
 test('normaliza la entrega de respuestas en partes', () => {
   const delivery = normalizeAgentReplyDelivery({
@@ -395,6 +399,63 @@ test('rellena parametros de la estrategia de cierre de fabrica', () => {
   )
 
   assert.equal(rendered, 'Agente de Clínica Norte por WhatsApp; problema: dolor que ya afecta su rutina; avance: mark_ready_to_advance')
+})
+
+test('convierte el perfil estructurado del negocio en parametros del prompt', () => {
+  const extraction = normalizeBusinessProfileExtraction({
+    sameBusinessWithPrevious: true,
+    profile: {
+      businessName: 'Clínica Norte',
+      industry: 'clínica dental',
+      businessType: 'service',
+      description: 'Atiende limpiezas, ortodoncia e implantes en Ciudad Juárez.',
+      offerings: [
+        { name: 'Limpieza dental', cadence: 'cada 6 meses', price: '$700 MXN' },
+        { name: 'Ortodoncia', description: 'tratamiento mensual', price: 'desde $1,200 MXN al mes' }
+      ],
+      locations: [
+        { address: 'Av. Tecnológico 123', city: 'Ciudad Juárez', postalCode: '32500' }
+      ],
+      hours: { summary: 'Lunes a viernes de 9 a 6' },
+      payments: { transfer: 'sí', invoice: 'sí da factura' },
+      contacts: { mainPhone: '656 111 2222', extension: '103' }
+    }
+  }, {
+    businessContext: 'Clínica dental en Ciudad Juárez.'
+  })
+
+  assert.equal(extraction.profile.businessName, 'Clínica Norte')
+  assert.equal(extraction.promptParameters.NOMBRE_DEL_NEGOCIO, 'Clínica Norte')
+  assert.equal(extraction.promptParameters.INDUSTRIA, 'clínica dental')
+  assert.match(extraction.promptParameters.PRODUCTO_O_SERVICIO, /Limpieza dental/)
+  assert.match(extraction.promptParameters.VALOR, /\$700 MXN/)
+  assert.match(extraction.promptParameters.UBICACION_O_MODALIDAD, /Ciudad Juárez/)
+  assert.match(extraction.promptParameters.DISPONIBILIDAD, /Lunes a viernes/)
+  assert.match(extraction.promptParameters.CONDICIONES_IMPORTANTES, /factura/)
+
+  const rendered = renderClosingStrategyTemplate(
+    '[NOMBRE_DEL_NEGOCIO] · [INDUSTRIA] · [PRODUCTO_O_SERVICIO] · [UBICACION_O_MODALIDAD]',
+    extraction.promptParameters
+  )
+  assert.match(rendered, /Clínica Norte · clínica dental/)
+  assert.doesNotMatch(rendered, /\[INDUSTRIA\]/)
+})
+
+test('los parametros del perfil no acortan ni cambian la estrategia de fabrica', () => {
+  const parameters = buildBusinessProfilePromptParameters({
+    businessName: 'Academia Sol',
+    industry: 'escuela de idiomas',
+    offerings: [{ name: 'clases de inglés para adultos', price: '$1,500 MXN mensuales' }],
+    locations: [{ modality: 'online y presencial en Chihuahua' }]
+  })
+  const rendered = renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, parameters)
+
+  assert.match(rendered, /Academia Sol/)
+  assert.match(rendered, /escuela de idiomas/)
+  assert.match(rendered, /clases de inglés para adultos/)
+  assert.match(rendered, /PRINCIPIO CENTRAL DEL AGENTE/)
+  assert.match(rendered, /VARIACIÓN HUMANA OBLIGATORIA/)
+  assert.ok(rendered.length > 15000)
 })
 
 test('estrategia de fabrica evita moldes repetitivos de venta', () => {

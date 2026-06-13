@@ -939,6 +939,64 @@ async function initTables() {
       }
     }
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS ai_business_profile (
+        id ${usePostgres ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
+        source_context TEXT,
+        source_hash TEXT,
+        profile_json TEXT,
+        prompt_parameters_json TEXT,
+        profile_summary TEXT,
+        business_name TEXT,
+        industry TEXT,
+        business_type TEXT,
+        offerings_summary TEXT,
+        pricing_summary TEXT,
+        location_summary TEXT,
+        payment_summary TEXT,
+        contact_summary TEXT,
+        extraction_status TEXT DEFAULT 'empty',
+        extraction_error TEXT,
+        extracted_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    const aiBusinessProfileColumns = [
+      ['source_context', 'TEXT'],
+      ['source_hash', 'TEXT'],
+      ['profile_json', 'TEXT'],
+      ['prompt_parameters_json', 'TEXT'],
+      ['profile_summary', 'TEXT'],
+      ['business_name', 'TEXT'],
+      ['industry', 'TEXT'],
+      ['business_type', 'TEXT'],
+      ['offerings_summary', 'TEXT'],
+      ['pricing_summary', 'TEXT'],
+      ['location_summary', 'TEXT'],
+      ['payment_summary', 'TEXT'],
+      ['contact_summary', 'TEXT'],
+      ['extraction_status', "TEXT DEFAULT 'empty'"],
+      ['extraction_error', 'TEXT'],
+      ['extracted_at', 'DATETIME']
+    ]
+
+    for (const [columnName, columnType] of aiBusinessProfileColumns) {
+      try {
+        await db.run(`ALTER TABLE ai_business_profile ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Ignore if the column already exists.
+      }
+    }
+
+    try {
+      await db.run('CREATE INDEX IF NOT EXISTS idx_ai_business_profile_source_hash ON ai_business_profile(source_hash)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_ai_business_profile_status ON ai_business_profile(extraction_status)')
+    } catch (err) {
+      logger.warn('Advertencia al crear índices de ai_business_profile:', err.message)
+    }
+
     // Insertar configuración por defecto de Analytics (visible por defecto)
     // Usar INSERT con ON CONFLICT para compatibilidad SQLite/PostgreSQL
     try {
