@@ -689,7 +689,7 @@ async function convertAudioToOggOpus({ buffer, extension }) {
   }
 }
 
-async function saveWhatsAppImageDataUrl(dataUrl = '') {
+export async function saveWhatsAppImageDataUrl(dataUrl = '') {
   const { buffer, mimeType, extension } = parseImageDataUrl(dataUrl)
   try {
     const { uploadMediaAsset } = await import('./mediaStorageService.js')
