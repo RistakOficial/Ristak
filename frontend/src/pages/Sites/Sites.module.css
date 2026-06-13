@@ -8483,13 +8483,13 @@
 
 .alphaSlider input::-webkit-slider-runnable-track {
   background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0), var(--alpha-color, #000000)),
     linear-gradient(45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%),
     linear-gradient(-45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%),
     linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%),
-    linear-gradient(90deg, rgba(0, 0, 0, 0), var(--alpha-color, #000000));
-  background-position: 0 0, 0 4px, 4px -4px, -4px 0, 0 0;
-  background-size: 8px 8px, 8px 8px, 8px 8px, 8px 8px, 100% 100%;
+    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%);
+  background-position: 0 0, 0 0, 0 4px, 4px -4px, -4px 0;
+  background-size: 100% 100%, 8px 8px, 8px 8px, 8px 8px, 8px 8px;
 }
 
 .colorSlider input::-moz-range-track,
@@ -8505,13 +8505,13 @@
 
 .alphaSlider input::-moz-range-track {
   background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0), var(--alpha-color, #000000)),
     linear-gradient(45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%),
     linear-gradient(-45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%),
     linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%),
-    linear-gradient(90deg, rgba(0, 0, 0, 0), var(--alpha-color, #000000));
-  background-position: 0 0, 0 4px, 4px -4px, -4px 0, 0 0;
-  background-size: 8px 8px, 8px 8px, 8px 8px, 8px 8px, 100% 100%;
+    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%);
+  background-position: 0 0, 0 0, 0 4px, 4px -4px, -4px 0;
+  background-size: 100% 100%, 8px 8px, 8px 8px, 8px 8px, 8px 8px;
 }
 
 .colorSlider input::-webkit-slider-thumb,

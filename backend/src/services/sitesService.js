@@ -996,7 +996,7 @@ function sanitizeImportedIframeTag(attrsText = '', report = []) {
     return ''
   }
 
-  const title = limitString(attrs.title || attrs['aria-label'] || 'Contenido externo', 120)
+  const title = limitString(attrs.title || attrs['aria-label'] || 'Código', 120)
   const allow = limitString(attrs.allow || DEFAULT_EMBED_ALLOW, 280) || DEFAULT_EMBED_ALLOW
   const className = cleanString(attrs.class)
   const id = cleanString(attrs.id)
@@ -1887,7 +1887,7 @@ function getImportedVideoValueSource(value = '') {
 function normalizeImportedVideoEmbed(value = '') {
   const source = getImportedVideoValueSource(value)
   if (!source.candidate) {
-    const error = new Error('Pega una URL o codigo embed de video.')
+    const error = new Error('Pega una URL o código embed de video.')
     error.status = 400
     throw error
   }
@@ -4692,7 +4692,7 @@ function isCssPaint(value) {
 function normalizeCssColor(value, fallback = '') {
   const raw = cleanString(value).toLowerCase()
   if (!raw) return fallback
-  if (raw === 'transparent') return 'rgba(0, 0, 0, 0)'
+  if (raw === 'transparent') return 'rgba(255, 255, 255, 0)'
   if (/^#[0-9a-f]{6}$/i.test(raw)) return raw
   if (!isCssColor(raw)) return fallback
   const match = raw.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i)
@@ -8852,7 +8852,7 @@ const DEFAULT_EMBED_ALLOW = 'accelerometer; autoplay; clipboard-write; encrypted
 const EMBED_SANDBOX_URL = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox'
 const EMBED_SANDBOX_HTML = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox'
 const EMBED_MIN_HEIGHT = 180
-const EMBED_MAX_HEIGHT = 900
+const EMBED_MAX_HEIGHT = 5000
 
 function decodeHtmlAttribute(value) {
   return cleanString(value)
@@ -8886,7 +8886,7 @@ function getIframeAttribute(iframeTag, attributeName) {
 }
 
 function normalizeEmbedHeight(value) {
-  const match = cleanString(value).match(/(\d{2,4})/)
+  const match = cleanString(value).match(/(\d{2,5})/)
   if (!match) return 0
   const height = Number(match[1])
   if (!Number.isFinite(height)) return 0
@@ -8907,7 +8907,29 @@ function buildEmbedSrcDoc(html) {
       iframe { border: 0; }
     </style>
   </head>
-  <body>${html}</body>
+  <body>${html}
+    <script>
+      (() => {
+        const sendHeight = () => {
+          const body = document.body;
+          const root = document.documentElement;
+          const height = Math.max(
+            body ? body.scrollHeight : 0,
+            body ? body.offsetHeight : 0,
+            root ? root.scrollHeight : 0,
+            root ? root.offsetHeight : 0
+          );
+          parent.postMessage({ type: 'ristak:embed-height', height }, '*');
+        };
+        window.addEventListener('load', sendHeight);
+        if ('ResizeObserver' in window && document.body) {
+          new ResizeObserver(sendHeight).observe(document.body);
+        }
+        setTimeout(sendHeight, 50);
+        setTimeout(sendHeight, 300);
+      })();
+    </script>
+  </body>
 </html>`
 }
 
@@ -8935,7 +8957,7 @@ function resolveEmbedContent(value) {
   }
 
   if (/<[a-z][\s\S]*>/i.test(raw)) {
-    return { kind: 'html', srcDoc: buildEmbedSrcDoc(raw), title: 'Codigo embed', allow: DEFAULT_EMBED_ALLOW, height: 0 }
+    return { kind: 'html', srcDoc: buildEmbedSrcDoc(raw), title: 'Código', allow: DEFAULT_EMBED_ALLOW, height: 0 }
   }
 
   return { kind: 'empty' }
@@ -10495,7 +10517,7 @@ function renderContentBlock(block, context = {}) {
   if (block.blockType === 'embed') {
     const embed = resolveEmbedContent(block.content)
     if (embed.kind === 'empty') {
-      return `<div class="rstk-embed rstk-embed-empty">Pega una URL, iframe o codigo embed/html</div>`
+      return `<div class="rstk-embed rstk-embed-empty">Pega una URL, iframe o código embed</div>`
     }
 
     const heightStyle = embed.height ? ` style="min-height:${embed.height}px"` : ''
@@ -11187,6 +11209,7 @@ const RSTK_BASE_CSS = `
   .rstk-section-heading h2,.rstk-section-heading p{margin:0}
   .rstk-section-columns{display:grid;grid-template-columns:repeat(var(--rstk-section-columns,1),minmax(0,1fr));gap:var(--rstk-section-gap,clamp(18px,3vw,30px));align-items:start}
   .rstk-section-column{min-width:0;display:grid;align-content:start;gap:var(--rstk-gap)}
+  .rstk-section-column>.rstk-block-style{--rstk-block-bg:transparent;--rstk-block-border:transparent;--rstk-block-border-width:0px;--rstk-block-shell-border-width:0px}
   .rstk-block-style{
     width:auto;
     min-width:0;
@@ -12750,6 +12773,20 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   ${popupHtml}
   ${paramPreservationScript}
   ${siteNavHtml ? `<script>${SITE_NAV_SCRIPT}</script>` : ''}
+  <script>
+    (() => {
+      window.addEventListener('message', event => {
+        const data = event.data || {};
+        if (data.type !== 'ristak:embed-height') return;
+        const frame = Array.from(document.querySelectorAll('iframe.rstk-embed-code')).find(item => item.contentWindow === event.source);
+        if (!frame) return;
+        const height = Math.max(${EMBED_MIN_HEIGHT}, Math.min(${EMBED_MAX_HEIGHT}, Number(data.height || 0)));
+        if (!Number.isFinite(height)) return;
+        frame.style.minHeight = Math.round(height) + 'px';
+        frame.style.height = Math.round(height) + 'px';
+      });
+    })();
+  </script>
   <script>
     (() => {
       const form = document.querySelector('[data-site-form]');

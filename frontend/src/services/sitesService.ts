@@ -526,7 +526,7 @@ export const blockLabels: Record<SiteBlockType, string> = {
   subtitle: 'Subtitulo',
   description: 'Texto descriptivo',
   text: 'Texto',
-  embed: 'Contenido externo',
+  embed: 'Código',
   calendar_embed: 'Calendario',
   section: 'Franja',
   header_panel: 'Panel superior',

@@ -33,6 +33,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Code2,
   Copy,
   CornerDownRight,
   DollarSign,
@@ -338,6 +339,7 @@ const normalizeVisibleRuleAction = (action?: SiteOptionAction): SiteOptionAction
 
 const SITES_AI_DRAFT_CREATED_EVENT = 'ristak-sites-ai-draft-created'
 const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
+const EDITOR_AUTOSAVE_CHANGE_THRESHOLD = 10
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
 const FORM_THANK_YOU_PAGE_ID = 'page-2'
 const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
@@ -374,7 +376,6 @@ interface SitesRouteState {
   pageId: string
   blockId: string
   device: DeviceMode
-  focus: boolean
 }
 
 const getSiteSection = (site?: PublicSite | null): SitesSection => site?.siteType === 'landing_page' ? 'landings' : 'forms'
@@ -416,8 +417,7 @@ const parseSitesRoute = (pathname: string, search: string): SitesRouteState => {
     siteId,
     pageId,
     blockId: searchParams.get('block') || '',
-    device,
-    focus: searchParams.get('focus') === '1'
+    device
   }
 }
 
@@ -433,12 +433,10 @@ const buildSitesEditorPath = (options: {
   siteId: string
   pageId?: string
   device?: DeviceMode
-  focus?: boolean
 }) => {
   const pageSegment = options.pageId ? `/pages/${encodeURIComponent(options.pageId)}` : ''
   const query = new URLSearchParams()
   if (options.device === 'mobile') query.set('device', 'mobile')
-  if (options.focus) query.set('focus', '1')
   const queryText = query.toString()
 
   return `${buildSitesSectionPath(options.section)}/${encodeURIComponent(options.siteId)}${pageSegment}${queryText ? `?${queryText}` : ''}`
@@ -849,7 +847,7 @@ const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
   subtitle: <Type size={15} />,
   description: <FileText size={15} />,
   text: <FileText size={15} />,
-  embed: <Globe2 size={15} />,
+  embed: <Code2 size={15} />,
   calendar_embed: <CalendarDays size={15} />,
   section: <LayoutTemplate size={15} />,
   header_panel: <PanelTop size={15} />,
@@ -1143,7 +1141,7 @@ const isCssPaint = (value?: string): value is string => isCssColor(value) || isC
 const normalizeCssColor = (value: string, fallback: string) => {
   const raw = String(value || '').trim().toLowerCase()
   if (!raw) return fallback
-  if (raw === 'transparent') return 'rgba(0, 0, 0, 0)'
+  if (raw === 'transparent') return 'rgba(255, 255, 255, 0)'
   if (isHex6(raw)) return raw
   if (!isCssColor(raw)) return fallback
   const match = raw.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i)
@@ -1761,7 +1759,6 @@ const getInheritedBlockStyleSettings = (site: PublicSite, block: SiteBlock, bloc
   if (!parent) return {}
   const settings = parent.settings || {}
   const inheritedKeys = [
-    'blockBg',
     'blockText',
     'contentMaxWidth',
     'fontFamily',
@@ -2552,7 +2549,7 @@ const EMBED_SANDBOX_URL = 'allow-scripts allow-same-origin allow-forms allow-pop
 const EMBED_SANDBOX_HTML = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox'
 const EMBED_DEFAULT_HEIGHT = 360
 const EMBED_MIN_HEIGHT = 180
-const EMBED_MAX_HEIGHT = 760
+const EMBED_MAX_HEIGHT = 5000
 
 const decodeHtmlEntities = (value: string) => value
   .replace(/&amp;/g, '&')
@@ -2651,7 +2648,7 @@ const normalizeImportedVideoPreviewUrl = (url: string) => {
 }
 
 const normalizeEmbedHeight = (value: string | null | undefined) => {
-  const match = String(value || '').match(/(\d{2,4})/)
+  const match = String(value || '').match(/(\d{2,5})/)
   if (!match) return undefined
   const height = Number(match[1])
   if (!Number.isFinite(height)) return undefined
@@ -2671,7 +2668,29 @@ const buildEmbedSrcDoc = (html: string) => `<!doctype html>
       iframe { border: 0; }
     </style>
   </head>
-  <body>${html}</body>
+  <body>${html}
+    <script>
+      (() => {
+        const sendHeight = () => {
+          const body = document.body;
+          const root = document.documentElement;
+          const height = Math.max(
+            body ? body.scrollHeight : 0,
+            body ? body.offsetHeight : 0,
+            root ? root.scrollHeight : 0,
+            root ? root.offsetHeight : 0
+          );
+          parent.postMessage({ type: 'ristak:embed-height', height }, '*');
+        };
+        window.addEventListener('load', sendHeight);
+        if ('ResizeObserver' in window && document.body) {
+          new ResizeObserver(sendHeight).observe(document.body);
+        }
+        setTimeout(sendHeight, 50);
+        setTimeout(sendHeight, 300);
+      })();
+    </script>
+  </body>
 </html>`
 
 const resolveEmbedPreview = (rawValue: string): EmbedPreviewConfig => {
@@ -2708,7 +2727,7 @@ const resolveEmbedPreview = (rawValue: string): EmbedPreviewConfig => {
   }
 
   if (/<[a-z][\s\S]*>/i.test(raw)) {
-    return { kind: 'html', srcDoc: buildEmbedSrcDoc(raw), title: 'Codigo embed', height: EMBED_DEFAULT_HEIGHT }
+    return { kind: 'html', srcDoc: buildEmbedSrcDoc(raw), title: 'Código', height: EMBED_DEFAULT_HEIGHT }
   }
 
   return { kind: 'empty' }
@@ -3058,7 +3077,6 @@ export const Sites: React.FC = () => {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
   const [saveStatusNow, setSaveStatusNow] = useState(() => Date.now())
-  const [editorFocusMode, setEditorFocusMode] = useState(routeState.focus)
   const [seoModalOpen, setSeoModalOpen] = useState(false)
   const [headerModalOpen, setHeaderModalOpen] = useState(false)
   const [pendingImportSiteType, setPendingImportSiteType] = useState<SiteType>('landing_page')
@@ -3081,6 +3099,11 @@ export const Sites: React.FC = () => {
   const guardHistoryArmedRef = useRef(false)
   const allowNavigationRef = useRef(false)
   const suppressEditorRouteRestoreRef = useRef(false)
+  const pendingAutosaveChangeCountRef = useRef(0)
+  const pendingSiteSaveRef = useRef(false)
+  const pendingBlockSaveIdsRef = useRef<Set<string>>(new Set())
+  const pendingAutosaveTimerRef = useRef<number | null>(null)
+  const savingPendingEditorRef = useRef(false)
 
   const markEditorExitInProgress = () => {
     suppressEditorRouteRestoreRef.current = true
@@ -3236,7 +3259,6 @@ export const Sites: React.FC = () => {
       ? styles.editorSaveStatusDirty
       : styles.editorSaveStatusSaved
   const editorActive = Boolean(editorSite)
-  const isCanvasFocusMode = editorFocusMode && Boolean(editorSite)
   const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
   const createFlowHeaderCopy = getCreateFlowHeaderCopy(createFlow)
   const canvasTheme = editorSite ? buildCanvasTheme(editorSite, device) : null
@@ -3251,25 +3273,22 @@ export const Sites: React.FC = () => {
     pageId?: string
     blockId?: string
     device?: DeviceMode
-    focus?: boolean
     replace?: boolean
   }) => {
     const site = options?.site || editorSite
     if (!site?.id) return
     const nextPageId = options?.pageId ?? activePage?.id ?? activePageId
     const nextDevice = options?.device ?? device
-    const nextFocus = options?.focus ?? editorFocusMode
     const nextPath = buildSitesEditorPath({
       section: getSiteSection(site),
       siteId: site.id,
       pageId: nextPageId,
-      device: nextDevice,
-      focus: nextFocus
+      device: nextDevice
     })
     const currentPath = `${location.pathname}${location.search}`
     if (nextPath === currentPath) return
     navigate(nextPath, { replace: options?.replace })
-  }, [activePage?.id, activePageId, device, editorFocusMode, editorSite, location.pathname, location.search, navigate])
+  }, [activePage?.id, activePageId, device, editorSite, location.pathname, location.search, navigate])
   const selectEditorPage = useCallback((pageId: string, options?: { replace?: boolean }) => {
     setActivePageId(pageId)
     setSelectedBlockId('')
@@ -3282,10 +3301,6 @@ export const Sites: React.FC = () => {
   const selectEditorBlock = useCallback((blockId: string) => {
     setSelectedBlockId(blockId)
   }, [])
-  const setEditorFocus = useCallback((nextFocus: boolean) => {
-    setEditorFocusMode(nextFocus)
-    navigateSitesEditor({ focus: nextFocus })
-  }, [navigateSitesEditor])
   const landingSectionLanes = useMemo(
     () => editorSite && isLanding(editorSite) ? buildLandingSectionLanes(canvasBlocks) : [],
     [canvasBlocks, editorSite]
@@ -3308,21 +3323,20 @@ export const Sites: React.FC = () => {
   const canvasPalettePreviewBlock = paletteDragging ? palettePreviewBlock : null
 
   useEffect(() => {
-    setEditorFocusMode(routeState.focus)
     setSeoModalOpen(false)
     setHeaderModalOpen(false)
-  }, [editorSite?.id, routeState.focus])
+  }, [editorSite?.id])
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent(SITES_EDITOR_ACTIVE_EVENT, {
-      detail: { active: editorActive, focusMode: isCanvasFocusMode }
+      detail: { active: editorActive }
     }))
-  }, [editorActive, isCanvasFocusMode])
+  }, [editorActive])
 
   useEffect(() => {
     return () => {
       window.dispatchEvent(new CustomEvent(SITES_EDITOR_ACTIVE_EVENT, {
-        detail: { active: false, focusMode: false }
+        detail: { active: false }
       }))
     }
   }, [])
@@ -3345,10 +3359,109 @@ export const Sites: React.FC = () => {
     }
   }, [hasUnsavedChanges])
 
+  type EditorDirtyScope = {
+    site?: boolean
+    blockIds?: string[]
+  }
+
+  type PendingEditorSaveOptions = {
+    silent?: boolean
+    statusOverride?: PublicSite['status']
+    forceSite?: boolean
+  }
+
+  function clearPendingEditorAutosaveTimer() {
+    if (pendingAutosaveTimerRef.current !== null) {
+      window.clearTimeout(pendingAutosaveTimerRef.current)
+      pendingAutosaveTimerRef.current = null
+    }
+  }
+
+  function resetPendingEditorSaveQueue() {
+    clearPendingEditorAutosaveTimer()
+    pendingAutosaveChangeCountRef.current = 0
+    pendingSiteSaveRef.current = false
+    pendingBlockSaveIdsRef.current.clear()
+  }
+
+  function clearEditorDirtyState() {
+    resetPendingEditorSaveQueue()
+    setHasUnsavedChanges(false)
+  }
+
+  function schedulePendingEditorAutosave() {
+    if (pendingAutosaveChangeCountRef.current < EDITOR_AUTOSAVE_CHANGE_THRESHOLD) return
+    clearPendingEditorAutosaveTimer()
+    pendingAutosaveTimerRef.current = window.setTimeout(() => {
+      pendingAutosaveTimerRef.current = null
+      void flushPendingEditorSaves({ silent: true })
+    }, 420)
+  }
+
+  async function flushPendingEditorSaves(options: PendingEditorSaveOptions = {}) {
+    const siteToSave = selectedSiteRef.current || selectedSite
+    if (!siteToSave || savingPendingEditorRef.current) return
+
+    if (options.statusOverride === 'published' && (!domainConfig.domain || !domainConfig.renderDomainVerified)) {
+      showToast('error', 'Dominio requerido', 'Configura y verifica un dominio antes de publicar este sitio.')
+      return
+    }
+
+    const shouldSaveSite = Boolean(options.forceSite || options.statusOverride || pendingSiteSaveRef.current)
+    const blockIdsToSave = [...pendingBlockSaveIdsRef.current].filter(blockId =>
+      Boolean(siteToSave.blocks?.some(block => block.id === blockId))
+    )
+
+    if (!shouldSaveSite && !blockIdsToSave.length) {
+      clearEditorDirtyState()
+      return
+    }
+
+    const localBlocksById = new Map((siteToSave.blocks || []).map(block => [block.id, block]))
+    clearPendingEditorAutosaveTimer()
+    savingPendingEditorRef.current = true
+    setSaving(true)
+
+    try {
+      let site = siteToSave
+      if (shouldSaveSite) {
+        site = await sitesService.updateSite(siteToSave.id, {
+          name: siteToSave.name,
+          slug: normalizeRouteInput(siteToSave.slug) || normalizeRouteInput(siteToSave.name) || getDefaultRoutePrefix(siteToSave.siteType),
+          siteType: siteToSave.siteType,
+          status: options.statusOverride || siteToSave.status,
+          title: getPublicTitleForSave(siteToSave),
+          description: siteToSave.description,
+          theme: siteToSave.theme,
+          metaCapiEnabled: siteToSave.metaCapiEnabled,
+          metaEventName: siteToSave.metaEventName
+        })
+      }
+
+      for (const blockId of blockIdsToSave) {
+        const block = localBlocksById.get(blockId)
+        if (!block) continue
+        site = await sitesService.updateBlock(siteToSave.id, block.id, block)
+      }
+
+      syncSelectedSite(site)
+      clearEditorDirtyState()
+      setLastSavedAt(Date.now())
+      if (!options.silent) {
+        showToast('success', options.statusOverride === 'published' ? 'Publicado' : 'Guardado', 'Sitio actualizado')
+      }
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo guardar')
+    } finally {
+      savingPendingEditorRef.current = false
+      setSaving(false)
+    }
+  }
+
   const handleConfirmLeaveEditor = useCallback((action?: () => void) => {
     allowNavigationRef.current = true
     guardHistoryArmedRef.current = false
-    setHasUnsavedChanges(false)
+    clearEditorDirtyState()
 
     action?.()
 
@@ -3373,13 +3486,25 @@ export const Sites: React.FC = () => {
     )
   }, [handleCancelLeaveEditor, handleConfirmLeaveEditor, hasUnsavedChanges, showConfirm])
 
-  const markEditorDirty = useCallback(() => {
-    if (editorSite) {
-      setHasUnsavedChanges(true)
+  const markEditorDirty = (scope: EditorDirtyScope = { site: true }) => {
+    const site = selectedSiteRef.current || editorSite
+    if (!site) return
+
+    if (scope.site || !scope.blockIds?.length) pendingSiteSaveRef.current = true
+    for (const blockId of scope.blockIds || []) {
+      if (blockId) pendingBlockSaveIdsRef.current.add(blockId)
     }
-  }, [editorSite])
+    pendingAutosaveChangeCountRef.current += 1
+    setHasUnsavedChanges(true)
+    schedulePendingEditorAutosave()
+  }
+
+  useEffect(() => {
+    return () => clearPendingEditorAutosaveTimer()
+  }, [])
 
   const markEditorSaved = useCallback(() => {
+    resetPendingEditorSaveQueue()
     setHasUnsavedChanges(false)
     setLastSavedAt(Date.now())
   }, [])
@@ -3468,13 +3593,12 @@ export const Sites: React.FC = () => {
       setSelectedBlockId('')
       setSection(getSiteSection(site))
       setCreateFlow('closed')
-      setHasUnsavedChanges(false)
+      clearEditorDirtyState()
       navigate(buildSitesEditorPath({
         section: getSiteSection(site),
         siteId: site.id,
         pageId: nextPageId,
-        device,
-        focus: editorFocusMode
+        device
       }))
       if (importData?.siteId) {
         setSelectedImportData(importData)
@@ -3488,7 +3612,7 @@ export const Sites: React.FC = () => {
     return () => {
       window.removeEventListener(SITES_AI_DRAFT_CREATED_EVENT, handleAIDraftCreated)
     }
-  }, [device, editorFocusMode, navigate])
+  }, [device, navigate])
 
   useEffect(() => {
     if (section === 'leads') {
@@ -3631,13 +3755,12 @@ export const Sites: React.FC = () => {
       setActivePageId(nextPageId)
       setSelectedBlockId('')
       setCreateFlow('closed')
-      setHasUnsavedChanges(false)
+      clearEditorDirtyState()
       navigate(buildSitesEditorPath({
         section: getSiteSection(site),
         siteId: site.id,
         pageId: nextPageId,
-        device,
-        focus: editorFocusMode
+        device
       }), { replace: options?.replaceRoute })
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo abrir el site')
@@ -3655,7 +3778,6 @@ export const Sites: React.FC = () => {
 
     setSection(current => current === routeState.section ? current : routeState.section)
     setDevice(current => current === routeState.device ? current : routeState.device)
-    setEditorFocusMode(current => current === routeState.focus ? current : routeState.focus)
     setCreateFlow(current => current === routeState.createFlow ? current : routeState.createFlow)
 
     if (routeState.siteId) {
@@ -3726,7 +3848,6 @@ export const Sites: React.FC = () => {
     routeState.blockId,
     routeState.createFlow,
     routeState.device,
-    routeState.focus,
     routeState.pageId,
     routeState.section,
     routeState.siteId,
@@ -3739,7 +3860,7 @@ export const Sites: React.FC = () => {
     markEditorExitInProgress()
     setSection(nextSection)
     setCreateFlow('closed')
-    setHasUnsavedChanges(false)
+    clearEditorDirtyState()
     navigateSitesSection(nextSection)
 
     if (nextSection === 'landings' || nextSection === 'forms') {
@@ -3763,7 +3884,7 @@ export const Sites: React.FC = () => {
           setSelectedSite(null)
           setSelectedBlockId('')
           setCreateFlow('closed')
-          setHasUnsavedChanges(false)
+          clearEditorDirtyState()
           navigateSitesSection(section)
         })
       }
@@ -3791,7 +3912,7 @@ export const Sites: React.FC = () => {
       const nextFlow = getCreateFlowForSection(section)
       setCreateFlow(nextFlow)
       navigateSitesCreateFlow(section, nextFlow)
-      setHasUnsavedChanges(false)
+      clearEditorDirtyState()
     })
   }
 
@@ -3817,11 +3938,10 @@ export const Sites: React.FC = () => {
       setPaletteInsertIndex(null)
       setPaletteSectionTarget(null)
       setCreateFlow('closed')
-      setEditorFocusMode(false)
       setSeoModalOpen(false)
       clearSiteEditorUrlParam()
       navigateSitesSection(section)
-      setHasUnsavedChanges(false)
+      clearEditorDirtyState()
     })
   }
 
@@ -3839,7 +3959,7 @@ export const Sites: React.FC = () => {
     handleBackToLibrary()
   }
 
-  const syncSelectedSite = (site: PublicSite) => {
+  function syncSelectedSite(site: PublicSite) {
     const normalizedSite = normalizeSiteForEditor(site)
     selectedSiteRef.current = normalizedSite
     setSelectedSite(normalizedSite)
@@ -3891,7 +4011,7 @@ export const Sites: React.FC = () => {
           blockId: direction === 'undo' ? entry.selectedBefore : entry.selectedAfter
         })
       }
-      setHasUnsavedChanges(false)
+      clearEditorDirtyState()
       showToast(
         'info',
         direction === 'undo' ? 'Cambio deshecho' : 'Cambio rehecho',
@@ -3952,7 +4072,7 @@ export const Sites: React.FC = () => {
   }, [editorSite])
 
   const updateSelectedSite = (patch: Partial<PublicSite>) => {
-    markEditorDirty()
+    markEditorDirty({ site: true })
     const current = selectedSiteRef.current
     if (!current) return
     const next = { ...current, ...patch }
@@ -3961,7 +4081,7 @@ export const Sites: React.FC = () => {
   }
 
   const patchSiteTheme = (patch: Partial<SiteTheme>) => {
-    markEditorDirty()
+    markEditorDirty({ site: true })
     const current = selectedSiteRef.current
     if (!current) return
     const next = { ...current, theme: { ...(current.theme || {}), ...patch } }
@@ -4377,13 +4497,12 @@ export const Sites: React.FC = () => {
       setSelectedBlockId('')
       setSection(getSiteSection(site))
       setCreateFlow('closed')
-      setHasUnsavedChanges(false)
+      clearEditorDirtyState()
       navigate(buildSitesEditorPath({
         section: getSiteSection(site),
         siteId: site.id,
         pageId: nextPageId,
-        device,
-        focus: editorFocusMode
+        device
       }))
       showToast('success', 'Sitio creado', 'Ya estas en el editor visual')
     } catch (error) {
@@ -4463,8 +4582,7 @@ export const Sites: React.FC = () => {
           section: getSiteSection(restoredSite),
           siteId: restoredSite.id,
           pageId: restoredPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID,
-          device,
-          focus: editorFocusMode
+          device
         }), { replace: true })
       } else {
         setSites(current => current.filter(item => item.id !== pendingSiteId))
@@ -4490,8 +4608,7 @@ export const Sites: React.FC = () => {
     setActivePageId(pendingPageId)
     setSection(pendingSection)
     setCreateFlow('closed')
-    setHasUnsavedChanges(false)
-    setEditorFocusMode(false)
+    clearEditorDirtyState()
     setAiEditorGeneration({ siteId: pendingSiteId, siteKind, editMode: Boolean(editSite) })
     setSites(current => {
       const withoutPending = current.filter(item => item.id !== pendingSiteId)
@@ -4505,8 +4622,7 @@ export const Sites: React.FC = () => {
       section: pendingSection,
       siteId: pendingSiteId,
       pageId: pendingPageId,
-      device,
-      focus: false
+      device
     }), { replace: true })
 
     try {
@@ -4529,8 +4645,7 @@ export const Sites: React.FC = () => {
         section: getSiteSection(normalizedSite),
         siteId: normalizedSite.id,
         pageId: nextPageId,
-        device,
-        focus: editorFocusMode
+        device
       })
       completedAIGenerationRedirectRef.current = editSite
         ? null
@@ -4551,7 +4666,7 @@ export const Sites: React.FC = () => {
       setActivePageId(nextPageId)
       setSection(getSiteSection(normalizedSite))
       setCreateFlow('closed')
-      setHasUnsavedChanges(false)
+      clearEditorDirtyState()
       setSelectedImportData(result.import)
       setImportReview({ site: normalizedSite, importData: result.import })
       setAiCreationModal(null)
@@ -4614,15 +4729,14 @@ export const Sites: React.FC = () => {
       setActivePageId(nextPageId)
       setSection(getSiteSection(site))
       setCreateFlow('closed')
-      setHasUnsavedChanges(false)
+      clearEditorDirtyState()
       setSelectedImportData(result.import)
       setImportReview({ site, importData: result.import })
       navigate(buildSitesEditorPath({
         section: getSiteSection(site),
         siteId: site.id,
         pageId: nextPageId,
-        device,
-        focus: editorFocusMode
+        device
       }))
       showToast('success', 'HTML importado', 'Revisa los campos detectados antes de publicar.')
     } catch (error) {
@@ -4675,35 +4789,14 @@ export const Sites: React.FC = () => {
   const handleSaveSite = async (statusOverride?: PublicSite['status'], options: { silent?: boolean } = {}) => {
     const siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave) return
-
-    if (statusOverride === 'published' && (!domainConfig.domain || !domainConfig.renderDomainVerified)) {
-      showToast('error', 'Dominio requerido', 'Configura y verifica un dominio antes de publicar este sitio.')
+    if (options.silent && !statusOverride && pendingAutosaveChangeCountRef.current < EDITOR_AUTOSAVE_CHANGE_THRESHOLD) {
       return
     }
-
-    setSaving(true)
-    try {
-      const site = await sitesService.updateSite(siteToSave.id, {
-        name: siteToSave.name,
-        slug: normalizeRouteInput(siteToSave.slug) || normalizeRouteInput(siteToSave.name) || getDefaultRoutePrefix(siteToSave.siteType),
-        siteType: siteToSave.siteType,
-        status: statusOverride || siteToSave.status,
-        title: getPublicTitleForSave(siteToSave),
-        description: siteToSave.description,
-        theme: siteToSave.theme,
-        metaCapiEnabled: siteToSave.metaCapiEnabled,
-        metaEventName: siteToSave.metaEventName
-      })
-      syncSelectedSite(site)
-      markEditorSaved()
-      if (!options.silent) {
-        showToast('success', statusOverride === 'published' ? 'Publicado' : 'Guardado', 'Sitio actualizado')
-      }
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo guardar')
-    } finally {
-      setSaving(false)
-    }
+    await flushPendingEditorSaves({
+      statusOverride,
+      silent: options.silent,
+      forceSite: !options.silent || Boolean(statusOverride)
+    })
   }
 
   const handleOpenLiveEditorSite = () => {
@@ -4830,7 +4923,7 @@ export const Sites: React.FC = () => {
               setSelectedBlockId('')
               navigateSitesSection(getSiteSection(siteToDelete))
             }
-            setHasUnsavedChanges(false)
+            clearEditorDirtyState()
             showToast('success', 'Eliminado', 'Sitio eliminado')
           } catch (error) {
             showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo eliminar')
@@ -5136,7 +5229,7 @@ export const Sites: React.FC = () => {
   }
 
   const patchBlockLocal = (blockId: string, patch: Partial<SiteBlock>) => {
-    markEditorDirty()
+    markEditorDirty({ blockIds: [blockId] })
     const current = selectedSiteRef.current
     if (!current?.blocks) return
     const next = {
@@ -5173,25 +5266,27 @@ export const Sites: React.FC = () => {
   }
 
   const patchBlockCategorySettingsLocal = (sourceBlock: SiteBlock, patch: Record<string, unknown>) => {
-    markEditorDirty()
     const current = selectedSiteRef.current
     if (!current?.blocks) return
     const sourceIsPopupBlock = isPopupBlock(sourceBlock)
     const sourcePageId = isLanding(current) ? getBlockPageId(sourceBlock, pages) : ''
+    const changedBlockIds: string[] = []
     const next = {
       ...current,
       blocks: current.blocks.map(block => {
         const sameType = block.blockType === sourceBlock.blockType
         const sameSurface = sourceIsPopupBlock ? isPopupBlock(block) : !isPopupBlock(block)
         const samePage = sourceIsPopupBlock || !isLanding(current) || getBlockPageId(block, pages) === sourcePageId
-        return sameType && samePage
-          && sameSurface
-          ? { ...block, settings: { ...(block.settings || {}), ...patch } }
-          : block
+        if (sameType && samePage && sameSurface) {
+          changedBlockIds.push(block.id)
+          return { ...block, settings: { ...(block.settings || {}), ...patch } }
+        }
+        return block
       })
     }
     selectedSiteRef.current = next
     setSelectedSite(next)
+    markEditorDirty({ blockIds: changedBlockIds })
   }
 
   const handleSaveBlockCategory = async (sourceBlock = selectedBlock) => {
@@ -5207,31 +5302,18 @@ export const Sites: React.FC = () => {
     })
     if (!targets.length) return
 
-    try {
-      let site = siteToSave
-      for (const block of targets) {
-        site = await sitesService.updateBlock(siteToSave.id, block.id, block)
-      }
-      syncSelectedSite(site)
-      markEditorSaved()
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo guardar el estilo')
+    for (const block of targets) {
+      pendingBlockSaveIdsRef.current.add(block.id)
     }
+    await flushPendingEditorSaves({ silent: true })
   }
 
   const handleSaveBlock = async (blockId = selectedBlock?.id) => {
     const siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave?.blocks || !blockId) return
-    const block = siteToSave.blocks.find(item => item.id === blockId)
-    if (!block) return
-
-    try {
-      const site = await sitesService.updateBlock(siteToSave.id, block.id, block)
-      syncSelectedSite(site)
-      markEditorSaved()
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo guardar el bloque')
-    }
+    if (!pendingBlockSaveIdsRef.current.has(blockId)) pendingBlockSaveIdsRef.current.add(blockId)
+    if (pendingAutosaveChangeCountRef.current < EDITOR_AUTOSAVE_CHANGE_THRESHOLD) return
+    await flushPendingEditorSaves({ silent: true })
   }
 
   const getDeletedBlockIds = (blockId: string) => {
@@ -5739,7 +5821,7 @@ export const Sites: React.FC = () => {
         className={styles.hiddenFileInput}
         onChange={handleImportHtmlFile}
       />
-      <div className={`${styles.container} ${isFocusedSitesMode ? styles.containerFocused : ''} ${isCanvasFocusMode ? styles.containerEditorFocus : ''}`}>
+      <div className={`${styles.container} ${isFocusedSitesMode ? styles.containerFocused : ''}`}>
         <header className={`${styles.header} ${editorSite ? styles.editorHeader : ''}`}>
           {editorSite ? (
             <>
@@ -5833,9 +5915,6 @@ export const Sites: React.FC = () => {
                         <Smartphone size={15} />
                       </button>
                     </div>
-                    <button type="button" className={styles.editorIconAction} onClick={() => setEditorFocus(true)} disabled={editorAIGenerating} title="Pantalla completa" aria-label="Pantalla completa">
-                      <Maximize2 size={14} />
-                    </button>
                     {isPublicSiteLive(editorSite, domainConfig) && (
                       <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating}>
                         <ExternalLink size={15} />
@@ -5981,34 +6060,6 @@ export const Sites: React.FC = () => {
               />
             ) : editorSite ? (
               <section className={styles.builder}>
-              {isCanvasFocusMode && (
-                <div className={styles.focusModeBar} role="toolbar" aria-label="Controles de enfoque">
-                  <button type="button" className={styles.focusExitButton} onClick={() => setEditorFocus(false)}>
-                    <X size={16} />
-                    <span>Salir de enfoque</span>
-                  </button>
-                  <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
-                    <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('desktop')} title="Escritorio" aria-label="Escritorio">
-                      <Monitor size={15} />
-                    </button>
-                    <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} title="Movil" aria-label="Movil">
-                      <Smartphone size={15} />
-                    </button>
-                  </div>
-                  <button type="button" className={styles.focusActionButton} onClick={handlePreviewSite}>
-                    <Eye size={15} />
-                    <span>Vista</span>
-                  </button>
-                  <button type="button" className={styles.focusActionButton} onClick={() => handleSaveSite()} disabled={saving}>
-                    <Save size={15} />
-                    <span>Guardar</span>
-                  </button>
-                  <button type="button" className={styles.focusPrimaryButton} onClick={() => handleSaveSite('published')} disabled={saving}>
-                    <Send size={15} />
-                    <span>Publicar</span>
-                  </button>
-                </div>
-              )}
               {activeAIGeneration ? (
                 <AIEditorGenerationPanel
                   editMode={activeAIGeneration.editMode}
@@ -10665,7 +10716,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 rows={4}
                 value={inlineEditor.value}
                 onChange={(event) => setInlineEditor(current => current ? { ...current, value: event.target.value } : current)}
-                placeholder="Pega URL o codigo embed: YouTube, Vimeo, Wistia..."
+                placeholder="Pega URL, iframe o código embed"
                 disabled={contentSaving}
                 name="rstk-imported-inline-video"
                 {...importedEditorNoAutocompleteAttrs}
@@ -12109,26 +12160,30 @@ const formatCssColor = ({ r, g, b, a }: { r: number; g: number; b: number; a: nu
   return alpha >= 1 ? rgbToHex(r, g, b) : `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${alpha})`
 }
 
-const swatchBackground = (color: string) => isCssGradient(color)
-  ? ({ backgroundImage: color } as React.CSSProperties)
-  : ({
-      backgroundColor: color,
-      backgroundImage: 'linear-gradient(45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%), linear-gradient(-45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%), linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%)',
-      backgroundPosition: '0 0, 0 6px, 6px -6px, -6px 0',
-      backgroundSize: '12px 12px'
-    } as React.CSSProperties)
+const colorCheckerboardBackground = 'linear-gradient(45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%), linear-gradient(-45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%), linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%)'
+
+const swatchBackground = (color: string) => {
+  if (isCssGradient(color)) return { backgroundImage: color } as React.CSSProperties
+  const rgba = parseCssColor(color, '#ffffff')
+  if (rgba.a >= 1) return { backgroundColor: color } as React.CSSProperties
+  return {
+    backgroundImage: `linear-gradient(${color}, ${color}), ${colorCheckerboardBackground}`,
+    backgroundPosition: '0 0, 0 0, 0 6px, 6px -6px, -6px 0',
+    backgroundSize: '100% 100%, 12px 12px, 12px 12px, 12px 12px, 12px 12px'
+  } as React.CSSProperties
+}
 
 // Ristak paint control: solid color or editable multi-stop gradient.
 const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = true, onChange, onCommit }) => {
   const rootRef = useRef<HTMLDivElement>(null)
-  const paint = allowGradient ? normalizeCssPaint(value, '#000000') : normalizeCssColor(value, '#000000')
+  const paint = allowGradient ? normalizeCssPaint(value, '#ffffff') : normalizeCssColor(value, '#ffffff')
   const isGradient = allowGradient && isCssGradient(paint)
   const gradient = useMemo(() => parseEditableGradient(paint, paintFallbackColor(paint, '#111827')), [paint])
   const [activeStopIndex, setActiveStopIndex] = useState(0)
   const safeActiveStopIndex = Math.min(activeStopIndex, Math.max(0, gradient.stops.length - 1))
   const activeStop = gradient.stops[safeActiveStopIndex]
-  const activeColor = isGradient ? (activeStop?.color || '#000000') : paint
-  const rgba = parseCssColor(activeColor, '#000000')
+  const activeColor = isGradient ? (activeStop?.color || '#ffffff') : paint
+  const rgba = parseCssColor(activeColor, '#ffffff')
   const hsv = rgbToHsv(rgba)
   const hueRgb = hsvToRgb(hsv.h, 1, 1)
   const hueColor = rgbToHex(hueRgb.r, hueRgb.g, hueRgb.b)
@@ -12136,7 +12191,7 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
   const [text, setText] = useState(paint)
   const [open, setOpen] = useState(false)
 
-  useEffect(() => { setText(allowGradient ? normalizeCssPaint(value, '#000000') : normalizeCssColor(value, '#000000')) }, [allowGradient, value])
+  useEffect(() => { setText(allowGradient ? normalizeCssPaint(value, '#ffffff') : normalizeCssColor(value, '#ffffff')) }, [allowGradient, value])
 
   useEffect(() => {
     if (!open) return undefined
@@ -15828,13 +15883,36 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
 
 const EmbedPreview: React.FC<{ rawCode: string }> = ({ rawCode }) => {
   const embed = resolveEmbedPreview(rawCode)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const [autoHeight, setAutoHeight] = useState<number | null>(null)
+
+  useEffect(() => {
+    setAutoHeight(null)
+    if (embed.kind !== 'html') return undefined
+
+    const handleEmbedHeight = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) return
+      const data = event.data as { type?: string; height?: number } | null
+      if (data?.type !== 'ristak:embed-height') return
+      const nextHeight = clampNumber(Number(data.height || 0), EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)
+      if (Number.isFinite(nextHeight)) setAutoHeight(Math.round(nextHeight))
+    }
+
+    window.addEventListener('message', handleEmbedHeight)
+    return () => window.removeEventListener('message', handleEmbedHeight)
+  }, [embed.kind, embed.kind === 'html' ? embed.srcDoc : ''])
 
   if (embed.kind === 'empty') {
-    return <div className="rstk-embed rstk-embed-empty">Pega una URL, iframe o codigo embed/html</div>
+    return <div className="rstk-embed rstk-embed-empty">Pega una URL, iframe o código embed</div>
   }
+
+  const resolvedHeight = embed.kind === 'html'
+    ? autoHeight || embed.height || EMBED_DEFAULT_HEIGHT
+    : embed.height || EMBED_DEFAULT_HEIGHT
 
   return (
     <iframe
+      ref={iframeRef}
       className={`rstk-embed ${embed.kind === 'html' ? 'rstk-embed-code' : ''}`}
       title={embed.title}
       src={embed.kind === 'url' ? embed.src : undefined}
@@ -15844,7 +15922,7 @@ const EmbedPreview: React.FC<{ rawCode: string }> = ({ rawCode }) => {
       sandbox={embed.kind === 'url' ? EMBED_SANDBOX_URL : EMBED_SANDBOX_HTML}
       allow={embed.kind === 'url' ? embed.allow || DEFAULT_EMBED_ALLOW : DEFAULT_EMBED_ALLOW}
       allowFullScreen
-      style={{ minHeight: `${embed.height || EMBED_DEFAULT_HEIGHT}px` }}
+      style={{ minHeight: `${resolvedHeight}px`, height: `${resolvedHeight}px` }}
     />
   )
 }

@@ -64,7 +64,6 @@ export const AppShell: React.FC = () => {
   const [aiAgentWidth, setAIAgentWidth] = useState(getInitialAIAgentWidth)
   const [aiAgentResizing, setAIAgentResizing] = useState(false)
   const [sitesEditorActive, setSitesEditorActive] = useState(false)
-  const [sitesEditorFocusMode, setSitesEditorFocusMode] = useState(false)
   const resizePointerIdRef = useRef<number | null>(null)
   const aiAgentWidthRef = useRef(aiAgentWidth)
   const lastSavedAIAgentWidthRef = useRef(aiAgentWidth)
@@ -118,10 +117,9 @@ export const AppShell: React.FC = () => {
 
   useLayoutEffect(() => {
     const handleSitesEditorActive = (event: Event) => {
-      const detail = (event as CustomEvent<{ active?: boolean; focusMode?: boolean }>).detail
+      const detail = (event as CustomEvent<{ active?: boolean }>).detail
       const active = Boolean(detail?.active)
       setSitesEditorActive(active)
-      setSitesEditorFocusMode(active && Boolean(detail?.focusMode))
     }
 
     window.addEventListener(SITES_EDITOR_ACTIVE_EVENT, handleSitesEditorActive)
@@ -236,7 +234,7 @@ export const AppShell: React.FC = () => {
       {syncProgressVisible && <SyncProgressBar onClose={handleProgressBarClose} />}
 
       <div
-        className={`${styles.shell} ${aiAgentOpen ? styles.shellWithAIAgent : ''} ${aiAgentResizing ? styles.shellResizingAIAgent : ''} ${sitesEditorFocusMode ? styles.shellSitesEditorFocus : ''} ${syncProgressVisible ? styles.shellWithSyncBar : ''}`}
+        className={`${styles.shell} ${aiAgentOpen ? styles.shellWithAIAgent : ''} ${aiAgentResizing ? styles.shellResizingAIAgent : ''} ${syncProgressVisible ? styles.shellWithSyncBar : ''}`}
         style={shellStyle}
       >
         <div className={styles.mainPane}>

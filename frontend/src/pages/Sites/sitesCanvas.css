@@ -106,6 +106,12 @@
   align-content: start;
   gap: var(--rstk-gap);
 }
+.rstkCanvas .rstk-section-column > .rstk-block-style {
+  --rstk-block-bg: transparent;
+  --rstk-block-border: transparent;
+  --rstk-block-border-width: 0px;
+  --rstk-block-shell-border-width: 0px;
+}
 
 .rstkCanvas .rstk-block-style {
   width: auto;
