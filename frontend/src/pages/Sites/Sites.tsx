@@ -87,6 +87,7 @@ import {
   Loading,
   NumberInput,
   CustomSelect,
+  TabList,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -17697,6 +17698,140 @@ const PopupInspector: React.FC<{
   )
 }
 
+type InspectorTabId = 'edit' | 'design' | 'settings'
+
+interface InspectorTab {
+  value: InspectorTabId
+  label: string
+  icon: React.ReactNode
+  content: React.ReactNode
+}
+
+const InspectorTabbedPanel: React.FC<{
+  title: string
+  subtitle: string
+  tabs: InspectorTab[]
+  defaultTab?: InspectorTabId
+}> = ({ title, subtitle, tabs, defaultTab = 'edit' }) => {
+  const [activeTab, setActiveTab] = useState<InspectorTabId>(defaultTab)
+  const activeContent = tabs.find(tab => tab.value === activeTab)?.content || tabs[0]?.content
+
+  useEffect(() => {
+    if (!tabs.some(tab => tab.value === activeTab)) {
+      setActiveTab(defaultTab)
+    }
+  }, [activeTab, defaultTab, tabs])
+
+  return (
+    <aside className={styles.propertiesPanel}>
+      <div className={styles.inspectorStickyTop}>
+        <div className={styles.panelHeader}>
+          <strong>{title}</strong>
+          <span>{subtitle}</span>
+        </div>
+        <TabList
+          tabs={tabs.map(({ value, label, icon }) => ({ value, label, icon }))}
+          activeTab={activeTab}
+          onTabChange={(value) => setActiveTab(value as InspectorTabId)}
+          variant="compact"
+          fullWidth
+          className={styles.inspectorTabList}
+        />
+      </div>
+      <div className={`${styles.propertiesBody} ${styles.inspectorTabBody}`} data-inspector-tab={activeTab}>
+        {activeContent}
+      </div>
+    </aside>
+  )
+}
+
+const InspectorEmptyState: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <p className={styles.inspectorEmptyText}>{children}</p>
+)
+
+const ActivePageSettings: React.FC<{
+  pages: SitePage[]
+  activePageId: string
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ pages, activePageId, onPatchTheme, onSaveSite }) => {
+  const activePage = pages.find(page => page.id === activePageId) || pages[0]
+  if (!activePage) return null
+
+  const patchActivePage = (patch: Partial<SitePage>) => {
+    onPatchTheme({
+      pages: normalizePagesForSave(pages.map(page => (
+        page.id === activePage.id ? { ...page, ...patch } : page
+      )))
+    })
+  }
+
+  return (
+    <div className={styles.settingsGroup}>
+      <div className={styles.panelSubheader}>Pagina activa</div>
+      <label className={styles.field}>
+        <span>Nombre de pagina</span>
+        <input
+          value={activePage.title || ''}
+          placeholder="Pagina"
+          onChange={(event) => patchActivePage({ title: event.target.value })}
+          onBlur={onSaveSite}
+        />
+      </label>
+    </div>
+  )
+}
+
+const SiteGlobalSettings: React.FC<{
+  site: PublicSite
+  onPatchSite: (patch: Partial<PublicSite>) => void
+  onSaveSite: () => void
+}> = ({ site, onPatchSite, onSaveSite }) => (
+  <div className={styles.settingsGroup}>
+    <div className={styles.panelSubheader}>Publico</div>
+    <label className={styles.field}>
+      <span>Titulo publico</span>
+      <input
+        value={getPublicTitleEditorValue(site)}
+        placeholder={site.name || 'Nombre publico'}
+        onChange={(event) => onPatchSite({ title: event.target.value })}
+        onBlur={onSaveSite}
+      />
+    </label>
+    <label className={styles.field}>
+      <span>Descripcion</span>
+      <textarea
+        rows={3}
+        value={site.description || ''}
+        placeholder="Descripcion corta para buscadores y previews"
+        onChange={(event) => onPatchSite({ description: event.target.value })}
+        onBlur={onSaveSite}
+      />
+    </label>
+  </div>
+)
+
+const hasBlockSettingsTabContent = (block: SiteBlock, isField: boolean) => (
+  isField ||
+  isChoiceBlock(block.blockType) ||
+  isPanelBlock(block) ||
+  block.blockType === SECTION_BLOCK_TYPE ||
+  [
+    'hero',
+    'cta',
+    'button',
+    'social_profile',
+    'image',
+    'video',
+    'benefits',
+    'testimonials',
+    'services',
+    'faq',
+    'calendar_embed',
+    'form_embed'
+  ].includes(block.blockType)
+)
+
 const PageInspector: React.FC<{
   site: PublicSite
   pages: SitePage[]
@@ -17718,233 +17853,247 @@ const PageInspector: React.FC<{
     }
   }, [formHasConversion, site.metaCapiEnabled])
 
-  return (
-    <aside className={styles.propertiesPanel}>
-      <div className={styles.panelHeader}>
-        <strong>Pagina</strong>
-        <span>{isLanding(site) ? (site.theme?.pageMode === 'website' ? 'Sitio web' : 'Embudo') : 'Formulario'}</span>
-      </div>
-      <div className={styles.propertiesBody}>
-        <>
-            <div className={styles.settingsGroup}>
-              <div className={styles.panelSubheader}>Colores</div>
-          <div className={styles.twoColumn}>
-            <ColorField
-              label="Fondo de pagina"
-              value={getThemePaint(theme, 'backgroundColor', userBgColor(site) || resolvedPageBg(site))}
-              allowGradient
-              onChange={(value) => onPatchTheme({ backgroundColor: value })}
-              onCommit={onSaveSite}
-            />
-            <ColorField
-              label="Texto de pagina"
-              value={getThemePaint(theme, 'textColor', isSiteDark(site) ? '#ffffff' : '#111827')}
-              allowGradient
-              onChange={(value) => onPatchTheme({ textColor: value, textColorCustom: true })}
-              onCommit={onSaveSite}
-            />
+  const pageConfigContent = (
+    <>
+      <ActivePageSettings pages={pages} activePageId={activePageId} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      {metaPixelConnected && isFormSite(site) && (
+        <div className={styles.settingsGroup}>
+          <div className={styles.panelSubheader}>Conversion del formulario</div>
+          <div className={`${styles.metaCard} ${formHasConversion && site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
+            <span className={styles.metaMark} aria-hidden="true">∞</span>
+            <div className={styles.metaCardInfo}>
+              <strong>{formHasConversion ? 'Evento de submit' : 'Sin evento'}</strong>
+              <small>{!site.metaCapiEnabled ? 'Requiere Meta del sitio' : formHasConversion ? 'Se envia al enviar formulario' : 'Solo PageView global'}</small>
+            </div>
           </div>
-          <ColorField
-            label="Acento"
-            value={getThemePaint(theme, 'accentColor', userAccentColor(site) || (isSiteDark(site) ? '#ffffff' : '#111827'))}
-            allowGradient
-            onChange={(value) => onPatchTheme({ accentColor: value })}
-            onCommit={onSaveSite}
-          />
           <label className={styles.field}>
-            <span>URL de fondo</span>
-            <input
-              value={getThemeString(theme, 'backgroundImage')}
-              placeholder={theme.backgroundMediaType === 'video' ? 'https://.../video.mp4' : 'https://...'}
-              onChange={(event) => onPatchTheme({ backgroundImage: event.target.value })}
+            <span>Evento de submit</span>
+            <CustomSelect
+              value={formEventName}
+              disabled={!site.metaCapiEnabled}
+              onChange={(event) => {
+                const metaEventName = event.target.value
+                onPatchSite({ metaEventName })
+                onPatchTheme({
+                  metaEventParameters: pruneMetaEventParametersForEvent(theme.metaEventParameters, metaEventName)
+                })
+              }}
               onBlur={onSaveSite}
-            />
+            >
+              {metaEventOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
           </label>
-          <MediaUploadControl
-            kind={theme.backgroundMediaType === 'video' ? 'video' : 'image'}
-            label={theme.backgroundMediaType === 'video' ? 'Subir video de fondo' : 'Subir imagen de fondo'}
-            moduleEntityId={site.id}
-            onUploaded={(url) => onPatchTheme({
-              backgroundImage: url,
-              backgroundMediaType: theme.backgroundMediaType === 'video' ? 'video' : 'image'
-            })}
-            onCommit={onSaveSite}
-          />
-          <div className={styles.twoColumn}>
-            <label className={styles.field}>
-              <span>Tipo</span>
-              <CustomSelect
-                value={getThemeString(theme, 'backgroundMediaType') || 'image'}
-                onChange={(event) => onPatchTheme({ backgroundMediaType: event.target.value as SiteTheme['backgroundMediaType'] })}
-                onBlur={onSaveSite}
+          {formHasConversion && (
+            <div className={styles.metaParametersInspector}>
+              <button
+                type="button"
+                className={[
+                  styles.metaParametersInspectorToggle,
+                  formMetaParamsOpen ? styles.metaParametersInspectorToggleActive : '',
+                  formHasParameters ? styles.metaParametersInspectorToggleFilled : ''
+                ].filter(Boolean).join(' ')}
+                disabled={!site.metaCapiEnabled}
+                aria-expanded={formMetaParamsOpen}
+                onClick={() => setFormMetaParamsOpen(open => !open)}
               >
-                {backgroundMediaTypeOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </CustomSelect>
-            </label>
-            <label className={styles.field}>
-              <span>Visualizacion</span>
-              <CustomSelect
-                value={getBackgroundVisualValue(theme)}
-                onChange={(event) => onPatchTheme(backgroundVisualPatch(event.target.value))}
-                onBlur={onSaveSite}
-              >
-                {backgroundVisualOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </CustomSelect>
-            </label>
-          </div>
-
-          <div className={styles.panelSubheader}>Dimensiones</div>
-          <DimensionField
-            label="Ancho maximo"
-            value={isLanding(site) && Number(theme.pageMaxWidth) === 1160 ? 1440 : getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1440 : 520, 360, 1440)}
-            min={360}
-            max={1440}
-            step={10}
-            onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
-            onCommit={onSaveSite}
-          />
-          <div className={styles.twoColumn}>
-            <DimensionField
-              label="Relleno de pagina"
-              value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, 120)}
-              min={0}
-              max={120}
-              onChange={(value) => onPatchTheme({ pagePadding: value })}
-              onCommit={onSaveSite}
-            />
-            <DimensionField
-              label="Radio"
-              value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, 40)}
-              min={0}
-              max={40}
-              onChange={(value) => onPatchTheme({ pageRadius: value })}
-              onCommit={onSaveSite}
-            />
-          </div>
-	          <div className={styles.panelSubheader}>Borde de pagina</div>
-	          <div className={styles.twoColumn}>
-            <DimensionField
-              label="Grosor"
-              value={getThemeNumber(theme, 'pageBorderWidth', 0, 0, 12)}
-              min={0}
-              max={12}
-              onChange={(value) => onPatchTheme({ pageBorderWidth: value })}
-              onCommit={onSaveSite}
-            />
-            <ColorField
-              label="Color"
-              value={getThemePaint(theme, 'pageBorderColor', '#dbe3ef')}
-              allowGradient
-              onChange={(value) => onPatchTheme({ pageBorderColor: value })}
-              onCommit={onSaveSite}
-            />
-          </div>
-          {metaPixelConnected && isFormSite(site) && (
-            <>
-              <div className={styles.panelSubheader}>Conversion del formulario</div>
-              <div className={`${styles.metaCard} ${formHasConversion && site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
-                <span className={styles.metaMark} aria-hidden="true">∞</span>
-                <div className={styles.metaCardInfo}>
-                  <strong>{formHasConversion ? 'Evento de submit' : 'Sin evento'}</strong>
-                  <small>{!site.metaCapiEnabled ? 'Requiere Meta del sitio' : formHasConversion ? 'Se envia al enviar formulario' : 'Solo PageView global'}</small>
-                </div>
-              </div>
-              <label className={styles.field}>
-                <span>Evento de submit</span>
-                <CustomSelect
-                  value={formEventName}
+                <Settings2 size={14} />
+                <span>Parametros Meta</span>
+                <ChevronDown size={13} />
+              </button>
+              {formMetaParamsOpen && (
+                <MetaEventParametersEditor
+                  eventName={formEventName}
+                  parameters={theme.metaEventParameters}
                   disabled={!site.metaCapiEnabled}
-                  onChange={(event) => {
-                    const metaEventName = event.target.value
-                    onPatchSite({ metaEventName })
-                    onPatchTheme({
-                      metaEventParameters: pruneMetaEventParametersForEvent(theme.metaEventParameters, metaEventName)
-                    })
-                  }}
+                  onChange={(metaEventParameters) => onPatchTheme({ metaEventParameters })}
+                  onCommit={onSaveSite}
+                />
+              )}
+            </div>
+          )}
+          {isStandardForm(site) && (
+            <>
+              <label className={styles.field}>
+                <span>Al enviar formulario</span>
+                <CustomSelect
+                  value={getThemeFormCompletionAction(theme)}
+                  onChange={(event) => onPatchTheme({ formCompletionAction: event.target.value as FormCompletionAction })}
                   onBlur={onSaveSite}
                 >
-                  {metaEventOptions.map(option => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
+                  <option value="next_page_if_qualified">Mostrar Agradecimiento o Descalificacion segun resultado</option>
+                  <option value="next_page">Siempre mostrar pagina Agradecimiento</option>
+                  <option value="form_default">Mostrar mensaje en este formulario</option>
                 </CustomSelect>
               </label>
-              {formHasConversion && (
-                <div className={styles.metaParametersInspector}>
-                  <button
-                    type="button"
-                    className={[
-                      styles.metaParametersInspectorToggle,
-                      formMetaParamsOpen ? styles.metaParametersInspectorToggleActive : '',
-                      formHasParameters ? styles.metaParametersInspectorToggleFilled : ''
-                    ].filter(Boolean).join(' ')}
-                    disabled={!site.metaCapiEnabled}
-                    aria-expanded={formMetaParamsOpen}
-                    onClick={() => setFormMetaParamsOpen(open => !open)}
-                  >
-                    <Settings2 size={14} />
-                    <span>Parametros Meta</span>
-                    <ChevronDown size={13} />
-                  </button>
-                  {formMetaParamsOpen && (
-                    <MetaEventParametersEditor
-                      eventName={formEventName}
-                      parameters={theme.metaEventParameters}
-                      disabled={!site.metaCapiEnabled}
-                      onChange={(metaEventParameters) => onPatchTheme({ metaEventParameters })}
-                      onCommit={onSaveSite}
-                    />
-                  )}
-                </div>
-              )}
-	              {isStandardForm(site) && (
-                <>
-                  <label className={styles.field}>
-                    <span>Al enviar formulario</span>
-                    <CustomSelect
-                      value={getThemeFormCompletionAction(theme)}
-                      onChange={(event) => onPatchTheme({ formCompletionAction: event.target.value as FormCompletionAction })}
-                      onBlur={onSaveSite}
-                    >
-                      <option value="next_page_if_qualified">Mostrar Agradecimiento o Descalificacion segun resultado</option>
-                      <option value="next_page">Siempre mostrar pagina Agradecimiento</option>
-                      <option value="form_default">Mostrar mensaje en este formulario</option>
-                    </CustomSelect>
-                  </label>
-                  <label className={styles.field}>
-                    <span>Mensaje si califica</span>
-                    <textarea
-                      rows={2}
-                      value={theme.finalMessages?.success || ''}
-                      placeholder="Listo. Recibimos tu informacion."
-                      onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), success: event.target.value } })}
-                      onBlur={onSaveSite}
-                    />
-                  </label>
-                  <label className={styles.field}>
-                    <span>Mensaje si no califica</span>
-                    <textarea
-                      rows={2}
-                      value={theme.finalMessages?.disqualified || ''}
-                      placeholder="Gracias por responder. Por ahora no parece ser el siguiente paso ideal."
-                      onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), disqualified: event.target.value } })}
-                      onBlur={onSaveSite}
-                    />
-                  </label>
-                </>
-              )}
+              <label className={styles.field}>
+                <span>Mensaje si califica</span>
+                <textarea
+                  rows={2}
+                  value={theme.finalMessages?.success || ''}
+                  placeholder="Listo. Recibimos tu informacion."
+                  onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), success: event.target.value } })}
+                  onBlur={onSaveSite}
+                />
+              </label>
+              <label className={styles.field}>
+                <span>Mensaje si no califica</span>
+                <textarea
+                  rows={2}
+                  value={theme.finalMessages?.disqualified || ''}
+                  placeholder="Gracias por responder. Por ahora no parece ser el siguiente paso ideal."
+                  onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), disqualified: event.target.value } })}
+                  onBlur={onSaveSite}
+                />
+              </label>
             </>
           )}
-          {isFormSite(site) && (
-            <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-          )}
         </div>
-        </>
+      )}
+    </>
+  )
+
+  const pageDesignContent = (
+    <div className={styles.settingsGroup}>
+      <div className={styles.panelSubheader}>Colores</div>
+      <div className={styles.twoColumn}>
+        <ColorField
+          label="Fondo de pagina"
+          value={getThemePaint(theme, 'backgroundColor', userBgColor(site) || resolvedPageBg(site))}
+          allowGradient
+          onChange={(value) => onPatchTheme({ backgroundColor: value })}
+          onCommit={onSaveSite}
+        />
+        <ColorField
+          label="Texto de pagina"
+          value={getThemePaint(theme, 'textColor', isSiteDark(site) ? '#ffffff' : '#111827')}
+          allowGradient
+          onChange={(value) => onPatchTheme({ textColor: value, textColorCustom: true })}
+          onCommit={onSaveSite}
+        />
       </div>
-    </aside>
+      <ColorField
+        label="Acento"
+        value={getThemePaint(theme, 'accentColor', userAccentColor(site) || (isSiteDark(site) ? '#ffffff' : '#111827'))}
+        allowGradient
+        onChange={(value) => onPatchTheme({ accentColor: value })}
+        onCommit={onSaveSite}
+      />
+      <label className={styles.field}>
+        <span>URL de fondo</span>
+        <input
+          value={getThemeString(theme, 'backgroundImage')}
+          placeholder={theme.backgroundMediaType === 'video' ? 'https://.../video.mp4' : 'https://...'}
+          onChange={(event) => onPatchTheme({ backgroundImage: event.target.value })}
+          onBlur={onSaveSite}
+        />
+      </label>
+      <MediaUploadControl
+        kind={theme.backgroundMediaType === 'video' ? 'video' : 'image'}
+        label={theme.backgroundMediaType === 'video' ? 'Subir video de fondo' : 'Subir imagen de fondo'}
+        moduleEntityId={site.id}
+        onUploaded={(url) => onPatchTheme({
+          backgroundImage: url,
+          backgroundMediaType: theme.backgroundMediaType === 'video' ? 'video' : 'image'
+        })}
+        onCommit={onSaveSite}
+      />
+      <div className={styles.twoColumn}>
+        <label className={styles.field}>
+          <span>Tipo</span>
+          <CustomSelect
+            value={getThemeString(theme, 'backgroundMediaType') || 'image'}
+            onChange={(event) => onPatchTheme({ backgroundMediaType: event.target.value as SiteTheme['backgroundMediaType'] })}
+            onBlur={onSaveSite}
+          >
+            {backgroundMediaTypeOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+        <label className={styles.field}>
+          <span>Visualizacion</span>
+          <CustomSelect
+            value={getBackgroundVisualValue(theme)}
+            onChange={(event) => onPatchTheme(backgroundVisualPatch(event.target.value))}
+            onBlur={onSaveSite}
+          >
+            {backgroundVisualOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+      </div>
+
+      <div className={styles.panelSubheader}>Dimensiones</div>
+      <DimensionField
+        label="Ancho maximo"
+        value={isLanding(site) && Number(theme.pageMaxWidth) === 1160 ? 1440 : getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1440 : 520, 360, 1440)}
+        min={360}
+        max={1440}
+        step={10}
+        onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
+        onCommit={onSaveSite}
+      />
+      <div className={styles.twoColumn}>
+        <DimensionField
+          label="Relleno de pagina"
+          value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, 120)}
+          min={0}
+          max={120}
+          onChange={(value) => onPatchTheme({ pagePadding: value })}
+          onCommit={onSaveSite}
+        />
+        <DimensionField
+          label="Radio"
+          value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, 40)}
+          min={0}
+          max={40}
+          onChange={(value) => onPatchTheme({ pageRadius: value })}
+          onCommit={onSaveSite}
+        />
+      </div>
+      <div className={styles.panelSubheader}>Borde de pagina</div>
+      <div className={styles.twoColumn}>
+        <DimensionField
+          label="Grosor"
+          value={getThemeNumber(theme, 'pageBorderWidth', 0, 0, 12)}
+          min={0}
+          max={12}
+          onChange={(value) => onPatchTheme({ pageBorderWidth: value })}
+          onCommit={onSaveSite}
+        />
+        <ColorField
+          label="Color"
+          value={getThemePaint(theme, 'pageBorderColor', '#dbe3ef')}
+          allowGradient
+          onChange={(value) => onPatchTheme({ pageBorderColor: value })}
+          onCommit={onSaveSite}
+        />
+      </div>
+    </div>
+  )
+
+  const pageGlobalContent = (
+    <>
+      <SiteGlobalSettings site={site} onPatchSite={onPatchSite} onSaveSite={onSaveSite} />
+      {isFormSite(site) && (
+        <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      )}
+    </>
+  )
+
+  return (
+    <InspectorTabbedPanel
+      title="Pagina"
+      subtitle={isLanding(site) ? (site.theme?.pageMode === 'website' ? 'Sitio web' : 'Embudo') : 'Formulario'}
+      tabs={[
+        { value: 'edit', label: 'Pagina', icon: <FileText size={14} />, content: pageConfigContent },
+        { value: 'design', label: 'Diseno', icon: <Sparkles size={14} />, content: pageDesignContent },
+        { value: 'settings', label: 'Global', icon: <Globe2 size={14} />, content: pageGlobalContent }
+      ]}
+    />
   )
 }
 
@@ -18132,34 +18281,35 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         : 'Contenido'
   const contentRows = block.blockType === 'embed' ? 7 : isField || block.blockType === SECTION_BLOCK_TYPE ? 2 : 3
 
-  return (
-    <aside className={styles.propertiesPanel}>
-      <div className={styles.panelHeader}>
-        <strong>Propiedades</strong>
-        <span>{blockLabels[block.blockType]}</span>
-      </div>
+  const blockHasSettingsContent = hasBlockSettingsTabContent(block, isField)
+  const editContent = (
+    <>
+      <label className={styles.field}>
+        <span>{isField ? 'Pregunta visible' : block.blockType === SECTION_BLOCK_TYPE ? 'Nombre de la franja' : 'Nombre del bloque'}</span>
+        <input value={block.label} onChange={(event) => onPatchBlock({ label: event.target.value })} onBlur={onSave} />
+      </label>
 
-      <div className={styles.propertiesBody}>
+      {block.blockType !== 'calendar_embed' && (
         <label className={styles.field}>
-          <span>{isField ? 'Pregunta visible' : block.blockType === SECTION_BLOCK_TYPE ? 'Nombre de la franja' : 'Nombre del bloque'}</span>
-          <input value={block.label} onChange={(event) => onPatchBlock({ label: event.target.value })} onBlur={onSave} />
+          <span>{contentLabel}</span>
+          <textarea
+            rows={contentRows}
+            value={block.content}
+            placeholder={block.blockType === 'embed' ? '<iframe src="https://..."></iframe> o codigo HTML del widget' : undefined}
+            onChange={(event) => onPatchBlock({ content: event.target.value })}
+            onBlur={onSave}
+          />
         </label>
+      )}
+    </>
+  )
 
-        {block.blockType !== 'calendar_embed' && (
-          <label className={styles.field}>
-            <span>{contentLabel}</span>
-            <textarea
-              rows={contentRows}
-              value={block.content}
-              placeholder={block.blockType === 'embed' ? '<iframe src="https://..."></iframe> o codigo HTML del widget' : undefined}
-              onChange={(event) => onPatchBlock({ content: event.target.value })}
-              onBlur={onSave}
-            />
-          </label>
-        )}
-
-        {isField && (
-          <>
+  const settingsContent = (
+    <>
+      {isField && (
+        <>
+          <div className={styles.settingsGroup}>
+            <div className={styles.panelSubheader}>Campo</div>
             <div className={styles.twoColumn}>
               <label className={styles.field}>
                 <span>Texto dentro del campo</span>
@@ -18217,49 +18367,68 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <span>Mostrar pais y lada</span>
               </label>
             )}
+          </div>
 
-            <CustomFieldBindingControl
-              block={block}
-              customFields={customFields}
-              onPatchSettings={onPatchSettings}
-              onSave={onSave}
-            />
-          </>
-        )}
-
-        {isChoiceBlock(block.blockType) && (
-          <OptionsRulesEditor block={block} blocks={allBlocks || blocks} pages={pages} onPatchBlock={onPatchBlock} onSave={onSave} />
-        )}
-
-        {!isField && (
-          <LandingBlockSettings
-            site={site}
+          <CustomFieldBindingControl
             block={block}
-            forms={forms}
-            calendars={calendars}
-            pages={pages}
-            activePageId={activePageId}
-            connectedSocialProfiles={connectedSocialProfiles}
-            loadingSocialProfiles={loadingSocialProfiles}
+            customFields={customFields}
             onPatchSettings={onPatchSettings}
             onSave={onSave}
           />
-        )}
+        </>
+      )}
 
-        <InlineBlockStyleControls
+      {isChoiceBlock(block.blockType) && (
+        <OptionsRulesEditor block={block} blocks={allBlocks || blocks} pages={pages} onPatchBlock={onPatchBlock} onSave={onSave} />
+      )}
+
+      {!isField && (
+        <LandingBlockSettings
           site={site}
           block={block}
-          blocks={blocks}
+          forms={forms}
+          calendars={calendars}
+          pages={pages}
+          activePageId={activePageId}
+          connectedSocialProfiles={connectedSocialProfiles}
+          loadingSocialProfiles={loadingSocialProfiles}
           onPatchSettings={onPatchSettings}
           onSave={onSave}
         />
+      )}
 
-        {isFormSite(site) && isField && (
-          <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-        )}
+      {!blockHasSettingsContent && (
+        <InspectorEmptyState>Este bloque no tiene ajustes extra.</InspectorEmptyState>
+      )}
+    </>
+  )
 
-      </div>
-    </aside>
+  const designContent = (
+    <>
+      <InlineBlockStyleControls
+        site={site}
+        block={block}
+        blocks={blocks}
+        onPatchSettings={onPatchSettings}
+        onSave={onSave}
+      />
+
+      {isFormSite(site) && isField && (
+        <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      )}
+    </>
+  )
+
+  return (
+    <InspectorTabbedPanel
+      title="Propiedades"
+      subtitle={blockLabels[block.blockType]}
+      tabs={[
+        { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
+        { value: 'design', label: 'Diseno', icon: <Sparkles size={14} />, content: designContent },
+        { value: 'settings', label: 'Ajustes', icon: <Settings2 size={14} />, content: settingsContent }
+      ]}
+    />
   )
 }
 

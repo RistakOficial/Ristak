@@ -6488,6 +6488,43 @@
   padding: 3px 8px;
 }
 
+.inspectorStickyTop {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: grid;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: var(--design-panel-bg, color-mix(in srgb, var(--color-background-secondary) 96%, var(--color-primary) 4%));
+}
+
+.inspectorStickyTop .panelHeader {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.inspectorTabList {
+  min-width: 0;
+}
+
+.inspectorTabList :global([data-ristak-tablist-tab]) {
+  min-width: 0;
+  padding-inline: 8px;
+  font-size: 0.76rem;
+}
+
+.inspectorTabBody {
+  padding-top: 14px;
+}
+
+.inspectorEmptyText {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .pageItem,
 .pageMenuButton,
 .paletteItem,
