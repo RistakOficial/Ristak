@@ -3,7 +3,10 @@ import { Braces, ChevronRight, Search, Smile, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import {
   BASE_VARIABLES,
+  FlowVariablesContext,
+  TOKEN_PATTERN,
   VARIABLE_CATEGORIES,
+  isDynamicToken,
   loadAllVariables,
   tokenFor,
   type FlowVariable
@@ -41,6 +44,42 @@ const EMOJIS = [
   '⚠️', '❓', '❗', '💰', '💳', '🛒', '📦', '🚀', '🏆', '🎯'
 ]
 
+interface PickerTreeNode {
+  id: string
+  label: string
+  variable?: FlowVariable
+  children: PickerTreeNode[]
+}
+
+function buildVariableTree(items: FlowVariable[]): PickerTreeNode[] {
+  const root: PickerTreeNode[] = []
+  const findOrCreate = (siblings: PickerTreeNode[], id: string, label: string) => {
+    let node = siblings.find((candidate) => candidate.id === id)
+    if (!node) {
+      node = { id, label, children: [] }
+      siblings.push(node)
+    }
+    return node
+  }
+
+  items.forEach((variable) => {
+    const labels = variable.pathLabels && variable.pathLabels.length > 0
+      ? variable.pathLabels
+      : [variable.label]
+    let siblings = root
+    labels.forEach((label, index) => {
+      const id = `${variable.fieldId}:${index}:${label}`
+      const node = findOrCreate(siblings, id, label)
+      if (index === labels.length - 1) {
+        node.variable = variable
+      }
+      siblings = node.children
+    })
+  })
+
+  return root
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -70,6 +109,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   const [pickerOpen, setPickerOpen] = useState<'variables' | 'emoji' | null>(null)
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const flowVariables = React.useContext(FlowVariablesContext)
 
   useEffect(() => {
     let cancelled = false
@@ -81,21 +121,30 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
     }
   }, [])
 
-  const variablesById = useMemo(
-    () => new Map(variables.map((variable) => [variable.fieldId, variable])),
-    [variables]
-  )
-
   const allowedCategories = React.useContext(VariableCategoriesContext)
+  const allVariables = useMemo(
+    () => [...variables, ...flowVariables.variables],
+    [flowVariables.variables, variables]
+  )
+  const variablesById = useMemo(
+    () => new Map(allVariables.map((variable) => [variable.fieldId, variable])),
+    [allVariables]
+  )
 
   // ------------------------------------------------------------------
   // DOM ↔ texto compilado
   // ------------------------------------------------------------------
-  const buildChip = useCallback((fieldId: string, label: string) => {
+  const buildChip = useCallback((fieldId: string, label: string, missing = false) => {
     const chip = document.createElement('span')
     chip.contentEditable = 'false'
     chip.dataset.variable = fieldId
-    chip.className = styles.variableTokenChip
+    chip.className = missing
+      ? `${styles.variableTokenChip} ${styles.variableTokenChipMissing}`
+      : styles.variableTokenChip
+    if (missing) {
+      chip.title = 'Esta variable ya no está disponible'
+      chip.dataset.variableMissing = 'true'
+    }
     chip.textContent = label
     return chip
   }, [])
@@ -105,16 +154,16 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
       const editor = editorRef.current
       if (!editor) return
       editor.textContent = ''
-      const pattern = /\{\{\s*([\w.-]+)\s*\}\}/g
       let lastIndex = 0
       const text = compiled || ''
-      for (const match of text.matchAll(pattern)) {
+      for (const match of text.matchAll(TOKEN_PATTERN)) {
         const index = match.index ?? 0
         if (index > lastIndex) {
           editor.appendChild(document.createTextNode(text.slice(lastIndex, index)))
         }
         const fieldId = match[1]
-        editor.appendChild(buildChip(fieldId, variablesById.get(fieldId)?.label || fieldId))
+        const known = variablesById.get(fieldId)
+        editor.appendChild(buildChip(fieldId, known?.label || fieldId, !known && isDynamicToken(fieldId)))
         lastIndex = index + match[0].length
       }
       if (lastIndex < text.length) {
@@ -166,6 +215,11 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
     editor.querySelectorAll<HTMLElement>('[data-variable]').forEach((chip) => {
       const known = variablesById.get(chip.dataset.variable || '')
       if (known && chip.textContent !== known.label) chip.textContent = known.label
+      if (known && chip.dataset.variableMissing) {
+        chip.className = styles.variableTokenChip
+        delete chip.dataset.variableMissing
+        chip.removeAttribute('title')
+      }
     })
   }, [variablesById])
 
@@ -250,22 +304,51 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   const filteredByCategory = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     // Solo categorías congruentes con los disparadores, en su orden
-    const categories = allowedCategories
+    const staticCategories = allowedCategories
       ? allowedCategories
           .map((id) => VARIABLE_CATEGORIES.find((category) => category.id === id))
           .filter((category): category is (typeof VARIABLE_CATEGORIES)[number] => Boolean(category))
       : VARIABLE_CATEGORIES
+    const categories = [...staticCategories, ...flowVariables.categories]
     return categories
       .map((category) => ({
         category,
-        items: variables.filter(
+        items: allVariables.filter(
           (variable) =>
             variable.category === category.id &&
-            (!normalized || variable.label.toLowerCase().includes(normalized))
+            (!normalized ||
+              variable.label.toLowerCase().includes(normalized) ||
+              (variable.pathLabels || []).join(' ').toLowerCase().includes(normalized) ||
+              (variable.categoryLabel || category.label).toLowerCase().includes(normalized))
         )
       }))
-      .filter((group) => group.items.length > 0)
-  }, [variables, query, allowedCategories])
+      .filter((group) => group.items.length > 0 || Boolean(group.category.unavailableReason))
+  }, [allVariables, flowVariables.categories, query, allowedCategories])
+
+  const renderVariableTree = (nodes: PickerTreeNode[], depth = 0): React.ReactNode =>
+    nodes.map((node) => {
+      if (node.variable) {
+        return (
+          <button
+            key={node.id}
+            type="button"
+            className={styles.composerPopoverItem}
+            style={{ paddingLeft: 6 + depth * 12 }}
+            onClick={() => node.variable && insertVariable(node.variable)}
+          >
+            <span className={styles.variableTokenChip}>{node.label}</span>
+          </button>
+        )
+      }
+      return (
+        <div key={node.id}>
+          <div className={styles.composerPopoverSubcategory} style={{ paddingLeft: 6 + depth * 12 }}>
+            {node.label}
+          </div>
+          {renderVariableTree(node.children, depth + 1)}
+        </div>
+      )
+    })
 
   const popoverRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -398,17 +481,13 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
                       className={cn(styles.varCategoryChevron, isOpen && styles.varCategoryChevronOpen)}
                     />
                   </button>
-                  {isOpen &&
-                    items.map((variable) => (
-                      <button
-                        key={variable.fieldId}
-                        type="button"
-                        className={styles.varItem}
-                        onClick={() => insertVariable(variable)}
-                      >
-                        {variable.label}
-                      </button>
-                    ))}
+                  {isOpen && (
+                    category.unavailableReason ? (
+                      <p className={styles.pickerWarning}>{category.unavailableReason}</p>
+                    ) : (
+                      renderVariableTree(buildVariableTree(items))
+                    )
+                  )}
                 </div>
               )
             })}
@@ -445,7 +524,7 @@ export const VariableTextInput: React.FC<Omit<MessageComposerProps, 'multiline' 
 /** Útil para mostrar texto compilado de forma legible en resúmenes */
 export function compiledToReadable(compiled: string, variables: FlowVariable[] = BASE_VARIABLES): string {
   const byId = new Map(variables.map((variable) => [variable.fieldId, variable.label]))
-  return (compiled || '').replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, fieldId) => byId.get(fieldId) || fieldId)
+  return (compiled || '').replace(TOKEN_PATTERN, (_, fieldId) => byId.get(fieldId) || fieldId)
 }
 
 export { tokenFor }

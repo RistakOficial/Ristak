@@ -6,6 +6,7 @@ import {
   updateAutomation,
   duplicateAutomation,
   deleteAutomation,
+  recordAutomationWebhookSample,
   createFolder,
   updateFolder,
   reorderFolders,
@@ -197,5 +198,20 @@ export async function serveAssetHandler(req, res) {
     res.end(buffer)
   } catch (error) {
     res.status(error.status || 500).json({ success: false, error: error.message })
+  }
+}
+
+export async function automationWebhookSampleHandler(req, res) {
+  try {
+    const data = await recordAutomationWebhookSample({
+      endpointId: req.params.endpointId,
+      method: req.method,
+      body: req.body,
+      query: req.query
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error capturando muestra de webhook de automatización: ${error.message}`)
+    sendError(res, error, 'Error capturando la muestra del webhook')
   }
 }

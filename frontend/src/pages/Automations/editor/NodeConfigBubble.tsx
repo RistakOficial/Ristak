@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Check, ChevronRight, Copy, Pencil, Plus, Trash2, X } from 'lucide-react'
+import { Check, ChevronRight, Copy, Loader2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { CustomSelect } from './config/configPrimitives'
 import { validateNodeConfig, type ConfigField, type NodeDefinition } from './nodeRegistry'
@@ -12,7 +12,6 @@ import {
   TextArea,
   TextInput,
   Toggle,
-  VariableChips,
   WeekdaysPicker
 } from './config/configPrimitives'
 import { AdvancedConditionBuilder } from './config/AdvancedConditionBuilder'
@@ -35,6 +34,7 @@ interface NodeConfigBubbleProps {
   anchor: { x: number; y: number }
   bounds: { width: number; height: number }
   onChange: (config: ConfigValue) => void
+  onRefreshWebhookSample?: (endpointId: string) => Promise<Record<string, unknown> | null>
   onClose: () => void
 }
 
@@ -43,12 +43,18 @@ const PANEL_WIDTH = 372
 const str = (value: unknown): string =>
   typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
 
+const hasSampleResponse = (value: unknown): boolean => {
+  if (Array.isArray(value)) return value.length > 0
+  return Boolean(value && typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0)
+}
+
 export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
   definition,
   config,
   anchor,
   bounds,
   onChange,
+  onRefreshWebhookSample,
   onClose
 }) => {
   const rootRef = useRef<HTMLDivElement>(null)
@@ -57,6 +63,7 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [draftTitle, setDraftTitle] = useState('')
   const titleInputRef = useRef<HTMLInputElement>(null)
+  const [checkingSample, setCheckingSample] = useState(false)
 
   const customTitle = str(config.customTitle).trim()
 
@@ -88,6 +95,32 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsEndpoint])
+
+  useEffect(() => {
+    const endpointId = str(config.endpointId)
+    if (!onRefreshWebhookSample || !endpointId || config.sampleStatus !== 'waiting' || hasSampleResponse(config.sampleResponse)) {
+      return
+    }
+
+    let cancelled = false
+    const refresh = async () => {
+      setCheckingSample(true)
+      try {
+        await onRefreshWebhookSample(endpointId)
+      } catch {
+        // El botón manual permite intentar de nuevo; no ensuciamos el panel con errores transitorios.
+      } finally {
+        if (!cancelled) setCheckingSample(false)
+      }
+    }
+
+    void refresh()
+    const interval = window.setInterval(refresh, 2500)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [config.endpointId, config.sampleResponse, config.sampleStatus, onRefreshWebhookSample])
 
   const insertVariable = (key: string, variable: string) => {
     const current = str(config[key])
@@ -456,6 +489,13 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
         const url = endpointId
           ? `${window.location.origin}/webhook/automations/${endpointId}`
           : 'Generando URL…'
+        const hasSample = hasSampleResponse(config.sampleResponse)
+        const waiting = config.sampleStatus === 'waiting' && !hasSample
+        const sampleStatus = hasSample
+          ? 'Datos recibidos correctamente'
+          : waiting
+            ? 'Esperando datos de prueba'
+            : 'Sin datos de prueba'
         return (
           <Field
             key={field.key}
@@ -480,6 +520,58 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
               >
                 {copied ? <Check size={12} /> : <Copy size={12} />}
               </button>
+            </div>
+            <div
+              className={cn(
+                styles.webhookTestPanel,
+                hasSample && styles.webhookTestPanelSuccess,
+                waiting && styles.webhookTestPanelWaiting
+              )}
+            >
+              <div className={styles.webhookTestHeader}>
+                <span className={styles.webhookTestStatus}>{sampleStatus}</span>
+                <span className={styles.webhookTestHint}>
+                  {hasSample
+                    ? str(config.sampleReceivedAt) || 'Muestra guardada'
+                    : 'Sin muestra no se pueden insertar variables de este webhook'}
+                </span>
+              </div>
+              <div className={styles.configRow}>
+                <button
+                  type="button"
+                  className={styles.configSmallButton}
+                  onClick={() =>
+                    onChange({
+                      ...config,
+                      sampleResponse: null,
+                      sampleStatus: 'waiting',
+                      sampleRequestedAt: new Date().toISOString()
+                    })
+                  }
+                >
+                  <RefreshCw size={11} />
+                  Probar webhook
+                </button>
+                {onRefreshWebhookSample && (
+                  <button
+                    type="button"
+                    className={styles.configIconButton}
+                    title="Actualizar estado"
+                    disabled={checkingSample || !endpointId}
+                    onClick={() => {
+                      setCheckingSample(true)
+                      void onRefreshWebhookSample(endpointId).finally(() => setCheckingSample(false))
+                    }}
+                  >
+                    {checkingSample ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                  </button>
+                )}
+              </div>
+              {hasSample && (
+                <pre className={styles.webhookSamplePreview}>
+                  {JSON.stringify(config.sampleResponse, null, 2)}
+                </pre>
+              )}
             </div>
           </Field>
         )
