@@ -12,6 +12,40 @@ const usePostgres = !!DATABASE_URL
 
 let db
 
+const DEFAULT_REPORT_TABLE_COLUMN_CONFIG = [
+  ['date', true],
+  ['profit', true],
+  ['revenue', true],
+  ['fixedBusinessExpenses', true],
+  ['businessExpenses', true],
+  ['spend', true],
+  ['roas', true],
+  ['new_customers', true],
+  ['cac', true],
+  ['appointments', true],
+  ['leads', true],
+  ['attendances', false],
+  ['transactions', false],
+  ['clicks', false],
+  ['reach', false],
+  ['cpc', false],
+  ['cpl', false],
+  ['cpa', false],
+  ['cpaAttendance', false],
+  ['visitors', false],
+  ['cpv', false],
+  ['webToInteresadosRate', false],
+  ['interesadosToApptsRate', false],
+  ['apptsToAttendanceRate', false],
+  ['attendanceToSalesRate', false],
+  ['attendanceToCustomersRate', false],
+  ['apptsToSalesRate', false]
+].map(([id, visible], order) => ({ id, visible, order }))
+
+const DEFAULT_REPORT_TABLE_CONFIG_VALUE = JSON.stringify(DEFAULT_REPORT_TABLE_COLUMN_CONFIG)
+const DEFAULT_REPORT_TABLE_CONFIG_KEYS = ['cashflow', 'attribution', 'campaigns']
+  .flatMap(reportType => ['day', 'month', 'year'].map(viewType => `table_reports_metrics_${reportType}_${viewType}`))
+
 const WHATSAPP_API_SYSTEM_CUSTOM_FIELD_KEYS = new Set([
   'whatsapp_api_provider',
   'whatsapp_api_first_message',
@@ -885,11 +919,23 @@ async function initTables() {
     try {
       await db.run(`
         INSERT INTO app_config (config_key, config_value)
-        VALUES ('report_manual_business_expenses_enabled', '0')
+        VALUES ('report_manual_business_expenses_enabled', '1')
         ON CONFLICT (config_key) DO NOTHING
       `)
     } catch (err) {
       // Ignore si ya existe
+    }
+
+    for (const configKey of DEFAULT_REPORT_TABLE_CONFIG_KEYS) {
+      try {
+        await db.run(`
+          INSERT INTO app_config (config_key, config_value)
+          VALUES (?, ?)
+          ON CONFLICT (config_key) DO NOTHING
+        `, [configKey, DEFAULT_REPORT_TABLE_CONFIG_VALUE])
+      } catch (err) {
+        // Ignore si ya existe
+      }
     }
 
     // Almacenamiento multimedia centralizado. Estas tablas son seguras para

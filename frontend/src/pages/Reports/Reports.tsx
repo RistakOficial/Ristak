@@ -67,6 +67,35 @@ const MANUAL_BUSINESS_EXPENSES_COLUMN_KEY = 'businessExpenses'
 const FIXED_BUSINESS_EXPENSES_COLUMN_KEY = 'fixedBusinessExpenses'
 const MANUAL_BUSINESS_EXPENSES_CONFIG_KEY = 'report_manual_business_expenses_enabled'
 const MS_PER_DAY = 24 * 60 * 60 * 1000
+const DEFAULT_REPORTS_COLUMN_ORDER = [
+  'date',
+  'profit',
+  'revenue',
+  FIXED_BUSINESS_EXPENSES_COLUMN_KEY,
+  MANUAL_BUSINESS_EXPENSES_COLUMN_KEY,
+  'spend',
+  'roas',
+  'new_customers',
+  'cac',
+  'appointments',
+  'leads',
+  'attendances',
+  'transactions',
+  'clicks',
+  'reach',
+  'cpc',
+  'cpl',
+  'cpa',
+  'cpaAttendance',
+  'visitors',
+  'cpv',
+  'webToInteresadosRate',
+  'interesadosToApptsRate',
+  'apptsToAttendanceRate',
+  'attendanceToSalesRate',
+  'attendanceToCustomersRate',
+  'apptsToSalesRate'
+]
 
 type ViewType = 'day' | 'month' | 'year'
 type ReportType = 'cashflow' | 'attribution' | 'campaigns'
@@ -1343,7 +1372,7 @@ export const Reports: React.FC = () => {
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
   const [manualBusinessExpensesEnabledConfig] = useAppConfig<string | number | boolean>(
     MANUAL_BUSINESS_EXPENSES_CONFIG_KEY,
-    '0'
+    '1'
   )
 
   const visitorSource = visitorSourceConfig
@@ -1455,9 +1484,9 @@ export const Reports: React.FC = () => {
 
   const manualBusinessExpensesEnabled = parseAnalyticsFlag(manualBusinessExpensesEnabledConfig)
   const manualBusinessExpensesColumnVisible = useMemo(() => {
-    if (!Array.isArray(reportsTableConfig)) return false
+    if (!Array.isArray(reportsTableConfig)) return true
     const columnConfig = reportsTableConfig.find((column) => column.id === MANUAL_BUSINESS_EXPENSES_COLUMN_KEY)
-    return Boolean(columnConfig?.visible)
+    return columnConfig ? columnConfig.visible !== false : true
   }, [reportsTableConfig])
   const fixedBusinessExpensesColumnVisible = useMemo(() => {
     if (!Array.isArray(reportsTableConfig)) return true
@@ -1928,9 +1957,14 @@ export const Reports: React.FC = () => {
       },
       {
         key: MANUAL_BUSINESS_EXPENSES_COLUMN_KEY,
-        header: 'Costos variables',
+        header: (
+          <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+            <div>Costos variables</div>
+            <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Insertar manual)</div>
+          </div>
+        ),
         sortable: true,
-        visible: false,
+        visible: true,
         width: '160px',
         render: (value: number, row) => {
           const periodStart = getManualExpensePeriodStart(row.date, viewType)
@@ -2075,7 +2109,7 @@ export const Reports: React.FC = () => {
         key: 'attendances',
         header: 'Asistencias',
         sortable: true,
-        visible: true,
+        visible: false,
         render: (value: number, row) => {
           const hasValue = (value || 0) > 0
           return hasValue ? (
@@ -2228,7 +2262,11 @@ export const Reports: React.FC = () => {
     ]
 
     // Filtrar columnas según configuración
-    let filteredColumns = columns
+    const columnOrder = new Map(DEFAULT_REPORTS_COLUMN_ORDER.map((key, index) => [key, index]))
+    let filteredColumns = [...columns].sort((a, b) => (
+      (columnOrder.get(String(a.key)) ?? DEFAULT_REPORTS_COLUMN_ORDER.length) -
+      (columnOrder.get(String(b.key)) ?? DEFAULT_REPORTS_COLUMN_ORDER.length)
+    ))
 
     // Filtrar columnas de visitantes si analytics no está habilitado
     if (!analyticsEnabled) {
