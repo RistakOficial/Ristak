@@ -473,9 +473,30 @@
   box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.14);
 }
 
+.businessExpenseInputShellLocked {
+  cursor: pointer;
+  background: color-mix(in srgb, var(--design-table-control-bg, var(--color-background)) 84%, var(--color-surface) 16%);
+}
+
 .businessExpenseInput:disabled {
   opacity: 0.65;
   cursor: progress;
+}
+
+.businessExpenseInput[readonly] {
+  cursor: pointer;
+}
+
+.businessExpenseLockIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 100%;
+  color: var(--color-text-tertiary);
+  border-left: 1px solid var(--design-table-border, var(--color-border-subtle));
+  background: var(--color-surface);
+  flex-shrink: 0;
 }
 
 /* Visitors Modal Styles */

@@ -107,6 +107,8 @@ export interface ManualBusinessExpense {
 
 export interface ManualBusinessExpenseInput extends ManualBusinessExpense {
   delete?: boolean
+  reset_children?: boolean
+  resetChildren?: boolean
 }
 
 export interface ContactPaymentDetail {

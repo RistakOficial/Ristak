@@ -168,24 +168,52 @@ if (usePostgres) {
     return sql.replace(/'(?:[^']|'')*'|\?/g, (match) => (match === '?' ? `$${index++}` : match))
   }
 
+  const normalizePostgresSql = (sql) => (
+    sql
+      .replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'SERIAL PRIMARY KEY')
+      .replace(/AUTOINCREMENT/g, 'GENERATED ALWAYS AS IDENTITY')
+      .replace(/DATETIME/g, 'TIMESTAMP')
+  )
+
+  const createPostgresAdapter = (client) => ({
+    run: async (sql, params = []) => {
+      sql = normalizePostgresSql(sql)
+      sql = convertPlaceholders(sql)
+
+      const result = await client.query(sql, params)
+      return {
+        lastID: result.rows[0]?.id || null,
+        changes: result.rowCount
+      }
+    },
+
+    get: async (sql, params = []) => {
+      sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
+      sql = convertPlaceholders(sql)
+
+      const result = await client.query(sql, params)
+      return result.rows[0] || null
+    },
+
+    all: async (sql, params = []) => {
+      sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
+      sql = convertPlaceholders(sql)
+
+      const result = await client.query(sql, params)
+      return result.rows
+    },
+
+    exec: async (sql) => {
+      sql = normalizePostgresSql(sql)
+      await client.query(sql)
+    }
+  })
+
   db = {
     run: async (sql, params = []) => {
       const client = await pool.connect()
       try {
-        // Convertir sintaxis SQLite a PostgreSQL
-        sql = sql.replace(/AUTOINCREMENT/g, 'GENERATED ALWAYS AS IDENTITY')
-        sql = sql.replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'SERIAL PRIMARY KEY')
-        sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
-        // INSERT OR IGNORE se maneja específicamente donde se usa (ver app_config INSERT)
-
-        // Convertir placeholders ? a $1, $2, etc.
-        sql = convertPlaceholders(sql)
-
-        const result = await client.query(sql, params)
-        return {
-          lastID: result.rows[0]?.id || null,
-          changes: result.rowCount
-        }
+        return await createPostgresAdapter(client).run(sql, params)
       } finally {
         client.release()
       }
@@ -194,11 +222,7 @@ if (usePostgres) {
     get: async (sql, params = []) => {
       const client = await pool.connect()
       try {
-        sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
-        sql = convertPlaceholders(sql)
-
-        const result = await client.query(sql, params)
-        return result.rows[0] || null
+        return await createPostgresAdapter(client).get(sql, params)
       } finally {
         client.release()
       }
@@ -207,11 +231,7 @@ if (usePostgres) {
     all: async (sql, params = []) => {
       const client = await pool.connect()
       try {
-        sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
-        sql = convertPlaceholders(sql)
-
-        const result = await client.query(sql, params)
-        return result.rows
+        return await createPostgresAdapter(client).all(sql, params)
       } finally {
         client.release()
       }
@@ -220,10 +240,23 @@ if (usePostgres) {
     exec: async (sql) => {
       const client = await pool.connect()
       try {
-        sql = sql.replace(/AUTOINCREMENT/g, 'GENERATED ALWAYS AS IDENTITY')
-        sql = sql.replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'SERIAL PRIMARY KEY')
-        sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
-        await client.query(sql)
+        await createPostgresAdapter(client).exec(sql)
+      } finally {
+        client.release()
+      }
+    },
+
+    transaction: async (callback) => {
+      const client = await pool.connect()
+      const txDb = createPostgresAdapter(client)
+      try {
+        await client.query('BEGIN')
+        const result = await callback(txDb)
+        await client.query('COMMIT')
+        return result
+      } catch (error) {
+        await client.query('ROLLBACK')
+        throw error
       } finally {
         client.release()
       }
@@ -277,6 +310,18 @@ if (usePostgres) {
           else resolve()
         })
       })
+    },
+
+    transaction: async (callback) => {
+      await db.run('BEGIN IMMEDIATE')
+      try {
+        const result = await callback(db)
+        await db.run('COMMIT')
+        return result
+      } catch (error) {
+        await db.run('ROLLBACK')
+        throw error
+      }
     }
   }
 }

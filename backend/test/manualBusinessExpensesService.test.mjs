@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { calculateManualBusinessExpensesForRange } from '../src/services/manualBusinessExpensesService.js'
+import {
+  calculateManualBusinessExpensesForRange,
+  getManualBusinessExpenseDescendantScope
+} from '../src/services/manualBusinessExpensesService.js'
 
 describe('manual business expense calculations', () => {
   it('uses daily overrides instead of adding them on top of monthly costs', () => {
@@ -70,6 +73,28 @@ describe('manual business expense calculations', () => {
     assert.equal(
       calculateManualBusinessExpensesForRange({ from: '2026-06-10', to: '2026-06-10' }, expenses),
       0
+    )
+  })
+
+  it('identifies daily records reset by a monthly edit', () => {
+    assert.deepEqual(
+      getManualBusinessExpenseDescendantScope('month', '2026-06-01'),
+      {
+        from: '2026-06-01',
+        to: '2026-06-30',
+        periodTypes: ['day']
+      }
+    )
+  })
+
+  it('identifies monthly and daily records reset by a yearly edit', () => {
+    assert.deepEqual(
+      getManualBusinessExpenseDescendantScope('year', '2026-01-01'),
+      {
+        from: '2026-01-01',
+        to: '2026-12-31',
+        periodTypes: ['day', 'month']
+      }
     )
   })
 })

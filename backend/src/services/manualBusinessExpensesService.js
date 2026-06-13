@@ -80,6 +80,50 @@ export const getManualBusinessExpenseRange = (expense) => {
   return null
 }
 
+export const getManualBusinessExpenseDescendantScope = (periodType, periodStart) => {
+  const normalizedPeriodStart = normalizeManualBusinessExpensePeriodStart(periodType, periodStart)
+  if (!normalizedPeriodStart || periodType === 'day') return null
+
+  const range = getManualBusinessExpenseRange({
+    period_type: periodType,
+    period_start: normalizedPeriodStart
+  })
+  if (!range) return null
+
+  if (periodType === 'month') {
+    return {
+      from: range.from,
+      to: range.to,
+      periodTypes: ['day']
+    }
+  }
+
+  if (periodType === 'year') {
+    return {
+      from: range.from,
+      to: range.to,
+      periodTypes: ['day', 'month']
+    }
+  }
+
+  return null
+}
+
+export const deleteManualBusinessExpenseDescendants = async (database, periodType, periodStart) => {
+  const scope = getManualBusinessExpenseDescendantScope(periodType, periodStart)
+  if (!scope) return 0
+
+  const periodTypePlaceholders = scope.periodTypes.map(() => '?').join(', ')
+  const result = await database.run(`
+    DELETE FROM report_manual_business_expenses
+    WHERE period_type IN (${periodTypePlaceholders})
+      AND period_start >= ?
+      AND period_start <= ?
+  `, [...scope.periodTypes, scope.from, scope.to])
+
+  return Number(result?.changes || 0)
+}
+
 export const roundCurrencyValue = (value) => Math.round((value + Number.EPSILON) * 100) / 100
 
 const MANUAL_BUSINESS_EXPENSE_PRIORITY = {

@@ -13,7 +13,8 @@ import {
   ViewSelector,
   PageContainer,
   PageHeader,
-  Loading
+  Loading,
+  Modal
 } from '@/components/common'
 import type { Column } from '@/components/common'
 import { useDateRange } from '@/contexts/DateRangeContext'
@@ -41,7 +42,8 @@ import {
   Layers,
   MousePointerClick,
   Table as TableIcon,
-  BarChart3
+  BarChart3,
+  Lock
 } from 'lucide-react'
 import {
   BarChart,
@@ -572,6 +574,143 @@ const parseManualExpenseInput = (value: string) => {
   if (!Number.isFinite(amount) || amount < 0) return null
 
   return { amount: roundCurrencyValue(amount), shouldDelete: false }
+}
+
+const businessExpenseViewNames: Record<ViewType, string> = {
+  day: 'día',
+  month: 'mes',
+  year: 'año'
+}
+
+const businessExpenseViewAdjectives: Record<ViewType, string> = {
+  day: 'diario',
+  month: 'mensual',
+  year: 'anual'
+}
+
+const businessExpenseParentActionLabels: Record<ViewType, string> = {
+  day: 'día',
+  month: 'mes',
+  year: 'año'
+}
+
+const findManualExpenseRecord = (
+  expenses: ManualBusinessExpense[],
+  periodType: ViewType,
+  periodStart: string
+) => expenses.find((expense) => (
+  getManualExpenseRecordKey(expense.period_type, expense.period_start) === getManualExpenseRecordKey(periodType, periodStart)
+)) || null
+
+const isSameManualExpenseMonth = (left: string, right: string) => {
+  const leftParts = parseDateKeyParts(left)
+  const rightParts = parseDateKeyParts(right)
+  return Boolean(leftParts && rightParts && leftParts.year === rightParts.year && leftParts.month === rightParts.month)
+}
+
+const isSameManualExpenseYear = (left: string, right: string) => {
+  const leftParts = parseDateKeyParts(left)
+  const rightParts = parseDateKeyParts(right)
+  return Boolean(leftParts && rightParts && leftParts.year === rightParts.year)
+}
+
+const getManualExpenseParentRecord = (
+  period: BusinessExpensePeriodTarget,
+  expenses: ManualBusinessExpense[]
+) => {
+  const parts = parseDateKeyParts(period.start)
+  if (!parts) return null
+
+  const year = String(parts.year).padStart(4, '0')
+  const month = String(parts.month).padStart(2, '0')
+  const monthStart = `${year}-${month}-01`
+  const yearStart = `${year}-01-01`
+
+  if (period.type === 'day') {
+    return findManualExpenseRecord(expenses, 'month', monthStart) ||
+      findManualExpenseRecord(expenses, 'year', yearStart)
+  }
+
+  if (period.type === 'month') {
+    return findManualExpenseRecord(expenses, 'year', yearStart)
+  }
+
+  return null
+}
+
+const getManualExpenseDescendantRecords = (
+  period: BusinessExpensePeriodTarget,
+  expenses: ManualBusinessExpense[]
+) => {
+  if (period.type === 'day') return []
+
+  return expenses.filter((expense) => {
+    if (period.type === 'month') {
+      return expense.period_type === 'day' && isSameManualExpenseMonth(expense.period_start, period.start)
+    }
+
+    return (
+      (expense.period_type === 'day' || expense.period_type === 'month') &&
+      isSameManualExpenseYear(expense.period_start, period.start)
+    )
+  })
+}
+
+const describeBusinessExpenseDescendants = (descendants: ManualBusinessExpense[]) => {
+  const dailyCount = descendants.filter((expense) => expense.period_type === 'day').length
+  const monthlyCount = descendants.filter((expense) => expense.period_type === 'month').length
+  const pieces = []
+
+  if (monthlyCount > 0) pieces.push(monthlyCount === 1 ? '1 mes' : `${monthlyCount} meses`)
+  if (dailyCount > 0) pieces.push(dailyCount === 1 ? '1 día' : `${dailyCount} días`)
+
+  return pieces.join(' y ')
+}
+
+const buildBusinessExpenseEditGuard = (
+  period: BusinessExpensePeriodTarget,
+  row: TableRow,
+  expenses: ManualBusinessExpense[]
+): BusinessExpenseEditGuard | null => {
+  const descendants = getManualExpenseDescendantRecords(period, expenses)
+
+  if (period.type !== 'day' && descendants.length > 0) {
+    const detailLabel = describeBusinessExpenseDescendants(descendants)
+    const targetName = businessExpenseViewNames[period.type]
+    const targetAdjective = businessExpenseViewAdjectives[period.type]
+    const childLabel = period.type === 'month' ? 'diarios' : 'mensuales o diarios'
+
+    return {
+      kind: 'reset-descendants',
+      key: period.key,
+      title: `Reemplazar costo ${targetAdjective}`,
+      message: `${row.displayDate} ya tiene costos ${childLabel} editados (${detailLabel}). Si guardas un costo ${targetAdjective}, esos detalles se van a borrar y el total se volverá a repartir desde el ${targetName}.`,
+      confirmText: `Usar valor ${targetAdjective}`,
+      cancelText: 'Conservar detalle',
+      inputHint: `Tiene ${detailLabel} con detalle; confirma para editar el ${targetName}.`
+    }
+  }
+
+  const exactRecord = findManualExpenseRecord(expenses, period.type, period.start)
+  if (exactRecord) return null
+
+  const parentRecord = getManualExpenseParentRecord(period, expenses)
+  if (!parentRecord) return null
+
+  const targetName = businessExpenseViewNames[period.type]
+  const targetAdjective = businessExpenseViewAdjectives[period.type]
+  const parentName = businessExpenseViewNames[parentRecord.period_type]
+  const parentActionLabel = businessExpenseParentActionLabels[parentRecord.period_type]
+
+  return {
+    kind: 'switch-to-specific',
+    key: period.key,
+    title: `Editar costo por ${targetName}`,
+    message: `Este valor viene de un costo registrado por ${parentName}. Si lo cambias aquí, ${row.displayDate} tendrá su propio costo ${targetAdjective} y el total del ${parentName} va a cambiar. Si prefieres evitar ajustes finos, registra todo en la vista de ${parentActionLabel}.`,
+    confirmText: `Editar este ${targetName}`,
+    cancelText: `Mejor en ${parentActionLabel}`,
+    inputHint: `Este valor viene del ${parentName}; confirma para editar este ${targetName}.`
+  }
 }
 
 const computeRangeForView = (
@@ -1364,6 +1503,22 @@ type BusinessExpensePeriodTarget = {
   type: ViewType
   start: string
   key: string
+  resetChildren?: boolean
+}
+
+type BusinessExpenseEditGuard = {
+  kind: 'switch-to-specific' | 'reset-descendants'
+  key: string
+  title: string
+  message: string
+  confirmText: string
+  cancelText: string
+  inputHint: string
+}
+
+type BusinessExpenseGuardDialogState = {
+  guard: BusinessExpenseEditGuard
+  onAllowed: () => void
 }
 
 interface BusinessExpenseCellProps {
@@ -1371,6 +1526,9 @@ interface BusinessExpenseCellProps {
   row: TableRow
   period: BusinessExpensePeriodTarget
   saving: boolean
+  editGuard: BusinessExpenseEditGuard | null
+  unlocked: boolean
+  onRequestEdit: (guard: BusinessExpenseEditGuard, onAllowed: () => void) => void
   onCommit: (period: BusinessExpensePeriodTarget, value: string) => Promise<number | null>
 }
 
@@ -1382,12 +1540,24 @@ const formatBusinessExpenseDraft = (value: number) => {
   }).format(roundCurrencyValue(value))
 }
 
-const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, period, saving, onCommit }) => {
+const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({
+  value,
+  row,
+  period,
+  saving,
+  editGuard,
+  unlocked,
+  onRequestEdit,
+  onCommit
+}) => {
   const formattedValue = formatBusinessExpenseDraft(value)
   const [draft, setDraft] = React.useState(formattedValue)
   const [focused, setFocused] = React.useState(false)
   const [dirty, setDirty] = React.useState(false)
   const committingRef = React.useRef(false)
+  const inputRef = React.useRef<HTMLInputElement | null>(null)
+  const focusAfterUnlockRef = React.useRef(false)
+  const locked = Boolean(editGuard && !unlocked)
 
   React.useEffect(() => {
     if (!focused) {
@@ -1396,7 +1566,18 @@ const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, p
     }
   }, [formattedValue, focused])
 
+  React.useEffect(() => {
+    if (!unlocked || !focusAfterUnlockRef.current) return
+
+    focusAfterUnlockRef.current = false
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    })
+  }, [unlocked])
+
   const handleCommit = async () => {
+    if (locked) return
     if (committingRef.current) return
     committingRef.current = true
 
@@ -1426,20 +1607,35 @@ const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, p
 
   return (
     <div
-      className={styles.businessExpenseInputShell}
+      className={`${styles.businessExpenseInputShell} ${locked ? styles.businessExpenseInputShellLocked : ''}`.trim()}
       data-period-key={period.key}
       data-ristak-unstyled
+      title={locked ? editGuard?.inputHint : undefined}
       onClick={(event) => event.stopPropagation()}
     >
       <span className={styles.businessExpensePrefix}>$</span>
       <input
+        ref={inputRef}
         className={styles.businessExpenseInput}
         value={draft}
         inputMode="decimal"
         aria-label={`Costos variables para ${row.displayDate}`}
         placeholder="0.00"
         disabled={saving}
-        onFocus={() => setFocused(true)}
+        readOnly={locked}
+        onFocus={(event) => {
+          if (!locked) {
+            setFocused(true)
+            return
+          }
+
+          event.currentTarget.blur()
+          if (!editGuard) return
+
+          onRequestEdit(editGuard, () => {
+            focusAfterUnlockRef.current = true
+          })
+        }}
         onBlur={() => {
           setFocused(false)
           if (shouldCommitDraft()) {
@@ -1447,6 +1643,7 @@ const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, p
           }
         }}
         onChange={(event) => {
+          if (locked) return
           setDraft(event.target.value)
           setDirty(true)
         }}
@@ -1465,6 +1662,11 @@ const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, p
           }
         }}
       />
+      {locked && (
+        <span className={styles.businessExpenseLockIcon} aria-hidden="true">
+          <Lock size={13} strokeWidth={2} />
+        </span>
+      )}
     </div>
   )
 }
@@ -1613,6 +1815,8 @@ export const Reports: React.FC = () => {
   const [manualBusinessExpenses, setManualBusinessExpenses] = useState<ManualBusinessExpense[]>([])
   const [configuredCosts, setConfiguredCosts] = useState<Cost[]>([])
   const [savingManualBusinessExpenseKey, setSavingManualBusinessExpenseKey] = useState<string | null>(null)
+  const [unlockedBusinessExpenseKeys, setUnlockedBusinessExpenseKeys] = useState<Set<string>>(() => new Set())
+  const [businessExpenseGuardDialog, setBusinessExpenseGuardDialog] = useState<BusinessExpenseGuardDialogState | null>(null)
 
   useEffect(() => {
     const requestId = metricsRequestRef.current + 1
@@ -1748,6 +1952,11 @@ export const Reports: React.FC = () => {
     }))
   }, [reportType, viewType])
 
+  useEffect(() => {
+    setUnlockedBusinessExpenseKeys(new Set())
+    setBusinessExpenseGuardDialog(null)
+  }, [reportType, viewType])
+
   const includeYearForTable = viewType === 'day'
     ? new Date(apiRange.from).getFullYear() !== new Date(apiRange.to).getFullYear()
     : true
@@ -1798,6 +2007,29 @@ export const Reports: React.FC = () => {
     return calculateConfiguredBusinessCostsForRange(apiRange, configuredCosts, revenue)
   }, [apiRange, configuredCosts, summary?.payments.totalRevenue, currentMetrics])
 
+  const handleRequestBusinessExpenseEdit = useCallback((
+    guard: BusinessExpenseEditGuard,
+    onAllowed: () => void
+  ) => {
+    setBusinessExpenseGuardDialog({ guard, onAllowed })
+  }, [])
+
+  const handleConfirmBusinessExpenseEdit = useCallback(() => {
+    const pending = businessExpenseGuardDialog
+    if (!pending) return
+
+    pending.onAllowed()
+    setUnlockedBusinessExpenseKeys((current) => {
+      const next = new Set(current)
+      next.add(pending.guard.key)
+      return next
+    })
+  }, [businessExpenseGuardDialog])
+
+  const handleCloseBusinessExpenseGuard = useCallback(() => {
+    setBusinessExpenseGuardDialog(null)
+  }, [])
+
   const handleSaveBusinessExpense = useCallback(async (
     period: BusinessExpensePeriodTarget,
     rawValue: string
@@ -1815,12 +2047,20 @@ export const Reports: React.FC = () => {
         period_type: period.type,
         period_start: period.start,
         amount: parsed.amount,
-        delete: parsed.shouldDelete
+        delete: parsed.shouldDelete,
+        reset_children: period.resetChildren === true
       })
 
       setManualBusinessExpenses((current) => {
+        const descendantKeys = period.resetChildren
+          ? new Set(getManualExpenseDescendantRecords(period, current).map((expense) => (
+            getManualExpenseRecordKey(expense.period_type, expense.period_start)
+          )))
+          : new Set<string>()
+
         const next = current.filter((expense) => (
-          getManualExpenseRecordKey(expense.period_type, expense.period_start) !== period.key
+          getManualExpenseRecordKey(expense.period_type, expense.period_start) !== period.key &&
+          !descendantKeys.has(getManualExpenseRecordKey(expense.period_type, expense.period_start))
         ))
 
         if (result.expense) {
@@ -1834,6 +2074,12 @@ export const Reports: React.FC = () => {
       return null
     } finally {
       setSavingManualBusinessExpenseKey(null)
+      setUnlockedBusinessExpenseKeys((current) => {
+        if (!current.has(period.key)) return current
+        const next = new Set(current)
+        next.delete(period.key)
+        return next
+      })
     }
 
     return parsed.amount
@@ -2117,6 +2363,13 @@ export const Reports: React.FC = () => {
         render: (value: number, row) => {
           const periodStart = getManualExpensePeriodStart(row.date, viewType)
           const expenseKey = getManualExpenseRecordKey(viewType, periodStart)
+          const basePeriod = {
+            type: viewType,
+            start: periodStart,
+            key: expenseKey
+          }
+          const editGuard = buildBusinessExpenseEditGuard(basePeriod, row, manualBusinessExpenses)
+          const unlocked = !editGuard || unlockedBusinessExpenseKeys.has(expenseKey)
 
           return (
             <BusinessExpenseCell
@@ -2124,11 +2377,13 @@ export const Reports: React.FC = () => {
               value={value}
               row={row}
               period={{
-                type: viewType,
-                start: periodStart,
-                key: expenseKey
+                ...basePeriod,
+                resetChildren: unlocked && editGuard?.kind === 'reset-descendants'
               }}
               saving={savingManualBusinessExpenseKey === expenseKey}
+              editGuard={editGuard}
+              unlocked={unlocked}
+              onRequestEdit={handleRequestBusinessExpenseEdit}
               onCommit={handleSaveBusinessExpense}
             />
           )
@@ -2434,7 +2689,24 @@ export const Reports: React.FC = () => {
     }
 
     return filteredColumns
-  }, [reportType, viewType, visitorSource, handleOpenModal, handleOpenVisitorsModal, handleOpenTransactionsModal, handleSaveBusinessExpense, savingManualBusinessExpenseKey, labels.lead, labels.leads, labels.customer, labels.customers, analyticsEnabled])
+  }, [
+    reportType,
+    viewType,
+    visitorSource,
+    manualBusinessExpenses,
+    unlockedBusinessExpenseKeys,
+    handleOpenModal,
+    handleOpenVisitorsModal,
+    handleOpenTransactionsModal,
+    handleRequestBusinessExpenseEdit,
+    handleSaveBusinessExpense,
+    savingManualBusinessExpenseKey,
+    labels.lead,
+    labels.leads,
+    labels.customer,
+    labels.customers,
+    analyticsEnabled
+  ])
 
   const appliedManualBusinessExpensesTotal = applyManualBusinessExpenses ? manualBusinessExpensesTotalForRange : 0
   const appliedFixedBusinessExpensesTotal = applyFixedBusinessExpenses ? fixedBusinessExpensesTotalForRange : 0
@@ -2650,6 +2922,18 @@ export const Reports: React.FC = () => {
           applyFixedBusinessExpenses={applyFixedBusinessExpenses}
         />
       )}
+
+        <Modal
+          isOpen={Boolean(businessExpenseGuardDialog)}
+          onClose={handleCloseBusinessExpenseGuard}
+          title={businessExpenseGuardDialog?.guard.title || 'Confirmar cambio'}
+          message={businessExpenseGuardDialog?.guard.message}
+          type="confirm"
+          size="sm"
+          confirmText={businessExpenseGuardDialog?.guard.confirmText || 'Continuar'}
+          cancelText={businessExpenseGuardDialog?.guard.cancelText || 'Cancelar'}
+          onConfirm={handleConfirmBusinessExpenseEdit}
+        />
 
         <ContactDetailsModal
           isOpen={modalState.open}
