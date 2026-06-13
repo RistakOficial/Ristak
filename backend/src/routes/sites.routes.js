@@ -5,6 +5,7 @@ import {
   importSiteHtmlHandler,
   createSiteHandler,
   createSiteWithAIHtmlHandler,
+  createPreviewSessionHandler,
   deleteBlockHandler,
   deleteSiteHandler,
   getSitesDomainHandler,
@@ -16,6 +17,7 @@ import {
   previewCalendarHandler,
   previewSiteHandler,
   removeSitesDomainHandler,
+  previewSiteSessionHandler,
   reorderBlocksHandler,
   restoreBlocksHandler,
   submitPublicSiteHandler,
@@ -34,7 +36,7 @@ router.post('/public/submit', submitPublicSiteHandler)
 router.post('/public/meta-event', metaPageEventPublicHandler)
 router.get('/public/calendar-preview/:slug', previewCalendarHandler)
 router.get('/public/imported-assets/:siteId/*', importedSiteAssetHandler)
-router.get('/:siteId/preview', previewSiteHandler)
+router.get('/:siteId/preview-session/:token', previewSiteSessionHandler)
 
 router.use(requireAuth)
 
@@ -49,6 +51,8 @@ router.get('/:siteId/import-mapping', getImportedSiteMappingHandler)
 router.get('/:siteId', getSiteHandler)
 router.put('/:siteId', updateSiteHandler)
 router.delete('/:siteId', deleteSiteHandler)
+router.get('/:siteId/preview', previewSiteHandler)
+router.post('/:siteId/preview-session', createPreviewSessionHandler)
 router.post('/:siteId/ai-edit-html', updateImportedSiteHtmlWithAIHandler)
 router.patch('/:siteId/import-content', updateImportedSiteEditableContentHandler)
 router.put('/:siteId/import-mapping', updateImportedSiteMappingHandler)

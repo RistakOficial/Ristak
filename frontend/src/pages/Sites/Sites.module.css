@@ -13743,3 +13743,269 @@
   box-sizing: border-box;
   flex-shrink: 0;
 }
+
+.editorUnifiedToolbarFormMode {
+  --form-mode-accent: rgba(var(--color-primary-rgb), 0.9);
+}
+
+.formModeStatus {
+  min-width: 0;
+  height: var(--editor-control-h, 44px);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(var(--color-primary-rgb), 0.26);
+  border-radius: 999px;
+  background: rgba(var(--color-primary-rgb), 0.09);
+  color: var(--color-text-primary);
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.formModeStatus > span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--form-mode-accent, var(--color-primary));
+  box-shadow: 0 0 0 0 rgba(var(--color-primary-rgb), 0.42);
+  animation: formModePulse 1.6s ease-out infinite;
+}
+
+.formModeStatus strong {
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.formModeStatus small {
+  max-width: 150px;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+}
+
+@keyframes formModePulse {
+  70% { box-shadow: 0 0 0 8px rgba(var(--color-primary-rgb), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--color-primary-rgb), 0); }
+}
+
+.formModeRail,
+.formModePanel {
+  border-color: rgba(var(--color-primary-rgb), 0.22);
+  background:
+    linear-gradient(180deg, rgba(var(--color-primary-rgb), 0.075), transparent 220px),
+    var(--color-background-secondary);
+}
+
+.formModePalette {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.formModePaletteHeader,
+.formModePanelHeader {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border-bottom: 1px solid rgba(var(--color-primary-rgb), 0.18);
+  padding-bottom: 14px;
+}
+
+.formModePaletteHeader div,
+.formModePanelHeader div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.formModePaletteHeader strong,
+.formModePanelHeader strong {
+  color: var(--color-text-primary);
+  font-size: 0.95rem;
+  font-weight: 850;
+}
+
+.formModePaletteHeader small,
+.formModePanelHeader small {
+  color: var(--color-text-tertiary);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.formModeIcon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(var(--color-primary-rgb), 0.24);
+  border-radius: 9px;
+  background: rgba(var(--color-primary-rgb), 0.12);
+  color: var(--color-primary);
+}
+
+.formModePaletteList {
+  display: grid;
+  gap: 8px;
+}
+
+.formModePaletteList button {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 9px;
+  background: rgba(148, 163, 184, 0.07);
+  color: var(--color-text-primary);
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.formModePaletteList button:hover {
+  border-color: rgba(var(--color-primary-rgb), 0.34);
+  background: rgba(var(--color-primary-rgb), 0.09);
+}
+
+.formModePaletteList button > span {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+}
+
+.formModePaletteList button strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.formModePanel {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.formModePanelHeader {
+  margin: 0 0 14px;
+}
+
+.formFieldList {
+  display: grid;
+  gap: 8px;
+}
+
+.formFieldItem {
+  width: 100%;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 9px;
+  background: rgba(148, 163, 184, 0.06);
+  color: var(--color-text-primary);
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.formFieldItem:hover,
+.formFieldItemActive {
+  border-color: rgba(var(--color-primary-rgb), 0.36);
+  background: rgba(var(--color-primary-rgb), 0.1);
+}
+
+.formFieldItem > span:first-child {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--color-background-primary);
+}
+
+.formFieldItem > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.formFieldItem strong,
+.formFieldEditorHeader strong {
+  overflow: hidden;
+  font-size: 0.84rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.formFieldItem small {
+  color: var(--color-text-tertiary);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.formFieldItem em {
+  color: var(--color-text-tertiary);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.formFieldEditorHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.formFieldEditorHeader > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.formFieldActions {
+  display: inline-flex;
+  gap: 5px;
+}
+
+.formFieldActions button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.07);
+  color: var(--color-text-secondary);
+}
+
+.formFieldActions button:hover:not(:disabled) {
+  background: rgba(var(--color-primary-rgb), 0.1);
+  color: var(--color-text-primary);
+}
+
+.formFieldActions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.videoSettingsBox {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  padding-top: 12px;
+}

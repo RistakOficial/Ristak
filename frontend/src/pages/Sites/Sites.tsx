@@ -75,6 +75,7 @@ import {
   Unlink2,
   Upload,
   Video,
+  Volume2,
   X
 } from 'lucide-react'
 import {
@@ -328,15 +329,43 @@ const pruneMetaEventParametersForEvent = (parameters?: SiteMetaEventParameters |
 
 const ruleActions: Array<{ value: SiteOptionAction; label: string }> = [
   { value: 'continue', label: 'Continuar' },
+  { value: 'cold_lead', label: 'Clasificar lead frio' },
+  { value: 'warm_lead', label: 'Clasificar lead tibio' },
+  { value: 'hot_lead', label: 'Clasificar lead caliente' },
   { value: 'jump', label: 'Saltar a otra pregunta' },
+  { value: 'show_message', label: 'Mostrar mensaje' },
+  { value: 'end_form', label: 'Terminar formulario' },
   { value: 'disqualify', label: 'Descalificar inmediatamente' },
   { value: 'disqualify_after_submit', label: 'Descalificar al finalizar formulario' },
-  { value: 'redirect', label: 'Dirigir a sitio' }
+  { value: 'redirect', label: 'Dirigir a sitio' },
+  { value: 'tag', label: 'Agregar etiqueta' },
+  { value: 'category', label: 'Asignar categoria' }
 ]
 const visibleRuleActionValues = new Set<SiteOptionAction>(ruleActions.map(action => action.value))
 const normalizeVisibleRuleAction = (action?: SiteOptionAction): SiteOptionAction => (
   action && visibleRuleActionValues.has(action) ? action : 'continue'
 )
+
+const embeddedFormFieldTypes: SiteBlockType[] = [
+  'short_text',
+  'paragraph',
+  'phone',
+  'email',
+  'number',
+  'currency',
+  'dropdown',
+  'radio',
+  'checkboxes',
+  'date'
+]
+
+const videoSpeedOptions: Array<{ value: string; label: string }> = [
+  { value: '0.75', label: '0.75x' },
+  { value: '1', label: '1x' },
+  { value: '1.25', label: '1.25x' },
+  { value: '1.5', label: '1.5x' },
+  { value: '2', label: '2x' }
+]
 
 const SITES_AI_DRAFT_CREATED_EVENT = 'ristak-sites-ai-draft-created'
 const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
@@ -3079,6 +3108,305 @@ const makePreviewBlock = (blockType: SiteBlockType, site: PublicSite, pageId?: s
   }
 }
 
+const createEmbeddedFieldBlock = (site: PublicSite, blockType: SiteBlockType, sortOrder = 0): SiteBlock => {
+  const payload = defaultBlockPayload(blockType, site)
+  const now = new Date().toISOString()
+  return {
+    id: `embedded_${crypto.randomUUID()}`,
+    siteId: site.id,
+    blockType,
+    label: payload.label || blockLabels[blockType] || 'Campo',
+    content: payload.content || '',
+    placeholder: payload.placeholder || '',
+    required: Boolean(payload.required),
+    options: cloneJson(payload.options || []),
+    settings: cloneJson(payload.settings || {}),
+    sortOrder,
+    createdAt: now,
+    updatedAt: now
+  }
+}
+
+const cloneFormFieldsForEmbed = (site: PublicSite, sourceFields: SiteBlock[], parentBlockId: string): SiteBlock[] => {
+  const idMap = new Map<string, string>()
+  sourceFields.forEach(field => {
+    idMap.set(field.id, `embedded_${parentBlockId}_${field.id}`.replace(/[^a-zA-Z0-9_-]/g, '_'))
+  })
+
+  return sourceFields.map((field, index) => {
+    const nextId = idMap.get(field.id) || `embedded_${crypto.randomUUID()}`
+    return {
+      ...cloneJson(field),
+      id: nextId,
+      siteId: site.id,
+      sortOrder: index,
+      options: (field.options || []).map((option, optionIndex) => {
+        const normalizedOption = normalizeOption(option, optionIndex)
+        return {
+          ...normalizedOption,
+          targetBlockId: normalizedOption.targetBlockId ? idMap.get(normalizedOption.targetBlockId) || normalizedOption.targetBlockId : ''
+        }
+      }),
+      settings: cloneJson(field.settings || {})
+    }
+  })
+}
+
+const getEditableEmbeddedFormBlocks = (site: PublicSite, block: SiteBlock, forms: PublicSite[]): SiteBlock[] => {
+  const settings = block.settings || {}
+  const embeddedBlocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks as SiteBlock[] : []
+  if (embeddedBlocks.length) return embeddedBlocks
+
+  const linkedFormId = getSettingString(settings, 'formSiteId')
+  const linkedForm = forms.find(form => form.id === linkedFormId)
+  const linkedFields = Array.isArray(linkedForm?.blocks)
+    ? linkedForm.blocks.filter(field => fieldBlockTypes.has(field.blockType))
+    : []
+
+  return linkedFields.length ? cloneFormFieldsForEmbed(site, linkedFields, block.id) : []
+}
+
+function FormModePalette({
+  fieldsCount,
+  onAddField
+}: {
+  fieldsCount: number
+  onAddField: (blockType: SiteBlockType) => void
+}) {
+  return (
+    <div className={styles.formModePalette}>
+      <div className={styles.formModePaletteHeader}>
+        <span className={styles.formModeIcon}><FormInput size={17} /></span>
+        <div>
+          <strong>Modo formulario</strong>
+          <small>{fieldsCount} {fieldsCount === 1 ? 'campo' : 'campos'} en este bloque</small>
+        </div>
+      </div>
+      <div className={styles.formModePaletteList}>
+        {embeddedFormFieldTypes.map(blockType => (
+          <button key={blockType} type="button" onClick={() => onAddField(blockType)}>
+            <span>{blockIcons[blockType]}</span>
+            <strong>{blockLabels[blockType] || 'Campo'}</strong>
+            <Plus size={14} />
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function FormEmbedEditorPanel({
+  site,
+  block,
+  forms,
+  customFields,
+  pages,
+  onPatchBlock,
+  onPatchSettings,
+  onSave
+}: {
+  site: PublicSite
+  block: SiteBlock
+  forms: PublicSite[]
+  customFields: CustomFieldDefinition[]
+  pages: SitePage[]
+  onPatchBlock: (patch: Partial<SiteBlock>) => void
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}) {
+  const settings = block.settings || {}
+  const fields = useMemo(() => getEditableEmbeddedFormBlocks(site, block, forms), [block, forms, site])
+  const [activeFieldId, setActiveFieldId] = useState(fields[0]?.id || '')
+  const activeField = fields.find(field => field.id === activeFieldId) || fields[0] || null
+  const selectedFormId = getSettingString(settings, 'formSiteId')
+
+  useEffect(() => {
+    if (!fields.length) {
+      setActiveFieldId('')
+      return
+    }
+    setActiveFieldId(current => fields.some(field => field.id === current) ? current : fields[0].id)
+  }, [fields])
+
+  const patchEmbeddedFields = (nextFields: SiteBlock[]) => {
+    onPatchSettings({
+      formSiteId: '',
+      embeddedBlocks: nextFields.map((field, index) => ({
+        ...field,
+        sortOrder: index,
+        updatedAt: new Date().toISOString()
+      }))
+    })
+  }
+
+  const patchField = (fieldId: string, patch: Partial<SiteBlock>) => {
+    patchEmbeddedFields(fields.map(field => field.id === fieldId ? { ...field, ...patch } : field))
+  }
+
+  const patchFieldSettings = (field: SiteBlock, patch: Record<string, unknown>) => {
+    patchField(field.id, {
+      settings: {
+        ...(field.settings || {}),
+        ...patch
+      }
+    })
+  }
+
+  const addField = (blockType: SiteBlockType) => {
+    const nextField = createEmbeddedFieldBlock(site, blockType, fields.length)
+    patchEmbeddedFields([...fields, nextField])
+    setActiveFieldId(nextField.id)
+  }
+
+  const removeField = (fieldId: string) => {
+    const nextFields = fields.filter(field => field.id !== fieldId)
+    patchEmbeddedFields(nextFields)
+    setActiveFieldId(nextFields[0]?.id || '')
+  }
+
+  const moveField = (fieldId: string, direction: 'up' | 'down') => {
+    const index = fields.findIndex(field => field.id === fieldId)
+    if (index < 0) return
+    const nextIndex = direction === 'up' ? index - 1 : index + 1
+    if (nextIndex < 0 || nextIndex >= fields.length) return
+    patchEmbeddedFields(arrayMove(fields, index, nextIndex))
+  }
+
+  return (
+    <aside className={`${styles.propertiesPanel} ${styles.formModePanel}`} aria-label="Editor de formulario embebido">
+      <div className={styles.formModePanelHeader}>
+        <span className={styles.formModeIcon}><FormInput size={18} /></span>
+        <div>
+          <strong>Editando formulario</strong>
+          <small>Opciones del formulario seleccionado</small>
+        </div>
+      </div>
+      <div className={styles.propertiesBody}>
+        <div className={styles.settingsGroup}>
+          <div className={styles.panelSubheader}>Contenido del formulario</div>
+          <label className={styles.field}>
+            <span>Titulo</span>
+            <input value={block.content || ''} placeholder="Formulario" onChange={(event) => onPatchBlock({ content: event.target.value })} onBlur={onSave} />
+          </label>
+          <label className={styles.field}>
+            <span>Descripcion</span>
+            <textarea rows={2} value={getSettingString(settings, 'description')} onChange={(event) => onPatchSettings({ description: event.target.value })} onBlur={onSave} />
+          </label>
+          <label className={styles.field}>
+            <span>Formulario base</span>
+            <CustomSelect value={selectedFormId} onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined })} onBlur={onSave}>
+              <option value="">Inline editable</option>
+              {forms.filter(form => form.id !== site.id).map(form => <option key={form.id} value={form.id}>{form.name}</option>)}
+            </CustomSelect>
+          </label>
+          <label className={styles.field}>
+            <span>Al terminar</span>
+            <CustomSelect value={getFormCompletionAction(settings)} onChange={(event) => onPatchSettings({ completionAction: event.target.value })} onBlur={onSave}>
+              <option value="next_page">Ir a la siguiente pagina</option>
+              <option value="next_page_if_qualified">Siguiente pagina solo si califica</option>
+              <option value="form_default">Mostrar mensaje del formulario</option>
+            </CustomSelect>
+          </label>
+        </div>
+
+        <div className={styles.settingsGroup}>
+          <div className={styles.optionRulesHeader}>
+            <strong>Campos</strong>
+            <button type="button" onClick={() => addField('short_text')}>
+              <Plus size={14} />
+              Campo
+            </button>
+          </div>
+          <div className={styles.formFieldList}>
+            {fields.map((field, index) => (
+              <button key={field.id} type="button" className={`${styles.formFieldItem} ${activeField?.id === field.id ? styles.formFieldItemActive : ''}`} onClick={() => setActiveFieldId(field.id)}>
+                <span>{blockIcons[field.blockType]}</span>
+                <span>
+                  <strong>{field.label || blockLabels[field.blockType] || 'Campo'}</strong>
+                  <small>{blockLabels[field.blockType] || field.blockType}</small>
+                </span>
+                <em>{index + 1}</em>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {activeField && (
+          <div className={styles.settingsGroup}>
+            <div className={styles.formFieldEditorHeader}>
+              <div>
+                <span className={styles.panelSubheader}>Campo seleccionado</span>
+                <strong>{activeField.label || blockLabels[activeField.blockType]}</strong>
+              </div>
+              <div className={styles.formFieldActions}>
+                <button type="button" onClick={() => moveField(activeField.id, 'up')} disabled={fields[0]?.id === activeField.id} title="Subir"><ArrowUp size={14} /></button>
+                <button type="button" onClick={() => moveField(activeField.id, 'down')} disabled={fields[fields.length - 1]?.id === activeField.id} title="Bajar"><ArrowDown size={14} /></button>
+                <button type="button" onClick={() => removeField(activeField.id)} title="Eliminar"><Trash2 size={14} /></button>
+              </div>
+            </div>
+
+            <div className={styles.twoColumn}>
+              <label className={styles.field}>
+                <span>Tipo</span>
+                <CustomSelect value={activeField.blockType} onChange={(event) => patchField(activeField.id, { blockType: event.target.value as SiteBlockType })} onBlur={onSave}>
+                  {embeddedFormFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
+                </CustomSelect>
+              </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(activeField.required)}
+                  onChange={(event) => {
+                    patchField(activeField.id, { required: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Requerido</span>
+              </label>
+            </div>
+
+            <label className={styles.field}>
+              <span>Pregunta / etiqueta</span>
+              <input value={activeField.label || ''} onChange={(event) => patchField(activeField.id, { label: event.target.value })} onBlur={onSave} />
+            </label>
+            <label className={styles.field}>
+              <span>Texto de ayuda</span>
+              <textarea rows={2} value={activeField.content || ''} onChange={(event) => patchField(activeField.id, { content: event.target.value })} onBlur={onSave} />
+            </label>
+            {!isChoiceBlock(activeField.blockType) && (
+              <label className={styles.field}>
+                <span>Placeholder</span>
+                <input value={activeField.placeholder || ''} onChange={(event) => patchField(activeField.id, { placeholder: event.target.value })} onBlur={onSave} />
+              </label>
+            )}
+            {activeField.blockType === 'phone' && (
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={isPhoneCountrySelectorEnabled(activeField)}
+                  onChange={(event) => {
+                    patchFieldSettings(activeField, { phoneCountrySelectorEnabled: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Mostrar pais y lada</span>
+              </label>
+            )}
+
+            <CustomFieldBindingControl block={activeField} customFields={customFields} onPatchSettings={(patch) => patchFieldSettings(activeField, patch)} onSave={onSave} />
+
+            {isChoiceBlock(activeField.blockType) && (
+              <OptionsRulesEditor block={activeField} blocks={fields} pages={pages} onPatchBlock={(patch) => patchField(activeField.id, patch)} onSave={onSave} />
+            )}
+          </div>
+        )}
+
+        <InlineBlockStyleControls site={site} block={block} blocks={[block]} onPatchSettings={onPatchSettings} onSave={onSave} />
+      </div>
+    </aside>
+  )
+}
+
 const hydrateFormSitesForBuilder = async (list: PublicSite[]) => {
   const formSites = list.filter(site => isFormSite(site))
   if (!formSites.length) return list
@@ -3272,6 +3600,12 @@ export const Sites: React.FC = () => {
     : section === 'forms'
       ? (isFormSite(selectedSite) ? selectedSite : null)
       : null
+  const formEditBlock = selectedBlock?.blockType === 'form_embed' ? selectedBlock : null
+  const formEditMode = Boolean(editorSite && formEditBlock)
+  const formEditFields = useMemo(
+    () => editorSite && formEditBlock ? getEditableEmbeddedFormBlocks(editorSite, formEditBlock, forms) : [],
+    [editorSite, formEditBlock, forms]
+  )
   const importedPopupDetected = useMemo(
     () => isImportedHtmlSite(editorSite) && importedHtmlHasPopup(selectedImportData),
     [editorSite, selectedImportData]
@@ -3459,11 +3793,11 @@ export const Sites: React.FC = () => {
 
   async function flushPendingEditorSaves(options: PendingEditorSaveOptions = {}) {
     const siteToSave = selectedSiteRef.current || selectedSite
-    if (!siteToSave || savingPendingEditorRef.current) return
+    if (!siteToSave || savingPendingEditorRef.current) return false
 
     if (options.statusOverride === 'published' && (!domainConfig.domain || !domainConfig.renderDomainVerified)) {
       showToast('error', 'Dominio requerido', 'Configura y verifica un dominio antes de publicar este sitio.')
-      return
+      return false
     }
 
     const shouldSaveSite = Boolean(options.forceSite || options.statusOverride || pendingSiteSaveRef.current)
@@ -3473,7 +3807,7 @@ export const Sites: React.FC = () => {
 
     if (!shouldSaveSite && !blockIdsToSave.length) {
       clearEditorDirtyState()
-      return
+      return true
     }
 
     const localBlocksById = new Map((siteToSave.blocks || []).map(block => [block.id, block]))
@@ -3509,8 +3843,10 @@ export const Sites: React.FC = () => {
       if (!options.silent) {
         showToast('success', options.statusOverride === 'published' ? 'Publicado' : 'Guardado', 'Sitio actualizado')
       }
+      return true
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo guardar')
+      return false
     } finally {
       savingPendingEditorRef.current = false
       setSaving(false)
@@ -4878,10 +5214,8 @@ export const Sites: React.FC = () => {
 
     writePreviewLoadingPage(previewWindow)
     try {
-      const html = await sitesService.getPreviewHtml(editorSite.id, hasEditablePages(editorSite) ? activePage?.id : undefined, { test: true })
-      previewWindow.document.open()
-      previewWindow.document.write(html)
-      previewWindow.document.close()
+      const session = await sitesService.createPreviewSession(editorSite.id, hasEditablePages(editorSite) ? activePage?.id : undefined)
+      previewWindow.location.replace(session.url)
     } catch (error) {
       previewWindow.close()
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo previsualizar')
@@ -4908,10 +5242,8 @@ export const Sites: React.FC = () => {
     writePreviewLoadingPage(previewWindow)
     try {
       const pageId = hasEditablePages(site) ? normalizeFunnelPages(site)[0]?.id : undefined
-      const html = await sitesService.getPreviewHtml(site.id, pageId, { test: true })
-      previewWindow.document.open()
-      previewWindow.document.write(html)
-      previewWindow.document.close()
+      const session = await sitesService.createPreviewSession(site.id, pageId)
+      previewWindow.location.replace(session.url)
     } catch (error) {
       previewWindow.close()
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo previsualizar')
@@ -5324,6 +5656,19 @@ export const Sites: React.FC = () => {
     })
   }
 
+  const handleAddEmbeddedFormField = (blockType: SiteBlockType) => {
+    const currentSite = selectedSiteRef.current || editorSite
+    const currentFormBlock = formEditBlock
+    if (!currentSite || !currentFormBlock) return
+    const currentBlock = (currentSite.blocks || []).find(block => block.id === currentFormBlock.id) || currentFormBlock
+    const currentFields = getEditableEmbeddedFormBlocks(currentSite, currentBlock, forms)
+    const nextField = createEmbeddedFieldBlock(currentSite, blockType, currentFields.length)
+    patchBlockSettingsLocal(currentBlock, {
+      formSiteId: '',
+      embeddedBlocks: [...currentFields, nextField]
+    })
+  }
+
   const patchBlockCategorySettingsLocal = (sourceBlock: SiteBlock, patch: Record<string, unknown>) => {
     const current = selectedSiteRef.current
     if (!current?.blocks) return
@@ -5373,6 +5718,15 @@ export const Sites: React.FC = () => {
     if (!pendingBlockSaveIdsRef.current.has(blockId)) pendingBlockSaveIdsRef.current.add(blockId)
     if (pendingAutosaveChangeCountRef.current < EDITOR_AUTOSAVE_CHANGE_THRESHOLD) return
     await flushPendingEditorSaves({ silent: true })
+  }
+
+  const handleSaveFormEdit = async () => {
+    if (!formEditBlock) return
+    pendingBlockSaveIdsRef.current.add(formEditBlock.id)
+    const saved = await flushPendingEditorSaves({ silent: true })
+    if (!saved) return
+    setSelectedBlockId('')
+    showToast('success', 'Formulario guardado', 'Regresaste al editor del sitio.')
   }
 
   const getDeletedBlockIds = (blockId: string) => {
@@ -5884,7 +6238,7 @@ export const Sites: React.FC = () => {
         <header className={`${styles.header} ${editorSite ? styles.editorHeader : ''}`}>
           {editorSite ? (
             <>
-              <div className={styles.editorUnifiedToolbar}>
+              <div className={`${styles.editorUnifiedToolbar} ${formEditMode ? styles.editorUnifiedToolbarFormMode : ''}`}>
                 <div className={styles.editorToolbarTop}>
                   <div className={styles.editorToolbarContext}>
                     <button type="button" className={styles.backButton} onClick={handleBackToLibrary}>
@@ -5900,7 +6254,7 @@ export const Sites: React.FC = () => {
                         onBlur={() => handleSaveSite(undefined, { silent: true })}
                       />
                     </label>
-                    {editorSite.status !== 'draft' && (
+                    {editorSite.status !== 'draft' && !formEditMode && (
                       <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
                     )}
                     <div className={styles.editorPageSelectorSlot}>
@@ -5933,69 +6287,96 @@ export const Sites: React.FC = () => {
                       )}
                     </div>
                   </div>
-                  <div className={styles.editorToolbarTools} aria-label="Herramientas de edicion">
-                    <EditorSettingsDropdown
-                      site={editorSite}
-                      pages={pages}
-                      activePage={activePage}
-                      domainConfig={domainConfig}
-                      seoIssues={seoValidation?.totalIssues || 0}
-                      metaPixelConnected={metaPixelConnected}
-                      disabled={editorAIGenerating}
-                      canEditHeader={hasEditablePages(editorSite)}
-                      routeValue={getRouteEditorValue(editorSite)}
-                      routePlaceholder={editorSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
-                      onRouteChange={(value) => updateSelectedSite({ slug: normalizeRouteEditorInput(value, domainConfig) })}
-                      onPatchSite={updateSelectedSite}
-                      onPatchTheme={patchSiteTheme}
-                      onSaveSite={() => handleSaveSite(undefined, { silent: true })}
-                      onOpenSeo={() => setSeoModalOpen(true)}
-                      onOpenHeader={() => setHeaderModalOpen(true)}
-                    />
-                    {canConfigurePopup && (
-                      <button
-                        type="button"
-                        className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${popupSurfaceSelected ? styles.headerToolbarButtonActive : ''}`}
-                        onClick={() => selectEditorBlock(popupSurfaceSelected ? PAGE_SELECTED_ID : POPUP_SELECTED_ID)}
+                  {!formEditMode && (
+                    <div className={styles.editorToolbarTools} aria-label="Herramientas de edicion">
+                      <EditorSettingsDropdown
+                        site={editorSite}
+                        pages={pages}
+                        activePage={activePage}
+                        domainConfig={domainConfig}
+                        seoIssues={seoValidation?.totalIssues || 0}
+                        metaPixelConnected={metaPixelConnected}
                         disabled={editorAIGenerating}
-                        title="Configurar Pop up"
-                      >
-                        <MousePointerClick size={15} />
-                        <span>Pop up</span>
-                      </button>
-                    )}
-                  </div>
-                  <div className={styles.editorToolbarPrimary}>
-                    <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
-                      <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('desktop')} disabled={editorAIGenerating} title="Escritorio" aria-label="Escritorio">
-                        <Monitor size={15} />
-                      </button>
-                      <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} disabled={editorAIGenerating} title="Movil" aria-label="Movil">
-                        <Smartphone size={15} />
-                      </button>
+                        canEditHeader={hasEditablePages(editorSite)}
+                        routeValue={getRouteEditorValue(editorSite)}
+                        routePlaceholder={editorSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
+                        onRouteChange={(value) => updateSelectedSite({ slug: normalizeRouteEditorInput(value, domainConfig) })}
+                        onPatchSite={updateSelectedSite}
+                        onPatchTheme={patchSiteTheme}
+                        onSaveSite={() => handleSaveSite(undefined, { silent: true })}
+                        onOpenSeo={() => setSeoModalOpen(true)}
+                        onOpenHeader={() => setHeaderModalOpen(true)}
+                      />
+                      {canConfigurePopup && (
+                        <button
+                          type="button"
+                          className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${popupSurfaceSelected ? styles.headerToolbarButtonActive : ''}`}
+                          onClick={() => selectEditorBlock(popupSurfaceSelected ? PAGE_SELECTED_ID : POPUP_SELECTED_ID)}
+                          disabled={editorAIGenerating}
+                          title="Configurar Pop up"
+                        >
+                          <MousePointerClick size={15} />
+                          <span>Pop up</span>
+                        </button>
+                      )}
                     </div>
-                    {isPublicSiteLive(editorSite, domainConfig) && (
-                      <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating}>
-                        <ExternalLink size={15} />
-                        Ver en vivo
-                      </Button>
+                  )}
+                  <div className={styles.editorToolbarPrimary}>
+                    {formEditMode ? (
+                      <>
+                        <div className={styles.formModeStatus}>
+                          <span aria-hidden="true" />
+                          <FormInput size={15} />
+                          <strong>Editando formulario</strong>
+                          <small>{formEditBlock?.content || formEditBlock?.label || 'Formulario'}</small>
+                        </div>
+                        <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
+                          <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('desktop')} disabled={editorAIGenerating} title="Escritorio">
+                            <Monitor size={15} />
+                          </button>
+                          <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} disabled={editorAIGenerating} title="Movil">
+                            <Smartphone size={15} />
+                          </button>
+                        </div>
+                        <Button size="md" className={styles.editorPublishButton} onClick={handleSaveFormEdit} loading={saving} disabled={editorAIGenerating}>
+                          <Save size={15} />
+                          Guardar formulario
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
+                          <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('desktop')} disabled={editorAIGenerating} title="Escritorio">
+                            <Monitor size={15} />
+                          </button>
+                          <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} disabled={editorAIGenerating} title="Movil">
+                            <Smartphone size={15} />
+                          </button>
+                        </div>
+                        {isPublicSiteLive(editorSite, domainConfig) && (
+                          <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating}>
+                            <ExternalLink size={15} />
+                            Ver en vivo
+                          </Button>
+                        )}
+                        <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handlePreviewSite} disabled={editorAIGenerating}>
+                          <Eye size={15} />
+                          Previsualizar
+                        </Button>
+                        <span className={`${styles.editorSaveStatus} ${editorSaveStatusClass}`} aria-live="polite">
+                          {editorSaveStatus.icon}
+                          <span>{editorSaveStatus.label}</span>
+                        </span>
+                        <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={() => handleSaveSite()} loading={saving} disabled={editorAIGenerating}>
+                          <Save size={15} />
+                          Guardar
+                        </Button>
+                        <Button size="md" className={styles.editorPublishButton} onClick={() => handleSaveSite('published')} loading={saving} disabled={editorAIGenerating}>
+                          <Send size={15} />
+                          Publicar
+                        </Button>
+                      </>
                     )}
-                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handlePreviewSite} disabled={editorAIGenerating}>
-                      <Eye size={15} />
-                      Previsualizar
-                    </Button>
-                    <span className={`${styles.editorSaveStatus} ${editorSaveStatusClass}`} aria-live="polite">
-                      {editorSaveStatus.icon}
-                      <span>{editorSaveStatus.label}</span>
-                    </span>
-                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={() => handleSaveSite()} loading={saving} disabled={editorAIGenerating}>
-                      <Save size={15} />
-                      Guardar
-                    </Button>
-                    <Button size="md" className={styles.editorPublishButton} onClick={() => handleSaveSite('published')} loading={saving} disabled={editorAIGenerating}>
-                      <Send size={15} />
-                      Publicar
-                    </Button>
                   </div>
                 </div>
               </div>
@@ -6145,8 +6526,14 @@ export const Sites: React.FC = () => {
                   onDelete={() => void handleDeleteSite(editorSite)}
                 />
               ) : (
-              <div className={`${styles.builderGrid} ${isLanding(editorSite) ? styles.builderGridLanding : styles.builderGridForm}`}>
-                <div className={styles.blocksRail}>
+              <div className={`${styles.builderGrid} ${isLanding(editorSite) ? styles.builderGridLanding : styles.builderGridForm} ${formEditMode ? styles.builderGridFormMode : ''}`}>
+                <div className={`${styles.blocksRail} ${formEditMode ? styles.formModeRail : ''}`}>
+                  {formEditMode ? (
+                    <FormModePalette
+                      fieldsCount={formEditFields.length}
+                      onAddField={handleAddEmbeddedFormField}
+                    />
+                  ) : (
 	                  <Palette
 		                    blockTypes={popupSurfaceSelected ? getPopupPaletteBlockTypes(editorSite) : isLanding(editorSite) ? landingBlockTypes : formBlockTypes}
 		                    existingBlocks={editableCanvasBlocks}
@@ -6161,6 +6548,7 @@ export const Sites: React.FC = () => {
                     onPaletteDragMove={setPaletteDragPosition}
                     onPaletteDragEnd={resetPaletteDrag}
                   />
+                  )}
                 </div>
 
                 <section className={styles.canvasColumn}>
@@ -6327,31 +6715,44 @@ export const Sites: React.FC = () => {
                   </DndContext>
                 </section>
 
-                <PropertiesPanel
-                  site={editorSite}
+                {formEditMode && formEditBlock ? (
+                  <FormEmbedEditorPanel
+                    site={editorSite}
+                    block={formEditBlock}
+                    forms={forms}
+                    customFields={customFields}
+                    pages={pages}
+                    onPatchBlock={(patch) => patchSelectedBlock(patch)}
+                    onPatchSettings={(patch) => patchSelectedBlockSettings(patch)}
+                    onSave={() => handleSaveBlock()}
+                  />
+                ) : (
+                  <PropertiesPanel
+                    site={editorSite}
 	                  block={selectedBlock}
 	                  surfaceSelectionId={selectedBlockId}
 	                  blocks={editableCanvasBlocks}
 	                  allBlocks={blocks}
 	                  popupBlocks={popupBlocks}
-                  forms={forms}
-                  calendars={calendars}
-                  customFields={customFields}
-                  pages={pages}
-                  activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                  metaPixelConnected={metaPixelConnected}
-                  importedPopupDetected={importedPopupDetected}
-                  connectedSocialProfiles={connectedSocialProfiles}
-                  loadingSocialProfiles={loadingSocialProfiles}
-                  onPatchSite={updateSelectedSite}
-                  onPatchTheme={patchSiteTheme}
-                  onSaveSite={() => handleSaveSite(undefined, { silent: true })}
-                  onPatchBlock={(patch) => patchSelectedBlock(patch)}
-                  onPatchSettings={(patch) => patchSelectedBlockSettings(patch)}
-                  onPatchCategorySettings={(block, patch) => patchBlockCategorySettingsLocal(block, patch)}
-                  onSaveCategory={(block) => handleSaveBlockCategory(block)}
-                  onSave={() => handleSaveBlock()}
-                />
+                    forms={forms}
+                    calendars={calendars}
+                    customFields={customFields}
+                    pages={pages}
+                    activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                    metaPixelConnected={metaPixelConnected}
+                    importedPopupDetected={importedPopupDetected}
+                    connectedSocialProfiles={connectedSocialProfiles}
+                    loadingSocialProfiles={loadingSocialProfiles}
+                    onPatchSite={updateSelectedSite}
+                    onPatchTheme={patchSiteTheme}
+                    onSaveSite={() => handleSaveSite(undefined, { silent: true })}
+                    onPatchBlock={(patch) => patchSelectedBlock(patch)}
+                    onPatchSettings={(patch) => patchSelectedBlockSettings(patch)}
+                    onPatchCategorySettings={(block, patch) => patchBlockCategorySettingsLocal(block, patch)}
+                    onSaveCategory={(block) => handleSaveBlockCategory(block)}
+                    onSave={() => handleSaveBlock()}
+                  />
+                )}
 
               </div>
               )}
@@ -15898,6 +16299,84 @@ interface CanvasPreviewBlockProps {
   onSave?: () => void
 }
 
+const VideoPlayerPreview: React.FC<{
+  src: string
+  label?: string
+  settings: Record<string, unknown>
+}> = ({ src, label, settings }) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const controlsMode = getSettingString(settings, 'videoControlsMode') || (settings.videoControls === false ? 'none' : 'native')
+  const showNativeControls = controlsMode === 'native'
+  const showOverlay = controlsMode !== 'native'
+  const soundHint = settings.videoSoundHint !== false
+  const previewEnabled = settings.videoPreviewEnabled !== false
+  const muted = settings.videoMuted !== false
+  const autoplay = Boolean(settings.videoAutoplay)
+  const loop = Boolean(settings.videoLoop) || autoplay
+  const speed = getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4)
+  const fit = getSettingString(settings, 'videoFit') || 'cover'
+  const playerColor = getSettingString(settings, 'videoPlayerColor') || 'rgba(0,0,0,.52)'
+  const playColor = getSettingString(settings, 'videoPlayColor') || '#ffffff'
+  const className = [
+    'rstk-video',
+    'rstk-video-player',
+    showNativeControls ? 'rstk-video-native-controls' : 'rstk-video-custom-controls',
+    soundHint && showOverlay ? 'rstk-video-sound-hint' : ''
+  ].filter(Boolean).join(' ')
+
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.playbackRate = speed
+  }, [speed, src])
+
+  const handleOverlayClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const video = videoRef.current
+    if (!video) return
+    video.muted = false
+    if (video.paused) {
+      void video.play().catch(() => undefined)
+    } else {
+      video.pause()
+    }
+  }
+
+  return (
+    <div
+      className={className}
+      style={{
+        ['--rstk-video-player-color' as string]: playerColor,
+        ['--rstk-video-play-color' as string]: playColor
+      } as React.CSSProperties}
+    >
+      <video
+        ref={videoRef}
+        src={src}
+        title={label || 'Video'}
+        controls={showNativeControls}
+        muted={muted}
+        loop={loop}
+        autoPlay={autoplay}
+        playsInline
+        preload={previewEnabled ? 'auto' : 'metadata'}
+        style={{ objectFit: fit as React.CSSProperties['objectFit'] }}
+      />
+      {showOverlay && (
+        <button type="button" className="rstk-video-overlay" onClick={handleOverlayClick} aria-label="Reproducir video">
+          <span className="rstk-video-play-dot"><Play size={22} fill="currentColor" /></span>
+          {soundHint && (
+            <span className="rstk-video-sound">
+              <Volume2 size={16} />
+              <i />
+              <i />
+            </span>
+          )}
+        </button>
+      )}
+    </div>
+  )
+}
+
 const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   block,
   site,
@@ -16029,7 +16508,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const directVideoUrl = isDirectVideoUrl(rawVideoUrl) ? safePublicMediaUrl(rawVideoUrl, 'video') : ''
     const videoUrl = directVideoUrl ? '' : normalizeImportedVideoPreviewUrl(rawVideoUrl)
     return directVideoUrl
-      ? <div className="rstk-video"><video src={directVideoUrl} controls playsInline preload="metadata" /></div>
+      ? <VideoPlayerPreview src={directVideoUrl} label={block.label || 'Video'} settings={settings} />
       : videoUrl
         ? <div className="rstk-video"><iframe src={videoUrl} title={block.label || 'Video'} loading="lazy" allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
       : <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
@@ -16099,7 +16578,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const selectedFormFields = Array.isArray(form?.blocks)
       ? form.blocks.filter(field => fieldBlockTypes.has(field.blockType))
       : []
-    const description = form ? `Usando formulario: ${form.name}` : getSettingString(settings, 'description')
+    const description = getSettingString(settings, 'description') || (form ? `Usando formulario: ${form.name}` : '')
     const fields = embeddedBlocks.length
       ? embeddedBlocks
       : selectedFormFields.length
@@ -17168,6 +17647,8 @@ interface OptionsRulesEditorProps {
 const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, pages, onPatchBlock, onSave }) => {
   const options = getOptions(block)
   const fieldTargets = blocks.filter(item => fieldBlockTypes.has(item.blockType) && item.id !== block.id)
+  const messageActions = new Set<SiteOptionAction>(['show_message', 'end_form', 'disqualify', 'disqualify_after_submit'])
+  const categoryActions = new Set<SiteOptionAction>(['category', 'cold_lead', 'warm_lead', 'hot_lead'])
   const getTargetLabel = (target: SiteBlock) => {
     const page = pages.find(item => item.id === getBlockPageId(target, pages))
     return page ? `${target.label} - ${page.title}` : target.label
@@ -17204,9 +17685,9 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
     action,
     targetBlockId: action === 'jump' ? option.targetBlockId || '' : '',
     redirectUrl: action === 'redirect' ? option.redirectUrl || '' : '',
-    message: '',
-    tag: '',
-    category: ''
+    message: messageActions.has(action) ? option.message || '' : '',
+    tag: action === 'tag' ? option.tag || '' : '',
+    category: categoryActions.has(action) ? option.category || '' : ''
   })
 
   return (
@@ -17261,6 +17742,43 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
                 value={option.redirectUrl || ''}
                 placeholder="https://tusitio.com"
                 onChange={(event) => patchOption(index, { redirectUrl: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+          )}
+
+          {messageActions.has(getVisibleRuleAction(option.action)) && (
+            <label className={styles.field}>
+              <span>Mensaje</span>
+              <textarea
+                rows={2}
+                value={option.message || ''}
+                placeholder={option.action === 'disqualify' ? 'Gracias. Por ahora no califica.' : 'Gracias. Tu informacion fue recibida.'}
+                onChange={(event) => patchOption(index, { message: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+          )}
+
+          {option.action === 'tag' && (
+            <label className={styles.field}>
+              <span>Etiqueta</span>
+              <input
+                value={option.tag || ''}
+                placeholder="lead_prioritario"
+                onChange={(event) => patchOption(index, { tag: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+          )}
+
+          {categoryActions.has(getVisibleRuleAction(option.action)) && (
+            <label className={styles.field}>
+              <span>Categoria</span>
+              <input
+                value={option.category || ''}
+                placeholder={option.action === 'cold_lead' ? 'frio' : option.action === 'warm_lead' ? 'tibio' : option.action === 'hot_lead' ? 'caliente' : 'categoria'}
+                onChange={(event) => patchOption(index, { category: event.target.value })}
                 onBlur={onSave}
               />
             </label>
@@ -17586,6 +18104,109 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           onUploaded={(url) => onPatchSettings({ mediaUrl: url })}
           onCommit={onSave}
         />
+        {block.blockType === 'video' && (
+          <div className={styles.videoSettingsBox}>
+            <div className={styles.panelSubheader}>Reproductor</div>
+            <div className={styles.twoColumn}>
+              <label className={styles.field}>
+                <span>Controles</span>
+                <CustomSelect
+                  value={getSettingString(settings, 'videoControlsMode') || (settings.videoControls === false ? 'none' : 'native')}
+                  onChange={(event) => onPatchSettings({
+                    videoControlsMode: event.target.value,
+                    videoControls: event.target.value === 'native'
+                  })}
+                  onBlur={onSave}
+                >
+                  <option value="native">Controles nativos</option>
+                  <option value="clean">Boton play limpio</option>
+                  <option value="none">Sin controles visibles</option>
+                </CustomSelect>
+              </label>
+              <label className={styles.field}>
+                <span>Velocidad</span>
+                <CustomSelect
+                  value={String(getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4))}
+                  onChange={(event) => onPatchSettings({ videoDefaultSpeed: Number(event.target.value) })}
+                  onBlur={onSave}
+                >
+                  {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </CustomSelect>
+              </label>
+            </div>
+            <div className={styles.twoColumn}>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={settings.videoPreviewEnabled !== false}
+                  onChange={(event) => {
+                    onPatchSettings({ videoPreviewEnabled: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Preview de primeros segundos</span>
+              </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={settings.videoSoundHint !== false}
+                  onChange={(event) => {
+                    onPatchSettings({ videoSoundHint: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Animacion de bocina</span>
+              </label>
+            </div>
+            <div className={styles.twoColumn}>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.videoAutoplay)}
+                  onChange={(event) => {
+                    onPatchSettings({ videoAutoplay: event.target.checked, videoMuted: event.target.checked ? true : settings.videoMuted })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Autoplay</span>
+              </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.videoLoop)}
+                  onChange={(event) => {
+                    onPatchSettings({ videoLoop: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Loop</span>
+              </label>
+            </div>
+            <div className={styles.twoColumn}>
+              <ColorField label="Fondo controles" value={getSettingString(settings, 'videoPlayerColor') || 'rgba(0,0,0,.52)'} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
+              <ColorField label="Play" value={getSettingString(settings, 'videoPlayColor') || '#ffffff'} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
+            </div>
+            <div className={styles.twoColumn}>
+              <label className={styles.field}>
+                <span>Ajuste</span>
+                <CustomSelect value={getSettingString(settings, 'videoFit') || 'cover'} onChange={(event) => onPatchSettings({ videoFit: event.target.value })} onBlur={onSave}>
+                  <option value="cover">Cubrir espacio</option>
+                  <option value="contain">Mostrar completo</option>
+                  <option value="fill">Estirar</option>
+                </CustomSelect>
+              </label>
+              <DimensionField
+                label="Ancho"
+                value={getSettingNumber(settings, 'mediaWidth', 100, 20, 100)}
+                min={20}
+                max={100}
+                unit="%"
+                onChange={(value) => onPatchSettings({ mediaWidth: value })}
+                onCommit={onSave}
+              />
+            </div>
+          </div>
+        )}
       </div>
     )
   }
