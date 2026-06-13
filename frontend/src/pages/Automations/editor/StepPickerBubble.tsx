@@ -22,8 +22,8 @@ interface StepPickerBubbleProps {
    * docked: panel amplio fijo del lado derecho para usos heredados.
    */
   variant: 'anchored' | 'docked'
-  /** Alinea el globo debajo del borde derecho del punto de anclaje. */
-  placement?: 'point' | 'below-end'
+  /** Ajusta el globo alrededor del punto de anclaje. */
+  placement?: 'point' | 'below-end' | 'left-start'
   anchor: StepPickerAnchor
   /** Tamaño del contenedor para no salirse de la pantalla */
   bounds: { width: number; height: number }
@@ -155,16 +155,17 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
   }
   const anchoredWidth = Math.min(ANCHORED_WIDTH, Math.max(320, bounds.width - EDGE_GUTTER * 2))
   const anchoredVisibleHeight = Math.min(190, Math.max(90, bounds.height - EDGE_GUTTER * 2))
+  const alignBeforeAnchor = placement === 'below-end' || placement === 'left-start'
   const anchoredLeft =
-    placement === 'below-end'
+    alignBeforeAnchor
       ? anchor.x - anchoredWidth
       : anchor.x
   const anchoredTop =
-    placement === 'below-end'
+    placement === 'below-end' || placement === 'left-start'
       ? Math.max(EDGE_GUTTER, Math.min(anchor.y, bounds.height - anchoredVisibleHeight - EDGE_GUTTER))
       : Math.max(EDGE_GUTTER, Math.min(anchor.y, bounds.height - Math.min(560, bounds.height - EDGE_GUTTER * 2) - EDGE_GUTTER))
   const anchoredMaxHeight =
-    placement === 'below-end'
+    placement === 'below-end' || placement === 'left-start'
       ? Math.max(90, Math.min(620, bounds.height - anchoredTop - EDGE_GUTTER))
       : Math.min(560, bounds.height - EDGE_GUTTER * 2)
   const anchoredStyle: React.CSSProperties = {
@@ -183,7 +184,8 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
       className={cn(
         styles.bubble,
         variant === 'docked' && styles.bubbleDocked,
-        placement === 'below-end' && styles.bubbleBelowEnd
+        placement === 'below-end' && styles.bubbleBelowEnd,
+        placement === 'left-start' && styles.bubbleLeftStart
       )}
       style={variant === 'docked' ? dockedStyle : anchoredStyle}
       role="dialog"

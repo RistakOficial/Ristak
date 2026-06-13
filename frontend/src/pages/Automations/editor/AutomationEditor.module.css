@@ -834,13 +834,14 @@
   background: var(--color-background-secondary);
   border: 1px solid rgba(148, 163, 184, 0.22);
   box-shadow: 0 24px 60px -24px rgba(15, 23, 42, 0.5), 0 6px 18px -8px rgba(15, 23, 42, 0.18);
+  --bubble-enter-x: 0;
   --bubble-enter-y: 4px;
   transform-origin: top left;
   animation: bubbleIn 0.14s ease;
   cursor: default;
 }
 
-/* Panel amplio anclado a la derecha (botón "+"): overlay sin reflow */
+/* Panel amplio heredado anclado a la derecha: overlay sin reflow */
 .bubbleDocked {
   max-height: none;
   border-radius: 16px;
@@ -852,6 +853,12 @@
 
 .bubbleBelowEnd {
   --bubble-enter-y: -6px;
+  transform-origin: top right;
+}
+
+.bubbleLeftStart {
+  --bubble-enter-x: 6px;
+  --bubble-enter-y: 0;
   transform-origin: top right;
 }
 
@@ -876,7 +883,7 @@
 @keyframes bubbleIn {
   from {
     opacity: 0;
-    translate: 0 var(--bubble-enter-y);
+    translate: var(--bubble-enter-x) var(--bubble-enter-y);
     scale: 0.98;
   }
   to {

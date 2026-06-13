@@ -91,7 +91,7 @@ interface PickerState {
   kind: NodeKind
   /** anchored: globo cerca del punto · docked: panel amplio a la derecha */
   variant: 'anchored' | 'docked'
-  placement?: 'point' | 'below-end'
+  placement?: 'point' | 'below-end' | 'left-start'
   anchor: { x: number; y: number }
   worldPoint: { x: number; y: number }
   /** Conexión obligada (el globo se abrió desde una salida) */
@@ -1072,15 +1072,15 @@ export const AutomationEditor: React.FC = () => {
       ?.getBoundingClientRect()
     const anchor = canvasRect
       ? {
-          x: buttonRect.right - canvasRect.left,
-          y: buttonRect.bottom - canvasRect.top + 10
+          x: buttonRect.left - canvasRect.left - 10,
+          y: buttonRect.top - canvasRect.top
         }
-      : { x: bounds.width - 18, y: 72 }
+      : { x: bounds.width - 72, y: 18 }
 
     setPicker({
       kind: 'action',
       variant: 'anchored',
-      placement: 'below-end',
+      placement: 'left-start',
       anchor,
       worldPoint: {
         x: (bounds.width / 2 - viewport.x) / viewport.zoom - NODE_WIDTH / 2,
