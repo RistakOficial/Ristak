@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { ensureLocalDevAuth } from '@/services/authFetch'
 import { getIntegrationsStatus } from '@/services/integrationsService'
+import type { AccountLocaleDefaults } from '@/utils/accountLocale'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 
@@ -21,7 +22,7 @@ interface AuthContextType {
   user: User | null
   isAuthenticated: boolean
   login: (username: string, password: string) => Promise<void>
-  setupAccount: (username: string, password: string, setupToken?: string) => Promise<void>
+  setupAccount: (username: string, password: string, setupToken?: string, accountLocale?: AccountLocaleDefaults) => Promise<void>
   updateProfile: (profile: {
     firstName: string
     lastName: string
@@ -91,7 +92,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
           }
         } catch {
-          // Se maneja igual que un token invalido.
+          // Se maneja igual que un token inválido.
         }
 
         localStorage.removeItem('auth_token')
@@ -187,14 +188,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }
 
-  const setupAccount = async (username: string, password: string, setupToken?: string) => {
+  const setupAccount = async (username: string, password: string, setupToken?: string, accountLocale?: AccountLocaleDefaults) => {
     try {
       const response = await fetch(`${API_URL}/api/auth/setup`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ username, password, token: setupToken })
+        body: JSON.stringify({ username, password, token: setupToken, accountLocale })
       })
 
       const data = await response.json()

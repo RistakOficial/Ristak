@@ -1344,7 +1344,7 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definition_sources_definition ON contact_custom_field_definition_sources(definition_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definition_sources_site ON contact_custom_field_definition_sources(source_site_id)')
 
-    // Campos variables: parametros de cuenta/negocio que no dependen de un contacto.
+    // Campos variables: parámetros de cuenta/negocio que no dependen de un contacto.
     await db.run(`
       CREATE TABLE IF NOT EXISTS variable_fields (
         id TEXT PRIMARY KEY,

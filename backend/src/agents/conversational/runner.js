@@ -204,7 +204,7 @@ function summarizeBusinessInfo({ businessContext, businessName, location, produc
   const parts = [
     businessName ? `Negocio: ${businessName}` : '',
     productSummary ? `Servicios/productos: ${productSummary}` : '',
-    summarizeLocation(location) ? `Ubicacion: ${summarizeLocation(location)}` : '',
+    summarizeLocation(location) ? `Ubicación: ${summarizeLocation(location)}` : '',
     compactText(businessContext, 1000)
   ].filter(Boolean)
   return parts.join(' · ')
@@ -293,14 +293,14 @@ async function loadAdvancedClosingRuntimeContext({
     ESCRIBIR_TOOL_DE_AVANCE: resolveAdvanceToolName(config),
     HERRAMIENTA_INTERNA_DE_DESCARTE: 'discard_conversation',
     ESCRIBIR_TOOL_DE_DESCARTE: 'discard_conversation',
-    INFO_GENERAL_DEL_NEGOCIO: summarizeBusinessInfo({ businessContext, businessName, location, productSummary }) || 'consulta get_business_profile y list_products para informacion real del negocio',
-    PEGAR_INFO_DEL_NEGOCIO: summarizeBusinessInfo({ businessContext, businessName, location, productSummary }) || 'consulta get_business_profile y list_products para informacion real del negocio',
+    INFO_GENERAL_DEL_NEGOCIO: summarizeBusinessInfo({ businessContext, businessName, location, productSummary }) || 'consulta get_business_profile y list_products para información real del negocio',
+    PEGAR_INFO_DEL_NEGOCIO: summarizeBusinessInfo({ businessContext, businessName, location, productSummary }) || 'consulta get_business_profile y list_products para información real del negocio',
     VALOR: productSummary || 'consulta list_products antes de hablar de valor',
     VALOR_DEL_PRODUCTO_O_SERVICIO: productSummary || 'consulta list_products antes de hablar de valor',
     UBICACION_O_MODALIDAD: locationSummary || 'modalidad no especificada; consulta get_business_profile si hace falta',
     PRESENCIAL_ONLINE_AMBAS_UBICACION: locationSummary || 'modalidad no especificada; consulta get_business_profile si hace falta',
     MODALIDAD: locationSummary || 'modalidad no especificada',
-    UBICACION: locationSummary || 'ubicacion no especificada',
+    UBICACION: locationSummary || 'ubicación no especificada',
     DISPONIBILIDAD: availability,
     CONDICIONES_IMPORTANTES: conditions || 'sin condiciones adicionales configuradas',
     CONDICIONES_DEL_NEGOCIO: conditions || 'sin condiciones adicionales configuradas',
@@ -310,30 +310,30 @@ async function loadAdvancedClosingRuntimeContext({
     MOTIVO_DE_CONTACTO: firstText(learned.contactReason, 'pendiente de descubrir con una pregunta natural'),
     POR_QUE_AHORA: firstText(learned.whyNow, 'pendiente de descubrir con una pregunta natural'),
     PROBLEMA_SUPERFICIAL: firstText(learned.surfaceProblem, 'lo primero que la persona menciono'),
-    PROBLEMA_REAL: firstText(learned.realProblem, learned.surfaceProblem, 'el problema real que se confirme en la conversacion'),
+    PROBLEMA_REAL: firstText(learned.realProblem, learned.surfaceProblem, 'el problema real que se confirme en la conversación'),
     CONSECUENCIA: firstText(learned.consequenceIfNoAction, 'la consecuencia logica segun lo que la persona ya dijo'),
     CONSECUENCIA_LOGICA: firstText(learned.consequenceIfNoAction, 'la consecuencia logica segun lo que la persona ya dijo'),
     RESULTADO_DESEADO: firstText(learned.desiredOutcome, 'el resultado que la persona diga que busca'),
     OBJECION_PRINCIPAL: firstText(learned.objection, 'ninguna objecion clara todavia'),
     URGENCIA_DETECTADA: firstText(learned.urgencyLevel, 'desconocida'),
     CAMINO_1_CONSECUENCIA: firstText(learned.consequenceIfNoAction, 'seguir igual con el problema que ya conto'),
-    CAMINO_2_RESULTADO_DESEADO: firstText(learned.desiredOutcome, 'tomar accion hacia el resultado que busca')
+    CAMINO_2_RESULTADO_DESEADO: firstText(learned.desiredOutcome, 'tomar acción hacia el resultado que busca')
   }
 
   const systemFacts = [
     `Canal detectado: ${channelLabel}`,
     contact?.created_at ? `Contacto registrado: ${contact.created_at}` : '',
     contact?.full_name ? `Nombre registrado: ${contact.full_name}` : '',
-    contact?.phone ? `Telefono registrado: ${contact.phone}` : '',
+    contact?.phone ? `Teléfono registrado: ${contact.phone}` : '',
     contact?.email ? `Email registrado: ${contact.email}` : '',
     tagNames.length ? `Etiquetas: ${tagNames.join(', ')}` : '',
     contact?.source ? `Fuente del contacto: ${contact.source}` : '',
     contact?.attribution_session_source ? `Atribucion/source: ${contact.attribution_session_source}` : '',
     contact?.attribution_medium ? `Atribucion/medium: ${contact.attribution_medium}` : '',
     contact?.attribution_ad_name || contact?.attribution_ad_id ? `Anuncio detectado: ${[contact.attribution_ad_name, contact.attribution_ad_id].filter(Boolean).join(' / ')}` : '',
-    ruleContext?.businessPhoneNumberId ? `Numero de WhatsApp del negocio: ${ruleContext.businessPhoneNumberId}` : '',
+    ruleContext?.businessPhoneNumberId ? `Número de WhatsApp del negocio: ${ruleContext.businessPhoneNumberId}` : '',
     productSummary ? `Productos/servicios activos: ${productSummary}` : '',
-    locationSummary ? `Ubicacion registrada: ${locationSummary}` : '',
+    locationSummary ? `Ubicación registrada: ${locationSummary}` : '',
     `Zona horaria: ${timezone}`,
     `Fecha/hora para interpretar relativos: ${nowIso}`
   ].map((item) => compactText(item, 700)).filter(Boolean)

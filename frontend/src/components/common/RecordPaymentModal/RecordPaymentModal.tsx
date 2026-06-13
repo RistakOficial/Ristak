@@ -2592,7 +2592,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   value={manualPaymentData.reference}
                   onChange={(e) => setManualPaymentData({ ...manualPaymentData, reference: e.target.value })}
                   className={styles.input}
-                  placeholder="Numero de transferencia, cheque, etc."
+                  placeholder="Número de transferencia, cheque, etc."
                 />
               </div>
               <div className={styles.manualField}>

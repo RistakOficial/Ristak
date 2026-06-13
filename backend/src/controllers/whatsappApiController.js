@@ -111,10 +111,10 @@ export async function previewWhatsAppApiPhoneNumbersView(req, res) {
     })
     res.json({ success: true, data })
   } catch (error) {
-    logger.error(`Error leyendo numeros WhatsApp_API: ${error.message}`)
+    logger.error(`Error leyendo números WhatsApp_API: ${error.message}`)
     res.status(400).json({
       success: false,
-      error: error.message || 'No se pudieron leer los numeros de WhatsApp Business'
+      error: error.message || 'No se pudieron leer los números de WhatsApp Business'
     })
   }
 }
@@ -126,10 +126,10 @@ export async function setWhatsAppApiDefaultPhoneNumberView(req, res) {
     })
     res.json({ success: true, data })
   } catch (error) {
-    logger.error(`Error marcando numero principal WhatsApp_API: ${error.message}`)
+    logger.error(`Error marcando número principal WhatsApp_API: ${error.message}`)
     res.status(400).json({
       success: false,
-      error: error.message || 'No se pudo marcar el numero principal'
+      error: error.message || 'No se pudo marcar el número principal'
     })
   }
 }
@@ -143,10 +143,10 @@ export async function rerouteWhatsAppPhoneNumberContactsView(req, res) {
     })
     res.json({ success: true, data })
   } catch (error) {
-    logger.error(`Error moviendo contactos de numero WhatsApp: ${error.message}`)
+    logger.error(`Error moviendo contactos de número WhatsApp: ${error.message}`)
     res.status(400).json({
       success: false,
-      error: error.message || 'No se pudieron mover los contactos a otro numero'
+      error: error.message || 'No se pudieron mover los contactos a otro número'
     })
   }
 }
@@ -158,10 +158,10 @@ export async function restoreWhatsAppPhoneNumberContactsView(req, res) {
     })
     res.json({ success: true, data })
   } catch (error) {
-    logger.error(`Error restaurando contactos de numero WhatsApp: ${error.message}`)
+    logger.error(`Error restaurando contactos de número WhatsApp: ${error.message}`)
     res.status(400).json({
       success: false,
-      error: error.message || 'No se pudieron regresar los contactos a su numero original'
+      error: error.message || 'No se pudieron regresar los contactos a su número original'
     })
   }
 }

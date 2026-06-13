@@ -81,7 +81,7 @@ export async function submitMessageTemplateToYCloudView(req, res) {
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando plantilla a YCloud: ${error.message}`)
-    sendError(res, error, 'No se pudo enviar la plantilla a revision')
+    sendError(res, error, 'No se pudo enviar la plantilla a revisión')
   }
 }
 

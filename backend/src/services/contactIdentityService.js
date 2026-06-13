@@ -285,7 +285,7 @@ export async function mergeContactIds({ fromId, toId, canonicalPhone = null }) {
 
   await db.run('DELETE FROM contacts WHERE id = ?', [fromId])
   await syncContactPhoneColumns(toId, normalizedPhone)
-  logger.info(`Contactos fusionados por telefono: ${fromId} -> ${toId}`)
+  logger.info(`Contactos fusionados por teléfono: ${fromId} -> ${toId}`)
 
   return toId
 }

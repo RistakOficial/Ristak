@@ -14,12 +14,12 @@ test('normalizeTriggerLinkDestination acepta URLs absolutas, dominios y rutas in
   assert.equal(normalizeTriggerLinkDestination('https://example.com/demo.pdf'), 'https://example.com/demo.pdf')
   assert.equal(normalizeTriggerLinkDestination('example.com/demo'), 'https://example.com/demo')
   assert.equal(normalizeTriggerLinkDestination('/campaigns/demo'), '/campaigns/demo')
-  assert.throws(() => normalizeTriggerLinkDestination('//example.com/trampa'), /ruta interna valida/)
-  assert.throws(() => normalizeTriggerLinkDestination('javascript:alert(1)'), /no esta permitido/)
-  assert.throws(() => normalizeTriggerLinkDestination('solo texto'), /URL valida/)
+  assert.throws(() => normalizeTriggerLinkDestination('//example.com/trampa'), /ruta interna válida/)
+  assert.throws(() => normalizeTriggerLinkDestination('javascript:alert(1)'), /no está permitido/)
+  assert.throws(() => normalizeTriggerLinkDestination('solo texto'), /URL válida/)
 })
 
-test('createTriggerLink crea ID publico, URL publica y permite actualizar destino', async () => {
+test('createTriggerLink crea ID público, URL pública y permite actualizar destino', async () => {
   const created = await createTriggerLink(
     {
       name: `Enlace prueba ${Date.now()}`,

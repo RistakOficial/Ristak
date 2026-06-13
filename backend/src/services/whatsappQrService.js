@@ -4,7 +4,7 @@ import { db } from '../config/database.js'
 import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { logger } from '../utils/logger.js'
 
-const QR_CONSENT_TEXT = 'Acepto que esta conexion usa WhatsApp Web por QR y no la API oficial de Meta. Entiendo que puede desconectarse, fallar o poner en riesgo el numero. Ristak solo la usara para mensajes individuales cuando yo lo active.'
+const QR_CONSENT_TEXT = 'Acepto que esta conexión usa WhatsApp Web por QR y no la API oficial de Meta. Entiendo que puede desconectarse, fallar o poner en riesgo el número. Ristak solo la usará para mensajes individuales cuando yo lo active.'
 const CONNECT_TIMEOUT_MS = 20000
 const QR_SEND_ACK_TIMEOUT_MS = 10000
 const QR_RECENT_ACK_RETENTION_MS = 90000
@@ -135,7 +135,7 @@ function parseMediaDataUrl(dataUrl = '') {
 
   const match = text.match(/^data:([^;,]+)?(?:;[^,]*)?;base64,(.+)$/i)
   if (!match) {
-    throw new Error('El archivo no tiene un formato valido para enviar por QR')
+    throw new Error('El archivo no tiene un formato válido para enviar por QR')
   }
 
   return {
@@ -256,16 +256,16 @@ function getJidPhoneDigits(jid = '') {
 
 async function resolveRecipientJid(sock, toPhone) {
   const candidates = buildOutboundPhoneCandidates(toPhone)
-  if (!candidates.length) throw new Error('Falta el numero destino')
+  if (!candidates.length) throw new Error('Falta el número destino')
   if (!sock?.onWhatsApp) {
-    throw new Error('La conexion QR no puede verificar si el numero destino existe en WhatsApp')
+    throw new Error('La conexión QR no puede verificar si el número destino existe en WhatsApp')
   }
 
   let results = []
   try {
     results = await sock.onWhatsApp(...candidates)
   } catch (error) {
-    throw new Error(`No se pudo verificar el numero destino en WhatsApp: ${error.message}`)
+    throw new Error(`No se pudo verificar el número destino en WhatsApp: ${error.message}`)
   }
 
   const existingResults = Array.isArray(results)
@@ -292,7 +292,7 @@ async function resolveRecipientJid(sock, toPhone) {
     }
   }
 
-  throw new Error('Ese numero no aparece como usuario activo de WhatsApp para enviar por QR')
+  throw new Error('Ese número no aparece como usuario activo de WhatsApp para enviar por QR')
 }
 
 function assertQrSendAccepted(response, recipientJid) {
@@ -300,11 +300,11 @@ function assertQrSendAccepted(response, recipientJid) {
   const remoteJid = normalizeJid(response?.key?.remoteJid)
 
   if (!messageId || !remoteJid) {
-    throw new Error('WhatsApp QR no confirmo el envio al servidor. Intenta otra vez.')
+    throw new Error('WhatsApp QR no confirmó el envío al servidor. Intenta otra vez.')
   }
 
   if (recipientJid && remoteJid && remoteJid !== normalizeJid(recipientJid)) {
-    throw new Error('WhatsApp QR respondio con un destinatario distinto al verificado')
+    throw new Error('WhatsApp QR respondió con un destinatario distinto al verificado')
   }
 
   return {
@@ -765,7 +765,7 @@ async function loadBaileys() {
     const makeWASocket = baileys.default || baileys.makeWASocket
 
     if (!makeWASocket || !baileys.initAuthCreds || !baileys.makeCacheableSignalKeyStore) {
-      throw new Error('El paquete de QR no trae los metodos esperados')
+      throw new Error('El paquete de QR no trae los métodos esperados')
     }
 
     baileysRuntime = {
@@ -779,7 +779,7 @@ async function loadBaileys() {
     }
     return baileysRuntime
   } catch (error) {
-    throw new Error(`La conexion por QR no esta instalada correctamente: ${error.message}`)
+    throw new Error(`La conexión por QR no está instalada correctamente: ${error.message}`)
   }
 }
 
@@ -794,7 +794,7 @@ async function loadQrCode() {
 
 async function getPhoneRow(phoneNumberId) {
   const id = cleanString(phoneNumberId)
-  if (!id) throw new Error('Elige el numero que quieres conectar por QR')
+  if (!id) throw new Error('Elige el número que quieres conectar por QR')
 
   const row = await db.get(`
     SELECT *
@@ -803,14 +803,14 @@ async function getPhoneRow(phoneNumberId) {
   `, [id])
 
   if (!row) {
-    throw new Error('No encontramos ese numero en la conexion oficial de WhatsApp')
+    throw new Error('No encontramos ese número en la conexión oficial de WhatsApp')
   }
 
   const expectedPhone = normalizePhoneForStorage(row.phone_number || row.display_phone_number) ||
     cleanString(row.phone_number || row.display_phone_number)
 
   if (!expectedPhone) {
-    throw new Error('Ese numero no tiene telefono guardado para validar el QR')
+    throw new Error('Ese número no tiene teléfono guardado para validar el QR')
   }
 
   return {
@@ -823,7 +823,7 @@ async function resolveQrPhone({ phoneNumberId, from } = {}) {
   if (phoneNumberId) return getPhoneRow(phoneNumberId)
 
   const normalizedFrom = normalizePhoneForStorage(from) || cleanString(from)
-  if (!normalizedFrom) throw new Error('Elige el numero que enviara por QR')
+  if (!normalizedFrom) throw new Error('Elige el número que enviara por QR')
 
   const rows = await db.all(`
     SELECT *
@@ -833,7 +833,7 @@ async function resolveQrPhone({ phoneNumberId, from } = {}) {
 
   const row = rows.find(item => phoneMatches(item.phone_number || item.display_phone_number, normalizedFrom))
   if (!row) {
-    throw new Error('Ese numero no tiene QR conectado para enviar mensajes')
+    throw new Error('Ese número no tiene QR conectado para enviar mensajes')
   }
 
   return getPhoneRow(row.id)
@@ -977,7 +977,7 @@ async function getConnectedQrPhoneRowsForContact(contact = {}) {
   const fullRows = []
   for (const row of sortedRows) {
     const phone = await getPhoneRow(row.id).catch(error => {
-      logger.warn(`[WhatsApp QR] No se pudo preparar numero QR ${row.id} para foto de perfil: ${error.message}`)
+      logger.warn(`[WhatsApp QR] No se pudo preparar número QR ${row.id} para foto de perfil: ${error.message}`)
       return null
     })
     if (phone) fullRows.push(phone)
@@ -1002,7 +1002,7 @@ async function fetchQrProfilePictureForContact(contact = {}, { force = false, ty
       if (await markMissingAuthStateIfNeeded(phone)) continue
       const sock = await ensureOpenSocket(phone)
       if (typeof sock?.profilePictureUrl !== 'function') {
-        throw new Error('Baileys no trae lectura de foto de perfil en esta version')
+        throw new Error('Baileys no trae lectura de foto de perfil en esta versión')
       }
 
       const recipient = await resolveRecipientJid(sock, toPhone)
@@ -1223,7 +1223,7 @@ async function markMissingAuthStateIfNeeded(phone) {
     connectedPhone: null,
     qrCode: null,
     qrCodeDataUrl: null,
-    lastError: 'La conexion QR anterior no tiene credenciales guardadas. Genera un QR nuevo para estabilizarla.',
+    lastError: 'La conexión QR anterior no tiene credenciales guardadas. Genera un QR nuevo para estabilizarla.',
     lastDisconnectedAt: nowIso()
   })
   return true
@@ -1270,7 +1270,7 @@ function closeLiveSession(phoneNumberId) {
 async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, openDeferred = null } = {}) {
   const existing = await getSessionRow(phone.id)
   if (requireConsent && Number(existing?.consent_accepted || 0) !== 1) {
-    throw new Error('Primero acepta el riesgo de usar conexion por QR para este numero')
+    throw new Error('Primero acepta el riesgo de usar conexión por QR para este número')
   }
 
   closeLiveSession(phone.id)
@@ -1361,9 +1361,9 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       const connectedPhone = getConnectedPhoneFromSocket(sock, state)
 
       if (!phoneMatches(connectedPhone, phone.expectedPhone)) {
-        const message = `El QR conecto ${connectedPhone || 'otro numero'}, pero esperabamos ${phone.expectedPhone}`
+        const message = `El QR conecto ${connectedPhone || 'otro número'}, pero esperabamos ${phone.expectedPhone}`
         await clearAuthState(phone.id).catch(error => {
-          logger.warn(`[WhatsApp QR] No se pudo limpiar auth con numero incorrecto ${phone.id}: ${error.message}`)
+          logger.warn(`[WhatsApp QR] No se pudo limpiar auth con número incorrecto ${phone.id}: ${error.message}`)
         })
         await upsertSession(phone, {
           status: 'number_mismatch',
@@ -1399,7 +1399,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       const liveStillCurrent = liveSessions.get(phone.id)?.sock === sock
 
       if (!liveStillCurrent) {
-        rejectCurrentOpen(new Error(lastError || 'La conexion por QR se reemplazo por otra sesion'))
+        rejectCurrentOpen(new Error(lastError || 'La conexión por QR se reemplazo por otra sesión'))
         return
       }
 
@@ -1414,8 +1414,8 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
 
         const finalStatus = loggedOut ? 'logged_out' : 'bad_session'
         const message = badSession
-          ? 'La sesion QR se dano. Genera un QR nuevo para conectarlo otra vez.'
-          : lastError || 'WhatsApp cerro la sesion. Genera un QR nuevo para conectarlo otra vez.'
+          ? 'La sesión QR se dano. Genera un QR nuevo para conectarlo otra vez.'
+          : lastError || 'WhatsApp cerro la sesión. Genera un QR nuevo para conectarlo otra vez.'
         await upsertSession(phone, {
           status: finalStatus,
           connectedPhone: null,
@@ -1430,11 +1430,11 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       }
 
       if (connectionReplaced) {
-        // Otra instancia abrio la misma sesion (tipico durante un deploy con dos
+        // Otra instancia abrio la misma sesión (tipico durante un deploy con dos
         // procesos vivos a la vez). Las credenciales SIGUEN siendo validas, asi
         // que NO se borran: el watchdog reconecta solo cuando la otra instancia
         // muera, sin pedir un QR nuevo.
-        const message = 'Otra sesion tomo el control de esta conexion. Se reconectara sola en unos minutos.'
+        const message = 'Otra sesión tomó el control de esta conexión. Se reconectará sola en unos minutos.'
         await upsertSession(phone, {
           status: 'connection_replaced',
           qrCode: null,
@@ -1449,7 +1449,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
 
       if (currentReconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
         const message = lastError ||
-          'WhatsApp no dejo estabilizar la conexion por QR. Genera un QR nuevo e intentalo otra vez.'
+          'WhatsApp no dejo estabilizar la conexión por QR. Genera un QR nuevo e intentalo otra vez.'
         await upsertSession(phone, {
           status,
           qrCode: null,
@@ -1522,7 +1522,7 @@ async function ensureOpenSocket(phone) {
 
   if (live?.openPromise) {
     const timeout = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('El QR se esta reconectando. Espera unos segundos e intenta mandar otra vez.')), CONNECT_TIMEOUT_MS)
+      setTimeout(() => reject(new Error('El QR se está reconectando. Espera unos segundos e intenta mandar otra vez.')), CONNECT_TIMEOUT_MS)
     })
 
     await Promise.race([live.openPromise, timeout])
@@ -1532,7 +1532,7 @@ async function ensureOpenSocket(phone) {
 
   const { sock, openPromise } = await openSocket(phone)
   const timeout = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('El QR no esta conectado. Abre Configuracion > WhatsApp y escanea el codigo.')), CONNECT_TIMEOUT_MS)
+    setTimeout(() => reject(new Error('El QR no está conectado. Abre Configuración > WhatsApp y escanea el código.')), CONNECT_TIMEOUT_MS)
   })
 
   await Promise.race([openPromise, timeout])
@@ -1628,7 +1628,7 @@ export async function startWhatsAppQrConnection({ phoneNumberId, acceptedRisk, a
   openSocket(phone, { requireConsent: true })
     .then(({ openPromise }) => {
       openPromise.catch(error => {
-        logger.warn(`[WhatsApp QR] Conexion pendiente/fallida ${phone.id}: ${error.message}`)
+        logger.warn(`[WhatsApp QR] Conexión pendiente/fallida ${phone.id}: ${error.message}`)
       })
     })
     .catch(error => {
@@ -1646,7 +1646,7 @@ export async function disconnectWhatsAppQrConnection({ phoneNumberId } = {}) {
     const live = liveSessions.get(phone.id)
     if (live?.sock?.logout) await live.sock.logout()
   } catch (error) {
-    logger.warn(`[WhatsApp QR] No se pudo cerrar sesion QR ${phone.id}: ${error.message}`)
+    logger.warn(`[WhatsApp QR] No se pudo cerrar sesión QR ${phone.id}: ${error.message}`)
   }
 
   closeLiveSession(phone.id)
@@ -1677,12 +1677,12 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
   const body = cleanString(text)
 
   if (await markMissingAuthStateIfNeeded(phone)) {
-    throw new Error('El QR necesita reconectarse. Abre Configuracion > WhatsApp y genera un QR nuevo.')
+    throw new Error('El QR necesita reconectarse. Abre Configuración > WhatsApp y genera un QR nuevo.')
   }
   if (Number(phone.qr_send_enabled || 0) !== 1) {
-    throw new Error('Ese numero no tiene el envio por QR activado')
+    throw new Error('Ese número no tiene el envío por QR activado')
   }
-  if (!toPhone) throw new Error('Falta el numero destino')
+  if (!toPhone) throw new Error('Falta el número destino')
   if (!body) throw new Error('Falta el texto del mensaje')
 
   const sock = await ensureOpenSocket(phone)
@@ -1711,12 +1711,12 @@ export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imag
   const cleanCaption = cleanString(caption).slice(0, 1024)
 
   if (await markMissingAuthStateIfNeeded(phone)) {
-    throw new Error('El QR necesita reconectarse. Abre Configuracion > WhatsApp y genera un QR nuevo.')
+    throw new Error('El QR necesita reconectarse. Abre Configuración > WhatsApp y genera un QR nuevo.')
   }
   if (Number(phone.qr_send_enabled || 0) !== 1) {
-    throw new Error('Ese numero no tiene el envio por QR activado')
+    throw new Error('Ese número no tiene el envío por QR activado')
   }
-  if (!toPhone) throw new Error('Falta el numero destino')
+  if (!toPhone) throw new Error('Falta el número destino')
 
   const media = buildQrMediaPayload({
     dataUrl: imageDataUrl,
@@ -1756,12 +1756,12 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
 
   if (await markMissingAuthStateIfNeeded(phone)) {
-    throw new Error('El QR necesita reconectarse. Abre Configuracion > WhatsApp y genera un QR nuevo.')
+    throw new Error('El QR necesita reconectarse. Abre Configuración > WhatsApp y genera un QR nuevo.')
   }
   if (Number(phone.qr_send_enabled || 0) !== 1) {
-    throw new Error('Ese numero no tiene el envio por QR activado')
+    throw new Error('Ese número no tiene el envío por QR activado')
   }
-  if (!toPhone) throw new Error('Falta el numero destino')
+  if (!toPhone) throw new Error('Falta el número destino')
 
   const media = buildQrMediaPayload({
     dataUrl: audioDataUrl,
@@ -1811,12 +1811,12 @@ export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, d
   const cleanFilename = cleanString(filename).slice(0, 180) || getFilenameFromUrl(documentUrl) || `documento-${Date.now()}.pdf`
 
   if (await markMissingAuthStateIfNeeded(phone)) {
-    throw new Error('El QR necesita reconectarse. Abre Configuracion > WhatsApp y genera un QR nuevo.')
+    throw new Error('El QR necesita reconectarse. Abre Configuración > WhatsApp y genera un QR nuevo.')
   }
   if (Number(phone.qr_send_enabled || 0) !== 1) {
-    throw new Error('Ese numero no tiene el envio por QR activado')
+    throw new Error('Ese número no tiene el envío por QR activado')
   }
-  if (!toPhone) throw new Error('Falta el numero destino')
+  if (!toPhone) throw new Error('Falta el número destino')
 
   const media = buildQrMediaPayload({
     dataUrl: documentDataUrl,
@@ -1860,11 +1860,11 @@ export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, d
   }
 }
 
-// Estados desde los que vale la pena reabrir una sesion con credenciales
+// Estados desde los que vale la pena reabrir una sesión con credenciales
 // guardadas. Los estados terminales (logged_out, bad_session, number_mismatch,
 // disconnected manual) requieren un QR nuevo y NO se tocan.
 const QR_RESUMABLE_STATUSES = new Set(['connected', 'reconnecting', 'restarting', 'connection_replaced'])
-// Tras un 440 (otra instancia tomo la sesion) se espera a que la otra
+// Tras un 440 (otra instancia tomo la sesión) se espera a que la otra
 // instancia muera de verdad antes de reconectar, para no entrar en una guerra
 // de reconexiones entre dos procesos (deploy viejo vs nuevo).
 const QR_REPLACED_COOLDOWN_MS = 10 * 60 * 1000
@@ -1872,7 +1872,7 @@ const QR_REPLACED_COOLDOWN_MS = 10 * 60 * 1000
 /**
  * Reabre las sesiones de WhatsApp Web que tienen credenciales guardadas y se
  * quedaron sin socket vivo. Se llama al arrancar el servidor (los reinicios y
- * deploys matan los sockets y nadie los volvia a abrir: la sesion quedaba
+ * deploys matan los sockets y nadie los volvia a abrir: la sesión quedaba
  * "muerta" hasta que alguien intentaba enviar, y tras semanas sin conectarse
  * WhatsApp desvincula el dispositivo) y periodicamente como watchdog para
  * revivir sesiones que agotaron sus reintentos de reconexion.
@@ -1906,7 +1906,7 @@ export async function resumeWhatsAppQrSessions({ source = 'watchdog' } = {}) {
 
     try {
       const phone = await getPhoneRow(phoneNumberId)
-      logger.info(`[WhatsApp QR] (${source}) Reabriendo sesion ${phoneNumberId} (estado previo: ${status})`)
+      logger.info(`[WhatsApp QR] (${source}) Reabriendo sesión ${phoneNumberId} (estado previo: ${status})`)
       const { openPromise } = await openSocket(phone, { requireConsent: false })
       openPromise.catch(error => {
         logger.warn(`[WhatsApp QR] (${source}) Reapertura pendiente/fallida ${phoneNumberId}: ${error.message}`)

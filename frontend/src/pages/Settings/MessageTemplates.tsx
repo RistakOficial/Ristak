@@ -681,7 +681,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       const result = await messageTemplatesService.syncTemplate(selectedTemplateId)
       setDraft(templateToDraft(result.template))
       await loadBundle()
-      showToast('success', 'Estado sincronizado', result.message || 'WhatsApp API respondio correctamente')
+      showToast('success', 'Estado sincronizado', result.message || 'WhatsApp API respondió correctamente')
     } catch (error) {
       await loadBundle()
       showToast('error', 'No se pudo sincronizar', getErrorMessage(error, 'WhatsApp API no regreso estado'))
@@ -697,7 +697,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       setBundle(data)
       showToast('success', 'Plantillas sincronizadas', 'Estados actualizados desde WhatsApp API')
     } catch (error) {
-      showToast('error', 'No se pudo sincronizar', getErrorMessage(error, 'Revisa la conexion con WhatsApp API'))
+      showToast('error', 'No se pudo sincronizar', getErrorMessage(error, 'Revisa la conexión con WhatsApp API'))
     } finally {
       setSyncing(false)
     }
@@ -745,7 +745,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       await moveTemplatesToFolder(selectedTemplates, targetFolderId)
       clearSelection()
       await loadBundle()
-      showToast('success', 'Movido', 'La seleccion quedo en su nueva carpeta')
+      showToast('success', 'Movido', 'La selección quedo en su nueva carpeta')
     } catch (error) {
       showToast('error', 'No se pudo mover', getErrorMessage(error, 'Intenta con otra carpeta'))
     } finally {
@@ -764,10 +764,10 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         await messageTemplatesService.syncTemplate(template.id)
       }
       await loadBundle()
-      showToast('success', 'Plantillas sincronizadas', 'Se actualizo el estado de la seleccion')
+      showToast('success', 'Plantillas sincronizadas', 'Se actualizo el estado de la selección')
     } catch (error) {
       await loadBundle()
-      showToast('error', 'No se pudo sincronizar', getErrorMessage(error, 'Revisa la conexion con WhatsApp API'))
+      showToast('error', 'No se pudo sincronizar', getErrorMessage(error, 'Revisa la conexión con WhatsApp API'))
     } finally {
       setBulkWorking(false)
     }
@@ -777,8 +777,8 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     if (!selectedTotal || bulkWorking) return
 
     showConfirm(
-      'Eliminar seleccion',
-      `Se eliminaran ${selectedTotal} plantilla${selectedTotal === 1 ? '' : 's'}.`,
+      'Eliminar selección',
+      `Se eliminarán ${selectedTotal} plantilla${selectedTotal === 1 ? '' : 's'}.`,
       async () => {
         setBulkWorking(true)
         try {
@@ -787,7 +787,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           }
           clearSelection()
           await loadBundle()
-          showToast('success', 'Seleccion eliminada', 'Listo, ya no aparece en plantillas')
+          showToast('success', 'Selección eliminada', 'Listo, ya no aparece en plantillas')
         } catch (error) {
           showToast('error', 'No se pudo eliminar', getErrorMessage(error, 'Intenta nuevamente'))
         } finally {
@@ -867,10 +867,10 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     setSendingTest(true)
     try {
       const result = await messageTemplatesService.sendTest(selectedTemplateId, { to: testPhone.trim() })
-      showToast('success', 'Prueba enviada', result.message || 'WhatsApp Business acepto el envio')
+      showToast('success', 'Prueba enviada', result.message || 'WhatsApp Business aceptó el envío')
     } catch (error) {
       await loadBundle()
-      showToast('error', 'No se pudo enviar', getErrorMessage(error, 'Meta o WhatsApp API rechazo el envio'))
+      showToast('error', 'No se pudo enviar', getErrorMessage(error, 'Meta o WhatsApp API rechazó el envío'))
     } finally {
       setSendingTest(false)
     }
@@ -1136,7 +1136,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     const emptyTitle = hasTemplateFilters || searchTerm.trim()
       ? 'Sin resultados'
       : activeFolderId === 'all'
-        ? 'Todavia no hay plantillas'
+        ? 'Todavía no hay plantillas'
         : 'No hay plantillas en esta carpeta'
 
     return (
@@ -1281,13 +1281,13 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
               <span>{activeFolderName}</span>
             </div>
             <label className={styles.filterControl}>
-              <span>Numero</span>
+              <span>Número</span>
               <CustomSelect
                 value={templatePhoneFilter}
                 onChange={(event) => setTemplatePhoneFilter(event.target.value)}
                 disabled={!whatsappPhones.length}
               >
-                <option value="all">{whatsappPhones.length ? 'Todos los numeros' : 'Sin numeros conectados'}</option>
+                <option value="all">{whatsappPhones.length ? 'Todos los números' : 'Sin números conectados'}</option>
                 {whatsappPhones.map((phone) => (
                   <option key={phone.id} value={phone.id}>{getPhoneFilterLabel(phone)}</option>
                 ))}
@@ -1447,7 +1447,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
             <div className={styles.emptyState}>
               <ListTree size={28} />
               <strong>{emptyTitle}</strong>
-              <span>{hasTemplateFilters ? 'Prueba con otro numero, tipo o estado.' : 'Crea una plantilla nueva o cambia de carpeta.'}</span>
+              <span>{hasTemplateFilters ? 'Prueba con otro número, tipo o estado.' : 'Crea una plantilla nueva o cambia de carpeta.'}</span>
             </div>
           )}
         </main>

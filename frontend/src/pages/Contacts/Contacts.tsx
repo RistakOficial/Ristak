@@ -109,7 +109,7 @@ const ContactPhoneField: React.FC<{ defaultValue?: string; autoFocus?: boolean }
       <CustomSelect
         value={country.value}
         onChange={(event) => setCountryCode(event.target.value)}
-        aria-label="Pais y lada"
+        aria-label="País y lada"
       >
         {COUNTRY_OPTIONS.map(option => (
           <option key={option.value} value={option.value}>
@@ -121,7 +121,7 @@ const ContactPhoneField: React.FC<{ defaultValue?: string; autoFocus?: boolean }
         type="tel"
         inputMode="tel"
         autoFocus={autoFocus}
-        placeholder="Numero"
+        placeholder="Número"
         value={phoneNumber}
         onChange={(event) => setPhoneNumber(event.target.value)}
       />

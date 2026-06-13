@@ -1733,7 +1733,7 @@ export const handleAutomationIncomingWebhook = async (req, res) => {
     import('../services/automationEngine.js')
       .then(engine => engine.handleAutomationEvent('webhook-received', {
         endpointId: req.params.endpointId,
-        phone: body.phone || body.telefono || '',
+        phone: body.phone || body.telefono || body.teléfono || '',
         email: body.email || body.correo || '',
         contactName: body.name || body.nombre || '',
         payload: body

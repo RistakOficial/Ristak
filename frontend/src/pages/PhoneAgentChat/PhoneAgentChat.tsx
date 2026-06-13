@@ -35,7 +35,7 @@ export const PhoneAgentChat: React.FC = () => {
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
 
   useEffect(() => {
-    document.title = 'Agente AI movil y tablet | Ristak'
+    document.title = 'Agente AI móvil y tablet | Ristak'
 
     const updateAccess = () => setAccessState(getAccessState())
     const portableMedia = window.matchMedia(PORTABLE_WIDTH_QUERY)
@@ -163,7 +163,7 @@ export const PhoneAgentChat: React.FC = () => {
   }
 
   return (
-    <main className={styles.mobilePage} aria-label="Chat movil y tablet del agente AI">
+    <main className={styles.mobilePage} aria-label="Chat móvil y tablet del agente AI">
       <section className={styles.agentPanelHost}>
         <AIAgentPanel variant="embedded" />
       </section>

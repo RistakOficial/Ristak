@@ -65,7 +65,7 @@ export const Domains: React.FC = () => {
         setSavedDomain(result.domain)
         showToast('success', 'Dominio verificado y guardado', 'El dominio ya responde con esta app.')
       } else {
-        showToast('warning', 'Dominio pendiente', result.verification?.error || result.renderDomainError || 'El dominio todavia no responde con esta app')
+        showToast('warning', 'Dominio pendiente', result.verification?.error || result.renderDomainError || 'El dominio todavía no responde con esta app')
       }
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo verificar el dominio')
@@ -125,8 +125,8 @@ export const Domains: React.FC = () => {
       <article className={styles.domainCard}>
         <div className={styles.domainMeta}>
           <div>
-            <h3>Dominio publico</h3>
-            <p>Se guarda cuando el dominio responde al health publico de esta app.</p>
+            <h3>Dominio público</h3>
+            <p>Se guarda cuando el dominio responde al health público de esta app.</p>
           </div>
           <span className={`${styles.statusPill} ${status.className}`}>{status.label}</span>
         </div>

@@ -23,7 +23,7 @@ const META_AD_ACCOUNT_STATUS_LABELS = {
   1: 'Activa',
   2: 'Desactivada',
   3: 'Pendiente de pago',
-  7: 'En revision de riesgo',
+  7: 'En revisión de riesgo',
   8: 'Pago pendiente',
   9: 'En periodo de gracia',
   100: 'Cierre pendiente',
@@ -43,7 +43,7 @@ const META_STATUS_LABELS = {
   WITH_ISSUES: 'con problemas',
   DISAPPROVED: 'rechazado',
   PENDING_BILLING_INFO: 'falta revisar pago',
-  PENDING_REVIEW: 'en revision',
+  PENDING_REVIEW: 'en revisión',
   PAUSED: 'pausado',
   CAMPAIGN_PAUSED: 'campana pausada',
   ADSET_PAUSED: 'conjunto pausado',
@@ -56,7 +56,7 @@ const META_STATUS_LABELS = {
   RESTRICTED: 'restringido',
   VERIFIED: 'verificado',
   NOT_VERIFIED: 'sin verificar',
-  IN_REVIEW: 'en revision',
+  IN_REVIEW: 'en revisión',
   PENDING: 'pendiente'
 }
 
@@ -138,7 +138,7 @@ async function metaGraphGet(path, params = {}, accessToken = '') {
   const data = await response.json().catch(() => null)
 
   if (!response.ok || data?.error) {
-    const metaError = new Error(sanitizeExternalMessage(data?.error?.message || `Meta respondio ${response.status}`))
+    const metaError = new Error(sanitizeExternalMessage(data?.error?.message || `Meta respondió ${response.status}`))
     metaError.code = data?.error?.code
     metaError.subcode = data?.error?.error_subcode
     metaError.type = data?.error?.type
@@ -161,7 +161,7 @@ async function metaGraphGetWithFieldFallback(path, fieldSets = [], params = {}, 
     }
   }
 
-  throw lastError || new Error('Meta no respondio')
+  throw lastError || new Error('Meta no respondió')
 }
 
 function isMetaTokenError(error) {
@@ -252,7 +252,7 @@ function createMetaApiNotification(error, id = 'meta:api-error', title = 'No se 
     source: 'Meta Ads',
     severity: isMetaTokenError(error) ? 'critical' : 'warning',
     title: isMetaTokenError(error) ? 'Meta necesita reconexion' : title,
-    message: sanitizeExternalMessage(error?.message || 'Meta no respondio.'),
+      message: sanitizeExternalMessage(error?.message || 'Meta no respondió.'),
     updatedAt: new Date().toISOString(),
     actionUrl: '/settings/meta-ads',
     actionLabel: 'Revisar Meta'
@@ -357,8 +357,8 @@ function getTokenExpiryNotification(row) {
     severity: days <= 0 ? 'critical' : 'warning',
     title: days <= 0 ? 'Token de Meta expirado' : 'Token de Meta por expirar',
     message: days <= 0
-      ? 'El token de Meta ya expiro. La sincronizacion de anuncios y eventos puede fallar.'
-      : `El token de Meta expira en ${days} dia${days === 1 ? '' : 's'}. Renovalo antes de que se corte la sincronizacion.`,
+      ? 'El token de Meta ya expiro. La sincronización de anuncios y eventos puede fallar.'
+      : `El token de Meta expira en ${days} día${days === 1 ? '' : 's'}. Renuévalo antes de que se corte la sincronización.`,
     updatedAt: row.updated_at || row.token_expires_at,
     actionUrl: '/settings/meta-ads',
     actionLabel: 'Revisar Meta'
@@ -422,8 +422,8 @@ function createMetaAccountHealthNotifications(account, accountId) {
       id: `meta:ad-account-status:${account.account_id || accountId}`,
       source: 'Meta Ads',
       severity,
-      title: severity === 'critical' ? 'Cuenta publicitaria detenida' : 'Cuenta publicitaria requiere revision',
-      message: `${accountName} esta en estado "${formatMetaAccountStatus(rawStatus)}"${disableReason > 0 ? ` y Meta reporta razon ${disableReason}` : ''}. Revisa la cuenta antes de seguir invirtiendo.`,
+      title: severity === 'critical' ? 'Cuenta publicitaria detenida' : 'Cuenta publicitaria requiere revisión',
+      message: `${accountName} está en estado "${formatMetaAccountStatus(rawStatus)}"${disableReason > 0 ? ` y Meta reporta razón ${disableReason}` : ''}. Revisa la cuenta antes de seguir invirtiendo.`,
       updatedAt: new Date().toISOString(),
       actionUrl: '/settings/meta-ads',
       actionLabel: 'Revisar Meta'
@@ -452,7 +452,7 @@ function createMetaAccountHealthNotifications(account, accountId) {
       id: `meta:ad-account-spend-cap:${account.account_id || accountId}`,
       source: 'Meta Ads',
       severity: percent >= 100 ? 'critical' : 'warning',
-      title: percent >= 100 ? 'Limite de gasto de Meta alcanzado' : 'Limite de gasto de Meta casi lleno',
+      title: percent >= 100 ? 'Límite de gasto de Meta alcanzado' : 'Límite de gasto de Meta casi lleno',
       message: `${accountName} lleva ${formatMinorCurrency(amountSpent, account.currency)} de ${formatMinorCurrency(spendCap, account.currency)} (${percent.toFixed(0)}%).`,
       updatedAt: new Date().toISOString(),
       actionUrl: '/settings/meta-ads',
@@ -480,8 +480,8 @@ function createMetaAccountHealthNotifications(account, accountId) {
       id: `meta:ad-account-funding:${account.account_id || accountId}`,
       source: 'Meta Ads',
       severity: 'warning',
-      title: 'Meta no muestra metodo de pago activo',
-      message: `${accountName} no devolvio un metodo de pago activo. Si tus anuncios no gastan, revisa facturacion en Meta.`,
+      title: 'Meta no muestra método de pago activo',
+      message: `${accountName} no devolvio un método de pago activo. Si tus anuncios no gastan, revisa facturacion en Meta.`,
       updatedAt: new Date().toISOString(),
       actionUrl: '/settings/meta-ads',
       actionLabel: 'Revisar Meta'
@@ -497,7 +497,7 @@ function createMetaAccountHealthNotifications(account, accountId) {
         source: 'Meta Ads',
         severity: days <= 0 ? 'critical' : 'warning',
         title: days <= 0 ? 'Acceso de Meta expirado' : 'Acceso de Meta por expirar',
-        message: days <= 0 ? 'Meta reporta que el acceso de usuario ya expiro.' : `Meta reporta que el acceso expira en ${days} dia${days === 1 ? '' : 's'}.`,
+        message: days <= 0 ? 'Meta reporta que el acceso de usuario ya expiró.' : `Meta reporta que el acceso expira en ${days} día${days === 1 ? '' : 's'}.`,
         updatedAt: new Date().toISOString(),
         actionUrl: '/settings/meta-ads',
         actionLabel: 'Revisar Meta'
@@ -572,8 +572,8 @@ async function getMetaBusinessPortfolioNotifications(account, metaConfig) {
         id: `meta:business-verification:${businessId}`,
         source: 'Meta Business',
         severity: verificationSeverity,
-        title: verificationSeverity === 'critical' ? 'Portafolio comercial detenido' : 'Portafolio comercial requiere revision',
-        message: `${businessName} reporta verificacion "${formatMetaStatus(business.verification_status)}". Esto puede afectar anuncios, WhatsApp o permisos del negocio.`,
+        title: verificationSeverity === 'critical' ? 'Portafolio comercial detenido' : 'Portafolio comercial requiere revisión',
+        message: `${businessName} reporta verificación "${formatMetaStatus(business.verification_status)}". Esto puede afectar anuncios, WhatsApp o permisos del negocio.`,
         updatedAt: new Date().toISOString(),
         actionUrl: '/settings/meta-ads',
         actionLabel: 'Revisar Meta'
@@ -610,8 +610,8 @@ async function getMetaBusinessPortfolioNotifications(account, metaConfig) {
           id: `meta:business-ad-account:${adAccountId}`,
           source: 'Meta Business',
           severity,
-          title: 'Cuenta publicitaria del portafolio requiere revision',
-          message: `${row.name || `act_${adAccountId}`} esta en "${formatMetaAccountStatus(row.account_status)}"${disableReason > 0 ? ` con razon ${disableReason}` : ''}.`,
+          title: 'Cuenta publicitaria del portafolio requiere revisión',
+          message: `${row.name || `act_${adAccountId}`} está en "${formatMetaAccountStatus(row.account_status)}"${disableReason > 0 ? ` con razón ${disableReason}` : ''}.`,
           updatedAt: new Date().toISOString(),
           actionUrl: '/settings/meta-ads',
           actionLabel: 'Revisar Meta'
@@ -644,8 +644,8 @@ async function getMetaBusinessPortfolioNotifications(account, metaConfig) {
         id: `meta:waba:${waba.id}`,
         source: 'WhatsApp Business',
         severity,
-        title: severity === 'critical' ? 'Cuenta de WhatsApp en Meta detenida' : 'Cuenta de WhatsApp en Meta requiere revision',
-        message: `${waba.name || waba.id} reporta revision "${reviewStatus || 'sin dato'}" y verificacion "${verificationStatus || 'sin dato'}".`,
+        title: severity === 'critical' ? 'Cuenta de WhatsApp en Meta detenida' : 'Cuenta de WhatsApp en Meta requiere revisión',
+        message: `${waba.name || waba.id} reporta revisión "${reviewStatus || 'sin dato'}" y verificación "${verificationStatus || 'sin dato'}".`,
         updatedAt: new Date().toISOString(),
         actionUrl: '/settings/whatsapp',
         actionLabel: 'Ver WhatsApp'
@@ -688,7 +688,7 @@ function createMetaEntitySummaryNotification(typeConfig, rows) {
     id: `meta:${typeConfig.id}:issues`,
     source: 'Meta Ads',
     severity,
-    title: `${rows.length} ${rows.length === 1 ? typeConfig.singleLabel : typeConfig.pluralLabel} ${rows.length === 1 ? 'requiere' : 'requieren'} revision`,
+    title: `${rows.length} ${rows.length === 1 ? typeConfig.singleLabel : typeConfig.pluralLabel} ${rows.length === 1 ? 'requiere' : 'requieren'} revisión`,
     message: limitText(preview, 620),
     updatedAt: rows[0]?.updated_time || new Date().toISOString(),
     actionUrl: '/campaigns',
@@ -838,7 +838,7 @@ async function getMetaNotifications({ liveMetaCheck = true } = {}) {
       source: 'Meta Ads',
       severity: /token|invalid|expir/i.test(syncProgress.message || '') ? 'critical' : 'warning',
       title: syncProgress.step || 'Error sincronizando Meta',
-      message: syncProgress.message || 'La ultima sincronizacion de Meta Ads fallo.',
+      message: syncProgress.message || 'La ultima sincronización de Meta Ads fallo.',
       updatedAt: new Date().toISOString(),
       actionUrl: '/settings/meta-ads',
       actionLabel: 'Revisar Meta'
@@ -979,7 +979,7 @@ async function getStorageNotifications() {
       source: 'Sistema',
       severity: storage.percentUsed >= 95 ? 'critical' : 'warning',
       title: 'Storage de base de datos alto',
-      message: `La base esta usando ${storage.percentUsed.toFixed(1)}% (${storage.sizePretty}) de ${storage.limitGB} GB disponibles.`,
+      message: `La base está usando ${storage.percentUsed.toFixed(1)}% (${storage.sizePretty}) de ${storage.limitGB} GB disponibles.`,
       updatedAt: new Date().toISOString(),
       actionUrl: '/settings/account',
       actionLabel: 'Ver cuenta'
@@ -1000,7 +1000,7 @@ async function getDomainNotifications() {
         id: `domain:global:${config.domain}`,
         source: 'Dominios',
         severity: 'warning',
-        title: 'Dominio publico sin conectar',
+        title: 'Dominio público sin conectar',
         message: `${config.domain}: ${config.renderDomainError}`,
         updatedAt: config.renderDomainCheckedAt,
         actionUrl: '/settings/domains',
@@ -1049,7 +1049,7 @@ async function getAiNotifications() {
       source: 'Agente AI',
       severity: 'info',
       title: 'Agente AI sin llave activa',
-      message: 'No hay llave de OpenAI guardada para el agente. Si lo usas, revisa la configuracion.',
+      message: 'No hay llave de OpenAI guardada para el agente. Si lo usas, revisa la configuración.',
       updatedAt: row.updated_at,
       actionUrl: '/settings/ai-agent',
       actionLabel: 'Ver agente'

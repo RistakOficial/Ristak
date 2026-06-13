@@ -257,26 +257,26 @@ function shouldUseAiForText(text, settings, random) {
 
 function buildSplitterInstructions(settings) {
   return [
-    'Eres un procesador de mensajes para WhatsApp. Tu unica tarea es dividir una respuesta ya generada por otro agente en varios mensajes naturales.',
+    'Eres un procesador de mensajes para WhatsApp. Tu única tarea es dividir una respuesta ya generada por otro agente en varios mensajes naturales.',
     '',
     'Reglas no negociables:',
     '- No cambies el significado del texto original.',
-    '- No inventes informacion.',
-    '- No elimines instrucciones, datos, precios, horarios, fechas, URLs, telefonos, correos, codigos ni nombres propios.',
-    '- No agregues saludos ni despedidas si no venian en el texto original.',
+    '- No inventes información.',
+    '- No elimines instrucciones, datos, precios, horarios, fechas, URLs, teléfonos, correos, códigos ni nombres propios.',
+    '- No agregues saludos ni despedidas si no venían en el texto original.',
     '- No uses etiquetas visibles como "globo 1", "mensaje 2" o "parte 3".',
     '- Cada mensaje debe sonar natural por si solo, sin cortar frases de forma rara.',
-    '- Si hay una pregunta importante al final, dejala preferentemente como ultimo mensaje.',
-    '- Si el texto es tecnico o formal, conserva ese tono. Si es casual, conserva el tono casual.',
-    '- Si hay bullets, pasos o instrucciones, conserva el orden logico.',
+    '- Si hay una pregunta importante al final, déjala preferentemente como último mensaje.',
+    '- Si el texto es técnico o formal, conserva ese tono. Si es casual, conserva el tono casual.',
+    '- Si hay bullets, pasos o instrucciones, conserva el orden lógico.',
     '- No devuelvas markdown, explicaciones ni texto fuera del JSON.',
     '',
-    `Parametros: minimo para dividir ${settings.minMessageLengthToSplit} caracteres; maximo ${settings.maxBubbles} mensajes; longitud sugerida por mensaje ${settings.minBubbleLength}-${settings.maxBubbleLength} caracteres.`,
+    `Parámetros: mínimo para dividir ${settings.minMessageLengthToSplit} caracteres; máximo ${settings.maxBubbles} mensajes; longitud sugerida por mensaje ${settings.minBubbleLength}-${settings.maxBubbleLength} caracteres.`,
     settings.randomizeSplitting
-      ? 'Puedes variar naturalmente si conviene devolver 1, 2, 3, 4 o mas mensajes, siempre dentro del maximo.'
-      : 'Usa una division conservadora y consistente.',
+      ? 'Puedes variar naturalmente si conviene devolver 1, 2, 3, 4 o más mensajes, siempre dentro del máximo.'
+      : 'Usa una división conservadora y consistente.',
     '',
-    'Devuelve unicamente JSON valido con esta estructura:',
+    'Devuelve únicamente JSON válido con esta estructura:',
     '{"messages":["primer mensaje","segundo mensaje"]}'
   ].join('\n')
 }
@@ -372,7 +372,7 @@ export async function splitMessageIntoBubbles({
       reason: repaired.reason
     }
   } catch (error) {
-    log.warn(`[Agente conversacional] Divisor de mensajes fallo; se enviara respuesta original: ${error.message}`)
+    log.warn(`[Agente conversacional] Divisor de mensajes falló; se enviará respuesta original: ${error.message}`)
     return fallbackResult(clean, error.message || 'splitter_error')
   }
 }

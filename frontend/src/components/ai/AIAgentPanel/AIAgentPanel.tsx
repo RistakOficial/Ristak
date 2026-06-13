@@ -115,10 +115,10 @@ function getSitesAIIntro(siteKind: AIAgentSitesCreationKind, siteTitle = '') {
       `Vamos a editar con IA el HTML de "${siteTitle}".`,
       '',
       'Pídeme el cambio como lo dirías a un diseñador:',
-      '- Cambiar titulo, textos o CTA.',
-      '- Cambiar imagenes por otras de internet o por una URL especifica.',
+      '- Cambiar título, textos o CTA.',
+      '- Cambiar imágenes por otras de internet o por una URL especifica.',
       '- Reordenar secciones.',
-      '- Hacerlo mas premium, mas limpio o mas directo.',
+      '- Hacerlo más premium, más limpio o más directo.',
       '- Agregar, quitar o ajustar campos del formulario.',
       '',
       'Cuando lo actualice, Ristak volvera a revisar los formularios para que puedas confirmar donde se guarda cada dato.'
@@ -126,25 +126,25 @@ function getSitesAIIntro(siteKind: AIAgentSitesCreationKind, siteTitle = '') {
   }
 
   const pageLabel = siteKind === 'landing'
-    ? 'pagina embudo'
+    ? 'página embudo'
     : siteKind === 'interactive_form'
       ? 'formulario interactivo'
       : 'formulario'
   return [
     `Vamos a crear un ${pageLabel} completo desde cero en HTML con IA.`,
     '',
-    'La IA generara el HTML/CSS completo y Ristak lo importara como codigo propio para revisar formularios, campos y publicacion.',
+    'La IA generara el HTML/CSS completo y Ristak lo importara como código propio para revisar formularios, campos y publicación.',
     '',
     'Cuéntame esto en un solo mensaje si puedes:',
     '- Nicho o tipo de negocio.',
     '- Servicio, producto u oferta principal.',
-    '- Objetivo de la pagina.',
+    '- Objetivo de la página.',
     '- Cliente o prospecto ideal.',
     '- Estilo visual deseado.',
     '- Si quieres formulario y que campos debe pedir.',
     '- CTA principal.',
     '- Si quieres fotos de internet o alguna imagen por URL.',
-    '- Si prefieres una pagina corta o una pagina mas completa.'
+    '- Si prefieres una página corta o una página más completa.'
   ].join('\n')
 }
 
@@ -328,9 +328,9 @@ function removeDanglingOptionsHeading(lines: string[]) {
     'opciones',
     'opciones disponibles',
     'estas opciones',
-    'elige una opcion',
+    'elige una opción',
     'elige una',
-    'selecciona una opcion',
+    'selecciona una opción',
     'selecciona una'
   ])
 
@@ -462,7 +462,7 @@ function normalizeThinkingSource(value: string) {
 }
 
 function addRelevantThinkingActions(actions: string[], source: string) {
-  if (/(go\s*high\s*level|gohighlevel|go\s*hi\s*level|gohi\s*level|high\s*level|highlevel|ghl|custom field|campo personalizado|custom value|valor personalizado|formulario|form submissions|respuestas de formulario|survey|encuesta|funnel|embudo|trigger link|media storage|blog|workflow|task|tarea|tag|etiqueta|nota|conversation|conversacion|oportunidad|pipeline|producto|tienda|store)/.test(source)) {
+  if (/(go\s*high\s*level|gohighlevel|go\s*hi\s*level|gohi\s*level|high\s*level|highlevel|ghl|custom field|campo personalizado|custom value|valor personalizado|formulario|form submissions|respuestas de formulario|survey|encuesta|funnel|embudo|trigger link|media storage|blog|workflow|task|tarea|tag|etiqueta|nota|conversation|conversacion|conversación|oportunidad|pipeline|producto|tienda|store)/.test(source)) {
     addThinkingAction(actions, 'Consultando HighLevel')
   }
 
@@ -487,13 +487,13 @@ function addRelevantThinkingActions(actions: string[], source: string) {
     addThinkingAction(actions, 'Midiendo rendimiento')
   }
 
-  if (/(dashboard|reporte|reportes|analitica|analiticas|analytics|metrica|metricas|datos)/.test(source)) {
+  if (/(dashboard|reporte|reportes|analitica|analiticas|analítica|analíticas|analytics|metrica|metricas|métrica|métricas|datos)/.test(source)) {
     addThinkingAction(actions, 'Comprobando métricas')
   }
 }
 
 function referencesCurrentView(source: string) {
-  return /(esto|esta pantalla|este panel|esta pagina|esta vista|aqui|lo que estoy viendo|lo de aqui|esta seccion|este dashboard)/.test(source)
+  return /(esto|esta pantalla|este panel|esta pagina|esta página|esta vista|aqui|lo que estoy viendo|lo de aqui|esta seccion|este dashboard)/.test(source)
 }
 
 function getThinkingActions(messages: AIAgentMessage[], pathname: string, savingConfig: boolean) {
@@ -1264,7 +1264,7 @@ function isSectionTitle(line: string) {
     !plainTitle.includes(':') &&
     (
       /^🏆/.test(plainTitle) ||
-      /^(ranking|resumen|ganadora|ganador|métricas|metricas|detalle|comparativo|periodo|resultado)/i.test(plainTitle)
+      /^(ranking|resumen|ganadora|ganador|metricas|métricas|detalle|comparativo|periodo|resultado)/i.test(plainTitle)
     )
   )
 }
@@ -2048,7 +2048,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     }
 
     if (sitesCreationMode && messageAttachments.length) {
-      setAttachmentError('Para crear Sites con IA responde en texto. Después puedes editar la pagina generada desde la vista previa.')
+      setAttachmentError('Para crear Sites con IA responde en texto. Después puedes editar la página generada desde la vista previa.')
       return
     }
 

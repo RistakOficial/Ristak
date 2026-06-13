@@ -669,7 +669,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const handleDisconnectGoogleIntegration = async () => {
     showConfirm(
       'Desconectar Google Calendar',
-      'Las citas locales se conservan, pero esta instalacion dejara de sincronizar con Google Calendar.',
+      'Las citas locales se conservan, pero esta instalación dejará de sincronizar con Google Calendar.',
       () => {
         const disconnectGoogleIntegration = async () => {
           setDisconnectingGoogleIntegration(true)
@@ -902,7 +902,7 @@ export const CalendarsConfiguration: React.FC = () => {
 
   const handleCopyPublicUrl = async (calendar: CalendarType) => {
     if (!calendar.publicUrl) {
-      showToast('warning', 'URL no disponible', calendar.publicUrlUnavailableReason || 'Conecta y verifica el dominio publico general primero')
+      showToast('warning', 'URL no disponible', calendar.publicUrlUnavailableReason || 'Conecta y verifica el dominio público general primero')
       return
     }
 

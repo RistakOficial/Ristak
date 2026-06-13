@@ -10,6 +10,12 @@ export interface CountryOption {
   timezones?: string[]
 }
 
+export interface AccountLocaleDefaults {
+  countryCode: string
+  currency: string
+  dialCode: string
+}
+
 export const COUNTRY_OPTIONS: CountryOption[] = [
   { value: 'MX', label: 'México', dialCode: '52', currency: 'MXN', timezones: ['America/Mexico_City', 'America/Ciudad_Juarez', 'America/Monterrey', 'America/Tijuana'] },
   { value: 'US', label: 'Estados Unidos', dialCode: '1', currency: 'USD', timezones: ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles'] },
@@ -162,7 +168,7 @@ export function getPhoneInputParts(value?: string | null, fallbackCountryCode?: 
 }
 
 export function getDetectedAccountLocaleDefaults() {
-  const countryCode = getCountryFromLocale() || getCountryFromTimezone() || DEFAULT_COUNTRY.value
+  const countryCode = getCountryFromTimezone() || getCountryFromLocale() || DEFAULT_COUNTRY.value
   const country = getCountryDefaults(countryCode)
 
   return {

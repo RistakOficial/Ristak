@@ -251,6 +251,7 @@ const IMPORTED_FORM_CUSTOM_FIELD_HINTS = new Map([
   ['dob', 'birth_date'],
   ['direccion_completa', 'full_address'],
   ['direccion', 'address'],
+  ['dirección', 'address'],
   ['domicilio', 'address'],
   ['address_line_1', 'address_line_1'],
   ['address1', 'address_line_1'],
@@ -266,6 +267,7 @@ const IMPORTED_FORM_CUSTOM_FIELD_HINTS = new Map([
   ['provincia', 'state'],
   ['province', 'state'],
   ['pais', 'country'],
+  ['país', 'country'],
   ['country', 'country'],
   ['codigo_postal', 'postal_code'],
   ['cp', 'postal_code'],
@@ -273,6 +275,7 @@ const IMPORTED_FORM_CUSTOM_FIELD_HINTS = new Map([
   ['zip_code', 'postal_code'],
   ['postal_code', 'postal_code'],
   ['ubicacion', 'location'],
+  ['ubicación', 'location'],
   ['location', 'location'],
   ['empresa', 'company_name'],
   ['compania', 'company_name'],
@@ -1038,7 +1041,7 @@ function sanitizeImportedHtml(html = '') {
   }
 
   if (Buffer.byteLength(sanitized, 'utf8') > IMPORTED_HTML_MAX_BYTES) {
-    throw new Error('El HTML es demasiado grande. Sube un archivo de maximo 2 MB.')
+    throw new Error('El HTML es demasiado grande. Sube un archivo de máximo 2 MB.')
   }
 
   sanitized = replaceImportedWistiaPlayers(sanitized, report)
@@ -1122,7 +1125,7 @@ function getImportedFieldRequiredFromAttrs(attrs = {}) {
 
 function normalizeImportedFieldOptionValue(option = {}, index = 0) {
   const source = option && typeof option === 'object' ? option : { label: option, value: option }
-  const label = limitString(stripHtmlTags(source.label || source.text || source.value || `Opcion ${index + 1}`), 140)
+  const label = limitString(stripHtmlTags(source.label || source.text || source.value || `Opción ${index + 1}`), 140)
   const value = limitString(cleanString(source.value || source.label || source.text || label), 140)
   if (!label && !value) return null
 
@@ -1498,7 +1501,7 @@ function annotateImportedInputs(html = '', usedIds = new Set()) {
     if (['radio', 'checkbox'].includes(type)) {
       const editableTag = addImportedEditableAttributesToTag('input', attrsText, selfClose, {
         type: 'form_field',
-        label: getImportedElementLabel('input', attrs, attrs.value || attrs.name || 'Opcion'),
+        label: getImportedElementLabel('input', attrs, attrs.value || attrs.name || 'Opción'),
         usedIds
       })
       return setImportedDefaultFieldRequired(editableTag, attrsText)
@@ -1507,7 +1510,7 @@ function annotateImportedInputs(html = '', usedIds = new Set()) {
     if (['submit', 'button'].includes(type)) {
       return addImportedEditableAttributesToTag('input', attrsText, selfClose, {
         type: 'button',
-        label: getImportedElementLabel('input', attrs, attrs.value || 'Boton'),
+        label: getImportedElementLabel('input', attrs, attrs.value || 'Botón'),
         usedIds
       })
     }
@@ -1793,7 +1796,7 @@ function setImportedDefaultFieldRequired(openingTag = '', attrsText = '') {
 function normalizeImportedEditableImageUrl(value = '') {
   const raw = cleanString(value)
   if (!raw) {
-    const error = new Error('La URL de la imagen esta vacia')
+    const error = new Error('La URL de la imagen está vacía')
     error.status = 400
     throw error
   }
@@ -1899,7 +1902,7 @@ function normalizeImportedVideoEmbed(value = '') {
 
   const safeCandidate = safeEmbedUrl(source.candidate)
   if (!safeCandidate) {
-    const error = new Error('Usa una URL de video con http o https, o un iframe valido.')
+    const error = new Error('Usa una URL de video con http o https, o un iframe válido.')
     error.status = 400
     throw error
   }
@@ -2024,13 +2027,13 @@ function normalizeImportedActionStep(input = {}, index = 0) {
   const automationName = limitString(cleanString(source.automationName || source.automation_name || source.automation || source.label), 140)
 
   if (action === 'url' && !safeHref(buttonUrl, '')) {
-    const error = new Error('Usa una URL valida para el boton')
+    const error = new Error('Usa una URL válida para el botón')
     error.status = 400
     throw error
   }
 
   if (action === 'specific_page' && !buttonPageId) {
-    const error = new Error('Selecciona la pagina destino del boton')
+    const error = new Error('Selecciona la página destino del botón')
     error.status = 400
     throw error
   }
@@ -2209,7 +2212,7 @@ function buildImportedSelectOptions(options = [], existingBody = '') {
   const keepsEmptyOption = firstOptionMatch && !firstOptionValue
   const emptyOption = keepsEmptyOption
     ? firstOptionMatch[0]
-    : '<option value="">Selecciona una opcion</option>'
+    : '<option value="">Selecciona una opción</option>'
 
   return [
     emptyOption,
@@ -2324,7 +2327,7 @@ function applyImportedEditableContentUpdate(html = '', input = {}) {
   const formFieldPatch = editType === 'form_field' ? getImportedFormFieldPatch(input, value) : null
 
   if (!editId || !editType) {
-    const error = new Error('Seleccion invalida para editar contenido')
+    const error = new Error('Selección inválida para editar contenido')
     error.status = 400
     throw error
   }
@@ -2504,7 +2507,7 @@ function applyImportedEditableContentUpdate(html = '', input = {}) {
   }
 
   if (!updated) {
-    const error = new Error('No encontramos ese elemento editable en la pagina')
+    const error = new Error('No encontramos ese elemento editable en la página')
     error.status = 404
     throw error
   }
@@ -2701,7 +2704,7 @@ function getSocialProfileDefaults(site = {}, platform = 'facebook') {
   return {
     platform: normalizedPlatform,
     brandName: cleanString(theme.brandName) || cleanString(site.title) || cleanString(site.name) || 'Tu marca',
-    brandSubtitle: cleanString(theme.brandSubtitle) || (normalizedPlatform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'),
+    brandSubtitle: cleanString(theme.brandSubtitle) || (normalizedPlatform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'),
     brandAvatar: cleanString(theme.brandAvatar),
     followers: cleanString(theme.followers),
     brandVerified: theme.brandVerified === undefined ? true : theme.brandVerified !== false
@@ -2933,7 +2936,7 @@ function mapSubmission(row) {
 function validateSiteType(value) {
   const siteType = cleanString(value) || 'standard_form'
   if (!SITE_TYPES.has(siteType)) {
-    throw new Error('Tipo de site invalido')
+    throw new Error('Tipo de site inválido')
   }
   return siteType
 }
@@ -2941,7 +2944,7 @@ function validateSiteType(value) {
 function validateSiteStatus(value) {
   const status = cleanString(value) || 'draft'
   if (!SITE_STATUSES.has(status)) {
-    throw new Error('Estado de site invalido')
+    throw new Error('Estado de site inválido')
   }
   return status
 }
@@ -2949,7 +2952,7 @@ function validateSiteStatus(value) {
 function validateBlockType(value) {
   const blockType = cleanString(value)
   if (!BLOCK_TYPES.has(blockType)) {
-    throw new Error('Tipo de bloque invalido')
+    throw new Error('Tipo de bloque inválido')
   }
   return blockType
 }
@@ -2995,7 +2998,8 @@ function normalizeOptionAction(value) {
     sitio: 'redirect',
     etiqueta: 'tag',
     asignar_etiqueta: 'tag',
-    categoria: 'category'
+    categoria: 'category',
+    categoría: 'category'
   }
 
   const resolvedAction = aliases[action] || action
@@ -3027,7 +3031,7 @@ const SITES_AI_STOCK_IMAGE_LIBRARY = [
   },
   {
     id: 'local_business',
-    label: 'Negocio local, tienda, mostrador y atencion al cliente',
+    label: 'Negocio local, tienda, mostrador y atención al cliente',
     keywords: ['local', 'tienda', 'restaurante', 'boutique', 'negocio local', 'cliente', 'mostrador', 'retail', 'servicio local'],
     backgroundImage: TEMPLATE_IMAGE_URLS.local,
     images: [
@@ -3264,7 +3268,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
   }
   const makeLandingPanel = (kind, sortOrder) => {
     const isHeader = kind === 'header'
-    return makeBlock(isHeader ? 'header_panel' : 'footer_panel', isHeader ? 'Panel superior' : 'Panel inferior', isHeader ? 'Tu marca' : 'Tu informacion esta protegida.', {
+    return makeBlock(isHeader ? 'header_panel' : 'footer_panel', isHeader ? 'Panel superior' : 'Panel inferior', isHeader ? 'Tu marca' : 'Tu información esta protegida.', {
       sortOrder,
       settings: {
         ...getLandingSpacing(isHeader ? 'header_panel' : 'footer_panel'),
@@ -3371,13 +3375,13 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
       settings: { internalName: 'full_name' },
       sortOrder: startOrder
     }),
-    makeBlock('phone', 'Telefono / WhatsApp', '', {
-      placeholder: '10 digitos',
+    makeBlock('phone', 'Teléfono / WhatsApp', '', {
+      placeholder: '10 dígitos',
       required: true,
       settings: { internalName: 'phone', validation: 'phone', phoneCountrySelectorEnabled: true },
       sortOrder: startOrder + 1
     }),
-    makeBlock('email', 'Correo electronico', '', {
+    makeBlock('email', 'Correo electrónico', '', {
       placeholder: 'tu@email.com',
       required: true,
       settings: { internalName: 'email', validation: 'email' },
@@ -3400,8 +3404,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
   })
   const embeddedContactFields = () => [
     makeEmbeddedField('short_text', 'Nombre completo', 'Tu nombre', { internalName: 'full_name' }, 0),
-    makeEmbeddedField('phone', 'Telefono / WhatsApp', '10 digitos', { internalName: 'phone', validation: 'phone', phoneCountrySelectorEnabled: true }, 1),
-    makeEmbeddedField('email', 'Correo electronico', 'tu@email.com', { internalName: 'email', validation: 'email' }, 2)
+    makeEmbeddedField('phone', 'Teléfono / WhatsApp', '10 dígitos', { internalName: 'phone', validation: 'phone', phoneCountrySelectorEnabled: true }, 1),
+    makeEmbeddedField('email', 'Correo electrónico', 'tu@email.com', { internalName: 'email', validation: 'email' }, 2)
   ]
   const formEmbedSettings = (description, settings = {}) => withLandingSpacing('form_embed', {
     description,
@@ -3457,12 +3461,12 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
     }
   })
   const makeFormThankYouBlocks = () => [
-    makeBlock('title', 'Titulo', 'Gracias, recibimos tu informacion', { sortOrder: 0 }),
-    makeBlock('subtitle', 'Subtitulo', 'Te contactaremos pronto con el siguiente paso.', { sortOrder: 1 })
+    makeBlock('title', 'Título', 'Gracias, recibimos tu información', { sortOrder: 0 }),
+    makeBlock('subtitle', 'Subtítulo', 'Te contactaremos pronto con el siguiente paso.', { sortOrder: 1 })
   ]
   const makeFormDisqualifiedBlocks = () => [
-    makeBlock('title', 'Titulo', 'Gracias por responder', { sortOrder: 0 }),
-    makeBlock('subtitle', 'Subtitulo', 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo despues.', { sortOrder: 1 })
+    makeBlock('title', 'Título', 'Gracias por responder', { sortOrder: 0 }),
+    makeBlock('subtitle', 'Subtítulo', 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo después.', { sortOrder: 1 })
   ]
   const withStandardFormPages = (blocks) => [
     ...assignBlocksToPage(blocks, DEFAULT_FUNNEL_PAGE_ID),
@@ -3502,8 +3506,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
             settings: withLandingSpacing('hero', {
               textAlign: 'left',
               kicker: options.kicker || 'Agenda',
-              subtitle: options.subtitle || 'El prospecto ya dejo sus datos. Ahora puede elegir un horario para continuar la conversacion.',
-              buttonText: options.buttonText || 'Continuar a confirmacion',
+              subtitle: options.subtitle || 'El prospecto ya dejó sus datos. Ahora puede elegir un horario para continuar la conversación.',
+              buttonText: options.buttonText || 'Continuar a confirmación',
               buttonAction: 'next_page',
               buttonAlign: 'left',
               buttonBg: options.buttonBg || '#2563eb',
@@ -3539,11 +3543,11 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         blockPaddingBottom: 48
       },
       blocks: [
-        makeBlock('cta', 'Continuar', 'Ya quedo el siguiente paso?', {
+        makeBlock('cta', 'Continuar', '¿Ya quedó el siguiente paso?', {
           settings: withLandingSpacing('cta', {
             textAlign: 'center',
-            subtitle: options.ctaSubtitle || 'Cuando termines de agendar, avanza a la pagina de confirmacion.',
-            buttonText: options.ctaButtonText || 'Ver confirmacion',
+            subtitle: options.ctaSubtitle || 'Cuando termines de agendar, avanza a la página de confirmación.',
+            buttonText: options.ctaButtonText || 'Ver confirmación',
             buttonAction: 'next_page',
             ...defaultButtonSettings
           })
@@ -3565,8 +3569,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           settings: withLandingSpacing('hero', {
             textAlign: 'center',
             kicker: options.kicker || 'Antes de confirmar',
-            subtitle: options.subtitle || 'Usa esta pagina para explicar fechas, cupos, bonos, condiciones o lo que el cliente debe saber antes de avanzar.',
-            buttonText: options.buttonText || 'Confirmar mi interes',
+            subtitle: options.subtitle || 'Usa esta página para explicar fechas, cupos, bonos, condiciones o lo que el cliente debe saber antes de avanzar.',
+            buttonText: options.buttonText || 'Confirmar mi interés',
             buttonAction: 'next_page',
             buttonBg: options.buttonBg || '#ea580c',
             ...defaultButtonSettings
@@ -3584,9 +3588,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         blockPaddingBottom: 48
       },
       columnBlocks: [
-        [makeBlock('text', 'Que incluye', 'Aclara el beneficio principal de la oferta.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
-        [makeBlock('text', 'Para quien es', 'Explica quien aprovecha mejor esta oportunidad.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
-        [makeBlock('text', 'Que sigue', 'Deja claro como lo contactaran despues.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })]
+        [makeBlock('text', 'Qué incluye', 'Aclara el beneficio principal de la oferta.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
+        [makeBlock('text', 'Para quién es', 'Explica quién aprovecha mejor esta oportunidad.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
+        [makeBlock('text', 'Qué sigue', 'Deja claro cómo lo contactarán después.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })]
       ]
     },
     {
@@ -3598,10 +3602,10 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         blockPaddingBottom: 48
       },
       blocks: [
-        makeBlock('cta', 'Confirmar', 'Confirmar interes', {
+        makeBlock('cta', 'Confirmar', 'Confirmar interés', {
           settings: withLandingSpacing('cta', {
             textAlign: 'center',
-            subtitle: 'La persona ya entiende la oferta y puede avanzar a la confirmacion.',
+            subtitle: 'La persona ya entiende la oferta y puede avanzar a la confirmación.',
             buttonText: 'Continuar',
             buttonAction: 'next_page',
             ...defaultButtonSettings
@@ -3626,7 +3630,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
             settings: withLandingSpacing('hero', {
               textAlign: 'left',
               kicker: options.kicker || 'Contacto',
-              subtitle: options.subtitle || 'Esta pagina sirve para pedir datos finales, sucursal, servicio o cualquier detalle necesario antes de responder.',
+              subtitle: options.subtitle || 'Esta página sirve para pedir datos finales, sucursal, servicio o cualquier detalle necesario antes de responder.',
               buttonText: 'Enviar datos',
               buttonUrl: '#form',
               buttonAlign: 'left',
@@ -3661,11 +3665,11 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
       },
       columnBlocks: [
         [
-          makeBlock('hero', 'Gracias', options.headline || 'Gracias, recibimos tu informacion', {
+          makeBlock('hero', 'Gracias', options.headline || 'Gracias, recibimos tu información', {
             settings: withLandingSpacing('hero', {
               textAlign: 'left',
-              kicker: options.kicker || 'Confirmacion',
-              subtitle: options.subtitle || 'El siguiente paso queda claro para que la persona sepa que pasara despues.',
+              kicker: options.kicker || 'Confirmación',
+              subtitle: options.subtitle || 'El siguiente paso queda claro para que la persona sepa qué pasará después.',
               buttonText: options.buttonText || 'Volver al inicio',
               buttonUrl: options.buttonUrl || '#',
               buttonAlign: 'left',
@@ -3693,8 +3697,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         blockPaddingBottom: 48
       },
       columnBlocks: [
-        [makeBlock('text', 'Paso recibido', 'Tu equipo ya tiene la informacion para dar seguimiento.', { settings: withLandingSpacing('text', { blockBg: options.cardBg || '#f8fafc', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: options.cardBorder || '#e2e8f0' }) })],
-        [makeBlock('text', 'Respuesta clara', 'Edita este texto para explicar en cuanto tiempo contactaran.', { settings: withLandingSpacing('text', { blockBg: options.cardBg || '#f8fafc', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: options.cardBorder || '#e2e8f0' }) })],
+        [makeBlock('text', 'Paso recibido', 'Tu equipo ya tiene la información para dar seguimiento.', { settings: withLandingSpacing('text', { blockBg: options.cardBg || '#f8fafc', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: options.cardBorder || '#e2e8f0' }) })],
+        [makeBlock('text', 'Respuesta clara', 'Edita este texto para explicar en cuánto tiempo contactarán.', { settings: withLandingSpacing('text', { blockBg: options.cardBg || '#f8fafc', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: options.cardBorder || '#e2e8f0' }) })],
         [makeBlock('text', 'Siguiente paso', 'Puedes indicar si deben revisar WhatsApp, correo o una llamada.', { settings: withLandingSpacing('text', { blockBg: options.cardBg || '#f8fafc', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: options.cardBorder || '#e2e8f0' }) })]
       ]
     }
@@ -3708,7 +3712,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         ...makeDetailsPageLayout('page-2'),
         ...makeThankYouPageLayout('page-3', {
           blockBg: 'linear-gradient(120deg, rgba(124,45,18,.98), rgba(234,88,12,.72))',
-          headline: 'Gracias, tu registro quedo recibido',
+          headline: 'Gracias, tu registro quedó recibido',
           subtitle: 'Ahora la persona sabe que el equipo puede contactarla con los detalles del lanzamiento.',
           imageUrl: TEMPLATE_IMAGE_URLS.planning
         })
@@ -3722,7 +3726,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         ...makeThankYouPageLayout('page-3', {
           blockBg: 'linear-gradient(120deg, rgba(20,83,45,.98), rgba(22,163,74,.72))',
           headline: 'Gracias, recibimos tu solicitud',
-          subtitle: 'El visitante queda con una confirmacion clara y listo para que el negocio lo contacte.',
+          subtitle: 'El visitante queda con una confirmación clara y listo para que el negocio lo contacte.',
           imageUrl: TEMPLATE_IMAGE_URLS.local,
           stepsText: '#14532d',
           cardBg: '#f0fdf4',
@@ -3739,7 +3743,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
             ? 'linear-gradient(120deg, rgba(0,0,0,.98), rgba(31,31,31,.86))'
             : 'linear-gradient(120deg, rgba(17,24,39,.98), rgba(59,130,246,.74))',
           headline: 'Listo, recibimos tus datos',
-          subtitle: 'Esta pagina corta confirma la accion despues de venir desde redes sociales.',
+          subtitle: 'Esta página corta confirma la acción después de venir desde redes sociales.',
           imageUrl: TEMPLATE_IMAGE_URLS.consult
         })
       ]
@@ -3752,7 +3756,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           blockBg: 'linear-gradient(120deg, rgba(16,16,16,.98), rgba(39,39,42,.82))',
           blockText: '#f8fafc',
           headline: 'Agenda una llamada privada',
-          subtitle: 'Despues de aplicar, la persona puede elegir el horario ideal para revisar la propuesta.',
+          subtitle: 'Después de aplicar, la persona puede elegir el horario ideal para revisar la propuesta.',
           buttonBg: '#d4af37',
           buttonTextColor: '#121212',
           calendarBg: '#18181b',
@@ -3763,7 +3767,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         ...makeThankYouPageLayout('page-3', {
           blockBg: 'linear-gradient(120deg, rgba(16,16,16,.98), rgba(212,175,55,.45))',
           headline: 'Gracias, tu solicitud esta en proceso',
-          subtitle: 'El cierre mantiene la sensacion premium y explica que el equipo dara seguimiento.',
+          subtitle: 'El cierre mantiene la sensación premium y explica que el equipo dará seguimiento.',
           imageUrl: TEMPLATE_IMAGE_URLS.premium,
           stepsBg: '#18181b',
           stepsText: '#f8fafc',
@@ -3780,15 +3784,15 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           blockBg: 'linear-gradient(120deg, rgba(17,24,39,.98), rgba(30,64,175,.72))',
           blockText: '#ffffff',
           headline: 'Elige una llamada para revisar la oferta',
-          subtitle: 'Despues de leer la carta de ventas, el prospecto puede pasar directo a una conversacion.',
+          subtitle: 'Después de leer la carta de ventas, el prospecto puede pasar directo a una conversación.',
           buttonBg: '#ffffff',
           buttonTextColor: '#111827',
           ctaBg: '#111827'
         }),
         ...makeThankYouPageLayout('page-3', {
           blockBg: 'linear-gradient(120deg, rgba(17,24,39,.98), rgba(30,64,175,.72))',
-          headline: 'Gracias, tu solicitud quedo enviada',
-          subtitle: 'La persona termina con una confirmacion limpia y una idea clara del siguiente paso.'
+          headline: 'Gracias, tu solicitud quedó enviada',
+          subtitle: 'La persona termina con una confirmación limpia y una idea clara del siguiente paso.'
         })
       ]
     }
@@ -3799,15 +3803,15 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         ...makeSchedulePageLayout('page-2', {
           blockBg: 'linear-gradient(120deg, rgba(240,253,250,.98), rgba(204,251,241,.78))',
           blockText: '#0f172a',
-          headline: 'Agenda el diagnostico',
-          subtitle: 'Despues de explicar el servicio, este paso mueve al prospecto a una llamada concreta.',
+          headline: 'Agenda el diagnóstico',
+          subtitle: 'Después de explicar el servicio, este paso mueve al prospecto a una llamada concreta.',
           buttonBg: '#0f766e',
           ctaBg: '#0f766e'
         }),
         ...makeThankYouPageLayout('page-3', {
           blockBg: 'linear-gradient(120deg, rgba(15,118,110,.98), rgba(45,212,191,.64))',
-          headline: 'Gracias, tu diagnostico quedo solicitado',
-          subtitle: 'La pagina final confirma que el equipo recibio la informacion y dara seguimiento.'
+          headline: 'Gracias, tu diagnóstico quedó solicitado',
+          subtitle: 'La página final confirma que el equipo recibió la información y dará seguimiento.'
         })
       ]
     }
@@ -3836,9 +3840,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               makeBlock('hero', 'Hero', 'Convierte visitas en conversaciones de negocio', {
                 settings: withLandingSpacing('hero', {
                   textAlign: 'left',
-                  kicker: 'Pagina completa',
-                  subtitle: 'Presenta tu oferta, muestra por que vale la pena y deja listo el siguiente paso para quien ya esta interesado.',
-                  buttonText: 'Quiero informacion',
+                  kicker: 'Página completa',
+                  subtitle: 'Presenta tu oferta, muestra por qué vale la pena y deja listo el siguiente paso para quien ya está interesado.',
+                  buttonText: 'Quiero información',
                   buttonUrl: '#form',
                   buttonAlign: 'left',
                   buttonBg: '#111827',
@@ -3864,7 +3868,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
                 cardBg: '#f8fafc',
                 cardBorderColor: '#e2e8f0',
                 cardRadius: 16,
-                items: [{ title: 'Que haces', text: 'Explica tu servicio sin palabras complicadas.' }]
+                items: [{ title: 'Qué haces', text: 'Explica tu servicio sin palabras complicadas.' }]
               })
             })],
             [makeBlock('services', 'Confianza', 'Pruebas y beneficios', {
@@ -3873,16 +3877,16 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
                 cardBg: '#f8fafc',
                 cardBorderColor: '#e2e8f0',
                 cardRadius: 16,
-                items: [{ title: 'Por que elegirte', text: 'Muestra beneficios concretos y faciles de leer.' }]
+                items: [{ title: 'Por qué elegirte', text: 'Muestra beneficios concretos y fáciles de leer.' }]
               })
             })],
-            [makeBlock('services', 'Accion', 'Siguiente paso', {
+            [makeBlock('services', 'Acción', 'Siguiente paso', {
               settings: withLandingSpacing('services', {
                 listColumns: 1,
                 cardBg: '#f8fafc',
                 cardBorderColor: '#e2e8f0',
                 cardRadius: 16,
-                items: [{ title: 'Como avanzar', text: 'Lleva al prospecto a pedir informacion o agendar.' }]
+                items: [{ title: 'Como avanzar', text: 'Lleva al prospecto a pedir información o agendar.' }]
               })
             })]
           ]
@@ -3892,18 +3896,18 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           settings: { blockBg: '#111827', blockText: '#ffffff', sectionGap: 32, blockPaddingTop: 58, blockPaddingBottom: 60 },
           columnBlocks: [
             [
-              makeBlock('benefits', 'Beneficios', 'Lo que esta pagina deja claro', {
+              makeBlock('benefits', 'Beneficios', 'Lo que esta página deja claro', {
                 settings: withLandingSpacing('benefits', {
                   items: [
                     { title: '+ Oferta entendible', text: 'El visitante sabe si esto es para el.' },
-                    { title: '+ Datos listos', text: 'La informacion llega completa para dar seguimiento.' },
-                    { title: '+ Diseno editable', text: 'Puedes cambiar textos, colores, fotos y secciones.' }
+                    { title: '+ Datos listos', text: 'La información llega completa para dar seguimiento.' },
+                    { title: '+ Diseño editable', text: 'Puedes cambiar textos, colores, fotos y secciones.' }
                   ]
                 })
               })
             ],
             [
-              makeBlock('form_embed', 'Contacto', 'Pide informacion', {
+              makeBlock('form_embed', 'Contacto', 'Pide información', {
                 settings: formEmbedSettings('Deja tus datos y tu equipo podra dar seguimiento.', {
                   blockBg: '#ffffff',
                   blockText: '#0f172a',
@@ -3921,7 +3925,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               settings: withLandingSpacing('cta', {
                 textAlign: 'center',
                 subtitle: 'Edita esta plantilla con tu oferta real y publicala cuando este lista.',
-                buttonText: 'Editar mi pagina',
+                buttonText: 'Editar mi página',
                 buttonUrl: '#form',
                 ...defaultButtonSettings
               })
@@ -3944,7 +3948,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           },
           columnBlocks: [
             [
-              makeBlock('hero', 'Hero', 'Una oferta clara para que el cliente diga: quiero saber mas', {
+              makeBlock('hero', 'Hero', 'Una oferta clara para que el cliente diga: quiero saber más', {
                 settings: withLandingSpacing('hero', {
                   textAlign: 'left',
                   kicker: 'Carta de ventas',
@@ -3973,9 +3977,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               settings: withLandingSpacing('benefits', {
                 contentMaxWidth: 28,
                 items: [
-                  { title: '+ Resultado facil de entender', text: 'Explica el cambio que ayudas a lograr.' },
-                  { title: '+ Proceso sin confusion', text: 'Muestra que pasa despues de dejar sus datos.' },
-                  { title: '- Sin promesas raras', text: 'Mantiene la pagina generica y editable para cualquier negocio.' }
+                  { title: '+ Resultado fácil de entender', text: 'Explica el cambio que ayudas a lograr.' },
+                  { title: '+ Proceso sin confusion', text: 'Muestra que pasa después de dejar sus datos.' },
+                  { title: '- Sin promesas raras', text: 'Mantiene la página generica y editable para cualquier negocio.' }
                 ]
               })
             })
@@ -3993,14 +3997,14 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
                   cardBorderColor: '#e5e7eb',
                   cardRadius: 16,
                   items: [
-                    { title: 'Mensaje mas claro', text: 'La oferta se entiende antes de pedir una llamada.', author: 'Cliente actual' },
-                    { title: 'Seguimiento mas ordenado', text: 'Los datos llegan listos para contactar.', author: 'Equipo comercial' }
+                    { title: 'Mensaje más claro', text: 'La oferta se entiende antes de pedir una llamada.', author: 'Cliente actual' },
+                    { title: 'Seguimiento más ordenado', text: 'Los datos llegan listos para contactar.', author: 'Equipo comercial' }
                   ]
                 })
               })
             ],
             [
-              makeBlock('form_embed', 'Solicitar informacion', 'Hablemos de lo que necesitas', {
+              makeBlock('form_embed', 'Solicitar información', 'Hablemos de lo que necesitas', {
                 settings: formEmbedSettings('Deja tus datos y tu equipo podra dar seguimiento.', {
                   blockBg: '#f8fafc',
                   blockText: '#111827',
@@ -4013,11 +4017,11 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         {
           settings: { blockBg: '#111827', blockText: '#ffffff', textAlign: 'center', blockPaddingTop: 46, blockPaddingBottom: 52 },
           blocks: [
-            makeBlock('cta', 'CTA final', 'Listo para convertir mas visitas?', {
+            makeBlock('cta', 'CTA final', '¿Listo para convertir más visitas?', {
               settings: withLandingSpacing('cta', {
                 textAlign: 'center',
                 subtitle: 'Cambia el texto, la foto y los beneficios para aterrizar tu oferta real.',
-                buttonText: 'Quiero mas informacion',
+                buttonText: 'Quiero más información',
                 buttonUrl: '#form',
                 ...defaultButtonSettings
               })
@@ -4090,7 +4094,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               })
             ],
             [
-              makeBlock('form_embed', 'Agenda una llamada', 'Cuentanos que necesitas', {
+              makeBlock('form_embed', 'Agenda una llamada', 'Cuéntanos qué necesitas', {
                 settings: formEmbedSettings('Completa tus datos y te contactamos para revisar opciones.', {
                   blockBg: '#ffffff',
                   blockText: '#0f172a',
@@ -4115,11 +4119,11 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
             blockPaddingBottom: 58
           },
           blocks: [
-            makeBlock('hero', 'Hero', 'Lanza tu nueva oferta con una pagina lista para captar interesados', {
+            makeBlock('hero', 'Hero', 'Lanza tu nueva oferta con una página lista para captar interesados', {
               settings: withLandingSpacing('hero', {
                 textAlign: 'center',
                 kicker: 'Nuevo lanzamiento',
-                subtitle: 'Ideal para promociones, aperturas, preventas o cualquier oferta que necesita respuestas rapido.',
+                subtitle: 'Ideal para promociones, aperturas, preventas o cualquier oferta que necesita respuestas rápido.',
                 buttonText: 'Quiero registrarme',
                 buttonUrl: '#form',
                 buttonBg: '#ea580c',
@@ -4133,7 +4137,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           settings: { blockBg: '#ffffff', blockText: '#1f2937', sectionGap: 16, blockPaddingTop: 44, blockPaddingBottom: 46 },
           columnBlocks: [
             [makeBlock('text', 'Paso 1', 'Cuenta que estas ofreciendo y para quien es.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
-            [makeBlock('text', 'Paso 2', 'Muestra el beneficio principal y por que conviene actuar ahora.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
+            [makeBlock('text', 'Paso 2', 'Muestra el beneficio principal y por qué conviene actuar ahora.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
             [makeBlock('text', 'Paso 3', 'Pide los datos para dar seguimiento desde tu equipo.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })]
           ]
         },
@@ -4148,10 +4152,10 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               })
             ],
             [
-              makeBlock('cta', 'CTA', 'Aparta tu lugar o pide informacion', {
+              makeBlock('cta', 'CTA', 'Aparta tu lugar o pide información', {
                 settings: withLandingSpacing('cta', {
                   textAlign: 'left',
-                  subtitle: 'Edita este bloque segun tu promocion, cupo o fecha limite.',
+                  subtitle: 'Edita este bloque según tu promoción, cupo o fecha límite.',
                   buttonText: 'Enviar mis datos',
                   buttonUrl: '#form',
                   buttonAlign: 'left',
@@ -4164,8 +4168,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         {
           settings: { blockBg: '#fff7ed', blockText: '#7c2d12', textAlign: 'center', blockPaddingTop: 46, blockPaddingBottom: 56 },
           blocks: [
-            makeBlock('form_embed', 'Registro', 'Registro rapido', {
-              settings: formEmbedSettings('Deja tus datos para recibir la informacion completa.', {
+            makeBlock('form_embed', 'Registro', 'Registro rápido', {
+              settings: formEmbedSettings('Deja tus datos para recibir la información completa.', {
                 blockBg: '#ffffff',
                 blockText: '#1f2937',
                 fieldBorder: '#fdba74'
@@ -4193,7 +4197,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
                 settings: withLandingSpacing('hero', {
                   textAlign: 'left',
                   kicker: 'Servicio premium',
-                  subtitle: 'Usa este diseno para propuestas donde la confianza, el detalle y la claridad pesan mas que el volumen.',
+                  subtitle: 'Usa este diseño para propuestas donde la confianza, el detalle y la claridad pesan más que el volumen.',
                   buttonText: 'Solicitar una llamada',
                   buttonUrl: '#form',
                   buttonAlign: 'left',
@@ -4233,13 +4237,13 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
                   cardRadius: 10,
                   items: [
                     { title: 'Proceso cuidado', text: 'El cliente entiende cada paso antes de dejar sus datos.' },
-                    { title: 'Presentacion sobria', text: 'El diseno ayuda a comunicar calidad sin saturar.' }
+                    { title: 'Presentacion sobria', text: 'El diseño ayuda a comunicar calidad sin saturar.' }
                   ]
                 })
               })
             ],
             [
-              makeBlock('form_embed', 'Aplicar', 'Solicita informacion', {
+              makeBlock('form_embed', 'Aplicar', 'Solicita información', {
                 settings: formEmbedSettings('Completa tus datos para recibir una respuesta personalizada.', {
                   blockBg: '#101010',
                   blockText: '#f8fafc',
@@ -4274,11 +4278,11 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               })
             ],
             [
-              makeBlock('hero', 'Hero', 'Haz que mas personas encuentren y contacten tu negocio', {
+              makeBlock('hero', 'Hero', 'Haz que más personas encuentren y contacten tu negocio', {
                 settings: withLandingSpacing('hero', {
                   textAlign: 'left',
                   kicker: 'Negocio local',
-                  subtitle: 'Una pagina sencilla para explicar que haces, mostrar beneficios y recibir mensajes de clientes interesados.',
+                  subtitle: 'Una página sencilla para explicar qué haces, mostrar beneficios y recibir mensajes de clientes interesados.',
                   buttonText: 'Quiero que me contacten',
                   buttonUrl: '#form',
                   buttonAlign: 'left',
@@ -4293,9 +4297,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           columns: 3,
           settings: { blockBg: '#ffffff', blockText: '#14532d', sectionGap: 28, blockPaddingTop: 52, blockPaddingBottom: 52 },
           columnBlocks: [
-            [makeBlock('text', 'Atencion rapida', 'Responde cuando el cliente todavia trae interes caliente.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })],
-            [makeBlock('text', 'Informacion clara', 'Muestra horarios, servicios o promociones sin hacerlo pesado.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })],
-            [makeBlock('text', 'Seguimiento facil', 'Cada respuesta queda lista para contactar desde tu equipo.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })]
+            [makeBlock('text', 'Atención rápida', 'Responde cuando el cliente todavía trae interés caliente.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })],
+            [makeBlock('text', 'Información clara', 'Muestra horarios, servicios o promociones sin hacerlo pesado.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })],
+            [makeBlock('text', 'Seguimiento fácil', 'Cada respuesta queda lista para contactar desde tu equipo.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })]
           ]
         },
         {
@@ -4307,8 +4311,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
                 cardBorderColor: '#86efac',
                 cardRadius: 16,
                 items: [
-                  { title: 'Cuando me contactan?', text: 'Puedes ajustar este texto segun tus tiempos de respuesta.' },
-                  { title: 'Que informacion debo dejar?', text: 'Nombre, telefono y correo para dar seguimiento sin perder datos.' }
+                  { title: '¿Cuándo me contactan?', text: 'Puedes ajustar este texto según tus tiempos de respuesta.' },
+                  { title: '¿Qué información debo dejar?', text: 'Nombre, teléfono y correo para dar seguimiento sin perder datos.' }
                 ]
               })
             })
@@ -4317,8 +4321,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         {
           settings: { blockBg: '#dcfce7', blockText: '#14532d', textAlign: 'center', blockPaddingTop: 48, blockPaddingBottom: 56 },
           blocks: [
-            makeBlock('form_embed', 'Contacto', 'Pide informacion', {
-              settings: formEmbedSettings('Deja tus datos y te contactamos con mas detalles.', {
+            makeBlock('form_embed', 'Contacto', 'Pide información', {
+              settings: formEmbedSettings('Deja tus datos y te contactamos con más detalles.', {
                 blockBg: '#ffffff',
                 blockText: '#14532d',
                 fieldBorder: '#86efac',
@@ -4340,14 +4344,14 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               settings: withLandingSpacing('hero', {
                 textAlign: 'center',
                 kicker: 'Anuncio',
-                subtitle: 'Pagina corta para continuar una conversacion que viene desde redes sociales.',
-                buttonText: 'Quiero informacion',
+                subtitle: 'Página corta para continuar una conversación que viene desde redes sociales.',
+                buttonText: 'Quiero información',
                 buttonUrl: '#form',
                 ...defaultButtonSettings
               })
             }),
             makeBlock('form_embed', 'Formulario', 'Deja tus datos', {
-              settings: formEmbedSettings('Completa la informacion y te contactamos.', {
+              settings: formEmbedSettings('Completa la información y te contactamos.', {
                 blockBg: tpl === 'tiktok' ? '#161616' : '#f8fafc',
                 blockText: tpl === 'tiktok' ? '#ffffff' : '#111827',
                 fieldBg: tpl === 'tiktok' ? '#1f1f1f' : '#ffffff',
@@ -4367,7 +4371,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         settings: withLandingSpacing('hero', {
           textAlign: 'center',
           kicker: 'Nuevo',
-          subtitle: 'Una pagina clara para convertir visitas en leads calificados.',
+          subtitle: 'Una página clara para convertir visitas en leads calificados.',
           buttonText: 'Quiero una consulta',
           buttonUrl: '#form',
           ...defaultButtonSettings
@@ -4380,19 +4384,19 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         settings: { blockBg: '#ffffff', blockText: '#111827', sectionGap: 28, blockPaddingTop: 52, blockPaddingBottom: 52 },
         columnBlocks: [
           [
-      makeBlock('benefits', 'Beneficios', 'Por que elegirnos', {
+      makeBlock('benefits', 'Beneficios', 'Por qué elegirnos', {
         settings: withLandingSpacing('benefits', {
           items: [
-            { title: '+ Atencion rapida', text: 'Captura datos y responde sin friccion.' },
+            { title: '+ Atención rápida', text: 'Captura datos y responde sin fricción.' },
             { title: '+ Leads ordenados', text: 'Todo llega al dashboard y a la misma base de datos.' },
-            { title: '+ Dominio propio', text: 'Publica solo en dominios verificados.' }
+            { title: '+ Dominio propio', text: 'Pública solo en dominios verificados.' }
           ]
         })
       })
           ],
           [
             makeBlock('form_embed', 'Formulario', 'Deja tus datos', {
-              settings: formEmbedSettings('Completa la informacion y nuestro equipo te contactara.', {
+              settings: formEmbedSettings('Completa la información y nuestro equipo te contactará.', {
                 blockBg: '#f8fafc',
                 blockText: '#111827'
               })
@@ -4403,7 +4407,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
       {
         settings: { blockBg: '#111827', blockText: '#ffffff', textAlign: 'center', blockPaddingTop: 46, blockPaddingBottom: 50 },
         blocks: [
-      makeBlock('cta', 'CTA final', 'Listo para empezar?', {
+      makeBlock('cta', 'CTA final', '¿Listo para empezar?', {
         settings: withLandingSpacing('cta', {
           textAlign: 'center',
           subtitle: 'Deja tus datos y te contactamos.',
@@ -4420,9 +4424,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
   if (siteType === 'interactive_form') {
     if (tpl === 'callback') {
       return [
-        makeBlock('title', 'Titulo', 'Veamos si tiene sentido hablar', { sortOrder: 0 }),
-        makeBlock('subtitle', 'Subtitulo', 'Contesta estas preguntas y te decimos el siguiente paso.', { sortOrder: 1 }),
-        makeBlock('radio', 'Que tan pronto quieres avanzar?', '', {
+        makeBlock('title', 'Título', 'Veamos si tiene sentido hablar', { sortOrder: 0 }),
+        makeBlock('subtitle', 'Subtítulo', 'Contesta estas preguntas y te decimos el siguiente paso.', { sortOrder: 1 }),
+        makeBlock('radio', '¿Qué tan pronto quieres avanzar?', '', {
           required: true,
           options: [
             { label: 'Esta semana', action: 'hot_lead', category: 'caliente' },
@@ -4432,7 +4436,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           settings: { internalName: 'urgency' },
           sortOrder: 2
         }),
-        makeBlock('paragraph', 'Que necesitas resolver?', '', {
+        makeBlock('paragraph', '¿Qué necesitas resolver?', '', {
           placeholder: 'Escribe el contexto principal',
           required: false,
           settings: { internalName: 'need' },
@@ -4444,9 +4448,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
 
     if (tpl === 'quote') {
       return [
-        makeBlock('title', 'Titulo', 'Cotiza sin dar vueltas', { sortOrder: 0 }),
-        makeBlock('subtitle', 'Subtitulo', 'Primero entendemos lo que necesitas y despues pedimos tus datos.', { sortOrder: 1 }),
-        makeBlock('dropdown', 'Que tipo de ayuda necesitas?', '', {
+        makeBlock('title', 'Título', 'Cotiza sin dar vueltas', { sortOrder: 0 }),
+        makeBlock('subtitle', 'Subtítulo', 'Primero entendemos lo que necesitas y después pedimos tus datos.', { sortOrder: 1 }),
+        makeBlock('dropdown', '¿Qué tipo de ayuda necesitas?', '', {
           required: true,
           options: ['Servicio principal', 'Paquete completo', 'No estoy seguro'],
           settings: { internalName: 'service_type' },
@@ -4458,8 +4462,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           settings: { internalName: 'budget' },
           sortOrder: 3
         }),
-        makeBlock('paragraph', 'Cuentanos el contexto', '', {
-          placeholder: 'Que quieres lograr?',
+        makeBlock('paragraph', 'Cuéntanos el contexto', '', {
+          placeholder: '¿Qué quieres lograr?',
           required: false,
           settings: { internalName: 'context' },
           sortOrder: 4
@@ -4471,19 +4475,19 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
     if (tpl === 'event' || tpl === 'waitlist') {
       const isWaitlist = tpl === 'waitlist'
       return [
-        makeBlock('title', 'Titulo', isWaitlist ? 'Entra a la lista de espera' : 'Confirma tu registro', { sortOrder: 0 }),
-        makeBlock('subtitle', 'Subtitulo', isWaitlist ? 'Te avisamos cuando haya cupo o acceso disponible.' : 'Responde rapido para reservar tu lugar o recibir detalles.', { sortOrder: 1 }),
-        makeBlock('radio', isWaitlist ? 'Que acceso quieres?' : 'Que quieres recibir?', '', {
+        makeBlock('title', 'Título', isWaitlist ? 'Entra a la lista de espera' : 'Confirma tu registro', { sortOrder: 0 }),
+        makeBlock('subtitle', 'Subtítulo', isWaitlist ? 'Te avisamos cuando haya cupo o acceso disponible.' : 'Responde rápido para reservar tu lugar o recibir detalles.', { sortOrder: 1 }),
+        makeBlock('radio', isWaitlist ? '¿Qué acceso quieres?' : '¿Qué quieres recibir?', '', {
           required: true,
           options: isWaitlist
-            ? ['Acceso anticipado', 'Cupo prioritario', 'Mas informacion']
+            ? ['Acceso anticipado', 'Cupo prioritario', 'Más información']
             : ['Confirmar asistencia', 'Recibir detalles', 'Agendar una llamada'],
           settings: { internalName: isWaitlist ? 'access_interest' : 'registration_interest' },
           sortOrder: 2
         }),
         makeBlock('dropdown', 'Mejor horario de contacto', '', {
           required: false,
-          options: ['Manana', 'Tarde', 'Noche'],
+          options: ['Mañana', 'Tarde', 'Noche'],
           settings: { internalName: 'contact_window' },
           sortOrder: 3
         }),
@@ -4494,26 +4498,26 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
     if (tpl === 'facebook' || tpl === 'instagram' || tpl === 'tiktok') {
       return [
         socialProfileBlock(0),
-        makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 1 }),
-        makeBlock('subtitle', 'Subtitulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 2 }),
+        makeBlock('title', 'Título', 'Deja tus datos y te contactamos', { sortOrder: 1 }),
+        makeBlock('subtitle', 'Subtítulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 2 }),
         ...contactFields(3)
       ]
     }
 
     return [
-      makeBlock('title', 'Titulo', 'Vamos paso a paso', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Estas preguntas ayudan a saber si eres buen candidato.', { sortOrder: 1 }),
-      makeBlock('radio', 'Que buscas hoy?', '', {
+      makeBlock('title', 'Título', 'Vamos paso a paso', { sortOrder: 0 }),
+      makeBlock('subtitle', 'Subtítulo', 'Estas preguntas ayudan a saber si eres buen candidato.', { sortOrder: 1 }),
+      makeBlock('radio', '¿Qué buscas hoy?', '', {
         required: true,
         options: [
           { label: 'Quiero comprar o contratar', action: 'hot_lead', category: 'caliente' },
-          { label: 'Necesito orientacion', action: 'warm_lead', category: 'tibio' },
+          { label: 'Necesito orientación', action: 'warm_lead', category: 'tibio' },
           { label: 'Solo estoy investigando', action: 'cold_lead', category: 'frio' }
         ],
         settings: { internalName: 'intent' },
         sortOrder: 2
       }),
-      makeBlock('paragraph', 'Cuentanos mas', '', {
+      makeBlock('paragraph', 'Cuéntanos más', '', {
         placeholder: 'Escribe una respuesta breve',
         required: false,
         settings: { internalName: 'details' },
@@ -4525,9 +4529,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
 
   if (tpl === 'compact') {
     return withStandardFormPages([
-      makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Completa este formulario rapido para que podamos darte seguimiento.', { sortOrder: 1 }),
-      makeBlock('description', 'Nota', 'Tardas menos de un minuto. Usa este formato cuando solo necesitas datos basicos.', { sortOrder: 2 }),
+      makeBlock('title', 'Título', 'Deja tus datos y te contactamos', { sortOrder: 0 }),
+      makeBlock('subtitle', 'Subtítulo', 'Completa este formulario rápido para que podamos darte seguimiento.', { sortOrder: 1 }),
+      makeBlock('description', 'Nota', 'Tardas menos de un minuto. Usa este formato cuando solo necesitas datos básicos.', { sortOrder: 2 }),
       ...contactFields(3)
     ])
   }
@@ -4535,11 +4539,11 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
   if (tpl === 'event') {
     return withStandardFormPages([
       formImageBlock('Imagen de registro', TEMPLATE_IMAGE_URLS.planning, 0, { mediaRadius: 22 }),
-      makeBlock('title', 'Titulo', 'Registro rapido', { sortOrder: 1 }),
-      makeBlock('subtitle', 'Subtitulo', 'Deja tus datos para confirmar informacion y recibir los siguientes pasos.', { sortOrder: 2 }),
-      makeBlock('dropdown', 'Que te interesa?', '', {
+      makeBlock('title', 'Título', 'Registro rápido', { sortOrder: 1 }),
+      makeBlock('subtitle', 'Subtítulo', 'Deja tus datos para confirmar información y recibir los siguientes pasos.', { sortOrder: 2 }),
+      makeBlock('dropdown', '¿Qué te interesa?', '', {
         required: true,
-        options: ['Recibir informacion', 'Agendar una llamada', 'Cotizar un servicio'],
+        options: ['Recibir información', 'Agendar una llamada', 'Cotizar un servicio'],
         settings: { internalName: 'interest' },
         sortOrder: 3
       }),
@@ -4554,12 +4558,12 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
 
   if (tpl === 'quote') {
     return withStandardFormPages([
-      formImageBlock('Imagen de cotizacion', TEMPLATE_IMAGE_URLS.quote, 0, { mediaRadius: 18 }),
-      makeBlock('title', 'Titulo', 'Cuentanos que necesitas cotizar', { sortOrder: 1 }),
-      makeBlock('subtitle', 'Subtitulo', 'Mientras mas claro sea el contexto, mas facil sera responderte bien.', { sortOrder: 2 }),
-      makeBlock('dropdown', 'Servicio de interes', '', {
+      formImageBlock('Imagen de cotización', TEMPLATE_IMAGE_URLS.quote, 0, { mediaRadius: 18 }),
+      makeBlock('title', 'Título', 'Cuéntanos qué necesitas cotizar', { sortOrder: 1 }),
+      makeBlock('subtitle', 'Subtítulo', 'Mientras más claro sea el contexto, más fácil será responderte bien.', { sortOrder: 2 }),
+      makeBlock('dropdown', 'Servicio de interés', '', {
         required: true,
-        options: ['Servicio principal', 'Paquete completo', 'Aun no se'],
+        options: ['Servicio principal', 'Paquete completo', 'Aún no sé'],
         settings: { internalName: 'service_interest' },
         sortOrder: 3
       }),
@@ -4570,7 +4574,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         sortOrder: 4
       }),
       makeBlock('paragraph', 'Detalles importantes', '', {
-        placeholder: 'Cuentanos que quieres lograr',
+        placeholder: 'Cuéntanos qué quieres lograr',
         required: false,
         settings: { internalName: 'project_details' },
         sortOrder: 5
@@ -4581,20 +4585,20 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
 
   if (tpl === 'callback') {
     return withStandardFormPages([
-      makeBlock('title', 'Titulo', 'Solicita una llamada consultiva', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Este formulario ayuda a preparar la conversacion antes de contactarte.', { sortOrder: 1 }),
+      makeBlock('title', 'Título', 'Solicita una llamada consultiva', { sortOrder: 0 }),
+      makeBlock('subtitle', 'Subtítulo', 'Este formulario ayuda a preparar la conversación antes de contactarte.', { sortOrder: 1 }),
       makeBlock('radio', 'Nivel de urgencia', '', {
         required: true,
         options: [
           { label: 'Necesito resolverlo pronto', action: 'hot_lead', category: 'caliente' },
           { label: 'Estoy evaluando opciones', action: 'warm_lead', category: 'tibio' },
-          { label: 'Solo quiero informacion', action: 'cold_lead', category: 'frio' }
+          { label: 'Solo quiero información', action: 'cold_lead', category: 'frio' }
         ],
         settings: { internalName: 'urgency' },
         sortOrder: 2
       }),
-      makeBlock('paragraph', 'Que te gustaria revisar?', '', {
-        placeholder: 'Describe brevemente tu situacion',
+      makeBlock('paragraph', '¿Qué te gustaría revisar?', '', {
+        placeholder: 'Describe brevemente tu situación',
         required: false,
         settings: { internalName: 'call_topic' },
         sortOrder: 3
@@ -4605,16 +4609,16 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
 
   if (tpl === 'waitlist') {
     return withStandardFormPages([
-      makeBlock('title', 'Titulo', 'Entra a la lista de espera', { sortOrder: 0 }),
+      makeBlock('title', 'Título', 'Entra a la lista de espera', { sortOrder: 0 }),
       formImageBlock('Imagen de lista', TEMPLATE_IMAGE_URLS.handshake, 1, { mediaRadius: 26 }),
-      makeBlock('subtitle', 'Subtitulo', 'Deja tus datos y te avisamos cuando haya cupo, fecha o acceso disponible.', { sortOrder: 2 }),
-      makeBlock('dropdown', 'Que quieres recibir?', '', {
+      makeBlock('subtitle', 'Subtítulo', 'Deja tus datos y te avisamos cuando haya cupo, fecha o acceso disponible.', { sortOrder: 2 }),
+      makeBlock('dropdown', '¿Qué quieres recibir?', '', {
         required: true,
-        options: ['Acceso anticipado', 'Aviso de cupo', 'Mas informacion'],
+        options: ['Acceso anticipado', 'Aviso de cupo', 'Más información'],
         settings: { internalName: 'waitlist_interest' },
         sortOrder: 3
       }),
-      makeBlock('checkboxes', 'Temas de interes', '', {
+      makeBlock('checkboxes', 'Temas de interés', '', {
         required: false,
         options: ['Promociones', 'Nuevas fechas', 'Paquetes especiales'],
         settings: { internalName: 'topics' },
@@ -4626,10 +4630,10 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
 
   if (tpl === 'executive' || tpl === 'local' || tpl === 'premium' || tpl === 'ristak') {
     return withStandardFormPages([
-      makeBlock('title', 'Titulo', 'Solicita informacion', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Cuentanos que necesitas y te contactamos con el siguiente paso.', { sortOrder: 1 }),
-      makeBlock('paragraph', 'Que necesitas resolver?', '', {
-        placeholder: 'Escribe una descripcion breve',
+      makeBlock('title', 'Título', 'Solicita información', { sortOrder: 0 }),
+      makeBlock('subtitle', 'Subtítulo', 'Cuéntanos qué necesitas y te contactamos con el siguiente paso.', { sortOrder: 1 }),
+      makeBlock('paragraph', '¿Qué necesitas resolver?', '', {
+        placeholder: 'Escribe una descripción breve',
         required: false,
         settings: { internalName: 'need' },
         sortOrder: 2
@@ -4641,17 +4645,17 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
   if (tpl === 'facebook' || tpl === 'instagram' || tpl === 'tiktok') {
     return withStandardFormPages([
       socialProfileBlock(0),
-      makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 1 }),
-      makeBlock('subtitle', 'Subtitulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 2 }),
+      makeBlock('title', 'Título', 'Deja tus datos y te contactamos', { sortOrder: 1 }),
+      makeBlock('subtitle', 'Subtítulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 2 }),
       ...contactFields(3)
     ])
   }
 
   return withStandardFormPages([
-    makeBlock('title', 'Titulo', siteType === 'interactive_form' ? 'Vamos paso a paso' : 'Cuentanos que necesitas', {
+    makeBlock('title', 'Título', siteType === 'interactive_form' ? 'Vamos paso a paso' : 'Cuéntanos qué necesitas', {
       sortOrder: 0
     }),
-    makeBlock('subtitle', 'Subtitulo', 'Completa la informacion y nuestro equipo te contactara.', {
+    makeBlock('subtitle', 'Subtítulo', 'Completa la información y nuestro equipo te contactará.', {
       sortOrder: 1
     }),
     ...contactFields(2)
@@ -4755,7 +4759,7 @@ function extractOpenAIResponseText(data) {
 
 function parseSitesAIJson(text) {
   const rawText = cleanString(text)
-  if (!rawText) throw new Error('La IA respondio vacia')
+  if (!rawText) throw new Error('La IA respondió vacía')
 
   const fenced = rawText.match(/```(?:json)?\s*([\s\S]*?)```/i)
   const candidate = fenced?.[1] || rawText
@@ -4766,7 +4770,7 @@ function parseSitesAIJson(text) {
   try {
     return JSON.parse(jsonText)
   } catch {
-    const error = new Error('La IA no devolvio JSON valido para Sites')
+    const error = new Error('La IA no devolvio JSON válido para Sites')
     error.status = 502
     throw error
   }
@@ -4781,7 +4785,7 @@ function getSitesAITargetType(siteKind) {
 function validateSitesAICreationKind(value) {
   const siteKind = cleanString(value)
   if (!['landing', 'form', 'interactive_form'].includes(siteKind)) {
-    const error = new Error('Tipo de creacion con IA invalido')
+    const error = new Error('Tipo de creación con IA inválido')
     error.status = 400
     throw error
   }
@@ -4817,7 +4821,7 @@ function getSitesAIBusinessContext(agentConfig = {}) {
 
 function getSitesAIImageCatalogText() {
   return SITES_AI_STOCK_IMAGE_LIBRARY
-    .map(group => `- ${group.id}: ${group.label}. Fondo: ${group.backgroundImage}. Imagenes: ${group.images.join(' | ')}`)
+    .map(group => `- ${group.id}: ${group.label}. Fondo: ${group.backgroundImage}. Imágenes: ${group.images.join(' | ')}`)
     .join('\n')
 }
 
@@ -4827,41 +4831,41 @@ function buildSitesAIHtmlInstructions({ siteKind, agentConfig = {}, editMode = f
   const targetSiteType = getSitesAITargetType(siteKind)
 
   return `
-Eres el creador libre de paginas HTML de Ristak. Genera o modifica una pagina completa en HTML/CSS para que Ristak la importe como codigo propio.
+Eres el creador libre de páginas HTML de Ristak. Genera o modifica una página completa en HTML/CSS para que Ristak la importe como código propio.
 
 Reglas duras:
-- Responde SOLO JSON valido, sin markdown.
+- Responde SOLO JSON válido, sin markdown.
 - No uses React, JSX, Tailwind, dependencias externas ni JavaScript obligatorio. El importador de Ristak puede quitar scripts por seguridad.
 - Entrega un documento HTML completo con <!doctype html>, <html lang="es">, <head>, <meta charset>, <meta viewport>, <title>, meta description y CSS dentro de <style>.
-- Si el embudo necesita varias paginas, devuelve cada pagina por separado en page.pages. No juntes todo en una sola pagina cuando el flujo naturalmente tiene pasos separados.
-- Cada pagina de page.pages debe traer id, title, filename, description y html completo. Usa nombres claros de negocio: Inicio, Video de venta, Agenda, Aplicacion, Gracias, Diagnostico, Oferta, Checkout, etc. No uses "Pagina 1" si puedes nombrarla mejor.
-- Cuando un boton mande a otra pagina del mismo embudo, usa data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la pagina destino. Si solo avanza, usa data-rstk-button-action="next_page".
-- La pagina debe ser responsiva, profesional y lista para publicarse.
-- Copy corto: titulares de 4 a 10 palabras cuando sea posible, parrafos breves de 1 a 2 lineas, listas cortas para explicar detalles.
+- Si el embudo necesita varias páginas, devuelve cada página por separado en page.pages. No juntes todo en una sola página cuando el flujo naturalmente tiene pasos separados.
+- Cada página de page.pages debe traer id, title, filename, description y html completo. Usa nombres claros de negocio: Inicio, Video de venta, Agenda, Aplicacion, Gracias, Diagnostico, Oferta, Checkout, etc. No uses "Página 1" si puedes nombrarla mejor.
+- Cuando un botón mande a otra página del mismo embudo, usa data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la página destino. Si solo avanza, usa data-rstk-button-action="next_page".
+- La página debe ser responsiva, profesional y lista para publicarse.
+- Copy corto: titulares de 4 a 10 palabras cuando sea posible, párrafos breves de 1 a 2 líneas, listas cortas para explicar detalles.
 - Si un texto largo es necesario, ajusta el CSS con font-size menor, max-width razonable, line-height claro y espacios suficientes. No dejes titulares enormes que rompan el layout.
-- Usa imagenes HTTPS directas y visibles. Prefiere el catalogo incluido. Tambien puedes usar URLs directas publicas/licenciadas de bancos conocidos cuando el usuario las proporcione o esten permitidas; no uses previews con marca de agua.
+- Usa imágenes HTTPS directas y visibles. Prefiere el catalogo incluido. También puedes usar URLs directas públicas/licenciadas de bancos conocidos cuando el usuario las proporcione o esten permitidas; no uses previews con marca de agua.
 - No uses formularios que dependan de JavaScript. El submit lo intercepta Ristak.
 - No agregues action externo en formularios.
 - No escondas campos importantes ni uses inputs sin name.
-- No metas tarjetas dentro de tarjetas sin necesidad; usa secciones limpias, buena jerarquia y aire visual.
+- No metas tarjetas dentro de tarjetas sin necesidad; usa secciones limpias, buena jerarquía y aire visual.
 - Tipo solicitado: ${targetSiteType}.
 
 Estructuras de landing (el mensaje del usuario te dice cual eligio; respetala):
-- EMBUDO: una sola mision de conversion. SIN menu de navegacion ni enlaces que saquen del flujo. CTA repetido hacia la misma accion. Si el flujo tiene pasos (ej. registro → gracias), cada paso es una pagina de page.pages enlazada con data-rstk-button-page-id.
-- SITIO WEB: presentacion completa del negocio en varias paginas de page.pages (Inicio, Servicios, Nosotros, Contacto u otras que apliquen). TODAS las paginas comparten un header con menu de navegacion cuyos enlaces usan data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la pagina destino, y un footer con datos de contacto. Un solo h1 por pagina y title + meta description propios de cada pagina. El formulario principal vive en Contacto; el resto del sitio invita sin presionar.
-- Si el usuario no especifica estructura, usa EMBUDO para peticiones de venta/captura y SITIO WEB cuando pida presencia, varias paginas o "sitio web".
+- EMBUDO: una sola mision de conversion. SIN menu de navegacion ni enlaces que saquen del flujo. CTA repetido hacia la misma acción. Si el flujo tiene pasos (ej. registro → gracias), cada paso es una página de page.pages enlazada con data-rstk-button-page-id.
+- SITIO WEB: presentación completa del negocio en varias páginas de page.pages (Inicio, Servicios, Nosotros, Contacto u otras que apliquen). TODAS las páginas comparten un header con menú de navegación cuyos enlaces usan data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la página destino, y un footer con datos de contacto. Un solo h1 por página y title + meta description propios de cada página. El formulario principal vive en Contacto; el resto del sitio invita sin presionar.
+- Si el usuario no especifica estructura, usa EMBUDO para peticiones de venta/captura y SITIO WEB cuando pida presencia, varias páginas o "sitio web".
 
-Marcado para edicion rapida:
-- Marca los elementos importantes que el usuario podria querer cambiar sin tocar codigo.
+Marcado para edición rapida:
+- Marca los elementos importantes que el usuario podria querer cambiar sin tocar código.
 - Usa data-rstk-editable="true", data-rstk-edit-type, data-rstk-label y data-rstk-edit-id.
-- Cuando puedas, agrega tambien aliases data-ristak-* o data-ristack-* para compatibilidad.
+- Cuando puedas, agrega también aliases data-ristak-* o data-ristack-* para compatibilidad.
 - Tipos permitidos: heading, text, button, form_label, placeholder, image, background_image, video.
-- Marca titulares, subtitulares, parrafos breves, botones, labels de formularios, placeholders, imagenes, logos, elementos con fondo de imagen y espacios de video/iframe/embed.
-- Si incluyes un video, usa URL o iframe seguro y marca el contenedor con data-rstk-edit-type="video" para que el usuario pueda reemplazarlo despues.
-- En botones editables, cuando sepas la accion, agrega data-rstk-button-actions como JSON de acciones. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
-- Acciones permitidas: submit, next_page, specific_page, url, automation, none. La accion automation puede quedar como demo.
-- Mantén tambien data-rstk-button-action con la primera accion para compatibilidad. Si el boton abre enlace, agrega data-rstk-button-url. Si va a una pagina interna, agrega data-rstk-button-page-id cuando exista un id claro.
-- En radio buttons y checkboxes, no agregues acciones para descalificar o detener el flujo. Si una opcion debe avanzar, agrega data-rstk-choice-actions con acciones permitidas como submit, next_page, specific_page o url.
+- Marca titulares, subtitulares, párrafos breves, botones, labels de formularios, placeholders, imágenes, logos, elementos con fondo de imagen y espacios de video/iframe/embed.
+- Si incluyes un video, usa URL o iframe seguro y marca el contenedor con data-rstk-edit-type="video" para que el usuario pueda reemplazarlo después.
+- En botones editables, cuando sepas la acción, agrega data-rstk-button-actions como JSON de acciones. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
+- Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
+- Mantén también data-rstk-button-action con la primera acción para compatibilidad. Si el botón abre enlace, agrega data-rstk-button-url. Si va a una página interna, agrega data-rstk-button-page-id cuando exista un id claro.
+- En radio buttons y checkboxes, no agregues acciones para descalificar o detener el flujo. Si una opción debe avanzar, agrega data-rstk-choice-actions con acciones permitidas como submit, next_page, specific_page o url.
 - Marca secciones principales con data-rstk-section y un nombre claro.
 - No envuelvas textos editables en demasiadas etiquetas. Deja un elemento claro para cada texto importante.
 
@@ -4871,13 +4875,13 @@ Convenciones de formularios para Ristak:
 - Agrega data-rstk-field y data-ristak-field en campos estandar para que Ristak los entienda.
 - Campos estandar permitidos: full_name, first_name, last_name, phone, email, message.
 - Para campos personalizados usa data-rstk-custom-field y data-ristak-field con una llave clara.
-- Campos personalizados utiles: treatment_interest, service_interest, preferred_date, preferred_time, appointment_reason, budget, branch, notes, company_name, job_title, city, state, postal_code.
+- Campos personalizados útiles: treatment_interest, service_interest, preferred_date, preferred_time, appointment_reason, budget, branch, notes, company_name, job_title, city, state, postal_code.
 - Ejemplo de nombre: <input id="full_name" name="full_name" data-rstk-field="full_name" data-ristak-field="full_name" autocomplete="name" required>
 - Ejemplo de tratamiento: <select id="treatment_interest" name="treatment_interest" data-rstk-custom-field="treatment_interest" data-ristak-field="treatment_interest" required>.
-- Si hay telefono, usa type="tel", name="phone", data-rstk-field="phone", autocomplete="tel".
+- Si hay teléfono, usa type="tel", name="phone", data-rstk-field="phone", autocomplete="tel".
 - Si hay email, usa type="email", name="email", data-rstk-field="email", autocomplete="email".
 
-JSON cuando falta informacion:
+JSON cuando falta información:
 {
   "status": "needs_more_info",
   "reply": "Pregunta breve al usuario"
@@ -4886,39 +4890,39 @@ JSON cuando falta informacion:
 JSON cuando esta listo:
 {
   "status": "ready",
-  "reply": "Pagina HTML lista para importar.",
+  "reply": "Página HTML lista para importar.",
   "page": {
     "siteType": "${targetSiteType}",
     "filename": "pagina-generada.html",
     "name": "Nombre interno",
-    "title": "Titulo publico",
-    "description": "Descripcion corta",
+    "title": "Título público",
+    "description": "Descripción corta",
     "html": "<!doctype html>..."
   }
 }
 
-JSON cuando esta listo con varias paginas:
+JSON cuando esta listo con varias páginas:
 {
   "status": "ready",
   "reply": "Embudo HTML listo para importar.",
   "page": {
     "siteType": "${targetSiteType}",
     "name": "Nombre interno",
-    "title": "Titulo publico",
-    "description": "Descripcion corta",
+    "title": "Título público",
+    "description": "Descripción corta",
     "pages": [
       {
         "id": "inicio",
         "title": "Inicio",
         "filename": "inicio.html",
-        "description": "Primera pagina del embudo",
+        "description": "Primera página del embudo",
         "html": "<!doctype html>..."
       },
       {
         "id": "gracias",
         "title": "Gracias",
         "filename": "gracias.html",
-        "description": "Confirmacion despues del formulario",
+        "description": "Confirmación después del formulario",
         "html": "<!doctype html>..."
       }
     ]
@@ -4926,25 +4930,25 @@ JSON cuando esta listo con varias paginas:
 }
 
 ${editMode ? `
-Modo edicion:
+Modo edición:
 - Recibiras el HTML actual y la peticion del usuario.
 - Si recibes visualContext, úsalo como referencia visual de la página actual: ubica logos, imágenes, botones, formularios, colores, textos visibles y la página activa antes de editar.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
-- Si recibes importedPages con varias paginas, conserva el embudo multipagina y responde con page.pages incluyendo todas las paginas completas. Mantén ids, title y filename de cada pagina salvo que el usuario pida renombrar, agregar, quitar o reordenar paginas.
+- Si recibes importedPages con varias páginas, conserva el embudo multipágina y responde con page.pages incluyendo todas las páginas completas. Mantén ids, title y filename de cada página salvo que el usuario pida renombrar, agregar, quitar o reordenar páginas.
 - Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
-- Puedes cambiar titulo, imagenes, videos, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
-- En ediciones de una zona seleccionada, las instrucciones de posicion, orden o alineacion como "centra el titular", "pon el video debajo" o "mueve el boton abajo" ya son suficientes. No respondas needs_more_info por no tener ids exactos; identifica titulo, video/player y CTA por jerarquia visual dentro de la zona y aplica el cambio.
+- Puedes cambiar título, imágenes, videos, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
+- En ediciones de una zona seleccionada, las instrucciones de posición, orden o alineación como "centra el titular", "pon el video debajo" o "mueve el botón abajo" ya son suficientes. No respondas needs_more_info por no tener ids exactos; identifica título, video/player y CTA por jerarquía visual dentro de la zona y aplica el cambio.
 - Si el usuario dice que algo se transparenta, no se lee, se pierde, esta muy claro o tiene poco contraste, interpreta eso como una peticion visual directa: aumenta opacidad, oscurece/aclara el fondo, mejora contraste y conserva el contenido.
-- Usa needs_more_info solo si literalmente no hay una accion que ejecutar o la peticion contradice el HTML actual de forma imposible.
+- Usa needs_more_info solo si literalmente no hay una acción que ejecutar o la peticion contradice el HTML actual de forma imposible.
 ` : `
-Modo creacion:
+Modo creación:
 - Si el usuario pidio formulario, incluyelo completo y bien mapeado.
 - Si no especifica campos, usa los campos minimos razonables para el objetivo.
-- Para landings de captura, incluye nombre completo, telefono o email y un campo de interes si aplica.
+- Para landings de captura, incluye nombre completo, teléfono o email y un campo de interés si aplica.
 `}
 
-Catalogo de imagenes permitido:
+Catalogo de imágenes permitido:
 ${imageCatalog}
 
 Contexto del negocio configurado en Ristak:
@@ -5211,7 +5215,7 @@ function buildImportedAIRegionOperationalPromptText(promptText = '', requestText
   if (!cleanRequest) return rawPrompt
   if (/Solicitud del usuario:/i.test(rawPrompt)) {
     return rawPrompt.replace(
-      /(Solicitud del usuario:\s*)[\s\S]*?(\n\nReglas para esta edicion:|$)/i,
+      /(Solicitud del usuario:\s*)[\s\S]*?(\n\nReglas para esta edición:|$)/i,
       (_match, prefix, suffix = '') => `${prefix}${cleanRequest}${suffix}`
     )
   }
@@ -5220,7 +5224,7 @@ function buildImportedAIRegionOperationalPromptText(promptText = '', requestText
 
 function getImportedAIRegionUserRequestText(text = '') {
   const raw = String(text || '')
-  const match = raw.match(/Solicitud del usuario:\s*([\s\S]*?)(?:\n\nReglas para esta edicion:|$)/i)
+  const match = raw.match(/Solicitud del usuario:\s*([\s\S]*?)(?:\n\nReglas para esta edición:|$)/i)
   return match ? match[1] : raw
 }
 
@@ -5231,7 +5235,7 @@ function getImportedAIRegionNormalizedUserRequestText(text = '') {
 function shouldApplyImportedAIRegionCenteredLayoutFallback(text = '') {
   const normalized = getImportedAIRegionNormalizedUserRequestText(text)
   const asksForLayout = /\b(centrad|centrar|center|alinear|alineado|dise[nñ]o|orden|primero|luego|debajo|abajo|arriba|apilad|vertical)\b/i.test(normalized)
-  const mentionsTitle = /\b(titular|titulo|t[ií]tulo|headline|encabezado)\b/i.test(normalized)
+  const mentionsTitle = /\b(titular|título|t[ií]tulo|headline|encabezado)\b/i.test(normalized)
   const mentionsVideo = /\b(video|player|wistia|vsl|presentacion|presentaci[oó]n)\b/i.test(normalized)
   const mentionsButton = /\b(bot[oó]n|cta|agendar|llamada|agenda)\b/i.test(normalized)
   return asksForLayout && mentionsTitle && mentionsVideo && mentionsButton
@@ -5241,7 +5245,7 @@ function shouldApplyImportedAIRegionVideoOnlyFallback(text = '') {
   const normalized = getImportedAIRegionNormalizedUserRequestText(text)
   const asksToRemove = /\b(borra|borrar|borres|quita|quitar|quites|elimina|eliminar|elimin[aá]|limpia|limpiar|deja|dejar|solo|solamente|unicamente|únicamente)\b/i.test(normalized)
   const mentionsVideo = /\b(video|player|wistia|youtube|iframe|embed|vsl|presentacion|presentaci[oó]n)\b/i.test(normalized)
-  const mentionsOtherContent = /\b(contenedor|contenedores|caja|cajas|card|cards|bloque|bloques|elemento|elementos|texto|textos|titular|titulo|t[ií]tulo|subtitulo|subt[ií]tulo|bot[oó]n|cta)\b/i.test(normalized)
+  const mentionsOtherContent = /\b(contenedor|contenedores|caja|cajas|card|cards|bloque|bloques|elemento|elementos|texto|textos|titular|título|t[ií]tulo|subtitulo|subt[ií]tulo|bot[oó]n|cta)\b/i.test(normalized)
   const asksBigCentered = /\b(grande|centrad|centrar|center|ancho|completo|full|principal)\b/i.test(normalized)
   return asksToRemove && mentionsVideo && (mentionsOtherContent || asksBigCentered)
 }
@@ -5268,7 +5272,7 @@ function parseImportedAIRegionMetaLine(line = '') {
 
 function parseImportedAIRegionElementHints(promptText = '') {
   const hints = []
-  const pattern = /^\d+\.\s+([^\n]*)(?:\nHTML:\s*([\s\S]*?))?(?=\n\n\d+\.\s+|\n\nSolicitud del usuario:|\n\nReglas para esta edicion:|$)/gm
+  const pattern = /^\d+\.\s+([^\n]*)(?:\nHTML:\s*([\s\S]*?))?(?=\n\n\d+\.\s+|\n\nSolicitud del usuario:|\n\nReglas para esta edición:|$)/gm
   let match
   while ((match = pattern.exec(String(promptText || '')))) {
     const meta = parseImportedAIRegionMetaLine(match[1] || '')
@@ -5453,13 +5457,13 @@ ${videoMarkup}
 function applyImportedAIRegionCenteredLayoutFallbackToHtml(html = '', promptText = '') {
   const source = String(html || '')
   if (!shouldApplyImportedAIRegionCenteredLayoutFallback(promptText)) {
-    return { html: source, applied: false, reason: 'La solicitud no pidio layout centrado con titular, video y boton.' }
+    return { html: source, applied: false, reason: 'La solicitud no pidió layout centrado con titular, video y botón.' }
   }
 
   const hints = parseImportedAIRegionElementHints(promptText)
   const layoutHints = pickImportedAIRegionLayoutHints(hints)
   if (!layoutHints.title || !layoutHints.video || !layoutHints.button) {
-    return { html: source, applied: false, reason: 'Faltan titular, video o boton detectados en la seleccion.' }
+    return { html: source, applied: false, reason: 'Faltan titular, video o botón detectados en la selección.' }
   }
 
   const titleRange = findImportedEditableElementById(source, layoutHints.title.editId, layoutHints.title.editType || '')
@@ -5494,7 +5498,7 @@ function applyImportedAIRegionCenteredLayoutFallbackToHtml(html = '', promptText
   return {
     html: `${source.slice(0, container.start)}${replacement}${source.slice(container.end)}`,
     applied: true,
-    reason: 'Se reordeno la zona como titular, subtitulo, video y boton.'
+    reason: 'Se reordenó la zona como titular, subtítulo, video y botón.'
   }
 }
 
@@ -5575,7 +5579,7 @@ function buildImportedAIRegionFallbackPageResult({ currentImport = {}, importedP
     }
   }
 
-  const title = sourcePage?.title || getImportedHtmlTitle(fallback.html, currentImport.originalFilename || 'Pagina importada')
+  const title = sourcePage?.title || getImportedHtmlTitle(fallback.html, currentImport.originalFilename || 'Página importada')
   const basePage = {
     siteType: getSitesAITargetType(siteKind),
     filename: sourcePage?.filename || currentImport.originalFilename || 'pagina-generada.html',
@@ -5624,7 +5628,7 @@ function extractImportedAIRegionReplacementText(requestText = '') {
 
   const patterns = [
     /\b(?:cambia|cambiar|cambiale|reemplaza|reemplazar|pon|poner|actualiza|actualizar|edita|editar|modifica|modificar)\b[\s\S]{0,90}?\b(?:a|por|como|que diga|para que diga|que sea)\s+([\s\S]{1,320})$/i,
-    /\b(?:titular|titulo|t[ií]tulo|headline|encabezado|subtitulo|subt[ií]tulo|bot[oó]n|cta)\b[\s\S]{0,50}?\b(?:a|por|como|que diga|para que diga|que sea)\s+([\s\S]{1,320})$/i
+    /\b(?:titular|título|t[ií]tulo|headline|encabezado|subtitulo|subt[ií]tulo|bot[oó]n|cta)\b[\s\S]{0,50}?\b(?:a|por|como|que diga|para que diga|que sea)\s+([\s\S]{1,320})$/i
   ]
 
   for (const pattern of patterns) {
@@ -5646,10 +5650,10 @@ function getImportedAIRegionTextTargetKind(requestText = '', hints = []) {
   if (!hasReplacement) return ''
   const asksToChange = /\b(cambia|cambiar|cambiale|reemplaza|reemplazar|pon|poner|actualiza|actualizar|edita|editar|modifica|modificar)\b/i.test(normalized)
   if (!asksToChange) return ''
-  if (/\b(titular|titulo|t[ií]tulo|headline|encabezado|hero title)\b/i.test(normalized)) return 'heading'
-  if (/\b(subtitulo|subt[ií]tulo|descripcion|descripci[oó]n|bajada)\b/i.test(normalized)) return 'subtitle'
+  if (/\b(titular|título|t[ií]tulo|headline|encabezado|hero title)\b/i.test(normalized)) return 'heading'
+  if (/\b(subtitulo|subt[ií]tulo|descripción|descripci[oó]n|bajada)\b/i.test(normalized)) return 'subtitle'
   if (/\b(bot[oó]n|cta|call to action)\b/i.test(normalized)) return 'button'
-  if (/\b(texto|copy|parrafo|p[aá]rrafo)\b/i.test(normalized)) return 'text'
+  if (/\b(texto|copy|párrafo|p[aá]rrafo)\b/i.test(normalized)) return 'text'
 
   const editableHints = hints.filter(hint => cleanString(hint.editId))
   const headingHints = editableHints.filter(hint => hint.role === 'titular' || hint.editType === 'heading' || /^h[1-6]$/i.test(hint.tagName || ''))
@@ -5715,7 +5719,7 @@ function applyImportedAIRegionTextReplacementOperation(html = '', { promptText =
     return { html: source, attempted: false, applied: false, operation: 'replace_text', reason: 'La solicitud no pidio reemplazar un texto concreto.' }
   }
   if (!hints.length) {
-    return { html: source, attempted: false, applied: false, operation: 'replace_text', reason: 'Sin zona seleccionada; la edicion de texto se delega a OpenAI con toda la pagina.' }
+    return { html: source, attempted: false, applied: false, operation: 'replace_text', reason: 'Sin zona seleccionada; la edición de texto se delega a OpenAI con toda la página.' }
   }
 
   const hint = pickImportedAIRegionTextHint(hints, targetKind)
@@ -5749,7 +5753,7 @@ function applyImportedAIRegionTextReplacementOperation(html = '', { promptText =
       operation: `replace_${targetKind}_text`,
       reason: applied
         ? `Se cambio ${hint.label || hint.role || targetKind} a "${replacementText}".`
-        : 'La operacion de texto no produjo diferencias visibles.'
+        : 'La operación de texto no produjo diferencias visibles.'
     }
   } catch (error) {
     return {
@@ -5786,13 +5790,13 @@ function applyImportedAIRegionVideoReplacementOperation(html = '', { promptText 
   const source = String(html || '')
   const videoValue = extractImportedAIRegionVideoValue(requestText)
   if (!shouldApplyImportedAIRegionVideoReplacement(requestText) || !videoValue) {
-    return { html: source, attempted: false, applied: false, operation: 'replace_video', reason: 'La solicitud no incluyo un video valido para reemplazar.' }
+    return { html: source, attempted: false, applied: false, operation: 'replace_video', reason: 'La solicitud no incluyo un video válido para reemplazar.' }
   }
 
   const operationalPrompt = buildImportedAIRegionOperationalPromptText(promptText, requestText)
   const hints = parseImportedAIRegionElementHints(operationalPrompt)
   if (!hints.length) {
-    return { html: source, attempted: false, applied: false, operation: 'replace_video', reason: 'Sin zona seleccionada; el reemplazo de video se delega a OpenAI con toda la pagina.' }
+    return { html: source, attempted: false, applied: false, operation: 'replace_video', reason: 'Sin zona seleccionada; el reemplazo de video se delega a OpenAI con toda la página.' }
   }
   const videoHint = getImportedAIRegionVideoHint(hints)
   if (!videoHint) {
@@ -5871,7 +5875,7 @@ function applyImportedAIRegionContrastFallbackToHtml(html = '', promptText = '')
   return {
     html: `${source.slice(0, container.start)}${replacement}${source.slice(container.end)}`,
     applied: true,
-    reason: 'Se hizo mas solida y legible la zona seleccionada.'
+    reason: 'Se hizo más sólida y legible la zona seleccionada.'
   }
 }
 
@@ -5957,7 +5961,7 @@ function applyImportedAIRegionAgentOperationsToHtml(html = '', { promptText = ''
     attempted: operations.length > 0,
     applied,
     operation: operations.length > 1 ? 'site_agent_operations' : (operations[0]?.split(':')[0] || ''),
-    reason: applied ? 'El agente interno aplico operaciones deterministas y verifico diferencias en el HTML.' : 'No habia una operacion determinista suficiente para esta solicitud.',
+    reason: applied ? 'El agente interno aplicó operaciones deterministas y verificó diferencias en el HTML.' : 'No había una operación determinista suficiente para esta solicitud.',
     operations
   }
 }
@@ -5965,7 +5969,7 @@ function applyImportedAIRegionAgentOperationsToHtml(html = '', { promptText = ''
 function buildImportedAIRegionPagePayloadFromHtml({ html = '', currentImport = {}, importedPages = [], activePageId = '', siteKind = 'landing' } = {}) {
   const sourcePage = findImportedAIActivePageContext(importedPages, activePageId)
   const nextHtml = String(html || '')
-  const title = sourcePage?.title || getImportedHtmlTitle(nextHtml, currentImport.originalFilename || 'Pagina importada')
+  const title = sourcePage?.title || getImportedHtmlTitle(nextHtml, currentImport.originalFilename || 'Página importada')
   const basePage = {
     siteType: getSitesAITargetType(siteKind),
     filename: sourcePage?.filename || currentImport.originalFilename || 'pagina-generada.html',
@@ -6034,18 +6038,18 @@ function getImportedAIRegionMissingTargetMessage(fallbackResult = {}) {
   const reason = cleanString(fallbackResult.reason)
   if (fallbackType === 'video_only') {
     if (/no se detecto un video/i.test(reason)) {
-      return 'La zona que seleccionaste no incluye un video detectable. Para cambiar o dejar solo el video, selecciona tambien el video dentro del rectangulo.'
+      return 'La zona que seleccionaste no incluye un video detectable. Para cambiar o dejar solo el video, selecciona también el video dentro del rectangulo.'
     }
     if (/ya no coincide/i.test(reason)) {
-      return 'El video de esa seleccion ya no coincide con el HTML guardado. Recarga la vista previa y vuelve a seleccionar la zona.'
+      return 'El video de esa selección ya no coincide con el HTML guardado. Recarga la vista previa y vuelve a seleccionar la zona.'
     }
   }
   if (fallbackType === 'centered_title_video_button') {
     if (/faltan titular, video o boton/i.test(reason)) {
-      return 'La zona seleccionada no incluye todos los elementos necesarios: titulo, video y boton. Selecciona la franja completa que quieres reordenar.'
+      return 'La zona seleccionada no incluye todos los elementos necesarios: título, video y botón. Selecciona la franja completa que quieres reordenar.'
     }
     if (/ya no coinciden/i.test(reason)) {
-      return 'Los elementos de esa seleccion ya no coinciden con el HTML guardado. Recarga la vista previa y vuelve a seleccionar la zona.'
+      return 'Los elementos de esa selección ya no coinciden con el HTML guardado. Recarga la vista previa y vuelve a seleccionar la zona.'
     }
   }
   return ''
@@ -6053,10 +6057,10 @@ function getImportedAIRegionMissingTargetMessage(fallbackResult = {}) {
 
 function buildImportedAIRegionMissingTargetResponse(debugOrMessage = '', message = '') {
   const debug = debugOrMessage && typeof debugOrMessage === 'object' ? debugOrMessage : null
-  const reply = cleanString(debug ? message : debugOrMessage) || 'La zona seleccionada no incluye el elemento que pediste cambiar. Selecciona la parte correcta de la pagina y vuelve a intentar.'
+  const reply = cleanString(debug ? message : debugOrMessage) || 'La zona seleccionada no incluye el elemento que pediste cambiar. Selecciona la parte correcta de la página y vuelve a intentar.'
   if (debug) {
     debug.finalStatus = 'selection_target_missing'
-    addSitesAIEditDebugStep(debug, `No se guardo el HTML porque falta el objetivo en la seleccion: ${reply}`)
+    addSitesAIEditDebugStep(debug, `No se guardo el HTML porque falta el objetivo en la selección: ${reply}`)
     logSitesAIEditDebug(debug, 'selection_target_missing')
   }
   const response = {
@@ -6191,7 +6195,7 @@ function isGenericSocialProfileName(value) {
 
 function isGenericSocialProfileSubtitle(value) {
   const subtitle = cleanString(value).toLowerCase()
-  return !subtitle || subtitle === 'patrocinado' || subtitle === 'publicacion pagada'
+  return !subtitle || subtitle === 'patrocinado' || subtitle === 'publicación pagada'
 }
 
 function isSupportedSocialPlatform(value) {
@@ -6433,7 +6437,7 @@ export async function createSite(input = {}) {
   return getSite(id, { includeBlocks: true, includeSubmissions: true })
 }
 
-function getImportedHtmlTitle(html = '', fallback = 'Pagina importada') {
+function getImportedHtmlTitle(html = '', fallback = 'Página importada') {
   const titleMatch = String(html || '').match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)
   return limitString(stripHtmlTags(titleMatch?.[1] || fallback), 120)
 }
@@ -6488,7 +6492,7 @@ function sortImportedZipHtmlPaths(paths = [], mainPath = '') {
 }
 
 function getImportedPageDisplayTitle(value = '', index = 0) {
-  return limitString(cleanString(value), 80) || `Pagina ${index + 1}`
+  return limitString(cleanString(value), 80) || `Página ${index + 1}`
 }
 
 function normalizeImportedPageId(value = '', index = 0, usedIds = new Set()) {
@@ -6515,7 +6519,7 @@ function normalizeGeneratedImportedPageAssetPath(page = {}, index = 0, usedPaths
     page.id ||
     page.title ||
     page.name ||
-    `pagina-${index + 1}`
+    `página-${index + 1}`
   )
   const existingHtmlPath = normalizeImportedAssetPath(rawBase)
   if (existingHtmlPath && /\.html?$/i.test(existingHtmlPath)) {
@@ -6594,7 +6598,7 @@ async function extractImportedZipArchive(filename = '', buffer = Buffer.alloc(0)
   }
 
   if (buffer.byteLength > IMPORTED_ZIP_MAX_BYTES) {
-    const error = new Error('El ZIP es demasiado grande. Sube un archivo de maximo 15 MB.')
+    const error = new Error('El ZIP es demasiado grande. Sube un archivo de máximo 15 MB.')
     error.status = 400
     throw error
   }
@@ -6631,21 +6635,21 @@ async function extractImportedZipArchive(filename = '', buffer = Buffer.alloc(0)
     }
 
     if (filesByPath.size >= IMPORTED_ZIP_MAX_FILES) {
-      const error = new Error(`El ZIP trae demasiados archivos. Sube maximo ${IMPORTED_ZIP_MAX_FILES} archivos web.`)
+      const error = new Error(`El ZIP trae demasiados archivos. Sube máximo ${IMPORTED_ZIP_MAX_FILES} archivos web.`)
       error.status = 400
       throw error
     }
 
     const content = await entry.async('nodebuffer')
     if (content.byteLength > IMPORTED_ASSET_MAX_BYTES) {
-      const error = new Error(`El archivo ${assetPath} es demasiado grande. Cada archivo interno debe pesar maximo 8 MB.`)
+      const error = new Error(`El archivo ${assetPath} es demasiado grande. Cada archivo interno debe pesar máximo 8 MB.`)
       error.status = 400
       throw error
     }
 
     totalBytes += content.byteLength
     if (totalBytes > IMPORTED_ASSET_TOTAL_MAX_BYTES) {
-      const error = new Error('El ZIP trae demasiados assets. Reduce imagenes o videos e intenta otra vez.')
+      const error = new Error('El ZIP trae demasiados assets. Reduce imágenes o videos e intenta otra vez.')
       error.status = 400
       throw error
     }
@@ -6675,7 +6679,7 @@ async function extractImportedZipArchive(filename = '', buffer = Buffer.alloc(0)
     htmlPaths: sortImportedZipHtmlPaths(htmlPaths, mainPath),
     report: [
       `Se importo ZIP con ${filesByPath.size} archivos web`,
-      `Pagina principal detectada: ${mainPath}`,
+      `Página principal detectada: ${mainPath}`,
       ...report
     ]
   }
@@ -6773,13 +6777,13 @@ async function addImportedEditableImageAsset(siteId, currentImport, input = {}) 
 
   const buffer = decodeBase64Buffer(fileBase64)
   if (!buffer.length) {
-    const error = new Error('La imagen esta vacia.')
+    const error = new Error('La imagen está vacía.')
     error.status = 400
     throw error
   }
 
   if (buffer.byteLength > IMPORTED_ASSET_MAX_BYTES) {
-    const error = new Error('La imagen es demasiado grande. Sube una imagen de maximo 8 MB.')
+    const error = new Error('La imagen es demasiado grande. Sube una imagen de máximo 8 MB.')
     error.status = 400
     throw error
   }
@@ -6837,7 +6841,7 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
       pagesByPath.set(file.assetPath, makeImportedZipPage(
         file.assetPath,
         pageIndex,
-        getImportedHtmlTitle(sanitized.html, `Pagina ${pageIndex + 1}`)
+        getImportedHtmlTitle(sanitized.html, `Página ${pageIndex + 1}`)
       ))
 
       assets.push(buildImportedAssetRow({
@@ -6895,7 +6899,7 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
 async function prepareGeneratedImportedPagesContent({ pages = [], siteId, importId }) {
   const normalizedPages = normalizeGeneratedImportedPages(pages)
   if (!normalizedPages.length) {
-    const error = new Error('La IA no devolvio paginas HTML validas para importar')
+    const error = new Error('La IA no devolvió páginas HTML válidas para importar')
     error.status = 502
     throw error
   }
@@ -7163,15 +7167,15 @@ export async function createImportedSiteFromHtml(input = {}) {
         report: sanitized.report
       },
       detectedForms,
-      pages: [makeImportedZipPage('', 0, getImportedHtmlTitle(sanitized.html, 'Pagina 1'))],
+      pages: [makeImportedZipPage('', 0, getImportedHtmlTitle(sanitized.html, 'Página 1'))],
       assets: []
     }
   }
 
   const detectedForms = prepared.detectedForms
   const mappings = buildDefaultImportedFormMappings(detectedForms)
-  const publicTitle = getImportedHtmlTitle(prepared.sanitized.html, input.title || filename.replace(/\.[^.]+$/, '') || 'Pagina importada')
-  const publicDescription = getImportedHtmlDescription(prepared.sanitized.html, input.description || 'Pagina importada desde HTML propio')
+  const publicTitle = getImportedHtmlTitle(prepared.sanitized.html, input.title || filename.replace(/\.[^.]+$/, '') || 'Página importada')
+  const publicDescription = getImportedHtmlDescription(prepared.sanitized.html, input.description || 'Página importada desde HTML propio')
   const slug = await ensureUniqueSlug(slugify(input.slug || publicTitle || 'pagina-importada'))
   const theme = {
     ...DEFAULT_THEME,
@@ -7182,7 +7186,7 @@ export async function createImportedSiteFromHtml(input = {}) {
     importAssetCount: prepared.assets.length,
     pages: Array.isArray(prepared.pages) && prepared.pages.length
       ? prepared.pages
-      : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+      : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   }
 
   await db.run(`
@@ -7192,11 +7196,11 @@ export async function createImportedSiteFromHtml(input = {}) {
     ) VALUES (?, ?, ?, ?, 'draft', NULL, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, [
     siteId,
-    limitString(input.name || publicTitle || 'Pagina importada', 100),
+    limitString(input.name || publicTitle || 'Página importada', 100),
     slug,
     siteType,
     publicTitle,
-    publicDescription || 'Pagina importada desde HTML propio',
+    publicDescription || 'Página importada desde HTML propio',
     jsonString(theme),
     normalizeBoolean(input.metaCapiEnabled),
     normalizeSiteMetaEventName(input.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
@@ -7283,7 +7287,7 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
       currentImport.formMappings,
       buildDefaultImportedFormMappings(prepared.detectedForms)
     )
-    const publicTitle = getImportedHtmlTitle(prepared.sanitized.html, input.title || currentSite.title || 'Pagina importada')
+    const publicTitle = getImportedHtmlTitle(prepared.sanitized.html, input.title || currentSite.title || 'Página importada')
     const publicDescription = getImportedHtmlDescription(prepared.sanitized.html, input.description || currentSite.description || '')
     const nextTheme = {
       ...DEFAULT_THEME,
@@ -7357,7 +7361,7 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
     currentImport.formMappings,
     buildDefaultImportedFormMappings(detectedForms)
   )
-  const publicTitle = getImportedHtmlTitle(htmlSanitized, input.title || 'Pagina importada')
+  const publicTitle = getImportedHtmlTitle(htmlSanitized, input.title || 'Página importada')
   const publicDescription = getImportedHtmlDescription(htmlSanitized, input.description || '')
 
   await db.run(`
@@ -7406,7 +7410,7 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
   }
 
   if (currentImport.importType !== 'html') {
-    const error = new Error('La edicion rapida funciona con paginas HTML de un solo archivo. Para ZIP, sube una nueva version del archivo.')
+    const error = new Error('La edición rapida funciona con páginas HTML de un solo archivo. Para ZIP, sube una nueva version del archivo.')
     error.status = 400
     throw error
   }
@@ -7422,7 +7426,7 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
   if (cleanString(updateInput.fileBase64 || updateInput.file_base64)) {
     const editType = normalizeImportedEditableContentType(updateInput.editType || updateInput.edit_type)
     if (!['image', 'background_image'].includes(editType)) {
-      const error = new Error('La subida de archivo solo aplica para imagenes.')
+      const error = new Error('La subida de archivo solo aplica para imágenes.')
       error.status = 400
       throw error
     }
@@ -7460,7 +7464,7 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
     currentImport.formMappings,
     buildDefaultImportedFormMappings(nextDetectedForms)
   )
-  const publicTitle = getImportedHtmlTitle(htmlSanitized, 'Pagina importada')
+  const publicTitle = getImportedHtmlTitle(htmlSanitized, 'Página importada')
   const publicDescription = getImportedHtmlDescription(htmlSanitized, '')
 
   if (editsAssetPage && activeAsset) {
@@ -7527,14 +7531,14 @@ export async function createSiteWithAIHtml(input = {}) {
     return {
       status: 'needs_more_info',
       reply: siteKind === 'landing'
-        ? 'Cuentame el negocio, oferta, objetivo, estilo visual, CTA y que campos quieres capturar si llevara formulario.'
-        : 'Cuentame que formulario quieres, que datos debe pedir, estilo visual y que mensaje debe ver la persona al terminar.'
+        ? 'Cuéntame el negocio, oferta, objetivo, estilo visual, CTA y qué campos quieres capturar si llevará formulario.'
+        : 'Cuéntame qué formulario quieres, qué datos debe pedir, estilo visual y qué mensaje debe ver la persona al terminar.'
     }
   }
 
   const apiKey = await getOpenAIApiKey()
   if (!apiKey) {
-    const error = new Error('Primero configura la API key de OpenAI en Configuracion.')
+    const error = new Error('Primero configura la API key de OpenAI en Configuración.')
     error.status = 409
     throw error
   }
@@ -7553,7 +7557,7 @@ export async function createSiteWithAIHtml(input = {}) {
   if (status === 'needs_more_info' || !hasSitesAIHtmlPayload(aiPayload)) {
     return {
       status: 'needs_more_info',
-      reply: limitString(aiPayload?.reply, 1000) || 'Me falta un dato clave para armar la pagina HTML. Cuentame un poco mas del negocio, objetivo y campos.'
+      reply: limitString(aiPayload?.reply, 1000) || 'Me falta un dato clave para armar la página HTML. Cuéntame un poco más del negocio, objetivo y campos.'
     }
   }
 
@@ -7565,7 +7569,7 @@ export async function createSiteWithAIHtml(input = {}) {
     pages: page.pages,
     name: page.name,
     title: page.title,
-    description: page.description || 'Pagina generada con IA desde HTML.',
+    description: page.description || 'Página generada con IA desde HTML.',
     userId: input.userId,
     metaCapiEnabled: input.metaCapiEnabled,
     metaEventName: input.metaEventName
@@ -7573,7 +7577,7 @@ export async function createSiteWithAIHtml(input = {}) {
 
   return {
     status: 'created',
-    reply: limitString(aiPayload?.reply, 1000) || 'Listo, genere la pagina HTML y la importe para revisar sus formularios.',
+    reply: limitString(aiPayload?.reply, 1000) || 'Listo, genere la página HTML y la importe para revisar sus formularios.',
     site: result.site,
     import: result.import
   }
@@ -7670,7 +7674,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   if (messages.length === 0 && !aiRegionRequest) {
     return {
       status: 'needs_more_info',
-      reply: 'Dime que quieres cambiar del HTML: titulo, imagen, orden de secciones, colores, textos o campos del formulario.'
+      reply: 'Dime que quieres cambiar del HTML: título, imagen, orden de secciones, colores, textos o campos del formulario.'
     }
   }
 
@@ -7692,7 +7696,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
     messages,
     aiRegionRequest
   })
-  addSitesAIEditDebugStep(debug, `Inicio de edicion IA para pagina ${activePageId || 'activa'} con ${debug.selectedElements} elementos visuales.`)
+  addSitesAIEditDebugStep(debug, `Inicio de edición IA para página ${activePageId || 'activa'} con ${debug.selectedElements} elementos visuales.`)
   logSitesAIEditDebug(debug, 'request_started')
 
   const agentImportedPages = await getImportedSitePagesForAIContext(currentSite, currentImport, { htmlLimit: 0 })
@@ -7710,7 +7714,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   debug.agentReason = agentResult.reason || ''
   debug.agentOperations = agentResult.operations || []
   if (agentResult.attempted) {
-    addSitesAIEditDebugStep(debug, `Agente interno ${agentResult.operation || 'operacion'}: ${agentResult.reason || 'sin detalle'}`)
+    addSitesAIEditDebugStep(debug, `Agente interno ${agentResult.operation || 'operación'}: ${agentResult.reason || 'sin detalle'}`)
     logSitesAIEditDebug(debug, agentResult.page ? 'site_agent_updated' : 'site_agent_no_change', {
       agentOperations: debug.agentOperations
     })
@@ -7729,7 +7733,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
 
     return {
       status: 'updated',
-      reply: agentResult.reason || 'Ristak aplico el cambio con el agente interno del editor.',
+      reply: agentResult.reason || 'Ristak aplicó el cambio con el agente interno del editor.',
       site: result.site,
       import: result.import,
       debug: getSitesAIEditDebugPayload(debug)
@@ -7745,7 +7749,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
 
   const apiKey = await getOpenAIApiKey()
   if (!apiKey) {
-    const error = new Error('Primero configura la API key de OpenAI en Configuracion.')
+    const error = new Error('Primero configura la API key de OpenAI en Configuración.')
     error.status = 409
     throw error
   }
@@ -7774,7 +7778,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   if (status === 'needs_more_info' || !hasSitesAIHtmlPayload(aiPayload)) {
     return {
       status: 'needs_more_info',
-      reply: limitString(aiPayload?.reply, 1000) || 'Me falta saber que cambio quieres hacer en esta pagina HTML.'
+      reply: limitString(aiPayload?.reply, 1000) || 'Me falta saber que cambio quieres hacer en esta página HTML.'
     }
   }
 
@@ -7816,8 +7820,8 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
       return {
         status: 'updated',
         reply: layoutFallbackResult.type === 'video_only'
-          ? 'Ristak dejo solo el video grande y centrado en la zona seleccionada.'
-          : 'Ristak aplico el reordenamiento de la zona seleccionada: titular, subtitulo, video y boton.',
+          ? 'Ristak dejó solo el video grande y centrado en la zona seleccionada.'
+          : 'Ristak aplicó el reordenamiento de la zona seleccionada: titular, subtítulo, video y botón.',
         site: layoutResult.site,
         import: layoutResult.import
       }
@@ -7852,8 +7856,8 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
         return {
           status: 'updated',
           reply: fallbackResultPage.type === 'video_only'
-            ? 'La IA no hizo cambios visibles, asi que Ristak dejo solo el video grande y centrado en la zona seleccionada.'
-            : 'La IA no hizo cambios visibles, asi que Ristak aplico el ajuste de layout en la zona seleccionada.',
+            ? 'La IA no hizo cambios visibles, así que Ristak dejó solo el video grande y centrado en la zona seleccionada.'
+            : 'La IA no hizo cambios visibles, así que Ristak aplicó el ajuste de layout en la zona seleccionada.',
           site: fallbackResult.site,
           import: fallbackResult.import
         }
@@ -7864,7 +7868,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
       status: 'needs_more_info',
       reply: hasSelectedRegionHints
         ? 'La IA devolvio el mismo HTML sin cambios visibles. Reintenta indicando exactamente que debe cambiar en la zona seleccionada.'
-        : 'La IA devolvio el mismo HTML sin cambios visibles. Reintenta indicando exactamente que debe cambiar en la pagina.'
+        : 'La IA devolvio el mismo HTML sin cambios visibles. Reintenta indicando exactamente que debe cambiar en la página.'
     }
   }
 
@@ -8248,7 +8252,7 @@ export async function refreshSitesPublicDomain(input = {}) {
   const domain = normalizeDomain(rawDomain)
 
   if (hasDomainCandidate && cleanString(rawDomain) && !domain) {
-    const result = { verified: false, error: 'Dominio invalido' }
+    const result = { verified: false, error: 'Dominio inválido' }
     return {
       ...current,
       domain: cleanString(rawDomain),
@@ -8317,25 +8321,25 @@ function getExpectedPublicDomainTargets() {
 
 function describeDnsSignal(dnsInfo) {
   if (!dnsInfo.cnames.length && !dnsInfo.addresses.length) {
-    return 'No encuentro registros DNS publicos para ese dominio'
+    return 'No encuentro registros DNS públicos para ese dominio'
   }
 
   const expectedTargets = getExpectedPublicDomainTargets()
   const matchingTarget = dnsInfo.cnames.find(cname => expectedTargets.has(cname))
   if (matchingTarget) {
-    return `DNS apunta a ${matchingTarget}, pero el dominio todavia no responde a esta app`
+    return `DNS apunta a ${matchingTarget}, pero el dominio todavía no responde a esta app`
   }
 
   const renderTarget = dnsInfo.cnames.find(cname => cname.endsWith('.onrender.com'))
   if (renderTarget) {
-    return `DNS apunta a ${renderTarget}, pero el dominio todavia no responde a esta app`
+    return `DNS apunta a ${renderTarget}, pero el dominio todavía no responde a esta app`
   }
 
   if (dnsInfo.cnames.length) {
     return `DNS apunta a ${dnsInfo.cnames.join(', ')}, pero no responde a esta app`
   }
 
-  return 'DNS resuelve, pero el dominio todavia no responde a esta app'
+  return 'DNS resuelve, pero el dominio todavía no responde a esta app'
 }
 
 async function checkDomainHealth(domain, protocol) {
@@ -8360,13 +8364,13 @@ async function checkDomainHealth(domain, protocol) {
 
     return {
       ok: false,
-      error: `${url} respondio ${response.status}, pero no parece ser el health de Ristak`
+      error: `${url} respondió ${response.status}, pero no parece ser el health de Ristak`
     }
   } catch (error) {
     return {
       ok: false,
       error: error.name === 'AbortError'
-        ? `${url} no respondio a tiempo`
+        ? `${url} no respondió a tiempo`
         : `${url} fallo: ${error.message}`
     }
   } finally {
@@ -8377,7 +8381,7 @@ async function checkDomainHealth(domain, protocol) {
 export async function verifyPublicDomainConnection(domainValue) {
   const domain = normalizeDomain(domainValue)
   if (!domain) {
-    return { verified: false, error: 'Dominio invalido' }
+    return { verified: false, error: 'Dominio inválido' }
   }
 
   // Probamos el dominio tal cual y su variante con/sin www: en Render es comun
@@ -8475,7 +8479,7 @@ function matchesPublicDomain(hostValue, domainValue) {
 export async function resolveConnectedPublicDomainForHost(hostValue, { forceRefresh = false } = {}) {
   const host = normalizeDomain(hostValue)
   if (!host) {
-    return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio invalido' }
+    return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio inválido' }
   }
 
   const config = await getSitesPublicDomainConfig()
@@ -8542,7 +8546,7 @@ async function hydrateEmbeddedForms(blocks = []) {
 export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false, path = '/' } = {}) {
   const host = normalizeDomain(hostValue)
   if (!host) {
-    return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio invalido' }
+    return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio inválido' }
   }
 
   const domainResolution = await resolveConnectedPublicDomainForHost(host, { forceRefresh })
@@ -8553,7 +8557,7 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
     site = await findDefaultPublishedSite()
   }
   if (!site) {
-    return { ok: false, status: 404, reason: 'route_not_configured', message: 'Ruta publica no configurada' }
+    return { ok: false, status: 404, reason: 'route_not_configured', message: 'Ruta pública no configurada' }
   }
 
   if (site.status !== 'published') {
@@ -8984,7 +8988,7 @@ function normalizeOption(option) {
   if (option && typeof option === 'object') {
     const label = cleanString(option.label || option.value || option.text)
     return {
-      id: cleanString(option.id) || slugify(label || 'opcion'),
+      id: cleanString(option.id) || slugify(label || 'opción'),
       label,
       value: cleanString(option.value) || label,
       action: normalizeOptionAction(option.action),
@@ -8998,7 +9002,7 @@ function normalizeOption(option) {
 
   const label = cleanString(option)
   return {
-    id: slugify(label || 'opcion'),
+    id: slugify(label || 'opción'),
     label,
     value: label,
     action: 'continue',
@@ -9138,7 +9142,7 @@ function normalizePageList(rawPages = []) {
 
       return {
         id: cleanString(page?.id) || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
-        title: cleanString(page?.title) || `Pagina ${index + 1}`,
+        title: cleanString(page?.title) || `Página ${index + 1}`,
         sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
         metaCapiEnabled: Boolean(normalizeBoolean(page?.metaCapiEnabled ?? page?.meta_capi_enabled)),
         metaEventName,
@@ -9193,13 +9197,13 @@ function normalizeFormPages(site) {
 function normalizeSitePages(site) {
   if (isImportedHtmlSite(site)) {
     const pages = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
-    return pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+    return pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   }
 
   if (site?.siteType === 'standard_form') return normalizeFormPages(site)
 
   const pages = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
-  return pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+  return pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
 }
 
 // 'website' = landing site whose pages form a tree with hierarchical URLs + auto nav.
@@ -9338,8 +9342,8 @@ function getDefaultFormThankYouBlocks(siteId) {
       id: 'default-thank-you-title',
       siteId,
       blockType: 'title',
-      label: 'Titulo',
-      content: 'Gracias, recibimos tu informacion',
+      label: 'Título',
+      content: 'Gracias, recibimos tu información',
       placeholder: '',
       required: false,
       options: [],
@@ -9352,7 +9356,7 @@ function getDefaultFormThankYouBlocks(siteId) {
       id: 'default-thank-you-subtitle',
       siteId,
       blockType: 'subtitle',
-      label: 'Subtitulo',
+      label: 'Subtítulo',
       content: 'Te contactaremos pronto con el siguiente paso.',
       placeholder: '',
       required: false,
@@ -9371,7 +9375,7 @@ function getDefaultFormDisqualifiedBlocks(siteId) {
       id: 'default-disqualified-title',
       siteId,
       blockType: 'title',
-      label: 'Titulo',
+      label: 'Título',
       content: 'Gracias por responder',
       placeholder: '',
       required: false,
@@ -9385,8 +9389,8 @@ function getDefaultFormDisqualifiedBlocks(siteId) {
       id: 'default-disqualified-subtitle',
       siteId,
       blockType: 'subtitle',
-      label: 'Subtitulo',
-      content: 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo despues.',
+      label: 'Subtítulo',
+      content: 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo después.',
       placeholder: '',
       required: false,
       options: [],
@@ -10509,7 +10513,7 @@ function renderContentBlock(block, context = {}) {
   if (block.blockType === 'header_panel' || block.blockType === 'footer_panel') {
     const isHeader = block.blockType === 'header_panel'
     const links = getPanelLinks(settings)
-    const copy = content || (isHeader ? escapeHtml(block.label || 'Tu marca') : 'Tu informacion esta protegida.')
+    const copy = content || (isHeader ? escapeHtml(block.label || 'Tu marca') : 'Tu información esta protegida.')
     return `
       <div class="rstk-site-panel ${isHeader ? 'rstk-site-panel-header' : 'rstk-site-panel-footer'}">
         ${isHeader ? `<strong class="rstk-site-panel-copy">${copy}</strong>` : `<p class="rstk-site-panel-copy">${copy}</p>`}
@@ -10645,7 +10649,7 @@ function renderContentBlock(block, context = {}) {
               <div data-embedded-page-content="${escapeHtml(page.id)}"${index === 0 ? '' : ' hidden'}>
                 ${pageFields.length
                   ? pageFields.map(field => renderFieldBlock(field, false, page.id, context)).join('\n')
-                  : `<p class="rstk-help">Esta pagina no tiene campos.</p>`}
+                  : `<p class="rstk-help">Esta página no tiene campos.</p>`}
               </div>
             `
           }).join('\n')}
@@ -10742,10 +10746,10 @@ function renderFieldInput(block, context = {}) {
       ).toUpperCase()
       return `
         <div class="rstk-phone-input" data-phone-country-field>
-          <select id="${id}__country" name="${id}__country" data-phone-country-select aria-label="Pais y lada">
+          <select id="${id}__country" name="${id}__country" data-phone-country-select aria-label="País y lada">
             ${renderPhoneCountryOptions(defaultCountryCode)}
           </select>
-          <input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="${placeholder || 'Numero'}" data-phone-number-input ${required}>
+          <input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="${placeholder || 'Número'}" data-phone-number-input ${required}>
         </div>
       `
     }
@@ -10760,7 +10764,7 @@ function renderFieldInput(block, context = {}) {
   if (block.blockType === 'dropdown') {
     return `
       <select id="${id}" name="${id}" ${required}>
-        <option value="">Selecciona una opcion</option>
+        <option value="">Selecciona una opción</option>
         ${options.map(option => `<option value="${escapeHtml(option.value)}" ${optionRuleAttributes(option)}>${escapeHtml(option.label)}</option>`).join('')}
       </select>
     `
@@ -11277,7 +11281,7 @@ function resolveTemplate(site) {
 function getBrand(site, template) {
   const theme = (site && site.theme) || {}
   const name = cleanString(theme.brandName) || cleanString(site && site.title) || cleanString(site && site.name) || 'Tu marca'
-  const subtitleDefault = template.chrome === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'
+  const subtitleDefault = template.chrome === 'instagram' ? 'Publicación pagada' : 'Patrocinado'
   const subtitle = cleanString(theme.brandSubtitle) || subtitleDefault
   const avatarUrl = safeUrl(theme.brandAvatar)
   const followers = cleanString(theme.followers || theme.followersCount || theme.followerCount)
@@ -11314,7 +11318,7 @@ function renderSocialProfileBlock(block, context = {}) {
   const template = SITE_TEMPLATES[platform] || siteTemplate
   const siteBrand = getBrand(context.site || {}, template)
   const name = cleanString(settings.brandName) || siteBrand.name
-  const subtitleDefault = platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'
+  const subtitleDefault = platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'
   const subtitle = cleanString(settings.brandSubtitle) || siteBrand.subtitle || subtitleDefault
   const followers = cleanString(settings.followers || settings.followersCount || settings.followerCount) || siteBrand.followers
   const avatarUrl = safeUrl(settings.brandAvatar) || siteBrand.avatarUrl
@@ -11349,7 +11353,7 @@ function renderLegalFooter(brand) {
   return `
     <p class="rstk-footer">
       <span class="rstk-lock" aria-hidden="true">${RSTK_ICONS.lock}</span>
-      Tu informacion esta protegida. ${escapeHtml(brand.name)} no la comparte con terceros.
+      Tu información esta protegida. ${escapeHtml(brand.name)} no la comparte con terceros.
     </p>
   `
 }
@@ -12286,7 +12290,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
               });
             }
             form.reset();
-            setMessage(form, submission.message || 'Listo. Recibimos tu informacion.', 'success');
+            setMessage(form, submission.message || 'Listo. Recibimos tu información.', 'success');
             window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
             if (submission.status !== 'disqualified') {
               const navigationAction = selectedChoiceActions.find(item => (
@@ -12465,7 +12469,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
           if (done) return;
           done = true;
           window.removeEventListener('ristak:submitted', handleSubmitted);
-          reject(new Error('No se pudo confirmar el envio del formulario'));
+          reject(new Error('No se pudo confirmar el envío del formulario'));
         }, 10000);
         const handleSubmitted = (submitEvent) => {
           if (done) return;
@@ -12510,7 +12514,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
               context
             }
           }));
-          showActionMessage(source, 'Accion demo registrada: ' + action.action, 'success');
+          showActionMessage(source, 'Acción demo registrada: ' + action.action, 'success');
           return;
         }
         if (action.action === 'disqualify') {
@@ -12561,7 +12565,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
 
         event.preventDefault();
         runImportedActions(button, actions, { source: 'button' }).catch(error => {
-          showActionMessage(button, error && error.message ? error.message : 'No se pudo ejecutar la accion', 'error');
+          showActionMessage(button, error && error.message ? error.message : 'No se pudo ejecutar la acción', 'error');
         });
       }, true);
     })();
@@ -12628,7 +12632,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
   if (!imported) {
     return renderDomainErrorHtml({
       host: site.domain,
-      message: 'La pagina importada no se encontro. Vuelve a subir el HTML desde Sites.'
+      message: 'La página importada no se encontro. Vuelve a subir el HTML desde Sites.'
     })
   }
 
@@ -12753,7 +12757,7 @@ function renderSiteNavItems(site, parentId, activeIds, linkStyle, depth) {
     if (submenu) classes.push('rstk-nav-has-children')
     if (activeIds.has(page.id)) classes.push('rstk-nav-active')
     return `<li class="${classes.join(' ')}">`
-      + `<a class="rstk-nav-link" href="${escapeHtml(href)}">${escapeHtml(page.title || 'Pagina')}`
+      + `<a class="rstk-nav-link" href="${escapeHtml(href)}">${escapeHtml(page.title || 'Página')}`
       + `${submenu ? '<span class="rstk-nav-caret" aria-hidden="true">&#9662;</span>' : ''}</a>`
       + `${submenu ? `<div class="rstk-nav-submenu">${submenu}</div>` : ''}`
       + `</li>`
@@ -13270,7 +13274,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
           const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect');
           if (blockingRule) {
-            if (state.message) state.message.textContent = blockingRule.action === 'redirect' ? 'Enviando...' : (blockingRule.message || 'Gracias. Tu informacion fue recibida.');
+            if (state.message) state.message.textContent = blockingRule.action === 'redirect' ? 'Enviando...' : (blockingRule.message || 'Gracias. Tu información fue recibida.');
             form.dataset.ruleSubmit = 'true';
             form.dataset.rulePageId = state.pageIds[state.index] || '';
             form.requestSubmit();
@@ -13295,7 +13299,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
         const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect');
         if (blockingRule) {
-          if (message) message.textContent = blockingRule.action === 'redirect' ? 'Enviando...' : (blockingRule.message || 'Gracias. Tu informacion fue recibida.');
+          if (message) message.textContent = blockingRule.action === 'redirect' ? 'Enviando...' : (blockingRule.message || 'Gracias. Tu información fue recibida.');
           form.dataset.ruleSubmit = 'true';
           form.requestSubmit();
           return;
@@ -13321,7 +13325,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect');
         if (blockingRule) {
           writeStoredResponses(mergedResponses);
-          if (message) message.textContent = blockingRule.action === 'redirect' ? 'Enviando...' : (blockingRule.message || 'Gracias. Tu informacion fue recibida.');
+          if (message) message.textContent = blockingRule.action === 'redirect' ? 'Enviando...' : (blockingRule.message || 'Gracias. Tu información fue recibida.');
           form.dataset.ruleSubmit = 'true';
           form.requestSubmit();
           return;
@@ -13438,7 +13442,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             window.location.href = preserveUrl(nextPageUrl);
             return;
           }
-          if (message) message.textContent = (data && data.data && data.data.message) || ${JSON.stringify('Listo. Recibimos tu informacion.')};
+          if (message) message.textContent = (data && data.data && data.data.message) || ${JSON.stringify('Listo. Recibimos tu información.')};
         } catch (error) {
           if (message) message.textContent = error.message || 'No se pudo enviar el formulario';
         } finally {
@@ -13556,7 +13560,7 @@ function inferContactFromResponses(blocks, responseEntries) {
 
     if (!contact.phone && (
       block.blockType === 'phone' ||
-      label.includes('telefono') ||
+      label.includes('teléfono') ||
       label.includes('teléfono') ||
       label.includes('celular') ||
       label.includes('whatsapp')
@@ -13822,19 +13826,19 @@ function normalizeSubmissionResponses(blocks, responses = {}) {
 
     if (!missing) {
       if (block.blockType === 'email' && !normalizeEmail(value)) {
-        errors.push(`${block.label || 'Correo electronico'} debe ser un correo valido`)
+        errors.push(`${block.label || 'Correo electrónico'} debe ser un correo válido`)
       }
 
       if (block.blockType === 'phone' && cleanString(value).replace(/[^\d]/g, '').length < 7) {
-        errors.push(`${block.label || 'Telefono'} debe tener un telefono valido`)
+        errors.push(`${block.label || 'Teléfono'} debe tener un teléfono válido`)
       }
 
       if ((block.blockType === 'number' || block.blockType === 'currency') && !Number.isFinite(Number(value))) {
-        errors.push(`${block.label || 'Numero'} debe ser numerico`)
+        errors.push(`${block.label || 'Número'} debe ser numerico`)
       }
 
       if (block.blockType === 'date' && Number.isNaN(Date.parse(value))) {
-        errors.push(`${block.label || 'Fecha'} debe tener una fecha valida`)
+        errors.push(`${block.label || 'Fecha'} debe tener una fecha válida`)
       }
     }
 
@@ -13843,7 +13847,7 @@ function normalizeSubmissionResponses(blocks, responses = {}) {
       const selectedValues = Array.isArray(value) ? value : [value].filter(Boolean)
       for (const selectedValue of selectedValues) {
         if (optionValues.size > 0 && !optionValues.has(selectedValue)) {
-          errors.push(`${block.label || 'Pregunta'} tiene una opcion invalida`)
+          errors.push(`${block.label || 'Pregunta'} tiene una opción inválida`)
           break
         }
       }
@@ -13905,7 +13909,7 @@ function evaluateSubmissionRules(blocks, responses = {}) {
       }
 
       if (action === 'end_form' && !message) {
-        message = option.message || 'Gracias. Tu informacion fue recibida.'
+        message = option.message || 'Gracias. Tu información fue recibida.'
       }
 
       if (action === 'redirect' && !redirectUrl) {
@@ -13949,7 +13953,7 @@ function getSiteFinalMessage(site, ruleEvaluation) {
     return cleanString(finalMessages.disqualified)
   }
 
-  return cleanString(finalMessages.success) || 'Listo. Recibimos tu informacion.'
+  return cleanString(finalMessages.success) || 'Listo. Recibimos tu información.'
 }
 
 async function logMetaEvent({ contactId, eventType, metaEventName, eventId, status, requestPayload, responsePayload, errorMessage }) {
@@ -13982,7 +13986,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   }
 
   const metaConfig = await getMetaConfig().catch(error => {
-    logger.warn(`No se pudo leer configuracion Meta para Sites CAPI: ${error.message}`)
+    logger.warn(`No se pudo leer configuración Meta para Sites CAPI: ${error.message}`)
     return null
   })
   const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
@@ -14095,7 +14099,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
 
 async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId, requestMeta }) {
   const metaConfig = await getMetaConfig().catch(error => {
-    logger.warn(`No se pudo leer configuracion Meta para evento de pagina Site: ${error.message}`)
+    logger.warn(`No se pudo leer configuración Meta para evento de página Site: ${error.message}`)
     return null
   })
   const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
@@ -14540,7 +14544,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
   const submissionStatus = importedDisqualified ? 'disqualified' : 'received'
   const responseMessage = importedDisqualified
     ? cleanString(meta.importedDisqualifiedMessage || meta.imported_disqualified_message) || 'Gracias. Por ahora esta solicitud no califica.'
-    : 'Listo. Recibimos tu informacion.'
+    : 'Listo. Recibimos tu información.'
   const contactId = await upsertImportedContactFromSubmission({
     site,
     contact,
@@ -14635,7 +14639,7 @@ export async function createSubmissionFromRequest(req, body = {}) {
     : await findSiteByRoutePath(req.path)
 
   if (!site) {
-    const error = new Error('Site publico no encontrado')
+    const error = new Error('Site público no encontrado')
     error.status = 404
     throw error
   }
@@ -14789,7 +14793,7 @@ export async function createMetaPageEventFromRequest(req, body = {}) {
 
   const site = await getSite(siteId, { includeBlocks: false, includeSubmissions: false })
   if (!site) {
-    const error = new Error('Site publico no encontrado')
+    const error = new Error('Site público no encontrado')
     error.status = 404
     throw error
   }

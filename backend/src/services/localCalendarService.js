@@ -386,7 +386,7 @@ export async function getCalendarPublicUrlStatus() {
     return {
       enabled: false,
       domain: domainConfig.domain,
-      reason: 'El dominio publico general existe, pero todavia no responde a esta app.'
+      reason: 'El dominio público general existe, pero todavía no responde a esta app.'
     }
   }
 
@@ -791,14 +791,14 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
         <p class="description">${escapeHtml(calendar.description || 'Selecciona una fecha y horario disponible para confirmar tu cita.')}</p>
         <div class="meta">
           <span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>${duration} min</span>
-          <span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Confirmacion ${calendar.autoConfirm ? 'automatica' : 'pendiente'}</span>
+          <span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Confirmación ${calendar.autoConfirm ? 'automática' : 'pendiente'}</span>
         </div>
       </section>
 
       <section class="calendarPane" data-calendar-pane>
         <div class="paneTitle">
           <h2>Selecciona fecha y hora</h2>
-          <p>Elige un dia disponible para ver horarios.</p>
+          <p>Elige un día disponible para ver horarios.</p>
         </div>
         <div class="monthBar">
           <button class="navBtn" type="button" data-prev aria-label="Mes anterior">
@@ -810,7 +810,7 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
           </button>
         </div>
         <div class="weekdays" aria-hidden="true">
-          <span>Dom</span><span>Lun</span><span>Mar</span><span>Mie</span><span>Jue</span><span>Vie</span><span>Sab</span>
+          <span>Dom</span><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span>
         </div>
         <div class="days" data-days></div>
         <div class="timezone">
@@ -822,15 +822,15 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
       <section class="timesPane">
         <div class="selectedDate">
           <h3 data-selected-title>Selecciona una fecha</h3>
-          <p data-selected-subtitle>Los horarios apareceran aqui.</p>
+          <p data-selected-subtitle>Los horarios aparecerán aquí.</p>
         </div>
         <div class="slotList" data-slots>
-          <div class="slotEmpty">Elige un dia con disponibilidad.</div>
+          <div class="slotEmpty">Elige un día con disponibilidad.</div>
         </div>
         <form data-form>
           <h2>Tus datos</h2>
           <label>Nombre completo<input name="name" autocomplete="name" required placeholder="Tu nombre"></label>
-          <label>Telefono / WhatsApp<input name="phone" autocomplete="tel" inputmode="tel" required placeholder="10 digitos"></label>
+          <label>Teléfono / WhatsApp<input name="phone" autocomplete="tel" inputmode="tel" required placeholder="10 dígitos"></label>
           <label>Correo<input name="email" autocomplete="email" type="email" placeholder="tu@email.com"></label>
           <label>Notas<textarea name="notes" rows="3" placeholder="Algo que debamos saber"></textarea></label>
           <button class="submit" type="submit" disabled data-submit>Selecciona un horario</button>
@@ -955,18 +955,18 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
 
         if (!key) {
           selectedTitle.textContent = 'Selecciona una fecha';
-          selectedSubtitle.textContent = 'Los horarios apareceran aqui.';
-          slotsEl.innerHTML = '<div class="slotEmpty">Elige un dia con disponibilidad.</div>';
+          selectedSubtitle.textContent = 'Los horarios aparecerán aquí.';
+          slotsEl.innerHTML = '<div class="slotEmpty">Elige un día con disponibilidad.</div>';
           return;
         }
 
         const [year, month, day] = key.split('-').map(Number);
         const selectedDate = new Date(year, month - 1, day);
         selectedTitle.textContent = formatCalendarDate(selectedDate);
-        selectedSubtitle.textContent = slots.length ? 'Elige un horario disponible.' : 'No hay horarios en este dia.';
+        selectedSubtitle.textContent = slots.length ? 'Elige un horario disponible.' : 'No hay horarios en este día.';
 
         if (!slots.length) {
-          slotsEl.innerHTML = '<div class="slotEmpty">No hay horarios disponibles este dia.</div>';
+          slotsEl.innerHTML = '<div class="slotEmpty">No hay horarios disponibles este día.</div>';
           return;
         }
 
@@ -1030,7 +1030,7 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
           }
         } catch (error) {
           daysEl.innerHTML = '';
-          slotsEl.innerHTML = '<div class="slotEmpty">No se pudieron cargar horarios. Intenta mas tarde.</div>';
+          slotsEl.innerHTML = '<div class="slotEmpty">No se pudieron cargar horarios. Intenta más tarde.</div>';
         } finally {
           setLoading(false);
         }

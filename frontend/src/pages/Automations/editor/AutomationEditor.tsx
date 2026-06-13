@@ -343,7 +343,7 @@ export const AutomationEditor: React.FC = () => {
       }
       showConfirm(
         'Cambios sin publicar',
-        'Esta automatización ya tenía una versión en vivo, pero hiciste cambios nuevos que todavía no publicas. Si sales ahora, se guardan como borrador y la versión activa seguirá igual.',
+        'Esta automatización ya tenía una versión en vivo, pero hiciste cambios nuevos que todavía no has publicado. Si sales ahora, se guardan como borrador y la versión activa seguirá igual.',
         onContinue,
         'Salir sin publicar',
         'Seguir editando'

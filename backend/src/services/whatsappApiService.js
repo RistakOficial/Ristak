@@ -127,63 +127,63 @@ const MESSAGE_EVENT_TYPES = new Set([
 const PHONE_STATUS_ALERTS = {
   BANNED: {
     severity: 'critical',
-    title: 'Numero de WhatsApp baneado',
-    message: 'WhatsApp marco este numero como baneado. No se puede usar para enviar mensajes hasta resolverlo en Meta o WhatsApp API.'
+    title: 'Número de WhatsApp baneado',
+    message: 'WhatsApp marcó este número como baneado. No se puede usar para enviar mensajes hasta resolverlo en Meta o WhatsApp API.'
   },
   BLOCKED: {
     severity: 'critical',
-    title: 'Limite de WhatsApp alcanzado',
-    message: 'El numero alcanzo el limite de mensajes del periodo de 24 horas. Las plantillas pueden fallar hasta que se reinicie el limite.'
+    title: 'Límite de WhatsApp alcanzado',
+    message: 'El número alcanzó el límite de mensajes del periodo de 24 horas. Las plantillas pueden fallar hasta que se reinicie el límite.'
   },
   RESTRICTED: {
     severity: 'critical',
-    title: 'Numero restringido',
-    message: 'El numero alcanzo su limite de conversaciones iniciadas por negocio y no puede mandar mas mensajes por ahora.'
+    title: 'Número restringido',
+    message: 'El número alcanzó su límite de conversaciones iniciadas por negocio y no puede mandar más mensajes por ahora.'
   },
   RATE_LIMITED: {
     severity: 'critical',
-    title: 'WhatsApp aplico rate limit',
-    message: 'WhatsApp limito el volumen de envio del numero. Baja el ritmo de plantillas y revisa calidad/saldo antes de reintentar.'
+    title: 'WhatsApp aplicó rate limit',
+    message: 'WhatsApp limitó el volumen de envío del número. Baja el ritmo de plantillas y revisa calidad/saldo antes de reintentar.'
   },
   DISCONNECTED: {
     severity: 'critical',
-    title: 'Numero desconectado',
-    message: 'El numero no esta alcanzable por los servidores de WhatsApp. Revisa el estado en Meta o WhatsApp API antes de enviar.'
+    title: 'Número desconectado',
+    message: 'El número no está alcanzable por los servidores de WhatsApp. Revisa el estado en Meta o WhatsApp API antes de enviar.'
   },
   MIGRATED: {
     severity: 'critical',
-    title: 'Numero migrado',
-    message: 'Este numero fue transferido a otra cuenta de WhatsApp Business. La configuracion de WhatsApp_API debe revisarse.'
+    title: 'Número migrado',
+    message: 'Este número fue transferido a otra cuenta de WhatsApp Business. La configuración de WhatsApp_API debe revisarse.'
   },
   FLAGGED: {
     severity: 'warning',
-    title: 'Numero marcado por baja calidad',
-    message: 'WhatsApp marco el numero por baja calidad. Si no mejora, puede bajar el limite o bloquear envios.'
+    title: 'Número marcado por baja calidad',
+    message: 'WhatsApp marcó el número por baja calidad. Si no mejora, puede bajar el límite o bloquear envíos.'
   },
   WARNED: {
     severity: 'warning',
     title: 'Advertencia en WhatsApp',
-    message: 'WhatsApp emitio una advertencia para este numero, probablemente por reportes o calidad de mensajes.'
+    message: 'WhatsApp emitió una advertencia para este número, probablemente por reportes o calidad de mensajes.'
   },
   UNVERIFIED: {
     severity: 'warning',
-    title: 'Numero sin verificar',
-    message: 'El numero todavia no esta verificado. Termina la verificacion para poder enviar bien.'
+    title: 'Número sin verificar',
+    message: 'El número todavía no está verificado. Termina la verificación para poder enviar bien.'
   },
   MANUAL_REVIEW: {
     severity: 'warning',
-    title: 'Numero en revision manual',
-    message: 'Meta o WhatsApp API esta revisando el numero. El envio puede quedar limitado hasta que aprueben la revision.'
+    title: 'Número en revisión manual',
+    message: 'Meta o WhatsApp API está revisando el número. El envío puede quedar limitado hasta que aprueben la revisión.'
   },
   PENDING: {
     severity: 'info',
-    title: 'Numero pendiente',
-    message: 'El numero esta pendiente de verificacion o registro en WhatsApp Business.'
+    title: 'Número pendiente',
+    message: 'El número está pendiente de verificación o registro en WhatsApp Business.'
   },
   UNKNOWN: {
     severity: 'warning',
-    title: 'Estado de numero desconocido',
-    message: 'WhatsApp API no pudo determinar el estado del numero. Conviene sincronizar y revisar antes de enviar campañas.'
+    title: 'Estado de número desconocido',
+    message: 'WhatsApp API no pudo determinar el estado del número. Conviene sincronizar y revisar antes de enviar campañas.'
   }
 }
 
@@ -191,37 +191,37 @@ const TEMPLATE_STATUS_ALERTS = {
   REJECTED: {
     severity: 'critical',
     title: 'Plantilla rechazada',
-    message: 'Meta rechazo esta plantilla. No se puede enviar hasta corregirla y aprobarla.'
+    message: 'Meta rechazó esta plantilla. No se puede enviar hasta corregirla y aprobarla.'
   },
   PAUSED: {
     severity: 'critical',
     title: 'Plantilla pausada',
-    message: 'Meta pauso esta plantilla por retroalimentacion negativa. No se puede enviar mientras siga pausada.'
+    message: 'Meta pausó esta plantilla por retroalimentación negativa. No se puede enviar mientras siga pausada.'
   },
   DISABLED: {
     severity: 'critical',
     title: 'Plantilla deshabilitada',
-    message: 'Meta deshabilito esta plantilla. Revisa el motivo y apela o crea una version corregida.'
+    message: 'Meta deshabilitó esta plantilla. Revisa el motivo y apela o crea una versión corregida.'
   },
   ARCHIVED: {
     severity: 'critical',
     title: 'Plantilla archivada',
-    message: 'La plantilla esta archivada. WhatsApp API indica que las plantillas archivadas no se pueden enviar.'
+    message: 'La plantilla está archivada. WhatsApp API indica que las plantillas archivadas no se pueden enviar.'
   },
   DELETED: {
     severity: 'critical',
     title: 'Plantilla eliminada',
-    message: 'La plantilla fue eliminada y ya no esta disponible para envio.'
+    message: 'La plantilla fue eliminada y ya no está disponible para envío.'
   },
   IN_APPEAL: {
     severity: 'warning',
     title: 'Plantilla en apelacion',
-    message: 'La plantilla esta en apelacion. Evita depender de ella hasta que Meta confirme el resultado.'
+    message: 'La plantilla está en apelación. Evita depender de ella hasta que Meta confirme el resultado.'
   },
   PENDING: {
     severity: 'info',
     title: 'Plantilla pendiente',
-    message: 'La plantilla sigue en revision. No se puede usar para enviar hasta que este APPROVED.'
+    message: 'La plantilla sigue en revisión. No se puede usar para enviar hasta que esté APPROVED.'
   }
 }
 
@@ -966,7 +966,7 @@ async function ycloudRequest(path, { apiKey, method = 'GET', body, query } = {})
       data?.message ||
       data?.error?.message ||
       data?.error ||
-      `WhatsApp API respondio ${response.status} ${response.statusText}`
+      `WhatsApp API respondió ${response.status} ${response.statusText}`
     const error = new Error(typeof message === 'string' ? message : safeJson(message))
     error.statusCode = response.status
     error.ycloud = data
@@ -1266,8 +1266,8 @@ async function syncPhoneNumberAlert(phoneNumber, { sourceEventId, eventType } = 
     await upsertAlert({
       severity: 'warning',
       alertType: 'phone_quality',
-      title: 'Calidad baja del numero',
-      message: `${label}: La calidad esta en RED o fue marcada como FLAGGED. Esto puede bajar limites o bloquear plantillas.`,
+      title: 'Calidad baja del número',
+      message: `${label}: La calidad está en RED o fue marcada como FLAGGED. Esto puede bajar límites o bloquear plantillas.`,
       sourceEventId,
       entityType: 'phone_number',
       entityId,
@@ -1277,8 +1277,8 @@ async function syncPhoneNumberAlert(phoneNumber, { sourceEventId, eventType } = 
     await upsertAlert({
       severity: 'info',
       alertType: 'phone_quality',
-      title: 'Calidad media del numero',
-      message: `${label}: La calidad esta en YELLOW. No es bloqueo, pero conviene cuidar volumen y contenido.`,
+      title: 'Calidad media del número',
+      message: `${label}: La calidad está en YELLOW. No es bloqueo, pero conviene cuidar volumen y contenido.`,
       sourceEventId,
       entityType: 'phone_number',
       entityId,
@@ -1299,7 +1299,7 @@ async function syncTemplateAlert(template, { sourceEventId, eventType } = {}) {
     ? {
         severity: 'warning',
         title: 'Plantilla marcada',
-        message: 'Meta marco esta plantilla y podria deshabilitarla si no mejora su rendimiento.'
+        message: 'Meta marcó esta plantilla y podría deshabilitarla si no mejora su rendimiento.'
       }
     : null)
 
@@ -1323,7 +1323,7 @@ async function syncTemplateAlert(template, { sourceEventId, eventType } = {}) {
       severity: 'warning',
       alertType: 'template_quality',
       title: 'Calidad baja de plantilla',
-      message: `${label}: La calidad esta en RED. Puede terminar pausada o deshabilitada.`,
+      message: `${label}: La calidad está en RED. Puede terminar pausada o deshabilitada.`,
       sourceEventId,
       entityType: 'template',
       entityId,
@@ -1354,7 +1354,7 @@ async function syncBalanceAlert(balance) {
       severity: 'warning',
       alertType: 'balance',
       title: 'Saldo bajo de WhatsApp API',
-      message: `La cuenta de WhatsApp API reporta ${amount.toFixed(2)} ${currency}. Recarga antes de lanzar envios grandes.`,
+      message: `La cuenta de WhatsApp API reporta ${amount.toFixed(2)} ${currency}. Recarga antes de lanzar envíos grandes.`,
       entityType: 'account',
       entityId: 'balance',
       raw: balance.raw || balance
@@ -1396,7 +1396,7 @@ async function syncBusinessAccountAlert(account = {}, { sourceEventId, eventType
       severity: 'critical',
       alertType: 'business_account',
       title: 'Cuenta WhatsApp Business con bloqueo',
-      message: 'WhatsApp API reporto una actualizacion grave en la cuenta de WhatsApp Business. Revisa el panel de Meta o WhatsApp API.',
+      message: 'WhatsApp API reporto una actualización grave en la cuenta de WhatsApp Business. Revisa el panel de Meta o WhatsApp API.',
       sourceEventId,
       entityType: 'business_account',
       entityId,
@@ -1409,8 +1409,8 @@ async function syncBusinessAccountAlert(account = {}, { sourceEventId, eventType
     await upsertAlert({
       severity: 'warning',
       alertType: 'business_account',
-      title: 'Cuenta WhatsApp Business en revision',
-      message: `WhatsApp API reporto decision/estado ${decision}. Puede afectar aprobacion o envio de plantillas.`,
+      title: 'Cuenta WhatsApp Business en revisión',
+      message: `WhatsApp API reportó decisión/estado ${decision}. Puede afectar aprobación o envío de plantillas.`,
       sourceEventId,
       entityType: 'business_account',
       entityId,
@@ -1689,10 +1689,10 @@ function getPhoneRowRestrictionReason(phoneRow = {}) {
     ? 1
     : Number(phoneRow.api_send_enabled)
   if (apiSendEnabled === 0) {
-    return 'El envio por WhatsApp API esta desactivado para este numero.'
+    return 'El envío por WhatsApp API está desactivado para este número.'
   }
   if (API_FALLBACK_PHONE_STATUSES.has(status)) {
-    return `WhatsApp API marco este numero como ${status}.`
+    return `WhatsApp API marcó este número como ${status}.`
   }
   return ''
 }
@@ -1746,7 +1746,7 @@ async function getOfficialApiRestrictionReason({ phoneRow, config } = {}) {
   if (!blockingAlert) return ''
 
   return cleanString(blockingAlert.message || blockingAlert.title) ||
-    'WhatsApp API reporto una restriccion activa.'
+    'WhatsApp API reportó una restricción activa.'
 }
 
 // Una alerta de bloqueo que no se ha refrescado en este lapso deja de frenar
@@ -1763,7 +1763,7 @@ function isExpiredRestrictionAlert(alert = {}) {
 }
 
 // Contraparte de activateOfficialApiRestrictionFromFailedMessage: cuando la API
-// vuelve a aceptar mensajes de este numero/cuenta, las alertas de bloqueo ya no
+// vuelve a aceptar mensajes de este número/cuenta, las alertas de bloqueo ya no
 // reflejan la realidad y deben resolverse solas.
 async function resolveOfficialApiRestrictionAlerts({ businessPhoneNumberId, wabaId } = {}) {
   const cleanWabaId = cleanString(wabaId)
@@ -1784,16 +1784,16 @@ function getOfficialApiErrorText(error) {
   ].map(cleanString).filter(Boolean).join(' ')
 }
 
-// Errores que pertenecen a UNA conversacion, no al numero ni a la cuenta:
+// Errores que pertenecen a UNA conversación, no al número ni a la cuenta:
 // 131047 = ventana de 24 horas vencida, 131026 = destinatario no puede recibir,
-// 131021 = enviarse a si mismo, 470 = fuera de ventana (codigo legado).
+// 131021 = enviarse a si mismo, 470 = fuera de ventana (código legado).
 const API_CONVERSATION_SCOPED_ERROR_CODES = /\b(131047|131026|131021|470)\b/
 
 function getOfficialApiConversationWindowReason(error) {
   const text = getOfficialApiErrorText(error)
   if (!text) return ''
   if (/\b(131047|470)\b/.test(text) || /24.?HOUR|24 HORAS|CUSTOMER SERVICE WINDOW|OUTSIDE.*WINDOW/i.test(text)) {
-    return 'La conversacion lleva mas de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.'
+    return 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.'
   }
   return ''
 }
@@ -1803,16 +1803,16 @@ function getOfficialApiRestrictionErrorReason(error) {
   // OJO: para decidir el ALCANCE del error se usa solo el mensaje del error,
   // nunca el JSON crudo del webhook: ese JSON siempre trae "from" y "wabaId",
   // hacia que todo error pareciera "de cuenta" y un simple 131047 (ventana de
-  // 24 horas) terminaba marcando el numero y la cuenta como bloqueados.
+  // 24 horas) terminaba marcando el número y la cuenta como bloqueados.
   const text = cleanString(error?.message) || getOfficialApiErrorText(error)
   if (!text) return ''
 
   if (API_CONVERSATION_SCOPED_ERROR_CODES.test(text)) return ''
   const hasBusinessScope = /\b(WABA|BUSINESS ACCOUNT|PHONE NUMBER|SENDER|QUALITY|MESSAGING LIMIT)\b/i.test(text)
   if (API_FALLBACK_RECIPIENT_ERROR_PATTERN.test(text) && !hasBusinessScope) return ''
-  if (statusCode === 429) return 'WhatsApp API rechazo el envio por limite de volumen.'
+  if (statusCode === 429) return 'WhatsApp API rechazó el envío por límite de volumen.'
   if (API_FALLBACK_ERROR_PATTERN.test(text)) {
-    return 'WhatsApp API rechazo el envio por restriccion o limite.'
+    return 'WhatsApp API rechazó el envío por restricción o límite.'
   }
   return ''
 }
@@ -1821,8 +1821,8 @@ async function getOfficialApiFallbackDecision({ config, fromPhone, phoneNumberId
   const phoneRow = await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone })
   const signalReason = await getOfficialApiRestrictionReason({ phoneRow, config })
   const errorReason = error ? getOfficialApiRestrictionErrorReason(error) : ''
-  // La ventana de 24 horas tambien amerita respaldo QR, pero es un asunto de
-  // ESTA conversacion: decide el fallback sin marcar nada como restringido.
+  // La ventana de 24 horas también amerita respaldo QR, pero es un asunto de
+  // ESTA conversación: decide el fallback sin marcar nada como restringido.
   const windowReason = error && !errorReason ? getOfficialApiConversationWindowReason(error) : ''
   const reason = errorReason || windowReason || signalReason
 
@@ -1852,7 +1852,7 @@ async function activateOfficialApiRestrictionFromFailedMessage({ normalizedMessa
     await upsertAlert({
       severity: 'critical',
       alertType: 'phone_status',
-      title: 'Numero con WhatsApp API bloqueado',
+      title: 'Número con WhatsApp API bloqueado',
       message,
       entityType: 'phone_number',
       entityId: businessPhoneNumberId,
@@ -1880,7 +1880,7 @@ async function retryFailedOfficialApiMessageViaQr({
     fromPhone: identity?.businessPhone || normalizedMessage?.from
   })
   if (!isQrFallbackReady(phoneRow)) {
-    logger.warn(`[WhatsApp API] Cuenta restringida pero QR no esta listo para ${identity?.businessPhone || normalizedMessage?.from || 'numero desconocido'}`)
+    logger.warn(`[WhatsApp API] Cuenta restringida pero QR no está listo para ${identity?.businessPhone || normalizedMessage?.from || 'número desconocido'}`)
     return null
   }
 
@@ -2636,7 +2636,7 @@ export async function previewWhatsAppApiPhoneNumbers({ apiKey } = {}) {
   const cleanApiKey = cleanString(apiKey) || saved.apiKey
 
   if (!cleanApiKey) {
-    throw new Error('Pega la llave de WhatsApp API para buscar tus numeros')
+    throw new Error('Pega la llave de WhatsApp API para buscar tus números')
   }
 
   const phoneNumbers = await listYCloudPhoneNumbers(cleanApiKey)
@@ -3170,7 +3170,7 @@ export async function warmWhatsAppApiProfilePictures(contacts = [], {
     try {
       config = await loadConfig({ includeSecrets: true })
     } catch (error) {
-      logger.warn(`[WhatsApp API] No se pudo cargar configuracion para fotos de perfil: ${error.message}`)
+      logger.warn(`[WhatsApp API] No se pudo cargar configuración para fotos de perfil: ${error.message}`)
       config = null
     }
     return config
@@ -3441,7 +3441,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     ? getOfficialApiRestrictionErrorReason({ message: failureText })
     : ''
   // Ventana de 24 horas (131047 y parecidos): el mensaje se reintenta por QR,
-  // pero NO se crea ninguna alerta de bloqueo porque el numero y la cuenta
+  // pero NO se crea ninguna alerta de bloqueo porque el número y la cuenta
   // estan perfectamente sanos.
   const conversationWindowReason = incomingStatus === 'failed' && !restrictionReason
     ? getOfficialApiConversationWindowReason({ message: failureText })
@@ -3469,7 +3469,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   }
 
   // La API confirmo un envio saliente: cualquier alerta de bloqueo de este
-  // numero o de la cuenta quedo obsoleta y se resuelve sola.
+  // número o de la cuenta quedo obsoleta y se resuelve sola.
   if (
     cleanTransport === 'api' &&
     identity.direction === 'outbound' &&
@@ -3969,9 +3969,9 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
       endpointId,
       signatureValid,
       processedStatus: 'rejected',
-      processedError: 'Firma de WhatsApp API invalida'
+      processedError: 'Firma de WhatsApp API inválida'
     })
-    const error = new Error('Firma de WhatsApp API invalida')
+    const error = new Error('Firma de WhatsApp API inválida')
     error.statusCode = 401
     throw error
   }
@@ -4144,7 +4144,7 @@ export async function disconnectWhatsAppQrForPhone({ phoneNumberId } = {}) {
 export async function createWhatsAppApiTemplate(templatePayload = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
-    throw new Error('WhatsApp Business no esta conectado con WhatsApp API')
+    throw new Error('WhatsApp Business no está conectado con WhatsApp API')
   }
 
   const wabaId = cleanString(templatePayload.wabaId || config.wabaId)
@@ -4170,7 +4170,7 @@ export async function createWhatsAppApiTemplate(templatePayload = {}) {
 export async function retrieveWhatsAppApiTemplate({ wabaId, name, language } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
-    throw new Error('WhatsApp Business no esta conectado con WhatsApp API')
+    throw new Error('WhatsApp Business no está conectado con WhatsApp API')
   }
 
   const cleanWabaId = cleanString(wabaId || config.wabaId)
@@ -4193,7 +4193,7 @@ export async function retrieveWhatsAppApiTemplate({ wabaId, name, language } = {
 export async function syncWhatsAppApiTemplatesFromYCloud({ wabaId, status } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
-    throw new Error('WhatsApp Business no esta conectado con WhatsApp API')
+    throw new Error('WhatsApp Business no está conectado con WhatsApp API')
   }
 
   const items = await listYCloudTemplates(config.apiKey, {
@@ -4365,7 +4365,7 @@ export async function sendWhatsAppApiTemplateMessage({
   const cleanTemplateName = cleanString(templateName)
   const cleanLanguage = cleanString(language)
 
-  if (!toPhone) throw new Error('Falta el numero destino')
+  if (!toPhone) throw new Error('Falta el número destino')
   if (!templateId && !cleanTemplateName) throw new Error('Elige una plantilla')
 
   const template = await findTemplateForSend({
@@ -4384,7 +4384,7 @@ export async function sendWhatsAppApiTemplateMessage({
   if (!finalTemplate.name) throw new Error('No se encontro el nombre de la plantilla')
   if (!finalTemplate.language) throw new Error('Falta el idioma de la plantilla')
   if (finalTemplate.status && finalTemplate.status !== 'APPROVED') {
-    throw new Error(`La plantilla ${finalTemplate.name} esta ${finalTemplate.status}; solo se pueden enviar plantillas APPROVED`)
+    throw new Error(`La plantilla ${finalTemplate.name} está ${finalTemplate.status}; solo se pueden enviar plantillas APPROVED`)
   }
 
   const renderedVariables = await renderOutgoingVariables(variables, {
@@ -4397,11 +4397,11 @@ export async function sendWhatsAppApiTemplateMessage({
   const templateComponents = buildTemplateComponents({ components, variables: renderedVariables })
 
   if (!config.enabled || !config.apiKey) {
-    throw new Error('WhatsApp_API no esta conectado')
+    throw new Error('WhatsApp_API no está conectado')
   }
 
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
-  if (!fromPhone) throw new Error('Falta el numero emisor de WhatsApp_API')
+  if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
   const normalizedVariables = normalizeTemplateVariables(renderedVariables)
   const requestBody = {
     from: fromPhone,
@@ -4527,7 +4527,7 @@ export async function sendWhatsAppApiTemplateMessage({
 }
 
 function buildQrFallbackError(originalError, fallbackError) {
-  const message = `${originalError?.message || 'WhatsApp API no pudo enviar el mensaje'}. El respaldo por QR tambien fallo: ${fallbackError.message}`
+  const message = `${originalError?.message || 'WhatsApp API no pudo enviar el mensaje'}. El respaldo por QR también fallo: ${fallbackError.message}`
   const error = new Error(message)
   error.statusCode = originalError?.statusCode || 400
   error.originalError = originalError

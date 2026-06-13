@@ -705,11 +705,11 @@ export const TagsSettings: React.FC = () => {
               </label>
 
               <label className={styles.field}>
-                <span>Descripcion opcional</span>
+                <span>Descripción opcional</span>
                 <textarea
                   rows={3}
                   value={folderDraft.description}
-                  placeholder="Para que el equipo sepa que guardar aqui."
+                  placeholder="Para que el equipo sepa qué guardar aquí."
                   onChange={(event) => setFolderDraft(current => ({ ...current, description: event.target.value }))}
                 />
               </label>

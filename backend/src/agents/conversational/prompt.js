@@ -1008,12 +1008,12 @@ export function buildAdvancedClosingContextSection(context = {}) {
     .map((label) => `- ${label}`)
 
   return [
-    '## Parametros internos de cierre avanzado',
+    '## Parámetros internos de cierre avanzado',
     'Estos datos son memoria privada del agente para aplicar la estrategia de fabrica. No los menciones como variables, no los expliques al contacto y no los guardes como campos personalizados.',
     systemLines.length ? ['Datos que el sistema ya sabe:', ...systemLines].join('\n') : '',
-    learnedLines.length ? ['Puntos aprendidos de esta conversacion:', ...learnedLines].join('\n') : 'Puntos aprendidos de esta conversacion: aun no hay suficientes datos.',
-    missingLines.length ? ['Si la conversacion lo permite, descubre de forma natural:', ...missingLines].join('\n') : '',
-    'Cuando el contacto revele alguno de estos puntos, ejecuta update_closing_context en silencio. Hazlo solo con informacion dicha por la persona o datos reales del sistema; nunca inventes consecuencias, urgencia ni objeciones.',
+    learnedLines.length ? ['Puntos aprendidos de esta conversación:', ...learnedLines].join('\n') : 'Puntos aprendidos de esta conversación: aun no hay suficientes datos.',
+    missingLines.length ? ['Si la conversación lo permite, descubre de forma natural:', ...missingLines].join('\n') : '',
+    'Cuando el contacto revele alguno de estos puntos, ejecuta update_closing_context en silencio. Hazlo solo con información dicha por la persona o datos reales del sistema; nunca inventes consecuencias, urgencia ni objeciones.',
     'Usa estos puntos para decidir la siguiente pregunta, mostrar contraste y activar la herramienta interna de avance cuando ya exista intencion real.'
   ].filter(Boolean).join('\n')
 }

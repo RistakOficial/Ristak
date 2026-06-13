@@ -28,7 +28,7 @@ export const useTimezone = () => {
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 
 export const TimezoneProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Default to Mexico City timezone
+  // Default to México City timezone
   const [timezone, setTimezone] = useState<string>(() => {
     const saved = localStorage.getItem('userTimezone')
     return saved || 'America/Mexico_City'

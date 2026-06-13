@@ -14,6 +14,7 @@ import {
   verifySetupToken,
   consumeSetupToken
 } from '../services/licenseService.js'
+import { saveAccountLocaleSettings } from '../utils/accountLocale.js'
 
 function cleanProfileText(value, maxLength = 160) {
   if (value === undefined || value === null) return ''
@@ -912,6 +913,13 @@ export async function setup(req, res) {
 
     if (!userId) {
       throw new Error('No se pudo resolver el ID del usuario creado')
+    }
+
+    try {
+      const locale = await saveAccountLocaleSettings(req.body.accountLocale || {})
+      logger.info(`🌎 Locale inicial guardado: país ${locale.countryCode}, moneda ${locale.currency}, lada +${locale.dialCode}`)
+    } catch (localeError) {
+      logger.warn(`No se pudo guardar país/moneda/lada inicial: ${localeError.message}`)
     }
 
     const [{ token: apiToken, metadata: apiTokenMetadata }, appId] = await Promise.all([

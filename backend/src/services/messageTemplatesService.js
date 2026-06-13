@@ -467,13 +467,13 @@ function buildYCloudButtons(buttons = []) {
 
     if (button.type === 'website') {
       const url = clampText(button.value, 2000)
-      if (!url) throw new Error(`El boton ${label} necesita URL`)
+      if (!url) throw new Error(`El botón ${label} necesita URL`)
       return { type: 'URL', text: label, url }
     }
 
     if (button.type === 'phone') {
       const phoneNumber = clampText(button.value, 20)
-      if (!phoneNumber) throw new Error(`El boton ${label} necesita telefono`)
+      if (!phoneNumber) throw new Error(`El botón ${label} necesita teléfono`)
       return { type: 'PHONE_NUMBER', text: label, phone_number: phoneNumber }
     }
 
@@ -742,7 +742,7 @@ export async function submitMessageTemplateToYCloud(id) {
     return {
       template: await applyYCloudTemplateResponse(id, response, { submitted: true }),
       ycloud: response,
-      message: 'Plantilla enviada a revision de Meta por YCloud.'
+      message: 'Plantilla enviada a revisión de Meta por YCloud.'
     }
   } catch (error) {
     const message = await saveTemplateLastError(id, error)
@@ -802,7 +802,7 @@ export async function sendMessageTemplateTest(id, payload = {}) {
   }
 
   const to = cleanString(payload.to)
-  if (!to) throw new Error('Escribe el numero destino para enviar la prueba')
+  if (!to) throw new Error('Escribe el número destino para enviar la prueba')
 
   try {
     const response = await sendWhatsAppApiTemplateMessage({

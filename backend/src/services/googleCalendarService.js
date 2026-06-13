@@ -82,11 +82,11 @@ export function normalizeServiceAccountCredentials(input) {
   const tokenUri = cleanString(credentials.token_uri) || GOOGLE_TOKEN_URI
 
   if (!clientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail)) {
-    throw new Error('El JSON del Service Account no trae client_email valido')
+    throw new Error('El JSON del Service Account no trae client_email válido')
   }
 
   if (!privateKey.includes('BEGIN PRIVATE KEY')) {
-    throw new Error('El JSON del Service Account no trae private_key valida')
+    throw new Error('El JSON del Service Account no trae private_key válida')
   }
 
   return {
@@ -118,7 +118,7 @@ async function fetchWithTimeout(url, options = {}, timeout = REQUEST_TIMEOUT) {
   } catch (error) {
     clearTimeout(timeoutId)
     if (error.name === 'AbortError') {
-      throw new Error(`Google Calendar no respondio despues de ${timeout}ms`)
+      throw new Error(`Google Calendar no respondió después de ${timeout}ms`)
     }
     throw error
   }
@@ -182,7 +182,7 @@ export async function getGoogleCalendarConfig({ includeCredentials = false } = {
       calendarId: cleanString(config.calendarId)
     }
   } catch (error) {
-    logger.warn(`[Google Calendar] No se pudo desencriptar la configuracion: ${error.message}`)
+    logger.warn(`[Google Calendar] No se pudo desencriptar la configuración: ${error.message}`)
     return null
   }
 }
@@ -190,7 +190,7 @@ export async function getGoogleCalendarConfig({ includeCredentials = false } = {
 export async function getGoogleServiceAccountJson() {
   const config = await getGoogleCalendarConfig({ includeCredentials: true })
   if (!config?.credentials) {
-    throw new Error('Google Calendar no esta configurado')
+    throw new Error('Google Calendar no está configurado')
   }
 
   return JSON.stringify(config.credentials, null, 2)
@@ -410,7 +410,7 @@ function googleCalendarToLocalRecord(calendar = {}, config = {}) {
 export async function getGoogleCalendarMetadata(config = null) {
   const activeConfig = config || await getGoogleCalendarConfig({ includeCredentials: true })
   if (!activeConfig) {
-    throw new Error('Google Calendar no esta configurado')
+    throw new Error('Google Calendar no está configurado')
   }
   if (!activeConfig.calendarId) {
     throw new Error('No hay Calendar ID global configurado')
@@ -654,7 +654,7 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
 export async function syncGoogleIntegrationNow({ startTime = null, endTime = null } = {}) {
   const config = await getGoogleCalendarConfig({ includeCredentials: true })
   if (!config) {
-    throw new Error('Google Calendar no esta configurado')
+    throw new Error('Google Calendar no está configurado')
   }
 
   const now = new Date()
@@ -735,7 +735,7 @@ export async function updateLocalCalendarGoogleSync({ calendarId, googleCalendar
 
   const googleCalendar = await findGoogleCalendarOption(normalizedGoogleCalendarId, { config })
   if (!googleCalendar?.id) {
-    throw new Error('Ese calendario de Google no esta disponible para el Service Account')
+    throw new Error('Ese calendario de Google no está disponible para el Service Account')
   }
 
   if (!canWriteGoogleCalendar(googleCalendar)) {

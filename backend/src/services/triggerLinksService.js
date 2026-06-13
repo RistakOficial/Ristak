@@ -43,7 +43,7 @@ export function normalizeTriggerLinkDestination(value) {
 
   if (raw.startsWith('/')) {
     if (raw.startsWith('//')) {
-      throw badRequest('Usa una ruta interna valida que empiece con un solo /.')
+      throw badRequest('Usa una ruta interna válida que empiece con un solo /.')
     }
     return raw
   }
@@ -53,10 +53,10 @@ export function normalizeTriggerLinkDestination(value) {
     try {
       url = new URL(raw)
     } catch {
-      throw badRequest('Usa una URL valida para el destino.')
+      throw badRequest('Usa una URL válida para el destino.')
     }
     if (!ALLOWED_DESTINATION_PROTOCOLS.has(url.protocol)) {
-      throw badRequest('Ese tipo de URL no esta permitido para redireccionar.')
+      throw badRequest('Ese tipo de URL no está permitido para redireccionar.')
     }
     return url.toString()
   }
@@ -65,7 +65,7 @@ export function normalizeTriggerLinkDestination(value) {
     return `https://${raw}`
   }
 
-  throw badRequest('Usa una URL valida. Puede ser https://..., www... o una ruta que empiece con /.')
+  throw badRequest('Usa una URL válida. Puede ser https://..., www... o una ruta que empiece con /.')
 }
 
 function makePublicId() {
@@ -82,7 +82,7 @@ async function createUniquePublicId() {
     const existing = await db.get('SELECT id FROM trigger_links WHERE public_id = ?', [publicId])
     if (!existing) return publicId
   }
-  throw badRequest('No se pudo generar un ID publico unico. Intenta otra vez.')
+  throw badRequest('No se pudo generar un ID público unico. Intenta otra vez.')
 }
 
 export function buildTriggerLinkPublicUrl(link, baseUrl = '') {
@@ -269,7 +269,7 @@ export async function recordTriggerLinkClick(publicId, req = {}) {
 
   const query = req.query || {}
   const contactId = getQueryValue(query, 'contact_id', 'contactId', 'cid')
-  const phone = getQueryValue(query, 'phone', 'telefono', 'tel')
+  const phone = getQueryValue(query, 'phone', 'teléfono', 'tel')
   const email = getQueryValue(query, 'email', 'correo')
   const contactName = getQueryValue(query, 'contact_name', 'contactName', 'name', 'nombre')
   const visitorId = getQueryValue(query, 'visitor_id', 'visitorId', 'vid', 'rstk_vid')
@@ -325,7 +325,7 @@ export async function recordTriggerLinkClick(publicId, req = {}) {
   }
 
   handleAutomationEvent('trigger-link-clicked', automationPayload).catch(error => {
-    logger.warn(`No se pudo disparar automatizacion de enlace ${row.public_id}: ${error.message}`)
+    logger.warn(`No se pudo disparar automatización de enlace ${row.public_id}: ${error.message}`)
   })
 
   return {

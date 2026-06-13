@@ -391,8 +391,8 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
 
   assert.match(instructions, /Eres un agente conversacional de Ristak/)
   assert.match(instructions, /dentro de una conversación por WhatsApp/)
-  assert.match(instructions, /Parametros internos de cierre avanzado/)
-  assert.match(instructions, /Puntos aprendidos de esta conversacion/)
+  assert.match(instructions, /Parámetros internos de cierre avanzado/)
+  assert.match(instructions, /Puntos aprendidos de esta conversación/)
   assert.match(instructions, /Problema real: sus conversaciones se enfrían/)
   assert.match(instructions, /update_closing_context/)
   assert.doesNotMatch(instructions, /\[NOMBRE_DEL_NEGOCIO\]/)

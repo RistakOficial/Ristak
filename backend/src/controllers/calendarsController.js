@@ -89,14 +89,14 @@ async function getSavedHighLevelOnlyContext() {
 async function ensurePublicCalendarRequest(req, slugOrId) {
   const host = getRequestHost(req);
   if (!host) {
-    const error = new Error('Dominio invalido');
+    const error = new Error('Dominio inválido');
     error.status = 404;
     throw error;
   }
 
   const domainResolution = await resolveConnectedPublicDomainForHost(host);
   if (!domainResolution.ok) {
-    const error = new Error(domainResolution.message || 'Dominio publico no verificado');
+    const error = new Error(domainResolution.message || 'Dominio público no verificado');
     error.status = domainResolution.status || 404;
     throw error;
   }
@@ -151,7 +151,7 @@ async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, tim
 
 /**
  * GET /api/calendars/google-integration
- * Estado publico de la integración Google Calendar por Service Account.
+ * Estado público de la integración Google Calendar por Service Account.
  */
 export async function getGoogleCalendarIntegration(req, res) {
   try {
@@ -421,7 +421,7 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl 
   }
 
   if (!phone || phone.replace(/[^\d]/g, '').length < 7) {
-    const error = new Error('El telefono es requerido');
+    const error = new Error('El teléfono es requerido');
     error.status = 400;
     throw error;
   }
@@ -829,7 +829,7 @@ export async function createPublicAppointment(req, res) {
     if (Number.isNaN(start.getTime())) {
       return res.status(400).json({
         success: false,
-        error: 'Horario invalido'
+        error: 'Horario inválido'
       });
     }
 

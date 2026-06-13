@@ -71,7 +71,7 @@ async function assertUniqueKey(fieldKey, { excludeId = '' } = {}) {
   `, params)
 
   if (existing) {
-    throw badRequest('Ese parametro ya existe. Usa otro nombre interno.')
+    throw badRequest('Ese parámetro ya existe. Usa otro nombre interno.')
   }
 }
 
@@ -91,7 +91,7 @@ export async function createVariableField(input = {}, { userId = null } = {}) {
   const value = cleanString(input.value ?? input.valueText ?? input.value_text, 5000)
 
   if (!label) throw badRequest('Ponle nombre al campo variable.')
-  if (!fieldKey) throw badRequest('Usa un parametro valido.')
+  if (!fieldKey) throw badRequest('Usa un parámetro válido.')
 
   await assertUniqueKey(fieldKey)
 
@@ -126,7 +126,7 @@ export async function updateVariableField(variableFieldId, input = {}) {
   const fieldKey = hasKeyInput
     ? normalizeVariableFieldKey(input.fieldKey || input.key || input.field_key)
     : existing.fieldKey
-  if (!fieldKey) throw badRequest('Usa un parametro valido.')
+  if (!fieldKey) throw badRequest('Usa un parámetro válido.')
 
   if (fieldKey !== existing.fieldKey) {
     await assertUniqueKey(fieldKey, { excludeId: existing.id })

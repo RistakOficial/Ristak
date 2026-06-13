@@ -18,7 +18,7 @@ function readAvailability(status?: AIAgentConfigStatus | null): Omit<AIAgentAvai
 
 export function useAIAgentAvailability(): AIAgentAvailability {
   // Regla de producto: toda entrada nueva de IA debe ocultarse hasta que OpenAI este conectado.
-  // La unica excepcion es el boton flotante Chat AI, porque ese panel permite pegar el token.
+  // La única excepcion es el boton flotante Chat AI, porque ese panel permite pegar el token.
   const [availability, setAvailability] = useState<AIAgentAvailability>({
     configured: false,
     loading: true,

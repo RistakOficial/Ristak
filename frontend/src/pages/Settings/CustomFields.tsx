@@ -43,16 +43,16 @@ type FolderDraft = {
 }
 
 const fieldTypes: Array<{ value: CustomFieldDataType; label: string; detail: string }> = [
-  { value: 'text', label: 'Texto corto', detail: 'Una linea de texto.' },
-  { value: 'textarea', label: 'Parrafo', detail: 'Texto largo o notas.' },
-  { value: 'radio', label: 'Radio buttons', detail: 'Una opcion visible.' },
-  { value: 'dropdown', label: 'Dropdown', detail: 'Una opcion en lista.' },
+  { value: 'text', label: 'Texto corto', detail: 'Una línea de texto.' },
+  { value: 'textarea', label: 'Párrafo', detail: 'Texto largo o notas.' },
+  { value: 'radio', label: 'Radio buttons', detail: 'Una opción visible.' },
+  { value: 'dropdown', label: 'Dropdown', detail: 'Una opción en lista.' },
   { value: 'checkboxes', label: 'Checkboxes', detail: 'Varias opciones.' },
-  { value: 'number', label: 'Numero', detail: 'Solo cantidad numerica.' },
+  { value: 'number', label: 'Número', detail: 'Solo cantidad numérica.' },
   { value: 'currency', label: 'Moneda', detail: 'Importe de dinero.' },
-  { value: 'date', label: 'Fecha', detail: 'Dia o fecha.' },
-  { value: 'email', label: 'Email', detail: 'Correo electronico.' },
-  { value: 'phone', label: 'Telefono', detail: 'Numero de contacto.' }
+  { value: 'date', label: 'Fecha', detail: 'Día o fecha.' },
+  { value: 'email', label: 'Email', detail: 'Correo electrónico.' },
+  { value: 'phone', label: 'Teléfono', detail: 'Número de contacto.' }
 ]
 
 const choiceTypes = new Set<CustomFieldDataType>(['radio', 'dropdown', 'checkboxes', 'select', 'multiselect'])
@@ -280,7 +280,7 @@ export const CustomFields: React.FC = () => {
     }
 
     if (choiceTypes.has(draft.dataType) && options.length === 0) {
-      showToast('warning', 'Faltan opciones', 'Agrega al menos una opcion para este tipo de campo.')
+      showToast('warning', 'Faltan opciones', 'Agrega al menos una opción para este tipo de campo.')
       return null
     }
 
@@ -498,7 +498,7 @@ export const CustomFields: React.FC = () => {
   const handleArchiveField = (field: CustomFieldDefinition) => {
     showConfirm(
       'Eliminar campo',
-      `El campo "${field.label}" se eliminara del sistema y tambien se borraran sus valores guardados en todos los contactos. Esta accion no se puede deshacer.`,
+      `El campo "${field.label}" se eliminará del sistema y también se borrarán sus valores guardados en todos los contactos. Esta acción no se puede deshacer.`,
       () => {
         const archive = async () => {
           try {
@@ -753,7 +753,7 @@ export const CustomFields: React.FC = () => {
 
               <div className={styles.typeHint}>
                 <ChevronRight size={15} />
-                <span>{editingField ? 'El tipo y sus opciones no se pueden cambiar despues de crear el campo.' : fieldTypes.find(type => type.value === draft.dataType)?.detail}</span>
+                <span>{editingField ? 'El tipo y sus opciones no se pueden cambiar después de crear el campo.' : fieldTypes.find(type => type.value === draft.dataType)?.detail}</span>
               </div>
 
               {!editingField && (
@@ -774,10 +774,10 @@ export const CustomFields: React.FC = () => {
                   <textarea
                     rows={5}
                     value={draft.optionsText}
-                    placeholder={'Opcion 1\nOpcion 2\nOpcion 3'}
+                    placeholder={'Opción 1\nOpción 2\nOpción 3'}
                     onChange={(event) => patchDraft({ optionsText: event.target.value })}
                   />
-                  <small>Una opcion por linea.</small>
+                  <small>Una opción por línea.</small>
                 </label>
               )}
             </div>
@@ -821,11 +821,11 @@ export const CustomFields: React.FC = () => {
               </label>
 
               <label className={styles.field}>
-                <span>Descripcion opcional</span>
+                <span>Descripción opcional</span>
                 <textarea
                   rows={3}
                   value={folderDraft.description}
-                  placeholder="Para que el equipo sepa que guardar aqui."
+                  placeholder="Para que el equipo sepa qué guardar aquí."
                   onChange={(event) => setFolderDraft(current => ({ ...current, description: event.target.value }))}
                 />
               </label>

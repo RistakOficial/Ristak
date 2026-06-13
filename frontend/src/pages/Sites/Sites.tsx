@@ -243,13 +243,13 @@ const metaParameterFieldLabels: Record<SiteMetaParameterFieldKey, string> = {
   predictedLtv: 'Valor lead',
   currency: 'Moneda',
   contentName: 'Contenido',
-  contentCategory: 'Categoria',
+  contentCategory: 'Categoría',
   contentIds: 'IDs contenido',
   contentType: 'Tipo contenido',
   numItems: 'Cantidad',
   orderId: 'Orden',
   status: 'Estado',
-  searchString: 'Busqueda'
+  searchString: 'Búsqueda'
 }
 
 const metaParameterFieldPlaceholders: Record<SiteMetaParameterFieldKey, string> = {
@@ -344,7 +344,7 @@ const ruleActions: Array<{ value: SiteOptionAction; label: string }> = [
   { value: 'disqualify_after_submit', label: 'Descalificar al finalizar formulario' },
   { value: 'redirect', label: 'Dirigir a sitio' },
   { value: 'tag', label: 'Agregar etiqueta' },
-  { value: 'category', label: 'Asignar categoria' }
+  { value: 'category', label: 'Asignar categoría' }
 ]
 const visibleRuleActionValues = new Set<SiteOptionAction>(ruleActions.map(action => action.value))
 const normalizeVisibleRuleAction = (action?: SiteOptionAction): SiteOptionAction => (
@@ -1329,14 +1329,14 @@ const getLibraryTitle = (section: SitesSection) => {
 }
 
 const getLibraryDescription = (section: SitesSection) => {
-  if (section === 'landings') return 'Biblioteca de paginas publicas, sitios web y embudos listos para editar.'
-  if (section === 'forms') return 'Biblioteca de formularios publicos para capturar prospectos y respuestas.'
-  return 'Biblioteca de sitios publicos.'
+  if (section === 'landings') return 'Biblioteca de páginas públicas, sitios web y embudos listos para editar.'
+  if (section === 'forms') return 'Biblioteca de formularios públicos para capturar prospectos y respuestas.'
+  return 'Biblioteca de sitios públicos.'
 }
 
 const getLibraryEmptyMessage = (section: SitesSection) => {
-  if (section === 'landings') return 'Crea un sitio web para verlo aqui como tarjeta editable.'
-  if (section === 'forms') return 'Crea un formulario para verlo aqui como tarjeta editable.'
+  if (section === 'landings') return 'Crea un sitio web para verlo aquí como tarjeta editable.'
+  if (section === 'forms') return 'Crea un formulario para verlo aquí como tarjeta editable.'
   return getEmptyEditorMessage(section)
 }
 
@@ -1389,7 +1389,7 @@ const getCreateFlowHeaderCopy = (step: CreateFlow) => {
 
   if (step === 'interactive-start') {
     return {
-      title: 'Formulario interactivo multipagina',
+    title: 'Formulario interactivo multipágina',
       subtitle: 'Ahora elige si quieres empezar en blanco, con plantilla o con IA.'
     }
   }
@@ -1403,7 +1403,7 @@ const getCreateFlowHeaderCopy = (step: CreateFlow) => {
 
   return {
     title: 'Sitios',
-    subtitle: 'Constructor visual controlado para sitios web, formularios, leads y publicacion por dominio verificado.'
+    subtitle: 'Constructor visual controlado para sitios web, formularios, leads y publicación por dominio verificado.'
   }
 }
 
@@ -1484,7 +1484,7 @@ const getPopupTrigger = (theme?: SiteTheme | null): PopupTrigger => {
 
 const popupTriggerLabels: Record<PopupTrigger, string> = {
   never: 'Nunca',
-  delay: 'Despues de unos segundos',
+  delay: 'Después de unos segundos',
   exit_intent: 'Cuando intenta salir'
 }
 
@@ -1581,13 +1581,13 @@ const formChoiceStyleOptions: Array<{ value: FormChoiceStyle; label: string }> =
   { value: 'native', label: 'Clasico con circulo' },
   { value: 'cards', label: 'Fila seleccionada' },
   { value: 'pills', label: 'Pildoras' },
-  { value: 'minimal', label: 'Linea simple' }
+  { value: 'minimal', label: 'Línea simple' }
 ]
 
 const formSelectStyleOptions: Array<{ value: FormSelectStyle; label: string }> = [
   { value: 'classic', label: 'Clasico' },
   { value: 'filled', label: 'Relleno moderno' },
-  { value: 'underline', label: 'Linea inferior' }
+  { value: 'underline', label: 'Línea inferior' }
 ]
 
 const socialPlatformOptions: Array<{ value: SocialPlatform; label: string }> = [
@@ -1625,7 +1625,7 @@ const connectedSocialProfileBlockPatch = (profile: ConnectedSocialProfile): Reco
   brandSubtitle: profile.platform === 'instagram'
     ? 'Perfil de Instagram conectado'
     : profile.platform === 'facebook'
-      ? 'Pagina de Facebook conectada'
+      ? 'Página de Facebook conectada'
       : 'Perfil conectado',
   brandAvatar: profile.avatarUrl || '',
   followers: profile.followersLabel || '',
@@ -1666,7 +1666,7 @@ const socialProfileDefaultsForSite = (site?: PublicSite | null): Record<string, 
   return {
     platform,
     brandName: theme.brandName || getPublicTitleEditorValue(site) || site?.name || 'Tu marca',
-    brandSubtitle: theme.brandSubtitle || (platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'),
+    brandSubtitle: theme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'),
     brandAvatar: theme.brandAvatar || '',
     followers: theme.followers || '',
     brandVerified: theme.brandVerified === undefined ? true : theme.brandVerified !== false,
@@ -2127,7 +2127,7 @@ const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
   const normalized = rawPages
     .map((page, index) => ({
       id: page?.id || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
-      title: page?.title || `Pagina ${index + 1}`,
+      title: page?.title || `Página ${index + 1}`,
       sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
       ...(page?.parentPageId ? { parentPageId: page.parentPageId } : {}),
       ...(page?.slug ? { slug: page.slug } : {}),
@@ -2183,13 +2183,13 @@ const normalizeFormPages = (site?: PublicSite | null): SitePage[] => {
 const normalizeFunnelPages = (site?: PublicSite | null): SitePage[] => {
   if (isImportedHtmlSite(site)) {
     const normalized = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
-    return normalized.length ? normalized : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+    return normalized.length ? normalized : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   }
 
   if (isStandardForm(site)) return normalizeFormPages(site)
 
   const normalized = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
-  return normalized.length ? normalized : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+  return normalized.length ? normalized : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
 }
 
 const getFormContentPages = (pages: SitePage[]) => pages.filter(page => !isFormFinalPage(page))
@@ -2234,7 +2234,7 @@ const isLastFormContentPage = (site: PublicSite, pages: SitePage[], pageId?: str
 
 const makeFunnelPage = (index: number, extra?: Partial<SitePage>): SitePage => ({
   id: `page-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-  title: `Pagina ${index + 1}`,
+  title: `Página ${index + 1}`,
   sortOrder: index,
   metaCapiEnabled: false,
   metaEventName: 'none',
@@ -2245,7 +2245,7 @@ const makeFunnelPage = (index: number, extra?: Partial<SitePage>): SitePage => (
 const normalizePagesForSave = (pages: SitePage[]) =>
   pages.map((page, index) => ({
     id: page.id,
-    title: page.title || `Pagina ${index + 1}`,
+    title: page.title || `Página ${index + 1}`,
     sortOrder: index,
     ...(page.parentPageId ? { parentPageId: page.parentPageId } : {}),
     ...(page.slug ? { slug: page.slug } : {}),
@@ -2564,7 +2564,7 @@ const normalizeOption = (option: string | SiteBlockOption, index: number): SiteB
     }
   }
 
-  const label = option.label || option.value || `Opcion ${index + 1}`
+  const label = option.label || option.value || `Opción ${index + 1}`
   return {
     id: option.id || `option-${index}`,
     label,
@@ -2919,9 +2919,9 @@ const createEmbeddedBlocks = (siteId: string): SiteBlock[] => [
     id: `embedded_${crypto.randomUUID()}`,
     siteId,
     blockType: 'phone',
-    label: 'Telefono / WhatsApp',
+    label: 'Teléfono / WhatsApp',
     content: '',
-    placeholder: '10 digitos',
+    placeholder: '10 dígitos',
     required: true,
     options: [],
     settings: { internalName: 'phone', validation: 'phone', phoneCountrySelectorEnabled: true, pageId: DEFAULT_FUNNEL_PAGE_ID },
@@ -2933,7 +2933,7 @@ const createEmbeddedBlocks = (siteId: string): SiteBlock[] => [
     id: `embedded_${crypto.randomUUID()}`,
     siteId,
     blockType: 'email',
-    label: 'Correo electronico',
+    label: 'Correo electrónico',
     content: '',
     placeholder: 'tu@email.com',
     required: true,
@@ -2972,7 +2972,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       settings: blockSettings({
         textAlign: 'center',
         kicker: 'Nuevo',
-        subtitle: 'Subtitulo del sitio web',
+        subtitle: 'Subtítulo del sitio web',
         buttonText: 'Comenzar',
         buttonUrl: '#form',
         ...DEFAULT_BUTTON_SETTINGS
@@ -3032,7 +3032,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     return {
       blockType,
       label,
-      content: 'Tu informacion esta protegida.',
+      content: 'Tu información está protegida.',
       settings: blockSettings({
         panelLinks: [
           { label: 'API docs', url: '/docs' },
@@ -3055,7 +3055,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     return {
       blockType,
       label,
-      content: 'Listo para empezar?',
+      content: '¿Listo para empezar?',
       settings: blockSettings({
         textAlign: 'center',
         subtitle: 'Deja tus datos y te contactamos.',
@@ -3070,7 +3070,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     return {
       blockType,
       label,
-      content: 'Boton',
+      content: 'Botón',
       settings: blockSettings({ buttonText: 'Continuar', buttonUrl: '#form', ...DEFAULT_BUTTON_SETTINGS })
     }
   }
@@ -3080,7 +3080,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       blockType,
       label,
       content: label,
-      settings: blockSettings({ items: [{ title: 'Elemento 1', text: 'Descripcion breve.' }, { title: 'Elemento 2', text: 'Descripcion breve.' }] })
+      settings: blockSettings({ items: [{ title: 'Elemento 1', text: 'Descripción breve.' }, { title: 'Elemento 2', text: 'Descripción breve.' }] })
     }
   }
 
@@ -3139,12 +3139,12 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     blockType,
     label,
     content: isField ? '' : label,
-    placeholder: isField ? (blockType === 'dropdown' ? 'Selecciona una opcion' : 'Escribe aqui') : '',
+    placeholder: isField ? (blockType === 'dropdown' ? 'Selecciona una opción' : 'Escribe aquí') : '',
     required: false,
     options: isChoiceBlock(blockType)
       ? [
-          { label: 'Opcion 1', value: 'Opcion 1', action: 'continue' as SiteOptionAction },
-          { label: 'Opcion 2', value: 'Opcion 2', action: 'continue' as SiteOptionAction }
+          { label: 'Opción 1', value: 'Opción 1', action: 'continue' as SiteOptionAction },
+          { label: 'Opción 2', value: 'Opción 2', action: 'continue' as SiteOptionAction }
         ]
       : [],
     settings: blockSettings(baseSettings)
@@ -3342,11 +3342,11 @@ function FormEmbedEditorPanel({
       <div className={styles.settingsGroup}>
         <div className={styles.panelSubheader}>Contenido del formulario</div>
         <label className={styles.field}>
-          <span>Titulo</span>
+          <span>Título</span>
           <input value={block.content || ''} placeholder="Formulario" onChange={(event) => onPatchBlock({ content: event.target.value })} onBlur={onSave} />
         </label>
         <label className={styles.field}>
-          <span>Descripcion</span>
+          <span>Descripción</span>
           <textarea rows={2} value={getSettingString(settings, 'description')} onChange={(event) => onPatchSettings({ description: event.target.value })} onBlur={onSave} />
         </label>
         <label className={styles.field}>
@@ -3359,8 +3359,8 @@ function FormEmbedEditorPanel({
         <label className={styles.field}>
           <span>Al terminar</span>
           <CustomSelect value={getFormCompletionAction(settings)} onChange={(event) => onPatchSettings({ completionAction: event.target.value })} onBlur={onSave}>
-            <option value="next_page">Ir a la siguiente pagina</option>
-            <option value="next_page_if_qualified">Siguiente pagina solo si califica</option>
+            <option value="next_page">Ir a la siguiente página</option>
+            <option value="next_page_if_qualified">Siguiente página solo si califica</option>
             <option value="form_default">Mostrar mensaje del formulario</option>
           </CustomSelect>
         </label>
@@ -3371,10 +3371,10 @@ function FormEmbedEditorPanel({
   const pagesContent = (
     <div className={styles.settingsGroup}>
       <div className={styles.optionRulesHeader}>
-        <strong>Paginas del formulario</strong>
+        <strong>Páginas del formulario</strong>
         <button type="button" onClick={onAddPage}>
           <Plus size={14} />
-          Pagina
+          Página
         </button>
       </div>
       <div className={styles.embeddedPageTabs}>
@@ -3386,19 +3386,19 @@ function FormEmbedEditorPanel({
             onClick={() => onActivePageChange(page.id)}
           >
             <FileText size={14} />
-            <span>{page.title || 'Pagina'}</span>
+            <span>{page.title || 'Página'}</span>
           </button>
         ))}
       </div>
       {activePage && (
         <div className={styles.embeddedPageEditor}>
           <label className={styles.field}>
-            <span>Nombre de esta pagina</span>
+            <span>Nombre de esta página</span>
             <input value={activePage.title || ''} onChange={(event) => onRenamePage(activePage.id, event.target.value)} onBlur={onSave} />
           </label>
           <button type="button" onClick={() => onDeletePage(activePage.id)} disabled={pages.length <= 1}>
             <Trash2 size={14} />
-            Eliminar pagina
+            Eliminar página
           </button>
         </div>
       )}
@@ -3426,8 +3426,8 @@ function FormEmbedEditorPanel({
       )}
       tabs={[
         { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
-        { value: 'settings', label: 'Paginas', icon: <FileText size={14} />, content: pagesContent },
-        { value: 'design', label: 'Diseno', icon: <Sparkles size={14} />, content: designContent }
+        { value: 'settings', label: 'Páginas', icon: <FileText size={14} />, content: pagesContent },
+        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent }
       ]}
     />
   )
@@ -3934,7 +3934,7 @@ export const Sites: React.FC = () => {
 
     showConfirm(
       'Cambios sin guardar',
-      'Hay cambios en el editor que todavia no se han guardado o publicado. Si sales ahora, esos ajustes se van a perder.',
+      'Hay cambios en el editor que todavía no se han guardado o publicado. Si sales ahora, esos ajustes se van a perder.',
       () => handleConfirmLeaveEditor(action),
       'Salir sin guardar',
       'Seguir editando',
@@ -4577,7 +4577,7 @@ export const Sites: React.FC = () => {
       navigateSitesEditor({ site, pageId: targetPageId, blockId: '' })
       markEditorSaved()
     } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron guardar las paginas')
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron guardar las páginas')
     } finally {
       setSaving(false)
     }
@@ -4681,8 +4681,8 @@ export const Sites: React.FC = () => {
       syncSelectedSite(site)
       markEditorSaved()
       showToast('success', mode === 'website' ? 'Modo Sitio web' : 'Modo Embudo', mode === 'website'
-        ? 'Ahora puedes organizar paginas con subpaginas.'
-        : 'Las paginas vuelven a un orden lineal de embudo.')
+        ? 'Ahora puedes organizar páginas con subpáginas.'
+        : 'Las páginas vuelven a un orden lineal de embudo.')
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo cambiar el modo del sitio')
     } finally {
@@ -4767,9 +4767,9 @@ export const Sites: React.FC = () => {
       setActivePageId(newRootId)
       navigateSitesEditor({ site, pageId: newRootId, blockId: '' })
       markEditorSaved()
-      showToast('success', subtreeIds.length > 1 ? 'Pagina y subpaginas duplicadas' : 'Pagina duplicada', 'Ya esta lista para editar.')
+      showToast('success', subtreeIds.length > 1 ? 'Página y subpáginas duplicadas' : 'Página duplicada', 'Ya está lista para editar.')
     } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo duplicar la pagina')
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo duplicar la página')
     } finally {
       setSaving(false)
     }
@@ -4778,7 +4778,7 @@ export const Sites: React.FC = () => {
   const handleDeletePage = async (pageId: string) => {
     if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
     if (isStandardForm(selectedSite) && isFormFinalPageId(pageId)) {
-      showToast('warning', 'Pagina fija', 'Esta pagina se usa para cerrar el formulario y no se puede eliminar.')
+      showToast('warning', 'Página fija', 'Esta página se usa para cerrar el formulario y no se puede eliminar.')
       return
     }
     const websiteMode = getSitePageMode(selectedSite) === 'website'
@@ -4788,16 +4788,16 @@ export const Sites: React.FC = () => {
       ? getFormContentPages(pages).filter(page => !idsToDeleteSet.has(page.id)).length
       : pages.filter(page => !idsToDeleteSet.has(page.id)).length
     if (remainingPageCount < 1) {
-      showToast('warning', 'No se puede eliminar', `${getSiteTypeLabel(selectedSite)} debe tener al menos una pagina.`)
+      showToast('warning', 'No se puede eliminar', `${getSiteTypeLabel(selectedSite)} debe tener al menos una página.`)
       return
     }
 
     const hasSubpages = idsToDelete.length > 1
     showConfirm(
-      hasSubpages ? 'Eliminar pagina y subpaginas' : 'Eliminar pagina',
+      hasSubpages ? 'Eliminar página y subpáginas' : 'Eliminar página',
       hasSubpages
-        ? 'Se eliminaran esta pagina, sus subpaginas y todos sus bloques. Esta accion no se puede deshacer.'
-        : 'Se eliminara esta pagina y todos sus bloques. Esta accion no se puede deshacer.',
+        ? 'Se eliminarán esta página, sus subpáginas y todos sus bloques. Esta acción no se puede deshacer.'
+        : 'Se eliminará esta página y todos sus bloques. Esta acción no se puede deshacer.',
       () => {
         const deletePage = async () => {
           const pageIndex = pages.findIndex(page => page.id === pageId)
@@ -4824,9 +4824,9 @@ export const Sites: React.FC = () => {
             setActivePageId(nextActive || DEFAULT_FUNNEL_PAGE_ID)
             navigateSitesEditor({ site, pageId: nextActive || DEFAULT_FUNNEL_PAGE_ID, blockId: '' })
             markEditorSaved()
-            showToast('success', 'Pagina eliminada', `${getSiteTypeLabel(selectedSite)} se actualizo.`)
+            showToast('success', 'Página eliminada', `${getSiteTypeLabel(selectedSite)} se actualizo.`)
           } catch (error) {
-            showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo eliminar la pagina')
+            showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo eliminar la página')
           } finally {
             setSaving(false)
           }
@@ -4885,7 +4885,7 @@ export const Sites: React.FC = () => {
     if (!cleanTitle) return
     const websiteMode = getSitePageMode(selectedSite) === 'website'
     const nextPages = pages.map((page, index) => page.id === pageId
-      ? { ...page, title: cleanTitle || `Pagina ${index + 1}`, ...(websiteMode ? { slug: undefined } : {}) }
+      ? { ...page, title: cleanTitle || `Página ${index + 1}`, ...(websiteMode ? { slug: undefined } : {}) }
       : page
     )
     void persistFunnelPages(nextPages, activePageId)
@@ -4920,13 +4920,13 @@ export const Sites: React.FC = () => {
                 pageMode: isBlank ? 'website' : 'funnel',
                 pages: normalizePagesForSave(
                   isBlank
-                    ? [makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Pagina 1', 0)]
+                    ? [makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Página 1', 0)]
                     : getTemplateFunnelPages(template)
                 )
               }
             : siteType === 'interactive_form'
               ? {
-                  pages: normalizePagesForSave([makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Pagina 1', 0)])
+                  pages: normalizePagesForSave([makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Página 1', 0)])
                 }
             : siteType === 'standard_form'
               ? {
@@ -4960,7 +4960,7 @@ export const Sites: React.FC = () => {
         pageId: nextPageId,
         device
       }))
-      showToast('success', 'Sitio creado', 'Ya estas en el editor visual')
+      showToast('success', 'Sitio creado', 'Ya estás en el editor visual')
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo crear el sitio')
     } finally {
@@ -5009,7 +5009,7 @@ export const Sites: React.FC = () => {
         '- Usa textos cortos, titulares compactos y párrafos fáciles de escanear.',
         '- Si algún texto necesita ser largo, ajusta font-size, line-height y ancho para que no rompa el diseño.',
         '- Usa fotos HTTPS visibles cuando ayuden al objetivo.',
-        '- Marca textos e imagenes editables con los atributos internos de Ristak.',
+        '- Marca textos e imágenes editables con los atributos internos de Ristak.',
         '- Prepara formularios con campos claros para que Ristak detecte y mapee datos automaticamente.'
       ].join('\n')
     ].filter(Boolean)
@@ -5162,7 +5162,7 @@ export const Sites: React.FC = () => {
     if (!file) return
 
     if (!/\.(html?|zip)$/i.test(file.name)) {
-      showToast('error', 'Archivo no valido', 'Sube un archivo .html o un .zip con tu sitio.')
+      showToast('error', 'Archivo no válido', 'Sube un archivo .html o un .zip con tu sitio.')
       return
     }
 
@@ -5228,7 +5228,7 @@ export const Sites: React.FC = () => {
       setSelectedImportData(importData)
       setImportReview({ site, importData })
     } catch (error) {
-      showToast('error', 'No se pudo abrir la ruta de datos', error instanceof Error ? error.message : 'Intentalo otra vez.')
+      showToast('error', 'No se pudo abrir la ruta de datos', error instanceof Error ? error.message : 'Inténtalo otra vez.')
     } finally {
       setLoadingImportData(false)
     }
@@ -5320,7 +5320,7 @@ export const Sites: React.FC = () => {
       if (result.verification?.verified) {
         showToast('success', 'Dominio verificado y guardado', 'El dominio ya responde con esta app')
       } else {
-        showToast('warning', 'Dominio pendiente', result.verification?.error || result.renderDomainError || 'El dominio todavia no responde con esta app')
+        showToast('warning', 'Dominio pendiente', result.verification?.error || result.renderDomainError || 'El dominio todavía no responde con esta app')
       }
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo verificar el dominio')
@@ -5362,7 +5362,7 @@ export const Sites: React.FC = () => {
     if (!siteToDelete) return
     showConfirm(
       'Eliminar sitio',
-      `Se eliminara "${siteToDelete.name}" y sus respuestas. Esta accion no se puede deshacer.`,
+      `Se eliminará "${siteToDelete.name}" y sus respuestas. Esta acción no se puede deshacer.`,
       () => {
         const deleteSite = async () => {
           try {
@@ -5652,7 +5652,7 @@ export const Sites: React.FC = () => {
     }
     if (scope === HEADER_SCOPE_PAGE && activePage) {
       settings.pageId = activePage.id
-      payload.label = 'Header de pagina'
+      payload.label = 'Header de página'
     } else {
       delete settings.pageId
       payload.label = 'Header global'
@@ -5672,7 +5672,7 @@ export const Sites: React.FC = () => {
         ))
       syncSelectedSite(site)
       if (added) selectEditorBlock(added.id)
-      showToast('success', scope === HEADER_SCOPE_GLOBAL ? 'Header global creado' : 'Header de pagina creado', 'Ya puedes editarlo desde Header.')
+      showToast('success', scope === HEADER_SCOPE_GLOBAL ? 'Header global creado' : 'Header de página creado', 'Ya puedes editarlo desde Header.')
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo crear el header')
     } finally {
@@ -5767,7 +5767,7 @@ export const Sites: React.FC = () => {
   const addEmbeddedFormPage = () => {
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
-    const nextPage = makeFunnelPage(context.pages.length, { title: `Pagina ${context.pages.length + 1}` })
+    const nextPage = makeFunnelPage(context.pages.length, { title: `Página ${context.pages.length + 1}` })
     const nextPages = normalizeEmbeddedFormPages([...context.pages, nextPage])
     patchEmbeddedFormFieldsLocal(context.fields, '', nextPages)
     setActiveEmbeddedFormPageId(nextPage.id)
@@ -5999,7 +5999,7 @@ export const Sites: React.FC = () => {
     const deletedCount = getDeletedBlockIds(blockId).length
     const targetLabel = deletesContainer ? 'contenedor' : 'elemento'
     const detail = deletesContainer && deletedCount > 1
-      ? 'Tambien se quitaran los elementos que esten dentro.'
+      ? 'También se quitaran los elementos que esten dentro.'
       : 'Se quitara del editor.'
 
     showConfirm(
@@ -6545,7 +6545,7 @@ export const Sites: React.FC = () => {
                     </div>
                   </div>
                   {!formEditMode && (
-                    <div className={styles.editorToolbarTools} aria-label="Herramientas de edicion">
+                    <div className={styles.editorToolbarTools} aria-label="Herramientas de edición">
                       <EditorSettingsDropdown
                         site={editorSite}
                         pages={pages}
@@ -6591,7 +6591,7 @@ export const Sites: React.FC = () => {
                       <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('desktop')} disabled={editorAIGenerating} title="Escritorio">
                         <Monitor size={15} />
                       </button>
-                      <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} disabled={editorAIGenerating} title="Movil">
+                      <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} disabled={editorAIGenerating} title="Móvil">
                         <Smartphone size={15} />
                       </button>
                     </div>
@@ -7091,10 +7091,10 @@ const siteStructureOptions: Array<{
     optimizes: 'Se optimiza para verte profesional, generar confianza y que te encuentren en Google.',
     prompt: [
       'Estructura elegida: SITIO WEB completo (no es un embudo).',
-      '- Crea un sitio multipagina y devuelvelo en page.pages: Inicio mas las paginas que apliquen (Servicios, Nosotros, Contacto, etc.), cada una con id, title y filename claros.',
-      '- Todas las paginas comparten un header con menu de navegacion y un footer con datos de contacto. Los enlaces del menu llevan a las otras paginas con data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la pagina destino.',
-      '- Optimiza para presentacion y confianza: un solo h1 por pagina, title y meta description propios por pagina, jerarquia clara y secciones escaneables.',
-      '- La pagina de Contacto incluye un formulario bien mapeado; el resto del sitio puede invitar a contactar sin presionar como un embudo.'
+      '- Crea un sitio multipágina y devuélvelo en page.pages: Inicio más las páginas que apliquen (Servicios, Nosotros, Contacto, etc.), cada una con id, title y filename claros.',
+      '- Todas las páginas comparten un header con menú de navegación y un footer con datos de contacto. Los enlaces del menú llevan a las otras páginas con data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la página destino.',
+      '- Optimiza para presentación y confianza: un solo h1 por página, title y meta description propios por página, jerarquía clara y secciones escaneables.',
+      '- La página de Contacto incluye un formulario bien mapeado; el resto del sitio puede invitar a contactar sin presionar como un embudo.'
     ].join('\n')
   },
   {
@@ -7105,9 +7105,9 @@ const siteStructureOptions: Array<{
     optimizes: 'Se optimiza para campañas y anuncios: sin menú ni distracciones, solo el siguiente paso.',
     prompt: [
       'Estructura elegida: EMBUDO de conversion.',
-      '- Una sola mision: llevar al visitante a UNA accion principal. Sin menu de navegacion ni enlaces que distraigan.',
-      '- CTA repetido hacia la misma accion a lo largo de la pagina.',
-      '- Si el flujo tiene pasos naturales (ej. registro → gracias), devuelve cada paso como pagina separada en page.pages.'
+      '- Una sola mision: llevar al visitante a UNA acción principal. Sin menu de navegacion ni enlaces que distraigan.',
+      '- CTA repetido hacia la misma acción a lo largo de la página.',
+      '- Si el flujo tiene pasos naturales (ej. registro → gracias), devuelve cada paso como página separada en page.pages.'
     ].join('\n')
   }
 ]
@@ -7131,8 +7131,8 @@ const websiteStyleOptions: Array<{
     bestFor: 'Mostrar tus servicios, dónde estás y cómo contactarte.',
     prompt: [
       'Tipo de sitio web elegido: Negocio de servicios.',
-      'Paginas esperadas: Inicio (hero con propuesta clara, servicios destacados, prueba social y CTA a contacto), Servicios (detalle de cada servicio con beneficios), Nosotros (historia, equipo, por que confiar) y Contacto (formulario, telefono, direccion y horarios).',
-      'El menu lleva a todas las paginas y el footer repite contacto y ubicacion.'
+      'Páginas esperadas: Inicio (hero con propuesta clara, servicios destacados, prueba social y CTA a contacto), Servicios (detalle de cada servicio con beneficios), Nosotros (historia, equipo, por que confiar) y Contacto (formulario, teléfono, dirección y horarios).',
+      'El menu lleva a todas las páginas y el footer repite contacto y ubicación.'
     ].join('\n'),
     sections: ['Inicio', 'Servicios', 'Nosotros', 'Contacto']
   },
@@ -7144,7 +7144,7 @@ const websiteStyleOptions: Array<{
     bestFor: 'Presentarte, mostrar lo que haces y abrir la puerta a trabajar contigo.',
     prompt: [
       'Tipo de sitio web elegido: Marca personal.',
-      'Paginas esperadas: Inicio (quien eres y que resuelves, foto o presencia personal, CTA a contacto), Sobre mi (historia, trayectoria, autoridad), Lo que hago (servicios, proyectos o contenido) y Contacto (formulario y redes).',
+      'Páginas esperadas: Inicio (quien eres y que resuelves, foto o presencia personal, CTA a contacto), Sobre mi (historia, trayectoria, autoridad), Lo que hago (servicios, proyectos o contenido) y Contacto (formulario y redes).',
       'El tono es cercano y humano; la cara y la historia de la persona son protagonistas.'
     ].join('\n'),
     sections: ['Inicio', 'Sobre mí', 'Lo que hago', 'Contacto']
@@ -7157,8 +7157,8 @@ const websiteStyleOptions: Array<{
     bestFor: 'Explicar tu producto, resolver dudas y canalizar interesados.',
     prompt: [
       'Tipo de sitio web elegido: Empresa o producto.',
-      'Paginas esperadas: Inicio (propuesta de valor, beneficios clave, prueba social), Producto o Soluciones (que hace, como funciona, para quien), Preguntas frecuentes (objeciones y dudas reales) y Contacto (formulario para interesados).',
-      'El diseño transmite solidez: jerarquia clara, datos concretos y llamados a contacto presentes sin ser agresivos.'
+      'Páginas esperadas: Inicio (propuesta de valor, beneficios clave, prueba social), Producto o Soluciones (que hace, como funciona, para quien), Preguntas frecuentes (objeciones y dudas reales) y Contacto (formulario para interesados).',
+      'El diseño transmite solidez: jerarquía clara, datos concretos y llamados a contacto presentes sin ser agresivos.'
     ].join('\n'),
     sections: ['Inicio', 'Producto', 'Preguntas', 'Contacto']
   }
@@ -8437,16 +8437,16 @@ const buildImportedPreviewVisualContext = async (
 }
 
 const editableTypeLabels: Record<ImportedEditableSelection['editType'], string> = {
-  heading: 'Titulo',
+  heading: 'Título',
   text: 'Texto',
-  button: 'Boton',
+  button: 'Botón',
   form_label: 'Texto de campo',
   placeholder: 'Texto dentro del campo',
   form_field: 'Campo de formulario',
   image: 'Imagen',
   background_image: 'Imagen de fondo',
   video: 'Video',
-  choice_option: 'Opcion',
+  choice_option: 'Opción',
   section: 'Seccion'
 }
 
@@ -8556,7 +8556,7 @@ const importedChoiceOnlyActions: ImportedButtonAction[] = ['disqualify_after_sub
 const importedButtonActions = new Set<ImportedButtonAction>(['none', ...importedSelectableButtonActions, ...importedChoiceOnlyActions])
 
 // Quick per-option action selector for choice fields. Disqualification flows
-// se arman enviando la opcion a una pagina especifica (p.ej. "no calificas").
+// se arman enviando la opción a una página especifica (p.ej. "no calificas").
 const importedChoiceQuickActions: Array<{ value: '' | ImportedButtonAction; label: string }> = [
   { value: '', label: 'No hacer nada' },
   { value: 'submit', label: 'Enviar formulario' },
@@ -8722,7 +8722,7 @@ const getImportedChoiceLabel = (input: HTMLInputElement, doc: Document) => {
     const label = doc.querySelector(`label[for="${id.replace(/"/g, '\\"')}"]`)
     if (label?.textContent?.trim()) return label.textContent.replace(/\s+/g, ' ').trim()
   }
-  return input.getAttribute('value') || input.getAttribute('name') || 'Opcion'
+  return input.getAttribute('value') || input.getAttribute('name') || 'Opción'
 }
 
 const getImportedChoiceInputFromTarget = (target: Element, doc: Document) => {
@@ -8921,14 +8921,14 @@ interface ImportedPanelFormField {
 const importedPanelFieldTypeLabels: Record<string, string> = {
   text: 'Texto',
   email: 'Email',
-  tel: 'Telefono',
-  number: 'Numero',
+  tel: 'Teléfono',
+  number: 'Número',
   date: 'Fecha',
   url: 'URL',
   password: 'Contraseña',
   textarea: 'Texto largo',
   select: 'Desplegable',
-  radio: 'Opcion unica',
+  radio: 'Opción única',
   checkbox: 'Casillas'
 }
 
@@ -9402,16 +9402,16 @@ const buildImportedAIRegionPrompt = (
       ].filter(Boolean).join(', ')
       return `${index + 1}. ${meta}\nHTML: ${element.html || ''}`
     }).join('\n\n')
-    : 'No se detectaron elementos editables claros dentro del rectangulo. Usa las coordenadas y el contexto visual del HTML actual.'
+    : 'No se detectaron elementos editables claros dentro del rectángulo. Usa las coordenadas y el contexto visual del HTML actual.'
 
   return `
-El usuario selecciono una zona especifica del HTML importado y quiere que la IA modifique SOLO esa zona salvo que sea indispensable ajustar CSS cercano para que se vea bien.
-${options.forceApply ? '\nLa respuesta anterior pidio mas informacion, pero esta peticion ya es suficiente. No preguntes otra vez; aplica la mejor interpretacion posible.' : ''}
+El usuario seleccionó una zona específica del HTML importado y quiere que la IA modifique SOLO esa zona salvo que sea indispensable ajustar CSS cercano para que se vea bien.
+${options.forceApply ? '\nLa respuesta anterior pidió más información, pero esta petición ya es suficiente. No preguntes otra vez; aplica la mejor interpretación posible.' : ''}
 ${options.previousReply ? `\nRespuesta anterior que NO debe repetirse: ${options.previousReply}` : ''}
 
-Pagina activa: ${selection.pageTitle} (${selection.pageId})
+Página activa: ${selection.pageTitle} (${selection.pageId})
 Site: ${site.title || site.name}
-Rectangulo seleccionado en viewport: x=${Math.round(selection.bounds.x)}, y=${Math.round(selection.bounds.y)}, ancho=${Math.round(selection.bounds.width)}, alto=${Math.round(selection.bounds.height)}, viewport=${Math.round(selection.bounds.viewportWidth)}x${Math.round(selection.bounds.viewportHeight)}.
+Rectángulo seleccionado en viewport: x=${Math.round(selection.bounds.x)}, y=${Math.round(selection.bounds.y)}, ancho=${Math.round(selection.bounds.width)}, alto=${Math.round(selection.bounds.height)}, viewport=${Math.round(selection.bounds.viewportWidth)}x${Math.round(selection.bounds.viewportHeight)}.
 
 Resumen visual renderizado de la zona:
 ${selection.visualSummary || 'Sin resumen visual disponible.'}
@@ -9422,15 +9422,15 @@ ${elementLines}
 Solicitud del usuario:
 ${userPrompt.trim()}
 
-Reglas para esta edicion:
-- Devuelve el HTML completo actualizado, conservando todas las paginas del embudo si existen.
-- No cambies otras secciones que el usuario no selecciono.
-- La instruccion del usuario es suficiente aunque no mencione ids exactos. Si dice titular, video, boton, arriba, abajo, centrado, hero, orden o layout, identifica esos elementos dentro del rectangulo seleccionado y aplica el cambio.
-- Si hay varios candidatos, usa el mas importante por jerarquia visual: titular principal, video/player dentro de la zona y CTA principal.
-- No respondas con needs_more_info ni con preguntas para cambios de posicion, alineacion, orden, tamano, video, boton, titular o layout. Haz tu mejor edicion con el HTML actual.
-- Si el usuario pide titular arriba, video debajo y boton debajo, convierte esa zona en un layout vertical centrado y conserva los estilos visuales importantes.
-- Si el usuario menciona que algo "se transparenta", "se ve muy transparente", "no se lee", "se pierde", "muy claro" o "poco contraste", usa el resumen visual para localizar fondos/textos con alpha u opacidad baja y vuelve esa parte mas solida/legible sin cambiar contenido.
-- Si la solicitud pide insertar un video, acepta URL o codigo iframe/embed y colocalo como un elemento editable de video con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-label y data-rstk-edit-id.
+Reglas para esta edición:
+- Devuelve el HTML completo actualizado, conservando todas las páginas del embudo si existen.
+- No cambies otras secciones que el usuario no seleccionó.
+- La instrucción del usuario es suficiente aunque no mencione ids exactos. Si dice titular, video, botón, arriba, abajo, centrado, hero, orden o layout, identifica esos elementos dentro del rectángulo seleccionado y aplica el cambio.
+- Si hay varios candidatos, usa el más importante por jerarquía visual: titular principal, video/player dentro de la zona y CTA principal.
+- No respondas con needs_more_info ni con preguntas para cambios de posición, alineación, orden, tamaño, video, botón, titular o layout. Haz tu mejor edición con el HTML actual.
+- Si el usuario pide titular arriba, video debajo y botón debajo, convierte esa zona en un layout vertical centrado y conserva los estilos visuales importantes.
+- Si el usuario menciona que algo "se transparenta", "se ve muy transparente", "no se lee", "se pierde", "muy claro" o "poco contraste", usa el resumen visual para localizar fondos/textos con alpha u opacidad baja y vuelve esa parte más sólida/legible sin cambiar contenido.
+- Si la solicitud pide insertar un video, acepta URL o código iframe/embed y colócalo como un elemento editable de video con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-label y data-rstk-edit-id.
 - Conserva formularios, campos, rutas de datos y acciones de botones existentes salvo que el usuario pida cambiarlos.
   `.trim()
 }
@@ -9442,25 +9442,25 @@ const buildImportedAIPagePrompt = (
   visualContext: SitesAIPreviewVisualContext | null,
   options: { forceApply?: boolean; previousReply?: string } = {}
 ) => `
-El usuario quiere modificar la pagina HTML completa desde el panel derecho del editor. No selecciono una zona especifica, asi que puedes usar toda la pagina activa como contexto.
-${options.forceApply ? '\nLa respuesta anterior pidio mas informacion, pero esta peticion ya es suficiente. No preguntes otra vez; aplica la mejor interpretacion posible.' : ''}
+El usuario quiere modificar la página HTML completa desde el panel derecho del editor. No seleccionó una zona específica, así que puedes usar toda la página activa como contexto.
+${options.forceApply ? '\nLa respuesta anterior pidió más información, pero esta petición ya es suficiente. No preguntes otra vez; aplica la mejor interpretación posible.' : ''}
 ${options.previousReply ? `\nRespuesta anterior que NO debe repetirse: ${options.previousReply}` : ''}
 
-Pagina activa: ${page?.title || site.title || site.name} (${page?.id || DEFAULT_FUNNEL_PAGE_ID})
+Página activa: ${page?.title || site.title || site.name} (${page?.id || DEFAULT_FUNNEL_PAGE_ID})
 Site: ${site.title || site.name}
 
-Resumen visual de la pagina:
+Resumen visual de la página:
 ${visualContext?.summary || 'Sin resumen visual disponible.'}
 
 Solicitud del usuario:
 ${userPrompt.trim()}
 
-Reglas para esta edicion:
-- Devuelve el HTML completo actualizado, conservando todas las paginas del embudo si existen.
-- Aplica el cambio a la pagina activa completa.
+Reglas para esta edición:
+- Devuelve el HTML completo actualizado, conservando todas las páginas del embudo si existen.
+- Aplica el cambio a la página activa completa.
 - Conserva formularios, campos, rutas de datos, tracking y acciones de botones salvo que el usuario pida cambiarlos.
-- Si el usuario pide cambiar copy, layout, video, contraste, imagenes o botones, aplica el cambio directamente con el HTML actual.
-- Usa needs_more_info solo si no hay una accion concreta que ejecutar.
+- Si el usuario pide cambiar copy, layout, video, contraste, imágenes o botones, aplica el cambio directamente con el HTML actual.
+- Usa needs_more_info solo si no hay una acción concreta que ejecutar.
 `.trim()
 
 const normalizeImportedAIRegionPreviewHtml = (html = '') => (
@@ -10024,7 +10024,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!prompt) {
       setAiRegionError(aiRegionSelection
         ? 'Escribe que quieres que cambie la IA en esa zona.'
-        : 'Escribe que quieres que cambie la IA en la pagina.'
+        : 'Escribe que quieres que cambie la IA en la página.'
       )
       return
     }
@@ -10680,7 +10680,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!file || !inlineEditor || inlineEditor.mode !== 'image') return
 
     if (!file.type.startsWith('image/')) {
-      setContentError('Sube una imagen valida.')
+      setContentError('Sube una imagen válida.')
       return
     }
 
@@ -10900,7 +10900,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           {!previewLoading && !previewError && !previewHtml && (
             <div className={styles.importedPreviewState}>
               <FileText size={18} />
-              <span>La vista previa todavia no tiene contenido.</span>
+              <span>La vista previa todavía no tiene contenido.</span>
             </div>
           )}
         </div>
@@ -10918,12 +10918,12 @@ const ImportedHtmlEditorPanel: React.FC<{
             <div className={styles.importedButtonActionHeader}>
               <ListChecks size={17} />
               <div>
-                <span>Formulario de esta pagina</span>
+                <span>Formulario de esta página</span>
                 <strong>{panelFormFields.length} {panelFormFields.length === 1 ? 'campo' : 'campos'}</strong>
               </div>
             </div>
             <p className={styles.importedFormFieldsHint}>
-              Edita cada campo desde aqui: etiqueta, opciones, obligatorio y a donde manda cada opcion.
+              Edita cada campo desde aquí: etiqueta, opciones, obligatorio y a dónde manda cada opción.
             </p>
             <div className={styles.importedFormFieldsList}>
               {panelFormFields.map(field => (
@@ -10938,7 +10938,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                     <strong>{field.label}</strong>
                     <small>
                       {field.typeLabel}
-                      {field.optionsCount > 0 ? ` · ${field.optionsCount} ${field.optionsCount === 1 ? 'opcion' : 'opciones'}` : ''}
+                      {field.optionsCount > 0 ? ` · ${field.optionsCount} ${field.optionsCount === 1 ? 'opción' : 'opciones'}` : ''}
                     </small>
                   </span>
                   {field.hasDisqualify && <span className={styles.importedFormFieldBadge}>Descalifica</span>}
@@ -10960,30 +10960,30 @@ const ImportedHtmlEditorPanel: React.FC<{
                     ? 'Dibuja una zona'
                     : aiRegionSelection
                       ? `${aiRegionSelection.elements.length || 1} elementos detectados`
-                      : 'Toda la pagina activa'}
+                      : 'Toda la página activa'}
                 </strong>
               </div>
             </div>
             <label className={styles.importedActionField}>
-              <span>{aiRegionSelection ? 'Que quieres cambiar en esta zona?' : 'Que quieres cambiar en esta pagina?'}</span>
+              <span>{aiRegionSelection ? '¿Qué quieres cambiar en esta zona?' : '¿Qué quieres cambiar en esta página?'}</span>
               <textarea
                 rows={5}
                 value={aiRegionPrompt}
                 onChange={(event) => setAiRegionPrompt(event.target.value)}
                 placeholder={aiRegionSelection
-                  ? 'Ejemplo: centra el titular, pon el video debajo y deja el boton al final...'
-                  : 'Ejemplo: mejora el hero, reemplaza el video o reorganiza la pagina...'}
+                  ? 'Ejemplo: centra el titular, pon el video debajo y deja el botón al final...'
+                  : 'Ejemplo: mejora el hero, reemplaza el video o reorganiza la página...'}
                 disabled={aiRegionSaving}
                 name="rstk-imported-ai-region-prompt"
                 {...importedEditorNoAutocompleteAttrs}
               />
             </label>
             {aiRegionMode ? (
-              <p>Arrastra sobre la vista previa la parte exacta que quieres cambiar. La instruccion se queda aqui lista para aplicar.</p>
+              <p>Arrastra sobre la vista previa la parte exacta que quieres cambiar. La instrucción se queda aquí lista para aplicar.</p>
             ) : aiRegionSelection ? (
-              <p>La IA usara esta zona como contexto. Puedes cambiar la seleccion o escribir algo para toda la pagina despues.</p>
+              <p>La IA usará esta zona como contexto. Puedes cambiar la selección o escribir algo para toda la página después.</p>
             ) : (
-              <p>Si no seleccionas zona, la IA revisa toda la pagina activa y aplica el cambio completo.</p>
+              <p>Si no seleccionas zona, la IA revisa toda la página activa y aplica el cambio completo.</p>
             )}
             {aiRegionError && (
               <div className={styles.importedAIRegionError}>
@@ -11008,7 +11008,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 </small>
                 {aiRegionLastAttempt.debug && (
                   <div className={styles.importedAIRegionDebug}>
-                    <span>Respuesta y diagnostico</span>
+                    <span>Respuesta y diagnóstico</span>
                     {aiRegionLastAttempt.debug.traceId && (
                       <small>Rastro para logs: {aiRegionLastAttempt.debug.traceId}</small>
                     )}
@@ -11016,19 +11016,19 @@ const ImportedHtmlEditorPanel: React.FC<{
                       <p><b>Respuesta de IA:</b> {aiRegionLastAttempt.debug.aiReply}</p>
                     )}
                     <p>
-                      <b>Que hizo Ristak:</b>{' '}
+                      <b>Qué hizo Ristak:</b>{' '}
                       {aiRegionLastAttempt.debug.agentApplied
-                        ? `Ejecuto ${aiRegionLastAttempt.debug.agentOperation || 'una operacion interna'} y guardo el HTML verificado.`
+                        ? `Ejecutó ${aiRegionLastAttempt.debug.agentOperation || 'una operación interna'} y guardó el HTML verificado.`
                         : aiRegionLastAttempt.debug.finalStatus === 'selection_target_missing'
                         ? 'Detuvo el guardado porque la zona seleccionada no incluye el elemento que pediste cambiar.'
                         : aiRegionLastAttempt.debug.fallbackApplied
-                        ? `Aplico ${aiRegionLastAttempt.debug.fallbackType || 'un ajuste automatico'} porque era mas confiable para esta zona.`
+                        ? `Aplicó ${aiRegionLastAttempt.debug.fallbackType || 'un ajuste automático'} porque era más confiable para esta zona.`
                         : aiRegionLastAttempt.debug.changedByAI
-                          ? 'Guardo el HTML que devolvio la IA.'
-                          : 'No detecto cambios visibles en el HTML.'}
+                          ? 'Guardó el HTML que devolvió la IA.'
+                          : 'No detectó cambios visibles en el HTML.'}
                     </p>
                     {aiRegionLastAttempt.debug.agentReason && (
-                      <p><b>Operacion:</b> {aiRegionLastAttempt.debug.agentReason}</p>
+                      <p><b>Operación:</b> {aiRegionLastAttempt.debug.agentReason}</p>
                     )}
                     {aiRegionLastAttempt.debug.agentOperations?.length ? (
                       <ul>
@@ -11065,7 +11065,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 disabled={saving || aiRegionSaving || previewLoading || Boolean(previewError)}
               >
                 <MousePointerClick size={14} />
-                {aiRegionMode ? 'Cancelar seleccion' : 'Seleccionar y modificar con IA'}
+                {aiRegionMode ? 'Cancelar selección' : 'Seleccionar y modificar con IA'}
               </Button>
               <Button
                 type="button"
@@ -11127,7 +11127,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             <div className={styles.importedButtonActionHeader}>
               <ListChecks size={17} />
               <div>
-                <span>Opcion seleccionada</span>
+                <span>Opción seleccionada</span>
                 <strong>{choiceEditor.selection.label}</strong>
               </div>
             </div>
@@ -11224,7 +11224,7 @@ const ImportedHtmlEditorPanel: React.FC<{
               </Button>
               <Button type="button" size="sm" onClick={() => void saveChoiceEditor()} disabled={!canSaveChoiceEditor} loading={contentSaving}>
                 <Save size={14} />
-                Guardar opcion
+                Guardar opción
               </Button>
             </div>
           </div>
@@ -11466,7 +11466,7 @@ const ImportedHtmlEditorPanel: React.FC<{
               )}
               {inlineVideoPreview.kind === 'empty' && inlineEditor.value.trim() && (
                 <div className={styles.importedInlineVideoHint}>
-                  No se pudo mostrar aqui, pero Ristak intentara guardarlo como video seguro.
+                  No se pudo mostrar aquí, pero Ristak intentará guardarlo como video seguro.
                 </div>
               )}
               <div className={styles.importedInlineEditorActions}>
@@ -11510,8 +11510,8 @@ const importedStandardFieldOptions = [
   { value: 'full_name', label: 'Nombre completo' },
   { value: 'first_name', label: 'Nombre' },
   { value: 'last_name', label: 'Apellido' },
-  { value: 'email', label: 'Correo electronico' },
-  { value: 'phone', label: 'Telefono / WhatsApp' },
+  { value: 'email', label: 'Correo electrónico' },
+  { value: 'phone', label: 'Teléfono / WhatsApp' },
   { value: 'message', label: 'Mensaje o nota' }
 ]
 
@@ -11548,7 +11548,7 @@ const importedStandardFieldAliases: Record<string, string[]> = {
     'phone_no',
     'tel',
     'telephone',
-    'telefono',
+    'teléfono',
     'numero_telefono',
     'numero_de_telefono',
     'telefono_contacto',
@@ -11560,7 +11560,7 @@ const importedStandardFieldAliases: Record<string, string[]> = {
     'mobile',
     'mobile_phone',
     'mobile_number',
-    'movil',
+    'móvil',
     'cel',
     'cell',
     'cellphone',
@@ -11650,7 +11650,7 @@ const importedStandardFieldAliases: Record<string, string[]> = {
     'detalle',
     'detalles',
     'description',
-    'descripcion'
+    'descripción'
   ]
 }
 
@@ -11828,7 +11828,7 @@ const ImportedHtmlReviewModal: React.FC<{
           <div>
             <span>Ruta de datos</span>
             <h2 id="import-review-title">Enruta los campos del formulario</h2>
-            <p>Ristak ya lo hace automatico; aqui puedes ajustar donde se guarda cada dato de {review.importData.originalFilename || review.site.name}.</p>
+            <p>Ristak ya lo hace automático; aquí puedes ajustar dónde se guarda cada dato de {review.importData.originalFilename || review.site.name}.</p>
           </div>
           <button type="button" className={styles.importReviewClose} onClick={onClose} aria-label="Cerrar">
             <X size={18} />
@@ -11846,7 +11846,7 @@ const ImportedHtmlReviewModal: React.FC<{
           {draft.length === 0 ? (
             <div className={styles.importEmptyFields}>
               <CheckCircle2 size={20} />
-              <p>No encontramos formularios en este HTML. Puedes previsualizarlo y publicarlo como pagina informativa.</p>
+              <p>No encontramos formularios en este HTML. Puedes previsualizarlo y publicarlo como página informativa.</p>
             </div>
           ) : draft.map((form, formIndex) => (
             <section key={form.formId || formIndex} className={styles.importFormSection}>
@@ -12035,7 +12035,7 @@ const LibrarySitePreview: React.FC<{
                 ) : (
                   <div className="rstkDropEmpty">
                     {isLandingPreview ? <LayoutTemplate size={22} /> : <FormInput size={22} />}
-                    <p>Sin bloques todavia</p>
+                    <p>Sin bloques todavía</p>
                   </div>
                 )}
                 {hasFields && (
@@ -12118,8 +12118,8 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
             {sites.length === 0
               ? getLibraryEmptyMessage(section)
               : isLandingLibrary
-                ? 'Agrega otra pagina o embudo a tu biblioteca.'
-                : 'Agrega otro formulario publico a tu biblioteca.'}
+                ? 'Agrega otra página o embudo a tu biblioteca.'
+                : 'Agrega otro formulario público a tu biblioteca.'}
           </small>
         </button>
 
@@ -12211,7 +12211,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           >
             <div className={styles.libraryRouteEditorHeader}>
               <div>
-                <span>Ruta publica</span>
+                <span>Ruta pública</span>
                 <strong>{routeEditingSite.name}</strong>
               </div>
               <button type="button" className={styles.libraryRouteClose} disabled={routeSavingId === routeEditingSite.id} onClick={cancelRouteEdit} aria-label="Cerrar editor de ruta">
@@ -12278,19 +12278,19 @@ const LANDING_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
   {
     id: 'full-page',
     title: 'Web grandes',
-    description: 'Embudos completos con pagina principal, captura, agenda o confirmacion.',
+    description: 'Embudos completos con página principal, captura, agenda o confirmación.',
     ids: ['ristak', 'executive', 'local']
   },
   {
     id: 'sales-pages',
     title: 'Cartas y lanzamientos',
-    description: 'Flujos completos para vender, registrar interesados y cerrar con pagina de gracias.',
+    description: 'Flujos completos para vender, registrar interesados y cerrar con página de gracias.',
     ids: ['vsl', 'launch', 'premium']
   },
   {
     id: 'social',
     title: 'Redes sociales',
-    description: 'Flujos cortos para anuncios sociales con captura y confirmacion final.',
+    description: 'Flujos cortos para anuncios sociales con captura y confirmación final.',
     ids: ['facebook', 'instagram', 'tiktok']
   }
 ]
@@ -12443,14 +12443,14 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
             <button type="button" disabled={creating} onClick={() => onCreateWithAI('landing')}>
               <Sparkles size={22} />
               <strong>Usando IA</strong>
-              <p>Genera una pagina HTML completa; Ristak la importa y revisa sus formularios.</p>
+              <p>Genera una página HTML completa; Ristak la importa y revisa sus formularios.</p>
               <ChevronRight size={18} />
             </button>
           )}
           <button type="button" disabled={creating} onClick={() => onImportHtml('landing_page')}>
             <Upload size={22} />
             <strong>Subir HTML o ZIP</strong>
-            <p>Usa tu pagina actual o un sitio comprimido; Ristak detecta sus formularios para guardar contactos.</p>
+            <p>Usa tu página actual o un sitio comprimido; Ristak detecta sus formularios para guardar contactos.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -12469,14 +12469,14 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
         <div className={styles.choiceGrid}>
           <button type="button" disabled={creating} onClick={() => onAdvance('form-start')}>
             <FileText size={22} />
-            <strong>Formulario + paginas finales</strong>
-            <p>La persona responde y despues ve agradecimiento o descalificacion segun sus respuestas.</p>
+            <strong>Formulario + páginas finales</strong>
+            <p>La persona responde y después ve agradecimiento o descalificacion segun sus respuestas.</p>
             <ChevronRight size={18} />
           </button>
           <button type="button" disabled={creating} onClick={() => onAdvance('interactive-start')}>
             <FormInput size={22} />
-            <strong>Interactivo o multipagina</strong>
-            <p>Divide las preguntas en pasos o paginas para guiar mejor a la persona que responde.</p>
+            <strong>Interactivo o multipágina</strong>
+            <p>Divide las preguntas en pasos o páginas para guiar mejor a la persona que responde.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -12487,7 +12487,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
           <button type="button" disabled={creating} onClick={() => onCreate('standard_form', 'blank', 'compact')}>
             <FileText size={22} />
             <strong>En blanco</strong>
-            <p>Formulario limpio con paginas finales listas para personalizar.</p>
+            <p>Formulario limpio con páginas finales listas para personalizar.</p>
             <ChevronRight size={18} />
           </button>
           <button type="button" disabled={creating} onClick={() => onAdvance('form-template')}>
@@ -12507,7 +12507,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
           <button type="button" disabled={creating} onClick={() => onImportHtml('standard_form')}>
             <Upload size={22} />
             <strong>Subir HTML o ZIP</strong>
-            <p>Conserva tu formulario actual, aunque venga con varias paginas, y decide como guardar cada campo.</p>
+            <p>Conserva tu formulario actual, aunque venga con varias páginas, y decide como guardar cada campo.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -12538,7 +12538,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
           <button type="button" disabled={creating} onClick={() => onImportHtml('interactive_form')}>
             <Upload size={22} />
             <strong>Subir HTML o ZIP</strong>
-            <p>Importa formularios multipagina y revisa que datos se guardan en el contacto.</p>
+            <p>Importa formularios multipágina y revisa qué datos se guardan en el contacto.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -13156,7 +13156,7 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
                         </button>
                       </div>
                       <label className={styles.colorSlider}>
-                        <span>Direccion</span>
+                        <span>Dirección</span>
                         <input
                           type="range"
                           min={0}
@@ -13228,11 +13228,11 @@ const MediaUploadControl: React.FC<{
     event.target.value = ''
     if (!file) return
     if (kind === 'image' && !file.type.startsWith('image/')) {
-      showToast('error', 'Archivo no valido', 'Sube una imagen JPG, PNG, GIF o WebP.')
+      showToast('error', 'Archivo no válido', 'Sube una imagen JPG, PNG, GIF o WebP.')
       return
     }
     if (kind === 'video' && !file.type.startsWith('video/')) {
-      showToast('error', 'Archivo no valido', 'Sube un video MP4, WebM o MOV.')
+      showToast('error', 'Archivo no válido', 'Sube un video MP4, WebM o MOV.')
       return
     }
 
@@ -13246,9 +13246,9 @@ const MediaUploadControl: React.FC<{
       })
       onUploaded(uploaded.publicUrl)
       window.setTimeout(onCommit, 0)
-      showToast('success', kind === 'image' ? 'Imagen subida' : 'Video subido', 'El archivo ya esta listo en el editor.')
+      showToast('success', kind === 'image' ? 'Imagen subida' : 'Video subido', 'El archivo ya está listo en el editor.')
     } catch (error) {
-      showToast('error', 'No se pudo subir', error instanceof Error ? error.message : 'Intentalo otra vez.')
+      showToast('error', 'No se pudo subir', error instanceof Error ? error.message : 'Inténtalo otra vez.')
     } finally {
       setUploading(false)
     }
@@ -13315,7 +13315,7 @@ const CanvasChrome: React.FC<{
 }> = ({ platform, site, embedded = false }) => {
   const theme = site.theme || {}
   const name = theme.brandName || site.title || site.name || 'Tu marca'
-  const subtitle = theme.brandSubtitle || (platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado')
+  const subtitle = theme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado')
   const followers = String(theme.followers || '')
   const secondary = followers ? `${followers} seguidores` : subtitle
   const platformClass = platform === 'facebook'
@@ -13552,8 +13552,8 @@ const SeoOptimizationModal: React.FC<{
       >
         <div className={styles.seoModalHeader}>
           <div>
-            <span>Configuracion del sitio</span>
-            <h2 id="seo-modal-title">SEO & optimizacion de busqueda</h2>
+            <span>Configuración del sitio</span>
+            <h2 id="seo-modal-title">SEO & optimización de búsqueda</h2>
           </div>
           <button type="button" className={styles.seoModalClose} onClick={onClose} aria-label="Cerrar SEO">
             <X size={18} />
@@ -13564,28 +13564,28 @@ const SeoOptimizationModal: React.FC<{
           <section className={styles.seoSection}>
             <SeoSectionTitle icon={<FileText size={17} />} title="Contenido" issues={validation.contentIssues} />
             <label className={styles.seoField}>
-              <span>Titulo publico</span>
+              <span>Título público</span>
               <input
                 value={publicTitle}
-                placeholder="Nombre que vera la gente"
+                placeholder="Nombre que verá la gente"
                 onChange={(event) => onPatchSite({ title: event.target.value })}
                 onBlur={onSave}
               />
             </label>
-            <SeoCheckLine ok={checks.titlePresent}>La pagina tiene un titulo.</SeoCheckLine>
-            <SeoCheckLine ok={checks.titleLength}>El titulo tiene menos de 70 caracteres.</SeoCheckLine>
+            <SeoCheckLine ok={checks.titlePresent}>La página tiene un título.</SeoCheckLine>
+            <SeoCheckLine ok={checks.titleLength}>El título tiene menos de 70 caracteres.</SeoCheckLine>
             <label className={styles.seoField}>
-              <span>Descripcion</span>
+              <span>Descripción</span>
               <textarea
                 value={description}
-                placeholder="Explica en una frase clara que ofrece esta pagina."
+                placeholder="Explica en una frase clara que ofrece esta página."
                 rows={4}
                 onChange={(event) => onPatchSite({ description: event.target.value })}
                 onBlur={onSave}
               />
             </label>
-            <SeoCheckLine ok={checks.descriptionPresent}>La pagina tiene una descripcion para buscadores.</SeoCheckLine>
-            <SeoCheckLine ok={checks.descriptionLength}>La descripcion tiene menos de 155 caracteres.</SeoCheckLine>
+            <SeoCheckLine ok={checks.descriptionPresent}>La página tiene una descripción para buscadores.</SeoCheckLine>
+            <SeoCheckLine ok={checks.descriptionLength}>La descripción tiene menos de 155 caracteres.</SeoCheckLine>
           </section>
 
           <section className={styles.seoSection}>
@@ -13600,7 +13600,7 @@ const SeoOptimizationModal: React.FC<{
                 onBlur={onSave}
               />
             </label>
-            <SeoCheckLine ok={checks.keywordsPresent}>La pagina tiene palabras clave.</SeoCheckLine>
+            <SeoCheckLine ok={checks.keywordsPresent}>La página tiene palabras clave.</SeoCheckLine>
           </section>
 
           <section className={styles.seoSection}>
@@ -13614,11 +13614,11 @@ const SeoOptimizationModal: React.FC<{
                 onBlur={onSave}
               />
             </label>
-            <SeoCheckLine ok={checks.authorPresent}>La pagina tiene nombre de autor.</SeoCheckLine>
+            <SeoCheckLine ok={checks.authorPresent}>La página tiene nombre de autor.</SeoCheckLine>
           </section>
 
           <section className={styles.seoSection}>
-            <SeoSectionTitle icon={<Image size={17} />} title="Imagenes" issues={validation.imageIssues} />
+            <SeoSectionTitle icon={<Image size={17} />} title="Imágenes" issues={validation.imageIssues} />
             <label className={styles.seoField}>
               <span>Imagen principal para compartir</span>
               <div className={styles.seoUrlField}>
@@ -13631,7 +13631,7 @@ const SeoOptimizationModal: React.FC<{
                 <Image size={17} />
               </div>
             </label>
-            <SeoCheckLine ok={checks.imagePresent}>La pagina tiene imagen para compartir.</SeoCheckLine>
+            <SeoCheckLine ok={checks.imagePresent}>La página tiene imagen para compartir.</SeoCheckLine>
           </section>
 
           <section className={styles.seoSection}>
@@ -13643,7 +13643,7 @@ const SeoOptimizationModal: React.FC<{
                 onClick={() => addThemeLine('seoMetaTags', metaTags, '<meta name="robots" content="index, follow">')}
               >
                 <Plus size={15} />
-                Anadir
+                Añadir
               </button>
             </div>
             <textarea
@@ -13654,15 +13654,15 @@ const SeoOptimizationModal: React.FC<{
               onChange={(event) => patchThemeText('seoMetaTags', event.target.value)}
               onBlur={onSave}
             />
-            <SeoCheckLine ok={checks.metaTagsPresent}>La pagina tiene metaetiquetas personalizadas.</SeoCheckLine>
+            <SeoCheckLine ok={checks.metaTagsPresent}>La página tiene metaetiquetas personalizadas.</SeoCheckLine>
             <div className={styles.seoFieldHeader}>
-              <span>Enlaces canonicos</span>
+              <span>Enlaces canónicos</span>
               <button
                 type="button"
                 onClick={() => addThemeLine('seoCanonicalLinks', canonicalLinks, getRoutePath(site))}
               >
                 <Plus size={15} />
-                Anadir
+                Añadir
               </button>
             </div>
             <textarea
@@ -13674,7 +13674,7 @@ const SeoOptimizationModal: React.FC<{
               onBlur={onSave}
             />
             <SeoCheckLine ok={checks.outgoingLinksLimit}>
-              La pagina tiene menos de 300 enlaces salientes.
+              La página tiene menos de 300 enlaces salientes.
             </SeoCheckLine>
           </section>
 
@@ -13692,7 +13692,7 @@ const SeoOptimizationModal: React.FC<{
                 ))}
               </CustomSelect>
             </label>
-            <SeoCheckLine ok={checks.languagePresent}>La pagina tiene idioma seleccionado.</SeoCheckLine>
+            <SeoCheckLine ok={checks.languagePresent}>La página tiene idioma seleccionado.</SeoCheckLine>
           </section>
         </div>
 
@@ -13754,7 +13754,7 @@ const HeaderBlockControls: React.FC<{
         <span>Texto del header</span>
         <input
           value={block.content || ''}
-          placeholder="Nombre que vera la gente"
+          placeholder="Nombre que verá la gente"
           onChange={(event) => onPatchBlock(block, { content: event.target.value })}
           onBlur={() => onSaveBlock(block.id)}
         />
@@ -13859,7 +13859,7 @@ const MetaEventParametersEditor: React.FC<{
         ))}
       </div>
       <div className={styles.metaCustomParameters}>
-        <span>Parametros custom</span>
+        <span>Parámetros custom</span>
         {visibleCustomRows.map((parameter, index) => {
           const isNewRow = index >= customRows.length
           return (
@@ -13881,7 +13881,7 @@ const MetaEventParametersEditor: React.FC<{
               <button
                 type="button"
                 disabled={disabled || isNewRow}
-                title="Eliminar parametro"
+                title="Eliminar parámetro"
                 onClick={() => removeCustomRow(index)}
               >
                 <Trash2 size={13} />
@@ -13940,7 +13940,7 @@ const MetaPageConversionToolbar: React.FC<{
   return (
     <div
       className={`${styles.metaConversionToolbar} ${metaEnabled && activePageHasConversion ? styles.metaConversionToolbarActive : ''}`}
-      title={metaEnabled ? 'Conversion de Meta para esta pagina' : 'Activa Meta para configurar conversiones'}
+      title={metaEnabled ? 'Conversión de Meta para esta página' : 'Activa Meta para configurar conversiones'}
     >
       <span className={styles.metaMark} aria-hidden="true">∞</span>
       <label className={styles.metaSwitch}>
@@ -13948,7 +13948,7 @@ const MetaPageConversionToolbar: React.FC<{
           type="checkbox"
           checked={metaEnabled}
           disabled={disabled}
-          aria-label="Activar medicion de Meta"
+          aria-label="Activar medición de Meta"
           onChange={(event) => {
             onPatchSite({ metaCapiEnabled: event.target.checked })
             saveSoon()
@@ -14004,7 +14004,7 @@ const MetaPageConversionToolbar: React.FC<{
         ].filter(Boolean).join(' ')}
         disabled={disabled || !metaEnabled || !activePageHasConversion}
         aria-expanded={paramsOpen}
-        title="Parametros opcionales de Meta"
+        title="Parámetros opcionales de Meta"
         onClick={() => setParamsOpen(open => !open)}
       >
         <Settings2 size={14} />
@@ -14014,7 +14014,7 @@ const MetaPageConversionToolbar: React.FC<{
       {paramsOpen && metaEnabled && activePageHasConversion && (
         <div className={styles.metaParametersPopover}>
           <div className={styles.metaParametersHeader}>
-            <strong>Parametros Meta</strong>
+            <strong>Parámetros Meta</strong>
             <span>{activePageEventName}</span>
           </div>
           <MetaEventParametersEditor
@@ -14091,14 +14091,14 @@ const MetaPageConversionSettingsPanel: React.FC<{
         </span>
         <div>
           <strong>Meta Pixel + CAPI</strong>
-          <small>{metaEnabled ? 'Encendido para visitas y conversiones' : 'Apagado para esta pagina'}</small>
+          <small>{metaEnabled ? 'Encendido para visitas y conversiones' : 'Apagado para esta página'}</small>
         </div>
         <label className={styles.metaSwitch}>
           <input
             type="checkbox"
             checked={metaEnabled}
             disabled={disabled}
-            aria-label="Activar medicion de Meta"
+            aria-label="Activar medición de Meta"
             onChange={(event) => {
               onPatchSite({ metaCapiEnabled: event.target.checked })
               saveSoon()
@@ -14161,7 +14161,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
         onClick={() => setParamsOpen(open => !open)}
       >
         <Settings2 size={14} />
-        <span>Parametros</span>
+        <span>Parámetros</span>
         <ChevronDown size={13} />
       </button>
 
@@ -14270,15 +14270,15 @@ const EditorSettingsDropdown: React.FC<{
             <div className={styles.editorSettingsSectionHeader}>
               <span className={styles.editorSettingsSectionIcon}><Link2 size={15} /></span>
               <div>
-                <strong>Ruta publica</strong>
-                <small>Edita la direccion de esta pagina</small>
+                <strong>Ruta pública</strong>
+                <small>Edita la dirección de esta página</small>
               </div>
             </div>
             <label className={styles.editorSettingsRouteField}>
               <span>{publicDomain}/</span>
               <input
                 value={routeValue}
-                aria-label="Ruta publica"
+                aria-label="Ruta pública"
                 placeholder={routePlaceholder}
                 disabled={disabled}
                 onChange={(event) => onRouteChange(event.target.value)}
@@ -14297,7 +14297,7 @@ const EditorSettingsDropdown: React.FC<{
                 <span className={styles.editorSettingsSectionIcon}><PanelTop size={15} /></span>
                 <div>
                   <strong>Headers</strong>
-                  <small>Codigo global y codigo de esta pagina</small>
+                  <small>Código global y código de esta página</small>
                 </div>
                 <button type="button" onClick={() => openNestedPanel(onOpenHeader)}>
                   Editar
@@ -14324,7 +14324,7 @@ const EditorSettingsDropdown: React.FC<{
                 </span>
                 <div>
                   <strong>Meta Pixel + CAPI</strong>
-                  <small>{metaPixelConnected ? 'No disponible para esta vista' : 'Conecta Meta en Configuracion'}</small>
+                  <small>{metaPixelConnected ? 'No disponible para esta vista' : 'Conecta Meta en Configuración'}</small>
                 </div>
               </div>
             )}
@@ -14364,7 +14364,7 @@ const HeaderToolbarModal: React.FC<{
   onSaveSite
 }) => {
   const [savingModal, setSavingModal] = useState(false)
-  const activePageTitle = activePage?.title || 'esta pagina'
+  const activePageTitle = activePage?.title || 'esta página'
   const siteKindLabel = isFormSite(site) ? 'formulario' : 'sitio'
   const theme = site.theme || {}
   const globalHeaderCode = getThemeString(theme, 'headerTrackingCode')
@@ -14409,7 +14409,7 @@ const HeaderToolbarModal: React.FC<{
       >
         <div className={styles.seoModalHeader}>
           <div>
-            <span>Codigos de tracking</span>
+            <span>Códigos de tracking</span>
             <h2 id="header-modal-title">Header</h2>
           </div>
           <button type="button" className={styles.seoModalClose} onClick={onClose} aria-label="Cerrar Header">
@@ -14421,10 +14421,10 @@ const HeaderToolbarModal: React.FC<{
           <section className={styles.seoSection}>
             <div className={styles.headerModalIntro}>
               <SeoSectionTitle icon={<PanelTop size={17} />} title="Header global" />
-              <p>Pega aqui el codigo que debe cargarse en todas las paginas del {siteKindLabel}.</p>
+              <p>Pega aquí el código que debe cargarse en todas las páginas del {siteKindLabel}.</p>
             </div>
             <label className={styles.seoField}>
-              <span>Codigo global en header</span>
+              <span>Código global en header</span>
               <textarea
                 className={styles.headerCodeTextarea}
                 rows={8}
@@ -14434,17 +14434,17 @@ const HeaderToolbarModal: React.FC<{
                 onChange={(event) => onPatchTheme({ headerTrackingCode: event.target.value })}
                 onBlur={() => { void onSaveSite() }}
               />
-              <small>Se insertara antes de cerrar el &lt;/head&gt; en todas las paginas publicas.</small>
+              <small>Se insertará antes de cerrar el &lt;/head&gt; en todas las páginas públicas.</small>
             </label>
           </section>
 
           <section className={styles.seoSection}>
             <div className={styles.headerModalIntro}>
-              <SeoSectionTitle icon={<PanelTop size={17} />} title="Header de esta pagina" />
-              <p>Usalo cuando {activePageTitle} necesita un codigo diferente o adicional.</p>
+              <SeoSectionTitle icon={<PanelTop size={17} />} title="Header de esta página" />
+              <p>Úsalo cuando {activePageTitle} necesita un código diferente o adicional.</p>
             </div>
             <label className={styles.seoField}>
-              <span>Codigo solo para esta pagina</span>
+              <span>Código solo para esta página</span>
               <textarea
                 className={styles.headerCodeTextarea}
                 rows={8}
@@ -14455,7 +14455,7 @@ const HeaderToolbarModal: React.FC<{
                 onChange={(event) => patchActivePage({ headerTrackingCode: event.target.value })}
                 onBlur={() => { void onSaveSite() }}
               />
-              <small>Se agregara despues del codigo global y solo se cargara en esta pagina.</small>
+              <small>Se agregará después del código global y solo se cargará en esta página.</small>
             </label>
           </section>
         </div>
@@ -14599,13 +14599,13 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
       >
         <FileText size={15} />
         <span className={styles.pagesDropdownTriggerText}>
-          <strong>{activePage?.title || 'Pagina 1'}</strong>
+          <strong>{activePage?.title || 'Página 1'}</strong>
         </span>
         <ChevronDown size={15} className={styles.pagesDropdownChevron} />
       </button>
 
       {open && (
-        <div className={styles.pagesDropdownPanel} role="dialog" aria-label="Paginas del sitio">
+        <div className={styles.pagesDropdownPanel} role="dialog" aria-label="Páginas del sitio">
           {onChangeMode && (
             <div style={{ padding: '10px 12px 0' }}>
               <div
@@ -14647,7 +14647,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
             </div>
           )}
           <div className={styles.pagesDropdownHeader}>
-            <span>{websiteMode ? 'Paginas y subpaginas' : 'Paginas'}</span>
+            <span>{websiteMode ? 'Páginas y subpáginas' : 'Páginas'}</span>
             <strong>{pages.length}</strong>
           </div>
           <DndContext
@@ -14713,7 +14713,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                 {!locked && (
                   <button type="button" className={styles.pagesDropdownAddButton} onClick={() => { onAddPage() }}>
                     <Plus size={15} />
-                    {websiteMode ? 'Agregar pagina principal' : 'Agregar pagina'}
+                    {websiteMode ? 'Agregar página principal' : 'Agregar página'}
                   </button>
                 )}
               </div>
@@ -14721,7 +14721,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
           </DndContext>
 
           {fixedPages.length > 0 && (
-            <div className={styles.pagesDropdownFixedSection} aria-label="Paginas de resultado del formulario">
+            <div className={styles.pagesDropdownFixedSection} aria-label="Páginas de resultado del formulario">
               <div className={styles.pagesDropdownFixedHeader}>
                 <span>Resultado del formulario</span>
                 <strong>Orden fijo</strong>
@@ -14809,7 +14809,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   onDoneRename
 }) => {
   const [menuOpen, setMenuOpen] = useState(false)
-  const title = page.title || `Pagina ${index + 1}`
+  const title = page.title || `Página ${index + 1}`
   const dragDisabled = locked || fixedPage
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: page.id,
@@ -14836,7 +14836,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
           {...(!dragDisabled ? attributes : {})}
           {...(!dragDisabled ? listeners : {})}
           aria-label={!dragDisabled ? `Arrastrar ${title}` : undefined}
-          title={!dragDisabled ? 'Arrastra para ordenar' : 'Esta pagina no se puede mover'}
+          title={!dragDisabled ? 'Arrastra para ordenar' : 'Esta página no se puede mover'}
           onClick={(event) => event.stopPropagation()}
         >
           <GripVertical size={18} />
@@ -14881,7 +14881,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                 <button
                   type="button"
                   className={styles.pagesDropdownMenuButton}
-                  aria-label="Opciones de pagina"
+                  aria-label="Opciones de página"
                   onPointerDown={(event) => event.stopPropagation()}
                   onKeyDown={(event) => event.stopPropagation()}
                 >
@@ -14911,7 +14911,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                   }}
                 >
                   <Copy size={14} />
-                  Duplicar pagina
+                  Duplicar página
                 </DropdownMenuItem>
                 {showAddSubpage && onAddSubpage && (
                   <DropdownMenuItem
@@ -14960,7 +14960,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                   }}
                 >
                   <Trash2 size={14} />
-                  Eliminar pagina
+                  Eliminar página
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -14988,7 +14988,7 @@ const FunnelFixedPageDropdownItem: React.FC<FunnelFixedPageDropdownItemProps> = 
   pageToneClass,
   onSelect
 }) => {
-  const title = page.title || `Pagina ${index + 1}`
+  const title = page.title || `Página ${index + 1}`
 
   return (
     <div className={styles.pagesDropdownItemWrap}>
@@ -15043,7 +15043,7 @@ const EditablePageTitle: React.FC<{
       className={inputClassName || styles.pageTitleInput}
       value={draft}
       draggable={false}
-      aria-label="Nombre de pagina"
+      aria-label="Nombre de página"
       onFocus={onFocus}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
@@ -15870,7 +15870,7 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
               <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
             )}
             {lane.section && columnBlocks.length === 0 && !isTargetColumn && (
-              <div className="rstkColumnDropZone">Suelta contenido aqui</div>
+              <div className="rstkColumnDropZone">Suelta contenido aquí</div>
             )}
           </div>
         )
@@ -15982,7 +15982,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
       <div className="rstk-section-inner">
         {hasHeading && (
           <div className="rstk-section-heading">
-            <InlineEditable as="h2" value={section.content} placeholder="Titulo opcional" onChange={(value) => onPatchBlock(section.id, { content: value })} onCommit={() => onSaveBlock(section.id)} />
+            <InlineEditable as="h2" value={section.content} placeholder="Título opcional" onChange={(value) => onPatchBlock(section.id, { content: value })} onCommit={() => onSaveBlock(section.id)} />
             <InlineEditable as="p" multiline value={getSettingString(settings, 'subtitle')} placeholder="Texto breve opcional" onChange={(value) => onPatchBlockSettings(section, { subtitle: value })} onCommit={() => onSaveBlock(section.id)} />
           </div>
         )}
@@ -16055,22 +16055,22 @@ const fontWeightEditorOptions = [
 
 const textStylePresetOptions = [
   { value: '', label: 'Ninguno' },
-  { value: 'uppercase', label: 'Mayusculas' },
+  { value: 'uppercase', label: 'Mayúsculas' },
   { value: 'capitalize', label: 'Capitalizado' }
 ] as const
 
 const lineHeightEditorOptions = [
-  { value: '', label: 'Automatico' },
+  { value: '', label: 'Automático' },
   { value: '1', label: '1.0 - Sencillo' },
   { value: '1.2', label: '1.2 - Compacto' },
-  { value: '1.5', label: '1.5 - Comodo' },
+  { value: '1.5', label: '1.5 - Cómodo' },
   { value: '1.75', label: '1.75 - Amplio' },
   { value: '2', label: '2.0 - Doble' }
 ] as const
 
 const listStyleEditorOptions = [
   { value: '', label: 'Ninguno' },
-  { value: 'disc', label: 'Vinetas' },
+  { value: 'disc', label: 'Viñetas' },
   { value: 'decimal', label: 'Numerada' }
 ] as const
 
@@ -16188,11 +16188,11 @@ const TypographyFormatInspector: React.FC<{
       </div>
 
       <div className={styles.typographyButtonRow}>
-        <div className={styles.typographySegmented} role="group" aria-label={isButton ? 'Formato del boton' : 'Formato de texto'}>
+        <div className={styles.typographySegmented} role="group" aria-label={isButton ? 'Formato del botón' : 'Formato de texto'}>
           <button type="button" className={isBold ? styles.typographyActive : ''} aria-pressed={isBold} title="Negrita" onClick={() => patchAndSave({ [fontWeightKey]: isBold ? 'normal' : 'bold' })}>
             <Bold size={14} />
           </button>
-          <button type="button" className={isItalic ? styles.typographyActive : ''} aria-pressed={isItalic} title="Italica" onClick={() => patchAndSave({ [fontStyleKey]: isItalic ? '' : 'italic' })}>
+          <button type="button" className={isItalic ? styles.typographyActive : ''} aria-pressed={isItalic} title="Itálica" onClick={() => patchAndSave({ [fontStyleKey]: isItalic ? '' : 'italic' })}>
             <Italic size={14} />
           </button>
           <button type="button" className={isUnderline ? styles.typographyActive : ''} aria-pressed={isUnderline} title="Subrayado" onClick={() => patchAndSave({ [textDecorationKey]: toggleTextDecorationToken(textDecoration, 'underline') })}>
@@ -16202,7 +16202,7 @@ const TypographyFormatInspector: React.FC<{
             <Strikethrough size={14} />
           </button>
         </div>
-        <div className={styles.typographyMiniMenu} aria-label="Opciones tipograficas">
+        <div className={styles.typographyMiniMenu} aria-label="Opciones tipográficas">
           <Type size={14} />
           <ChevronDown size={13} />
         </div>
@@ -16231,7 +16231,7 @@ const TypographyFormatInspector: React.FC<{
         onCommit={onSave}
       />
 
-      <div className={styles.typographyAlignGrid} role="group" aria-label={isButton ? 'Alineacion del boton' : 'Alineacion de texto'}>
+      <div className={styles.typographyAlignGrid} role="group" aria-label={isButton ? 'Alineación del botón' : 'Alineación de texto'}>
         {alignOptions.map(option => {
           const active = alignValue === option.value
           return (
@@ -16251,7 +16251,7 @@ const TypographyFormatInspector: React.FC<{
       </div>
 
       {supportsList && (
-        <div className={styles.typographyIndentGrid} aria-label="Sangria">
+        <div className={styles.typographyIndentGrid} aria-label="Sangría">
           <button type="button" disabled><List size={14} /></button>
           <button type="button" disabled><ListOrdered size={14} /></button>
           <button type="button" disabled><ChevronRight size={14} /></button>
@@ -16273,7 +16273,7 @@ const TypographyFormatInspector: React.FC<{
 
       {supportsList && (
         <label className={styles.typographySelectRow}>
-          <span>Vinetas y listas</span>
+          <span>Viñetas y listas</span>
           <CustomSelect
             value={getSettingString(settings, 'textListStyle')}
             onChange={(event) => patchAndSave({ textListStyle: event.target.value })}
@@ -16377,7 +16377,7 @@ const InlineBlockStyleControls: React.FC<{
             onSave={onSave}
           />
           <ColorField
-            label="Fondo del boton"
+            label="Fondo del botón"
             value={getSettingPaint(settings, 'buttonBg', defaultAccent)}
             allowGradient
             onChange={(value) => onPatchSettings({ buttonBg: value })}
@@ -16385,7 +16385,7 @@ const InlineBlockStyleControls: React.FC<{
           />
           <div className={styles.twoColumn}>
             <DimensionField
-              label="Radio boton"
+              label="Radio botón"
               value={getSettingNumber(settings, 'buttonRadius', 28, 0, 80)}
               min={0}
               max={80}
@@ -16393,7 +16393,7 @@ const InlineBlockStyleControls: React.FC<{
               onCommit={onSave}
             />
             <DimensionField
-              label="Alto boton"
+              label="Alto botón"
               value={getSettingNumber(settings, 'buttonHeight', 54, 34, 88)}
               min={34}
               max={88}
@@ -16421,7 +16421,7 @@ const InlineBlockStyleControls: React.FC<{
           </div>
           <div className={styles.twoColumn}>
             <DimensionField
-              label="Ancho boton"
+              label="Ancho botón"
               value={getSettingNumber(settings, 'buttonWidth', 0, 0, 100)}
               min={0}
               max={100}
@@ -16440,7 +16440,7 @@ const InlineBlockStyleControls: React.FC<{
           </div>
           <div className={styles.twoColumn}>
             <DimensionField
-              label="Borde boton"
+              label="Borde botón"
               value={getSettingNumber(settings, 'buttonBorderWidth', 1, 0, 8)}
               min={0}
               max={8}
@@ -16492,7 +16492,7 @@ const InlineBlockStyleControls: React.FC<{
         <>
           <div className={styles.panelSubheader}>{block.blockType === 'image' ? 'Personalizacion de imagen' : 'Personalizacion de video'}</div>
           <AlignmentControl
-            label="Alineacion"
+            label="Alineación"
             value={getHorizontalAlign(settings, 'mediaAlign', 'center')}
             options={horizontalAlignOptions}
             onChange={(value) => onPatchSettings({ mediaAlign: value })}
@@ -16621,7 +16621,7 @@ const InlineBlockStyleControls: React.FC<{
                   </CustomSelect>
                 </label>
                 <label className={styles.field}>
-                  <span>Visualizacion</span>
+                  <span>Visualización</span>
                   <CustomSelect
                     value={getSettingString(settings, 'blockBackgroundFit') || 'cover'}
                     onChange={(event) => onPatchSettings({ blockBackgroundFit: event.target.value })}
@@ -16812,7 +16812,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         ...fallbackTheme,
         template: platform,
         brandName,
-        brandSubtitle: getSettingString(settings, 'brandSubtitle') || fallbackTheme.brandSubtitle || (platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'),
+        brandSubtitle: getSettingString(settings, 'brandSubtitle') || fallbackTheme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'),
         brandAvatar: getSettingString(settings, 'brandAvatar') || fallbackTheme.brandAvatar || '',
         followers: getSettingString(settings, 'followers') || fallbackTheme.followers || '',
         brandVerified: settings.brandVerified === undefined ? fallbackTheme.brandVerified : settings.brandVerified !== false
@@ -16832,7 +16832,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
           className="rstk-site-panel-copy"
           multiline={!isHeader}
           value={block.content}
-          placeholder={isHeader ? 'Nombre de marca' : 'Texto del pie de pagina'}
+          placeholder={isHeader ? 'Nombre de marca' : 'Texto del pie de página'}
           disabled={!editable}
           onChange={(value) => patchBlock({ content: value })}
           onCommit={save}
@@ -16853,11 +16853,11 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       <section className="rstk-hero">
         <InlineEditable as="p" className="rstk-kicker" value={getSettingString(settings, 'kicker')} placeholder="Kicker (opcional)" disabled={!editable} onChange={(value) => patchSettings({ kicker: value })} onCommit={save} />
         <InlineEditable as="h1" className="rstk-headline" multiline value={block.content} placeholder={block.label || 'Titular principal'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
-        <InlineEditable as="p" className="rstk-subheading" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtitulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
+        <InlineEditable as="p" className="rstk-subheading" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtítulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
         <InlineButtonEditable
           value={getSettingString(settings, 'buttonText')}
           subtitle={getSettingString(settings, 'buttonSubtitle')}
-          placeholder="Texto del boton"
+          placeholder="Texto del botón"
           disabled={!editable}
           onChange={(value) => patchSettings({ buttonText: value })}
           onSubtitleChange={getSettingString(settings, 'buttonSubtitle') ? (value) => patchSettings({ buttonSubtitle: value }) : undefined}
@@ -16869,13 +16869,13 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
 
   if (['headline', 'title'].includes(block.blockType)) {
     return (
-      <InlineEditable as="h1" className="rstk-headline" multiline value={block.content} placeholder={block.label || 'Titulo'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+      <InlineEditable as="h1" className="rstk-headline" multiline value={block.content} placeholder={block.label || 'Título'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
     )
   }
 
   if (['subheading', 'subtitle', 'description'].includes(block.blockType)) {
     return (
-      <InlineEditable as="p" className="rstk-subheading" multiline value={block.content} placeholder={block.label || 'Subtitulo'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+      <InlineEditable as="p" className="rstk-subheading" multiline value={block.content} placeholder={block.label || 'Subtítulo'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
     )
   }
 
@@ -16922,7 +16922,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       <InlineButtonEditable
         value={getSettingString(settings, 'buttonText') || block.content || ''}
         subtitle={getSettingString(settings, 'buttonSubtitle')}
-        placeholder="Boton"
+        placeholder="Botón"
         disabled={!editable}
         onChange={(value) => patchSettings({ buttonText: value })}
         onSubtitleChange={getSettingString(settings, 'buttonSubtitle') ? (value) => patchSettings({ buttonSubtitle: value }) : undefined}
@@ -16935,7 +16935,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const items = getCanvasItems(settings)
     return (
       <section className="rstk-section-list rstk-checklist">
-        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Titulo de seccion'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Título de seccion'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
         <ul className="rstk-check-list">
           {(items.length ? items : [{ title: 'Agrega elementos en el panel', text: '', author: '' }]).map((item, index) => {
             const tone = getItemTone(item)
@@ -16960,7 +16960,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const items = getCanvasItems(settings)
     return (
       <section className="rstk-section-list">
-        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Titulo de seccion'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Título de seccion'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
         <div className="rstk-list-grid">
           {(items.length ? items : [{ title: 'Elemento', text: 'Agrega elementos en el panel', author: '' }]).map((item, index) => (
             <article key={index}>
@@ -17009,11 +17009,11 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     return (
       <section className="rstk-cta">
         <InlineEditable as="h2" value={block.content} placeholder={block.label || 'CTA final'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
-        <InlineEditable as="p" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtitulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
+        <InlineEditable as="p" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtítulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
         <InlineButtonEditable
           value={getSettingString(settings, 'buttonText')}
           subtitle={getSettingString(settings, 'buttonSubtitle')}
-          placeholder="Texto del boton"
+          placeholder="Texto del botón"
           disabled={!editable}
           onChange={(value) => patchSettings({ buttonText: value })}
           onSubtitleChange={getSettingString(settings, 'buttonSubtitle') ? (value) => patchSettings({ buttonSubtitle: value }) : undefined}
@@ -17105,14 +17105,14 @@ const PhoneCountryInputPreview: React.FC<{ placeholder?: string }> = ({ placehol
 
   return (
     <div className="rstk-phone-input">
-      <select aria-label="Pais y lada" defaultValue={selectedCountry.value}>
+      <select aria-label="País y lada" defaultValue={selectedCountry.value}>
         {COUNTRY_OPTIONS.map(country => (
           <option key={country.value} value={country.value}>
             {getCountryFlagEmoji(country.value)} +{country.dialCode}
           </option>
         ))}
       </select>
-      <input type="tel" readOnly placeholder={placeholder || 'Numero'} />
+      <input type="tel" readOnly placeholder={placeholder || 'Número'} />
     </div>
   )
 }
@@ -17127,7 +17127,7 @@ const getFieldPreviewInputType = (blockType: SiteBlockType) => {
 
 const getPreviewOptions = (block: SiteBlock): SiteBlockOption[] => {
   const options = getOptions(block)
-  return options.length ? options : [{ id: 'preview-option', label: 'Opcion', value: 'Opcion', action: 'continue' }]
+  return options.length ? options : [{ id: 'preview-option', label: 'Opción', value: 'Opción', action: 'continue' }]
 }
 
 const FieldControlPreview: React.FC<{ block: SiteBlock }> = ({ block }) => {
@@ -17138,7 +17138,7 @@ const FieldControlPreview: React.FC<{ block: SiteBlock }> = ({ block }) => {
   if (block.blockType === 'dropdown') {
     return (
       <select defaultValue="" aria-label={block.label || 'Pregunta'}>
-        <option value="">{block.placeholder || 'Selecciona una opcion'}</option>
+        <option value="">{block.placeholder || 'Selecciona una opción'}</option>
         {getPreviewOptions(block).map(option => (
           <option key={option.id || option.label} value={option.value || option.label}>{option.label}</option>
         ))}
@@ -17187,7 +17187,7 @@ const EmbeddedFormCanvasDropZone: React.FC<{
     onDrop={(event) => editor.onDropField(event, insertIndex)}
   >
     <Plus size={empty ? 18 : 12} />
-    <span>{empty ? 'Arrastra campos aqui' : 'Soltar aqui'}</span>
+    <span>{empty ? 'Arrastra campos aquí' : 'Soltar aquí'}</span>
   </div>
 )
 
@@ -17400,7 +17400,7 @@ const FormGlobalStyleControls: React.FC<{
             <button type="button" className={isBold ? styles.textFormatActive : ''} aria-pressed={isBold} title="Negrita" aria-label="Negrita" onClick={() => patchTextFormat({ formFontWeight: isBold ? 'normal' : 'bold' })}>
               <Bold size={15} />
             </button>
-            <button type="button" className={isItalic ? styles.textFormatActive : ''} aria-pressed={isItalic} title="Italica" aria-label="Italica" onClick={() => patchTextFormat({ formFontStyle: isItalic ? 'normal' : 'italic' })}>
+            <button type="button" className={isItalic ? styles.textFormatActive : ''} aria-pressed={isItalic} title="Itálica" aria-label="Itálica" onClick={() => patchTextFormat({ formFontStyle: isItalic ? 'normal' : 'italic' })}>
               <Italic size={15} />
             </button>
             <button type="button" className={isUnderline ? styles.textFormatActive : ''} aria-pressed={isUnderline} title="Subrayado" aria-label="Subrayado" onClick={() => patchTextFormat({ formTextDecoration: isUnderline ? 'none' : 'underline' })}>
@@ -17453,14 +17453,14 @@ const FormGlobalStyleControls: React.FC<{
         </label>
       </div>
       <div className={styles.twoColumn}>
-        <ColorField label="Opcion seleccionada" value={getThemePaint(theme, 'formChoiceSelectedBg', defaultChoiceSelectedBg)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBg: value })} onCommit={onSaveSite} />
+        <ColorField label="Opción seleccionada" value={getThemePaint(theme, 'formChoiceSelectedBg', defaultChoiceSelectedBg)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBg: value })} onCommit={onSaveSite} />
         <ColorField label="Borde seleccionado" value={getThemePaint(theme, 'formChoiceSelectedBorder', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBorder: value })} onCommit={onSaveSite} />
       </div>
 
-      <div className={styles.panelSubheader}>Boton de envio</div>
+      <div className={styles.panelSubheader}>Botón de envío</div>
       <div className={styles.twoColumn}>
         <label className={styles.field}>
-          <span>Texto del boton</span>
+          <span>Texto del botón</span>
           <input value={theme.submitText || ''} placeholder="Enviar" onChange={(event) => onPatchTheme({ submitText: event.target.value })} onBlur={onSaveSite} />
         </label>
         <label className={styles.field}>
@@ -17471,7 +17471,7 @@ const FormGlobalStyleControls: React.FC<{
       {isStandardForm(site) && (
         <div className={styles.twoColumn}>
           <label className={styles.field}>
-            <span>Texto boton continuar</span>
+            <span>Texto botón continuar</span>
             <input value={theme.continueText || ''} placeholder="Continuar" onChange={(event) => onPatchTheme({ continueText: event.target.value })} onBlur={onSaveSite} />
           </label>
         </div>
@@ -17479,30 +17479,30 @@ const FormGlobalStyleControls: React.FC<{
       {isInteractiveForm(site) && (
         <div className={styles.twoColumn}>
           <label className={styles.field}>
-            <span>Texto boton siguiente</span>
+            <span>Texto botón siguiente</span>
             <input value={theme.nextText || ''} placeholder="Siguiente" onChange={(event) => onPatchTheme({ nextText: event.target.value })} onBlur={onSaveSite} />
           </label>
           <label className={styles.field}>
-            <span>Texto boton anterior</span>
+            <span>Texto botón anterior</span>
             <input value={theme.backText || ''} placeholder="Anterior" onChange={(event) => onPatchTheme({ backText: event.target.value })} onBlur={onSaveSite} />
           </label>
         </div>
       )}
       <div className={styles.twoColumn}>
-        <ColorField label="Fondo boton" value={getThemePaint(theme, 'submitBg', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBg: value })} onCommit={onSaveSite} />
-        <ColorField label="Texto boton" value={getThemePaint(theme, 'submitTextColor', onAccentFor(defaultAccent))} allowGradient onChange={(value) => onPatchTheme({ submitTextColor: value })} onCommit={onSaveSite} />
+        <ColorField label="Fondo botón" value={getThemePaint(theme, 'submitBg', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBg: value })} onCommit={onSaveSite} />
+        <ColorField label="Texto botón" value={getThemePaint(theme, 'submitTextColor', onAccentFor(defaultAccent))} allowGradient onChange={(value) => onPatchTheme({ submitTextColor: value })} onCommit={onSaveSite} />
       </div>
       <div className={styles.twoColumn}>
-        <ColorField label="Borde boton" value={getThemePaint(theme, 'submitBorderColor', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBorderColor: value })} onCommit={onSaveSite} />
-        <DimensionField label="Radio boton" value={getThemeNumber(theme, 'submitRadius', 12, 0, 80)} min={0} max={80} onChange={(value) => onPatchTheme({ submitRadius: value })} onCommit={onSaveSite} />
+        <ColorField label="Borde botón" value={getThemePaint(theme, 'submitBorderColor', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBorderColor: value })} onCommit={onSaveSite} />
+        <DimensionField label="Radio botón" value={getThemeNumber(theme, 'submitRadius', 12, 0, 80)} min={0} max={80} onChange={(value) => onPatchTheme({ submitRadius: value })} onCommit={onSaveSite} />
       </div>
       <div className={styles.twoColumn}>
-        <DimensionField label="Alto boton" value={getThemeNumber(theme, 'submitHeight', 50, 34, 96)} min={34} max={96} onChange={(value) => onPatchTheme({ submitHeight: value })} onCommit={onSaveSite} />
-        <DimensionField label="Texto boton" value={getThemeNumber(theme, 'submitFontSize', 16, 11, 32)} min={11} max={32} onChange={(value) => onPatchTheme({ submitFontSize: value })} onCommit={onSaveSite} />
+        <DimensionField label="Alto botón" value={getThemeNumber(theme, 'submitHeight', 50, 34, 96)} min={34} max={96} onChange={(value) => onPatchTheme({ submitHeight: value })} onCommit={onSaveSite} />
+        <DimensionField label="Texto botón" value={getThemeNumber(theme, 'submitFontSize', 16, 11, 32)} min={11} max={32} onChange={(value) => onPatchTheme({ submitFontSize: value })} onCommit={onSaveSite} />
       </div>
       <div className={styles.twoColumn}>
-        <DimensionField label="Relleno boton" value={getThemeNumber(theme, 'submitPaddingX', 22, 8, 72)} min={8} max={72} onChange={(value) => onPatchTheme({ submitPaddingX: value })} onCommit={onSaveSite} />
-        <DimensionField label="Borde boton" value={getThemeNumber(theme, 'submitBorderWidth', 1, 0, 8)} min={0} max={8} onChange={(value) => onPatchTheme({ submitBorderWidth: value })} onCommit={onSaveSite} />
+        <DimensionField label="Relleno botón" value={getThemeNumber(theme, 'submitPaddingX', 22, 8, 72)} min={8} max={72} onChange={(value) => onPatchTheme({ submitPaddingX: value })} onCommit={onSaveSite} />
+        <DimensionField label="Borde botón" value={getThemeNumber(theme, 'submitBorderWidth', 1, 0, 8)} min={0} max={8} onChange={(value) => onPatchTheme({ submitBorderWidth: value })} onCommit={onSaveSite} />
       </div>
     </div>
   )
@@ -17533,7 +17533,7 @@ const PopupInspector: React.FC<{
           {importedPopupDetected && (
             <div className={styles.popupDetectedCard}>
               <strong>Detectado en el HTML</strong>
-              <p>Encontramos un popup o modal dentro del sitio importado. Si activas este panel, Ristak mostrara el popup configurado aqui.</p>
+              <p>Encontramos un popup o modal dentro del sitio importado. Si activas este panel, Ristak mostrará el popup configurado aquí.</p>
             </div>
           )}
 
@@ -17588,7 +17588,7 @@ const PopupInspector: React.FC<{
           </div>
           <ColorField label="Color borde" value={getThemePaint(theme, 'popupBorderColor', 'rgba(148, 163, 184, 0.32)')} allowGradient onChange={(value) => onPatchTheme({ popupBorderColor: value })} onCommit={onSaveSite} />
 
-          <div className={styles.panelSubheader}>Boton de cerrar</div>
+          <div className={styles.panelSubheader}>Botón de cerrar</div>
           <div className={styles.twoColumn}>
             <label className={styles.field}>
               <span>Mostrar</span>
@@ -17690,12 +17690,12 @@ const ActivePageSettings: React.FC<{
 
   return (
     <div className={styles.settingsGroup}>
-      <div className={styles.panelSubheader}>Pagina activa</div>
+      <div className={styles.panelSubheader}>Página activa</div>
       <label className={styles.field}>
-        <span>Nombre de pagina</span>
+        <span>Nombre de página</span>
         <input
           value={activePage.title || ''}
-          placeholder="Pagina"
+          placeholder="Página"
           onChange={(event) => patchActivePage({ title: event.target.value })}
           onBlur={onSaveSite}
         />
@@ -17710,22 +17710,22 @@ const SiteGlobalSettings: React.FC<{
   onSaveSite: () => void
 }> = ({ site, onPatchSite, onSaveSite }) => (
   <div className={styles.settingsGroup}>
-    <div className={styles.panelSubheader}>Publico</div>
+    <div className={styles.panelSubheader}>Público</div>
     <label className={styles.field}>
-      <span>Titulo publico</span>
+      <span>Título público</span>
       <input
         value={getPublicTitleEditorValue(site)}
-        placeholder={site.name || 'Nombre publico'}
+        placeholder={site.name || 'Nombre público'}
         onChange={(event) => onPatchSite({ title: event.target.value })}
         onBlur={onSaveSite}
       />
     </label>
     <label className={styles.field}>
-      <span>Descripcion</span>
+      <span>Descripción</span>
       <textarea
         rows={3}
         value={site.description || ''}
-        placeholder="Descripcion corta para buscadores y previews"
+        placeholder="Descripción corta para buscadores y previews"
         onChange={(event) => onPatchSite({ description: event.target.value })}
         onBlur={onSaveSite}
       />
@@ -17776,12 +17776,12 @@ const PageInspector: React.FC<{
       <ActivePageSettings pages={pages} activePageId={activePageId} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
       {metaPixelConnected && isFormSite(site) && (
         <div className={styles.settingsGroup}>
-          <div className={styles.panelSubheader}>Conversion del formulario</div>
+          <div className={styles.panelSubheader}>Conversión del formulario</div>
           <div className={`${styles.metaCard} ${formHasConversion && site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
             <span className={styles.metaMark} aria-hidden="true">∞</span>
             <div className={styles.metaCardInfo}>
               <strong>{formHasConversion ? 'Evento de submit' : 'Sin evento'}</strong>
-              <small>{!site.metaCapiEnabled ? 'Requiere Meta del sitio' : formHasConversion ? 'Se envia al enviar formulario' : 'Solo PageView global'}</small>
+              <small>{!site.metaCapiEnabled ? 'Requiere Meta del sitio' : formHasConversion ? 'Se envía al enviar formulario' : 'Solo PageView global'}</small>
             </div>
           </div>
           <label className={styles.field}>
@@ -17817,7 +17817,7 @@ const PageInspector: React.FC<{
                 onClick={() => setFormMetaParamsOpen(open => !open)}
               >
                 <Settings2 size={14} />
-                <span>Parametros Meta</span>
+                <span>Parámetros Meta</span>
                 <ChevronDown size={13} />
               </button>
               {formMetaParamsOpen && (
@@ -17841,7 +17841,7 @@ const PageInspector: React.FC<{
                   onBlur={onSaveSite}
                 >
                   <option value="next_page_if_qualified">Mostrar Agradecimiento o Descalificacion segun resultado</option>
-                  <option value="next_page">Siempre mostrar pagina Agradecimiento</option>
+                  <option value="next_page">Siempre mostrar página Agradecimiento</option>
                   <option value="form_default">Mostrar mensaje en este formulario</option>
                 </CustomSelect>
               </label>
@@ -17850,7 +17850,7 @@ const PageInspector: React.FC<{
                 <textarea
                   rows={2}
                   value={theme.finalMessages?.success || ''}
-                  placeholder="Listo. Recibimos tu informacion."
+                  placeholder="Listo. Recibimos tu información."
                   onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), success: event.target.value } })}
                   onBlur={onSaveSite}
                 />
@@ -17877,14 +17877,14 @@ const PageInspector: React.FC<{
       <div className={styles.panelSubheader}>Colores</div>
       <div className={styles.twoColumn}>
         <ColorField
-          label="Fondo de pagina"
+          label="Fondo de página"
           value={getThemePaint(theme, 'backgroundColor', userBgColor(site) || resolvedPageBg(site))}
           allowGradient
           onChange={(value) => onPatchTheme({ backgroundColor: value })}
           onCommit={onSaveSite}
         />
         <ColorField
-          label="Texto de pagina"
+          label="Texto de página"
           value={getThemePaint(theme, 'textColor', isSiteDark(site) ? '#ffffff' : '#111827')}
           allowGradient
           onChange={(value) => onPatchTheme({ textColor: value, textColorCustom: true })}
@@ -17931,7 +17931,7 @@ const PageInspector: React.FC<{
           </CustomSelect>
         </label>
         <label className={styles.field}>
-          <span>Visualizacion</span>
+          <span>Visualización</span>
           <CustomSelect
             value={getBackgroundVisualValue(theme)}
             onChange={(event) => onPatchTheme(backgroundVisualPatch(event.target.value))}
@@ -17946,7 +17946,7 @@ const PageInspector: React.FC<{
 
       <div className={styles.panelSubheader}>Dimensiones</div>
       <DimensionField
-        label="Ancho maximo"
+        label="Ancho máximo"
         value={isLanding(site) && Number(theme.pageMaxWidth) === 1160 ? 1440 : getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1440 : 520, 360, 1440)}
         min={360}
         max={1440}
@@ -17956,7 +17956,7 @@ const PageInspector: React.FC<{
       />
       <div className={styles.twoColumn}>
         <DimensionField
-          label="Relleno de pagina"
+          label="Relleno de página"
           value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, 120)}
           min={0}
           max={120}
@@ -17972,7 +17972,7 @@ const PageInspector: React.FC<{
           onCommit={onSaveSite}
         />
       </div>
-      <div className={styles.panelSubheader}>Borde de pagina</div>
+      <div className={styles.panelSubheader}>Borde de página</div>
       <div className={styles.twoColumn}>
         <DimensionField
           label="Grosor"
@@ -18004,11 +18004,11 @@ const PageInspector: React.FC<{
 
   return (
     <InspectorTabbedPanel
-      title="Pagina"
+      title="Página"
       subtitle={isLanding(site) ? (site.theme?.pageMode === 'website' ? 'Sitio web' : 'Embudo') : 'Formulario'}
       tabs={[
-        { value: 'edit', label: 'Pagina', icon: <FileText size={14} />, content: pageConfigContent },
-        { value: 'design', label: 'Diseno', icon: <Sparkles size={14} />, content: pageDesignContent },
+        { value: 'edit', label: 'Página', icon: <FileText size={14} />, content: pageConfigContent },
+        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: pageDesignContent },
         { value: 'settings', label: 'Global', icon: <Globe2 size={14} />, content: pageGlobalContent }
       ]}
     />
@@ -18037,15 +18037,15 @@ const normalizeCustomFieldDataType = (value = '') => {
 const customFieldTypeLabel = (value = '') => {
   const type = normalizeCustomFieldDataType(value)
   if (type === 'text') return 'Texto corto'
-  if (type === 'textarea') return 'Parrafo'
-  if (type === 'radio') return 'Opcion unica'
+  if (type === 'textarea') return 'Párrafo'
+  if (type === 'radio') return 'Opción única'
   if (type === 'dropdown') return 'Lista desplegable'
   if (type === 'checkboxes') return 'Varias opciones'
-  if (type === 'number') return 'Numero'
+  if (type === 'number') return 'Número'
   if (type === 'currency') return 'Moneda'
   if (type === 'date') return 'Fecha'
   if (type === 'email') return 'Correo'
-  if (type === 'phone') return 'Telefono'
+  if (type === 'phone') return 'Teléfono'
   return value || 'Campo'
 }
 
@@ -18130,7 +18130,7 @@ const CustomFieldBindingControl: React.FC<{
         </p>
       ) : (
         <p className={styles.customFieldHint}>
-          Crea campos compatibles en Configuracion para guardar este dato dentro del contacto.
+          Crea campos compatibles en Configuración para guardar este dato dentro del contacto.
         </p>
       )}
     </div>
@@ -18199,19 +18199,19 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const contentLabel = isField
     ? 'Texto de ayuda'
     : block.blockType === SECTION_BLOCK_TYPE
-      ? 'Titulo visible opcional'
+      ? 'Título visible opcional'
       : block.blockType === 'embed'
-        ? 'Codigo externo, iframe o URL'
+        ? 'Código externo, iframe o URL'
         : block.blockType === 'hero'
-          ? 'Titulo principal'
+          ? 'Título principal'
           : block.blockType === 'cta'
-            ? 'Titulo'
+            ? 'Título'
             : hasListCopy
-              ? 'Titulo de seccion'
+              ? 'Título de seccion'
               : isPrimaryTextBlock
-                ? 'Texto del titulo'
+                ? 'Texto del título'
                 : isSecondaryTextBlock
-                  ? 'Texto del subtitulo'
+                  ? 'Texto del subtítulo'
                   : block.blockType === 'text'
                     ? 'Texto'
                     : 'Contenido'
@@ -18233,7 +18233,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       <textarea
         rows={contentRows}
         value={block.content}
-        placeholder={block.blockType === 'embed' ? '<iframe src="https://..."></iframe> o codigo HTML del widget' : undefined}
+        placeholder={block.blockType === 'embed' ? '<iframe src="https://..."></iframe> o código HTML del widget' : undefined}
         onChange={(event) => onPatchBlock({ content: event.target.value })}
         onBlur={onSave}
       />
@@ -18256,7 +18256,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
       {(block.blockType === 'hero' || block.blockType === 'cta') && (
         <label className={styles.field}>
-          <span>Subtitulo</span>
+          <span>Subtítulo</span>
           <textarea rows={2} value={getSettingString(settings, 'subtitle')} onChange={(event) => onPatchSettings({ subtitle: event.target.value })} onBlur={onSave} />
         </label>
       )}
@@ -18264,7 +18264,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {hasButtonCopy && (
         <div className={styles.twoColumn}>
           <label className={styles.field}>
-            <span>Texto del boton</span>
+            <span>Texto del botón</span>
             <input
               value={buttonTextEditorValue}
               onChange={(event) => onPatchSettings({ buttonText: event.target.value })}
@@ -18272,7 +18272,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             />
           </label>
           <label className={styles.field}>
-            <span>Subtexto del boton</span>
+            <span>Subtexto del botón</span>
             <input value={getSettingString(settings, 'buttonSubtitle')} onChange={(event) => onPatchSettings({ buttonSubtitle: event.target.value })} onBlur={onSave} />
           </label>
         </div>
@@ -18282,7 +18282,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
       {hasListCopy && (
         <label className={styles.field}>
-          <span>Items (uno por linea: titulo | texto | autor)</span>
+          <span>Items (uno por línea: título | texto | autor)</span>
           <textarea
             rows={5}
             value={stringifyItems(settings)}
@@ -18325,8 +18325,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 >
                   <option value="">Ninguna</option>
                   <option value="email">Correo</option>
-                  <option value="phone">Telefono</option>
-                  <option value="number">Numero</option>
+                  <option value="phone">Teléfono</option>
+                  <option value="number">Número</option>
                   <option value="currency">Moneda</option>
                   <option value="date">Fecha</option>
                 </CustomSelect>
@@ -18354,7 +18354,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     window.setTimeout(onSave, 0)
                   }}
                 />
-                <span>Mostrar pais y lada</span>
+                <span>Mostrar país y lada</span>
               </label>
             )}
           </div>
@@ -18415,7 +18415,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       subtitle={blockLabels[block.blockType]}
       tabs={[
         { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
-        { value: 'design', label: 'Diseno', icon: <Sparkles size={14} />, content: designContent },
+        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent },
         { value: 'settings', label: 'Ajustes', icon: <Settings2 size={14} />, content: settingsContent }
       ]}
     />
@@ -18451,8 +18451,8 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
         ...options,
         {
           id: `option-${Date.now()}`,
-          label: `Opcion ${options.length + 1}`,
-          value: `Opcion ${options.length + 1}`,
+          label: `Opción ${options.length + 1}`,
+          value: `Opción ${options.length + 1}`,
           action: 'continue'
         }
       ]
@@ -18489,7 +18489,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
         <div key={option.id || index} className={styles.optionRuleCard}>
           <div className={styles.twoColumn}>
             <label className={styles.field}>
-              <span>Opcion</span>
+              <span>Opción</span>
               <input
                 value={option.label}
                 onChange={(event) => patchOption(index, { label: event.target.value, value: event.target.value })}
@@ -18539,7 +18539,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
               <textarea
                 rows={2}
                 value={option.message || ''}
-                placeholder={option.action === 'disqualify' ? 'Gracias. Por ahora no califica.' : 'Gracias. Tu informacion fue recibida.'}
+                placeholder={option.action === 'disqualify' ? 'Gracias. Por ahora no califica.' : 'Gracias. Tu información fue recibida.'}
                 onChange={(event) => patchOption(index, { message: event.target.value })}
                 onBlur={onSave}
               />
@@ -18560,10 +18560,10 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
 
           {categoryActions.has(getVisibleRuleAction(option.action)) && (
             <label className={styles.field}>
-              <span>Categoria</span>
+              <span>Categoría</span>
               <input
                 value={option.category || ''}
-                placeholder={option.action === 'cold_lead' ? 'frio' : option.action === 'warm_lead' ? 'tibio' : option.action === 'hot_lead' ? 'caliente' : 'categoria'}
+                placeholder={option.action === 'cold_lead' ? 'frio' : option.action === 'warm_lead' ? 'tibio' : option.action === 'hot_lead' ? 'caliente' : 'categoría'}
                 onChange={(event) => patchOption(index, { category: event.target.value })}
                 onBlur={onSave}
               />
@@ -18572,7 +18572,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
 
           <button type="button" className={styles.removeOption} onClick={() => removeOption(index)}>
             <Trash2 size={14} />
-            Quitar opcion
+            Quitar opción
           </button>
         </div>
       ))}
@@ -18606,11 +18606,11 @@ const ButtonActionFields: React.FC<{
   return (
     <>
       <label className={styles.field}>
-        <span>Accion del boton</span>
+        <span>Acción del botón</span>
         <CustomSelect value={action} onChange={(event) => onPatchSettings({ buttonAction: event.target.value })} onBlur={onSave}>
           <option value="url">Enviar a una URL</option>
-          <option value="next_page">Ir a la siguiente pagina del embudo</option>
-          <option value="specific_page">Ir a una pagina especifica del embudo</option>
+          <option value="next_page">Ir a la siguiente página del embudo</option>
+          <option value="specific_page">Ir a una página específica del embudo</option>
           <option value="open_popup">Abrir pop up</option>
           <option value="close_popup">Cerrar pop up</option>
         </CustomSelect>
@@ -18625,9 +18625,9 @@ const ButtonActionFields: React.FC<{
 
       {action === 'specific_page' && (
         <label className={styles.field}>
-          <span>Pagina destino</span>
+          <span>Página destino</span>
           <CustomSelect value={getSettingString(settings, 'buttonPageId')} onChange={(event) => onPatchSettings({ buttonPageId: event.target.value })} onBlur={onSave}>
-            <option value="">Selecciona una pagina</option>
+            <option value="">Selecciona una página</option>
             {targetPages.map(page => <option key={page.id} value={page.id}>{page.title}</option>)}
           </CustomSelect>
         </label>
@@ -18727,16 +18727,16 @@ const SocialProfileSettings: React.FC<{
       </label>
       <p className={styles.muted}>
         {connectedProfilesForPlatform.length > 0
-          ? 'Elige un perfil conectado para llenar estos datos. Despues puedes ajustar texto, foto o seguidores aqui mismo.'
+          ? 'Elige un perfil conectado para llenar estos datos. Después puedes ajustar texto, foto o seguidores aquí mismo.'
           : 'No hay perfiles conectados para esta red. Puedes llenar este bloque manualmente mientras conectas la cuenta.'}
       </p>
       <label className={styles.field}>
-        <span>Nombre que se vera</span>
+        <span>Nombre que se verá</span>
         <input value={getSettingString(settings, 'brandName')} placeholder={site.title || site.name || 'Tu marca'} onChange={(event) => onPatchSettings({ brandName: event.target.value })} onBlur={onSave} />
       </label>
       <label className={styles.field}>
         <span>Texto secundario</span>
-        <input value={getSettingString(settings, 'brandSubtitle')} placeholder={platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'} onChange={(event) => onPatchSettings({ brandSubtitle: event.target.value })} onBlur={onSave} />
+        <input value={getSettingString(settings, 'brandSubtitle')} placeholder={platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'} onChange={(event) => onPatchSettings({ brandSubtitle: event.target.value })} onBlur={onSave} />
       </label>
       <label className={styles.field}>
         <span>Foto de perfil (URL)</span>
@@ -18768,7 +18768,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
 
   if (isPanelBlock(block)) {
     const panelTitle = block.blockType === HEADER_PANEL_BLOCK_TYPE
-      ? getHeaderScope(block) === HEADER_SCOPE_GLOBAL ? 'Header global' : 'Header de esta pagina'
+      ? getHeaderScope(block) === HEADER_SCOPE_GLOBAL ? 'Header global' : 'Header de esta página'
       : 'Panel inferior'
     return (
       <div className={styles.settingsGroup}>
@@ -18783,7 +18783,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
             onBlur={onSave}
           />
         </label>
-        <p className={styles.muted}>Escribe un enlace por linea. Si no quieres enlaces, deja esta caja vacia.</p>
+        <p className={styles.muted}>Escribe un enlace por línea. Si no quieres enlaces, deja esta caja vacía.</p>
       </div>
     )
   }
@@ -18873,7 +18873,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
                   onBlur={onSave}
                 >
                   <option value="native">Controles nativos</option>
-                  <option value="clean">Boton play limpio</option>
+                  <option value="clean">Botón play limpio</option>
                   <option value="none">Sin controles visibles</option>
                 </CustomSelect>
               </label>
@@ -18994,11 +18994,11 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
         {selectedCalendar ? (
           <p className={styles.muted}>
             {selectedCalendar.publicUrlEnabled
-              ? `Se mostrara como iframe usando ${selectedCalendar.publicBookingPath || '/calendar/...'}`
-              : selectedCalendar.publicUrlUnavailableReason || 'Conecta el dominio publico general para que funcione publicamente.'}
+              ? `Se mostrará como iframe usando ${selectedCalendar.publicBookingPath || '/calendar/...'}`
+              : selectedCalendar.publicUrlUnavailableReason || 'Conecta el dominio público general para que funcione publicamente.'}
           </p>
         ) : (
-          <p className={styles.muted}>Este bloque usa la URL publica del calendario en el mismo dominio del site.</p>
+          <p className={styles.muted}>Este bloque usa la URL pública del calendario en el mismo dominio del site.</p>
         )}
       </div>
     )
@@ -19019,15 +19019,15 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           </CustomSelect>
         </label>
         <label className={styles.field}>
-          <span>Descripcion del formulario</span>
+          <span>Descripción del formulario</span>
           <textarea rows={2} value={getSettingString(settings, 'description')} onChange={(event) => onPatchSettings({ description: event.target.value })} onBlur={onSave} />
         </label>
         <label className={styles.field}>
           <span>Al terminar el formulario</span>
           <CustomSelect value={getFormCompletionAction(settings)} onChange={(event) => onPatchSettings({ completionAction: event.target.value })} onBlur={onSave}>
-            <option value="next_page">Ir a la siguiente pagina al terminar</option>
-            <option value="next_page_if_qualified">Ir a la siguiente pagina solo si califica</option>
-            <option value="form_default">Mantener la configuracion actual del formulario</option>
+            <option value="next_page">Ir a la siguiente página al terminar</option>
+            <option value="next_page_if_qualified">Ir a la siguiente página solo si califica</option>
+            <option value="form_default">Mantener la configuración actual del formulario</option>
           </CustomSelect>
         </label>
         <button
@@ -19056,7 +19056,7 @@ const LeadsPanel: React.FC<{ rows: LeadRow[]; loading: boolean; onRefresh: () =>
     <div className={styles.builderHeader}>
       <div>
         <h2>Respuestas</h2>
-        <p>Respuestas recibidas desde sitios web y formularios publicos.</p>
+        <p>Respuestas recibidas desde sitios web y formularios públicos.</p>
       </div>
       <Button variant="secondary" onClick={onRefresh} loading={loading}>
         <RefreshCw size={16} />
@@ -19075,7 +19075,7 @@ const LeadsPanel: React.FC<{ rows: LeadRow[]; loading: boolean; onRefresh: () =>
       {rows.length === 0 ? (
         <div className={styles.emptyState}>
           <ListChecks size={24} />
-          <p>No hay respuestas todavia.</p>
+          <p>No hay respuestas todavía.</p>
         </div>
       ) : rows.map(row => {
         const rules = row.meta?.rules && typeof row.meta.rules === 'object' ? row.meta.rules as Record<string, unknown> : {}
@@ -19130,7 +19130,7 @@ const DomainsPanel: React.FC<DomainsPanelProps> = ({
 
       <div className={styles.domainEditor}>
         <label className={styles.field}>
-          <span>Dominio publico general</span>
+          <span>Dominio público general</span>
           <input
             value={domainInput}
             placeholder="www.doctorramirez.com"

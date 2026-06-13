@@ -255,14 +255,14 @@ const templateImageUrls = {
 }
 
 export const siteTemplates: SiteTemplateMeta[] = [
-  { id: 'ristak', label: 'Base de negocio', description: 'Embudo con opt-in, agenda y pagina de gracias para una oferta generica.', group: 'landing', category: 'full_page', accent: '#111827', swatchBg: '#f5f6f8', swatchInk: '#0f172a', badge: 'Web', defaultTheme: { backgroundImage: templateImageUrls.workspace, backgroundColor: 'linear-gradient(90deg, rgba(248,250,252,.95), rgba(248,250,252,.72))', backgroundFit: 'cover', backgroundPosition: 'center center' } },
-  { id: 'executive', label: 'Corporativo claro', description: 'Embudo serio con diagnostico, agenda y confirmacion para servicios.', group: 'landing', category: 'full_page', accent: '#0f766e', swatchBg: '#f8fafc', swatchInk: '#0f172a', badge: 'Web', defaultTheme: { backgroundImage: templateImageUrls.team, backgroundColor: 'linear-gradient(110deg, rgba(248,250,252,.96), rgba(236,254,255,.68))', backgroundFit: 'cover', backgroundPosition: 'center center', accentColor: '#0f766e' } },
-  { id: 'launch', label: 'Lanzamiento', description: 'Embudo de registro con pagina de detalles y cierre de gracias.', group: 'landing', category: 'full_page', accent: '#ea580c', swatchBg: '#fff7ed', swatchInk: '#1f2937', badge: 'Promo', defaultTheme: { backgroundImage: templateImageUrls.planning, backgroundColor: 'linear-gradient(135deg, rgba(255,247,237,.95), rgba(251,146,60,.36))', backgroundFit: 'cover', backgroundPosition: 'center center', accentColor: '#ea580c' } },
-  { id: 'premium', label: 'Premium sobrio', description: 'Embudo elegante con aplicacion, agenda privada y confirmacion.', group: 'landing', category: 'full_page', accent: '#d4af37', swatchBg: '#101010', swatchInk: '#f8fafc', badge: 'Premium', defaultTheme: { backgroundImage: templateImageUrls.premium, backgroundColor: 'linear-gradient(120deg, rgba(16,16,16,.95), rgba(16,16,16,.72))', backgroundFit: 'cover', backgroundPosition: 'center center', accentColor: '#d4af37', textColor: '#f8fafc' } },
-  { id: 'local', label: 'Negocio local', description: 'Embudo local con oferta, contacto y pagina de gracias para seguimiento.', group: 'landing', category: 'full_page', accent: '#15803d', swatchBg: '#f0fdf4', swatchInk: '#14532d', badge: 'Local', defaultTheme: { backgroundImage: templateImageUrls.local, backgroundColor: 'linear-gradient(110deg, rgba(240,253,244,.95), rgba(220,252,231,.72))', backgroundFit: 'cover', backgroundPosition: 'center center', accentColor: '#15803d' } },
-  { id: 'vsl', label: 'Carta de ventas', description: 'Embudo de venta con carta, agenda y pagina final de confirmacion.', group: 'landing', category: 'full_page', accent: '#111827', swatchBg: '#0a0b0d', swatchInk: '#ffffff', badge: 'Venta', defaultTheme: { backgroundImage: templateImageUrls.handshake, backgroundColor: 'linear-gradient(140deg, rgba(10,11,13,.96), rgba(17,24,39,.72))', backgroundFit: 'cover', backgroundPosition: 'center center', accentColor: '#111827' } },
+  { id: 'ristak', label: 'Base de negocio', description: 'Embudo con opt-in, agenda y página de gracias para una oferta generica.', group: 'landing', category: 'full_page', accent: '#111827', swatchBg: '#f5f6f8', swatchInk: '#0f172a', badge: 'Web', defaultTheme: { backgroundImage: templateImageUrls.workspace, backgroundColor: 'linear-gradient(90deg, rgba(248,250,252,.95), rgba(248,250,252,.72))', backgroundFit: 'cover', backgroundPosition: 'center center' } },
+  { id: 'executive', label: 'Corporativo claro', description: 'Embudo serio con diagnostico, agenda y confirmación para servicios.', group: 'landing', category: 'full_page', accent: '#0f766e', swatchBg: '#f8fafc', swatchInk: '#0f172a', badge: 'Web', defaultTheme: { backgroundImage: templateImageUrls.team, backgroundColor: 'linear-gradient(110deg, rgba(248,250,252,.96), rgba(236,254,255,.68))', backgroundFit: 'cover', backgroundPosition: 'center center', accentColor: '#0f766e' } },
+  { id: 'launch', label: 'Lanzamiento', description: 'Embudo de registro con página de detalles y cierre de gracias.', group: 'landing', category: 'full_page', accent: '#ea580c', swatchBg: '#fff7ed', swatchInk: '#1f2937', badge: 'Promo', defaultTheme: { backgroundImage: templateImageUrls.planning, backgroundColor: 'linear-gradient(135deg, rgba(255,247,237,.95), rgba(251,146,60,.36))', backgroundFit: 'cover', backgroundPosition: 'center center', accentColor: '#ea580c' } },
+  { id: 'premium', label: 'Premium sobrio', description: 'Embudo elegante con aplicacion, agenda privada y confirmación.', group: 'landing', category: 'full_page', accent: '#d4af37', swatchBg: '#101010', swatchInk: '#f8fafc', badge: 'Premium', defaultTheme: { backgroundImage: templateImageUrls.premium, backgroundColor: 'linear-gradient(120deg, rgba(16,16,16,.95), rgba(16,16,16,.72))', backgroundFit: 'cover', backgroundPosition: 'center center', accentColor: '#d4af37', textColor: '#f8fafc' } },
+  { id: 'local', label: 'Negocio local', description: 'Embudo local con oferta, contacto y página de gracias para seguimiento.', group: 'landing', category: 'full_page', accent: '#15803d', swatchBg: '#f0fdf4', swatchInk: '#14532d', badge: 'Local', defaultTheme: { backgroundImage: templateImageUrls.local, backgroundColor: 'linear-gradient(110deg, rgba(240,253,244,.95), rgba(220,252,231,.72))', backgroundFit: 'cover', backgroundPosition: 'center center', accentColor: '#15803d' } },
+  { id: 'vsl', label: 'Carta de ventas', description: 'Embudo de venta con carta, agenda y página final de confirmación.', group: 'landing', category: 'full_page', accent: '#111827', swatchBg: '#0a0b0d', swatchInk: '#ffffff', badge: 'Venta', defaultTheme: { backgroundImage: templateImageUrls.handshake, backgroundColor: 'linear-gradient(140deg, rgba(10,11,13,.96), rgba(17,24,39,.72))', backgroundFit: 'cover', backgroundPosition: 'center center', accentColor: '#111827' } },
   { id: 'facebook', label: 'Facebook', description: 'Formato corto con apariencia de anuncio o perfil de Facebook.', group: 'form', category: 'social', accent: '#1877f2', swatchBg: '#f0f2f5', swatchInk: '#1c1e21', badge: 'Redes' },
-  { id: 'instagram', label: 'Instagram', description: 'Formato corto con apariencia de publicacion o anuncio de Instagram.', group: 'form', category: 'social', accent: '#0095f6', swatchBg: '#ffffff', swatchInk: '#262626', badge: 'Redes' },
+  { id: 'instagram', label: 'Instagram', description: 'Formato corto con apariencia de publicación o anuncio de Instagram.', group: 'form', category: 'social', accent: '#0095f6', swatchBg: '#ffffff', swatchInk: '#262626', badge: 'Redes' },
   { id: 'tiktok', label: 'TikTok', description: 'Formato oscuro y directo para trafico que viene de TikTok.', group: 'form', category: 'social', accent: '#fe2c55', swatchBg: '#000000', swatchInk: '#ffffff', badge: 'Redes' },
   { id: 'compact', label: 'Formulario compacto', description: 'Captura rapida de datos, ideal para formularios pequenos y directos.', group: 'form', category: 'compact', accent: '#2563eb', swatchBg: '#f8fafc', swatchInk: '#0f172a', badge: 'Corto', defaultTheme: { backgroundColor: '#f8fafc', accentColor: '#2563eb', pageMaxWidth: 480, pagePadding: 18, pageRadius: 18 } },
   { id: 'event', label: 'Registro simple', description: 'Para pedir datos antes de una llamada, evento, clase o cotizacion.', group: 'form', category: 'event', accent: '#be123c', swatchBg: '#fdf2f8', swatchInk: '#500724', badge: 'Registro', defaultTheme: { backgroundImage: templateImageUrls.planning, backgroundColor: 'linear-gradient(140deg, rgba(253,242,248,.96), rgba(251,207,232,.76))', backgroundFit: 'cover', backgroundPosition: 'center center', accentColor: '#be123c', pageMaxWidth: 540, pagePadding: 24, pageRadius: 24 } },
@@ -521,9 +521,9 @@ export interface SitesAICreationResult {
 
 export const blockLabels: Record<SiteBlockType, string> = {
   headline: 'Titular',
-  subheading: 'Subtitulo',
-  title: 'Titulo',
-  subtitle: 'Subtitulo',
+  subheading: 'Subtítulo',
+  title: 'Título',
+  subtitle: 'Subtítulo',
   description: 'Texto descriptivo',
   text: 'Texto',
   embed: 'Código',
@@ -534,7 +534,7 @@ export const blockLabels: Record<SiteBlockType, string> = {
   hero: 'Principal',
   image: 'Imagen',
   video: 'Video',
-  button: 'Boton',
+  button: 'Botón',
   benefits: 'Beneficios',
   testimonials: 'Testimonios',
   services: 'Servicios',
@@ -543,14 +543,14 @@ export const blockLabels: Record<SiteBlockType, string> = {
   faq: 'Preguntas frecuentes',
   cta: 'Llamado final',
   short_text: 'Respuesta corta',
-  paragraph: 'Parrafo largo',
+  paragraph: 'Párrafo largo',
   currency: 'Moneda',
-  number: 'Numero',
+  number: 'Número',
   dropdown: 'Lista desplegable',
-  radio: 'Opcion unica',
+  radio: 'Opción única',
   checkboxes: 'Varias opciones',
-  phone: 'Telefono',
-  email: 'Correo electronico',
+  phone: 'Teléfono',
+  email: 'Correo electrónico',
   date: 'Fecha'
 }
 

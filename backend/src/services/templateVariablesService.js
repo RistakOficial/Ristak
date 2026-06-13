@@ -179,6 +179,7 @@ function buildContactVariables(contact = {}) {
     nombre_completo: fullName,
     phone: contact.phone,
     telefono: contact.phone,
+    teléfono: contact.phone,
     email: contact.email,
     correo: contact.email,
     source: contact.source,

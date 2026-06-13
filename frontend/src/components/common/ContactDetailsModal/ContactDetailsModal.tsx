@@ -184,7 +184,7 @@ const parseJsonDraft = (draft: string) => {
   try {
     return JSON.parse(draft)
   } catch {
-    throw new Error('Ese campo espera JSON valido.')
+    throw new Error('Ese campo espera JSON válido.')
   }
 }
 
@@ -211,7 +211,7 @@ const parseCustomFieldDraft = (draft: string, field: ContactCustomField): Contac
     if (!trimmed) return null
     const numericValue = Number(trimmed)
     if (Number.isNaN(numericValue)) {
-      throw new Error('Ese campo espera un numero valido.')
+      throw new Error('Ese campo espera un número válido.')
     }
     return numericValue
   }
