@@ -6,6 +6,8 @@ import { useNotification } from '@/contexts/NotificationContext'
 import {
   conversationalAgentService,
   type AgentFilterOptions,
+  type AgentReplyDeliveryConfig,
+  type AgentReplyDeliveryMode,
   type AgentResponseDelayConfig,
   type AgentResponseDelayMode,
   type AgentResponseDelayUnit,
@@ -77,6 +79,13 @@ const defaultResponseDelay: AgentResponseDelayConfig = {
   rangeUnit: 'minutes'
 }
 
+const defaultReplyDelivery: AgentReplyDeliveryConfig = {
+  mode: 'single',
+  targetChars: 280,
+  minDelaySeconds: 2,
+  maxDelaySeconds: 6
+}
+
 type TestMessage = { role: 'user' | 'assistant'; content: string; internal?: boolean }
 
 function agentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInput {
@@ -86,6 +95,10 @@ function agentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInpu
 
 function getAgentResponseDelay(agent: ConversationalAgentDef): AgentResponseDelayConfig {
   return { ...defaultResponseDelay, ...((agent.responseDelay || {}) as Partial<AgentResponseDelayConfig>) }
+}
+
+function getAgentReplyDelivery(agent: ConversationalAgentDef): AgentReplyDeliveryConfig {
+  return { ...defaultReplyDelivery, ...((agent.replyDelivery || {}) as Partial<AgentReplyDeliveryConfig>) }
 }
 
 function getDelayUnitLabel(unit: AgentResponseDelayUnit, value: number) {
@@ -111,6 +124,13 @@ function getResponseDelayHelp(delay: AgentResponseDelayConfig) {
     return `Escoge un tiempo entre ${getResponseDelaySummary(delay)} para que las respuestas no salgan siempre igual.`
   }
   return 'Contesta en cuanto termina de preparar la respuesta y agrupar mensajes recientes.'
+}
+
+function getReplyDeliveryHelp(delivery: AgentReplyDeliveryConfig) {
+  if (delivery.mode === 'split') {
+    return `Si la respuesta se alarga, la parte en WhatsApps de unas ${delivery.targetChars} letras y espera de ${delivery.minDelaySeconds} a ${delivery.maxDelaySeconds} segundos entre cada uno.`
+  }
+  return 'Envía cada respuesta completa en un solo WhatsApp.'
 }
 
 interface AgentCardProps {
@@ -140,6 +160,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
   const customFieldOptions = filterOptions?.customFields || []
   const responseDelay = getAgentResponseDelay(agent)
   const responseDelaySummary = getResponseDelaySummary(responseDelay)
+  const replyDelivery = getAgentReplyDelivery(agent)
 
   const updateExtra = (index: number, patch: Partial<AgentSuccessExtra>) => {
     onChange({ successExtras: agent.successExtras.map((extra, i) => (i === index ? { ...extra, ...patch } : extra)) })
@@ -147,6 +168,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
 
   const updateResponseDelay = (patch: Partial<AgentResponseDelayConfig>) => {
     onChange({ responseDelay: { ...responseDelay, ...patch } })
+  }
+
+  const updateReplyDelivery = (patch: Partial<AgentReplyDeliveryConfig>) => {
+    onChange({ replyDelivery: { ...replyDelivery, ...patch } })
   }
 
   const handleObjectiveChange = (objective: ConversationalObjective) => {
@@ -178,8 +203,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
         for (const action of result.actions || []) {
           updated.push({ role: 'assistant', content: `⚙︎ Acción interna: ${action.type}`, internal: true })
         }
-        if (result.reply) {
-          updated.push({ role: 'assistant', content: result.reply })
+        const visibleReplies = result.replyParts?.length ? result.replyParts : (result.reply ? [result.reply] : [])
+        if (visibleReplies.length) {
+          visibleReplies.forEach((content) => updated.push({ role: 'assistant', content }))
         } else if (result.suppressed) {
           updated.push({ role: 'assistant', content: '⚙︎ El agente decidió no responder (acción interna o silencio).', internal: true })
         }
@@ -231,6 +257,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
             : ' · entra con cualquier chat'}
           {exitCount > 0 ? ` · se suelta con ${exitCount}` : ''}
           {responseDelaySummary ? ` · espera ${responseDelaySummary}` : ''}
+          {replyDelivery.mode === 'split' ? ' · responde en partes' : ''}
         </p>
       )}
 
@@ -535,6 +562,59 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
               )}
 
               <p className={`${styles.helper} ${styles.responseDelayHelp}`}>{getResponseDelayHelp(responseDelay)}</p>
+            </div>
+            <div className={styles.replyDeliveryGrid}>
+              <label className={`${styles.inlineToggle} ${styles.replyDeliveryToggle}`}>
+                <input
+                  type="checkbox"
+                  checked={replyDelivery.mode === 'split'}
+                  onChange={(event) => updateReplyDelivery({ mode: (event.target.checked ? 'split' : 'single') as AgentReplyDeliveryMode })}
+                />
+                <span>Dividir respuestas largas en varios mensajes</span>
+              </label>
+
+              {replyDelivery.mode === 'split' && (
+                <div className={styles.replyDeliveryControls}>
+                  <div className={`${styles.field} ${styles.replyPartSizeField}`}>
+                    <label className={styles.label}>Tamaño aprox.</label>
+                    <input
+                      className={`${styles.input} ${styles.delayNumberInput}`}
+                      type="number"
+                      min={120}
+                      max={700}
+                      step={10}
+                      value={replyDelivery.targetChars}
+                      onChange={(event) => updateReplyDelivery({ targetChars: Number(event.target.value) || defaultReplyDelivery.targetChars })}
+                    />
+                  </div>
+                  <div className={`${styles.field} ${styles.delayNumberField}`}>
+                    <label className={styles.label}>Pausa mín.</label>
+                    <input
+                      className={`${styles.input} ${styles.delayNumberInput}`}
+                      type="number"
+                      min={0}
+                      max={60}
+                      step={1}
+                      value={replyDelivery.minDelaySeconds}
+                      onChange={(event) => updateReplyDelivery({ minDelaySeconds: Number(event.target.value) || 0 })}
+                    />
+                  </div>
+                  <div className={`${styles.field} ${styles.delayNumberField}`}>
+                    <label className={styles.label}>Pausa máx.</label>
+                    <input
+                      className={`${styles.input} ${styles.delayNumberInput}`}
+                      type="number"
+                      min={0}
+                      max={60}
+                      step={1}
+                      value={replyDelivery.maxDelaySeconds}
+                      onChange={(event) => updateReplyDelivery({ maxDelaySeconds: Number(event.target.value) || 0 })}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <p className={`${styles.helper} ${styles.responseDelayHelp}`}>{getReplyDeliveryHelp(replyDelivery)}</p>
             </div>
           </div>
 

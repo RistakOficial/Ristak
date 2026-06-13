@@ -5,6 +5,7 @@ export type ConversationSignal = 'ready_for_human' | 'ready_to_schedule' | 'read
 export type ClosingStrategyMode = 'system' | 'custom'
 export type AgentResponseDelayMode = 'none' | 'fixed' | 'random'
 export type AgentResponseDelayUnit = 'seconds' | 'minutes'
+export type AgentReplyDeliveryMode = 'single' | 'split'
 
 export interface AgentResponseDelayConfig {
   mode: AgentResponseDelayMode
@@ -13,6 +14,13 @@ export interface AgentResponseDelayConfig {
   minValue: number
   maxValue: number
   rangeUnit: AgentResponseDelayUnit
+}
+
+export interface AgentReplyDeliveryConfig {
+  mode: AgentReplyDeliveryMode
+  targetChars: number
+  minDelaySeconds: number
+  maxDelaySeconds: number
 }
 
 export interface ConversationalAgentConfig {
@@ -136,6 +144,7 @@ export interface ConversationalAgentDef {
   closingStrategyMode: ClosingStrategyMode
   closingStrategyCustom: string
   responseDelay: AgentResponseDelayConfig
+  replyDelivery: AgentReplyDeliveryConfig
   filters: AgentFilters
   createdAt: string | null
   updatedAt: string | null
@@ -151,6 +160,7 @@ export interface ConversationAgentState {
   signalSummary: string | null
   signalAt: string | null
   lastInboundMessageId: string | null
+  lastAnsweredInboundMessageId: string | null
   lastReplyAt: string | null
   updatedBy: string | null
   updatedAt: string | null
@@ -162,6 +172,7 @@ export type ConversationStateAction = 'pause' | 'resume' | 'take_over' | 'skip' 
 
 export interface ConversationalAgentTestResult {
   reply: string
+  replyParts?: string[]
   suppressed: boolean
   actions: Array<{ type: string; [key: string]: unknown }>
   model: string

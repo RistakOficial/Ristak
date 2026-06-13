@@ -3098,13 +3098,15 @@ async function initTables() {
         closing_strategy_mode TEXT DEFAULT 'system',
         closing_strategy_custom TEXT,
         response_delay_config TEXT,
+        reply_delivery_config TEXT,
         entry_filters TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
     for (const [columnName, columnType] of [
-      ['response_delay_config', 'TEXT']
+      ['response_delay_config', 'TEXT'],
+      ['reply_delivery_config', 'TEXT']
     ]) {
       try {
         if (usePostgres) {
@@ -3127,6 +3129,7 @@ async function initTables() {
         signal_summary TEXT,
         signal_at DATETIME,
         last_inbound_message_id TEXT,
+        last_answered_inbound_message_id TEXT,
         last_reply_at DATETIME,
         updated_by TEXT,
         agent_id TEXT,
@@ -3138,15 +3141,20 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_state_signal ON conversational_agent_state(signal, signal_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_state_status ON conversational_agent_state(status, updated_at)')
 
-    // Columna agregada al pasar a varios agentes: qué agente atiende cada conversación
-    try {
-      if (usePostgres) {
-        await db.run('ALTER TABLE conversational_agent_state ADD COLUMN IF NOT EXISTS agent_id TEXT')
-      } else {
-        await db.run('ALTER TABLE conversational_agent_state ADD COLUMN agent_id TEXT')
+    // Columnas agregadas al evolucionar el agente conversacional.
+    for (const [columnName, columnType] of [
+      ['agent_id', 'TEXT'],
+      ['last_answered_inbound_message_id', 'TEXT']
+    ]) {
+      try {
+        if (usePostgres) {
+          await db.run(`ALTER TABLE conversational_agent_state ADD COLUMN IF NOT EXISTS ${columnName} ${columnType}`)
+        } else {
+          await db.run(`ALTER TABLE conversational_agent_state ADD COLUMN ${columnName} ${columnType}`)
+        }
+      } catch (err) {
+        // La columna ya existe.
       }
-    } catch (err) {
-      // La columna ya existe.
     }
 
     await db.run(`

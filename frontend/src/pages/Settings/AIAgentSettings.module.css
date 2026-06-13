@@ -370,6 +370,14 @@
   gap: 12px;
 }
 
+.replyDeliveryGrid {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(360px, 1fr);
+  align-items: start;
+  gap: 12px;
+  margin-top: 14px;
+}
+
 .responseDelayControls {
   display: flex;
   align-items: flex-start;
@@ -378,8 +386,25 @@
   min-width: 0;
 }
 
+.replyDeliveryControls {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.replyDeliveryToggle {
+  min-height: 42px;
+  align-items: center;
+}
+
 .delayNumberField {
   flex: 0 0 116px;
+}
+
+.replyPartSizeField {
+  flex: 0 0 142px;
 }
 
 .delayUnitField {
@@ -598,6 +623,7 @@
   .conversationSetupGrid,
   .compactSettingsGrid,
   .responseDelayGrid,
+  .replyDeliveryGrid,
   .agentTextGrid,
   .contextGrid,
   .modelGrid,

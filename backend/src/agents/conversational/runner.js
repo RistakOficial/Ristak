@@ -21,7 +21,9 @@ import {
   buildRuleContext,
   exitRulesMatch,
   normalizeConversationalAgentModel,
-  getAgentResponseDelayMs
+  getAgentResponseDelayMs,
+  getAgentReplyDeliveryPartDelayMs,
+  normalizeAgentReplyDelivery
 } from '../../services/conversationalAgentService.js'
 import { buildConversationalInstructions } from './prompt.js'
 import { createConversationalTools } from './tools.js'
@@ -32,6 +34,9 @@ const MAX_TURNS = 10
 const DEFAULT_MODEL = process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || 'gpt-5.4-nano'
 const MAX_REPLY_CHARS = 1000
 const DEBOUNCE_MS = 4000
+const PENDING_INBOUND_LIMIT = 8
+const PENDING_INBOUND_SCAN_LIMIT = 30
+const MAX_REPLY_PARTS = 6
 
 // Conversaciones que el agente está procesando ahora mismo (instancia única).
 const runningContacts = new Set()
@@ -57,6 +62,115 @@ export function sanitizeAgentReply(text) {
   return reply
 }
 
+function cleanMessageText(row) {
+  return String(row?.message_text || '').trim() ||
+    (row?.message_type && row.message_type !== 'text' ? `[${row.message_type} sin texto]` : '') ||
+    '(mensaje vacío)'
+}
+
+function splitLongSegment(segment, targetChars) {
+  const words = String(segment || '').trim().split(/\s+/).filter(Boolean)
+  const parts = []
+  let current = ''
+
+  for (const word of words) {
+    if (word.length > targetChars) {
+      if (current) {
+        parts.push(current)
+        current = ''
+      }
+      for (let index = 0; index < word.length; index += targetChars) {
+        parts.push(word.slice(index, index + targetChars))
+      }
+      continue
+    }
+
+    const next = current ? `${current} ${word}` : word
+    if (next.length > targetChars && current) {
+      parts.push(current)
+      current = word
+    } else {
+      current = next
+    }
+  }
+
+  if (current) parts.push(current)
+  return parts
+}
+
+function splitReplySegments(text) {
+  return String(text || '')
+    .split(/\n{2,}/)
+    .flatMap((paragraph) => paragraph.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) || [paragraph])
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+}
+
+export function splitReplyIntoParts(reply, deliveryInput = {}) {
+  const text = String(reply || '').trim()
+  if (!text) return []
+
+  const delivery = normalizeAgentReplyDelivery(deliveryInput?.replyDelivery || deliveryInput)
+  if (delivery.mode !== 'split' || text.length <= Math.round(delivery.targetChars * 1.15)) {
+    return [text]
+  }
+
+  const parts = []
+  let current = ''
+
+  const pushPart = (part) => {
+    const clean = String(part || '').trim()
+    if (clean) parts.push(clean)
+  }
+
+  for (const segment of splitReplySegments(text)) {
+    const subSegments = segment.length > delivery.targetChars
+      ? splitLongSegment(segment, delivery.targetChars)
+      : [segment]
+
+    for (const subSegment of subSegments) {
+      const next = current ? `${current} ${subSegment}` : subSegment
+      if (next.length > delivery.targetChars && current) {
+        pushPart(current)
+        current = subSegment
+      } else {
+        current = next
+      }
+    }
+  }
+
+  pushPart(current)
+
+  if (parts.length <= MAX_REPLY_PARTS) return parts
+  return [
+    ...parts.slice(0, MAX_REPLY_PARTS - 1),
+    parts.slice(MAX_REPLY_PARTS - 1).join(' ')
+  ].filter(Boolean)
+}
+
+export function buildPendingReplyContextMessage(pendingMessages = []) {
+  const lines = (Array.isArray(pendingMessages) ? pendingMessages : [])
+    .map((message, index) => {
+      const text = cleanMessageText(message).slice(0, 700)
+      return `${index + 1}. ${text}`
+    })
+    .filter(Boolean)
+
+  if (!lines.length) return null
+
+  return {
+    role: 'user',
+    content: [
+      '[Contexto interno de Ristak: mensajes entrantes pendientes sin respuesta completa]',
+      'Estos mensajes todavía deben tomarse en cuenta como parte de la siguiente respuesta visible del agente.',
+      'Responde considerando TODOS, no sólo el último. Si el último mensaje corrige o agrega información, prioriza lo más reciente.',
+      'Si ya existe una respuesta parcial del agente en el historial, continúa de forma natural sin repetirla literal.',
+      'No menciones este contexto interno.',
+      ...lines
+    ].join('\n')
+  }
+}
+
 async function loadConversationHistory(contactId) {
   const rows = await db.all(`
     SELECT id, direction, message_type, message_text, message_timestamp, created_at
@@ -67,18 +181,44 @@ async function loadConversationHistory(contactId) {
   `, [contactId, HISTORY_LIMIT])
 
   return rows.reverse().map((row) => {
-    const text = String(row.message_text || '').trim() ||
-      (row.message_type && row.message_type !== 'text' ? `[${row.message_type} sin texto]` : '')
     return {
+      id: row.id,
       role: row.direction === 'outbound' ? 'assistant' : 'user',
-      content: text || '(mensaje vacío)'
+      content: cleanMessageText(row),
+      timestamp: row.message_timestamp || row.created_at || null
     }
   })
 }
 
+async function loadPendingInboundMessages(contactId, state = {}) {
+  const rows = await db.all(`
+    SELECT id, message_text, message_type, message_timestamp, created_at
+    FROM whatsapp_api_messages
+    WHERE contact_id = ? AND direction = 'inbound'
+    ORDER BY COALESCE(message_timestamp, created_at) DESC
+    LIMIT ?
+  `, [contactId, PENDING_INBOUND_SCAN_LIMIT])
+
+  const ordered = rows.reverse()
+  const answeredIndex = state?.lastAnsweredInboundMessageId
+    ? ordered.findIndex((row) => row.id === state.lastAnsweredInboundMessageId)
+    : -1
+
+  let pending = answeredIndex >= 0 ? ordered.slice(answeredIndex + 1) : ordered
+  if (answeredIndex < 0 && state?.lastReplyAt) {
+    pending = ordered.filter((row) => {
+      const messageTime = row.message_timestamp || row.created_at || ''
+      const createdTime = row.created_at || ''
+      return messageTime > state.lastReplyAt || createdTime > state.lastReplyAt
+    })
+  }
+
+  return pending.slice(-PENDING_INBOUND_LIMIT)
+}
+
 async function loadLatestInboundMessage(contactId) {
   return db.get(`
-    SELECT id, message_text, phone, business_phone, business_phone_number_id
+    SELECT id, message_text, message_type, phone, business_phone, business_phone_number_id
     FROM whatsapp_api_messages
     WHERE contact_id = ? AND direction = 'inbound'
     ORDER BY COALESCE(message_timestamp, created_at) DESC
@@ -128,12 +268,12 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
   return { agent, ctx, model }
 }
 
-async function executeAgent({ agent, apiKey, messages, contactId, model }) {
+async function executeAgent({ agent, apiKey, messages, contactId, model, traceMessage = '' }) {
   let agentRun = null
   try {
     agentRun = await startAgentRun({
       userId: null,
-      latestUserMessage: [...messages].reverse().find((m) => m.role === 'user')?.content || '',
+      latestUserMessage: traceMessage || [...messages].reverse().find((m) => m.role === 'user')?.content || '',
       viewContext: { path: '/chat', title: 'Agente conversacional' }
     })
     await updateAgentRun(agentRun, {
@@ -172,6 +312,80 @@ async function executeAgent({ agent, apiKey, messages, contactId, model }) {
   }
 }
 
+function scheduleConversationalAgentRerun({ contactId, phone, latestMessage, reason }) {
+  if (!latestMessage?.id) return
+  setTimeout(() => {
+    handleInboundMessageForConversationalAgent({
+      contactId,
+      phone: latestMessage.phone || phone,
+      messageId: latestMessage.id
+    }).catch((error) => {
+      logger.error(`[Agente conversacional] Error reintentando tras ${reason}: ${error.message}`)
+    })
+  }, 0)
+}
+
+async function loadNewerInboundMessage(contactId, handledMessageId) {
+  const latest = await loadLatestInboundMessage(contactId)
+  return latest && latest.id !== handledMessageId ? latest : null
+}
+
+async function sendReplyParts({ contactId, phone, latest, agentConfig, reply }) {
+  const parts = splitReplyIntoParts(reply, agentConfig.replyDelivery)
+  if (!parts.length) return { parts: [], sentParts: 0, interruptedBy: null }
+
+  const { sendWhatsAppApiTextMessage } = await import('../../services/whatsappApiService.js')
+
+  for (let index = 0; index < parts.length; index += 1) {
+    if (index > 0) {
+      const delayMs = getAgentReplyDeliveryPartDelayMs(agentConfig)
+      if (delayMs > 0) {
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'reply_part_wait_started',
+          detail: { messageId: latest.id, agentId: agentConfig.id || null, partIndex: index + 1, partCount: parts.length, delayMs }
+        })
+        await sleep(delayMs)
+      }
+
+      const newerInbound = await loadNewerInboundMessage(contactId, latest.id)
+      if (newerInbound) {
+        return { parts, sentParts: index, interruptedBy: newerInbound }
+      }
+    }
+
+    await sendWhatsAppApiTextMessage({
+      to: phone || latest.phone,
+      from: latest.business_phone || undefined,
+      phoneNumberId: latest.business_phone_number_id || undefined,
+      text: parts[index],
+      externalId: `convagent_${latest.id}${parts.length > 1 ? `_${index + 1}` : ''}`.slice(0, 120)
+    })
+
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: parts.length > 1 ? 'reply_part_sent' : 'reply_single_sent',
+      detail: {
+        messageId: latest.id,
+        agentId: agentConfig.id || null,
+        partIndex: index + 1,
+        partCount: parts.length,
+        replyPreview: parts[index].slice(0, 180)
+      }
+    })
+  }
+
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET last_reply_at = CURRENT_TIMESTAMP,
+        last_answered_inbound_message_id = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE contact_id = ?
+  `, [latest.id, contactId])
+
+  return { parts, sentParts: parts.length, interruptedBy: null }
+}
+
 /**
  * Punto de entrada desde el webhook de mensajes entrantes de WhatsApp.
  * Es fire-and-forget: nunca lanza, solo registra errores.
@@ -199,7 +413,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
 
       const freshState = await getConversationState(contactId)
       if (!freshState || freshState.status !== 'active') return
-      if (freshState.lastInboundMessageId === latest.id) return
+      if (freshState.lastInboundMessageId === latest.id && freshState.lastAnsweredInboundMessageId === latest.id) return
 
       // Reclama el mensaje antes de correr para evitar respuestas duplicadas.
       await db.run(`
@@ -262,6 +476,10 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
       const messages = await loadConversationHistory(contactId)
       if (!messages.length) return
+      const pendingMessages = await loadPendingInboundMessages(contactId, freshState)
+      const pendingContextMessage = buildPendingReplyContextMessage(pendingMessages)
+      const messagesForAgent = pendingContextMessage ? [...messages, pendingContextMessage] : messages
+      const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
 
       const { agent, ctx, model } = await buildAgentForRun({
         config: agentConfig,
@@ -271,7 +489,14 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         dryRun: false
       })
 
-      const reply = await executeAgent({ agent, apiKey, messages, contactId, model })
+      const reply = await executeAgent({
+        agent,
+        apiKey,
+        messages: messagesForAgent,
+        contactId,
+        model,
+        traceMessage
+      })
 
       const responseDelayMs = getAgentResponseDelayMs(agentConfig)
       if (responseDelayMs > 0) {
@@ -282,8 +507,8 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         })
         await sleep(responseDelayMs)
 
-        const latestAfterDelay = await loadLatestInboundMessage(contactId)
-        if (latestAfterDelay && latestAfterDelay.id !== latest.id) {
+        const latestAfterDelay = await loadNewerInboundMessage(contactId, latest.id)
+        if (latestAfterDelay) {
           await recordConversationalAgentEvent({
             contactId,
             eventType: 'reply_suppressed',
@@ -294,22 +519,19 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
               newerMessageId: latestAfterDelay.id
             }
           })
-          setTimeout(() => {
-            handleInboundMessageForConversationalAgent({
-              contactId,
-              phone: latestAfterDelay.phone || phone,
-              messageId: latestAfterDelay.id
-            }).catch((error) => {
-              logger.error(`[Agente conversacional] Error reintentando tras pausa de respuesta: ${error.message}`)
-            })
-          }, 0)
+          scheduleConversationalAgentRerun({
+            contactId,
+            phone,
+            latestMessage: latestAfterDelay,
+            reason: 'pausa de respuesta'
+          })
           return
         }
       }
 
       // El estado pudo cambiar durante la ejecución o la espera (descartada, humano, etc.)
       const postState = await getConversationState(contactId)
-      const blockedStatuses = new Set(['discarded', 'paused', 'skipped'])
+      const blockedStatuses = new Set(['discarded', 'paused', 'skipped', 'human'])
       if (ctx.suppressReply || !reply || blockedStatuses.has(postState?.status)) {
         await recordConversationalAgentEvent({
           contactId,
@@ -319,25 +541,61 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         return
       }
 
-      const { sendWhatsAppApiTextMessage } = await import('../../services/whatsappApiService.js')
-      await sendWhatsAppApiTextMessage({
-        to: phone || latest.phone,
-        from: latest.business_phone || undefined,
-        phoneNumberId: latest.business_phone_number_id || undefined,
-        text: reply,
-        externalId: `convagent_${latest.id}`.slice(0, 120)
-      })
+      const latestBeforeSend = await loadNewerInboundMessage(contactId, latest.id)
+      if (latestBeforeSend) {
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'reply_suppressed',
+          detail: {
+            messageId: latest.id,
+            agentId: agentConfig.id || null,
+            reason: 'newer_inbound_before_reply',
+            newerMessageId: latestBeforeSend.id
+          }
+        })
+        scheduleConversationalAgentRerun({
+          contactId,
+          phone,
+          latestMessage: latestBeforeSend,
+          reason: 'mensaje nuevo antes de enviar'
+        })
+        return
+      }
 
-      await db.run(`
-        UPDATE conversational_agent_state
-        SET last_reply_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-        WHERE contact_id = ?
-      `, [contactId])
+      const delivery = await sendReplyParts({ contactId, phone, latest, agentConfig, reply })
+      if (delivery.interruptedBy) {
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'reply_suppressed',
+          detail: {
+            messageId: latest.id,
+            agentId: agentConfig.id || null,
+            reason: 'newer_inbound_during_split_reply',
+            newerMessageId: delivery.interruptedBy.id,
+            sentParts: delivery.sentParts,
+            partCount: delivery.parts.length
+          }
+        })
+        scheduleConversationalAgentRerun({
+          contactId,
+          phone,
+          latestMessage: delivery.interruptedBy,
+          reason: 'envío en partes'
+        })
+        return
+      }
 
       await recordConversationalAgentEvent({
         contactId,
         eventType: 'reply_sent',
-        detail: { messageId: latest.id, agentId: agentConfig.id || null, replyPreview: reply.slice(0, 280), actions: ctx.actions }
+        detail: {
+          messageId: latest.id,
+          agentId: agentConfig.id || null,
+          replyPreview: reply.slice(0, 280),
+          partCount: delivery.parts.length,
+          pendingInboundCount: pendingMessages.length,
+          actions: ctx.actions
+        }
       })
     } finally {
       runningContacts.delete(contactId)
@@ -376,7 +634,8 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
       name: 'Agente', objective: 'citas', customObjective: '', successAction: 'ready_for_human',
       successExtras: [], requiredData: '', handoffRules: '', extraInstructions: '',
       allowEmojis: false, defaultCalendarId: null, closingStrategyMode: 'system', closingStrategyCustom: '',
-      responseDelay: { mode: 'none', fixedValue: 10, fixedUnit: 'seconds', minValue: 1, maxValue: 10, rangeUnit: 'minutes' }
+      responseDelay: { mode: 'none', fixedValue: 10, fixedUnit: 'seconds', minValue: 1, maxValue: 10, rangeUnit: 'minutes' },
+      replyDelivery: { mode: 'single', targetChars: 280, minDelaySeconds: 2, maxDelaySeconds: 6 }
     }
   }
   const config = configOverride ? { ...baseConfig, ...configOverride } : baseConfig
@@ -404,6 +663,7 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
 
   return {
     reply: ctx.suppressReply ? '' : reply,
+    replyParts: ctx.suppressReply ? [] : splitReplyIntoParts(reply, config.replyDelivery),
     suppressed: ctx.suppressReply,
     actions: ctx.actions,
     model

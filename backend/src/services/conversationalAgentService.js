@@ -53,6 +53,13 @@ const DEFAULT_RESPONSE_DELAY_CONFIG = {
   maxValue: 10,
   rangeUnit: 'minutes'
 }
+const REPLY_DELIVERY_MODES = new Set(['single', 'split'])
+const DEFAULT_REPLY_DELIVERY_CONFIG = {
+  mode: 'single',
+  targetChars: 280,
+  minDelaySeconds: 2,
+  maxDelaySeconds: 6
+}
 
 function toBoolean(value) {
   return [true, 1, '1', 'true'].includes(value)
@@ -598,6 +605,41 @@ export function getAgentResponseDelayMs(agentConfig = {}) {
   return 0
 }
 
+function clampInteger(value, min, max, fallback) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return fallback
+  return Math.min(Math.max(Math.round(numeric), min), max)
+}
+
+export function normalizeAgentReplyDelivery(input) {
+  const raw = input && typeof input === 'object' ? input : {}
+  const mode = REPLY_DELIVERY_MODES.has(raw.mode) ? raw.mode : DEFAULT_REPLY_DELIVERY_CONFIG.mode
+  let minDelaySeconds = clampInteger(raw.minDelaySeconds, 0, 60, DEFAULT_REPLY_DELIVERY_CONFIG.minDelaySeconds)
+  let maxDelaySeconds = clampInteger(raw.maxDelaySeconds, 0, 60, DEFAULT_REPLY_DELIVERY_CONFIG.maxDelaySeconds)
+
+  if (minDelaySeconds > maxDelaySeconds) {
+    const swap = minDelaySeconds
+    minDelaySeconds = maxDelaySeconds
+    maxDelaySeconds = swap
+  }
+
+  return {
+    mode,
+    targetChars: clampInteger(raw.targetChars, 120, 700, DEFAULT_REPLY_DELIVERY_CONFIG.targetChars),
+    minDelaySeconds,
+    maxDelaySeconds
+  }
+}
+
+export function getAgentReplyDeliveryPartDelayMs(agentConfig = {}) {
+  const delivery = normalizeAgentReplyDelivery(agentConfig.replyDelivery)
+  if (delivery.mode !== 'split') return 0
+  const minMs = delivery.minDelaySeconds * 1000
+  const maxMs = delivery.maxDelaySeconds * 1000
+  if (maxMs <= minMs) return minMs
+  return Math.round(minMs + Math.random() * (maxMs - minMs))
+}
+
 function mapAgentRow(row) {
   if (!row) return null
   return {
@@ -617,6 +659,7 @@ function mapAgentRow(row) {
     closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     closingStrategyCustom: row.closing_strategy_custom || '',
     responseDelay: normalizeAgentResponseDelay(parseJsonField(row.response_delay_config, null)),
+    replyDelivery: normalizeAgentReplyDelivery(parseJsonField(row.reply_delivery_config, null)),
     filters: normalizeAgentFilters(parseJsonField(row.entry_filters, null)),
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
@@ -637,8 +680,8 @@ export async function ensureAgentsMigration() {
       id, name, enabled, position, objective, custom_objective, success_action,
       success_extras, required_data, handoff_rules, extra_instructions,
       allow_emojis, default_calendar_id, closing_strategy_mode, closing_strategy_custom,
-      response_delay_config, entry_filters
-    ) VALUES (?, ?, 1, 0, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      response_delay_config, reply_delivery_config, entry_filters
+    ) VALUES (?, ?, 1, 0, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     `cagent_${randomUUID()}`,
     'Agente principal',
@@ -653,6 +696,7 @@ export async function ensureAgentsMigration() {
     legacy.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     legacy.closing_strategy_custom || '',
     JSON.stringify(DEFAULT_RESPONSE_DELAY_CONFIG),
+    JSON.stringify(DEFAULT_REPLY_DELIVERY_CONFIG),
     JSON.stringify({ entry: [], exit: [] })
   ])
   logger.info('[Agente conversacional] Config previa migrada al contenedor "Agente principal"')
@@ -693,6 +737,9 @@ function agentInputToRowValues(input, base) {
     responseDelay: input.responseDelay === undefined
       ? normalizeAgentResponseDelay(base.responseDelay)
       : normalizeAgentResponseDelay(input.responseDelay),
+    replyDelivery: input.replyDelivery === undefined
+      ? normalizeAgentReplyDelivery(base.replyDelivery)
+      : normalizeAgentReplyDelivery(input.replyDelivery),
     filters: input.filters === undefined ? base.filters : normalizeAgentFilters(input.filters)
   }
   return next
@@ -714,6 +761,7 @@ const DEFAULT_AGENT_BASE = {
   closingStrategyMode: 'system',
   closingStrategyCustom: '',
   responseDelay: DEFAULT_RESPONSE_DELAY_CONFIG,
+  replyDelivery: DEFAULT_REPLY_DELIVERY_CONFIG,
   filters: { entry: [], exit: [] }
 }
 
@@ -727,14 +775,14 @@ export async function createConversationalAgent(input = {}) {
       id, name, enabled, position, objective, custom_objective, success_action,
       success_extras, required_data, handoff_rules, extra_instructions,
       allow_emojis, default_calendar_id, closing_strategy_mode, closing_strategy_custom,
-      response_delay_config, entry_filters
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      response_delay_config, reply_delivery_config, entry_filters
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     id, next.name, next.enabled ? 1 : 0, next.position, next.objective, next.customObjective,
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
     next.extraInstructions, next.allowEmojis ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
-    JSON.stringify(next.responseDelay), JSON.stringify(next.filters)
+    JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.filters)
   ])
   await recordConversationalAgentEvent({ eventType: 'agent_created', detail: { agentId: id, name: next.name } })
   return getConversationalAgent(id)
@@ -751,7 +799,8 @@ export async function updateConversationalAgent(agentId, input = {}) {
     SET name = ?, enabled = ?, position = ?, objective = ?, custom_objective = ?,
         success_action = ?, success_extras = ?, required_data = ?, handoff_rules = ?,
         extra_instructions = ?, allow_emojis = ?, default_calendar_id = ?,
-        closing_strategy_mode = ?, closing_strategy_custom = ?, response_delay_config = ?, entry_filters = ?,
+        closing_strategy_mode = ?, closing_strategy_custom = ?, response_delay_config = ?,
+        reply_delivery_config = ?, entry_filters = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
@@ -759,7 +808,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
     next.extraInstructions, next.allowEmojis ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
-    JSON.stringify(next.responseDelay), JSON.stringify(next.filters),
+    JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.filters),
     agentId
   ])
   return getConversationalAgent(agentId)
@@ -1411,6 +1460,7 @@ function mapStateRow(row) {
     signalSummary: row.signal_summary || null,
     signalAt: row.signal_at || null,
     lastInboundMessageId: row.last_inbound_message_id || null,
+    lastAnsweredInboundMessageId: row.last_answered_inbound_message_id || null,
     lastReplyAt: row.last_reply_at || null,
     updatedBy: row.updated_by || null,
     agentId: row.agent_id || null,

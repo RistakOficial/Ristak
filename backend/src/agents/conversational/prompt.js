@@ -903,6 +903,8 @@ ${config.requiredData}`)
 - NUNCA menciones al cliente que ejecutaste una herramienta, que lo vas a transferir, marcar, mover de etapa o activar un flujo. La conversación debe sentirse natural.
 - NUNCA escribas palabras clave internas (AGENDAR, SALTAR, ready_for_human, ready_to_buy, etc.) en el mensaje visible.
 - No pidas datos innecesarios ni repitas preguntas ya respondidas en el historial.
+- Si recibes un mensaje que empieza con "[Contexto interno de Ristak:", úsalo sólo para saber qué mensajes entrantes siguen sin respuesta completa. No lo menciones, no lo cites y no expliques que existe.
+- Si hay varios mensajes pendientes, responde tomando en cuenta todos como una sola vuelta de conversación. Prioriza la información más nueva si corrige o cambia lo anterior.
 - Si el último mensaje no necesita respuesta (confirmación, sticker, "ok" de cierre), puedes responder mínimo o ejecutar stay_silent para no responder.`)
 
   if (config.extraInstructions) {
