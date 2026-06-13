@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import http from 'node:http'
 
 const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
 
@@ -14,6 +15,14 @@ const ENV_KEYS = [
   'BUNNY_CDN_BASE_URL',
   'BUNNY_STREAM_LIBRARY_ID',
   'BUNNY_STREAM_API_KEY',
+  'INTERNAL_INSTALLER_TOKEN',
+  'LICENSE_SERVER_URL',
+  'CLIENT_ID',
+  'LICENSE_KEY',
+  'INSTALLATION_ID',
+  'APP_URL',
+  'APP_VERSION',
+  'MEDIA_CENTRAL_CONFIG_TIMEOUT_MS',
   'WHATSAPP_LOCAL_MEDIA_FALLBACK',
   'RENDER_EXTERNAL_URL',
   'PUBLIC_URL'
@@ -54,6 +63,133 @@ test('requirePublicMediaUrl conserva URLs CDN absolutas y exige base HTTPS para 
       /URL HTTPS/
     )
   } finally {
+    restoreEnv(previousEnv)
+  }
+})
+
+test('saveWhatsAppImageDataUrl recupera configuración Bunny desde Installer cuando el runtime no trae env vars', async () => {
+  const previousEnv = snapshotEnv()
+  let server = null
+  let baseUrl = ''
+  let db = null
+  let previousSettings = null
+  let mediaAssetId = ''
+  const uploads = []
+
+  try {
+    server = http.createServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/api/license/storage-config') {
+        let body = ''
+        req.on('data', chunk => { body += chunk })
+        req.on('end', () => {
+          const payload = body ? JSON.parse(body) : {}
+          assert.equal(payload.client_id, 'cli_1')
+          assert.equal(payload.license_key, 'RSTK-TEST-0000')
+          assert.equal(payload.installation_id, 'inst_1')
+          res.setHeader('Content-Type', 'application/json')
+          res.end(JSON.stringify({
+            success: true,
+            config: {
+              media_storage_provider: 'bunny',
+              media_storage_require_bunny: 'true',
+              media_compression_enabled: 'true',
+              default_storage_quota_gb: '5',
+              internal_installer_token: 'internal-token',
+              bunny_storage_zone: 'central-zone',
+              bunny_storage_region: 'la',
+              bunny_storage_endpoint: `${baseUrl}/storage`,
+              bunny_storage_api_key: 'central-storage-secret',
+              bunny_cdn_base_url: `${baseUrl}/cdn`
+            }
+          }))
+        })
+        return
+      }
+
+      if (req.method === 'PUT' && req.url?.startsWith('/storage/central-zone/')) {
+        uploads.push(req.url)
+        req.resume()
+        req.on('end', () => {
+          res.statusCode = 201
+          res.end('ok')
+        })
+        return
+      }
+
+      res.statusCode = 404
+      res.end('not found')
+    })
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    baseUrl = `http://127.0.0.1:${server.address().port}`
+
+    delete process.env.DATABASE_URL
+    delete process.env.BUNNY_STORAGE_ZONE
+    delete process.env.BUNNY_STORAGE_REGION
+    delete process.env.BUNNY_STORAGE_ENDPOINT
+    delete process.env.BUNNY_STORAGE_API_KEY
+    delete process.env.BUNNY_CDN_BASE_URL
+    delete process.env.BUNNY_STREAM_LIBRARY_ID
+    delete process.env.BUNNY_STREAM_API_KEY
+    delete process.env.INTERNAL_INSTALLER_TOKEN
+    delete process.env.WHATSAPP_LOCAL_MEDIA_FALLBACK
+    process.env.MEDIA_STORAGE_PROVIDER = 'bunny'
+    process.env.MEDIA_STORAGE_REQUIRE_BUNNY = 'true'
+    process.env.LICENSE_SERVER_URL = baseUrl
+    process.env.CLIENT_ID = 'cli_1'
+    process.env.LICENSE_KEY = 'RSTK-TEST-0000'
+    process.env.INSTALLATION_ID = 'inst_1'
+    process.env.APP_URL = 'https://demo.onrender.com'
+    process.env.APP_VERSION = '1.0.0'
+    process.env.MEDIA_CENTRAL_CONFIG_TIMEOUT_MS = '2000'
+
+    const [whatsappApiService, mediaStorageService, database] = await Promise.all([
+      import('../src/services/whatsappApiService.js'),
+      import('../src/services/mediaStorageService.js'),
+      import('../src/config/database.js')
+    ])
+    mediaStorageService.resetCentralStorageConfigCache()
+    db = database.db
+    previousSettings = await db.get(`
+      SELECT bunny_storage_zone, bunny_storage_region, bunny_cdn_base_url, bunny_stream_library_id
+      FROM storage_settings
+      WHERE id = 1
+    `)
+    await db.run(`
+      UPDATE storage_settings SET
+        bunny_storage_zone = NULL,
+        bunny_storage_region = NULL,
+        bunny_cdn_base_url = NULL,
+        bunny_stream_library_id = NULL
+      WHERE id = 1
+    `)
+
+    const savedImage = await whatsappApiService.saveWhatsAppImageDataUrl(ONE_PIXEL_PNG_DATA_URL)
+    mediaAssetId = savedImage.mediaAssetId
+
+    assert.match(savedImage.publicPath, new RegExp(`^${baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/cdn/`))
+    assert.ok(uploads.length >= 1)
+    assert.equal(process.env.INTERNAL_INSTALLER_TOKEN, 'internal-token')
+  } finally {
+    if (db && mediaAssetId) {
+      await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+    }
+    if (db && previousSettings) {
+      await db.run(`
+        UPDATE storage_settings SET
+          bunny_storage_zone = ?,
+          bunny_storage_region = ?,
+          bunny_cdn_base_url = ?,
+          bunny_stream_library_id = ?
+        WHERE id = 1
+      `, [
+        previousSettings.bunny_storage_zone,
+        previousSettings.bunny_storage_region,
+        previousSettings.bunny_cdn_base_url,
+        previousSettings.bunny_stream_library_id
+      ]).catch(() => undefined)
+    }
+    server?.closeAllConnections?.()
+    server?.close()
     restoreEnv(previousEnv)
   }
 })
