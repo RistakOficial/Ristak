@@ -867,11 +867,17 @@
   height: 14px;
 }
 
-.avatarChannelBadgeWhatsapp svg path {
-  stroke: currentColor;
-  stroke-linejoin: round;
-  stroke-width: 0.7px;
-  paint-order: stroke fill;
+.avatarChannelBadgeWhatsappGlyph {
+  overflow: visible;
+  shape-rendering: geometricPrecision;
+}
+
+.avatarChannelBadgeWhatsappBubble {
+  fill: #ffffff;
+}
+
+.avatarChannelBadgeWhatsappPhone {
+  fill: #119c58;
 }
 
 .avatarChannelBadgeMessenger {
