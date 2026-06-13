@@ -14,6 +14,7 @@ export type InitStepId =
   | 'whatsapp'
   | 'meta-app'
   | 'meta-connect'
+  | 'whatsapp-api'
   | 'openai'
   | 'google-calendar'
 
@@ -55,6 +56,7 @@ function buildSteps(status: IntegrationsStatus | null, metaAppDone: boolean): In
     { id: 'whatsapp', required: true, done: Boolean(status?.whatsapp?.connected) },
     { id: 'meta-app', required: false, done: metaAppDone, manual: true },
     { id: 'meta-connect', required: true, done: Boolean(meta?.connected) },
+    { id: 'whatsapp-api', required: true, done: Boolean(status?.whatsapp?.connected && meta?.connected) },
     { id: 'openai', required: true, done: Boolean(status?.openai?.configured) },
     { id: 'google-calendar', required: false, done: Boolean(status?.googleCalendar?.connected) }
   ]

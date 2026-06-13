@@ -39,46 +39,52 @@ interface StepMeta {
 const STEP_META: Record<InitStepId, StepMeta> = {
   'facebook-page': {
     title: 'Conecta tu página de Facebook',
-    description: 'Vincula la página principal de tu negocio. Es la base de toda la conexión con Meta.',
+    description: 'Empieza por la página principal del negocio. Es la base para conectar Instagram, anuncios y permisos de Meta.',
     icon: Facebook,
     to: '/settings/meta-ads'
   },
   instagram: {
     title: 'Conecta Instagram',
-    description: 'Si tu negocio tiene Instagram ligado a la página de Facebook, vincúlalo también.',
+    description: 'Vincula la cuenta de Instagram que ya vive dentro del mismo negocio y página de Facebook.',
     icon: Instagram,
     to: '/settings/meta-ads'
   },
   'ad-account': {
     title: 'Selecciona tu cuenta publicitaria',
-    description: 'Configura la cuenta desde la que se crearán y administrarán los anuncios.',
+    description: 'Conecta la cuenta publicitaria desde la que Ristak va a leer métricas y administrar campañas.',
     icon: Megaphone,
     to: '/settings/meta-ads'
   },
   pixel: {
-    title: 'Conecta el píxel o dataset',
-    description: 'Necesario para medir conversiones, visitas, formularios y resultados de campañas.',
+    title: 'Conecta el píxel de Facebook',
+    description: 'Selecciona el píxel o dataset de Meta para medir visitas, formularios y resultados de campañas.',
     icon: Target,
     to: '/settings/meta-ads'
   },
   whatsapp: {
-    title: 'Conecta WhatsApp Business',
-    description: 'Vincula el número o cuenta de WhatsApp para conversaciones, mensajes y seguimiento.',
+    title: 'Conecta tu aplicación de WhatsApp Business',
+    description: 'Vincula la cuenta o número de WhatsApp Business que usarás para conversaciones y seguimiento.',
     icon: MessageCircle,
     to: '/settings/whatsapp'
   },
   'meta-app': {
-    title: 'Crea tu app en Meta Developers',
-    description: 'Configura la aplicación en Meta para permisos, OAuth, Marketing API, WhatsApp e Instagram/Messenger.',
+    title: 'Crea la cuenta y app en Meta Developers',
+    description: 'Crea o entra a Meta Developers y prepara la aplicación que tendrá permisos para Marketing, Instagram y WhatsApp.',
     icon: Code2,
     externalHref: 'https://developers.facebook.com/apps/',
     externalLabel: 'Abrir Meta Developers'
   },
   'meta-connect': {
-    title: 'Conecta la app de Meta con Ristak',
-    description: 'Vincula todo con Ristak para que la plataforma use tus permisos y activos correctamente.',
+    title: 'Conecta la app de Meta Developers',
+    description: 'Vincula la app de Meta Developers con Ristak para que use tus permisos y activos correctamente.',
     icon: PlugZap,
     to: '/settings/meta-ads'
+  },
+  'whatsapp-api': {
+    title: 'Agrega WhatsApp API a Meta Developers',
+    description: 'Dentro de la app de Meta Developers, conecta WhatsApp API para que Ristak pueda operar mensajes oficiales desde esa app.',
+    icon: MessageCircle,
+    to: '/settings/whatsapp'
   },
   openai: {
     title: 'Conecta OpenAI',
