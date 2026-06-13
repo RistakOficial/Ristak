@@ -4420,6 +4420,8 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
   if (!wabaId) throw new Error('Falta el WABA ID de Meta')
   if (!phoneNumberId) throw new Error('Falta el Phone Number ID de Meta')
 
+  await subscribeMetaDirectWaba({ wabaId, token: systemUserToken })
+
   await setAppConfig(CONFIG_KEYS.metaStatus, 'connected')
   await setAppConfig(CONFIG_KEYS.metaAppId, appId)
   await setAppConfig(CONFIG_KEYS.metaBusinessId, businessId)
@@ -4523,6 +4525,18 @@ async function metaDirectGraphRequest(path, { method = 'GET', token, query, body
     throw new Error(data?.error?.message || `Meta Graph respondió ${response.status}`)
   }
   return data
+}
+
+async function subscribeMetaDirectWaba({ wabaId, token } = {}) {
+  const cleanWabaId = cleanString(wabaId)
+  if (!cleanWabaId) throw new Error('Falta el WABA ID de Meta')
+
+  await metaDirectGraphRequest(`/${encodeURIComponent(cleanWabaId)}/subscribed_apps`, {
+    method: 'POST',
+    token,
+    body: {}
+  })
+  logger.info(`[Meta directo] App suscrita a webhooks de WABA ${cleanWabaId}`)
 }
 
 export async function testMetaDirectConnection() {
@@ -4702,9 +4716,14 @@ async function processMetaDirectWebhookPayload({ payload = {}, eventRowId = '' }
 
   const alertFields = new Set([
     'message_template_status_update',
+    'template_category_update',
     'message_template_quality_update',
     'account_update',
+    'account_alerts',
+    'account_review_update',
+    'business_status_update',
     'phone_number_quality_update',
+    'phone_number_name_update',
     'business_capability_update'
   ])
   const entries = Array.isArray(payload.entry) ? payload.entry : []
