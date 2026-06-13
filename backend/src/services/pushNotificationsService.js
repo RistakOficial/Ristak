@@ -277,7 +277,8 @@ function getNotificationData(payload = {}) {
       url: payload.url || '/phone/chat',
       category: payload.category || 'ristak',
       tag: payload.tag || 'ristak',
-      messageId: payload.messageId || ''
+      messageId: payload.messageId || '',
+      contactId: payload.contactId || ''
     }).map(([key, value]) => [key, String(value || '')])
   )
 }
@@ -849,6 +850,7 @@ export async function sendChatMessageNotification(message = {}) {
     body: bodyText,
     tag: `chat-${messageKey}`,
     messageId: messageKey,
+    contactId: message.contactId || '',
     url: `/phone/chat?contact=${encodeURIComponent(message.contactId || '')}`,
     category: 'chat'
   }

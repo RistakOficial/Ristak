@@ -530,7 +530,36 @@
 }
 
 .chatListElasticContent {
+  position: relative;
   min-height: 100%;
+}
+
+.chatListElasticContent::before {
+  content: "↓ Suelta para actualizar";
+  position: absolute;
+  top: -42px;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 780;
+  letter-spacing: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(0, 8px, 0);
+  transition:
+    opacity 140ms ease,
+    transform 180ms ease;
+}
+
+.chatListElasticContent[data-phone-elastic-state="pulling"]::before,
+.chatListElasticContent[data-phone-elastic-state="settling"]::before {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
 }
 
 .archiveRow,

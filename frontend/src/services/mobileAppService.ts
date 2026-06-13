@@ -16,6 +16,16 @@ type PhotoSource = 'camera' | 'photos'
 type DocumentSource = 'documents'
 type MobileShellTheme = 'light' | 'dark'
 
+export const MOBILE_APP_NOTIFICATION_EVENT = 'ristak:mobile-notification'
+
+export interface MobileAppNotificationDetail {
+  category: string
+  contactId: string
+  messageId: string
+  source: 'received' | 'action'
+  url: string
+}
+
 export interface MobilePhotoAttachment {
   id: string
   name: string
@@ -76,6 +86,37 @@ function getNotificationPath(notification: ActionPerformed['notification'] | { d
   const directUrl = typeof data.url === 'string' ? data.url : ''
   const route = typeof data.route === 'string' ? data.route : ''
   return directUrl || route || '/phone/chat'
+}
+
+function getNotificationContactId(data: Record<string, unknown>, url: string) {
+  const directContactId = typeof data.contactId === 'string' ? data.contactId : ''
+  if (directContactId) return directContactId
+
+  try {
+    const parsed = new URL(url, window.location.origin)
+    return parsed.searchParams.get('contact') || ''
+  } catch {
+    return ''
+  }
+}
+
+function dispatchMobileNotificationEvent(
+  notification: ActionPerformed['notification'] | { data?: Record<string, unknown> },
+  source: MobileAppNotificationDetail['source']
+) {
+  if (typeof window === 'undefined') return
+
+  const data = notification?.data || {}
+  const url = getNotificationPath(notification)
+  const detail: MobileAppNotificationDetail = {
+    category: typeof data.category === 'string' ? data.category : '',
+    contactId: getNotificationContactId(data, url),
+    messageId: typeof data.messageId === 'string' ? data.messageId : '',
+    source,
+    url
+  }
+
+  window.dispatchEvent(new CustomEvent<MobileAppNotificationDetail>(MOBILE_APP_NOTIFICATION_EVENT, { detail }))
 }
 
 function normalizeImageFormat(format = '') {
@@ -142,7 +183,12 @@ async function configureNativeNotificationListeners() {
   if (notificationListenersConfigured || !Capacitor.isNativePlatform()) return
   notificationListenersConfigured = true
 
+  await PushNotifications.addListener('pushNotificationReceived', (notification) => {
+    dispatchMobileNotificationEvent(notification, 'received')
+  }).catch(() => undefined)
+
   await PushNotifications.addListener('pushNotificationActionPerformed', (event) => {
+    dispatchMobileNotificationEvent(event.notification, 'action')
     openInternalPath(getNotificationPath(event.notification))
   }).catch(() => undefined)
 }

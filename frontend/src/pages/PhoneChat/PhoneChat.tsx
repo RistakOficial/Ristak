@@ -90,7 +90,15 @@ import {
   type MessageTemplateCategory,
   type MessageTemplatePayload
 } from '@/services/messageTemplatesService'
-import { mobileAppService, triggerLightHapticFeedback, type MobileChatAttachment, type MobileDocumentAttachment, type MobilePhotoAttachment } from '@/services/mobileAppService'
+import {
+  MOBILE_APP_NOTIFICATION_EVENT,
+  mobileAppService,
+  triggerLightHapticFeedback,
+  type MobileAppNotificationDetail,
+  type MobileChatAttachment,
+  type MobileDocumentAttachment,
+  type MobilePhotoAttachment
+} from '@/services/mobileAppService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
@@ -305,6 +313,12 @@ interface MessageActionPressGesture {
   startX: number
   startY: number
   timerId: number
+}
+
+interface PhonePullReleasePayload {
+  edge: 'top' | 'bottom'
+  offset: number
+  scrollable: HTMLElement
 }
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
@@ -596,6 +610,36 @@ function readAIAgentMobileMessages(): AIAgentMessage[] {
 function writeAIAgentMobileMessages(messages: AIAgentMessage[]) {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(AI_AGENT_MESSAGES_KEY, JSON.stringify(messages.slice(-60)))
+}
+
+function getMobileNotificationContactId(payload: Partial<MobileAppNotificationDetail> | Record<string, unknown> | null | undefined) {
+  if (!payload) return ''
+  const directContactId = typeof payload.contactId === 'string' ? payload.contactId : ''
+  if (directContactId) return directContactId
+
+  const url = typeof payload.url === 'string' ? payload.url : ''
+  if (!url || typeof window === 'undefined') return ''
+
+  try {
+    const parsed = new URL(url, window.location.origin)
+    return parsed.searchParams.get('contact') || ''
+  } catch {
+    return ''
+  }
+}
+
+function isChatNotificationPayload(payload: Partial<MobileAppNotificationDetail> | Record<string, unknown> | null | undefined) {
+  if (!payload) return false
+  const category = typeof payload.category === 'string' ? payload.category : ''
+  const url = typeof payload.url === 'string' ? payload.url : ''
+  if (category === 'chat') return true
+
+  try {
+    const parsed = new URL(url || '/phone/chat', typeof window === 'undefined' ? 'http://localhost' : window.location.origin)
+    return parsed.pathname === '/phone/chat'
+  } catch {
+    return false
+  }
 }
 
 function mapAgentStatesByContactId(states: ConversationAgentState[] = []) {
@@ -2725,8 +2769,16 @@ export const PhoneChat: React.FC = () => {
   const voiceAnalyserRef = useRef<AnalyserNode | null>(null)
   const voiceAnimationFrameRef = useRef<number | null>(null)
   const voiceLastWaveUpdateRef = useRef(0)
+  const chatInboxRefreshInFlightRef = useRef(false)
+  const chatPullRefreshHandlerRef = useRef<((payload: PhonePullReleasePayload) => void) | null>(null)
+  const handlePhonePullRelease = useCallback((payload: PhonePullReleasePayload) => {
+    chatPullRefreshHandlerRef.current?.(payload)
+  }, [])
 
-  usePhoneElasticScroll({ enabled: accessState === 'allowed' })
+  usePhoneElasticScroll({
+    enabled: accessState === 'allowed',
+    onPullRelease: handlePhonePullRelease
+  })
   const voiceSmoothedWaveHeightRef = useRef(VOICE_WAVE_MIN_HEIGHT)
   const voiceHoldTimerRef = useRef<number | null>(null)
   const voicePressStartedAtRef = useRef<number | null>(null)
@@ -3664,6 +3716,47 @@ export const PhoneChat: React.FC = () => {
     }
   }, [locationId])
 
+  const refreshChatInboxNow = useCallback(async (options: { contactId?: string; showIndicator?: boolean } = {}) => {
+    if (accessState !== 'allowed') return
+    if (chatInboxRefreshInFlightRef.current) return
+
+    chatInboxRefreshInFlightRef.current = true
+    const showIndicator = options.showIndicator === true
+    if (showIndicator) setChatsRefreshing(true)
+
+    try {
+      const notificationContactId = options.contactId || ''
+      const openContactId = activeContactIdRef.current
+      const shouldRefreshOpenConversation = Boolean(
+        conversationOpenRef.current &&
+        openContactId &&
+        (!notificationContactId || notificationContactId === openContactId)
+      )
+
+      await Promise.all([
+        loadChats({ silent: true, useCache: false }),
+        loadAgentData({ includeDefinitions: false }),
+        shouldRefreshOpenConversation && openContactId
+          ? loadConversation(openContactId, { silent: true, useCache: false })
+          : Promise.resolve()
+      ])
+    } finally {
+      chatInboxRefreshInFlightRef.current = false
+      if (showIndicator) setChatsRefreshing(false)
+    }
+  }, [accessState, loadAgentData, loadChats, loadConversation])
+
+  const handleChatPullRefreshRelease = useCallback((payload: PhonePullReleasePayload) => {
+    if (payload.edge !== 'top') return
+    if (payload.scrollable.getAttribute('data-phone-chat-list-scroll') !== 'true') return
+    if (conversationVisible || chatsLoading || chatsRefreshing) return
+
+    triggerLightHapticFeedback()
+    refreshChatInboxNow({ showIndicator: true }).catch(() => undefined)
+  }, [chatsLoading, chatsRefreshing, conversationVisible, refreshChatInboxNow])
+
+  chatPullRefreshHandlerRef.current = handleChatPullRefreshRelease
+
   const loadSupportData = useCallback(async () => {
     const statusCacheKey = getPhoneDailyCacheKey('phone-chat', 'whatsapp-status', locationId || 'default')
     const calendarsCacheKey = getPhoneDailyCacheKey('phone-chat', 'calendars', locationId || 'default')
@@ -4055,6 +4148,35 @@ export const PhoneChat: React.FC = () => {
       document.removeEventListener('visibilitychange', refreshVisibleChats)
     }
   }, [accessState, chatQuery, loadAgentData, loadChats])
+
+  useEffect(() => {
+    if (accessState !== 'allowed') return
+
+    const refreshFromNotification = (payload: Partial<MobileAppNotificationDetail> | Record<string, unknown> | null | undefined) => {
+      if (!isChatNotificationPayload(payload)) return
+      refreshChatInboxNow({
+        contactId: getMobileNotificationContactId(payload)
+      }).catch(() => undefined)
+    }
+
+    const handleNativeNotification = (event: Event) => {
+      refreshFromNotification((event as CustomEvent<MobileAppNotificationDetail>).detail || null)
+    }
+
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      const message = event.data || {}
+      if (message?.type !== 'ristak:push-notification') return
+      refreshFromNotification(message.payload || null)
+    }
+
+    window.addEventListener(MOBILE_APP_NOTIFICATION_EVENT, handleNativeNotification)
+    navigator.serviceWorker?.addEventListener('message', handleServiceWorkerMessage)
+
+    return () => {
+      window.removeEventListener(MOBILE_APP_NOTIFICATION_EVENT, handleNativeNotification)
+      navigator.serviceWorker?.removeEventListener('message', handleServiceWorkerMessage)
+    }
+  }, [accessState, refreshChatInboxNow])
 
   useEffect(() => {
     if (accessState !== 'allowed') return
@@ -10703,7 +10825,7 @@ export const PhoneChat: React.FC = () => {
             </div>
           </header>
 
-          <div className={styles.chatList} data-phone-chat-scrollable="true">
+          <div className={styles.chatList} data-phone-chat-scrollable="true" data-phone-chat-list-scroll="true">
             <div className={styles.chatListElasticContent} data-phone-elastic-target="true">
               {renderChats()}
             </div>

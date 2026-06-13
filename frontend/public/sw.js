@@ -112,6 +112,28 @@ function getNotificationBody(payload) {
   return body && !isAppNameNotificationText(body) ? body : DEFAULT_NOTIFICATION_BODY
 }
 
+function getNotificationData(payload) {
+  return {
+    url: payload?.url || '/phone/chat',
+    category: payload?.category || 'ristak',
+    tag: payload?.tag || 'ristak-chat',
+    messageId: payload?.messageId || '',
+    contactId: payload?.contactId || ''
+  }
+}
+
+function notifyOpenClients(payload) {
+  const data = getNotificationData(payload)
+  return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+    clientList.forEach((client) => {
+      client.postMessage({
+        type: 'ristak:push-notification',
+        payload: data
+      })
+    })
+  }).catch(() => undefined)
+}
+
 self.addEventListener('push', (event) => {
   let payload = {
     title: DEFAULT_NOTIFICATION_TITLE,
@@ -128,23 +150,27 @@ self.addEventListener('push', (event) => {
     payload.body = event.data ? event.data.text() : payload.body
   }
 
+  const notificationData = getNotificationData(payload)
+
   event.waitUntil(
-    self.registration.showNotification(getNotificationTitle(payload), {
-      body: getNotificationBody(payload),
-      icon: '/ristak-chat-icon-192.png',
-      badge: '/ristak-chat-icon-192.png',
-      tag: payload.tag || 'ristak-chat',
-      renotify: true,
-      data: {
-        url: payload.url || '/phone/chat'
-      }
-    })
+    Promise.all([
+      notifyOpenClients(payload),
+      self.registration.showNotification(getNotificationTitle(payload), {
+        body: getNotificationBody(payload),
+        icon: '/ristak-chat-icon-192.png',
+        badge: '/ristak-chat-icon-192.png',
+        tag: notificationData.tag,
+        renotify: true,
+        data: notificationData
+      })
+    ])
   )
 })
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const targetUrl = event.notification.data?.url || '/phone/chat'
+  const notificationData = event.notification.data || {}
+  const targetUrl = notificationData.url || '/phone/chat'
   const normalizedTarget = new URL(targetUrl, self.location.origin)
 
   event.waitUntil(
@@ -152,6 +178,10 @@ self.addEventListener('notificationclick', (event) => {
       for (const client of clientList) {
         const clientUrl = new URL(client.url)
         if (clientUrl.pathname === normalizedTarget.pathname && 'focus' in client) {
+          client.postMessage({
+            type: 'ristak:push-notification',
+            payload: notificationData
+          })
           if ('navigate' in client && clientUrl.href !== normalizedTarget.href) {
             return client.navigate(normalizedTarget.href).then(() => client.focus())
           }
