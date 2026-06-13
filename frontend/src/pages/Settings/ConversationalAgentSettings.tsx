@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Bot, Clock, MessageCircle, Play, Plus, Power, RotateCcw, Send, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Bot, Clock, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Send, Trash2, X } from 'lucide-react'
 import { Button, Card, CustomSelect, TagPicker } from '@/components/common'
 import { DEFAULT_AI_MODEL, aiModelOptionGroups, aiModelOptions, getKnownAIModel } from '@/constants/aiModels'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -156,6 +156,29 @@ function getReplyDeliveryHelp(delivery: AgentReplyDeliveryConfig) {
   return 'Envía cada respuesta completa en un solo WhatsApp.'
 }
 
+interface SelectionToggleProps {
+  checked: boolean
+  title: string
+  description?: string
+  disabled?: boolean
+  onChange: (checked: boolean) => void
+}
+
+const SelectionToggle: React.FC<SelectionToggleProps> = ({ checked, title, description, disabled, onChange }) => (
+  <label className={`${styles.selectionToggle} ${checked ? styles.selectionToggleChecked : ''} ${disabled ? styles.selectionToggleDisabled : ''}`}>
+    <span className={styles.selectionToggleCopy}>
+      <strong>{title}</strong>
+      {description && <small>{description}</small>}
+    </span>
+    <input
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.checked)}
+    />
+  </label>
+)
+
 interface AgentCardProps {
   agent: ConversationalAgentDef
   calendars: Calendar[]
@@ -252,95 +275,91 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
           <ArrowLeft size={16} />
           Volver
         </Button>
-        <span className={`${styles.agentStatusPill} ${agent.enabled ? styles.agentStatusPillActive : styles.agentStatusPillMuted}`}>
-          {agent.enabled ? 'Activo' : 'Apagado'}
-        </span>
+        <div className={styles.agentStickyActions}>
+          <span className={`${styles.agentStatusPill} ${agent.enabled ? styles.agentStatusPillActive : styles.agentStatusPillMuted}`}>
+            {agent.enabled ? 'Publicado' : 'En pausa'}
+          </span>
+          <Button
+            variant={agent.enabled ? 'secondary' : 'primary'}
+            onClick={() => onChange({ enabled: !agent.enabled })}
+          >
+            {agent.enabled ? <Pause size={16} /> : <Play size={16} />}
+            {agent.enabled ? 'Pausar' : 'Publicar'}
+          </Button>
+        </div>
       </div>
 
-      <div className={styles.agentCardHeader}>
-        <span className={`${styles.iconBox} ${agent.enabled ? '' : styles.iconBoxMuted}`}>
-          <Bot size={20} />
-        </span>
-        <input
-          className={styles.agentNameInput}
-          value={agent.name}
-          onChange={(event) => onChange({ name: event.target.value })}
-          placeholder="Nombre del agente"
-          aria-label="Nombre del agente"
-        />
-        <div className={styles.agentCardActions}>
-          <label className={styles.inlineToggle}>
+      <div className={styles.agentDetailLayout}>
+        <div className={styles.agentConfigColumn}>
+          <div className={styles.agentCardHeader}>
+            <span className={`${styles.iconBox} ${agent.enabled ? '' : styles.iconBoxMuted}`}>
+              <Bot size={20} />
+            </span>
             <input
-              type="checkbox"
-              checked={agent.enabled}
-              onChange={(event) => onChange({ enabled: event.target.checked })}
+              className={styles.agentNameInput}
+              value={agent.name}
+              onChange={(event) => onChange({ name: event.target.value })}
+              placeholder="Nombre del agente"
+              aria-label="Nombre del agente"
             />
-            <span>{agent.enabled ? 'Activo' : 'Apagado'}</span>
-          </label>
-          <button type="button" className={styles.iconButton} onClick={onDelete} aria-label={`Eliminar ${agent.name}`}>
-            <Trash2 size={16} />
-          </button>
-        </div>
-      </div>
+            <div className={styles.agentCardActions}>
+              <button type="button" className={styles.iconButton} onClick={onDelete} aria-label={`Eliminar ${agent.name}`}>
+                <Trash2 size={16} />
+              </button>
+            </div>
+          </div>
 
-      <p className={styles.agentCardSummary}>
-        {selectedObjective.label} · {selectedActionInfo.label}
-        {entryCount > 0
-          ? ` · entra con ${entryCount} ${entryCount === 1 ? 'regla' : 'reglas'}`
-          : ' · entra con cualquier chat'}
-        {exitCount > 0 ? ` · se suelta con ${exitCount}` : ''}
-        {responseDelaySummary ? ` · espera ${responseDelaySummary}` : ''}
-        {replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split' ? ' · responde en partes' : ''}
-      </p>
+          <p className={styles.agentCardSummary}>
+            {selectedObjective.label} · {selectedActionInfo.label}
+            {entryCount > 0
+              ? ` · entra con ${entryCount} ${entryCount === 1 ? 'regla' : 'reglas'}`
+              : ' · entra con cualquier chat'}
+            {exitCount > 0 ? ` · se suelta con ${exitCount}` : ''}
+            {responseDelaySummary ? ` · espera ${responseDelaySummary}` : ''}
+            {replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split' ? ' · responde en partes' : ''}
+          </p>
 
-      <div className={styles.agentSection}>
-        <h3 className={styles.sectionTitle}>Modelo y orden del chat</h3>
-        <div className={styles.agentOpsGrid}>
-          <div className={styles.field}>
-            <label className={styles.label}>Modelo de OpenAI</label>
-            <CustomSelect
-              value={selectedAgentModelValue}
-              onChange={(event) => onChange({ model: event.target.value })}
-              portal
-            >
-              {aiModelOptionGroups.map((group) => (
-                <optgroup key={group.label} label={group.label}>
-                  {group.options.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
+          <div className={styles.agentSection}>
+            <h3 className={styles.sectionTitle}>Modelo y orden del chat</h3>
+            <div className={styles.agentOpsGrid}>
+              <div className={styles.field}>
+                <label className={styles.label}>Modelo de OpenAI</label>
+                <CustomSelect
+                  value={selectedAgentModelValue}
+                  onChange={(event) => onChange({ model: event.target.value })}
+                  portal
+                >
+                  {aiModelOptionGroups.map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.options.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
-                </optgroup>
-              ))}
-            </CustomSelect>
-            <p className={styles.helper}>
-              {selectedAgentModel.label} responde sólo para este agente.
-            </p>
-          </div>
+                </CustomSelect>
+                <p className={styles.helper}>
+                  {selectedAgentModel.label} responde sólo para este agente.
+                </p>
+              </div>
 
-          <div className={styles.agentOpsToggles}>
-            <label className={`${styles.inlineToggle} ${styles.compactToggle}`}>
-              <input
-                type="checkbox"
-                checked={agent.hideAttended}
-                onChange={(event) => onChange({ hideAttended: event.target.checked })}
-              />
-              <span>Ocultar conversaciones atendidas</span>
-            </label>
-            <label className={`${styles.inlineToggle} ${styles.compactToggle}`}>
-              <input
-                type="checkbox"
-                checked={agent.hideAttendedNotifications}
-                onChange={(event) => onChange({ hideAttendedNotifications: event.target.checked })}
-              />
-              <span>Silenciar notificaciones atendidas</span>
-            </label>
-            <p className={styles.helper}>
-              Aplica sólo a conversaciones que este agente esté atendiendo.
-            </p>
+              <div className={styles.agentOpsToggles}>
+                <SelectionToggle
+                  checked={agent.hideAttended}
+                  title="Ocultar conversaciones atendidas"
+                  description="Sólo aplica a conversaciones que este agente esté atendiendo."
+                  onChange={(checked) => onChange({ hideAttended: checked })}
+                />
+                <SelectionToggle
+                  checked={agent.hideAttendedNotifications}
+                  title="Silenciar notificaciones atendidas"
+                  description="Sin avisos mientras este agente responde."
+                  onChange={(checked) => onChange({ hideAttendedNotifications: checked })}
+                />
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
 
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>1. Cuándo contesta</h3>
@@ -643,39 +662,30 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
               <p className={`${styles.helper} ${styles.responseDelayHelp}`}>{getResponseDelayHelp(responseDelay)}</p>
             </div>
             <div className={styles.replyDeliveryGrid}>
-              <label className={`${styles.inlineToggle} ${styles.replyDeliveryToggle}`}>
-                <input
-                  type="checkbox"
-                  checked={replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split'}
-                  onChange={(event) => {
-                    const enabled = event.target.checked
-                    updateReplyDelivery({
-                      mode: (enabled ? 'split' : 'single') as AgentReplyDeliveryMode,
-                      splitMessagesEnabled: enabled
-                    })
-                  }}
-                />
-                <span>Modo mensajes humanos</span>
-              </label>
+              <SelectionToggle
+                checked={replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split'}
+                title="Modo mensajes humanos"
+                description="Parte respuestas largas en varios globos."
+                onChange={(enabled) => {
+                  updateReplyDelivery({
+                    mode: (enabled ? 'split' : 'single') as AgentReplyDeliveryMode,
+                    splitMessagesEnabled: enabled
+                  })
+                }}
+              />
 
               {(replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split') && (
                 <div className={styles.replyDeliveryControls}>
-                  <label className={`${styles.inlineToggle} ${styles.replyOptionToggle}`}>
-                    <input
-                      type="checkbox"
-                      checked={replyDelivery.randomizeSplitting}
-                      onChange={(event) => updateReplyDelivery({ randomizeSplitting: event.target.checked })}
-                    />
-                    <span>Variar cortes</span>
-                  </label>
-                  <label className={`${styles.inlineToggle} ${styles.replyOptionToggle}`}>
-                    <input
-                      type="checkbox"
-                      checked={replyDelivery.delayBetweenBubblesEnabled}
-                      onChange={(event) => updateReplyDelivery({ delayBetweenBubblesEnabled: event.target.checked })}
-                    />
-                    <span>Pausas entre globos</span>
-                  </label>
+                  <SelectionToggle
+                    checked={replyDelivery.randomizeSplitting}
+                    title="Variar cortes"
+                    onChange={(checked) => updateReplyDelivery({ randomizeSplitting: checked })}
+                  />
+                  <SelectionToggle
+                    checked={replyDelivery.delayBetweenBubblesEnabled}
+                    title="Pausas entre globos"
+                    onChange={(checked) => updateReplyDelivery({ delayBetweenBubblesEnabled: checked })}
+                  />
                   <div className={`${styles.field} ${styles.replyPartSizeField}`}>
                     <label className={styles.label}>Dividir desde</label>
                     <input
@@ -797,24 +807,27 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
                 />
               </div>
             </div>
-            <label className={styles.inlineToggle}>
-              <input
-                type="checkbox"
-                checked={agent.allowEmojis}
-                onChange={(event) => onChange({ allowEmojis: event.target.checked })}
-              />
-              <span>Puede usar emojis si se siente natural</span>
-            </label>
+            <SelectionToggle
+              checked={agent.allowEmojis}
+              title="Puede usar emojis si se siente natural"
+              description="Déjalo apagado si quieres un tono más serio."
+              onChange={(checked) => onChange({ allowEmojis: checked })}
+            />
           </div>
 
-          <div className={styles.agentSection}>
-            <div className={styles.sectionHeading}>
-              <Play size={17} />
-              <h3 className={styles.sectionTitle}>5. Pruébalo rápido</h3>
+        </div>
+
+        <aside className={styles.agentTestColumn}>
+          <div className={styles.agentTestPanel}>
+            <div className={styles.agentTestHeader}>
+              <div className={styles.sectionHeading}>
+                <Play size={17} />
+                <h3 className={styles.sectionTitle}>Prueba del chat</h3>
+              </div>
+              <p className={styles.agentSectionHint}>
+                Es una prueba: no manda WhatsApp ni mueve contactos.
+              </p>
             </div>
-            <p className={styles.agentSectionHint}>
-              Es una prueba: no manda WhatsApp ni mueve contactos.
-            </p>
 
             <div className={styles.testChatBox}>
               {testMessages.length === 0 && (
@@ -867,6 +880,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
               )}
             </div>
           </div>
+        </aside>
+      </div>
     </Card>
   )
 }
@@ -941,6 +956,9 @@ export const ConversationalAgentSettings: React.FC = () => {
   const handleAgentChange = (agentId: string, patch: ConversationalAgentDefInput) => {
     setAgents((current) => current.map((agent) => (agent.id === agentId ? { ...agent, ...patch } as ConversationalAgentDef : agent)))
     scheduleAgentSave(agentId)
+    if (patch.enabled === true && config && !config.enabled) {
+      void handleGlobalChange({ enabled: true })
+    }
   }
 
   const handleGlobalChange = async (patch: { enabled?: boolean }) => {
@@ -1115,31 +1133,48 @@ export const ConversationalAgentSettings: React.FC = () => {
             const entryRules = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
 
             return (
-              <button
+              <div
                 key={agent.id}
-                type="button"
                 className={`${styles.agentDirectoryCard} ${agent.enabled ? '' : styles.agentDirectoryCardMuted}`}
-                onClick={() => setSelectedAgentId(agent.id)}
               >
-                <div className={styles.agentDirectoryCardTop}>
-                  <span className={`${styles.iconBox} ${agent.enabled ? '' : styles.iconBoxMuted}`}>
-                    <Bot size={20} />
-                  </span>
-                  <span className={`${styles.agentStatusPill} ${agent.enabled ? styles.agentStatusPillActive : styles.agentStatusPillMuted}`}>
-                    {agent.enabled ? 'Activo' : 'Apagado'}
-                  </span>
+                <button
+                  type="button"
+                  className={styles.agentDirectoryOpenButton}
+                  onClick={() => setSelectedAgentId(agent.id)}
+                >
+                  <div className={styles.agentDirectoryCardTop}>
+                    <span className={`${styles.iconBox} ${agent.enabled ? '' : styles.iconBoxMuted}`}>
+                      <Bot size={20} />
+                    </span>
+                    <span className={`${styles.agentStatusPill} ${agent.enabled ? styles.agentStatusPillActive : styles.agentStatusPillMuted}`}>
+                      {agent.enabled ? 'Publicado' : 'En pausa'}
+                    </span>
+                  </div>
+                  <div className={styles.agentDirectoryCardCopy}>
+                    <h3>{agent.name || 'Agente sin nombre'}</h3>
+                    <p>{objectiveLabel} · {actionLabel}</p>
+                  </div>
+                  <div className={styles.agentDirectoryMeta}>
+                    <span>{modelLabel}</span>
+                    <span>{entryRules > 0 ? `${entryRules} ${entryRules === 1 ? 'regla' : 'reglas'}` : 'Cualquier chat'}</span>
+                    {agent.hideAttended && <span>Oculta atendidas</span>}
+                    {agent.hideAttendedNotifications && <span>Silencia avisos</span>}
+                  </div>
+                </button>
+                <div className={styles.agentDirectoryActions}>
+                  <Button
+                    variant={agent.enabled ? 'secondary' : 'primary'}
+                    onClick={() => handleAgentChange(agent.id, { enabled: !agent.enabled })}
+                  >
+                    {agent.enabled ? <Pause size={15} /> : <Play size={15} />}
+                    {agent.enabled ? 'Pausar' : 'Publicar'}
+                  </Button>
+                  <Button variant="ghost" onClick={() => handleDeleteAgent(agent)}>
+                    <Trash2 size={15} />
+                    Eliminar
+                  </Button>
                 </div>
-                <div className={styles.agentDirectoryCardCopy}>
-                  <h3>{agent.name || 'Agente sin nombre'}</h3>
-                  <p>{objectiveLabel} · {actionLabel}</p>
-                </div>
-                <div className={styles.agentDirectoryMeta}>
-                  <span>{modelLabel}</span>
-                  <span>{entryRules > 0 ? `${entryRules} ${entryRules === 1 ? 'regla' : 'reglas'}` : 'Cualquier chat'}</span>
-                  {agent.hideAttended && <span>Oculta atendidas</span>}
-                  {agent.hideAttendedNotifications && <span>Silencia avisos</span>}
-                </div>
-              </button>
+              </div>
             )
           })}
         </div>
