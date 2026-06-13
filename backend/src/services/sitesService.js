@@ -10132,6 +10132,11 @@ function blockTextTransform(value) {
   return normalized === 'uppercase' || normalized === 'capitalize' ? normalized : ''
 }
 
+function blockTextListStyle(value) {
+  const normalized = cleanString(value)
+  return normalized === 'disc' || normalized === 'decimal' ? normalized : ''
+}
+
 function renderBlockStyleVars(block) {
   const settings = normalizeLegacyLandingBlockSettings(block)
   const vars = []
@@ -10171,6 +10176,7 @@ function renderBlockStyleVars(block) {
   const buttonTextDecoration = blockTextDecoration(settings.buttonTextDecoration)
   const textTransform = blockTextTransform(settings.textTransform)
   const buttonTextTransform = blockTextTransform(settings.buttonTextTransform)
+  const textListStyle = blockTextListStyle(settings.textListStyle)
   const mediaWidth = blockSettingNumber(settings, 'mediaWidth', 30, 100)
   const mediaRadius = blockSettingNumber(settings, 'mediaRadius', 0, 48)
   const embedHeight = blockSettingNumber(settings, 'embedHeight', EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)
@@ -10218,6 +10224,7 @@ function renderBlockStyleVars(block) {
   if (settings.fontStyle === 'italic') vars.push('--rstk-block-font-style:italic')
   if (textDecoration) vars.push(`--rstk-block-text-decoration:${textDecoration}`)
   if (textTransform) vars.push(`--rstk-block-text-transform:${textTransform}`)
+  if (textListStyle && block.blockType === 'text') vars.push(`--rstk-text-list-style:${textListStyle}`)
   if (cleanString(settings.lineHeight) && lineHeight !== null) vars.push(`--rstk-block-line-height:${lineHeight}`)
   if (textStrokeWidth !== null) vars.push(`--rstk-text-stroke-width:${textStrokeWidth}px`)
   if (textStrokeColor) vars.push(`--rstk-text-stroke-color:${paintFallbackColor(textStrokeColor, '#111827')}`)
@@ -10304,6 +10311,7 @@ function renderBlockStyleClassName(block) {
     blockTextDecoration(settings.textDecoration) ? 'rstkUnderlineOverride' : '',
     blockTextTransform(settings.textTransform) ? 'rstkTextTransformOverride' : '',
     settings.lineHeight !== undefined && cleanString(settings.lineHeight) ? 'rstkLineHeightOverride' : '',
+    block.blockType === 'text' && blockTextListStyle(settings.textListStyle) ? 'rstkListStyleOverride' : '',
     settings.textStrokeWidth !== undefined ? 'rstkStrokeOverride' : ''
   ].filter(Boolean)
 
@@ -11614,6 +11622,7 @@ const RSTK_BASE_CSS = `
   .rstkUnderlineOverride .rstk-headline,.rstkUnderlineOverride .rstk-subheading,.rstkUnderlineOverride .rstk-text,.rstkUnderlineOverride h2,.rstkUnderlineOverride label,.rstkUnderlineOverride .rstk-help,.rstkUnderlineOverride .rstk-list-grid strong,.rstkUnderlineOverride .rstk-list-grid p,.rstkUnderlineOverride .rstk-check-body strong,.rstkUnderlineOverride .rstk-check-body span{text-decoration:var(--rstk-block-text-decoration,underline)}
   .rstkTextTransformOverride .rstk-headline,.rstkTextTransformOverride .rstk-subheading,.rstkTextTransformOverride .rstk-text,.rstkTextTransformOverride h2,.rstkTextTransformOverride label,.rstkTextTransformOverride .rstk-help,.rstkTextTransformOverride .rstk-list-grid strong,.rstkTextTransformOverride .rstk-list-grid p,.rstkTextTransformOverride .rstk-check-body strong,.rstkTextTransformOverride .rstk-check-body span{text-transform:var(--rstk-block-text-transform,none)}
   .rstkLineHeightOverride .rstk-headline,.rstkLineHeightOverride .rstk-subheading,.rstkLineHeightOverride .rstk-text,.rstkLineHeightOverride h2,.rstkLineHeightOverride label,.rstkLineHeightOverride .rstk-help,.rstkLineHeightOverride .rstk-list-grid strong,.rstkLineHeightOverride .rstk-list-grid p,.rstkLineHeightOverride .rstk-check-body strong,.rstkLineHeightOverride .rstk-check-body span{line-height:var(--rstk-block-line-height)}
+  .rstkListStyleOverride .rstk-text{display:list-item;list-style-position:inside;list-style-type:var(--rstk-text-list-style,disc)}
   .rstkStrokeOverride .rstk-headline,.rstkStrokeOverride .rstk-subheading,.rstkStrokeOverride .rstk-text,.rstkStrokeOverride h2,.rstkStrokeOverride label,.rstkStrokeOverride .rstk-help,.rstkStrokeOverride .rstk-list-grid strong,.rstkStrokeOverride .rstk-list-grid p,.rstkStrokeOverride .rstk-check-body strong,.rstkStrokeOverride .rstk-check-body span{-webkit-text-stroke:var(--rstk-text-stroke-width,0) var(--rstk-text-stroke-color,currentColor)}
   .rstkTextGradient .rstk-headline,.rstkTextGradient .rstk-subheading,.rstkTextGradient .rstk-text,.rstkTextGradient h2,.rstkTextGradient label,.rstkTextGradient .rstk-help,.rstkTextGradient .rstk-site-panel-copy,.rstkTextGradient .rstk-list-grid strong,.rstkTextGradient .rstk-list-grid p,.rstkTextGradient .rstk-check-body strong,.rstkTextGradient .rstk-check-body span,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-headline,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-subheading,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-text,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) h2,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) label,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-help,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-site-panel-copy,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-list-grid strong,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-list-grid p,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-check-body strong,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-check-body span{background-image:var(--rstk-block-text-paint,var(--rstk-page-text-paint));background-clip:text;-webkit-background-clip:text;color:transparent !important;-webkit-text-fill-color:transparent}
   .rstkButtonTextGradient .rstk-button-label{background-image:var(--rstk-button-text-paint);background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent}

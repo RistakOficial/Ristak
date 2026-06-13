@@ -1156,6 +1156,12 @@ html body .rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option input[type='
   line-height: var(--rstk-block-line-height);
 }
 
+.rstkCanvas .rstkListStyleOverride .rstk-text {
+  display: list-item;
+  list-style-position: inside;
+  list-style-type: var(--rstk-text-list-style, disc);
+}
+
 .rstkCanvas .rstkStrokeOverride .rstk-headline,
 .rstkCanvas .rstkStrokeOverride .rstk-subheading,
 .rstkCanvas .rstkStrokeOverride .rstk-text,
