@@ -14035,7 +14035,7 @@
 .builderGridFormMode,
 .containerFocused .builderGridFormMode,
 .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
-  grid-template-columns: minmax(170px, 190px) minmax(360px, 1fr) minmax(288px, 320px);
+  grid-template-columns: minmax(198px, 216px) minmax(300px, 1fr) minmax(340px, 380px);
 }
 
 .builderGridFormMode > .formModeRail {
@@ -14201,11 +14201,12 @@
 
 .formModePaletteList button strong {
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   font-size: 0.82rem;
   font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.15;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .formModePanel {
