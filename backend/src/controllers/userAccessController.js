@@ -30,7 +30,7 @@ function assertEmailOrPhone(email, phone) {
   }
 }
 
-function normalizeMemberInput(input = {}, { requirePassword = false } = {}) {
+function normalizeMemberInput(input = {}, { requirePassword = false, requireContact = true } = {}) {
   const firstName = cleanText(input.firstName, 80)
   const lastName = cleanText(input.lastName, 80)
   const email = cleanEmail(input.email)
@@ -39,7 +39,9 @@ function normalizeMemberInput(input = {}, { requirePassword = false } = {}) {
   const role = normalizeUserRole(input.role)
   const password = cleanText(input.password, 120)
 
-  assertEmailOrPhone(email, phone)
+  if (requireContact) {
+    assertEmailOrPhone(email, phone)
+  }
 
   if (rawPhone && !phone) {
     const error = new Error('Ese teléfono no se ve válido. Usa lada y número.')
@@ -228,14 +230,15 @@ export async function createUser(req, res) {
 export async function updateUser(req, res) {
   try {
     const targetId = String(req.params.userId || '')
-    const currentUserId = String(req.user.userId)
+    const currentUserId = String(req.user?.userId || '')
     const existing = await fetchMemberById(targetId)
 
     if (!existing) {
       return res.status(404).json({ success: false, error: 'Usuario no encontrado' })
     }
 
-    const member = normalizeMemberInput(req.body)
+    const canKeepLegacyUsername = Boolean(existing.username && !existing.email && !existing.phone)
+    const member = normalizeMemberInput(req.body, { requireContact: !canKeepLegacyUsername })
 
     if (targetId === currentUserId && existing.role === 'admin' && member.role !== 'admin') {
       return res.status(400).json({
@@ -301,7 +304,7 @@ export async function updateUser(req, res) {
 export async function deleteUser(req, res) {
   try {
     const targetId = String(req.params.userId || '')
-    const currentUserId = String(req.user.userId)
+    const currentUserId = String(req.user?.userId || '')
     const existing = await fetchMemberById(targetId)
 
     if (!existing) {
