@@ -1150,8 +1150,9 @@
 }
 
 .agentDetailLayout {
+  --agent-test-panel-width: clamp(320px, 24vw, 400px);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  grid-template-columns: minmax(0, 1fr) var(--agent-test-panel-width);
   align-items: start;
   gap: 20px;
 }
@@ -1170,10 +1171,10 @@
 .agentTestColumn {
   position: fixed;
   top: 230px;
-  right: max(28px, calc((100vw - 1280px) / 2 + 68px));
+  right: max(68px, calc((100vw - 224px - var(--app-page-max, 1664px)) / 2 + 25px));
   bottom: 20px;
   z-index: 30;
-  width: min(400px, calc(100vw - 56px));
+  width: var(--agent-test-panel-width);
 }
 
 .agentStatusPill {
