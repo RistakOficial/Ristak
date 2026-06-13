@@ -897,8 +897,8 @@ const TRIGGERS: NodeDefinition[] = [
     defaultConfig: () => ({ campaign: '', adsetId: '', adId: '' }),
     fields: [
       { key: 'campaign', label: 'Campaña (opcional)', type: 'catalogSelect', catalog: 'campaigns', advanced: true },
-      { key: 'adsetId', label: 'Conjunto de anuncios (opcional)', type: 'text', placeholder: 'Cualquier conjunto', advanced: true },
-      { key: 'adId', label: 'Anuncio (opcional)', type: 'text', placeholder: 'Ej. Facebook Ads #1', advanced: true }
+      { key: 'adsetId', label: 'Conjunto de anuncios (opcional)', type: 'catalogSelect', catalog: 'adsets', advanced: true },
+      { key: 'adId', label: 'Anuncio (opcional)', type: 'catalogSelect', catalog: 'adIds', advanced: true }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => ({

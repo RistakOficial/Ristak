@@ -12,6 +12,8 @@ import {
   deleteFolder,
   listEnrollments,
   getEnrollmentStats,
+  listAttributionCampaigns,
+  listAttributionAdsets,
   listAttributionAds,
   saveAutomationAsset,
   getAutomationAsset
@@ -122,6 +124,24 @@ export async function deleteFolderHandler(req, res) {
   }
 }
 
+
+export async function getCampaignsCatalogHandler(req, res) {
+  try {
+    res.json({ success: true, data: await listAttributionCampaigns() })
+  } catch (error) {
+    logger.error(`Error listando campañas de atribución: ${error.message}`)
+    sendError(res, error, 'Error listando las campañas')
+  }
+}
+
+export async function getAdsetsCatalogHandler(req, res) {
+  try {
+    res.json({ success: true, data: await listAttributionAdsets() })
+  } catch (error) {
+    logger.error(`Error listando conjuntos de atribución: ${error.message}`)
+    sendError(res, error, 'Error listando los conjuntos')
+  }
+}
 
 export async function getAdsCatalogHandler(req, res) {
   try {

@@ -8,6 +8,7 @@ import { calendarsService } from './calendarsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from './whatsappApiService'
 import { sitesService } from './sitesService'
 import { contactTagsService } from './contactTagsService'
+import { campaignsService, type ConnectedSocialProfile } from './campaignsService'
 
 /**
  * Catálogos de datos reales del CRM para los selectores del editor de
@@ -35,9 +36,13 @@ export type CatalogKind =
   | 'whatsappNumbers'
   | 'whatsappTemplates'
   | 'campaigns'
+  | 'adsets'
   | 'links'
   | 'products'
   | 'ads'
+  | 'adIds'
+  | 'messengerPages'
+  | 'instagramAccounts'
 
 // ---------------------------------------------------------------------------
 // Mocks marcados (catálogos sin backend todavía)
@@ -46,11 +51,6 @@ export type CatalogKind =
 // MOCK: no existe aún un endpoint de usuarios del equipo.
 const MOCK_USERS: CatalogOption[] = [
   { value: 'owner', label: 'Cuenta principal' }
-]
-
-// MOCK: no existe aún catálogo de campañas/anuncios para automatizaciones.
-const MOCK_CAMPAIGNS: CatalogOption[] = [
-  { value: 'any', label: 'Cualquier campaña' }
 ]
 
 // MOCK: no existe aún catálogo de enlaces rastreables.
@@ -129,14 +129,87 @@ async function loadForms(): Promise<CatalogOption[]> {
     .map((site) => ({ value: site.id || site.slug, label: site.name }))
 }
 
-/** Anuncios reales detectados en la atribución de los contactos */
+interface MetaAdsCatalogItem {
+  id: string
+  name: string
+  campaignId?: string
+  campaignName?: string
+  adsetId?: string
+  adsetName?: string
+  lastDate?: string
+}
+
+const compactMeta = (...parts: Array<string | undefined | null>) =>
+  parts.map((part) => String(part || '').trim()).filter(Boolean).join(' · ') || undefined
+
+/** Campañas reales sincronizadas desde Meta Ads */
+async function loadCampaigns(): Promise<CatalogOption[]> {
+  const campaigns = await apiClient.get<MetaAdsCatalogItem[]>('/automations/catalogs/campaigns')
+  return (campaigns || []).map((campaign) => ({
+    value: campaign.name || campaign.id,
+    label: campaign.name || campaign.id,
+    meta: campaign.name && campaign.id && campaign.name !== campaign.id ? campaign.id : undefined
+  }))
+}
+
+/** Conjuntos reales sincronizados desde Meta Ads */
+async function loadAdsets(): Promise<CatalogOption[]> {
+  const adsets = await apiClient.get<MetaAdsCatalogItem[]>('/automations/catalogs/adsets')
+  return (adsets || []).map((adset) => ({
+    value: adset.id || adset.name,
+    label: adset.name || adset.id,
+    meta: compactMeta(adset.campaignName, adset.id && adset.name !== adset.id ? adset.id : undefined)
+  }))
+}
+
+/** Anuncios reales para filtros legibles por nombre */
 async function loadAds(): Promise<CatalogOption[]> {
-  const ads = await apiClient.get<Array<{ id: string; name: string }>>('/automations/catalogs/ads')
+  const ads = await apiClient.get<MetaAdsCatalogItem[]>('/automations/catalogs/ads')
   return (ads || []).map((ad) => ({
     value: ad.name || ad.id,
     label: ad.name || ad.id,
-    meta: ad.name && ad.id && ad.name !== ad.id ? ad.id : undefined
+    meta: compactMeta(ad.adsetName, ad.id && ad.name !== ad.id ? ad.id : undefined)
   }))
+}
+
+/** Anuncios reales para campos que deben guardar el ID interno del anuncio */
+async function loadAdIds(): Promise<CatalogOption[]> {
+  const ads = await apiClient.get<MetaAdsCatalogItem[]>('/automations/catalogs/ads')
+  return (ads || []).map((ad) => ({
+    value: ad.id || ad.name,
+    label: ad.name || ad.id,
+    meta: compactMeta(ad.adsetName, ad.campaignName, ad.id && ad.name !== ad.id ? ad.id : undefined)
+  }))
+}
+
+const socialProfileLabel = (profile: ConnectedSocialProfile) => {
+  if (profile.platform === 'instagram') {
+    const username = profile.username ? `@${profile.username}` : profile.name
+    return profile.name && profile.name !== username ? `${profile.name} (${username})` : username
+  }
+  return profile.name || profile.pageName || profile.sourceId
+}
+
+async function loadConnectedSocialProfiles(platform: ConnectedSocialProfile['platform']): Promise<CatalogOption[]> {
+  const response = await campaignsService.getConnectedSocialProfiles()
+  return response.profiles
+    .filter((profile) => profile.platform === platform)
+    .map((profile) => ({
+      value: platform === 'facebook' ? String(profile.pageId || profile.sourceId || '') : String(profile.sourceId || ''),
+      label: socialProfileLabel(profile),
+      meta: platform === 'facebook'
+        ? compactMeta(profile.category || 'Facebook', profile.sourceId)
+        : compactMeta(profile.pageName, profile.sourceId)
+    }))
+    .filter((option) => option.value)
+}
+
+async function loadMessengerPages(): Promise<CatalogOption[]> {
+  return loadConnectedSocialProfiles('facebook')
+}
+
+async function loadInstagramAccounts(): Promise<CatalogOption[]> {
+  return loadConnectedSocialProfiles('instagram')
 }
 
 async function loadWhatsAppNumbers(): Promise<CatalogOption[]> {
@@ -207,10 +280,14 @@ const loaders: Record<CatalogKind, () => Promise<CatalogOption[]>> = {
   forms: loadForms,
   whatsappNumbers: loadWhatsAppNumbers,
   whatsappTemplates: loadWhatsAppTemplates,
-  campaigns: async () => MOCK_CAMPAIGNS,
+  campaigns: loadCampaigns,
+  adsets: loadAdsets,
   links: async () => MOCK_LINKS,
   products: async () => MOCK_PRODUCTS,
-  ads: loadAds
+  ads: loadAds,
+  adIds: loadAdIds,
+  messengerPages: loadMessengerPages,
+  instagramAccounts: loadInstagramAccounts
 }
 
 const fallbacks: Partial<Record<CatalogKind, CatalogOption[]>> = {
@@ -221,7 +298,12 @@ const fallbacks: Partial<Record<CatalogKind, CatalogOption[]>> = {
   forms: [],
   whatsappNumbers: [],
   whatsappTemplates: [],
-  ads: []
+  campaigns: [],
+  adsets: [],
+  ads: [],
+  adIds: [],
+  messengerPages: [],
+  instagramAccounts: []
 }
 
 const cache = new Map<CatalogKind, Promise<CatalogOption[]>>()

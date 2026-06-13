@@ -492,7 +492,7 @@ export interface TriggerFilterField {
   label: string
   /** Frase con artículo para la oración ("la fuente", "el país"…) */
   phrase: string
-  catalog?: 'tags' | 'contactFields' | 'users' | 'calendars' | 'campaigns' | 'products' | 'ads'
+  catalog?: CatalogKind
   /** Opciones fijas (el valor se elige de una lista, no texto libre) */
   options?: Array<{ value: string; label: string }>
   /** Categoría del drill-down (Contacto, Mensaje, Citas…) */
@@ -514,7 +514,7 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'form_field', label: 'Campo del formulario', phrase: 'el campo del formulario', category: 'Formulario', appliesTo: ['form'] },
   // Atribución de anuncios (vive en el contacto: disponible siempre)
   { id: 'ad', label: 'Anuncio de origen', phrase: 'el anuncio de origen', catalog: 'ads', category: 'Anuncio' },
-  { id: 'ad_id', label: 'ID del anuncio', phrase: 'el ID del anuncio', category: 'Anuncio' },
+  { id: 'ad_id', label: 'ID del anuncio', phrase: 'el ID del anuncio', catalog: 'adIds', category: 'Anuncio' },
   { id: 'attribution_url', label: 'URL de origen', phrase: 'la URL de origen', category: 'Anuncio' },
   { id: 'medium', label: 'Medio de atribución', phrase: 'el medio', category: 'Anuncio' },
   // Del contacto (siempre disponibles)

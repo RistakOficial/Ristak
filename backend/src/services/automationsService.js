@@ -318,11 +318,79 @@ function parseLog(raw) {
   try { return JSON.parse(raw) } catch { return [] }
 }
 
+function mapMetaCatalogRow(row) {
+  return {
+    id: String(row.id || row.name || ''),
+    name: String(row.name || row.id || ''),
+    campaignId: row.campaign_id ? String(row.campaign_id) : undefined,
+    campaignName: row.campaign_name ? String(row.campaign_name) : undefined,
+    adsetId: row.adset_id ? String(row.adset_id) : undefined,
+    adsetName: row.adset_name ? String(row.adset_name) : undefined,
+    lastDate: row.last_date || undefined
+  }
+}
+
 /**
- * Anuncios reales detectados en la atribución de los contactos: alimenta el
- * selector "Anuncio de origen" de los filtros de automatizaciones.
+ * Campañas reales sincronizadas desde Meta Ads: alimentan filtros y triggers
+ * donde el usuario antes tenia que adivinar nombres o IDs.
+ */
+export async function listAttributionCampaigns() {
+  const rows = await db.all(
+    `SELECT
+       campaign_id AS id,
+       COALESCE(MAX(NULLIF(campaign_name, '')), campaign_id) AS name,
+       MAX(date) AS last_date
+     FROM meta_ads
+     WHERE campaign_id IS NOT NULL AND campaign_id != ''
+     GROUP BY campaign_id
+     ORDER BY MAX(date) DESC, name ASC
+     LIMIT 300`
+  )
+  return rows.map(mapMetaCatalogRow)
+}
+
+/**
+ * Conjuntos de anuncios sincronizados desde Meta Ads.
+ */
+export async function listAttributionAdsets() {
+  const rows = await db.all(
+    `SELECT
+       adset_id AS id,
+       COALESCE(MAX(NULLIF(adset_name, '')), adset_id) AS name,
+       MAX(campaign_id) AS campaign_id,
+       COALESCE(MAX(NULLIF(campaign_name, '')), MAX(campaign_id)) AS campaign_name,
+       MAX(date) AS last_date
+     FROM meta_ads
+     WHERE adset_id IS NOT NULL AND adset_id != ''
+     GROUP BY adset_id
+     ORDER BY MAX(date) DESC, name ASC
+     LIMIT 300`
+  )
+  return rows.map(mapMetaCatalogRow)
+}
+
+/**
+ * Anuncios reales detectados en la atribución de los contactos y en Meta Ads:
+ * alimenta el selector "Anuncio de origen" de los filtros de automatizaciones.
  */
 export async function listAttributionAds() {
+  const metaRows = await db.all(
+    `SELECT
+       ad_id AS id,
+       COALESCE(MAX(NULLIF(ad_name, '')), ad_id) AS name,
+       MAX(campaign_id) AS campaign_id,
+       COALESCE(MAX(NULLIF(campaign_name, '')), MAX(campaign_id)) AS campaign_name,
+       MAX(adset_id) AS adset_id,
+       COALESCE(MAX(NULLIF(adset_name, '')), MAX(adset_id)) AS adset_name,
+       MAX(date) AS last_date
+     FROM meta_ads
+     WHERE ad_id IS NOT NULL AND ad_id != ''
+     GROUP BY ad_id
+     ORDER BY MAX(date) DESC, name ASC
+     LIMIT 300`
+  )
+  if (metaRows.length > 0) return metaRows.map(mapMetaCatalogRow)
+
   const rows = await db.all(
     `SELECT attribution_ad_name AS name, attribution_ad_id AS id, COUNT(*) AS total
      FROM contacts
@@ -332,10 +400,7 @@ export async function listAttributionAds() {
      ORDER BY total DESC
      LIMIT 200`
   )
-  return rows.map((row) => ({
-    id: String(row.id || row.name || ''),
-    name: String(row.name || row.id || '')
-  }))
+  return rows.map(mapMetaCatalogRow)
 }
 
 export async function listEnrollments(automationId) {

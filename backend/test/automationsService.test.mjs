@@ -4,6 +4,9 @@ import { db } from '../src/config/database.js'
 import {
   createAutomation,
   getAutomation,
+  listAttributionAdsets,
+  listAttributionAds,
+  listAttributionCampaigns,
   updateAutomation
 } from '../src/services/automationsService.js'
 
@@ -77,5 +80,69 @@ test('updateAutomation separa borrador guardado de flujo publicado', async () =>
     assert.equal(fresh.flow.nodes[1].config.customTitle, 'Cambio pendiente')
   } finally {
     await db.run('DELETE FROM automations WHERE id = ?', [automation.id])
+  }
+})
+
+test('catálogos de Meta Ads devuelven campañas, conjuntos y anuncios reales', async () => {
+  const suffix = Date.now()
+  const accountId = `act_catalog_${suffix}`
+  const campaignId = `cmp_${suffix}`
+  const adsetId = `adset_${suffix}`
+  const adId = `ad_${suffix}`
+
+  await db.run(
+    `INSERT INTO meta_ads (
+       date,
+       ad_account_id,
+       campaign_id,
+       campaign_name,
+       adset_id,
+       adset_name,
+       ad_id,
+       ad_name,
+       spend,
+       clicks
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      '2099-01-01',
+      accountId,
+      campaignId,
+      'Campaña de prueba',
+      adsetId,
+      'Conjunto de prueba',
+      adId,
+      'Anuncio de prueba',
+      10,
+      3
+    ]
+  )
+
+  try {
+    const [campaigns, adsets, ads] = await Promise.all([
+      listAttributionCampaigns(),
+      listAttributionAdsets(),
+      listAttributionAds()
+    ])
+
+    assert.ok(campaigns.some((campaign) => (
+      campaign.id === campaignId &&
+      campaign.name === 'Campaña de prueba' &&
+      campaign.lastDate === '2099-01-01'
+    )))
+    assert.ok(adsets.some((adset) => (
+      adset.id === adsetId &&
+      adset.name === 'Conjunto de prueba' &&
+      adset.campaignId === campaignId &&
+      adset.campaignName === 'Campaña de prueba'
+    )))
+    assert.ok(ads.some((ad) => (
+      ad.id === adId &&
+      ad.name === 'Anuncio de prueba' &&
+      ad.adsetId === adsetId &&
+      ad.adsetName === 'Conjunto de prueba' &&
+      ad.campaignId === campaignId
+    )))
+  } finally {
+    await db.run('DELETE FROM meta_ads WHERE ad_account_id = ?', [accountId])
   }
 })

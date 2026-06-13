@@ -13,6 +13,8 @@ import {
   deleteFolderHandler,
   getEnrollmentsHandler,
   getEnrollmentStatsHandler,
+  getCampaignsCatalogHandler,
+  getAdsetsCatalogHandler,
   getAdsCatalogHandler,
   uploadAssetHandler,
   serveAssetHandler
@@ -34,7 +36,9 @@ router.post('/folders/reorder', reorderFoldersHandler)
 router.put('/folders/:folderId', updateFolderHandler)
 router.delete('/folders/:folderId', deleteFolderHandler)
 
-// Catálogos para los filtros del editor (anuncios de atribución)
+// Catálogos para filtros y disparadores del editor (atribución de Meta Ads)
+router.get('/catalogs/campaigns', getCampaignsCatalogHandler)
+router.get('/catalogs/adsets', getAdsetsCatalogHandler)
 router.get('/catalogs/ads', getAdsCatalogHandler)
 
 // Automatizaciones

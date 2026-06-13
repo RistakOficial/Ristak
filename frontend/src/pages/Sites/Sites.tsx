@@ -16971,7 +16971,13 @@ const SocialProfileSettings: React.FC<{
           }}
           onBlur={onSave}
         >
-          <option value="">{loadingSocialProfiles ? 'Buscando perfiles...' : 'Escribir manualmente'}</option>
+          <option value="">
+            {loadingSocialProfiles
+              ? 'Buscando perfiles...'
+              : connectedProfilesForPlatform.length > 0
+                ? 'Selecciona un perfil conectado'
+                : 'Sin perfiles conectados'}
+          </option>
           {connectedProfilesForPlatform.map(profile => (
             <option key={profile.id} value={profile.id}>{socialProfileOptionLabel(profile)}</option>
           ))}
@@ -16979,8 +16985,8 @@ const SocialProfileSettings: React.FC<{
       </label>
       <p className={styles.muted}>
         {connectedProfilesForPlatform.length > 0
-          ? 'Elige un perfil para llenar los datos. Despues puedes cambiar el texto, foto o seguidores aqui mismo.'
-          : 'Puedes llenar este perfil manualmente y moverlo dentro del formulario como cualquier bloque.'}
+          ? 'Elige un perfil conectado para llenar estos datos. Despues puedes ajustar texto, foto o seguidores aqui mismo.'
+          : 'No hay perfiles conectados para esta red. Puedes llenar este bloque manualmente mientras conectas la cuenta.'}
       </p>
       <label className={styles.field}>
         <span>Nombre que se vera</span>
