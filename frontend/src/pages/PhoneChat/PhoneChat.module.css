@@ -772,6 +772,38 @@
   font-weight: 650;
 }
 
+.chatItemAgentAction {
+  background: color-mix(in srgb, #ef4444 12%, var(--phone-chat-bg) 88%);
+}
+
+.chatItemAgentAction::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 999px 999px 0;
+  background: #ef4444;
+}
+
+.chatItemAgentAction::after {
+  background: color-mix(in srgb, #ef4444 30%, var(--phone-chat-border));
+}
+
+.chatItemAgentAction .chatMain strong {
+  color: #7f1d1d;
+  font-weight: 880;
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .chatItemAgentAction {
+  background: color-mix(in srgb, #ef4444 19%, var(--phone-chat-bg) 81%);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .chatItemAgentAction .chatMain strong {
+  color: #fecaca;
+}
+
 .avatar {
   position: relative;
   display: inline-flex;
@@ -927,6 +959,36 @@
 
 .avatarChannelBadgeSms {
   background: linear-gradient(145deg, #94a3b8 0%, #475569 52%, #1e293b 100%);
+}
+
+.avatarAgentBadge {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  border: 2px solid var(--phone-chat-bg);
+  border-radius: 999px;
+  color: #ffffff;
+  background: #ef4444;
+  box-shadow: 0 3px 8px rgba(127, 29, 29, 0.22);
+  pointer-events: none;
+}
+
+.avatarAgentBadge svg {
+  display: block;
+  stroke-width: 2.7;
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .avatarAgentBadge {
+  border-color: var(--phone-chat-bg);
+  color: #450a0a;
+  background: #fecaca;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.34);
 }
 
 :global(body[data-phone-chat-tone="dark"]) .avatarChannelBadge {

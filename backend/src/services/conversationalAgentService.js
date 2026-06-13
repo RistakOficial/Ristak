@@ -112,6 +112,7 @@ function mapConfigRow(row) {
       extraInstructions: '',
       allowEmojis: false,
       hideAttended: false,
+      hideAttendedNotifications: false,
       defaultCalendarId: null,
       closingStrategyMode: 'system',
       closingStrategyCustom: '',
@@ -130,6 +131,9 @@ function mapConfigRow(row) {
     extraInstructions: row.extra_instructions || '',
     allowEmojis: toBoolean(row.allow_emojis),
     hideAttended: toBoolean(row.hide_attended),
+    hideAttendedNotifications: row.hide_attended_notifications === null || row.hide_attended_notifications === undefined
+      ? toBoolean(row.hide_attended)
+      : toBoolean(row.hide_attended_notifications),
     defaultCalendarId: row.default_calendar_id || null,
     closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     closingStrategyCustom: row.closing_strategy_custom || '',
@@ -156,6 +160,7 @@ export async function saveConversationalAgentConfig(input = {}) {
     extraInstructions: input.extraInstructions === undefined ? current.extraInstructions : String(input.extraInstructions || '').slice(0, 8000),
     allowEmojis: input.allowEmojis === undefined ? current.allowEmojis : toBoolean(input.allowEmojis),
     hideAttended: input.hideAttended === undefined ? current.hideAttended : toBoolean(input.hideAttended),
+    hideAttendedNotifications: input.hideAttendedNotifications === undefined ? current.hideAttendedNotifications : toBoolean(input.hideAttendedNotifications),
     defaultCalendarId: input.defaultCalendarId === undefined ? current.defaultCalendarId : (String(input.defaultCalendarId || '').trim() || null),
     closingStrategyMode: input.closingStrategyMode === undefined
       ? current.closingStrategyMode
@@ -171,14 +176,14 @@ export async function saveConversationalAgentConfig(input = {}) {
       UPDATE conversational_agent_config
       SET enabled = ?, model = ?, objective = ?, custom_objective = ?, success_action = ?,
           required_data = ?, handoff_rules = ?, extra_instructions = ?,
-          allow_emojis = ?, hide_attended = ?, default_calendar_id = ?,
+          allow_emojis = ?, hide_attended = ?, hide_attended_notifications = ?, default_calendar_id = ?,
           closing_strategy_mode = ?, closing_strategy_custom = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = 1
     `, [
       next.enabled ? 1 : 0, next.model, next.objective, next.customObjective, next.successAction,
       next.requiredData, next.handoffRules, next.extraInstructions,
-      next.allowEmojis ? 1 : 0, next.hideAttended ? 1 : 0, next.defaultCalendarId,
+      next.allowEmojis ? 1 : 0, next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
       next.closingStrategyMode, next.closingStrategyCustom
     ])
   } else {
@@ -186,13 +191,13 @@ export async function saveConversationalAgentConfig(input = {}) {
       INSERT INTO conversational_agent_config (
         id, enabled, model, objective, custom_objective, success_action,
         required_data, handoff_rules, extra_instructions,
-        allow_emojis, hide_attended, default_calendar_id,
+        allow_emojis, hide_attended, hide_attended_notifications, default_calendar_id,
         closing_strategy_mode, closing_strategy_custom
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       next.enabled ? 1 : 0, next.model, next.objective, next.customObjective, next.successAction,
       next.requiredData, next.handoffRules, next.extraInstructions,
-      next.allowEmojis ? 1 : 0, next.hideAttended ? 1 : 0, next.defaultCalendarId,
+      next.allowEmojis ? 1 : 0, next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
       next.closingStrategyMode, next.closingStrategyCustom
     ])
   }
@@ -1720,6 +1725,14 @@ export async function markHumanTakeoverIfActive(contactId, { updatedBy = 'human'
   if (!state || state.status !== 'active') return state
   logger.info(`[Agente conversacional] Humano tomó la conversación de ${contactId}; el agente deja de responder`)
   return setConversationStatus(contactId, 'human', { updatedBy })
+}
+
+export async function shouldSuppressChatNotificationForConversationalAgent(contactId) {
+  if (!contactId) return false
+  const config = await getConversationalAgentConfig()
+  if (!config.enabled || !config.hideAttendedNotifications) return false
+  const state = await getConversationState(contactId)
+  return Boolean(state?.status === 'active' && !state.signal)
 }
 
 /**

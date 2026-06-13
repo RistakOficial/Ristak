@@ -879,7 +879,7 @@ export const ConversationalAgentSettings: React.FC = () => {
     scheduleAgentSave(agentId)
   }
 
-  const handleGlobalChange = async (patch: { enabled?: boolean; hideAttended?: boolean; model?: string }) => {
+  const handleGlobalChange = async (patch: { enabled?: boolean; hideAttended?: boolean; hideAttendedNotifications?: boolean; model?: string }) => {
     try {
       const next = await conversationalAgentService.saveConfig(patch)
       setConfig(next)
@@ -991,7 +991,16 @@ export const ConversationalAgentSettings: React.FC = () => {
               />
               <span>Ocultar chats que el agente ya está atendiendo</span>
             </label>
-            <p className={styles.helper}>Vuelven a aparecer si necesita ayuda o ya cumplió su meta.</p>
+            <label className={`${styles.inlineToggle} ${styles.compactToggle}`}>
+              <input
+                type="checkbox"
+                checked={Boolean(config?.hideAttendedNotifications)}
+                disabled={loading || !config}
+                onChange={(event) => handleGlobalChange({ hideAttendedNotifications: event.target.checked })}
+              />
+              <span>Silenciar notificaciones de chats atendidos</span>
+            </label>
+            <p className={styles.helper}>Si el agente necesita humano o cumple su meta, el chat vuelve a subir como pendiente.</p>
           </div>
         </div>
       </Card>

@@ -291,7 +291,7 @@ async function sendScheduledChatMessage(row) {
       fromNumber: row.from_phone,
       toNumber: row.to_phone,
       externalId: row.external_id || row.id
-    })
+    }, { markHumanTakeover: false })
   }
 
   return sendWhatsAppApiTextMessage({

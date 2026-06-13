@@ -3258,6 +3258,17 @@ export const PhoneChat: React.FC = () => {
     [agentPriorityStates]
   )
   const agentPriorityCount = agentPriorityStates.length
+  const agentPriorityChatRows = useMemo(() => {
+    if (archivedViewOpen || agentPriorityViewOpen || chatFilter !== 'all') return []
+    return chats
+      .filter((contact) => agentPriorityChatIdSet.has(contact.id))
+      .sort((left, right) => {
+        const leftState = agentStates[left.id]
+        const rightState = agentStates[right.id]
+        return Date.parse(rightState?.signalAt || right.lastMessageDate || right.createdAt) -
+          Date.parse(leftState?.signalAt || left.lastMessageDate || left.createdAt)
+      })
+  }, [agentPriorityChatIdSet, agentPriorityViewOpen, agentStates, archivedViewOpen, chatFilter, chats])
   const agentActiveChatIdSet = useMemo(() => {
     if (!agentEnabled) return new Set<string>()
     return new Set(
@@ -3310,8 +3321,8 @@ export const PhoneChat: React.FC = () => {
       if (agentPriorityViewOpen) return agentPriorityChatIdSet.has(contact.id)
       if (archivedViewOpen) return archivedChatIdSet.has(contact.id)
       if (archivedChatIdSet.has(contact.id)) return false
-      // Las conversaciones con señal del agente viven en su propia sección
-      if (agentEnabled && agentPriorityChatIdSet.has(contact.id)) return false
+      // Las conversaciones con señal del agente suben como filas de acción.
+      if (agentPriorityChatIdSet.has(contact.id)) return false
       // "Ocultar atendidas por el agente": solo reaparecen con señal o humano
       if (agentHiddenChatIdSet.has(contact.id)) return false
       return true
@@ -3575,6 +3586,7 @@ export const PhoneChat: React.FC = () => {
   const saveAgentConfigPatch = useCallback(async (patch: Partial<{
     enabled: boolean
     hideAttended: boolean
+    hideAttendedNotifications: boolean
   }>) => {
     setAgentConfigSaving(true)
     try {
@@ -7067,7 +7079,7 @@ export const PhoneChat: React.FC = () => {
     return <MessageCircle size={12} />
   }
 
-  const renderAvatar = (contact: Contact, options: { showChannelBadge?: boolean } = {}) => {
+  const renderAvatar = (contact: Contact, options: { showChannelBadge?: boolean; showAgentBadge?: boolean } = {}) => {
     const photoUrl = getContactProfilePhoto(contact as Partial<Contact> & Record<string, unknown>)
     const chatContact = contact as ChatContact
     const avatarChannelClass = getAvatarChannelClass(chatContact)
@@ -7085,6 +7097,15 @@ export const PhoneChat: React.FC = () => {
             aria-label={`Canal: ${channelBadge.label}`}
           >
             {renderChannelBadgeIcon(channelBadge.kind)}
+          </span>
+        )}
+        {options.showAgentBadge && (
+          <span
+            className={styles.avatarAgentBadge}
+            title="Necesita acción del agente"
+            aria-label="Necesita acción del agente"
+          >
+            <Bot size={11} />
           </span>
         )}
       </span>
@@ -7140,10 +7161,12 @@ export const PhoneChat: React.FC = () => {
     const hasUnread = showUnreadIndicators && source === 'chat' && unreadCount > 0
     const isArchived = archivedChatIdSet.has(contact.id)
     const isMuted = mutedChatIdSet.has(contact.id)
+    const agentState = source === 'chat' ? agentStates[contact.id] || null : null
+    const isAgentActionChat = Boolean(agentState?.signal && agentState.signal !== 'discarded')
 
     const content = (
       <>
-        {renderAvatar(contact, { showChannelBadge: source === 'chat' })}
+        {renderAvatar(contact, { showChannelBadge: source === 'chat', showAgentBadge: isAgentActionChat })}
         <span className={styles.chatMain}>
           <strong>{getContactName(contact)}</strong>
           <small>{subtitle}</small>
@@ -7236,7 +7259,7 @@ export const PhoneChat: React.FC = () => {
         <div
           role="button"
           tabIndex={0}
-          className={`${styles.chatItem} ${styles.chatSwipeContent} ${hasUnread ? styles.chatItemUnread : ''}`}
+          className={`${styles.chatItem} ${styles.chatSwipeContent} ${hasUnread ? styles.chatItemUnread : ''} ${isAgentActionChat ? styles.chatItemAgentAction : ''}`}
           style={{ transform: `translate3d(-${swipeOffset}px, 0, 0)` }}
           onTransitionEnd={(event) => handleChatSwipeContentTransitionEnd(contact.id, event)}
           onClick={() => handleChatItemPress(contact)}
@@ -7903,36 +7926,7 @@ export const PhoneChat: React.FC = () => {
           </div>
         )}
         {showAIAgentListItem && renderAIAgentChatButton()}
-        {agentPriorityViewOpen && (
-          <button
-            type="button"
-            className={`${styles.archiveRow} ${styles.archiveRowActive}`}
-            onClick={() => setAgentPriorityViewOpen(false)}
-          >
-            <span className={`${styles.archiveRowIcon} ${styles.agentPriorityRowIcon}`}>
-              <ChevronLeft size={22} />
-            </span>
-            <strong>Prioritarios del agente</strong>
-            <span>{agentPriorityCount}</span>
-          </button>
-        )}
-        {agentEnabled && !agentPriorityViewOpen && !archivedViewOpen && agentPriorityCount > 0 && (
-          <button
-            type="button"
-            className={styles.archiveRow}
-            onClick={() => {
-              setArchivedViewOpen(false)
-              setAgentPriorityViewOpen(true)
-            }}
-            aria-label={`Ver ${agentPriorityCount} conversaciones prioritarias del agente`}
-          >
-            <span className={`${styles.archiveRowIcon} ${styles.agentPriorityRowIcon}`}>
-              <Bot size={22} />
-            </span>
-            <strong>Prioritarios del agente</strong>
-            <span>{agentPriorityCount}</span>
-          </button>
-        )}
+        {agentPriorityChatRows.map((contact) => renderContactButton(contact, 'chat'))}
         {archivedViewOpen && (
           <button
             type="button"
@@ -7960,7 +7954,7 @@ export const PhoneChat: React.FC = () => {
             <span>{archivedChatCount}</span>
           </button>
         )}
-        {filteredChats.length > 0 ? (
+        {filteredChats.length + agentPriorityChatRows.length > 0 ? (
           filteredChats.map((contact) => renderContactButton(contact, 'chat'))
         ) : (
           <div className={styles.emptyChats}>
@@ -10637,6 +10631,19 @@ export const PhoneChat: React.FC = () => {
             checked={Boolean(agentConfig?.hideAttended)}
             disabled={agentConfigSaving || !agentConfig}
             onChange={(event) => saveAgentConfigPatch({ hideAttended: event.target.checked })}
+          />
+        </label>
+
+        <label className={styles.toggleRow}>
+          <span>
+            <strong>Silenciar notificaciones atendidas</strong>
+            <small>No avisa mientras el agente responde; si pide humano, vuelve a subir el chat.</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={Boolean(agentConfig?.hideAttendedNotifications)}
+            disabled={agentConfigSaving || !agentConfig}
+            onChange={(event) => saveAgentConfigPatch({ hideAttendedNotifications: event.target.checked })}
           />
         </label>
 

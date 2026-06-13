@@ -4,6 +4,7 @@ import http2 from 'http2'
 import webPush from 'web-push'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { shouldSuppressChatNotificationForConversationalAgent } from './conversationalAgentService.js'
 
 const ENV_VAPID_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || ''
 const ENV_VAPID_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || process.env.VAPID_PRIVATE_KEY || ''
@@ -841,6 +842,14 @@ export async function sendChatMessageNotification(message = {}) {
 
   const enabled = await getBooleanPushConfig('chat_push_notifications_enabled', true)
   if (!enabled) return { sent: 0, skipped: true, reason: 'disabled' }
+
+  const suppressByAgent = await shouldSuppressChatNotificationForConversationalAgent(message.contactId).catch((error) => {
+    logger.warn(`[Push] No se pudo revisar silencio del agente conversacional: ${error.message}`)
+    return false
+  })
+  if (suppressByAgent) {
+    return { sent: 0, skipped: true, reason: 'conversational_agent_attending' }
+  }
 
   const senderName = getChatSenderName(message)
   const bodyText = getChatMessageBody(message)

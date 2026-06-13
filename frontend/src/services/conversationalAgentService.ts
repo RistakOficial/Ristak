@@ -41,6 +41,7 @@ export interface ConversationalAgentConfig {
   extraInstructions: string
   allowEmojis: boolean
   hideAttended: boolean
+  hideAttendedNotifications: boolean
   defaultCalendarId: string | null
   closingStrategyMode: ClosingStrategyMode
   closingStrategyCustom: string
@@ -61,6 +62,7 @@ export interface ConversationalAgentConfigInput {
   extraInstructions?: string
   allowEmojis?: boolean
   hideAttended?: boolean
+  hideAttendedNotifications?: boolean
   defaultCalendarId?: string | null
   closingStrategyMode?: ClosingStrategyMode
   closingStrategyCustom?: string

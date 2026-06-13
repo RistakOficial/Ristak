@@ -3099,6 +3099,7 @@ async function initTables() {
         extra_instructions TEXT,
         allow_emojis INTEGER DEFAULT 0,
         hide_attended INTEGER DEFAULT 0,
+        hide_attended_notifications INTEGER DEFAULT 0,
         default_calendar_id TEXT,
         closing_strategy_mode TEXT DEFAULT 'system',
         closing_strategy_custom TEXT,
@@ -3110,6 +3111,7 @@ async function initTables() {
     // Columnas agregadas después del despliegue inicial del agente conversacional
     for (const [columnName, columnType] of [
       ['model', "TEXT DEFAULT 'gpt-5.4-nano'"],
+      ['hide_attended_notifications', 'INTEGER'],
       ['closing_strategy_mode', "TEXT DEFAULT 'system'"],
       ['closing_strategy_custom', 'TEXT']
     ]) {

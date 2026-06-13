@@ -10,6 +10,7 @@ import { getGHLClient } from '../services/ghlClient.js';
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js';
 import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
 import { sendPaymentNotification } from '../services/pushNotificationsService.js';
+import { markHumanTakeoverIfActive } from '../services/conversationalAgentService.js';
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
 import {
@@ -2310,7 +2311,7 @@ function createHighLevelChatError(message, statusCode = 400) {
   return error;
 }
 
-export async function sendHighLevelConversationMessageCore(payload = {}, { req } = {}) {
+export async function sendHighLevelConversationMessageCore(payload = {}, { req, markHumanTakeover = true } = {}) {
   const {
     contactId,
     channel,
@@ -2405,6 +2406,12 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req }
         requestBody,
         response
       });
+
+  if (markHumanTakeover) {
+    markHumanTakeoverIfActive(contact.id, { updatedBy: 'human' }).catch(error => {
+      logger.warn(`[Agente conversacional] No se pudo marcar toma humana desde HighLevel: ${error.message}`);
+    });
+  }
 
   return {
     ...response,
