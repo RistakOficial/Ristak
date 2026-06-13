@@ -1694,13 +1694,6 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       unit: 'days',
       // fecha específica (la zona horaria viene de la configuración del flujo)
       untilDate: '',
-      // recurrente
-      recurrence: 'weekly',
-      weekdays: [],
-      monthDay: 1,
-      timeOfDay: '09:00',
-      startDate: '',
-      endDate: '',
       // cita
       calendar: '',
       calendarName: '',
@@ -1764,18 +1757,14 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       const errors: string[] = []
       const mode = str(config.mode)
       if (!mode) return ['Selecciona el tipo de espera']
+      const allowedModes = new Set(['duration', 'datetime', 'appointment', 'reply', 'action', 'conditions'])
+      if (!allowedModes.has(mode)) return ['Selecciona un tipo de espera disponible']
 
       if (mode === 'duration' && (Number(config.amount) || 0) <= 0) {
         errors.push('La duración debe ser mayor a cero')
       }
       if (mode === 'datetime' && !str(config.untilDate)) {
         errors.push('Selecciona la fecha y hora de espera')
-      }
-      if (mode === 'recurring') {
-        if (str(config.recurrence) === 'weekly' && arr(config.weekdays).length === 0) {
-          errors.push('Selecciona al menos un día de la semana')
-        }
-        if (!str(config.timeOfDay)) errors.push('Define la hora de continuación')
       }
       if (mode === 'appointment') {
         if ((Number(config.offsetAmount) || 0) <= 0 && str(config.appointmentOffset) !== 'at') {
@@ -1809,6 +1798,9 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     },
     summary: (config) => {
       const mode = str(config.mode)
+      if (mode && !['duration', 'datetime', 'appointment', 'reply', 'action', 'conditions'].includes(mode)) {
+        return { empty: 'Selecciona un tipo de espera disponible' }
+      }
       const timeoutText = config.timeoutEnabled
         ? ` hasta ${durationLabel(Number(config.timeoutAmount) || 0, str(config.timeoutUnit) || 'days')}`
         : ''
@@ -1818,10 +1810,6 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       if (mode === 'datetime') {
         const until = str(config.untilDate)
         return { text: until ? `Espera hasta ${until.replace('T', ' ')}` : undefined, empty: 'Configura la espera' }
-      }
-      if (mode === 'recurring') {
-        const recurrences: Record<string, string> = { daily: 'cada día', weekly: 'cada semana', monthly: 'cada mes' }
-        return { text: `Continúa ${recurrences[str(config.recurrence)] || ''} a las ${str(config.timeOfDay) || '09:00'}` }
       }
       if (mode === 'appointment') {
         const offsets: Record<string, string> = { before: 'antes de', after: 'después de', at: 'al inicio de' }
