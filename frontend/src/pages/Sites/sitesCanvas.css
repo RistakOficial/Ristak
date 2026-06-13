@@ -70,9 +70,14 @@
 
 .rstkCanvas .rstk-section-lane.rstk-block-style,
 .rstkCanvas .rstk-section-lane {
+  position: relative;
   width: 100%;
   margin: var(--rstk-block-margin, 0);
-  background: var(--rstk-block-bg, transparent);
+  background-color: var(--rstk-block-bg-color, var(--rstk-block-bg, transparent));
+  background-image: var(--rstk-block-bg-layer, none), var(--rstk-block-bg-image, none);
+  background-position: center center, var(--rstk-block-bg-position, center center);
+  background-repeat: no-repeat, var(--rstk-block-bg-repeat, no-repeat);
+  background-size: 100% 100%, var(--rstk-block-bg-size, cover);
   color: var(--rstk-block-text, var(--rstk-ink));
   border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, transparent);
   border-radius: var(--rstk-block-radius, 0);
@@ -108,16 +113,24 @@
 }
 .rstkCanvas .rstk-section-column > .rstk-block-style {
   --rstk-block-bg: transparent;
+  --rstk-block-bg-color: transparent;
+  --rstk-block-bg-layer: none;
+  --rstk-block-bg-image: none;
   --rstk-block-border: transparent;
   --rstk-block-border-width: 0px;
   --rstk-block-shell-border-width: 0px;
 }
 
 .rstkCanvas .rstk-block-style {
+  position: relative;
   width: auto;
   min-width: 0;
   margin: var(--rstk-block-margin, 0);
-  background: var(--rstk-block-bg, transparent);
+  background-color: var(--rstk-block-bg-color, var(--rstk-block-bg, transparent));
+  background-image: var(--rstk-block-bg-layer, none), var(--rstk-block-bg-image, none);
+  background-position: center center, var(--rstk-block-bg-position, center center);
+  background-repeat: no-repeat, var(--rstk-block-bg-repeat, no-repeat);
+  background-size: 100% 100%, var(--rstk-block-bg-size, cover);
   color: var(--rstk-block-text, var(--rstk-ink));
   font-family: var(--rstk-block-font, var(--rstk-font));
   font-size: var(--rstk-block-size, inherit);
@@ -126,6 +139,23 @@
   border: var(--rstk-block-shell-border-width, 0) solid var(--rstk-block-border, transparent);
   border-radius: var(--rstk-block-radius, 0);
   padding: var(--rstk-block-pad, 0);
+}
+.rstkCanvas .rstkHasBgVideo {
+  isolation: isolate;
+  overflow: hidden;
+}
+.rstkCanvas .rstk-block-bg-video {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: var(--rstk-block-bg-size, cover);
+  pointer-events: none;
+}
+.rstkCanvas .rstkHasBgVideo > :not(.rstk-block-bg-video) {
+  position: relative;
+  z-index: 1;
 }
 .rstkCanvas .rstkHeaderPanelBlock { z-index: 6; }
 .rstkCanvas .rstkFooterPanelBlock { z-index: 1; }
@@ -194,11 +224,11 @@
 
 .rstkCanvas .rstk-button-link, .rstkCanvas .rstk-actions button {
   -webkit-appearance: none; appearance: none; cursor: pointer;
-  min-height: var(--rstk-button-height, 50px); display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: var(--rstk-button-height, 50px); display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
   border: var(--rstk-button-border-width, 1px) solid var(--rstk-button-border, var(--rstk-button-bg, var(--rstk-accent))); border-radius: var(--rstk-block-button-radius, var(--rstk-btn-radius));
   background: var(--rstk-button-bg, var(--rstk-accent)); color: var(--rstk-button-text, var(--rstk-on-accent));
-  font: inherit; font-weight: var(--rstk-btn-weight); font-size: var(--rstk-button-size, 1.02rem); line-height: 1;
-  padding: 0 var(--rstk-button-pad-x, 22px); text-decoration: none;
+  font-family: var(--rstk-button-font, inherit); font-weight: var(--rstk-button-weight, var(--rstk-btn-weight)); font-size: var(--rstk-button-size, 1.02rem); font-style: var(--rstk-button-font-style, normal); line-height: 1.08;
+  padding: 8px var(--rstk-button-pad-x, 22px); text-decoration: var(--rstk-button-text-decoration, none);
 }
 .rstkCanvas .rstk-button-link {
   justify-self: var(--rstk-button-justify, center);
@@ -207,7 +237,7 @@
   margin-right: var(--rstk-button-margin-right, auto);
 }
 .rstkCanvas .rstk-button-label { display: inline-block; }
-.rstkCanvas .rstk-button-subtitle { display: block; font-size: .78em; font-weight: 650; line-height: 1.25; opacity: .82; }
+.rstkCanvas .rstk-button-subtitle { display: block; font-size: var(--rstk-button-subtitle-size, .78em); font-weight: 650; line-height: 1.25; opacity: .82; }
 .rstkCanvas.rstk-centered .rstk-button-link { margin-inline: auto; }
 .rstkCanvas .rstk-secondary { background: transparent !important; color: var(--rstk-ink) !important; border-color: var(--rstk-border) !important; }
 
@@ -228,9 +258,10 @@
 .rstkCanvas .rstk-check-body span { color: var(--rstk-muted); font-size: .92rem; }
 
 .rstkCanvas .rstk-media, .rstkCanvas .rstk-video { width: 100%; margin: 0; overflow: hidden; border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border)); border-radius: var(--rstk-media-radius, var(--rstk-block-radius, var(--rstk-radius))); background: var(--rstk-block-bg, var(--rstk-surface2)); }
-.rstkCanvas .rstk-media img, .rstkCanvas .rstk-video iframe { width: 100%; display: block; border: 0; }
+.rstkCanvas .rstk-media img, .rstkCanvas .rstk-video iframe, .rstkCanvas .rstk-video video { width: 100%; display: block; border: 0; }
 .rstkCanvas .rstk-video { aspect-ratio: 16/9; position: relative; }
-.rstkCanvas .rstk-video iframe { height: 100%; }
+.rstkCanvas .rstk-video iframe, .rstkCanvas .rstk-video video { height: 100%; }
+.rstkCanvas .rstk-video video { background: #000; object-fit: cover; }
 .rstkCanvas .rstk-media-empty { min-height: 190px; display: grid; place-items: center; gap: 8px; color: var(--rstk-muted); font-size: .92rem; }
 .rstkCanvas .rstk-play { display: grid; place-items: center; width: 58px; height: 58px; border-radius: 50%; background: var(--rstk-accent); color: var(--rstk-on-accent); }
 
@@ -243,6 +274,19 @@
 .rstkCanvas .rstk-site-panel-footer .rstk-site-panel-links { justify-content: center; }
 
 .rstkCanvas .rstk-field { display: grid; gap: 8px; text-align: left; }
+.rstkCanvas .rstk-embedded-form > .rstk-field,
+.rstkCanvas .rstk-embedded-form > .rstk-options,
+.rstkCanvas .rstk-embedded-form > .rstk-actions {
+  width: min(100%, 560px);
+  justify-self: center;
+}
+.rstkCanvas .rstk-embedded-form > .rstk-field {
+  text-align: left;
+}
+.rstkCanvas .rstk-embedded-form > .rstk-help {
+  width: min(100%, 620px);
+  justify-self: center;
+}
 .rstkCanvas.rstk-kind-form .rstk-form { font-family: var(--rstk-form-font, var(--rstk-font)); }
 .rstkCanvas label { font-size: .95rem; font-weight: 700; color: var(--rstk-ink); }
 .rstkCanvas.rstk-kind-form .rstk-field > label {

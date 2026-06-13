@@ -7,6 +7,43 @@
   display: none;
 }
 
+.mediaUploadControl {
+  min-width: 0;
+}
+
+.mediaUploadControl button {
+  width: 100%;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--design-control-border, rgba(148, 163, 184, 0.24));
+  border-radius: var(--design-control-radius, 8px);
+  background: var(--design-control-bg, var(--color-background-primary));
+  color: var(--color-text-primary);
+  padding: 0 12px;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.mediaUploadControl button:hover:not(:disabled) {
+  border-color: var(--design-control-border-hover, rgba(148, 163, 184, 0.42));
+  background: var(--design-control-bg-hover, rgba(148, 163, 184, 0.1));
+}
+
+.mediaUploadControl button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.sectionBackgroundMedia {
+  display: grid;
+  gap: 10px;
+}
+
 .importedEditorPanel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(350px, 410px);
@@ -13683,4 +13720,26 @@
     min-width: 126px;
     justify-content: flex-start;
   }
+}
+
+.pageFrame .containerFocused:has(.builder) .blocksRail {
+  overflow-y: scroll;
+  overflow-x: hidden;
+  scrollbar-gutter: stable both-edges;
+  padding-bottom: 24px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .palette {
+  min-width: 0;
+  min-height: 0;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .paletteGroups {
+  min-width: 0;
+  padding-bottom: 24px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .paletteItem {
+  box-sizing: border-box;
+  flex-shrink: 0;
 }

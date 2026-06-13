@@ -41,7 +41,10 @@ class ApiClient {
     }
 
     const headers = new Headers(fetchOptions.headers)
-    headers.set('Content-Type', 'application/json')
+    const isFormDataBody = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData
+    if (!isFormDataBody && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
     Object.entries(this.getAuthHeaders()).forEach(([key, value]) => {
       headers.set(key, value)
     })
@@ -96,6 +99,14 @@ class ApiClient {
       ...options,
       method: 'POST',
       body: JSON.stringify(body),
+    })
+  }
+
+  async postForm<T>(endpoint: string, body: FormData, options?: ApiRequestOptions): Promise<T> {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'POST',
+      body,
     })
   }
 

@@ -12,6 +12,20 @@ export interface MediaAsset {
 }
 
 export const mediaService = {
+  uploadFile(input: {
+    file: File
+    module?: string
+    moduleEntityId?: string
+    isPublic?: boolean
+  }): Promise<MediaAsset> {
+    const formData = new FormData()
+    formData.append('file', input.file)
+    formData.append('module', input.module || 'other')
+    formData.append('isPublic', String(input.isPublic ?? true))
+    if (input.moduleEntityId) formData.append('moduleEntityId', input.moduleEntityId)
+    return apiClient.postForm<MediaAsset>('/media/upload', formData)
+  },
+
   uploadDataUrl(input: {
     fileBase64: string
     filename: string
@@ -34,4 +48,3 @@ export const mediaService = {
 }
 
 export default mediaService
-

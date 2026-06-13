@@ -267,7 +267,7 @@ const isCssGradient = (value?: string): value is string => {
 const normalizeCssColor = (value: string, fallback: string) => {
   const raw = String(value || '').trim().toLowerCase()
   if (!raw) return fallback
-  if (raw === 'transparent') return 'rgba(0, 0, 0, 0)'
+  if (raw === 'transparent') return 'rgba(255, 255, 255, 0)'
   if (isHex6(raw)) return raw
   if (!isCssColor(raw)) return fallback
   const match = raw.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i)
@@ -385,16 +385,17 @@ type Overrides = { vars?: TemplateVars; accent?: string }
 
 const resolveRenderOverrides = (template: Template, theme: PublicSite['theme'], isLandingType: boolean): Overrides => {
   if (template.chrome !== 'none') return {}
+  const hasExplicitBg = typeof theme.backgroundColor === 'string' && theme.backgroundColor.trim() !== ''
   const paintColor = (value?: string) => {
     const paint = normalizeCssPaint(value, '')
     return paint ? paintFallbackColor(paint, '') : null
   }
   const rawBg = paintColor(theme.backgroundColor)
-  const userBg = rawBg && rawBg.toLowerCase() !== DEFAULT_BG ? rawBg : null
+  const userBg = rawBg && (hasExplicitBg || rawBg.toLowerCase() !== DEFAULT_BG) ? rawBg : null
   const rawAccent = paintColor(theme.accentColor)
   const userAccent = rawAccent && rawAccent.toLowerCase() !== DEFAULT_ACCENT.toLowerCase() ? rawAccent : null
   if (isLandingType) {
-    return { vars: deriveNeutralVars(template, userBg || '#08080a', userAccent) }
+    return { vars: deriveNeutralVars(template, userBg || template.vars.pageBg, userAccent) }
   }
   if (userBg) {
     return { vars: deriveNeutralVars(template, userBg, userAccent) }

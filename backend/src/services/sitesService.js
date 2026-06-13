@@ -8584,6 +8584,21 @@ function safeUrl(value) {
   }
 }
 
+function safePublicMediaUrl(value, kind = 'image') {
+  const raw = cleanString(value)
+  if (!raw) return ''
+  if (raw.startsWith('/')) return raw.replace(/["\\\n\r]/g, '')
+  if (kind === 'image' && /^data:image\//i.test(raw)) return raw
+  if (kind === 'video' && /^data:video\//i.test(raw)) return raw
+  return safeUrl(raw)
+}
+
+function isDirectVideoUrl(value) {
+  const url = safePublicMediaUrl(value, 'video')
+  if (!url) return false
+  return /^data:video\//i.test(url) || /\.(mp4|m4v|mov|webm|ogg|ogv|m3u8)(?:[?#]|$)/i.test(url.split('?')[0] || url)
+}
+
 // Watch/share URLs (YouTube, Vimeo, Loom, Wistia) refuse to load inside an
 // iframe; convert them to their embeddable player URL.
 function normalizeVideoEmbedUrl(value) {
@@ -10120,7 +10135,9 @@ function renderBlockStyleVars(block) {
   const fieldBg = blockSettingPaint(settings, 'fieldBg')
   const fieldBorder = blockSettingPaint(settings, 'fieldBorder')
   const fontFamily = cleanString(settings.fontFamily)
+  const buttonFontFamily = cleanString(settings.buttonFontFamily)
   const textStrokeColor = blockSettingPaint(settings, 'textStrokeColor')
+  const blockBackgroundImage = cleanString(settings.blockBackgroundImage)
   const fontSize = blockSettingNumber(settings, 'fontSize', 12, 96)
   const textStrokeWidth = blockSettingNumber(settings, 'textStrokeWidth', 0, 12)
   const contentMaxWidth = blockSettingNumber(settings, 'contentMaxWidth', 10, 120)
@@ -10148,7 +10165,19 @@ function renderBlockStyleVars(block) {
   const blockHasNativeBorder = ['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'embed', 'calendar_embed'].includes(block.blockType)
   const supportsButton = ['hero', 'button', 'cta'].includes(block.blockType)
 
-  if (blockBg) vars.push(`--rstk-block-bg:${blockBg}`)
+  if (blockBg) {
+    vars.push(`--rstk-block-bg:${blockBg}`)
+    vars.push(`--rstk-block-bg-layer:${paintLayer(blockBg)}`)
+    vars.push(`--rstk-block-bg-color:${isCssGradient(blockBg) ? 'transparent' : blockBg}`)
+  }
+  if (blockBackgroundImage && cleanString(settings.blockBackgroundMediaType) !== 'video') {
+    const imageLayer = cssImageUrl(blockBackgroundImage)
+    if (imageLayer) {
+      vars.push(`--rstk-block-bg-image:${imageLayer}`)
+      vars.push(`--rstk-block-bg-size:${backgroundFitValue(settings.blockBackgroundFit)}`)
+      vars.push(`--rstk-block-bg-position:${backgroundPositionValue(settings.blockBackgroundPosition)}`)
+    }
+  }
   if (blockText) {
     vars.push(`--rstk-block-text:${paintFallbackColor(blockText, '#111827')}`)
     if (isCssGradient(blockText)) vars.push(`--rstk-block-text-paint:${blockText}`)
@@ -10168,6 +10197,7 @@ function renderBlockStyleVars(block) {
   if (fieldBg) vars.push(`--rstk-field-bg:${fieldBg}`)
   if (fieldBorder) vars.push(`--rstk-field-border:${paintFallbackColor(fieldBorder, '#dbe3ef')}`)
   if (fontFamily) vars.push(`--rstk-block-font:${fontFamily.replace(/[;"{}<>]/g, '')}`)
+  if (buttonFontFamily) vars.push(`--rstk-button-font:${buttonFontFamily.replace(/[;"{}<>]/g, '')}`)
   if (settings.fontStyle === 'italic') vars.push('--rstk-block-font-style:italic')
   if (settings.textDecoration === 'underline') vars.push('--rstk-block-text-decoration:underline')
   if (textStrokeWidth !== null) vars.push(`--rstk-text-stroke-width:${textStrokeWidth}px`)
@@ -10194,16 +10224,25 @@ function renderBlockStyleVars(block) {
   if (supportsButton) {
     const align = blockButtonAlign(settings, 'center')
     const margins = marginForAlign(align)
+    const buttonWidth = blockSettingNumber(settings, 'buttonWidth', 0, 100)
     vars.push(`--rstk-button-justify:${justifyForAlign(align)}`)
     vars.push(`--rstk-button-margin-left:${margins.left}`)
     vars.push(`--rstk-button-margin-right:${margins.right}`)
-    vars.push(`--rstk-button-width:${align === 'full' ? '100%' : 'fit-content'}`)
+    vars.push(`--rstk-button-width:${align === 'full' ? '100%' : buttonWidth && buttonWidth > 0 ? `${buttonWidth}%` : 'fit-content'}`)
   }
   if (buttonRadius !== null) vars.push(`--rstk-block-button-radius:${buttonRadius}px`)
   if (buttonHeight !== null) vars.push(`--rstk-button-height:${buttonHeight}px`)
   if (buttonPaddingX !== null) vars.push(`--rstk-button-pad-x:${buttonPaddingX}px`)
   if (buttonFontSize !== null) vars.push(`--rstk-button-size:${buttonFontSize}px`)
+  if (settings.buttonSubtitleFontSize !== undefined) {
+    const buttonSubtitleFontSize = blockSettingNumber(settings, 'buttonSubtitleFontSize', 10, 24)
+    if (buttonSubtitleFontSize !== null) vars.push(`--rstk-button-subtitle-size:${buttonSubtitleFontSize}px`)
+  }
   if (buttonBorderWidth !== null) vars.push(`--rstk-button-border-width:${buttonBorderWidth}px`)
+  if (settings.buttonFontWeight === 'bold') vars.push('--rstk-button-weight:850')
+  if (settings.buttonFontWeight === 'normal') vars.push('--rstk-button-weight:400')
+  if (settings.buttonFontStyle === 'italic') vars.push('--rstk-button-font-style:italic')
+  if (settings.buttonTextDecoration === 'underline') vars.push('--rstk-button-text-decoration:underline')
   if (mediaWidth !== null) vars.push(`--rstk-media-width:${mediaWidth}%`)
   if (settings.mediaAlign !== undefined) {
     const align = blockHorizontalAlign(settings, 'mediaAlign', 'center')
@@ -10236,6 +10275,7 @@ function renderBlockStyleClassName(block) {
     cleanString(settings.blockText) ? 'rstkBlockTextOverride' : '',
     isCssGradient(settings.blockText) ? 'rstkTextGradient' : '',
     isCssGradient(settings.buttonTextColor) ? 'rstkButtonTextGradient' : '',
+    cleanString(settings.blockBackgroundMediaType) === 'video' && safePublicMediaUrl(settings.blockBackgroundImage, 'video') ? 'rstkHasBgVideo' : '',
     cleanString(settings.fontFamily) ? 'rstkFontOverride' : '',
     settings.fontSize !== undefined ? 'rstkSizeOverride' : '',
     settings.fontWeight === 'bold' || settings.fontWeight === 'normal' ? 'rstkWeightOverride' : '',
@@ -10247,10 +10287,19 @@ function renderBlockStyleClassName(block) {
   return classes.join(' ')
 }
 
+function renderBlockBackgroundVideo(block) {
+  const settings = block?.settings || {}
+  if (cleanString(settings.blockBackgroundMediaType) !== 'video') return ''
+  const src = safePublicMediaUrl(settings.blockBackgroundImage, 'video')
+  if (!src) return ''
+  return `<video class="rstk-block-bg-video" src="${escapeHtml(src)}" autoplay muted loop playsinline aria-hidden="true"></video>`
+}
+
 function wrapRenderedBlock(block, html) {
   const style = renderBlockStyleVars(block)
   const className = renderBlockStyleClassName(block)
-  return style ? `<div class="${escapeHtml(className)}"${style}>${html}</div>` : html
+  const backgroundVideo = renderBlockBackgroundVideo(block)
+  return style || backgroundVideo ? `<div class="${escapeHtml(className)}"${style}>${backgroundVideo}${html}</div>` : html
 }
 
 function renderPublicBlock(block, context = {}) {
@@ -10303,6 +10352,7 @@ function renderLandingSectionLane(lane, context = {}) {
 
   return `
     <section class="${escapeHtml(className)}"${style}>
+      ${renderBlockBackgroundVideo(section)}
       <div class="rstk-section-inner">
         ${heading}
         <div class="rstk-section-columns">
@@ -10396,34 +10446,39 @@ function renderContentBlock(block, context = {}) {
   if (block.blockType === 'hero') {
     const buttonUrl = resolveButtonHref(settings, context)
     const buttonActionAttrs = renderButtonActionAttributes(settings)
+    const buttonContent = renderSubmitButtonContent(settings.buttonText, settings.buttonSubtitle)
     return `
       <section class="rstk-hero">
         ${settings.kicker ? `<p class="rstk-kicker">${escapeHtml(settings.kicker)}</p>` : ''}
         <h1 class="rstk-headline">${content || escapeHtml(block.label)}</h1>
         ${settings.subtitle ? `<p class="rstk-subheading">${escapeHtml(settings.subtitle)}</p>` : ''}
-        ${settings.buttonText ? `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"${buttonActionAttrs}><span class="rstk-button-label">${escapeHtml(settings.buttonText)}</span></a>` : ''}
+        ${settings.buttonText ? `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"${buttonActionAttrs}>${buttonContent}</a>` : ''}
       </section>
     `
   }
 
   if (block.blockType === 'image') {
-    const imageUrl = safeUrl(settings.mediaUrl || block.content)
+    const imageUrl = safePublicMediaUrl(settings.mediaUrl || block.content, 'image')
     return imageUrl
       ? `<figure class="rstk-media"><img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(block.label || 'Imagen')}" loading="lazy"></figure>`
       : `<div class="rstk-media rstk-media-empty">Imagen sin URL</div>`
   }
 
   if (block.blockType === 'video') {
-    const videoUrl = normalizeVideoEmbedUrl(settings.mediaUrl || block.content)
-    return videoUrl
-      ? `<div class="rstk-video"><iframe src="${escapeHtml(videoUrl)}" loading="lazy" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
+    const rawVideoUrl = settings.mediaUrl || block.content
+    const directVideoUrl = isDirectVideoUrl(rawVideoUrl) ? safePublicMediaUrl(rawVideoUrl, 'video') : ''
+    const videoUrl = directVideoUrl ? '' : normalizeVideoEmbedUrl(rawVideoUrl)
+    return directVideoUrl
+      ? `<div class="rstk-video"><video src="${escapeHtml(directVideoUrl)}" controls playsinline preload="metadata"></video></div>`
+      : videoUrl
+        ? `<div class="rstk-video"><iframe src="${escapeHtml(videoUrl)}" loading="lazy" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
       : `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
   }
 
   if (block.blockType === 'button') {
     const buttonUrl = resolveButtonHref(settings, context)
     const buttonActionAttrs = renderButtonActionAttributes(settings)
-    return `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"${buttonActionAttrs}><span class="rstk-button-label">${escapeHtml(settings.buttonText || block.content || block.label || 'Continuar')}</span></a>`
+    return `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"${buttonActionAttrs}>${renderSubmitButtonContent(settings.buttonText || block.content || block.label || 'Continuar', settings.buttonSubtitle)}</a>`
   }
 
   if (block.blockType === 'benefits') {
@@ -10495,11 +10550,12 @@ function renderContentBlock(block, context = {}) {
   if (block.blockType === 'cta') {
     const buttonUrl = resolveButtonHref(settings, context)
     const buttonActionAttrs = renderButtonActionAttributes(settings)
+    const buttonContent = renderSubmitButtonContent(settings.buttonText, settings.buttonSubtitle)
     return `
       <section class="rstk-cta">
         <h2>${content || escapeHtml(block.label)}</h2>
         ${settings.subtitle ? `<p>${escapeHtml(settings.subtitle)}</p>` : ''}
-        ${settings.buttonText ? `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"${buttonActionAttrs}><span class="rstk-button-label">${escapeHtml(settings.buttonText)}</span></a>` : ''}
+        ${settings.buttonText ? `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"${buttonActionAttrs}>${buttonContent}</a>` : ''}
       </section>
     `
   }
@@ -11203,18 +11259,23 @@ const RSTK_BASE_CSS = `
   .rstk-shell{display:grid;gap:var(--rstk-gap)}
   .rstk-centered .rstk-shell{text-align:center;justify-items:center}
   .rstk-centered .rstk-subheading,.rstk-centered .rstk-text{margin-inline:auto}
-  .rstk-section-lane.rstk-block-style,.rstk-section-lane{width:100%;margin:var(--rstk-block-margin,0);background:var(--rstk-block-bg,transparent);color:var(--rstk-block-text,var(--rstk-ink));border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,transparent);border-radius:var(--rstk-block-radius,0);padding:0}
+  .rstk-section-lane.rstk-block-style,.rstk-section-lane{position:relative;width:100%;margin:var(--rstk-block-margin,0);background-color:var(--rstk-block-bg-color,var(--rstk-block-bg,transparent));background-image:var(--rstk-block-bg-layer,none),var(--rstk-block-bg-image,none);background-position:center center,var(--rstk-block-bg-position,center center);background-repeat:no-repeat,var(--rstk-block-bg-repeat,no-repeat);background-size:100% 100%,var(--rstk-block-bg-size,cover);color:var(--rstk-block-text,var(--rstk-ink));border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,transparent);border-radius:var(--rstk-block-radius,0);padding:0}
   .rstk-section-inner{width:100%;max-width:var(--rstk-max);margin:0 auto;padding:var(--rstk-block-pad,var(--rstk-frame-pad,clamp(28px,5vw,72px)));display:grid;gap:var(--rstk-section-gap,clamp(18px,3vw,30px))}
   .rstk-section-heading{display:grid;gap:10px;justify-items:var(--rstk-block-justify,stretch);text-align:var(--rstk-block-align,inherit)}
   .rstk-section-heading h2,.rstk-section-heading p{margin:0}
   .rstk-section-columns{display:grid;grid-template-columns:repeat(var(--rstk-section-columns,1),minmax(0,1fr));gap:var(--rstk-section-gap,clamp(18px,3vw,30px));align-items:start}
   .rstk-section-column{min-width:0;display:grid;align-content:start;gap:var(--rstk-gap)}
-  .rstk-section-column>.rstk-block-style{--rstk-block-bg:transparent;--rstk-block-border:transparent;--rstk-block-border-width:0px;--rstk-block-shell-border-width:0px}
+  .rstk-section-column>.rstk-block-style{--rstk-block-bg:transparent;--rstk-block-bg-color:transparent;--rstk-block-bg-layer:none;--rstk-block-bg-image:none;--rstk-block-border:transparent;--rstk-block-border-width:0px;--rstk-block-shell-border-width:0px}
   .rstk-block-style{
+    position:relative;
     width:auto;
     min-width:0;
     margin:var(--rstk-block-margin,0);
-    background:var(--rstk-block-bg,transparent);
+    background-color:var(--rstk-block-bg-color,var(--rstk-block-bg,transparent));
+    background-image:var(--rstk-block-bg-layer,none),var(--rstk-block-bg-image,none);
+    background-position:center center,var(--rstk-block-bg-position,center center);
+    background-repeat:no-repeat,var(--rstk-block-bg-repeat,no-repeat);
+    background-size:100% 100%,var(--rstk-block-bg-size,cover);
     color:var(--rstk-block-text,var(--rstk-ink));
     font-family:var(--rstk-block-font,var(--rstk-font));
     font-size:var(--rstk-block-size,inherit);
@@ -11224,6 +11285,9 @@ const RSTK_BASE_CSS = `
     border-radius:var(--rstk-block-radius,0);
     padding:var(--rstk-block-pad,0);
   }
+  .rstkHasBgVideo{isolation:isolate;overflow:hidden}
+  .rstk-block-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-block-bg-size,cover);pointer-events:none}
+  .rstkHasBgVideo > :not(.rstk-block-bg-video){position:relative;z-index:1}
   .rstkHeaderPanelBlock{z-index:6}
   .rstkFooterPanelBlock{z-index:1}
   .rstk-block-style .rstk-headline,
@@ -11284,16 +11348,16 @@ const RSTK_BASE_CSS = `
 
   .rstk-button-link,.rstk-actions button{
     -webkit-appearance:none;appearance:none;cursor:pointer;
-    min-height:var(--rstk-button-height,50px);display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    min-height:var(--rstk-button-height,50px);display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
     border:var(--rstk-button-border-width,1px) solid var(--rstk-button-border,var(--rstk-button-bg,var(--rstk-accent)));border-radius:var(--rstk-block-button-radius,var(--rstk-btn-radius));
     background:var(--rstk-button-bg,var(--rstk-accent));color:var(--rstk-button-text,var(--rstk-on-accent));
-    font:inherit;font-weight:var(--rstk-btn-weight);font-size:var(--rstk-button-size,1.02rem);line-height:1;
-    padding:0 var(--rstk-button-pad-x,22px);text-decoration:none;
+    font-family:var(--rstk-button-font,inherit);font-weight:var(--rstk-button-weight,var(--rstk-btn-weight));font-size:var(--rstk-button-size,1.02rem);font-style:var(--rstk-button-font-style,normal);line-height:1.08;
+    padding:8px var(--rstk-button-pad-x,22px);text-decoration:var(--rstk-button-text-decoration,none);
     transition:background .15s ease,border-color .15s ease,transform .04s ease,box-shadow .15s ease;
   }
 	  .rstk-button-link{justify-self:var(--rstk-button-justify,center);width:var(--rstk-button-width,fit-content);margin-left:var(--rstk-button-margin-left,auto);margin-right:var(--rstk-button-margin-right,auto)}
 	  .rstk-button-label{display:inline-block}
-	  .rstk-button-subtitle{display:block;font-size:.78em;font-weight:650;line-height:1.25;opacity:.82}
+	  .rstk-button-subtitle{display:block;font-size:var(--rstk-button-subtitle-size,.78em);font-weight:650;line-height:1.25;opacity:.82}
 	  .rstk-centered .rstk-button-link{margin-inline:auto}
   .rstk-button-link:hover,.rstk-actions button:hover{background:var(--rstk-button-hover-bg,var(--rstk-accent-strong));border-color:var(--rstk-button-hover-border,var(--rstk-button-border,var(--rstk-button-hover-bg,var(--rstk-accent-strong))))}
   .rstk-actions button:active{transform:translateY(1px)}
@@ -11317,9 +11381,10 @@ const RSTK_BASE_CSS = `
   .rstk-check-body span{color:var(--rstk-muted);font-size:.92rem}
 
   .rstk-media,.rstk-video{width:100%;margin:0;overflow:hidden;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-media-radius,var(--rstk-block-radius,var(--rstk-radius)));background:var(--rstk-block-bg,var(--rstk-surface2))}
-  .rstk-media img,.rstk-video iframe{width:100%;display:block;border:0}
+  .rstk-media img,.rstk-video iframe,.rstk-video video{width:100%;display:block;border:0}
   .rstk-video{aspect-ratio:16/9;position:relative}
-  .rstk-video iframe{height:100%}
+  .rstk-video iframe,.rstk-video video{height:100%}
+  .rstk-video video{background:#000;object-fit:cover}
   .rstk-media-empty{min-height:190px;display:grid;place-items:center;gap:8px;color:var(--rstk-muted);font-size:.92rem}
   .rstk-play{display:grid;place-items:center;width:58px;height:58px;border-radius:50%;background:var(--rstk-accent);color:var(--rstk-on-accent)}
 
@@ -11331,7 +11396,10 @@ const RSTK_BASE_CSS = `
   .rstk-site-panel-footer{justify-content:center;text-align:center;flex-wrap:wrap}
   .rstk-site-panel-footer .rstk-site-panel-links{justify-content:center}
 
-	  .rstk-field{display:grid;gap:8px;text-align:left}
+  .rstk-field{display:grid;gap:8px;text-align:left}
+  .rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-options,.rstk-embedded-form > .rstk-actions{width:min(100%,560px);justify-self:center}
+  .rstk-embedded-form > .rstk-field{text-align:left}
+  .rstk-embedded-form > .rstk-help{width:min(100%,620px);justify-self:center}
 	  .rstk-kind-form form{font-family:var(--rstk-form-font,var(--rstk-font))}
 	  label{font-size:.95rem;font-weight:700;color:var(--rstk-ink)}
 	  .rstk-kind-form .rstk-field > label{color:var(--rstk-form-label-color,var(--rstk-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-label-size,.95rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none)}
@@ -11642,18 +11710,17 @@ function deriveNeutralVars(template, bg, userAccent) {
 
 function resolveRenderOverrides(template, theme, isLandingType) {
   if (template.chrome !== 'none') return {}
+  const hasExplicitBg = typeof theme.backgroundColor === 'string' && theme.backgroundColor.trim() !== ''
   const paintColor = (value) => {
     const paint = normalizeCssPaint(value, '')
     return paint ? paintFallbackColor(paint, '') : null
   }
-  // DEFAULT_THEME forces backgroundColor=#ffffff, so treat white as "not chosen":
-  // landings default to the premium dark canvas; forms stay light until recolored.
   const rawBg = paintColor(theme.backgroundColor)
-  const userBg = rawBg && rawBg.toLowerCase() !== String(DEFAULT_THEME.backgroundColor).toLowerCase() ? rawBg : null
+  const userBg = rawBg && (hasExplicitBg || rawBg.toLowerCase() !== String(DEFAULT_THEME.backgroundColor).toLowerCase()) ? rawBg : null
   const rawAccent = paintColor(theme.accentColor)
   const userAccent = rawAccent && rawAccent.toLowerCase() !== String(DEFAULT_THEME.accentColor).toLowerCase() ? rawAccent : null
   if (isLandingType) {
-    return { vars: deriveNeutralVars(template, userBg || '#08080a', userAccent) }
+    return { vars: deriveNeutralVars(template, userBg || template.vars.pageBg, userAccent) }
   }
   if (userBg) {
     return { vars: deriveNeutralVars(template, userBg, userAccent) }

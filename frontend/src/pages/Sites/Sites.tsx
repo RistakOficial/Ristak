@@ -127,6 +127,7 @@ import {
 import { aiAgentService } from '@/services/aiAgentService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
+import mediaService from '@/services/mediaService'
 import {
   customFieldsService,
   isSystemCustomFieldDefinition,
@@ -737,7 +738,8 @@ const DEFAULT_BUTTON_SETTINGS = {
   buttonAlign: 'center',
   buttonRadius: 28,
   buttonHeight: 54,
-  buttonPaddingX: 28
+  buttonPaddingX: 28,
+  buttonWidth: 0
 }
 const GOOGLE_FONT_OPTIONS = [
   { label: 'Sistema', value: '' },
@@ -1234,8 +1236,7 @@ const userBgColor = (site: PublicSite): string | null => {
   const v = site.theme?.backgroundColor
   if (typeof v !== 'string' || !isCssPaint(v)) return null
   const paint = normalizeCssPaint(v, '#ffffff')
-  const color = paintFallbackColor(paint, '#ffffff')
-  return color.toLowerCase() !== '#ffffff' ? color : null
+  return paintFallbackColor(paint, '#ffffff')
 }
 const userAccentColor = (site: PublicSite): string | null => {
   const v = site.theme?.accentColor
@@ -1249,7 +1250,7 @@ const resolvedPageBg = (site: PublicSite): string => {
   if (id === 'facebook') return '#f0f2f5'
   if (id === 'instagram') return '#ffffff'
   if (id === 'tiktok') return '#000000'
-  return userBgColor(site) || (site.siteType === 'landing_page' ? '#08080a' : '#ffffff')
+  return userBgColor(site) || (site.siteType === 'landing_page' ? templateMetaById(id)?.swatchBg || '#f5f6f8' : '#ffffff')
 }
 const isSiteDark = (site: PublicSite): boolean => {
   const id = resolveTemplateId(site)
@@ -1649,6 +1650,13 @@ const backgroundVisualPatch = (value: string): Partial<SiteTheme> => {
   return { backgroundFit: 'cover', backgroundRepeat: 'no-repeat', backgroundPosition: 'center center', backgroundAttachment: 'scroll' }
 }
 
+const getBackgroundSizeCss = (value: string) => {
+  if (value === 'contain' || value === 'no-repeat') return 'contain'
+  if (value === 'full_width') return '100% auto'
+  if (value === 'auto' || value === 'repeat' || value === 'repeat-x' || value === 'repeat-y') return 'auto'
+  return 'cover'
+}
+
 const isHorizontalAlign = (value: unknown): value is HorizontalAlign =>
   value === 'left' || value === 'center' || value === 'right'
 
@@ -1885,14 +1893,29 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   const cardBg = getSettingString(settings, 'cardBg')
   const cardBorder = getSettingString(settings, 'cardBorderColor')
   const fontFamily = getSettingString(settings, 'fontFamily')
+  const buttonFontFamily = getSettingString(settings, 'buttonFontFamily')
   const textStrokeColor = getSettingString(settings, 'textStrokeColor')
   const fieldBg = getSettingString(settings, 'fieldBg')
   const fieldBorder = getSettingString(settings, 'fieldBorder')
   const blockBorder = getSettingString(settings, 'blockBorderColor')
+  const blockBackgroundImage = getSettingString(settings, 'blockBackgroundImage')
   const blockHasNativeBorder = nativeBorderBlockTypes.has(block.blockType)
   const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta'
 
-  if (isCssPaint(bg)) style['--rstk-block-bg'] = normalizeCssPaint(bg, '#ffffff')
+  if (isCssPaint(bg)) {
+    const normalized = normalizeCssPaint(bg, '#ffffff')
+    style['--rstk-block-bg'] = normalized
+    style['--rstk-block-bg-layer'] = paintToBackgroundLayer(normalized)
+    style['--rstk-block-bg-color'] = isCssGradient(normalized) ? 'transparent' : normalized
+  }
+  if (blockBackgroundImage && getSettingString(settings, 'blockBackgroundMediaType') !== 'video') {
+    const imageLayer = cssPublicImageUrl(blockBackgroundImage)
+    if (imageLayer) {
+      style['--rstk-block-bg-image'] = imageLayer
+      style['--rstk-block-bg-size'] = getBackgroundSizeCss(getSettingString(settings, 'blockBackgroundFit') || 'cover')
+      style['--rstk-block-bg-position'] = getSettingString(settings, 'blockBackgroundPosition') || 'center center'
+    }
+  }
   if (isCssPaint(text)) {
     const normalized = normalizeCssPaint(text, '#111827')
     style['--rstk-block-text'] = paintFallbackColor(normalized, '#111827')
@@ -1912,6 +1935,7 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   if (isCssPaint(cardBg)) style['--rstk-card-bg'] = normalizeCssPaint(cardBg, '#ffffff')
   if (isCssPaint(cardBorder)) style['--rstk-card-border'] = paintFallbackColor(normalizeCssPaint(cardBorder, '#dbe3ef'), '#dbe3ef')
   if (fontFamily) style['--rstk-block-font'] = fontFamily.replace(/[;"{}<>]/g, '')
+  if (buttonFontFamily) style['--rstk-button-font'] = buttonFontFamily.replace(/[;"{}<>]/g, '')
   if (settings.fontStyle === 'italic') style['--rstk-block-font-style'] = 'italic'
   if (settings.textDecoration === 'underline') style['--rstk-block-text-decoration'] = 'underline'
   if (settings.textStrokeWidth !== undefined) style['--rstk-text-stroke-width'] = `${getSettingNumber(settings, 'textStrokeWidth', 0, 0, 12)}px`
@@ -1959,16 +1983,22 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   if (supportsButton) {
     const align = getButtonAlign(settings, 'center')
     const margins = marginVarsForAlign(align)
+    const buttonWidth = getSettingNumber(settings, 'buttonWidth', 0, 0, 100)
     style['--rstk-button-justify'] = justifyForAlign(align)
     style['--rstk-button-margin-left'] = margins.left
     style['--rstk-button-margin-right'] = margins.right
-    style['--rstk-button-width'] = align === 'full' ? '100%' : 'fit-content'
+    style['--rstk-button-width'] = align === 'full' ? '100%' : buttonWidth > 0 ? `${buttonWidth}%` : 'fit-content'
   }
   if (settings.buttonRadius !== undefined) style['--rstk-block-button-radius'] = `${getSettingNumber(settings, 'buttonRadius', 28, 0, 80)}px`
   if (settings.buttonHeight !== undefined) style['--rstk-button-height'] = `${getSettingNumber(settings, 'buttonHeight', 54, 34, 88)}px`
   if (settings.buttonPaddingX !== undefined) style['--rstk-button-pad-x'] = `${getSettingNumber(settings, 'buttonPaddingX', 28, 8, 72)}px`
   if (settings.buttonFontSize !== undefined) style['--rstk-button-size'] = `${getSettingNumber(settings, 'buttonFontSize', 16, 11, 32)}px`
+  if (settings.buttonSubtitleFontSize !== undefined) style['--rstk-button-subtitle-size'] = `${getSettingNumber(settings, 'buttonSubtitleFontSize', 13, 10, 24)}px`
   if (settings.buttonBorderWidth !== undefined) style['--rstk-button-border-width'] = `${getSettingNumber(settings, 'buttonBorderWidth', 1, 0, 8)}px`
+  if (settings.buttonFontWeight === 'bold') style['--rstk-button-weight'] = '850'
+  if (settings.buttonFontWeight === 'normal') style['--rstk-button-weight'] = '400'
+  if (settings.buttonFontStyle === 'italic') style['--rstk-button-font-style'] = 'italic'
+  if (settings.buttonTextDecoration === 'underline') style['--rstk-button-text-decoration'] = 'underline'
   if (settings.mediaWidth !== undefined) style['--rstk-media-width'] = `${getSettingNumber(settings, 'mediaWidth', 100, 30, 100)}%`
   if (settings.mediaAlign !== undefined) {
     const align = getHorizontalAlign(settings, 'mediaAlign', 'center')
@@ -2001,6 +2031,7 @@ const getBlockStyleClassName = (block: SiteBlock, extra = '') => {
     getSettingString(settings, 'blockText') ? 'rstkBlockTextOverride' : '',
     isCssGradient(getSettingString(settings, 'blockText')) ? 'rstkTextGradient' : '',
     isCssGradient(getSettingString(settings, 'buttonTextColor')) ? 'rstkButtonTextGradient' : '',
+    getSettingString(settings, 'blockBackgroundMediaType') === 'video' && safePublicMediaUrl(getSettingString(settings, 'blockBackgroundImage'), 'video') ? 'rstkHasBgVideo' : '',
     settings.fontFamily ? 'rstkFontOverride' : '',
     settings.fontSize !== undefined ? 'rstkSizeOverride' : '',
     settings.fontWeight === 'bold' || settings.fontWeight === 'normal' ? 'rstkWeightOverride' : '',
@@ -2575,6 +2606,34 @@ const safeEmbedUrl = (value: string) => {
   } catch {
     return ''
   }
+}
+
+const DIRECT_VIDEO_RE = /\.(mp4|m4v|mov|webm|ogg|ogv|m3u8)(?:[?#]|$)/i
+
+const safePublicMediaUrl = (value: string, kind: 'image' | 'video') => {
+  const raw = decodeHtmlEntities(String(value || '')).trim()
+  if (!raw) return ''
+  if (raw.startsWith('/')) return raw.replace(/["\\\n\r]/g, '')
+  if (kind === 'image' && /^data:image\//i.test(raw)) return raw
+  if (kind === 'video' && /^data:video\//i.test(raw)) return raw
+  return safeEmbedUrl(raw)
+}
+
+const isDirectVideoUrl = (value: string) => {
+  const raw = safePublicMediaUrl(value, 'video')
+  if (!raw) return false
+  return /^data:video\//i.test(raw) || DIRECT_VIDEO_RE.test(raw.split('?')[0] || raw)
+}
+
+const cssPublicImageUrl = (value: string) => {
+  const url = safePublicMediaUrl(value, 'image')
+  return url ? `url("${url.replace(/["\\\n\r]/g, '')}")` : ''
+}
+
+const paintToBackgroundLayer = (paint: string) => {
+  if (!paint) return 'none'
+  if (isCssGradient(paint)) return paint
+  return `linear-gradient(${paint}, ${paint})`
 }
 
 function extractImportedWistiaMediaId(value: string) {
@@ -12363,7 +12422,7 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
             />
           </label>
           <label className={styles.alphaSlider}>
-            <span>Transparencia</span>
+            <span>Opacidad</span>
             <input
               type="range"
               min={0}
@@ -12493,6 +12552,60 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
   )
 }
 
+const MediaUploadControl: React.FC<{
+  kind: 'image' | 'video'
+  label?: string
+  moduleEntityId?: string
+  onUploaded: (url: string) => void
+  onCommit: () => void
+}> = ({ kind, label, moduleEntityId, onUploaded, onCommit }) => {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  const { showToast } = useNotification()
+  const accept = kind === 'image' ? 'image/*' : 'video/*'
+
+  const handleFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (kind === 'image' && !file.type.startsWith('image/')) {
+      showToast('error', 'Archivo no valido', 'Sube una imagen JPG, PNG, GIF o WebP.')
+      return
+    }
+    if (kind === 'video' && !file.type.startsWith('video/')) {
+      showToast('error', 'Archivo no valido', 'Sube un video MP4, WebM o MOV.')
+      return
+    }
+
+    setUploading(true)
+    try {
+      const uploaded = await mediaService.uploadFile({
+        file,
+        module: 'sites',
+        moduleEntityId,
+        isPublic: true
+      })
+      onUploaded(uploaded.publicUrl)
+      window.setTimeout(onCommit, 0)
+      showToast('success', kind === 'image' ? 'Imagen subida' : 'Video subido', 'El archivo ya esta listo en el editor.')
+    } catch (error) {
+      showToast('error', 'No se pudo subir', error instanceof Error ? error.message : 'Intentalo otra vez.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <div className={styles.mediaUploadControl}>
+      <input ref={inputRef} type="file" accept={accept} onChange={handleFile} className={styles.hiddenFileInput} />
+      <button type="button" onClick={() => inputRef.current?.click()} disabled={uploading}>
+        <Upload size={14} />
+        <span>{uploading ? 'Subiendo...' : label || (kind === 'image' ? 'Subir imagen' : 'Subir video')}</span>
+      </button>
+    </div>
+  )
+}
+
 const CanvasBackgroundVideo: React.FC<{ theme?: SiteTheme }> = ({ theme }) => {
   const src = getThemeBackgroundVideo(theme)
   if (!src) return null
@@ -12500,6 +12613,14 @@ const CanvasBackgroundVideo: React.FC<{ theme?: SiteTheme }> = ({ theme }) => {
   return (
     <video className="rstk-bg-video" src={src} autoPlay muted loop playsInline aria-hidden="true" />
   )
+}
+
+const BlockBackgroundVideo: React.FC<{ block: SiteBlock }> = ({ block }) => {
+  const settings = block.settings || {}
+  if (getSettingString(settings, 'blockBackgroundMediaType') !== 'video') return null
+  const src = safePublicMediaUrl(getSettingString(settings, 'blockBackgroundImage'), 'video')
+  if (!src) return null
+  return <video className="rstk-block-bg-video" src={src} autoPlay muted loop playsInline aria-hidden="true" />
 }
 
 const CanvasAvatar: React.FC<{ name: string; avatar?: string }> = ({ name, avatar }) => (
@@ -14421,9 +14542,23 @@ const InlineEditable: React.FC<InlineEditableProps> = ({
   )
 }
 
-const InlineButtonEditable: React.FC<Omit<InlineEditableProps, 'as' | 'className'>> = (props) => (
+const InlineButtonEditable: React.FC<Omit<InlineEditableProps, 'as' | 'className'> & {
+  subtitle?: string
+  onSubtitleChange?: (value: string) => void
+}> = ({ subtitle = '', onSubtitleChange, disabled, onCommit, ...props }) => (
   <a className="rstk-button-link" href="#" onClick={(event) => event.preventDefault()}>
-    <InlineEditable {...props} as="span" className="rstk-button-label" />
+    <InlineEditable {...props} disabled={disabled} onCommit={onCommit} as="span" className="rstk-button-label" />
+    {subtitle || onSubtitleChange ? (
+      <InlineEditable
+        as="span"
+        className="rstk-button-subtitle"
+        value={subtitle}
+        placeholder="Subtexto"
+        disabled={disabled}
+        onChange={(value) => onSubtitleChange?.(value)}
+        onCommit={onCommit}
+      />
+    ) : null}
   </a>
 )
 
@@ -14578,6 +14713,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
         onSelect()
       }}
     >
+      <BlockBackgroundVideo block={block} />
       <div className="rstkBlockTools">
         <button type="button" className="rstkBlockTool rstkBlockToolDrag" {...attributes} {...listeners} aria-label="Reordenar bloque">
           <GripVertical size={15} />
@@ -15134,6 +15270,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
         onSelectBlock(section.id)
       }}
     >
+      <BlockBackgroundVideo block={section} />
       <div className="rstkBlockTools">
         <button type="button" className="rstkBlockTool rstkBlockToolDrag" {...attributes} {...listeners} aria-label="Reordenar franja">
           <GripVertical size={15} />
@@ -15254,9 +15391,16 @@ const InlineBlockStyleControls: React.FC<{
   const isBold = settings.fontWeight === 'bold'
   const isItalic = settings.fontStyle === 'italic'
   const isUnderline = settings.textDecoration === 'underline'
+  const isButtonBold = settings.buttonFontWeight === 'bold'
+  const isButtonItalic = settings.buttonFontStyle === 'italic'
+  const isButtonUnderline = settings.buttonTextDecoration === 'underline'
   const currentFontFamily = getSettingString(settings, 'fontFamily')
+  const currentButtonFontFamily = getSettingString(settings, 'buttonFontFamily')
   const fontOptions = currentFontFamily && !GOOGLE_FONT_OPTIONS.some(option => option.value === currentFontFamily)
     ? [...GOOGLE_FONT_OPTIONS, { label: 'Fuente actual', value: currentFontFamily }]
+    : GOOGLE_FONT_OPTIONS
+  const buttonFontOptions = currentButtonFontFamily && !GOOGLE_FONT_OPTIONS.some(option => option.value === currentButtonFontFamily)
+    ? [...GOOGLE_FONT_OPTIONS, { label: 'Fuente actual', value: currentButtonFontFamily }]
     : GOOGLE_FONT_OPTIONS
   const patchTextFormat = (patch: Record<string, unknown>) => {
     onPatchSettings(patch)
@@ -15370,6 +15514,50 @@ const InlineBlockStyleControls: React.FC<{
       {supportsButton && (
         <>
           <div className={styles.panelSubheader}>Personalizacion del boton</div>
+          <div className={styles.textFormatPanel}>
+            <div className={styles.textToolbar}>
+              <label className={styles.textFontSelect}>
+                <span>Fuente boton</span>
+                <CustomSelect value={currentButtonFontFamily} onChange={(event) => onPatchSettings({ buttonFontFamily: event.target.value })} onBlur={onSave}>
+                  {buttonFontOptions.map(option => (
+                    <option key={option.label} value={option.value}>{option.label}</option>
+                  ))}
+                </CustomSelect>
+              </label>
+              <div className={styles.textFormatButtons} role="group" aria-label="Formato del boton">
+                <button
+                  type="button"
+                  className={isButtonBold ? styles.textFormatActive : ''}
+                  aria-pressed={isButtonBold}
+                  title="Negrita"
+                  aria-label="Negrita"
+                  onClick={() => patchTextFormat({ buttonFontWeight: isButtonBold ? 'normal' : 'bold' })}
+                >
+                  <Bold size={15} />
+                </button>
+                <button
+                  type="button"
+                  className={isButtonItalic ? styles.textFormatActive : ''}
+                  aria-pressed={isButtonItalic}
+                  title="Italica"
+                  aria-label="Italica"
+                  onClick={() => patchTextFormat({ buttonFontStyle: isButtonItalic ? '' : 'italic' })}
+                >
+                  <Italic size={15} />
+                </button>
+                <button
+                  type="button"
+                  className={isButtonUnderline ? styles.textFormatActive : ''}
+                  aria-pressed={isButtonUnderline}
+                  title="Subrayado"
+                  aria-label="Subrayado"
+                  onClick={() => patchTextFormat({ buttonTextDecoration: isButtonUnderline ? '' : 'underline' })}
+                >
+                  <Underline size={15} />
+                </button>
+              </div>
+            </div>
+          </div>
           <AlignmentControl
             label="Alineacion"
             value={getButtonAlign(settings, 'center')}
@@ -15426,6 +15614,25 @@ const InlineBlockStyleControls: React.FC<{
               min={11}
               max={32}
               onChange={(value) => onPatchSettings({ buttonFontSize: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label="Ancho boton"
+              value={getSettingNumber(settings, 'buttonWidth', 0, 0, 100)}
+              min={0}
+              max={100}
+              unit="%"
+              onChange={(value) => onPatchSettings({ buttonWidth: value })}
+              onCommit={onSave}
+            />
+            <DimensionField
+              label="Subtexto"
+              value={getSettingNumber(settings, 'buttonSubtitleFontSize', 13, 10, 24)}
+              min={10}
+              max={24}
+              onChange={(value) => onPatchSettings({ buttonSubtitleFontSize: value })}
               onCommit={onSave}
             />
           </div>
@@ -15597,6 +15804,55 @@ const InlineBlockStyleControls: React.FC<{
             onChange={(value) => onPatchSettings({ blockBg: value })}
             onCommit={onSave}
           />
+          {isSection && (
+            <div className={styles.sectionBackgroundMedia}>
+              <div className={styles.twoColumn}>
+                <label className={styles.field}>
+                  <span>Tipo de fondo</span>
+                  <CustomSelect
+                    value={getSettingString(settings, 'blockBackgroundMediaType') || 'image'}
+                    onChange={(event) => onPatchSettings({ blockBackgroundMediaType: event.target.value })}
+                    onBlur={onSave}
+                  >
+                    <option value="image">Imagen</option>
+                    <option value="video">Video</option>
+                  </CustomSelect>
+                </label>
+                <label className={styles.field}>
+                  <span>Visualizacion</span>
+                  <CustomSelect
+                    value={getSettingString(settings, 'blockBackgroundFit') || 'cover'}
+                    onChange={(event) => onPatchSettings({ blockBackgroundFit: event.target.value })}
+                    onBlur={onSave}
+                  >
+                    <option value="cover">Cubrir</option>
+                    <option value="contain">Contener</option>
+                    <option value="full_width">Ancho completo</option>
+                    <option value="auto">Original</option>
+                  </CustomSelect>
+                </label>
+              </div>
+              <label className={styles.field}>
+                <span>URL de fondo de franja</span>
+                <input
+                  value={getSettingString(settings, 'blockBackgroundImage')}
+                  placeholder={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'https://.../video.mp4' : 'https://...'}
+                  onChange={(event) => onPatchSettings({ blockBackgroundImage: event.target.value })}
+                  onBlur={onSave}
+                />
+              </label>
+              <MediaUploadControl
+                kind={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'}
+                label={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'Subir video de franja' : 'Subir imagen de franja'}
+                moduleEntityId={site.id}
+                onUploaded={(url) => onPatchSettings({
+                  blockBackgroundImage: url,
+                  blockBackgroundMediaType: getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'
+                })}
+                onCommit={onSave}
+              />
+            </div>
+          )}
           <div className={styles.twoColumn}>
             <DimensionField
               label="Radio"
@@ -15716,7 +15972,15 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         <InlineEditable as="p" className="rstk-kicker" value={getSettingString(settings, 'kicker')} placeholder="Kicker (opcional)" disabled={!editable} onChange={(value) => patchSettings({ kicker: value })} onCommit={save} />
         <InlineEditable as="h1" className="rstk-headline" multiline value={block.content} placeholder={block.label || 'Titular principal'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
         <InlineEditable as="p" className="rstk-subheading" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtitulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
-        <InlineButtonEditable value={getSettingString(settings, 'buttonText')} placeholder="Texto del boton" disabled={!editable} onChange={(value) => patchSettings({ buttonText: value })} onCommit={save} />
+        <InlineButtonEditable
+          value={getSettingString(settings, 'buttonText')}
+          subtitle={getSettingString(settings, 'buttonSubtitle')}
+          placeholder="Texto del boton"
+          disabled={!editable}
+          onChange={(value) => patchSettings({ buttonText: value })}
+          onSubtitleChange={getSettingString(settings, 'buttonSubtitle') ? (value) => patchSettings({ buttonSubtitle: value }) : undefined}
+          onCommit={save}
+        />
       </section>
     )
   }
@@ -15752,7 +16016,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   if (block.blockType === 'image') {
     const rawImageUrl = (getSettingString(settings, 'mediaUrl') || block.content || '').trim()
     // Only real URLs: free text (e.g. the default "Imagen") would resolve as a relative path.
-    const mediaUrl = /^data:image\//i.test(rawImageUrl) || rawImageUrl.startsWith('/') ? rawImageUrl : safeEmbedUrl(rawImageUrl)
+    const mediaUrl = safePublicMediaUrl(rawImageUrl, 'image')
     return mediaUrl
       ? <figure className="rstk-media"><img src={mediaUrl} alt={block.label || 'Imagen'} loading="lazy" /></figure>
       : <div className="rstk-media rstk-media-empty">Imagen sin URL</div>
@@ -15761,15 +16025,27 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   if (block.blockType === 'video') {
     // Normalize watch/share URLs to embeddable players and drop anything that is
     // not an absolute http(s) URL — a relative src would load the app itself.
-    const videoUrl = normalizeImportedVideoPreviewUrl(getSettingString(settings, 'mediaUrl') || block.content || '')
-    return videoUrl
-      ? <div className="rstk-video"><iframe src={videoUrl} title={block.label || 'Video'} loading="lazy" allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
+    const rawVideoUrl = getSettingString(settings, 'mediaUrl') || block.content || ''
+    const directVideoUrl = isDirectVideoUrl(rawVideoUrl) ? safePublicMediaUrl(rawVideoUrl, 'video') : ''
+    const videoUrl = directVideoUrl ? '' : normalizeImportedVideoPreviewUrl(rawVideoUrl)
+    return directVideoUrl
+      ? <div className="rstk-video"><video src={directVideoUrl} controls playsInline preload="metadata" /></div>
+      : videoUrl
+        ? <div className="rstk-video"><iframe src={videoUrl} title={block.label || 'Video'} loading="lazy" allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
       : <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
   }
 
   if (block.blockType === 'button') {
     return (
-      <InlineButtonEditable value={getSettingString(settings, 'buttonText') || block.content || ''} placeholder="Boton" disabled={!editable} onChange={(value) => patchSettings({ buttonText: value })} onCommit={save} />
+      <InlineButtonEditable
+        value={getSettingString(settings, 'buttonText') || block.content || ''}
+        subtitle={getSettingString(settings, 'buttonSubtitle')}
+        placeholder="Boton"
+        disabled={!editable}
+        onChange={(value) => patchSettings({ buttonText: value })}
+        onSubtitleChange={getSettingString(settings, 'buttonSubtitle') ? (value) => patchSettings({ buttonSubtitle: value }) : undefined}
+        onCommit={save}
+      />
     )
   }
 
@@ -15846,7 +16122,15 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       <section className="rstk-cta">
         <InlineEditable as="h2" value={block.content} placeholder={block.label || 'CTA final'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
         <InlineEditable as="p" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtitulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
-        <InlineButtonEditable value={getSettingString(settings, 'buttonText')} placeholder="Texto del boton" disabled={!editable} onChange={(value) => patchSettings({ buttonText: value })} onCommit={save} />
+        <InlineButtonEditable
+          value={getSettingString(settings, 'buttonText')}
+          subtitle={getSettingString(settings, 'buttonSubtitle')}
+          placeholder="Texto del boton"
+          disabled={!editable}
+          onChange={(value) => patchSettings({ buttonText: value })}
+          onSubtitleChange={getSettingString(settings, 'buttonSubtitle') ? (value) => patchSettings({ buttonSubtitle: value }) : undefined}
+          onCommit={save}
+        />
       </section>
     )
   }
@@ -16370,6 +16654,16 @@ const PageInspector: React.FC<{
               onBlur={onSaveSite}
             />
           </label>
+          <MediaUploadControl
+            kind={theme.backgroundMediaType === 'video' ? 'video' : 'image'}
+            label={theme.backgroundMediaType === 'video' ? 'Subir video de fondo' : 'Subir imagen de fondo'}
+            moduleEntityId={site.id}
+            onUploaded={(url) => onPatchTheme({
+              backgroundImage: url,
+              backgroundMediaType: theme.backgroundMediaType === 'video' ? 'video' : 'image'
+            })}
+            onCommit={onSaveSite}
+          />
           <div className={styles.twoColumn}>
             <label className={styles.field}>
               <span>Tipo</span>
@@ -17236,6 +17530,12 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
             <span>Texto del boton</span>
             <input value={getSettingString(settings, 'buttonText')} onChange={(event) => onPatchSettings({ buttonText: event.target.value })} onBlur={onSave} />
           </label>
+          <label className={styles.field}>
+            <span>Subtexto del boton</span>
+            <input value={getSettingString(settings, 'buttonSubtitle')} onChange={(event) => onPatchSettings({ buttonSubtitle: event.target.value })} onBlur={onSave} />
+          </label>
+        </div>
+        <div className={styles.twoColumn}>
           <ButtonActionFields settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={onPatchSettings} onSave={onSave} />
         </div>
       </div>
@@ -17244,11 +17544,17 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
 
   if (block.blockType === 'button') {
     return (
-      <div className={styles.twoColumn}>
-        <label className={styles.field}>
-          <span>Texto del boton</span>
-          <input value={getSettingString(settings, 'buttonText')} onChange={(event) => onPatchSettings({ buttonText: event.target.value })} onBlur={onSave} />
-        </label>
+      <div className={styles.settingsGroup}>
+        <div className={styles.twoColumn}>
+          <label className={styles.field}>
+            <span>Texto del boton</span>
+            <input value={getSettingString(settings, 'buttonText')} onChange={(event) => onPatchSettings({ buttonText: event.target.value })} onBlur={onSave} />
+          </label>
+          <label className={styles.field}>
+            <span>Subtexto del boton</span>
+            <input value={getSettingString(settings, 'buttonSubtitle')} onChange={(event) => onPatchSettings({ buttonSubtitle: event.target.value })} onBlur={onSave} />
+          </label>
+        </div>
         <ButtonActionFields settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={onPatchSettings} onSave={onSave} />
       </div>
     )
@@ -17269,10 +17575,18 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
 
   if (block.blockType === 'image' || block.blockType === 'video') {
     return (
-      <label className={styles.field}>
-        <span>{block.blockType === 'image' ? 'URL de imagen' : 'URL de video'}</span>
-        <input value={getSettingString(settings, 'mediaUrl')} onChange={(event) => onPatchSettings({ mediaUrl: event.target.value })} onBlur={onSave} />
-      </label>
+      <div className={styles.settingsGroup}>
+        <label className={styles.field}>
+          <span>{block.blockType === 'image' ? 'URL de imagen' : 'URL de video'}</span>
+          <input value={getSettingString(settings, 'mediaUrl')} onChange={(event) => onPatchSettings({ mediaUrl: event.target.value })} onBlur={onSave} />
+        </label>
+        <MediaUploadControl
+          kind={block.blockType === 'image' ? 'image' : 'video'}
+          moduleEntityId={site.id}
+          onUploaded={(url) => onPatchSettings({ mediaUrl: url })}
+          onCommit={onSave}
+        />
+      </div>
     )
   }
 
