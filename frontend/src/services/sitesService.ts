@@ -670,6 +670,12 @@ export const sitesService = {
     return response.text()
   },
 
+  createPreviewSession(siteId: string, pageId?: string) {
+    return apiClient.post<{ url: string; expiresAt: string }>(`/sites/${siteId}/preview-session`, {
+      pageId
+    })
+  },
+
   getCalendarPreviewUrl(calendarSlug: string) {
     return `${API_BASE_URL}/api/sites/public/calendar-preview/${encodeURIComponent(calendarSlug)}?test=1`
   },

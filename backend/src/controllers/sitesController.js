@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import {
   createBlock,
   createImportedSiteFromHtml,
@@ -33,6 +34,58 @@ import {
   renderPublicCalendarHtml
 } from '../services/localCalendarService.js'
 import { logger } from '../utils/logger.js'
+
+const SITE_PREVIEW_TTL_MS = 60 * 60 * 1000
+const sitePreviewSessions = new Map()
+
+function getPreviewUserId(req) {
+  return String(req.user?.userId || req.user?.id || req.user?.email || 'user')
+}
+
+function cleanupPreviewSessions() {
+  const now = Date.now()
+  for (const [token, session] of sitePreviewSessions.entries()) {
+    if (!session?.expiresAt || session.expiresAt <= now) {
+      sitePreviewSessions.delete(token)
+    }
+  }
+}
+
+function getPreviewCookieName(token) {
+  return `rstk_site_preview_${String(token || '').slice(0, 18).replace(/[^a-zA-Z0-9_-]/g, '')}`
+}
+
+function parseCookies(req) {
+  return String(req.headers.cookie || '')
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .reduce((acc, part) => {
+      const separatorIndex = part.indexOf('=')
+      if (separatorIndex < 0) return acc
+      const key = part.slice(0, separatorIndex)
+      const value = part.slice(separatorIndex + 1)
+      acc[key] = decodeURIComponent(value || '')
+      return acc
+    }, {})
+}
+
+function getRequestOrigin(req) {
+  const protocol = req.get('x-forwarded-proto') || req.protocol || 'http'
+  const host = req.get('x-forwarded-host') || req.get('host')
+  return host ? `${protocol}://${host}` : ''
+}
+
+function setPreviewCookie(req, res, token) {
+  const cookieName = getPreviewCookieName(token)
+  res.cookie(cookieName, token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: req.secure || req.get('x-forwarded-proto') === 'https',
+    maxAge: SITE_PREVIEW_TTL_MS,
+    path: '/api/sites'
+  })
+}
 
 function sendError(res, error, fallback = 'Error procesando solicitud') {
   const status = error.status || 500
@@ -200,6 +253,74 @@ export async function previewSiteHandler(req, res) {
   } catch (error) {
     logger.error(`Error previsualizando site: ${error.message}`)
     sendError(res, error, 'Error previsualizando site')
+  }
+}
+
+export async function createPreviewSessionHandler(req, res) {
+  try {
+    const site = await getSitePreview(req.params.siteId)
+    if (!site) {
+      return res.status(404).json({ success: false, error: 'Site no encontrado' })
+    }
+
+    cleanupPreviewSessions()
+    const token = crypto.randomBytes(32).toString('base64url')
+    const expiresAt = Date.now() + SITE_PREVIEW_TTL_MS
+    const pageId = String(req.body?.pageId || req.query?.page || '')
+
+    sitePreviewSessions.set(token, {
+      token,
+      siteId: site.id,
+      userId: getPreviewUserId(req),
+      pageId,
+      expiresAt
+    })
+    setPreviewCookie(req, res, token)
+
+    const params = new URLSearchParams()
+    if (pageId) params.set('page', pageId)
+    const origin = getRequestOrigin(req)
+    const path = `/api/sites/${encodeURIComponent(site.id)}/preview-session/${encodeURIComponent(token)}`
+    const url = `${origin}${path}${params.toString() ? `?${params.toString()}` : ''}`
+
+    res.json({
+      success: true,
+      data: {
+        url,
+        expiresAt: new Date(expiresAt).toISOString()
+      }
+    })
+  } catch (error) {
+    logger.error(`Error creando preview temporal de site: ${error.message}`)
+    sendError(res, error, 'Error creando preview temporal')
+  }
+}
+
+export async function previewSiteSessionHandler(req, res) {
+  try {
+    cleanupPreviewSessions()
+    const token = String(req.params.token || '')
+    const session = sitePreviewSessions.get(token)
+    const cookieValue = parseCookies(req)[getPreviewCookieName(token)]
+
+    if (!session || session.siteId !== req.params.siteId || cookieValue !== token) {
+      return res.status(403).type('html').send('Preview expirado o no autorizado')
+    }
+
+    const site = await getSitePreview(req.params.siteId)
+    if (!site) {
+      return res.status(404).type('html').send('Site no encontrado')
+    }
+
+    res.set('Cache-Control', 'no-store')
+    res.status(200).type('html').send(await renderPublicSiteHtml(site, {
+      pageId: req.query?.page || session.pageId,
+      trackingEnabled: false,
+      preview: true
+    }))
+  } catch (error) {
+    logger.error(`Error previsualizando sesion temporal de site: ${error.message}`)
+    return res.status(500).type('html').send('Error previsualizando site')
   }
 }
 

@@ -10045,6 +10045,40 @@ function renderSubmitButtonContent(label, subtitle = '') {
   return `<span class="rstk-button-label">${safeLabel}</span>${safeSubtitle ? `<span class="rstk-button-subtitle">${safeSubtitle}</span>` : ''}`
 }
 
+function renderVideoPlayer(src, block, settings = {}) {
+  const controlsMode = cleanString(settings.videoControlsMode) || (settings.videoControls === false ? 'none' : 'native')
+  const showNativeControls = controlsMode === 'native'
+  const showOverlay = controlsMode !== 'native'
+  const soundHint = settings.videoSoundHint !== false
+  const previewEnabled = settings.videoPreviewEnabled !== false
+  const muted = settings.videoMuted !== false
+  const autoplay = Boolean(settings.videoAutoplay)
+  const loop = Boolean(settings.videoLoop) || autoplay
+  const rawSpeed = Number(settings.videoDefaultSpeed || 1)
+  const speed = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1
+  const fit = ['cover', 'contain', 'fill'].includes(cleanString(settings.videoFit)) ? cleanString(settings.videoFit) : 'cover'
+  const playerColor = normalizeCssPaint(settings.videoPlayerColor, 'rgba(0,0,0,.52)') || 'rgba(0,0,0,.52)'
+  const playColor = normalizeCssPaint(settings.videoPlayColor, '#ffffff') || '#ffffff'
+  const classes = [
+    'rstk-video',
+    'rstk-video-player',
+    showNativeControls ? 'rstk-video-native-controls' : 'rstk-video-custom-controls',
+    soundHint && showOverlay ? 'rstk-video-sound-hint' : ''
+  ].filter(Boolean).join(' ')
+
+  return `
+    <div class="${classes}" style="--rstk-video-player-color:${escapeHtml(playerColor)};--rstk-video-play-color:${escapeHtml(playColor)}">
+      <video src="${escapeHtml(src)}" title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${muted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${previewEnabled ? 'auto' : 'metadata'}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
+      ${showOverlay ? `
+        <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
+          <span class="rstk-video-play-dot">${RSTK_ICONS.play}</span>
+          ${soundHint ? `<span class="rstk-video-sound"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 10v4h4l5 4V6l-5 4H4z" fill="currentColor"/><path d="M16 9.2c.8.8 1.2 1.7 1.2 2.8s-.4 2-1.2 2.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><i></i><i></i></span>` : ''}
+        </button>
+      ` : ''}
+    </div>
+  `
+}
+
 function renderContentBlock(block, context = {}) {
   const content = escapeHtml(block.content)
   const settings = block.settings || {}
@@ -10112,7 +10146,7 @@ function renderContentBlock(block, context = {}) {
     const directVideoUrl = isDirectVideoUrl(rawVideoUrl) ? safePublicMediaUrl(rawVideoUrl, 'video') : ''
     const videoUrl = directVideoUrl ? '' : normalizeVideoEmbedUrl(rawVideoUrl)
     return directVideoUrl
-      ? `<div class="rstk-video"><video src="${escapeHtml(directVideoUrl)}" controls playsinline preload="metadata"></video></div>`
+      ? renderVideoPlayer(directVideoUrl, block, settings)
       : videoUrl
         ? `<div class="rstk-video"><iframe src="${escapeHtml(videoUrl)}" loading="lazy" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
       : `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
@@ -11028,6 +11062,13 @@ const RSTK_BASE_CSS = `
   .rstk-video{aspect-ratio:16/9;position:relative}
   .rstk-video iframe,.rstk-video video{height:100%}
   .rstk-video video{background:#000;object-fit:cover}
+  .rstk-video-player{isolation:isolate}
+  .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:linear-gradient(180deg,transparent,rgba(0,0,0,.12));color:var(--rstk-video-play-color,#fff);cursor:pointer}
+  .rstk-video-play-dot{width:64px;height:64px;display:grid;place-items:center;border-radius:999px;background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:0 16px 38px rgba(0,0,0,.28)}
+  .rstk-video-sound{position:absolute;right:14px;bottom:14px;display:inline-flex;align-items:center;gap:4px;border-radius:999px;background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);padding:8px 10px}
+  .rstk-video-sound i{width:5px;height:12px;border-radius:999px;background:currentColor;animation:rstkVideoSound 1s ease-in-out infinite}
+  .rstk-video-sound i:last-child{height:18px;animation-delay:.18s}
+  @keyframes rstkVideoSound{0%,100%{transform:scaleY(.55);opacity:.65}50%{transform:scaleY(1);opacity:1}}
   .rstk-media-empty{min-height:190px;display:grid;place-items:center;gap:8px;color:var(--rstk-muted);font-size:.92rem}
   .rstk-play{display:grid;place-items:center;width:58px;height:58px;border-radius:50%;background:var(--rstk-accent);color:var(--rstk-on-accent)}
 
@@ -12454,6 +12495,28 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         if (!Number.isFinite(height)) return;
         frame.style.minHeight = Math.round(height) + 'px';
         frame.style.height = Math.round(height) + 'px';
+      });
+    })();
+  </script>
+  <script>
+    (() => {
+      document.querySelectorAll('.rstk-video-player video').forEach(video => {
+        const rawSpeed = Number(video.getAttribute('data-rstk-video-speed') || '1');
+        video.playbackRate = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1;
+      });
+      document.addEventListener('click', event => {
+        const overlay = event.target && event.target.closest ? event.target.closest('[data-rstk-video-overlay]') : null;
+        if (!overlay) return;
+        event.preventDefault();
+        const host = overlay.closest('.rstk-video-player');
+        const video = host ? host.querySelector('video') : null;
+        if (!video) return;
+        video.muted = false;
+        if (video.paused) {
+          video.play().catch(() => {});
+        } else {
+          video.pause();
+        }
       });
     })();
   </script>
