@@ -18261,6 +18261,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const settings = block.settings || {}
   const hasButtonCopy = block.blockType === 'hero' || block.blockType === 'cta' || block.blockType === 'button'
   const hasListCopy = ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
+  const isPrimaryTextBlock = ['headline', 'title'].includes(block.blockType)
+  const isSecondaryTextBlock = ['subheading', 'subtitle', 'description'].includes(block.blockType)
+  const showBlockNameFirst = isField || block.blockType === SECTION_BLOCK_TYPE
+  const showContentField = block.blockType !== 'calendar_embed' && block.blockType !== 'button'
   const contentLabel = isField
     ? 'Texto de ayuda'
     : block.blockType === SECTION_BLOCK_TYPE
@@ -18273,34 +18277,44 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             ? 'Titulo'
             : hasListCopy
               ? 'Titulo de seccion'
-              : 'Contenido'
+              : isPrimaryTextBlock
+                ? 'Texto del titulo'
+                : isSecondaryTextBlock
+                  ? 'Texto del subtitulo'
+                  : block.blockType === 'text'
+                    ? 'Texto'
+                    : 'Contenido'
   const contentRows = block.blockType === 'embed' ? 7 : isField || block.blockType === SECTION_BLOCK_TYPE ? 2 : 3
   const buttonTextEditorValue = Object.prototype.hasOwnProperty.call(settings, 'buttonText')
     ? getSettingString(settings, 'buttonText')
     : block.blockType === 'button'
       ? block.content
       : ''
+  const blockNameField = (
+    <label className={styles.field}>
+      <span>{isField ? 'Pregunta visible' : block.blockType === SECTION_BLOCK_TYPE ? 'Nombre de la franja' : 'Nombre interno del bloque'}</span>
+      <input value={block.label} onChange={(event) => onPatchBlock({ label: event.target.value })} onBlur={onSave} />
+    </label>
+  )
+  const contentField = showContentField ? (
+    <label className={styles.field}>
+      <span>{contentLabel}</span>
+      <textarea
+        rows={contentRows}
+        value={block.content}
+        placeholder={block.blockType === 'embed' ? '<iframe src="https://..."></iframe> o codigo HTML del widget' : undefined}
+        onChange={(event) => onPatchBlock({ content: event.target.value })}
+        onBlur={onSave}
+      />
+    </label>
+  ) : null
 
   const blockHasSettingsContent = hasBlockSettingsTabContent(block, isField)
   const editContent = (
     <>
-      <label className={styles.field}>
-        <span>{isField ? 'Pregunta visible' : block.blockType === SECTION_BLOCK_TYPE ? 'Nombre de la franja' : 'Nombre del bloque'}</span>
-        <input value={block.label} onChange={(event) => onPatchBlock({ label: event.target.value })} onBlur={onSave} />
-      </label>
+      {showBlockNameFirst && blockNameField}
 
-      {block.blockType !== 'calendar_embed' && block.blockType !== 'button' && (
-        <label className={styles.field}>
-          <span>{contentLabel}</span>
-          <textarea
-            rows={contentRows}
-            value={block.content}
-            placeholder={block.blockType === 'embed' ? '<iframe src="https://..."></iframe> o codigo HTML del widget' : undefined}
-            onChange={(event) => onPatchBlock({ content: event.target.value })}
-            onBlur={onSave}
-          />
-        </label>
-      )}
+      {contentField}
 
       {block.blockType === 'hero' && (
         <label className={styles.field}>
@@ -18332,6 +18346,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </label>
         </div>
       )}
+
+      {!showBlockNameFirst && blockNameField}
 
       {hasListCopy && (
         <label className={styles.field}>
