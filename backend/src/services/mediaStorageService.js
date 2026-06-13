@@ -15,6 +15,16 @@ const __dirname = dirname(__filename)
 
 const GB = 1024 * 1024 * 1024
 const LOCAL_MEDIA_ROOT = join(__dirname, '../../uploads/media-storage')
+const CENTRAL_STORAGE_CONFIG_TTL_MS = Math.max(
+  30_000,
+  Number(process.env.MEDIA_CENTRAL_CONFIG_TTL_MS || 5 * 60 * 1000) || 5 * 60 * 1000
+)
+
+let centralStorageConfigCache = {
+  expiresAt: 0,
+  env: null,
+  promise: null
+}
 
 const MEDIA_MODULES = new Set([
   'chat',
@@ -121,6 +131,12 @@ function normalizeBaseUrl(value = '') {
   return clean
 }
 
+function applyRuntimeEnvFallback(key, value) {
+  const clean = cleanString(value)
+  if (!clean || cleanString(process.env[key])) return
+  process.env[key] = clean
+}
+
 function publicBaseUrl() {
   return normalizeBaseUrl(process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '')
 }
@@ -218,8 +234,7 @@ async function getStorageSettingsRow() {
   return await db.get('SELECT * FROM storage_settings WHERE id = 1')
 }
 
-export async function getStorageRuntimeConfig() {
-  const row = await getStorageSettingsRow()
+function buildStorageRuntimeConfig(row) {
   const provider = cleanString(process.env.MEDIA_STORAGE_PROVIDER || row?.storage_provider || 'bunny').toLowerCase()
   const storageEnabled = process.env.MEDIA_STORAGE_ENABLED !== undefined
     ? boolValue(process.env.MEDIA_STORAGE_ENABLED, true)
@@ -264,6 +279,124 @@ export async function getStorageRuntimeConfig() {
     : config.provider === 'bunny'
       ? config.bunnyConfigured ? 'configured' : 'not_configured'
       : 'local_fallback'
+
+  return config
+}
+
+function centralStorageRequestConfig() {
+  const licenseServerUrl = normalizeBaseUrl(process.env.LICENSE_SERVER_URL || '')
+  const clientId = cleanString(process.env.CLIENT_ID)
+  const licenseKey = cleanString(process.env.LICENSE_KEY)
+  const installationId = cleanString(process.env.INSTALLATION_ID)
+  if (!licenseServerUrl || !clientId || !licenseKey || !installationId) return null
+  return {
+    licenseServerUrl,
+    body: {
+      client_id: clientId,
+      license_key: licenseKey,
+      installation_id: installationId,
+      app_url: process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || '',
+      version: process.env.APP_VERSION || ''
+    }
+  }
+}
+
+function readCentralStorageConfigValue(config, snakeKey, envKey) {
+  return cleanString(config?.[snakeKey] || config?.[envKey])
+}
+
+function normalizeCentralStorageEnv(config = {}) {
+  return {
+    MEDIA_STORAGE_PROVIDER: readCentralStorageConfigValue(config, 'media_storage_provider', 'MEDIA_STORAGE_PROVIDER') || 'bunny',
+    MEDIA_STORAGE_REQUIRE_BUNNY: readCentralStorageConfigValue(config, 'media_storage_require_bunny', 'MEDIA_STORAGE_REQUIRE_BUNNY') || 'true',
+    MEDIA_COMPRESSION_ENABLED: readCentralStorageConfigValue(config, 'media_compression_enabled', 'MEDIA_COMPRESSION_ENABLED') || 'true',
+    DEFAULT_STORAGE_QUOTA_GB: readCentralStorageConfigValue(config, 'default_storage_quota_gb', 'DEFAULT_STORAGE_QUOTA_GB'),
+    INTERNAL_INSTALLER_TOKEN: readCentralStorageConfigValue(config, 'internal_installer_token', 'INTERNAL_INSTALLER_TOKEN'),
+    BUNNY_STORAGE_ZONE: readCentralStorageConfigValue(config, 'bunny_storage_zone', 'BUNNY_STORAGE_ZONE'),
+    BUNNY_STORAGE_REGION: readCentralStorageConfigValue(config, 'bunny_storage_region', 'BUNNY_STORAGE_REGION'),
+    BUNNY_STORAGE_ENDPOINT: readCentralStorageConfigValue(config, 'bunny_storage_endpoint', 'BUNNY_STORAGE_ENDPOINT'),
+    BUNNY_STORAGE_API_KEY: readCentralStorageConfigValue(config, 'bunny_storage_api_key', 'BUNNY_STORAGE_API_KEY'),
+    BUNNY_CDN_BASE_URL: readCentralStorageConfigValue(config, 'bunny_cdn_base_url', 'BUNNY_CDN_BASE_URL'),
+    BUNNY_STREAM_LIBRARY_ID: readCentralStorageConfigValue(config, 'bunny_stream_library_id', 'BUNNY_STREAM_LIBRARY_ID'),
+    BUNNY_STREAM_API_KEY: readCentralStorageConfigValue(config, 'bunny_stream_api_key', 'BUNNY_STREAM_API_KEY')
+  }
+}
+
+async function fetchCentralStorageConfig() {
+  const requestConfig = centralStorageRequestConfig()
+  if (!requestConfig) return null
+
+  if (centralStorageConfigCache.env && centralStorageConfigCache.expiresAt > Date.now()) {
+    return centralStorageConfigCache.env
+  }
+  if (centralStorageConfigCache.promise) return centralStorageConfigCache.promise
+
+  centralStorageConfigCache.promise = (async () => {
+    try {
+      const response = await fetch(`${requestConfig.licenseServerUrl}/api/license/storage-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestConfig.body),
+        signal: AbortSignal.timeout(Number(process.env.MEDIA_CENTRAL_CONFIG_TIMEOUT_MS || 10_000) || 10_000)
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || !payload?.success || !payload?.config) {
+        const reason = payload?.reason || payload?.message || response.statusText
+        logger.warn(`[MediaStorage] Installer no entregó configuración Bunny (${response.status}): ${reason}`)
+        return null
+      }
+
+      const env = normalizeCentralStorageEnv(payload.config)
+      if (!env.BUNNY_STORAGE_ZONE || !env.BUNNY_STORAGE_API_KEY || !env.BUNNY_CDN_BASE_URL) {
+        logger.warn('[MediaStorage] Installer entregó configuración Bunny incompleta.')
+        return null
+      }
+
+      centralStorageConfigCache.env = env
+      centralStorageConfigCache.expiresAt = Date.now() + CENTRAL_STORAGE_CONFIG_TTL_MS
+      return env
+    } catch (error) {
+      logger.warn(`[MediaStorage] No se pudo recuperar configuración Bunny desde Installer: ${error.message}`)
+      return null
+    } finally {
+      centralStorageConfigCache.promise = null
+    }
+  })()
+
+  return centralStorageConfigCache.promise
+}
+
+function applyCentralStorageEnv(env = null) {
+  if (!env) return false
+  let applied = false
+  for (const [key, value] of Object.entries(env)) {
+    if (cleanString(value) && !cleanString(process.env[key])) {
+      applyRuntimeEnvFallback(key, value)
+      applied = true
+    }
+  }
+  return applied
+}
+
+export function resetCentralStorageConfigCache() {
+  centralStorageConfigCache = {
+    expiresAt: 0,
+    env: null,
+    promise: null
+  }
+}
+
+export async function getStorageRuntimeConfig() {
+  const row = await getStorageSettingsRow()
+  let config = buildStorageRuntimeConfig(row)
+
+  if (config.provider === 'bunny' && !config.bunnyConfigured) {
+    const centralEnv = await fetchCentralStorageConfig()
+    if (applyCentralStorageEnv(centralEnv)) {
+      config = buildStorageRuntimeConfig(row)
+      config.centralConfigLoaded = config.bunnyConfigured
+    }
+  }
 
   return config
 }
