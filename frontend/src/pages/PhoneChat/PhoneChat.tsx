@@ -230,6 +230,7 @@ type ComposerStatus = 'idle' | 'sending'
 type MessageAudioRate = typeof MESSAGE_AUDIO_RATE_OPTIONS[number]
 type PaymentMode = 'single' | 'partial'
 type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | 'agentMenu' | null
+type ChatMoreMode = 'default' | 'agentControls'
 type AgentMenuSection = 'menu' | 'ready_human' | 'ready_advance'
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'leads'
 type TemplateMode = 'choice' | 'send' | 'create'
@@ -2627,6 +2628,7 @@ export const PhoneChat: React.FC = () => {
   const [closingSwipeChatId, setClosingSwipeChatId] = useState<string | null>(null)
   const [chatSwipeSuppressed, setChatSwipeSuppressed] = useState(false)
   const [chatActionContactId, setChatActionContactId] = useState<string | null>(null)
+  const [chatMoreMode, setChatMoreMode] = useState<ChatMoreMode>('default')
   const [chatQuickActionsContact, setChatQuickActionsContact] = useState<ChatContact | null>(null)
   const chatLongPressRef = useRef<{ contactId: string; timerId: number } | null>(null)
   const [contactQuery, setContactQuery] = useState('')
@@ -4386,6 +4388,7 @@ export const PhoneChat: React.FC = () => {
     }
     if (sheet !== 'chatMore') {
       setChatActionContactId(null)
+      setChatMoreMode('default')
     }
     if (sheet !== 'clabe') {
       setClabeFormOpen(false)
@@ -5078,6 +5081,7 @@ export const PhoneChat: React.FC = () => {
   const handleOpenChatMore = (contact: Contact) => {
     setActiveContactId(contact.id)
     setChatActionContactId(contact.id)
+    setChatMoreMode('default')
     setSheet('chatMore')
     setContactInfoOpen(false)
     closeSwipeActions()
@@ -5093,6 +5097,7 @@ export const PhoneChat: React.FC = () => {
     if (!contact?.id) return
     setActiveContactId(contact.id)
     setChatActionContactId(contact.id)
+    setChatMoreMode('agentControls')
     setChatQuickActionsContact(null)
     setAgentMenuSection('menu')
     setSheet('chatMore')
@@ -10338,11 +10343,12 @@ export const PhoneChat: React.FC = () => {
     }
 
     const isMuted = mutedChatIdSet.has(chatActionContact.id)
+    const showingAgentControls = chatMoreMode === 'agentControls'
     const agentState = agentStates[chatActionContact.id] || null
     const agentChatStatus = agentState?.status || 'active'
     const agentStatusLabels: Record<string, string> = {
       active: 'El agente atiende este chat.',
-      paused: 'Agente pausado en este chat.',
+      paused: 'Chatbot pausado en este chat.',
       human: 'Conversación tomada por un humano.',
       skipped: 'Chatbot omitido en este chat.',
       completed: 'El agente ya cumplió el objetivo aquí.',
@@ -10353,6 +10359,7 @@ export const PhoneChat: React.FC = () => {
       handleAgentStateAction(chatActionContact.id, action, successMessage)
       actionSheetDismiss.requestClose()
       setChatActionContactId(null)
+      setChatMoreMode('default')
       closeSwipeActions()
     }
 
@@ -10368,11 +10375,11 @@ export const PhoneChat: React.FC = () => {
               onClick: () => runAgentAction('take_over', `Tomaste la conversación de ${getContactName(chatActionContact)}.`)
             },
             {
-              label: 'Pausar agente',
-              description: 'Pausa al agente solo en esta conversación.',
+              label: 'Pausar chatbot',
+              description: 'Pausa el chatbot solo en esta conversación.',
               Icon: Pause,
               className: styles.chatMoreAgent,
-              onClick: () => runAgentAction('pause', 'El agente quedó pausado en este chat.')
+              onClick: () => runAgentAction('pause', 'El chatbot quedó pausado en este chat.')
             },
             {
               label: 'Omitir chatbot',
@@ -10392,30 +10399,33 @@ export const PhoneChat: React.FC = () => {
             }
           ]
 
-    const actions = [
-      {
-        label: 'Agendar cita',
-        description: 'Crear una cita para este contacto.',
-        Icon: CalendarDays,
-        className: styles.chatMoreAppointment,
-        onClick: () => handleOpenAppointmentForm(chatActionContact)
-      },
-      {
-        label: 'Registrar pagos',
-        description: highLevelConnected ? 'Guardar un pago o plan de pagos.' : 'Guardar un pago único.',
-        Icon: CircleDollarSign,
-        className: styles.chatMorePayment,
-        onClick: () => handleChatMoreAction(chatActionContact, 'payment')
-      },
-      {
-        label: isMuted ? 'Quitar silencio' : 'Silenciar',
-        description: isMuted ? 'Quitar la marca de silencio de este chat.' : 'Marcar este chat como silenciado.',
-        Icon: isMuted ? Bell : BellOff,
-        className: styles.chatMoreMute,
-        onClick: () => handleToggleMuteChat(chatActionContact)
-      },
-      ...agentActions
-    ]
+    const contactActions = showingAgentControls
+      ? []
+      : [
+          {
+            label: 'Agendar cita',
+            description: 'Crear una cita para este contacto.',
+            Icon: CalendarDays,
+            className: styles.chatMoreAppointment,
+            onClick: () => handleOpenAppointmentForm(chatActionContact)
+          },
+          {
+            label: 'Registrar pagos',
+            description: highLevelConnected ? 'Guardar un pago o plan de pagos.' : 'Guardar un pago único.',
+            Icon: CircleDollarSign,
+            className: styles.chatMorePayment,
+            onClick: () => handleChatMoreAction(chatActionContact, 'payment')
+          },
+          {
+            label: isMuted ? 'Quitar silencio' : 'Silenciar',
+            description: isMuted ? 'Quitar la marca de silencio de este chat.' : 'Marcar este chat como silenciado.',
+            Icon: isMuted ? Bell : BellOff,
+            className: styles.chatMoreMute,
+            onClick: () => handleToggleMuteChat(chatActionContact)
+          }
+        ]
+
+    const actions = [...contactActions, ...agentActions]
 
     return (
       <div className={styles.chatMoreList}>
@@ -11114,7 +11124,7 @@ export const PhoneChat: React.FC = () => {
                     {sheet === 'clabe' && 'CLABE'}
                     {sheet === 'settings' && 'Ajustes del chat'}
                     {sheet === 'newChat' && 'Nuevo chat'}
-                    {sheet === 'chatMore' && 'Más acciones'}
+                    {sheet === 'chatMore' && (chatMoreMode === 'agentControls' ? 'Acciones del chatbot' : 'Más acciones')}
                     {sheet === 'agentMenu' && (agentMenuSection === 'ready_human' ? 'Listas para humano' : agentMenuSection === 'ready_advance' ? 'Listas para avanzar' : 'Agente conversacional')}
                     {sheet === 'schedule' && (scheduleEditingMessageId ? 'Editar programación' : 'Programar mensaje')}
                   </h2>
