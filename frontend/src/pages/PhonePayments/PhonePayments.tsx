@@ -568,7 +568,7 @@ export const PhonePayments: React.FC = () => {
           <div className={styles.productFormHeader}>
             <div>
               <strong>{productFormMode === 'edit' ? 'Editar producto' : 'Nuevo producto'}</strong>
-              <small>Estos datos aparecerán al cobrar desde productos guardados.</small>
+              <small>Estos datos aparecerán al cobrar desde Guardados.</small>
             </div>
             <button type="button" onClick={closeProductForm} aria-label="Cerrar formulario">
               <X size={18} />

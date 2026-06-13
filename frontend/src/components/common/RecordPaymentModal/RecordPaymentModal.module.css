@@ -1619,9 +1619,9 @@ body.dark .tooltipInfo {
   --record-payment-embedded-text: var(--phone-chat-text, var(--color-text-primary, #0f172a));
   --record-payment-embedded-muted: var(--phone-chat-muted, var(--color-text-tertiary, #64748b));
   --record-payment-embedded-border: var(--phone-chat-border, var(--color-border, rgba(0, 0, 0, 0.08)));
-  --record-payment-embedded-tablist-bg: color-mix(in srgb, var(--record-payment-embedded-text) 4%, var(--record-payment-embedded-bg) 96%);
-  --record-payment-embedded-tablist-border: color-mix(in srgb, var(--record-payment-embedded-text) 14%, var(--record-payment-embedded-border) 86%);
-  --record-payment-embedded-tab-active-bg: color-mix(in srgb, var(--record-payment-embedded-text) 12%, var(--record-payment-embedded-bg) 88%);
+  --record-payment-embedded-tablist-bg: color-mix(in srgb, var(--record-payment-embedded-text) 9%, var(--record-payment-embedded-bg) 91%);
+  --record-payment-embedded-tablist-border: color-mix(in srgb, var(--record-payment-embedded-text) 24%, var(--record-payment-embedded-border) 76%);
+  --record-payment-embedded-tab-active-bg: color-mix(in srgb, var(--record-payment-embedded-text) 18%, var(--record-payment-embedded-bg) 82%);
   --record-payment-embedded-top-padding: calc(env(safe-area-inset-top, 0px) + 72px);
   --record-payment-control-border: color-mix(in srgb, var(--record-payment-embedded-text) 14%, var(--record-payment-embedded-border) 86%);
   --color-background: var(--record-payment-embedded-bg);

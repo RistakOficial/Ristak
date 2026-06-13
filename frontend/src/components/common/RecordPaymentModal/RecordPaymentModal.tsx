@@ -1788,7 +1788,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             <TabList
               tabs={[
                 { value: 'direct', label: 'Cobro directo' },
-                { value: 'product', label: 'Productos guardados' }
+                { value: 'product', label: 'Guardados' }
               ]}
               activeTab={chargeType}
               onTabChange={(value) => {

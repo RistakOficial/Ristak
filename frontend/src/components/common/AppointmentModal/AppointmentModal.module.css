@@ -64,9 +64,9 @@
   --appointment-mobile-text: var(--phone-chat-text, #050505);
   --appointment-mobile-muted: var(--phone-chat-muted, #737373);
   --appointment-mobile-border: var(--phone-chat-border, rgba(17, 24, 39, 0.08));
-  --appointment-mobile-tablist-bg: color-mix(in srgb, var(--appointment-mobile-text) 4%, var(--appointment-mobile-bg) 96%);
-  --appointment-mobile-tablist-border: color-mix(in srgb, var(--appointment-mobile-text) 14%, var(--appointment-mobile-border) 86%);
-  --appointment-mobile-tab-active-bg: color-mix(in srgb, var(--appointment-mobile-text) 12%, var(--appointment-mobile-bg) 88%);
+  --appointment-mobile-tablist-bg: color-mix(in srgb, var(--appointment-mobile-text) 9%, var(--appointment-mobile-bg) 91%);
+  --appointment-mobile-tablist-border: color-mix(in srgb, var(--appointment-mobile-text) 24%, var(--appointment-mobile-border) 76%);
+  --appointment-mobile-tab-active-bg: color-mix(in srgb, var(--appointment-mobile-text) 18%, var(--appointment-mobile-bg) 82%);
   --color-background: var(--appointment-mobile-surface);
   --color-background-secondary: var(--appointment-mobile-surface);
   --color-background-tertiary: var(--appointment-mobile-soft);
