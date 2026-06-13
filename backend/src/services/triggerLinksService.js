@@ -23,12 +23,6 @@ function notFound(message) {
   return error
 }
 
-function gone(message) {
-  const error = new Error(message)
-  error.status = 410
-  return error
-}
-
 function parseJson(raw, fallback) {
   if (raw === null || raw === undefined) return fallback
   if (typeof raw === 'object') return raw
@@ -37,13 +31,6 @@ function parseJson(raw, fallback) {
   } catch {
     return fallback
   }
-}
-
-function boolValue(value, fallback = true) {
-  if (value === undefined || value === null || value === '') return fallback
-  if (typeof value === 'boolean') return value
-  const raw = String(value).trim().toLowerCase()
-  return !['0', 'false', 'no', 'off'].includes(raw)
 }
 
 function normalizePublicId(value) {
@@ -166,7 +153,7 @@ export async function listTriggerLinks({ includeArchived = false, baseUrl = '' }
     SELECT *
     FROM trigger_links
     ${includeArchived ? '' : 'WHERE archived = 0'}
-    ORDER BY archived ASC, active DESC, updated_at DESC, created_at DESC
+    ORDER BY archived ASC, updated_at DESC, created_at DESC
   `)
   return rows.map(row => mapTriggerLink(row, { baseUrl })).filter(Boolean)
 }
@@ -206,7 +193,7 @@ export async function createTriggerLink(input = {}, { userId = null, baseUrl = '
     name,
     destinationUrl,
     cleanString(input.description, 800) || null,
-    boolValue(input.active, true) ? 1 : 0,
+    1,
     userId ? String(userId) : null
   ])
 
@@ -229,14 +216,13 @@ export async function updateTriggerLink(triggerLinkId, input = {}, { baseUrl = '
       name = ?,
       destination_url = ?,
       description = ?,
-      active = ?,
+      active = 1,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
     name,
     destinationUrl,
     input.description === undefined ? existing.description || null : cleanString(input.description, 800) || null,
-    boolValue(input.active, existing.active) ? 1 : 0,
     existing.id
   ])
 
@@ -280,7 +266,6 @@ export async function recordTriggerLinkClick(publicId, req = {}) {
     [normalizedPublicId]
   )
   if (!row) throw notFound('Enlace de disparo no encontrado.')
-  if (!Number(row.active ?? 1)) throw gone('Este enlace de disparo esta apagado.')
 
   const query = req.query || {}
   const contactId = getQueryValue(query, 'contact_id', 'contactId', 'cid')

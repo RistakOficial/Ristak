@@ -657,7 +657,7 @@ export const TagsSettings: React.FC = () => {
 
               <label className={styles.field}>
                 <span>Carpeta</span>
-                <CustomSelect value={draft.folderId} onChange={(event) => patchDraft({ folderId: event.target.value })}>
+                <CustomSelect portal value={draft.folderId} onChange={(event) => patchDraft({ folderId: event.target.value })}>
                   <option value="">Sin carpeta</option>
                   {folders.map(folder => (
                     <option key={folder.id} value={folder.id}>{folder.name}</option>

@@ -43,7 +43,7 @@ test('createTriggerLink crea ID publico, URL publica y permite actualizar destin
     )
     assert.equal(updated.name, 'Enlace actualizado')
     assert.equal(updated.destinationUrl, '/descarga')
-    assert.equal(updated.active, false)
+    assert.equal(updated.active, true)
 
     const saved = await getTriggerLink(created.id, { baseUrl: 'https://app.ristak.test' })
     assert.equal(saved.publicUrl, `https://app.ristak.test/trigger-links/${created.publicId}`)

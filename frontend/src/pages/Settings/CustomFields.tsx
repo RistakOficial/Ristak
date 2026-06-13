@@ -748,6 +748,7 @@ export const CustomFields: React.FC = () => {
               <label className={styles.field}>
                 <span>Tipo</span>
                 <CustomSelect
+                  portal
                   value={draft.dataType}
                   disabled={Boolean(editingField)}
                   onChange={(event) => patchDraft({ dataType: event.target.value as CustomFieldDataType })}
@@ -766,7 +767,7 @@ export const CustomFields: React.FC = () => {
               {!editingField && (
                 <label className={styles.field}>
                   <span>Carpeta</span>
-                  <CustomSelect value={draft.folderId} onChange={(event) => patchDraft({ folderId: event.target.value })}>
+                  <CustomSelect portal value={draft.folderId} onChange={(event) => patchDraft({ folderId: event.target.value })}>
                     <option value="">Sin carpeta</option>
                     {folders.map(folder => (
                       <option key={folder.id} value={folder.id}>{folder.name}</option>

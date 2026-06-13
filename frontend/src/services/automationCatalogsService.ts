@@ -128,7 +128,6 @@ async function loadForms(): Promise<CatalogOption[]> {
 async function loadTriggerLinks(): Promise<CatalogOption[]> {
   const links = await triggerLinksService.list()
   return (links || [])
-    .filter((link) => link.active)
     .map((link) => ({
       value: link.id,
       label: link.name,

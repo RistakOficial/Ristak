@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
-  CheckCircle2,
   Copy,
   Edit3,
   ExternalLink,
@@ -9,14 +8,12 @@ import {
   Loader2,
   MousePointerClick,
   Plus,
-  Power,
   Save,
   Search,
   Trash2,
-  X,
-  XCircle
+  X
 } from 'lucide-react'
-import { Button, CustomSelect, PageHeader } from '@/components/common'
+import { Button, PageHeader } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   triggerLinksService,
@@ -25,20 +22,16 @@ import {
 } from '@/services/triggerLinksService'
 import styles from './CustomFields.module.css'
 
-type LinkFilter = 'all' | 'active' | 'inactive'
-
 type TriggerLinkDraft = {
   name: string
   destinationUrl: string
   description: string
-  active: boolean
 }
 
 const emptyDraft = (): TriggerLinkDraft => ({
   name: '',
   destinationUrl: '',
-  description: '',
-  active: true
+  description: ''
 })
 
 const formatDateTime = (value?: string | null) => {
@@ -51,12 +44,9 @@ const formatDateTime = (value?: string | null) => {
   }).format(date)
 }
 
-const getFilterTargetId = (filter: LinkFilter) => filter
-
 export const TriggerLinks: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [links, setLinks] = useState<TriggerLink[]>([])
-  const [activeFilter, setActiveFilter] = useState<LinkFilter>('all')
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -81,17 +71,9 @@ export const TriggerLinks: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const counts = useMemo(() => ({
-    all: links.length,
-    active: links.filter(link => link.active).length,
-    inactive: links.filter(link => !link.active).length
-  }), [links])
-
   const visibleLinks = useMemo(() => {
     const query = search.trim().toLowerCase()
     return links.filter(link => {
-      if (activeFilter === 'active' && !link.active) return false
-      if (activeFilter === 'inactive' && link.active) return false
       if (!query) return true
       return [
         link.name,
@@ -101,7 +83,7 @@ export const TriggerLinks: React.FC = () => {
         link.description
       ].some(value => String(value || '').toLowerCase().includes(query))
     })
-  }, [activeFilter, links, search])
+  }, [links, search])
 
   const patchDraft = (patch: Partial<TriggerLinkDraft>) => {
     setDraft(current => ({ ...current, ...patch }))
@@ -118,8 +100,7 @@ export const TriggerLinks: React.FC = () => {
     setDraft({
       name: link.name,
       destinationUrl: link.destinationUrl,
-      description: link.description || '',
-      active: link.active
+      description: link.description || ''
     })
     setEditorOpen(true)
   }
@@ -154,8 +135,7 @@ export const TriggerLinks: React.FC = () => {
     return {
       name,
       destinationUrl,
-      description: draft.description.trim(),
-      active: draft.active
+      description: draft.description.trim()
     }
   }
 
@@ -178,20 +158,6 @@ export const TriggerLinks: React.FC = () => {
       showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Intenta otra vez')
     } finally {
       setSaving(false)
-    }
-  }
-
-  const toggleLinkActive = async (link: TriggerLink) => {
-    try {
-      await triggerLinksService.update(link.id, { active: !link.active })
-      await loadLinks()
-      showToast(
-        'success',
-        link.active ? 'Enlace apagado' : 'Enlace activado',
-        link.active ? 'Ya no disparará automatizaciones.' : 'Ya vuelve a registrar visitas.'
-      )
-    } catch (error) {
-      showToast('error', 'No se pudo cambiar el estado', error instanceof Error ? error.message : 'Intenta otra vez')
     }
   }
 
@@ -218,12 +184,12 @@ export const TriggerLinks: React.FC = () => {
     )
   }
 
-  const renderFilterButton = (filter: LinkFilter, Icon: typeof HashIcon, label: string, count: number) => (
-    <div className={`${styles.folderRow} ${styles.folderSystemRow} ${activeFilter === filter ? styles.folderSystemRowActive : ''}`}>
-      <button type="button" onClick={() => setActiveFilter(getFilterTargetId(filter))}>
-        <Icon size={16} />
-        <span>{label}</span>
-        <b>{count}</b>
+  const renderFilterButton = () => (
+    <div className={`${styles.folderRow} ${styles.folderSystemRow} ${styles.folderSystemRowActive}`}>
+      <button type="button" aria-current="true">
+        <HashIcon size={16} />
+        <span>Todos los enlaces</span>
+        <b>{links.length}</b>
       </button>
       <span className={styles.folderActionSpacer} aria-hidden="true" />
     </div>
@@ -248,9 +214,7 @@ export const TriggerLinks: React.FC = () => {
             <strong>Filtros</strong>
             <span>{links.length} enlaces</span>
           </div>
-          {renderFilterButton('all', HashIcon, 'Todos los enlaces', counts.all)}
-          {renderFilterButton('active', CheckCircle2, 'Activos', counts.active)}
-          {renderFilterButton('inactive', XCircle, 'Apagados', counts.inactive)}
+          {renderFilterButton()}
         </aside>
 
         <main className={styles.tablePanel}>
@@ -271,7 +235,7 @@ export const TriggerLinks: React.FC = () => {
             <div className={styles.emptyState}>
               <Link2 size={26} />
               <strong>No hay enlaces en esta vista</strong>
-              <span>Crea un enlace nuevo o cambia de filtro.</span>
+              <span>Crea un enlace nuevo o ajusta la búsqueda.</span>
             </div>
           ) : (
             <div className={styles.tableWrap}>
@@ -283,7 +247,6 @@ export const TriggerLinks: React.FC = () => {
                     <th>Destino</th>
                     <th>Disparos</th>
                     <th>Último disparo</th>
-                    <th>Estado</th>
                     <th aria-label="Acciones" />
                   </tr>
                 </thead>
@@ -298,7 +261,6 @@ export const TriggerLinks: React.FC = () => {
                       <td><code>{link.destinationUrl}</code></td>
                       <td>{link.clickCount}</td>
                       <td>{formatDateTime(link.lastClickedAt)}</td>
-                      <td><span className={styles.typePill}>{link.active ? 'Activo' : 'Apagado'}</span></td>
                       <td>
                         <div className={styles.rowActions}>
                           <button type="button" onClick={() => copyText(link.publicUrl, 'Enlace público')} aria-label={`Copiar ${link.name}`} title="Copiar">
@@ -306,9 +268,6 @@ export const TriggerLinks: React.FC = () => {
                           </button>
                           <button type="button" onClick={() => window.open(link.publicUrl, '_blank', 'noopener,noreferrer')} aria-label={`Abrir ${link.name}`} title="Abrir">
                             <ExternalLink size={15} />
-                          </button>
-                          <button type="button" onClick={() => void toggleLinkActive(link)} aria-label={link.active ? `Apagar ${link.name}` : `Activar ${link.name}`} title={link.active ? 'Apagar' : 'Activar'}>
-                            <Power size={15} />
                           </button>
                           <button type="button" onClick={() => openEditEditor(link)} aria-label={`Editar ${link.name}`} title="Editar">
                             <Edit3 size={15} />
@@ -360,14 +319,6 @@ export const TriggerLinks: React.FC = () => {
                   placeholder="Para que tu equipo sepa dónde se usa."
                   onChange={(event) => patchDraft({ description: event.target.value })}
                 />
-              </label>
-
-              <label className={styles.field}>
-                <span>Estado</span>
-                <CustomSelect value={draft.active ? 'active' : 'inactive'} onChange={(event) => patchDraft({ active: event.target.value === 'active' })}>
-                  <option value="active">Activo</option>
-                  <option value="inactive">Apagado</option>
-                </CustomSelect>
               </label>
 
               {editingLink && (

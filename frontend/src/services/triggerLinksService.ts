@@ -33,7 +33,6 @@ export interface SaveTriggerLinkInput {
   name: string
   destinationUrl: string
   description?: string
-  active?: boolean
 }
 
 export const triggerLinksService = {
