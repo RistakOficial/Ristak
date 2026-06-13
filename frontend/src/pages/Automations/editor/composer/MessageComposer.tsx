@@ -61,14 +61,18 @@ function buildVariableTree(items: FlowVariable[]): PickerTreeNode[] {
     }
     return node
   }
+  const pathParts = (path: string) => path.match(/[^[.\]]+|\[\d+\]/g) || []
 
   items.forEach((variable) => {
     const labels = variable.pathLabels && variable.pathLabels.length > 0
       ? variable.pathLabels
       : [variable.label]
+    const segments = pathParts(variable.path || variable.fieldId)
     let siblings = root
     labels.forEach((label, index) => {
-      const id = `${variable.fieldId}:${index}:${label}`
+      const id = segments.length === labels.length
+        ? segments.slice(0, index + 1).join('')
+        : labels.slice(0, index + 1).join('/')
       const node = findOrCreate(siblings, id, label)
       if (index === labels.length - 1) {
         node.variable = variable
