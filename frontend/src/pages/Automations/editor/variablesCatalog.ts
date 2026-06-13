@@ -150,7 +150,13 @@ const BLOCK_OUTPUT_ROOTS = [
 ]
 
 export function isDynamicToken(fieldId: string): boolean {
-  return BLOCK_OUTPUT_ROOTS.some((root) => fieldId === root || fieldId.startsWith(`${root}_`) || fieldId.startsWith(`${root}.`))
+  return BLOCK_OUTPUT_ROOTS.some(
+    (root) =>
+      fieldId === root ||
+      fieldId.startsWith(`${root}_`) ||
+      fieldId.startsWith(`${root}.`) ||
+      fieldId.startsWith(`${root}[`)
+  )
 }
 
 function tokenSegment(value: string): string {
@@ -162,6 +168,24 @@ function tokenSegment(value: string): string {
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '')
   return normalized || 'campo'
+}
+
+function pathSegment(value: string): string {
+  const trimmed = value.trim()
+  if (/^\[\d+\]$/.test(trimmed)) return trimmed
+  return tokenSegment(trimmed)
+}
+
+function joinPathSegments(segments: string[]): string {
+  return segments.reduce((path, segment) => {
+    if (!path) return segment
+    return segment.startsWith('[') ? `${path}${segment}` : `${path}.${segment}`
+  }, '')
+}
+
+function tokenFromPath(root: string, path: string): string {
+  if (!path) return root
+  return path.startsWith('[') ? `${root}${path}` : `${root}.${path}`
 }
 
 function labelFromKey(value: string): string {
@@ -182,28 +206,35 @@ function typeFromValue(value: unknown): VariableValueType {
   return 'unknown'
 }
 
-function fieldsFromSample(value: unknown): VariableSchemaField[] {
-  if (!value || typeof value !== 'object') return []
-  const source =
-    Array.isArray(value) && value.length > 0 && typeof value[0] === 'object'
-      ? (value[0] as Record<string, unknown>)
-      : Array.isArray(value)
-        ? {}
-        : (value as Record<string, unknown>)
-
-  return Object.entries(source).map(([key, child]) => {
-    const type = typeFromValue(child)
-    const children =
-      child && typeof child === 'object'
-        ? fieldsFromSample(Array.isArray(child) ? child[0] : child)
-        : undefined
+function fieldsFromObject(value: Record<string, unknown>): VariableSchemaField[] {
+  return Object.entries(value).map(([key, child]) => {
+    const children = fieldsFromSample(child)
     return {
       label: labelFromKey(key),
       path: tokenSegment(key),
-      type,
-      ...(children && children.length > 0 ? { children } : {})
+      type: typeFromValue(child),
+      ...(children.length > 0 ? { children } : {})
     }
   })
+}
+
+function fieldsFromArray(value: unknown[]): VariableSchemaField[] {
+  return value.map((child, index) => {
+    const children = fieldsFromSample(child)
+    return {
+      label: `[${index}]`,
+      path: `[${index}]`,
+      type: typeFromValue(child),
+      ...(children.length > 0 ? { children } : {})
+    }
+  })
+}
+
+function fieldsFromSample(value: unknown): VariableSchemaField[] {
+  if (!value || typeof value !== 'object') return []
+  return Array.isArray(value)
+    ? fieldsFromArray(value)
+    : fieldsFromObject(value as Record<string, unknown>)
 }
 
 function flattenFields(
@@ -215,7 +246,7 @@ function flattenFields(
   parentLabels: string[] = []
 ): FlowVariable[] {
   return fields.flatMap((candidate) => {
-    const segment = tokenSegment(candidate.path || candidate.label)
+    const segment = pathSegment(candidate.path || candidate.label)
     const nextPath = [...parentPath, segment]
     const nextLabels = [...parentLabels, candidate.label]
     const hasChildren = Boolean(candidate.children && candidate.children.length > 0)
@@ -224,9 +255,9 @@ function flattenFields(
       return flattenFields(candidate.children || [], root, category, sourceId, nextPath, nextLabels)
     }
 
-    const path = nextPath.join('.')
+    const path = joinPathSegments(nextPath)
     return [{
-      fieldId: `${root}.${path}`,
+      fieldId: tokenFromPath(root, path),
       label: candidate.label,
       category: category.id,
       categoryLabel: category.label,
