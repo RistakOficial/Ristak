@@ -2623,6 +2623,7 @@ export const PhoneChat: React.FC = () => {
   const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>(() => mapAgentStatesByContactId(initialAgentLiveCache?.states || []))
   const [agentDataHydrated, setAgentDataHydrated] = useState(() => Boolean(initialAgentLiveCache))
   const [agentMenuSection, setAgentMenuSection] = useState<AgentMenuSection>('menu')
+  const [selectedAgentId, setSelectedAgentId] = useState(() => initialAgentLiveCache?.agents?.[0]?.id || '')
   const [agentConfigSaving, setAgentConfigSaving] = useState(false)
   const [agentStatusPhraseIndex, setAgentStatusPhraseIndex] = useState(0)
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_ARCHIVED_STATE_KEY))
@@ -3580,6 +3581,19 @@ export const PhoneChat: React.FC = () => {
   }, [loadAgentData])
 
   useEffect(() => {
+    if (!agentDefs.length) {
+      setSelectedAgentId('')
+      return
+    }
+
+    setSelectedAgentId((current) => (
+      current && agentDefs.some((agent) => agent.id === current)
+        ? current
+        : agentDefs[0].id
+    ))
+  }, [agentDefs])
+
+  useEffect(() => {
     const handleAgentLiveCache = (event: Event) => {
       applyAgentLiveCache((event as CustomEvent<ConversationalAgentLiveCache>).detail || null)
     }
@@ -3604,23 +3618,22 @@ export const PhoneChat: React.FC = () => {
     }
   }, [showToast])
 
-  // El menú móvil edita el primer agente (la lista completa vive en la web)
-  const saveFirstAgentPatch = useCallback(async (patch: Partial<{
+  const saveAgentPatch = useCallback(async (agentId: string, patch: Partial<{
+    enabled: boolean
     objective: ConversationalObjective
     successAction: ConversationalSuccessAction
   }>) => {
-    const first = agentDefs[0]
-    if (!first) return
+    if (!agentId) return
     setAgentConfigSaving(true)
     try {
-      const next = await conversationalAgentService.updateAgent(first.id, patch)
+      const next = await conversationalAgentService.updateAgent(agentId, patch)
       setAgentDefs((current) => current.map((agent) => (agent.id === next.id ? next : agent)))
     } catch (error: any) {
       showToast('error', 'Agente conversacional', error?.message || 'No se pudo guardar el cambio')
     } finally {
       setAgentConfigSaving(false)
     }
-  }, [agentDefs, showToast])
+  }, [showToast])
 
   const handleAgentStateAction = useCallback(async (contactId: string, action: ConversationStateAction, successMessage: string) => {
     try {
@@ -10598,121 +10611,186 @@ export const PhoneChat: React.FC = () => {
 
     const readyHumanCount = agentPriorityStates.filter((state) => state.signal === 'ready_for_human').length
     const readyAdvanceCount = agentPriorityStates.filter((state) => state.signal === 'ready_to_schedule' || state.signal === 'ready_to_buy' || state.signal === 'appointment_booked').length
-    const firstAgentDef = agentDefs[0] || null
+    const selectedAgentDef = agentDefs.find((agent) => agent.id === selectedAgentId) || agentDefs[0] || null
+    const selectedAgentActions = selectedAgentDef
+      ? agentActionsByObjective[selectedAgentDef.objective] || agentActionsByObjective.custom
+      : []
 
     return (
       <div className={styles.agentMenuBody} data-phone-chat-scrollable="true">
-        <label className={styles.toggleRow}>
-          <span>
-            <strong>Agente conversacional</strong>
-            <small>Atiende los chats entrantes con la información real del negocio.</small>
-          </span>
-          <input
-            type="checkbox"
-            checked={Boolean(agentConfig?.enabled)}
-            disabled={agentConfigSaving || !agentConfig}
-            onChange={(event) => saveAgentConfigPatch({ enabled: event.target.checked })}
-          />
-        </label>
+        <section className={styles.agentMenuSection} aria-label="Control general">
+          <div className={styles.agentMenuSectionHeader}>
+            <span>Control general</span>
+            <small>{agentConfig?.enabled ? 'Atendiendo chats' : 'Apagado'}</small>
+          </div>
+          <label className={styles.agentMasterToggle}>
+            <span>
+              <strong>Agente conversacional</strong>
+              <small>Permite que los agentes activos respondan conversaciones entrantes.</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={Boolean(agentConfig?.enabled)}
+              disabled={agentConfigSaving || !agentConfig}
+              onChange={(event) => saveAgentConfigPatch({ enabled: event.target.checked })}
+            />
+          </label>
+        </section>
 
-        {firstAgentDef ? (
-          <>
+        <section className={styles.agentMenuSection} aria-label="Agentes">
+          <div className={styles.agentMenuSectionHeader}>
+            <span>Agentes</span>
+            <small>{agentDefs.length ? `${agentDefs.length} configurados` : 'Sin agentes'}</small>
+          </div>
+
+          {agentDefs.length ? (
+            <div className={styles.agentPickerList}>
+              {agentDefs.map((agent) => {
+                const active = selectedAgentDef?.id === agent.id
+                const objectiveLabel = agentObjectiveOptions.find((option) => option.value === agent.objective)?.label || 'Objetivo'
+
+                return (
+                  <div key={agent.id} className={`${styles.agentPickerItem} ${active ? styles.agentPickerItemActive : ''}`}>
+                    <button
+                      type="button"
+                      className={styles.agentPickerButton}
+                      aria-pressed={active}
+                      onClick={() => setSelectedAgentId(agent.id)}
+                    >
+                      <span className={styles.agentPickerIcon}>
+                        {active ? <Check size={16} /> : <Bot size={16} />}
+                      </span>
+                      <span className={styles.agentPickerCopy}>
+                        <strong>{agent.name || 'Agente sin nombre'}</strong>
+                        <small>{agent.enabled ? 'Activo' : 'Apagado'} · {objectiveLabel}</small>
+                      </span>
+                    </button>
+                    <label className={styles.agentPickerSwitch} aria-label={`${agent.enabled ? 'Desactivar' : 'Activar'} ${agent.name || 'agente'}`}>
+                      <input
+                        type="checkbox"
+                        checked={agent.enabled}
+                        disabled={agentConfigSaving}
+                        onChange={(event) => saveAgentPatch(agent.id, { enabled: event.target.checked })}
+                      />
+                      <span>
+                        <Check size={15} />
+                      </span>
+                    </label>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <p className={styles.agentMenuHint}>
+              Aún no hay agentes creados. Créalos en Agente AI → Agente conversacional.
+            </p>
+          )}
+        </section>
+
+        {selectedAgentDef && (
+          <section className={styles.agentMenuSection} aria-label="Configurar agente">
+            <div className={styles.agentMenuSectionHeader}>
+              <span>Configurar agente</span>
+              <small>{selectedAgentDef.name || 'Agente seleccionado'}</small>
+            </div>
+
             <label className={styles.agentMenuField}>
-              <span>{agentDefs.length > 1 ? `Objetivo de "${firstAgentDef.name}"` : 'Objetivo del agente'}</span>
+              <span>Objetivo</span>
               <PhoneSelect
-                value={firstAgentDef.objective}
+                value={selectedAgentDef.objective}
                 onChange={(value) => {
                   const objective = value as ConversationalObjective
                   const allowed = agentActionsByObjective[objective] || agentActionsByObjective.custom
-                  saveFirstAgentPatch({
+                  saveAgentPatch(selectedAgentDef.id, {
                     objective,
-                    ...(allowed.includes(firstAgentDef.successAction) ? {} : { successAction: allowed[0] })
+                    ...(allowed.includes(selectedAgentDef.successAction) ? {} : { successAction: allowed[0] })
                   })
                 }}
-                ariaLabel="Objetivo del agente conversacional"
+                ariaLabel={`Objetivo de ${selectedAgentDef.name || 'agente conversacional'}`}
                 options={agentObjectiveOptions}
                 title="Objetivo"
                 placeholder="Objetivo"
                 disabled={agentConfigSaving}
+                buttonClassName={styles.agentMenuSelectButton}
               />
             </label>
 
             <label className={styles.agentMenuField}>
               <span>Cuando cumpla el objetivo</span>
               <PhoneSelect
-                value={firstAgentDef.successAction}
-                onChange={(value) => saveFirstAgentPatch({ successAction: value as ConversationalSuccessAction })}
-                ariaLabel="Acción al cumplir el objetivo"
-                options={(agentActionsByObjective[firstAgentDef.objective] || agentActionsByObjective.custom)
-                  .map((action) => ({ value: action, label: agentSuccessActionLabels[action] }))}
+                value={selectedAgentDef.successAction}
+                onChange={(value) => saveAgentPatch(selectedAgentDef.id, { successAction: value as ConversationalSuccessAction })}
+                ariaLabel={`Acción al cumplir el objetivo de ${selectedAgentDef.name || 'agente conversacional'}`}
+                options={selectedAgentActions.map((action) => ({ value: action, label: agentSuccessActionLabels[action] }))}
                 title="Al cumplir el objetivo"
                 placeholder="Acción"
                 disabled={agentConfigSaving}
+                buttonClassName={styles.agentMenuSelectButton}
               />
             </label>
-            {agentDefs.length > 1 && (
-              <p className={styles.agentMenuHint}>
-                Tienes {agentDefs.length} agentes; aquí editas el primero. Los demás se administran en la configuración web.
-              </p>
-            )}
-          </>
-        ) : (
-          <p className={styles.agentMenuHint}>
-            Aún no hay agentes creados. Créalos en Agente AI → Agente conversacional.
-          </p>
+          </section>
         )}
 
-        <label className={styles.toggleRow}>
-          <span>
-            <strong>Ocultar conversaciones atendidas</strong>
-            <small>Solo reaparecen cuando el agente cumple el objetivo o necesita humano.</small>
-          </span>
-          <input
-            type="checkbox"
-            checked={Boolean(agentConfig?.hideAttended)}
-            disabled={agentConfigSaving || !agentConfig}
-            onChange={(event) => saveAgentConfigPatch({ hideAttended: event.target.checked })}
-          />
-        </label>
-
-        <label className={styles.toggleRow}>
-          <span>
-            <strong>Silenciar notificaciones atendidas</strong>
-            <small>No avisa mientras el agente responde; si pide humano, vuelve a subir el chat.</small>
-          </span>
-          <input
-            type="checkbox"
-            checked={Boolean(agentConfig?.hideAttendedNotifications)}
-            disabled={agentConfigSaving || !agentConfig}
-            onChange={(event) => saveAgentConfigPatch({ hideAttendedNotifications: event.target.checked })}
-          />
-        </label>
-
-        <div className={styles.chatMoreList}>
-          <button type="button" onClick={() => setAgentMenuSection('ready_human')}>
-            <span className={styles.agentPriorityRowIcon}>
-              <User size={22} />
-            </span>
+        <section className={styles.agentMenuSection} aria-label="Orden del chat">
+          <div className={styles.agentMenuSectionHeader}>
+            <span>Orden del chat</span>
+            <small>Conversaciones atendidas</small>
+          </div>
+          <label className={styles.agentCompactToggle}>
             <span>
-              <strong>Listas para humano</strong>
-              <small>{readyHumanCount === 1 ? '1 conversación esperando' : `${readyHumanCount} conversaciones esperando`}</small>
+              <strong>Ocultar atendidas</strong>
+              <small>Reaparecen si el agente necesita seguimiento.</small>
             </span>
-          </button>
-          <button type="button" onClick={() => setAgentMenuSection('ready_advance')}>
-            <span className={styles.agentPriorityRowIcon}>
-              <CalendarDays size={22} />
-            </span>
-            <span>
-              <strong>Listas para agendar o comprar</strong>
-              <small>{readyAdvanceCount === 1 ? '1 conversación lista' : `${readyAdvanceCount} conversaciones listas`}</small>
-            </span>
-          </button>
-        </div>
+            <input
+              type="checkbox"
+              checked={Boolean(agentConfig?.hideAttended)}
+              disabled={agentConfigSaving || !agentConfig}
+              onChange={(event) => saveAgentConfigPatch({ hideAttended: event.target.checked })}
+            />
+          </label>
 
-        <p className={styles.agentMenuHint}>
-          La configuración completa (datos mínimos, casos para humano, instrucciones extra y prueba del agente) está en
-          Agente AI → Agente conversacional.
-        </p>
+          <label className={styles.agentCompactToggle}>
+            <span>
+              <strong>Silenciar atendidas</strong>
+              <small>Sin avisos mientras el agente responde.</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={Boolean(agentConfig?.hideAttendedNotifications)}
+              disabled={agentConfigSaving || !agentConfig}
+              onChange={(event) => saveAgentConfigPatch({ hideAttendedNotifications: event.target.checked })}
+            />
+          </label>
+        </section>
+
+        <section className={styles.agentMenuSection} aria-label="Bandejas del agente">
+          <div className={styles.agentMenuSectionHeader}>
+            <span>Bandejas</span>
+            <small>Seguimiento</small>
+          </div>
+          <div className={styles.agentInboxList}>
+            <button type="button" onClick={() => setAgentMenuSection('ready_human')}>
+              <span className={styles.agentPriorityRowIcon}>
+                <User size={19} />
+              </span>
+              <div>
+                <strong>Para humano</strong>
+                <small>{readyHumanCount === 1 ? '1 conversación esperando' : `${readyHumanCount} conversaciones esperando`}</small>
+              </div>
+              <ChevronRight size={18} />
+            </button>
+            <button type="button" onClick={() => setAgentMenuSection('ready_advance')}>
+              <span className={styles.agentPriorityRowIcon}>
+                <CalendarDays size={19} />
+              </span>
+              <div>
+                <strong>Para agendar o comprar</strong>
+                <small>{readyAdvanceCount === 1 ? '1 conversación lista' : `${readyAdvanceCount} conversaciones listas`}</small>
+              </div>
+              <ChevronRight size={18} />
+            </button>
+          </div>
+        </section>
       </div>
     )
   }

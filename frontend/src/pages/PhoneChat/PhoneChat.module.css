@@ -7244,24 +7244,243 @@
 .agentMenuBody {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
-  max-height: min(66dvh, 580px);
-  padding-bottom: 8px;
+  max-height: min(70dvh, 620px);
+  padding: 0 2px 8px;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
 
-.agentMenuField {
+.agentMenuSection {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 12px;
+  background: var(--phone-chat-surface-soft);
+}
+
+.agentMenuSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.agentMenuSectionHeader span,
+.agentMenuSectionHeader small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentMenuSectionHeader span {
+  color: var(--phone-chat-text);
+  font-size: 13px;
+  font-weight: 840;
+}
+
+.agentMenuSectionHeader small {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.agentMasterToggle,
+.agentCompactToggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.agentMasterToggle > span,
+.agentCompactToggle > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agentMasterToggle strong,
+.agentCompactToggle strong {
+  min-width: 0;
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  font-weight: 830;
+  line-height: 1.15;
+}
+
+.agentMasterToggle small,
+.agentCompactToggle small {
+  min-width: 0;
+  color: var(--phone-chat-muted);
+  font-size: 12.5px;
+  font-weight: 560;
+  line-height: 1.28;
+}
+
+.agentMasterToggle input,
+.agentCompactToggle input {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  accent-color: var(--phone-chat-accent);
+}
+
+.agentPickerList {
   display: grid;
   gap: 6px;
+  max-height: 194px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.agentPickerItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--phone-chat-surface);
+}
+
+.agentPickerItemActive {
+  border-color: rgba(var(--phone-chat-primary-rgb), 0.28);
+  background: rgba(var(--phone-chat-primary-rgb), 0.08);
+}
+
+.agentPickerButton {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: var(--phone-chat-text);
+  background: transparent;
+  text-align: left;
+}
+
+.agentPickerIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .agentPickerIcon {
+  color: #93c5fd;
+  background: rgba(37, 99, 235, 0.22);
+}
+
+.agentPickerCopy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agentPickerCopy strong,
+.agentPickerCopy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentPickerCopy strong {
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  font-weight: 830;
+  line-height: 1.12;
+}
+
+.agentPickerCopy small {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agentPickerSwitch {
+  position: relative;
+  display: inline-grid;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.agentPickerSwitch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.agentPickerSwitch span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 10px;
+  color: transparent;
+  background: var(--phone-chat-surface);
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
+  pointer-events: none;
+}
+
+.agentPickerSwitch input:checked + span {
+  color: #052e16;
+  background: #22c55e;
+  border-color: #22c55e;
+}
+
+.agentPickerSwitch input:disabled {
+  cursor: not-allowed;
+}
+
+.agentMenuField {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
 }
 
 .agentMenuField > span {
-  font-size: 13px;
-  font-weight: 700;
+  min-width: 0;
   color: var(--phone-chat-muted);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.agentMenuSelectButton {
+  min-height: 42px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 780;
 }
 
 .agentMenuBack {
@@ -7284,4 +7503,56 @@
   font-size: 12.5px;
   line-height: 1.4;
   color: var(--phone-chat-muted);
+}
+
+.agentInboxList {
+  display: grid;
+  gap: 6px;
+}
+
+.agentInboxList button {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 8px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
+  text-align: left;
+}
+
+.agentInboxList .agentPriorityRowIcon {
+  width: 36px;
+  height: 36px;
+}
+
+.agentInboxList div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agentInboxList strong,
+.agentInboxList small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentInboxList strong {
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  font-weight: 830;
+  line-height: 1.12;
+}
+
+.agentInboxList small {
+  color: var(--phone-chat-muted);
+  font-size: 12.5px;
+  font-weight: 580;
 }
