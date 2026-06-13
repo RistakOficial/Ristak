@@ -358,6 +358,13 @@ export function splitReplyIntoParts(reply, deliveryInput = {}) {
   }).messages
 }
 
+export function buildReplyPartDelaySchedule(parts = [], agentConfig = {}) {
+  const count = Array.isArray(parts) ? parts.length : 0
+  return Array.from({ length: count }, (_, index) => {
+    return index === 0 ? 0 : getAgentReplyDeliveryPartDelayMs(agentConfig)
+  })
+}
+
 export function buildPendingReplyContextMessage(pendingMessages = []) {
   const lines = (Array.isArray(pendingMessages) ? pendingMessages : [])
     .map((message, index) => {
@@ -558,8 +565,26 @@ async function loadNewerInboundMessage(contactId, handledMessageId) {
   return latest && latest.id !== handledMessageId ? latest : null
 }
 
-async function sendReplyParts({ contactId, phone, latest, agentConfig, reply, apiKey, model }) {
-  const splitResult = await splitMessageIntoBubbles({
+export async function sendReplyParts({
+  contactId,
+  phone,
+  latest,
+  agentConfig,
+  reply,
+  apiKey,
+  model,
+  dependencies = {}
+}) {
+  const {
+    splitter = splitMessageIntoBubbles,
+    sendTextMessage = null,
+    wait = sleep,
+    loadNewerInbound = loadNewerInboundMessage,
+    recordEvent = recordConversationalAgentEvent,
+    markReplyComplete = null
+  } = dependencies || {}
+
+  const splitResult = await splitter({
     text: reply,
     settings: agentConfig.replyDelivery,
     apiKey,
@@ -568,11 +593,12 @@ async function sendReplyParts({ contactId, phone, latest, agentConfig, reply, ap
   const parts = splitResult.messages
   if (!parts.length) return { parts: [], sentParts: 0, interruptedBy: null }
 
-  const { sendWhatsAppApiTextMessage } = await import('../../services/whatsappApiService.js')
+  const sendMessage = sendTextMessage || (await import('../../services/whatsappApiService.js')).sendWhatsAppApiTextMessage
 
   const delivery = normalizeAgentReplyDelivery(agentConfig.replyDelivery)
+  const delaySchedule = buildReplyPartDelaySchedule(parts, { replyDelivery: delivery })
   if (delivery.splitMessagesEnabled) {
-    await recordConversationalAgentEvent({
+    await recordEvent({
       contactId,
       eventType: 'reply_splitter_result',
       detail: {
@@ -587,23 +613,23 @@ async function sendReplyParts({ contactId, phone, latest, agentConfig, reply, ap
 
   for (let index = 0; index < parts.length; index += 1) {
     if (index > 0) {
-      const delayMs = getAgentReplyDeliveryPartDelayMs(agentConfig)
+      const delayMs = delaySchedule[index] || 0
       if (delayMs > 0) {
-        await recordConversationalAgentEvent({
+        await recordEvent({
           contactId,
           eventType: 'reply_part_wait_started',
           detail: { messageId: latest.id, agentId: agentConfig.id || null, partIndex: index + 1, partCount: parts.length, delayMs }
         })
-        await sleep(delayMs)
+        await wait(delayMs)
       }
 
-      const newerInbound = await loadNewerInboundMessage(contactId, latest.id)
+      const newerInbound = await loadNewerInbound(contactId, latest.id)
       if (newerInbound) {
-        return { parts, sentParts: index, interruptedBy: newerInbound }
+        return { parts, sentParts: index, interruptedBy: newerInbound, delaySchedule }
       }
     }
 
-    await sendWhatsAppApiTextMessage({
+    await sendMessage({
       to: phone || latest.phone,
       from: latest.business_phone || undefined,
       phoneNumberId: latest.business_phone_number_id || undefined,
@@ -611,7 +637,7 @@ async function sendReplyParts({ contactId, phone, latest, agentConfig, reply, ap
       externalId: `convagent_${latest.id}${parts.length > 1 ? `_${index + 1}` : ''}`.slice(0, 120)
     })
 
-    await recordConversationalAgentEvent({
+    await recordEvent({
       contactId,
       eventType: parts.length > 1 ? 'reply_part_sent' : 'reply_single_sent',
       detail: {
@@ -624,15 +650,19 @@ async function sendReplyParts({ contactId, phone, latest, agentConfig, reply, ap
     })
   }
 
-  await db.run(`
-    UPDATE conversational_agent_state
-    SET last_reply_at = CURRENT_TIMESTAMP,
-        last_answered_inbound_message_id = ?,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE contact_id = ?
-  `, [latest.id, contactId])
+  if (typeof markReplyComplete === 'function') {
+    await markReplyComplete({ contactId, latest, parts, delaySchedule })
+  } else {
+    await db.run(`
+      UPDATE conversational_agent_state
+      SET last_reply_at = CURRENT_TIMESTAMP,
+          last_answered_inbound_message_id = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE contact_id = ?
+    `, [latest.id, contactId])
+  }
 
-  return { parts, sentParts: parts.length, interruptedBy: null }
+  return { parts, sentParts: parts.length, interruptedBy: null, delaySchedule }
 }
 
 /**
@@ -989,10 +1019,13 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
       apiKey,
       model
     })
+  const replyParts = splitResult.messages
+  const replyPartDelaysMs = buildReplyPartDelaySchedule(replyParts, { replyDelivery: config.replyDelivery })
 
   return {
     reply: ctx.suppressReply ? '' : reply,
-    replyParts: splitResult.messages,
+    replyParts,
+    replyPartDelaysMs,
     suppressed: ctx.suppressReply,
     actions: ctx.actions,
     model

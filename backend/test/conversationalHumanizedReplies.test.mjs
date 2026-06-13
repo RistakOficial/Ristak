@@ -7,7 +7,9 @@ import {
   normalizeAgentReplyDelivery
 } from '../src/services/conversationalAgentService.js'
 import {
+  buildReplyPartDelaySchedule,
   buildPendingReplyContextMessage,
+  sendReplyParts,
   shouldRecoverPendingInbound,
   splitReplyIntoParts
 } from '../src/agents/conversational/runner.js'
@@ -48,6 +50,70 @@ test('calcula una pausa entre partes dentro del rango configurado', () => {
   })
 
   assert.equal(delayMs, 2000)
+})
+
+test('crea calendario de pausas dejando el primer globo inmediato', () => {
+  const schedule = buildReplyPartDelaySchedule(['uno', 'dos', 'tres'], {
+    replyDelivery: {
+      mode: 'split',
+      delayBetweenBubblesEnabled: true,
+      minDelaySeconds: 2,
+      maxDelaySeconds: 2
+    }
+  })
+
+  assert.deepEqual(schedule, [0, 2000, 2000])
+})
+
+test('envio real espera antes de cada globo posterior', async () => {
+  const sequence = []
+  const result = await sendReplyParts({
+    contactId: 'contacto-test',
+    phone: '+526561111111',
+    latest: {
+      id: 'mensaje-inicial',
+      phone: '+526561111111',
+      business_phone: '+526562222222',
+      business_phone_number_id: 'phone-row-test'
+    },
+    agentConfig: {
+      id: 'agente-test',
+      replyDelivery: {
+        mode: 'split',
+        splitMessagesEnabled: true,
+        delayBetweenBubblesEnabled: true,
+        minDelaySeconds: 2,
+        maxDelaySeconds: 2
+      }
+    },
+    reply: 'respuesta original',
+    apiKey: 'sk-test',
+    model: 'test-model',
+    dependencies: {
+      splitter: async () => ({ messages: ['globo uno', 'globo dos', 'globo tres'], source: 'test', reason: 'ok' }),
+      sendTextMessage: async ({ text }) => {
+        sequence.push(`send:${text}`)
+      },
+      wait: async (delayMs) => {
+        sequence.push(`wait:${delayMs}`)
+      },
+      loadNewerInbound: async () => null,
+      recordEvent: async () => {},
+      markReplyComplete: async () => {
+        sequence.push('complete')
+      }
+    }
+  })
+
+  assert.deepEqual(result.delaySchedule, [0, 2000, 2000])
+  assert.deepEqual(sequence, [
+    'send:globo uno',
+    'wait:2000',
+    'send:globo dos',
+    'wait:2000',
+    'send:globo tres',
+    'complete'
+  ])
 })
 
 test('mantiene una sola respuesta cuando la entrega está en modo normal', () => {

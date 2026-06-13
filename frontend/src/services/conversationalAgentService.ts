@@ -183,6 +183,7 @@ export type ConversationStateAction = 'pause' | 'resume' | 'take_over' | 'skip' 
 export interface ConversationalAgentTestResult {
   reply: string
   replyParts?: string[]
+  replyPartDelaysMs?: number[]
   suppressed: boolean
   actions: Array<{ type: string; [key: string]: unknown }>
   model: string

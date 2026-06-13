@@ -95,6 +95,18 @@ const defaultReplyDelivery: AgentReplyDeliveryConfig = {
 
 type TestMessage = { role: 'user' | 'assistant'; content: string; internal?: boolean }
 
+const MAX_TEST_REPLY_DELAY_MS = 60_000
+
+function normalizeTestReplyDelay(value: unknown) {
+  const delayMs = Number(value)
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return 0
+  return Math.min(Math.round(delayMs), MAX_TEST_REPLY_DELAY_MS)
+}
+
+function waitForTestReplyDelay(delayMs: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, delayMs))
+}
+
 function agentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInput {
   const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = agent
   return rest
@@ -208,19 +220,22 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
         { config: agentToInput(agent) }
       )
 
-      setTestMessages((current) => {
-        const updated = [...current]
-        for (const action of result.actions || []) {
-          updated.push({ role: 'assistant', content: `⚙︎ Acción interna: ${action.type}`, internal: true })
+      for (const action of result.actions || []) {
+        setTestMessages((current) => [...current, { role: 'assistant', content: `⚙︎ Acción interna: ${action.type}`, internal: true }])
+      }
+
+      const visibleReplies = result.replyParts?.length ? result.replyParts : (result.reply ? [result.reply] : [])
+      if (visibleReplies.length) {
+        for (let index = 0; index < visibleReplies.length; index += 1) {
+          const delayMs = normalizeTestReplyDelay(result.replyPartDelaysMs?.[index])
+          if (index > 0 && delayMs > 0) {
+            await waitForTestReplyDelay(delayMs)
+          }
+          setTestMessages((current) => [...current, { role: 'assistant', content: visibleReplies[index] }])
         }
-        const visibleReplies = result.replyParts?.length ? result.replyParts : (result.reply ? [result.reply] : [])
-        if (visibleReplies.length) {
-          visibleReplies.forEach((content) => updated.push({ role: 'assistant', content }))
-        } else if (result.suppressed) {
-          updated.push({ role: 'assistant', content: '⚙︎ El agente decidió no responder (acción interna o silencio).', internal: true })
-        }
-        return updated
-      })
+      } else if (result.suppressed) {
+        setTestMessages((current) => [...current, { role: 'assistant', content: '⚙︎ El agente decidió no responder (acción interna o silencio).', internal: true }])
+      }
     } catch (error: any) {
       showToast('error', 'Prueba fallida', error?.message || 'No se pudo probar el agente')
     } finally {
