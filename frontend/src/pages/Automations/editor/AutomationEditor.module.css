@@ -1143,6 +1143,57 @@
   white-space: nowrap;
 }
 
+.webhookTestPanel {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 9px;
+  background: rgba(148, 163, 184, 0.07);
+  padding: 9px;
+}
+
+.webhookTestPanelWaiting {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.webhookTestPanelSuccess {
+  border-color: rgba(34, 197, 94, 0.24);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.webhookTestHeader {
+  display: grid;
+  gap: 2px;
+}
+
+.webhookTestStatus {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.webhookTestHint {
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.webhookSamplePreview {
+  max-height: 148px;
+  overflow: auto;
+  margin: 0;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--color-text-secondary);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px;
+  white-space: pre-wrap;
+}
+
 /* Switch alineado a la izquierda, texto a su derecha */
 .toggleField {
   display: flex;
@@ -1919,6 +1970,12 @@
   user-select: none;
 }
 
+.variableTokenChipMissing {
+  background: rgba(220, 38, 38, 0.12);
+  color: var(--color-status-error);
+  text-decoration: line-through;
+}
+
 .composerPopover {
   position: absolute;
   z-index: 60;
@@ -1969,6 +2026,15 @@
   padding: 6px 6px 3px;
 }
 
+.composerPopoverSubcategory {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  color: var(--color-text-secondary);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
 .composerPopoverItem {
   display: block;
   width: 100%;
@@ -1982,6 +2048,16 @@
 
 .composerPopoverItem:hover {
   background: rgba(148, 163, 184, 0.12);
+}
+
+.pickerWarning {
+  margin: 2px 6px 8px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--color-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.45;
+  padding: 7px 8px;
 }
 
 .composerEmojiGrid {

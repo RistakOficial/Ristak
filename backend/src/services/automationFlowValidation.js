@@ -22,6 +22,11 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
+function hasSampleResponse(value) {
+  if (Array.isArray(value)) return value.length > 0
+  return isPlainObject(value) && Object.keys(value).length > 0
+}
+
 /**
  * Normaliza un flujo recibido del cliente a la forma { nodes, edges, viewport }.
  * No valida reglas de negocio: solo garantiza estructura segura para persistir.
@@ -133,6 +138,14 @@ export function validateFlowForPublish(flow) {
   if (!startNode || triggers.length === 0) {
     errors.push('Agrega al menos un disparador antes de publicar')
   }
+
+  triggers
+    .filter((trigger) => trigger?.type === 'trigger-incoming-webhook')
+    .forEach((trigger) => {
+      if (!hasSampleResponse(trigger?.config?.sampleResponse)) {
+        errors.push('Prueba el webhook y recibe datos reales antes de publicar')
+      }
+    })
 
   const nodeIds = new Set(nodes.map((node) => node.id))
   const brokenEdge = edges.find(

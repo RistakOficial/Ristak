@@ -43,6 +43,7 @@ import { AutomationCanvas, type PendingEdge, type PickerRequest } from './Automa
 import { StepPickerBubble, rememberRecentStep } from './StepPickerBubble'
 import { NodeConfigBubble } from './NodeConfigBubble'
 import { VariableCategoriesContext } from './composer/MessageComposer'
+import { FlowVariablesContext, buildFlowVariableCatalog } from './variablesCatalog'
 import { Settings as SettingsIcon } from 'lucide-react'
 import {
   getNodeDefinition,
@@ -201,6 +202,11 @@ export const AutomationEditor: React.FC = () => {
     return [...contextual, 'contact', 'custom', 'conversation', 'automation']
   }, [nodes])
 
+  const flowVariableCatalog = useMemo(
+    () => buildFlowVariableCatalog(nodes, edges, config?.triggerId ? null : config?.nodeId || null),
+    [config?.nodeId, config?.triggerId, edges, nodes]
+  )
+
   // ------------------------------------------------------------------
   // Carga inicial + modo editor a pantalla completa
   // ------------------------------------------------------------------
@@ -317,6 +323,40 @@ export const AutomationEditor: React.FC = () => {
     },
     []
   )
+
+  const refreshWebhookSample = useCallback(async (endpointId: string) => {
+    const currentAutomation = automationRef.current
+    if (!currentAutomation || !endpointId) return null
+    const latest = await automationsService.getAutomation(currentAutomation.id)
+    const latestNodes = migrateLegacyFlow(latest.flow.nodes)
+    const latestStart = latestNodes.find(isStartNode)
+    const latestTrigger = latestStart
+      ? getStartTriggers(latestStart).find((trigger) => String(trigger.config?.endpointId || '') === endpointId)
+      : undefined
+
+    if (!latestTrigger?.config?.sampleResponse) return null
+
+    const current = stateRef.current.present
+    const currentStart = current.nodes.find(isStartNode)
+    if (!currentStart) return latestTrigger.config
+
+    const triggers = getStartTriggers(currentStart).map((trigger) =>
+      String(trigger.config?.endpointId || '') === endpointId
+        ? {
+            ...trigger,
+            config: {
+              ...trigger.config,
+              sampleResponse: latestTrigger.config.sampleResponse,
+              sampleReceivedAt: latestTrigger.config.sampleReceivedAt,
+              sampleMethod: latestTrigger.config.sampleMethod,
+              sampleStatus: 'received'
+            }
+          }
+        : trigger
+    )
+    updateNodeConfig(currentStart.id, { ...currentStart.config, triggers }, false)
+    return latestTrigger.config
+  }, [updateNodeConfig])
 
   // ------------------------------------------------------------------
   // Selección / creación de pasos desde los globos
@@ -997,6 +1037,7 @@ export const AutomationEditor: React.FC = () => {
 
   return (
     <VariableCategoriesContext.Provider value={variableCategories}>
+    <FlowVariablesContext.Provider value={flowVariableCatalog}>
     <div className={styles.editorShell}>
       {/* ----------------------------- Toolbar ---------------------------- */}
       <header className={styles.toolbar}>
@@ -1181,6 +1222,7 @@ export const AutomationEditor: React.FC = () => {
           definition={configDefinition}
           config={(configTrigger ? configTrigger.config : configNode.config) || {}}
           onChange={handleConfigChange}
+          onRefreshWebhookSample={refreshWebhookSample}
           onClose={() => setConfig(null)}
         />
       )}
@@ -1230,6 +1272,7 @@ export const AutomationEditor: React.FC = () => {
         )}
       </Modal>
     </div>
+    </FlowVariablesContext.Provider>
     </VariableCategoriesContext.Provider>
   )
 }

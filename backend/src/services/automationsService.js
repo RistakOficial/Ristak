@@ -88,6 +88,23 @@ function normalizeName(rawName, fallback) {
   return name
 }
 
+function isEmptyObject(value) {
+  return !value || typeof value !== 'object' || Array.isArray(value)
+    ? false
+    : Object.keys(value).length === 0
+}
+
+function normalizeWebhookSample({ body, query }) {
+  if (body && typeof body === 'object' && !isEmptyObject(body)) return body
+  if (query && typeof query === 'object' && !isEmptyObject(query)) return query
+  return {}
+}
+
+function hasWebhookSampleData(value) {
+  if (Array.isArray(value)) return value.length > 0
+  return Boolean(value && typeof value === 'object' && Object.keys(value).length > 0)
+}
+
 // ---------------------------------------------------------------------------
 // Carpetas
 // ---------------------------------------------------------------------------
@@ -269,6 +286,68 @@ export async function deleteAutomation(automationId) {
 
   await db.run('DELETE FROM automations WHERE id = ?', [automationId])
   return { id: automationId }
+}
+
+export async function recordAutomationWebhookSample({ endpointId, method, body, query }) {
+  const cleanEndpointId = typeof endpointId === 'string' ? endpointId.trim() : ''
+  if (!cleanEndpointId) throw badRequest('Endpoint de webhook inválido')
+
+  const rows = await db.all('SELECT id, flow FROM automations ORDER BY updated_at DESC')
+  const receivedAt = new Date().toISOString()
+  const sampleResponse = normalizeWebhookSample({ body, query })
+  if (!hasWebhookSampleData(sampleResponse)) {
+    throw badRequest('Envía al menos un dato de prueba para mapear variables del webhook')
+  }
+
+  for (const row of rows) {
+    const flow = normalizeFlow(parseFlow(row.flow))
+    const startNode = flow.nodes.find((node) => node.type === START_NODE_TYPE)
+    if (!startNode) continue
+
+    const triggers = Array.isArray(startNode.config?.triggers) ? startNode.config.triggers : []
+    const triggerIndex = triggers.findIndex(
+      (trigger) =>
+        trigger?.type === 'trigger-incoming-webhook' &&
+        String(trigger?.config?.endpointId || '') === cleanEndpointId
+    )
+    if (triggerIndex === -1) continue
+
+    const nextTriggers = triggers.map((trigger, index) =>
+      index === triggerIndex
+        ? {
+            ...trigger,
+            config: {
+              ...(trigger.config || {}),
+              sampleResponse,
+              sampleReceivedAt: receivedAt,
+              sampleMethod: method || 'POST',
+              sampleStatus: 'received'
+            }
+          }
+        : trigger
+    )
+    const nextNodes = flow.nodes.map((node) =>
+      node.id === startNode.id
+        ? { ...node, config: { ...node.config, triggers: nextTriggers } }
+        : node
+    )
+    const nextFlow = { ...flow, nodes: nextNodes }
+
+    await db.run(
+      `UPDATE automations SET flow = ${flowPlaceholder}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [JSON.stringify(nextFlow), row.id]
+    )
+
+    return {
+      automationId: row.id,
+      triggerId: triggers[triggerIndex].id,
+      endpointId: cleanEndpointId,
+      sampleResponse,
+      sampleReceivedAt: receivedAt
+    }
+  }
+
+  throw notFound('Webhook de automatización no encontrado')
 }
 
 export async function getAutomationsOverview() {

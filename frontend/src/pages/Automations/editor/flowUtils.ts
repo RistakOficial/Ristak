@@ -28,6 +28,20 @@ export function getStartTriggers(node: AutomationNode): AutomationTriggerEntry[]
   return Array.isArray(triggers) ? (triggers as AutomationTriggerEntry[]) : []
 }
 
+function hasSampleResponse(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0
+  return Boolean(value && typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0)
+}
+
+export function getUntestedWebhookTriggers(node: AutomationNode): AutomationTriggerEntry[] {
+  if (!isStartNode(node)) return []
+  return getStartTriggers(node).filter(
+    (trigger) =>
+      trigger.type === 'trigger-incoming-webhook' &&
+      !hasSampleResponse(trigger.config?.sampleResponse)
+  )
+}
+
 /** Salidas de un nodo (la tarjeta inicial siempre tiene la salida "Entonces") */
 export function getNodeOutputs(node: AutomationNode): NodeOutputHandle[] {
   if (isStartNode(node)) {
@@ -149,6 +163,13 @@ export function canConnect(
 
   if (getNodeOutputs(source).every((output) => output.id !== sourceHandle)) {
     return { valid: false, reason: 'La salida seleccionada ya no existe' }
+  }
+
+  if (isStartNode(source) && getUntestedWebhookTriggers(source).length > 0) {
+    return {
+      valid: false,
+      reason: 'Prueba el webhook y recibe datos reales antes de conectar el siguiente tramo'
+    }
   }
 
   const duplicated = edges.some(

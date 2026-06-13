@@ -65,6 +65,28 @@ test('publicar acepta un flujo lineal válido', () => {
   assert.deepEqual(validateFlowForPublish(flow), [])
 })
 
+test('publicar exige muestra real para webhooks entrantes', () => {
+  const flow = {
+    nodes: [
+      startNode([
+        {
+          id: 't1',
+          type: 'trigger-incoming-webhook',
+          config: { endpointId: 'hook_1', sampleResponse: {} }
+        }
+      ]),
+      actionNode('a1')
+    ],
+    edges: [edge('e1', 'start', 'a1')]
+  }
+
+  const errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('webhook')))
+
+  flow.nodes[0].config.triggers[0].config.sampleResponse = { contacto: { nombre: 'Ana' } }
+  assert.deepEqual(validateFlowForPublish(flow), [])
+})
+
 test('publicar detecta conexiones rotas', () => {
   const flow = {
     nodes: [startNode()],

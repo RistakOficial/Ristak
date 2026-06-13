@@ -2,6 +2,7 @@ import express from 'express'
 import {
   handleYCloudWhatsAppApiWebhook
 } from '../controllers/whatsappApiController.js'
+import { automationWebhookSampleHandler } from '../controllers/automationsController.js'
 import {
   handleContactWebhook,
   handlePaymentWebhook,
@@ -18,6 +19,7 @@ import {
 
 const router = express.Router()
 
+router.all('/automations/:endpointId', automationWebhookSampleHandler)
 router.post('/contact', handleContactWebhook)
 router.post('/payment', handlePaymentWebhook)
 router.post('/payment-plan', handlePaymentPlanWebhook)

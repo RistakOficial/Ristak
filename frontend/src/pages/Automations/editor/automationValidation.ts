@@ -1,6 +1,12 @@
 import type { AutomationEdge, AutomationNode } from '@/services/automationsService'
 import { getNodeDefinition, validateNodeConfig } from './nodeRegistry'
 import { getStartTriggers, hasPath, isStartNode, nodeHasInput } from './flowUtils'
+import {
+  BASE_VARIABLES,
+  buildFlowVariableCatalog,
+  extractTokens,
+  isDynamicToken
+} from './variablesCatalog'
 
 export interface FlowValidationIssue {
   nodeId?: string
@@ -23,6 +29,35 @@ function pushNodeError(result: FlowValidationResult, nodeId: string, message: st
 /** Nombre legible de un nodo para los mensajes de error */
 function nodeName(node: AutomationNode): string {
   return node.label || getNodeDefinition(node.type)?.label || 'Paso sin nombre'
+}
+
+function collectStrings(value: unknown, output: string[] = []): string[] {
+  if (typeof value === 'string') {
+    output.push(value)
+    return output
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStrings(item, output))
+    return output
+  }
+  if (value && typeof value === 'object') {
+    Object.values(value as Record<string, unknown>).forEach((item) => collectStrings(item, output))
+  }
+  return output
+}
+
+function unavailableDynamicTokens(
+  node: AutomationNode,
+  nodes: AutomationNode[],
+  edges: AutomationEdge[]
+): string[] {
+  const catalog = buildFlowVariableCatalog(nodes, edges, node.id)
+  const available = new Set([
+    ...BASE_VARIABLES.map((variable) => variable.fieldId),
+    ...catalog.variables.map((variable) => variable.fieldId)
+  ])
+  const tokens = new Set(collectStrings(node.config || {}).flatMap(extractTokens))
+  return [...tokens].filter((token) => isDynamicToken(token) && !available.has(token))
 }
 
 /**
@@ -67,6 +102,9 @@ export function validateAutomationFlow(
     }
     validateNodeConfig(definition, node.config || {}).forEach((error) => {
       pushNodeError(result, node.id, error)
+    })
+    unavailableDynamicTokens(node, nodes, edges).forEach((token) => {
+      pushNodeError(result, node.id, `La variable {{${token}}} ya no está disponible`)
     })
   })
 

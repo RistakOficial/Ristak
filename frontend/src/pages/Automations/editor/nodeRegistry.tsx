@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   Banknote,
   Bot,
+  Calculator,
   CalendarCheck,
   CalendarClock,
   ClipboardList,
@@ -276,7 +277,28 @@ export interface NodeDefinition {
   noInput?: boolean
   /** Validación específica además de los campos requeridos */
   validate?: (config: Record<string, unknown>) => string[]
+  /** Datos que este bloque puede exponer como variables para pasos posteriores */
+  variableOutput?: (config: Record<string, unknown>) => NodeVariableOutput | null
   summary: (config: Record<string, unknown>) => NodeSummaryData
+}
+
+export type VariableValueType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'unknown'
+
+export interface VariableSchemaField {
+  label: string
+  path: string
+  type?: VariableValueType
+  children?: VariableSchemaField[]
+}
+
+export interface NodeVariableOutput {
+  baseId: string
+  baseLabel: string
+  fields?: VariableSchemaField[]
+  sampleResponse?: unknown
+  requiresSample?: boolean
+  unavailableReason?: string
+  fixedTokenRoot?: string
 }
 
 export interface NodeCategory {
@@ -346,6 +368,123 @@ export const durationLabel = (amount: number, unit: string): string => {
   return `${amount} ${amount === 1 ? singular : plural}`
 }
 
+const field = (
+  label: string,
+  path: string,
+  type: VariableValueType = 'string',
+  children?: VariableSchemaField[]
+): VariableSchemaField => ({ label, path, type, ...(children ? { children } : {}) })
+
+const hasSampleResponse = (value: unknown): boolean => {
+  if (Array.isArray(value)) return value.length > 0
+  return Boolean(value && typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0)
+}
+
+function parseJsonSample(value: unknown): unknown | null {
+  if (!value) return null
+  if (typeof value === 'object') return value
+  if (typeof value !== 'string' || !value.trim()) return null
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+const WHATSAPP_REPLY_FIELDS: VariableSchemaField[] = [
+  field('Cuerpo', 'cuerpo'),
+  field('Número del contacto', 'numero_contacto'),
+  field('Nombre del contacto', 'nombre_contacto'),
+  field('Fecha del mensaje', 'fecha_mensaje'),
+  field('ID del mensaje', 'id_mensaje'),
+  field('Archivo adjunto', 'archivo_adjunto', 'object', [
+    field('Tipo', 'tipo'),
+    field('URL', 'url'),
+    field('Nombre', 'nombre'),
+    field('Tamaño', 'tamaño', 'number')
+  ])
+]
+
+const FORM_FIELDS: VariableSchemaField[] = [
+  field('Nombre', 'nombre'),
+  field('Teléfono', 'telefono'),
+  field('Email', 'email'),
+  field('Ciudad', 'ciudad'),
+  field('Servicio de interés', 'servicio_de_interes'),
+  field('Mensaje', 'mensaje'),
+  field('Fecha de envío', 'fecha_de_envio')
+]
+
+const CONTACT_OUTPUT_FIELDS: VariableSchemaField[] = [
+  field('ID del contacto', 'id_contacto'),
+  field('Nombre', 'nombre'),
+  field('Teléfono', 'telefono'),
+  field('Email', 'email'),
+  field('Etiquetas', 'etiquetas', 'array'),
+  field('Campos personalizados', 'campos_personalizados', 'object', [
+    field('Interés', 'interes'),
+    field('Presupuesto', 'presupuesto'),
+    field('Última cita', 'ultima_cita')
+  ])
+]
+
+const CONTACT_UPDATED_FIELDS: VariableSchemaField[] = [
+  field('ID del contacto', 'id_contacto'),
+  field('Nombre', 'nombre'),
+  field('Teléfono', 'telefono'),
+  field('Email', 'email'),
+  field('Estado de actualización', 'estado_actualizacion')
+]
+
+const APPOINTMENT_FIELDS: VariableSchemaField[] = [
+  field('ID de la cita', 'id_cita'),
+  field('Nombre del contacto', 'nombre_contacto'),
+  field('Fecha', 'fecha'),
+  field('Hora', 'hora'),
+  field('Servicio', 'servicio'),
+  field('Estado', 'estado'),
+  field('Calendario', 'calendario'),
+  field('Notas', 'notas')
+]
+
+const PAYMENT_FIELDS: VariableSchemaField[] = [
+  field('ID del pago', 'id_pago'),
+  field('Monto', 'monto', 'number'),
+  field('Moneda', 'moneda'),
+  field('Estado', 'estado'),
+  field('Método de pago', 'metodo_pago'),
+  field('Fecha', 'fecha')
+]
+
+const WHATSAPP_SEND_FIELDS: VariableSchemaField[] = [
+  field('ID del mensaje', 'id_mensaje'),
+  field('Estado', 'estado'),
+  field('Número destino', 'numero_destino'),
+  field('Fecha de envío', 'fecha_envio')
+]
+
+const httpResponseOutput = (config: Record<string, unknown>): NodeVariableOutput => {
+  const sampleResponse = parseJsonSample(config.sampleResponseJson)
+  return sampleResponse
+    ? { baseId: 'http_request', baseLabel: 'HTTP Request', sampleResponse }
+    : {
+        baseId: 'http_request',
+        baseLabel: 'HTTP Request',
+        fields: [
+          field('Status', 'status'),
+          field('Código de estado', 'status_code', 'number'),
+          field('Respuesta', 'respuesta')
+        ]
+      }
+}
+
+const aiOutput = (config: Record<string, unknown>): NodeVariableOutput => {
+  const sampleResponse = parseJsonSample(config.sampleResponseJson)
+  return sampleResponse
+    ? { baseId: 'chatgpt', baseLabel: 'ChatGPT', sampleResponse }
+    : { baseId: 'chatgpt', baseLabel: 'ChatGPT', fields: [field('Respuesta', 'respuesta')] }
+}
+
 // ---------------------------------------------------------------------------
 // Disparadores
 // ---------------------------------------------------------------------------
@@ -400,6 +539,13 @@ const TRIGGERS: NodeDefinition[] = [
       { key: 'conditions', label: 'Condiciones (opcional)', type: 'textarea', placeholder: 'Ej. campo "interés" = demo' }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: (config) => ({
+      baseId: 'formulario',
+      baseLabel: str(config.formName) || str(config.form)
+        ? `Formulario - ${str(config.formName) || str(config.form)}`
+        : 'Formulario',
+      fields: FORM_FIELDS
+    }),
     summary: (config) => ({
       text: str(config.formName) || str(config.form) ? `Formulario: ${str(config.formName) || str(config.form)}` : undefined,
       empty: 'Selecciona el formulario'
@@ -431,6 +577,12 @@ const TRIGGERS: NodeDefinition[] = [
       }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'respuesta_whatsapp',
+      baseLabel: 'Respuesta WhatsApp',
+      fields: WHATSAPP_REPLY_FIELDS,
+      fixedTokenRoot: 'respuesta_whatsapp'
+    }),
     summary: (config) => {
       const keywords = arr<string>(config.keywords)
       const channel = channelLabel(str(config.channel) || 'any')
@@ -448,7 +600,7 @@ const TRIGGERS: NodeDefinition[] = [
     icon: Rss,
     accent: 'green',
     addButtonLabel: 'Configurar webhook',
-    defaultConfig: () => ({ endpointId: '', method: 'POST' }),
+    defaultConfig: () => ({ endpointId: '', method: 'POST', sampleStatus: 'none' }),
     fields: [
       { key: 'endpointId', label: 'URL del webhook', type: 'webhookUrl' },
       {
@@ -468,8 +620,25 @@ const TRIGGERS: NodeDefinition[] = [
       }
     ],
     outputs: () => SINGLE_OUTPUT,
+    validate: (config) =>
+      hasSampleResponse(config.sampleResponse)
+        ? []
+        : ['Prueba el webhook antes de continuar: todavía no hay datos para mapear'],
+    variableOutput: (config) => ({
+      baseId: 'webhook',
+      baseLabel: 'Webhook',
+      sampleResponse: config.sampleResponse,
+      requiresSample: true,
+      unavailableReason: hasSampleResponse(config.sampleResponse)
+        ? undefined
+        : 'Sin datos de prueba: prueba el webhook para mapear variables'
+    }),
     summary: (config) => ({
-      text: str(config.endpointId) ? `Esperando llamadas ${str(config.method) || 'POST'}` : undefined,
+      text: str(config.endpointId)
+        ? hasSampleResponse(config.sampleResponse)
+          ? `Datos recibidos correctamente · ${str(config.method) || 'POST'}`
+          : `Sin datos de prueba · ${str(config.method) || 'POST'}`
+        : undefined,
       empty: 'Genera la URL del webhook'
     })
   },
@@ -501,6 +670,11 @@ const TRIGGERS: NodeDefinition[] = [
       { key: 'calendar', label: 'Calendario (opcional)', type: 'catalogSelect', catalog: 'calendars' }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'cita',
+      baseLabel: 'Cita',
+      fields: APPOINTMENT_FIELDS
+    }),
     summary: (config) => {
       const statuses: Record<string, string> = {
         booked: 'Agendada',
@@ -603,6 +777,11 @@ const TRIGGERS: NodeDefinition[] = [
       { key: 'timezone', label: 'Zona horaria (opcional)', type: 'text', placeholder: 'Ej. America/Mexico_City' }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'cita',
+      baseLabel: 'Cita',
+      fields: APPOINTMENT_FIELDS
+    }),
     summary: (config) => {
       const recurrences: Record<string, string> = {
         none: 'Una sola vez',
@@ -633,6 +812,11 @@ const TRIGGERS: NodeDefinition[] = [
       { key: 'assignedUser', label: 'Usuario asignado (opcional)', type: 'catalogSelect', catalog: 'users' }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'pago',
+      baseLabel: 'Pago',
+      fields: PAYMENT_FIELDS
+    }),
     summary: (config) => {
       const calendar = str(config.calendarName) || str(config.calendar)
       return { text: calendar ? `Calendario: ${calendar}` : 'Cualquier calendario' }
@@ -837,6 +1021,12 @@ const TRIGGERS: NodeDefinition[] = [
       { key: 'source', label: 'Fuente (opcional)', type: 'text', placeholder: 'Ej. ctwa' }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'respuesta_whatsapp',
+      baseLabel: 'Respuesta WhatsApp',
+      fields: WHATSAPP_REPLY_FIELDS,
+      fixedTokenRoot: 'respuesta_whatsapp'
+    }),
     summary: (config) => ({
       text: str(config.campaign) && str(config.campaign) !== 'any' ? `Anuncio: ${str(config.campaign)}` : 'Cualquier anuncio de WhatsApp'
     })
@@ -859,6 +1049,11 @@ const TRIGGERS: NodeDefinition[] = [
       { key: 'reason', label: 'Motivo (opcional)', type: 'text', placeholder: 'Cualquier motivo' }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'pago',
+      baseLabel: 'Pago',
+      fields: PAYMENT_FIELDS
+    }),
     summary: (config) => ({
       text: str(config.provider) ? `Reembolsos de ${str(config.provider)}` : 'Cualquier reembolso'
     })
@@ -994,6 +1189,11 @@ const CHANNEL_NODES: NodeDefinition[] = [
     }),
     fields: [],
     outputs: (config) => withBranches(SINGLE_OUTPUT, config, { includeMessageButtons: true }),
+    variableOutput: () => ({
+      baseId: 'enviar_whatsapp',
+      baseLabel: 'Enviar WhatsApp',
+      fields: WHATSAPP_SEND_FIELDS
+    }),
     validate: (config) => {
       const errors: string[] = []
       if (str(config.messageType) === 'template') {
@@ -1096,6 +1296,11 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
       { key: 'customFields', label: 'Campos personalizados', type: 'keyValue' }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'contacto_actualizado',
+      baseLabel: 'Contacto creado',
+      fields: CONTACT_UPDATED_FIELDS
+    }),
     summary: (config) => {
       const parts = [str(config.firstName), str(config.phone)].filter(Boolean)
       return {
@@ -1152,6 +1357,11 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
       }
       return outputs
     },
+    variableOutput: () => ({
+      baseId: 'contacto',
+      baseLabel: 'Contacto encontrado',
+      fields: CONTACT_OUTPUT_FIELDS
+    }),
     validate: (config) =>
       str(config.searchBy) === 'custom' && !str(config.customKey)
         ? ['Selecciona el campo personalizado de búsqueda']
@@ -1198,6 +1408,11 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
       }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'contacto_actualizado',
+      baseLabel: 'Contacto actualizado',
+      fields: CONTACT_UPDATED_FIELDS
+    }),
     validate: (config) =>
       str(config.operation) !== 'clear' && !str(config.value).trim() && str(config.field)
         ? ['Captura el valor para el campo']
@@ -1364,7 +1579,15 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     icon: Webhook,
     accent: 'teal',
     addButtonLabel: 'Configurar webhook',
-    defaultConfig: () => ({ url: '', method: 'POST', headers: [], body: '', timeout: 15, onError: 'continue' }),
+    defaultConfig: () => ({
+      url: '',
+      method: 'POST',
+      headers: [],
+      body: '',
+      timeout: 15,
+      onError: 'continue',
+      sampleResponseJson: ''
+    }),
     fields: [
       { key: 'url', label: 'URL', type: 'text', placeholder: 'https://…', required: true },
       {
@@ -1381,6 +1604,13 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       },
       { key: 'headers', label: 'Headers', type: 'keyValue' },
       { key: 'body', label: 'Body (JSON)', type: 'textarea', placeholder: '{\n  "telefono": "{{telefono}}"\n}', showVariables: true },
+      {
+        key: 'sampleResponseJson',
+        label: 'Muestra de respuesta (opcional)',
+        type: 'textarea',
+        placeholder: '{\n  "status": "success",\n  "lead_id": "abc123"\n}',
+        help: 'Pega una respuesta real para que sus campos aparezcan como variables.'
+      },
       { key: 'timeout', label: 'Timeout (segundos)', type: 'number', placeholder: '15' },
       {
         key: 'onError',
@@ -1398,6 +1628,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       if (str(config.onError) === 'branch') outputs.push({ id: 'error', label: 'Error' })
       return outputs
     },
+    variableOutput: httpResponseOutput,
     summary: (config) => ({
       text: str(config.url) ? `${str(config.method) || 'POST'} ${str(config.url)}` : undefined,
       empty: 'Configura la URL del webhook'
@@ -1839,7 +2070,8 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       userPrompt: '',
       channel: 'any',
       useFor: 'message',
-      saveAs: 'respuesta_ia'
+      saveAs: 'respuesta_ia',
+      sampleResponseJson: ''
     }),
     fields: [
       { key: 'systemPrompt', label: 'Prompt del sistema', type: 'textarea', placeholder: 'Eres un asistente que…', required: true },
@@ -1855,9 +2087,17 @@ const OTHER_ACTIONS: NodeDefinition[] = [
           { value: 'classify', label: 'Clasificar la intención' }
         ]
       },
-      { key: 'saveAs', label: 'Guardar respuesta en variable', type: 'text', placeholder: 'respuesta_ia' }
+      { key: 'saveAs', label: 'Guardar respuesta en variable', type: 'text', placeholder: 'respuesta_ia' },
+      {
+        key: 'sampleResponseJson',
+        label: 'Muestra JSON de respuesta (opcional)',
+        type: 'textarea',
+        placeholder: '{\n  "intencion": "reagendar",\n  "sentimiento": "neutral"\n}',
+        help: 'Si la IA devuelve JSON, pega una muestra para mapear subcampos.'
+      }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: aiOutput,
     summary: (config) => ({
       box: str(config.systemPrompt) || undefined,
       empty: 'Escribe el prompt de la IA'
@@ -1881,7 +2121,8 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       userPrompt: '',
       channel: 'any',
       useFor: 'message',
-      saveAs: 'respuesta_ia'
+      saveAs: 'respuesta_ia',
+      sampleResponseJson: ''
     }),
     fields: [
       { key: 'model', label: 'Modelo', type: 'text', placeholder: 'gpt-4o-mini' },
@@ -1898,13 +2139,237 @@ const OTHER_ACTIONS: NodeDefinition[] = [
           { value: 'classify', label: 'Clasificar la intención' }
         ]
       },
-      { key: 'saveAs', label: 'Guardar respuesta en variable', type: 'text', placeholder: 'respuesta_ia' }
+      { key: 'saveAs', label: 'Guardar respuesta en variable', type: 'text', placeholder: 'respuesta_ia' },
+      {
+        key: 'sampleResponseJson',
+        label: 'Muestra JSON de respuesta (opcional)',
+        type: 'textarea',
+        placeholder: '{\n  "intencion": "reagendar",\n  "datos": { "fecha_sugerida": "2026-06-20" }\n}',
+        help: 'Si el modelo devuelve JSON, pega una muestra para mapear subcampos.'
+      }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: aiOutput,
     summary: (config) => ({
       box: str(config.systemPrompt) || undefined,
       empty: 'Escribe el prompt del modelo'
     })
+  },
+  {
+    type: 'data-calculator',
+    kind: 'action',
+    label: 'Calculadora',
+    category: 'action-data',
+    description: 'Calcula un resultado numérico para usarlo después',
+    icon: Calculator,
+    accent: 'teal',
+    addButtonLabel: 'Configurar cálculo',
+    defaultConfig: () => ({ operation: 'add', initialValue: '', operand: '' }),
+    fields: [
+      { key: 'initialValue', label: 'Valor inicial', type: 'text', placeholder: '0', showVariables: true, required: true },
+      {
+        key: 'operation',
+        label: 'Operación',
+        type: 'select',
+        options: [
+          { value: 'add', label: 'Sumar' },
+          { value: 'subtract', label: 'Restar' },
+          { value: 'multiply', label: 'Multiplicar' },
+          { value: 'divide', label: 'Dividir' },
+          { value: 'percent', label: 'Porcentaje' }
+        ]
+      },
+      { key: 'operand', label: 'Valor de operación', type: 'text', placeholder: '0', showVariables: true, required: true }
+    ],
+    outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'calculadora',
+      baseLabel: 'Calculadora',
+      fields: [
+        field('Resultado', 'resultado', 'number'),
+        field('Operación', 'operacion'),
+        field('Valor inicial', 'valor_inicial', 'number'),
+        field('Valor final', 'valor_final', 'number')
+      ]
+    }),
+    summary: (config) => {
+      const operationLabels: Record<string, string> = {
+        add: 'suma',
+        subtract: 'resta',
+        multiply: 'multiplica',
+        divide: 'divide',
+        percent: 'calcula porcentaje'
+      }
+      return {
+        text: str(config.initialValue) || str(config.operand)
+          ? `${operationLabels[str(config.operation)] || 'calcula'} · ${str(config.initialValue) || '0'} · ${str(config.operand) || '0'}`
+          : undefined,
+        empty: 'Configura la operación'
+      }
+    }
+  },
+  {
+    type: 'data-format-number',
+    kind: 'action',
+    label: 'Formateador de número',
+    category: 'action-data',
+    description: 'Convierte números a moneda, porcentajes o decimales legibles',
+    icon: Banknote,
+    accent: 'teal',
+    addButtonLabel: 'Configurar formato',
+    defaultConfig: () => ({ value: '', format: 'currency', currency: 'MXN', decimals: 2 }),
+    fields: [
+      { key: 'value', label: 'Número original', type: 'text', placeholder: '{{payment.amount}}', showVariables: true, required: true },
+      {
+        key: 'format',
+        label: 'Formato',
+        type: 'select',
+        options: [
+          { value: 'currency', label: 'Moneda' },
+          { value: 'decimal', label: 'Decimales' },
+          { value: 'percent', label: 'Porcentaje' },
+          { value: 'thousands', label: 'Separadores de miles' },
+          { value: 'round', label: 'Redondear' }
+        ]
+      },
+      { key: 'currency', label: 'Moneda', type: 'text', placeholder: 'MXN', showIf: (config) => str(config.format) === 'currency' },
+      { key: 'decimals', label: 'Decimales', type: 'number', placeholder: '2' }
+    ],
+    outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'formateador_numero',
+      baseLabel: 'Formateador de número',
+      fields: [
+        field('Número original', 'numero_original', 'number'),
+        field('Número formateado', 'numero_formateado')
+      ]
+    }),
+    summary: (config) => ({
+      text: str(config.value) ? `Formatea ${str(config.value)} · ${str(config.format) || 'moneda'}` : undefined,
+      empty: 'Define el número a formatear'
+    })
+  },
+  {
+    type: 'data-format-date',
+    kind: 'action',
+    label: 'Formateador de fecha',
+    category: 'action-data',
+    description: 'Convierte fechas técnicas en fechas legibles',
+    icon: CalendarClock,
+    accent: 'teal',
+    addButtonLabel: 'Configurar fecha',
+    defaultConfig: () => ({ value: '', outputFormat: 'long', timezone: '' }),
+    fields: [
+      { key: 'value', label: 'Fecha original', type: 'text', placeholder: '{{appointment.date}}', showVariables: true, required: true },
+      {
+        key: 'outputFormat',
+        label: 'Formato',
+        type: 'select',
+        options: [
+          { value: 'long', label: 'Fecha larga' },
+          { value: 'short', label: 'Fecha corta' },
+          { value: 'date_time', label: 'Fecha y hora' },
+          { value: 'time', label: 'Solo hora' }
+        ]
+      },
+      { key: 'timezone', label: 'Zona horaria (opcional)', type: 'text', placeholder: 'America/Mexico_City' }
+    ],
+    outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'formateador_fecha',
+      baseLabel: 'Formateador de fecha',
+      fields: [
+        field('Fecha original', 'fecha_original'),
+        field('Fecha formateada', 'fecha_formateada'),
+        field('Día', 'dia', 'number'),
+        field('Mes', 'mes'),
+        field('Año', 'año', 'number'),
+        field('Hora', 'hora')
+      ]
+    }),
+    summary: (config) => ({
+      text: str(config.value) ? `Formatea ${str(config.value)} · ${str(config.outputFormat) || 'fecha larga'}` : undefined,
+      empty: 'Define la fecha a formatear'
+    })
+  },
+  {
+    type: 'data-format-text',
+    kind: 'action',
+    label: 'Formateador de texto',
+    category: 'action-data',
+    description: 'Limpia, capitaliza o extrae partes de un texto',
+    icon: PencilLine,
+    accent: 'teal',
+    addButtonLabel: 'Configurar texto',
+    defaultConfig: () => ({ value: '', transform: 'capitalize' }),
+    fields: [
+      { key: 'value', label: 'Texto original', type: 'text', placeholder: '{{respuesta_whatsapp.cuerpo}}', showVariables: true, required: true },
+      {
+        key: 'transform',
+        label: 'Transformación',
+        type: 'select',
+        options: [
+          { value: 'uppercase', label: 'Mayúsculas' },
+          { value: 'lowercase', label: 'Minúsculas' },
+          { value: 'capitalize', label: 'Capitalizar' },
+          { value: 'trim', label: 'Limpiar espacios' },
+          { value: 'extract', label: 'Extraer texto' }
+        ]
+      }
+    ],
+    outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'formateador_texto',
+      baseLabel: 'Formateador de texto',
+      fields: [
+        field('Texto original', 'texto_original'),
+        field('Texto formateado', 'texto_formateado')
+      ]
+    }),
+    summary: (config) => ({
+      text: str(config.value) ? `Transforma texto · ${str(config.transform) || 'capitalizar'}` : undefined,
+      empty: 'Define el texto a transformar'
+    })
+  },
+  {
+    type: 'action-appointment-upsert',
+    kind: 'action',
+    label: 'Crear / actualizar cita',
+    category: 'action-data',
+    description: 'Genera o modifica una cita y expone sus datos',
+    icon: CalendarCheck,
+    accent: 'teal',
+    addButtonLabel: 'Configurar cita',
+    defaultConfig: () => ({ mode: 'create', calendar: '', calendarName: '', date: '', time: '', service: '' }),
+    fields: [
+      {
+        key: 'mode',
+        label: 'Acción',
+        type: 'select',
+        options: [
+          { value: 'create', label: 'Crear cita' },
+          { value: 'read', label: 'Consultar cita' },
+          { value: 'update', label: 'Actualizar cita' }
+        ]
+      },
+      { key: 'calendar', label: 'Calendario', type: 'catalogSelect', catalog: 'calendars' },
+      { key: 'date', label: 'Fecha', type: 'text', placeholder: '{{formateador_fecha_1.fecha_original}}', showVariables: true },
+      { key: 'time', label: 'Hora', type: 'text', placeholder: '15:00', showVariables: true },
+      { key: 'service', label: 'Servicio', type: 'text', placeholder: 'Consulta', showVariables: true }
+    ],
+    outputs: () => SINGLE_OUTPUT,
+    variableOutput: (config) => ({
+      baseId: str(config.mode) === 'create' ? 'crear_cita' : 'cita',
+      baseLabel: str(config.mode) === 'create' ? 'Crear cita' : 'Cita',
+      fields: APPOINTMENT_FIELDS
+    }),
+    summary: (config) => {
+      const modes: Record<string, string> = { create: 'Crear', read: 'Consultar', update: 'Actualizar' }
+      return {
+        text: `${modes[str(config.mode)] || 'Crear'} cita${str(config.date) ? ` · ${str(config.date)}` : ''}${str(config.time) ? ` ${str(config.time)}` : ''}`,
+        empty: 'Configura la cita'
+      }
+    }
   },
   {
     type: 'extra-comment',
