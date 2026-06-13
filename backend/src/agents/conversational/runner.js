@@ -23,8 +23,10 @@ import {
   normalizeConversationalAgentModel,
   getAgentResponseDelayMs,
   getAgentReplyDeliveryPartDelayMs,
-  normalizeAgentReplyDelivery
+  normalizeAgentReplyDelivery,
+  ADVANCED_CLOSING_CONTEXT_FIELDS
 } from '../../services/conversationalAgentService.js'
+import { tagNamesForIds } from '../../services/contactTagsService.js'
 import { buildConversationalInstructions } from './prompt.js'
 import { createConversationalTools } from './tools.js'
 import { buildInputItems } from '../runner.js'
@@ -43,6 +45,22 @@ const PENDING_INBOUND_SCAN_LIMIT = 30
 const PENDING_RECOVERY_SCAN_LIMIT = 80
 const PENDING_RECOVERY_SCHEDULE_LIMIT = 10
 const PENDING_RECOVERY_MAX_AGE_MS = Number(process.env.CONVERSATIONAL_AGENT_PENDING_RECOVERY_MAX_AGE_MS || 60 * 60 * 1000)
+const CHANNEL_LABELS = {
+  whatsapp: 'WhatsApp',
+  instagram: 'Instagram',
+  messenger: 'Messenger',
+  webchat: 'Chat web',
+  sms: 'SMS',
+  email: 'Email'
+}
+const OBJECTIVE_FINAL_TEXTS = {
+  citas: 'agendar una cita',
+  ventas: 'comprar',
+  datos: 'compartir los datos clave',
+  filtrar: 'confirmar si tiene intencion real',
+  detectar: 'detectar si esta listo para comprar o agendar',
+  custom: 'avanzar al siguiente paso definido por el negocio'
+}
 
 // Conversaciones que el agente está procesando ahora mismo (instancia única).
 const runningContacts = new Set()
@@ -107,6 +125,230 @@ function cleanMessageText(row) {
   return String(row?.message_text || '').trim() ||
     (row?.message_type && row.message_type !== 'text' ? `[${row.message_type} sin texto]` : '') ||
     '(mensaje vacío)'
+}
+
+function safeJsonParse(value, fallback) {
+  if (!value) return fallback
+  if (typeof value === 'object') return value
+  try {
+    const parsed = JSON.parse(value)
+    return parsed === null || parsed === undefined ? fallback : parsed
+  } catch {
+    return fallback
+  }
+}
+
+function compactText(value, maxLength = 600) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength)
+}
+
+function formatMoney(amount, currency = 'MXN') {
+  const numeric = Number(amount)
+  if (!Number.isFinite(numeric)) return ''
+  try {
+    return new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: String(currency || 'MXN').toUpperCase(),
+      maximumFractionDigits: 2
+    }).format(numeric)
+  } catch {
+    return `${numeric} ${currency || 'MXN'}`
+  }
+}
+
+function firstText(...values) {
+  return values.map((value) => compactText(value)).find(Boolean) || ''
+}
+
+function getChannelLabel(channel = 'whatsapp') {
+  return CHANNEL_LABELS[String(channel || '').toLowerCase()] || compactText(channel) || 'WhatsApp'
+}
+
+function describeObjectiveFinal(config = {}) {
+  if (config.objective === 'custom' && config.customObjective) return compactText(config.customObjective)
+  return OBJECTIVE_FINAL_TEXTS[config.objective] || OBJECTIVE_FINAL_TEXTS.citas
+}
+
+function resolveAdvanceToolName(config = {}) {
+  if (config.successAction === 'book_appointment') return 'book_appointment'
+  if (config.successAction === 'none') return 'stay_silent'
+  return 'mark_ready_to_advance'
+}
+
+function summarizeProducts(rows = []) {
+  const products = []
+  const seen = new Set()
+  for (const row of rows) {
+    const name = compactText(row.name, 80)
+    if (!name || seen.has(row.id || name)) continue
+    seen.add(row.id || name)
+    const value = row.amount !== null && row.amount !== undefined
+      ? ` (${formatMoney(row.amount, row.currency)})`
+      : ''
+    products.push(`${name}${value}`)
+  }
+  return products.slice(0, 6).join(', ')
+}
+
+function summarizeLocation(location = {}) {
+  const parts = [
+    location?.address,
+    location?.city,
+    location?.state,
+    location?.country
+  ].map((item) => compactText(item, 80)).filter(Boolean)
+  return parts.join(', ')
+}
+
+function summarizeBusinessInfo({ businessContext, businessName, location, productSummary }) {
+  const parts = [
+    businessName ? `Negocio: ${businessName}` : '',
+    productSummary ? `Servicios/productos: ${productSummary}` : '',
+    summarizeLocation(location) ? `Ubicacion: ${summarizeLocation(location)}` : '',
+    compactText(businessContext, 1000)
+  ].filter(Boolean)
+  return parts.join(' · ')
+}
+
+async function loadAdvancedClosingRuntimeContext({
+  contactId,
+  config,
+  businessName,
+  businessContext,
+  timezone,
+  nowIso,
+  channel = 'whatsapp',
+  ruleContext = null
+} = {}) {
+  if (config?.closingStrategyMode === 'custom') return { enabled: false }
+
+  const [contact, state, products, calendars, hlRow] = await Promise.all([
+    contactId ? db.get(`
+      SELECT id, full_name, first_name, last_name, phone, email, source, tags,
+             purchases_count, total_paid, created_at, updated_at,
+             attribution_session_source, attribution_medium, attribution_ad_name,
+             attribution_ad_id, visitor_id, ghl_contact_id, preferred_whatsapp_phone_number_id
+      FROM contacts WHERE id = ?
+    `, [contactId]).catch(() => null) : null,
+    contactId ? db.get('SELECT closing_context_json FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => null) : null,
+    db.all(`
+      SELECT p.id, p.name, pp.amount, pp.currency
+      FROM products p
+      LEFT JOIN product_prices pp ON pp.product_id = p.id
+      WHERE p.is_active = 1
+      ORDER BY p.name ASC
+      LIMIT 40
+    `).catch(() => []),
+    db.all('SELECT id, name FROM calendars WHERE is_active = 1 ORDER BY name ASC LIMIT 10').catch(() => []),
+    db.get('SELECT location_data FROM highlevel_config LIMIT 1').catch(() => null)
+  ])
+
+  let location = null
+  try {
+    location = hlRow?.location_data ? JSON.parse(hlRow.location_data) : null
+  } catch { /* sin perfil */ }
+
+  const storedTags = safeJsonParse(contact?.tags, [])
+  const tagNames = Array.isArray(storedTags) && storedTags.length
+    ? await tagNamesForIds(storedTags).catch(() => storedTags)
+    : []
+  const learned = safeJsonParse(state?.closing_context_json, {})
+  const productSummary = summarizeProducts(products)
+  const locationSummary = summarizeLocation(location)
+  const channelLabel = getChannelLabel(channel)
+  const cameFromAd = ruleContext?.cameFromAd || Boolean(contact?.attribution_ad_name || contact?.attribution_ad_id)
+  const arrivalSource = firstText(
+    learned.arrivalSource,
+    contact?.source,
+    contact?.attribution_session_source,
+    cameFromAd ? 'anuncio de Meta/WhatsApp' : '',
+    channelLabel
+  )
+  const personType = Number(contact?.purchases_count || 0) > 0 || Number(contact?.total_paid || 0) > 0
+    ? 'cliente'
+    : 'prospecto'
+  const conditions = [
+    config?.requiredData ? `Datos minimos: ${config.requiredData}` : '',
+    config?.handoffRules ? `Reglas de humano: ${config.handoffRules}` : '',
+    config?.extraInstructions ? `Instrucciones extra: ${config.extraInstructions}` : ''
+  ].map((item) => compactText(item, 700)).filter(Boolean).join(' · ')
+  const availability = calendars.length
+    ? `consulta disponibilidad real con list_calendars/get_free_slots; calendarios activos: ${calendars.map((calendar) => calendar.name || calendar.id).filter(Boolean).slice(0, 5).join(', ')}`
+    : 'consulta disponibilidad real con list_calendars/get_free_slots antes de proponer horarios'
+
+  const parameters = {
+    NOMBRE_DEL_NEGOCIO: businessName || 'este negocio',
+    ESCRIBIR_NOMBRE_DEL_NEGOCIO: businessName || 'este negocio',
+    INDUSTRIA: businessContext ? 'la industria descrita en el contexto del negocio' : 'no especificada',
+    ESCRIBIR_INDUSTRIA: businessContext ? 'la industria descrita en el contexto del negocio' : 'no especificada',
+    PRODUCTO_O_SERVICIO: firstText(learned.productInterest, productSummary, 'los servicios del negocio'),
+    ESCRIBIR_PRODUCTO_O_SERVICIO: firstText(learned.productInterest, productSummary, 'los servicios del negocio'),
+    TIPO_DE_PERSONA: personType,
+    ESCRIBIR_TIPO_DE_CLIENTE: personType,
+    OBJETIVO_FINAL: describeObjectiveFinal(config),
+    ESCRIBIR_OBJETIVO_FINAL: describeObjectiveFinal(config),
+    CANAL_DE_CONVERSACION: channelLabel,
+    WHATSAPP_INSTAGRAM_MESSENGER_CHAT_WEB_SMS: channelLabel,
+    HERRAMIENTA_INTERNA_DE_AVANCE: resolveAdvanceToolName(config),
+    ESCRIBIR_TOOL_DE_AVANCE: resolveAdvanceToolName(config),
+    HERRAMIENTA_INTERNA_DE_DESCARTE: 'discard_conversation',
+    ESCRIBIR_TOOL_DE_DESCARTE: 'discard_conversation',
+    INFO_GENERAL_DEL_NEGOCIO: summarizeBusinessInfo({ businessContext, businessName, location, productSummary }) || 'consulta get_business_profile y list_products para informacion real del negocio',
+    PEGAR_INFO_DEL_NEGOCIO: summarizeBusinessInfo({ businessContext, businessName, location, productSummary }) || 'consulta get_business_profile y list_products para informacion real del negocio',
+    VALOR: productSummary || 'consulta list_products antes de hablar de valor',
+    VALOR_DEL_PRODUCTO_O_SERVICIO: productSummary || 'consulta list_products antes de hablar de valor',
+    UBICACION_O_MODALIDAD: locationSummary || 'modalidad no especificada; consulta get_business_profile si hace falta',
+    PRESENCIAL_ONLINE_AMBAS_UBICACION: locationSummary || 'modalidad no especificada; consulta get_business_profile si hace falta',
+    MODALIDAD: locationSummary || 'modalidad no especificada',
+    UBICACION: locationSummary || 'ubicacion no especificada',
+    DISPONIBILIDAD: availability,
+    CONDICIONES_IMPORTANTES: conditions || 'sin condiciones adicionales configuradas',
+    CONDICIONES_DEL_NEGOCIO: conditions || 'sin condiciones adicionales configuradas',
+    ORIGEN_CONTACTO: arrivalSource,
+    ETIQUETAS_CONTACTO: tagNames.length ? tagNames.join(', ') : 'sin etiquetas registradas',
+    FECHA_REGISTRO_CONTACTO: contact?.created_at || 'no disponible',
+    MOTIVO_DE_CONTACTO: firstText(learned.contactReason, 'pendiente de descubrir con una pregunta natural'),
+    POR_QUE_AHORA: firstText(learned.whyNow, 'pendiente de descubrir con una pregunta natural'),
+    PROBLEMA_SUPERFICIAL: firstText(learned.surfaceProblem, 'lo primero que la persona menciono'),
+    PROBLEMA_REAL: firstText(learned.realProblem, learned.surfaceProblem, 'el problema real que se confirme en la conversacion'),
+    CONSECUENCIA: firstText(learned.consequenceIfNoAction, 'la consecuencia logica segun lo que la persona ya dijo'),
+    CONSECUENCIA_LOGICA: firstText(learned.consequenceIfNoAction, 'la consecuencia logica segun lo que la persona ya dijo'),
+    RESULTADO_DESEADO: firstText(learned.desiredOutcome, 'el resultado que la persona diga que busca'),
+    OBJECION_PRINCIPAL: firstText(learned.objection, 'ninguna objecion clara todavia'),
+    URGENCIA_DETECTADA: firstText(learned.urgencyLevel, 'desconocida'),
+    CAMINO_1_CONSECUENCIA: firstText(learned.consequenceIfNoAction, 'seguir igual con el problema que ya conto'),
+    CAMINO_2_RESULTADO_DESEADO: firstText(learned.desiredOutcome, 'tomar accion hacia el resultado que busca')
+  }
+
+  const systemFacts = [
+    `Canal detectado: ${channelLabel}`,
+    contact?.created_at ? `Contacto registrado: ${contact.created_at}` : '',
+    contact?.full_name ? `Nombre registrado: ${contact.full_name}` : '',
+    contact?.phone ? `Telefono registrado: ${contact.phone}` : '',
+    contact?.email ? `Email registrado: ${contact.email}` : '',
+    tagNames.length ? `Etiquetas: ${tagNames.join(', ')}` : '',
+    contact?.source ? `Fuente del contacto: ${contact.source}` : '',
+    contact?.attribution_session_source ? `Atribucion/source: ${contact.attribution_session_source}` : '',
+    contact?.attribution_medium ? `Atribucion/medium: ${contact.attribution_medium}` : '',
+    contact?.attribution_ad_name || contact?.attribution_ad_id ? `Anuncio detectado: ${[contact.attribution_ad_name, contact.attribution_ad_id].filter(Boolean).join(' / ')}` : '',
+    ruleContext?.businessPhoneNumberId ? `Numero de WhatsApp del negocio: ${ruleContext.businessPhoneNumberId}` : '',
+    productSummary ? `Productos/servicios activos: ${productSummary}` : '',
+    locationSummary ? `Ubicacion registrada: ${locationSummary}` : '',
+    `Zona horaria: ${timezone}`,
+    `Fecha/hora para interpretar relativos: ${nowIso}`
+  ].map((item) => compactText(item, 700)).filter(Boolean)
+
+  const missingFields = ADVANCED_CLOSING_CONTEXT_FIELDS
+    .map((field) => field.key)
+    .filter((key) => !compactText(learned?.[key]))
+
+  return {
+    enabled: true,
+    parameters,
+    systemFacts,
+    learned,
+    missingFields
+  }
 }
 
 export function splitReplyIntoParts(reply, deliveryInput = {}) {
@@ -194,7 +436,7 @@ async function loadLatestInboundMessage(contactId) {
   `, [contactId])
 }
 
-async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun }) {
+async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null }) {
   const [aiConfig, timezone] = await Promise.all([
     getAIAgentConfig({}),
     getAccountTimezone().catch(() => 'America/Mexico_City')
@@ -215,6 +457,16 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
 
   const ctx = { contactId, config, dryRun, actions: [], suppressReply: false }
   const tools = createConversationalTools(ctx)
+  const advancedClosingContext = await loadAdvancedClosingRuntimeContext({
+    contactId,
+    config,
+    businessName,
+    businessContext: String(aiConfig?.business_context || '').trim().slice(0, 6000),
+    timezone,
+    nowIso,
+    channel,
+    ruleContext
+  })
 
   const instructions = buildConversationalInstructions({
     config,
@@ -223,7 +475,8 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     businessName,
     timezone,
     nowIso,
-    contactName
+    contactName,
+    advancedClosingContext
   })
 
   const agent = new Agent({
@@ -490,7 +743,9 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         conversationModel: config.model,
         contactId,
         contactName: contact?.full_name || null,
-        dryRun: false
+        dryRun: false,
+        channel: 'whatsapp',
+        ruleContext
       })
 
       const reply = await executeAgent({
@@ -719,7 +974,9 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     conversationModel: globalConfig.model,
     contactId: null,
     contactName: null,
-    dryRun: true
+    dryRun: true,
+    channel: 'whatsapp',
+    ruleContext: null
   })
 
   const reply = await executeAgent({ agent, apiKey, messages: cleanMessages, contactId: null, model })

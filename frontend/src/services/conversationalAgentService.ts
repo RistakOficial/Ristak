@@ -170,6 +170,7 @@ export interface ConversationAgentState {
   lastAnsweredInboundMessageId: string | null
   lastReplyAt: string | null
   updatedBy: string | null
+  closingContext?: Record<string, string>
   updatedAt: string | null
   contactName?: string | null
   contactPhone?: string | null

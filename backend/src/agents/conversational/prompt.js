@@ -839,6 +839,91 @@ No presiones.
 
 Solo sé la voz de la razón.`
 
+const ADVANCED_CLOSING_CONTEXT_LABELS = {
+  arrivalSource: 'De donde llego',
+  contactReason: 'Por que contacto',
+  whyNow: 'Por que ahora',
+  surfaceProblem: 'Problema superficial',
+  realProblem: 'Problema real',
+  attemptedBefore: 'Que intento antes',
+  impact: 'Como le afecta',
+  consequenceIfNoAction: 'Consecuencia si no hace nada',
+  desiredOutcome: 'Resultado deseado',
+  scenarioToAvoid: 'Escenario que quiere evitar',
+  urgencyLevel: 'Urgencia detectada',
+  objection: 'Objecion principal',
+  decisionSignal: 'Senal de decision',
+  productInterest: 'Producto o servicio de interes',
+  valueQuestion: 'Pregunta sobre valor',
+  timingPreference: 'Tiempo o disponibilidad deseada',
+  nextUsefulQuestion: 'Siguiente pregunta util',
+  notes: 'Notas internas'
+}
+
+function normalizePlaceholderKey(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function cleanTemplateValue(value, fallback = '') {
+  const clean = String(value || '').replace(/\s+/g, ' ').trim()
+  return clean || fallback
+}
+
+export function renderClosingStrategyTemplate(template, parameters = {}) {
+  const normalized = {}
+  for (const [key, value] of Object.entries(parameters || {})) {
+    const clean = cleanTemplateValue(value)
+    if (!clean) continue
+    normalized[key] = clean
+    normalized[normalizePlaceholderKey(key)] = clean
+  }
+
+  return String(template || '').replace(/\[([^\]]+)\]/g, (match, rawKey) => {
+    const key = normalizePlaceholderKey(rawKey)
+    return normalized[rawKey] || normalized[key] || match
+  })
+}
+
+function formatContextLines(values = {}, labels = ADVANCED_CLOSING_CONTEXT_LABELS) {
+  return Object.entries(labels)
+    .map(([key, label]) => {
+      const value = cleanTemplateValue(values?.[key])
+      return value ? `- ${label}: ${value}` : null
+    })
+    .filter(Boolean)
+}
+
+export function buildAdvancedClosingContextSection(context = {}) {
+  if (!context?.enabled) return ''
+
+  const systemLines = (Array.isArray(context.systemFacts) ? context.systemFacts : [])
+    .map((line) => cleanTemplateValue(line))
+    .filter(Boolean)
+    .map((line) => `- ${line}`)
+
+  const learnedLines = formatContextLines(context.learned || {})
+  const missingLines = (Array.isArray(context.missingFields) ? context.missingFields : [])
+    .map((field) => ADVANCED_CLOSING_CONTEXT_LABELS[field] || field)
+    .filter(Boolean)
+    .slice(0, 8)
+    .map((label) => `- ${label}`)
+
+  return [
+    '## Parametros internos de cierre avanzado',
+    'Estos datos son memoria privada del agente para aplicar la estrategia de fabrica. No los menciones como variables, no los expliques al contacto y no los guardes como campos personalizados.',
+    systemLines.length ? ['Datos que el sistema ya sabe:', ...systemLines].join('\n') : '',
+    learnedLines.length ? ['Puntos aprendidos de esta conversacion:', ...learnedLines].join('\n') : 'Puntos aprendidos de esta conversacion: aun no hay suficientes datos.',
+    missingLines.length ? ['Si la conversacion lo permite, descubre de forma natural:', ...missingLines].join('\n') : '',
+    'Cuando el contacto revele alguno de estos puntos, ejecuta update_closing_context en silencio. Hazlo solo con informacion dicha por la persona o datos reales del sistema; nunca inventes consecuencias, urgencia ni objeciones.',
+    'Usa estos puntos para decidir la siguiente pregunta, mostrar contraste y activar la herramienta interna de avance cuando ya exista intencion real.'
+  ].filter(Boolean).join('\n')
+}
+
 function describeObjective(config) {
   if (config.objective === 'custom' && config.customObjective) {
     return config.customObjective
@@ -846,7 +931,7 @@ function describeObjective(config) {
   return OBJECTIVE_TEXTS[config.objective] || OBJECTIVE_TEXTS.citas
 }
 
-export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName }) {
+export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, advancedClosingContext = null }) {
   const sections = []
 
   sections.push(`Eres el asistente conversacional de ${businessName || 'este negocio'} dentro de una conversación de WhatsApp con un prospecto o cliente.
@@ -885,9 +970,13 @@ ${config.requiredData}`)
   }
 
   const customStrategy = config.closingStrategyMode === 'custom' && String(config.closingStrategyCustom || '').trim()
-  sections.push(customStrategy
-    ? `## Estrategia de cierre (definida por el negocio, síguela paso a paso)\n${String(config.closingStrategyCustom).trim().slice(0, 8000)}`
-    : DEFAULT_CLOSING_STRATEGY)
+  if (customStrategy) {
+    sections.push(`## Estrategia de cierre (definida por el negocio, síguela paso a paso)\n${String(config.closingStrategyCustom).trim().slice(0, 8000)}`)
+  } else {
+    sections.push(renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, advancedClosingContext?.parameters || {}))
+    const closingContextSection = buildAdvancedClosingContextSection(advancedClosingContext)
+    if (closingContextSection) sections.push(closingContextSection)
+  }
 
   sections.push(`## Estilo (obligatorio)
 - Suena como una persona real escribiendo por WhatsApp, nunca como bot, call center ni vendedor insistente.
@@ -905,6 +994,7 @@ ${config.requiredData}`)
 - No pidas datos innecesarios ni repitas preguntas ya respondidas en el historial.
 - Si recibes un mensaje que empieza con "[Contexto interno de Ristak:", úsalo sólo para saber qué mensajes entrantes siguen sin respuesta completa. No lo menciones, no lo cites y no expliques que existe.
 - Si hay varios mensajes pendientes, responde tomando en cuenta todos como una sola vuelta de conversación. Prioriza la información más nueva si corrige o cambia lo anterior.
+- Si la estrategia de fabrica esta activa y el contacto revela origen, motivo, urgencia, problema real, impacto, objecion, consecuencia logica o resultado deseado, actualiza la memoria con update_closing_context sin decirlo.
 - Si el último mensaje no necesita respuesta (confirmación, sticker, "ok" de cierre), puedes responder mínimo o ejecutar stay_silent para no responder.`)
 
   if (config.extraInstructions) {

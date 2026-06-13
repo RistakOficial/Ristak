@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   getAgentReplyDeliveryPartDelayMs,
+  mergeAdvancedClosingContext,
   normalizeAgentReplyDelivery
 } from '../src/services/conversationalAgentService.js'
 import {
@@ -13,6 +14,10 @@ import {
 import {
   splitMessageIntoBubbles
 } from '../src/agents/conversational/messageSplitter.js'
+import {
+  buildConversationalInstructions,
+  renderClosingStrategyTemplate
+} from '../src/agents/conversational/prompt.js'
 
 test('normaliza la entrega de respuestas en partes', () => {
   const delivery = normalizeAgentReplyDelivery({
@@ -247,6 +252,108 @@ test('construye contexto interno con mensajes pendientes sin exponerlo al client
   assert.match(context.content, /Responde considerando TODOS/)
   assert.match(context.content, /1\. hola, quiero info/)
   assert.match(context.content, /2\. también cuánto cuesta\?/)
+})
+
+test('rellena parametros de la estrategia de cierre de fabrica', () => {
+  const rendered = renderClosingStrategyTemplate(
+    'Agente de [NOMBRE_DEL_NEGOCIO] por [CANAL_DE_CONVERSACION]; problema: [PROBLEMA_REAL]; avance: [HERRAMIENTA_INTERNA_DE_AVANCE]',
+    {
+      NOMBRE_DEL_NEGOCIO: 'Clínica Norte',
+      CANAL_DE_CONVERSACION: 'WhatsApp',
+      PROBLEMA_REAL: 'dolor que ya afecta su rutina',
+      HERRAMIENTA_INTERNA_DE_AVANCE: 'mark_ready_to_advance'
+    }
+  )
+
+  assert.equal(rendered, 'Agente de Clínica Norte por WhatsApp; problema: dolor que ya afecta su rutina; avance: mark_ready_to_advance')
+})
+
+test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', () => {
+  const baseConfig = {
+    objective: 'ventas',
+    customObjective: '',
+    successAction: 'ready_for_human',
+    requiredData: '',
+    handoffRules: '',
+    extraInstructions: '',
+    allowEmojis: false,
+    closingStrategyMode: 'system',
+    closingStrategyCustom: ''
+  }
+  const advancedClosingContext = {
+    enabled: true,
+    parameters: {
+      NOMBRE_DEL_NEGOCIO: 'Ristak',
+      CANAL_DE_CONVERSACION: 'WhatsApp',
+      PRODUCTO_O_SERVICIO: 'automatización de mensajes',
+      OBJETIVO_FINAL: 'hablar con un humano',
+      HERRAMIENTA_INTERNA_DE_AVANCE: 'mark_ready_to_advance',
+      HERRAMIENTA_INTERNA_DE_DESCARTE: 'discard_conversation'
+    },
+    systemFacts: ['Canal detectado: WhatsApp', 'Etiqueta: prospecto'],
+    learned: {
+      contactReason: 'pierde leads por responder tarde',
+      realProblem: 'sus conversaciones se enfrían antes de que el equipo conteste',
+      desiredOutcome: 'responder más rápido sin contratar otra persona'
+    },
+    missingFields: ['whyNow', 'consequenceIfNoAction']
+  }
+
+  const instructions = buildConversationalInstructions({
+    config: baseConfig,
+    businessContext: 'Software para operación comercial.',
+    brandVoice: '',
+    businessName: 'Ristak',
+    timezone: 'America/Mexico_City',
+    nowIso: 'sábado, 13 de junio de 2026, 10:00',
+    contactName: 'Juan',
+    advancedClosingContext
+  })
+
+  assert.match(instructions, /Eres un agente conversacional de Ristak/)
+  assert.match(instructions, /dentro de una conversación por WhatsApp/)
+  assert.match(instructions, /Parametros internos de cierre avanzado/)
+  assert.match(instructions, /Puntos aprendidos de esta conversacion/)
+  assert.match(instructions, /Problema real: sus conversaciones se enfrían/)
+  assert.match(instructions, /update_closing_context/)
+  assert.doesNotMatch(instructions, /\[NOMBRE_DEL_NEGOCIO\]/)
+
+  const customInstructions = buildConversationalInstructions({
+    config: {
+      ...baseConfig,
+      closingStrategyMode: 'custom',
+      closingStrategyCustom: 'Mi estrategia custom con [NOMBRE_DEL_NEGOCIO]'
+    },
+    businessContext: '',
+    brandVoice: '',
+    businessName: 'Ristak',
+    timezone: 'America/Mexico_City',
+    nowIso: 'sábado, 13 de junio de 2026, 10:00',
+    contactName: null,
+    advancedClosingContext
+  })
+
+  assert.match(customInstructions, /Mi estrategia custom con \[NOMBRE_DEL_NEGOCIO\]/)
+  assert.doesNotMatch(customInstructions, /Parametros internos de cierre avanzado/)
+})
+
+test('memoria de cierre avanzado solo acepta parametros del contrato', () => {
+  const result = mergeAdvancedClosingContext(
+    { contactReason: 'quiere saber precios' },
+    {
+      whyNow: 'tiene una fecha encima',
+      urgencyLevel: 'alta',
+      campoInventado: 'no debe guardarse'
+    },
+    { updatedBy: 'agent', nowIso: '2026-06-13T10:00:00.000Z' }
+  )
+
+  assert.deepEqual(result.changedKeys.sort(), ['urgencyLevel', 'whyNow'])
+  assert.equal(result.context.contactReason, 'quiere saber precios')
+  assert.equal(result.context.whyNow, 'tiene una fecha encima')
+  assert.equal(result.context.urgencyLevel, 'alta')
+  assert.equal(result.context.campoInventado, undefined)
+  assert.equal(result.context.updatedBy, 'agent')
 })
 
 test('recupera solo mensajes entrantes recientes que no fueron contestados', () => {

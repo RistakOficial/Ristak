@@ -3179,6 +3179,7 @@ async function initTables() {
         last_reply_at DATETIME,
         updated_by TEXT,
         agent_id TEXT,
+        closing_context_json TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
@@ -3190,7 +3191,8 @@ async function initTables() {
     // Columnas agregadas al evolucionar el agente conversacional.
     for (const [columnName, columnType] of [
       ['agent_id', 'TEXT'],
-      ['last_answered_inbound_message_id', 'TEXT']
+      ['last_answered_inbound_message_id', 'TEXT'],
+      ['closing_context_json', 'TEXT']
     ]) {
       try {
         if (usePostgres) {

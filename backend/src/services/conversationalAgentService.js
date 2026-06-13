@@ -67,6 +67,28 @@ const DEFAULT_REPLY_DELIVERY_CONFIG = {
   minDelaySeconds: 2,
   maxDelaySeconds: 7
 }
+export const ADVANCED_CLOSING_CONTEXT_FIELDS = [
+  { key: 'arrivalSource', label: 'De donde llego' },
+  { key: 'contactReason', label: 'Por que contacto' },
+  { key: 'whyNow', label: 'Por que ahora' },
+  { key: 'surfaceProblem', label: 'Problema superficial' },
+  { key: 'realProblem', label: 'Problema real' },
+  { key: 'attemptedBefore', label: 'Que intento antes' },
+  { key: 'impact', label: 'Como le afecta' },
+  { key: 'consequenceIfNoAction', label: 'Consecuencia si no hace nada' },
+  { key: 'desiredOutcome', label: 'Resultado deseado' },
+  { key: 'scenarioToAvoid', label: 'Escenario que quiere evitar' },
+  { key: 'urgencyLevel', label: 'Urgencia detectada' },
+  { key: 'objection', label: 'Objecion principal' },
+  { key: 'decisionSignal', label: 'Senal de decision' },
+  { key: 'productInterest', label: 'Producto o servicio de interes' },
+  { key: 'valueQuestion', label: 'Pregunta sobre valor' },
+  { key: 'timingPreference', label: 'Tiempo o disponibilidad deseada' },
+  { key: 'nextUsefulQuestion', label: 'Siguiente pregunta util' },
+  { key: 'notes', label: 'Notas internas' }
+]
+const ADVANCED_CLOSING_CONTEXT_KEYS = new Set(ADVANCED_CLOSING_CONTEXT_FIELDS.map((field) => field.key))
+const ADVANCED_CLOSING_URGENCY_LEVELS = new Set(['baja', 'media', 'alta', 'desconocida'])
 
 function toBoolean(value) {
   return [true, 1, '1', 'true'].includes(value)
@@ -195,6 +217,67 @@ function parseJsonField(text, fallback) {
     return parsed === null || parsed === undefined ? fallback : parsed
   } catch {
     return fallback
+  }
+}
+
+function cleanAdvancedClosingContextValue(value, maxLength = 700) {
+  if (value === null || value === undefined) return ''
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => cleanAdvancedClosingContextValue(item, maxLength))
+      .filter(Boolean)
+      .join('; ')
+      .slice(0, maxLength)
+  }
+  const raw = typeof value === 'object' ? JSON.stringify(value) : String(value)
+  return raw.replace(/\s+/g, ' ').trim().slice(0, maxLength)
+}
+
+export function normalizeAdvancedClosingContext(input = {}) {
+  const raw = input && typeof input === 'object' ? input : {}
+  const next = {}
+
+  for (const key of ADVANCED_CLOSING_CONTEXT_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
+    const clean = cleanAdvancedClosingContextValue(raw[key])
+    if (!clean) continue
+    next[key] = key === 'urgencyLevel'
+      ? (ADVANCED_CLOSING_URGENCY_LEVELS.has(clean.toLowerCase()) ? clean.toLowerCase() : 'desconocida')
+      : clean
+  }
+
+  return next
+}
+
+function normalizeStoredAdvancedClosingContext(raw) {
+  const parsed = raw && typeof raw === 'object' ? raw : parseJsonField(raw, {})
+  const normalized = normalizeAdvancedClosingContext(parsed)
+  const updatedAt = cleanAdvancedClosingContextValue(parsed?.updatedAt, 80)
+  const updatedBy = cleanAdvancedClosingContextValue(parsed?.updatedBy, 80)
+  return {
+    ...normalized,
+    ...(updatedAt ? { updatedAt } : {}),
+    ...(updatedBy ? { updatedBy } : {})
+  }
+}
+
+export function mergeAdvancedClosingContext(current = {}, patch = {}, { updatedBy = 'agent', nowIso = new Date().toISOString() } = {}) {
+  const normalizedCurrent = normalizeStoredAdvancedClosingContext(current)
+  const normalizedPatch = normalizeAdvancedClosingContext(patch)
+  const changedKeys = Object.keys(normalizedPatch).filter((key) => normalizedCurrent[key] !== normalizedPatch[key])
+
+  if (!changedKeys.length) {
+    return { context: normalizedCurrent, changedKeys: [] }
+  }
+
+  return {
+    context: {
+      ...normalizedCurrent,
+      ...normalizedPatch,
+      updatedAt: nowIso,
+      updatedBy: cleanAdvancedClosingContextValue(updatedBy, 80) || 'agent'
+    },
+    changedKeys
   }
 }
 
@@ -1503,6 +1586,7 @@ function mapStateRow(row) {
     lastReplyAt: row.last_reply_at || null,
     updatedBy: row.updated_by || null,
     agentId: row.agent_id || null,
+    closingContext: normalizeStoredAdvancedClosingContext(row.closing_context_json || '{}'),
     updatedAt: row.updated_at || null
   }
 }
@@ -1520,6 +1604,34 @@ export async function getConversationState(contactId) {
   if (!contactId) return null
   const row = await db.get('SELECT * FROM conversational_agent_state WHERE contact_id = ?', [contactId])
   return mapStateRow(row)
+}
+
+export async function updateConversationClosingContext(contactId, patch = {}, { updatedBy = 'agent' } = {}) {
+  if (!contactId) {
+    return { context: normalizeAdvancedClosingContext(patch), changedKeys: Object.keys(normalizeAdvancedClosingContext(patch)) }
+  }
+
+  await ensureConversationState(contactId)
+  const row = await db.get('SELECT closing_context_json FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+  const { context, changedKeys } = mergeAdvancedClosingContext(row?.closing_context_json || '{}', patch, { updatedBy })
+
+  if (!changedKeys.length) {
+    return { context, changedKeys }
+  }
+
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET closing_context_json = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE contact_id = ?
+  `, [JSON.stringify(context), contactId])
+
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'closing_context_updated',
+    detail: { updatedBy, changedKeys }
+  })
+
+  return { context, changedKeys }
 }
 
 export async function ensureConversationState(contactId) {

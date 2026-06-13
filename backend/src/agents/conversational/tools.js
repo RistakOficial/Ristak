@@ -9,7 +9,8 @@ import {
   setConversationSignal,
   setConversationStatus,
   recordConversationalAgentEvent,
-  applyAgentSuccessExtras
+  applyAgentSuccessExtras,
+  updateConversationClosingContext
 } from '../../services/conversationalAgentService.js'
 
 /**
@@ -180,6 +181,44 @@ export function createConversationalTools(ctx) {
 
       const result = await invokeController(updateContact, { params: { id: ctx.contactId }, body })
       return toToolResult(result, (data) => ({ id: data?.id, fullName: data?.full_name, email: data?.email }))
+    }
+  })
+
+  const updateClosingContextTool = tool({
+    name: 'update_closing_context',
+    description: 'Memoria interna de la estrategia de cierre avanzada de fabrica. Usala en silencio cuando el contacto revele origen, motivo, por que ahora, problema real, impacto, consecuencia logica, resultado deseado, urgencia, objecion o senal de decision. No guarda campos personalizados del contacto.',
+    parameters: z.object({
+      arrivalSource: z.string().nullable().optional().describe('De donde llego si lo dijo o si el sistema lo detecto'),
+      contactReason: z.string().nullable().optional().describe('Que lo hizo escribir o pedir informacion'),
+      whyNow: z.string().nullable().optional().describe('Que cambio ahora o cual fue el detonante'),
+      surfaceProblem: z.string().nullable().optional().describe('Problema inicial expresado de forma simple'),
+      realProblem: z.string().nullable().optional().describe('Problema de fondo, solo si esta sustentado por la conversacion'),
+      attemptedBefore: z.string().nullable().optional().describe('Que intento antes o que no le funciono'),
+      impact: z.string().nullable().optional().describe('Como le afecta en su dia, negocio, dinero, tiempo o proceso'),
+      consequenceIfNoAction: z.string().nullable().optional().describe('Consecuencia logica de quedarse igual, sin inventar miedo'),
+      desiredOutcome: z.string().nullable().optional().describe('Resultado que quiere construir'),
+      scenarioToAvoid: z.string().nullable().optional().describe('Escenario que quiere evitar'),
+      urgencyLevel: z.enum(['baja', 'media', 'alta', 'desconocida']).nullable().optional().describe('Urgencia detectada'),
+      objection: z.string().nullable().optional().describe('Freno u objecion principal'),
+      decisionSignal: z.string().nullable().optional().describe('Senal de que quiere avanzar, comparar, esperar o hablar con alguien'),
+      productInterest: z.string().nullable().optional().describe('Producto o servicio especifico que le interesa'),
+      valueQuestion: z.string().nullable().optional().describe('Pregunta o sensibilidad sobre valor/precio'),
+      timingPreference: z.string().nullable().optional().describe('Fecha, horario o rapidez deseada'),
+      nextUsefulQuestion: z.string().nullable().optional().describe('Siguiente pregunta util para no hacer interrogatorio'),
+      notes: z.string().nullable().optional().describe('Nota breve de contexto util para cierre')
+    }),
+    execute: async (patch) => {
+      const cleanPatch = Object.fromEntries(
+        Object.entries(patch || {}).filter(([, value]) => value !== null && value !== undefined && String(value).trim())
+      )
+      pushAction(ctx, 'update_closing_context', { keys: Object.keys(cleanPatch) })
+      if (!Object.keys(cleanPatch).length) return { ok: false, error: 'No enviaste ningun punto util para actualizar' }
+      if (ctx.dryRun || !ctx.contactId) {
+        return { ok: true, simulated: true, changedKeys: Object.keys(cleanPatch), context: cleanPatch }
+      }
+
+      const result = await updateConversationClosingContext(ctx.contactId, cleanPatch, { updatedBy: 'agent' })
+      return { ok: true, changedKeys: result.changedKeys, context: result.context }
     }
   })
 
@@ -367,6 +406,7 @@ export function createConversationalTools(ctx) {
     listProductsTool,
     getContactProfileTool,
     saveContactDataTool,
+    ...(config.closingStrategyMode === 'custom' ? [] : [updateClosingContextTool]),
     markReadyTool,
     sendToHumanTool,
     discardConversationTool,
