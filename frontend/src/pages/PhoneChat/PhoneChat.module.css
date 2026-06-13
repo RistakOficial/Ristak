@@ -6297,6 +6297,53 @@
   padding: 0 12px;
 }
 
+.phoneChatPage input[type="checkbox"] {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  display: inline-grid !important;
+  place-content: center !important;
+  width: 34px !important;
+  min-width: 34px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 0 !important;
+  border: 2px solid var(--phone-chat-border) !important;
+  border-radius: 999px !important;
+  background: var(--phone-chat-surface) !important;
+  box-shadow: none !important;
+  cursor: pointer !important;
+  flex: 0 0 auto !important;
+  touch-action: manipulation;
+}
+
+.phoneChatPage input[type="checkbox"]::after {
+  content: "" !important;
+  width: 7px !important;
+  height: 12px !important;
+  border: solid transparent !important;
+  border-width: 0 2.5px 2.5px 0 !important;
+  transform: translateY(-1px) rotate(45deg) !important;
+}
+
+.phoneChatPage input[type="checkbox"]:checked {
+  border-color: var(--phone-chat-accent) !important;
+  background: var(--phone-chat-accent) !important;
+}
+
+.phoneChatPage input[type="checkbox"]:checked::after {
+  border-color: var(--phone-chat-text-on-primary) !important;
+}
+
+.phoneChatPage input[type="checkbox"]:focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 4px rgba(var(--phone-chat-accent-rgb), 0.24) !important;
+}
+
+.phoneChatPage input[type="checkbox"]:disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+}
+
 .toggleRow {
   display: flex;
   align-items: center;
@@ -6310,10 +6357,7 @@
 }
 
 .toggleRow input {
-  width: 23px;
-  height: 23px;
   accent-color: var(--phone-chat-accent);
-  flex: 0 0 auto;
 }
 
 .toggleRowDisabled {
@@ -7293,7 +7337,7 @@
 
 .agentMasterToggle,
 .agentCompactToggle {
-  display: grid;
+  display: grid !important;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
@@ -7327,9 +7371,6 @@
 
 .agentMasterToggle input,
 .agentCompactToggle input {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
   accent-color: var(--phone-chat-accent);
 }
 
@@ -7418,36 +7459,40 @@
 
 .agentPickerSwitch {
   position: relative;
-  display: inline-grid;
+  display: inline-grid !important;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   border: 0;
   background: transparent;
+  gap: 0 !important;
 }
 
 .agentPickerSwitch input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  min-width: 100% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  margin: 0 !important;
+  opacity: 0 !important;
+  cursor: pointer !important;
 }
 
 .agentPickerSwitch span {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--phone-chat-border);
-  border-radius: 10px;
+  width: 34px !important;
+  height: 34px !important;
+  border: 2px solid var(--phone-chat-border);
+  border-radius: 999px;
   color: transparent;
   background: var(--phone-chat-surface);
+  flex: 0 0 34px;
   transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
   pointer-events: none;
 }
