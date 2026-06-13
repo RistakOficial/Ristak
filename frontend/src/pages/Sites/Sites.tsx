@@ -3357,192 +3357,210 @@ function FormEmbedEditorPanel({
   const activeField = visibleFields.find(field => field.id === activeFieldId) || visibleFields[0] || null
   const selectedFormId = getSettingString(settings, 'formSiteId')
 
-  return (
-    <aside className={`${styles.propertiesPanel} ${styles.formModePanel}`} aria-label="Editor de formulario embebido">
-      <div className={styles.formModePanelHeader}>
-        <span className={styles.formModeIcon}><FormInput size={18} /></span>
-        <div>
-          <strong>Editando formulario</strong>
-          <small>Se guarda con el sitio web</small>
-        </div>
+  const editContent = (
+    <>
+      <div className={styles.settingsGroup}>
+        <div className={styles.panelSubheader}>Contenido del formulario</div>
+        <label className={styles.field}>
+          <span>Titulo</span>
+          <input value={block.content || ''} placeholder="Formulario" onChange={(event) => onPatchBlock({ content: event.target.value })} onBlur={onSave} />
+        </label>
+        <label className={styles.field}>
+          <span>Descripcion</span>
+          <textarea rows={2} value={getSettingString(settings, 'description')} onChange={(event) => onPatchSettings({ description: event.target.value })} onBlur={onSave} />
+        </label>
+        <label className={styles.field}>
+          <span>Formulario base</span>
+          <CustomSelect value={selectedFormId} onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined, embeddedPages: undefined })} onBlur={onSave}>
+            <option value="">Inline editable</option>
+            {forms.filter(form => form.id !== site.id).map(form => <option key={form.id} value={form.id}>{form.name}</option>)}
+          </CustomSelect>
+        </label>
+        <label className={styles.field}>
+          <span>Al terminar</span>
+          <CustomSelect value={getFormCompletionAction(settings)} onChange={(event) => onPatchSettings({ completionAction: event.target.value })} onBlur={onSave}>
+            <option value="next_page">Ir a la siguiente pagina</option>
+            <option value="next_page_if_qualified">Siguiente pagina solo si califica</option>
+            <option value="form_default">Mostrar mensaje del formulario</option>
+          </CustomSelect>
+        </label>
       </div>
-      <div className={styles.propertiesBody}>
-        <div className={styles.settingsGroup}>
-          <div className={styles.panelSubheader}>Contenido del formulario</div>
-          <label className={styles.field}>
-            <span>Titulo</span>
-            <input value={block.content || ''} placeholder="Formulario" onChange={(event) => onPatchBlock({ content: event.target.value })} onBlur={onSave} />
-          </label>
-          <label className={styles.field}>
-            <span>Descripcion</span>
-            <textarea rows={2} value={getSettingString(settings, 'description')} onChange={(event) => onPatchSettings({ description: event.target.value })} onBlur={onSave} />
-          </label>
-          <label className={styles.field}>
-            <span>Formulario base</span>
-            <CustomSelect value={selectedFormId} onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined, embeddedPages: undefined })} onBlur={onSave}>
-              <option value="">Inline editable</option>
-              {forms.filter(form => form.id !== site.id).map(form => <option key={form.id} value={form.id}>{form.name}</option>)}
-            </CustomSelect>
-          </label>
-          <label className={styles.field}>
-            <span>Al terminar</span>
-            <CustomSelect value={getFormCompletionAction(settings)} onChange={(event) => onPatchSettings({ completionAction: event.target.value })} onBlur={onSave}>
-              <option value="next_page">Ir a la siguiente pagina</option>
-              <option value="next_page_if_qualified">Siguiente pagina solo si califica</option>
-              <option value="form_default">Mostrar mensaje del formulario</option>
-            </CustomSelect>
-          </label>
-        </div>
 
-        <div className={styles.settingsGroup}>
-          <div className={styles.optionRulesHeader}>
-            <strong>Paginas</strong>
-            <button type="button" onClick={onAddPage}>
-              <Plus size={14} />
-              Pagina
+      <div className={styles.settingsGroup}>
+        <div className={styles.optionRulesHeader}>
+          <strong>Campos</strong>
+          <button type="button" onClick={() => onAddField('short_text')}>
+            <Plus size={14} />
+            Campo
+          </button>
+        </div>
+        <div className={styles.formFieldList}>
+          {visibleFields.map((field, index) => (
+            <button key={field.id} type="button" className={`${styles.formFieldItem} ${activeField?.id === field.id ? styles.formFieldItemActive : ''}`} onClick={() => onActiveFieldChange(field.id)}>
+              <span>{blockIcons[field.blockType]}</span>
+              <span>
+                <strong>{field.label || blockLabels[field.blockType] || 'Campo'}</strong>
+                <small>{blockLabels[field.blockType] || field.blockType}</small>
+              </span>
+              <em>{index + 1}</em>
             </button>
-          </div>
-          <div className={styles.embeddedPageTabs}>
-            {pages.map(page => (
-              <button
-                key={page.id}
-                type="button"
-                className={page.id === activePage?.id ? styles.embeddedPageTabActive : ''}
-                onClick={() => onActivePageChange(page.id)}
-              >
-                <FileText size={14} />
-                <span>{page.title || 'Pagina'}</span>
-              </button>
-            ))}
-          </div>
-          {activePage && (
-            <div className={styles.embeddedPageEditor}>
-              <label className={styles.field}>
-                <span>Nombre de esta pagina</span>
-                <input value={activePage.title || ''} onChange={(event) => onRenamePage(activePage.id, event.target.value)} onBlur={onSave} />
-              </label>
-              <button type="button" onClick={() => onDeletePage(activePage.id)} disabled={pages.length <= 1}>
-                <Trash2 size={14} />
-                Eliminar pagina
-              </button>
-            </div>
+          ))}
+          {visibleFields.length === 0 && (
+            <p className={styles.muted}>Esta pagina todavia no tiene campos. Agrega uno desde la izquierda o con el boton Campo.</p>
           )}
         </div>
+      </div>
 
+      {activeField && (
         <div className={styles.settingsGroup}>
-          <div className={styles.optionRulesHeader}>
-            <strong>Campos</strong>
-            <button type="button" onClick={() => onAddField('short_text')}>
-              <Plus size={14} />
-              Campo
-            </button>
+          <div className={styles.formFieldEditorHeader}>
+            <div>
+              <span className={styles.panelSubheader}>Campo seleccionado</span>
+              <strong>{activeField.label || blockLabels[activeField.blockType]}</strong>
+            </div>
+            <div className={styles.formFieldActions}>
+              <button type="button" onClick={() => onMoveField(activeField.id, 'up')} disabled={visibleFields[0]?.id === activeField.id} title="Subir"><ArrowUp size={14} /></button>
+              <button type="button" onClick={() => onMoveField(activeField.id, 'down')} disabled={visibleFields[visibleFields.length - 1]?.id === activeField.id} title="Bajar"><ArrowDown size={14} /></button>
+              <button type="button" onClick={() => onRemoveField(activeField.id)} title="Eliminar"><Trash2 size={14} /></button>
+            </div>
           </div>
-          <div className={styles.formFieldList}>
-            {visibleFields.map((field, index) => (
-              <button key={field.id} type="button" className={`${styles.formFieldItem} ${activeField?.id === field.id ? styles.formFieldItemActive : ''}`} onClick={() => onActiveFieldChange(field.id)}>
-                <span>{blockIcons[field.blockType]}</span>
-                <span>
-                  <strong>{field.label || blockLabels[field.blockType] || 'Campo'}</strong>
-                  <small>{blockLabels[field.blockType] || field.blockType}</small>
-                </span>
-                <em>{index + 1}</em>
-              </button>
-            ))}
-            {visibleFields.length === 0 && (
-              <p className={styles.muted}>Esta pagina todavia no tiene campos. Agrega uno desde la izquierda o con el boton Campo.</p>
-            )}
+
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Tipo</span>
+              <CustomSelect value={activeField.blockType} onChange={(event) => onPatchField(activeField.id, { blockType: event.target.value as SiteBlockType })} onBlur={onSave}>
+                {embeddedFormFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
+              </CustomSelect>
+            </label>
+            <label className={styles.field}>
+              <span>Pagina</span>
+              <CustomSelect
+                value={getBlockPageId(activeField, pages)}
+                onChange={(event) => {
+                  onPatchFieldSettings(activeField, { pageId: event.target.value })
+                  onActivePageChange(event.target.value)
+                }}
+                onBlur={onSave}
+              >
+                {pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Pagina'}</option>)}
+              </CustomSelect>
+            </label>
+          </div>
+
+          <div className={styles.twoColumn}>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={Boolean(activeField.required)}
+                onChange={(event) => {
+                  onPatchField(activeField.id, { required: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Requerido</span>
+            </label>
+          </div>
+
+          <label className={styles.field}>
+            <span>Pregunta / etiqueta</span>
+            <input value={activeField.label || ''} onChange={(event) => onPatchField(activeField.id, { label: event.target.value })} onBlur={onSave} />
+          </label>
+          <label className={styles.field}>
+            <span>Texto de ayuda</span>
+            <textarea rows={2} value={activeField.content || ''} onChange={(event) => onPatchField(activeField.id, { content: event.target.value })} onBlur={onSave} />
+          </label>
+          {!isChoiceBlock(activeField.blockType) && (
+            <label className={styles.field}>
+              <span>Placeholder</span>
+              <input value={activeField.placeholder || ''} onChange={(event) => onPatchField(activeField.id, { placeholder: event.target.value })} onBlur={onSave} />
+            </label>
+          )}
+          {activeField.blockType === 'phone' && (
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={isPhoneCountrySelectorEnabled(activeField)}
+                onChange={(event) => {
+                  onPatchFieldSettings(activeField, { phoneCountrySelectorEnabled: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Mostrar pais y lada</span>
+            </label>
+          )}
+
+          <CustomFieldBindingControl block={activeField} customFields={customFields} onPatchSettings={(patch) => onPatchFieldSettings(activeField, patch)} onSave={onSave} />
+
+          {isChoiceBlock(activeField.blockType) && (
+            <OptionsRulesEditor block={activeField} blocks={fields} pages={pages} onPatchBlock={(patch) => onPatchField(activeField.id, patch)} onSave={onSave} />
+          )}
+        </div>
+      )}
+    </>
+  )
+
+  const pagesContent = (
+    <div className={styles.settingsGroup}>
+      <div className={styles.optionRulesHeader}>
+        <strong>Paginas del formulario</strong>
+        <button type="button" onClick={onAddPage}>
+          <Plus size={14} />
+          Pagina
+        </button>
+      </div>
+      <div className={styles.embeddedPageTabs}>
+        {pages.map(page => (
+          <button
+            key={page.id}
+            type="button"
+            className={page.id === activePage?.id ? styles.embeddedPageTabActive : ''}
+            onClick={() => onActivePageChange(page.id)}
+          >
+            <FileText size={14} />
+            <span>{page.title || 'Pagina'}</span>
+          </button>
+        ))}
+      </div>
+      {activePage && (
+        <div className={styles.embeddedPageEditor}>
+          <label className={styles.field}>
+            <span>Nombre de esta pagina</span>
+            <input value={activePage.title || ''} onChange={(event) => onRenamePage(activePage.id, event.target.value)} onBlur={onSave} />
+          </label>
+          <button type="button" onClick={() => onDeletePage(activePage.id)} disabled={pages.length <= 1}>
+            <Trash2 size={14} />
+            Eliminar pagina
+          </button>
+        </div>
+      )}
+    </div>
+  )
+
+  const designContent = (
+    <InlineBlockStyleControls site={site} block={block} blocks={[block]} onPatchSettings={onPatchSettings} onSave={onSave} />
+  )
+
+  return (
+    <InspectorTabbedPanel
+      title="Editando formulario"
+      subtitle="Se guarda con el sitio web"
+      className={styles.formModePanel}
+      ariaLabel="Editor de formulario embebido"
+      header={(
+        <div className={styles.formModePanelHeader}>
+          <span className={styles.formModeIcon}><FormInput size={18} /></span>
+          <div>
+            <strong>Editando formulario</strong>
+            <small>Se guarda con el sitio web</small>
           </div>
         </div>
-
-        {activeField && (
-          <div className={styles.settingsGroup}>
-            <div className={styles.formFieldEditorHeader}>
-              <div>
-                <span className={styles.panelSubheader}>Campo seleccionado</span>
-                <strong>{activeField.label || blockLabels[activeField.blockType]}</strong>
-              </div>
-              <div className={styles.formFieldActions}>
-                <button type="button" onClick={() => onMoveField(activeField.id, 'up')} disabled={visibleFields[0]?.id === activeField.id} title="Subir"><ArrowUp size={14} /></button>
-                <button type="button" onClick={() => onMoveField(activeField.id, 'down')} disabled={visibleFields[visibleFields.length - 1]?.id === activeField.id} title="Bajar"><ArrowDown size={14} /></button>
-                <button type="button" onClick={() => onRemoveField(activeField.id)} title="Eliminar"><Trash2 size={14} /></button>
-              </div>
-            </div>
-
-            <div className={styles.twoColumn}>
-              <label className={styles.field}>
-                <span>Tipo</span>
-                <CustomSelect value={activeField.blockType} onChange={(event) => onPatchField(activeField.id, { blockType: event.target.value as SiteBlockType })} onBlur={onSave}>
-                  {embeddedFormFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
-                </CustomSelect>
-              </label>
-              <label className={styles.field}>
-                <span>Pagina</span>
-                <CustomSelect
-                  value={getBlockPageId(activeField, pages)}
-                  onChange={(event) => {
-                    onPatchFieldSettings(activeField, { pageId: event.target.value })
-                    onActivePageChange(event.target.value)
-                  }}
-                  onBlur={onSave}
-                >
-                  {pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Pagina'}</option>)}
-                </CustomSelect>
-              </label>
-            </div>
-
-            <div className={styles.twoColumn}>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(activeField.required)}
-                  onChange={(event) => {
-                    onPatchField(activeField.id, { required: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Requerido</span>
-              </label>
-            </div>
-
-            <label className={styles.field}>
-              <span>Pregunta / etiqueta</span>
-              <input value={activeField.label || ''} onChange={(event) => onPatchField(activeField.id, { label: event.target.value })} onBlur={onSave} />
-            </label>
-            <label className={styles.field}>
-              <span>Texto de ayuda</span>
-              <textarea rows={2} value={activeField.content || ''} onChange={(event) => onPatchField(activeField.id, { content: event.target.value })} onBlur={onSave} />
-            </label>
-            {!isChoiceBlock(activeField.blockType) && (
-              <label className={styles.field}>
-                <span>Placeholder</span>
-                <input value={activeField.placeholder || ''} onChange={(event) => onPatchField(activeField.id, { placeholder: event.target.value })} onBlur={onSave} />
-              </label>
-            )}
-            {activeField.blockType === 'phone' && (
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={isPhoneCountrySelectorEnabled(activeField)}
-                  onChange={(event) => {
-                    onPatchFieldSettings(activeField, { phoneCountrySelectorEnabled: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Mostrar pais y lada</span>
-              </label>
-            )}
-
-            <CustomFieldBindingControl block={activeField} customFields={customFields} onPatchSettings={(patch) => onPatchFieldSettings(activeField, patch)} onSave={onSave} />
-
-            {isChoiceBlock(activeField.blockType) && (
-              <OptionsRulesEditor block={activeField} blocks={fields} pages={pages} onPatchBlock={(patch) => onPatchField(activeField.id, patch)} onSave={onSave} />
-            )}
-          </div>
-        )}
-
-        <InlineBlockStyleControls site={site} block={block} blocks={[block]} onPatchSettings={onPatchSettings} onSave={onSave} />
-      </div>
-    </aside>
+      )}
+      tabs={[
+        { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
+        { value: 'settings', label: 'Paginas', icon: <FileText size={14} />, content: pagesContent },
+        { value: 'design', label: 'Diseno', icon: <Sparkles size={14} />, content: designContent }
+      ]}
+    />
   )
 }
 
@@ -17703,7 +17721,10 @@ const InspectorTabbedPanel: React.FC<{
   subtitle: string
   tabs: InspectorTab[]
   defaultTab?: InspectorTabId
-}> = ({ title, subtitle, tabs, defaultTab = 'edit' }) => {
+  className?: string
+  ariaLabel?: string
+  header?: React.ReactNode
+}> = ({ title, subtitle, tabs, defaultTab = 'edit', className, ariaLabel, header }) => {
   const [activeTab, setActiveTab] = useState<InspectorTabId>(defaultTab)
   const activeContent = tabs.find(tab => tab.value === activeTab)?.content || tabs[0]?.content
 
@@ -17714,12 +17735,14 @@ const InspectorTabbedPanel: React.FC<{
   }, [activeTab, defaultTab, tabs])
 
   return (
-    <aside className={styles.propertiesPanel}>
+    <aside className={[styles.propertiesPanel, className].filter(Boolean).join(' ')} aria-label={ariaLabel}>
       <div className={styles.inspectorStickyTop}>
-        <div className={styles.panelHeader}>
-          <strong>{title}</strong>
-          <span>{subtitle}</span>
-        </div>
+        {header || (
+          <div className={styles.panelHeader}>
+            <strong>{title}</strong>
+            <span>{subtitle}</span>
+          </div>
+        )}
         <TabList
           tabs={tabs.map(({ value, label, icon }) => ({ value, label, icon }))}
           activeTab={activeTab}

@@ -14217,6 +14217,12 @@
   margin: 0 0 14px;
 }
 
+.formModePanel .inspectorStickyTop .formModePanelHeader {
+  margin: 0;
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
 .formFieldList {
   display: grid;
   gap: 8px;
