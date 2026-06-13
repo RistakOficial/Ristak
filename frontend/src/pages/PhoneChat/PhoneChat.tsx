@@ -6869,26 +6869,8 @@ export const PhoneChat: React.FC = () => {
     }
   }
 
-  const renderWhatsAppBadgeGlyph = () => (
-    <svg
-      className={styles.avatarChannelBadgeWhatsappGlyph}
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        className={styles.avatarChannelBadgeWhatsappBubble}
-        d="M12.02 3.25c-4.86 0-8.82 3.67-8.82 8.18 0 1.48.45 2.93 1.3 4.18l-1.08 4.18 4.44-1.06a9.74 9.74 0 0 0 4.16.92c4.86 0 8.82-3.67 8.82-8.18s-3.96-8.22-8.82-8.22Z"
-      />
-      <path
-        className={styles.avatarChannelBadgeWhatsappPhone}
-        d="M8.32 7.42c.25-.25.62-.38 1.1-.38h.38c.28 0 .52.17.63.43l.8 1.87c.1.25.05.54-.14.73l-.5.51c-.13.13-.16.33-.07.5.35.66.79 1.23 1.34 1.7.52.44 1.12.79 1.8 1.04.17.06.36.01.48-.12l.56-.62c.18-.2.47-.27.73-.18l1.94.7c.28.1.46.36.46.65v.33c0 .45-.16.83-.47 1.12-.48.45-1.16.66-2.03.61-1.65-.09-3.3-.84-4.92-2.24-1.64-1.41-2.61-2.93-2.9-4.55-.15-.84.12-1.54.81-2.1Z"
-      />
-    </svg>
-  )
-
   const renderChannelBadgeIcon = (kind: ContactChannelBadgeKind) => {
-    if (kind === 'whatsapp') return renderWhatsAppBadgeGlyph()
+    if (kind === 'whatsapp') return <Icon name="whatsapp" size={16} className={styles.avatarChannelBadgeWhatsappGlyph} />
     if (kind === 'messenger') return <Icon name="facebook" size={12} />
     if (kind === 'instagram') return <Icon name="instagram" size={12} />
     if (kind === 'email') return <Mail size={12} />

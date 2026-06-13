@@ -867,17 +867,21 @@
   height: 14px;
 }
 
+.chatItem > .avatar .avatarChannelBadgeWhatsapp svg {
+  width: 16px;
+  height: 16px;
+}
+
 .avatarChannelBadgeWhatsappGlyph {
+  color: #ffffff;
+  fill: currentColor;
   overflow: visible;
   shape-rendering: geometricPrecision;
+  transform: translateY(-0.25px);
 }
 
-.avatarChannelBadgeWhatsappBubble {
-  fill: #ffffff;
-}
-
-.avatarChannelBadgeWhatsappPhone {
-  fill: #119c58;
+.avatarChannelBadgeWhatsappGlyph path {
+  stroke: none;
 }
 
 .avatarChannelBadgeMessenger {
@@ -1120,8 +1124,8 @@
 }
 
 .conversationHeader .avatar .avatarChannelBadgeWhatsapp svg {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
 }
 
 .conversationContactButton {
