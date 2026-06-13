@@ -1264,6 +1264,17 @@
   margin: 18px 0 16px;
 }
 
+.configPanel .bubbleBody > div > .configSection:first-child,
+.configPanel .bubbleBody > .configSection:first-child {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.configSection > .configField:last-child {
+  margin-bottom: 0;
+}
+
 .configSectionTitle {
   font-size: 12px;
   font-weight: 700;
@@ -2247,6 +2258,34 @@
   scrollbar-gutter: stable;
 }
 
+.whatsappConfig {
+  display: flex;
+  flex-direction: column;
+}
+
+.whatsappConfig .configSection {
+  padding-top: 13px;
+  margin: 13px 0 12px;
+}
+
+.whatsappConfig > .configSection:first-child {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.whatsappConfig .configSectionTitle {
+  margin-bottom: 9px;
+}
+
+.whatsappConfig .configField {
+  margin-bottom: 12px;
+}
+
+.whatsappConfig .configSection > .configField:last-child {
+  margin-bottom: 0;
+}
+
 /* Globo de mensaje dentro del panel (estilo ManyChat) */
 .panelBubble {
   position: relative;
@@ -2261,9 +2300,19 @@
   border-color: rgba(148, 163, 184, 0.3);
 }
 
+.whatsappConfig .panelBubble {
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
 .panelBubble .composerWrap {
   border: none;
   background: transparent;
+}
+
+.whatsappConfig .panelBubble .composerEditor {
+  min-height: 72px;
+  padding: 10px 12px 30px;
 }
 
 .addButtonInBubble {
@@ -2281,6 +2330,11 @@
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
+}
+
+.whatsappConfig .addButtonInBubble {
+  margin-top: 6px;
+  padding: 8px 12px;
 }
 
 .addButtonInBubble:hover:not(:disabled) {
@@ -2377,6 +2431,10 @@
   margin: 18px 0 10px;
 }
 
+.whatsappConfig .contentBlocksTitle {
+  margin: 12px 0 8px;
+}
+
 .contentBlockCard {
   display: flex;
   align-items: center;
@@ -2390,6 +2448,11 @@
   margin-bottom: 9px;
   cursor: pointer;
   transition: border-color 0.13s ease, background 0.13s ease;
+}
+
+.whatsappConfig .contentBlockCard {
+  padding: 10px;
+  margin-bottom: 7px;
 }
 
 .contentBlockCard:hover {
