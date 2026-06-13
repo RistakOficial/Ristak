@@ -3207,6 +3207,17 @@ export const PhoneChat: React.FC = () => {
     return () => window.clearInterval(intervalId)
   }, [agentEnabled])
   const agentStatusPhrase = AGENT_STATUS_PHRASES[agentStatusPhraseIndex % AGENT_STATUS_PHRASES.length]
+  const activeConversationAgentState = activeContact?.id ? agentStates[activeContact.id] || null : null
+  const activeConversationAgentStatus = activeConversationAgentState?.status || 'active'
+  const activeConversationAgentActive = Boolean(agentEnabled && activeContact && activeConversationAgentStatus === 'active')
+  const activeConversationAgentLabel = ({
+    active: 'Agente leyendo este chat',
+    paused: 'Agente pausado',
+    human: 'Tomado por humano',
+    skipped: 'Chatbot omitido',
+    completed: 'Objetivo cumplido',
+    discarded: 'Chat descartado'
+  } as Record<string, string>)[activeConversationAgentStatus] || 'Agente conversacional'
 
   useEffect(() => {
     if (agentDataHydrated && !agentEnabled && chatFilter === 'agent') {
@@ -4928,6 +4939,24 @@ export const PhoneChat: React.FC = () => {
     setSheet('chatMore')
     setContactInfoOpen(false)
     closeSwipeActions()
+  }
+
+  const openAgentGlobalMenu = () => {
+    setAgentMenuSection('menu')
+    setSheet('agentMenu')
+    loadAgentData()
+  }
+
+  const openConversationAgentControls = (contact?: Contact | null) => {
+    if (!contact?.id) return
+    setActiveContactId(contact.id)
+    setChatActionContactId(contact.id)
+    setChatQuickActionsContact(null)
+    setAgentMenuSection('menu')
+    setSheet('chatMore')
+    setContactInfoOpen(false)
+    closeSwipeActions()
+    loadAgentData({ includeDefinitions: false })
   }
 
   const handleOpenAppointmentForm = (contact?: Contact | null) => {
@@ -10491,6 +10520,49 @@ export const PhoneChat: React.FC = () => {
     </button>
   )
 
+  const renderAgentRobotGlyph = (active: boolean) => (
+    <>
+      {active && (
+        <>
+          <span className={styles.agentBotOrbit} aria-hidden="true" />
+          <span className={styles.agentBotSparkle} aria-hidden="true" />
+        </>
+      )}
+      <span className={styles.agentRobot} aria-hidden="true">
+        <span className={styles.agentRobotAntenna} />
+        <span className={styles.agentRobotHead}>
+          <span className={styles.agentRobotEyes}>
+            <span className={styles.agentRobotEye} />
+            <span className={styles.agentRobotEye} />
+          </span>
+          <span className={styles.agentRobotMouth} />
+        </span>
+      </span>
+    </>
+  )
+
+  const renderAgentRobotButton = ({
+    active,
+    className = '',
+    label,
+    onClick
+  }: {
+    active: boolean
+    className?: string
+    label: string
+    onClick: () => void
+  }) => (
+    <button
+      type="button"
+      className={`${styles.roundButton} ${active ? styles.agentBotButtonActive : styles.agentBotButtonIdle} ${className}`.trim()}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
+      {renderAgentRobotGlyph(active)}
+    </button>
+  )
+
   if (accessState === 'checking') {
     return (
       <main className={styles.loadingPage}>
@@ -10544,33 +10616,11 @@ export const PhoneChat: React.FC = () => {
           <header className={`${styles.chatListHeader} ${chatSearchExpanded ? styles.chatListHeaderSearchExpanded : ''}`}>
             {deviceMode !== 'tablet' && (
               <div className={styles.topActionRow} aria-hidden={chatSearchExpanded}>
-                <button
-                  type="button"
-                  className={`${styles.roundButton} ${agentEnabled ? styles.agentBotButtonActive : styles.agentBotButtonIdle}`}
-                  onClick={() => {
-                    setAgentMenuSection('menu')
-                    setSheet('agentMenu')
-                    loadAgentData()
-                  }}
-                  aria-label="Agente conversacional"
-                >
-                  {agentEnabled && (
-                    <>
-                      <span className={styles.agentBotOrbit} aria-hidden="true" />
-                      <span className={styles.agentBotSparkle} aria-hidden="true" />
-                    </>
-                  )}
-                  <span className={styles.agentRobot} aria-hidden="true">
-                    <span className={styles.agentRobotAntenna} />
-                    <span className={styles.agentRobotHead}>
-                      <span className={styles.agentRobotEyes}>
-                        <span className={styles.agentRobotEye} />
-                        <span className={styles.agentRobotEye} />
-                      </span>
-                      <span className={styles.agentRobotMouth} />
-                    </span>
-                  </span>
-                </button>
+                {renderAgentRobotButton({
+                  active: agentEnabled,
+                  label: 'Agente conversacional',
+                  onClick: openAgentGlobalMenu
+                })}
                 {agentEnabled && (
                   <div className={styles.agentStatusBubble} aria-hidden="true">
                     <span className={styles.agentStatusLabel}>
@@ -10709,20 +10759,28 @@ export const PhoneChat: React.FC = () => {
             {aiAgentConversationOpen ? (
               <span className={styles.conversationHeaderSpacer} aria-hidden="true" />
             ) : (
-              <div className={styles.callActions}>
-                <button type="button" onClick={() => handleOpenAppointmentForm(activeContact)} aria-label="Agendar cita">
-                  <CalendarDays size={25} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPaymentMode('single')
-                    setSheet('payment')
-                  }}
-                  aria-label="Cobrar"
-                >
-                  <CircleDollarSign size={25} />
-                </button>
+              <div className={styles.conversationActionCluster}>
+                {activeContact && agentEnabled && renderAgentRobotButton({
+                  active: activeConversationAgentActive,
+                  className: styles.conversationAgentButton,
+                  label: activeConversationAgentLabel,
+                  onClick: () => openConversationAgentControls(activeContact)
+                })}
+                <div className={styles.callActions}>
+                  <button type="button" onClick={() => handleOpenAppointmentForm(activeContact)} aria-label="Agendar cita">
+                    <CalendarDays size={25} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentMode('single')
+                      setSheet('payment')
+                    }}
+                    aria-label="Cobrar"
+                  >
+                    <CircleDollarSign size={25} />
+                  </button>
+                </div>
               </div>
             )}
           </header>

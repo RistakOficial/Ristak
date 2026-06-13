@@ -36,16 +36,54 @@ const MAX_REPLY_CHARS = 1000
 const DEBOUNCE_MS = 4000
 const PENDING_INBOUND_LIMIT = 8
 const PENDING_INBOUND_SCAN_LIMIT = 30
+const PENDING_RECOVERY_SCAN_LIMIT = 80
+const PENDING_RECOVERY_SCHEDULE_LIMIT = 10
+const PENDING_RECOVERY_MAX_AGE_MS = Number(process.env.CONVERSATIONAL_AGENT_PENDING_RECOVERY_MAX_AGE_MS || 60 * 60 * 1000)
 const MAX_REPLY_PARTS = 6
 
 // Conversaciones que el agente está procesando ahora mismo (instancia única).
 const runningContacts = new Set()
+const pendingContactReruns = new Map()
 
 // Palabras internas que jamás deben llegar al cliente final.
 const INTERNAL_TOKEN_PATTERN = /\b(AGENDAR|SALTAR|ready_for_human|ready_to_schedule|ready_to_buy|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment)\b/gi
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function toTimestampMs(value) {
+  if (!value) return 0
+  if (value instanceof Date) return value.getTime()
+  const raw = String(value).trim()
+  if (!raw) return 0
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(raw) && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)
+    ? `${raw.replace(' ', 'T')}Z`
+    : raw
+  const parsed = Date.parse(normalized)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+export function shouldRecoverPendingInbound(latestMessage, state, {
+  nowMs = Date.now(),
+  maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS
+} = {}) {
+  if (!latestMessage?.id) return false
+  const messageMs = toTimestampMs(
+    latestMessage.message_timestamp ||
+    latestMessage.messageTimestamp ||
+    latestMessage.created_at ||
+    latestMessage.createdAt
+  )
+  if (!messageMs) return false
+  if (maxAgeMs > 0 && nowMs - messageMs > maxAgeMs) return false
+  if (state?.status && state.status !== 'active') return false
+  if (state?.lastAnsweredInboundMessageId === latestMessage.id || state?.last_answered_inbound_message_id === latestMessage.id) {
+    return false
+  }
+
+  const lastReplyMs = toTimestampMs(state?.lastReplyAt || state?.last_reply_at)
+  return !lastReplyMs || messageMs > lastReplyMs
 }
 
 export function sanitizeAgentReply(text) {
@@ -314,6 +352,7 @@ async function executeAgent({ agent, apiKey, messages, contactId, model, traceMe
 
 function scheduleConversationalAgentRerun({ contactId, phone, latestMessage, reason }) {
   if (!latestMessage?.id) return
+  pendingContactReruns.delete(contactId)
   setTimeout(() => {
     handleInboundMessageForConversationalAgent({
       contactId,
@@ -323,6 +362,12 @@ function scheduleConversationalAgentRerun({ contactId, phone, latestMessage, rea
       logger.error(`[Agente conversacional] Error reintentando tras ${reason}: ${error.message}`)
     })
   }, 0)
+}
+
+async function schedulePendingContactRerun(contactId, phone, reason) {
+  const latest = await loadLatestInboundMessage(contactId).catch(() => null)
+  if (!latest) return
+  scheduleConversationalAgentRerun({ contactId, phone, latestMessage: latest, reason })
 }
 
 async function loadNewerInboundMessage(contactId, handledMessageId) {
@@ -400,7 +445,15 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
     const state = await ensureConversationState(contactId)
     if (!state || state.status !== 'active') return
 
-    if (runningContacts.has(contactId)) return
+    if (runningContacts.has(contactId)) {
+      pendingContactReruns.set(contactId, { contactId, phone, messageId })
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'run_rerun_queued',
+        detail: { messageId, reason: 'already_running' }
+      }).catch(() => {})
+      return
+    }
     runningContacts.add(contactId)
 
     try {
@@ -599,6 +652,15 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       })
     } finally {
       runningContacts.delete(contactId)
+      const pending = pendingContactReruns.get(contactId)
+      if (pending) {
+        pendingContactReruns.delete(contactId)
+        await schedulePendingContactRerun(
+          contactId,
+          pending.phone || phone,
+          'mensaje entrante durante ejecución'
+        )
+      }
     }
   } catch (error) {
     runningContacts.delete(contactId)
@@ -609,6 +671,56 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       detail: { message: error.message }
     }).catch(() => {})
   }
+}
+
+export async function recoverPendingConversationalAgentConversations({
+  nowMs = Date.now(),
+  maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS
+} = {}) {
+  const config = await getConversationalAgentConfig()
+  if (!config.enabled) return { scanned: 0, scheduled: 0 }
+
+  const rows = await db.all(`
+    SELECT id, contact_id, message_text, message_type, phone, business_phone,
+           business_phone_number_id, message_timestamp, created_at
+    FROM whatsapp_api_messages
+    WHERE direction = 'inbound' AND contact_id IS NOT NULL
+    ORDER BY COALESCE(message_timestamp, created_at) DESC
+    LIMIT ?
+  `, [PENDING_RECOVERY_SCAN_LIMIT])
+
+  const latestByContact = new Map()
+  for (const row of rows) {
+    if (!row?.contact_id || latestByContact.has(row.contact_id)) continue
+    latestByContact.set(row.contact_id, row)
+  }
+
+  let scheduled = 0
+  for (const latest of latestByContact.values()) {
+    if (scheduled >= PENDING_RECOVERY_SCHEDULE_LIMIT) break
+    const state = await getConversationState(latest.contact_id).catch(() => null)
+    if (!shouldRecoverPendingInbound(latest, state, { nowMs, maxAgeMs })) continue
+
+    await recordConversationalAgentEvent({
+      contactId: latest.contact_id,
+      eventType: 'pending_recovery_scheduled',
+      detail: { messageId: latest.id, maxAgeMs }
+    }).catch(() => {})
+
+    scheduleConversationalAgentRerun({
+      contactId: latest.contact_id,
+      phone: latest.phone,
+      latestMessage: latest,
+      reason: 'recuperación de pendientes al arrancar'
+    })
+    scheduled += 1
+  }
+
+  if (scheduled) {
+    logger.info(`[Agente conversacional] ${scheduled} conversación(es) pendiente(s) recuperadas al arrancar`)
+  }
+
+  return { scanned: latestByContact.size, scheduled }
 }
 
 /**

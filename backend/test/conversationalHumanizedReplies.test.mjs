@@ -7,6 +7,7 @@ import {
 } from '../src/services/conversationalAgentService.js'
 import {
   buildPendingReplyContextMessage,
+  shouldRecoverPendingInbound,
   splitReplyIntoParts
 } from '../src/agents/conversational/runner.js'
 
@@ -79,4 +80,29 @@ test('construye contexto interno con mensajes pendientes sin exponerlo al client
   assert.match(context.content, /Responde considerando TODOS/)
   assert.match(context.content, /1\. hola, quiero info/)
   assert.match(context.content, /2\. también cuánto cuesta\?/)
+})
+
+test('recupera solo mensajes entrantes recientes que no fueron contestados', () => {
+  const nowMs = Date.parse('2026-06-13T01:20:00Z')
+  const latest = {
+    id: 'inbound-reciente',
+    message_timestamp: '2026-06-13 01:15:00',
+    created_at: '2026-06-13 01:15:00'
+  }
+
+  assert.equal(shouldRecoverPendingInbound(latest, { status: 'active' }, { nowMs, maxAgeMs: 60 * 60 * 1000 }), true)
+  assert.equal(shouldRecoverPendingInbound(latest, { status: 'paused' }, { nowMs, maxAgeMs: 60 * 60 * 1000 }), false)
+  assert.equal(shouldRecoverPendingInbound(latest, {
+    status: 'active',
+    lastAnsweredInboundMessageId: 'inbound-reciente'
+  }, { nowMs, maxAgeMs: 60 * 60 * 1000 }), false)
+  assert.equal(shouldRecoverPendingInbound(latest, {
+    status: 'active',
+    lastReplyAt: '2026-06-13 01:16:00'
+  }, { nowMs, maxAgeMs: 60 * 60 * 1000 }), false)
+  assert.equal(shouldRecoverPendingInbound({
+    ...latest,
+    id: 'inbound-viejo',
+    message_timestamp: '2026-06-12 23:00:00'
+  }, { status: 'active' }, { nowMs, maxAgeMs: 60 * 60 * 1000 }), false)
 })

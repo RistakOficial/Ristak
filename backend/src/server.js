@@ -59,6 +59,7 @@ import licenseRoutes from './routes/license.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
 import { getHealthInfo } from './services/licenseService.js'
 import { requireFeature } from './middleware/licenseMiddleware.js'
+import { recoverPendingConversationalAgentConversations } from './agents/conversational/runner.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -205,6 +206,10 @@ app.listen(PORT, '0.0.0.0', async () => {
 
   repairPendingPaymentFlows().catch(error => {
     logger.error(`No se pudo ejecutar reparación inicial de parcialidades: ${error.message}`)
+  })
+
+  recoverPendingConversationalAgentConversations().catch(error => {
+    logger.error(`No se pudo recuperar conversaciones pendientes del agente: ${error.message}`)
   })
 
   // Iniciar cron jobs
