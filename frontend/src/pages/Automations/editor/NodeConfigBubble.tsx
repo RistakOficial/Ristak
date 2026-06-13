@@ -38,7 +38,7 @@ interface NodeConfigBubbleProps {
   onClose: () => void
 }
 
-const PANEL_WIDTH = 440
+const PANEL_WIDTH = 520
 
 const str = (value: unknown): string =>
   typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)

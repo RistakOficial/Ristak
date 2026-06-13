@@ -403,7 +403,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
     const rect = wrap.getBoundingClientRect()
     const margin = 12
     const gap = 8
-    const preferredWidth = pickerOpen === 'variables' ? 390 : 272
+    const preferredWidth = pickerOpen === 'variables' ? 430 : 292
     const width = Math.min(preferredWidth, window.innerWidth - margin * 2)
     const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin))
     const spaceBelow = window.innerHeight - rect.bottom - margin
