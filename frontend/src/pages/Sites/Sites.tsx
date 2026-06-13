@@ -16495,22 +16495,13 @@ const InlineBlockStyleControls: React.FC<{
             onPatchSettings={onPatchSettings}
             onSave={onSave}
           />
-          <div className={styles.twoColumn}>
-            <ColorField
-              label="Fondo del boton"
-              value={getSettingPaint(settings, 'buttonBg', defaultAccent)}
-              allowGradient
-              onChange={(value) => onPatchSettings({ buttonBg: value })}
-              onCommit={onSave}
-            />
-            <ColorField
-              label="Texto del boton"
-              value={getSettingPaint(settings, 'buttonTextColor', onAccentFor(defaultAccent))}
-              allowGradient
-              onChange={(value) => onPatchSettings({ buttonTextColor: value })}
-              onCommit={onSave}
-            />
-          </div>
+          <ColorField
+            label="Fondo del boton"
+            value={getSettingPaint(settings, 'buttonBg', defaultAccent)}
+            allowGradient
+            onChange={(value) => onPatchSettings({ buttonBg: value })}
+            onCommit={onSave}
+          />
           <div className={styles.twoColumn}>
             <DimensionField
               label="Radio boton"
@@ -16539,7 +16530,7 @@ const InlineBlockStyleControls: React.FC<{
               onCommit={onSave}
             />
             <DimensionField
-              label="Texto boton"
+              label="Tamano texto"
               value={getSettingNumber(settings, 'buttonFontSize', 16, 11, 32)}
               min={11}
               max={32}
@@ -16558,7 +16549,7 @@ const InlineBlockStyleControls: React.FC<{
               onCommit={onSave}
             />
             <DimensionField
-              label="Subtexto"
+              label="Tamano subtexto"
               value={getSettingNumber(settings, 'buttonSubtitleFontSize', 13, 10, 24)}
               min={10}
               max={24}
@@ -17823,10 +17814,6 @@ const hasBlockSettingsTabContent = (block: SiteBlock, isField: boolean) => (
     'social_profile',
     'image',
     'video',
-    'benefits',
-    'testimonials',
-    'services',
-    'faq',
     'calendar_embed',
     'form_embed'
   ].includes(block.blockType)
@@ -18272,14 +18259,27 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   const isField = fieldBlockTypes.has(block.blockType)
   const settings = block.settings || {}
+  const hasButtonCopy = block.blockType === 'hero' || block.blockType === 'cta' || block.blockType === 'button'
+  const hasListCopy = ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
   const contentLabel = isField
     ? 'Texto de ayuda'
     : block.blockType === SECTION_BLOCK_TYPE
       ? 'Titulo visible opcional'
       : block.blockType === 'embed'
         ? 'Codigo externo, iframe o URL'
-        : 'Contenido'
+        : block.blockType === 'hero'
+          ? 'Titulo principal'
+          : block.blockType === 'cta'
+            ? 'Titulo'
+            : hasListCopy
+              ? 'Titulo de seccion'
+              : 'Contenido'
   const contentRows = block.blockType === 'embed' ? 7 : isField || block.blockType === SECTION_BLOCK_TYPE ? 2 : 3
+  const buttonTextEditorValue = Object.prototype.hasOwnProperty.call(settings, 'buttonText')
+    ? getSettingString(settings, 'buttonText')
+    : block.blockType === 'button'
+      ? block.content
+      : ''
 
   const blockHasSettingsContent = hasBlockSettingsTabContent(block, isField)
   const editContent = (
@@ -18289,7 +18289,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         <input value={block.label} onChange={(event) => onPatchBlock({ label: event.target.value })} onBlur={onSave} />
       </label>
 
-      {block.blockType !== 'calendar_embed' && (
+      {block.blockType !== 'calendar_embed' && block.blockType !== 'button' && (
         <label className={styles.field}>
           <span>{contentLabel}</span>
           <textarea
@@ -18297,6 +18297,49 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             value={block.content}
             placeholder={block.blockType === 'embed' ? '<iframe src="https://..."></iframe> o codigo HTML del widget' : undefined}
             onChange={(event) => onPatchBlock({ content: event.target.value })}
+            onBlur={onSave}
+          />
+        </label>
+      )}
+
+      {block.blockType === 'hero' && (
+        <label className={styles.field}>
+          <span>Kicker</span>
+          <input value={getSettingString(settings, 'kicker')} onChange={(event) => onPatchSettings({ kicker: event.target.value })} onBlur={onSave} />
+        </label>
+      )}
+
+      {(block.blockType === 'hero' || block.blockType === 'cta') && (
+        <label className={styles.field}>
+          <span>Subtitulo</span>
+          <textarea rows={2} value={getSettingString(settings, 'subtitle')} onChange={(event) => onPatchSettings({ subtitle: event.target.value })} onBlur={onSave} />
+        </label>
+      )}
+
+      {hasButtonCopy && (
+        <div className={styles.twoColumn}>
+          <label className={styles.field}>
+            <span>Texto del boton</span>
+            <input
+              value={buttonTextEditorValue}
+              onChange={(event) => onPatchSettings({ buttonText: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
+          <label className={styles.field}>
+            <span>Subtexto del boton</span>
+            <input value={getSettingString(settings, 'buttonSubtitle')} onChange={(event) => onPatchSettings({ buttonSubtitle: event.target.value })} onBlur={onSave} />
+          </label>
+        </div>
+      )}
+
+      {hasListCopy && (
+        <label className={styles.field}>
+          <span>Items (uno por linea: titulo | texto | autor)</span>
+          <textarea
+            rows={5}
+            value={stringifyItems(settings)}
+            onChange={(event) => onPatchSettings({ items: parseItems(event.target.value) })}
             onBlur={onSave}
           />
         </label>
@@ -18829,29 +18872,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
   if (['hero', 'cta'].includes(block.blockType)) {
     return (
       <div className={styles.settingsGroup}>
-        {block.blockType === 'hero' && (
-          <label className={styles.field}>
-            <span>Kicker</span>
-            <input value={getSettingString(settings, 'kicker')} onChange={(event) => onPatchSettings({ kicker: event.target.value })} onBlur={onSave} />
-          </label>
-        )}
-        <label className={styles.field}>
-          <span>Subtitulo</span>
-          <textarea rows={2} value={getSettingString(settings, 'subtitle')} onChange={(event) => onPatchSettings({ subtitle: event.target.value })} onBlur={onSave} />
-        </label>
-        <div className={styles.twoColumn}>
-          <label className={styles.field}>
-            <span>Texto del boton</span>
-            <input value={getSettingString(settings, 'buttonText')} onChange={(event) => onPatchSettings({ buttonText: event.target.value })} onBlur={onSave} />
-          </label>
-          <label className={styles.field}>
-            <span>Subtexto del boton</span>
-            <input value={getSettingString(settings, 'buttonSubtitle')} onChange={(event) => onPatchSettings({ buttonSubtitle: event.target.value })} onBlur={onSave} />
-          </label>
-        </div>
-        <div className={styles.twoColumn}>
-          <ButtonActionFields settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={onPatchSettings} onSave={onSave} />
-        </div>
+        <ButtonActionFields settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={onPatchSettings} onSave={onSave} />
       </div>
     )
   }
@@ -18859,16 +18880,6 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
   if (block.blockType === 'button') {
     return (
       <div className={styles.settingsGroup}>
-        <div className={styles.twoColumn}>
-          <label className={styles.field}>
-            <span>Texto del boton</span>
-            <input value={getSettingString(settings, 'buttonText')} onChange={(event) => onPatchSettings({ buttonText: event.target.value })} onBlur={onSave} />
-          </label>
-          <label className={styles.field}>
-            <span>Subtexto del boton</span>
-            <input value={getSettingString(settings, 'buttonSubtitle')} onChange={(event) => onPatchSettings({ buttonSubtitle: event.target.value })} onBlur={onSave} />
-          </label>
-        </div>
         <ButtonActionFields settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={onPatchSettings} onSave={onSave} />
       </div>
     )
@@ -19004,20 +19015,6 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           </div>
         )}
       </div>
-    )
-  }
-
-  if (['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)) {
-    return (
-      <label className={styles.field}>
-        <span>Items (uno por linea: titulo | texto | autor)</span>
-        <textarea
-          rows={5}
-          value={stringifyItems(settings)}
-          onChange={(event) => onPatchSettings({ items: parseItems(event.target.value) })}
-          onBlur={onSave}
-        />
-      </label>
     )
   }
 
