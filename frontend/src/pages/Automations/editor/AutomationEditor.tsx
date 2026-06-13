@@ -88,6 +88,7 @@ interface PickerState {
   kind: NodeKind
   /** anchored: globo cerca del punto · docked: panel amplio a la derecha */
   variant: 'anchored' | 'docked'
+  placement?: 'point' | 'below-end'
   anchor: { x: number; y: number }
   worldPoint: { x: number; y: number }
   /** Conexión obligada (el globo se abrió desde una salida) */
@@ -739,17 +740,29 @@ export const AutomationEditor: React.FC = () => {
   // ------------------------------------------------------------------
   // FAB "+"
   // ------------------------------------------------------------------
-  const handleFabClick = () => {
+  const handleFabClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     setConfig(null)
     const current = stateRef.current.present
     const selected = selectedNodeId ? current.nodes.find((node) => node.id === selectedNodeId) : undefined
     const freeHandle = selected ? findFreeOutput(selected) : null
     const viewport = viewportRef.current
     const bounds = canvasBoundsRef.current
+    const buttonRect = event.currentTarget.getBoundingClientRect()
+    const canvasRect = event.currentTarget
+      .closest('[data-automation-canvas-wrap]')
+      ?.getBoundingClientRect()
+    const anchor = canvasRect
+      ? {
+          x: buttonRect.right - canvasRect.left,
+          y: buttonRect.bottom - canvasRect.top + 10
+        }
+      : { x: bounds.width - 18, y: 72 }
+
     setPicker({
       kind: 'action',
-      variant: 'docked',
-      anchor: { x: 0, y: 0 },
+      variant: 'anchored',
+      placement: 'below-end',
+      anchor,
       worldPoint: {
         x: (bounds.width / 2 - viewport.x) / viewport.zoom - NODE_WIDTH / 2,
         y: (bounds.height / 2 - viewport.y) / viewport.zoom - 80
@@ -1190,7 +1203,15 @@ export const AutomationEditor: React.FC = () => {
         fitSignal={fitSignal}
         actions={canvasActions}
       >
-        <button type="button" className={styles.fab} title="Agregar paso" onClick={handleFabClick}>
+        <button
+          type="button"
+          className={styles.fab}
+          title="Agregar paso"
+          data-automation-interactive="true"
+          onPointerDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onClick={handleFabClick}
+        >
           <Plus size={20} />
         </button>
 
@@ -1198,6 +1219,7 @@ export const AutomationEditor: React.FC = () => {
           <StepPickerBubble
             kind={picker.kind}
             variant={picker.variant}
+            placement={picker.placement}
             anchor={picker.anchor}
             bounds={canvasBounds}
             connectLabel={

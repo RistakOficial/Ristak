@@ -756,6 +756,8 @@
   background: var(--color-background-secondary);
   border: 1px solid rgba(148, 163, 184, 0.22);
   box-shadow: 0 24px 60px -24px rgba(15, 23, 42, 0.5), 0 6px 18px -8px rgba(15, 23, 42, 0.18);
+  --bubble-enter-y: 4px;
+  transform-origin: top left;
   animation: bubbleIn 0.14s ease;
   cursor: default;
 }
@@ -770,11 +772,16 @@
   max-height: min(86vh, calc(100% - 24px));
 }
 
+.bubbleBelowEnd {
+  --bubble-enter-y: -6px;
+  transform-origin: top right;
+}
+
 .bubbleSearchRow {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
+  gap: 10px;
+  padding: 10px 16px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.14);
   flex-shrink: 0;
 }
@@ -782,11 +789,13 @@
 @keyframes bubbleIn {
   from {
     opacity: 0;
-    transform: translateY(4px) scale(0.98);
+    translate: 0 var(--bubble-enter-y);
+    scale: 0.98;
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    translate: 0 0;
+    scale: 1;
   }
 }
 
@@ -801,13 +810,13 @@
 .bubbleTitle {
   flex: 1;
   min-width: 0;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
   color: var(--color-text-primary);
 }
 
 .bubbleSubtitle {
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--color-text-tertiary);
   line-height: 1.4;
   margin-top: 3px;
@@ -837,7 +846,7 @@
   overflow-y: auto;
   /* El scroll vive dentro del globo: nunca mueve el canvas de atrás */
   overscroll-behavior: contain;
-  padding: 10px 12px 14px;
+  padding: 12px 14px 16px;
 }
 
 .bubbleSearch {
@@ -846,8 +855,8 @@
   border-radius: 10px;
   background: var(--color-background-primary);
   color: var(--color-text-primary);
-  font-size: 13px;
-  padding: 8px 12px;
+  font-size: 14px;
+  padding: 9px 12px;
 }
 
 .bubbleSearch:focus {
@@ -856,29 +865,29 @@
 }
 
 .pickerSection {
-  margin-top: 12px;
+  margin-top: 14px;
 }
 
 .pickerSectionTitle {
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12.5px;
+  font-weight: 750;
   text-transform: none;
   color: var(--color-text-primary);
-  padding: 0 2px 6px;
+  padding: 0 2px 7px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .pickerItem {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
   text-align: left;
   border: none;
   background: transparent;
   border-radius: 10px;
-  padding: 8px;
+  padding: 10px 12px;
   cursor: pointer;
   color: var(--color-text-primary);
 }
@@ -892,8 +901,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
   border-radius: 8px;
   background: rgba(var(--node-accent, 59, 130, 246), 0.14);
@@ -913,21 +922,23 @@
 .pickerItemLabel {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
-  line-height: 1.3;
+  font-size: 14.5px;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .pickerItemDescription {
   display: block;
-  font-size: 11px;
+  font-size: 12.5px;
+  font-weight: 450;
   color: var(--color-text-tertiary);
-  margin-top: 1px;
+  margin-top: 2px;
 }
 
 .pickerEmpty {
-  padding: 18px 8px;
+  padding: 20px 8px;
   text-align: center;
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--color-text-tertiary);
 }
 
@@ -948,9 +959,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 14px;
+  padding: 11px 16px;
   border-top: 1px solid rgba(148, 163, 184, 0.14);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-text-secondary);
 }
 
