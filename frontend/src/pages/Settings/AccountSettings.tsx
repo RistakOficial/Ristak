@@ -8,6 +8,7 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig } from '@/hooks'
 import apiClient from '@/services/apiClient'
+import mediaService from '@/services/mediaService'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import {
   ACCOUNT_COUNTRY_CONFIG_KEY,
@@ -25,11 +26,20 @@ const PROFILE_PHOTO_KEY = 'admin_profile_photo'
 const MAX_PROFILE_PHOTO_SIZE = 1.5 * 1024 * 1024
 const CUSTOMER_LABEL_OPTIONS = ['Cliente', 'Paciente', 'Proyecto', 'Miembro', 'Alumno']
 const LEAD_LABEL_OPTIONS = ['Interesado', 'Prospecto', 'Mensaje', 'Lead', 'Consulta']
+const STORAGE_GB = 1024 * 1024 * 1024
+
+const formatStorageBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB'
+  const gb = bytes / STORAGE_GB
+  if (gb >= 1) return `${gb.toFixed(gb >= 10 ? 0 : 1)} GB`
+  return `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB`
+}
 
 interface StorageStatus {
   sizeGB: number
   sizePretty?: string
   limitGB: number
+  availablePretty?: string
   percentUsed: number
   warningThreshold: number
   needsAttention: boolean
@@ -314,7 +324,24 @@ export const AccountSettings: React.FC = () => {
 
     const loadStorageStatus = async () => {
       try {
-        const data = await apiClient.get<StorageStatus>('/dashboard/storage-status')
+        const usage = await mediaService.getStorageUsage() as {
+          used_bytes?: number
+          quota_bytes?: number
+          available_bytes?: number
+          usage_percent?: number
+        }
+        const usedBytes = Number(usage.used_bytes || 0)
+        const quotaBytes = Number(usage.quota_bytes || 0)
+        const percentUsed = Math.max(0, Math.min(100, Number(usage.usage_percent || 0)))
+        const data: StorageStatus = {
+          sizeGB: usedBytes / STORAGE_GB,
+          sizePretty: formatStorageBytes(usedBytes),
+          limitGB: quotaBytes / STORAGE_GB,
+          availablePretty: formatStorageBytes(Number(usage.available_bytes || 0)),
+          percentUsed,
+          warningThreshold: 80,
+          needsAttention: percentUsed >= 80
+        }
         if (!cancelled) {
           setStorageStatus(data)
           setStorageStatusError(false)
@@ -454,12 +481,23 @@ export const AccountSettings: React.FC = () => {
 
   const handleSaveProfilePhoto = async () => {
     try {
-      await setProfilePhoto(profilePhotoDraft)
+      let nextProfilePhoto = profilePhotoDraft
+      if (/^data:image\//i.test(profilePhotoDraft)) {
+        const uploaded = await mediaService.uploadDataUrl({
+          fileBase64: profilePhotoDraft,
+          filename: 'admin-profile-photo',
+          module: 'business_settings',
+          isPublic: true
+        })
+        nextProfilePhoto = uploaded.publicUrl
+      }
+      await setProfilePhoto(nextProfilePhoto)
+      setProfilePhotoDraft(nextProfilePhoto)
       setIsEditingPhoto(false)
       showToast(
         'success',
-        profilePhotoDraft ? 'Foto actualizada' : 'Foto eliminada',
-        profilePhotoDraft ? 'La foto del administrador quedó guardada.' : 'Se quitó la foto del administrador.'
+        nextProfilePhoto ? 'Foto actualizada' : 'Foto eliminada',
+        nextProfilePhoto ? 'La foto del administrador quedó guardada.' : 'Se quitó la foto del administrador.'
       )
     } catch (error: any) {
       showToast('error', 'Error', error?.message || 'No se pudo guardar la foto')
@@ -1300,9 +1338,9 @@ export const AccountSettings: React.FC = () => {
               <div className={styles.storageUsageHeader}>
                 <div>
                   <h3 className={styles.accountSectionTitle}>
-                    <Database size={16} /> Base de datos
+                    <Database size={16} /> Almacenamiento multimedia
                   </h3>
-                  <p className={styles.accountSectionDescription}>Storage utilizado en Render.</p>
+                  <p className={styles.accountSectionDescription}>Imágenes, videos, audios y documentos subidos a Ristak.</p>
                 </div>
                 <strong className={styles.storageUsageValue}>
                   {storageStatus
@@ -1319,7 +1357,7 @@ export const AccountSettings: React.FC = () => {
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={Math.round(storagePercent)}
-                aria-label="Uso de base de datos"
+                aria-label="Uso de almacenamiento multimedia"
               >
                 <span
                   className={`${styles.storageUsageBar} ${storageStatus?.needsAttention ? styles.storageUsageBarWarning : ''}`}
@@ -1329,7 +1367,7 @@ export const AccountSettings: React.FC = () => {
 
               <div className={styles.storageUsageMeta}>
                 <span>{storageStatus?.sizePretty || `${storageStatus?.sizeGB ?? 0} GB`} usados</span>
-                <span>{storageStatus ? `${storageStatus.limitGB} GB disponibles` : 'Esperando lectura'}</span>
+                <span>{storageStatus ? `${storageStatus.availablePretty || '0 MB'} libres de ${storageStatus.limitGB.toFixed(storageStatus.limitGB >= 10 ? 0 : 1)} GB` : 'Esperando lectura'}</span>
               </div>
             </section>
           </div>

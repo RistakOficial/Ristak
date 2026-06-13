@@ -476,6 +476,7 @@ function requirePublicHttpsBaseUrl(baseUrl = '', mediaLabel = 'archivos') {
 export function buildLocalMediaUrl(localMedia, publicBaseUrl = '') {
   const publicPath = cleanString(localMedia?.publicPath)
   if (!publicPath) return ''
+  if (/^https?:\/\//i.test(publicPath)) return publicPath
 
   const baseUrl = normalizePublicBaseUrl(publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL)
   if (!baseUrl) return publicPath
@@ -664,6 +665,26 @@ async function convertAudioToOggOpus({ buffer, extension }) {
 
 async function saveWhatsAppImageDataUrl(dataUrl = '') {
   const { buffer, mimeType, extension } = parseImageDataUrl(dataUrl)
+  try {
+    const { uploadMediaAsset } = await import('./mediaStorageService.js')
+    const asset = await uploadMediaAsset({
+      buffer,
+      mimeType,
+      filename: `whatsapp-image.${extension}`,
+      module: 'chat',
+      isPublic: true
+    })
+    return {
+      mimeType: asset.mimeType,
+      size: asset.sizeProcessed,
+      publicPath: asset.publicUrl,
+      filename: asset.storedFilename,
+      mediaAssetId: asset.id
+    }
+  } catch (error) {
+    logger.warn(`[WhatsApp API] No se pudo guardar imagen en mediaStorageService: ${error.message}; usando fallback local.`)
+  }
+
   const dayKey = new Date().toISOString().slice(0, 10)
   const folder = join(WHATSAPP_IMAGE_UPLOAD_ROOT, dayKey)
   const filename = `${crypto.randomUUID()}.${extension}`
@@ -683,6 +704,27 @@ async function saveWhatsAppImageDataUrl(dataUrl = '') {
 export async function saveWhatsAppAudioDataUrl(dataUrl = '') {
   const parsed = parseAudioDataUrl(dataUrl)
   const originalMimeType = parsed.mimeType
+  try {
+    const { uploadMediaAsset } = await import('./mediaStorageService.js')
+    const asset = await uploadMediaAsset({
+      buffer: parsed.buffer,
+      mimeType: parsed.mimeType,
+      filename: `whatsapp-audio.${parsed.extension || 'audio'}`,
+      module: 'chat',
+      isPublic: true
+    })
+    return {
+      mimeType: asset.mimeType,
+      originalMimeType,
+      size: asset.sizeProcessed,
+      publicPath: asset.publicUrl,
+      filename: asset.storedFilename,
+      mediaAssetId: asset.id
+    }
+  } catch (error) {
+    logger.warn(`[WhatsApp API] No se pudo guardar audio en mediaStorageService: ${error.message}; usando fallback local.`)
+  }
+
   const media = audioNeedsWhatsAppConversion(parsed)
     ? {
         buffer: await convertAudioToOggOpus(parsed),
@@ -714,6 +756,27 @@ export async function saveWhatsAppAudioDataUrl(dataUrl = '') {
 
 async function saveWhatsAppDocumentDataUrl(dataUrl = '', filename = '', mimeType = '') {
   const parsed = parseDocumentDataUrl(dataUrl, filename, mimeType)
+  try {
+    const { uploadMediaAsset } = await import('./mediaStorageService.js')
+    const asset = await uploadMediaAsset({
+      buffer: parsed.buffer,
+      mimeType: parsed.mimeType,
+      filename: parsed.filename,
+      module: 'chat',
+      isPublic: true
+    })
+    return {
+      mimeType: asset.mimeType,
+      size: asset.sizeProcessed,
+      publicPath: asset.publicUrl,
+      storedFilename: asset.storedFilename,
+      filename: asset.originalFilename,
+      mediaAssetId: asset.id
+    }
+  } catch (error) {
+    logger.warn(`[WhatsApp API] No se pudo guardar documento en mediaStorageService: ${error.message}; usando fallback local.`)
+  }
+
   const dayKey = new Date().toISOString().slice(0, 10)
   const folder = join(WHATSAPP_DOCUMENT_UPLOAD_ROOT, dayKey)
   const storedFilename = `${crypto.randomUUID()}.${parsed.extension}`

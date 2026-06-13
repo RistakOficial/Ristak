@@ -6549,31 +6549,18 @@ async function addImportedEditableImageAsset(siteId, currentImport, input = {}) 
   }
 
   const extension = getImportedEditableImageExtension(input.filename || input.fileName || 'imagen', getImportedEditableUploadMimeType(fileBase64))
-  const assetPath = `ai-edits/${Date.now()}-${crypto.randomUUID()}.${extension}`
-  const asset = buildImportedAssetRow({
-    importId: currentImport.id,
-    siteId,
-    assetPath,
-    contentType: getImportedAssetContentType(assetPath),
-    content: buffer
+  const { uploadMediaAsset } = await import('./mediaStorageService.js')
+  const asset = await uploadMediaAsset({
+    buffer,
+    mimeType: getImportedEditableUploadMimeType(fileBase64) || getImportedAssetContentType(`image.${extension}`),
+    filename: input.filename || input.fileName || `imagen.${extension}`,
+    userId: input.userId || null,
+    module: 'sites',
+    moduleEntityId: siteId,
+    isPublic: true
   })
 
-  await db.run(`
-    INSERT INTO public_site_import_assets (
-      id, import_id, site_id, asset_path, content_type, content_base64, size_bytes,
-      created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-  `, [
-    asset.id,
-    asset.importId,
-    asset.siteId,
-    asset.assetPath,
-    asset.contentType,
-    asset.contentBase64,
-    asset.sizeBytes
-  ])
-
-  return `/api/sites/public/imported-assets/${encodeURIComponent(siteId)}/${assetPath}`
+  return asset.publicUrl
 }
 
 async function prepareImportedZipContent({ filename, fileBase64, siteId, importId }) {

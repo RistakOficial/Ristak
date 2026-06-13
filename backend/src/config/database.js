@@ -736,6 +736,190 @@ async function initTables() {
       // Ignore si ya existe
     }
 
+    // Almacenamiento multimedia centralizado. Estas tablas son seguras para
+    // instalaciones nuevas y existentes: solo agregan metadata, cuotas y
+    // configuración no sensible. Las llaves de Bunny viven en variables de entorno.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS media_assets (
+        id TEXT PRIMARY KEY,
+        business_id TEXT NOT NULL DEFAULT 'default',
+        user_id TEXT,
+        original_filename TEXT,
+        stored_filename TEXT,
+        bunny_path TEXT,
+        public_url TEXT,
+        private_url TEXT,
+        mime_type TEXT,
+        media_type TEXT,
+        extension TEXT,
+        size_original BIGINT DEFAULT 0,
+        size_processed BIGINT DEFAULT 0,
+        quota_size BIGINT DEFAULT 0,
+        width INTEGER,
+        height INTEGER,
+        duration REAL,
+        status TEXT DEFAULT 'ready',
+        storage_provider TEXT DEFAULT 'bunny',
+        storage_zone TEXT,
+        cdn_base_url TEXT,
+        module TEXT DEFAULT 'other',
+        module_entity_id TEXT,
+        is_public INTEGER DEFAULT 0,
+        metadata_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        deleted_at DATETIME
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS storage_quotas (
+        business_id TEXT PRIMARY KEY,
+        quota_gb REAL DEFAULT 5,
+        quota_bytes BIGINT DEFAULT 5368709120,
+        used_bytes BIGINT DEFAULT 0,
+        extra_quota_gb REAL DEFAULT 0,
+        storage_enabled INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS storage_settings (
+        id INTEGER PRIMARY KEY,
+        storage_provider TEXT DEFAULT 'bunny',
+        storage_enabled INTEGER DEFAULT 1,
+        default_storage_quota_gb REAL DEFAULT 5,
+        compression_enabled INTEGER DEFAULT 1,
+        image_optimization_enabled INTEGER DEFAULT 1,
+        video_compression_enabled INTEGER DEFAULT 1,
+        audio_compression_enabled INTEGER DEFAULT 1,
+        bunny_storage_zone TEXT,
+        bunny_storage_region TEXT,
+        bunny_cdn_base_url TEXT,
+        bunny_stream_library_id TEXT,
+        max_image_size_mb INTEGER DEFAULT 25,
+        max_video_size_mb INTEGER DEFAULT 512,
+        max_audio_size_mb INTEGER DEFAULT 100,
+        max_document_size_mb INTEGER DEFAULT 50,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    for (const [columnName, columnType] of [
+      ['business_id', "TEXT NOT NULL DEFAULT 'default'"],
+      ['user_id', 'TEXT'],
+      ['original_filename', 'TEXT'],
+      ['stored_filename', 'TEXT'],
+      ['bunny_path', 'TEXT'],
+      ['public_url', 'TEXT'],
+      ['private_url', 'TEXT'],
+      ['mime_type', 'TEXT'],
+      ['media_type', 'TEXT'],
+      ['extension', 'TEXT'],
+      ['size_original', 'BIGINT DEFAULT 0'],
+      ['size_processed', 'BIGINT DEFAULT 0'],
+      ['quota_size', 'BIGINT DEFAULT 0'],
+      ['width', 'INTEGER'],
+      ['height', 'INTEGER'],
+      ['duration', 'REAL'],
+      ['status', "TEXT DEFAULT 'ready'"],
+      ['storage_provider', "TEXT DEFAULT 'bunny'"],
+      ['storage_zone', 'TEXT'],
+      ['cdn_base_url', 'TEXT'],
+      ['module', "TEXT DEFAULT 'other'"],
+      ['module_entity_id', 'TEXT'],
+      ['is_public', 'INTEGER DEFAULT 0'],
+      ['metadata_json', 'TEXT'],
+      ['deleted_at', 'DATETIME']
+    ]) {
+      try {
+        if (usePostgres) {
+          await db.run(`ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS ${columnName} ${columnType}`)
+        } else {
+          await db.run(`ALTER TABLE media_assets ADD COLUMN ${columnName} ${columnType}`)
+        }
+      } catch (err) {
+        // La columna ya existe.
+      }
+    }
+
+    for (const [columnName, columnType] of [
+      ['quota_gb', 'REAL DEFAULT 5'],
+      ['quota_bytes', 'BIGINT DEFAULT 5368709120'],
+      ['used_bytes', 'BIGINT DEFAULT 0'],
+      ['extra_quota_gb', 'REAL DEFAULT 0'],
+      ['storage_enabled', 'INTEGER DEFAULT 1']
+    ]) {
+      try {
+        if (usePostgres) {
+          await db.run(`ALTER TABLE storage_quotas ADD COLUMN IF NOT EXISTS ${columnName} ${columnType}`)
+        } else {
+          await db.run(`ALTER TABLE storage_quotas ADD COLUMN ${columnName} ${columnType}`)
+        }
+      } catch (err) {
+        // La columna ya existe.
+      }
+    }
+
+    try {
+      await db.run('CREATE INDEX IF NOT EXISTS idx_media_assets_business_status ON media_assets(business_id, status)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_media_assets_module ON media_assets(module, module_entity_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_media_assets_type ON media_assets(media_type)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_media_assets_deleted ON media_assets(deleted_at)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_media_assets_provider_path ON media_assets(storage_provider, bunny_path)')
+    } catch (err) {
+      logger.warn('Advertencia al crear índices de media_assets:', err.message)
+    }
+
+    try {
+      await db.run(`
+        INSERT INTO storage_settings (
+          id,
+          storage_provider,
+          storage_enabled,
+          default_storage_quota_gb,
+          compression_enabled,
+          image_optimization_enabled,
+          video_compression_enabled,
+          audio_compression_enabled,
+          bunny_storage_zone,
+          bunny_storage_region,
+          bunny_cdn_base_url,
+          bunny_stream_library_id,
+          max_image_size_mb,
+          max_video_size_mb,
+          max_audio_size_mb,
+          max_document_size_mb
+        )
+        VALUES (?, ?, 1, ?, 1, 1, 1, 1, ?, ?, ?, ?, 25, 512, 100, 50)
+        ON CONFLICT (id) DO NOTHING
+      `, [
+        1,
+        process.env.MEDIA_STORAGE_PROVIDER || 'bunny',
+        Number(process.env.DEFAULT_STORAGE_QUOTA_GB || 5) || 5,
+        process.env.BUNNY_STORAGE_ZONE || null,
+        process.env.BUNNY_STORAGE_REGION || null,
+        process.env.BUNNY_CDN_BASE_URL || null,
+        process.env.BUNNY_STREAM_LIBRARY_ID || null
+      ])
+    } catch (err) {
+      logger.warn('Advertencia al crear configuración default de almacenamiento:', err.message)
+    }
+
+    try {
+      const quotaGb = Number(process.env.DEFAULT_STORAGE_QUOTA_GB || 5) || 5
+      await db.run(`
+        INSERT INTO storage_quotas (business_id, quota_gb, quota_bytes, used_bytes, extra_quota_gb, storage_enabled)
+        VALUES ('default', ?, ?, 0, 0, 1)
+        ON CONFLICT (business_id) DO NOTHING
+      `, [quotaGb, Math.round(quotaGb * 1024 * 1024 * 1024)])
+    } catch (err) {
+      logger.warn('Advertencia al crear cuota default de almacenamiento:', err.message)
+    }
+
     // Plantillas internas de WhatsApp. Son locales a Ristak y quedan listas para
     // conectarse a YCloud sin depender de la estructura remota desde el inicio.
     await db.run(`

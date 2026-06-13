@@ -106,7 +106,10 @@ export async function updateImportedSiteHtmlWithAIHandler(req, res) {
 
 export async function updateImportedSiteEditableContentHandler(req, res) {
   try {
-    const result = await updateImportedSiteEditableContent(req.params.siteId, req.body || {})
+    const result = await updateImportedSiteEditableContent(req.params.siteId, {
+      ...(req.body || {}),
+      userId: req.user?.userId || req.user?.id
+    })
     res.json({ success: true, data: result })
   } catch (error) {
     logger.error(`Error editando contenido HTML importado: ${error.message}`)

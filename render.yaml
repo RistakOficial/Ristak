@@ -21,6 +21,28 @@ services:
         fromDatabase:
           name: ristak-db
           property: connectionString
+      - key: MEDIA_STORAGE_PROVIDER
+        value: bunny
+      - key: MEDIA_COMPRESSION_ENABLED
+        value: "true"
+      - key: DEFAULT_STORAGE_QUOTA_GB
+        value: "5"
+      - key: BUNNY_STORAGE_ZONE
+        sync: false
+      - key: BUNNY_STORAGE_REGION
+        sync: false
+      - key: BUNNY_STORAGE_ENDPOINT
+        sync: false
+      - key: BUNNY_STORAGE_API_KEY
+        sync: false
+      - key: BUNNY_CDN_BASE_URL
+        sync: false
+      - key: BUNNY_STREAM_LIBRARY_ID
+        sync: false
+      - key: BUNNY_STREAM_API_KEY
+        sync: false
+      - key: INTERNAL_INSTALLER_TOKEN
+        sync: false
 
 databases:
   - name: ristak-db

@@ -47,6 +47,8 @@ import mcpRoutes from './routes/mcp.routes.js'
 import whatsappApiRoutes from './routes/whatsappApi.routes.js'
 import productsRoutes from './routes/products.routes.js'
 import sitesRoutes from './routes/sites.routes.js'
+import mediaRoutes from './routes/media.routes.js'
+import internalStorageRoutes from './routes/internalStorage.routes.js'
 import automationsRoutes from './routes/automations.routes.js'
 import appointmentRemindersRoutes from './routes/appointmentReminders.routes.js'
 import pushRoutes from './routes/push.routes.js'
@@ -94,6 +96,11 @@ app.get('/health', (req, res) => {
   res.json(getHealthInfo())
 })
 
+// Multimedia pública/fallback e integraciones internas del installer.
+// Deben existir antes del host router de Sites para no capturar estas rutas como dominios públicos.
+app.use('/media', mediaRoutes)
+app.use('/internal', internalStorageRoutes)
+
 // Host router para Sites públicos. Debe correr antes de APIs privadas/static.
 app.use(publicSiteHostMiddleware)
 
@@ -101,6 +108,8 @@ app.use(publicSiteHostMiddleware)
 app.use('/', oauthRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/api-access', apiAccessRoutes)
+app.use('/api/media', mediaRoutes)
+app.use('/api/internal', internalStorageRoutes)
 app.use('/api/sites', sitesRoutes)
 app.use('/api/automations', automationsRoutes)
 app.use('/api/appointment-reminders', appointmentRemindersRoutes)
