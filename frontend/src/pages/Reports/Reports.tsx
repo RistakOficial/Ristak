@@ -102,6 +102,11 @@ type ReportType = 'cashflow' | 'attribution' | 'campaigns'
 type DisplayMode = 'table' | 'metrics'
 type ModalType = 'interesados' | 'sales' | 'appointments' | 'attendances' | 'customers'
 
+type MetricsLoadState = {
+  rows: ReportMetricRow[]
+  viewType: ViewType | null
+}
+
 type TableRow = {
   id: string
   date: string
@@ -195,6 +200,66 @@ const isReportType = (value?: string): value is ReportType =>
 
 const buildReportsPath = (displayMode: DisplayMode, viewType: ViewType, reportType: ReportType) =>
   `/reports/${displayMode}/${viewType}/${reportType}`
+
+const isMetricDateCompatibleWithView = (date: string, viewType: ViewType) => {
+  if (viewType === 'day') return /^\d{4}-\d{2}-\d{2}$/.test(date)
+  if (viewType === 'month') return /^\d{4}-\d{2}$/.test(date)
+  return /^\d{4}$/.test(date)
+}
+
+const getMetricPeriodKey = (date: string, viewType: ViewType) => {
+  const sanitized = date.includes('T') ? date.split('T')[0] : date
+  const [year = '', month = '', day = ''] = sanitized.split('-')
+
+  if (viewType === 'day' && year && month && day) return `${year}-${month}-${day}`
+  if (viewType === 'month' && year && month) return `${year}-${month}`
+  if (viewType === 'year' && year) return year
+  return sanitized
+}
+
+const createEmptyMetricRow = (date: string): ReportMetricRow => ({
+  date,
+  spend: 0,
+  revenue: 0,
+  leads: 0,
+  customers: 0,
+  appointments: 0,
+  attendances: 0,
+  sales: 0,
+  clicks: 0,
+  reach: 0,
+  visitors: 0,
+  new_customers: 0,
+  roas: 0,
+  profit: 0
+})
+
+const mergeMetricRowsByView = (metrics: ReportMetricRow[], viewType: ViewType) => {
+  const rowsByPeriod = new Map<string, ReportMetricRow>()
+
+  metrics.forEach((metric) => {
+    const period = getMetricPeriodKey(metric.date, viewType)
+    const current = rowsByPeriod.get(period) || createEmptyMetricRow(period)
+
+    current.spend += Number(metric.spend || 0)
+    current.revenue += Number(metric.revenue || 0)
+    current.leads += Number(metric.leads || 0)
+    current.customers += Number(metric.customers || 0)
+    current.appointments += Number(metric.appointments || 0)
+    current.attendances += Number(metric.attendances || 0)
+    current.sales += Number(metric.sales || 0)
+    current.clicks += Number(metric.clicks || 0)
+    current.reach += Number(metric.reach || 0)
+    current.visitors += Number(metric.visitors || 0)
+    current.new_customers += Number(metric.new_customers || 0)
+    current.roas = current.spend > 0 ? current.revenue / current.spend : 0
+    current.profit = current.revenue - current.spend
+
+    rowsByPeriod.set(period, current)
+  })
+
+  return Array.from(rowsByPeriod.values())
+}
 
 const parseReportsPath = (pathname: string) => {
   const parts = pathname.replace(/^\/reports\/?/, '').split('/').filter(Boolean)
@@ -1437,13 +1502,14 @@ export const Reports: React.FC = () => {
   const [monthPreset, setMonthPreset] = useState<'last12' | 'thisYear' | 'custom'>('last12')
   const [yearRange, setYearRange] = useState(defaultYearRange)
 
-  const [metrics, setMetrics] = useState<ReportMetricRow[]>([])
+  const [metricsState, setMetricsState] = useState<MetricsLoadState>({ rows: [], viewType: null })
   const [metricsRange, setMetricsRange] = useState<ReportRange | null>(null)
   const [summary, setSummary] = useState<ReportsSummary | null>(null)
   const [loadingMetrics, setLoadingMetrics] = useState(false)
   const [loadingSummary, setLoadingSummary] = useState(false)
   const [hasLoadedMetrics, setHasLoadedMetrics] = useState(false)
   const [hasLoadedSummary, setHasLoadedSummary] = useState(false)
+  const metricsRequestRef = React.useRef(0)
 
   const [modalState, setModalState] = useState<{
     open: boolean
@@ -1549,15 +1615,29 @@ export const Reports: React.FC = () => {
   const [savingManualBusinessExpenseKey, setSavingManualBusinessExpenseKey] = useState<string | null>(null)
 
   useEffect(() => {
+    const requestId = metricsRequestRef.current + 1
+    metricsRequestRef.current = requestId
+    let cancelled = false
+    const requestedViewType = viewType
+    const isCurrentRequest = () => !cancelled && metricsRequestRef.current === requestId
+    const commitMetrics = (rows: ReportMetricRow[]) => {
+      if (!isCurrentRequest()) return
+      setMetricsState({ rows, viewType: requestedViewType })
+    }
+
     const fetchMetrics = async () => {
       try {
         setLoadingMetrics(true)
+        setHasLoadedMetrics(false)
+        setMetricsState({ rows: [], viewType: requestedViewType })
         const result = await reportsService.getMetrics({
           from: apiRange.from,
           to: apiRange.to,
-          groupBy: viewType,
+          groupBy: requestedViewType,
           scope: scopeParam
         })
+
+        if (!isCurrentRequest()) return
 
         // Si estamos en modo tracking, obtener visitantes del tracking
         if (visitorSource === 'tracking') {
@@ -1566,13 +1646,14 @@ export const Reports: React.FC = () => {
               `/api/tracking/visitors-by-period?` + new URLSearchParams({
                 startDate: apiRange.from,
                 endDate: apiRange.to,
-                groupBy: viewType,
+                groupBy: requestedViewType,
                 scope: scopeParam // Pasar el scope actual para que respete la vista
               })
             )
 
             if (trackingResponse.ok) {
               const trackingData = await trackingResponse.json()
+              if (!isCurrentRequest()) return
 
               // Actualizar las métricas con los visitantes del tracking
               const updatedMetrics = result.metrics.map((metric: ReportMetricRow) => {
@@ -1583,29 +1664,36 @@ export const Reports: React.FC = () => {
                 }
               })
 
-              setMetrics(updatedMetrics)
+              commitMetrics(updatedMetrics)
             } else {
-              setMetrics(result.metrics)
+              commitMetrics(result.metrics)
             }
           } catch (trackingError) {
             // Si falla el tracking, usar métricas originales
-            setMetrics(result.metrics)
+            commitMetrics(result.metrics)
           }
         } else {
-          setMetrics(result.metrics)
+          commitMetrics(result.metrics)
         }
 
+        if (!isCurrentRequest()) return
         setMetricsRange(result.range)
       } catch (error) {
-        setMetrics([])
+        if (!isCurrentRequest()) return
+        setMetricsState({ rows: [], viewType: requestedViewType })
         showToast('error', 'No se pudieron cargar las métricas', 'Revisa tu conexión e intenta nuevamente')
       } finally {
-        setLoadingMetrics(false)
-        setHasLoadedMetrics(true)
+        if (isCurrentRequest()) {
+          setLoadingMetrics(false)
+          setHasLoadedMetrics(true)
+        }
       }
     }
 
     fetchMetrics()
+    return () => {
+      cancelled = true
+    }
   }, [apiRange.from, apiRange.to, scopeParam, viewType, showToast, dateRange, visitorSource])
 
   useEffect(() => {
@@ -1664,10 +1752,20 @@ export const Reports: React.FC = () => {
     ? new Date(apiRange.from).getFullYear() !== new Date(apiRange.to).getFullYear()
     : true
 
+  const currentMetrics = useMemo(() => {
+    if (metricsState.viewType !== viewType) return []
+
+    const compatibleRows = metricsState.rows.filter((item) => (
+      isMetricDateCompatibleWithView(item.date, viewType)
+    ))
+
+    return mergeMetricRowsByView(compatibleRows, viewType)
+  }, [metricsState, viewType])
+
   const businessExpensesByPeriod = useMemo(() => {
     const expensesByPeriod: Record<string, number> = {}
 
-    metrics.forEach((item) => {
+    currentMetrics.forEach((item) => {
       expensesByPeriod[item.date] = calculateManualBusinessExpensesForRange(
         resolvePeriodRange(item.date, viewType),
         manualBusinessExpenses
@@ -1675,12 +1773,12 @@ export const Reports: React.FC = () => {
     })
 
     return expensesByPeriod
-  }, [metrics, viewType, manualBusinessExpenses])
+  }, [currentMetrics, viewType, manualBusinessExpenses])
 
   const fixedBusinessExpensesByPeriod = useMemo(() => {
     const expensesByPeriod: Record<string, number> = {}
 
-    metrics.forEach((item) => {
+    currentMetrics.forEach((item) => {
       expensesByPeriod[item.date] = calculateConfiguredBusinessCostsForRange(
         resolvePeriodRange(item.date, viewType),
         configuredCosts,
@@ -1689,16 +1787,16 @@ export const Reports: React.FC = () => {
     })
 
     return expensesByPeriod
-  }, [metrics, viewType, configuredCosts, apiRange])
+  }, [currentMetrics, viewType, configuredCosts, apiRange])
 
   const manualBusinessExpensesTotalForRange = useMemo(() => (
     calculateManualBusinessExpensesForRange(apiRange, manualBusinessExpenses)
   ), [apiRange, manualBusinessExpenses])
 
   const fixedBusinessExpensesTotalForRange = useMemo(() => {
-    const revenue = summary?.payments.totalRevenue ?? metrics.reduce((sum, item) => sum + item.revenue, 0)
+    const revenue = summary?.payments.totalRevenue ?? currentMetrics.reduce((sum, item) => sum + item.revenue, 0)
     return calculateConfiguredBusinessCostsForRange(apiRange, configuredCosts, revenue)
-  }, [apiRange, configuredCosts, summary?.payments.totalRevenue, metrics])
+  }, [apiRange, configuredCosts, summary?.payments.totalRevenue, currentMetrics])
 
   const handleSaveBusinessExpense = useCallback(async (
     period: BusinessExpensePeriodTarget,
@@ -1742,7 +1840,7 @@ export const Reports: React.FC = () => {
   }, [showToast])
 
   const tableData: TableRow[] = useMemo(() => (
-    metrics.map((item) => {
+    currentMetrics.map((item) => {
       const periodStart = getManualExpensePeriodStart(item.date, viewType)
       const periodKey = getManualExpenseRecordKey(viewType, periodStart)
       const businessExpenses = businessExpensesByPeriod[item.date] || 0
@@ -1806,7 +1904,7 @@ export const Reports: React.FC = () => {
       const dateB = new Date(b.date).getTime()
       return dateB - dateA
     })
-  ), [metrics, viewType, includeYearForTable, timezoneInfo, businessExpensesByPeriod, fixedBusinessExpensesByPeriod, applyManualBusinessExpenses, applyFixedBusinessExpenses])
+  ), [currentMetrics, viewType, includeYearForTable, timezoneInfo, businessExpensesByPeriod, fixedBusinessExpensesByPeriod, applyManualBusinessExpenses, applyFixedBusinessExpenses])
 
   const handleOpenModal = React.useCallback(async (
     type: ModalType,
@@ -2541,7 +2639,7 @@ export const Reports: React.FC = () => {
         </Card>
       ) : (
         <MetricsGrid
-          metrics={metrics}
+          metrics={currentMetrics}
           loading={loadingMetrics && !hasLoadedMetrics}
           reportType={reportType}
           showVisitors={analyticsEnabled}
