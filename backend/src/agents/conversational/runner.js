@@ -770,7 +770,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
 
       const { agent, ctx, model } = await buildAgentForRun({
         config: agentConfig,
-        conversationModel: config.model,
+        conversationModel: agentConfig.model || config.model,
         contactId,
         contactName: contact?.full_name || null,
         dryRun: false,
@@ -981,7 +981,7 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     baseConfig = {
       name: 'Agente', objective: 'citas', customObjective: '', successAction: 'ready_for_human',
       successExtras: [], requiredData: '', handoffRules: '', extraInstructions: '',
-      allowEmojis: false, defaultCalendarId: null, closingStrategyMode: 'system', closingStrategyCustom: '',
+      allowEmojis: false, model: globalConfig.model, defaultCalendarId: null, closingStrategyMode: 'system', closingStrategyCustom: '',
       responseDelay: { mode: 'none', fixedValue: 10, fixedUnit: 'seconds', minValue: 1, maxValue: 10, rangeUnit: 'minutes' },
       replyDelivery: { mode: 'single', targetChars: 280, minDelaySeconds: 2, maxDelaySeconds: 6 }
     }
@@ -1001,7 +1001,7 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
 
   const { agent, ctx, model } = await buildAgentForRun({
     config,
-    conversationModel: globalConfig.model,
+    conversationModel: config.model || globalConfig.model,
     contactId: null,
     contactName: null,
     dryRun: true,

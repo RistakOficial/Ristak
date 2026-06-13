@@ -6302,10 +6302,10 @@
   -webkit-appearance: none !important;
   display: inline-grid !important;
   place-content: center !important;
-  width: 34px !important;
-  min-width: 34px !important;
-  height: 34px !important;
-  min-height: 34px !important;
+  width: 38px !important;
+  min-width: 38px !important;
+  height: 38px !important;
+  min-height: 38px !important;
   margin: 0 !important;
   border: 2px solid var(--phone-chat-border) !important;
   border-radius: 999px !important;
@@ -6318,8 +6318,8 @@
 
 .phoneChatPage input[type="checkbox"]::after {
   content: "" !important;
-  width: 7px !important;
-  height: 12px !important;
+  width: 8px !important;
+  height: 14px !important;
   border: solid transparent !important;
   border-width: 0 2.5px 2.5px 0 !important;
   transform: translateY(-1px) rotate(45deg) !important;
@@ -7462,8 +7462,8 @@
   display: inline-grid !important;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 50px;
+  height: 50px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -7486,13 +7486,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px !important;
-  height: 34px !important;
+  width: 38px !important;
+  height: 38px !important;
   border: 2px solid var(--phone-chat-border);
   border-radius: 999px;
   color: transparent;
   background: var(--phone-chat-surface);
-  flex: 0 0 34px;
+  flex: 0 0 38px;
   transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
   pointer-events: none;
 }

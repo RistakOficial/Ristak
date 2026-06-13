@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Bot, ChevronDown, Clock, MessageCircle, Play, Plus, RotateCcw, Send, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Bot, Clock, MessageCircle, Play, Plus, Power, RotateCcw, Send, Trash2, X } from 'lucide-react'
 import { Button, Card, CustomSelect, TagPicker } from '@/components/common'
 import { DEFAULT_AI_MODEL, aiModelOptionGroups, aiModelOptions, getKnownAIModel } from '@/constants/aiModels'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -26,6 +26,7 @@ import { ConditionBuilder } from './ConditionBuilder'
 import styles from './AIAgentSettings.module.css'
 
 const AUTOSAVE_DELAY_MS = 900
+const OMIT_ALL_CONFIRM_TEXT = 'OMITIR TODO'
 
 const objectiveOptions: Array<{ value: ConversationalObjective; label: string; description: string }> = [
   { value: 'citas', label: 'Agendar citas', description: 'Lleva la plática hasta dejar una cita lista.' },
@@ -160,13 +161,12 @@ interface AgentCardProps {
   calendars: Calendar[]
   filterOptions?: AgentFilterOptions
   systemStrategy: string
-  expanded: boolean
-  onToggleExpanded: () => void
+  onBack: () => void
   onChange: (patch: ConversationalAgentDefInput) => void
   onDelete: () => void
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, systemStrategy, expanded, onToggleExpanded, onChange, onDelete }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, systemStrategy, onBack, onChange, onDelete }) => {
   const { showToast } = useNotification()
   const [testMessages, setTestMessages] = useState<TestMessage[]>([])
   const [testInput, setTestInput] = useState('')
@@ -175,6 +175,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
   const allowedActions = actionsByObjective[agent.objective] || actionsByObjective.custom
   const selectedObjective = objectiveOptions.find((option) => option.value === agent.objective) || objectiveOptions[0]
   const selectedActionInfo = successActionLabels[agent.successAction] || successActionLabels.ready_for_human
+  const selectedAgentModelValue = getKnownAIModel(agent.model || DEFAULT_AI_MODEL)
+  const selectedAgentModel = aiModelOptions.find((option) => option.value === selectedAgentModelValue) || aiModelOptions[0]
   const strategyIsCustom = agent.closingStrategyMode === 'custom'
   const strategyText = strategyIsCustom ? agent.closingStrategyCustom : systemStrategy
   const entryCount = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
@@ -245,13 +247,20 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
 
   return (
     <Card padding="md" className={styles.conversationAgentCard}>
+      <div className={styles.agentDetailTopbar}>
+        <Button variant="ghost" onClick={onBack}>
+          <ArrowLeft size={16} />
+          Volver
+        </Button>
+        <span className={`${styles.agentStatusPill} ${agent.enabled ? styles.agentStatusPillActive : styles.agentStatusPillMuted}`}>
+          {agent.enabled ? 'Activo' : 'Apagado'}
+        </span>
+      </div>
+
       <div className={styles.agentCardHeader}>
-        <button type="button" className={styles.agentCardToggle} onClick={onToggleExpanded} aria-expanded={expanded}>
-          <span className={`${styles.iconBox} ${agent.enabled ? '' : styles.iconBoxMuted}`}>
-            <Bot size={20} />
-          </span>
-          <ChevronDown size={17} className={`${styles.agentCardChevron} ${expanded ? styles.agentCardChevronOpen : ''}`} />
-        </button>
+        <span className={`${styles.iconBox} ${agent.enabled ? '' : styles.iconBoxMuted}`}>
+          <Bot size={20} />
+        </span>
         <input
           className={styles.agentNameInput}
           value={agent.name}
@@ -274,20 +283,65 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
         </div>
       </div>
 
-      {!expanded && (
-        <p className={styles.agentCardSummary}>
-          {selectedObjective.label} · {selectedActionInfo.label}
-          {entryCount > 0
-            ? ` · entra con ${entryCount} ${entryCount === 1 ? 'regla' : 'reglas'}`
-            : ' · entra con cualquier chat'}
-          {exitCount > 0 ? ` · se suelta con ${exitCount}` : ''}
-          {responseDelaySummary ? ` · espera ${responseDelaySummary}` : ''}
-          {replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split' ? ' · responde en partes' : ''}
-        </p>
-      )}
+      <p className={styles.agentCardSummary}>
+        {selectedObjective.label} · {selectedActionInfo.label}
+        {entryCount > 0
+          ? ` · entra con ${entryCount} ${entryCount === 1 ? 'regla' : 'reglas'}`
+          : ' · entra con cualquier chat'}
+        {exitCount > 0 ? ` · se suelta con ${exitCount}` : ''}
+        {responseDelaySummary ? ` · espera ${responseDelaySummary}` : ''}
+        {replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split' ? ' · responde en partes' : ''}
+      </p>
 
-      {expanded && (
-        <>
+      <div className={styles.agentSection}>
+        <h3 className={styles.sectionTitle}>Modelo y orden del chat</h3>
+        <div className={styles.agentOpsGrid}>
+          <div className={styles.field}>
+            <label className={styles.label}>Modelo de OpenAI</label>
+            <CustomSelect
+              value={selectedAgentModelValue}
+              onChange={(event) => onChange({ model: event.target.value })}
+              portal
+            >
+              {aiModelOptionGroups.map((group) => (
+                <optgroup key={group.label} label={group.label}>
+                  {group.options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </CustomSelect>
+            <p className={styles.helper}>
+              {selectedAgentModel.label} responde sólo para este agente.
+            </p>
+          </div>
+
+          <div className={styles.agentOpsToggles}>
+            <label className={`${styles.inlineToggle} ${styles.compactToggle}`}>
+              <input
+                type="checkbox"
+                checked={agent.hideAttended}
+                onChange={(event) => onChange({ hideAttended: event.target.checked })}
+              />
+              <span>Ocultar conversaciones atendidas</span>
+            </label>
+            <label className={`${styles.inlineToggle} ${styles.compactToggle}`}>
+              <input
+                type="checkbox"
+                checked={agent.hideAttendedNotifications}
+                onChange={(event) => onChange({ hideAttendedNotifications: event.target.checked })}
+              />
+              <span>Silenciar notificaciones atendidas</span>
+            </label>
+            <p className={styles.helper}>
+              Aplica sólo a conversaciones que este agente esté atendiendo.
+            </p>
+          </div>
+        </div>
+      </div>
+
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>1. Cuándo contesta</h3>
             <p className={styles.agentSectionHint}>
@@ -813,8 +867,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
               )}
             </div>
           </div>
-        </>
-      )}
     </Card>
   )
 }
@@ -827,7 +879,7 @@ export const ConversationalAgentSettings: React.FC = () => {
   const [filterOptions, setFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const saveTimersRef = useRef<Map<string, number>>(new Map())
   const agentsRef = useRef<ConversationalAgentDef[]>([])
   agentsRef.current = agents
@@ -848,9 +900,6 @@ export const ConversationalAgentSettings: React.FC = () => {
         setAgents(nextAgents)
         setCalendars(calendarList.filter((cal) => cal.isActive !== false))
         setFilterOptions(nextOptions)
-        if (nextAgents.length === 1) {
-          setExpandedIds(new Set([nextAgents[0].id]))
-        }
       } catch (error: any) {
         if (!cancelled) {
           showToast('error', 'Error', error?.message || 'No se pudo cargar el agente conversacional')
@@ -894,7 +943,7 @@ export const ConversationalAgentSettings: React.FC = () => {
     scheduleAgentSave(agentId)
   }
 
-  const handleGlobalChange = async (patch: { enabled?: boolean; hideAttended?: boolean; hideAttendedNotifications?: boolean; model?: string }) => {
+  const handleGlobalChange = async (patch: { enabled?: boolean }) => {
     try {
       const next = await conversationalAgentService.saveConfig(patch)
       setConfig(next)
@@ -906,9 +955,16 @@ export const ConversationalAgentSettings: React.FC = () => {
   const handleCreateAgent = async () => {
     setCreating(true)
     try {
-      const agent = await conversationalAgentService.createAgent({ name: `Agente ${agents.length + 1}` })
+      const agent = await conversationalAgentService.createAgent({
+        name: `Agente ${agents.length + 1}`,
+        model: getKnownAIModel(config?.model || DEFAULT_AI_MODEL)
+      })
+      if (config && !config.enabled) {
+        const nextConfig = await conversationalAgentService.saveConfig({ enabled: true })
+        setConfig(nextConfig)
+      }
       setAgents((current) => [...current, agent])
-      setExpandedIds((current) => new Set([...current, agent.id]))
+      setSelectedAgentId(agent.id)
     } catch (error: any) {
       showToast('error', 'No se pudo crear', error?.message || 'Error al crear el agente')
     } finally {
@@ -924,6 +980,7 @@ export const ConversationalAgentSettings: React.FC = () => {
         try {
           await conversationalAgentService.deleteAgent(agent.id)
           setAgents((current) => current.filter((item) => item.id !== agent.id))
+          setSelectedAgentId((current) => (current === agent.id ? null : current))
         } catch (error: any) {
           showToast('error', 'No se pudo eliminar', error?.message || 'Error al eliminar el agente')
         }
@@ -933,9 +990,52 @@ export const ConversationalAgentSettings: React.FC = () => {
     )
   }
 
+  const handleOmitAll = () => {
+    showConfirm(
+      'Omitir todo',
+      'Esto apaga el agente conversacional y desactiva todos los agentes configurados. Las conversaciones dejan de responderse por IA hasta que vuelvas a activar un agente.',
+      async () => {
+        try {
+          saveTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+          saveTimersRef.current.clear()
+          const nextConfig = await conversationalAgentService.saveConfig({ enabled: false })
+          const updatedAgents = await Promise.all(
+            agentsRef.current.map((agent) => conversationalAgentService.updateAgent(agent.id, { enabled: false }))
+          )
+          setConfig(nextConfig)
+          setAgents(updatedAgents)
+          setSelectedAgentId(null)
+          showToast('success', 'Agente conversacional', 'Todo quedó omitido y apagado.')
+        } catch (error: any) {
+          showToast('error', 'No se pudo omitir todo', error?.message || 'Inténtalo otra vez.')
+        }
+      },
+      'Omitir todo',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: OMIT_ALL_CONFIRM_TEXT }
+    )
+  }
+
   const systemStrategy = config?.systemClosingStrategy || ''
-  const selectedModelValue = getKnownAIModel(config?.model || DEFAULT_AI_MODEL)
-  const selectedModel = aiModelOptions.find((option) => option.value === selectedModelValue) || aiModelOptions[0]
+  const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) || null : null
+  const activeAgentsCount = agents.filter((agent) => agent.enabled).length
+
+  if (selectedAgent) {
+    return (
+      <div className={styles.container}>
+        <AgentCard
+          agent={selectedAgent}
+          calendars={calendars}
+          filterOptions={filterOptions}
+          systemStrategy={systemStrategy}
+          onBack={() => setSelectedAgentId(null)}
+          onChange={(patch) => handleAgentChange(selectedAgent.id, patch)}
+          onDelete={() => handleDeleteAgent(selectedAgent)}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className={styles.container}>
@@ -948,23 +1048,21 @@ export const ConversationalAgentSettings: React.FC = () => {
             <div>
               <h2 className={styles.title}>Agente conversacional</h2>
               <p className={styles.description}>
-                Decide qué chats contesta, qué debe lograr y cuándo pasarle la bola al equipo.
+                Crea agentes separados, cada uno con su modelo, objetivo y reglas de atención.
               </p>
             </div>
           </div>
           <div className={styles.headerActions}>
-            <label className={styles.inlineToggle}>
-              <input
-                type="checkbox"
-                checked={Boolean(config?.enabled)}
-                disabled={loading || !config}
-                onChange={(event) => handleGlobalChange({ enabled: event.target.checked })}
-              />
-              <span>
+            {!config?.enabled && (
+              <Button variant="secondary" onClick={() => handleGlobalChange({ enabled: true })} disabled={loading || !config}>
                 <Bot size={16} />
-                {config?.enabled ? 'Activado' : 'Desactivado'}
-              </span>
-            </label>
+                Reactivar
+              </Button>
+            )}
+            <Button variant="danger" onClick={handleOmitAll} disabled={loading || !config || (!agents.length && !config.enabled)}>
+              <Power size={16} />
+              Omitir todo
+            </Button>
             <Button onClick={handleCreateAgent} loading={creating} disabled={loading || creating}>
               <Plus size={16} />
               Nuevo agente
@@ -972,50 +1070,18 @@ export const ConversationalAgentSettings: React.FC = () => {
           </div>
         </div>
 
-        <div className={styles.conversationSetupGrid}>
-          <div className={styles.field}>
-            <label className={styles.label}>Modelo para responder</label>
-            <CustomSelect
-              value={selectedModelValue}
-              onChange={(event) => handleGlobalChange({ model: event.target.value })}
-              disabled={loading || !config}
-              portal
-            >
-              {aiModelOptionGroups.map((group) => (
-                <optgroup key={group.label} label={group.label}>
-                  {group.options.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </CustomSelect>
-            <p className={styles.helper}>
-              Usa {selectedModel.label} sólo para chats. El Agente AI general queda aparte.
-            </p>
+        <div className={styles.agentDirectoryStats}>
+          <div>
+            <span>{agents.length}</span>
+            <small>{agents.length === 1 ? 'agente creado' : 'agentes creados'}</small>
           </div>
-
-          <div className={styles.globalToggleGroup}>
-            <label className={`${styles.inlineToggle} ${styles.compactToggle}`}>
-              <input
-                type="checkbox"
-                checked={Boolean(config?.hideAttended)}
-                disabled={loading || !config}
-                onChange={(event) => handleGlobalChange({ hideAttended: event.target.checked })}
-              />
-              <span>Ocultar chats que el agente ya está atendiendo</span>
-            </label>
-            <label className={`${styles.inlineToggle} ${styles.compactToggle}`}>
-              <input
-                type="checkbox"
-                checked={Boolean(config?.hideAttendedNotifications)}
-                disabled={loading || !config}
-                onChange={(event) => handleGlobalChange({ hideAttendedNotifications: event.target.checked })}
-              />
-              <span>Silenciar notificaciones de chats atendidos</span>
-            </label>
-            <p className={styles.helper}>Si el agente necesita humano o cumple su meta, el chat vuelve a subir como pendiente.</p>
+          <div>
+            <span>{activeAgentsCount}</span>
+            <small>{activeAgentsCount === 1 ? 'activo' : 'activos'}</small>
+          </div>
+          <div>
+            <span>{config?.enabled ? 'Listo' : 'Omitido'}</span>
+            <small>seguridad general</small>
           </div>
         </div>
       </Card>
@@ -1027,33 +1093,57 @@ export const ConversationalAgentSettings: React.FC = () => {
       )}
 
       {!loading && agents.length === 0 && (
-        <Card>
-          <p className={styles.helper}>
-            Aún no tienes agentes. Crea uno y dile qué chats debe atender.
-          </p>
+        <Card padding="md" className={styles.emptyAgentDirectory}>
+          <div className={styles.iconBox}>
+            <Bot size={22} />
+          </div>
+          <h3>Aún no tienes agentes</h3>
+          <p>Crea uno y configura qué chats debe tomar, cómo debe responder y cuándo debe pedir ayuda.</p>
+          <Button onClick={handleCreateAgent} loading={creating} disabled={creating}>
+            <Plus size={16} />
+            Nuevo agente
+          </Button>
         </Card>
       )}
 
-      {agents.map((agent) => (
-        <AgentCard
-          key={agent.id}
-          agent={agent}
-          calendars={calendars}
-          filterOptions={filterOptions}
-          systemStrategy={systemStrategy}
-          expanded={expandedIds.has(agent.id)}
-          onToggleExpanded={() => {
-            setExpandedIds((current) => {
-              const next = new Set(current)
-              if (next.has(agent.id)) next.delete(agent.id)
-              else next.add(agent.id)
-              return next
-            })
-          }}
-          onChange={(patch) => handleAgentChange(agent.id, patch)}
-          onDelete={() => handleDeleteAgent(agent)}
-        />
-      ))}
+      {!loading && agents.length > 0 && (
+        <div className={styles.agentDirectoryGrid}>
+          {agents.map((agent) => {
+            const objectiveLabel = objectiveOptions.find((option) => option.value === agent.objective)?.label || 'Objetivo'
+            const actionLabel = successActionLabels[agent.successAction]?.label || 'Acción'
+            const modelLabel = aiModelOptions.find((option) => option.value === getKnownAIModel(agent.model || DEFAULT_AI_MODEL))?.label || agent.model
+            const entryRules = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
+
+            return (
+              <button
+                key={agent.id}
+                type="button"
+                className={`${styles.agentDirectoryCard} ${agent.enabled ? '' : styles.agentDirectoryCardMuted}`}
+                onClick={() => setSelectedAgentId(agent.id)}
+              >
+                <div className={styles.agentDirectoryCardTop}>
+                  <span className={`${styles.iconBox} ${agent.enabled ? '' : styles.iconBoxMuted}`}>
+                    <Bot size={20} />
+                  </span>
+                  <span className={`${styles.agentStatusPill} ${agent.enabled ? styles.agentStatusPillActive : styles.agentStatusPillMuted}`}>
+                    {agent.enabled ? 'Activo' : 'Apagado'}
+                  </span>
+                </div>
+                <div className={styles.agentDirectoryCardCopy}>
+                  <h3>{agent.name || 'Agente sin nombre'}</h3>
+                  <p>{objectiveLabel} · {actionLabel}</p>
+                </div>
+                <div className={styles.agentDirectoryMeta}>
+                  <span>{modelLabel}</span>
+                  <span>{entryRules > 0 ? `${entryRules} ${entryRules === 1 ? 'regla' : 'reglas'}` : 'Cualquier chat'}</span>
+                  {agent.hideAttended && <span>Oculta atendidas</span>}
+                  {agent.hideAttendedNotifications && <span>Silencia avisos</span>}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

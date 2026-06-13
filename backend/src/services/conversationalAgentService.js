@@ -773,6 +773,7 @@ function mapAgentRow(row) {
     id: row.id,
     name: row.name || 'Agente',
     enabled: toBoolean(row.enabled),
+    model: normalizeConversationalAgentModel(row.model),
     position: Number(row.position) || 0,
     objective: VALID_OBJECTIVES.has(row.objective) ? row.objective : 'citas',
     customObjective: row.custom_objective || '',
@@ -782,6 +783,10 @@ function mapAgentRow(row) {
     handoffRules: row.handoff_rules || '',
     extraInstructions: row.extra_instructions || '',
     allowEmojis: toBoolean(row.allow_emojis),
+    hideAttended: toBoolean(row.hide_attended),
+    hideAttendedNotifications: row.hide_attended_notifications === null || row.hide_attended_notifications === undefined
+      ? toBoolean(row.hide_attended)
+      : toBoolean(row.hide_attended_notifications),
     defaultCalendarId: row.default_calendar_id || null,
     closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     closingStrategyCustom: row.closing_strategy_custom || '',
@@ -804,14 +809,16 @@ export async function ensureAgentsMigration() {
   if (!legacy) return
   await db.run(`
     INSERT INTO conversational_agents (
-      id, name, enabled, position, objective, custom_objective, success_action,
+      id, name, enabled, model, position, objective, custom_objective, success_action,
       success_extras, required_data, handoff_rules, extra_instructions,
-      allow_emojis, default_calendar_id, closing_strategy_mode, closing_strategy_custom,
+      allow_emojis, hide_attended, hide_attended_notifications,
+      default_calendar_id, closing_strategy_mode, closing_strategy_custom,
       response_delay_config, reply_delivery_config, entry_filters
-    ) VALUES (?, ?, 1, 0, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, 1, ?, 0, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     `cagent_${randomUUID()}`,
     'Agente principal',
+    normalizeConversationalAgentModel(legacy.model),
     VALID_OBJECTIVES.has(legacy.objective) ? legacy.objective : 'citas',
     legacy.custom_objective || '',
     VALID_SUCCESS_ACTIONS.has(legacy.success_action) ? legacy.success_action : 'ready_for_human',
@@ -819,6 +826,10 @@ export async function ensureAgentsMigration() {
     legacy.handoff_rules || '',
     legacy.extra_instructions || '',
     toBoolean(legacy.allow_emojis) ? 1 : 0,
+    toBoolean(legacy.hide_attended) ? 1 : 0,
+    legacy.hide_attended_notifications === null || legacy.hide_attended_notifications === undefined
+      ? (toBoolean(legacy.hide_attended) ? 1 : 0)
+      : (toBoolean(legacy.hide_attended_notifications) ? 1 : 0),
     legacy.default_calendar_id || null,
     legacy.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     legacy.closing_strategy_custom || '',
@@ -845,6 +856,7 @@ function agentInputToRowValues(input, base) {
   const next = {
     name: input.name === undefined ? base.name : String(input.name || 'Agente').trim().slice(0, 120) || 'Agente',
     enabled: input.enabled === undefined ? base.enabled : toBoolean(input.enabled),
+    model: input.model === undefined ? normalizeConversationalAgentModel(base.model) : normalizeConversationalAgentModel(input.model),
     position: input.position === undefined ? base.position : Number(input.position) || 0,
     objective: VALID_OBJECTIVES.has(input.objective) ? input.objective : base.objective,
     customObjective: input.customObjective === undefined ? base.customObjective : String(input.customObjective || '').slice(0, 2000),
@@ -854,6 +866,8 @@ function agentInputToRowValues(input, base) {
     handoffRules: input.handoffRules === undefined ? base.handoffRules : String(input.handoffRules || '').slice(0, 4000),
     extraInstructions: input.extraInstructions === undefined ? base.extraInstructions : String(input.extraInstructions || '').slice(0, 8000),
     allowEmojis: input.allowEmojis === undefined ? base.allowEmojis : toBoolean(input.allowEmojis),
+    hideAttended: input.hideAttended === undefined ? base.hideAttended : toBoolean(input.hideAttended),
+    hideAttendedNotifications: input.hideAttendedNotifications === undefined ? base.hideAttendedNotifications : toBoolean(input.hideAttendedNotifications),
     defaultCalendarId: input.defaultCalendarId === undefined ? base.defaultCalendarId : (String(input.defaultCalendarId || '').trim() || null),
     closingStrategyMode: input.closingStrategyMode === undefined
       ? base.closingStrategyMode
@@ -875,6 +889,7 @@ function agentInputToRowValues(input, base) {
 const DEFAULT_AGENT_BASE = {
   name: 'Agente',
   enabled: true,
+  model: DEFAULT_CONVERSATIONAL_AGENT_MODEL,
   position: 0,
   objective: 'citas',
   customObjective: '',
@@ -884,6 +899,8 @@ const DEFAULT_AGENT_BASE = {
   handoffRules: '',
   extraInstructions: '',
   allowEmojis: false,
+  hideAttended: false,
+  hideAttendedNotifications: false,
   defaultCalendarId: null,
   closingStrategyMode: 'system',
   closingStrategyCustom: '',
@@ -899,15 +916,17 @@ export async function createConversationalAgent(input = {}) {
   const id = `cagent_${randomUUID()}`
   await db.run(`
     INSERT INTO conversational_agents (
-      id, name, enabled, position, objective, custom_objective, success_action,
+      id, name, enabled, model, position, objective, custom_objective, success_action,
       success_extras, required_data, handoff_rules, extra_instructions,
-      allow_emojis, default_calendar_id, closing_strategy_mode, closing_strategy_custom,
+      allow_emojis, hide_attended, hide_attended_notifications,
+      default_calendar_id, closing_strategy_mode, closing_strategy_custom,
       response_delay_config, reply_delivery_config, entry_filters
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
-    id, next.name, next.enabled ? 1 : 0, next.position, next.objective, next.customObjective,
+    id, next.name, next.enabled ? 1 : 0, next.model, next.position, next.objective, next.customObjective,
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
-    next.extraInstructions, next.allowEmojis ? 1 : 0, next.defaultCalendarId,
+    next.extraInstructions, next.allowEmojis ? 1 : 0,
+    next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.filters)
   ])
@@ -923,17 +942,19 @@ export async function updateConversationalAgent(agentId, input = {}) {
   const next = agentInputToRowValues(input, current)
   await db.run(`
     UPDATE conversational_agents
-    SET name = ?, enabled = ?, position = ?, objective = ?, custom_objective = ?,
+    SET name = ?, enabled = ?, model = ?, position = ?, objective = ?, custom_objective = ?,
         success_action = ?, success_extras = ?, required_data = ?, handoff_rules = ?,
-        extra_instructions = ?, allow_emojis = ?, default_calendar_id = ?,
+        extra_instructions = ?, allow_emojis = ?, hide_attended = ?, hide_attended_notifications = ?,
+        default_calendar_id = ?,
         closing_strategy_mode = ?, closing_strategy_custom = ?, response_delay_config = ?,
         reply_delivery_config = ?, entry_filters = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
-    next.name, next.enabled ? 1 : 0, next.position, next.objective, next.customObjective,
+    next.name, next.enabled ? 1 : 0, next.model, next.position, next.objective, next.customObjective,
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
-    next.extraInstructions, next.allowEmojis ? 1 : 0, next.defaultCalendarId,
+    next.extraInstructions, next.allowEmojis ? 1 : 0,
+    next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.filters),
     agentId
@@ -1730,9 +1751,11 @@ export async function markHumanTakeoverIfActive(contactId, { updatedBy = 'human'
 export async function shouldSuppressChatNotificationForConversationalAgent(contactId) {
   if (!contactId) return false
   const config = await getConversationalAgentConfig()
-  if (!config.enabled || !config.hideAttendedNotifications) return false
+  if (!config.enabled) return false
   const state = await getConversationState(contactId)
-  return Boolean(state?.status === 'active' && !state.signal)
+  if (!state?.agentId || state.status !== 'active' || state.signal) return false
+  const agent = await getConversationalAgent(state.agentId)
+  return Boolean(agent?.enabled && agent.hideAttendedNotifications)
 }
 
 /**

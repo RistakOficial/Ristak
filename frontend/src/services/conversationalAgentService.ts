@@ -140,6 +140,7 @@ export interface ConversationalAgentDef {
   id: string
   name: string
   enabled: boolean
+  model: string
   position: number
   objective: ConversationalObjective
   customObjective: string
@@ -149,6 +150,8 @@ export interface ConversationalAgentDef {
   handoffRules: string
   extraInstructions: string
   allowEmojis: boolean
+  hideAttended: boolean
+  hideAttendedNotifications: boolean
   defaultCalendarId: string | null
   closingStrategyMode: ClosingStrategyMode
   closingStrategyCustom: string
@@ -163,6 +166,7 @@ export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, '
 
 export interface ConversationAgentState {
   contactId: string
+  agentId: string | null
   status: ConversationStatus
   signal: ConversationSignal | null
   signalReason: string | null

@@ -3255,6 +3255,10 @@ export const PhoneChat: React.FC = () => {
   const starredMessageIdSet = useMemo(() => new Set(starredMessageIds), [starredMessageIds])
   const archivedChatCount = archivedChatIds.length
   const agentEnabled = Boolean(agentConfig?.enabled)
+  const agentDefById = useMemo(
+    () => new Map(agentDefs.map((agent) => [agent.id, agent])),
+    [agentDefs]
+  )
   const agentPriorityStates = useMemo(
     () => Object.values(agentStates).filter((state) => Boolean(state.signal) && state.signal !== 'discarded'),
     [agentStates]
@@ -3315,13 +3319,17 @@ export const PhoneChat: React.FC = () => {
   }, [agentDataHydrated, agentEnabled, chatFilter])
 
   const agentHiddenChatIdSet = useMemo(() => {
-    if (!agentEnabled || !agentConfig?.hideAttended) return new Set<string>()
+    if (!agentEnabled) return new Set<string>()
     return new Set(
       Object.values(agentStates)
-        .filter((state) => state.status === 'active' && !state.signal)
+        .filter((state) => {
+          if (state.status !== 'active' || state.signal) return false
+          const agent = state.agentId ? agentDefById.get(state.agentId) : null
+          return Boolean(agent?.enabled && agent.hideAttended)
+        })
         .map((state) => state.contactId)
     )
-  }, [agentConfig?.hideAttended, agentEnabled, agentStates])
+  }, [agentDefById, agentEnabled, agentStates])
   const listBaseChats = useMemo(
     () => chats.filter((contact) => {
       if (agentPriorityViewOpen) return agentPriorityChatIdSet.has(contact.id)
@@ -3622,6 +3630,8 @@ export const PhoneChat: React.FC = () => {
     enabled: boolean
     objective: ConversationalObjective
     successAction: ConversationalSuccessAction
+    hideAttended: boolean
+    hideAttendedNotifications: boolean
   }>) => {
     if (!agentId) return
     setAgentConfigSaving(true)
@@ -10736,37 +10746,39 @@ export const PhoneChat: React.FC = () => {
           </section>
         )}
 
-        <section className={styles.agentMenuSection} aria-label="Orden del chat">
-          <div className={styles.agentMenuSectionHeader}>
-            <span>Orden del chat</span>
-            <small>Conversaciones atendidas</small>
-          </div>
-          <label className={styles.agentCompactToggle}>
-            <span>
-              <strong>Ocultar atendidas</strong>
-              <small>Reaparecen si el agente necesita seguimiento.</small>
-            </span>
-            <input
-              type="checkbox"
-              checked={Boolean(agentConfig?.hideAttended)}
-              disabled={agentConfigSaving || !agentConfig}
-              onChange={(event) => saveAgentConfigPatch({ hideAttended: event.target.checked })}
-            />
-          </label>
+        {selectedAgentDef && (
+          <section className={styles.agentMenuSection} aria-label="Orden del chat">
+            <div className={styles.agentMenuSectionHeader}>
+              <span>Orden del chat</span>
+              <small>{selectedAgentDef.name || 'Agente seleccionado'}</small>
+            </div>
+            <label className={styles.agentCompactToggle}>
+              <span>
+                <strong>Ocultar atendidas</strong>
+                <small>Sólo oculta conversaciones de este agente.</small>
+              </span>
+              <input
+                type="checkbox"
+                checked={Boolean(selectedAgentDef.hideAttended)}
+                disabled={agentConfigSaving}
+                onChange={(event) => saveAgentPatch(selectedAgentDef.id, { hideAttended: event.target.checked })}
+              />
+            </label>
 
-          <label className={styles.agentCompactToggle}>
-            <span>
-              <strong>Silenciar atendidas</strong>
-              <small>Sin avisos mientras el agente responde.</small>
-            </span>
-            <input
-              type="checkbox"
-              checked={Boolean(agentConfig?.hideAttendedNotifications)}
-              disabled={agentConfigSaving || !agentConfig}
-              onChange={(event) => saveAgentConfigPatch({ hideAttendedNotifications: event.target.checked })}
-            />
-          </label>
-        </section>
+            <label className={styles.agentCompactToggle}>
+              <span>
+                <strong>Silenciar atendidas</strong>
+                <small>Sin avisos mientras este agente responde.</small>
+              </span>
+              <input
+                type="checkbox"
+                checked={Boolean(selectedAgentDef.hideAttendedNotifications)}
+                disabled={agentConfigSaving}
+                onChange={(event) => saveAgentPatch(selectedAgentDef.id, { hideAttendedNotifications: event.target.checked })}
+              />
+            </label>
+          </section>
+        )}
 
         <section className={styles.agentMenuSection} aria-label="Bandejas del agente">
           <div className={styles.agentMenuSectionHeader}>
