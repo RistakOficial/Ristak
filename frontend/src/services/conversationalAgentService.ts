@@ -213,6 +213,29 @@ export const CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT = 'ristak-conversational-agen
 const LIVE_CACHE_KEY = 'ristak_conversational_agent_live_cache_v1'
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
+function normalizeConversationalSuccessAction(): ConversationalSuccessAction {
+  return 'ready_for_human'
+}
+
+function normalizeAgentConfig<T extends ConversationalAgentConfig | null | undefined>(config: T): T {
+  if (!config) return config
+  return {
+    ...config,
+    successAction: normalizeConversationalSuccessAction()
+  }
+}
+
+function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
+  return {
+    ...agent,
+    successAction: normalizeConversationalSuccessAction()
+  }
+}
+
+function normalizeAgentDefs(agents: ConversationalAgentDef[] = []) {
+  return agents.map(normalizeAgentDef)
+}
+
 function getLocalStorage() {
   if (typeof window === 'undefined') return null
   try {
@@ -230,9 +253,9 @@ export function readConversationalAgentLiveCache(): ConversationalAgentLiveCache
     const parsed = JSON.parse(storage.getItem(LIVE_CACHE_KEY) || 'null') as Partial<ConversationalAgentLiveCache> | null
     if (!parsed || typeof parsed !== 'object') return null
     return {
-      config: parsed.config || null,
+      config: normalizeAgentConfig(parsed.config || null),
       states: Array.isArray(parsed.states) ? parsed.states : [],
-      agents: Array.isArray(parsed.agents) ? parsed.agents : [],
+      agents: Array.isArray(parsed.agents) ? normalizeAgentDefs(parsed.agents) : [],
       savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0
     }
   } catch {
@@ -250,9 +273,9 @@ function writeConversationalAgentLiveCache(
 
   const current = readConversationalAgentLiveCache()
   const next: ConversationalAgentLiveCache = {
-    config: patch.config !== undefined ? patch.config : current?.config || null,
+    config: patch.config !== undefined ? normalizeAgentConfig(patch.config) : current?.config || null,
     states: patch.states !== undefined ? patch.states : current?.states || [],
-    agents: patch.agents !== undefined ? patch.agents : current?.agents || [],
+    agents: patch.agents !== undefined ? normalizeAgentDefs(patch.agents) : current?.agents || [],
     savedAt: Date.now()
   }
 
@@ -310,22 +333,22 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
 export const conversationalAgentService = {
   async getConfig(): Promise<ConversationalAgentConfig> {
-    const config = await request<ConversationalAgentConfig>('/config')
+    const config = normalizeAgentConfig(await request<ConversationalAgentConfig>('/config'))
     writeConversationalAgentLiveCache({ config })
     return config
   },
 
   async saveConfig(config: ConversationalAgentConfigInput): Promise<ConversationalAgentConfig> {
-    const next = await request<ConversationalAgentConfig>('/config', {
+    const next = normalizeAgentConfig(await request<ConversationalAgentConfig>('/config', {
       method: 'POST',
       body: JSON.stringify(config)
-    })
+    }))
     writeConversationalAgentLiveCache({ config: next }, { notify: true })
     return next
   },
 
   async listAgents(): Promise<ConversationalAgentDef[]> {
-    const agents = await request<ConversationalAgentDef[]>('/agents')
+    const agents = normalizeAgentDefs(await request<ConversationalAgentDef[]>('/agents'))
     writeConversationalAgentLiveCache({ agents })
     return agents
   },
@@ -335,20 +358,20 @@ export const conversationalAgentService = {
   },
 
   async createAgent(input: ConversationalAgentDefInput = {}): Promise<ConversationalAgentDef> {
-    const agent = await request<ConversationalAgentDef>('/agents', {
+    const agent = normalizeAgentDef(await request<ConversationalAgentDef>('/agents', {
       method: 'POST',
       body: JSON.stringify(input)
-    })
+    }))
     const current = readConversationalAgentLiveCache()
     writeConversationalAgentLiveCache({ agents: [...(current?.agents || []), agent] }, { notify: true })
     return agent
   },
 
   async updateAgent(agentId: string, input: ConversationalAgentDefInput): Promise<ConversationalAgentDef> {
-    const agent = await request<ConversationalAgentDef>(`/agents/${encodeURIComponent(agentId)}`, {
+    const agent = normalizeAgentDef(await request<ConversationalAgentDef>(`/agents/${encodeURIComponent(agentId)}`, {
       method: 'PUT',
       body: JSON.stringify(input)
-    })
+    }))
     const current = readConversationalAgentLiveCache()
     if (current) {
       writeConversationalAgentLiveCache({

@@ -38,20 +38,20 @@ const objectiveOptions: Array<{ value: ConversationalObjective; label: string; d
 ]
 
 const successActionLabels: Record<ConversationalSuccessAction, { label: string; description: string }> = {
-  book_appointment: { label: 'Agendar solo', description: 'Crea la cita con horarios reales. Nada de inventar.' },
-  ready_for_human: { label: 'Pasarlo al equipo', description: 'Lo deja en prioridad para que alguien lo tome.' },
-  ready_to_buy: { label: 'Marcar listo para comprar', description: 'Lo manda a prioridad como oportunidad caliente.' },
-  internal_signal: { label: 'Sólo avisar', description: 'Guarda la señal interna y sigue tranquilo.' },
-  none: { label: 'No mover nada', description: 'Sólo conversa; no cambia prioridades.' }
+  book_appointment: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' },
+  ready_for_human: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' },
+  ready_to_buy: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' },
+  internal_signal: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' },
+  none: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' }
 }
 
 const actionsByObjective: Record<ConversationalObjective, ConversationalSuccessAction[]> = {
-  citas: ['book_appointment', 'ready_for_human', 'internal_signal', 'none'],
-  ventas: ['ready_to_buy', 'ready_for_human', 'internal_signal', 'none'],
-  datos: ['ready_for_human', 'internal_signal', 'none'],
-  filtrar: ['ready_for_human', 'internal_signal', 'none'],
-  detectar: ['ready_to_buy', 'ready_for_human', 'internal_signal', 'none'],
-  custom: ['book_appointment', 'ready_to_buy', 'ready_for_human', 'internal_signal', 'none']
+  citas: ['ready_for_human'],
+  ventas: ['ready_for_human'],
+  datos: ['ready_for_human'],
+  filtrar: ['ready_for_human'],
+  detectar: ['ready_for_human'],
+  custom: ['ready_for_human']
 }
 
 const extraTypeOptions: Array<{ value: SuccessExtraType; label: string }> = [
@@ -354,7 +354,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
                 <SelectionToggle
                   checked={agent.hideAttendedNotifications}
                   title="Silenciar notificaciones atendidas"
-                  description="Sin avisos mientras este agente responde."
+                  description="Sin avisos mientras responde; si cumple el objetivo, manda push de prioridad."
                   onChange={(checked) => onChange({ hideAttendedNotifications: checked })}
                 />
               </div>

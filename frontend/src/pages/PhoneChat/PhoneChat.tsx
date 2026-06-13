@@ -231,7 +231,7 @@ type MessageAudioRate = typeof MESSAGE_AUDIO_RATE_OPTIONS[number]
 type PaymentMode = 'single' | 'partial'
 type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | 'agentMenu' | null
 type ChatMoreMode = 'default' | 'agentControls'
-type AgentMenuSection = 'menu' | 'ready_human' | 'ready_advance'
+type AgentMenuSection = 'menu' | 'ready_human'
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'leads'
 type TemplateMode = 'choice' | 'send' | 'create'
 type ChatSettingsSection = 'appearance' | 'templates' | 'numbers' | 'notifications' | 'agent' | 'chats' | 'display' | null
@@ -8033,7 +8033,7 @@ export const PhoneChat: React.FC = () => {
             <strong>{agentPriorityViewOpen ? 'Sin conversaciones prioritarias' : archivedViewOpen ? 'No hay chats archivados' : chatFilter === 'agent' ? 'Sin chats del agente' : chats.length === 0 ? 'Aún no hay chats' : 'No hay chats en este filtro'}</strong>
             <small>
               {agentPriorityViewOpen
-                ? 'Cuando el agente marque una conversación lista para humano, agendar o comprar, aparecerá aquí.'
+                ? 'Cuando el agente marque una conversación para humano, aparecerá aquí.'
                 : archivedViewOpen
                 ? 'Cuando archives una conversación, aparecerá en esta sección.'
                 : chatFilter === 'agent'
@@ -10523,28 +10523,28 @@ export const PhoneChat: React.FC = () => {
   ]
 
   const agentSuccessActionLabels: Record<ConversationalSuccessAction, string> = {
-    book_appointment: 'Agendar directamente',
-    ready_for_human: 'Mandar a prioridad (humano)',
-    ready_to_buy: 'Mandar a prioridad (compra)',
-    internal_signal: 'Solo señal interna',
-    none: 'No hacer nada'
+    book_appointment: 'Pasar a un humano',
+    ready_for_human: 'Pasar a un humano',
+    ready_to_buy: 'Pasar a un humano',
+    internal_signal: 'Pasar a un humano',
+    none: 'Pasar a un humano'
   }
 
   // Acciones coherentes con cada objetivo (mismo criterio que la config web)
   const agentActionsByObjective: Record<ConversationalObjective, ConversationalSuccessAction[]> = {
-    citas: ['book_appointment', 'ready_for_human', 'internal_signal', 'none'],
-    ventas: ['ready_to_buy', 'ready_for_human', 'internal_signal', 'none'],
-    datos: ['ready_for_human', 'internal_signal', 'none'],
-    filtrar: ['ready_for_human', 'internal_signal', 'none'],
-    detectar: ['ready_to_buy', 'ready_for_human', 'internal_signal', 'none'],
-    custom: ['book_appointment', 'ready_to_buy', 'ready_for_human', 'internal_signal', 'none']
+    citas: ['ready_for_human'],
+    ventas: ['ready_for_human'],
+    datos: ['ready_for_human'],
+    filtrar: ['ready_for_human'],
+    detectar: ['ready_for_human'],
+    custom: ['ready_for_human']
   }
 
   const agentSignalLabels: Record<string, string> = {
-    ready_for_human: 'Lista para humano',
-    ready_to_schedule: 'Lista para agendar',
-    ready_to_buy: 'Lista para comprar',
-    appointment_booked: 'Cita agendada por el agente',
+    ready_for_human: 'Pasar a humano',
+    ready_to_schedule: 'Pasar a humano',
+    ready_to_buy: 'Pasar a humano',
+    appointment_booked: 'Pasar a humano',
     discarded: 'Descartada'
   }
 
@@ -10602,30 +10602,14 @@ export const PhoneChat: React.FC = () => {
             Volver al agente
           </button>
           {renderAgentSignalList(
-            agentPriorityStates.filter((state) => state.signal === 'ready_for_human'),
-            'Cuando el agente detecte que alguien necesita humano, aparecerá aquí.'
+            agentPriorityStates,
+            'Cuando el agente cumpla el objetivo, aparecerá aquí para que un humano lo tome.'
           )}
         </>
       )
     }
 
-    if (agentMenuSection === 'ready_advance') {
-      return (
-        <>
-          <button type="button" className={styles.agentMenuBack} onClick={() => setAgentMenuSection('menu')}>
-            <ChevronLeft size={18} />
-            Volver al agente
-          </button>
-          {renderAgentSignalList(
-            agentPriorityStates.filter((state) => state.signal === 'ready_to_schedule' || state.signal === 'ready_to_buy' || state.signal === 'appointment_booked'),
-            'Cuando alguien esté listo para agendar o comprar, aparecerá aquí.'
-          )}
-        </>
-      )
-    }
-
-    const readyHumanCount = agentPriorityStates.filter((state) => state.signal === 'ready_for_human').length
-    const readyAdvanceCount = agentPriorityStates.filter((state) => state.signal === 'ready_to_schedule' || state.signal === 'ready_to_buy' || state.signal === 'appointment_booked').length
+    const readyHumanCount = agentPriorityStates.length
     const selectedAgentDef = agentDefs.find((agent) => agent.id === selectedAgentId) || agentDefs[0] || null
     const selectedAgentActions = selectedAgentDef
       ? agentActionsByObjective[selectedAgentDef.objective] || agentActionsByObjective.custom
@@ -10742,6 +10726,9 @@ export const PhoneChat: React.FC = () => {
                 disabled={agentConfigSaving}
                 buttonClassName={styles.agentMenuSelectButton}
               />
+              <small className={styles.agentMenuHint}>
+                En el chat aparecerá como prioridad en rojo para que un humano lo atienda.
+              </small>
             </label>
           </section>
         )}
@@ -10768,7 +10755,7 @@ export const PhoneChat: React.FC = () => {
             <label className={styles.agentCompactToggle}>
               <span>
                 <strong>Silenciar atendidas</strong>
-                <small>Sin avisos mientras este agente responde.</small>
+                <small>Sin avisos mientras responde; al cumplir objetivo sí manda push.</small>
               </span>
               <input
                 type="checkbox"
@@ -10791,18 +10778,8 @@ export const PhoneChat: React.FC = () => {
                 <User size={19} />
               </span>
               <div>
-                <strong>Para humano</strong>
+                <strong>Prioridad humana</strong>
                 <small>{readyHumanCount === 1 ? '1 conversación esperando' : `${readyHumanCount} conversaciones esperando`}</small>
-              </div>
-              <ChevronRight size={18} />
-            </button>
-            <button type="button" onClick={() => setAgentMenuSection('ready_advance')}>
-              <span className={styles.agentPriorityRowIcon}>
-                <CalendarDays size={19} />
-              </span>
-              <div>
-                <strong>Para agendar o comprar</strong>
-                <small>{readyAdvanceCount === 1 ? '1 conversación lista' : `${readyAdvanceCount} conversaciones listas`}</small>
               </div>
               <ChevronRight size={18} />
             </button>
@@ -11268,7 +11245,7 @@ export const PhoneChat: React.FC = () => {
                     {sheet === 'settings' && 'Ajustes del chat'}
                     {sheet === 'newChat' && 'Nuevo chat'}
                     {sheet === 'chatMore' && (chatMoreMode === 'agentControls' ? 'Acciones del chatbot' : 'Más acciones')}
-                    {sheet === 'agentMenu' && (agentMenuSection === 'ready_human' ? 'Listas para humano' : agentMenuSection === 'ready_advance' ? 'Listas para avanzar' : 'Agente conversacional')}
+                    {sheet === 'agentMenu' && (agentMenuSection === 'ready_human' ? 'Prioridad humana' : 'Agente conversacional')}
                     {sheet === 'schedule' && (scheduleEditingMessageId ? 'Editar programación' : 'Programar mensaje')}
                   </h2>
                 </div>

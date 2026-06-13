@@ -4,7 +4,8 @@ import assert from 'node:assert/strict'
 import {
   getAgentReplyDeliveryPartDelayMs,
   mergeAdvancedClosingContext,
-  normalizeAgentReplyDelivery
+  normalizeAgentReplyDelivery,
+  normalizeConversationalSuccessAction
 } from '../src/services/conversationalAgentService.js'
 import {
   buildReplyPartDelaySchedule,
@@ -37,6 +38,12 @@ test('normaliza la entrega de respuestas en partes', () => {
   assert.equal(delivery.maxBubbles, 10)
   assert.equal(delivery.minDelaySeconds, 3)
   assert.equal(delivery.maxDelaySeconds, 12)
+})
+
+test('normaliza acciones redundantes del agente a humano', () => {
+  for (const action of ['book_appointment', 'ready_for_human', 'ready_to_buy', 'internal_signal', 'none', '', null]) {
+    assert.equal(normalizeConversationalSuccessAction(action), 'ready_for_human')
+  }
 })
 
 test('calcula una pausa entre partes dentro del rango configurado', () => {

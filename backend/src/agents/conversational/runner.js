@@ -170,8 +170,6 @@ function describeObjectiveFinal(config = {}) {
 }
 
 function resolveAdvanceToolName(config = {}) {
-  if (config.successAction === 'book_appointment') return 'book_appointment'
-  if (config.successAction === 'none') return 'stay_silent'
   return 'mark_ready_to_advance'
 }
 

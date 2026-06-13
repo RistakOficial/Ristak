@@ -13,20 +13,10 @@ const OBJECTIVE_TEXTS = {
 }
 
 const SUCCESS_ACTION_TEXTS = {
-  book_appointment: `Cuando la persona esté lista para agendar:
-- Usa list_calendars y get_free_slots para ofrecer SOLO horarios reales disponibles. Nunca inventes horarios.
-- Propón máximo 2-3 opciones concretas de horario.
-- Cuando la persona confirme un horario, ejecuta book_appointment con ese horario exacto.
-- Después de agendar, confirma con un mensaje corto y natural con la fecha y hora reales de la cita. No agregues más conversación.`,
   ready_for_human: `Cuando la persona esté lista para avanzar:
 - Ejecuta mark_ready_to_advance con el resumen de la conversación.
-- NO escribas un mensaje final largo después de ejecutarla; el sistema toma el control. Si necesitas cerrar, una frase mínima y natural basta.`,
-  ready_to_buy: `Cuando la persona esté lista para comprar:
-- Ejecuta mark_ready_to_advance con el resumen y la intención detectada.
-- NO escribas un mensaje final largo después de ejecutarla; el sistema toma el control. Si necesitas cerrar, una frase mínima y natural basta.`,
-  internal_signal: `Cuando la persona esté lista para avanzar:
-- Ejecuta mark_ready_to_advance con el resumen y la intención detectada.
-- NO escribas un mensaje final largo después; el sistema toma el control con una señal interna.`
+- El chat aparecerá como prioridad roja para que un humano lo atienda.
+- NO escribas un mensaje final largo después de ejecutarla; el sistema toma el control. Si necesitas cerrar, una frase mínima y natural basta.`
 }
 
 /**

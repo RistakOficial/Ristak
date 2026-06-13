@@ -7250,13 +7250,13 @@
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  color: #1d4ed8;
-  background: #dbeafe;
+  color: #b91c1c;
+  background: #fee2e2;
 }
 
 .phoneChatPage[data-phone-chat-tone="dark"] .agentPriorityRowIcon {
-  color: #93c5fd;
-  background: rgba(37, 99, 235, 0.22);
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.22);
 }
 
 .chatMoreAgent {

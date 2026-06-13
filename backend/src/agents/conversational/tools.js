@@ -12,6 +12,7 @@ import {
   applyAgentSuccessExtras,
   updateConversationClosingContext
 } from '../../services/conversationalAgentService.js'
+import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 
 /**
  * Tools del agente conversacional. Se crean por ejecución con una factory
@@ -30,14 +31,30 @@ function pushAction(ctx, type, detail = {}) {
 }
 
 function resolveAdvanceSignal(config) {
-  if (config.successAction === 'none') return null
-  if (config.successAction === 'ready_for_human') return 'ready_for_human'
-  if (config.successAction === 'ready_to_buy') return 'ready_to_buy'
-  if (config.successAction === 'book_appointment') return 'ready_to_schedule'
-  // internal_signal: depende del objetivo configurado
-  if (config.objective === 'citas') return 'ready_to_schedule'
-  if (config.objective === 'ventas' || config.objective === 'detectar') return 'ready_to_buy'
   return 'ready_for_human'
+}
+
+async function notifyHumanPriority(ctx, { reason = '', summary = '', signal = 'ready_for_human' } = {}) {
+  if (ctx.dryRun || !ctx.contactId || signal === 'discarded') return
+  try {
+    const result = await sendConversationalAgentPriorityNotification({
+      contactId: ctx.contactId,
+      reason,
+      summary,
+      signal
+    })
+    await recordConversationalAgentEvent({
+      contactId: ctx.contactId,
+      eventType: 'priority_push_notification',
+      detail: { signal, sent: result?.sent || 0, skipped: Boolean(result?.skipped), reason: result?.reason || null }
+    })
+  } catch (error) {
+    await recordConversationalAgentEvent({
+      contactId: ctx.contactId,
+      eventType: 'priority_push_notification_failed',
+      detail: { signal, error: error.message }
+    })
+  }
 }
 
 export function createConversationalTools(ctx) {
@@ -301,6 +318,11 @@ export function createConversationalTools(ctx) {
           summary: `${finalTitle} · ${start.toISOString()}`,
           status: 'completed'
         })
+        await notifyHumanPriority(ctx, {
+          reason: 'Cita agendada por el agente',
+          summary: `${finalTitle} · ${start.toISOString()}`,
+          signal: 'appointment_booked'
+        })
         await recordConversationalAgentEvent({
           contactId: ctx.contactId,
           eventType: 'appointment_booked',
@@ -332,6 +354,11 @@ export function createConversationalTools(ctx) {
           summary: [resumen, siguientePaso ? `Siguiente paso: ${siguientePaso}` : ''].filter(Boolean).join(' · '),
           status: 'completed'
         })
+        await notifyHumanPriority(ctx, {
+          reason: intencionDetectada,
+          summary: [resumen, siguientePaso ? `Siguiente paso: ${siguientePaso}` : ''].filter(Boolean).join(' · '),
+          signal
+        })
       } else {
         // Acción "no hacer nada": el agente cumplió y solo deja registro
         await setConversationStatus(ctx.contactId, 'completed', { updatedBy: 'agent' })
@@ -362,6 +389,7 @@ export function createConversationalTools(ctx) {
         summary: resumen,
         status: 'human'
       })
+      await notifyHumanPriority(ctx, { reason: motivo, summary: resumen, signal: 'ready_for_human' })
       return { ok: true, signal: 'ready_for_human', note: 'Un humano seguirá la conversación. Si hace falta, cierra con una frase breve y natural (ej. que en un momento le confirmas).' }
     }
   })
@@ -416,9 +444,5 @@ export function createConversationalTools(ctx) {
   // Disponibilidad y agenda: lectura siempre (para responder horarios reales);
   // escritura solo si el negocio configuró agenda directa.
   tools.push(listCalendarsTool, getFreeSlotsTool)
-  if (config.successAction === 'book_appointment') {
-    tools.push(bookAppointmentTool)
-  }
-
   return tools
 }

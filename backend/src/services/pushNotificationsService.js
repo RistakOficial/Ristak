@@ -867,6 +867,40 @@ export async function sendChatMessageNotification(message = {}) {
   return sendAppNotificationPayload(payload)
 }
 
+export async function sendConversationalAgentPriorityNotification(signal = {}) {
+  if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
+
+  const enabled = await getBooleanPushConfig('chat_push_notifications_enabled', true)
+  if (!enabled) return { sent: 0, skipped: true, reason: 'disabled' }
+
+  const contactId = String(signal.contactId || '').trim()
+  if (!contactId) return { sent: 0, skipped: true, reason: 'missing_contact' }
+
+  const contact = await db.get(
+    'SELECT full_name, first_name, phone FROM contacts WHERE id = ?',
+    [contactId]
+  ).catch(() => null)
+  const senderName = getChatSenderName({
+    contactName: contact?.full_name || contact?.first_name || '',
+    phone: contact?.phone || ''
+  })
+  const reason = cleanNotificationText(signal.reason || signal.summary)
+  const body = reason
+    ? `${senderName}: ${reason}`
+    : `${senderName}: el agente lo dejó en prioridad para humano.`
+  const payload = {
+    title: 'Pasar a un humano',
+    body,
+    tag: `agent-priority-${contactId}`,
+    messageId: `agent-priority-${contactId}-${Date.now()}`,
+    contactId,
+    url: `/phone/chat?contact=${encodeURIComponent(contactId)}`,
+    category: 'chat'
+  }
+
+  return sendAppNotificationPayload(payload)
+}
+
 export async function sendPaymentNotification(payment = {}) {
   if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
 

@@ -30,15 +30,12 @@ export const CONVERSATIONAL_OBJECTIVES = [
 ]
 
 export const SUCCESS_ACTIONS = [
-  { id: 'book_appointment', label: 'Agendar directamente' },
-  { id: 'ready_for_human', label: 'Marcar lista para humano' },
-  { id: 'ready_to_buy', label: 'Marcar lista para comprar' },
-  { id: 'internal_signal', label: 'Solo crear señal interna' },
-  { id: 'none', label: 'No hacer nada' }
+  { id: 'ready_for_human', label: 'Pasar a un humano' }
 ]
 
 const VALID_OBJECTIVES = new Set(CONVERSATIONAL_OBJECTIVES.map((item) => item.id))
 const VALID_SUCCESS_ACTIONS = new Set(SUCCESS_ACTIONS.map((item) => item.id))
+const DEFAULT_SUCCESS_ACTION = 'ready_for_human'
 const VALID_STATUSES = new Set(['active', 'paused', 'human', 'skipped', 'completed', 'discarded'])
 const DEFAULT_CONVERSATIONAL_AGENT_MODEL = process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || 'gpt-5.4-nano'
 const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
@@ -99,6 +96,10 @@ export function normalizeConversationalAgentModel(value) {
   return AI_MODEL_ID_PATTERN.test(model) ? model : DEFAULT_CONVERSATIONAL_AGENT_MODEL
 }
 
+export function normalizeConversationalSuccessAction() {
+  return DEFAULT_SUCCESS_ACTION
+}
+
 function mapConfigRow(row) {
   if (!row) {
     return {
@@ -106,7 +107,7 @@ function mapConfigRow(row) {
       model: DEFAULT_CONVERSATIONAL_AGENT_MODEL,
       objective: 'citas',
       customObjective: '',
-      successAction: 'ready_for_human',
+      successAction: DEFAULT_SUCCESS_ACTION,
       requiredData: '',
       handoffRules: '',
       extraInstructions: '',
@@ -125,7 +126,7 @@ function mapConfigRow(row) {
     model: normalizeConversationalAgentModel(row.model),
     objective: VALID_OBJECTIVES.has(row.objective) ? row.objective : 'citas',
     customObjective: row.custom_objective || '',
-    successAction: VALID_SUCCESS_ACTIONS.has(row.success_action) ? row.success_action : 'ready_for_human',
+    successAction: VALID_SUCCESS_ACTIONS.has(row.success_action) ? row.success_action : DEFAULT_SUCCESS_ACTION,
     requiredData: row.required_data || '',
     handoffRules: row.handoff_rules || '',
     extraInstructions: row.extra_instructions || '',
@@ -154,7 +155,7 @@ export async function saveConversationalAgentConfig(input = {}) {
     model: input.model === undefined ? current.model : normalizeConversationalAgentModel(input.model),
     objective: VALID_OBJECTIVES.has(input.objective) ? input.objective : current.objective,
     customObjective: input.customObjective === undefined ? current.customObjective : String(input.customObjective || '').slice(0, 2000),
-    successAction: VALID_SUCCESS_ACTIONS.has(input.successAction) ? input.successAction : current.successAction,
+    successAction: normalizeConversationalSuccessAction(input.successAction === undefined ? current.successAction : input.successAction),
     requiredData: input.requiredData === undefined ? current.requiredData : String(input.requiredData || '').slice(0, 2000),
     handoffRules: input.handoffRules === undefined ? current.handoffRules : String(input.handoffRules || '').slice(0, 4000),
     extraInstructions: input.extraInstructions === undefined ? current.extraInstructions : String(input.extraInstructions || '').slice(0, 8000),
@@ -777,7 +778,7 @@ function mapAgentRow(row) {
     position: Number(row.position) || 0,
     objective: VALID_OBJECTIVES.has(row.objective) ? row.objective : 'citas',
     customObjective: row.custom_objective || '',
-    successAction: VALID_SUCCESS_ACTIONS.has(row.success_action) ? row.success_action : 'ready_for_human',
+    successAction: VALID_SUCCESS_ACTIONS.has(row.success_action) ? row.success_action : DEFAULT_SUCCESS_ACTION,
     successExtras: normalizeSuccessExtras(parseJsonField(row.success_extras, [])),
     requiredData: row.required_data || '',
     handoffRules: row.handoff_rules || '',
@@ -821,7 +822,7 @@ export async function ensureAgentsMigration() {
     normalizeConversationalAgentModel(legacy.model),
     VALID_OBJECTIVES.has(legacy.objective) ? legacy.objective : 'citas',
     legacy.custom_objective || '',
-    VALID_SUCCESS_ACTIONS.has(legacy.success_action) ? legacy.success_action : 'ready_for_human',
+    DEFAULT_SUCCESS_ACTION,
     legacy.required_data || '',
     legacy.handoff_rules || '',
     legacy.extra_instructions || '',
@@ -860,7 +861,7 @@ function agentInputToRowValues(input, base) {
     position: input.position === undefined ? base.position : Number(input.position) || 0,
     objective: VALID_OBJECTIVES.has(input.objective) ? input.objective : base.objective,
     customObjective: input.customObjective === undefined ? base.customObjective : String(input.customObjective || '').slice(0, 2000),
-    successAction: VALID_SUCCESS_ACTIONS.has(input.successAction) ? input.successAction : base.successAction,
+    successAction: normalizeConversationalSuccessAction(input.successAction === undefined ? base.successAction : input.successAction),
     successExtras: input.successExtras === undefined ? base.successExtras : normalizeSuccessExtras(input.successExtras),
     requiredData: input.requiredData === undefined ? base.requiredData : String(input.requiredData || '').slice(0, 2000),
     handoffRules: input.handoffRules === undefined ? base.handoffRules : String(input.handoffRules || '').slice(0, 4000),
@@ -893,7 +894,7 @@ const DEFAULT_AGENT_BASE = {
   position: 0,
   objective: 'citas',
   customObjective: '',
-  successAction: 'ready_for_human',
+  successAction: DEFAULT_SUCCESS_ACTION,
   successExtras: [],
   requiredData: '',
   handoffRules: '',
