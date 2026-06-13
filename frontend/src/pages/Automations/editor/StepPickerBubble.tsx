@@ -41,9 +41,11 @@ interface StepPickerBubbleProps {
   kind: NodeKind
   /**
    * anchored: globo cerca del punto (drop, doble clic, disparadores).
-   * docked: panel amplio fijo del lado derecho (botón "+").
+   * docked: panel amplio fijo del lado derecho para usos heredados.
    */
   variant: 'anchored' | 'docked'
+  /** Alinea el globo debajo del borde derecho del punto de anclaje. */
+  placement?: 'point' | 'below-end'
   anchor: StepPickerAnchor
   /** Tamaño del contenedor para no salirse de la pantalla */
   bounds: { width: number; height: number }
@@ -64,12 +66,14 @@ interface PickerSection {
   items: NodeDefinition[]
 }
 
-const ANCHORED_WIDTH = 400
-const DOCKED_WIDTH = 460
+const ANCHORED_WIDTH = 460
+const DOCKED_WIDTH = 500
+const EDGE_GUTTER = 12
 
 export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
   kind,
   variant,
+  placement = 'point',
   anchor,
   bounds,
   connectLabel,
@@ -184,11 +188,25 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
     width: Math.min(DOCKED_WIDTH, bounds.width - 32),
     height: Math.min(bounds.height * 0.84, bounds.height - 32)
   }
+  const anchoredWidth = Math.min(ANCHORED_WIDTH, Math.max(320, bounds.width - EDGE_GUTTER * 2))
+  const anchoredVisibleHeight = Math.min(190, Math.max(90, bounds.height - EDGE_GUTTER * 2))
+  const anchoredLeft =
+    placement === 'below-end'
+      ? anchor.x - anchoredWidth
+      : anchor.x
+  const anchoredTop =
+    placement === 'below-end'
+      ? Math.max(EDGE_GUTTER, Math.min(anchor.y, bounds.height - anchoredVisibleHeight - EDGE_GUTTER))
+      : Math.max(EDGE_GUTTER, Math.min(anchor.y, bounds.height - Math.min(560, bounds.height - EDGE_GUTTER * 2) - EDGE_GUTTER))
+  const anchoredMaxHeight =
+    placement === 'below-end'
+      ? Math.max(90, Math.min(620, bounds.height - anchoredTop - EDGE_GUTTER))
+      : Math.min(560, bounds.height - EDGE_GUTTER * 2)
   const anchoredStyle: React.CSSProperties = {
-    left: Math.max(12, Math.min(anchor.x, bounds.width - ANCHORED_WIDTH - 12)),
-    top: Math.max(12, Math.min(anchor.y, bounds.height - Math.min(540, bounds.height - 24) - 12)),
-    width: ANCHORED_WIDTH,
-    maxHeight: Math.min(540, bounds.height - 24)
+    left: Math.max(EDGE_GUTTER, Math.min(anchoredLeft, bounds.width - anchoredWidth - EDGE_GUTTER)),
+    top: anchoredTop,
+    width: anchoredWidth,
+    maxHeight: anchoredMaxHeight
   }
 
   let runningIndex = -1
@@ -197,7 +215,11 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
     <div
       ref={rootRef}
       data-automation-interactive="true"
-      className={cn(styles.bubble, variant === 'docked' && styles.bubbleDocked)}
+      className={cn(
+        styles.bubble,
+        variant === 'docked' && styles.bubbleDocked,
+        placement === 'below-end' && styles.bubbleBelowEnd
+      )}
       style={variant === 'docked' ? dockedStyle : anchoredStyle}
       role="dialog"
       aria-label="Agregar paso"
@@ -215,12 +237,12 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
           </div>
         </div>
         <button type="button" className={styles.bubbleClose} onClick={onClose} title="Cerrar (Esc)">
-          <X size={14} />
+          <X size={16} />
         </button>
       </div>
 
       <div className={styles.bubbleSearchRow}>
-        <Search size={14} style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} />
+        <Search size={16} style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} />
         <input
           ref={searchRef}
           className={styles.bubbleSearch}
@@ -242,7 +264,7 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
               onClick={onSelectStartStep}
             >
               <span className={styles.pickerItemIcon}>
-                <Play size={14} />
+                <Play size={16} />
               </span>
               <span className={styles.pickerItemLabel}>
                 Disparador
@@ -250,7 +272,7 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
                   Añade un evento que inicia la automatización
                 </span>
               </span>
-              <ChevronRight size={13} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
+              <ChevronRight size={15} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
             </button>
           </div>
         )}
@@ -274,7 +296,7 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
                   onClick={() => onSelect(definition)}
                 >
                   <span className={styles.pickerItemIcon}>
-                    <definition.icon size={14} />
+                    <definition.icon size={16} />
                   </span>
                   <span className={styles.pickerItemLabel}>
                     {definition.label}
@@ -282,7 +304,7 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
                       <span className={styles.pickerItemDescription}>{definition.description}</span>
                     )}
                   </span>
-                  <ChevronRight size={13} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
+                  <ChevronRight size={15} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
                 </button>
               )
             })}
@@ -297,7 +319,7 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
             checked={Boolean(connectEnabled)}
             onChange={(event) => onToggleConnect(event.target.checked)}
           />
-          <Link2 size={13} style={{ color: 'var(--color-text-tertiary)' }} />
+          <Link2 size={14} style={{ color: 'var(--color-text-tertiary)' }} />
           {connectLabel}
         </label>
       )}
