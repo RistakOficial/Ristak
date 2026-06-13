@@ -27,6 +27,7 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/domains', label: 'Dominios' },
   { to: '/settings/costs', label: 'Costos' },
   { to: '/settings/custom-fields', label: 'Campos personalizados' },
+  { to: '/settings/variable-fields', label: 'Campos variables' },
   { to: '/settings/trigger-links', label: 'Enlaces de disparo' },
   { to: '/settings/tags', label: 'Etiquetas' },
   { to: '/settings/api-access', label: 'Acceso API' }

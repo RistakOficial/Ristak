@@ -165,6 +165,18 @@ export function validateFlowForPublish(flow) {
       }
     })
 
+  nodes
+    .filter((node) => node.type === 'logic-wait')
+    .forEach((node) => {
+      const config = isPlainObject(node.config) ? node.config : {}
+      if (config.mode !== 'action') return
+      const expectedAction = String(config.expectedAction || 'click_link')
+      if (expectedAction !== 'click_link') return
+      if (!String(config.actionResource || config.link || config.triggerLinkId || '').trim()) {
+        errors.push('El paso Esperar necesita un clic de disparo seleccionado')
+      }
+    })
+
   // Canales no soportados (SMS, Email…) en cualquier configuración
   const invalidChannels = new Set()
   const collectChannels = (config) => {

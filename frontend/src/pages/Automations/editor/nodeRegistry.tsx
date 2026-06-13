@@ -1824,6 +1824,9 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       if (mode === 'action' && !str(config.expectedAction)) {
         errors.push('Selecciona la acción esperada')
       }
+      if (mode === 'action' && (str(config.expectedAction) || 'click_link') === 'click_link' && !str(config.actionResource)) {
+        errors.push('Selecciona el clic de disparo')
+      }
       if (mode === 'conditions') {
         errors.push(...validateAdvancedCondition(config.conditions).map((error) => `Condición: ${error}`))
       }

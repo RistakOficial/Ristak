@@ -20,6 +20,12 @@ import {
   updateTriggerLinkHandler
 } from '../controllers/triggerLinksController.js';
 import {
+  createVariableFieldHandler,
+  deleteVariableFieldHandler,
+  listVariableFieldsHandler,
+  updateVariableFieldHandler
+} from '../controllers/variableFieldsController.js';
+import {
   createMessageTemplateView,
   createTemplateCustomFieldView,
   createTemplateFolderView,
@@ -56,6 +62,12 @@ router.delete('/custom-fields/:definitionId', deleteCustomField);
 router.post('/custom-field-folders', createCustomFieldFolder);
 router.put('/custom-field-folders/:folderId', updateCustomFieldFolder);
 router.delete('/custom-field-folders/:folderId', archiveCustomFieldFolder);
+
+// Variable fields / campos variables
+router.get('/variable-fields', listVariableFieldsHandler);
+router.post('/variable-fields', createVariableFieldHandler);
+router.put('/variable-fields/:variableFieldId', updateVariableFieldHandler);
+router.delete('/variable-fields/:variableFieldId', deleteVariableFieldHandler);
 
 // Trigger links / enlaces de disparo
 router.get('/trigger-links', listTriggerLinksHandler);

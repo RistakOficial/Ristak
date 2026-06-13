@@ -123,6 +123,7 @@
 
 .portalDropdown {
   position: fixed;
+  z-index: var(--z-index-tooltip, 10100);
 }
 
 .searchWrap {

@@ -11,6 +11,7 @@ import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js';
 import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
 import { sendPaymentNotification } from '../services/pushNotificationsService.js';
 import { markHumanTakeoverIfActive } from '../services/conversationalAgentService.js';
+import { renderTemplateVariables } from '../services/templateVariablesService.js';
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
 import {
@@ -2367,6 +2368,15 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
   const highLevelContactId = await resolveHighLevelContactIdForChat({ contact, ghlClient });
   const cleanFromNumber = normalizePhoneForStorage(fromNumber) || cleanString(fromNumber);
   const cleanToNumber = normalizePhoneForStorage(toNumber || contact.phone) || cleanString(toNumber || contact.phone);
+  const renderedText = await renderTemplateVariables(text, {
+    contactId: contact.id,
+    phone: cleanToNumber,
+    userId: req?.user?.userId,
+    publicBaseUrl: req ? getPublicBaseUrl(req) : undefined
+  });
+  if (!cleanString(renderedText) && resolvedAttachmentUrls.length === 0) {
+    throw createHighLevelChatError('El mensaje quedó vacío después de resolver parámetros.');
+  }
   const channelResolution = await resolveHighLevelChatChannelForReply({
     requestedChannel: channelConfig,
     contact,
@@ -2378,7 +2388,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     type: effectiveChannel.type,
     contactId: highLevelContactId,
     status: 'pending',
-    ...(text && { message: text }),
+    ...(renderedText && { message: renderedText }),
     ...(resolvedAttachmentUrls.length > 0 && { attachments: resolvedAttachmentUrls }),
     ...(cleanFromNumber && { fromNumber: cleanFromNumber }),
     ...(cleanToNumber && { toNumber: cleanToNumber }),
@@ -2389,7 +2399,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     ? await saveHighLevelMetaMirror({
         contact,
         channel: effectiveChannel,
-        text,
+        text: renderedText,
         attachments: resolvedAttachmentUrls,
         externalId,
         requestBody,
@@ -2398,7 +2408,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     : await saveHighLevelWhatsAppMirror({
         contact,
         channel: effectiveChannel,
-        text,
+        text: renderedText,
         attachments: resolvedAttachmentUrls,
         fromNumber: cleanFromNumber,
         toNumber: cleanToNumber,

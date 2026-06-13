@@ -24,6 +24,7 @@ import { decrypt, encrypt } from '../utils/encryption.js'
 import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
 import { logger } from '../utils/logger.js'
+import { renderTemplateVariables } from './templateVariablesService.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -4330,6 +4331,20 @@ async function saveTemplateSend({ template, requestBody, response, variables }) 
   return id
 }
 
+async function renderOutgoingVariables(value, options = {}) {
+  if (Array.isArray(value)) {
+    return Promise.all(value.map((item) => renderTemplateVariables(String(item ?? ''), options)))
+  }
+  if (value && typeof value === 'object') {
+    const entries = await Promise.all(Object.entries(value).map(async ([key, item]) => [
+      key,
+      await renderTemplateVariables(String(item ?? ''), options)
+    ]))
+    return Object.fromEntries(entries)
+  }
+  return value
+}
+
 export async function sendWhatsAppApiTemplateMessage({
   to,
   from,
@@ -4339,6 +4354,10 @@ export async function sendWhatsAppApiTemplateMessage({
   components,
   variables,
   externalId,
+  contactId,
+  userId,
+  publicBaseUrl,
+  extraVariables,
   phoneNumberId
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
@@ -4368,7 +4387,14 @@ export async function sendWhatsAppApiTemplateMessage({
     throw new Error(`La plantilla ${finalTemplate.name} esta ${finalTemplate.status}; solo se pueden enviar plantillas APPROVED`)
   }
 
-  const templateComponents = buildTemplateComponents({ components, variables })
+  const renderedVariables = await renderOutgoingVariables(variables, {
+    contactId,
+    phone: toPhone,
+    userId,
+    publicBaseUrl,
+    extraVariables
+  })
+  const templateComponents = buildTemplateComponents({ components, variables: renderedVariables })
 
   if (!config.enabled || !config.apiKey) {
     throw new Error('WhatsApp_API no esta conectado')
@@ -4376,7 +4402,7 @@ export async function sendWhatsAppApiTemplateMessage({
 
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   if (!fromPhone) throw new Error('Falta el numero emisor de WhatsApp_API')
-  const normalizedVariables = normalizeTemplateVariables(variables)
+  const normalizedVariables = normalizeTemplateVariables(renderedVariables)
   const requestBody = {
     from: fromPhone,
     to: toPhone,
@@ -4734,11 +4760,29 @@ async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioD
   }
 }
 
-export async function sendWhatsAppApiTextMessage({ to, text, from, externalId, transport = 'api', phoneNumberId } = {}) {
+export async function sendWhatsAppApiTextMessage({
+  to,
+  text,
+  from,
+  externalId,
+  transport = 'api',
+  contactId,
+  userId,
+  publicBaseUrl,
+  extraVariables,
+  phoneNumberId
+} = {}) {
   const config = await loadConfig({ includeSecrets: true })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
-  const body = cleanString(text)
+  const renderedText = await renderTemplateVariables(text, {
+    contactId,
+    phone: toPhone || to,
+    userId,
+    publicBaseUrl,
+    extraVariables
+  })
+  const body = cleanString(renderedText)
   const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
 
   if (!toPhone) throw new Error('Falta el número destino')
@@ -4842,6 +4886,9 @@ export async function sendWhatsAppApiImageMessage({
   caption,
   externalId,
   transport = 'api',
+  contactId,
+  userId,
+  extraVariables,
   publicBaseUrl,
   phoneNumberId
 } = {}) {
@@ -4853,7 +4900,14 @@ export async function sendWhatsAppApiImageMessage({
 
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
-  const cleanCaption = cleanString(caption).slice(0, 1024)
+  const renderedCaption = await renderTemplateVariables(caption, {
+    contactId,
+    phone: toPhone || to,
+    userId,
+    publicBaseUrl,
+    extraVariables
+  })
+  const cleanCaption = cleanString(renderedCaption).slice(0, 1024)
   const cleanImageUrl = cleanString(imageUrl)
 
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
@@ -4992,6 +5046,9 @@ export async function sendWhatsAppApiDocumentMessage({
   caption,
   externalId,
   transport = 'api',
+  contactId,
+  userId,
+  extraVariables,
   publicBaseUrl,
   phoneNumberId
 } = {}) {
@@ -5003,7 +5060,14 @@ export async function sendWhatsAppApiDocumentMessage({
 
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
-  const cleanCaption = cleanString(caption).slice(0, 1024)
+  const renderedCaption = await renderTemplateVariables(caption, {
+    contactId,
+    phone: toPhone || to,
+    userId,
+    publicBaseUrl,
+    extraVariables
+  })
+  const cleanCaption = cleanString(renderedCaption).slice(0, 1024)
   const cleanDocumentUrl = cleanString(documentUrl)
 
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')

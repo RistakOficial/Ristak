@@ -13,6 +13,7 @@ import { APIAccessSettings } from './APIAccessSettings'
 import { Domains } from './Domains'
 import { MobileAppSettings } from './MobileAppSettings'
 import { CustomFields } from './CustomFields'
+import { VariableFields } from './VariableFields'
 import { TriggerLinks } from './TriggerLinks'
 import { TagsSettings } from './TagsSettings'
 import styles from './Settings.module.css'
@@ -37,6 +38,7 @@ export const Settings: React.FC = () => {
             <Route path="domains/*" element={<Domains />} />
             <Route path="payments/*" element={<PaymentsConfiguration />} />
             <Route path="custom-fields/*" element={<CustomFields />} />
+            <Route path="variable-fields/*" element={<VariableFields />} />
             <Route path="trigger-links/*" element={<TriggerLinks />} />
             <Route path="tags" element={<TagsSettings />} />
             <Route path="ai-agent" element={<Navigate to="/ai-agent/general" replace />} />

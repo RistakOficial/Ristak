@@ -247,6 +247,9 @@ export async function sendWhatsAppApiTextMessageView(req, res) {
       text: req.body?.text,
       externalId: req.body?.externalId,
       transport: req.body?.transport,
+      contactId: req.body?.contactId,
+      userId: req.user?.userId,
+      publicBaseUrl: getPublicBaseUrl(req),
       phoneNumberId: req.body?.phoneNumberId
     })
     notifyHumanTakeover(req.body?.to)
@@ -326,6 +329,8 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
       caption: req.body?.caption,
       externalId: req.body?.externalId,
       transport: req.body?.transport,
+      contactId: req.body?.contactId,
+      userId: req.user?.userId,
       phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req)
     })
@@ -352,6 +357,8 @@ export async function sendWhatsAppApiDocumentMessageView(req, res) {
       caption: req.body?.caption,
       externalId: req.body?.externalId,
       transport: req.body?.transport,
+      contactId: req.body?.contactId,
+      userId: req.user?.userId,
       phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req)
     })
@@ -418,6 +425,9 @@ export async function sendWhatsAppApiTemplateMessageView(req, res) {
       components: req.body?.components,
       variables: req.body?.variables,
       externalId: req.body?.externalId,
+      contactId: req.body?.contactId,
+      userId: req.user?.userId,
+      publicBaseUrl: getPublicBaseUrl(req),
       phoneNumberId: req.body?.phoneNumberId
     })
     notifyHumanTakeover(req.body?.to)

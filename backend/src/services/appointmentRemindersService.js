@@ -343,6 +343,7 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
             to: appointment.phone,
             text,
             from: sender.fromPhone || undefined,
+            contactId: appointment.contact_id,
             phoneNumberId: sender.phoneNumberId || undefined,
             transport: sender.transport
           })
@@ -350,12 +351,13 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
           // Si la API oficial no está conectada, intentar por WhatsApp Web (QR).
           if (sender.transport === 'api' && /no está conectado/i.test(error.message || '')) {
             response = await sendWhatsAppApiTextMessage({
-              to: appointment.phone,
-              text,
-              from: sender.fromPhone || undefined,
-              phoneNumberId: sender.phoneNumberId || undefined,
-              transport: 'qr'
-            })
+            to: appointment.phone,
+            text,
+            from: sender.fromPhone || undefined,
+            contactId: appointment.contact_id,
+            phoneNumberId: sender.phoneNumberId || undefined,
+            transport: 'qr'
+          })
           } else {
             throw error
           }

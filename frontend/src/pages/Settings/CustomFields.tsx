@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   ChevronRight,
+  Copy,
   Edit3,
   Folder,
   FolderPlus,
@@ -111,6 +112,8 @@ const getFolderTargetId = (folderId: FolderFilter) => (
   folderId === 'unfiled' || folderId === 'all' ? '' : folderId
 )
 
+const customFieldParameter = (field: Pick<CustomFieldDefinition, 'fieldKey' | 'key'>) => `{{custom.${field.fieldKey || field.key}}}`
+
 export const CustomFields: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [folders, setFolders] = useState<CustomFieldFolder[]>([])
@@ -179,6 +182,7 @@ export const CustomFields: React.FC = () => {
       return [
         field.label,
         field.fieldKey,
+        customFieldParameter(field),
         field.description,
         field.folderName,
         getTypeLabel(field.dataType)
@@ -251,6 +255,15 @@ export const CustomFields: React.FC = () => {
     setDraft(current => ({ ...current, ...patch }))
   }
 
+  const copyText = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      showToast('success', 'Copiado', `${label} copiado.`)
+    } catch {
+      showToast('error', 'No se pudo copiar', 'Cópialo manualmente.')
+    }
+  }
+
   const handleLabelChange = (value: string) => {
     setDraft(current => ({
       ...current,
@@ -270,7 +283,7 @@ export const CustomFields: React.FC = () => {
     }
 
     if (!fieldKey) {
-      showToast('warning', 'Falta ID', 'El ID sirve para guardar el dato dentro del contacto.')
+      showToast('warning', 'Falta parámetro', 'El parámetro sirve para guardar y usar el dato del contacto.')
       return null
     }
 
@@ -592,7 +605,7 @@ export const CustomFields: React.FC = () => {
           <div className={styles.toolbar}>
             <label className={styles.search} data-ristak-unstyled>
               <Search size={16} />
-              <input value={search} placeholder="Buscar por nombre, ID o tipo" onChange={(event) => setSearch(event.target.value)} />
+              <input value={search} placeholder="Buscar por nombre, parámetro o tipo" onChange={(event) => setSearch(event.target.value)} />
             </label>
             <span>{visibleFields.length} campos</span>
           </div>
@@ -647,7 +660,7 @@ export const CustomFields: React.FC = () => {
                       />
                     </th>
                     <th>Campo</th>
-                    <th>ID</th>
+                    <th>Parámetro</th>
                     <th>Tipo</th>
                     <th>Carpeta</th>
                     <th>Opciones</th>
@@ -682,7 +695,7 @@ export const CustomFields: React.FC = () => {
                         <strong>{field.label}</strong>
                         {field.description && <span>{field.description}</span>}
                       </td>
-                      <td><code>{field.fieldKey || field.key}</code></td>
+                      <td><code>{customFieldParameter(field)}</code></td>
                       <td><span className={styles.typePill}>{getTypeLabel(field.dataType)}</span></td>
                       <td>{field.folderName || getFolderName(folders, field.folderId)}</td>
                       <td>{field.options?.length ? `${field.options.length} opciones` : '-'}</td>
@@ -692,6 +705,9 @@ export const CustomFields: React.FC = () => {
                           <span className={styles.lockedAction}>Protegido</span>
                         ) : (
                           <div className={styles.rowActions}>
+                            <button type="button" onClick={() => copyText(customFieldParameter(field), 'Parámetro')} aria-label={`Copiar ${field.label}`} title="Copiar parámetro">
+                              <Copy size={15} />
+                            </button>
                             <button type="button" onClick={() => openEditEditor(field)} aria-label={`Editar ${field.label}`} title="Editar">
                               <Edit3 size={15} />
                             </button>
@@ -731,7 +747,7 @@ export const CustomFields: React.FC = () => {
               </label>
 
               <label className={styles.field}>
-                <span>ID del campo</span>
+                <span>Parámetro</span>
                 <input
                   value={draft.fieldKey}
                   placeholder="presupuesto_mensual"
@@ -742,7 +758,7 @@ export const CustomFields: React.FC = () => {
                     patchDraft({ fieldKey: normalizeFieldKey(event.target.value) })
                   }}
                 />
-                <small>{editingField ? 'Este ID ya quedo fijo. Para usar otro ID, elimina este campo y crea uno nuevo.' : 'Este ID es el nombre interno para guardar el valor.'}</small>
+                <small>{editingField ? `Este parámetro ya quedó fijo: ${customFieldParameter({ fieldKey: draft.fieldKey, key: draft.fieldKey })}` : `Se usará como ${customFieldParameter({ fieldKey: draft.fieldKey || 'campo_personalizado', key: draft.fieldKey || 'campo_personalizado' })}`}</small>
               </label>
 
               <label className={styles.field}>

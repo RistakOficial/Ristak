@@ -76,6 +76,7 @@
 .portalDropdown {
   position: fixed;
   right: auto;
+  z-index: var(--z-index-tooltip, 10100);
 }
 
 @keyframes slideDown {

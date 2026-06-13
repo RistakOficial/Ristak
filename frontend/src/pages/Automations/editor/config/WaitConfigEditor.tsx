@@ -310,14 +310,14 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
           </Field>
           {str(config.expectedAction) === 'click_link' || !str(config.expectedAction) ? (
             <Field
-              label="Clic de disparo (opcional)"
-              help="Si lo dejas vacío, cualquier clic de disparo continúa la espera."
+              label="Clic de disparo"
+              help="Elige el enlace exacto que debe continuar esta espera."
             >
               <CatalogSelect
                 catalog="links"
                 value={str(config.actionResource)}
                 onChange={(value, label) => set({ actionResource: value, actionResourceName: label })}
-                placeholder="Cualquier clic de disparo"
+                placeholder="Selecciona el clic de disparo"
                 aria-label="Clic de disparo"
               />
             </Field>

@@ -1,5 +1,6 @@
 import React from 'react'
 import { getCatalog } from '@/services/automationCatalogsService'
+import { variableFieldsService } from '@/services/variableFieldsService'
 import type {
   AutomationEdge,
   AutomationNode,
@@ -55,6 +56,7 @@ export const FlowVariablesContext = React.createContext<FlowVariableCatalog>({
 export const VARIABLE_CATEGORIES: FlowVariableCategory[] = [
   { id: 'contact', label: 'Contacto' },
   { id: 'custom', label: 'Campos personalizados' },
+  { id: 'variable', label: 'Campos variables' },
   { id: 'conversation', label: 'Conversación' },
   { id: 'appointment', label: 'Citas' },
   { id: 'payment', label: 'Pagos' },
@@ -113,7 +115,10 @@ export const BASE_VARIABLES: FlowVariable[] = [
 /** Variables + campos personalizados reales del CRM (vía adaptador) */
 export async function loadAllVariables(): Promise<FlowVariable[]> {
   try {
-    const customFields = await getCatalog('contactFields')
+    const [customFields, variableFields] = await Promise.all([
+      getCatalog('contactFields'),
+      variableFieldsService.list().catch(() => [])
+    ])
     const custom = customFields
       .filter((field) => field.value.startsWith('custom:'))
       .map((field) => ({
@@ -121,7 +126,12 @@ export async function loadAllVariables(): Promise<FlowVariable[]> {
         label: field.label,
         category: 'custom'
       }))
-    return [...BASE_VARIABLES, ...custom]
+    const accountVariables = variableFields.map((field) => ({
+      fieldId: `variable.${field.fieldKey}`,
+      label: field.label,
+      category: 'variable'
+    }))
+    return [...BASE_VARIABLES, ...custom, ...accountVariables]
   } catch {
     return BASE_VARIABLES
   }

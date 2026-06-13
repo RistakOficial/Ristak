@@ -5930,6 +5930,7 @@ export const PhoneChat: React.FC = () => {
       whatsappApiService.sendImage({
         to: contact.phone || '',
         from: cameraShareBusinessPhoneValue,
+        contactId: contact.id,
         imageDataUrl: photo.dataUrl,
         caption,
         externalId: `camera-share-${Date.now()}-${index}`,
@@ -6104,6 +6105,7 @@ export const PhoneChat: React.FC = () => {
       const result = await whatsappApiService.sendTemplate({
         to: activeContact.phone,
         from: selectedBusinessPhoneValue,
+        contactId: activeContact.id,
         templateId: template.id,
         templateName: template.name,
         language: template.language,
@@ -6791,6 +6793,7 @@ export const PhoneChat: React.FC = () => {
             ? whatsappApiService.sendImage({
                 to: activeContact.phone || '',
                 from: selectedBusinessPhoneValue,
+                contactId: activeContact.id,
                 imageDataUrl: attachment.dataUrl,
                 caption: index === 0 ? text : '',
                 externalId: `${optimisticId}-attachment-${index}`,
@@ -6800,6 +6803,7 @@ export const PhoneChat: React.FC = () => {
             : whatsappApiService.sendDocument({
                 to: activeContact.phone || '',
                 from: selectedBusinessPhoneValue,
+                contactId: activeContact.id,
                 documentDataUrl: attachment.dataUrl,
                 filename: attachment.name,
                 mimeType: attachment.type,
@@ -6837,6 +6841,7 @@ export const PhoneChat: React.FC = () => {
         const result = await whatsappApiService.sendText({
           to: activeContact.phone,
           from: selectedBusinessPhoneValue,
+          contactId: activeContact.id,
           text,
           externalId: optimisticId,
           transport: resolvedTransport,

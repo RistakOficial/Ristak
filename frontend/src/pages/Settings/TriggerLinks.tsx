@@ -44,6 +44,8 @@ const formatDateTime = (value?: string | null) => {
   }).format(date)
 }
 
+const triggerLinkParameter = (link: Pick<TriggerLink, 'publicId'>) => `{{trigger_link.${link.publicId}}}`
+
 export const TriggerLinks: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [links, setLinks] = useState<TriggerLink[]>([])
@@ -78,6 +80,7 @@ export const TriggerLinks: React.FC = () => {
       return [
         link.name,
         link.publicId,
+        triggerLinkParameter(link),
         link.publicUrl,
         link.destinationUrl,
         link.description
@@ -221,7 +224,7 @@ export const TriggerLinks: React.FC = () => {
           <div className={styles.toolbar}>
             <label className={styles.search} data-ristak-unstyled>
               <Search size={16} />
-              <input value={search} placeholder="Buscar por nombre, ID o destino" onChange={(event) => setSearch(event.target.value)} />
+              <input value={search} placeholder="Buscar por nombre, parámetro o destino" onChange={(event) => setSearch(event.target.value)} />
             </label>
             <span>{visibleLinks.length} enlaces</span>
           </div>
@@ -243,7 +246,7 @@ export const TriggerLinks: React.FC = () => {
                 <thead>
                   <tr>
                     <th>Enlace</th>
-                    <th>ID</th>
+                    <th>Parámetro</th>
                     <th>Destino</th>
                     <th>Disparos</th>
                     <th>Último disparo</th>
@@ -257,13 +260,13 @@ export const TriggerLinks: React.FC = () => {
                         <strong>{link.name}</strong>
                         <span>{link.publicUrl}</span>
                       </td>
-                      <td><code>{link.publicId}</code></td>
+                      <td><code>{triggerLinkParameter(link)}</code></td>
                       <td><code>{link.destinationUrl}</code></td>
                       <td>{link.clickCount}</td>
                       <td>{formatDateTime(link.lastClickedAt)}</td>
                       <td>
                         <div className={styles.rowActions}>
-                          <button type="button" onClick={() => copyText(link.publicUrl, 'Enlace público')} aria-label={`Copiar ${link.name}`} title="Copiar">
+                          <button type="button" onClick={() => copyText(triggerLinkParameter(link), 'Parámetro')} aria-label={`Copiar ${link.name}`} title="Copiar parámetro">
                             <Copy size={15} />
                           </button>
                           <button type="button" onClick={() => window.open(link.publicUrl, '_blank', 'noopener,noreferrer')} aria-label={`Abrir ${link.name}`} title="Abrir">

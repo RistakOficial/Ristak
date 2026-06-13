@@ -107,6 +107,12 @@ function buildVariableMap(ctx) {
   const contact = ctx.contact || {}
   const custom = contact.customFields || {}
   const map = {
+    first_name: contact.firstName || (contact.fullName || '').split(' ')[0] || '',
+    last_name: contact.lastName || '',
+    full_name: contact.fullName || '',
+    name: contact.fullName || contact.firstName || '',
+    phone: contact.phone || '',
+    email: contact.email || '',
     'contact.first_name': contact.firstName || (contact.fullName || '').split(' ')[0] || '',
     'contact.last_name': contact.lastName || '',
     'contact.full_name': contact.fullName || '',
@@ -124,13 +130,18 @@ function buildVariableMap(ctx) {
   }
   Object.entries(custom).forEach(([key, value]) => {
     map[`contact.custom.${key}`] = String(value ?? '')
+    map[`custom.${key}`] = String(value ?? '')
+    if (map[key] === undefined) map[key] = String(value ?? '')
   })
   return map
 }
 
-export function renderTemplate(text, ctx) {
+export function renderTemplate(text, ctx, { preserveUnknown = false } = {}) {
   const map = buildVariableMap(ctx)
-  return String(text || '').replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_match, token) => map[token] ?? '')
+  return String(text || '').replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, token) => {
+    if (map[token] !== undefined) return map[token]
+    return preserveUnknown ? match : ''
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +536,7 @@ async function sendMediaBlock({ block, to, phoneNumberId, ctx }) {
     sendWhatsAppApiDocumentMessage
   } = await import('./whatsappApiService.js')
 
-  const caption = renderTemplate(str(block.caption), ctx).trim() || undefined
+  const caption = renderTemplate(str(block.caption), ctx, { preserveUnknown: true }).trim() || undefined
   let dataUrl = null
   let externalUrl = null
   let filename = str(block.caption) || 'archivo'
@@ -551,7 +562,7 @@ async function sendMediaBlock({ block, to, phoneNumberId, ctx }) {
   }
 
   if (block.type === 'image') {
-    await sendWhatsAppApiImageMessage({ to, imageDataUrl: dataUrl || undefined, imageUrl: externalUrl || undefined, caption, phoneNumberId })
+    await sendWhatsAppApiImageMessage({ to, imageDataUrl: dataUrl || undefined, imageUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId })
   } else if (block.type === 'audio') {
     await sendWhatsAppApiAudioMessage({
       to,
@@ -570,6 +581,7 @@ async function sendMediaBlock({ block, to, phoneNumberId, ctx }) {
       filename,
       mimeType,
       caption,
+      contactId: ctx.contact?.id,
       phoneNumberId
     })
   }
@@ -609,7 +621,7 @@ async function sendWhatsAppBlocks(node, ctx) {
         const rawVariables = block.templateVariables || {}
         const variables = {}
         Object.entries(rawVariables).forEach(([key, value]) => {
-          const rendered = renderTemplate(String(value ?? ''), ctx).trim()
+          const rendered = renderTemplate(String(value ?? ''), ctx, { preserveUnknown: true }).trim()
           if (rendered) variables[key] = rendered
         })
 
@@ -655,6 +667,7 @@ async function sendWhatsAppBlocks(node, ctx) {
           templateId: str(block.templateId) || undefined,
           templateName: str(block.templateName) || undefined,
           ...(components ? { components } : { variables }),
+          contactId: ctx.contact?.id,
           phoneNumberId
         })
         sentNames.push(str(block.templateName) || str(block.templateId))
@@ -671,13 +684,13 @@ async function sendWhatsAppBlocks(node, ctx) {
   const notes = []
   for (const block of blocks) {
     if (block.type === 'text') {
-      const text = renderTemplate(str(block.compiledText), ctx).trim()
+      const text = renderTemplate(str(block.compiledText), ctx, { preserveUnknown: true }).trim()
       if (!text) continue
       const buttons = Array.isArray(block.buttons) ? block.buttons.filter((b) => str(b.label).trim()) : []
       const body = buttons.length
         ? `${text}\n\n${buttons.map((b) => `▸ ${b.label.trim()}`).join('\n')}`
         : text
-      await sendWhatsAppApiTextMessage({ to, text: body, phoneNumberId })
+      await sendWhatsAppApiTextMessage({ to, text: body, contactId: ctx.contact?.id, phoneNumberId })
       sent += 1
     } else if (block.type === 'delay') {
       const seconds = Math.min(

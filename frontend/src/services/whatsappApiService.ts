@@ -170,6 +170,7 @@ export interface WhatsAppApiPhoneNumbersPreviewResponse {
 export interface WhatsAppApiTemplateSendPayload {
   to: string
   from?: string
+  contactId?: string
   templateId?: string
   templateName?: string
   language?: string
@@ -182,6 +183,7 @@ export interface WhatsAppApiTemplateSendPayload {
 export interface WhatsAppApiTextSendPayload {
   to: string
   from?: string
+  contactId?: string
   text: string
   externalId?: string
   transport?: 'api' | 'qr'
@@ -226,6 +228,7 @@ export interface ScheduleChatMessagePayload {
 export interface WhatsAppApiImageSendPayload {
   to: string
   from?: string
+  contactId?: string
   imageDataUrl?: string
   imageUrl?: string
   caption?: string
@@ -237,6 +240,7 @@ export interface WhatsAppApiImageSendPayload {
 export interface WhatsAppApiDocumentSendPayload {
   to: string
   from?: string
+  contactId?: string
   documentDataUrl?: string
   documentUrl?: string
   filename?: string
