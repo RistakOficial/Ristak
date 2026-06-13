@@ -15,6 +15,8 @@ import {
   consumeSetupToken
 } from '../services/licenseService.js'
 import { saveAccountLocaleSettings } from '../utils/accountLocale.js'
+import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { getEffectiveAccessConfig } from '../utils/userAccess.js'
 
 function cleanProfileText(value, maxLength = 160) {
   if (value === undefined || value === null) return ''
@@ -39,7 +41,8 @@ function serializeAuthUser(user) {
     fullName,
     phone: cleanProfileText(user.phone, 40),
     businessName: cleanProfileText(user.business_name),
-    role: user.role
+    role: user.role,
+    accessConfig: getEffectiveAccessConfig(user)
   }
 }
 
@@ -98,10 +101,12 @@ export async function login(req, res) {
       })
     }
 
-    // Buscar usuario por username o email
+    const normalizedLoginPhone = normalizePhoneForStorage(username)
+
+    // Buscar usuario por username, email o teléfono.
     const user = await db.get(
-      'SELECT * FROM users WHERE username = ? OR email = ?',
-      [username, username]
+      'SELECT * FROM users WHERE username = ? OR email = ? OR phone = ?',
+      [username, username, normalizedLoginPhone]
     )
 
     if (!user) {
@@ -292,7 +297,7 @@ export async function verifyTokenEndpoint(req, res) {
 
     // Verificar que el usuario todavía exista y esté activo
     const user = await db.get(
-      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role, is_active
+      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role, access_config, is_active
        FROM users
        WHERE id = ?`,
       [payload.userId]
@@ -409,7 +414,7 @@ export async function getMe(req, res) {
     }
 
     const user = await db.get(
-      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role
+      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role, access_config
        FROM users
        WHERE id = ? AND is_active = 1`,
       [payload.userId]
@@ -547,7 +552,7 @@ export async function updateProfile(req, res) {
     )
 
     const user = await db.get(
-      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role
+      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role, access_config
        FROM users
        WHERE id = ? AND is_active = 1`,
       [payload.userId]

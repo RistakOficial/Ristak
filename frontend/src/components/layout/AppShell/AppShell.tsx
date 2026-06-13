@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { InitializationProvider } from '@/contexts/InitializationContext'
 import { useAppConfig, useDomainFeatureSync } from '@/hooks'
 import { requestAIAgentClose } from '@/utils/aiAgentEvents'
+import { hasModuleAccess } from '@/utils/accessControl'
 import { HIGHLEVEL_SYNC_STARTED_EVENT } from '@/services/highLevelService'
 import styles from './AppShell.module.css'
 
@@ -54,7 +55,7 @@ function getInitialAIAgentWidth() {
 
 export const AppShell: React.FC = () => {
   const navigate = useNavigate()
-  const { logout } = useAuth()
+  const { logout, user } = useAuth()
   const [persistedAIAgentWidth, savePersistedAIAgentWidth] = useAppConfig<number>(
     AI_AGENT_WIDTH_CONFIG_KEY,
     getInitialAIAgentWidth()
@@ -64,6 +65,7 @@ export const AppShell: React.FC = () => {
   const [aiAgentWidth, setAIAgentWidth] = useState(getInitialAIAgentWidth)
   const [aiAgentResizing, setAIAgentResizing] = useState(false)
   const [sitesEditorActive, setSitesEditorActive] = useState(false)
+  const canUseAIAgent = hasModuleAccess(user, 'ai_agent', 'read')
   const resizePointerIdRef = useRef<number | null>(null)
   const aiAgentWidthRef = useRef(aiAgentWidth)
   const lastSavedAIAgentWidthRef = useRef(aiAgentWidth)
@@ -114,6 +116,13 @@ export const AppShell: React.FC = () => {
       requestAIAgentClose()
     }
   }, [aiAgentOpen, syncProgressVisible])
+
+  useEffect(() => {
+    if (!canUseAIAgent && aiAgentOpen) {
+      setAIAgentOpen(false)
+      requestAIAgentClose()
+    }
+  }, [aiAgentOpen, canUseAIAgent])
 
   useLayoutEffect(() => {
     const handleSitesEditorActive = (event: Event) => {
@@ -250,7 +259,7 @@ export const AppShell: React.FC = () => {
           </Layout>
         </div>
 
-        {!sitesEditorActive && (
+        {!sitesEditorActive && canUseAIAgent && (
           <div className={styles.aiAgentSlot}>
             {aiAgentOpen && (
               <button

@@ -23,7 +23,7 @@ export async function requireAuth(req, res, next) {
     }
 
     const user = await db.get(
-      'SELECT id, username, email, role FROM users WHERE id = ? AND is_active = 1',
+      'SELECT id, username, email, role, access_config FROM users WHERE id = ? AND is_active = 1',
       [payload.userId]
     )
 
@@ -39,7 +39,8 @@ export async function requireAuth(req, res, next) {
       userId: user.id,
       username: user.username,
       email: user.email,
-      role: user.role
+      role: user.role,
+      access_config: user.access_config
     }
 
     // Identidad local válida no basta: la licencia central debe estar activa.

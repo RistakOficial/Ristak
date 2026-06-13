@@ -1,5 +1,6 @@
 import express from 'express'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import {
   createBlockHandler,
   importSiteHtmlHandler,
@@ -39,6 +40,7 @@ router.get('/public/imported-assets/:siteId/*', importedSiteAssetHandler)
 router.get('/:siteId/preview-session/:token', previewSiteSessionHandler)
 
 router.use(requireAuth)
+router.use(requireModuleAccess('sites'))
 
 router.get('/', getSitesHandler)
 router.post('/', createSiteHandler)

@@ -1,6 +1,7 @@
 import express from 'express';
 import * as calendarsController from '../controllers/calendarsController.js';
 import { requireAuth } from '../middleware/authMiddleware.js';
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js';
 
 const router = express.Router();
 
@@ -14,6 +15,7 @@ router.get('/public/:slug/free-slots', calendarsController.getPublicFreeSlots);
 router.post('/public/:slug/appointments', calendarsController.createPublicAppointment);
 
 router.use(requireAuth);
+router.use(requireModuleAccess('appointments'));
 
 // Obtener todos los calendarios
 router.get('/', calendarsController.getCalendars);

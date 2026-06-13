@@ -1,6 +1,7 @@
 import express from 'express'
 import { chat, deleteConfig, getConfig, getRunTrace, listAgents, saveBusinessContextAnswer, saveConfig, transcribeVoice } from '../controllers/aiAgentController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
 const rawAudioBody = express.raw({
@@ -9,6 +10,7 @@ const rawAudioBody = express.raw({
 })
 
 router.use(requireAuth)
+router.use(requireModuleAccess('ai_agent'))
 
 router.get('/config', getConfig)
 router.post('/config', saveConfig)

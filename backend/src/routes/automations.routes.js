@@ -1,5 +1,6 @@
 import express from 'express'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import {
   getAutomationsHandler,
   getAutomationHandler,
@@ -26,6 +27,7 @@ const router = express.Router()
 router.get('/assets/:assetId', serveAssetHandler)
 
 router.use(requireAuth)
+router.use(requireModuleAccess('automations'))
 
 // Subida de archivos de bloques (imagen, video, audio, documento)
 router.post('/assets', express.json({ limit: '30mb' }), uploadAssetHandler)

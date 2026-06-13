@@ -3349,6 +3349,7 @@ async function initTables() {
       ['last_name', 'TEXT'],
       ['phone', 'TEXT'],
       ['business_name', 'TEXT'],
+      ['access_config', 'TEXT'],
       ['api_token_hash', 'TEXT'],
       ['api_token_prefix', 'TEXT'],
       ['api_token_last_four', 'TEXT'],
@@ -3370,6 +3371,7 @@ async function initTables() {
     }
 
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_token_hash ON users(api_token_hash)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone)')
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS oauth_clients (

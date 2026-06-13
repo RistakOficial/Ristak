@@ -2,20 +2,22 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { ensureLocalDevAuth } from '@/services/authFetch'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import type { AccountLocaleDefaults } from '@/utils/accountLocale'
+import type { AccessConfig, UserRole } from '@/utils/accessControl'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 
-interface User {
+export interface User {
   id: string
   name: string
   email: string
-  role: 'admin' | 'manager' | 'viewer'
+  role: UserRole
   tenant: string
   username?: string
   firstName?: string
   lastName?: string
   phone?: string
   businessName?: string
+  accessConfig?: AccessConfig
 }
 
 interface AuthContextType {
@@ -43,13 +45,14 @@ function mapUserFromApi(apiUser: any): User {
     id: apiUser.id,
     name: apiUser.fullName || apiUser.username,
     email: apiUser.email || '',
-    role: 'admin',
+    role: apiUser.role === 'admin' ? 'admin' : 'employee',
     tenant: 'Ristak',
     username: apiUser.username,
     firstName: apiUser.firstName || '',
     lastName: apiUser.lastName || '',
     phone: apiUser.phone || '',
-    businessName: apiUser.businessName || ''
+    businessName: apiUser.businessName || '',
+    accessConfig: apiUser.accessConfig || undefined
   }
 }
 

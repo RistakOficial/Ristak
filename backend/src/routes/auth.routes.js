@@ -15,7 +15,14 @@ import {
   rotateApiToken,
   revokeApiToken
 } from '../controllers/authController.js'
+import {
+  createUser,
+  deleteUser,
+  listUsers,
+  updateUser
+} from '../controllers/userAccessController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireAdmin } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
 
@@ -51,6 +58,12 @@ router.patch('/profile', requireAuth, updateProfile)
 
 // GET /api/auth/me - Obtener información del usuario autenticado
 router.get('/me', requireAuth, getMe)
+
+// Usuarios y accesos internos del CRM
+router.get('/users', requireAuth, requireAdmin, listUsers)
+router.post('/users', requireAuth, requireAdmin, createUser)
+router.patch('/users/:userId', requireAuth, requireAdmin, updateUser)
+router.delete('/users/:userId', requireAuth, requireAdmin, deleteUser)
 
 // GET /api/auth/api-token - Obtener metadatos del API token autenticado
 router.get('/api-token', requireAuth, getApiToken)

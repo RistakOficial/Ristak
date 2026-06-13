@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -27,6 +27,11 @@ import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useInitialization } from '@/contexts/InitializationContext'
 import { settingsNavigation } from '@/pages/Settings/settingsNav'
+import {
+  hasModuleAccess,
+  type AccessControlledUser,
+  type PermissionKey
+} from '@/utils/accessControl'
 import {
   DndContext,
   closestCenter,
@@ -79,6 +84,18 @@ const baseNavigation: NavItem[] = [
   { id: 'sites', name: 'Sitios', href: '/sites', icon: PanelTop },
 ]
 
+const navPermissionById: Partial<Record<string, PermissionKey>> = {
+  dashboard: 'dashboard',
+  appointments: 'appointments',
+  transactions: 'payments',
+  contacts: 'contacts',
+  reports: 'reports',
+  analytics: 'analytics',
+  campaigns: 'campaigns',
+  automations: 'automations',
+  sites: 'sites'
+}
+
 // La pestaña de Inicialización siempre va primera y solo se muestra mientras el
 // onboarding de integraciones no esté completo (o el usuario no lo haya ocultado).
 const initializationNavigation: NavItem = {
@@ -88,8 +105,28 @@ const initializationNavigation: NavItem = {
   icon: Rocket
 }
 
-const getNavigationItems = (): NavItem[] => {
-  return [...baseNavigation]
+const cleanNavigationDividers = (items: NavItem[]) => {
+  const cleaned: NavItem[] = []
+
+  items.forEach((item) => {
+    if (item.isDivider) {
+      if (!cleaned.length || cleaned[cleaned.length - 1].isDivider) return
+    }
+    cleaned.push(item)
+  })
+
+  while (cleaned[0]?.isDivider) cleaned.shift()
+  while (cleaned[cleaned.length - 1]?.isDivider) cleaned.pop()
+
+  return cleaned
+}
+
+const getNavigationItems = (user?: AccessControlledUser | null): NavItem[] => {
+  return cleanNavigationDividers(baseNavigation.filter((item) => {
+    if (item.isDivider) return true
+    const permissionKey = navPermissionById[item.id]
+    return !permissionKey || hasModuleAccess(user, permissionKey, 'read')
+  }))
 }
 
 const getInitials = (name?: string, email?: string) => {
@@ -131,6 +168,7 @@ const getNavLinkClasses = (isActive: boolean, extraClasses?: string) => cn(
 interface SettingsNavGroupProps {
   pathname: string
   open: boolean
+  items: typeof settingsNavigation
   onToggle: () => void
   onNavigate?: () => void
 }
@@ -139,8 +177,10 @@ interface SettingsNavGroupProps {
 // misma lista del sidebar y al expandirse muestra las secciones anidadas con
 // una guía vertical. El estado activo reutiliza la misma receta visual que el
 // resto de los items del panel.
-const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({ pathname, open, onToggle, onNavigate }) => {
+const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({ pathname, open, items, onToggle, onNavigate }) => {
   const isSettingsRoute = pathname.startsWith('/settings')
+
+  if (!items.length) return null
 
   return (
     <div className="pt-2">
@@ -165,7 +205,7 @@ const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({ pathname, open, onT
 
       {open && (
         <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[rgba(148,163,184,0.16)] pl-2.5">
-          {settingsNavigation.map((item) => {
+          {items.map((item) => {
             const hasChildren = Boolean(item.children?.length)
             const sectionOpen = pathname.startsWith(item.to)
             const isActive = hasChildren ? sectionOpen : pathname.startsWith(item.to)
@@ -445,7 +485,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
   const { isInitialized } = useInitialization()
   const [sidebarOrder, setSidebarOrder] = useAppConfig<string[]>('sidebar_navigation_order', [])
   const appVersion = useAppVersion()
-  const [navigation, setNavigation] = useState<NavItem[]>(() => getNavigationItems())
+  const [navigation, setNavigation] = useState<NavItem[]>(() => [])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isEditMode, setIsEditMode] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
@@ -468,6 +508,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
 
   const accountMenuLabel = user?.businessName || user?.email || user?.name || user?.username || 'Usuario'
   const initials = getInitials(accountMenuLabel, user?.email)
+  const visibleSettingsNavigation = useMemo(
+    () => settingsNavigation.filter((item) => !item.permissionKey || hasModuleAccess(user, item.permissionKey, 'read')),
+    [user]
+  )
+  const canUseAIAgent = hasModuleAccess(user, 'ai_agent', 'read')
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -563,12 +608,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
 
   // Prepone Inicialización (siempre primero) cuando el onboarding no está completo.
   const withInitialization = (items: NavItem[]): NavItem[] =>
-    isInitialized ? items : [initializationNavigation, ...items]
+    isInitialized || user?.role !== 'admin' ? items : [initializationNavigation, ...items]
 
   useEffect(() => {
-    const items = getNavigationItems()
+    const items = getNavigationItems(user)
     setNavigation(withInitialization(applyOrder(items, sidebarOrder)))
-  }, [sidebarOrder, isInitialized])
+  }, [sidebarOrder, isInitialized, user])
 
   const handleDragStart = (event: DragStartEvent) => {
     if (!isEditMode) {
@@ -810,15 +855,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
               ) : null}
             </DragOverlay>
 
-            <AIAgentNavGroup
-              pathname={location.pathname}
-              open={aiAgentOpen}
-              onToggle={() => setAiAgentOpen((current) => !current)}
-              onNavigate={handleNavigate}
-            />
+            {canUseAIAgent && (
+              <AIAgentNavGroup
+                pathname={location.pathname}
+                open={aiAgentOpen}
+                onToggle={() => setAiAgentOpen((current) => !current)}
+                onNavigate={handleNavigate}
+              />
+            )}
             <SettingsNavGroup
               pathname={location.pathname}
               open={settingsOpen}
+              items={visibleSettingsNavigation}
               onToggle={() => setSettingsOpen((current) => !current)}
               onNavigate={handleNavigate}
             />
@@ -852,15 +900,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
               )
             })}
 
-            <AIAgentNavGroup
-              pathname={location.pathname}
-              open={aiAgentOpen}
-              onToggle={() => setAiAgentOpen((current) => !current)}
-              onNavigate={handleNavigate}
-            />
+            {canUseAIAgent && (
+              <AIAgentNavGroup
+                pathname={location.pathname}
+                open={aiAgentOpen}
+                onToggle={() => setAiAgentOpen((current) => !current)}
+                onNavigate={handleNavigate}
+              />
+            )}
             <SettingsNavGroup
               pathname={location.pathname}
               open={settingsOpen}
+              items={visibleSettingsNavigation}
               onToggle={() => setSettingsOpen((current) => !current)}
               onNavigate={handleNavigate}
             />
