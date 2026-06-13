@@ -336,6 +336,95 @@
   width: min(100%, 620px);
   justify-self: center;
 }
+.rstkCanvas .rstk-embedded-pages,
+.rstkCanvas .rstk-embedded-pages [data-embedded-page-content] {
+  width: min(100%, 560px);
+  justify-self: center;
+  display: grid;
+  gap: 14px;
+}
+.rstkCanvas .rstkEmbeddedFormEditor {
+  width: min(100%, 580px);
+  justify-self: center;
+  display: grid;
+  gap: 8px;
+}
+.rstkCanvas .rstkEmbeddedFormField {
+  position: relative;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: calc(var(--rstk-field-radius, var(--rstk-radius)) + 4px);
+  padding: 8px;
+  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+.rstkCanvas .rstkEmbeddedFormField > .rstk-field {
+  width: 100%;
+}
+.rstkCanvas .rstkEmbeddedFormField:hover,
+.rstkCanvas .rstkEmbeddedFormFieldActive {
+  border-color: color-mix(in srgb, var(--rstk-accent) 62%, transparent);
+  background: color-mix(in srgb, var(--rstk-accent) 7%, transparent);
+}
+.rstkCanvas .rstkEmbeddedFormFieldActive {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--rstk-accent) 20%, transparent);
+}
+.rstkCanvas .rstkEmbeddedFormFieldTools {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 3;
+  display: inline-flex;
+  gap: 4px;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity .14s ease, transform .14s ease;
+}
+.rstkCanvas .rstkEmbeddedFormField:hover .rstkEmbeddedFormFieldTools,
+.rstkCanvas .rstkEmbeddedFormFieldActive .rstkEmbeddedFormFieldTools {
+  opacity: 1;
+  transform: translateY(0);
+}
+.rstkCanvas .rstkEmbeddedFormFieldTools button {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--rstk-input-border) 78%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--rstk-field-bg, var(--rstk-input-bg)) 94%, var(--rstk-ink) 6%);
+  color: var(--rstk-ink);
+  cursor: pointer;
+}
+.rstkCanvas .rstkEmbeddedFormFieldTools button:disabled {
+  cursor: not-allowed;
+  opacity: .36;
+}
+.rstkCanvas .rstkEmbeddedFormDrop {
+  width: 100%;
+  min-height: 9px;
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  border: 1px dashed transparent;
+  border-radius: 999px;
+  color: transparent;
+  font-size: .78rem;
+  font-weight: 750;
+  transition: min-height .16s ease, border-color .16s ease, color .16s ease, background .16s ease;
+}
+.rstkCanvas .rstkEmbeddedFormDropActive,
+.rstkCanvas .rstkEmbeddedFormDropEmpty {
+  min-height: 38px;
+  border-color: color-mix(in srgb, var(--rstk-accent) 52%, transparent);
+  background: color-mix(in srgb, var(--rstk-accent) 10%, transparent);
+  color: var(--rstk-ink);
+}
+.rstkCanvas .rstkEmbeddedFormDropEmpty {
+  min-height: 86px;
+  border-radius: var(--rstk-field-radius, var(--rstk-radius));
+}
 .rstkCanvas.rstk-kind-form .rstk-form { font-family: var(--rstk-form-font, var(--rstk-font)); }
 .rstkCanvas label { font-size: .95rem; font-weight: 700; color: var(--rstk-ink); }
 .rstkCanvas.rstk-kind-form .rstk-field > label {

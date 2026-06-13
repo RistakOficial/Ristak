@@ -730,6 +730,19 @@ type BlockMoveState = {
   canMoveUp: boolean
   canMoveDown: boolean
 }
+type EmbeddedFormCanvasEditorBridge = {
+  parentBlockId: string
+  activeFieldId: string
+  activePageId: string
+  pages: SitePage[]
+  insertIndex: number | null
+  onSelectField: (fieldId: string) => void
+  onDragOverField: (event: React.DragEvent<HTMLElement>, insertIndex: number) => void
+  onDropField: (event: React.DragEvent<HTMLElement>, insertIndex: number) => void
+  onDragLeave: (event: React.DragEvent<HTMLElement>) => void
+  onMoveField: (fieldId: string, direction: BlockMoveDirection) => void
+  onDeleteField: (fieldId: string) => void
+}
 
 type EditorHistoryEntry = {
   action: 'reorder' | 'delete'
@@ -2062,6 +2075,24 @@ const normalizeFunnelPages = (site?: PublicSite | null): SitePage[] => {
 
 const getFormContentPages = (pages: SitePage[]) => pages.filter(page => !isFormFinalPage(page))
 
+const normalizeEmbeddedFormPages = (rawPages?: unknown): SitePage[] => {
+  const normalized = normalizePageList(Array.isArray(rawPages) ? rawPages as SitePage[] : [])
+  const contentPages = getFormContentPages(normalized)
+  const pages = contentPages.length ? contentPages : normalized
+  return (pages.length ? pages : [makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Formulario', 0)])
+    .map((page, index) => ({ ...page, sortOrder: index }))
+}
+
+const getEmbeddedFormContentPagesFromSite = (site?: PublicSite | null): SitePage[] =>
+  normalizeEmbeddedFormPages(site ? normalizeFunnelPages(site) : [])
+
+const getEmbeddedFormPageFields = (fields: SiteBlock[], pages: SitePage[], pageId?: string) => {
+  const activePageId = pageId && pages.some(page => page.id === pageId)
+    ? pageId
+    : pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+  return fields.filter(field => getBlockPageId(field, pages) === activePageId)
+}
+
 const getOrderedPagesForSite = (site: PublicSite, nextPages: SitePage[]) => (
   isStandardForm(site)
     ? normalizeFormPages({ ...site, theme: { ...(site.theme || {}), pages: nextPages } })
@@ -2757,7 +2788,7 @@ const createEmbeddedBlocks = (siteId: string): SiteBlock[] => [
     placeholder: 'Tu nombre',
     required: true,
     options: [],
-    settings: { internalName: 'full_name' },
+    settings: { internalName: 'full_name', pageId: DEFAULT_FUNNEL_PAGE_ID },
     sortOrder: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -2771,7 +2802,7 @@ const createEmbeddedBlocks = (siteId: string): SiteBlock[] => [
     placeholder: '10 digitos',
     required: true,
     options: [],
-    settings: { internalName: 'phone', validation: 'phone', phoneCountrySelectorEnabled: true },
+    settings: { internalName: 'phone', validation: 'phone', phoneCountrySelectorEnabled: true, pageId: DEFAULT_FUNNEL_PAGE_ID },
     sortOrder: 1,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -2785,7 +2816,7 @@ const createEmbeddedBlocks = (siteId: string): SiteBlock[] => [
     placeholder: 'tu@email.com',
     required: true,
     options: [],
-    settings: { internalName: 'email', validation: 'email' },
+    settings: { internalName: 'email', validation: 'email', pageId: DEFAULT_FUNNEL_PAGE_ID },
     sortOrder: 2,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -2936,7 +2967,11 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       blockType,
       label,
       content: 'Formulario',
-      settings: blockSettings({ description: 'Completa tus datos.', embeddedBlocks: createEmbeddedBlocks(siteId) })
+      settings: blockSettings({
+        description: 'Completa tus datos.',
+        embeddedPages: normalizePagesForSave(normalizeEmbeddedFormPages()),
+        embeddedBlocks: createEmbeddedBlocks(siteId)
+      })
     }
   }
 
@@ -3016,7 +3051,7 @@ const makePreviewBlock = (blockType: SiteBlockType, site: PublicSite, pageId?: s
   }
 }
 
-const createEmbeddedFieldBlock = (site: PublicSite, blockType: SiteBlockType, sortOrder = 0): SiteBlock => {
+const createEmbeddedFieldBlock = (site: PublicSite, blockType: SiteBlockType, sortOrder = 0, pageId = DEFAULT_FUNNEL_PAGE_ID): SiteBlock => {
   const payload = defaultBlockPayload(blockType, site)
   const now = new Date().toISOString()
   return {
@@ -3028,11 +3063,24 @@ const createEmbeddedFieldBlock = (site: PublicSite, blockType: SiteBlockType, so
     placeholder: payload.placeholder || '',
     required: Boolean(payload.required),
     options: cloneJson(payload.options || []),
-    settings: cloneJson(payload.settings || {}),
+    settings: {
+      ...cloneJson(payload.settings || {}),
+      pageId
+    },
     sortOrder,
     createdAt: now,
     updatedAt: now
   }
+}
+
+const getEditableEmbeddedFormPages = (block: SiteBlock, forms: PublicSite[]): SitePage[] => {
+  const settings = block.settings || {}
+  const embeddedPages = normalizeEmbeddedFormPages(settings.embeddedPages)
+  if (Array.isArray(settings.embeddedPages) && embeddedPages.length) return embeddedPages
+
+  const linkedFormId = getSettingString(settings, 'formSiteId')
+  const linkedForm = forms.find(form => form.id === linkedFormId)
+  return getEmbeddedFormContentPagesFromSite(linkedForm)
 }
 
 const cloneFormFieldsForEmbed = (site: PublicSite, sourceFields: SiteBlock[], parentBlockId: string): SiteBlock[] => {
@@ -3076,10 +3124,18 @@ const getEditableEmbeddedFormBlocks = (site: PublicSite, block: SiteBlock, forms
 
 function FormModePalette({
   fieldsCount,
-  onAddField
+  activePageTitle,
+  onAddField,
+  onPaletteDragStart,
+  onPaletteDragMove,
+  onPaletteDragEnd
 }: {
   fieldsCount: number
+  activePageTitle: string
   onAddField: (blockType: SiteBlockType) => void
+  onPaletteDragStart: (payload: PaletteDragPayload, position: PaletteDragPosition | null) => void
+  onPaletteDragMove: (position: PaletteDragPosition | null) => void
+  onPaletteDragEnd: () => void
 }) {
   return (
     <div className={styles.formModePalette}>
@@ -3087,15 +3143,40 @@ function FormModePalette({
         <span className={styles.formModeIcon}><FormInput size={17} /></span>
         <div>
           <strong>Modo formulario</strong>
-          <small>{fieldsCount} {fieldsCount === 1 ? 'campo' : 'campos'} en este bloque</small>
+          <small>{activePageTitle || 'Formulario'} - {fieldsCount} {fieldsCount === 1 ? 'campo' : 'campos'}</small>
         </div>
       </div>
+      <p className={styles.formModePaletteHint}>Arrastra componentes al formulario o haz click para agregarlos al final.</p>
       <div className={styles.formModePaletteList}>
         {embeddedFormFieldTypes.map(blockType => (
-          <button key={blockType} type="button" onClick={() => onAddField(blockType)}>
+          <button
+            key={blockType}
+            type="button"
+            draggable
+            onDragStart={(event) => {
+              event.dataTransfer.effectAllowed = 'move'
+              event.dataTransfer.dropEffect = 'move'
+              event.dataTransfer.setData('application/ristak-block', blockType)
+              hideNativeDragPreview(event.dataTransfer)
+              const rect = event.currentTarget.getBoundingClientRect()
+              onPaletteDragStart(
+                { blockType },
+                event.clientX || event.clientY
+                  ? { x: event.clientX, y: event.clientY }
+                  : { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+              )
+            }}
+            onDrag={(event) => {
+              if (event.clientX || event.clientY) {
+                onPaletteDragMove({ x: event.clientX, y: event.clientY })
+              }
+            }}
+            onDragEnd={onPaletteDragEnd}
+            onClick={() => onAddField(blockType)}
+          >
             <span>{blockIcons[blockType]}</span>
             <strong>{blockLabels[blockType] || 'Campo'}</strong>
-            <Plus size={14} />
+            <GripVertical size={14} />
           </button>
         ))}
       </div>
@@ -3109,76 +3190,52 @@ function FormEmbedEditorPanel({
   forms,
   customFields,
   pages,
+  activePageId,
+  activeFieldId,
   onPatchBlock,
   onPatchSettings,
-  onSave
+  onSave,
+  onActivePageChange,
+  onAddPage,
+  onRenamePage,
+  onDeletePage,
+  onActiveFieldChange,
+  onAddField,
+  onPatchField,
+  onPatchFieldSettings,
+  onRemoveField,
+  onMoveField
 }: {
   site: PublicSite
   block: SiteBlock
   forms: PublicSite[]
   customFields: CustomFieldDefinition[]
   pages: SitePage[]
+  activePageId: string
+  activeFieldId: string
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
+  onActivePageChange: (pageId: string) => void
+  onAddPage: () => void
+  onRenamePage: (pageId: string, title: string) => void
+  onDeletePage: (pageId: string) => void
+  onActiveFieldChange: (fieldId: string) => void
+  onAddField: (blockType: SiteBlockType) => void
+  onPatchField: (fieldId: string, patch: Partial<SiteBlock>) => void
+  onPatchFieldSettings: (field: SiteBlock, patch: Record<string, unknown>) => void
+  onRemoveField: (fieldId: string) => void
+  onMoveField: (fieldId: string, direction: BlockMoveDirection) => void
 }) {
   const settings = block.settings || {}
   const fields = useMemo(() => getEditableEmbeddedFormBlocks(site, block, forms), [block, forms, site])
-  const [activeFieldId, setActiveFieldId] = useState(fields[0]?.id || '')
-  const activeField = fields.find(field => field.id === activeFieldId) || fields[0] || null
+  const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
+  const visibleFields = useMemo(
+    () => getEmbeddedFormPageFields(fields, pages, activePage?.id),
+    [activePage?.id, fields, pages]
+  )
+  const activeField = visibleFields.find(field => field.id === activeFieldId) || visibleFields[0] || null
   const selectedFormId = getSettingString(settings, 'formSiteId')
-
-  useEffect(() => {
-    if (!fields.length) {
-      setActiveFieldId('')
-      return
-    }
-    setActiveFieldId(current => fields.some(field => field.id === current) ? current : fields[0].id)
-  }, [fields])
-
-  const patchEmbeddedFields = (nextFields: SiteBlock[]) => {
-    onPatchSettings({
-      formSiteId: '',
-      embeddedBlocks: nextFields.map((field, index) => ({
-        ...field,
-        sortOrder: index,
-        updatedAt: new Date().toISOString()
-      }))
-    })
-  }
-
-  const patchField = (fieldId: string, patch: Partial<SiteBlock>) => {
-    patchEmbeddedFields(fields.map(field => field.id === fieldId ? { ...field, ...patch } : field))
-  }
-
-  const patchFieldSettings = (field: SiteBlock, patch: Record<string, unknown>) => {
-    patchField(field.id, {
-      settings: {
-        ...(field.settings || {}),
-        ...patch
-      }
-    })
-  }
-
-  const addField = (blockType: SiteBlockType) => {
-    const nextField = createEmbeddedFieldBlock(site, blockType, fields.length)
-    patchEmbeddedFields([...fields, nextField])
-    setActiveFieldId(nextField.id)
-  }
-
-  const removeField = (fieldId: string) => {
-    const nextFields = fields.filter(field => field.id !== fieldId)
-    patchEmbeddedFields(nextFields)
-    setActiveFieldId(nextFields[0]?.id || '')
-  }
-
-  const moveField = (fieldId: string, direction: 'up' | 'down') => {
-    const index = fields.findIndex(field => field.id === fieldId)
-    if (index < 0) return
-    const nextIndex = direction === 'up' ? index - 1 : index + 1
-    if (nextIndex < 0 || nextIndex >= fields.length) return
-    patchEmbeddedFields(arrayMove(fields, index, nextIndex))
-  }
 
   return (
     <aside className={`${styles.propertiesPanel} ${styles.formModePanel}`} aria-label="Editor de formulario embebido">
@@ -3186,7 +3243,7 @@ function FormEmbedEditorPanel({
         <span className={styles.formModeIcon}><FormInput size={18} /></span>
         <div>
           <strong>Editando formulario</strong>
-          <small>Opciones del formulario seleccionado</small>
+          <small>Se guarda con el sitio web</small>
         </div>
       </div>
       <div className={styles.propertiesBody}>
@@ -3202,7 +3259,7 @@ function FormEmbedEditorPanel({
           </label>
           <label className={styles.field}>
             <span>Formulario base</span>
-            <CustomSelect value={selectedFormId} onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined })} onBlur={onSave}>
+            <CustomSelect value={selectedFormId} onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined, embeddedPages: undefined })} onBlur={onSave}>
               <option value="">Inline editable</option>
               {forms.filter(form => form.id !== site.id).map(form => <option key={form.id} value={form.id}>{form.name}</option>)}
             </CustomSelect>
@@ -3219,15 +3276,50 @@ function FormEmbedEditorPanel({
 
         <div className={styles.settingsGroup}>
           <div className={styles.optionRulesHeader}>
+            <strong>Paginas</strong>
+            <button type="button" onClick={onAddPage}>
+              <Plus size={14} />
+              Pagina
+            </button>
+          </div>
+          <div className={styles.embeddedPageTabs}>
+            {pages.map(page => (
+              <button
+                key={page.id}
+                type="button"
+                className={page.id === activePage?.id ? styles.embeddedPageTabActive : ''}
+                onClick={() => onActivePageChange(page.id)}
+              >
+                <FileText size={14} />
+                <span>{page.title || 'Pagina'}</span>
+              </button>
+            ))}
+          </div>
+          {activePage && (
+            <div className={styles.embeddedPageEditor}>
+              <label className={styles.field}>
+                <span>Nombre de esta pagina</span>
+                <input value={activePage.title || ''} onChange={(event) => onRenamePage(activePage.id, event.target.value)} onBlur={onSave} />
+              </label>
+              <button type="button" onClick={() => onDeletePage(activePage.id)} disabled={pages.length <= 1}>
+                <Trash2 size={14} />
+                Eliminar pagina
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className={styles.settingsGroup}>
+          <div className={styles.optionRulesHeader}>
             <strong>Campos</strong>
-            <button type="button" onClick={() => addField('short_text')}>
+            <button type="button" onClick={() => onAddField('short_text')}>
               <Plus size={14} />
               Campo
             </button>
           </div>
           <div className={styles.formFieldList}>
-            {fields.map((field, index) => (
-              <button key={field.id} type="button" className={`${styles.formFieldItem} ${activeField?.id === field.id ? styles.formFieldItemActive : ''}`} onClick={() => setActiveFieldId(field.id)}>
+            {visibleFields.map((field, index) => (
+              <button key={field.id} type="button" className={`${styles.formFieldItem} ${activeField?.id === field.id ? styles.formFieldItemActive : ''}`} onClick={() => onActiveFieldChange(field.id)}>
                 <span>{blockIcons[field.blockType]}</span>
                 <span>
                   <strong>{field.label || blockLabels[field.blockType] || 'Campo'}</strong>
@@ -3236,6 +3328,9 @@ function FormEmbedEditorPanel({
                 <em>{index + 1}</em>
               </button>
             ))}
+            {visibleFields.length === 0 && (
+              <p className={styles.muted}>Esta pagina todavia no tiene campos. Agrega uno desde la izquierda o con el boton Campo.</p>
+            )}
           </div>
         </div>
 
@@ -3247,25 +3342,41 @@ function FormEmbedEditorPanel({
                 <strong>{activeField.label || blockLabels[activeField.blockType]}</strong>
               </div>
               <div className={styles.formFieldActions}>
-                <button type="button" onClick={() => moveField(activeField.id, 'up')} disabled={fields[0]?.id === activeField.id} title="Subir"><ArrowUp size={14} /></button>
-                <button type="button" onClick={() => moveField(activeField.id, 'down')} disabled={fields[fields.length - 1]?.id === activeField.id} title="Bajar"><ArrowDown size={14} /></button>
-                <button type="button" onClick={() => removeField(activeField.id)} title="Eliminar"><Trash2 size={14} /></button>
+                <button type="button" onClick={() => onMoveField(activeField.id, 'up')} disabled={visibleFields[0]?.id === activeField.id} title="Subir"><ArrowUp size={14} /></button>
+                <button type="button" onClick={() => onMoveField(activeField.id, 'down')} disabled={visibleFields[visibleFields.length - 1]?.id === activeField.id} title="Bajar"><ArrowDown size={14} /></button>
+                <button type="button" onClick={() => onRemoveField(activeField.id)} title="Eliminar"><Trash2 size={14} /></button>
               </div>
             </div>
 
             <div className={styles.twoColumn}>
               <label className={styles.field}>
                 <span>Tipo</span>
-                <CustomSelect value={activeField.blockType} onChange={(event) => patchField(activeField.id, { blockType: event.target.value as SiteBlockType })} onBlur={onSave}>
+                <CustomSelect value={activeField.blockType} onChange={(event) => onPatchField(activeField.id, { blockType: event.target.value as SiteBlockType })} onBlur={onSave}>
                   {embeddedFormFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
                 </CustomSelect>
               </label>
+              <label className={styles.field}>
+                <span>Pagina</span>
+                <CustomSelect
+                  value={getBlockPageId(activeField, pages)}
+                  onChange={(event) => {
+                    onPatchFieldSettings(activeField, { pageId: event.target.value })
+                    onActivePageChange(event.target.value)
+                  }}
+                  onBlur={onSave}
+                >
+                  {pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Pagina'}</option>)}
+                </CustomSelect>
+              </label>
+            </div>
+
+            <div className={styles.twoColumn}>
               <label className={styles.checkboxLabel}>
                 <input
                   type="checkbox"
                   checked={Boolean(activeField.required)}
                   onChange={(event) => {
-                    patchField(activeField.id, { required: event.target.checked })
+                    onPatchField(activeField.id, { required: event.target.checked })
                     window.setTimeout(onSave, 0)
                   }}
                 />
@@ -3275,16 +3386,16 @@ function FormEmbedEditorPanel({
 
             <label className={styles.field}>
               <span>Pregunta / etiqueta</span>
-              <input value={activeField.label || ''} onChange={(event) => patchField(activeField.id, { label: event.target.value })} onBlur={onSave} />
+              <input value={activeField.label || ''} onChange={(event) => onPatchField(activeField.id, { label: event.target.value })} onBlur={onSave} />
             </label>
             <label className={styles.field}>
               <span>Texto de ayuda</span>
-              <textarea rows={2} value={activeField.content || ''} onChange={(event) => patchField(activeField.id, { content: event.target.value })} onBlur={onSave} />
+              <textarea rows={2} value={activeField.content || ''} onChange={(event) => onPatchField(activeField.id, { content: event.target.value })} onBlur={onSave} />
             </label>
             {!isChoiceBlock(activeField.blockType) && (
               <label className={styles.field}>
                 <span>Placeholder</span>
-                <input value={activeField.placeholder || ''} onChange={(event) => patchField(activeField.id, { placeholder: event.target.value })} onBlur={onSave} />
+                <input value={activeField.placeholder || ''} onChange={(event) => onPatchField(activeField.id, { placeholder: event.target.value })} onBlur={onSave} />
               </label>
             )}
             {activeField.blockType === 'phone' && (
@@ -3293,7 +3404,7 @@ function FormEmbedEditorPanel({
                   type="checkbox"
                   checked={isPhoneCountrySelectorEnabled(activeField)}
                   onChange={(event) => {
-                    patchFieldSettings(activeField, { phoneCountrySelectorEnabled: event.target.checked })
+                    onPatchFieldSettings(activeField, { phoneCountrySelectorEnabled: event.target.checked })
                     window.setTimeout(onSave, 0)
                   }}
                 />
@@ -3301,10 +3412,10 @@ function FormEmbedEditorPanel({
               </label>
             )}
 
-            <CustomFieldBindingControl block={activeField} customFields={customFields} onPatchSettings={(patch) => patchFieldSettings(activeField, patch)} onSave={onSave} />
+            <CustomFieldBindingControl block={activeField} customFields={customFields} onPatchSettings={(patch) => onPatchFieldSettings(activeField, patch)} onSave={onSave} />
 
             {isChoiceBlock(activeField.blockType) && (
-              <OptionsRulesEditor block={activeField} blocks={fields} pages={pages} onPatchBlock={(patch) => patchField(activeField.id, patch)} onSave={onSave} />
+              <OptionsRulesEditor block={activeField} blocks={fields} pages={pages} onPatchBlock={(patch) => onPatchField(activeField.id, patch)} onSave={onSave} />
             )}
           </div>
         )}
@@ -3365,6 +3476,9 @@ export const Sites: React.FC = () => {
   const [paletteDragging, setPaletteDragging] = useState(false)
   const [paletteDragPayload, setPaletteDragPayload] = useState<PaletteDragPayload | null>(null)
   const [paletteInsertIndex, setPaletteInsertIndex] = useState<number | null>(null)
+  const [embeddedFieldInsertIndex, setEmbeddedFieldInsertIndex] = useState<number | null>(null)
+  const [activeEmbeddedFormFieldId, setActiveEmbeddedFormFieldId] = useState('')
+  const [activeEmbeddedFormPageId, setActiveEmbeddedFormPageId] = useState('')
   const [paletteSectionTarget, setPaletteSectionTarget] = useState<PaletteSectionTarget | null>(null)
   const [paletteDragPosition, setPaletteDragPosition] = useState<PaletteDragPosition | null>(null)
   const [leadRows, setLeadRows] = useState<LeadRow[]>([])
@@ -3499,6 +3613,38 @@ export const Sites: React.FC = () => {
     () => editorSite && formEditBlock ? getEditableEmbeddedFormBlocks(editorSite, formEditBlock, forms) : [],
     [editorSite, formEditBlock, forms]
   )
+  const formEditPages = useMemo(
+    () => formEditBlock ? getEditableEmbeddedFormPages(formEditBlock, forms) : [],
+    [formEditBlock, forms]
+  )
+  const activeEmbeddedFormPage = formEditPages.find(page => page.id === activeEmbeddedFormPageId) || formEditPages[0] || null
+  const formEditVisibleFields = useMemo(
+    () => getEmbeddedFormPageFields(formEditFields, formEditPages, activeEmbeddedFormPage?.id),
+    [activeEmbeddedFormPage?.id, formEditFields, formEditPages]
+  )
+  useEffect(() => {
+    if (!formEditMode) {
+      setActiveEmbeddedFormFieldId('')
+      setActiveEmbeddedFormPageId('')
+      setEmbeddedFieldInsertIndex(null)
+      return
+    }
+
+    const nextPageId = formEditPages.some(page => page.id === activeEmbeddedFormPageId)
+      ? activeEmbeddedFormPageId
+      : formEditPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+    if (nextPageId !== activeEmbeddedFormPageId) {
+      setActiveEmbeddedFormPageId(nextPageId)
+    }
+
+    const visibleFields = getEmbeddedFormPageFields(formEditFields, formEditPages, nextPageId)
+    if (!visibleFields.length) {
+      setActiveEmbeddedFormFieldId('')
+      return
+    }
+
+    setActiveEmbeddedFormFieldId(current => visibleFields.some(field => field.id === current) ? current : visibleFields[0].id)
+  }, [activeEmbeddedFormPageId, formEditMode, formEditBlock?.id, formEditFields, formEditPages])
   const importedPopupDetected = useMemo(
     () => isImportedHtmlSite(editorSite) && importedHtmlHasPopup(selectedImportData),
     [editorSite, selectedImportData]
@@ -5516,17 +5662,155 @@ export const Sites: React.FC = () => {
     })
   }
 
-  const handleAddEmbeddedFormField = (blockType: SiteBlockType) => {
+  const getCurrentEmbeddedFormContext = () => {
     const currentSite = selectedSiteRef.current || editorSite
     const currentFormBlock = formEditBlock
-    if (!currentSite || !currentFormBlock) return
+    if (!currentSite || !currentFormBlock) return null
     const currentBlock = (currentSite.blocks || []).find(block => block.id === currentFormBlock.id) || currentFormBlock
-    const currentFields = getEditableEmbeddedFormBlocks(currentSite, currentBlock, forms)
-    const nextField = createEmbeddedFieldBlock(currentSite, blockType, currentFields.length)
-    patchBlockSettingsLocal(currentBlock, {
+    const embeddedPages = getEditableEmbeddedFormPages(currentBlock, forms)
+    const activePageId = embeddedPages.some(page => page.id === activeEmbeddedFormPageId)
+      ? activeEmbeddedFormPageId
+      : embeddedPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+    return {
+      site: currentSite,
+      block: currentBlock,
+      fields: getEditableEmbeddedFormBlocks(currentSite, currentBlock, forms),
+      pages: embeddedPages,
+      activePageId
+    }
+  }
+
+  const patchEmbeddedFormFieldsLocal = (nextFields: SiteBlock[], selectFieldId?: string, nextPages?: SitePage[]) => {
+    const context = getCurrentEmbeddedFormContext()
+    if (!context) return
+    const pagesForSave = normalizeEmbeddedFormPages(nextPages || context.pages)
+    patchBlockSettingsLocal(context.block, {
       formSiteId: '',
-      embeddedBlocks: [...currentFields, nextField]
+      embeddedPages: normalizePagesForSave(pagesForSave),
+      embeddedBlocks: nextFields.map((field, index) => ({
+        ...field,
+        sortOrder: index,
+        updatedAt: new Date().toISOString()
+      }))
     })
+    if (selectFieldId !== undefined) setActiveEmbeddedFormFieldId(selectFieldId)
+  }
+
+  const selectEmbeddedFormPage = (pageId: string) => {
+    const context = getCurrentEmbeddedFormContext()
+    const nextPageId = context?.pages.some(page => page.id === pageId)
+      ? pageId
+      : context?.pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+    setActiveEmbeddedFormPageId(nextPageId)
+    setEmbeddedFieldInsertIndex(null)
+    if (context) {
+      const pageFields = getEmbeddedFormPageFields(context.fields, context.pages, nextPageId)
+      setActiveEmbeddedFormFieldId(pageFields[0]?.id || '')
+    }
+  }
+
+  const addEmbeddedFormPage = () => {
+    const context = getCurrentEmbeddedFormContext()
+    if (!context) return
+    const nextPage = makeFunnelPage(context.pages.length, { title: `Pagina ${context.pages.length + 1}` })
+    const nextPages = normalizeEmbeddedFormPages([...context.pages, nextPage])
+    patchEmbeddedFormFieldsLocal(context.fields, '', nextPages)
+    setActiveEmbeddedFormPageId(nextPage.id)
+  }
+
+  const renameEmbeddedFormPage = (pageId: string, title: string) => {
+    const context = getCurrentEmbeddedFormContext()
+    if (!context) return
+    const nextPages = context.pages.map(page => page.id === pageId ? { ...page, title } : page)
+    patchEmbeddedFormFieldsLocal(context.fields, undefined, nextPages)
+  }
+
+  const deleteEmbeddedFormPage = (pageId: string) => {
+    const context = getCurrentEmbeddedFormContext()
+    if (!context || context.pages.length <= 1) return
+    const deletedIndex = context.pages.findIndex(page => page.id === pageId)
+    const nextPages = context.pages.filter(page => page.id !== pageId)
+    const fallbackPage = nextPages[Math.max(0, deletedIndex - 1)] || nextPages[0]
+    const nextFields = context.fields.map(field => (
+      getBlockPageId(field, context.pages) === pageId
+        ? { ...field, settings: { ...(field.settings || {}), pageId: fallbackPage.id } }
+        : field
+    ))
+    const fallbackFields = getEmbeddedFormPageFields(nextFields, nextPages, fallbackPage.id)
+    patchEmbeddedFormFieldsLocal(nextFields, fallbackFields[0]?.id || '', nextPages)
+    setActiveEmbeddedFormPageId(fallbackPage.id)
+  }
+
+  const handleAddEmbeddedFormField = (blockType: SiteBlockType, insertIndex?: number) => {
+    if (!embeddedFormFieldTypes.includes(blockType)) return
+    const context = getCurrentEmbeddedFormContext()
+    if (!context) return
+    const nextField = createEmbeddedFieldBlock(context.site, blockType, context.fields.length, context.activePageId)
+    const pageFields = getEmbeddedFormPageFields(context.fields, context.pages, context.activePageId)
+    const boundedIndex = Number.isFinite(Number(insertIndex))
+      ? Math.max(0, Math.min(Number(insertIndex), pageFields.length))
+      : pageFields.length
+    const globalIndex = pageFields.length === 0
+      ? context.fields.length
+      : boundedIndex === 0
+        ? context.fields.findIndex(field => field.id === pageFields[0].id)
+        : context.fields.findIndex(field => field.id === pageFields[boundedIndex - 1].id) + 1
+    const insertAt = Math.max(0, globalIndex)
+    patchEmbeddedFormFieldsLocal([
+      ...context.fields.slice(0, insertAt),
+      nextField,
+      ...context.fields.slice(insertAt)
+    ], nextField.id)
+  }
+
+  const patchEmbeddedFormField = (fieldId: string, patch: Partial<SiteBlock>) => {
+    const context = getCurrentEmbeddedFormContext()
+    if (!context) return
+    patchEmbeddedFormFieldsLocal(
+      context.fields.map(field => field.id === fieldId ? { ...field, ...patch } : field),
+      fieldId
+    )
+  }
+
+  const patchEmbeddedFormFieldSettings = (field: SiteBlock, patch: Record<string, unknown>) => {
+    patchEmbeddedFormField(field.id, {
+      settings: {
+        ...(field.settings || {}),
+        ...patch
+      }
+    })
+  }
+
+  const removeEmbeddedFormField = (fieldId: string) => {
+    const context = getCurrentEmbeddedFormContext()
+    if (!context) return
+    const field = context.fields.find(item => item.id === fieldId)
+    const pageId = field ? getBlockPageId(field, context.pages) : context.activePageId
+    const pageFields = getEmbeddedFormPageFields(context.fields, context.pages, pageId)
+    const currentIndex = pageFields.findIndex(item => item.id === fieldId)
+    const nextFields = context.fields.filter(field => field.id !== fieldId)
+    const nextPageFields = getEmbeddedFormPageFields(nextFields, context.pages, pageId)
+    const nextActive = nextPageFields[Math.min(Math.max(currentIndex, 0), Math.max(nextPageFields.length - 1, 0))]?.id || ''
+    patchEmbeddedFormFieldsLocal(nextFields, nextActive)
+  }
+
+  const moveEmbeddedFormField = (fieldId: string, direction: BlockMoveDirection) => {
+    const context = getCurrentEmbeddedFormContext()
+    if (!context) return
+    const field = context.fields.find(item => item.id === fieldId)
+    if (!field) return
+    const pageId = getBlockPageId(field, context.pages)
+    const pageFields = getEmbeddedFormPageFields(context.fields, context.pages, pageId)
+    const currentIndex = pageFields.findIndex(item => item.id === fieldId)
+    if (currentIndex < 0) return
+    const nextIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1
+    if (nextIndex < 0 || nextIndex >= pageFields.length) return
+    const nextPageFields = arrayMove(pageFields, currentIndex, nextIndex)
+    const replacements = [...nextPageFields]
+    const nextFields = context.fields.map(item => (
+      getBlockPageId(item, context.pages) === pageId ? (replacements.shift() || item) : item
+    ))
+    patchEmbeddedFormFieldsLocal(nextFields, fieldId)
   }
 
   const patchBlockCategorySettingsLocal = (sourceBlock: SiteBlock, patch: Record<string, unknown>) => {
@@ -5578,15 +5862,6 @@ export const Sites: React.FC = () => {
     if (!pendingBlockSaveIdsRef.current.has(blockId)) pendingBlockSaveIdsRef.current.add(blockId)
     if (pendingAutosaveChangeCountRef.current < EDITOR_AUTOSAVE_CHANGE_THRESHOLD) return
     await flushPendingEditorSaves({ silent: true })
-  }
-
-  const handleSaveFormEdit = async () => {
-    if (!formEditBlock) return
-    pendingBlockSaveIdsRef.current.add(formEditBlock.id)
-    const saved = await flushPendingEditorSaves({ silent: true })
-    if (!saved) return
-    setSelectedBlockId('')
-    showToast('success', 'Formulario guardado', 'Regresaste al editor del sitio.')
   }
 
   const getDeletedBlockIds = (blockId: string) => {
@@ -6007,6 +6282,7 @@ export const Sites: React.FC = () => {
     setPaletteDragging(false)
     setActivePaletteDragPayload(null)
     setPaletteInsertIndex(null)
+    setEmbeddedFieldInsertIndex(null)
     setPaletteSectionTarget(null)
     setPaletteDragPosition(null)
   }
@@ -6023,7 +6299,50 @@ export const Sites: React.FC = () => {
   const leaveCanvasPaletteDrag = () => {
     setPaletteDragging(false)
     setPaletteInsertIndex(null)
+    setEmbeddedFieldInsertIndex(null)
     setPaletteSectionTarget(null)
+  }
+
+  const isEmbeddedFormPalettePayload = (payload?: PaletteDragPayload | null) =>
+    Boolean(payload && embeddedFormFieldTypes.includes(payload.blockType))
+
+  const handleEmbeddedFormFieldDragOver = (event: React.DragEvent<HTMLElement>, insertIndex: number) => {
+    if (!isPaletteDragEvent(event)) return
+    const payload = getPalettePayloadForDrag(event.dataTransfer)
+    if (!isEmbeddedFormPalettePayload(payload)) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    setPaletteDragEventPosition(event)
+    if (!paletteDragging) setPaletteDragging(true)
+    if (payload && (
+      payload.blockType !== paletteDragPayload?.blockType ||
+      JSON.stringify(payload.initialSettings || {}) !== JSON.stringify(paletteDragPayload?.initialSettings || {})
+    )) {
+      setActivePaletteDragPayload(payload)
+    }
+    setEmbeddedFieldInsertIndex(insertIndex)
+    setPaletteInsertIndex(null)
+    setPaletteSectionTarget(null)
+  }
+
+  const handleEmbeddedFormFieldDrop = (event: React.DragEvent<HTMLElement>, insertIndex: number) => {
+    if (!isPaletteDragEvent(event)) return
+    event.preventDefault()
+    event.stopPropagation()
+    setPaletteDragEventPosition(event)
+    const payload = getPalettePayloadForDrag(event.dataTransfer)
+    resetPaletteDrag()
+    if (!isEmbeddedFormPalettePayload(payload)) return
+    handleAddEmbeddedFormField(payload!.blockType, insertIndex)
+  }
+
+  const handleEmbeddedFormFieldDragLeave = (event: React.DragEvent<HTMLElement>) => {
+    if (!isPaletteDragEvent(event)) return
+    const nextTarget = event.relatedTarget as Node | null
+    if (nextTarget && event.currentTarget.contains(nextTarget)) return
+    setEmbeddedFieldInsertIndex(null)
   }
 
   const handleCanvasDrop = async (event: React.DragEvent<HTMLDivElement>) => {
@@ -6035,6 +6354,7 @@ export const Sites: React.FC = () => {
     const target = placement?.target || paletteSectionTarget
     resetPaletteDrag()
     if (!payload) return
+    if (formEditMode && isEmbeddedFormPalettePayload(payload)) return
     await handleAddBlock(payload.blockType, {
       insertIndex,
       initialSettings: payload.initialSettings,
@@ -6049,6 +6369,12 @@ export const Sites: React.FC = () => {
       event.dataTransfer.dropEffect = 'move'
       setPaletteDragEventPosition(event)
       const payload = getPalettePayloadForDrag(event.dataTransfer)
+      if (formEditMode && isEmbeddedFormPalettePayload(payload)) {
+        setEmbeddedFieldInsertIndex(null)
+        setPaletteInsertIndex(null)
+        setPaletteSectionTarget(null)
+        return
+      }
       if (!paletteDragging) setPaletteDragging(true)
       if (payload && (
         payload.blockType !== paletteDragPayload?.blockType ||
@@ -6080,6 +6406,20 @@ export const Sites: React.FC = () => {
       leaveCanvasPaletteDrag()
     }
   }
+
+  const embeddedFormEditorBridge: EmbeddedFormCanvasEditorBridge | null = formEditBlock ? {
+    parentBlockId: formEditBlock.id,
+    activeFieldId: activeEmbeddedFormFieldId,
+    activePageId: activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID,
+    pages: formEditPages,
+    insertIndex: embeddedFieldInsertIndex,
+    onSelectField: setActiveEmbeddedFormFieldId,
+    onDragOverField: handleEmbeddedFormFieldDragOver,
+    onDropField: handleEmbeddedFormFieldDrop,
+    onDragLeave: handleEmbeddedFormFieldDragLeave,
+    onMoveField: moveEmbeddedFormField,
+    onDeleteField: removeEmbeddedFormField
+  } : null
 
   if (loading) {
     return <Loading page="dashboard" />
@@ -6207,57 +6547,40 @@ export const Sites: React.FC = () => {
                       </label>
                       )}
                     </div>
-                    {formEditMode ? (
-                      <>
-                        <div className={styles.formModeStatus}>
-                          <span aria-hidden="true" />
-                          <FormInput size={15} />
-                          <strong>Editando formulario</strong>
-                          <small>{formEditBlock?.content || formEditBlock?.label || 'Formulario'}</small>
-                        </div>
-                        <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
-                          <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('desktop')} disabled={editorAIGenerating} title="Escritorio">
-                            <Monitor size={15} />
-                          </button>
-                          <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} disabled={editorAIGenerating} title="Movil">
-                            <Smartphone size={15} />
-                          </button>
-                        </div>
-                        <Button size="lg" onClick={handleSaveFormEdit} loading={saving} disabled={editorAIGenerating}>
-                          <Save size={15} />
-                          Guardar formulario
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
-                          <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('desktop')} disabled={editorAIGenerating} title="Escritorio">
-                            <Monitor size={15} />
-                          </button>
-                          <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} disabled={editorAIGenerating} title="Movil">
-                            <Smartphone size={15} />
-                          </button>
-                        </div>
-                        {isPublicSiteLive(editorSite, domainConfig) && (
-                          <Button variant="secondary" size="lg" onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating}>
-                            <ExternalLink size={15} />
-                            Ver en vivo
-                          </Button>
-                        )}
-                        <Button variant="secondary" size="lg" onClick={handlePreviewSite} disabled={editorAIGenerating}>
-                          <Eye size={15} />
-                          Previsualizar
-                        </Button>
-                        <Button variant="secondary" size="lg" onClick={() => handleSaveSite()} loading={saving} disabled={editorAIGenerating}>
-                          <Save size={15} />
-                          Guardar
-                        </Button>
-                        <Button size="lg" onClick={() => handleSaveSite('published')} loading={saving} disabled={editorAIGenerating}>
-                          <Send size={15} />
-                          Publicar
-                        </Button>
-                      </>
+                    {formEditMode && (
+                      <div className={styles.formModeStatus}>
+                        <span aria-hidden="true" />
+                        <FormInput size={15} />
+                        <strong>Editando formulario</strong>
+                        <small>{formEditBlock?.content || formEditBlock?.label || 'Formulario'}</small>
+                      </div>
                     )}
+                    <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
+                      <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('desktop')} disabled={editorAIGenerating} title="Escritorio">
+                        <Monitor size={15} />
+                      </button>
+                      <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} disabled={editorAIGenerating} title="Movil">
+                        <Smartphone size={15} />
+                      </button>
+                    </div>
+                    {isPublicSiteLive(editorSite, domainConfig) && (
+                      <Button variant="secondary" size="lg" onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating}>
+                        <ExternalLink size={15} />
+                        Ver en vivo
+                      </Button>
+                    )}
+                    <Button variant="secondary" size="lg" onClick={handlePreviewSite} disabled={editorAIGenerating}>
+                      <Eye size={15} />
+                      Previsualizar
+                    </Button>
+                    <Button variant="secondary" size="lg" onClick={() => handleSaveSite()} loading={saving} disabled={editorAIGenerating}>
+                      <Save size={15} />
+                      Guardar
+                    </Button>
+                    <Button size="lg" onClick={() => handleSaveSite('published')} loading={saving} disabled={editorAIGenerating}>
+                      <Send size={15} />
+                      Publicar
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -6413,8 +6736,19 @@ export const Sites: React.FC = () => {
                 <div className={`${styles.blocksRail} ${formEditMode ? styles.formModeRail : ''}`}>
                   {formEditMode ? (
                     <FormModePalette
-                      fieldsCount={formEditFields.length}
+                      fieldsCount={formEditVisibleFields.length}
+                      activePageTitle={activeEmbeddedFormPage?.title || 'Formulario'}
                       onAddField={handleAddEmbeddedFormField}
+                      onPaletteDragStart={(payload, position) => {
+                        setActivePaletteDragPayload(payload)
+                        setPaletteDragPosition(position)
+                        setPaletteDragging(false)
+                        setPaletteInsertIndex(null)
+                        setEmbeddedFieldInsertIndex(null)
+                        setPaletteSectionTarget(null)
+                      }}
+                      onPaletteDragMove={setPaletteDragPosition}
+                      onPaletteDragEnd={resetPaletteDrag}
                     />
                   ) : (
 	                  <Palette
@@ -6476,6 +6810,7 @@ export const Sites: React.FC = () => {
                               paletteInsertIndex={paletteInsertIndex}
                               paletteSectionTarget={paletteSectionTarget}
                               paletteDragging={paletteDragging}
+                              embeddedFormEditor={embeddedFormEditorBridge}
                               onSelectPopup={() => selectEditorBlock(POPUP_SELECTED_ID)}
                               onClosePopup={() => selectEditorBlock(PAGE_SELECTED_ID)}
                               onSelectBlock={selectEditorBlock}
@@ -6519,6 +6854,7 @@ export const Sites: React.FC = () => {
                                         paletteInsertIndex={paletteInsertIndex}
                                         paletteSectionTarget={paletteSectionTarget}
                                         paletteDragging={paletteDragging}
+                                        embeddedFormEditor={embeddedFormEditorBridge}
                                         onSelectBlock={selectEditorBlock}
                                         onDeleteBlock={requestDeleteBlock}
                                         onMoveBlock={handleMoveBlock}
@@ -6559,6 +6895,7 @@ export const Sites: React.FC = () => {
                                           activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                                           canMoveUp={moveState.canMoveUp}
                                           canMoveDown={moveState.canMoveDown}
+                                          embeddedFormEditor={embeddedFormEditorBridge}
                                           onSelect={() => selectEditorBlock(block.id)}
                                           onDelete={() => requestDeleteBlock(block.id)}
                                           onMoveUp={() => handleMoveBlock(block.id, 'up')}
@@ -6604,10 +6941,22 @@ export const Sites: React.FC = () => {
                     block={formEditBlock}
                     forms={forms}
                     customFields={customFields}
-                    pages={pages}
+                    pages={formEditPages}
+                    activePageId={activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                    activeFieldId={activeEmbeddedFormFieldId}
                     onPatchBlock={(patch) => patchSelectedBlock(patch)}
                     onPatchSettings={(patch) => patchSelectedBlockSettings(patch)}
                     onSave={() => handleSaveBlock()}
+                    onActivePageChange={selectEmbeddedFormPage}
+                    onAddPage={addEmbeddedFormPage}
+                    onRenamePage={renameEmbeddedFormPage}
+                    onDeletePage={deleteEmbeddedFormPage}
+                    onActiveFieldChange={setActiveEmbeddedFormFieldId}
+                    onAddField={handleAddEmbeddedFormField}
+                    onPatchField={patchEmbeddedFormField}
+                    onPatchFieldSettings={patchEmbeddedFormFieldSettings}
+                    onRemoveField={removeEmbeddedFormField}
+                    onMoveField={moveEmbeddedFormField}
                   />
                 ) : (
                   <PropertiesPanel
@@ -14314,6 +14663,7 @@ interface SortableCanvasBlockProps {
   activePageId: string
   canMoveUp: boolean
   canMoveDown: boolean
+  embeddedFormEditor?: EmbeddedFormCanvasEditorBridge | null
   onSelect: () => void
   onDelete: () => void
   onMoveUp: () => void
@@ -14348,6 +14698,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
   activePageId,
   canMoveUp,
   canMoveDown,
+  embeddedFormEditor,
   onSelect,
   onDelete,
   onMoveUp,
@@ -14424,6 +14775,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
         pages={pages}
         activePageId={activePageId}
         selected={selected}
+        embeddedFormEditor={embeddedFormEditor?.parentBlockId === block.id ? embeddedFormEditor : undefined}
         onPatchBlock={onPatchBlock}
         onPatchSettings={onPatchSettings}
         onSave={onSave}
@@ -14446,6 +14798,7 @@ interface PopupCanvasSurfaceProps {
   paletteInsertIndex: number | null
   paletteSectionTarget: PaletteSectionTarget | null
   paletteDragging: boolean
+  embeddedFormEditor?: EmbeddedFormCanvasEditorBridge | null
   onSelectPopup: () => void
   onClosePopup: () => void
   onSelectBlock: (blockId: string) => void
@@ -14471,6 +14824,7 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
   paletteInsertIndex,
   paletteSectionTarget,
   paletteDragging,
+  embeddedFormEditor,
   onSelectPopup,
   onClosePopup,
   onSelectBlock,
@@ -14565,6 +14919,7 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
               paletteInsertIndex={paletteInsertIndex}
               paletteSectionTarget={paletteSectionTarget}
               paletteDragging={paletteDragging}
+              embeddedFormEditor={embeddedFormEditor}
               onSelectBlock={onSelectBlock}
               onDeleteBlock={onDeleteBlock}
               onMoveBlock={onMoveBlock}
@@ -14593,6 +14948,7 @@ interface LandingCanvasSectionsProps {
   paletteInsertIndex: number | null
   paletteSectionTarget: PaletteSectionTarget | null
   paletteDragging: boolean
+  embeddedFormEditor?: EmbeddedFormCanvasEditorBridge | null
   onSelectBlock: (blockId: string) => void
   onDeleteBlock: (blockId: string) => void
   onMoveBlock: (blockId: string, direction: BlockMoveDirection) => void
@@ -14615,6 +14971,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
   paletteInsertIndex,
   paletteSectionTarget,
   paletteDragging,
+  embeddedFormEditor,
   onSelectBlock,
   onDeleteBlock,
   onMoveBlock,
@@ -14654,6 +15011,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
                 activePageId={activePageId}
                 canMoveUp={moveState.canMoveUp}
                 canMoveDown={moveState.canMoveDown}
+                embeddedFormEditor={embeddedFormEditor}
                 onSelect={() => onSelectBlock(block.id)}
                 onDelete={() => onDeleteBlock(block.id)}
                 onMoveUp={() => onMoveBlock(block.id, 'up')}
@@ -14684,6 +15042,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
 	              palettePreviewBlock={palettePreviewBlock}
 	              paletteInsertIndex={paletteInsertIndex}
 	              paletteSectionTarget={paletteSectionTarget}
+                embeddedFormEditor={embeddedFormEditor}
 	              onSelectBlock={onSelectBlock}
               onDeleteBlock={onDeleteBlock}
               onMoveBlock={onMoveBlock}
@@ -14716,6 +15075,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
 	              palettePreviewBlock={palettePreviewBlock}
 	              paletteInsertIndex={paletteInsertIndex}
 	              paletteSectionTarget={paletteSectionTarget}
+                embeddedFormEditor={embeddedFormEditor}
 	              onSelectBlock={onSelectBlock}
               onDeleteBlock={onDeleteBlock}
               onMoveBlock={onMoveBlock}
@@ -14744,6 +15104,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
 	          palettePreviewBlock={palettePreviewBlock}
 	          paletteInsertIndex={paletteInsertIndex}
 	          paletteSectionTarget={paletteSectionTarget}
+          embeddedFormEditor={embeddedFormEditor}
 	          onSelectBlock={onSelectBlock}
           onDeleteBlock={onDeleteBlock}
           onMoveBlock={onMoveBlock}
@@ -14771,6 +15132,7 @@ interface LandingSectionRenderProps {
   palettePreviewBlock?: SiteBlock | null
   paletteInsertIndex?: number | null
   paletteSectionTarget?: PaletteSectionTarget | null
+  embeddedFormEditor?: EmbeddedFormCanvasEditorBridge | null
   onSelectBlock: (blockId: string) => void
   onDeleteBlock: (blockId: string) => void
   onMoveBlock: (blockId: string, direction: BlockMoveDirection) => void
@@ -14794,6 +15156,7 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
   palettePreviewBlock,
   paletteInsertIndex,
   paletteSectionTarget,
+  embeddedFormEditor,
   onSelectBlock,
   onDeleteBlock,
   onMoveBlock,
@@ -14849,6 +15212,7 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
                     activePageId={activePageId}
                     canMoveUp={moveState.canMoveUp}
                     canMoveDown={moveState.canMoveDown}
+                    embeddedFormEditor={embeddedFormEditor}
                     onSelect={() => onSelectBlock(block.id)}
                     onDelete={() => onDeleteBlock(block.id)}
                     onMoveUp={() => onMoveBlock(block.id, 'up')}
@@ -14887,6 +15251,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
   palettePreviewBlock,
   paletteInsertIndex,
   paletteSectionTarget,
+  embeddedFormEditor,
   onSelectBlock,
   onDeleteBlock,
   onMoveBlock,
@@ -14993,6 +15358,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
 	          palettePreviewBlock={palettePreviewBlock}
 	          paletteInsertIndex={paletteInsertIndex}
 	          paletteSectionTarget={paletteSectionTarget}
+	          embeddedFormEditor={embeddedFormEditor}
 	          onSelectBlock={onSelectBlock}
           onDeleteBlock={onDeleteBlock}
           onMoveBlock={onMoveBlock}
@@ -15696,6 +16062,7 @@ interface CanvasPreviewBlockProps {
   pages?: SitePage[]
   activePageId?: string
   selected?: boolean
+  embeddedFormEditor?: EmbeddedFormCanvasEditorBridge | null
   onPatchBlock?: (patch: Partial<SiteBlock>) => void
   onPatchSettings?: (patch: Record<string, unknown>) => void
   onSave?: () => void
@@ -15788,6 +16155,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   pages = [],
   activePageId = DEFAULT_FUNNEL_PAGE_ID,
   selected = false,
+  embeddedFormEditor,
   onPatchBlock,
   onPatchSettings,
   onSave
@@ -15981,16 +16349,22 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       ? form.blocks.filter(field => fieldBlockTypes.has(field.blockType))
       : []
     const description = getSettingString(settings, 'description') || (form ? `Usando formulario: ${form.name}` : '')
-    const fields = embeddedBlocks.length
-      ? embeddedBlocks
-      : selectedFormFields.length
-        ? selectedFormFields
-        : [{ id: 'placeholder', blockType: 'short_text', label: 'Campo', required: true, placeholder: 'Respuesta' } as SiteBlock]
+    const resolvedFields = embeddedBlocks.length ? embeddedBlocks : selectedFormFields
+    const visibleEditorFields = embeddedFormEditor
+      ? getEmbeddedFormPageFields(resolvedFields, embeddedFormEditor.pages, embeddedFormEditor.activePageId)
+      : resolvedFields
+    const fields = resolvedFields.length
+      ? resolvedFields
+      : [{ id: 'placeholder', blockType: 'short_text', label: 'Campo', required: true, placeholder: 'Respuesta' } as SiteBlock]
     return (
       <section className="rstk-embedded-form">
         <InlineEditable as="h2" value={block.content} placeholder="Formulario" disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
         {description && <p className="rstk-help">{description}</p>}
-        {fields.map(field => <FieldStaticPreview key={field.id} block={field} />)}
+        {embeddedFormEditor ? (
+          <EmbeddedFormCanvasFields fields={visibleEditorFields} editor={embeddedFormEditor} />
+        ) : (
+          fields.map(field => <FieldStaticPreview key={field.id} block={field} />)
+        )}
         <div className="rstk-actions rstk-embed-actions">
           <button type="button" data-submit>Enviar</button>
         </div>
@@ -16166,6 +16540,97 @@ const FieldStaticPreview: React.FC<{ block: SiteBlock }> = ({ block }) => (
     {block.content ? <p className="rstk-help">{block.content}</p> : null}
     <FieldControlPreview block={block} />
   </section>
+)
+
+const EmbeddedFormCanvasDropZone: React.FC<{
+  active: boolean
+  empty?: boolean
+  insertIndex: number
+  editor: EmbeddedFormCanvasEditorBridge
+}> = ({ active, empty = false, insertIndex, editor }) => (
+  <div
+    className={`rstkEmbeddedFormDrop ${empty ? 'rstkEmbeddedFormDropEmpty' : ''} ${active ? 'rstkEmbeddedFormDropActive' : ''}`}
+    onDragOver={(event) => editor.onDragOverField(event, insertIndex)}
+    onDrop={(event) => editor.onDropField(event, insertIndex)}
+  >
+    <Plus size={empty ? 18 : 12} />
+    <span>{empty ? 'Arrastra campos aqui' : 'Soltar aqui'}</span>
+  </div>
+)
+
+const EmbeddedFormCanvasFields: React.FC<{
+  fields: SiteBlock[]
+  editor: EmbeddedFormCanvasEditorBridge
+}> = ({ fields, editor }) => (
+  <div
+    className="rstkEmbeddedFormEditor"
+    onDragLeave={editor.onDragLeave}
+    onDragOver={(event) => {
+      if (!fields.length) editor.onDragOverField(event, 0)
+    }}
+    onDrop={(event) => {
+      if (!fields.length) editor.onDropField(event, 0)
+    }}
+  >
+    {fields.length === 0 ? (
+      <EmbeddedFormCanvasDropZone active={editor.insertIndex === 0} empty insertIndex={0} editor={editor} />
+    ) : (
+      <>
+        <EmbeddedFormCanvasDropZone active={editor.insertIndex === 0} insertIndex={0} editor={editor} />
+        {fields.map((field, index) => {
+          const selected = editor.activeFieldId === field.id
+          return (
+            <React.Fragment key={field.id}>
+              <section
+                className={`rstkEmbeddedFormField ${selected ? 'rstkEmbeddedFormFieldActive' : ''}`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  editor.onSelectField(field.id)
+                }}
+              >
+                <div className="rstkEmbeddedFormFieldTools">
+                  <button
+                    type="button"
+                    disabled={index === 0}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      editor.onMoveField(field.id, 'up')
+                    }}
+                    aria-label="Subir campo"
+                  >
+                    <ArrowUp size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={index === fields.length - 1}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      editor.onMoveField(field.id, 'down')
+                    }}
+                    aria-label="Bajar campo"
+                  >
+                    <ArrowDown size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      editor.onDeleteField(field.id)
+                    }}
+                    aria-label="Eliminar campo"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+                <FieldStaticPreview block={field} />
+              </section>
+              <EmbeddedFormCanvasDropZone active={editor.insertIndex === index + 1} insertIndex={index + 1} editor={editor} />
+            </React.Fragment>
+          )
+        })}
+      </>
+    )}
+  </div>
 )
 
 // Field blocks: rstk-field markup with inline-editable label/help. The input is
@@ -17684,7 +18149,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
       <div className={styles.settingsGroup}>
         <label className={styles.field}>
           <span>Formulario existente</span>
-          <CustomSelect value={getSettingString(settings, 'formSiteId')} onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined })} onBlur={onSave}>
+          <CustomSelect value={getSettingString(settings, 'formSiteId')} onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined, embeddedPages: undefined })} onBlur={onSave}>
             <option value="">Formulario inline dentro de este sitio embudo</option>
             {forms.filter(form => form.id !== site.id).map(form => (
               <option key={form.id} value={form.id}>{form.name}</option>
@@ -17707,7 +18172,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           type="button"
           className={styles.inlineCreateButton}
           onClick={() => {
-            onPatchSettings({ formSiteId: '', embeddedBlocks: createEmbeddedBlocks(site.id) })
+            onPatchSettings({ formSiteId: '', embeddedPages: normalizePagesForSave(normalizeEmbeddedFormPages()), embeddedBlocks: createEmbeddedBlocks(site.id) })
             window.setTimeout(onSave, 0)
           }}
         >

@@ -8312,12 +8312,14 @@ async function hydrateEmbeddedForms(blocks = []) {
 
     const embeddedSite = await getSite(formSiteId, { includeBlocks: true, includeSubmissions: false })
     const embeddedBlocks = embeddedSite?.blocks || []
+    const embeddedPages = normalizeEmbeddedFormPages(normalizeSitePages(embeddedSite))
     hydrated.push({
       ...block,
       settings: {
         ...settings,
         embeddedSiteId: embeddedSite?.id || formSiteId,
         embeddedSiteName: embeddedSite?.name || '',
+        embeddedPages,
         embeddedBlocks
       }
     })
@@ -9057,6 +9059,39 @@ function getPageBlocks(site, pageId) {
 
 function getStandardFormContentPages(site) {
   return normalizeSitePages(site).filter(page => !FORM_FINAL_PAGE_IDS.has(page.id))
+}
+
+function normalizeEmbeddedFormPages(rawPages = []) {
+  const normalized = normalizePageList(Array.isArray(rawPages) ? rawPages : [])
+  const contentPages = normalized.filter(page => !FORM_FINAL_PAGE_IDS.has(page.id))
+  const pages = contentPages.length ? contentPages : normalized
+  return (pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Formulario', sortOrder: 0 }])
+    .map((page, index) => ({ ...page, sortOrder: index }))
+}
+
+function getEmbeddedFormPageFields(fields = [], pages = [], pageId = '') {
+  const activePageId = pageId && pages.some(page => page.id === pageId)
+    ? pageId
+    : pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+  return fields.filter(field => getBlockPageId(field, pages) === activePageId)
+}
+
+function collectFieldBlockPageEntries(blocks = [], pages = []) {
+  const entries = []
+
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    if (FIELD_BLOCK_TYPES.has(block.blockType)) {
+      entries.push([block.id, getBlockPageId(block, pages)])
+      continue
+    }
+
+    if (block.blockType === 'form_embed' && Array.isArray(block.settings?.embeddedBlocks)) {
+      const embeddedPages = normalizeEmbeddedFormPages(block.settings?.embeddedPages)
+      entries.push(...collectFieldBlockPageEntries(block.settings.embeddedBlocks, embeddedPages))
+    }
+  }
+
+  return entries
 }
 
 function getStandardFormContentBlocks(site, blocks = []) {
@@ -10237,17 +10272,39 @@ function renderContentBlock(block, context = {}) {
   if (block.blockType === 'form_embed') {
     const embeddedBlocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks : []
     const fields = collectFieldBlocks(embeddedBlocks)
+    const embeddedPages = normalizeEmbeddedFormPages(settings.embeddedPages)
+    const hasEmbeddedPages = embeddedPages.length > 1
     const submitButtonContent = renderSubmitButtonContent(context.submitText, context.submitSubtitle)
+    const renderEmbeddedFields = () => {
+      if (!fields.length) return '<p class="rstk-help">Selecciona o crea un formulario embebido para capturar respuestas.</p>'
+      if (!hasEmbeddedPages) {
+        return fields.map(field => renderFieldBlock(field, false, getBlockPageId(field, embeddedPages), context)).join('\n')
+      }
+      return `
+        <div class="rstk-embedded-pages" data-embedded-form-pages>
+          ${embeddedPages.map((page, index) => {
+            const pageFields = getEmbeddedFormPageFields(fields, embeddedPages, page.id)
+            return `
+              <div data-embedded-page-content="${escapeHtml(page.id)}"${index === 0 ? '' : ' hidden'}>
+                ${pageFields.length
+                  ? pageFields.map(field => renderFieldBlock(field, false, page.id, context)).join('\n')
+                  : `<p class="rstk-help">Esta pagina no tiene campos.</p>`}
+              </div>
+            `
+          }).join('\n')}
+        </div>
+      `
+    }
     return `
       <section class="rstk-embedded-form" id="form">
         <h2>${content || escapeHtml(block.label || 'Formulario')}</h2>
         ${settings.description ? `<p class="rstk-help">${escapeHtml(settings.description)}</p>` : ''}
-        ${fields.length
-          ? fields.map(field => renderFieldBlock(field, false, '', context)).join('\n')
-          : '<p class="rstk-help">Selecciona o crea un formulario embebido para capturar respuestas.</p>'}
+        ${renderEmbeddedFields()}
         ${fields.length ? `
           <div class="rstk-actions rstk-embed-actions">
-            <button type="submit" data-submit>${submitButtonContent}</button>
+            ${hasEmbeddedPages ? `<button type="button" class="rstk-secondary" data-embedded-back hidden>${escapeHtml(context.backText || 'Anterior')}</button>` : ''}
+            ${hasEmbeddedPages ? `<button type="button" data-embedded-next>${escapeHtml(context.nextText || 'Siguiente')}</button>` : ''}
+            <button type="submit" data-submit${hasEmbeddedPages ? ' hidden' : ''}>${submitButtonContent}</button>
           </div>
           <p class="rstk-submit-message" data-message role="status"></p>
         ` : ''}
@@ -11115,6 +11172,7 @@ const RSTK_BASE_CSS = `
   .rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-options,.rstk-embedded-form > .rstk-actions{width:min(100%,560px);justify-self:center}
   .rstk-embedded-form > .rstk-field{text-align:left}
   .rstk-embedded-form > .rstk-help{width:min(100%,620px);justify-self:center}
+  .rstk-embedded-pages,.rstk-embedded-pages [data-embedded-page-content]{width:min(100%,560px);justify-self:center;display:grid;gap:14px}
 	  .rstk-kind-form form{font-family:var(--rstk-form-font,var(--rstk-font))}
 	  label{font-size:.95rem;font-weight:700;color:var(--rstk-ink)}
 	  .rstk-kind-form .rstk-field > label{color:var(--rstk-form-label-color,var(--rstk-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-label-size,.95rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none)}
@@ -12441,15 +12499,12 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	  ].filter(Boolean).join(' ')
 
 	  const phoneLocale = await getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
-	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, phoneLocale, linkStyle, websiteMode }
+	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
-  const fieldBlockPageMap = isStandardFormType
-    ? Object.fromEntries(
-      collectFieldBlocks(Array.isArray(site.blocks) ? site.blocks : [])
-        .map(block => [block.id, getBlockPageId(block, pages)])
-    )
+  const fieldBlockPageMap = isStandardFormType || isLandingType
+    ? Object.fromEntries(collectFieldBlockPageEntries(isStandardFormType ? (Array.isArray(site.blocks) ? site.blocks : []) : blocks, pages))
     : {}
 
   const submitArea = hasForm && !isLandingType
@@ -12773,6 +12828,64 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         if (progressFill) progressFill.style.width = (((index + 1) / stepPages.length) * 100) + '%';
       };
 
+      const embeddedForms = Array.from(form.querySelectorAll('[data-embedded-form-pages]')).map((host) => {
+        const pageContents = Array.from(host.querySelectorAll('[data-embedded-page-content]'));
+        const pageIds = pageContents.map(content => content.getAttribute('data-embedded-page-content') || '').filter(Boolean);
+        const formHost = host.closest('.rstk-embedded-form');
+        return {
+          host,
+          formHost,
+          pageContents,
+          pageIds,
+          index: 0,
+          backButton: formHost ? formHost.querySelector('[data-embedded-back]') : null,
+          nextButton: formHost ? formHost.querySelector('[data-embedded-next]') : null,
+          submitButton: formHost ? formHost.querySelector('[data-submit]') : null,
+          message: formHost ? formHost.querySelector('[data-message]') : message
+        };
+      });
+
+      const getEmbeddedPageFields = (state) => {
+        const currentPageId = state.pageIds[state.index] || '';
+        return fields.filter(field => (field.getAttribute('data-page-id') || '') === currentPageId);
+      };
+
+      const renderEmbeddedForm = (state) => {
+        const currentPageId = state.pageIds[state.index] || '';
+        state.pageContents.forEach((content) => {
+          content.hidden = (content.getAttribute('data-embedded-page-content') || '') !== currentPageId;
+        });
+        if (state.backButton) state.backButton.hidden = state.index === 0;
+        if (state.nextButton) state.nextButton.hidden = state.index >= state.pageIds.length - 1;
+        if (state.submitButton) state.submitButton.hidden = state.index < state.pageIds.length - 1;
+      };
+
+      embeddedForms.forEach((state) => {
+        state.nextButton && state.nextButton.addEventListener('click', () => {
+          const currentFields = getEmbeddedPageFields(state);
+          if (!currentFields.every(validateField)) return;
+          const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
+          const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect');
+          if (blockingRule) {
+            if (state.message) state.message.textContent = blockingRule.action === 'redirect' ? 'Enviando...' : (blockingRule.message || 'Gracias. Tu informacion fue recibida.');
+            form.dataset.ruleSubmit = 'true';
+            form.dataset.rulePageId = state.pageIds[state.index] || '';
+            form.requestSubmit();
+            return;
+          }
+          const jumpRule = rules.find(item => item.action === 'jump' && item.targetBlockId);
+          const targetPageId = jumpRule && jumpRule.targetBlockId ? targetBlockPageMap[jumpRule.targetBlockId] : '';
+          const targetIndex = state.pageIds.indexOf(targetPageId);
+          state.index = targetIndex >= 0 ? targetIndex : Math.min(state.index + 1, state.pageIds.length - 1);
+          renderEmbeddedForm(state);
+        });
+
+        state.backButton && state.backButton.addEventListener('click', () => {
+          state.index = Math.max(0, state.index - 1);
+          renderEmbeddedForm(state);
+        });
+      });
+
       nextButton && nextButton.addEventListener('click', () => {
         const currentFields = getPageFields(getCurrentPageId());
         if (!currentFields.every(validateField)) return;
@@ -12832,7 +12945,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const ruleSubmit = form.dataset.ruleSubmit === 'true';
-        const fieldsToValidate = ruleSubmit ? getPageFields(getCurrentPageId()) : fields;
+        const rulePageId = form.dataset.rulePageId || getCurrentPageId();
+        const fieldsToValidate = ruleSubmit ? getPageFields(rulePageId) : fields;
         const valid = fieldsToValidate.every(validateField);
         if (!valid) {
           delete form.dataset.ruleSubmit;
@@ -12921,6 +13035,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           if (message) message.textContent = error.message || 'No se pudo enviar el formulario';
         } finally {
           delete form.dataset.ruleSubmit;
+          delete form.dataset.rulePageId;
           if (submitButton) submitButton.disabled = false;
           if (formNextButton) formNextButton.disabled = false;
         }
@@ -12929,6 +13044,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       initPhoneCountryFields();
       hydrateStoredResponses();
       renderStep();
+      embeddedForms.forEach(renderEmbeddedForm);
     })();
   </script>
   ${metaPixelSnippet}
