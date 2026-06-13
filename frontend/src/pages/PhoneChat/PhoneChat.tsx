@@ -103,7 +103,7 @@ import {
   getContactCustomFieldKeys
 } from '@/utils/contactCustomFields'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
-import { getPortableDeviceMode, writeTabletViewPreference, type PortableDeviceMode } from '@/utils/phoneAccess'
+import { getLocalPhonePreviewDeviceMode, getPortableDeviceMode, isLocalPhonePreviewHost, writeTabletViewPreference, type PortableDeviceMode } from '@/utils/phoneAccess'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import styles from './PhoneChat.module.css'
 
@@ -510,11 +510,12 @@ interface ContactInfoCustomFieldView {
 
 function getPhoneChatDeviceMode(): PhoneChatDeviceMode {
   if (typeof window === 'undefined') return 'checking'
-  return getPortableDeviceMode()
+  return getLocalPhonePreviewDeviceMode() || getPortableDeviceMode()
 }
 
 function getAccessState(deviceMode = getPhoneChatDeviceMode()): AccessState {
   if (deviceMode === 'checking') return 'checking'
+  if (isLocalPhonePreviewHost()) return 'allowed'
   return deviceMode === 'desktop' ? 'blocked' : 'allowed'
 }
 

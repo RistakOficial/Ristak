@@ -32,6 +32,7 @@ import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from
 import { reportsService, type ContactListItem, type ReportMetricRow, type ReportsSummary } from '@/services/reportsService'
 import { transactionsService, type Transaction, type TransactionSummary } from '@/services/transactionsService'
 import { formatCurrency, formatDate, formatDateToISO, formatNumber, formatRoas } from '@/utils/format'
+import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import styles from './PhoneApp.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -217,6 +218,7 @@ function compactPhoneDataForCache(data: PhoneAppData): PhoneAppData {
 
 function hasPortableAccess() {
   if (typeof window === 'undefined') return false
+  if (isLocalPhonePreviewHost()) return true
 
   const portableViewport = window.matchMedia(PORTABLE_WIDTH_QUERY).matches
   const phoneViewport = window.matchMedia(PHONE_WIDTH_QUERY).matches

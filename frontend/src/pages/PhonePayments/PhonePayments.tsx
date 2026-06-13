@@ -11,6 +11,7 @@ import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
+import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import styles from './PhonePayments.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -72,6 +73,7 @@ const PRODUCT_CURRENCY_OPTIONS = CURRENCY_OPTIONS.map((option) => {
 
 function hasPortableAccess() {
   if (typeof window === 'undefined') return false
+  if (isLocalPhonePreviewHost()) return true
 
   const portableViewport = window.matchMedia(PORTABLE_WIDTH_QUERY).matches
   const phoneViewport = window.matchMedia(PHONE_WIDTH_QUERY).matches

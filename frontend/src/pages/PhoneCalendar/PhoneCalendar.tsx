@@ -22,6 +22,7 @@ import { calendarsService, type Calendar, type CalendarEvent } from '@/services/
 import { contactsService } from '@/services/contactsService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import type { Contact } from '@/types'
+import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { convertLocalToUTC } from '@/utils/timezone'
 import styles from './PhoneCalendar.module.css'
@@ -90,6 +91,7 @@ const getStoredLastCalendarId = () => {
 
 function hasPortableAccess() {
   if (typeof window === 'undefined') return false
+  if (isLocalPhonePreviewHost()) return true
 
   const portableViewport = window.matchMedia(PORTABLE_WIDTH_QUERY).matches
   const phoneViewport = window.matchMedia(PHONE_WIDTH_QUERY).matches
