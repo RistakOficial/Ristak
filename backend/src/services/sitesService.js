@@ -13017,6 +13017,10 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           }
           index = 0;
           renderStep();
+          embeddedForms.forEach((state) => {
+            state.index = 0;
+            renderEmbeddedForm(state);
+          });
           if (submission.redirectUrl) {
             window.location.href = submission.redirectUrl;
             return;
