@@ -31,7 +31,7 @@ const GOAL_TYPES = [
   { value: 'contact', label: 'Contacto / CRM' },
   { value: 'ads', label: 'Ads / campañas' },
   { value: 'custom', label: 'Evento personalizado' },
-  { value: 'advanced', label: 'Condición avanzada (grupos Y/O)' }
+  { value: 'advanced', label: 'Condición avanzada por grupos' }
 ]
 
 export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Config) => void }> = ({
@@ -107,7 +107,7 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
               ]}
               value={str(config.amountOperator) || 'any'}
               onValueChange={(next) => set({ amountOperator: next })}
-              aria-label="Operador de monto"
+              aria-label="Comparación de monto"
             />
           </Field>
           {str(config.amountOperator) !== 'any' && str(config.amountOperator) !== '' && (

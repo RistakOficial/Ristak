@@ -334,7 +334,7 @@ export function validateAdvancedCondition(config: unknown): string[] {
           errors.push(`${position}: indica el campo personalizado`)
         }
         if (!rule.operator) {
-          errors.push(`${position}: selecciona un operador`)
+          errors.push(`${position}: selecciona qué debe pasar`)
           return
         }
         if (operatorNeedsValue(rule.field, rule.operator) && !String(rule.value ?? '').trim()) {
@@ -406,7 +406,7 @@ export function validateConditionRules(config: unknown): string[] {
       errors.push(`${position}: indica el campo personalizado`)
     }
     if (!rule.operator) {
-      errors.push(`${position}: selecciona un operador`)
+      errors.push(`${position}: selecciona qué debe pasar`)
       return
     }
     if (operatorNeedsValue(rule.field, rule.operator) && !String(rule.value ?? '').trim()) {
@@ -457,7 +457,7 @@ export interface TriggerFilter {
   /** Campo personalizado elegido cuando field === 'custom' */
   customKey?: string
   customLabel?: string
-  match: TriggerFilterMatch
+  match: TriggerFilterMatch | ''
   value: string
   /** Nombre legible del valor cuando viene de un catálogo (etiqueta, calendario…) */
   valueLabel?: string
@@ -483,6 +483,7 @@ export const TRIGGER_FILTER_OPERATORS: Array<{
 
 /** ¿El operador del filtro necesita capturar un valor? */
 export function triggerOperatorNeedsValue(match: unknown): boolean {
+  if (!match) return false
   const operator = TRIGGER_FILTER_OPERATORS.find((candidate) => candidate.value === match)
   return operator ? !operator.noValue : true
 }
@@ -565,9 +566,12 @@ export function asTriggerFilters(value: unknown): TriggerFilter[] {
 export function validateTriggerFilters(value: unknown): string[] {
   const errors: string[] = []
   asTriggerFilters(value).forEach((filter, index) => {
+    const field = filter.field ? TRIGGER_FILTER_FIELDS.find((candidate) => candidate.id === filter.field) : undefined
     if (!filter.field) errors.push(`Filtro ${index + 1}: elige el campo`)
+    else if (!field) errors.push(`Filtro ${index + 1}: el campo seleccionado ya no existe`)
     else if (filter.field === 'custom' && !filter.customKey) errors.push(`Filtro ${index + 1}: elige el campo personalizado`)
-    if (triggerOperatorNeedsValue(filter.match) && !String(filter.value || '').trim()) {
+    else if (!filter.match) errors.push(`Filtro ${index + 1}: elige qué debe pasar`)
+    if (filter.match && triggerOperatorNeedsValue(filter.match) && !String(filter.value || '').trim()) {
       errors.push(`Filtro ${index + 1}: captura el valor`)
     }
   })
@@ -580,6 +584,7 @@ export function triggerFiltersSentence(value: unknown): string {
     .filter(
       (filter) =>
         filter.field &&
+        filter.match &&
         (!triggerOperatorNeedsValue(filter.match) || String(filter.value || '').trim())
     )
     .map((filter) => {
@@ -601,7 +606,7 @@ export function triggerFiltersSentence(value: unknown): string {
       const valuePart = triggerOperatorNeedsValue(filter.match)
         ? ` "${filter.valueLabel || filter.value}"`
         : ''
-      return `${joiner}${phrase} ${verbs[filter.match] || 'coincida con'}${valuePart}`
+      return `${joiner}${phrase} ${verbs[filter.match as TriggerFilterMatch] || 'coincida con'}${valuePart}`
     })
     .join('')
 }

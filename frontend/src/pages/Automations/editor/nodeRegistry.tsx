@@ -522,18 +522,18 @@ const TRIGGERS: NodeDefinition[] = [
     icon: Tag,
     accent: 'green',
     addButtonLabel: 'Seleccionar etiqueta',
-    defaultConfig: () => ({ tag: '', operator: 'added' }),
+    defaultConfig: () => ({ tag: '', operator: '' }),
     fields: [
       { key: 'tag', label: 'Etiqueta', type: 'catalogSelect', catalog: 'tags', required: true },
       {
         key: 'operator',
-        label: 'Operador',
+        label: 'Cuando una etiqueta es:',
         type: 'select',
         required: true,
+        showIf: (config) => Boolean(str(config.tag)),
         options: [
           { value: 'added', label: 'Añadida' },
-          { value: 'removed', label: 'Eliminada' },
-          { value: 'contains', label: 'Contiene' }
+          { value: 'removed', label: 'Eliminada' }
         ]
       }
     ],
@@ -546,10 +546,12 @@ const TRIGGERS: NodeDefinition[] = [
       }
       const tag = str(config.tagName) || str(config.tag)
       return {
-        text: tag
+        text: tag && str(config.operator)
           ? `Cuando un contacto ${verbs[str(config.operator)] || 'reciba la etiqueta'} "${tag}"${triggerFiltersSentence(config.filters)}`
-          : undefined,
-        empty: 'Selecciona la etiqueta que dispara el flujo'
+          : tag
+            ? `Selecciona si la etiqueta "${tag}" fue añadida o eliminada`
+            : undefined,
+        empty: 'Selecciona la etiqueta'
       }
     }
   },
@@ -683,11 +685,11 @@ const TRIGGERS: NodeDefinition[] = [
     icon: CalendarClock,
     accent: 'green',
     addButtonLabel: 'Configurar cita',
-    defaultConfig: () => ({ status: 'confirmed', calendar: '', calendarName: '' }),
+    defaultConfig: () => ({ status: '', calendar: '', calendarName: '' }),
     fields: [
       {
         key: 'status',
-        label: 'Estado',
+        label: 'Cuando la cita esté',
         type: 'select',
         required: true,
         options: [
@@ -717,8 +719,12 @@ const TRIGGERS: NodeDefinition[] = [
         no_show: 'No asistió'
       }
       const calendar = str(config.calendarName) || str(config.calendar)
+      const status = str(config.status)
       return {
-        text: `Cuando una cita sea ${(statuses[str(config.status)] || 'Confirmada').toLowerCase()}${calendar ? ` en "${calendar}"` : ''}${triggerFiltersSentence(config.filters)}`
+        text: status
+          ? `Cuando una cita sea ${(statuses[status] || status).toLowerCase()}${calendar ? ` en "${calendar}"` : ''}${triggerFiltersSentence(config.filters)}`
+          : undefined,
+        empty: 'Selecciona el estado de la cita'
       }
     }
   },
@@ -805,6 +811,7 @@ const TRIGGERS: NodeDefinition[] = [
         key: 'recurrence',
         label: 'Recurrencia',
         type: 'select',
+        showIf: (config) => Boolean(str(config.datetime)),
         options: [
           { value: 'none', label: 'Una sola vez' },
           { value: 'daily', label: 'Cada día' },
@@ -938,6 +945,7 @@ const TRIGGERS: NodeDefinition[] = [
         key: 'match',
         label: 'Regla de coincidencia',
         type: 'select',
+        showIf: (config) => Boolean(str(config.post)),
         options: [
           { value: 'contains', label: 'Contiene' },
           { value: 'exact', label: 'Coincidencia exacta' }
@@ -947,29 +955,30 @@ const TRIGGERS: NodeDefinition[] = [
         key: 'allowedComments',
         label: 'Comentarios permitidos',
         type: 'select',
+        showIf: (config) => Boolean(str(config.post)),
         options: [
           { value: 'all', label: 'Todos los comentarios' },
           { value: 'first_only', label: 'Solo el primer comentario de cada persona' }
         ]
       },
-      { key: 'avoidDuplicates', label: 'Evitar respuestas duplicadas', type: 'toggle' },
-      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle' },
+      { key: 'avoidDuplicates', label: 'Evitar respuestas duplicadas', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
+      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
       {
         key: 'publicReply',
         label: 'Respuesta pública',
         type: 'textarea',
         placeholder: '¡Gracias por comentar! Te escribimos por privado…',
         showVariables: true,
-        showIf: (config) => Boolean(config.publicReplyEnabled)
+        showIf: (config) => Boolean(str(config.post)) && Boolean(config.publicReplyEnabled)
       },
-      { key: 'dmReplyEnabled', label: 'Responder por Messenger', type: 'toggle' },
+      { key: 'dmReplyEnabled', label: 'Responder por Messenger', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
       {
         key: 'dmReply',
         label: 'Mensaje por Messenger',
         type: 'textarea',
         placeholder: 'Hola {{nombre}}, vimos tu comentario…',
         showVariables: true,
-        showIf: (config) => Boolean(config.dmReplyEnabled)
+        showIf: (config) => Boolean(str(config.post)) && Boolean(config.dmReplyEnabled)
       }
     ],
     outputs: () => SINGLE_OUTPUT,
@@ -1006,6 +1015,7 @@ const TRIGGERS: NodeDefinition[] = [
         key: 'match',
         label: 'Regla de coincidencia',
         type: 'select',
+        showIf: (config) => Boolean(str(config.post)),
         options: [
           { value: 'contains', label: 'Contiene' },
           { value: 'exact', label: 'Coincidencia exacta' }
@@ -1015,28 +1025,29 @@ const TRIGGERS: NodeDefinition[] = [
         key: 'allowedComments',
         label: 'Comentarios permitidos',
         type: 'select',
+        showIf: (config) => Boolean(str(config.post)),
         options: [
           { value: 'all', label: 'Todos los comentarios' },
           { value: 'first_only', label: 'Solo el primer comentario de cada persona' }
         ]
       },
-      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle' },
+      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
       {
         key: 'publicReply',
         label: 'Respuesta pública',
         type: 'textarea',
         placeholder: '¡Gracias por comentar!',
         showVariables: true,
-        showIf: (config) => Boolean(config.publicReplyEnabled)
+        showIf: (config) => Boolean(str(config.post)) && Boolean(config.publicReplyEnabled)
       },
-      { key: 'dmReplyEnabled', label: 'Responder por Instagram Direct', type: 'toggle' },
+      { key: 'dmReplyEnabled', label: 'Responder por Instagram Direct', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
       {
         key: 'dmReply',
         label: 'Mensaje por Instagram Direct',
         type: 'textarea',
         placeholder: 'Hola {{nombre}}, vimos tu comentario…',
         showVariables: true,
-        showIf: (config) => Boolean(config.dmReplyEnabled)
+        showIf: (config) => Boolean(str(config.post)) && Boolean(config.dmReplyEnabled)
       }
     ],
     outputs: () => SINGLE_OUTPUT,
@@ -1415,13 +1426,15 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
     icon: PencilLine,
     accent: 'blue',
     addButtonLabel: 'Seleccionar campo',
-    defaultConfig: () => ({ field: '', fieldName: '', operation: 'replace', value: '' }),
+    defaultConfig: () => ({ field: '', fieldName: '', operation: '', value: '' }),
     fields: [
       { key: 'field', label: 'Campo', type: 'catalogSelect', catalog: 'contactFields', required: true },
       {
         key: 'operation',
-        label: 'Operación',
+        label: 'Qué hacer con ese campo',
         type: 'select',
+        required: true,
+        showIf: (config) => Boolean(str(config.field)),
         options: [
           { value: 'replace', label: 'Reemplazar valor' },
           { value: 'append', label: 'Agregar al valor actual' },
@@ -1435,7 +1448,7 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
         type: 'text',
         placeholder: 'Nuevo valor…',
         showVariables: true,
-        showIf: (config) => str(config.operation) !== 'clear'
+        showIf: (config) => Boolean(str(config.field)) && Boolean(str(config.operation)) && str(config.operation) !== 'clear'
       }
     ],
     outputs: () => SINGLE_OUTPUT,
@@ -1671,7 +1684,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     kind: 'action',
     label: 'Condición',
     category: 'action-logic',
-    description: 'Divide el flujo con grupos de reglas del CRM (Y/O combinables)',
+    description: 'Divide el flujo con grupos de reglas del CRM',
     icon: Filter,
     accent: 'purple',
     tintedHeader: true,

@@ -219,13 +219,17 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
     group: ConditionGroup
   ) => {
     const field = rule.field ? getCrmField(rule.field) : undefined
-    const operators = rule.field ? getOperatorsForField(rule.field) : []
+    const canSelectOperator = Boolean(rule.field) && (!field?.needsCustomKey || Boolean(rule.customKey))
+    const operators = canSelectOperator ? getOperatorsForField(rule.field) : []
+    const ruleLead = ruleIndex === 0
+      ? 'Regla principal'
+      : group.operator === 'OR'
+        ? 'O puede cumplirse'
+        : 'También debe cumplirse'
     return (
       <div key={ruleIndex} className={styles.conditionRule}>
         <div className={styles.conditionRuleHeader}>
-          <span className={styles.conditionRuleTitle}>
-            {ruleIndex === 0 ? 'Si' : group.operator === 'OR' ? 'O' : 'Y'}
-          </span>
+          <span className={styles.conditionRuleTitle}>{ruleLead}</span>
           <button
             type="button"
             className={styles.configIconButton}
@@ -265,7 +269,7 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
               valueMode: 'fixed'
             })
           }
-          placeholder="Selecciona un campo del CRM"
+          placeholder="Selecciona qué dato revisar"
           aria-label="Campo"
         />
 
@@ -281,14 +285,14 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
           </div>
         )}
 
-        {rule.field && (
+        {canSelectOperator && (
           <div style={{ marginTop: 6 }}>
             <CustomSelect
               options={operators.map((operator) => ({ value: operator.value, label: operator.label }))}
               value={rule.operator}
               onValueChange={(next) => updateRule(branchIndex, groupIndex, ruleIndex, { operator: next })}
-              placeholder="Selecciona un operador"
-              aria-label="Operador"
+              placeholder="Selecciona qué debe pasar"
+              aria-label="Qué debe pasar"
             />
           </div>
         )}
@@ -306,14 +310,14 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
         <div className={styles.groupConnector}>
           <CustomSelect
             options={[
-              { value: 'AND', label: 'Y además' },
-              { value: 'OR', label: 'O bien' }
+              { value: 'AND', label: 'También debe cumplirse este grupo' },
+              { value: 'OR', label: 'Este grupo es una alternativa' }
             ]}
             value={branch.groupsOperator}
             onValueChange={(next) =>
               updateBranch(branchIndex, { groupsOperator: next === 'OR' ? 'OR' : 'AND' })
             }
-            aria-label="Combinar grupos"
+            aria-label="Cómo combinar grupos"
           />
         </div>
       )}
@@ -321,14 +325,14 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
         <div className={styles.conditionGroupHeader}>
           <CustomSelect
             options={[
-              { value: 'AND', label: 'Cumplir todas (Y)' },
-              { value: 'OR', label: 'Cumplir cualquiera (O)' }
+              { value: 'AND', label: 'Deben cumplirse todas las reglas' },
+              { value: 'OR', label: 'Puede cumplirse cualquier regla' }
             ]}
             value={group.operator}
             onValueChange={(next) =>
               updateGroup(branchIndex, groupIndex, { operator: next === 'OR' ? 'OR' : 'AND' })
             }
-            aria-label="Operador del grupo"
+            aria-label="Cómo evaluar este grupo"
           />
           <button
             type="button"
