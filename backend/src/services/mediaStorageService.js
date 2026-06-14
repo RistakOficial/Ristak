@@ -533,7 +533,8 @@ async function createImageThumbnail(buffer, mimeType) {
   }
 }
 
-function shouldCompress({ config, mediaType }) {
+function shouldCompress({ config, mediaType, skipCompression = false }) {
+  if (skipCompression) return false
   if (!config.compressionEnabled) return false
   if (mediaType === 'image') return config.imageOptimizationEnabled
   if (mediaType === 'video') return config.videoCompressionEnabled
@@ -541,8 +542,8 @@ function shouldCompress({ config, mediaType }) {
   return false
 }
 
-async function processMedia({ buffer, mimeType, mediaType, config }) {
-  if (!shouldCompress({ config, mediaType })) {
+async function processMedia({ buffer, mimeType, mediaType, config, skipCompression = false }) {
+  if (!shouldCompress({ config, mediaType, skipCompression })) {
     return { buffer, mimeType, compression: 'disabled' }
   }
 
@@ -698,7 +699,8 @@ export async function uploadMediaAsset(input = {}) {
     buffer: originalBuffer,
     mimeType: detected.mimeType,
     mediaType,
-    config
+    config,
+    skipCompression: boolValue(input.skipCompression)
   })
   const processedDetected = await detectMimeType(processed.buffer, processed.mimeType, originalFilename)
   const finalMimeType = processedDetected.mimeType

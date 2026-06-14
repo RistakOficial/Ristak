@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 
-const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
+const VALID_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAGUlEQVQokWMwXpVGEmIY1bBqNJSMh2vSAACFAkMQ6K3QUQAAAABJRU5ErkJggg=='
 
 const ENV_KEYS = [
   'DATABASE_URL',
@@ -163,11 +163,29 @@ test('saveWhatsAppImageDataUrl recupera configuración Bunny desde Installer cua
       WHERE id = 1
     `)
 
-    const savedImage = await whatsappApiService.saveWhatsAppImageDataUrl(ONE_PIXEL_PNG_DATA_URL)
+    const savedImage = await whatsappApiService.saveWhatsAppImageDataUrl(VALID_PNG_DATA_URL)
     mediaAssetId = savedImage.mediaAssetId
 
     assert.match(savedImage.publicPath, new RegExp(`^${baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/cdn/`))
+    assert.match(savedImage.publicPath, /\.jpg$/)
+    assert.equal(savedImage.mimeType, 'image/jpeg')
     assert.ok(uploads.length >= 1)
+    assert.ok(
+      uploads.some(url => decodeURIComponent(url).endsWith('-whatsapp-image.jpg')),
+      'la foto principal de WhatsApp API debe subirse como JPEG, no WebP'
+    )
+    assert.ok(
+      uploads.every(url => !decodeURIComponent(url).endsWith('-whatsapp-image.webp')),
+      'la foto principal no debe convertirse a WebP porque Meta/YCloud no la aceptan como imagen normal'
+    )
+    const row = await db.get('SELECT mime_type, extension, stored_filename, metadata_json FROM media_assets WHERE id = ?', [mediaAssetId])
+    assert.equal(row.mime_type, 'image/jpeg')
+    assert.equal(row.extension, 'jpg')
+    assert.match(row.stored_filename, /\.jpg$/)
+    const metadata = JSON.parse(row.metadata_json || '{}')
+    assert.equal(metadata.whatsappApiCompatible, true)
+    assert.equal(metadata.whatsappImageCompression, 'whatsapp_jpeg')
+    assert.equal(metadata.originalMimeType, 'image/png')
     assert.equal(process.env.INTERNAL_INSTALLER_TOKEN, 'internal-token')
   } finally {
     if (db && mediaAssetId) {
@@ -230,7 +248,7 @@ test('saveWhatsAppImageDataUrl falla claro cuando Bunny es obligatorio y no est�
     `)
 
     await assert.rejects(
-      () => whatsappApiService.saveWhatsAppImageDataUrl(ONE_PIXEL_PNG_DATA_URL),
+      () => whatsappApiService.saveWhatsAppImageDataUrl(VALID_PNG_DATA_URL),
       (error) => {
         assert.equal(error.code, 'bunny_not_configured')
         assert.match(error.message, /Bunny\.net está activo/)
