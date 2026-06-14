@@ -23,8 +23,10 @@ router.get('/', calendarsController.getCalendars);
 // Crear calendario local de Ristak
 router.post('/', calendarsController.createCalendar);
 
-// Integración Google Calendar por Service Account
+// Integración Google Calendar: OAuth central para instalaciones licenciadas,
+// Service Account como fallback para instalaciones standalone.
 router.get('/google-integration', calendarsController.getGoogleCalendarIntegration);
+router.post('/google-integration/connect-url', calendarsController.getGoogleCalendarConnectUrl);
 router.get('/google-integration/calendars', calendarsController.listGoogleCalendarOptions);
 router.get('/google-integration/reveal/service-account', calendarsController.revealGoogleCalendarServiceAccount);
 router.put('/google-integration', calendarsController.saveGoogleCalendarIntegration);

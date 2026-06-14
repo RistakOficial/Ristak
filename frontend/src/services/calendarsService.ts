@@ -120,6 +120,8 @@ export interface CalendarEvent {
 }
 
 export interface GoogleCalendarIntegrationStatus {
+  connectionMode?: 'service_account' | 'oauth';
+  configured?: boolean;
   connected: boolean;
   calendarId: string;
   serviceAccountEmail: string;
@@ -137,10 +139,22 @@ export interface GoogleCalendarIntegrationStatus {
   syncedEventsCount: number;
   connectedAt: string | null;
   updatedAt: string | null;
+  googleAccountEmail?: string;
+  googleAccountName?: string;
+  googleAccountPictureUrl?: string;
+  scopes?: string[];
+  canManageEvents?: boolean;
+  canListCalendars?: boolean;
 }
 
 export interface GoogleCalendarServiceAccountReveal {
   serviceAccountJson: string;
+}
+
+export interface GoogleCalendarConnectUrl {
+  url: string;
+  mode?: 'calendar';
+  redirectUri?: string;
 }
 
 export interface GoogleCalendarOption {
@@ -226,6 +240,12 @@ export const calendarsService = {
 
   async getGoogleIntegration(): Promise<GoogleCalendarIntegrationStatus> {
     return apiClient.get<GoogleCalendarIntegrationStatus>('/calendars/google-integration');
+  },
+
+  async getGoogleConnectUrl(): Promise<GoogleCalendarConnectUrl> {
+    return apiClient.post<GoogleCalendarConnectUrl>('/calendars/google-integration/connect-url', {
+      returnPath: '/integrations/google-calendar'
+    });
   },
 
   async revealGoogleServiceAccount(): Promise<GoogleCalendarServiceAccountReveal> {

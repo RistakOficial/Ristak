@@ -1149,6 +1149,14 @@
   padding: 2px 0 0;
 }
 
+.googleLayoutSingle {
+  display: grid;
+  grid-template-columns: minmax(0, 780px);
+  align-items: start;
+  margin-top: 0;
+  padding: 2px 0 0;
+}
+
 .connectionPanel,
 .guidePanel {
   min-width: 0;
@@ -1227,11 +1235,20 @@
 }
 
 .statusPill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   flex: 0 0 auto;
   min-height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   color: var(--color-text-secondary);
   background: rgba(148, 163, 184, 0.06);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .statusOk {
@@ -1381,6 +1398,16 @@
   background: transparent;
 }
 
+.oauthConnectionCard {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 14px 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
 .connectedIcon {
   display: grid;
   place-items: center;
@@ -1390,6 +1417,26 @@
   border-radius: 8px;
   background: rgba(16, 185, 129, 0.08);
   color: var(--color-success);
+}
+
+.oauthAccountAvatar {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background:
+    linear-gradient(var(--color-background-primary), var(--color-background-primary)) padding-box,
+    linear-gradient(135deg, #4285f4 0 25%, #34a853 25% 50%, #fbbc05 50% 75%, #ea4335 75% 100%) border-box;
+  color: #4285f4;
+}
+
+.oauthAccountAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .connectedMain {
@@ -1457,6 +1504,31 @@
   font-size: 10.5px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.oauthPermissionGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.oauthPermissionGrid span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.oauthPermissionGrid svg {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
 }
 
 .formActions {
@@ -1819,7 +1891,8 @@
 /* ===== Responsive ===== */
 @media (max-width: 1100px) {
   .calendarRow,
-  .googleLayout {
+  .googleLayout,
+  .googleLayoutSingle {
     grid-template-columns: 1fr;
   }
 
@@ -1885,7 +1958,8 @@
     grid-template-columns: auto auto minmax(0, 1fr) auto;
   }
 
-  .googleLayout {
+  .googleLayout,
+  .googleLayoutSingle {
     padding: 6px 0 0;
   }
 
@@ -1941,7 +2015,8 @@
 
   .supportLinks,
   .integrationFacts,
-  .connectedMeta {
+  .connectedMeta,
+  .oauthPermissionGrid {
     grid-template-columns: 1fr;
   }
 
@@ -1958,7 +2033,8 @@
     width: 100%;
   }
 
-  .connectedCard {
+  .connectedCard,
+  .oauthConnectionCard {
     grid-template-columns: 1fr;
   }
 

@@ -96,7 +96,7 @@ const STEP_META: Record<InitStepId, StepMeta> = {
     title: 'Conecta Google Calendar',
     description: 'Opcional. Sincroniza tu calendario para gestionar citas y disponibilidad.',
     icon: Calendar,
-    to: '/settings/calendars'
+    to: '/settings/calendars/google'
   }
 }
 

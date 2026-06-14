@@ -344,7 +344,7 @@ export const CalendarsConfiguration: React.FC = () => {
       const data = await calendarsService.getGoogleIntegration()
       setGoogleIntegration(data)
       setGoogleCalendarId(data.calendarId || '')
-      if (data.connected) {
+      if (data.connected && data.connectionMode !== 'oauth') {
         try {
           const revealed = await calendarsService.revealGoogleServiceAccount()
           setServiceAccountJson(revealed.serviceAccountJson || '')
@@ -354,7 +354,7 @@ export const CalendarsConfiguration: React.FC = () => {
       } else {
         setServiceAccountJson('')
       }
-      setEditingGoogleIntegration(!data.connected)
+      setEditingGoogleIntegration(data.connectionMode !== 'oauth' && !data.connected)
     } catch (error: any) {
       showToast('error', 'Error al cargar Google Calendar', error.message || 'No se pudo leer la integración')
     } finally {
@@ -490,6 +490,21 @@ export const CalendarsConfiguration: React.FC = () => {
       showToast('success', 'Email copiado', serviceAccountEmailForSharing)
     } catch {
       showToast('error', 'No se pudo copiar', 'Copia el email manualmente')
+    }
+  }
+
+  const handleConnectGoogleOAuth = async () => {
+    setSavingGoogleIntegration(true)
+    try {
+      const data = await calendarsService.getGoogleConnectUrl()
+      if (!data.url) {
+        throw new Error('El portal no devolvió la URL de conexión')
+      }
+      window.location.assign(data.url)
+    } catch (error: any) {
+      showToast('error', 'No se pudo abrir Google Calendar', error.message || 'Intenta de nuevo en unos minutos')
+    } finally {
+      setSavingGoogleIntegration(false)
     }
   }
 
@@ -1943,6 +1958,7 @@ export const CalendarsConfiguration: React.FC = () => {
 
   const renderGoogleCalendarTab = () => {
     const isConnected = Boolean(googleIntegration?.connected)
+    const isCentralGoogleOAuth = googleIntegration?.connectionMode === 'oauth'
     const testFailed = googleIntegration?.lastTestStatus === 'error'
     const syncFailed = googleIntegration?.lastSyncStatus === 'error'
     const showWizard = !isConnected || editingGoogleIntegration
@@ -1954,6 +1970,142 @@ export const CalendarsConfiguration: React.FC = () => {
         : ''
     const failureHelp = latestGoogleError ? getGoogleFailureHelp(latestGoogleError) : null
     const guideToggleLabel = googleGuideExpanded ? 'Contraer guía' : 'Expandir guía'
+
+    const renderCentralOAuthPanel = () => {
+      const accountName = googleIntegration?.googleAccountName || googleIntegration?.googleAccountEmail || 'Google Calendar'
+      const accountEmail = googleIntegration?.googleAccountEmail || 'Conecta tu cuenta para ver calendarios disponibles'
+      const canConnect = googleIntegration?.configured !== false
+
+      return (
+        <div className={pageStyles.googleLayoutSingle}>
+          <section className={pageStyles.connectionPanel}>
+            <div className={pageStyles.connectionHeader}>
+              <div>
+                <h2>Google Calendar</h2>
+                <p>Conecta tu cuenta con Google desde el portal de Ristak. No necesitas pegar JSON ni crear Service Accounts.</p>
+              </div>
+              <span className={`${pageStyles.statusPill} ${isConnected ? pageStyles.statusOk : canConnect ? pageStyles.statusWarn : pageStyles.statusOff}`}>
+                {isConnected ? <CheckCircle size={15} /> : canConnect ? <Info size={15} /> : <XCircle size={15} />}
+                {isConnected ? 'Conectado' : canConnect ? 'Listo' : 'Pendiente'}
+              </span>
+            </div>
+
+            <div className={pageStyles.oauthConnectionCard}>
+              <div className={pageStyles.oauthAccountAvatar}>
+                {googleIntegration?.googleAccountPictureUrl ? (
+                  <img src={googleIntegration.googleAccountPictureUrl} alt="" />
+                ) : (
+                  <Calendar size={22} />
+                )}
+              </div>
+              <div className={pageStyles.connectedMain}>
+                <div className={pageStyles.connectedTitle}>
+                  <h3>{isConnected ? accountName : 'Conectar con Google'}</h3>
+                  {isConnected && <span>OAuth</span>}
+                </div>
+                <p>{isConnected ? accountEmail : 'Te vamos a llevar al portal seguro para autorizar Google Calendar con los permisos correctos.'}</p>
+              </div>
+            </div>
+
+            {isConnected ? (
+              <>
+                <div className={pageStyles.oauthPermissionGrid}>
+                  <span>
+                    <ShieldCheck size={15} />
+                    {googleIntegration?.canManageEvents ? 'Puede crear y editar citas' : 'Sin permiso para editar citas'}
+                  </span>
+                  <span>
+                    <ListChecks size={15} />
+                    {googleIntegration?.canListCalendars ? 'Puede leer tus calendarios' : 'Sin permiso para listar calendarios'}
+                  </span>
+                  <span>
+                    <Calendar size={15} />
+                    {loadingGoogleCalendarOptions
+                      ? 'Leyendo calendarios...'
+                      : `${googleCalendarOptions.length} calendario${googleCalendarOptions.length === 1 ? '' : 's'} disponible${googleCalendarOptions.length === 1 ? '' : 's'}`}
+                  </span>
+                </div>
+
+                <div className={pageStyles.connectedActions}>
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      await loadGoogleIntegration()
+                      await loadGoogleCalendarOptions()
+                    }}
+                    disabled={busyGoogleAction}
+                  >
+                    <RefreshCw size={16} />
+                    Actualizar
+                  </Button>
+                  <Button variant="ghost" onClick={handleConnectGoogleOAuth} disabled={busyGoogleAction}>
+                    {savingGoogleIntegration ? (
+                      <>
+                        <Loader2 size={16} className={styles.spinIcon} />
+                        Abriendo...
+                      </>
+                    ) : (
+                      <>
+                        <KeyRound size={16} />
+                        Cambiar cuenta
+                      </>
+                    )}
+                  </Button>
+                  <Button variant="ghost" onClick={handleDisconnectGoogleIntegration} disabled={busyGoogleAction}>
+                    {disconnectingGoogleIntegration ? (
+                      <>
+                        <Loader2 size={16} className={styles.spinIcon} />
+                        Desconectando...
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 size={16} />
+                        Desconectar
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className={pageStyles.wizardIntro}>
+                  <strong>{canConnect ? 'Conexión central' : 'Falta configuración del portal'}</strong>
+                  <span>
+                    {canConnect
+                      ? 'Al continuar, Google te pedirá permiso para leer calendarios y crear eventos. La autorización se guarda cifrada en el portal.'
+                      : 'Primero configura Google OAuth en el portal de Ristak para poder conectar calendarios desde las instalaciones.'}
+                  </span>
+                </div>
+
+                <div className={pageStyles.formActions}>
+                  <Button onClick={handleConnectGoogleOAuth} disabled={!canConnect || savingGoogleIntegration}>
+                    {savingGoogleIntegration ? (
+                      <>
+                        <Loader2 size={16} className={styles.spinIcon} />
+                        Abriendo...
+                      </>
+                    ) : (
+                      <>
+                        <KeyRound size={16} />
+                        Conectar con Google
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {googleIntegration?.lastTestStatus === 'error' && googleIntegration.lastTestMessage && (
+              <div className={pageStyles.resultStack}>
+                <div className={`${pageStyles.testResult} ${pageStyles.testError}`}>
+                  {googleIntegration.lastTestMessage}
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      )
+    }
 
     const renderGoogleGuide = () => (
       <aside className={pageStyles.guidePanel}>
@@ -2102,6 +2254,29 @@ export const CalendarsConfiguration: React.FC = () => {
         )}
       </aside>
     )
+
+    if (loadingGoogleIntegration) {
+      return (
+        <div className={pageStyles.googleLayoutSingle}>
+          <section className={pageStyles.connectionPanel}>
+            <div className={pageStyles.connectionHeader}>
+              <div>
+                <h2>Google Calendar</h2>
+                <p>Revisando conexión...</p>
+              </div>
+              <span className={`${pageStyles.statusPill} ${pageStyles.statusWarn}`}>
+                <Loader2 size={15} className={styles.spinIcon} />
+                Cargando
+              </span>
+            </div>
+          </section>
+        </div>
+      )
+    }
+
+    if (isCentralGoogleOAuth) {
+      return renderCentralOAuthPanel()
+    }
 
     return (
       <div className={pageStyles.googleLayout}>

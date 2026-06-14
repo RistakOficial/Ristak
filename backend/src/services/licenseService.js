@@ -47,6 +47,17 @@ function getConfig() {
   }
 }
 
+function buildInstalledAppPayload(extra = {}) {
+  const config = getConfig()
+  return {
+    client_id: config.clientId,
+    license_key: config.licenseKey,
+    installation_id: config.installationId,
+    app_url: config.appUrl,
+    ...extra
+  }
+}
+
 /**
  * La licencia solo se exige cuando la app fue instalada por el portal central
  * (tiene LICENSE_SERVER_URL + CLIENT_ID + LICENSE_KEY). En desarrollo local o
@@ -55,6 +66,34 @@ function getConfig() {
 export function isLicenseEnforced() {
   const config = getConfig()
   return !!(config.licenseServerUrl && config.clientId && config.licenseKey)
+}
+
+async function callLicenseServer(path, body = {}) {
+  const config = getConfig()
+
+  if (!isLicenseEnforced()) {
+    throw new Error('Esta instalación no está conectada al portal central.')
+  }
+
+  let response, data
+  try {
+    response = await fetch(`${config.licenseServerUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildInstalledAppPayload(body))
+    })
+    data = await response.json().catch(() => ({}))
+  } catch (error) {
+    logger.error(`No se pudo contactar al portal central: ${error.message}`)
+    throw new Error('No se pudo contactar al portal central. Intenta de nuevo en unos minutos.')
+  }
+
+  if (!response.ok || data?.success === false) {
+    const message = data?.message || data?.error || 'El portal central rechazó la solicitud.'
+    throw new Error(message)
+  }
+
+  return data || {}
 }
 
 export function getHealthInfo() {
@@ -197,6 +236,32 @@ export async function hasFeature(featureKey) {
   if (!state.allowed) return false
   if (!state.enforced) return true
   return !!state.features?.[featureKey]
+}
+
+export async function getCentralGoogleCalendarStatus() {
+  const data = await callLicenseServer('/api/license/google-calendar/status')
+  return data.calendar || {}
+}
+
+export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/integrations/google-calendar' } = {}) {
+  const data = await callLicenseServer('/api/license/google-calendar/connect-url', {
+    return_path: returnPath
+  })
+  return {
+    url: data.url || '',
+    mode: data.mode || 'calendar',
+    redirectUri: data.redirect_uri || data.redirectUri || ''
+  }
+}
+
+export async function listCentralGoogleCalendars() {
+  const data = await callLicenseServer('/api/license/google-calendar/calendars')
+  return Array.isArray(data.calendars) ? data.calendars : []
+}
+
+export async function disconnectCentralGoogleCalendar() {
+  const data = await callLicenseServer('/api/license/google-calendar/disconnect')
+  return data.calendar || {}
 }
 
 /**
