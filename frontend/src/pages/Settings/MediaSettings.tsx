@@ -11,6 +11,7 @@ import {
   FileText,
   FileVideo,
   Folder,
+  FolderInput,
   Grid3X3,
   HardDrive,
   List,
@@ -30,11 +31,12 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  Modal,
   PageHeader,
   TabList
 } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
-import mediaService, { type MediaAsset, type MediaDownloadEntry, type StorageUsage } from '@/services/mediaService'
+import mediaService, { type MediaAsset, type MediaDownloadEntry, type MediaMoveEntry, type StorageUsage } from '@/services/mediaService'
 import styles from './MediaSettings.module.css'
 
 type MediaFilter = 'all' | 'image' | 'video' | 'audio' | 'document' | 'other'
@@ -55,10 +57,29 @@ interface FolderSummary {
   sizeBytes: number
 }
 
+interface MoveDialogState {
+  kind: 'files' | 'folder' | 'selection'
+  title: string
+  files: ExplorerFile[]
+  sourceFolderPath?: string
+}
+
+interface MarqueeSelectionState {
+  active: boolean
+  moved: boolean
+  additive: boolean
+  pointerId: number
+  startX: number
+  startY: number
+  currentX: number
+  currentY: number
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 const STORAGE_GB = 1024 * 1024 * 1024
 const FILE_SELECTION_PREFIX = 'file:'
 const FOLDER_SELECTION_PREFIX = 'folder:'
+const MEDIA_DRAG_MIME = 'application/x-ristak-media-assets'
 
 const mediaTabs: Array<{ value: MediaFilter; label: string; icon: React.ReactNode }> = [
   { value: 'all', label: 'Todo', icon: <HardDrive size={14} /> },
@@ -248,6 +269,27 @@ function buildFolderSummaries(files: ExplorerFile[], currentPath: string): Folde
   return Array.from(folders.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'))
 }
 
+function buildAllFolderSummaries(files: ExplorerFile[]): FolderSummary[] {
+  const folders = new Map<string, FolderSummary>()
+
+  files.forEach((file) => {
+    file.folderSegments.forEach((_, index) => {
+      const path = file.folderSegments.slice(0, index + 1).join('/')
+      const existing = folders.get(path) || {
+        path,
+        name: file.folderSegments.slice(0, index + 1).map(formatFolderSegment).join(' / '),
+        filesCount: 0,
+        sizeBytes: 0
+      }
+      existing.filesCount += 1
+      existing.sizeBytes += Number(file.asset.quotaSize || file.asset.sizeProcessed || file.asset.sizeOriginal || 0)
+      folders.set(path, existing)
+    })
+  })
+
+  return Array.from(folders.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'))
+}
+
 function buildFileUrl(asset: MediaAsset, variant: 'file' | 'thumbnail' = 'file') {
   const path = `/api/media/assets/${encodeURIComponent(asset.id)}/${variant}`
   if (API_BASE_URL) return `${API_BASE_URL}${path}`
@@ -290,9 +332,39 @@ function buildArchiveFilename(label: string) {
   return `${sanitizeDownloadName(label, 'media')}.zip`
 }
 
+function joinFolderPath(...parts: string[]) {
+  return parts.flatMap(pathSegments).filter(Boolean).join('/')
+}
+
+function relativeFolderPath(filePath: string, sourceFolderPath: string) {
+  if (!sourceFolderPath) return filePath
+  if (filePath === sourceFolderPath) return ''
+  return filePath.startsWith(`${sourceFolderPath}/`)
+    ? filePath.slice(sourceFolderPath.length + 1)
+    : filePath
+}
+
+function rectsOverlap(a: DOMRect | { left: number; right: number; top: number; bottom: number }, b: DOMRect | { left: number; right: number; top: number; bottom: number }) {
+  return a.left <= b.right && a.right >= b.left && a.top <= b.bottom && a.bottom >= b.top
+}
+
+function dataTransferHasMediaPayload(dataTransfer: DataTransfer) {
+  return Array.from(dataTransfer.types || []).includes(MEDIA_DRAG_MIME)
+}
+
+function readDraggedMediaIds(dataTransfer: DataTransfer) {
+  try {
+    const parsed = JSON.parse(dataTransfer.getData(MEDIA_DRAG_MIME) || '[]')
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string' && Boolean(id)) : []
+  } catch {
+    return []
+  }
+}
+
 export const MediaSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const uploadInputRef = useRef<HTMLInputElement>(null)
+  const filePaneRef = useRef<HTMLElement>(null)
   const [assets, setAssets] = useState<MediaAsset[]>([])
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   const [loading, setLoading] = useState(true)
@@ -301,6 +373,7 @@ export const MediaSettings: React.FC = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [bulkAction, setBulkAction] = useState<'download' | 'delete' | null>(null)
+  const [moving, setMoving] = useState(false)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [activeFilter, setActiveFilter] = useState<MediaFilter>('all')
@@ -308,6 +381,11 @@ export const MediaSettings: React.FC = () => {
   const [currentPath, setCurrentPath] = useState('')
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
   const [selectedItemKeys, setSelectedItemKeys] = useState<Set<string>>(() => new Set())
+  const [moveDialog, setMoveDialog] = useState<MoveDialogState | null>(null)
+  const [moveTargetPath, setMoveTargetPath] = useState('')
+  const [draggingFileIds, setDraggingFileIds] = useState<string[]>([])
+  const [dragOverFolderPath, setDragOverFolderPath] = useState<string | null>(null)
+  const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null)
 
   const loadMedia = useCallback(async (mode: 'initial' | 'refresh' = 'refresh') => {
     if (mode === 'initial') setLoading(true)
@@ -367,6 +445,7 @@ export const MediaSettings: React.FC = () => {
     normalizedQuery ? [] : buildFolderSummaries(typeFilteredFiles, currentPath)
   ), [currentPath, normalizedQuery, typeFilteredFiles])
   const rootFolders = useMemo(() => buildFolderSummaries(typeFilteredFiles, ''), [typeFilteredFiles])
+  const allFolderOptions = useMemo(() => buildAllFolderSummaries(files), [files])
   const visibleSelectionKeys = useMemo(() => [
     ...folderSummaries.map((folder) => folderSelectionKey(folder.path)),
     ...visibleFiles.map((file) => fileSelectionKey(file.asset.id))
@@ -402,6 +481,24 @@ export const MediaSettings: React.FC = () => {
   const selectedElementCount = selectedItemKeys.size
   const allVisibleSelected = visibleSelectionKeys.length > 0 && visibleSelectionKeys.every((key) => selectedItemKeys.has(key))
   const partiallySelected = !allVisibleSelected && visibleSelectionKeys.some((key) => selectedItemKeys.has(key))
+  const actionBusy = Boolean(bulkAction) || moving
+  const moveDestinationOptions = useMemo<FolderSummary[]>(() => [
+    {
+      path: '',
+      name: 'Mi unidad',
+      filesCount: files.length,
+      sizeBytes: files.reduce((total, file) => total + Number(file.asset.quotaSize || file.asset.sizeProcessed || file.asset.sizeOriginal || 0), 0)
+    },
+    ...allFolderOptions
+  ], [allFolderOptions, files])
+  const marqueeBox = marqueeSelection && marqueeSelection.moved
+    ? {
+        left: Math.min(marqueeSelection.startX, marqueeSelection.currentX),
+        top: Math.min(marqueeSelection.startY, marqueeSelection.currentY),
+        width: Math.abs(marqueeSelection.currentX - marqueeSelection.startX),
+        height: Math.abs(marqueeSelection.currentY - marqueeSelection.startY)
+      }
+    : null
 
   useEffect(() => {
     setSelectedItemKeys((current) => {
@@ -461,6 +558,265 @@ export const MediaSettings: React.FC = () => {
   const filesInsideFolder = (folderPath: string) => (
     files.filter((file) => fileStartsWithPath(file, folderPath))
   )
+
+  const filesByIds = (assetIds: string[]) => {
+    const uniqueIds = new Set(assetIds)
+    return files.filter((file) => uniqueIds.has(file.asset.id))
+  }
+
+  const isMoveTargetDisabled = (dialog: MoveDialogState | null, targetPath: string) => {
+    if (!dialog || dialog.files.length === 0) return true
+    if (dialog.kind === 'folder' && dialog.sourceFolderPath) {
+      const sourceParentPath = pathSegments(dialog.sourceFolderPath).slice(0, -1).join('/')
+      if (targetPath === sourceParentPath) return true
+      if (targetPath === dialog.sourceFolderPath) return true
+      if (targetPath.startsWith(`${dialog.sourceFolderPath}/`)) return true
+    }
+    return dialog.files.every((file) => file.folderPath === targetPath)
+  }
+
+  const openMoveDialog = (dialog: MoveDialogState) => {
+    const firstValidTarget = ['', ...allFolderOptions.map((folder) => folder.path)]
+      .find((path) => !isMoveTargetDisabled(dialog, path)) || ''
+    setMoveDialog(dialog)
+    setMoveTargetPath(firstValidTarget)
+  }
+
+  const closeMoveDialog = () => {
+    if (moving) return
+    setMoveDialog(null)
+    setMoveTargetPath('')
+  }
+
+  const buildMoveEntries = (dialog: MoveDialogState, targetFolderPath: string): MediaMoveEntry[] => {
+    if (dialog.kind === 'folder' && dialog.sourceFolderPath) {
+      const sourceFolderPath = dialog.sourceFolderPath
+      const folderName = pathSegments(sourceFolderPath).slice(-1)[0] || getCurrentFolderLabel(sourceFolderPath)
+      return dialog.files.map((file) => ({
+        id: file.asset.id,
+        targetFolderPath: joinFolderPath(
+          targetFolderPath,
+          folderName,
+          relativeFolderPath(file.folderPath, sourceFolderPath)
+        )
+      }))
+    }
+
+    if (dialog.kind === 'selection') {
+      const entriesById = new Map<string, MediaMoveEntry>()
+
+      selectedItemKeys.forEach((key) => {
+        const folderPath = selectedFolderPathFromKey(key)
+        if (!folderPath) return
+        const folderName = pathSegments(folderPath).slice(-1)[0] || getCurrentFolderLabel(folderPath)
+        filesInsideFolder(folderPath).forEach((file) => {
+          entriesById.set(file.asset.id, {
+            id: file.asset.id,
+            targetFolderPath: joinFolderPath(
+              targetFolderPath,
+              folderName,
+              relativeFolderPath(file.folderPath, folderPath)
+            )
+          })
+        })
+      })
+
+      selectedItemKeys.forEach((key) => {
+        const assetId = selectedFileIdFromKey(key)
+        if (!assetId || entriesById.has(assetId)) return
+        entriesById.set(assetId, { id: assetId, targetFolderPath })
+      })
+
+      return Array.from(entriesById.values())
+    }
+
+    return dialog.files.map((file) => ({
+      id: file.asset.id,
+      targetFolderPath
+    }))
+  }
+
+  const moveFiles = async (dialog: MoveDialogState, targetFolderPath: string) => {
+    if (isMoveTargetDisabled(dialog, targetFolderPath)) {
+      showToast('warning', 'Elige otra carpeta', 'Selecciona una carpeta distinta para mover los archivos.')
+      return
+    }
+
+    const entries = buildMoveEntries(dialog, targetFolderPath)
+    if (!entries.length) {
+      showToast('warning', 'No hay archivos', 'Selecciona al menos un archivo para mover.')
+      return
+    }
+
+    setMoving(true)
+    try {
+      const movedAssets = await mediaService.moveAssets(entries, targetFolderPath)
+      const movedById = new Map(movedAssets.map((asset) => [asset.id, asset]))
+      setAssets((current) => current.map((asset) => movedById.get(asset.id) || asset))
+      setSelectedItemKeys(new Set())
+      if (movedAssets[0]) {
+        const movedFile = toExplorerFile(movedAssets[0])
+        setCurrentPath(movedFile.folderPath)
+        setSelectedAssetId(movedAssets[0].id)
+      }
+      await loadMedia('refresh')
+      showToast('success', 'Archivos movidos', `${movedAssets.length} archivo${movedAssets.length === 1 ? '' : 's'} quedaron en la carpeta elegida.`)
+      setMoveDialog(null)
+      setMoveTargetPath('')
+    } catch (moveError) {
+      await loadMedia('refresh')
+      showToast('error', 'No se pudo mover', moveError instanceof Error ? moveError.message : 'Intenta otra vez.')
+    } finally {
+      setMoving(false)
+      setDraggingFileIds([])
+      setDragOverFolderPath(null)
+    }
+  }
+
+  const handleMoveSelected = () => {
+    openMoveDialog({
+      kind: 'selection',
+      title: `Mover ${selectedFileCount} archivo${selectedFileCount === 1 ? '' : 's'}`,
+      files: selectedFiles
+    })
+  }
+
+  const handleMoveFile = (file: ExplorerFile) => {
+    openMoveDialog({
+      kind: 'files',
+      title: `Mover ${file.fileName}`,
+      files: [file]
+    })
+  }
+
+  const handleMoveFolder = (folder: FolderSummary) => {
+    openMoveDialog({
+      kind: 'folder',
+      title: `Mover carpeta ${folder.name}`,
+      files: filesInsideFolder(folder.path),
+      sourceFolderPath: folder.path
+    })
+  }
+
+  const moveDraggedFilesToFolder = (targetFolderPath: string, assetIds = draggingFileIds) => {
+    const draggedFiles = filesByIds(assetIds)
+    if (!draggedFiles.length) return
+    void moveFiles({
+      kind: 'files',
+      title: 'Mover archivos',
+      files: draggedFiles
+    }, targetFolderPath)
+  }
+
+  const handleFileDragStart = (event: React.DragEvent<HTMLElement>, file: ExplorerFile) => {
+    if (actionBusy) {
+      event.preventDefault()
+      return
+    }
+
+    const selectedIds = new Set(selectedFiles.map((selected) => selected.asset.id))
+    const ids = selectedIds.has(file.asset.id) ? Array.from(selectedIds) : [file.asset.id]
+    if (!selectedIds.has(file.asset.id)) {
+      setSelectedItemKeys(new Set([fileSelectionKey(file.asset.id)]))
+    }
+    setDraggingFileIds(ids)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData(MEDIA_DRAG_MIME, JSON.stringify(ids))
+    event.dataTransfer.setData('text/plain', ids.join(','))
+  }
+
+  const handleFileDragEnd = () => {
+    setDraggingFileIds([])
+    setDragOverFolderPath(null)
+  }
+
+  const handleFolderDragOver = (event: React.DragEvent<HTMLElement>, folderPath: string) => {
+    if (actionBusy || (!draggingFileIds.length && !dataTransferHasMediaPayload(event.dataTransfer))) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setDragOverFolderPath(folderPath)
+  }
+
+  const handleFolderDragLeave = (event: React.DragEvent<HTMLElement>, folderPath: string) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+    setDragOverFolderPath((current) => current === folderPath ? null : current)
+  }
+
+  const handleFolderDrop = (event: React.DragEvent<HTMLElement>, folderPath: string) => {
+    if (actionBusy) return
+    const droppedIds = readDraggedMediaIds(event.dataTransfer)
+    const assetIds = droppedIds.length ? droppedIds : draggingFileIds
+    if (!assetIds.length) return
+    event.preventDefault()
+    event.stopPropagation()
+    setDragOverFolderPath(null)
+    moveDraggedFilesToFolder(folderPath, assetIds)
+  }
+
+  const handleMarqueePointerDown = (event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || actionBusy) return
+    const target = event.target as HTMLElement
+    if (target.closest('button, input, a, [role="menuitem"], [data-media-item="true"]')) return
+    const pane = filePaneRef.current
+    if (!pane) return
+    const rect = pane.getBoundingClientRect()
+    const startX = Math.max(0, Math.min(rect.width, event.clientX - rect.left))
+    const startY = Math.max(0, Math.min(rect.height, event.clientY - rect.top))
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    setMarqueeSelection({
+      active: true,
+      moved: false,
+      additive: event.metaKey || event.ctrlKey || event.shiftKey,
+      pointerId: event.pointerId,
+      startX,
+      startY,
+      currentX: startX,
+      currentY: startY
+    })
+  }
+
+  const handleMarqueePointerMove = (event: React.PointerEvent<HTMLElement>) => {
+    if (!marqueeSelection?.active || marqueeSelection.pointerId !== event.pointerId) return
+    const pane = filePaneRef.current
+    if (!pane) return
+    const rect = pane.getBoundingClientRect()
+    const currentX = Math.max(0, Math.min(rect.width, event.clientX - rect.left))
+    const currentY = Math.max(0, Math.min(rect.height, event.clientY - rect.top))
+    const moved = marqueeSelection.moved ||
+      Math.abs(currentX - marqueeSelection.startX) > 5 ||
+      Math.abs(currentY - marqueeSelection.startY) > 5
+    setMarqueeSelection((current) => current
+      ? { ...current, currentX, currentY, moved }
+      : current)
+  }
+
+  const handleMarqueePointerUp = (event: React.PointerEvent<HTMLElement>) => {
+    if (!marqueeSelection?.active || marqueeSelection.pointerId !== event.pointerId) return
+    const pane = filePaneRef.current
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+
+    if (pane && marqueeSelection.moved) {
+      const paneRect = pane.getBoundingClientRect()
+      const selectionRect = {
+        left: paneRect.left + Math.min(marqueeSelection.startX, marqueeSelection.currentX),
+        right: paneRect.left + Math.max(marqueeSelection.startX, marqueeSelection.currentX),
+        top: paneRect.top + Math.min(marqueeSelection.startY, marqueeSelection.currentY),
+        bottom: paneRect.top + Math.max(marqueeSelection.startY, marqueeSelection.currentY)
+      }
+      const selectedKeys = Array.from(pane.querySelectorAll<HTMLElement>('[data-media-selection-key]'))
+        .filter((node) => rectsOverlap(selectionRect, node.getBoundingClientRect()))
+        .map((node) => node.dataset.mediaSelectionKey || '')
+        .filter(Boolean)
+
+      setSelectedItemKeys((current) => {
+        const next = marqueeSelection.additive ? new Set(current) : new Set<string>()
+        selectedKeys.forEach((key) => next.add(key))
+        return next
+      })
+    }
+
+    setMarqueeSelection(null)
+  }
 
   const handleUploadClick = () => {
     uploadInputRef.current?.click()
@@ -707,6 +1063,10 @@ export const MediaSettings: React.FC = () => {
             <Download size={15} className={styles.menuItemIcon} />
             Descargar carpeta
           </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => handleMoveFolder(folder)}>
+            <FolderInput size={15} className={styles.menuItemIcon} />
+            Mover carpeta
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem className={styles.dangerMenuItem} onSelect={() => handleDeleteFolder(folder)}>
             <Trash2 size={15} className={styles.menuItemIcon} />
@@ -741,6 +1101,10 @@ export const MediaSettings: React.FC = () => {
               <Download size={15} className={styles.menuItemIcon} />
               Descargar archivo
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => handleMoveFile(file)}>
+              <FolderInput size={15} className={styles.menuItemIcon} />
+              Mover a
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem className={styles.dangerMenuItem} onSelect={() => handleDeleteAsset(asset)}>
               <Trash2 size={15} className={styles.menuItemIcon} />
@@ -761,9 +1125,18 @@ export const MediaSettings: React.FC = () => {
         key={folder.path}
         role="button"
         tabIndex={0}
-        className={cx(variant === 'tile' ? styles.folderTile : styles.listRow, isChecked && styles.itemChecked)}
+        className={cx(
+          variant === 'tile' ? styles.folderTile : styles.listRow,
+          isChecked && styles.itemChecked,
+          dragOverFolderPath === folder.path && styles.folderDropActive
+        )}
+        data-media-item="true"
+        data-media-selection-key={selectionKey}
         onClick={() => handleFolderOpen(folder.path)}
         onKeyDown={(event) => handleItemKeyDown(event, () => handleFolderOpen(folder.path))}
+        onDragOver={(event) => handleFolderDragOver(event, folder.path)}
+        onDragLeave={(event) => handleFolderDragLeave(event, folder.path)}
+        onDrop={(event) => handleFolderDrop(event, folder.path)}
       >
         {variant === 'tile' ? (
           <>
@@ -812,10 +1185,15 @@ export const MediaSettings: React.FC = () => {
           key={asset.id}
           role="button"
           tabIndex={0}
+          draggable={!actionBusy}
+          data-media-item="true"
+          data-media-selection-key={selectionKey}
           className={cx(styles.fileTile, selected && styles.itemSelected, isChecked && styles.itemChecked)}
           onClick={() => setSelectedAssetId(asset.id)}
           onDoubleClick={() => handleOpenAsset(asset)}
           onKeyDown={(event) => handleItemKeyDown(event, () => setSelectedAssetId(asset.id))}
+          onDragStart={(event) => handleFileDragStart(event, file)}
+          onDragEnd={handleFileDragEnd}
         >
           <span className={styles.tileControls}>
             {renderSelectionCheckbox(selectionKey, `Seleccionar archivo ${file.fileName}`)}
@@ -839,10 +1217,15 @@ export const MediaSettings: React.FC = () => {
         key={asset.id}
         role="button"
         tabIndex={0}
+        draggable={!actionBusy}
+        data-media-item="true"
+        data-media-selection-key={selectionKey}
         className={cx(styles.listRow, selected && styles.itemSelected, isChecked && styles.itemChecked)}
         onClick={() => setSelectedAssetId(asset.id)}
         onDoubleClick={() => handleOpenAsset(asset)}
         onKeyDown={(event) => handleItemKeyDown(event, () => setSelectedAssetId(asset.id))}
+        onDragStart={(event) => handleFileDragStart(event, file)}
+        onDragEnd={handleFileDragEnd}
       >
         <span className={styles.selectionCell}>
           {renderSelectionCheckbox(selectionKey, `Seleccionar archivo ${file.fileName}`)}
@@ -997,8 +1380,15 @@ export const MediaSettings: React.FC = () => {
             <aside className={styles.folderRail} aria-label="Carpetas principales">
               <button
                 type="button"
-                className={cx(styles.folderNavItem, !currentPath && styles.folderNavItemActive)}
+                className={cx(
+                  styles.folderNavItem,
+                  !currentPath && styles.folderNavItemActive,
+                  dragOverFolderPath === '' && styles.folderNavItemDropActive
+                )}
                 onClick={() => handleFolderOpen('')}
+                onDragOver={(event) => handleFolderDragOver(event, '')}
+                onDragLeave={(event) => handleFolderDragLeave(event, '')}
+                onDrop={(event) => handleFolderDrop(event, '')}
               >
                 <HardDrive size={17} />
                 <span>Mi unidad</span>
@@ -1008,8 +1398,15 @@ export const MediaSettings: React.FC = () => {
                 <button
                   key={folder.path}
                   type="button"
-                  className={cx(styles.folderNavItem, currentPath === folder.path && styles.folderNavItemActive)}
+                  className={cx(
+                    styles.folderNavItem,
+                    currentPath === folder.path && styles.folderNavItemActive,
+                    dragOverFolderPath === folder.path && styles.folderNavItemDropActive
+                  )}
                   onClick={() => handleFolderOpen(folder.path)}
+                  onDragOver={(event) => handleFolderDragOver(event, folder.path)}
+                  onDragLeave={(event) => handleFolderDragLeave(event, folder.path)}
+                  onDrop={(event) => handleFolderDrop(event, folder.path)}
                 >
                   <Folder size={17} />
                   <span>{folder.name}</span>
@@ -1018,7 +1415,26 @@ export const MediaSettings: React.FC = () => {
               ))}
             </aside>
 
-            <main className={styles.filePane}>
+            <main
+              ref={filePaneRef}
+              className={styles.filePane}
+              onPointerDown={handleMarqueePointerDown}
+              onPointerMove={handleMarqueePointerMove}
+              onPointerUp={handleMarqueePointerUp}
+              onPointerCancel={handleMarqueePointerUp}
+            >
+              {marqueeBox ? (
+                <span
+                  className={styles.marqueeBox}
+                  style={{
+                    left: marqueeBox.left,
+                    top: marqueeBox.top,
+                    width: marqueeBox.width,
+                    height: marqueeBox.height
+                  }}
+                  aria-hidden="true"
+                />
+              ) : null}
               <div className={styles.paneHeader}>
                 <div>
                   <h2>{normalizedQuery ? 'Resultados' : getCurrentFolderLabel(currentPath)}</h2>
@@ -1037,6 +1453,15 @@ export const MediaSettings: React.FC = () => {
                       disabled={Boolean(bulkAction) || selectedFileCount === 0}
                     >
                       Descargar
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      leftIcon={moving ? <Loader2 size={15} className={styles.spin} /> : <FolderInput size={15} />}
+                      onClick={handleMoveSelected}
+                      disabled={actionBusy || selectedFileCount === 0}
+                    >
+                      Mover
                     </Button>
                     <Button
                       variant="ghost"
@@ -1170,6 +1595,66 @@ export const MediaSettings: React.FC = () => {
           </div>
         )}
       </Card>
+
+      <Modal
+        isOpen={Boolean(moveDialog)}
+        onClose={closeMoveDialog}
+        title={moveDialog?.title || 'Mover archivos'}
+        size="md"
+        contentClassName={styles.moveModalContent}
+      >
+        {moveDialog ? (
+          <div className={styles.moveModal}>
+            <p className={styles.moveIntro}>
+              {moveDialog.files.length} archivo{moveDialog.files.length === 1 ? '' : 's'} se moverán a:
+            </p>
+            <div className={styles.moveFolderList} role="radiogroup" aria-label="Carpeta destino">
+              {moveDestinationOptions.map((folder) => {
+                const disabled = isMoveTargetDisabled(moveDialog, folder.path)
+                const active = moveTargetPath === folder.path
+                return (
+                  <button
+                    key={folder.path || 'root'}
+                    type="button"
+                    className={cx(
+                      styles.moveFolderOption,
+                      active && styles.moveFolderOptionActive,
+                      disabled && styles.moveFolderOptionDisabled
+                    )}
+                    disabled={disabled || moving}
+                    onClick={() => setMoveTargetPath(folder.path)}
+                    role="radio"
+                    aria-checked={active}
+                  >
+                    <span className={styles.rowIcon}>
+                      {folder.path ? <Folder size={18} /> : <HardDrive size={18} />}
+                    </span>
+                    <span className={styles.moveFolderMeta}>
+                      <strong>{folder.name}</strong>
+                      <small>{folder.path ? folder.path.split('/').map(formatFolderSegment).join(' / ') : 'Raíz de Media'}</small>
+                    </span>
+                    <small>{folder.filesCount}</small>
+                  </button>
+                )
+              })}
+            </div>
+            <div className={styles.moveModalFooter}>
+              <Button variant="secondary" size="sm" onClick={closeMoveDialog} disabled={moving}>
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                leftIcon={moving ? <Loader2 size={15} className={styles.spin} /> : <FolderInput size={15} />}
+                onClick={() => void moveFiles(moveDialog, moveTargetPath)}
+                disabled={moving || isMoveTargetDisabled(moveDialog, moveTargetPath)}
+              >
+                Mover
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   )
 }

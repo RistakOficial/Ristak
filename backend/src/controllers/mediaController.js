@@ -7,6 +7,7 @@ import {
   getMediaAssetFile,
   getStorageUsage,
   listMediaAssets,
+  moveMediaAssets,
   replaceMediaAsset,
   retryMediaAsset,
   runStorageDiagnostics,
@@ -288,6 +289,21 @@ export async function downloadMediaAssetsArchiveHandler(req, res) {
     res.send(archive)
   } catch (error) {
     sendError(res, error, 'Error descargando archivos multimedia')
+  }
+}
+
+export async function moveMediaAssetsHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const moved = await moveMediaAssets({
+      businessId: body.businessId || body.business_id || req.query?.businessId || 'default',
+      entries: Array.isArray(body.entries) ? body.entries : [],
+      assetIds: Array.isArray(body.assetIds) ? body.assetIds : [],
+      targetFolderPath: body.targetFolderPath || body.folderPath || ''
+    })
+    res.json({ success: true, data: moved })
+  } catch (error) {
+    sendError(res, error, 'Error moviendo archivos multimedia')
   }
 }
 

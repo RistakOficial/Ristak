@@ -11,6 +11,7 @@ import {
   getMediaAssetUrlHandler,
   getStorageUsageHandler,
   listMediaAssetsHandler,
+  moveMediaAssetsHandler,
   replaceMediaAssetHandler,
   retryMediaAssetHandler,
   serveMediaAssetFileHandler,
@@ -43,6 +44,7 @@ router.get('/diagnostics', storageDiagnosticsHandler)
 router.get('/assets/:assetId/url', requireMediaAccess, getMediaAssetUrlHandler)
 router.get('/assets/:assetId/download', requireMediaAccess, downloadMediaAssetHandler)
 router.post('/assets/download', requireMediaAccess, downloadMediaAssetsArchiveHandler)
+router.post('/assets/move', requireMediaAccess, moveMediaAssetsHandler)
 router.delete('/assets/:assetId', requireMediaAccess, deleteMediaAssetHandler)
 router.put('/assets/:assetId/replace', requireMediaAccess, upload.single('file'), replaceMediaAssetHandler)
 router.post('/assets/:assetId/retry', requireMediaAccess, retryMediaAssetHandler)

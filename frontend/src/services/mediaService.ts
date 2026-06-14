@@ -66,6 +66,11 @@ export interface MediaDownloadEntry {
   path?: string
 }
 
+export interface MediaMoveEntry {
+  id: string
+  targetFolderPath?: string
+}
+
 function getAuthHeaders() {
   try {
     const token = localStorage.getItem('auth_token')
@@ -227,6 +232,13 @@ export const mediaService = {
       },
       filename
     )
+  },
+
+  moveAssets(entries: MediaMoveEntry[], targetFolderPath = '') {
+    return apiClient.post<MediaAsset[]>('/media/assets/move', {
+      entries,
+      targetFolderPath
+    })
   },
 
   getStorageUsage() {
