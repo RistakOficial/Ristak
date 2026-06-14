@@ -439,6 +439,7 @@
 
 .settingsSection,
 .actionCard,
+.businessDescriptionPanel,
 .permissionCard,
 .enabledCard,
 .calendarPicker,
@@ -452,6 +453,7 @@
 }
 
 .settingsSection,
+.businessDescriptionPanel,
 .calendarPicker {
   display: grid;
   gap: 14px;
@@ -515,6 +517,8 @@
 }
 
 .actionCard button,
+.businessDescriptionActions button,
+.businessVoiceButton,
 .permissionCard button {
   display: inline-flex;
   align-items: center;
@@ -532,8 +536,129 @@
 }
 
 .actionCard button:disabled,
+.businessDescriptionActions button:disabled,
+.businessVoiceButton:disabled,
 .permissionCard button:disabled {
   opacity: 0.6;
+}
+
+.businessDescriptionPanel {
+  gap: 12px;
+}
+
+.businessDescriptionHeader {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.businessDescriptionHeader > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  color: var(--phone-chat-text-on-primary, #ffffff);
+  background: var(--phone-settings-primary);
+}
+
+.businessDescriptionHeader div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.businessDescriptionHeader strong {
+  color: var(--phone-settings-text);
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1.08;
+}
+
+.businessDescriptionHeader small,
+.businessDescriptionActions small {
+  color: var(--phone-settings-muted);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.32;
+}
+
+.businessDescriptionField {
+  position: relative;
+  display: grid;
+  min-width: 0;
+}
+
+.businessDescriptionField textarea {
+  width: 100%;
+  min-height: 178px;
+  resize: vertical;
+  padding: 14px 14px 62px;
+  border: 1px solid var(--phone-settings-border);
+  border-radius: 20px;
+  outline: 0;
+  color: var(--phone-settings-text);
+  background: var(--phone-settings-soft);
+  box-shadow: none;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.35;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.businessDescriptionField textarea::placeholder {
+  color: color-mix(in srgb, var(--phone-settings-muted) 72%, transparent);
+}
+
+.businessDescriptionField textarea:focus {
+  border-color: color-mix(in srgb, var(--phone-settings-accent) 62%, var(--phone-settings-border));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--phone-settings-accent) 16%, transparent);
+}
+
+.businessDescriptionField textarea:disabled {
+  opacity: 0.72;
+}
+
+.businessVoiceButton {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  min-width: 98px;
+  min-height: 42px;
+  padding: 0 14px;
+  border-color: transparent;
+  color: var(--phone-chat-text-on-primary, #ffffff);
+  background: var(--phone-settings-primary);
+  box-shadow: 0 8px 18px rgba(var(--phone-settings-primary-rgb), 0.18);
+}
+
+.businessVoiceButtonRecording {
+  color: #ffffff;
+  background: #dc2626;
+  box-shadow: 0 8px 18px rgba(220, 38, 38, 0.22);
+}
+
+.businessDescriptionActions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.businessDescriptionActions small {
+  min-width: 0;
+}
+
+.businessDescriptionActions button:disabled,
+.businessVoiceButton:disabled {
+  cursor: default;
 }
 
 .spinIcon {

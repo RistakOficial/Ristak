@@ -506,6 +506,7 @@ function getAudioExtension(mimeType = '') {
   const normalized = mimeType.split(';')[0].toLowerCase()
 
   if (normalized.includes('mp4')) return 'mp4'
+  if (normalized.includes('ogg') || normalized.includes('opus')) return 'ogg'
   if (normalized.includes('mpeg') || normalized.includes('mp3')) return 'mp3'
   if (normalized.includes('wav')) return 'wav'
   if (normalized.includes('m4a')) return 'm4a'
