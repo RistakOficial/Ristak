@@ -2789,6 +2789,7 @@ export const PhoneChat: React.FC = () => {
   const [aiAgentHubOpen, setAiAgentHubOpen] = useState(false)
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [aiAgentHubQuery, setAiAgentHubQuery] = useState('')
+  const [conversationReturnTarget, setConversationReturnTarget] = useState<'chats' | 'aiAgentHub'>('chats')
   const [initialAgentLiveCache] = useState(() => readConversationalAgentLiveCache())
   const [agentConfig, setAgentConfig] = useState<ConversationalAgentConfig | null>(() => initialAgentLiveCache?.config || null)
   const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>(() => initialAgentLiveCache?.agents || [])
@@ -5080,7 +5081,7 @@ export const PhoneChat: React.FC = () => {
     }
   }
 
-  const handleSelectContact = (contact: Contact) => {
+  const handleSelectContact = (contact: Contact, options?: { returnTarget?: 'chats' | 'aiAgentHub' }) => {
     const chatContact = (chats.find((item) => item.id === contact.id) || contact) as ChatContact
     const nextContact = ensureChatContact(contact)
     acknowledgeAgentPriorityOnOpen(nextContact.id)
@@ -5094,6 +5095,7 @@ export const PhoneChat: React.FC = () => {
     setChats((current) => current.map((item) => (
       item.id === nextContact.id ? { ...item, unreadCount: 0 } : item
     )))
+    setConversationReturnTarget(options?.returnTarget || 'chats')
     setConversationOpen(true)
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
@@ -5116,6 +5118,7 @@ export const PhoneChat: React.FC = () => {
     startConversationBottomLock(AI_AGENT_CHAT_ID)
     runConversationOpenBottomScrollSequence()
     setActiveContactId(AI_AGENT_CHAT_ID)
+    setConversationReturnTarget('chats')
     setConversationOpen(true)
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
@@ -5132,6 +5135,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleBackToChats = () => {
+    const shouldReturnToAiAgentHub = conversationReturnTarget === 'aiAgentHub'
     setChatSwipeSuppressed(true)
     clearQueuedBottomScrolls()
     closeSwipeActions()
@@ -5145,6 +5149,13 @@ export const PhoneChat: React.FC = () => {
     setMessageActionMenu(null)
     setReplyingToMessageId(null)
     setScheduleEditingMessageId(null)
+    setConversationReturnTarget('chats')
+    if (shouldReturnToAiAgentHub) {
+      setAiAgentHubOpen(true)
+      setAgentPickerOpen(false)
+      setAgentMenuSection('menu')
+      loadAgentData()
+    }
     messageInfoSwipeGestureRef.current = null
     setDraggingMessageInfoSwipe(null)
     setDraftAttachments([])
@@ -7616,7 +7627,7 @@ export const PhoneChat: React.FC = () => {
         onClick={() => {
           setAiAgentHubOpen(false)
           setAgentPickerOpen(false)
-          handleSelectContact(contact)
+          handleSelectContact(contact, { returnTarget: 'aiAgentHub' })
         }}
       >
         {renderAvatar(contact, { showChannelBadge: true, showAgentBadge: true })}
