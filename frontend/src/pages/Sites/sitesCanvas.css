@@ -275,8 +275,8 @@
   cursor: pointer;
 }
 .rstkCanvas .rstk-video-play-dot {
-  width: 64px;
-  height: 64px;
+  width: var(--rstk-video-play-size, 64px);
+  height: var(--rstk-video-play-size, 64px);
   display: grid;
   place-items: center;
   border-radius: 999px;

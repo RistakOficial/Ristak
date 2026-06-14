@@ -577,6 +577,28 @@ const videoSpeedOptions: Array<{ value: string; label: string }> = [
   { value: '2', label: '2x' }
 ]
 
+const videoControlsModeOptions = [
+  { value: 'clean', label: 'Tipo Wistia' },
+  { value: 'native', label: 'Controles del navegador' },
+  { value: 'none', label: 'Sin reproductor visible' }
+] as const
+type VideoControlsMode = typeof videoControlsModeOptions[number]['value']
+const DEFAULT_VIDEO_CONTROLS_MODE: VideoControlsMode = 'clean'
+const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
+  videoControlsMode: DEFAULT_VIDEO_CONTROLS_MODE,
+  videoControls: false,
+  videoPreviewEnabled: true,
+  videoSoundHint: true,
+  videoMuted: true,
+  videoAutoplay: false,
+  videoLoop: false,
+  videoDefaultSpeed: 1,
+  videoFit: 'cover',
+  videoPlayerColor: 'rgba(0,0,0,.52)',
+  videoPlayColor: '#ffffff',
+  videoPlaySize: 64
+}
+
 const SITES_AI_DRAFT_CREATED_EVENT = 'ristak-sites-ai-draft-created'
 const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
 const EDITOR_AUTOSAVE_CHANGE_THRESHOLD = 10
@@ -1645,6 +1667,26 @@ const getSettingString = (settings: Record<string, unknown>, key: string) => {
   const value = settings?.[key]
   return typeof value === 'string' ? value : ''
 }
+
+const isVideoControlsMode = (value: string): value is VideoControlsMode =>
+  videoControlsModeOptions.some(option => option.value === value)
+
+const getVideoControlsMode = (settings: Record<string, unknown>): VideoControlsMode => {
+  const rawMode = getSettingString(settings, 'videoControlsMode')
+  if (isVideoControlsMode(rawMode)) return rawMode
+  if (settings.videoControls === false) return 'none'
+  return DEFAULT_VIDEO_CONTROLS_MODE
+}
+
+const withDefaultVideoPlayerSettings = (settings: Record<string, unknown> = {}) => ({
+  ...DEFAULT_VIDEO_PLAYER_SETTINGS,
+  ...settings
+})
+
+const withUploadedVideoSettings = (settings: Record<string, unknown> = {}, mediaUrl: string) => ({
+  ...withDefaultVideoPlayerSettings(settings),
+  mediaUrl
+})
 
 const isPhoneCountrySelectorEnabled = (block: SiteBlock) => {
   const settings = block.settings || {}
@@ -3307,7 +3349,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       blockType,
       label,
       content: '',
-      settings: blockSettings()
+      settings: blockSettings(blockType === 'video' ? DEFAULT_VIDEO_PLAYER_SETTINGS : {})
     }
   }
 
@@ -3628,6 +3670,18 @@ function FormEmbedEditorPanel({
 
       return (
         <>
+          <MediaUploadControl
+            kind={mediaKind}
+            label={mediaKind === 'image' ? 'Subir imagen' : 'Subir video'}
+            moduleEntityId={site.id}
+            onUploaded={(url) => patchActiveField({
+              content: url,
+              settings: mediaKind === 'video'
+                ? withUploadedVideoSettings(activeFieldSettings, url)
+                : { ...activeFieldSettings, mediaUrl: url }
+            })}
+            onCommit={onSave}
+          />
           <label className={styles.field}>
             <span>{urlLabel}</span>
             <input
@@ -3640,17 +3694,17 @@ function FormEmbedEditorPanel({
               onBlur={onSave}
             />
           </label>
-          <MediaUploadControl
-            kind={mediaKind}
-            label={mediaKind === 'image' ? 'Subir imagen' : 'Subir video'}
-            moduleEntityId={site.id}
-            onUploaded={(url) => patchActiveField({ content: url, settings: { ...activeFieldSettings, mediaUrl: url } })}
-            onCommit={onSave}
-          />
           <label className={styles.field}>
             <span>Texto alternativo</span>
             <input value={activeField.label || ''} onChange={(event) => patchActiveField({ label: event.target.value })} onBlur={onSave} />
           </label>
+          {mediaKind === 'video' && (
+            <VideoPlayerSettingsControls
+              settings={activeFieldSettings}
+              onPatchSettings={patchActiveFieldSettings}
+              onSave={onSave}
+            />
+          )}
         </>
       )
     }
@@ -13849,6 +13903,138 @@ const MediaUploadControl: React.FC<{
   )
 }
 
+const VideoPlayerSettingsControls: React.FC<{
+  settings: Record<string, unknown>
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ settings, onPatchSettings, onSave }) => {
+  const controlsMode = getVideoControlsMode(settings)
+  const showWistiaControls = controlsMode === 'clean'
+
+  return (
+    <div className={styles.videoSettingsBox}>
+      <div className={styles.panelSubheader}>Reproductor</div>
+      <label className={styles.field}>
+        <span>Estilo del reproductor</span>
+        <CustomSelect
+          value={controlsMode}
+          onChange={(event) => {
+            const nextMode = isVideoControlsMode(event.target.value) ? event.target.value : DEFAULT_VIDEO_CONTROLS_MODE
+            onPatchSettings({
+              videoControlsMode: nextMode,
+              videoControls: nextMode === 'native'
+            })
+          }}
+          onBlur={onSave}
+        >
+          {videoControlsModeOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
+
+      <div className={styles.twoColumn}>
+        <label className={styles.field}>
+          <span>Velocidad inicial</span>
+          <CustomSelect
+            value={String(getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4))}
+            onChange={(event) => onPatchSettings({ videoDefaultSpeed: Number(event.target.value) })}
+            onBlur={onSave}
+          >
+            {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </CustomSelect>
+        </label>
+        <label className={styles.field}>
+          <span>Ajuste del video</span>
+          <CustomSelect value={getSettingString(settings, 'videoFit') || 'cover'} onChange={(event) => onPatchSettings({ videoFit: event.target.value })} onBlur={onSave}>
+            <option value="cover">Cubrir espacio</option>
+            <option value="contain">Mostrar completo</option>
+            <option value="fill">Estirar</option>
+          </CustomSelect>
+        </label>
+      </div>
+
+      <div className={styles.twoColumn}>
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={settings.videoPreviewEnabled !== false}
+            onChange={(event) => {
+              onPatchSettings({ videoPreviewEnabled: event.target.checked })
+              window.setTimeout(onSave, 0)
+            }}
+          />
+          <span>Preview de primeros segundos</span>
+        </label>
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={Boolean(settings.videoAutoplay)}
+            onChange={(event) => {
+              onPatchSettings({ videoAutoplay: event.target.checked, videoMuted: event.target.checked ? true : settings.videoMuted })
+              window.setTimeout(onSave, 0)
+            }}
+          />
+          <span>Autoplay</span>
+        </label>
+      </div>
+
+      <div className={styles.twoColumn}>
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={settings.videoMuted !== false}
+            onChange={(event) => {
+              onPatchSettings({ videoMuted: event.target.checked })
+              window.setTimeout(onSave, 0)
+            }}
+          />
+          <span>Iniciar silenciado</span>
+        </label>
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={Boolean(settings.videoLoop)}
+            onChange={(event) => {
+              onPatchSettings({ videoLoop: event.target.checked })
+              window.setTimeout(onSave, 0)
+            }}
+          />
+          <span>Repetir video</span>
+        </label>
+      </div>
+
+      {showWistiaControls && (
+        <>
+          <div className={styles.twoColumn}>
+            <ColorField label="Fondo del player" value={getSettingString(settings, 'videoPlayerColor') || 'rgba(0,0,0,.52)'} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
+            <ColorField label="Ícono play" value={getSettingString(settings, 'videoPlayColor') || '#ffffff'} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
+          </div>
+          <DimensionField
+            label="Tamaño del play"
+            value={getSettingNumber(settings, 'videoPlaySize', 64, 42, 110)}
+            min={42}
+            max={110}
+            onChange={(value) => onPatchSettings({ videoPlaySize: value })}
+            onCommit={onSave}
+          />
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={settings.videoSoundHint !== false}
+              onChange={(event) => {
+                onPatchSettings({ videoSoundHint: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Mostrar bocina animada</span>
+          </label>
+        </>
+      )}
+    </div>
+  )
+}
+
 const CanvasBackgroundVideo: React.FC<{ theme?: SiteTheme }> = ({ theme }) => {
   const src = getThemeBackgroundVideo(theme)
   if (!src) return null
@@ -17232,15 +17418,6 @@ const InlineBlockStyleControls: React.FC<{
                   </CustomSelect>
                 </label>
               </div>
-              <label className={styles.field}>
-                <span>URL de fondo de franja</span>
-                <input
-                  value={getSettingString(settings, 'blockBackgroundImage')}
-                  placeholder={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'https://.../video.mp4' : 'https://...'}
-                  onChange={(event) => onPatchSettings({ blockBackgroundImage: event.target.value })}
-                  onBlur={onSave}
-                />
-              </label>
               <MediaUploadControl
                 kind={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'}
                 label={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'Subir video de franja' : 'Subir imagen de franja'}
@@ -17251,6 +17428,15 @@ const InlineBlockStyleControls: React.FC<{
                 })}
                 onCommit={onSave}
               />
+              <label className={styles.field}>
+                <span>URL de fondo de franja</span>
+                <input
+                  value={getSettingString(settings, 'blockBackgroundImage')}
+                  placeholder={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'https://.../video.mp4' : 'https://...'}
+                  onChange={(event) => onPatchSettings({ blockBackgroundImage: event.target.value })}
+                  onBlur={onSave}
+                />
+              </label>
             </div>
           )}
           <div className={styles.twoColumn}>
@@ -17305,9 +17491,9 @@ const VideoPlayerPreview: React.FC<{
   settings: Record<string, unknown>
 }> = ({ src, label, settings }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const controlsMode = getSettingString(settings, 'videoControlsMode') || (settings.videoControls === false ? 'none' : 'native')
+  const controlsMode = getVideoControlsMode(settings)
   const showNativeControls = controlsMode === 'native'
-  const showOverlay = controlsMode !== 'native'
+  const showOverlay = controlsMode === 'clean'
   const soundHint = settings.videoSoundHint !== false
   const previewEnabled = settings.videoPreviewEnabled !== false
   const muted = settings.videoMuted !== false
@@ -17317,10 +17503,11 @@ const VideoPlayerPreview: React.FC<{
   const fit = getSettingString(settings, 'videoFit') || 'cover'
   const playerColor = getSettingString(settings, 'videoPlayerColor') || 'rgba(0,0,0,.52)'
   const playColor = getSettingString(settings, 'videoPlayColor') || '#ffffff'
+  const playSize = `${getSettingNumber(settings, 'videoPlaySize', 64, 42, 110)}px`
   const className = [
     'rstk-video',
     'rstk-video-player',
-    showNativeControls ? 'rstk-video-native-controls' : 'rstk-video-custom-controls',
+    showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     soundHint && showOverlay ? 'rstk-video-sound-hint' : ''
   ].filter(Boolean).join(' ')
 
@@ -17346,7 +17533,8 @@ const VideoPlayerPreview: React.FC<{
       className={className}
       style={{
         ['--rstk-video-player-color' as string]: playerColor,
-        ['--rstk-video-play-color' as string]: playColor
+        ['--rstk-video-play-color' as string]: playColor,
+        ['--rstk-video-play-size' as string]: playSize
       } as React.CSSProperties}
     >
       <video
@@ -18774,25 +18962,6 @@ const PageInspector: React.FC<{
         onChange={(value) => onPatchTheme({ accentColor: value })}
         onCommit={onSaveSite}
       />
-      <label className={styles.field}>
-        <span>URL de fondo</span>
-        <input
-          value={getThemeString(theme, 'backgroundImage')}
-          placeholder={theme.backgroundMediaType === 'video' ? 'https://.../video.mp4' : 'https://...'}
-          onChange={(event) => onPatchTheme({ backgroundImage: event.target.value })}
-          onBlur={onSaveSite}
-        />
-      </label>
-      <MediaUploadControl
-        kind={theme.backgroundMediaType === 'video' ? 'video' : 'image'}
-        label={theme.backgroundMediaType === 'video' ? 'Subir video de fondo' : 'Subir imagen de fondo'}
-        moduleEntityId={site.id}
-        onUploaded={(url) => onPatchTheme({
-          backgroundImage: url,
-          backgroundMediaType: theme.backgroundMediaType === 'video' ? 'video' : 'image'
-        })}
-        onCommit={onSaveSite}
-      />
       <div className={styles.twoColumn}>
         <label className={styles.field}>
           <span>Tipo</span>
@@ -18819,6 +18988,25 @@ const PageInspector: React.FC<{
           </CustomSelect>
         </label>
       </div>
+      <MediaUploadControl
+        kind={theme.backgroundMediaType === 'video' ? 'video' : 'image'}
+        label={theme.backgroundMediaType === 'video' ? 'Subir video de fondo' : 'Subir imagen de fondo'}
+        moduleEntityId={site.id}
+        onUploaded={(url) => onPatchTheme({
+          backgroundImage: url,
+          backgroundMediaType: theme.backgroundMediaType === 'video' ? 'video' : 'image'
+        })}
+        onCommit={onSaveSite}
+      />
+      <label className={styles.field}>
+        <span>URL de fondo</span>
+        <input
+          value={getThemeString(theme, 'backgroundImage')}
+          placeholder={theme.backgroundMediaType === 'video' ? 'https://.../video.mp4' : 'https://...'}
+          onChange={(event) => onPatchTheme({ backgroundImage: event.target.value })}
+          onBlur={onSaveSite}
+        />
+      </label>
 
       <div className={styles.panelSubheader}>Dimensiones</div>
       <DimensionField
@@ -19088,7 +19276,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const isSecondaryTextBlock = ['subheading', 'subtitle', 'description'].includes(block.blockType)
   const systemFieldPreset = getSystemFormFieldPresetForBlock(block)
   const showBlockNameFirst = isField || block.blockType === SECTION_BLOCK_TYPE
-  const showContentField = block.blockType !== 'calendar_embed' && block.blockType !== 'button'
+  const isMediaBlock = block.blockType === 'image' || block.blockType === 'video'
+  const showContentField = block.blockType !== 'calendar_embed' && block.blockType !== 'button' && !isMediaBlock
   const contentLabel = isField
     ? 'Texto de ayuda'
     : block.blockType === SECTION_BLOCK_TYPE
@@ -19134,6 +19323,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   ) : null
 
   const blockHasSettingsContent = hasBlockSettingsTabContent(block, isField)
+  const defaultInspectorTab: InspectorTabId = isMediaBlock ? 'settings' : 'edit'
   const editContent = (
     <>
       {showBlockNameFirst && blockNameField}
@@ -19333,8 +19523,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   return (
     <InspectorTabbedPanel
+      key={`${block.id}:${block.blockType}`}
       title="Propiedades"
       subtitle={blockLabels[block.blockType]}
+      defaultTab={defaultInspectorTab}
       tabs={[
         { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
         { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent },
@@ -19777,120 +19969,28 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
   }
 
   if (block.blockType === 'image' || block.blockType === 'video') {
+    const mediaKind = block.blockType === 'image' ? 'image' : 'video'
     return (
       <div className={styles.settingsGroup}>
+        <MediaUploadControl
+          kind={mediaKind}
+          label={mediaKind === 'image' ? 'Subir imagen' : 'Subir video'}
+          moduleEntityId={site.id}
+          onUploaded={(url) => onPatchSettings(mediaKind === 'video'
+            ? withUploadedVideoSettings(settings, url)
+            : { mediaUrl: url })}
+          onCommit={onSave}
+        />
         <label className={styles.field}>
           <span>{block.blockType === 'image' ? 'URL de imagen' : 'URL de video'}</span>
           <input value={getSettingString(settings, 'mediaUrl')} onChange={(event) => onPatchSettings({ mediaUrl: event.target.value })} onBlur={onSave} />
         </label>
-        <MediaUploadControl
-          kind={block.blockType === 'image' ? 'image' : 'video'}
-          moduleEntityId={site.id}
-          onUploaded={(url) => onPatchSettings({ mediaUrl: url })}
-          onCommit={onSave}
-        />
         {block.blockType === 'video' && (
-          <div className={styles.videoSettingsBox}>
-            <div className={styles.panelSubheader}>Reproductor</div>
-            <div className={styles.twoColumn}>
-              <label className={styles.field}>
-                <span>Controles</span>
-                <CustomSelect
-                  value={getSettingString(settings, 'videoControlsMode') || (settings.videoControls === false ? 'none' : 'native')}
-                  onChange={(event) => onPatchSettings({
-                    videoControlsMode: event.target.value,
-                    videoControls: event.target.value === 'native'
-                  })}
-                  onBlur={onSave}
-                >
-                  <option value="native">Controles nativos</option>
-                  <option value="clean">Botón play limpio</option>
-                  <option value="none">Sin controles visibles</option>
-                </CustomSelect>
-              </label>
-              <label className={styles.field}>
-                <span>Velocidad</span>
-                <CustomSelect
-                  value={String(getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4))}
-                  onChange={(event) => onPatchSettings({ videoDefaultSpeed: Number(event.target.value) })}
-                  onBlur={onSave}
-                >
-                  {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </CustomSelect>
-              </label>
-            </div>
-            <div className={styles.twoColumn}>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={settings.videoPreviewEnabled !== false}
-                  onChange={(event) => {
-                    onPatchSettings({ videoPreviewEnabled: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Preview de primeros segundos</span>
-              </label>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={settings.videoSoundHint !== false}
-                  onChange={(event) => {
-                    onPatchSettings({ videoSoundHint: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Animacion de bocina</span>
-              </label>
-            </div>
-            <div className={styles.twoColumn}>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(settings.videoAutoplay)}
-                  onChange={(event) => {
-                    onPatchSettings({ videoAutoplay: event.target.checked, videoMuted: event.target.checked ? true : settings.videoMuted })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Autoplay</span>
-              </label>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(settings.videoLoop)}
-                  onChange={(event) => {
-                    onPatchSettings({ videoLoop: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Loop</span>
-              </label>
-            </div>
-            <div className={styles.twoColumn}>
-              <ColorField label="Fondo controles" value={getSettingString(settings, 'videoPlayerColor') || 'rgba(0,0,0,.52)'} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
-              <ColorField label="Play" value={getSettingString(settings, 'videoPlayColor') || '#ffffff'} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
-            </div>
-            <div className={styles.twoColumn}>
-              <label className={styles.field}>
-                <span>Ajuste</span>
-                <CustomSelect value={getSettingString(settings, 'videoFit') || 'cover'} onChange={(event) => onPatchSettings({ videoFit: event.target.value })} onBlur={onSave}>
-                  <option value="cover">Cubrir espacio</option>
-                  <option value="contain">Mostrar completo</option>
-                  <option value="fill">Estirar</option>
-                </CustomSelect>
-              </label>
-              <DimensionField
-                label="Ancho"
-                value={getSettingNumber(settings, 'mediaWidth', 100, 20, 100)}
-                min={20}
-                max={100}
-                unit="%"
-                onChange={(value) => onPatchSettings({ mediaWidth: value })}
-                onCommit={onSave}
-              />
-            </div>
-          </div>
+          <VideoPlayerSettingsControls
+            settings={settings}
+            onPatchSettings={onPatchSettings}
+            onSave={onSave}
+          />
         )}
       </div>
     )

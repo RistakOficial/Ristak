@@ -10508,9 +10508,14 @@ function renderSubmitButtonContent(label, subtitle = '') {
 }
 
 function renderVideoPlayer(src, block, settings = {}) {
-  const controlsMode = cleanString(settings.videoControlsMode) || (settings.videoControls === false ? 'none' : 'native')
+  const requestedControlsMode = cleanString(settings.videoControlsMode)
+  const controlsMode = ['native', 'clean', 'none'].includes(requestedControlsMode)
+    ? requestedControlsMode
+    : settings.videoControls === false
+      ? 'none'
+      : 'clean'
   const showNativeControls = controlsMode === 'native'
-  const showOverlay = controlsMode !== 'native'
+  const showOverlay = controlsMode === 'clean'
   const soundHint = settings.videoSoundHint !== false
   const previewEnabled = settings.videoPreviewEnabled !== false
   const muted = settings.videoMuted !== false
@@ -10521,15 +10526,17 @@ function renderVideoPlayer(src, block, settings = {}) {
   const fit = ['cover', 'contain', 'fill'].includes(cleanString(settings.videoFit)) ? cleanString(settings.videoFit) : 'cover'
   const playerColor = normalizeCssPaint(settings.videoPlayerColor, 'rgba(0,0,0,.52)') || 'rgba(0,0,0,.52)'
   const playColor = normalizeCssPaint(settings.videoPlayColor, '#ffffff') || '#ffffff'
+  const rawPlaySize = Number(settings.videoPlaySize || 64)
+  const playSize = Number.isFinite(rawPlaySize) ? Math.min(110, Math.max(42, rawPlaySize)) : 64
   const classes = [
     'rstk-video',
     'rstk-video-player',
-    showNativeControls ? 'rstk-video-native-controls' : 'rstk-video-custom-controls',
+    showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     soundHint && showOverlay ? 'rstk-video-sound-hint' : ''
   ].filter(Boolean).join(' ')
 
   return `
-    <div class="${classes}" style="--rstk-video-player-color:${escapeHtml(playerColor)};--rstk-video-play-color:${escapeHtml(playColor)}">
+    <div class="${classes}" style="--rstk-video-player-color:${escapeHtml(playerColor)};--rstk-video-play-color:${escapeHtml(playColor)};--rstk-video-play-size:${escapeHtml(String(playSize))}px">
       <video src="${escapeHtml(src)}" title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${muted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${previewEnabled ? 'auto' : 'metadata'}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
       ${showOverlay ? `
         <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
@@ -11558,7 +11565,7 @@ const RSTK_BASE_CSS = `
   .rstk-video video{background:#000;object-fit:cover}
   .rstk-video-player{isolation:isolate}
   .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:linear-gradient(180deg,transparent,rgba(0,0,0,.12));color:var(--rstk-video-play-color,#fff);cursor:pointer}
-  .rstk-video-play-dot{width:64px;height:64px;display:grid;place-items:center;border-radius:999px;background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:0 16px 38px rgba(0,0,0,.28)}
+  .rstk-video-play-dot{width:var(--rstk-video-play-size,64px);height:var(--rstk-video-play-size,64px);display:grid;place-items:center;border-radius:999px;background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:0 16px 38px rgba(0,0,0,.28)}
   .rstk-video-sound{position:absolute;right:14px;bottom:14px;display:inline-flex;align-items:center;gap:4px;border-radius:999px;background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);padding:8px 10px}
   .rstk-video-sound i{width:5px;height:12px;border-radius:999px;background:currentColor;animation:rstkVideoSound 1s ease-in-out infinite}
   .rstk-video-sound i:last-child{height:18px;animation-delay:.18s}
