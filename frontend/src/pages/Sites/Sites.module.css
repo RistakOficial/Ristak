@@ -314,7 +314,7 @@
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(340px, var(--imported-code-source-width, 50%)) 12px minmax(360px, 1fr);
+  grid-template-columns: minmax(340px, var(--imported-code-source-width, 50%)) 12px minmax(96px, 1fr);
   gap: 0;
   align-items: stretch;
   overflow: hidden;
@@ -548,7 +548,9 @@
   font-weight: 520;
   line-height: 1.62;
   tab-size: 2;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   letter-spacing: 0;
 }
 
@@ -563,7 +565,10 @@
 
 .importedCodeHighlight code {
   display: block;
-  min-width: max-content;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .importedCodeHighlight :global(.rstk-code-token-tag) {
@@ -604,7 +609,8 @@
   -webkit-text-fill-color: transparent;
   box-shadow: none !important;
   caret-color: var(--rstk-code-caret);
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-gutter: stable;
 }
 
@@ -675,30 +681,25 @@
 
 .importedCodePreviewStage {
   min-height: 0;
-  display: flex;
-  justify-content: center;
-  overflow: auto;
-  scrollbar-gutter: stable;
-  background:
-    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
-    color-mix(in srgb, var(--color-background-primary) 88%, var(--color-primary) 12%);
-  background-size: 24px 24px;
-  padding: 16px;
+  display: block;
+  overflow: hidden;
+  background: #ffffff;
+  padding: 0;
 }
 
 .importedCodePreviewFrame {
-  width: min(860px, 100%);
+  display: block;
+  width: 100%;
   height: 100%;
-  min-height: 680px;
-  border: 1px solid rgba(15, 23, 42, 0.14);
-  border-radius: 8px;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
   background: #ffffff;
-  box-shadow: 0 24px 64px -52px rgba(15, 23, 42, 0.78);
+  box-shadow: none;
 }
 
 .importedCodePreviewStageMobile .importedCodePreviewFrame {
-  width: min(390px, 100%);
+  width: 100%;
 }
 
 .importedCodeEmptyState {
@@ -1249,6 +1250,68 @@
 .importedButtonCodeHint {
   color: var(--color-text-tertiary);
   font-weight: 680;
+}
+
+.importedFieldRouteBox {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  padding-top: 12px;
+}
+
+.importedFieldRouteHeader {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+}
+
+.importedFieldRouteHeader svg {
+  width: 30px;
+  height: 30px;
+  padding: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--color-text-secondary);
+}
+
+.importedFieldRouteHeader span,
+.importedFieldRouteHeader strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importedFieldRouteHeader span {
+  color: var(--color-text-tertiary);
+  font-size: 0.72rem;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.importedFieldRouteHeader strong {
+  color: var(--color-text-primary);
+  font-size: 0.84rem;
+  font-weight: 760;
+}
+
+.importedFieldRouteHint {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 0.78rem;
+  font-weight: 680;
+  line-height: 1.45;
+}
+
+.importedFieldRouteActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .importedFormFieldsBox {
@@ -14654,7 +14717,7 @@
 .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
   min-height: var(--editor-control-h, 40px);
   display: grid;
-  grid-template-columns: minmax(430px, 1.25fr) minmax(156px, auto) minmax(480px, 1fr);
+  grid-template-columns: minmax(360px, 1fr) minmax(360px, auto) minmax(480px, 1fr);
   align-items: center;
   gap: 12px;
 }
@@ -14749,6 +14812,22 @@
 .editorPageSelectorSlot .pagesDropdownTriggerText strong {
   font-size: 13px;
   font-weight: var(--font-weight-bold, 700);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorPageSelectorSlot {
+  flex: 0 0 160px;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorPageSelectorSlot .pagesDropdownTrigger {
+  height: 38px;
+  min-height: 38px;
+  background: transparent;
+  padding-inline: 10px;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorPageSelectorSlot .pagesDropdownTriggerText strong {
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold, 600);
 }
 
 .pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorSettingsButton,
@@ -14883,20 +14962,6 @@
   animation: editorSaveSpin 0.9s linear infinite;
 }
 
-.codeToolbarButton {
-  min-width: 132px;
-}
-
-.codeToolbarButtonActive {
-  border-color: rgba(var(--color-primary-rgb), 0.3) !important;
-  background: rgba(var(--color-primary-rgb), 0.09) !important;
-  color: var(--color-text-primary) !important;
-}
-
-.codeToolbarButtonActive svg {
-  color: var(--color-primary);
-}
-
 @keyframes editorSaveSpin {
   from {
     transform: rotate(0deg);
@@ -14909,7 +14974,7 @@
 
 @media (max-width: 1500px) {
   .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
-    grid-template-columns: minmax(390px, 1fr) minmax(142px, auto) minmax(430px, auto);
+    grid-template-columns: minmax(320px, 1fr) minmax(360px, auto) minmax(430px, auto);
     gap: 10px;
   }
 

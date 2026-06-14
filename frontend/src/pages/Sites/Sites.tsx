@@ -4173,7 +4173,6 @@ export const Sites: React.FC = () => {
   const [pendingImportSiteType, setPendingImportSiteType] = useState<SiteType>('landing_page')
   const [importReview, setImportReview] = useState<ImportReviewState | null>(null)
   const [selectedImportData, setSelectedImportData] = useState<ImportedSiteImport | null>(null)
-  const [importedCodeEditorOpen, setImportedCodeEditorOpen] = useState(false)
   const [importedCodeDrafts, setImportedCodeDrafts] = useState<Record<string, string>>({})
   const [aiCreationModal, setAiCreationModal] = useState<SitesAICreationModalState>(null)
   const [aiEditorGeneration, setAiEditorGeneration] = useState<AIEditorGenerationState>(null)
@@ -4198,7 +4197,6 @@ export const Sites: React.FC = () => {
   const pendingBlockSaveIdsRef = useRef<Set<string>>(new Set())
   const pendingBlockOrderScopesRef = useRef<Set<string>>(new Set())
   const pendingImportedCodeDraftsRef = useRef<Map<string, string>>(new Map())
-  const pendingOpenImportedCodeEditorSiteIdRef = useRef<string | null>(null)
   const savingPendingEditorRef = useRef(false)
 
   const markEditorExitInProgress = () => {
@@ -4210,7 +4208,6 @@ export const Sites: React.FC = () => {
   }, [selectedSite])
 
   useEffect(() => {
-    setImportedCodeEditorOpen(Boolean(selectedSite?.id && pendingOpenImportedCodeEditorSiteIdRef.current === selectedSite.id))
     setImportedCodeDrafts({})
     pendingImportedCodeDraftsRef.current.clear()
   }, [selectedSite?.id])
@@ -6052,7 +6049,6 @@ export const Sites: React.FC = () => {
       })
       const site = normalizeSiteForEditor(result.site)
       const nextPageId = normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID
-      pendingOpenImportedCodeEditorSiteIdRef.current = site.id
       setSites(current => [site, ...current])
       setSelectedSite(site)
       selectedSiteRef.current = site
@@ -6063,7 +6059,6 @@ export const Sites: React.FC = () => {
       clearEditorDirtyState()
       setSelectedImportData(result.import)
       setImportReview(result.import.detectedForms?.length ? { site, importData: result.import } : null)
-      setImportedCodeEditorOpen(true)
       navigate(buildSitesEditorPath({
         section: getSiteSection(site),
         siteId: site.id,
@@ -7597,6 +7592,34 @@ export const Sites: React.FC = () => {
     onDeleteField: removeEmbeddedFormField
   } : null
 
+  const editorPageSelector = editorSite && hasEditablePages(editorSite) ? (
+    <FunnelPagesPanel
+      pages={pages}
+      activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+      locked={!canManagePages(editorSite) || editorAIGenerating}
+      draggingPageId={draggingPageId}
+      colorFinalPages={isStandardForm(editorSite)}
+      isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
+      pageMode={getSitePageMode(editorSite)}
+      onChangeMode={isLanding(editorSite) && !isImportedHtmlSite(editorSite) ? handleChangePageMode : undefined}
+      onAddSubpage={handleAddSubpage}
+      onPromotePage={handlePromotePage}
+      onDemotePage={handleDemotePage}
+      getPageDepth={(page) => getPageDepth(page, pages)}
+      canDeletePage={(page) => isStandardForm(editorSite)
+        ? !isFormFinalPage(page) && getFormContentPages(pages).length > 1
+        : pages.length > 1}
+      canDuplicatePage={(page) => !isStandardForm(editorSite) || !isFormFinalPage(page)}
+      onSelectPage={selectEditorPage}
+      onAddPage={handleAddPage}
+      onDuplicatePage={handleDuplicatePage}
+      onDeletePage={handleDeletePage}
+      onDragPage={setDraggingPageId}
+      onReorderPages={handleReorderPages}
+      onRenamePage={handleRenamePage}
+    />
+  ) : null
+
   if (loading) {
     return <Loading page="dashboard" />
   }
@@ -7633,38 +7656,31 @@ export const Sites: React.FC = () => {
                     {editorSite.status !== 'draft' && !formEditMode && (
                       <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
                     )}
-                    <div className={styles.editorPageSelectorSlot}>
-                      {hasEditablePages(editorSite) && (
-                        <FunnelPagesPanel
-                          pages={pages}
-                          activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                          locked={!canManagePages(editorSite) || editorAIGenerating}
-                          draggingPageId={draggingPageId}
-                          colorFinalPages={isStandardForm(editorSite)}
-                          isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
-                          pageMode={getSitePageMode(editorSite)}
-                          onChangeMode={isLanding(editorSite) && !isImportedHtmlSite(editorSite) ? handleChangePageMode : undefined}
-                          onAddSubpage={handleAddSubpage}
-                          onPromotePage={handlePromotePage}
-                          onDemotePage={handleDemotePage}
-                          getPageDepth={(page) => getPageDepth(page, pages)}
-                          canDeletePage={(page) => isStandardForm(editorSite)
-                            ? !isFormFinalPage(page) && getFormContentPages(pages).length > 1
-                            : pages.length > 1}
-                          canDuplicatePage={(page) => !isStandardForm(editorSite) || !isFormFinalPage(page)}
-                          onSelectPage={selectEditorPage}
-                          onAddPage={handleAddPage}
-                          onDuplicatePage={handleDuplicatePage}
-                          onDeletePage={handleDeletePage}
-                          onDragPage={setDraggingPageId}
-                          onReorderPages={handleReorderPages}
-                          onRenamePage={handleRenamePage}
-                        />
-                      )}
-                    </div>
+                    {formEditMode && editorPageSelector && (
+                      <div className={styles.editorPageSelectorSlot}>
+                        {editorPageSelector}
+                      </div>
+                    )}
                   </div>
                   {!formEditMode && (
                     <div className={styles.editorToolbarTools} aria-label="Herramientas de edición">
+                      {editorPageSelector && (
+                        <div className={styles.editorPageSelectorSlot}>
+                          {editorPageSelector}
+                        </div>
+                      )}
+                      {canConfigurePopup && (
+                        <button
+                          type="button"
+                          className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${popupSurfaceSelected ? styles.headerToolbarButtonActive : ''}`}
+                          onClick={() => selectEditorBlock(popupSurfaceSelected ? PAGE_SELECTED_ID : POPUP_SELECTED_ID)}
+                          disabled={editorAIGenerating}
+                          title="Configurar Pop up"
+                        >
+                          <MousePointerClick size={15} />
+                          <span>Pop up</span>
+                        </button>
+                      )}
                       <EditorSettingsDropdown
                         site={editorSite}
                         pages={pages}
@@ -7683,30 +7699,6 @@ export const Sites: React.FC = () => {
                         onOpenSeo={() => setSeoModalOpen(true)}
                         onOpenHeader={() => setHeaderModalOpen(true)}
                       />
-                      {isImportedHtmlSite(editorSite) && (
-                        <button
-                          type="button"
-                          className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${styles.codeToolbarButton} ${importedCodeEditorOpen ? styles.codeToolbarButtonActive : ''}`}
-                          onClick={() => setImportedCodeEditorOpen(current => !current)}
-                          disabled={editorAIGenerating}
-                          title={importedCodeEditorOpen ? 'Volver al editor visual del sitio' : 'Editar archivos HTML'}
-                        >
-                          <Code2 size={15} />
-                          <span>{importedCodeEditorOpen ? 'Editar en modo sitio' : 'Editar código'}</span>
-                        </button>
-                      )}
-                      {canConfigurePopup && (
-                        <button
-                          type="button"
-                          className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${popupSurfaceSelected ? styles.headerToolbarButtonActive : ''}`}
-                          onClick={() => selectEditorBlock(popupSurfaceSelected ? PAGE_SELECTED_ID : POPUP_SELECTED_ID)}
-                          disabled={editorAIGenerating}
-                          title="Configurar Pop up"
-                        >
-                          <MousePointerClick size={15} />
-                          <span>Pop up</span>
-                        </button>
-                      )}
                     </div>
                   )}
                   <div className={styles.editorToolbarPrimary}>
@@ -7887,7 +7879,7 @@ export const Sites: React.FC = () => {
                   saving={saving}
                   aiAgentAvailable={aiAgentConfigured}
                   importData={selectedImportData}
-                  codeEditorOpen={importedCodeEditorOpen}
+                  codeEditorOpen={true}
                   codeDrafts={importedCodeDrafts}
                   loadingImportData={loadingImportData}
                   onSelectPage={selectEditorPage}
@@ -7897,6 +7889,7 @@ export const Sites: React.FC = () => {
                   onEditFields={() => void handleOpenImportMappingEditor(editorSite)}
                   onPreviewContextChange={handleImportedPreviewContextChange}
                   onContentUpdated={handleImportedContentUpdated}
+                  onImportMappingUpdated={setSelectedImportData}
                   onUpdateRoute={handleUpdateLibraryRoute}
                   onDelete={() => void handleDeleteSite(editorSite)}
                 />
@@ -9319,6 +9312,7 @@ type ImportedCodeElementEditorState = {
   placeholder?: string
   fieldName?: string
   fieldHtmlId?: string
+  fieldInputType?: string
   required?: boolean
   mediaUrl?: string
 }
@@ -9361,6 +9355,27 @@ type ImportedFormFieldEditorState = {
   placeholder: string
   required: boolean
   options: ImportedFormFieldOption[]
+}
+
+type ImportedSelectedFieldRouteContext = {
+  editId: string
+  label: string
+  placeholder: string
+  fieldName: string
+  fieldHtmlId: string
+  inputType: string
+  tagName: string
+}
+
+type ImportedSelectedFieldRouteMatch = {
+  formIndex: number
+  fieldIndex: number
+  field: ImportedSiteFieldMapping
+}
+
+type ImportedSelectedFieldRouteDraft = {
+  destinationType: ImportedSiteFieldMapping['destinationType']
+  destinationKey: string
 }
 
 const importedEditableSelector = [
@@ -10990,6 +11005,7 @@ const readImportedCodeElementEditor = (
       placeholder: selection.placeholder,
       fieldName: selection.fieldName,
       fieldHtmlId: selection.fieldHtmlId,
+      fieldInputType: selection.inputType,
       required: selection.required
     }
   }
@@ -12001,6 +12017,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   onEditFields: () => void
   onPreviewContextChange: (siteId: string, context: SitesAIPreviewVisualContext) => void
   onContentUpdated: (result: ImportedSiteCreateResult) => void
+  onImportMappingUpdated: (importData: ImportedSiteImport) => void
   onUpdateRoute: (site: PublicSite, route: string) => Promise<void>
   onDelete: () => void
 }> = ({
@@ -12022,6 +12039,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   onEditFields,
   onPreviewContextChange,
   onContentUpdated,
+  onImportMappingUpdated,
   onUpdateRoute,
   onDelete
 }) => {
@@ -12058,6 +12076,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [panelFormFields, setPanelFormFields] = useState<ImportedPanelFormField[]>([])
   const [contentSaving, setContentSaving] = useState(false)
   const [contentError, setContentError] = useState('')
+  const [selectedFieldRouteDraft, setSelectedFieldRouteDraft] = useState<ImportedSelectedFieldRouteDraft | null>(null)
+  const [selectedFieldRouteSaving, setSelectedFieldRouteSaving] = useState(false)
   const [codeEditorWidth, setCodeEditorWidth] = useState(50)
   const [codeEditorTheme, setCodeEditorTheme] = useState<ImportedCodeTheme>('dark')
   const [codeSelectionNotice, setCodeSelectionNotice] = useState('')
@@ -12116,6 +12136,46 @@ const ImportedHtmlEditorPanel: React.FC<{
       ignored: fields.filter(field => field.ignored || field.destinationType === 'ignored').length
     }
   }, [importData])
+  const selectedFieldRouteContext = useMemo<ImportedSelectedFieldRouteContext | null>(() => {
+    if (fieldEditor) {
+      return {
+        editId: fieldEditor.selection.editId,
+        label: fieldEditor.label,
+        placeholder: fieldEditor.placeholder,
+        fieldName: fieldEditor.selection.fieldName,
+        fieldHtmlId: fieldEditor.selection.fieldHtmlId,
+        inputType: fieldEditor.selection.inputType,
+        tagName: fieldEditor.selection.tagName
+      }
+    }
+
+    if (codeElementEditor?.mode === 'field') {
+      return {
+        editId: codeElementEditor.editId,
+        label: codeElementEditor.label,
+        placeholder: codeElementEditor.placeholder || '',
+        fieldName: codeElementEditor.fieldName || '',
+        fieldHtmlId: codeElementEditor.fieldHtmlId || '',
+        inputType: codeElementEditor.fieldInputType || codeElementEditor.tagName,
+        tagName: codeElementEditor.tagName
+      }
+    }
+
+    return null
+  }, [codeElementEditor, fieldEditor])
+  const selectedFieldRouteContextKey = buildImportedSelectedFieldRouteContextKey(selectedFieldRouteContext)
+  const selectedFieldRouteMatch = useMemo(
+    () => findImportedFieldRouteMatch(importData?.formMappings, selectedFieldRouteContext),
+    [importData?.formMappings, selectedFieldRouteContextKey]
+  )
+
+  useEffect(() => {
+    if (!selectedFieldRouteContext) {
+      setSelectedFieldRouteDraft(null)
+      return
+    }
+    setSelectedFieldRouteDraft(buildImportedSelectedFieldRouteDraft(selectedFieldRouteMatch, selectedFieldRouteContext))
+  }, [selectedFieldRouteContext, selectedFieldRouteContextKey, selectedFieldRouteMatch])
   const appendAIRegionPromptText = useCallback((text: string) => {
     setAiRegionPrompt(current => appendDictatedText(current, text))
   }, [])
@@ -12139,7 +12199,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       const rect = container.getBoundingClientRect()
       if (!rect.width) return
       const next = ((clientX - rect.left) / rect.width) * 100
-      setCodeEditorWidth(Math.min(72, Math.max(28, next)))
+      setCodeEditorWidth(Math.min(88, Math.max(28, next)))
     }
 
     updateWidth(event.clientX)
@@ -12482,6 +12542,126 @@ const ImportedHtmlEditorPanel: React.FC<{
       setContentSaving(false)
     }
   }, [activeImportedPage?.id, clearInlineSelection, loadInlinePreview, onContentUpdated, showToast, site.id])
+
+  const saveSelectedFieldRoute = useCallback(async () => {
+    if (!selectedFieldRouteContext || !selectedFieldRouteDraft) return
+    if (!importData) {
+      setContentError('Todavía no se cargó la ruta de datos de este HTML. Intenta recargar la página.')
+      return
+    }
+
+    const draftDestinationType = selectedFieldRouteDraft.destinationType
+    const destinationKey = draftDestinationType === 'standard'
+      ? selectedFieldRouteDraft.destinationKey
+      : normalizeImportedDestinationKey(selectedFieldRouteDraft.destinationKey, getImportedFieldRouteDefaultKey(selectedFieldRouteContext))
+
+    if (draftDestinationType !== 'ignored' && !destinationKey) {
+      setContentError('Elige a dónde se guarda este campo.')
+      return
+    }
+
+    const nextMappings = cloneImportedFormMappings(importData.formMappings || [])
+    if (!nextMappings.length) {
+      nextMappings.push({
+        formId: `form-${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}`,
+        formTitle: activeImportedPage?.title || 'Formulario',
+        fields: []
+      })
+    }
+
+    let routeMatch = findImportedFieldRouteMatch(nextMappings, selectedFieldRouteContext)
+    if (!routeMatch) {
+      const targetForm = nextMappings[0]
+      if (!targetForm) {
+        setContentError('No pude preparar el formulario para guardar esta ruta.')
+        return
+      }
+      const sourceName = selectedFieldRouteContext.fieldName ||
+        selectedFieldRouteContext.fieldHtmlId ||
+        selectedFieldRouteContext.editId ||
+        getImportedFieldRouteDefaultKey(selectedFieldRouteContext)
+      const label = selectedFieldRouteContext.label || selectedFieldRouteContext.placeholder || sourceName
+      const addedField: ImportedSiteFieldMapping = {
+        fieldId: selectedFieldRouteContext.editId || sourceName,
+        sourceName,
+        label,
+        type: selectedFieldRouteContext.inputType || selectedFieldRouteContext.tagName || 'text',
+        destinationType: 'custom',
+        destinationKey: getImportedFieldRouteDefaultKey(selectedFieldRouteContext),
+        saveMode: 'custom',
+        ignored: false,
+        options: []
+      }
+      targetForm.fields.push(addedField)
+      routeMatch = {
+        formIndex: 0,
+        fieldIndex: targetForm.fields.length - 1,
+        field: addedField
+      }
+    }
+
+    const matchedForm = nextMappings[routeMatch.formIndex]
+    const currentField = matchedForm?.fields[routeMatch.fieldIndex]
+    if (!matchedForm || !currentField) {
+      setContentError('No pude encontrar ese campo para guardar su ruta.')
+      return
+    }
+    const nextField: ImportedSiteFieldMapping = draftDestinationType === 'ignored'
+      ? {
+        ...currentField,
+        ...clearImportedCustomFieldPatch,
+        destinationType: 'ignored',
+        saveMode: 'ignored',
+        ignored: true,
+        destinationKey: currentField.destinationKey || destinationKey
+      }
+      : draftDestinationType === 'standard'
+        ? {
+          ...currentField,
+          ...clearImportedCustomFieldPatch,
+          destinationType: 'standard',
+          saveMode: 'standard',
+          ignored: false,
+          destinationKey: destinationKey || inferImportedStandardKey(currentField)
+        }
+        : {
+          ...currentField,
+          ...clearImportedCustomFieldPatch,
+          destinationType: 'new_custom',
+          saveMode: 'new_custom',
+          ignored: false,
+          destinationKey,
+          customFieldKey: destinationKey,
+          customFieldLabel: selectedFieldRouteContext.label || currentField.label || destinationKey,
+          customFieldDataType: currentField.customFieldDataType || 'text',
+          customFieldSyncTarget: currentField.customFieldSyncTarget || 'local'
+        }
+
+    matchedForm.fields[routeMatch.fieldIndex] = nextField
+
+    setSelectedFieldRouteSaving(true)
+    setContentError('')
+    try {
+      const updatedImportData = await sitesService.updateImportMapping(site.id, nextMappings)
+      onImportMappingUpdated(updatedImportData)
+      const updatedMatch = findImportedFieldRouteMatch(updatedImportData.formMappings, selectedFieldRouteContext)
+      setSelectedFieldRouteDraft(buildImportedSelectedFieldRouteDraft(updatedMatch, selectedFieldRouteContext))
+      showToast('success', 'Ruta de campo guardada', 'Este campo ya apunta al dato correcto.')
+    } catch (error) {
+      setContentError(error instanceof Error ? error.message : 'No se pudo guardar la ruta de este campo.')
+    } finally {
+      setSelectedFieldRouteSaving(false)
+    }
+  }, [
+    activeImportedPage?.id,
+    activeImportedPage?.title,
+    importData,
+    onImportMappingUpdated,
+    selectedFieldRouteContext,
+    selectedFieldRouteDraft,
+    showToast,
+    site.id
+  ])
 
   const startAIRegionMode = useCallback(() => {
     selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
@@ -13460,6 +13640,109 @@ const ImportedHtmlEditorPanel: React.FC<{
   const inlineVideoPreview: EmbedPreviewConfig = inlineEditor?.mode === 'video'
     ? resolveImportedVideoPreview(inlineEditor.value)
     : { kind: 'empty' }
+  const selectedFieldRoutePanel = selectedFieldRouteContext && selectedFieldRouteDraft ? (
+    <div className={styles.importedFieldRouteBox}>
+      <div className={styles.importedFieldRouteHeader}>
+        <Link2 size={15} />
+        <div>
+          <span>Ruta de datos</span>
+          <strong>{selectedFieldRouteMatch ? 'Campo detectado' : 'Campo nuevo detectado'}</strong>
+        </div>
+      </div>
+      <label className={styles.importedActionField}>
+        <span>Guardar como</span>
+        <CustomSelect
+          value={selectedFieldRouteDraft.destinationType === 'new_custom' ? 'custom' : selectedFieldRouteDraft.destinationType}
+          disabled={selectedFieldRouteSaving || saving || contentSaving}
+          onChange={(event) => {
+            const destinationType = event.target.value as ImportedSiteFieldMapping['destinationType']
+            setSelectedFieldRouteDraft(current => {
+              if (!current) return current
+              if (destinationType === 'standard') {
+                return {
+                  destinationType: 'standard',
+                  destinationKey: selectedFieldRouteMatch?.field ? inferImportedStandardKey(selectedFieldRouteMatch.field) : 'full_name'
+                }
+              }
+              if (destinationType === 'ignored') {
+                return {
+                  destinationType: 'ignored',
+                  destinationKey: current.destinationKey
+                }
+              }
+              return {
+                destinationType: 'custom',
+                destinationKey: current.destinationKey || getImportedFieldRouteDefaultKey(selectedFieldRouteContext)
+              }
+            })
+          }}
+        >
+          <option value="standard">Dato del contacto</option>
+          <option value="custom">Campo personalizado</option>
+          <option value="ignored">No guardar</option>
+        </CustomSelect>
+      </label>
+      {selectedFieldRouteDraft.destinationType === 'standard' ? (
+        <label className={styles.importedActionField}>
+          <span>Dato del contacto</span>
+          <CustomSelect
+            value={selectedFieldRouteDraft.destinationKey || 'full_name'}
+            disabled={selectedFieldRouteSaving || saving || contentSaving}
+            onChange={(event) => setSelectedFieldRouteDraft(current => current ? {
+              ...current,
+              destinationType: 'standard',
+              destinationKey: event.target.value
+            } : current)}
+          >
+            {importedStandardFieldOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+      ) : selectedFieldRouteDraft.destinationType === 'ignored' ? (
+        <p className={styles.importedFieldRouteHint}>
+          Este campo no se guardará cuando el visitante envíe el formulario.
+        </p>
+      ) : (
+        <label className={styles.importedActionField}>
+          <span>Clave del campo personalizado</span>
+          <input
+            value={selectedFieldRouteDraft.destinationKey}
+            disabled={selectedFieldRouteSaving || saving || contentSaving}
+            placeholder="ej. presupuesto_estimado"
+            name="rstk-imported-field-route-custom-key"
+            {...importedEditorNoAutocompleteAttrs}
+            onChange={(event) => setSelectedFieldRouteDraft(current => current ? {
+              ...current,
+              destinationType: 'custom',
+              destinationKey: event.target.value
+            } : current)}
+          />
+        </label>
+      )}
+      <div className={styles.importedFieldRouteActions}>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => setSelectedFieldRouteDraft(buildImportedSelectedFieldRouteDraft(selectedFieldRouteMatch, selectedFieldRouteContext))}
+          disabled={selectedFieldRouteSaving || saving || contentSaving}
+        >
+          Restablecer
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => void saveSelectedFieldRoute()}
+          disabled={selectedFieldRouteSaving || saving || contentSaving || (selectedFieldRouteDraft.destinationType !== 'ignored' && !selectedFieldRouteDraft.destinationKey.trim())}
+          loading={selectedFieldRouteSaving}
+        >
+          <Save size={14} />
+          Guardar ruta
+        </Button>
+      </div>
+    </div>
+  ) : null
 
   const codeElementEditorPanel = codeElementEditor ? (
     <div className={styles.importedButtonActionBox}>
@@ -13541,6 +13824,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             />
             <span>Campo requerido</span>
           </label>
+          {selectedFieldRoutePanel}
         </>
       )}
 
@@ -13906,7 +14190,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 autoCorrect="off"
                 autoCapitalize="off"
                 disabled={saving}
-                wrap="off"
+                wrap="soft"
                 aria-label={`Código de ${activeCodeFile.label || activeCodeFile.path || 'archivo principal'}`}
                 onScroll={syncCodeHighlightScroll}
                 onChange={(event) => onCodeDraftChange(activeCodeFile.path, event.target.value, activeCodeFile.content)}
@@ -13926,7 +14210,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           aria-orientation="vertical"
           aria-label="Cambiar tamaño entre código y vista"
           aria-valuemin={28}
-          aria-valuemax={72}
+          aria-valuemax={88}
           aria-valuenow={Math.round(codeEditorWidth)}
           tabIndex={0}
           onPointerDown={handleCodeSplitPointerDown}
@@ -13935,9 +14219,9 @@ const ImportedHtmlEditorPanel: React.FC<{
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
             event.preventDefault()
             if (event.key === 'ArrowLeft') setCodeEditorWidth(current => Math.max(28, current - 4))
-            if (event.key === 'ArrowRight') setCodeEditorWidth(current => Math.min(72, current + 4))
+            if (event.key === 'ArrowRight') setCodeEditorWidth(current => Math.min(88, current + 4))
             if (event.key === 'Home') setCodeEditorWidth(28)
-            if (event.key === 'End') setCodeEditorWidth(72)
+            if (event.key === 'End') setCodeEditorWidth(88)
           }}
         >
           <span />
@@ -14365,6 +14649,8 @@ const ImportedHtmlEditorPanel: React.FC<{
               />
               <span>Campo obligatorio</span>
             </label>
+
+            {selectedFieldRoutePanel}
 
             {fieldEditorHasOptions && (
               <div className={styles.importedFieldOptionsEditor}>
@@ -14794,6 +15080,115 @@ const getImportedFieldRouteType = (field: ImportedSiteFieldMapping): ImportedSit
   if (field.destinationType === 'standard' || field.saveMode === 'standard') return 'standard'
   if (field.destinationType === 'custom' || field.saveMode === 'custom' || field.destinationType === 'new_custom' || field.saveMode === 'new_custom') return 'custom'
   return 'custom'
+}
+
+const buildImportedSelectedFieldRouteContextKey = (context: ImportedSelectedFieldRouteContext | null) => (
+  context
+    ? [
+      context.editId,
+      context.fieldName,
+      context.fieldHtmlId,
+      context.label,
+      context.placeholder,
+      context.inputType,
+      context.tagName
+    ].join('|')
+    : ''
+)
+
+const getImportedFieldRouteTokens = (context: ImportedSelectedFieldRouteContext | null) => {
+  if (!context) return []
+  return [
+    context.editId,
+    context.fieldName,
+    context.fieldHtmlId,
+    context.label,
+    context.placeholder
+  ]
+    .map(value => normalizeImportedDestinationKey(value || '', ''))
+    .filter(Boolean)
+}
+
+const getImportedMappingTokens = (field: ImportedSiteFieldMapping) => (
+  [
+    field.fieldId,
+    field.sourceName,
+    field.label,
+    field.destinationKey,
+    field.customFieldKey,
+    field.customFieldLabel
+  ]
+    .map(value => normalizeImportedDestinationKey(value || '', ''))
+    .filter(Boolean)
+)
+
+const findImportedFieldRouteMatch = (
+  formMappings: ImportedSiteFormMapping[] | undefined,
+  context: ImportedSelectedFieldRouteContext | null
+): ImportedSelectedFieldRouteMatch | null => {
+  const routeTokens = getImportedFieldRouteTokens(context)
+  if (!formMappings?.length || !routeTokens.length) return null
+
+  let bestMatch: ImportedSelectedFieldRouteMatch | null = null
+  let bestScore = 0
+
+  formMappings.forEach((form, formIndex) => {
+    form.fields.forEach((field, fieldIndex) => {
+      const mappingTokens = getImportedMappingTokens(field)
+      if (!mappingTokens.length) return
+      let score = 0
+      routeTokens.forEach(token => {
+        if (!token) return
+        if (mappingTokens.includes(token)) {
+          score += 4
+          return
+        }
+        if (mappingTokens.some(mappingToken => mappingToken.includes(token) || token.includes(mappingToken))) {
+          score += 1
+        }
+      })
+
+      if (context?.inputType && field.type && normalizeImportedDestinationKey(field.type, '') === normalizeImportedDestinationKey(context.inputType, '')) {
+        score += 1
+      }
+
+      if (score > bestScore) {
+        bestScore = score
+        bestMatch = { formIndex, fieldIndex, field }
+      }
+    })
+  })
+
+  return bestScore > 0 ? bestMatch : null
+}
+
+const getImportedFieldRouteDefaultKey = (context: ImportedSelectedFieldRouteContext | null) => (
+  normalizeImportedDestinationKey(
+    context?.fieldName || context?.fieldHtmlId || context?.label || context?.placeholder || '',
+    'campo_personalizado'
+  )
+)
+
+const buildImportedSelectedFieldRouteDraft = (
+  match: ImportedSelectedFieldRouteMatch | null,
+  context: ImportedSelectedFieldRouteContext | null
+): ImportedSelectedFieldRouteDraft => {
+  if (!match) {
+    return {
+      destinationType: 'custom',
+      destinationKey: getImportedFieldRouteDefaultKey(context)
+    }
+  }
+
+  const destinationType = getImportedFieldRouteType(match.field)
+  return {
+    destinationType,
+    destinationKey: destinationType === 'standard'
+      ? match.field.destinationKey || inferImportedStandardKey(match.field)
+      : destinationType === 'custom'
+        ? match.field.customFieldKey || match.field.destinationKey || getImportedFieldRouteDefaultKey(context)
+        : match.field.destinationKey || getImportedFieldRouteDefaultKey(context)
+  }
 }
 
 const findImportedCustomFieldDefinition = (
