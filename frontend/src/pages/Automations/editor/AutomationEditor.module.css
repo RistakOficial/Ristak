@@ -1638,6 +1638,187 @@
   color: var(--color-text-primary);
 }
 
+.schedulerConfig {
+  display: flex;
+  flex-direction: column;
+}
+
+.schedulerModeGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.schedulerModeButton {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 12px;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  padding: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.schedulerModeButton:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.schedulerModeButton svg {
+  flex-shrink: 0;
+  color: rgb(var(--color-primary-rgb));
+}
+
+.schedulerModeButton span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.schedulerModeButton strong {
+  color: var(--color-text-primary);
+  font-size: 14.5px;
+  font-weight: 750;
+}
+
+.schedulerModeButton small {
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.schedulerModeButtonActive {
+  border-color: rgba(var(--color-primary-rgb), 0.5);
+  background: rgba(var(--color-primary-rgb), 0.1);
+  color: var(--color-text-primary);
+}
+
+.schedulerCalendar {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 14px;
+  background: rgba(148, 163, 184, 0.035);
+  padding: 12px;
+}
+
+.schedulerCalendarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.schedulerCalendarTitle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--color-text-primary);
+  font-size: 14.5px;
+  font-weight: 750;
+  text-transform: capitalize;
+}
+
+.schedulerCalendarTitle svg {
+  color: rgb(var(--color-primary-rgb));
+}
+
+.schedulerCalendarNav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.schedulerCalendarNav:hover {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--color-text-primary);
+}
+
+.schedulerWeekHeader,
+.schedulerDateGrid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.schedulerWeekHeader {
+  margin-bottom: 7px;
+}
+
+.schedulerWeekHeader span {
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.schedulerDateButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.schedulerDateButton:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.schedulerDateButtonMuted {
+  color: var(--color-text-tertiary);
+  background: transparent;
+}
+
+.schedulerDateButtonToday {
+  border-color: rgba(var(--color-primary-rgb), 0.32);
+}
+
+.schedulerDateButtonSelected {
+  background: rgb(var(--color-primary-rgb));
+  border-color: rgb(var(--color-primary-rgb));
+  color: var(--color-text-inverse);
+}
+
+.schedulerTodayButton {
+  width: 100%;
+  margin-top: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 650;
+  min-height: 40px;
+  cursor: pointer;
+}
+
+.schedulerTodayButton:hover {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--color-text-primary);
+}
+
 /* Vista previa de WhatsApp */
 .waPreview {
   background: rgba(20, 184, 166, 0.08);

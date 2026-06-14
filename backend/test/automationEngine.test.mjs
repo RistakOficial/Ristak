@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { DateTime } from 'luxon'
 import { db } from '../src/config/database.js'
-import { renderTemplate, filtersMatch, evaluateConditionNode, handleAutomationEvent } from '../src/services/automationEngine.js'
+import { renderTemplate, filtersMatch, evaluateConditionNode, handleAutomationEvent, processScheduledTriggers } from '../src/services/automationEngine.js'
 
 const ctx = {
   contact: {
@@ -89,6 +90,18 @@ test('filtersMatch: filtra datos completos del evento de pago', () => {
   assert.equal(filtersMatch([{ field: 'payment_method', match: 'contains', value: 'card' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'receipt', match: 'contains', value: 'INV-55' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'provider', match: 'is', value: 'paypal' }], paymentCtx), false)
+})
+
+test('filtersMatch: formulario enviado puede ser descalificado o no descalificado', () => {
+  assert.equal(filtersMatch([{ field: 'form_disqualified', match: 'is_disqualified', value: '' }], {
+    formStatus: 'disqualified'
+  }), true)
+  assert.equal(filtersMatch([{ field: 'form_disqualified', match: 'not_disqualified', value: '' }], {
+    formStatus: 'received'
+  }), true)
+  assert.equal(filtersMatch([{ field: 'form_disqualified', match: 'is_disqualified', value: '' }], {
+    formStatus: 'received'
+  }), false)
 })
 
 test('evaluateConditionNode: una rama → Sí/No', () => {
@@ -471,5 +484,68 @@ test('webhook encuentra contacto por valor mapeado y asigna usuario', async () =
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('trigger fecha programada inscribe una sola vez por horario', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_schedule_trigger_${suffix}`
+  const now = DateTime.now().setZone('America/Mexico_City').startOf('minute')
+  const scheduledAt = now.toFormat("yyyy-LL-dd'T'HH:mm")
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: `trigger-schedule-${suffix}`,
+              type: 'trigger-scheduler',
+              config: {
+                scheduleMode: 'once',
+                datetime: scheduledAt,
+                recurrence: 'none',
+                weekdays: []
+              }
+            }
+          ]
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: { timezone: 'America/Mexico_City' }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test fecha programada', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await processScheduledTriggers(now.plus({ seconds: 30 }).toUTC().toJSDate())
+    await processScheduledTriggers(now.plus({ seconds: 40 }).toUTC().toJSDate())
+
+    const enrollments = await db.all('SELECT * FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    assert.equal(enrollments.length, 1)
+    assert.equal(enrollments[0].status, 'completed')
+    assert.equal(enrollments[0].current_node_id, 'done')
+
+    const runs = await db.all('SELECT * FROM automation_schedule_runs WHERE automation_id = ?', [automationId])
+    assert.equal(runs.length, 1)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automation_schedule_runs WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
   }
 })

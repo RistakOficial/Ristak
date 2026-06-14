@@ -3624,6 +3624,21 @@ async function initTables() {
     for (const column of ['resume_at DATETIME', 'wait_kind TEXT', "context TEXT DEFAULT '{}'"]) {
       await db.run(`ALTER TABLE automation_enrollments ADD COLUMN ${column}`).catch(() => {})
     }
+
+    // Ejecuciones ya tomadas por el disparador programado. La llave única evita
+    // que el tick del motor dispare varias veces el mismo horario.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS automation_schedule_runs (
+        id TEXT PRIMARY KEY,
+        automation_id TEXT NOT NULL,
+        trigger_id TEXT NOT NULL,
+        run_key TEXT NOT NULL,
+        scheduled_for DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (automation_id, trigger_id, run_key)
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automation_schedule_runs_auto ON automation_schedule_runs(automation_id, created_at)')
     // Etiquetas locales de contactos (array JSON), usadas por automatizaciones
     await db.run(`ALTER TABLE contacts ADD COLUMN tags TEXT DEFAULT '[]'`).catch(() => {})
 

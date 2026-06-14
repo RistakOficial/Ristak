@@ -20,6 +20,7 @@ import { GoalConfigEditor } from './config/GoalConfigEditor'
 import { WhatsAppConfigEditor } from './config/WhatsAppConfigEditor'
 import { MessageBlocksEditor } from './config/MessageBlocksEditor'
 import { TriggerFiltersEditor } from './config/TriggerFiltersEditor'
+import { SchedulerConfigEditor } from './config/SchedulerConfigEditor'
 import type { TriggerFilter } from './crmFields'
 import { MessageComposer, VariableTextInput } from './composer/MessageComposer'
 import type { MessageBlock } from './nodeRegistry'
@@ -690,6 +691,9 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
               supportsQuickReplies={Boolean(definition.supportsQuickReplies)}
             />
           </>
+        )}
+        {definition.configComponent === 'scheduler' && (
+          <SchedulerConfigEditor config={config} onChange={onChange} />
         )}
 
         {!definition.configComponent && definition.fields.length === 0 && definition.kind !== 'trigger' && (

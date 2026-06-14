@@ -1,6 +1,8 @@
 import crypto from 'crypto'
+import { DateTime } from 'luxon'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
 import {
   findContactByPhoneCandidates,
@@ -22,8 +24,10 @@ import {
 
 const MAX_STEPS = 60
 const MAX_INLINE_DELAY_SECONDS = 120
+const SCHEDULE_TRIGGER_WINDOW_MINUTES = 2
 const WAIT_KIND_REPLY = 'reply'
 const WAIT_KIND_TRIGGER_LINK_CLICK = 'trigger-link-click'
+const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
 function makeId(prefix) {
   return `${prefix}_${crypto.randomUUID()}`
@@ -53,6 +57,10 @@ function cleanString(value) {
 
 function normalizeText(value) {
   return String(value || '').trim().toLowerCase()
+}
+
+function boolText(value) {
+  return value ? 'true' : 'false'
 }
 
 function isPlainObject(value) {
@@ -220,6 +228,39 @@ function paymentDataFromContext(ctx = {}) {
   }
 }
 
+function formDisqualifiedFromContext(ctx = {}) {
+  const explicit = ctx.formDisqualified ?? ctx.form_disqualified ?? ctx.disqualified ?? ctx.importedDisqualified ?? ctx.imported_disqualified
+  if (typeof explicit === 'boolean') return explicit
+  if (typeof explicit === 'number') return explicit === 1
+  if (typeof explicit === 'string') {
+    const normalized = normalizeText(explicit)
+    if (['true', '1', 'yes', 'si', 'sí', 'descalificado', 'disqualified'].includes(normalized)) return true
+    if (['false', '0', 'no', 'recibido', 'received', 'qualified', 'calificado'].includes(normalized)) return false
+  }
+
+  const status = normalizeText(
+    ctx.formStatus ||
+    ctx.form_status ||
+    ctx.submissionStatus ||
+    ctx.submission_status ||
+    ctx.status
+  )
+  if (['disqualified', 'descalificado'].includes(status)) return true
+  return false
+}
+
+function formDataFromContext(ctx = {}) {
+  const status = ctx.formStatus || ctx.form_status || ctx.submissionStatus || ctx.submission_status || ctx.status || ''
+  return {
+    id_formulario: ctx.formId || ctx.form_id || '',
+    nombre_formulario: ctx.formName || ctx.form_name || '',
+    estado: status,
+    descalificado: formDisqualifiedFromContext(ctx),
+    id_envio: ctx.submissionId || ctx.submission_id || '',
+    fecha_de_envio: ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || ''
+  }
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // ---------------------------------------------------------------------------
@@ -293,6 +334,28 @@ function buildVariableMap(ctx) {
     map['payment.receipt'] = String(payment.recibo ?? '')
     map['payment.invoice_number'] = String(payment.numero_factura ?? '')
     map['payment.date'] = String(payment.fecha ?? '')
+  }
+  const form = formDataFromContext(ctx)
+  if (Object.values(form).some((value) => value !== '' && value !== false)) {
+    setDeepVariable(map, 'formulario', form)
+    setDeepVariable(map, 'formulario_1', form)
+    map['form.id'] = String(form.id_formulario ?? '')
+    map['form.name'] = String(form.nombre_formulario ?? '')
+    map['form.status'] = String(form.estado ?? '')
+    map['form.disqualified'] = boolText(Boolean(form.descalificado))
+    map['form.submission_id'] = String(form.id_envio ?? '')
+    map['form.submitted_at'] = String(form.fecha_de_envio ?? '')
+  }
+  if (ctx.scheduledFor || ctx.scheduleRunKey) {
+    const schedule = {
+      fecha_programada: ctx.scheduledFor || '',
+      zona_horaria: ctx.scheduleTimezone || '',
+      recurrencia: ctx.scheduleRecurrence || ''
+    }
+    setDeepVariable(map, 'programacion', schedule)
+    map['schedule.scheduled_for'] = String(schedule.fecha_programada)
+    map['schedule.timezone'] = String(schedule.zona_horaria)
+    map['schedule.recurrence'] = String(schedule.recurrencia)
   }
   Object.entries(custom).forEach(([key, value]) => {
     map[`contact.custom.${key}`] = String(value ?? '')
@@ -369,6 +432,8 @@ function filterFieldValue(filter, ctx) {
     case 'receipt': return ctx.receipt || ctx.reference || ctx.invoiceNumber || ctx.invoiceId || ctx.title || ctx.description || null
     case 'invoice_number': return ctx.invoiceNumber || ctx.invoice_number || null
     case 'campaign': return ctx.campaign || null
+    case 'form_disqualified': return boolText(formDisqualifiedFromContext(ctx))
+    case 'form_status': return ctx.formStatus || ctx.form_status || ctx.submissionStatus || ctx.submission_status || ctx.status || ''
     case 'link': return ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ''
     case 'trigger_link': return ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ''
     case 'destination_url': return ctx.destinationUrl || ''
@@ -377,7 +442,7 @@ function filterFieldValue(filter, ctx) {
 }
 
 /** Operadores de filtro que no comparan contra un valor capturado */
-const NO_VALUE_FILTER_OPERATORS = new Set(['empty', 'not_empty'])
+const NO_VALUE_FILTER_OPERATORS = new Set(['empty', 'not_empty', 'is_disqualified', 'not_disqualified'])
 
 function evaluateFilter(filter, ctx) {
   const actualRaw = filterFieldValue(filter, ctx)
@@ -392,6 +457,8 @@ function evaluateFilter(filter, ctx) {
     case 'ends_with': return actual.endsWith(expected)
     case 'empty': return actual === ''
     case 'not_empty': return actual !== ''
+    case 'is_disqualified': return actual === 'true' || actual === 'disqualified' || actual === 'descalificado'
+    case 'not_disqualified': return actual !== 'true' && actual !== 'disqualified' && actual !== 'descalificado'
     default: return actual === expected
   }
 }
@@ -456,6 +523,13 @@ function triggerMatches(trigger, eventType, ctx) {
       if (trigger.type !== 'trigger-form-submitted') return false
       const form = str(config.form)
       return !form || form === str(ctx.formId)
+    }
+
+    case 'scheduler': {
+      if (trigger.type !== 'trigger-scheduler') return false
+      const triggerKey = str(ctx.scheduleTriggerKey)
+      if (!triggerKey) return true
+      return triggerKey === (str(trigger.id) || trigger.type)
     }
 
     case 'appointment-booked': {
@@ -533,7 +607,8 @@ const EVENT_DESCRIPTIONS = {
   },
   refund: () => 'se procesó un reembolso',
   'webhook-received': () => 'se recibió un webhook',
-  'trigger-link-clicked': (ctx) => `recibió un clic de disparo${ctx.triggerLinkName ? ` en "${ctx.triggerLinkName}"` : ''}`
+  'trigger-link-clicked': (ctx) => `recibió un clic de disparo${ctx.triggerLinkName ? ` en "${ctx.triggerLinkName}"` : ''}`,
+  scheduler: (ctx) => `llegó la fecha programada${ctx.scheduledFor ? ` (${ctx.scheduledFor})` : ''}`
 }
 
 // ---------------------------------------------------------------------------
@@ -676,7 +751,17 @@ async function createEnrollment(automation, contact, ctx) {
       eventId: ctx.eventId || null,
       clickedAt: ctx.clickedAt || null,
       query: ctx.query || null,
-      payload: ctx.payload || null
+      payload: ctx.payload || null,
+      formId: ctx.formId || null,
+      formName: ctx.formName || null,
+      formStatus: ctx.formStatus || ctx.form_status || ctx.submissionStatus || ctx.submission_status || ctx.status || null,
+      formDisqualified: formDisqualifiedFromContext(ctx),
+      submissionId: ctx.submissionId || ctx.submission_id || null,
+      submittedAt: ctx.submittedAt || ctx.submitted_at || null,
+      scheduledFor: ctx.scheduledFor || null,
+      scheduleRunKey: ctx.scheduleRunKey || null,
+      scheduleRecurrence: ctx.scheduleRecurrence || null,
+      scheduleTimezone: ctx.scheduleTimezone || null
     }
   }
   await db.run(
@@ -1539,6 +1624,149 @@ export async function handleAutomationEvent(eventType, data = {}) {
   }
 }
 
+function weekdayKey(date) {
+  return WEEKDAY_KEYS[Math.max(0, Math.min(6, date.weekday - 1))]
+}
+
+function normalizeScheduleRecurrence(config = {}) {
+  const recurrence = cleanString(config.recurrence)
+  if (['daily', 'weekly', 'monthly'].includes(recurrence)) return recurrence
+  if (cleanString(config.scheduleMode) === 'recurring') return 'daily'
+  return 'none'
+}
+
+function resolveScheduleZone(config = {}, flow = {}, accountTimezone = 'America/Mexico_City') {
+  const requested = cleanString(config.timezone || flow?.settings?.timezone)
+  if (requested && isValidTimezone(requested)) return requested
+  return isValidTimezone(accountTimezone) ? accountTimezone : 'America/Mexico_City'
+}
+
+function computeDueSchedule(config = {}, flow = {}, nowUtc = DateTime.utc(), accountTimezone = 'America/Mexico_City') {
+  const zone = resolveScheduleZone(config, flow, accountTimezone)
+  const datetime = cleanString(config.datetime)
+  if (!datetime) return null
+
+  const base = DateTime.fromISO(datetime, { zone })
+  if (!base.isValid) return null
+
+  const recurrence = normalizeScheduleRecurrence(config)
+  const localNow = nowUtc.setZone(zone)
+  const scheduledToday = localNow.set({
+    hour: base.hour,
+    minute: base.minute,
+    second: 0,
+    millisecond: 0
+  })
+  const minutesAfterScheduled = localNow.diff(scheduledToday, 'minutes').minutes
+  if (minutesAfterScheduled < 0 || minutesAfterScheduled > SCHEDULE_TRIGGER_WINDOW_MINUTES) return null
+
+  if (recurrence === 'none') {
+    if (scheduledToday.toFormat('yyyyLLddHHmm') !== base.toFormat('yyyyLLddHHmm')) return null
+    return {
+      recurrence,
+      timezone: zone,
+      runKey: `once:${base.toFormat('yyyyLLddHHmm')}`,
+      scheduledFor: base.toUTC().toISO()
+    }
+  }
+
+  if (localNow < base.minus({ seconds: 1 })) return null
+
+  if (recurrence === 'daily') {
+    const allowedWeekdays = Array.isArray(config.weekdays) ? config.weekdays.filter(Boolean) : []
+    if (allowedWeekdays.length > 0 && !allowedWeekdays.includes(weekdayKey(localNow))) return null
+    return {
+      recurrence,
+      timezone: zone,
+      runKey: `daily:${scheduledToday.toFormat('yyyyLLdd')}:${base.toFormat('HHmm')}`,
+      scheduledFor: scheduledToday.toUTC().toISO()
+    }
+  }
+
+  if (recurrence === 'weekly') {
+    const allowedWeekdays = Array.isArray(config.weekdays) && config.weekdays.length > 0
+      ? config.weekdays
+      : [weekdayKey(base)]
+    if (!allowedWeekdays.includes(weekdayKey(localNow))) return null
+    return {
+      recurrence,
+      timezone: zone,
+      runKey: `weekly:${scheduledToday.toFormat('kkkk-WW')}:${weekdayKey(localNow)}:${base.toFormat('HHmm')}`,
+      scheduledFor: scheduledToday.toUTC().toISO()
+    }
+  }
+
+  if (recurrence === 'monthly') {
+    if (localNow.day !== base.day) return null
+    return {
+      recurrence,
+      timezone: zone,
+      runKey: `monthly:${scheduledToday.toFormat('yyyyLL')}:${String(base.day).padStart(2, '0')}:${base.toFormat('HHmm')}`,
+      scheduledFor: scheduledToday.toUTC().toISO()
+    }
+  }
+
+  return null
+}
+
+async function claimScheduleRun({ automationId, triggerKey, runKey, scheduledFor }) {
+  const id = makeId('sched')
+  const result = await db.run(
+    `INSERT INTO automation_schedule_runs (id, automation_id, trigger_id, run_key, scheduled_for)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (automation_id, trigger_id, run_key) DO NOTHING`,
+    [id, automationId, triggerKey, runKey, scheduledFor]
+  )
+  return Number(result?.changes || 0) > 0
+}
+
+/** Dispara automatizaciones cuyo disparador programado ya llegó. */
+export async function processScheduledTriggers(referenceDate = new Date()) {
+  try {
+    const nowUtc = referenceDate instanceof Date
+      ? DateTime.fromJSDate(referenceDate, { zone: 'utc' })
+      : DateTime.fromISO(String(referenceDate), { zone: 'utc' })
+    if (!nowUtc.isValid) return
+
+    const [automations, accountTimezone] = await Promise.all([
+      listPublishedAutomations(),
+      getAccountTimezone().catch(() => 'America/Mexico_City')
+    ])
+
+    for (const automation of automations) {
+      const flow = automation.flow || {}
+      const startNode = getStartNode(flow)
+      if (!startNode) continue
+      const triggers = getTriggers(startNode)
+      for (let index = 0; index < triggers.length; index += 1) {
+        const trigger = triggers[index]
+        if (trigger?.type !== 'trigger-scheduler') continue
+        const due = computeDueSchedule(trigger.config || {}, flow, nowUtc, accountTimezone)
+        if (!due) continue
+
+        const triggerKey = str(trigger.id) || trigger.type
+        const claimed = await claimScheduleRun({
+          automationId: automation.id,
+          triggerKey,
+          runKey: due.runKey,
+          scheduledFor: due.scheduledFor
+        })
+        if (!claimed) continue
+
+        await enrollMatching([automation], 'scheduler', {
+          scheduleTriggerKey: triggerKey,
+          scheduleRunKey: due.runKey,
+          scheduleRecurrence: due.recurrence,
+          scheduledFor: due.scheduledFor,
+          scheduleTimezone: due.timezone
+        })
+      }
+    }
+  } catch (error) {
+    logger.error(`[Automatizaciones] Error procesando horarios programados: ${error.message}`)
+  }
+}
+
 /** Tick del programador: reanuda esperas vencidas (duración o timeout) */
 export async function processDueResumes() {
   try {
@@ -1612,6 +1840,7 @@ export function startAutomationScheduler(intervalMs = 20000) {
   schedulerStarted = true
   setInterval(() => {
     processDueResumes().catch(() => undefined)
+    processScheduledTriggers().catch(() => undefined)
   }, intervalMs)
   logger.info('⚙️ Motor de automatizaciones activo (tick cada 20s)')
 }

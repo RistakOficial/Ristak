@@ -129,7 +129,7 @@ export interface NodeSummaryData {
 }
 
 /** Configuradores con UI propia (más allá del formulario declarativo) */
-export type NodeConfigComponent = 'conditions' | 'wait' | 'goal' | 'whatsapp' | 'message'
+export type NodeConfigComponent = 'conditions' | 'wait' | 'goal' | 'whatsapp' | 'message' | 'scheduler'
 
 // ---------------------------------------------------------------------------
 // Bloques de mensaje tipo ManyChat (varios globos dentro de una cajita)
@@ -385,6 +385,26 @@ export const durationLabel = (amount: number, unit: string): string => {
   return `${amount} ${amount === 1 ? singular : plural}`
 }
 
+const SCHEDULE_RECURRENCE_LABELS: Record<string, string> = {
+  none: 'Una vez',
+  daily: 'Cada día',
+  weekly: 'Cada semana',
+  monthly: 'Cada mes'
+}
+
+function formatScheduleDatetime(value: string): string {
+  const [date = '', time = ''] = value.split('T')
+  if (!date) return ''
+  const parsed = new Date(`${date}T${time || '00:00'}`)
+  if (Number.isNaN(parsed.getTime())) return value.replace('T', ' a las ')
+  const dateLabel = parsed.toLocaleDateString('es-MX', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  })
+  return `${dateLabel}${time ? ` a las ${time}` : ''}`
+}
+
 const field = (
   label: string,
   path: string,
@@ -438,6 +458,12 @@ const TRIGGER_LINK_FIELDS: VariableSchemaField[] = [
   field('URL pública', 'url_publica'),
   field('Destino final', 'destino_final'),
   field('Fecha del disparo', 'fecha_disparo')
+]
+
+const SCHEDULE_FIELDS: VariableSchemaField[] = [
+  field('Fecha programada', 'fecha_programada'),
+  field('Zona horaria', 'zona_horaria'),
+  field('Recurrencia', 'recurrencia')
 ]
 
 const CONTACT_OUTPUT_FIELDS: VariableSchemaField[] = [
@@ -606,7 +632,7 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-customer-replied',
     kind: 'trigger',
-    label: 'El Cliente Respondió',
+    label: 'Cliente respondió',
     category: 'trigger-events',
     description: 'Se activa cuando el contacto responde un mensaje',
     icon: MessageCircleReply,
@@ -648,9 +674,9 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-incoming-webhook',
     kind: 'trigger',
-    label: 'Webhook entrante',
+    label: 'Datos recibidos de otra app',
     category: 'trigger-events',
-    description: 'Se activa al recibir una llamada HTTP externa',
+    description: 'Se activa cuando otra app manda datos a esta URL',
     icon: Rss,
     accent: 'green',
     addButtonLabel: 'Configurar webhook',
@@ -818,60 +844,37 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-scheduler',
     kind: 'trigger',
-    label: 'Scheduler',
+    label: 'Fecha programada',
     category: 'trigger-events',
-    description: 'Se ejecuta en una fecha u horario programado',
+    description: 'Inicia el flujo una vez o de forma recurrente',
     icon: Clock,
     accent: 'green',
-    addButtonLabel: 'Programar horario',
-    defaultConfig: () => ({ datetime: '', recurrence: 'none', weekdays: [] }),
-    fields: [
-      { key: 'datetime', label: 'Fecha y hora', type: 'datetime', required: true },
-      {
-        key: 'recurrence',
-        label: 'Recurrencia',
-        type: 'select',
-        showIf: (config) => Boolean(str(config.datetime)),
-        options: [
-          { value: 'none', label: 'Una sola vez' },
-          { value: 'daily', label: 'Cada día' },
-          { value: 'weekly', label: 'Cada semana' },
-          { value: 'monthly', label: 'Cada mes' }
-        ]
-      },
-      {
-        key: 'weekdays',
-        label: 'Días permitidos',
-        type: 'weekdays',
-        showIf: (config) => str(config.recurrence) === 'daily' || str(config.recurrence) === 'weekly'
-      }
-    ],
+    addButtonLabel: 'Programar fecha',
+    defaultConfig: () => ({ scheduleMode: 'once', datetime: '', recurrence: 'none', weekdays: [] }),
+    configComponent: 'scheduler',
+    fields: [],
     outputs: () => SINGLE_OUTPUT,
     variableOutput: () => ({
-      baseId: 'cita',
-      baseLabel: 'Cita',
-      fields: APPOINTMENT_FIELDS
+      baseId: 'programacion',
+      baseLabel: 'Fecha programada',
+      fields: SCHEDULE_FIELDS
     }),
+    validate: (config) => (str(config.datetime) ? [] : ['Elige la fecha y la hora del disparador programado']),
     summary: (config) => {
-      const recurrences: Record<string, string> = {
-        none: 'Una sola vez',
-        daily: 'Cada día',
-        weekly: 'Cada semana',
-        monthly: 'Cada mes'
-      }
       const datetime = str(config.datetime)
+      const recurrence = str(config.recurrence) || 'none'
       return {
         text: datetime
-          ? `${str(config.recurrence) === 'none' ? 'El' : recurrences[str(config.recurrence)]} ${datetime.replace('T', ' a las ')}`
+          ? `${SCHEDULE_RECURRENCE_LABELS[recurrence] || 'Programado'} · ${formatScheduleDatetime(datetime)}`
           : undefined,
-        empty: 'Programa la fecha y hora'
+        empty: 'Elige cuándo se dispara'
       }
     }
   },
   {
     type: 'trigger-appointment-booked',
     kind: 'trigger',
-    label: 'Cita reservada por el cliente',
+    label: 'Cliente agendó una cita',
     category: 'trigger-appointments',
     description: 'Se activa cuando el contacto agenda una cita',
     icon: CalendarCheck,
@@ -934,7 +937,7 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-facebook-comment',
     kind: 'trigger',
-    label: 'Facebook - Comentario(s) en una publicación',
+    label: 'Comentario en Facebook',
     brand: 'Facebook',
     category: 'trigger-fbig',
     description: 'Se activa con comentarios en tus publicaciones de Facebook',
@@ -1005,7 +1008,7 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-instagram-comment',
     kind: 'trigger',
-    label: 'Instagram - Comentario(s) en una publicación',
+    label: 'Comentario en Instagram',
     brand: 'Instagram',
     category: 'trigger-fbig',
     description: 'Se activa con comentarios en tus publicaciones o reels',
@@ -1074,7 +1077,7 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-click-to-whatsapp',
     kind: 'trigger',
-    label: 'Click to WhatsApp ads',
+    label: 'Mensaje desde anuncio de WhatsApp',
     brand: 'WhatsApp',
     category: 'trigger-fbig',
     description: 'Se activa cuando llega un mensaje desde un anuncio de WhatsApp',
@@ -1101,7 +1104,7 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-refund',
     kind: 'trigger',
-    label: 'Refund',
+    label: 'Reembolso',
     category: 'trigger-events',
     description: 'Se activa cuando se procesa un reembolso',
     icon: RotateCcw,
@@ -1126,7 +1129,7 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-facebook-ad-click',
     kind: 'trigger',
-    label: 'El usuario hace clic en un anuncio de Facebook',
+    label: 'Clic en anuncio de Facebook',
     brand: 'Facebook Ads',
     category: 'trigger-fbig',
     description: 'Se activa cuando el contacto llega desde un anuncio',
@@ -2137,7 +2140,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         },
         conversation: () => `Respondió por ${channelLabel(str(config.conversationChannel) || 'any')}`,
         contact: () => 'Cambio en el contacto',
-        ads: () => (str(config.adsEvent) === 'ctwa' ? 'Click to WhatsApp ads' : 'Clic en anuncio de Facebook'),
+        ads: () => (str(config.adsEvent) === 'ctwa' ? 'Mensaje desde anuncio de WhatsApp' : 'Clic en anuncio de Facebook'),
         custom: () => `Evento "${str(config.customEventName)}"`,
         advanced: () => summarizeAdvancedCondition(config.advancedCondition) || 'Condición avanzada'
       }

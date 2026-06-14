@@ -126,7 +126,7 @@ export const CRM_FIELDS: CrmField[] = [
 
   // Ads
   { id: 'ads-fb-click', label: 'Clic en anuncio de Facebook', category: 'ads', type: 'boolean' },
-  { id: 'ads-ctwa', label: 'Click to WhatsApp ads', category: 'ads', type: 'boolean' },
+  { id: 'ads-ctwa', label: 'Mensaje desde anuncio de WhatsApp', category: 'ads', type: 'boolean' },
   { id: 'ads-campaign', label: 'Campaña', category: 'ads', type: 'select', valueCatalog: 'campaigns' },
   { id: 'ads-source', label: 'Fuente de campaña', category: 'ads', type: 'text' },
 
@@ -457,6 +457,8 @@ export type TriggerFilterMatch =
   | 'ends_with'
   | 'empty'
   | 'not_empty'
+  | 'is_disqualified'
+  | 'not_disqualified'
 
 export interface TriggerFilter {
   field: string
@@ -484,7 +486,9 @@ export const TRIGGER_FILTER_OPERATORS: Array<{
   { value: 'starts_with', label: 'empieza con' },
   { value: 'ends_with', label: 'termina con' },
   { value: 'empty', label: 'está vacío', noValue: true },
-  { value: 'not_empty', label: 'no está vacío', noValue: true }
+  { value: 'not_empty', label: 'no está vacío', noValue: true },
+  { value: 'is_disqualified', label: 'es descalificado', noValue: true },
+  { value: 'not_disqualified', label: 'no es descalificado', noValue: true }
 ]
 
 /** ¿El operador del filtro necesita capturar un valor? */
@@ -502,6 +506,8 @@ export interface TriggerFilterField {
   catalog?: CatalogKind
   /** Opciones fijas (el valor se elige de una lista, no texto libre) */
   options?: Array<{ value: string; label: string }>
+  /** Operadores permitidos solo para este campo */
+  operators?: TriggerFilterMatch[]
   /** Categoría del drill-down (Contacto, Mensaje, Citas…) */
   category: string
   /** Contextos donde aplica; sin lista = siempre (datos del contacto) */
@@ -524,6 +530,14 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'receipt', label: 'Recibo / factura', phrase: 'el recibo', category: 'Pago', appliesTo: ['payment'] },
   { id: 'invoice_number', label: 'Número de factura', phrase: 'el número de factura', category: 'Pago', appliesTo: ['payment'] },
   { id: 'campaign', label: 'Campaña', phrase: 'la campaña', catalog: 'campaigns', category: 'Anuncio', appliesTo: ['ads'] },
+  {
+    id: 'form_disqualified',
+    label: 'Resultado del formulario',
+    phrase: 'el formulario',
+    operators: ['is_disqualified', 'not_disqualified'],
+    category: 'Formulario',
+    appliesTo: ['form']
+  },
   { id: 'form_field', label: 'Campo del formulario', phrase: 'el campo del formulario', category: 'Formulario', appliesTo: ['form'] },
   // Atribución de anuncios (vive en el contacto: disponible siempre)
   { id: 'ad', label: 'Anuncio de origen', phrase: 'el anuncio de origen', catalog: 'ads', category: 'Anuncio' },
@@ -571,6 +585,13 @@ export function filterFieldsFor(contextKey?: string): TriggerFilterField[] {
   )
 }
 
+export function triggerOperatorsForField(field?: TriggerFilterField): typeof TRIGGER_FILTER_OPERATORS {
+  if (!field?.operators?.length) {
+    return TRIGGER_FILTER_OPERATORS.filter((operator) => operator.value !== 'is_disqualified' && operator.value !== 'not_disqualified')
+  }
+  return TRIGGER_FILTER_OPERATORS.filter((operator) => field.operators?.includes(operator.value))
+}
+
 export function asTriggerFilters(value: unknown): TriggerFilter[] {
   return Array.isArray(value) ? (value as TriggerFilter[]) : []
 }
@@ -579,10 +600,12 @@ export function validateTriggerFilters(value: unknown): string[] {
   const errors: string[] = []
   asTriggerFilters(value).forEach((filter, index) => {
     const field = filter.field ? TRIGGER_FILTER_FIELDS.find((candidate) => candidate.id === filter.field) : undefined
+    const operators = triggerOperatorsForField(field)
     if (!filter.field) errors.push(`Filtro ${index + 1}: elige el campo`)
     else if (!field) errors.push(`Filtro ${index + 1}: el campo seleccionado ya no existe`)
     else if (filter.field === 'custom' && !filter.customKey) errors.push(`Filtro ${index + 1}: elige el campo personalizado`)
     else if (!filter.match) errors.push(`Filtro ${index + 1}: elige qué debe pasar`)
+    else if (!operators.some((operator) => operator.value === filter.match)) errors.push(`Filtro ${index + 1}: elige una condición válida`)
     if (filter.match && triggerOperatorNeedsValue(filter.match) && !String(filter.value || '').trim()) {
       errors.push(`Filtro ${index + 1}: captura el valor`)
     }
@@ -604,6 +627,10 @@ export function triggerFiltersSentence(value: unknown): string {
       const phrase = filter.field === 'custom'
         ? `el campo "${filter.customLabel || filter.customKey}"`
         : field?.phrase || 'el campo'
+      if (filter.field === 'form_disqualified') {
+        const joiner = filter.connector === 'or' ? ' o ' : ' y '
+        return `${joiner}${phrase} ${filter.match === 'not_disqualified' ? 'no es descalificado' : 'es descalificado'}`
+      }
       const verbs: Record<string, string> = {
         is: 'es igual a',
         not: 'NO es igual a',
@@ -612,7 +639,9 @@ export function triggerFiltersSentence(value: unknown): string {
         starts_with: 'empiece con',
         ends_with: 'termine con',
         empty: 'esté vacío',
-        not_empty: 'no esté vacío'
+        not_empty: 'no esté vacío',
+        is_disqualified: 'es descalificado',
+        not_disqualified: 'no es descalificado'
       }
       const joiner = filter.connector === 'or' ? ' o ' : ' y '
       const valuePart = triggerOperatorNeedsValue(filter.match)

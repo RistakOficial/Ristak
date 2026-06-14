@@ -15128,7 +15128,13 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
     .then(engine => engine.handleAutomationEvent('form-submitted', {
       contactId,
       formId: site.id,
-      formName: site.name || ''
+      formName: site.name || '',
+      submissionId,
+      formStatus: submissionStatus,
+      status: submissionStatus,
+      formDisqualified: submissionStatus === 'disqualified',
+      submittedAt: meta.submittedAt,
+      formResponses: layers.mappedFields
     }))
     .catch(() => {})
 
@@ -15292,7 +15298,13 @@ export async function createSubmissionFromRequest(req, body = {}) {
     .then(engine => engine.handleAutomationEvent('form-submitted', {
       contactId,
       formId: site.id,
-      formName: site.name || ''
+      formName: site.name || '',
+      submissionId,
+      formStatus: ruleEvaluation.status,
+      status: ruleEvaluation.status,
+      formDisqualified: ruleEvaluation.status === 'disqualified' || ruleEvaluation.disqualified === true,
+      submittedAt: meta.submittedAt,
+      formResponses: responses
     }))
     .catch(() => {})
 

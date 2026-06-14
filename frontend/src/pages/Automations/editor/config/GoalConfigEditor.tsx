@@ -90,7 +90,7 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
               options={[
                 { value: 'received', label: 'Pago recibido' },
                 { value: 'failed', label: 'Pago fallido' },
-                { value: 'refund', label: 'Refund / reembolso' }
+                { value: 'refund', label: 'Reembolso' }
               ]}
               value={str(config.paymentEvent) || 'received'}
               onValueChange={(next) => set({ paymentEvent: next })}
@@ -259,7 +259,7 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
             <CustomSelect
               options={[
                 { value: 'fb_click', label: 'Clic en anuncio de Facebook' },
-                { value: 'ctwa', label: 'Click to WhatsApp ads' }
+                { value: 'ctwa', label: 'Mensaje desde anuncio de WhatsApp' }
               ]}
               value={str(config.adsEvent) || 'fb_click'}
               onValueChange={(next) => set({ adsEvent: next })}

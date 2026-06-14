@@ -74,7 +74,7 @@ export const FlowSettingsPanel: React.FC<FlowSettingsPanelProps> = ({
 
         <Field
           label="Zona horaria del flujo"
-          help="Todos los nodos (Esperar, Scheduler, ventanas horarias) usan esta zona horaria"
+          help="Todos los nodos (Esperar, fecha programada y ventanas horarias) usan esta zona horaria"
         >
           <CustomSelect
             options={TIMEZONES}

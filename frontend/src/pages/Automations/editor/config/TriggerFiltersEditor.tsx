@@ -1,10 +1,10 @@
 import React from 'react'
 import { Plus, X } from 'lucide-react'
 import {
-  TRIGGER_FILTER_OPERATORS,
   asTriggerFilters,
   filterFieldsFor,
   triggerOperatorNeedsValue,
+  triggerOperatorsForField,
   type TriggerFilter
 } from '../crmFields'
 import { CatalogSelect, TextInput, CustomSelect } from './configPrimitives'
@@ -46,6 +46,7 @@ export const TriggerFiltersEditor: React.FC<{
       {filters.map((filter, index) => {
         const field = fields.find((candidate) => candidate.id === filter.field)
         const fieldReady = Boolean(filter.field) && (filter.field !== 'custom' || Boolean(filter.customKey))
+        const operators = triggerOperatorsForField(field)
         const needsValue = Boolean(filter.match) && triggerOperatorNeedsValue(filter.match)
         return (
           <div key={index} className={styles.filterRow}>
@@ -105,12 +106,17 @@ export const TriggerFiltersEditor: React.FC<{
               <div className={styles.filterStep}>
                 <div className={styles.configRow}>
                   <CustomSelect
-                    options={TRIGGER_FILTER_OPERATORS.map((operator) => ({
+                    options={operators.map((operator) => ({
                       value: operator.value,
                       label: operator.label
                     }))}
                     value={filter.match || ''}
-                    onValueChange={(next) => update(index, { match: next as TriggerFilter['match'] })}
+                    onValueChange={(next) =>
+                      update(index, {
+                        match: next as TriggerFilter['match'],
+                        ...(triggerOperatorNeedsValue(next) ? {} : { value: '', valueLabel: '' })
+                      })
+                    }
                     placeholder="Selecciona qué debe pasar"
                     aria-label="Qué debe pasar"
                   />
