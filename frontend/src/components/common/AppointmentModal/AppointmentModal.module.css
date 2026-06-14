@@ -64,9 +64,6 @@
   --appointment-mobile-text: var(--phone-chat-text, #050505);
   --appointment-mobile-muted: var(--phone-chat-muted, #737373);
   --appointment-mobile-border: var(--phone-chat-border, rgba(17, 24, 39, 0.08));
-  --appointment-mobile-tablist-bg: color-mix(in srgb, var(--appointment-mobile-text) 9%, var(--appointment-mobile-bg) 91%);
-  --appointment-mobile-tablist-border: color-mix(in srgb, var(--appointment-mobile-text) 24%, var(--appointment-mobile-border) 76%);
-  --appointment-mobile-tab-active-bg: color-mix(in srgb, var(--appointment-mobile-text) 18%, var(--appointment-mobile-bg) 82%);
   --color-background: var(--appointment-mobile-surface);
   --color-background-secondary: var(--appointment-mobile-surface);
   --color-background-tertiary: var(--appointment-mobile-soft);
@@ -1184,35 +1181,6 @@
 .mobileSheetContainer .tabListWrapper {
   border-bottom: 0;
   padding-bottom: 0;
-}
-
-/* Piel del segmentado igual a la del Registrar pago móvil */
-.mobileSheetContainer :global([data-ristak-tablist]) {
-  border: 1px solid var(--appointment-mobile-tablist-border);
-  background: var(--appointment-mobile-tablist-bg);
-  border-radius: 14px;
-  padding: 4px;
-  box-sizing: border-box;
-  max-width: 100%;
-  min-width: 0;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  box-shadow: none;
-}
-
-.mobileSheetContainer :global([data-ristak-tablist-tab]) {
-  min-width: 0;
-  min-height: 40px;
-  border-radius: 10px;
-  color: var(--appointment-mobile-muted);
-  font-size: 14px;
-  font-weight: 750;
-}
-
-.mobileSheetContainer :global([data-ristak-tablist-tab][data-active="true"]) {
-  color: var(--appointment-mobile-text);
-  background: var(--appointment-mobile-tab-active-bg);
-  box-shadow: none;
 }
 
 /* Contenido de slots (tanto para modo default como custom) */

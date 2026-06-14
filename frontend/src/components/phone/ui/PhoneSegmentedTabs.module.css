@@ -1,0 +1,79 @@
+.root {
+  --phone-segmented-tabs-text: var(--phone-chat-text, #050505);
+  --phone-segmented-tabs-muted: var(--phone-chat-muted, #737373);
+  --phone-segmented-tabs-surface: var(--phone-chat-surface, #ffffff);
+  --phone-segmented-tabs-border-base: var(--phone-chat-border, rgba(17, 24, 39, 0.08));
+  --phone-segmented-tabs-bg: color-mix(
+    in srgb,
+    var(--phone-segmented-tabs-text) 9%,
+    var(--phone-segmented-tabs-surface) 91%
+  );
+  --phone-segmented-tabs-border: color-mix(
+    in srgb,
+    var(--phone-segmented-tabs-text) 24%,
+    var(--phone-segmented-tabs-border-base) 76%
+  );
+  --phone-segmented-tabs-active-bg: color-mix(
+    in srgb,
+    var(--phone-segmented-tabs-text) 18%,
+    var(--phone-segmented-tabs-surface) 82%
+  );
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--phone-segmented-tabs-border);
+  border-radius: 14px;
+  background: var(--phone-segmented-tabs-bg);
+  box-sizing: border-box;
+  box-shadow: none;
+}
+
+.tab {
+  appearance: none;
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--phone-segmented-tabs-muted);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.15;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.tab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--phone-segmented-tabs-text) 28%, transparent);
+  outline-offset: 2px;
+}
+
+.tab:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.tabLabel {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabActive {
+  background: var(--phone-segmented-tabs-active-bg);
+  color: var(--phone-segmented-tabs-text);
+}

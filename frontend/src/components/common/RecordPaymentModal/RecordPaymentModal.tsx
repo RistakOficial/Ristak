@@ -6,6 +6,7 @@ import { CustomSelect } from '../CustomSelect'
 import { NumberInput } from '../NumberInput'
 import { PhoneDateField } from '@/components/phone/PhoneDateField'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
+import { PhoneSegmentedTabs } from '@/components/phone/ui'
 import {
   Search,
   Loader2,
@@ -55,6 +56,7 @@ type FirstPaymentMethod = '' | 'cash' | 'bank_transfer' | 'deposit' | 'card'
 type RemainingFrequency = 'custom' | 'weekly' | 'biweekly' | 'monthly'
 type SendMethod = 'whatsapp' | 'sms' | 'email' | 'email_whatsapp' | 'email_sms' | 'all'
 type InvoiceSendMethod = 'email' | 'sms' | 'both'
+type PaymentSegmentedOption = { value: string; label: string }
 
 const INSTALLMENT_VALUE_TYPE_OPTIONS = [
   { value: 'percentage', label: 'Porcentaje' },
@@ -531,6 +533,40 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const selectedSendMethodOption = sendMethodOptions.find(option => option.value === sendMethod)
   const contactLocked = Boolean(lockInitialContact && initialContact?.id)
   const isEmbedded = variant === 'embedded'
+  const renderPaymentSegmentedTabs = ({
+    options,
+    value,
+    onChange,
+    ariaLabel,
+    desktopFullWidth = true
+  }: {
+    options: PaymentSegmentedOption[]
+    value: string
+    onChange: (value: string) => void
+    ariaLabel: string
+    desktopFullWidth?: boolean
+  }) => {
+    if (isEmbedded) {
+      return (
+        <PhoneSegmentedTabs
+          ariaLabel={ariaLabel}
+          options={options}
+          value={value}
+          onChange={onChange}
+        />
+      )
+    }
+
+    return (
+      <TabList
+        tabs={options}
+        activeTab={value}
+        onTabChange={onChange}
+        variant="compact"
+        className={desktopFullWidth ? styles.fullWidthTabList : undefined}
+      />
+    )
+  }
 
   useEffect(() => {
     if (sendMethodOptions.length === 0) return
@@ -1585,23 +1621,22 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       return (
       <div className={styles.field}>
         <label className={styles.label}>Tipo de pago</label>
-        <div style={{ marginTop: '4px' }}>
-          <TabList
-            tabs={[
+        <div className={styles.segmentedTabsField}>
+          {renderPaymentSegmentedTabs({
+            ariaLabel: 'Tipo de pago',
+            options: [
               { value: 'single', label: 'Único' },
               { value: 'partial', label: 'Parcialidades' }
-            ]}
-            activeTab={paymentMode}
-            onTabChange={(value) => {
+            ],
+            value: paymentMode,
+            onChange: (value) => {
               const nextPaymentMode = value as PaymentMode
               if (nextPaymentMode === 'partial' && paymentMode !== 'partial') {
                 setFirstPaymentMethod('')
               }
               setPaymentMode(nextPaymentMode)
-            }}
-            variant="compact"
-            className={styles.fullWidthTabList}
-          />
+            }
+          })}
         </div>
       </div>
       )
@@ -1784,14 +1819,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
         <div className={styles.field}>
           <label className={styles.label}>Tipo de cobro</label>
-          <div style={{ marginTop: '4px' }}>
-            <TabList
-              tabs={[
+          <div className={styles.segmentedTabsField}>
+            {renderPaymentSegmentedTabs({
+              ariaLabel: 'Tipo de cobro',
+              options: [
                 { value: 'direct', label: 'Cobro directo' },
                 { value: 'product', label: 'Guardados' }
-              ]}
-              activeTab={chargeType}
-              onTabChange={(value) => {
+              ],
+              value: chargeType,
+              onChange: (value) => {
                 if (value === 'direct') {
                   setChargeType('direct')
                   setSelectedProduct(null)
@@ -1805,10 +1841,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   setAmount('')
                   setNewProductCurrency(currency || defaultCurrency || 'MXN')
                 }
-              }}
-              variant="compact"
-              className={styles.fullWidthTabList}
-            />
+              }
+            })}
           </div>
         </div>
 
@@ -2025,17 +2059,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
         <div className={styles.field}>
           <label className={styles.label}>IVA</label>
-          <div style={{ marginTop: '4px' }}>
-            <TabList
-              tabs={[
+          <div className={styles.segmentedTabsField}>
+            {renderPaymentSegmentedTabs({
+              ariaLabel: 'IVA',
+              options: [
                 { value: 'sin', label: 'Sin IVA' },
                 { value: 'con', label: 'Aplicar IVA 16%' }
-              ]}
-              activeTab={includeIVA ? 'con' : 'sin'}
-              onTabChange={(value) => setIncludeIVA(value === 'con')}
-              variant="compact"
-              className={styles.fullWidthTabList}
-            />
+              ],
+              value: includeIVA ? 'con' : 'sin',
+              onChange: (value) => setIncludeIVA(value === 'con')
+            })}
           </div>
         </div>
 
@@ -2061,18 +2094,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     <span>El enganche con el que arranca el plan.</span>
                   </div>
                 </div>
-                <TabList
-                  tabs={[
+                {renderPaymentSegmentedTabs({
+                  ariaLabel: 'Primer pago',
+                  options: [
                     { value: 'yes', label: 'Con enganche' },
                     { value: 'no', label: 'Sin enganche' }
-                  ]}
-                  activeTab={firstPaymentEnabled ? 'yes' : 'no'}
-                  onTabChange={(value) => {
+                  ],
+                  value: firstPaymentEnabled ? 'yes' : 'no',
+                  onChange: (value) => {
                     setFirstPaymentEnabled(value === 'yes')
                     setAutoDistributeRemaining(true)
-                  }}
-                  variant="compact"
-                />
+                  },
+                  desktopFullWidth: false
+                })}
               </div>
 
               {firstPaymentEnabled && (

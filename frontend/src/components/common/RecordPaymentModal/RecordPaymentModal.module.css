@@ -209,6 +209,10 @@
   text-align: center !important;
 }
 
+.segmentedTabsField {
+  margin-top: 4px;
+}
+
 /* Contact selection */
 .selectedContact {
   display: flex;

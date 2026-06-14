@@ -9,6 +9,7 @@ import { PhoneSelect } from '@/components/phone/PhoneSelect';
 import { PhoneDateTimeField } from '@/components/phone/ui/PhoneDateTimeField';
 import { formatTimeLabel } from '@/components/phone/ui/PhoneTimeField';
 import { PhoneDurationField, formatDurationLabel } from '@/components/phone/ui/PhoneDurationField';
+import { PhoneSegmentedTabs } from '@/components/phone/ui';
 import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot } from '@/services/calendarsService';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
@@ -1777,23 +1778,35 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 <div className={styles.dateTimeSection}>
                   {/* TabList para seleccionar modo */}
                   <div className={styles.tabListWrapper}>
-                    <TabList
-                      tabs={[
-                        {
-                          value: 'default',
-                          label: 'Por defecto',
-                          description: 'Usa el horario sugerido por la disponibilidad del calendario.'
-                        },
-                        {
-                          value: 'custom',
-                          label: 'Personalizado',
-                          description: 'Te deja escoger una fecha y hora exactas para esta cita.'
-                        }
-                      ]}
-                      activeTab={scheduleMode}
-                      onTabChange={(value) => setScheduleMode(value as 'default' | 'custom')}
-	                      fullWidth
-                    />
+                    {isMobileSheet ? (
+                      <PhoneSegmentedTabs
+                        ariaLabel="Modo de horario"
+                        options={[
+                          { value: 'default', label: 'Por defecto' },
+                          { value: 'custom', label: 'Personalizado' }
+                        ]}
+                        value={scheduleMode}
+                        onChange={(value) => setScheduleMode(value as 'default' | 'custom')}
+                      />
+                    ) : (
+                      <TabList
+                        tabs={[
+                          {
+                            value: 'default',
+                            label: 'Por defecto',
+                            description: 'Usa el horario sugerido por la disponibilidad del calendario.'
+                          },
+                          {
+                            value: 'custom',
+                            label: 'Personalizado',
+                            description: 'Te deja escoger una fecha y hora exactas para esta cita.'
+                          }
+                        ]}
+                        activeTab={scheduleMode}
+                        onTabChange={(value) => setScheduleMode(value as 'default' | 'custom')}
+                        fullWidth
+                      />
+                    )}
                   </div>
 
                   {/* Modo Por defecto: Selector de slots disponibles */}
