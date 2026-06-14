@@ -7663,6 +7663,9 @@ export const PhoneChat: React.FC = () => {
             <span className={styles.aiAgentHubEyebrow}>Inteligencia artificial</span>
             <span className={`${styles.aiAgentHubRobot} ${agentEnabled ? styles.aiAgentHubRobotOn : styles.aiAgentHubRobotOff}`}>
               {renderAgentRobotGlyph(agentEnabled)}
+              <span className={styles.aiAgentHubRobotPing} aria-hidden="true" />
+              <span className={styles.aiAgentHubRobotSparkleOne} aria-hidden="true" />
+              <span className={styles.aiAgentHubRobotSparkleTwo} aria-hidden="true" />
             </span>
             <div className={styles.aiAgentHubCopy}>
               <p className={`${styles.aiAgentHubStatus} ${agentEnabled ? styles.aiAgentHubStatusOn : styles.aiAgentHubStatusOff}`}>{activeLabel}</p>
