@@ -1002,6 +1002,42 @@ const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
   reader.onerror = () => reject(reader.error || new Error('No se pudo leer el archivo'))
   reader.readAsDataURL(file)
 })
+const textToFileDataUrl = (content: string, mimeType: string) => {
+  const bytes = new TextEncoder().encode(content)
+  let binary = ''
+  bytes.forEach(byte => {
+    binary += String.fromCharCode(byte)
+  })
+  const encoded = btoa(binary)
+  return `data:${mimeType};base64,${encoded}`
+}
+const BLANK_IMPORTED_HTML = `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sitio HTML en blanco</title>
+  <style>
+    :root {
+      color: #111827;
+      background: #ffffff;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background: #ffffff;
+    }
+  </style>
+</head>
+<body>
+</body>
+</html>`
 const DEFAULT_BUTTON_SETTINGS = {
   buttonAlign: 'center',
   buttonRadius: 28,
@@ -4146,6 +4182,7 @@ export const Sites: React.FC = () => {
   const pendingBlockSaveIdsRef = useRef<Set<string>>(new Set())
   const pendingBlockOrderScopesRef = useRef<Set<string>>(new Set())
   const pendingImportedCodeDraftsRef = useRef<Map<string, string>>(new Map())
+  const pendingOpenImportedCodeEditorSiteIdRef = useRef<string | null>(null)
   const savingPendingEditorRef = useRef(false)
 
   const markEditorExitInProgress = () => {
@@ -4157,7 +4194,7 @@ export const Sites: React.FC = () => {
   }, [selectedSite])
 
   useEffect(() => {
-    setImportedCodeEditorOpen(false)
+    setImportedCodeEditorOpen(Boolean(selectedSite?.id && pendingOpenImportedCodeEditorSiteIdRef.current === selectedSite.id))
     setImportedCodeDrafts({})
     pendingImportedCodeDraftsRef.current.clear()
   }, [selectedSite?.id])
@@ -5988,6 +6025,43 @@ export const Sites: React.FC = () => {
     }
   }
 
+  const handleCreateBlankHtmlSite = async (siteType: SiteType) => {
+    setCreating(true)
+    try {
+      const result = await sitesService.importHtmlSite({
+        siteType,
+        filename: 'sitio-html-en-blanco.html',
+        fileBase64: textToFileDataUrl(BLANK_IMPORTED_HTML, 'text/html'),
+        metaCapiEnabled: metaPixelConnected
+      })
+      const site = normalizeSiteForEditor(result.site)
+      const nextPageId = normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+      pendingOpenImportedCodeEditorSiteIdRef.current = site.id
+      setSites(current => [site, ...current])
+      setSelectedSite(site)
+      selectedSiteRef.current = site
+      setSelectedBlockId('')
+      setActivePageId(nextPageId)
+      setSection(getSiteSection(site))
+      setCreateFlow('closed')
+      clearEditorDirtyState()
+      setSelectedImportData(result.import)
+      setImportReview(result.import.detectedForms?.length ? { site, importData: result.import } : null)
+      setImportedCodeEditorOpen(true)
+      navigate(buildSitesEditorPath({
+        section: getSiteSection(site),
+        siteId: site.id,
+        pageId: nextPageId,
+        device
+      }))
+      showToast('success', 'HTML en blanco creado', 'Se abrió el editor de código para que escribas o pegues tu página.')
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo crear el HTML en blanco')
+    } finally {
+      setCreating(false)
+    }
+  }
+
   const handleImportHtmlFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
@@ -7741,6 +7815,7 @@ export const Sites: React.FC = () => {
                 aiAgentAvailable={aiAgentConfigured}
                 onCreate={handleCreateSite}
                 onCreateWithAI={handleCreateSiteWithAI}
+                onCreateBlankHtml={handleCreateBlankHtmlSite}
                 onImportHtml={handleOpenImportHtml}
                 onAdvance={(nextFlow) => {
                   setCreateFlow(nextFlow)
@@ -14328,6 +14403,7 @@ interface CreateFlowPanelProps {
   aiAgentAvailable: boolean
   onCreate: (siteType: SiteType, mode?: 'blank' | 'template', templateId?: SiteTemplateId) => void
   onCreateWithAI: (siteKind: SitesAICreationKind) => void
+  onCreateBlankHtml: (siteType: SiteType) => void
   onImportHtml: (siteType: SiteType) => void
   onAdvance: (step: CreateFlow) => void
 }
@@ -14488,37 +14564,62 @@ const TemplateCategoryGallery: React.FC<{
   </div>
 )
 
-const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAgentAvailable, onCreate, onCreateWithAI, onImportHtml, onAdvance }) => {
+const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAgentAvailable, onCreate, onCreateWithAI, onCreateBlankHtml, onImportHtml, onAdvance }) => {
   return (
     <section className={styles.createPanel}>
       {step === 'landing-start' && (
-        <div className={styles.choiceGrid}>
-          <button type="button" disabled={creating} onClick={() => onCreate('landing_page', 'blank', 'ristak')}>
-            <FileText size={22} />
-            <strong>En blanco</strong>
-            <p>Canvas limpio para agregar solo los bloques que necesitas.</p>
-            <ChevronRight size={18} />
-          </button>
-          <button type="button" disabled={creating} onClick={() => onAdvance('landing-template')}>
-            <LayoutTemplate size={22} />
-            <strong>Desde plantilla</strong>
-            <p>Elige embudos completos para web, ventas, lanzamientos o redes sociales.</p>
-            <ChevronRight size={18} />
-          </button>
-          {aiAgentAvailable && (
-            <button type="button" disabled={creating} onClick={() => onCreateWithAI('landing')}>
-              <Sparkles size={22} />
-              <strong>Usando IA</strong>
-              <p>Genera una página HTML completa; Ristak la importa y revisa sus formularios.</p>
-              <ChevronRight size={18} />
-            </button>
-          )}
-          <button type="button" disabled={creating} onClick={() => onImportHtml('landing_page')}>
-            <Upload size={22} />
-            <strong>Subir HTML o ZIP</strong>
-            <p>Usa tu página actual o un sitio comprimido; Ristak detecta sus formularios para guardar contactos.</p>
-            <ChevronRight size={18} />
-          </button>
+        <div className={styles.createChoiceCategories}>
+          <section className={styles.createChoiceCategory}>
+            <div className={styles.createChoiceCategoryHeader}>
+              <span>Editor de bloques</span>
+              <strong>Crea el sitio visualmente</strong>
+              <p>Empieza desde cero o usa una plantilla para editar con secciones y bloques.</p>
+            </div>
+            <div className={styles.choiceGrid}>
+              <button type="button" disabled={creating} onClick={() => onCreate('landing_page', 'blank', 'ristak')}>
+                <FileText size={22} />
+                <strong>En blanco</strong>
+                <p>Canvas limpio para agregar solo los bloques que necesitas.</p>
+                <ChevronRight size={18} />
+              </button>
+              <button type="button" disabled={creating} onClick={() => onAdvance('landing-template')}>
+                <LayoutTemplate size={22} />
+                <strong>Desde plantilla</strong>
+                <p>Elige embudos completos para web, ventas, lanzamientos o redes sociales.</p>
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          </section>
+
+          <section className={styles.createChoiceCategory}>
+            <div className={styles.createChoiceCategoryHeader}>
+              <span>Editor HTML</span>
+              <strong>Trae o escribe tu propio código</strong>
+              <p>Abre una hoja HTML limpia, importa archivos o genera una página completa con IA.</p>
+            </div>
+            <div className={styles.choiceGrid}>
+              <button type="button" disabled={creating} onClick={() => onCreateBlankHtml('landing_page')}>
+                <Code2 size={22} />
+                <strong>Hoja HTML en blanco</strong>
+                <p>Escribe tu código o pega una versión editada con ChatGPT en otra ventana.</p>
+                <ChevronRight size={18} />
+              </button>
+              <button type="button" disabled={creating} onClick={() => onImportHtml('landing_page')}>
+                <Upload size={22} />
+                <strong>Subir HTML o ZIP</strong>
+                <p>Usa tu página actual o un sitio comprimido; Ristak detecta sus formularios.</p>
+                <ChevronRight size={18} />
+              </button>
+              {aiAgentAvailable && (
+                <button type="button" disabled={creating} onClick={() => onCreateWithAI('landing')}>
+                  <Sparkles size={22} />
+                  <strong>Usando IA</strong>
+                  <p>Genera una página HTML completa; Ristak la importa y revisa sus formularios.</p>
+                  <ChevronRight size={18} />
+                </button>
+              )}
+            </div>
+          </section>
         </div>
       )}
 

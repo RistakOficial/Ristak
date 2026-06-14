@@ -5231,11 +5231,14 @@
 
 .choiceGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 280px));
+  justify-content: start;
+  align-items: stretch;
   gap: 12px;
 }
 
 .choiceGrid button {
+  width: 100%;
   min-height: 180px;
   position: relative;
   display: grid;
@@ -6232,6 +6235,46 @@
   color: var(--color-text-tertiary);
   font-size: 0.9rem;
   line-height: 1.5;
+}
+
+.createChoiceCategories {
+  width: min(960px, 100%);
+  display: grid;
+  gap: 28px;
+  align-content: start;
+}
+
+.createChoiceCategory {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.createChoiceCategoryHeader {
+  display: grid;
+  gap: 4px;
+  max-width: 720px;
+}
+
+.createChoiceCategoryHeader span {
+  color: var(--color-primary);
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.createChoiceCategoryHeader strong {
+  color: var(--color-text-primary);
+  font-size: 1rem;
+  font-weight: 850;
+}
+
+.createChoiceCategoryHeader p {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 0.86rem;
+  line-height: 1.45;
 }
 
 .templateCategoryStack {
@@ -9724,8 +9767,8 @@
 
 .containerFocused .choiceGrid,
 .containerFocused .templateGallery {
-  width: 100%;
-  max-width: none;
+  width: min(1040px, 100%);
+  max-width: 1040px;
 }
 
 .containerFocused .templateCategoryStack,
@@ -9735,7 +9778,8 @@
 }
 
 .containerFocused .templateGallery {
-  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 300px));
+  justify-content: start;
   align-items: stretch;
 }
 
@@ -10804,7 +10848,8 @@
 }
 
 .pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .choiceGrid {
-  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 280px));
+  justify-content: start;
 }
 
 .pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .titleRow {
