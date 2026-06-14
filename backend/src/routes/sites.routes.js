@@ -23,6 +23,7 @@ import {
   restoreBlocksHandler,
   submitPublicSiteHandler,
   updateBlockHandler,
+  updateImportedSiteCodeFilesHandler,
   updateImportedSiteEditableContentHandler,
   updateImportedSiteHtmlWithAIHandler,
   updateImportedSiteMappingHandler,
@@ -57,6 +58,7 @@ router.get('/:siteId/preview', previewSiteHandler)
 router.post('/:siteId/preview-session', createPreviewSessionHandler)
 router.post('/:siteId/ai-edit-html', updateImportedSiteHtmlWithAIHandler)
 router.patch('/:siteId/import-content', updateImportedSiteEditableContentHandler)
+router.patch('/:siteId/import-code', updateImportedSiteCodeFilesHandler)
 router.put('/:siteId/import-mapping', updateImportedSiteMappingHandler)
 router.post('/:siteId/verify-domain', verifySiteDomainHandler)
 router.post('/:siteId/blocks', createBlockHandler)

@@ -143,6 +143,7 @@ const IMPORTED_HTML_MAX_BYTES = 2 * 1024 * 1024
 const IMPORTED_ZIP_MAX_BYTES = 15 * 1024 * 1024
 const IMPORTED_ASSET_MAX_BYTES = 8 * 1024 * 1024
 const IMPORTED_ASSET_TOTAL_MAX_BYTES = 25 * 1024 * 1024
+const IMPORTED_CODE_FILE_MAX_BYTES = 8 * 1024 * 1024
 const IMPORTED_ZIP_MAX_FILES = 250
 const IMPORTED_HTML_EXTENSIONS = new Set(['html', 'htm'])
 const IMPORTED_ASSET_CONTENT_TYPES = new Map([
@@ -758,6 +759,32 @@ function getImportedAssetExtension(assetPath = '') {
 
 function getImportedAssetContentType(assetPath = '') {
   return IMPORTED_ASSET_CONTENT_TYPES.get(getImportedAssetExtension(assetPath)) || 'application/octet-stream'
+}
+
+function isImportedCodeContentType(contentType = '', assetPath = '') {
+  const normalizedContentType = cleanString(contentType).split(';')[0].toLowerCase()
+  const extension = getImportedAssetExtension(assetPath)
+  return IMPORTED_HTML_EXTENSIONS.has(extension) ||
+    normalizedContentType.startsWith('text/') ||
+    [
+      'application/json',
+      'application/xml',
+      'application/manifest+json',
+      'image/svg+xml'
+    ].includes(normalizedContentType) ||
+    ['css', 'js', 'mjs', 'json', 'txt', 'svg', 'xml', 'webmanifest', 'map'].includes(extension)
+}
+
+function getImportedCodeLanguage(assetPath = '', contentType = '') {
+  const extension = getImportedAssetExtension(assetPath)
+  const normalizedContentType = cleanString(contentType).split(';')[0].toLowerCase()
+  if (IMPORTED_HTML_EXTENSIONS.has(extension) || normalizedContentType === 'text/html') return 'html'
+  if (extension === 'css' || normalizedContentType === 'text/css') return 'css'
+  if (extension === 'js' || extension === 'mjs' || normalizedContentType.includes('javascript')) return 'javascript'
+  if (extension === 'json' || extension === 'map' || normalizedContentType === 'application/json') return 'json'
+  if (extension === 'svg' || normalizedContentType === 'image/svg+xml') return 'svg'
+  if (extension === 'xml' || normalizedContentType === 'application/xml') return 'xml'
+  return 'text'
 }
 
 function shouldStoreImportedAssetInMediaStorage(file = {}) {
@@ -7026,6 +7053,79 @@ async function deleteImportedSiteMediaAssets(siteId) {
   }
 }
 
+async function listImportedSiteCodeFiles(siteId, imported = {}) {
+  const siteRow = await db.get('SELECT * FROM public_sites WHERE id = ? LIMIT 1', [siteId]).catch(() => null)
+  const site = mapSite(siteRow)
+  const pages = normalizeSitePages(site)
+  const pageByAssetPath = new Map()
+  const orderedPageAssetPaths = []
+
+  for (const page of pages) {
+    const assetPath = normalizeImportedAssetPath(page.importedAssetPath || page.imported_asset_path)
+    if (!assetPath) continue
+    pageByAssetPath.set(assetPath, page)
+    orderedPageAssetPaths.push(assetPath)
+  }
+
+  const rows = await db.all(`
+    SELECT asset_path, content_type, content_base64, size_bytes, updated_at, media_asset_id, public_url
+    FROM public_site_import_assets
+    WHERE site_id = ?
+    ORDER BY asset_path COLLATE NOCASE ASC
+  `, [siteId]).catch(() => [])
+
+  const assetFiles = rows
+    .map(row => {
+      const assetPath = normalizeImportedAssetPath(row.asset_path)
+      const contentType = row.content_type || getImportedAssetContentType(assetPath)
+      if (!assetPath || row.media_asset_id || row.public_url || !isImportedCodeContentType(contentType, assetPath)) return null
+      const page = pageByAssetPath.get(assetPath)
+      return {
+        path: assetPath,
+        label: page?.title || assetPath.split('/').pop() || assetPath,
+        pageId: page?.id || '',
+        pageTitle: page?.title || '',
+        contentType,
+        language: getImportedCodeLanguage(assetPath, contentType),
+        content: Buffer.from(row.content_base64 || '', 'base64').toString('utf8'),
+        sizeBytes: Number(row.size_bytes || 0),
+        updatedAt: row.updated_at || imported.updatedAt || '',
+        role: page ? 'page_asset' : 'asset'
+      }
+    })
+    .filter(Boolean)
+
+  const assetByPath = new Map(assetFiles.map(file => [file.path, file]))
+  const orderedAssetFiles = [
+    ...orderedPageAssetPaths.map(assetPath => assetByPath.get(assetPath)).filter(Boolean),
+    ...assetFiles.filter(file => !orderedPageAssetPaths.includes(file.path))
+  ]
+
+  const hasPageHtmlAssets = orderedPageAssetPaths.some(assetPath => {
+    const file = assetByPath.get(assetPath)
+    return file && file.language === 'html'
+  })
+
+  const mainHtml = imported.htmlSanitized || imported.htmlOriginal || ''
+  const files = []
+  if (mainHtml && !hasPageHtmlAssets) {
+    files.push({
+      path: '',
+      label: imported.originalFilename || 'index.html',
+      pageId: pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID,
+      pageTitle: pages[0]?.title || 'Página 1',
+      contentType: 'text/html; charset=utf-8',
+      language: 'html',
+      content: mainHtml,
+      sizeBytes: Buffer.byteLength(mainHtml, 'utf8'),
+      updatedAt: imported.updatedAt || '',
+      role: 'main_html'
+    })
+  }
+
+  return [...files, ...orderedAssetFiles]
+}
+
 export async function getImportedSiteBySiteId(siteId) {
   const row = await db.get('SELECT * FROM public_site_imports WHERE site_id = ? LIMIT 1', [siteId])
   if (!row) return null
@@ -7079,7 +7179,7 @@ export async function getImportedSiteBySiteId(siteId) {
     }
   }
 
-  return {
+  const imported = {
     id: row.id,
     siteId: row.site_id,
     originalFilename: row.original_filename || '',
@@ -7093,6 +7193,8 @@ export async function getImportedSiteBySiteId(siteId) {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
+  imported.codeFiles = await listImportedSiteCodeFiles(siteId, imported)
+  return imported
 }
 
 async function getImportedSiteAssetByPath(siteId, assetPath) {
@@ -7542,6 +7644,204 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
   `, [
     shouldRefreshStoredMainHtml ? publicTitle : currentSite.title,
     shouldRefreshStoredMainHtml ? publicDescription || null : currentSite.description,
+    siteId
+  ])
+
+  return {
+    site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
+    import: await getImportedSiteBySiteId(siteId)
+  }
+}
+
+export async function updateImportedSiteCodeFiles(siteId, input = {}) {
+  const currentImport = await getImportedSiteBySiteId(siteId)
+  if (!currentImport) {
+    const error = new Error('Importacion no encontrada')
+    error.status = 404
+    throw error
+  }
+
+  const currentSite = await getSite(siteId, { includeBlocks: false })
+  if (!currentSite) {
+    const error = new Error('Site no encontrado')
+    error.status = 404
+    throw error
+  }
+
+  const updates = Array.isArray(input.files) ? input.files : []
+  const updateByPath = new Map()
+
+  for (const file of updates) {
+    const rawPath = cleanString(file?.path ?? file?.assetPath ?? file?.asset_path ?? '')
+    const isMainHtml = !rawPath || rawPath === '__main__' || rawPath === 'main'
+    const assetPath = isMainHtml ? '' : normalizeImportedAssetPath(rawPath)
+    if (!isMainHtml && !assetPath) {
+      const error = new Error('Ruta de archivo inválida')
+      error.status = 400
+      throw error
+    }
+
+    const content = String(file?.content ?? '')
+    if (Buffer.byteLength(content, 'utf8') > IMPORTED_CODE_FILE_MAX_BYTES) {
+      const error = new Error(`El archivo ${assetPath || 'principal'} supera el límite permitido.`)
+      error.status = 413
+      throw error
+    }
+
+    updateByPath.set(assetPath, content)
+  }
+
+  if (!updateByPath.size) {
+    return {
+      site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
+      import: await getImportedSiteBySiteId(siteId)
+    }
+  }
+
+  const assetRows = await db.all(`
+    SELECT *
+    FROM public_site_import_assets
+    WHERE site_id = ?
+    ORDER BY asset_path COLLATE NOCASE ASC
+  `, [siteId]).catch(() => [])
+  const assetByPath = new Map(assetRows.map(row => [normalizeImportedAssetPath(row.asset_path), row]))
+  const pages = normalizeSitePages(currentSite)
+  const pageByAssetPath = new Map()
+  const orderedPageAssetPaths = []
+
+  for (const page of pages) {
+    const assetPath = normalizeImportedAssetPath(page.importedAssetPath || page.imported_asset_path)
+    if (!assetPath) continue
+    pageByAssetPath.set(assetPath, page)
+    orderedPageAssetPaths.push(assetPath)
+  }
+
+  for (const assetPath of updateByPath.keys()) {
+    if (!assetPath) continue
+    const row = assetByPath.get(assetPath)
+    const contentType = row?.content_type || getImportedAssetContentType(assetPath)
+    if (!row || row.media_asset_id || row.public_url || !isImportedCodeContentType(contentType, assetPath)) {
+      const error = new Error(`El archivo ${assetPath} no se puede editar como código.`)
+      error.status = 400
+      throw error
+    }
+  }
+
+  const htmlAssetRows = assetRows.filter(row => {
+    const assetPath = normalizeImportedAssetPath(row.asset_path)
+    const contentType = row.content_type || getImportedAssetContentType(assetPath)
+    return assetPath && isImportedCodeContentType(contentType, assetPath) && getImportedCodeLanguage(assetPath, contentType) === 'html'
+  })
+  const htmlAssetByPath = new Map(htmlAssetRows.map(row => [normalizeImportedAssetPath(row.asset_path), row]))
+  const orderedHtmlAssetPaths = [
+    ...orderedPageAssetPaths.filter(assetPath => htmlAssetByPath.has(assetPath)),
+    ...htmlAssetRows
+      .map(row => normalizeImportedAssetPath(row.asset_path))
+      .filter(assetPath => assetPath && !orderedPageAssetPaths.includes(assetPath))
+  ]
+  const shouldProcessMainHtml = updateByPath.has('') || orderedHtmlAssetPaths.length === 0
+  const htmlTargets = [
+    ...(shouldProcessMainHtml ? [{ assetPath: '', row: null }] : []),
+    ...orderedHtmlAssetPaths.map(assetPath => ({ assetPath, row: htmlAssetByPath.get(assetPath) }))
+  ]
+
+  const usedFormIds = new Set()
+  const detectedForms = []
+  const securityReport = []
+  const sanitizedHtmlByPath = new Map()
+  let storedMainHtml = currentImport.htmlSanitized || currentImport.htmlOriginal || '<!doctype html><html><body></body></html>'
+
+  for (const target of htmlTargets) {
+    const assetPath = target.assetPath
+    const sourceHtml = updateByPath.has(assetPath)
+      ? updateByPath.get(assetPath)
+      : assetPath
+        ? Buffer.from(target.row?.content_base64 || '', 'base64').toString('utf8')
+        : currentImport.htmlSanitized || currentImport.htmlOriginal || ''
+    const sanitized = sanitizeImportedHtml(sourceHtml)
+    const pageForms = namespaceImportedPageForms(detectImportedForms(sanitized.html), assetPath, usedFormIds)
+    pageForms.forEach(form => {
+      const formId = cleanString(form?.id)
+      if (formId) usedFormIds.add(formId)
+    })
+    detectedForms.push(...pageForms)
+    const htmlSanitized = annotateImportedEditableHtml(assignImportedFormIds(sanitized.html, pageForms))
+    sanitizedHtmlByPath.set(assetPath, htmlSanitized)
+    securityReport.push(...sanitized.report.map(item => (
+      assetPath ? `${pageByAssetPath.get(assetPath)?.title || assetPath}: ${item}` : item
+    )))
+  }
+
+  for (const [assetPath, content] of updateByPath.entries()) {
+    if (!assetPath) continue
+    const row = assetByPath.get(assetPath)
+    if (!row) continue
+    const contentType = row.content_type || getImportedAssetContentType(assetPath)
+    const language = getImportedCodeLanguage(assetPath, contentType)
+    const nextContent = language === 'html' && sanitizedHtmlByPath.has(assetPath)
+      ? sanitizedHtmlByPath.get(assetPath)
+      : content
+    const buffer = Buffer.from(nextContent || '', 'utf8')
+    await db.run(`
+      UPDATE public_site_import_assets SET
+        content_base64 = ?,
+        size_bytes = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      buffer.toString('base64'),
+      buffer.byteLength,
+      row.id
+    ])
+  }
+
+  if (sanitizedHtmlByPath.has('')) {
+    storedMainHtml = sanitizedHtmlByPath.get('')
+  } else {
+    const firstPageAssetPath = normalizeImportedAssetPath(pages[0]?.importedAssetPath || pages[0]?.imported_asset_path)
+    if (firstPageAssetPath && sanitizedHtmlByPath.has(firstPageAssetPath)) {
+      storedMainHtml = sanitizedHtmlByPath.get(firstPageAssetPath)
+    }
+  }
+
+  const nextMappings = mergeImportedFormMappings(
+    currentImport.formMappings,
+    buildDefaultImportedFormMappings(detectedForms)
+  )
+  const publicTitle = getImportedHtmlTitle(storedMainHtml, currentSite.title || 'Página importada')
+  const publicDescription = getImportedHtmlDescription(storedMainHtml, currentSite.description || '')
+
+  await db.run(`
+    UPDATE public_site_imports SET
+      html_original = ?,
+      html_sanitized = ?,
+      detected_forms_json = ?,
+      form_mappings_json = ?,
+      security_report_json = ?,
+      status = 'mapping_pending',
+      updated_at = CURRENT_TIMESTAMP
+    WHERE site_id = ?
+  `, [
+    storedMainHtml,
+    storedMainHtml,
+    jsonString(detectedForms.length ? detectedForms : currentImport.detectedForms),
+    jsonString(nextMappings),
+    jsonString(Array.from(new Set([
+      ...(Array.isArray(currentImport.securityReport) ? currentImport.securityReport : []),
+      ...securityReport
+    ]))),
+    siteId
+  ])
+
+  await db.run(`
+    UPDATE public_sites SET
+      title = ?,
+      description = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    publicTitle,
+    publicDescription || null,
     siteId
   ])
 

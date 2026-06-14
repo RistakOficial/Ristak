@@ -51,6 +51,205 @@
   align-items: start;
 }
 
+.importedCodeEditorPanel {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(190px, 240px) minmax(360px, 0.95fr) minmax(420px, 1.05fr);
+  gap: 12px;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.importedCodeFilesPane,
+.importedCodeSourcePane,
+.importedCodePreviewPane {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  overflow: hidden;
+}
+
+.importedCodePaneHeader {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  padding: 0 12px;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.importedCodePaneHeader span,
+.importedCodePaneHeader strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importedCodePaneHeader strong {
+  color: var(--color-text-primary);
+  font-size: 0.76rem;
+}
+
+.importedCodeFilesList {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  padding: 10px;
+}
+
+.importedCodeFileButton {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 8px 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.importedCodeFileButton:hover:not(:disabled) {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--color-text-primary);
+}
+
+.importedCodeFileButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.importedCodeFileButton svg {
+  color: var(--color-text-tertiary);
+}
+
+.importedCodeFileButton span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.importedCodeFileButton strong,
+.importedCodeFileButton small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importedCodeFileButton strong {
+  color: inherit;
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
+.importedCodeFileButton small {
+  color: var(--color-text-tertiary);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.importedCodeFileButton i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-warning, #f59e0b);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.14);
+}
+
+.importedCodeFileButtonActive {
+  border-color: rgba(var(--color-primary-rgb), 0.32);
+  background: rgba(var(--color-primary-rgb), 0.08);
+  color: var(--color-text-primary);
+}
+
+.importedCodeTextarea {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: color-mix(in srgb, var(--color-background-primary) 94%, var(--color-text-primary) 6%);
+  color: var(--color-text-primary);
+  padding: 14px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.58;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.importedCodeTextarea:disabled {
+  opacity: 0.68;
+  cursor: not-allowed;
+}
+
+.importedCodePreviewStage {
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  background:
+    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    color-mix(in srgb, var(--color-background-primary) 88%, var(--color-primary) 12%);
+  background-size: 24px 24px;
+  padding: 16px;
+}
+
+.importedCodePreviewFrame {
+  width: min(860px, 100%);
+  height: 100%;
+  min-height: 680px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 64px -52px rgba(15, 23, 42, 0.78);
+}
+
+.importedCodePreviewStageMobile .importedCodePreviewFrame {
+  width: min(390px, 100%);
+}
+
+.importedCodeEmptyState {
+  min-height: 180px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--color-text-tertiary);
+  font-size: 0.84rem;
+  font-weight: 720;
+  padding: 16px;
+}
+
 .importedPreviewPane {
   min-width: 0;
   overflow: hidden;
@@ -2636,6 +2835,14 @@
 @media (max-width: 1120px) {
   .importedEditorPanel {
     grid-template-columns: 1fr;
+  }
+
+  .importedCodeEditorPanel {
+    height: auto;
+    min-height: 820px;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(420px, 1fr) minmax(520px, 1fr);
+    overflow: visible;
   }
 
   .importedSidePanel {
@@ -14053,6 +14260,20 @@
 
 .editorSaveStatusSaving svg {
   animation: editorSaveSpin 0.9s linear infinite;
+}
+
+.codeToolbarButton {
+  min-width: 132px;
+}
+
+.codeToolbarButtonActive {
+  border-color: rgba(var(--color-primary-rgb), 0.3) !important;
+  background: rgba(var(--color-primary-rgb), 0.09) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.codeToolbarButtonActive svg {
+  color: var(--color-primary);
 }
 
 @keyframes editorSaveSpin {

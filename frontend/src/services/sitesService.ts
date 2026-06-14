@@ -379,6 +379,19 @@ export interface ImportedSiteFormMapping {
   fields: ImportedSiteFieldMapping[]
 }
 
+export interface ImportedSiteCodeFile {
+  path: string
+  label: string
+  pageId?: string
+  pageTitle?: string
+  contentType: string
+  language: 'html' | 'css' | 'javascript' | 'json' | 'svg' | 'xml' | 'text'
+  content: string
+  sizeBytes?: number
+  updatedAt?: string
+  role?: 'main_html' | 'page_asset' | 'asset'
+}
+
 export interface ImportedSiteImport {
   id: string
   siteId: string
@@ -388,6 +401,7 @@ export interface ImportedSiteImport {
   htmlSanitized?: string
   detectedForms: Array<Record<string, unknown>>
   formMappings: ImportedSiteFormMapping[]
+  codeFiles?: ImportedSiteCodeFile[]
   securityReport: string[]
   status: string
   createdAt: string
@@ -648,6 +662,10 @@ export const sitesService = {
 
   updateImportedContent(siteId: string, payload: ImportedEditableContentUpdate) {
     return apiClient.patch<ImportedSiteCreateResult>(`/sites/${siteId}/import-content`, payload)
+  },
+
+  updateImportedCodeFiles(siteId: string, payload: { files: Array<{ path: string; content: string }> }) {
+    return apiClient.patch<ImportedSiteCreateResult>(`/sites/${siteId}/import-code`, payload)
   },
 
   importHtmlSite(payload: {

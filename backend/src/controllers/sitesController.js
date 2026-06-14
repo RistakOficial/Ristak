@@ -26,6 +26,7 @@ import {
   restoreBlocks,
   updateBlock,
   updateImportedSiteEditableContent,
+  updateImportedSiteCodeFiles,
   updateImportedSiteHtmlWithAI,
   updateImportedSiteFormMappings,
   updateSite
@@ -169,6 +170,20 @@ export async function updateImportedSiteEditableContentHandler(req, res) {
     logger.error(`Error editando contenido HTML importado: ${error.message}`)
     error.status = error.status || 400
     sendError(res, error, 'Error editando contenido HTML')
+  }
+}
+
+export async function updateImportedSiteCodeFilesHandler(req, res) {
+  try {
+    const result = await updateImportedSiteCodeFiles(req.params.siteId, {
+      ...(req.body || {}),
+      userId: req.user?.userId || req.user?.id
+    })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error editando archivos HTML importados: ${error.message}`)
+    error.status = error.status || 400
+    sendError(res, error, 'Error editando archivos HTML')
   }
 }
 

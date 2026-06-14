@@ -104,6 +104,7 @@ import {
   type ImportedButtonActionStep,
   type ImportedEditableContentType,
   type ImportedSiteCreateResult,
+  type ImportedSiteCodeFile,
   type ImportedSiteFieldMapping,
   type ImportedSiteFormMapping,
   type ImportedSiteImport,
@@ -170,6 +171,10 @@ type SitesAICreationModalState = {
   siteKind: SitesAICreationKind
   editSite?: PublicSite | null
 } | null
+
+const IMPORTED_CODE_MAIN_FILE_KEY = '__main__'
+const getImportedCodeFileKey = (pathValue = '') => pathValue || IMPORTED_CODE_MAIN_FILE_KEY
+const getImportedCodeFilePathFromKey = (key = '') => key === IMPORTED_CODE_MAIN_FILE_KEY ? '' : key
 
 type AIEditorGenerationState = {
   siteId: string
@@ -4113,6 +4118,8 @@ export const Sites: React.FC = () => {
   const [pendingImportSiteType, setPendingImportSiteType] = useState<SiteType>('landing_page')
   const [importReview, setImportReview] = useState<ImportReviewState | null>(null)
   const [selectedImportData, setSelectedImportData] = useState<ImportedSiteImport | null>(null)
+  const [importedCodeEditorOpen, setImportedCodeEditorOpen] = useState(false)
+  const [importedCodeDrafts, setImportedCodeDrafts] = useState<Record<string, string>>({})
   const [aiCreationModal, setAiCreationModal] = useState<SitesAICreationModalState>(null)
   const [aiEditorGeneration, setAiEditorGeneration] = useState<AIEditorGenerationState>(null)
   const [importedPreviewContexts, setImportedPreviewContexts] = useState<Record<string, SitesAIPreviewVisualContext>>({})
@@ -4135,6 +4142,7 @@ export const Sites: React.FC = () => {
   const pendingDeletedBlockIdsRef = useRef<Set<string>>(new Set())
   const pendingBlockSaveIdsRef = useRef<Set<string>>(new Set())
   const pendingBlockOrderScopesRef = useRef<Set<string>>(new Set())
+  const pendingImportedCodeDraftsRef = useRef<Map<string, string>>(new Map())
   const savingPendingEditorRef = useRef(false)
 
   const markEditorExitInProgress = () => {
@@ -4144,6 +4152,12 @@ export const Sites: React.FC = () => {
   useEffect(() => {
     selectedSiteRef.current = selectedSite
   }, [selectedSite])
+
+  useEffect(() => {
+    setImportedCodeEditorOpen(false)
+    setImportedCodeDrafts({})
+    pendingImportedCodeDraftsRef.current.clear()
+  }, [selectedSite?.id])
 
   useEffect(() => {
     setLastSavedAt(null)
@@ -4453,6 +4467,7 @@ export const Sites: React.FC = () => {
     pendingDeletedBlockIdsRef.current.clear()
     pendingBlockSaveIdsRef.current.clear()
     pendingBlockOrderScopesRef.current.clear()
+    pendingImportedCodeDraftsRef.current.clear()
   }
 
   function clearEditorDirtyState() {
@@ -4586,9 +4601,10 @@ export const Sites: React.FC = () => {
       !pendingDeletedBlockIdsRef.current.has(blockId)
     )
     const orderScopeKeys = [...pendingBlockOrderScopesRef.current]
+    const importedCodeFilesToSave = [...pendingImportedCodeDraftsRef.current.entries()].map(([path, content]) => ({ path, content }))
     const shouldSaveSite = Boolean(options.forceSite || options.statusOverride || pendingSiteSaveRef.current)
 
-    if (!shouldSaveSite && !createdBlockIds.length && !deletedBlockIds.length && !blockIdsToSave.length && !orderScopeKeys.length) {
+    if (!shouldSaveSite && !createdBlockIds.length && !deletedBlockIds.length && !blockIdsToSave.length && !orderScopeKeys.length && !importedCodeFilesToSave.length) {
       clearEditorDirtyState()
       return true
     }
@@ -4632,6 +4648,15 @@ export const Sites: React.FC = () => {
         const pageId = getBlockOrderPageId(scopeKey)
         const orderedIds = getBlocksForOrderScope(siteToSave, pageId).map(block => block.id)
         site = await sitesService.reorderBlocks(siteToSave.id, orderedIds, pageId)
+      }
+
+      if (importedCodeFilesToSave.length) {
+        const result = await sitesService.updateImportedCodeFiles(siteToSave.id, {
+          files: importedCodeFilesToSave
+        })
+        site = normalizeSiteForEditor(result.site)
+        setSelectedImportData(result.import)
+        setImportedCodeDrafts({})
       }
 
       syncSelectedSite(site)
@@ -4689,8 +4714,32 @@ export const Sites: React.FC = () => {
     setHasUnsavedChanges(true)
   }
 
+  const handleImportedCodeDraftChange = useCallback((filePath: string, content: string, originalContent: string) => {
+    const key = getImportedCodeFileKey(filePath)
+    const normalizedPath = getImportedCodeFilePathFromKey(key)
+
+    setImportedCodeDrafts(current => {
+      const next = { ...current }
+      if (content === originalContent) {
+        delete next[key]
+      } else {
+        next[key] = content
+      }
+      return next
+    })
+
+    if (content === originalContent) {
+      pendingImportedCodeDraftsRef.current.delete(normalizedPath)
+      return
+    }
+
+    pendingImportedCodeDraftsRef.current.set(normalizedPath, content)
+    setHasUnsavedChanges(true)
+  }, [])
+
   const markEditorSaved = useCallback(() => {
     resetPendingEditorSaveQueue()
+    setImportedCodeDrafts({})
     setHasUnsavedChanges(false)
     setLastSavedAt(Date.now())
   }, [])
@@ -6020,6 +6069,8 @@ export const Sites: React.FC = () => {
     selectedSiteRef.current = normalizedSite
     setSelectedSite(normalizedSite)
     setSelectedImportData(result.import)
+    setImportedCodeDrafts({})
+    pendingImportedCodeDraftsRef.current.clear()
   }
 
   const handleSaveSite = async (statusOverride?: PublicSite['status'], options: { silent?: boolean } = {}) => {
@@ -7539,6 +7590,18 @@ export const Sites: React.FC = () => {
                         onOpenSeo={() => setSeoModalOpen(true)}
                         onOpenHeader={() => setHeaderModalOpen(true)}
                       />
+                      {isImportedHtmlSite(editorSite) && (
+                        <button
+                          type="button"
+                          className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${styles.codeToolbarButton} ${importedCodeEditorOpen ? styles.codeToolbarButtonActive : ''}`}
+                          onClick={() => setImportedCodeEditorOpen(current => !current)}
+                          disabled={editorAIGenerating}
+                          title={importedCodeEditorOpen ? 'Volver al editor visual del sitio' : 'Editar archivos HTML'}
+                        >
+                          <Code2 size={15} />
+                          <span>{importedCodeEditorOpen ? 'Editar en modo sitio' : 'Editar código'}</span>
+                        </button>
+                      )}
                       {canConfigurePopup && (
                         <button
                           type="button"
@@ -7730,8 +7793,11 @@ export const Sites: React.FC = () => {
                   saving={saving}
                   aiAgentAvailable={aiAgentConfigured}
                   importData={selectedImportData}
+                  codeEditorOpen={importedCodeEditorOpen}
+                  codeDrafts={importedCodeDrafts}
                   loadingImportData={loadingImportData}
                   onSelectPage={selectEditorPage}
+                  onCodeDraftChange={handleImportedCodeDraftChange}
                   onPreview={handlePreviewSite}
                   onPublish={() => handleSaveSite('published')}
                   onEditFields={() => void handleOpenImportMappingEditor(editorSite)}
@@ -10674,8 +10740,11 @@ const ImportedHtmlEditorPanel: React.FC<{
   saving: boolean
   aiAgentAvailable: boolean
   importData: ImportedSiteImport | null
+  codeEditorOpen: boolean
+  codeDrafts: Record<string, string>
   loadingImportData: boolean
   onSelectPage: (pageId: string) => void
+  onCodeDraftChange: (filePath: string, content: string, originalContent: string) => void
   onPreview: () => void
   onPublish: () => void
   onEditFields: () => void
@@ -10692,8 +10761,11 @@ const ImportedHtmlEditorPanel: React.FC<{
   saving,
   aiAgentAvailable,
   importData,
+  codeEditorOpen,
+  codeDrafts,
   loadingImportData,
   onSelectPage,
+  onCodeDraftChange,
   onPreview,
   onPublish,
   onEditFields,
@@ -10727,8 +10799,36 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [panelFormFields, setPanelFormFields] = useState<ImportedPanelFormField[]>([])
   const [contentSaving, setContentSaving] = useState(false)
   const [contentError, setContentError] = useState('')
+  const [activeCodeFileKey, setActiveCodeFileKey] = useState('')
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
+  const codeFiles = useMemo<ImportedSiteCodeFile[]>(() => {
+    const backendFiles = Array.isArray(importData?.codeFiles) ? importData.codeFiles : []
+    if (backendFiles.length) return backendFiles
+    const fallbackContent = importData?.htmlSanitized || importData?.htmlOriginal || ''
+    if (!fallbackContent) return []
+    return [{
+      path: '',
+      label: importData?.originalFilename || 'index.html',
+      pageId: activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID,
+      pageTitle: activeImportedPage?.title || 'Página 1',
+      contentType: 'text/html; charset=utf-8',
+      language: 'html',
+      content: fallbackContent,
+      role: 'main_html'
+    }]
+  }, [activeImportedPage?.id, activeImportedPage?.title, importData])
+  const activePageCodeFile = useMemo(() => (
+    codeFiles.find(file => file.pageId && file.pageId === activeImportedPage?.id) ||
+    codeFiles.find(file => file.path && file.path === activeImportedPage?.importedAssetPath) ||
+    codeFiles.find(file => file.language === 'html') ||
+    codeFiles[0] ||
+    null
+  ), [activeImportedPage?.id, activeImportedPage?.importedAssetPath, codeFiles])
+  const activeCodeFile = codeFiles.find(file => getImportedCodeFileKey(file.path) === activeCodeFileKey) || activePageCodeFile
+  const activeCodeKey = activeCodeFile ? getImportedCodeFileKey(activeCodeFile.path) : ''
+  const activeCodeValue = activeCodeFile ? codeDrafts[activeCodeKey] ?? activeCodeFile.content : ''
+  const activeCodeDirty = Boolean(activeCodeKey && Object.prototype.hasOwnProperty.call(codeDrafts, activeCodeKey))
   const mappingStats = useMemo(() => {
     const formMappings = Array.isArray(importData?.formMappings) ? importData.formMappings : []
     const fields = formMappings.flatMap(form => Array.isArray(form.fields) ? form.fields : [])
@@ -10749,6 +10849,16 @@ const ImportedHtmlEditorPanel: React.FC<{
     onError: setAiRegionError,
     onStart: () => setAiRegionError('')
   })
+
+  useEffect(() => {
+    if (!codeEditorOpen) return
+    if (!activePageCodeFile) {
+      setActiveCodeFileKey('')
+      return
+    }
+    const nextKey = getImportedCodeFileKey(activePageCodeFile.path)
+    setActiveCodeFileKey(current => codeFiles.some(file => getImportedCodeFileKey(file.path) === current) ? current : nextKey)
+  }, [activePageCodeFile, codeEditorOpen, codeFiles])
 
   useEffect(() => {
     if (!routeEditing) setRouteDraft(getRouteEditorValue(site))
@@ -11855,6 +11965,114 @@ const ImportedHtmlEditorPanel: React.FC<{
   const inlineVideoPreview: EmbedPreviewConfig = inlineEditor?.mode === 'video'
     ? resolveImportedVideoPreview(inlineEditor.value)
     : { kind: 'empty' }
+
+  const selectCodeFile = (file: ImportedSiteCodeFile) => {
+    setActiveCodeFileKey(getImportedCodeFileKey(file.path))
+    if (file.pageId && file.pageId !== activeImportedPage?.id) {
+      onSelectPage(file.pageId)
+    }
+  }
+  const activeCodePreviewHtml = activeCodeFile?.language === 'html'
+    ? activeCodeValue
+    : previewHtml
+
+  if (codeEditorOpen) {
+    return (
+      <div className={styles.importedCodeEditorPanel}>
+        <aside className={styles.importedCodeFilesPane} aria-label="Archivos del HTML importado">
+          <div className={styles.importedCodePaneHeader}>
+            <span>Archivos</span>
+            <strong>{codeFiles.length}</strong>
+          </div>
+          <div className={styles.importedCodeFilesList}>
+            {codeFiles.map(file => {
+              const fileKey = getImportedCodeFileKey(file.path)
+              const selected = fileKey === activeCodeKey
+              const dirty = Object.prototype.hasOwnProperty.call(codeDrafts, fileKey)
+              return (
+                <button
+                  key={fileKey}
+                  type="button"
+                  className={`${styles.importedCodeFileButton} ${selected ? styles.importedCodeFileButtonActive : ''}`}
+                  onClick={() => selectCodeFile(file)}
+                  disabled={saving}
+                >
+                  <FileText size={15} />
+                  <span>
+                    <strong>{file.label || file.path || 'index.html'}</strong>
+                    <small>{file.path || 'Archivo principal'} · {file.language.toUpperCase()}</small>
+                  </span>
+                  {dirty && <i aria-label="Cambios sin guardar" />}
+                </button>
+              )
+            })}
+            {!codeFiles.length && (
+              <div className={styles.importedCodeEmptyState}>
+                <Code2 size={18} />
+                <span>No hay archivos editables.</span>
+              </div>
+            )}
+          </div>
+        </aside>
+
+        <section className={styles.importedCodeSourcePane}>
+          <div className={styles.importedCodePaneHeader}>
+            <span>{activeCodeFile?.label || 'Código'}</span>
+            {activeCodeDirty && <strong>Cambios sin guardar</strong>}
+          </div>
+          {activeCodeFile ? (
+            <textarea
+              className={styles.importedCodeTextarea}
+              value={activeCodeValue}
+              spellCheck={false}
+              disabled={saving}
+              aria-label={`Código de ${activeCodeFile.label || activeCodeFile.path || 'archivo principal'}`}
+              onChange={(event) => onCodeDraftChange(activeCodeFile.path, event.target.value, activeCodeFile.content)}
+            />
+          ) : (
+            <div className={styles.importedCodeEmptyState}>
+              <Code2 size={18} />
+              <span>Selecciona un archivo.</span>
+            </div>
+          )}
+        </section>
+
+        <section className={styles.importedCodePreviewPane}>
+          <div className={styles.importedCodePaneHeader}>
+            <span>Vista de página</span>
+            <strong>{activeImportedPage?.title || 'Página'}</strong>
+          </div>
+          <div className={`${styles.importedCodePreviewStage} ${device === 'mobile' ? styles.importedCodePreviewStageMobile : ''}`}>
+            {previewLoading && !activeCodePreviewHtml ? (
+              <div className={styles.importedPreviewState}>
+                <RefreshCw size={18} />
+                <span>Cargando vista previa...</span>
+              </div>
+            ) : previewError && !activeCodePreviewHtml ? (
+              <div className={styles.importedPreviewState}>
+                <AlertTriangle size={18} />
+                <span>{previewError}</span>
+              </div>
+            ) : activeCodePreviewHtml ? (
+              <iframe
+                key={`${site.id}-${activeCodeKey}-${activeCodeValue.length}-${device}`}
+                className={styles.importedCodePreviewFrame}
+                title={`Vista previa de ${activeImportedPage?.title || site.name}`}
+                srcDoc={activeCodePreviewHtml}
+                sandbox="allow-same-origin allow-scripts"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            ) : (
+              <div className={styles.importedPreviewState}>
+                <FileText size={18} />
+                <span>Sin vista previa.</span>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    )
+  }
 
   return (
     <div className={styles.importedEditorPanel}>
