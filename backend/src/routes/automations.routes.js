@@ -13,6 +13,8 @@ import {
   reorderFoldersHandler,
   deleteFolderHandler,
   getEnrollmentsHandler,
+  getContactAutomationActivityHandler,
+  enrollContactInAutomationHandler,
   getEnrollmentStatsHandler,
   getCampaignsCatalogHandler,
   getAdsetsCatalogHandler,
@@ -46,10 +48,12 @@ router.get('/catalogs/ads', getAdsCatalogHandler)
 // Automatizaciones
 router.get('/', getAutomationsHandler)
 router.post('/', createAutomationHandler)
+router.get('/contacts/:contactId/activity', getContactAutomationActivityHandler)
 router.get('/:automationId/enrollments', getEnrollmentsHandler)
 router.get('/:automationId/stats', getEnrollmentStatsHandler)
 router.get('/:automationId', getAutomationHandler)
 router.put('/:automationId', updateAutomationHandler)
+router.post('/:automationId/enroll-contact', enrollContactInAutomationHandler)
 router.post('/:automationId/duplicate', duplicateAutomationHandler)
 router.delete('/:automationId', deleteAutomationHandler)
 

@@ -12,6 +12,8 @@ import {
   reorderFolders,
   deleteFolder,
   listEnrollments,
+  listContactAutomationActivity,
+  enrollContactInAutomation,
   getEnrollmentStats,
   listAttributionCampaigns,
   listAttributionAdsets,
@@ -159,6 +161,28 @@ export async function getEnrollmentsHandler(req, res) {
   } catch (error) {
     logger.error(`Error listando inscripciones: ${error.message}`)
     sendError(res, error, 'Error listando inscripciones')
+  }
+}
+
+export async function getContactAutomationActivityHandler(req, res) {
+  try {
+    res.json({ success: true, data: await listContactAutomationActivity(req.params.contactId) })
+  } catch (error) {
+    logger.error(`Error listando automatizaciones del contacto: ${error.message}`)
+    sendError(res, error, 'Error listando automatizaciones del contacto')
+  }
+}
+
+export async function enrollContactInAutomationHandler(req, res) {
+  try {
+    const result = await enrollContactInAutomation(req.params.automationId, {
+      ...(req.body || {}),
+      userId: req.user?.userId || req.user?.id || null
+    })
+    res.status(201).json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error agregando contacto a automatización: ${error.message}`)
+    sendError(res, error, 'Error agregando contacto a automatización')
   }
 }
 

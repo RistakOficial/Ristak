@@ -55,6 +55,12 @@ function cleanString(value) {
   return String(value ?? '').trim()
 }
 
+function engineError(status, message) {
+  const error = new Error(message)
+  error.status = status
+  return error
+}
+
 function normalizeText(value) {
   return String(value || '').trim().toLowerCase()
 }
@@ -761,7 +767,10 @@ async function createEnrollment(automation, contact, ctx) {
       scheduledFor: ctx.scheduledFor || null,
       scheduleRunKey: ctx.scheduleRunKey || null,
       scheduleRecurrence: ctx.scheduleRecurrence || null,
-      scheduleTimezone: ctx.scheduleTimezone || null
+      scheduleTimezone: ctx.scheduleTimezone || null,
+      manualEnrollment: Boolean(ctx.manualEnrollment),
+      manualEnrollmentSource: ctx.manualEnrollmentSource || null,
+      manualScheduledFor: ctx.manualScheduledFor || null
     }
   }
   await db.run(
@@ -1426,6 +1435,100 @@ async function listPublishedAutomations() {
   return rows.map((row) => ({ id: row.id, name: row.name, flow: parseJson(row.flow, { nodes: [], edges: [] }) }))
 }
 
+async function getPublishedAutomation(automationId) {
+  const id = cleanString(automationId)
+  if (!id) throw engineError(400, 'Selecciona una automatización')
+
+  const row = await db.get(
+    `SELECT id, name, COALESCE(published_flow, flow) AS flow
+     FROM automations
+     WHERE id = ? AND status = 'published'`,
+    [id]
+  )
+  if (!row) throw engineError(404, 'Automatización publicada no encontrada')
+  return { id: row.id, name: row.name, flow: parseJson(row.flow, { nodes: [], edges: [] }) }
+}
+
+function mapEnrollmentResult(enrollment) {
+  return {
+    id: enrollment.id,
+    automationId: enrollment.automationId,
+    contactId: enrollment.contactId || null,
+    contactName: enrollment.contactName || 'Contacto',
+    status: enrollment.status || 'active',
+    currentNodeId: enrollment.currentNodeId || null,
+    log: enrollment.log || [],
+    enteredAt: enrollment.enteredAt || null,
+    updatedAt: enrollment.updatedAt || null
+  }
+}
+
+export async function enrollContactManually({ automationId, contactId, source = 'manual', scheduledFor = null } = {}) {
+  const cleanContactId = cleanString(contactId)
+  if (!cleanContactId) throw engineError(400, 'Selecciona un contacto')
+
+  const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [cleanContactId])
+  if (!contactExists) throw engineError(404, 'Contacto no encontrado')
+
+  const automation = await getPublishedAutomation(automationId)
+  const flow = automation.flow || {}
+  const startNode = getStartNode(flow)
+  if (!startNode) throw engineError(400, 'La automatización no tiene inicio configurado')
+
+  const contact = await loadContact(cleanContactId)
+  const settings = flow.settings || {}
+  if (settings.preventDuplicateActiveEnrollment !== false) {
+    const active = await db.get(
+      `SELECT id FROM automation_enrollments
+       WHERE automation_id = ? AND contact_id = ? AND status IN ('active','waiting')`,
+      [automation.id, contact.id]
+    )
+    if (active) throw engineError(409, 'Este contacto ya está activo en esa automatización')
+  }
+  if (settings.allowReentry === false) {
+    const existing = await db.get(
+      'SELECT id FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automation.id, contact.id]
+    )
+    if (existing) throw engineError(409, 'Esta automatización no permite volver a meter al mismo contacto')
+  }
+
+  const ctx = {
+    contact,
+    automationName: automation.name,
+    channel: 'manual',
+    messageText: '',
+    manualEnrollment: true,
+    manualEnrollmentSource: source,
+    manualScheduledFor: scheduledFor || null,
+    scheduledFor: scheduledFor || null
+  }
+  const enrollment = await createEnrollment(automation, contact, ctx)
+  addLog(enrollment, {
+    nodeId: 'start',
+    label: 'Cuando...',
+    status: 'ok',
+    detail: scheduledFor ? `Agregado manualmente para ${scheduledFor}` : 'Agregado manualmente desde el contacto'
+  })
+
+  const edge = edgesFrom(flow, startNode.id)[0]
+  if (edge) {
+    logger.info(`[Automatizaciones] "${automation.name}": contacto agregado manualmente (${contact.fullName || contact.phone || cleanContactId})`)
+    await runFrom(flow, enrollment, edge.targetNodeId, ctx)
+  } else {
+    addLog(enrollment, { nodeId: 'start', label: 'Cuando...', status: 'error', detail: 'El inicio no está conectado a ningún paso' })
+    enrollment.status = 'exited'
+    await saveEnrollment(enrollment)
+  }
+
+  const row = await db.get('SELECT entered_at, updated_at FROM automation_enrollments WHERE id = ?', [enrollment.id])
+  return mapEnrollmentResult({
+    ...enrollment,
+    enteredAt: row?.entered_at || null,
+    updatedAt: row?.updated_at || null
+  })
+}
+
 async function resumeWaitingTriggerLinkClicks(automations, baseCtx) {
   const contact = baseCtx.contact || {}
   if (!contact.id || !hasTriggerLinkEventContext(baseCtx)) return
@@ -1767,6 +1870,60 @@ export async function processScheduledTriggers(referenceDate = new Date()) {
   }
 }
 
+/** Inscribe contactos que se dejaron programados manualmente desde su ficha. */
+export async function processScheduledContactEnrollments(referenceDate = new Date()) {
+  const dueDate = referenceDate instanceof Date ? referenceDate : new Date(referenceDate)
+  if (Number.isNaN(dueDate.getTime())) return
+  const dueAt = dueDate.toISOString()
+
+  try {
+    const rows = await db.all(
+      `SELECT * FROM automation_contact_enrollment_jobs
+       WHERE status = 'scheduled' AND scheduled_at <= ?
+       ORDER BY scheduled_at ASC, created_at ASC
+       LIMIT 50`,
+      [dueAt]
+    )
+
+    for (const row of rows) {
+      const claimed = await db.run(
+        `UPDATE automation_contact_enrollment_jobs
+         SET status = 'processing', updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status = 'scheduled'`,
+        [row.id]
+      )
+      if (Number(claimed?.changes || 0) === 0) continue
+
+      try {
+        const enrollment = await enrollContactManually({
+          automationId: row.automation_id,
+          contactId: row.contact_id,
+          source: 'manual-scheduled',
+          scheduledFor: row.scheduled_at
+        })
+
+        await db.run(
+          `UPDATE automation_contact_enrollment_jobs
+           SET status = 'completed', enrollment_id = ?, error = NULL,
+               executed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [enrollment.id, row.id]
+        )
+      } catch (error) {
+        await db.run(
+          `UPDATE automation_contact_enrollment_jobs
+           SET status = 'error', error = ?, executed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [error.message || 'No se pudo agregar el contacto a la automatización', row.id]
+        )
+        logger.warn(`[Automatizaciones] No se pudo ejecutar inscripción programada ${row.id}: ${error.message}`)
+      }
+    }
+  } catch (error) {
+    logger.error(`[Automatizaciones] Error procesando contactos programados: ${error.message}`)
+  }
+}
+
 /** Tick del programador: reanuda esperas vencidas (duración o timeout) */
 export async function processDueResumes() {
   try {
@@ -1841,6 +1998,7 @@ export function startAutomationScheduler(intervalMs = 20000) {
   setInterval(() => {
     processDueResumes().catch(() => undefined)
     processScheduledTriggers().catch(() => undefined)
+    processScheduledContactEnrollments().catch(() => undefined)
   }, intervalMs)
   logger.info('⚙️ Motor de automatizaciones activo (tick cada 20s)')
 }

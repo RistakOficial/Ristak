@@ -3,7 +3,15 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { DateTime } from 'luxon'
 import { db } from '../src/config/database.js'
-import { renderTemplate, filtersMatch, evaluateConditionNode, handleAutomationEvent, processScheduledTriggers } from '../src/services/automationEngine.js'
+import {
+  renderTemplate,
+  filtersMatch,
+  evaluateConditionNode,
+  handleAutomationEvent,
+  processScheduledTriggers,
+  processScheduledContactEnrollments,
+  enrollContactManually
+} from '../src/services/automationEngine.js'
 
 const ctx = {
   contact: {
@@ -547,5 +555,122 @@ test('trigger fecha programada inscribe una sola vez por horario', async () => {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automation_schedule_runs WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+  }
+})
+
+test('inscripción manual mete un contacto publicado al flujo seleccionado', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_manual_${suffix}`
+  const contactId = `contact_manual_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: { triggers: [] }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [contactId, `+521${Date.now().toString().slice(-10)}`, `manual-${suffix}@test.com`, 'Contacto Manual', 'Contacto', '{}']
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test manual', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    const result = await enrollContactManually({ automationId, contactId })
+
+    assert.equal(result.automationId, automationId)
+    assert.equal(result.contactId, contactId)
+    assert.equal(result.status, 'completed')
+    assert.equal(result.currentNodeId, 'done')
+
+    const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [result.id])
+    const log = JSON.parse(enrollment.log)
+    assert.equal(log.some((entry) => String(entry.detail || '').includes('Agregado manualmente')), true)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automation_contact_enrollment_jobs WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('inscripción manual programada se ejecuta cuando llega su fecha', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_manual_scheduled_${suffix}`
+  const contactId = `contact_manual_scheduled_${suffix}`
+  const jobId = `autojob_${suffix}`
+  const scheduledAt = new Date(Date.now() - 1000).toISOString()
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: { triggers: [] }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [contactId, `+522${Date.now().toString().slice(-10)}`, `manual-scheduled-${suffix}@test.com`, 'Contacto Programado', 'Contacto', '{}']
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test manual programada', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+    await db.run(
+      `INSERT INTO automation_contact_enrollment_jobs
+         (id, automation_id, contact_id, contact_name, scheduled_at, status)
+       VALUES (?, ?, ?, ?, ?, 'scheduled')`,
+      [jobId, automationId, contactId, 'Contacto Programado', scheduledAt]
+    )
+
+    await processScheduledContactEnrollments(new Date())
+
+    const job = await db.get('SELECT * FROM automation_contact_enrollment_jobs WHERE id = ?', [jobId])
+    assert.equal(job.status, 'completed')
+    assert.ok(job.enrollment_id)
+
+    const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [job.enrollment_id])
+    assert.equal(enrollment.status, 'completed')
+    assert.equal(enrollment.contact_id, contactId)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automation_contact_enrollment_jobs WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
   }
 })

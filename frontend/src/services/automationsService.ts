@@ -139,6 +139,36 @@ export interface AutomationEnrollment {
   updatedAt: string
 }
 
+export interface ContactAutomationActivityItem {
+  id: string
+  kind: 'enrollment' | 'scheduled'
+  automationId: string
+  automationName: string
+  status: string
+  contactId?: string | null
+  contactName?: string | null
+  currentNodeId?: string | null
+  log?: EnrollmentLogEntry[]
+  enteredAt?: string | null
+  scheduledAt?: string | null
+  enrollmentId?: string | null
+  error?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+  executedAt?: string | null
+}
+
+export interface ContactAutomationActivity {
+  active: ContactAutomationActivityItem[]
+  past: ContactAutomationActivityItem[]
+}
+
+export interface ContactAutomationEnrollmentResult {
+  mode: 'now' | 'scheduled'
+  enrollment?: ContactAutomationActivityItem
+  job?: ContactAutomationActivityItem
+}
+
 export interface EnrollmentStats {
   active: number
   total: number
@@ -235,6 +265,17 @@ export const automationsService = {
 
   async getEnrollmentStats(automationId: string): Promise<EnrollmentStats> {
     return apiClient.get<EnrollmentStats>(`/automations/${automationId}/stats`)
+  },
+
+  async getContactActivity(contactId: string): Promise<ContactAutomationActivity> {
+    return apiClient.get<ContactAutomationActivity>(`/automations/contacts/${contactId}/activity`)
+  },
+
+  async enrollContact(
+    automationId: string,
+    input: { contactId: string; mode: 'now' | 'scheduled'; scheduledAt?: string }
+  ): Promise<ContactAutomationEnrollmentResult> {
+    return apiClient.post<ContactAutomationEnrollmentResult>(`/automations/${automationId}/enroll-contact`, input)
   },
 
   async deleteFolder(folderId: string): Promise<void> {

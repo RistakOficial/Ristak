@@ -3639,6 +3639,28 @@ async function initTables() {
       )
     `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_automation_schedule_runs_auto ON automation_schedule_runs(automation_id, created_at)')
+
+    // Contactos agregados manualmente a una automatización desde su ficha.
+    // Permite mandarlos al flujo en ese momento o dejarlos programados para
+    // que el tick del motor los inscriba después.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS automation_contact_enrollment_jobs (
+        id TEXT PRIMARY KEY,
+        automation_id TEXT NOT NULL,
+        contact_id TEXT NOT NULL,
+        contact_name TEXT,
+        scheduled_at DATETIME NOT NULL,
+        status TEXT DEFAULT 'scheduled',
+        enrollment_id TEXT,
+        error TEXT,
+        created_by TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        executed_at DATETIME
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automation_contact_jobs_contact ON automation_contact_enrollment_jobs(contact_id, status, scheduled_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automation_contact_jobs_due ON automation_contact_enrollment_jobs(status, scheduled_at)')
     // Etiquetas locales de contactos (array JSON), usadas por automatizaciones
     await db.run(`ALTER TABLE contacts ADD COLUMN tags TEXT DEFAULT '[]'`).catch(() => {})
 

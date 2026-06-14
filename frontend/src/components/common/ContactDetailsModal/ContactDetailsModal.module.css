@@ -794,6 +794,297 @@
   color: var(--color-error);
 }
 
+.automationsPanel {
+  display: grid;
+  gap: 0.875rem;
+  margin-top: 0.875rem;
+}
+
+.automationEnrollBox {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.automationEnrollLabel {
+  font-size: 0.75rem;
+  font-weight: 650;
+  color: var(--color-text-secondary);
+}
+
+.automationSearchWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.automationSearchIcon {
+  position: absolute;
+  left: 0.875rem;
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+.automationSearchInput {
+  width: 100%;
+  min-height: 42px;
+  box-sizing: border-box;
+  padding: 0.625rem 0.875rem 0.625rem 2.5rem;
+  border: 1px solid var(--design-control-border, rgba(148, 163, 184, 0.22));
+  border-radius: var(--design-control-radius, 8px);
+  background: var(--design-control-bg, color-mix(in srgb, var(--color-background-glass) 70%, transparent));
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.35;
+}
+
+.automationSearchInput:focus {
+  outline: none;
+  border-color: var(--ristak-focus-border, var(--color-primary));
+  box-shadow: var(--ristak-focus-ring, 0 0 0 2px rgba(var(--color-primary-rgb), 0.12));
+}
+
+.automationSearchResults {
+  display: grid;
+  gap: 0.375rem;
+  padding: 0.375rem;
+  border: 1px solid var(--design-table-border, rgba(148, 163, 184, 0.18));
+  border-radius: var(--design-control-radius, 8px);
+  background: var(--color-background-primary);
+  box-shadow: 0 10px 24px -20px rgba(15, 23, 42, 0.45);
+}
+
+.automationResultButton {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.625rem;
+  border: 0;
+  border-radius: calc(var(--design-control-radius, 8px) - 2px);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.automationResultButton:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.automationResultButton span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automationResultButton svg {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+
+.automationResultState,
+.automationListState {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--color-text-tertiary);
+  font-size: 0.8125rem;
+  min-height: 38px;
+  padding: 0 0.625rem;
+}
+
+.automationNotice {
+  margin: 0;
+  color: var(--color-success);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.automationColumns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.automationColumn {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 0.5rem;
+}
+
+.automationColumnHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  color: var(--color-text-tertiary);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.automationColumnHeader strong {
+  min-width: 1.375rem;
+  height: 1.375rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.11);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  letter-spacing: 0;
+}
+
+.automationActivityList {
+  list-style: none;
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+}
+
+.automationActivityItem {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.625rem;
+  padding: 0.625rem 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.automationActivityItem:last-child {
+  border-bottom: 0;
+}
+
+.automationActivityMain {
+  min-width: 0;
+}
+
+.automationActivityName {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 0.8125rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.automationActivityMeta {
+  display: block;
+  margin-top: 0.125rem;
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.automationActivityBadge {
+  white-space: nowrap;
+}
+
+.automationEmptyText {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.enrollModalBody {
+  display: grid;
+  gap: 1rem;
+}
+
+.enrollModalIntro p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.enrollModalIntro strong {
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+.enrollModeGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.625rem;
+}
+
+.enrollModeButton {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid var(--design-control-border, rgba(148, 163, 184, 0.22));
+  border-radius: var(--design-control-radius, 8px);
+  background: var(--design-control-bg, transparent);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.enrollModeButton:hover {
+  border-color: var(--design-control-border-hover, rgba(148, 163, 184, 0.34));
+  color: var(--color-text-primary);
+  background: var(--design-control-bg-hover, rgba(148, 163, 184, 0.08));
+}
+
+.enrollModeButtonActive {
+  border-color: rgba(var(--color-primary-rgb), 0.36);
+  background: rgba(var(--color-primary-rgb), 0.1);
+  color: var(--color-text-primary);
+}
+
+.enrollField {
+  display: grid;
+  gap: 0.375rem;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.enrollField input {
+  width: 100%;
+  min-height: 42px;
+  box-sizing: border-box;
+  border: 1px solid var(--design-control-border, rgba(148, 163, 184, 0.22));
+  border-radius: var(--design-control-radius, 8px);
+  background: var(--design-control-bg, color-mix(in srgb, var(--color-background-glass) 70%, transparent));
+  color: var(--color-text-primary);
+  font: inherit;
+  padding: 0.625rem 0.75rem;
+}
+
+.enrollField input:focus {
+  outline: none;
+  border-color: var(--ristak-focus-border, var(--color-primary));
+  box-shadow: var(--ristak-focus-ring, 0 0 0 2px rgba(var(--color-primary-rgb), 0.12));
+}
+
+.enrollModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.625rem;
+  flex-wrap: wrap;
+}
+
 .metricsGrid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -868,6 +1159,11 @@
 
 @media (max-width: 900px) {
   .twoColumnGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .automationColumns,
+  .enrollModeGrid {
     grid-template-columns: 1fr;
   }
 }

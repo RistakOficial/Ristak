@@ -1,6 +1,11 @@
-import { useState, useMemo, useEffect } from 'react'
-import { Modal, Icon, Badge, CustomSelect, TagPicker, type BadgeVariant } from '@/components/common'
+import { useCallback, useState, useMemo, useEffect } from 'react'
+import { Modal, Icon, Badge, Button, CustomSelect, TagPicker, type BadgeVariant } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
+import automationsService, {
+  type AutomationSummary,
+  type ContactAutomationActivity,
+  type ContactAutomationActivityItem
+} from '@/services/automationsService'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
@@ -122,6 +127,49 @@ const getWhatsAppPhoneLabel = (phone: WhatsAppPhoneOption) => {
 const getPreferredWhatsAppPhoneNumberId = (contact?: ContactDetail | null) =>
   String(contact?.preferredWhatsAppPhoneNumberId || contact?.preferred_whatsapp_phone_number_id || '')
 
+const toDateTimeLocalInputValue = (date: Date) => {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+const defaultAutomationScheduleValue = () => {
+  const date = new Date(Date.now() + 60 * 60 * 1000)
+  date.setSeconds(0, 0)
+  return toDateTimeLocalInputValue(date)
+}
+
+const formatStatusText = (value: string) =>
+  value
+    .toLowerCase()
+    .split(/[\s_]+/)
+    .filter(Boolean)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+
+const automationStatusLabels: Record<string, string> = {
+  active: 'Activa',
+  waiting: 'En espera',
+  scheduled: 'Programada',
+  processing: 'Procesando',
+  completed: 'Completada',
+  exited: 'Terminada',
+  goal_met: 'Objetivo cumplido',
+  error: 'Error',
+  cancelled: 'Cancelada'
+}
+
+const getAutomationStatusLabel = (status?: string | null) =>
+  automationStatusLabels[String(status || '').toLowerCase()] || formatStatusText(String(status || 'Activa'))
+
+const getAutomationStatusVariant = (status?: string | null): BadgeVariant => {
+  const normalized = String(status || '').toLowerCase()
+  if (['active', 'processing'].includes(normalized)) return 'info'
+  if (normalized === 'waiting' || normalized === 'scheduled') return 'warning'
+  if (normalized === 'completed' || normalized === 'goal_met') return 'success'
+  if (normalized === 'error' || normalized === 'cancelled') return 'error'
+  return 'neutral'
+}
+
 const getResolvedAttributionDisplay = (contact?: ContactDetail | null) => ({
   campaignName: contact?.metaAttribution?.campaignName || contact?.campaign_name || null,
   adsetName: contact?.metaAttribution?.adsetName || contact?.adset_name || null,
@@ -238,9 +286,23 @@ export function ContactDetailsModal({
   const [refundsExpanded, setRefundsExpanded] = useState(false)
   const [appointmentsExpanded, setAppointmentsExpanded] = useState(false)
   const [customFieldsExpanded, setCustomFieldsExpanded] = useState(false)
+  const [automationsExpanded, setAutomationsExpanded] = useState(false)
   const [customFieldDrafts, setCustomFieldDrafts] = useState<Record<string, string>>({})
   const [savingCustomField, setSavingCustomField] = useState<string | null>(null)
   const [customFieldError, setCustomFieldError] = useState<string | null>(null)
+  const [automationActivity, setAutomationActivity] = useState<ContactAutomationActivity | null>(null)
+  const [automationActivityLoading, setAutomationActivityLoading] = useState(false)
+  const [automationCatalogLoading, setAutomationCatalogLoading] = useState(false)
+  const [automationError, setAutomationError] = useState<string | null>(null)
+  const [automationNotice, setAutomationNotice] = useState<string | null>(null)
+  const [automationQuery, setAutomationQuery] = useState('')
+  const [automationCatalog, setAutomationCatalog] = useState<AutomationSummary[]>([])
+  const [enrollModalOpen, setEnrollModalOpen] = useState(false)
+  const [enrollMode, setEnrollMode] = useState<'now' | 'scheduled'>('now')
+  const [enrollScheduledAt, setEnrollScheduledAt] = useState(defaultAutomationScheduleValue)
+  const [enrollSubmitting, setEnrollSubmitting] = useState(false)
+  const [enrollError, setEnrollError] = useState<string | null>(null)
+  const [selectedAutomationForEnrollment, setSelectedAutomationForEnrollment] = useState<AutomationSummary | null>(null)
   const [savingWhatsAppPreference, setSavingWhatsAppPreference] = useState(false)
   const [whatsappPreferenceError, setWhatsappPreferenceError] = useState<string | null>(null)
   const [savingTags, setSavingTags] = useState(false)
@@ -263,9 +325,22 @@ export function ContactDetailsModal({
       setRefundsExpanded(false)
       setAppointmentsExpanded(false)
       setCustomFieldsExpanded(false)
+      setAutomationsExpanded(false)
       setCustomFieldDrafts({})
       setSavingCustomField(null)
       setCustomFieldError(null)
+      setAutomationActivity(null)
+      setAutomationActivityLoading(false)
+      setAutomationCatalogLoading(false)
+      setAutomationError(null)
+      setAutomationNotice(null)
+      setAutomationQuery('')
+      setEnrollModalOpen(false)
+      setEnrollMode('now')
+      setEnrollScheduledAt(defaultAutomationScheduleValue())
+      setEnrollSubmitting(false)
+      setEnrollError(null)
+      setSelectedAutomationForEnrollment(null)
       setSavingWhatsAppPreference(false)
       setWhatsappPreferenceError(null)
       setSavingTags(false)
@@ -278,9 +353,22 @@ export function ContactDetailsModal({
     setRefundsExpanded(false)
     setAppointmentsExpanded(false)
     setCustomFieldsExpanded(false)
+    setAutomationsExpanded(false)
     setCustomFieldDrafts({})
     setSavingCustomField(null)
     setCustomFieldError(null)
+    setAutomationActivity(null)
+    setAutomationActivityLoading(false)
+    setAutomationCatalogLoading(false)
+    setAutomationError(null)
+    setAutomationNotice(null)
+    setAutomationQuery('')
+    setEnrollModalOpen(false)
+    setEnrollMode('now')
+    setEnrollScheduledAt(defaultAutomationScheduleValue())
+    setEnrollSubmitting(false)
+    setEnrollError(null)
+    setSelectedAutomationForEnrollment(null)
     setSavingWhatsAppPreference(false)
     setWhatsappPreferenceError(null)
     setSavingTags(false)
@@ -309,20 +397,115 @@ export function ContactDetailsModal({
     )
   }, [contactSearchIndexes, data, preparedContactSearch])
 
+  const loadAutomationData = useCallback(async (options: { silent?: boolean } = {}) => {
+    const contactId = selectedContact?.id
+    if (!contactId) return
+    if (!options.silent) {
+      setAutomationActivityLoading(true)
+      setAutomationCatalogLoading(true)
+    }
+    setAutomationError(null)
+    try {
+      const [activity, overview] = await Promise.all([
+        automationsService.getContactActivity(contactId),
+        automationsService.getOverview()
+      ])
+      setAutomationActivity(activity)
+      setAutomationCatalog(overview.automations)
+    } catch (error) {
+      setAutomationError(error instanceof Error ? error.message : 'No se pudieron cargar las automatizaciones.')
+    } finally {
+      setAutomationActivityLoading(false)
+      setAutomationCatalogLoading(false)
+    }
+  }, [selectedContact?.id])
+
+  useEffect(() => {
+    if (!isOpen || !selectedContact) return
+    void loadAutomationData({ silent: true })
+  }, [isOpen, loadAutomationData, selectedContact?.id])
+
+  useEffect(() => {
+    if (!isOpen || !selectedContact || !automationsExpanded) return
+    void loadAutomationData()
+  }, [automationsExpanded, isOpen, loadAutomationData, selectedContact?.id])
+
+  const publishedAutomations = useMemo(
+    () => automationCatalog.filter(automation => automation.status === 'published'),
+    [automationCatalog]
+  )
+  const preparedAutomationSearch = useMemo(() => prepareSearchQuery(automationQuery), [automationQuery])
+  const automationSearchResults = useMemo(() => {
+    if (!preparedAutomationSearch.normalized) return publishedAutomations.slice(0, 6)
+    return publishedAutomations
+      .filter(automation =>
+        searchIndexIncludes(
+          buildSearchIndex([automation.name, automation.description, automation.id]),
+          preparedAutomationSearch
+        )
+      )
+      .slice(0, 8)
+  }, [preparedAutomationSearch, publishedAutomations])
+
+  const openEnrollmentModal = (automation: AutomationSummary) => {
+    setSelectedAutomationForEnrollment(automation)
+    setEnrollMode('now')
+    setEnrollScheduledAt(defaultAutomationScheduleValue())
+    setEnrollError(null)
+    setEnrollModalOpen(true)
+  }
+
+  const closeEnrollmentModal = () => {
+    if (enrollSubmitting) return
+    setEnrollModalOpen(false)
+    setEnrollError(null)
+    setSelectedAutomationForEnrollment(null)
+  }
+
+  const submitAutomationEnrollment = async () => {
+    if (!selectedContact || !selectedAutomationForEnrollment) return
+    let scheduledAt: string | undefined
+    if (enrollMode === 'scheduled') {
+      const scheduledDate = new Date(enrollScheduledAt)
+      if (!enrollScheduledAt || Number.isNaN(scheduledDate.getTime())) {
+        setEnrollError('Elige una fecha y hora válidas.')
+        return
+      }
+      if (scheduledDate.getTime() < Date.now() - 60_000) {
+        setEnrollError('Elige una fecha futura.')
+        return
+      }
+      scheduledAt = scheduledDate.toISOString()
+    }
+
+    setEnrollSubmitting(true)
+    setEnrollError(null)
+    try {
+      await automationsService.enrollContact(selectedAutomationForEnrollment.id, {
+        contactId: selectedContact.id,
+        mode: enrollMode,
+        scheduledAt
+      })
+      setAutomationNotice(enrollMode === 'scheduled'
+        ? 'Contacto programado para entrar a la automatización.'
+        : 'Contacto agregado a la automatización.')
+      setAutomationQuery('')
+      setEnrollModalOpen(false)
+      setSelectedAutomationForEnrollment(null)
+      await loadAutomationData({ silent: true })
+    } catch (error) {
+      setEnrollError(error instanceof Error ? error.message : 'No se pudo agregar el contacto.')
+    } finally {
+      setEnrollSubmitting(false)
+    }
+  }
+
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('es-MX', {
       style: 'currency',
       currency: 'MXN'
     }).format(value)
   }
-
-  const formatStatusText = (value: string) =>
-    value
-      .toLowerCase()
-      .split(/[\s_]+/)
-      .filter(Boolean)
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ')
 
   const getStatusLabel = (status?: string | null): { text: string; variant: BadgeVariant } => {
     if (!status) return { text: '', variant: 'neutral' }
@@ -469,6 +652,64 @@ export function ContactDetailsModal({
     () => getResolvedAttributionDisplay(selectedContact),
     [selectedContact]
   )
+  const activeAutomationItems = automationActivity?.active || []
+  const pastAutomationItems = automationActivity?.past || []
+  const automationActivityCount = activeAutomationItems.length + pastAutomationItems.length
+  const automationInputMin = useMemo(() => toDateTimeLocalInputValue(new Date()), [enrollModalOpen])
+
+  const describeAutomationActivityItem = (item: ContactAutomationActivityItem) => {
+    if (item.kind === 'scheduled') {
+      if (item.status === 'scheduled' && item.scheduledAt) {
+        return `Programada para ${formatLocalDateTime(item.scheduledAt)}`
+      }
+      if (item.error) return item.error
+      if (item.executedAt) return `Procesada ${formatLocalDateTime(item.executedAt)}`
+      return item.scheduledAt ? `Programada para ${formatLocalDateTime(item.scheduledAt)}` : 'Programada'
+    }
+
+    if (item.status === 'waiting') {
+      return item.currentNodeId ? `En espera en ${item.currentNodeId}` : 'En espera dentro del flujo'
+    }
+    if (item.status === 'active') {
+      return item.currentNodeId ? `Paso actual: ${item.currentNodeId}` : 'Activa dentro del flujo'
+    }
+    if (item.updatedAt) return `Último movimiento: ${formatLocalDateTime(item.updatedAt)}`
+    if (item.enteredAt) return `Entró: ${formatLocalDateTime(item.enteredAt)}`
+    return 'Sin fecha registrada'
+  }
+
+  const renderAutomationActivityList = (items: ContactAutomationActivityItem[], emptyText: string) => {
+    if (automationActivityLoading) {
+      return (
+        <div className={styles.automationListState}>
+          <Icon name="refresh" size={16} className={styles.spinIcon} />
+          <span>Cargando...</span>
+        </div>
+      )
+    }
+
+    if (items.length === 0) {
+      return <p className={styles.automationEmptyText}>{emptyText}</p>
+    }
+
+    return (
+      <ul className={styles.automationActivityList}>
+        {items.map((item) => (
+          <li key={`${item.kind}-${item.id}`} className={styles.automationActivityItem}>
+            <div className={styles.automationActivityMain}>
+              <p className={styles.automationActivityName}>{item.automationName}</p>
+              <span className={styles.automationActivityMeta}>
+                {describeAutomationActivityItem(item)}
+              </span>
+            </div>
+            <Badge variant={getAutomationStatusVariant(item.status)} className={styles.automationActivityBadge}>
+              {getAutomationStatusLabel(item.status)}
+            </Badge>
+          </li>
+        ))}
+      </ul>
+    )
+  }
 
   return (
     <Modal
@@ -812,6 +1053,99 @@ export function ContactDetailsModal({
                   )}
                 </div>
 
+                <div className={styles.detailSection}>
+                  <button
+                    type="button"
+                    className={styles.customFieldsToggle}
+                    onClick={() => setAutomationsExpanded(prev => !prev)}
+                    aria-expanded={automationsExpanded}
+                  >
+                    <span className={styles.customFieldsToggleLabel}>
+                      <Icon name={automationsExpanded ? 'chevron-down' : 'chevron-right'} size={14} />
+                      Automatizaciones
+                    </span>
+                    <span className={styles.customFieldsToggleMeta}>
+                      {automationActivityCount}
+                    </span>
+                  </button>
+
+                  {automationsExpanded && (
+                    <div className={styles.automationsPanel}>
+                      <div className={styles.automationEnrollBox}>
+                        <label className={styles.automationEnrollLabel} htmlFor={`automation-search-${selectedContact.id}`}>
+                          Meter este contacto a una automatización
+                        </label>
+                        <div className={styles.automationSearchWrapper}>
+                          <Icon name="search" size={15} className={styles.automationSearchIcon} />
+                          <input
+                            id={`automation-search-${selectedContact.id}`}
+                            type="text"
+                            value={automationQuery}
+                            onChange={(event) => {
+                              setAutomationQuery(event.target.value)
+                              setAutomationNotice(null)
+                            }}
+                            placeholder="Escribe el nombre de la automatización..."
+                            className={styles.automationSearchInput}
+                          />
+                        </div>
+
+                        {(automationQuery.trim() || automationCatalogLoading) && (
+                          <div className={styles.automationSearchResults}>
+                            {automationCatalogLoading ? (
+                              <div className={styles.automationResultState}>
+                                <Icon name="refresh" size={15} className={styles.spinIcon} />
+                                <span>Cargando automatizaciones...</span>
+                              </div>
+                            ) : automationSearchResults.length === 0 ? (
+                              <div className={styles.automationResultState}>
+                                No encontré una automatización publicada con ese nombre.
+                              </div>
+                            ) : (
+                              automationSearchResults.map(automation => (
+                                <button
+                                  key={automation.id}
+                                  type="button"
+                                  className={styles.automationResultButton}
+                                  onClick={() => openEnrollmentModal(automation)}
+                                >
+                                  <span>{automation.name}</span>
+                                  <Icon name="arrow-right" size={14} />
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        )}
+
+                        {automationNotice && (
+                          <p className={styles.automationNotice}>{automationNotice}</p>
+                        )}
+                        {automationError && (
+                          <p className={styles.customFieldError}>{automationError}</p>
+                        )}
+                      </div>
+
+                      <div className={styles.automationColumns}>
+                        <div className={styles.automationColumn}>
+                          <div className={styles.automationColumnHeader}>
+                            <span>Activas</span>
+                            <strong>{activeAutomationItems.length}</strong>
+                          </div>
+                          {renderAutomationActivityList(activeAutomationItems, 'Este contacto no está activo en ninguna automatización.')}
+                        </div>
+
+                        <div className={styles.automationColumn}>
+                          <div className={styles.automationColumnHeader}>
+                            <span>Pasadas</span>
+                            <strong>{pastAutomationItems.length}</strong>
+                          </div>
+                          {renderAutomationActivityList(pastAutomationItems, 'Aún no hay automatizaciones pasadas.')}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Primera Atribución (Primer Toque) */}
                 {selectedContact.firstSession && (
                   <div className={styles.detailSection}>
@@ -1131,6 +1465,85 @@ export function ContactDetailsModal({
             </div>
           )}
         </div>
+
+        {selectedAutomationForEnrollment && (
+          <Modal
+            isOpen={enrollModalOpen}
+            onClose={closeEnrollmentModal}
+            title="Agregar a automatización"
+            size="md"
+          >
+            <form
+              className={styles.enrollModalBody}
+              onSubmit={(event) => {
+                event.preventDefault()
+                void submitAutomationEnrollment()
+              }}
+            >
+              <div className={styles.enrollModalIntro}>
+                <p>
+                  <strong>{selectedContact?.name || selectedContact?.phone || 'Este contacto'}</strong>
+                  {' '}entrará a <strong>{selectedAutomationForEnrollment.name}</strong>.
+                </p>
+              </div>
+
+              <div className={styles.enrollModeGrid} role="group" aria-label="Cuándo agregar el contacto">
+                <button
+                  type="button"
+                  className={`${styles.enrollModeButton} ${enrollMode === 'now' ? styles.enrollModeButtonActive : ''}`}
+                  onClick={() => setEnrollMode('now')}
+                >
+                  <Icon name="check" size={16} />
+                  <span>En este momento</span>
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.enrollModeButton} ${enrollMode === 'scheduled' ? styles.enrollModeButtonActive : ''}`}
+                  onClick={() => setEnrollMode('scheduled')}
+                >
+                  <Icon name="calendar" size={16} />
+                  <span>Programado</span>
+                </button>
+              </div>
+
+              {enrollMode === 'scheduled' && (
+                <label className={styles.enrollField}>
+                  <span>Fecha y hora</span>
+                  <input
+                    type="datetime-local"
+                    value={enrollScheduledAt}
+                    min={automationInputMin}
+                    onChange={(event) => {
+                      setEnrollScheduledAt(event.target.value)
+                      setEnrollError(null)
+                    }}
+                  />
+                </label>
+              )}
+
+              {enrollError && (
+                <p className={styles.customFieldError}>{enrollError}</p>
+              )}
+
+              <div className={styles.enrollModalActions}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={closeEnrollmentModal}
+                  disabled={enrollSubmitting}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  loading={enrollSubmitting}
+                >
+                  Agregar
+                </Button>
+              </div>
+            </form>
+          </Modal>
+        )}
       </div>
     </Modal>
   )

@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { normalizeFlow, validateFlowForPublish, START_NODE_TYPE } from './automationFlowValidation.js'
+import { enrollContactManually } from './automationEngine.js'
 
 const usePostgres = !!process.env.DATABASE_URL
 const flowPlaceholder = usePostgres ? '?::jsonb' : '?'
@@ -397,6 +398,84 @@ function parseLog(raw) {
   try { return JSON.parse(raw) } catch { return [] }
 }
 
+function contactDisplayName(row) {
+  return String(row?.full_name || row?.first_name || row?.phone || row?.email || row?.id || 'Contacto')
+}
+
+async function getContactForAutomation(contactId) {
+  const id = typeof contactId === 'string' ? contactId.trim() : ''
+  if (!id) throw badRequest('Selecciona un contacto')
+  const contact = await db.get(
+    'SELECT id, full_name, first_name, phone, email FROM contacts WHERE id = ?',
+    [id]
+  )
+  if (!contact) throw notFound('Contacto no encontrado')
+  return contact
+}
+
+async function getPublishedAutomationForEnrollment(automationId) {
+  const id = typeof automationId === 'string' ? automationId.trim() : ''
+  if (!id) throw badRequest('Selecciona una automatización')
+  const automation = await db.get(
+    `SELECT id, name, status
+     FROM automations
+     WHERE id = ?`,
+    [id]
+  )
+  if (!automation) throw notFound('Automatización no encontrada')
+  if (automation.status !== 'published') {
+    throw badRequest('Solo puedes meter contactos a automatizaciones publicadas')
+  }
+  return automation
+}
+
+function normalizeScheduledAt(value) {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!raw) throw badRequest('Elige cuándo quieres agregar el contacto')
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) throw badRequest('La fecha programada no es válida')
+  if (date.getTime() < Date.now() - 60_000) throw badRequest('Elige una fecha futura')
+  return date.toISOString()
+}
+
+function mapContactEnrollmentRow(row) {
+  return {
+    id: row.id,
+    kind: 'enrollment',
+    automationId: row.automation_id,
+    automationName: row.automation_name || 'Automatización',
+    status: row.status || 'active',
+    contactId: row.contact_id || null,
+    contactName: row.contact_name || 'Contacto',
+    currentNodeId: row.current_node_id || null,
+    log: parseLog(row.log),
+    enteredAt: row.entered_at,
+    updatedAt: row.updated_at
+  }
+}
+
+function mapContactEnrollmentJobRow(row) {
+  return {
+    id: row.id,
+    kind: 'scheduled',
+    automationId: row.automation_id,
+    automationName: row.automation_name || 'Automatización',
+    status: row.status || 'scheduled',
+    contactId: row.contact_id || null,
+    contactName: row.contact_name || 'Contacto',
+    scheduledAt: row.scheduled_at,
+    enrollmentId: row.enrollment_id || null,
+    error: row.error || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    executedAt: row.executed_at || null
+  }
+}
+
+function activityTime(item) {
+  return new Date(item.scheduledAt || item.updatedAt || item.executedAt || item.enteredAt || item.createdAt || 0).getTime() || 0
+}
+
 function mapMetaCatalogRow(row) {
   return {
     id: String(row.id || row.name || ''),
@@ -497,6 +576,91 @@ export async function listEnrollments(automationId) {
     enteredAt: row.entered_at,
     updatedAt: row.updated_at
   }))
+}
+
+export async function listContactAutomationActivity(contactId) {
+  await getContactForAutomation(contactId)
+  const [enrollmentRows, jobRows] = await Promise.all([
+    db.all(
+      `SELECT e.*, COALESCE(a.name, 'Automatización eliminada') AS automation_name
+       FROM automation_enrollments e
+       LEFT JOIN automations a ON a.id = e.automation_id
+       WHERE e.contact_id = ?
+       ORDER BY e.updated_at DESC
+       LIMIT 200`,
+      [contactId]
+    ),
+    db.all(
+      `SELECT j.*, COALESCE(a.name, 'Automatización eliminada') AS automation_name
+       FROM automation_contact_enrollment_jobs j
+       LEFT JOIN automations a ON a.id = j.automation_id
+       WHERE j.contact_id = ?
+       ORDER BY j.scheduled_at DESC, j.created_at DESC
+       LIMIT 200`,
+      [contactId]
+    )
+  ])
+
+  const enrollmentItems = enrollmentRows.map(mapContactEnrollmentRow)
+  const jobItems = jobRows.map(mapContactEnrollmentJobRow)
+  const activeStatuses = new Set(['active', 'waiting'])
+  const active = [
+    ...jobItems.filter((item) => ['scheduled', 'processing'].includes(item.status)),
+    ...enrollmentItems.filter((item) => activeStatuses.has(item.status))
+  ].sort((left, right) => activityTime(left) - activityTime(right))
+
+  const past = [
+    ...enrollmentItems.filter((item) => !activeStatuses.has(item.status)),
+    ...jobItems.filter((item) => !['scheduled', 'processing', 'completed'].includes(item.status) || (item.status === 'completed' && !item.enrollmentId))
+  ].sort((left, right) => activityTime(right) - activityTime(left))
+
+  return { active, past }
+}
+
+export async function enrollContactInAutomation(automationId, input = {}) {
+  const contact = await getContactForAutomation(input.contactId)
+  const automation = await getPublishedAutomationForEnrollment(automationId)
+  const mode = input.mode === 'scheduled' ? 'scheduled' : 'now'
+
+  if (mode === 'scheduled') {
+    const scheduledAt = normalizeScheduledAt(input.scheduledAt)
+    const id = makeId('autojob')
+    await db.run(
+      `INSERT INTO automation_contact_enrollment_jobs
+         (id, automation_id, contact_id, contact_name, scheduled_at, status, created_by)
+       VALUES (?, ?, ?, ?, ?, 'scheduled', ?)`,
+      [
+        id,
+        automation.id,
+        contact.id,
+        contactDisplayName(contact),
+        scheduledAt,
+        input.userId || null
+      ]
+    )
+    const row = await db.get(
+      `SELECT j.*, a.name AS automation_name
+       FROM automation_contact_enrollment_jobs j
+       LEFT JOIN automations a ON a.id = j.automation_id
+       WHERE j.id = ?`,
+      [id]
+    )
+    return { mode, job: mapContactEnrollmentJobRow(row) }
+  }
+
+  const enrollment = await enrollContactManually({
+    automationId: automation.id,
+    contactId: contact.id,
+    source: 'manual'
+  })
+  return {
+    mode,
+    enrollment: {
+      ...enrollment,
+      kind: 'enrollment',
+      automationName: automation.name
+    }
+  }
 }
 
 /** Conteo de contactos activos por nodo (para los badges del canvas) */
