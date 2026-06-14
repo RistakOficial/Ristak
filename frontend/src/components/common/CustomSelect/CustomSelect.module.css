@@ -22,6 +22,13 @@
   outline: none;
 }
 
+.large .trigger {
+  min-height: 46px;
+  padding: 0 14px;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
 .trigger:hover {
   border-color: var(--ristak-dropdown-border-hover);
   background-color: var(--ristak-dropdown-bg-hover);
@@ -96,6 +103,10 @@
   padding: 0;
 }
 
+.dropdownLarge .options {
+  max-height: var(--custom-select-options-max-height, 420px);
+}
+
 .options::-webkit-scrollbar {
   width: 8px;
 }
@@ -129,6 +140,13 @@
   cursor: pointer;
   transition: all 0.15s ease;
   text-align: left;
+}
+
+.dropdown.dropdownLarge .option {
+  min-height: 42px;
+  padding: 9px 12px;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .option span {

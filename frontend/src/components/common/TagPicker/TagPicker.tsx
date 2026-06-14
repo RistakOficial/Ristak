@@ -35,6 +35,7 @@ interface TagPickerBaseProps {
   disabled?: boolean
   /** Dibuja el dropdown en un portal (paneles con scroll que recortan) */
   portal?: boolean
+  size?: 'default' | 'large'
   'aria-label'?: string
 }
 
@@ -63,7 +64,8 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
     allowCreate = true,
     placeholder,
     disabled = false,
-    portal = false
+    portal = false,
+    size = 'default'
   } = props
   const isMultiple = props.multiple === true
 
@@ -102,22 +104,25 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
   const updatePortalPosition = useCallback(() => {
     if (!portal || !containerRef.current) return
     const rect = containerRef.current.getBoundingClientRect()
-    const viewportPadding = 8
-    const estimatedHeight = 300
+    const viewportPadding = 12
+    const gap = 6
+    const estimatedHeight = size === 'large' ? 420 : 300
     const spaceBelow = window.innerHeight - rect.bottom - viewportPadding
     const spaceAbove = rect.top - viewportPadding
     const openAbove = spaceBelow < estimatedHeight && spaceAbove > spaceBelow
-    const available = Math.max(140, openAbove ? spaceAbove : spaceBelow)
+    const available = Math.max(size === 'large' ? 220 : 140, openAbove ? spaceAbove : spaceBelow)
     const height = Math.min(estimatedHeight, available)
     setPortalStyle({
       position: 'fixed',
-      top: openAbove ? Math.max(viewportPadding, rect.top - height - 4) : rect.bottom + 4,
-      left: rect.left,
+      top: openAbove
+        ? Math.max(viewportPadding, rect.top - height - gap)
+        : Math.min(rect.bottom + gap, window.innerHeight - viewportPadding - height),
+      left: Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - rect.width - viewportPadding),
       width: rect.width,
       zIndex: 10000,
-      '--tag-picker-options-max-height': `${height - 52}px`
+      '--tag-picker-options-max-height': `${height - (size === 'large' ? 58 : 52)}px`
     } as React.CSSProperties)
-  }, [portal])
+  }, [portal, size])
 
   useEffect(() => {
     if (!isOpen) return
@@ -189,7 +194,7 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
   const dropdown = isOpen && !disabled ? (
     <div
       ref={dropdownRef}
-      className={`${styles.dropdown} ${portal ? styles.portalDropdown : ''}`}
+      className={`${styles.dropdown} ${portal ? styles.portalDropdown : ''} ${size === 'large' ? styles.dropdownLarge : ''}`}
       style={portal ? portalStyle : undefined}
     >
       <div className={styles.searchWrap}>
@@ -259,7 +264,7 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
   ) : null
 
   return (
-    <div ref={containerRef} className={styles.container}>
+    <div ref={containerRef} className={`${styles.container} ${size === 'large' ? styles.large : ''}`}>
       {isMultiple && (lockedTags.length > 0 || selectedIds.length > 0) && (
         <div className={styles.chips}>
           {lockedTags.map((tag) => (

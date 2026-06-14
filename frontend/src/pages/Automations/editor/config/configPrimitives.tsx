@@ -5,7 +5,7 @@ import { CustomSelect as BaseCustomSelect, TagPicker } from '@/components/common
 /** CustomSelect con portal: el dropdown se dibuja por delante del panel
  *  de configuración (los contenedores con scroll lo recortaban). */
 export const CustomSelect: React.FC<React.ComponentProps<typeof BaseCustomSelect>> = (props) => (
-  <BaseCustomSelect portal {...props} />
+  <BaseCustomSelect portal size="large" {...props} />
 )
 import { getCatalog, type CatalogKind, type CatalogOption } from '@/services/automationCatalogsService'
 import { CONTACT_VARIABLES } from '../nodeRegistry'
@@ -130,6 +130,7 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
         includeSystem
         allowCreate
         portal
+        size="large"
         placeholder={placeholder || 'Selecciona una etiqueta'}
         aria-label={rest['aria-label']}
       />
@@ -224,6 +225,7 @@ export const CatalogTags: React.FC<{
         onChange={onChange}
         allowCreate
         portal
+        size="large"
         aria-label={rest['aria-label']}
       />
     )

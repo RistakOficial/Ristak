@@ -30,7 +30,7 @@ DropdownMenuTrigger
 import { CustomSelect as BaseCustomSelect } from '@/components/common'
 
 const CustomSelect: React.FC<React.ComponentProps<typeof BaseCustomSelect>> = (props) => (
-  <BaseCustomSelect portal {...props} />
+  <BaseCustomSelect portal size="large" {...props} />
 )
 import { useNotification } from '@/contexts/NotificationContext'
 import automationsService, {

@@ -1177,6 +1177,16 @@
   min-height: 46px;
 }
 
+.configPanel .configInput.configInput,
+.configPanel .configTextarea.configTextarea {
+  font-size: 14.5px;
+  padding: 10px 12px;
+}
+
+.configPanel .configInput.configInput {
+  min-height: 46px;
+}
+
 .configTextarea {
   resize: vertical;
   min-height: 88px;
@@ -1245,6 +1255,7 @@
   min-height: 46px !important;
   padding: 0 14px;
   font-size: 14.5px;
+  line-height: 1.5;
 }
 
 .configPanel [data-ristak-dropdown-trigger] svg {
@@ -1755,12 +1766,6 @@
   flex: 1 1 auto;
 }
 
-.configPanel .filterRow .configInput {
-  min-height: 46px;
-  font-size: 14.5px;
-  padding: 10px 12px;
-}
-
 .filterStep {
   margin-top: 10px;
 }
@@ -2022,19 +2027,19 @@
 .cleanSearchInput,
 .leftNavSearch input {
   appearance: none;
-  height: 30px;
+  height: 38px;
   border: 1px solid rgba(148, 163, 184, 0.22) !important;
-  border-radius: 9px !important;
+  border-radius: 10px !important;
   background: var(--color-background-secondary) !important;
   box-shadow: none !important;
   color: var(--color-text-primary);
-  font-size: 12px;
+  font-size: 14px;
   padding: 0 10px 0 28px !important;
   outline: none !important;
 }
 
 .bubbleSearchRow .cleanSearchInput {
-  height: 34px;
+  height: 40px;
   font-size: 14px;
   padding-left: 34px !important;
 }
@@ -2691,11 +2696,12 @@
 }
 
 .composerSingleLine {
-  min-height: 0;
+  box-sizing: border-box;
+  min-height: 44px;
   max-height: none;
   white-space: nowrap;
   overflow-x: auto;
-  padding: 7px 34px 7px 10px;
+  padding: 10px 38px 10px 12px;
 }
 
 .composerEmpty::before {
@@ -2714,7 +2720,7 @@
 }
 
 .composerSingleLine ~ .composerToolbar {
-  bottom: 5px;
+  bottom: 11px;
 }
 
 .composerToolButton {
@@ -2771,8 +2777,9 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 12px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.14);
 }
 
@@ -2790,18 +2797,25 @@
   min-width: 0;
 }
 
+.composerPopoverSearch .cleanSearchInput {
+  height: 36px;
+  font-size: 14px;
+  padding-left: 34px !important;
+}
+
 /* Categorías expandibles del picker de variables */
 .varCategoryHeader {
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
+  min-height: 42px;
   text-align: left;
   border: none;
   border-radius: 8px;
   background: transparent;
-  padding: 8px 8px;
-  font-size: 11px;
+  padding: 9px 12px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -2827,12 +2841,13 @@
   display: flex;
   align-items: center;
   width: 100%;
+  min-height: 42px;
   text-align: left;
   border: none;
   border-radius: 8px;
   background: transparent;
-  padding: 7px 10px 7px 22px;
-  font-size: 13.5px;
+  padding: 9px 12px 9px 22px;
+  font-size: 14px;
   color: var(--color-text-primary);
   cursor: pointer;
   outline: none;
@@ -2856,16 +2871,16 @@
   align-items: center;
   gap: 5px;
   width: 100%;
-  min-height: 32px;
+  min-height: 42px;
   border: none;
   border-radius: 8px;
   background: transparent;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--color-text-tertiary);
-  padding: 7px 8px;
+  padding: 9px 12px;
   cursor: pointer;
 }
 
@@ -2897,12 +2912,12 @@
   align-items: center;
   gap: 4px;
   width: 100%;
-  min-height: 30px;
+  min-height: 42px;
   border: none;
   border-radius: 8px;
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 650;
   text-align: left;
   cursor: pointer;
@@ -2922,16 +2937,23 @@
 .composerPopoverItem {
   display: block;
   width: 100%;
+  min-height: 42px;
   text-align: left;
   border: none;
   border-radius: 8px;
   background: transparent;
-  padding: 6px 8px;
+  padding: 9px 12px;
   cursor: pointer;
 }
 
 .composerPopoverItem:hover {
   background: rgba(148, 163, 184, 0.12);
+}
+
+.composerPopoverItem .variableTokenChip {
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 3px 8px;
 }
 
 .pickerWarning {

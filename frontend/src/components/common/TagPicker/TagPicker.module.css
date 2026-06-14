@@ -76,6 +76,13 @@
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
+.large .trigger {
+  min-height: 46px;
+  padding: 0 14px;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
 .trigger:hover {
   border-color: var(--ristak-dropdown-border-hover, var(--color-border-secondary));
 }
@@ -135,6 +142,11 @@
   color: var(--color-text-tertiary);
 }
 
+.dropdownLarge .searchWrap {
+  min-height: 48px;
+  padding: 8px 12px;
+}
+
 .searchInput {
   flex: 1;
   border: none;
@@ -142,6 +154,11 @@
   background: transparent;
   font-size: 13px;
   color: var(--color-text-primary);
+}
+
+.dropdownLarge .searchInput {
+  min-height: 36px;
+  font-size: 14px;
 }
 
 .searchInput::placeholder {
@@ -152,6 +169,11 @@
   max-height: var(--tag-picker-options-max-height, 240px);
   overflow-y: auto;
   padding: 4px;
+}
+
+.dropdownLarge .options {
+  max-height: var(--tag-picker-options-max-height, 362px);
+  padding: 6px;
 }
 
 .option {
@@ -168,6 +190,14 @@
   cursor: pointer;
   border-radius: 6px;
   text-align: left;
+}
+
+.dropdownLarge .option {
+  min-height: 42px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .option:hover {
