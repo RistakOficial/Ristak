@@ -1331,6 +1331,269 @@
   background: var(--phone-chat-bg);
 }
 
+.aiAgentHubScreen,
+.agentPickerScreen {
+  position: absolute;
+  inset: 0;
+  z-index: 42;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-bg);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(100%);
+  transition: transform 220ms ease, opacity 220ms ease;
+}
+
+.aiAgentHubScreen {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.agentPickerScreen {
+  z-index: 46;
+  align-content: start;
+  gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: calc(env(safe-area-inset-top) + 10px) 12px calc(16px + env(safe-area-inset-bottom));
+  overflow: hidden;
+  background: var(--phone-chat-surface-soft);
+}
+
+.aiAgentHubScreenOpen {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.agentPickerScreen.contactInfoScreenOpen {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.agentPickerScreen .agentMenuBody {
+  max-height: none;
+  padding-bottom: 0;
+}
+
+.agentPickerScreen .agentMenuSection {
+  border-radius: 14px;
+}
+
+.aiAgentHubHeader {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  min-height: calc(58px + env(safe-area-inset-top));
+  padding: calc(env(safe-area-inset-top) + 7px) 10px 7px;
+  background: var(--phone-chat-bg);
+  box-shadow: 0 1px 0 var(--phone-chat-border);
+}
+
+.aiAgentHubHeader strong {
+  overflow: hidden;
+  color: var(--phone-chat-text);
+  font-size: 17px;
+  font-weight: 840;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiAgentHubHeaderAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  justify-self: end;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface-soft);
+}
+
+.aiAgentHubContent {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  padding: 12px 14px calc(26px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.aiAgentHubHero {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 18px 14px 16px;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(var(--phone-chat-accent-rgb), 0.11), transparent 64%),
+    var(--phone-chat-surface);
+}
+
+.aiAgentHubRobot {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 118px;
+  height: 118px;
+  border-radius: 999px;
+  color: #ffffff;
+  background:
+    radial-gradient(circle at 35% 24%, rgba(255, 255, 255, 0.5), transparent 28%),
+    linear-gradient(145deg, #143fba 0%, #2563eb 48%, #19c37d 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.36),
+    0 18px 42px rgba(37, 99, 235, 0.24);
+  isolation: isolate;
+}
+
+.aiAgentHubRobot .agentRobot {
+  transform: scale(2.22);
+}
+
+.aiAgentHubRobotOn {
+  animation: agentBotButtonBreath 4.2s ease-in-out infinite;
+}
+
+.aiAgentHubRobotOff {
+  color: #6b7280;
+  background:
+    radial-gradient(circle at 35% 24%, rgba(255, 255, 255, 0.38), transparent 28%),
+    linear-gradient(145deg, #d1d5db 0%, #9ca3af 58%, #6b7280 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.28),
+    0 14px 30px rgba(75, 85, 99, 0.18);
+  filter: grayscale(1);
+}
+
+.aiAgentHubCopy {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.aiAgentHubCopy p {
+  margin: 0;
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.aiAgentHubCopy h2 {
+  margin: 0;
+  color: var(--phone-chat-text);
+  font-size: 25px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1.05;
+}
+
+.aiAgentHubCopy span {
+  max-width: 280px;
+  color: var(--phone-chat-muted);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.32;
+}
+
+.aiAgentHubActions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  width: 100%;
+  max-width: 310px;
+}
+
+.aiAgentHubPowerButton,
+.aiAgentHubAgentsButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface-soft);
+  font-size: 14px;
+  font-weight: 840;
+}
+
+.aiAgentHubPowerButtonOn {
+  color: #ffffff;
+  border-color: transparent;
+  background: #ef4444;
+}
+
+.aiAgentHubPowerButton:disabled,
+.aiAgentHubAgentsButton:disabled {
+  opacity: 0.58;
+}
+
+.aiAgentHubSearch {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 11px;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-surface);
+  box-shadow: 0 1px 0 var(--phone-chat-border);
+}
+
+.aiAgentHubSearch input {
+  min-width: 0;
+  height: 34px;
+  border: 0;
+  outline: 0;
+  color: var(--phone-chat-text);
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.aiAgentHubSearch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  color: var(--phone-chat-muted);
+  background: transparent;
+}
+
+.aiAgentHubChatList {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--phone-chat-surface);
+}
+
+.aiAgentHubChatItem {
+  background: transparent;
+}
+
+.aiAgentHubChatItem::after {
+  left: 86px;
+}
+
 .contactInfoTopbar {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) 44px;
@@ -6876,8 +7139,31 @@
 }
 
 .agentBotButtonIdle {
-  color: var(--phone-chat-muted, #94a3b8);
-  opacity: 0.38;
+  color: #6b7280;
+  background: color-mix(in srgb, var(--phone-chat-surface-soft) 86%, #9ca3af 14%);
+  filter: grayscale(1);
+  opacity: 0.78;
+}
+
+.agentBotButtonIdle .agentRobotHead {
+  border-color: rgba(107, 114, 128, 0.82);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 48%),
+    #9ca3af;
+  box-shadow: none;
+}
+
+.agentBotButtonIdle .agentRobotAntenna,
+.agentBotButtonIdle .agentRobotHead::before,
+.agentBotButtonIdle .agentRobotHead::after {
+  background: rgba(107, 114, 128, 0.82);
+}
+
+.agentBotButtonIdle .agentRobotAntenna::after,
+.agentBotButtonIdle .agentRobotEye,
+.agentBotButtonIdle .agentRobotMouth {
+  background: #6b7280;
+  box-shadow: none;
 }
 
 .agentRobot {

@@ -42,6 +42,7 @@ import {
   Pin,
   Play,
   Plus,
+  Power,
   ReceiptText,
   Reply,
   Search,
@@ -2784,6 +2785,9 @@ export const PhoneChat: React.FC = () => {
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
   const [archivedViewOpen, setArchivedViewOpen] = useState(false)
   const [agentPriorityViewOpen, setAgentPriorityViewOpen] = useState(false)
+  const [aiAgentHubOpen, setAiAgentHubOpen] = useState(false)
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false)
+  const [aiAgentHubQuery, setAiAgentHubQuery] = useState('')
   const [initialAgentLiveCache] = useState(() => readConversationalAgentLiveCache())
   const [agentConfig, setAgentConfig] = useState<ConversationalAgentConfig | null>(() => initialAgentLiveCache?.config || null)
   const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>(() => initialAgentLiveCache?.agents || [])
@@ -3437,6 +3441,35 @@ export const PhoneChat: React.FC = () => {
     [agentPriorityStates]
   )
   const agentPriorityCount = agentPriorityStates.length
+  const publishedAgentDefs = useMemo(() => agentDefs.filter((agent) => agent.enabled), [agentDefs])
+  const publishedAgentCount = publishedAgentDefs.length
+  const agentHubChatRows = useMemo(() => {
+    const activeContactIds = new Set(
+      Object.values(agentStates)
+        .filter((state) => state.status === 'active' && state.signal !== 'discarded')
+        .map((state) => state.contactId)
+    )
+    const normalizedQuery = aiAgentHubQuery.trim().toLowerCase()
+
+    return chats
+      .filter((contact) => {
+        if (archivedChatIdSet.has(contact.id)) return false
+        if (!activeContactIds.has(contact.id)) return false
+        if (!normalizedQuery) return true
+
+        return [
+          getContactName(contact),
+          getContactDetail(contact),
+          getChatPreview(contact)
+        ].join(' ').toLowerCase().includes(normalizedQuery)
+      })
+      .sort((left, right) => {
+        const leftState = agentStates[left.id]
+        const rightState = agentStates[right.id]
+        return Date.parse(rightState?.updatedAt || right.lastMessageDate || right.createdAt) -
+          Date.parse(leftState?.updatedAt || left.lastMessageDate || left.createdAt)
+      })
+  }, [agentStates, aiAgentHubQuery, archivedChatIdSet, chats])
   const agentPriorityChatRows = useMemo(() => {
     if (archivedViewOpen || agentPriorityViewOpen || chatFilter !== 'all') return []
     return chats
@@ -4117,10 +4150,12 @@ export const PhoneChat: React.FC = () => {
   }, [showToast])
 
   useEffect(() => {
-    document.title = aiAgentConversationOpen
+    document.title = aiAgentHubOpen
+      ? 'Inteligencia artificial | Ristak'
+      : aiAgentConversationOpen
       ? 'Agente de IA | Ristak'
       : activeContact ? `${getContactName(activeContact)} | Ristak` : 'Ristak'
-  }, [activeContact, aiAgentConversationOpen])
+  }, [activeContact, aiAgentConversationOpen, aiAgentHubOpen])
 
   useEffect(() => {
     writeAIAgentMobileMessages(aiMessages)
@@ -4139,7 +4174,7 @@ export const PhoneChat: React.FC = () => {
     setOpenSwipeChatId(null)
     setDraggingSwipe(null)
     clearClosingSwipeActions()
-  }, [archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId, clearClosingSwipeActions])
+  }, [agentPickerOpen, aiAgentHubOpen, archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId, clearClosingSwipeActions])
 
   useEffect(() => {
     if (!contactInfoOpen) {
@@ -5334,6 +5369,44 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const openAgentSelectorScreen = () => {
+    setAgentMenuSection('agents')
+    setAgentPickerOpen(true)
+    setSheet(null)
+    loadAgentData()
+  }
+
+  const toggleAgentGlobalEnabled = async () => {
+    const nextEnabled = !agentEnabled
+
+    if (nextEnabled && publishedAgentCount === 0) {
+      showToast('warning', 'Sin agentes publicados', 'Publica al menos un agente para encender la inteligencia artificial.')
+      openAgentSelectorScreen()
+      return
+    }
+
+    const previousConfig = agentConfig
+    setAgentConfig((current) => current ? { ...current, enabled: nextEnabled } : current)
+    setAgentConfigSaving(true)
+
+    try {
+      const nextConfig = await conversationalAgentService.saveConfig({ enabled: nextEnabled })
+      setAgentConfig(nextConfig)
+      showToast(
+        'success',
+        'Agente conversacional',
+        nextEnabled
+          ? `${publishedAgentCount === 1 ? '1 agente publicado quedó activo' : `${publishedAgentCount} agentes publicados quedaron activos`}.`
+          : 'La inteligencia artificial quedó apagada.'
+      )
+    } catch (error: any) {
+      setAgentConfig(previousConfig)
+      showToast('error', 'Agente conversacional', error?.message || 'No se pudo cambiar el estado.')
+    } finally {
+      setAgentConfigSaving(false)
+    }
+  }
+
   const handleOpenChatMore = (contact: Contact) => {
     setActiveContactId(contact.id)
     setChatActionContactId(contact.id)
@@ -5344,8 +5417,14 @@ export const PhoneChat: React.FC = () => {
   }
 
   const openAgentGlobalMenu = () => {
+    setAiAgentHubOpen(true)
+    setAgentPickerOpen(false)
     setAgentMenuSection('menu')
-    setSheet('agentMenu')
+    setSheet(null)
+    setContactInfoOpen(false)
+    setMessageInfoOpen(false)
+    setCameraSharePhoto(null)
+    closeSwipeActions()
     loadAgentData()
   }
 
@@ -7517,6 +7596,139 @@ export const PhoneChat: React.FC = () => {
           {content}
         </div>
       </div>
+    )
+  }
+
+  const renderAgentHubChatButton = (contact: ChatContact) => {
+    const subtitle = showLastMessagePreview ? getChatPreview(contact) : getContactDetail(contact)
+    const dateLabel = formatMessageDate(contact.lastMessageDate || contact.createdAt)
+    const unreadCount = Number(contact.unreadCount || 0)
+    const hasUnread = showUnreadIndicators && unreadCount > 0
+    const isMuted = mutedChatIdSet.has(contact.id)
+
+    return (
+      <button
+        key={contact.id}
+        type="button"
+        className={`${styles.chatItem} ${styles.aiAgentHubChatItem} ${hasUnread ? styles.chatItemUnread : ''}`}
+        onClick={() => {
+          setAiAgentHubOpen(false)
+          setAgentPickerOpen(false)
+          handleSelectContact(contact)
+        }}
+      >
+        {renderAvatar(contact, { showChannelBadge: true, showAgentBadge: true })}
+        <span className={styles.chatMain}>
+          <strong>{getContactName(contact)}</strong>
+          <small>{subtitle}</small>
+        </span>
+        <span className={`${styles.chatMeta} ${hasUnread ? styles.chatMetaUnread : ''}`}>
+          {dateLabel && <small className={hasUnread ? styles.chatUnreadTime : undefined}>{dateLabel}</small>}
+          {isMuted && (
+            <span className={styles.chatMutedIcon} aria-label="Chat silenciado">
+              <BellOff size={13} />
+            </span>
+          )}
+          {hasUnread && <i className={styles.chatUnreadBadge} aria-label={`${unreadCount} mensajes no leídos`}>{unreadCount > 9 ? '9+' : unreadCount}</i>}
+        </span>
+      </button>
+    )
+  }
+
+  const renderAIAgentHubScreen = () => {
+    if (!aiAgentHubOpen) return null
+
+    const activeLabel = agentEnabled ? 'Encendida' : 'Apagada'
+    const agentCountLabel = publishedAgentCount === 1
+      ? '1 agente publicado'
+      : `${publishedAgentCount} agentes publicados`
+
+    return (
+      <section className={`${styles.aiAgentHubScreen} ${styles.aiAgentHubScreenOpen}`} aria-label="Inteligencia artificial">
+        <header className={styles.aiAgentHubHeader}>
+          <button
+            type="button"
+            className={styles.backButton}
+            onClick={() => {
+              setAiAgentHubOpen(false)
+              setAgentPickerOpen(false)
+            }}
+            aria-label="Volver a chats"
+          >
+            <ChevronLeft size={32} />
+          </button>
+          <strong>Inteligencia artificial</strong>
+          <button
+            type="button"
+            className={styles.aiAgentHubHeaderAction}
+            onClick={openAgentSelectorScreen}
+            aria-label="Elegir agentes"
+          >
+            <Bot size={19} />
+          </button>
+        </header>
+
+        <div className={styles.aiAgentHubContent} data-phone-chat-scrollable="true">
+          <section className={styles.aiAgentHubHero} aria-label="Control de inteligencia artificial">
+            <span className={`${styles.aiAgentHubRobot} ${agentEnabled ? styles.aiAgentHubRobotOn : styles.aiAgentHubRobotOff}`}>
+              {renderAgentRobotGlyph(agentEnabled)}
+            </span>
+            <div className={styles.aiAgentHubCopy}>
+              <p>{activeLabel}</p>
+              <h2>Agente conversacional</h2>
+              <span>{agentEnabled ? `${agentCountLabel} atendiendo chats.` : `${agentCountLabel}; toca encender para activarlos.`}</span>
+            </div>
+            <div className={styles.aiAgentHubActions}>
+              <button
+                type="button"
+                className={`${styles.aiAgentHubPowerButton} ${agentEnabled ? styles.aiAgentHubPowerButtonOn : ''}`}
+                onClick={toggleAgentGlobalEnabled}
+                disabled={agentConfigSaving}
+              >
+                {agentConfigSaving ? <Loader2 size={19} className={styles.spinIcon} /> : <Power size={19} />}
+                <span>{agentEnabled ? 'Apagar' : 'Encender'}</span>
+              </button>
+              <button type="button" className={styles.aiAgentHubAgentsButton} onClick={openAgentSelectorScreen}>
+                <Bot size={18} />
+                <span>Agentes</span>
+              </button>
+            </div>
+          </section>
+
+          <div className={styles.aiAgentHubSearch}>
+            <Search size={20} />
+            <input
+              value={aiAgentHubQuery}
+              onChange={(event) => setAiAgentHubQuery(event.target.value)}
+              placeholder="Buscar chats tomados por IA"
+              aria-label="Buscar chats tomados por IA"
+            />
+            {aiAgentHubQuery && (
+              <button type="button" onClick={() => setAiAgentHubQuery('')} aria-label="Limpiar búsqueda">
+                <X size={16} />
+              </button>
+            )}
+          </div>
+
+          <section className={styles.aiAgentHubChatList} aria-label="Chats tomados por el agente">
+            {agentHubChatRows.length ? (
+              agentHubChatRows.map((contact) => renderAgentHubChatButton(contact))
+            ) : (
+              <div className={styles.emptyChats}>
+                <span className={styles.emptyChatsIcon}>
+                  <Bot size={30} />
+                </span>
+                <strong>Sin chats tomados</strong>
+                <small>
+                  {agentEnabled
+                    ? 'Cuando un agente publicado atienda una conversación, aparecerá aquí.'
+                    : 'Enciende la inteligencia artificial para ver los chats que tome.'}
+                </small>
+              </div>
+            )}
+          </section>
+        </div>
+      </section>
     )
   }
 
@@ -11130,9 +11342,20 @@ export const PhoneChat: React.FC = () => {
     if (agentMenuSection === 'agents') {
       return (
         <>
-          <button type="button" className={styles.agentMenuBack} onClick={() => setAgentMenuSection('menu')}>
+          <button
+            type="button"
+            className={styles.agentMenuBack}
+            onClick={() => {
+              if (agentPickerOpen) {
+                setAgentPickerOpen(false)
+                setAgentMenuSection('menu')
+                return
+              }
+              setAgentMenuSection('menu')
+            }}
+          >
             <ChevronLeft size={18} />
-            Volver al menú
+            {agentPickerOpen ? 'Volver a IA' : 'Volver al menú'}
           </button>
           <div className={styles.agentMenuBody} data-phone-chat-scrollable="true">
             <section className={styles.agentMenuSection} aria-label="Lista de agentes">
@@ -11562,20 +11785,6 @@ export const PhoneChat: React.FC = () => {
           )}
         </section>
 
-        {selectedAgentDef ? (
-          renderAgentOrderControls(selectedAgentDef)
-        ) : (
-          <section className={styles.agentMenuSection} aria-label="Orden del chat">
-            <div className={styles.agentMenuSectionHeader}>
-              <span>Orden del chat</span>
-              <small>Sin agente</small>
-            </div>
-            <p className={styles.agentMenuHint}>
-              Cuando exista un agente, aquí podrás ocultar atendidas y silenciar atendidas para ese agente.
-            </p>
-          </section>
-        )}
-
         <section className={styles.agentMenuSection} aria-label="Bandejas del agente">
           <div className={styles.agentMenuSectionHeader}>
             <span>Bandejas</span>
@@ -11595,6 +11804,16 @@ export const PhoneChat: React.FC = () => {
           </div>
         </section>
       </div>
+    )
+  }
+
+  const renderAgentPickerScreen = () => {
+    if (!agentPickerOpen) return null
+
+    return (
+      <section className={`${styles.agentPickerScreen} ${styles.contactInfoScreenOpen}`} aria-label="Seleccionar y configurar agentes">
+        {renderAgentMenuSheet()}
+      </section>
     )
   }
 
@@ -12001,11 +12220,13 @@ export const PhoneChat: React.FC = () => {
         {renderMessageInfoScreen()}
         {renderContactInfoScreen()}
         {renderCameraShareScreen()}
+        {renderAIAgentHubScreen()}
+        {renderAgentPickerScreen()}
       </PhonePageTransition>
 
       {renderMessageActionMenu()}
 
-      {deviceMode !== 'tablet' && !conversationOpen && !cameraSharePhoto && <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />}
+      {deviceMode !== 'tablet' && !conversationOpen && !cameraSharePhoto && !aiAgentHubOpen && !agentPickerOpen && <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />}
 
       <input
         ref={cameraInputRef}
