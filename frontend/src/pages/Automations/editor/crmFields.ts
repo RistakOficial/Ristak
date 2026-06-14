@@ -150,8 +150,8 @@ export interface CrmOperator {
 
 export const OPERATORS_BY_TYPE: Record<CrmFieldType, CrmOperator[]> = {
   text: [
-    { value: 'is', label: 'coincide con' },
-    { value: 'is_not', label: 'no coincide con' },
+    { value: 'is', label: 'es igual a' },
+    { value: 'is_not', label: 'no es igual a' },
     { value: 'contains', label: 'contiene' },
     { value: 'not_contains', label: 'no contiene' },
     { value: 'starts_with', label: 'empieza con' },
@@ -187,8 +187,8 @@ export const OPERATORS_BY_TYPE: Record<CrmFieldType, CrmOperator[]> = {
     { value: 'none', label: 'no contiene ninguna' }
   ],
   select: [
-    { value: 'is', label: 'coincide con' },
-    { value: 'is_not', label: 'no coincide con' },
+    { value: 'is', label: 'es igual a' },
+    { value: 'is_not', label: 'no es igual a' },
     { value: 'empty', label: 'está vacío', noValue: true },
     { value: 'not_empty', label: 'no está vacío', noValue: true }
   ],
@@ -471,8 +471,8 @@ export const TRIGGER_FILTER_OPERATORS: Array<{
   /** No requiere capturar valor (está vacío / no está vacío) */
   noValue?: boolean
 }> = [
-  { value: 'is', label: 'coincide con' },
-  { value: 'not', label: 'NO coincide con' },
+  { value: 'is', label: 'es igual a' },
+  { value: 'not', label: 'NO es igual a' },
   { value: 'contains', label: 'contiene' },
   { value: 'not_contains', label: 'NO contiene' },
   { value: 'starts_with', label: 'empieza con' },
@@ -578,7 +578,7 @@ export function validateTriggerFilters(value: unknown): string[] {
   return errors
 }
 
-/** ' y la fuente coincida con "Facebook" y el país NO coincida con "México"' */
+/** ' y la fuente es igual a "Facebook" y el país NO es igual a "México"' */
 export function triggerFiltersSentence(value: unknown): string {
   return asTriggerFilters(value)
     .filter(
@@ -593,8 +593,8 @@ export function triggerFiltersSentence(value: unknown): string {
         ? `el campo "${filter.customLabel || filter.customKey}"`
         : field?.phrase || 'el campo'
       const verbs: Record<string, string> = {
-        is: 'coincida con',
-        not: 'NO coincida con',
+        is: 'es igual a',
+        not: 'NO es igual a',
         contains: 'contenga',
         not_contains: 'NO contenga',
         starts_with: 'empiece con',
@@ -606,7 +606,7 @@ export function triggerFiltersSentence(value: unknown): string {
       const valuePart = triggerOperatorNeedsValue(filter.match)
         ? ` "${filter.valueLabel || filter.value}"`
         : ''
-      return `${joiner}${phrase} ${verbs[filter.match as TriggerFilterMatch] || 'coincida con'}${valuePart}`
+      return `${joiner}${phrase} ${verbs[filter.match as TriggerFilterMatch] || 'es igual a'}${valuePart}`
     })
     .join('')
 }

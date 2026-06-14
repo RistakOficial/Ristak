@@ -99,9 +99,9 @@ function textOperatorPhrase(subject: string, param: AgentConditionParam) {
   const value = param.value || '…'
   switch (param.operator) {
     case 'is':
-      return `${subject} es "${value}"`
+      return `${subject} es igual a "${value}"`
     case 'is_not':
-      return `${subject} no es "${value}"`
+      return `${subject} no es igual a "${value}"`
     case 'not_contains':
       return `${subject} no contiene "${value}"`
     case 'starts_with':
@@ -249,8 +249,8 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
         field: 'custom_field',
         menuLabel: 'Campo personalizado',
         operators: [
-          { id: 'is', label: 'es', valueKind: 'customFieldValue', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} es "${p.value || '…'}"` },
-          { id: 'is_not', label: 'no es', valueKind: 'customFieldValue', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} no es "${p.value || '…'}"` },
+          { id: 'is', label: 'es igual a', valueKind: 'customFieldValue', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} es igual a "${p.value || '…'}"` },
+          { id: 'is_not', label: 'no es igual a', valueKind: 'customFieldValue', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} no es igual a "${p.value || '…'}"` },
           { id: 'contains', label: 'contiene', valueKind: 'customFieldValue', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} contiene "${p.value || '…'}"` },
           { id: 'not_contains', label: 'no contiene', valueKind: 'customFieldValue', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} no contiene "${p.value || '…'}"` },
           { id: 'starts_with', label: 'empieza con', valueKind: 'customFieldValue', phrase: (p, h) => `${h.customFieldLabel(p.fieldKey)} empieza con "${p.value || '…'}"` },
@@ -423,8 +423,8 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
         field: 'product',
         menuLabel: 'Producto comprado',
         operators: [
-          { id: 'is', label: 'es', valueKind: 'text', placeholder: 'Nombre del producto', phrase: (p) => `producto "${p.value || '…'}"` },
-          { id: 'is_not', label: 'no es', valueKind: 'text', placeholder: 'Nombre del producto', phrase: (p) => `no es "${p.value || '…'}"` },
+          { id: 'is', label: 'es igual a', valueKind: 'text', placeholder: 'Nombre del producto', phrase: (p) => `producto es igual a "${p.value || '…'}"` },
+          { id: 'is_not', label: 'no es igual a', valueKind: 'text', placeholder: 'Nombre del producto', phrase: (p) => `producto no es igual a "${p.value || '…'}"` },
           { id: 'contains', label: 'contiene', valueKind: 'text', placeholder: 'Parte del nombre', phrase: (p) => `producto contiene "${p.value || '…'}"` },
           { id: 'not_contains', label: 'no contiene', valueKind: 'text', placeholder: 'Parte del nombre', phrase: (p) => `producto no contiene "${p.value || '…'}"` }
         ]
@@ -458,8 +458,8 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
         field: 'ad',
         menuLabel: 'Anuncio específico',
         operators: [
-          { id: 'is', label: 'el anuncio es', valueKind: 'ad', phrase: (p, h) => `desde el anuncio "${h.adName(p.value)}"` },
-          { id: 'is_not', label: 'el anuncio no es', valueKind: 'ad', phrase: (p, h) => `no desde "${h.adName(p.value)}"` }
+          { id: 'is', label: 'el anuncio es igual a', valueKind: 'ad', phrase: (p, h) => `el anuncio es igual a "${h.adName(p.value)}"` },
+          { id: 'is_not', label: 'el anuncio no es igual a', valueKind: 'ad', phrase: (p, h) => `el anuncio no es igual a "${h.adName(p.value)}"` }
         ]
       }
     ]
