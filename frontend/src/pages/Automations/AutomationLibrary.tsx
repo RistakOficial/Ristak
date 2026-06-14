@@ -45,7 +45,7 @@ import styles from './editor/AutomationEditor.module.css'
 /**
  * Librería de automatizaciones tipo explorador de archivos (Finder):
  * lista unificada de carpetas y flujos, navegación con ruta y flecha atrás,
- * arrastrar filas a carpetas para moverlas, checkboxes al hover para
+ * arrastrar filas a carpetas para moverlas, checkboxes siempre visibles para
  * acciones en bloque y menú contextual por fila.
  */
 
@@ -307,7 +307,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
             <ArrowLeft size={13} />
           </button>
         ) : (
-          <Workflow size={13} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
+          <Workflow size={16} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
         )}
         <span
           className={cn(styles.libPathText, currentFolder && dropTarget === 'root' && styles.libDropTarget)}
@@ -320,7 +320,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button type="button" className={styles.leftNavToggle} title="Crear nuevo">
-              <Plus size={14} />
+              <Plus size={16} />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
@@ -335,7 +335,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
           </DropdownMenuContent>
         </DropdownMenu>
         <button type="button" className={styles.leftNavToggle} title="Contraer librería" onClick={() => setCollapsed(true)}>
-          <ChevronLeft size={14} />
+          <ChevronLeft size={16} />
         </button>
       </div>
 
@@ -367,7 +367,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
 
       {/* Búsqueda */}
       <div className={styles.leftNavSearch}>
-        <Search size={12} />
+        <Search size={15} />
         <input
           data-ristak-unstyled
           value={query}
@@ -388,7 +388,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
             {...dropHandlers(folder.id)}
           >
             <span className={styles.libRowLead}>
-              <Folder size={14} style={{ color: 'rgb(217, 156, 16)' }} />
+              <Folder size={16} style={{ color: 'rgb(217, 156, 16)' }} />
             </span>
             <span className={styles.libRowName}>{folder.name}</span>
             <DropdownMenu>
@@ -399,7 +399,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
                   title="Opciones"
                   onClick={(event) => event.stopPropagation()}
                 >
-                  <MoreHorizontal size={14} />
+                  <MoreHorizontal size={16} />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" side="top">
@@ -441,7 +441,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
                 }
               }}
             >
-              {/* Checkbox al hover (como en Contactos/Pagos) */}
+              {/* Checkbox siempre visible para selección rápida */}
               <span className={styles.libRowLead}>
                 <button
                   type="button"
@@ -452,7 +452,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
                     toggleSelected(automation.id)
                   }}
                 >
-                  {isChecked && <Check size={10} />}
+                  {isChecked && <Check size={12} />}
                 </button>
               </span>
               <span className={styles.libRowText}>
@@ -471,7 +471,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({ currentAut
                     title="Opciones"
                     onClick={(event) => event.stopPropagation()}
                   >
-                    <MoreHorizontal size={14} />
+                    <MoreHorizontal size={16} />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" side="top">
