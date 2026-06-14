@@ -3470,7 +3470,7 @@
 .messageSwipeWrap {
   position: relative;
   display: flex;
-  max-width: min(74%, 560px);
+  max-width: min(72%, 548px);
   min-width: 0;
   touch-action: pan-y;
 }
@@ -3568,10 +3568,10 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  max-width: min(74%, 560px);
+  max-width: min(72%, 548px);
   min-width: 0;
-  padding: 7px 10px 5px;
-  border-radius: 12px;
+  padding: 6px 9px 5px;
+  border-radius: 11px;
   color: var(--phone-chat-text);
   background: var(--phone-chat-inbound);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
@@ -3661,9 +3661,9 @@
 
 .messageImage {
   display: block;
-  width: min(268px, 68vw);
-  max-height: 330px;
-  margin: 0 0 6px;
+  width: min(252px, 62vw);
+  max-height: 318px;
+  margin: 0 0 5px;
   border-radius: 8px;
   object-fit: cover;
   background: #d7d2c8;
@@ -3674,9 +3674,9 @@
 
 .messageVideo {
   display: block;
-  width: min(268px, 68vw);
-  max-height: 330px;
-  margin: 0 0 6px;
+  width: min(252px, 62vw);
+  max-height: 318px;
+  margin: 0 0 5px;
   border-radius: 8px;
   background: #111827;
 }
@@ -4590,24 +4590,30 @@
 }
 
 .composer {
+  --phone-chat-composer-gap: 6px;
+  --phone-chat-composer-inline: 7px;
+  --phone-chat-composer-action: 38px;
+  --phone-chat-composer-side-action: 36px;
+  --phone-chat-composer-plus: 34px;
+  --phone-chat-composer-input: 38px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: var(--phone-chat-composer-plus) minmax(0, 1fr) auto;
   align-items: end;
-  gap: 8px;
+  gap: var(--phone-chat-composer-gap);
   box-sizing: border-box;
-  min-height: calc(54px + env(safe-area-inset-bottom));
-  padding: 7px 10px max(8px, env(safe-area-inset-bottom));
+  min-height: calc(48px + env(safe-area-inset-bottom));
+  padding: 5px var(--phone-chat-composer-inline) max(6px, env(safe-area-inset-bottom));
   background: transparent;
   transition: gap 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .composerHasContent {
-  gap: 7px;
+  gap: 5px;
 }
 
 :global(html[data-phone-chat-keyboard="true"]) .composer {
-  min-height: 50px;
-  padding-bottom: 6px;
+  min-height: 46px;
+  padding-bottom: 5px;
 }
 
 .composerPlus,
@@ -4622,8 +4628,8 @@
 }
 
 .composerPlus {
-  width: 36px;
-  height: 42px;
+  width: var(--phone-chat-composer-plus);
+  height: var(--phone-chat-composer-input);
   font-size: 22px;
 }
 
@@ -4636,9 +4642,9 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: end;
-  min-height: 42px;
+  min-height: var(--phone-chat-composer-input);
   border: 1px solid var(--phone-chat-border);
-  border-radius: 21px;
+  border-radius: 20px;
   background: var(--phone-chat-surface);
   box-sizing: border-box;
   overflow: hidden;
@@ -4649,7 +4655,7 @@
 }
 
 .messageInputWrapWithSchedule {
-  grid-template-columns: minmax(0, 1fr) 38px;
+  grid-template-columns: minmax(0, 1fr) 34px;
 }
 
 .composerHasContent .messageInputWrap {
@@ -4660,9 +4666,9 @@
 .composerInput {
   box-sizing: border-box;
   width: 100%;
-  min-height: 40px;
+  min-height: 36px;
   max-height: 118px;
-  padding: 10px 8px 9px 13px;
+  padding: 8px 8px 7px 13px;
   border: 0;
   outline: none;
   color: var(--phone-chat-text);
@@ -4697,16 +4703,16 @@
 }
 
 .messageInputWrap button {
-  width: 38px;
-  height: 40px;
+  width: 34px;
+  height: 36px;
   margin-bottom: 0;
 }
 
 .composerScheduleButton {
   align-self: end;
   justify-self: end;
-  width: 38px;
-  height: 40px;
+  width: 34px;
+  height: 36px;
   color: var(--phone-chat-text);
   border-radius: 20px;
 }
@@ -4717,8 +4723,8 @@
 }
 
 .composerIconButton {
-  width: 40px;
-  height: 42px;
+  width: var(--phone-chat-composer-side-action);
+  height: var(--phone-chat-composer-input);
   border-radius: 999px;
   overflow: hidden;
   transition:
@@ -4736,11 +4742,11 @@
 
 .composerTrailingActions {
   display: grid;
-  grid-template-columns: 40px 42px;
+  grid-template-columns: var(--phone-chat-composer-side-action) var(--phone-chat-composer-action);
   align-items: end;
-  gap: 6px;
-  min-width: 88px;
-  height: 42px;
+  gap: 4px;
+  min-width: calc(var(--phone-chat-composer-side-action) + var(--phone-chat-composer-action) + 4px);
+  height: var(--phone-chat-composer-input);
   transition:
     grid-template-columns 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
     min-width 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
@@ -4748,9 +4754,9 @@
 }
 
 .composerHasContent .composerTrailingActions {
-  grid-template-columns: 0 42px;
+  grid-template-columns: 0 var(--phone-chat-composer-action);
   gap: 0;
-  min-width: 42px;
+  min-width: var(--phone-chat-composer-action);
 }
 
 .composerCameraButton {
@@ -4767,8 +4773,8 @@
 }
 
 .composerSendButton {
-  width: 42px;
-  height: 42px;
+  width: var(--phone-chat-composer-action);
+  height: var(--phone-chat-composer-input);
   color: var(--phone-chat-text-on-primary);
   background: var(--phone-chat-accent);
   box-shadow: 0 8px 18px rgba(var(--phone-chat-accent-rgb), 0.25);
