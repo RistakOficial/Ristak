@@ -477,9 +477,27 @@ const PAYMENT_FIELDS: VariableSchemaField[] = [
   field('Monto', 'monto', 'number'),
   field('Moneda', 'moneda'),
   field('Estado', 'estado'),
+  field('Producto', 'producto'),
+  field('Proveedor', 'proveedor'),
   field('Método de pago', 'metodo_pago'),
+  field('Recibo / factura', 'recibo'),
+  field('Número de factura', 'numero_factura'),
   field('Fecha', 'fecha')
 ]
+
+const PAYMENT_ACTION_OPTIONS: ConfigFieldOption[] = [
+  { value: 'successful', label: 'Pago exitoso' },
+  { value: 'failed', label: 'Error de pago' },
+  { value: 'refunded', label: 'Reembolso' },
+  { value: 'pending', label: 'Pago pendiente o incompleto' }
+]
+
+const PAYMENT_ACTION_SUMMARIES: Record<string, string> = {
+  successful: 'un pago exitoso',
+  failed: 'un error de pago',
+  refunded: 'un reembolso',
+  pending: 'un pago pendiente o incompleto'
+}
 
 const WHATSAPP_SEND_FIELDS: VariableSchemaField[] = [
   field('ID del mensaje', 'id_mensaje'),
@@ -881,41 +899,36 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-payment-received',
     kind: 'trigger',
-    label: 'Pago recibido',
+    label: 'Pagos',
     category: 'trigger-events',
-    description: 'Se activa cuando se registra un pago',
+    description: 'Se activa por pagos exitosos, errores, reembolsos o pagos incompletos',
     icon: Receipt,
     accent: 'green',
     addButtonLabel: 'Configurar pago',
-    defaultConfig: () => ({ product: '', amountOperator: 'any', amount: '' }),
+    defaultConfig: () => ({ paymentAction: '' }),
     fields: [
-      { key: 'product', label: 'Producto (opcional)', type: 'catalogSelect', catalog: 'products', advanced: true },
       {
-        key: 'amountOperator',
-        label: 'Monto',
+        key: 'paymentAction',
+        label: 'Qué pasó con el pago',
         type: 'select',
-        options: [
-          { value: 'any', label: 'Cualquier monto' },
-          { value: 'gt', label: 'Mayor que' },
-          { value: 'lt', label: 'Menor que' },
-          { value: 'eq', label: 'Igual a' }
-        ]
-      },
-      {
-        key: 'amount',
-        label: 'Cantidad',
-        type: 'number',
-        placeholder: '0',
-        showIf: (config) => str(config.amountOperator) !== 'any' && str(config.amountOperator) !== ''
+        required: true,
+        options: PAYMENT_ACTION_OPTIONS
       }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'pago',
+      baseLabel: 'Pago',
+      fields: PAYMENT_FIELDS
+    }),
     summary: (config) => {
-      const operator = str(config.amountOperator)
-      const amount = config.amount === '' || config.amount === undefined ? '' : Number(config.amount)
-      const operatorLabels: Record<string, string> = { gt: 'mayor a', lt: 'menor a', eq: 'igual a' }
-      const extra = operator !== 'any' && amount !== '' ? ` ${operatorLabels[operator] || ''} $${amount}` : ''
-      return { text: `Cuando se reciba un pago${extra}${triggerFiltersSentence(config.filters)}` }
+      const action = str(config.paymentAction)
+      return {
+        text: action
+          ? `Cuando ocurra ${PAYMENT_ACTION_SUMMARIES[action] || 'un evento de pago'}${triggerFiltersSentence(config.filters)}`
+          : undefined,
+        empty: 'Elige qué acción del pago inicia la automatización'
+      }
     }
   },
   {
@@ -1094,6 +1107,7 @@ const TRIGGERS: NodeDefinition[] = [
     icon: RotateCcw,
     accent: 'green',
     addButtonLabel: 'Configurar reembolso',
+    hiddenFromPicker: true,
     defaultConfig: () => ({ product: '', amount: '' }),
     fields: [
       { key: 'product', label: 'Producto (opcional)', type: 'catalogSelect', catalog: 'products', advanced: true },

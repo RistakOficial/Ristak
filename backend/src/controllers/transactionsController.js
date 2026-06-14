@@ -1021,6 +1021,27 @@ export const refundTransaction = async (req, res) => {
 
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
+      import('../services/automationEngine.js')
+        .then(engine => engine.handleAutomationEvent('refund', {
+          contactId: transaction.contact_id,
+          paymentId: transaction.id || id,
+          amount: transaction.amount,
+          currency: transaction.currency,
+          status: 'refunded',
+          paymentStatus: 'refunded',
+          product: transaction.description || transaction.title || '',
+          provider: transaction.payment_method || '',
+          paymentMethod: transaction.payment_method || '',
+          paymentMode: transaction.payment_mode || '',
+          reference: transaction.reference || '',
+          title: transaction.title || '',
+          description: transaction.description || '',
+          invoiceId: transaction.ghl_invoice_id || '',
+          invoiceNumber: transaction.invoice_number || '',
+          receipt: transaction.reference || transaction.invoice_number || transaction.ghl_invoice_id || '',
+          paymentDate: transaction.date || transaction.created_at || ''
+        }))
+        .catch(() => {})
     }
 
     logger.success(`Transacción reembolsada: ${id}`)
@@ -1067,6 +1088,27 @@ export const voidTransaction = async (req, res) => {
     await db.run('UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['void', id])
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
+      import('../services/automationEngine.js')
+        .then(engine => engine.handleAutomationEvent('payment-received', {
+          contactId: transaction.contact_id,
+          paymentId: transaction.id || id,
+          amount: transaction.amount,
+          currency: transaction.currency,
+          status: 'void',
+          paymentStatus: 'void',
+          product: transaction.description || transaction.title || '',
+          provider: transaction.payment_method || '',
+          paymentMethod: transaction.payment_method || '',
+          paymentMode: transaction.payment_mode || '',
+          reference: transaction.reference || '',
+          title: transaction.title || '',
+          description: transaction.description || '',
+          invoiceId: transaction.ghl_invoice_id || '',
+          invoiceNumber: transaction.invoice_number || '',
+          receipt: transaction.reference || transaction.invoice_number || transaction.ghl_invoice_id || '',
+          paymentDate: transaction.date || transaction.created_at || ''
+        }))
+        .catch(() => {})
     }
 
     logger.success(`Transacción anulada: ${id}`)

@@ -161,6 +161,65 @@ function triggerLinkDisplayName(ctx = {}) {
   return String(ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ctx.publicId || ctx.link || '')
 }
 
+const SUCCESS_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'successful'])
+const FAILED_PAYMENT_STATUSES = new Set(['failed', 'failure', 'error', 'declined', 'canceled', 'cancelled', 'void', 'voided', 'overdue'])
+const REFUNDED_PAYMENT_STATUSES = new Set(['refunded', 'refund', 'partially_refunded'])
+const PENDING_PAYMENT_STATUSES = new Set([
+  'pending',
+  'partial',
+  'partially_paid',
+  'incomplete',
+  'requires_action',
+  'requires_payment_method',
+  'processing',
+  'payment_processing',
+  'draft',
+  'sent'
+])
+
+function normalizePaymentEventAction(value) {
+  const normalized = normalizeText(value)
+  if (!normalized) return ''
+  if (SUCCESS_PAYMENT_STATUSES.has(normalized)) return 'successful'
+  if (FAILED_PAYMENT_STATUSES.has(normalized)) return 'failed'
+  if (REFUNDED_PAYMENT_STATUSES.has(normalized)) return 'refunded'
+  if (PENDING_PAYMENT_STATUSES.has(normalized)) return 'pending'
+  return normalized
+}
+
+function paymentActionFromContext(ctx = {}, eventType = '') {
+  if (eventType === 'refund') return 'refunded'
+  return normalizePaymentEventAction(
+    ctx.paymentAction ||
+    ctx.paymentStatus ||
+    ctx.payment_status ||
+    ctx.status ||
+    ''
+  )
+}
+
+function paymentActionMatches(configAction, ctx = {}, eventType = '') {
+  const wanted = normalizeText(configAction) || 'successful'
+  if (wanted === 'any') return true
+  const actual = paymentActionFromContext(ctx, eventType) || 'successful'
+  return actual === wanted
+}
+
+function paymentDataFromContext(ctx = {}) {
+  return {
+    id_pago: ctx.paymentId || ctx.payment_id || ctx.id || '',
+    monto: ctx.amount ?? '',
+    moneda: ctx.currency || '',
+    estado: ctx.paymentStatus || ctx.payment_status || ctx.status || '',
+    producto: ctx.product || ctx.title || ctx.description || '',
+    proveedor: ctx.provider || ctx.paymentProvider || ctx.gateway || '',
+    metodo_pago: ctx.paymentMethod || ctx.payment_method || ctx.method || '',
+    recibo: ctx.receipt || ctx.reference || ctx.invoiceNumber || ctx.invoiceId || '',
+    numero_factura: ctx.invoiceNumber || ctx.invoice_number || '',
+    fecha: ctx.paymentDate || ctx.date || ctx.createdAt || ''
+  }
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // ---------------------------------------------------------------------------
@@ -219,6 +278,21 @@ function buildVariableMap(ctx) {
     'enlace_disparo.destino_final': ctx.destinationUrl || '',
     'enlace_disparo.fecha_disparo': ctx.clickedAt || '',
     'automation.name': ctx.automationName || ''
+  }
+  const payment = paymentDataFromContext(ctx)
+  if (Object.values(payment).some((value) => value !== '')) {
+    setDeepVariable(map, 'pago', payment)
+    setDeepVariable(map, 'pago_1', payment)
+    map['payment.id'] = String(payment.id_pago ?? '')
+    map['payment.amount'] = String(payment.monto ?? '')
+    map['payment.currency'] = String(payment.moneda ?? '')
+    map['payment.status'] = String(payment.estado ?? '')
+    map['payment.product'] = String(payment.producto ?? '')
+    map['payment.provider'] = String(payment.proveedor ?? '')
+    map['payment.method'] = String(payment.metodo_pago ?? '')
+    map['payment.receipt'] = String(payment.recibo ?? '')
+    map['payment.invoice_number'] = String(payment.numero_factura ?? '')
+    map['payment.date'] = String(payment.fecha ?? '')
   }
   Object.entries(custom).forEach(([key, value]) => {
     map[`contact.custom.${key}`] = String(value ?? '')
@@ -285,9 +359,15 @@ function filterFieldValue(filter, ctx) {
     // Campos del evento (cita, pago, anuncio…)
     case 'calendar': return ctx.calendarId || null
     case 'appointment_type': return ctx.appointmentType || null
+    case 'payment_status': return ctx.paymentStatus || ctx.payment_status || ctx.status || null
+    case 'amount': return ctx.amount ?? null
     case 'product': return ctx.product || null
     case 'currency': return ctx.currency || null
-    case 'provider': return ctx.provider || null
+    case 'provider': return ctx.provider || ctx.paymentProvider || ctx.gateway || null
+    case 'payment_method': return ctx.paymentMethod || ctx.payment_method || ctx.method || null
+    case 'payment_id': return ctx.paymentId || ctx.payment_id || ctx.id || null
+    case 'receipt': return ctx.receipt || ctx.reference || ctx.invoiceNumber || ctx.invoiceId || ctx.title || ctx.description || null
+    case 'invoice_number': return ctx.invoiceNumber || ctx.invoice_number || null
     case 'campaign': return ctx.campaign || null
     case 'link': return ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ''
     case 'trigger_link': return ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ''
@@ -396,6 +476,7 @@ function triggerMatches(trigger, eventType, ctx) {
 
     case 'payment-received': {
       if (trigger.type !== 'trigger-payment-received') return false
+      if (!paymentActionMatches(config.paymentAction, ctx, eventType)) return false
       const operator = str(config.amountOperator) || 'any'
       if (operator !== 'any') {
         const amount = Number(ctx.amount) || 0
@@ -410,7 +491,10 @@ function triggerMatches(trigger, eventType, ctx) {
     }
 
     case 'refund':
-      return trigger.type === 'trigger-refund'
+      if (trigger.type === 'trigger-refund') return true
+      if (trigger.type !== 'trigger-payment-received') return false
+      if (!str(config.paymentAction)) return false
+      return paymentActionMatches(config.paymentAction, ctx, eventType)
 
     case 'webhook-received': {
       if (trigger.type !== 'trigger-incoming-webhook') return false
@@ -437,7 +521,16 @@ const EVENT_DESCRIPTIONS = {
   'form-submitted': (ctx) => `envió el formulario${ctx.formName ? ` "${ctx.formName}"` : ''}`,
   'appointment-booked': () => 'agendó una cita',
   'appointment-status': (ctx) => `la cita cambió a ${ctx.status}`,
-  'payment-received': (ctx) => `se recibió un pago${ctx.amount ? ` de $${ctx.amount}` : ''}`,
+  'payment-received': (ctx) => {
+    const labels = {
+      successful: 'se registró un pago exitoso',
+      failed: 'se registró un error de pago',
+      refunded: 'se registró un reembolso',
+      pending: 'se registró un pago pendiente o incompleto'
+    }
+    const action = paymentActionFromContext(ctx, 'payment-received')
+    return `${labels[action] || 'se registró un evento de pago'}${ctx.amount ? ` de $${ctx.amount}` : ''}`
+  },
   refund: () => 'se procesó un reembolso',
   'webhook-received': () => 'se recibió un webhook',
   'trigger-link-clicked': (ctx) => `recibió un clic de disparo${ctx.triggerLinkName ? ` en "${ctx.triggerLinkName}"` : ''}`
@@ -459,6 +552,12 @@ function ruleFieldValue(rule, ctx) {
     case 'conv-last-received': return ctx.messageText || ''
     case 'conv-keyword': return ctx.messageText || ''
     case 'conv-replied': return ctx.messageText ? 'true' : 'false'
+    case 'pay-has': return (ctx.paymentId || ctx.payment_id || ctx.amount || ctx.status || ctx.paymentStatus) ? 'true' : 'false'
+    case 'pay-status': return ctx.paymentStatus || ctx.payment_status || ctx.status || ''
+    case 'pay-amount': return ctx.amount ?? ''
+    case 'pay-product': return ctx.product || ctx.title || ctx.description || ''
+    case 'pay-currency': return ctx.currency || ''
+    case 'pay-date': return ctx.paymentDate || ctx.date || ctx.createdAt || ''
     case 'tag-has':
     case 'tag-any-of':
       return (contact.tagKeys || contact.tags || []).join(' , ')

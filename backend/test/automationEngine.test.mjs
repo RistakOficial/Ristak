@@ -39,6 +39,24 @@ test('renderTemplate resuelve payloads de webhook con objetos y arrays anidados'
   assert.equal(renderTemplate('{{webhook.mixed[1].deep.value}}', { payload }), '7')
 })
 
+test('renderTemplate expone datos del pago para acciones posteriores', () => {
+  const paymentCtx = {
+    paymentId: 'pay_123',
+    amount: 1499,
+    currency: 'MXN',
+    paymentStatus: 'paid',
+    product: 'Curso',
+    provider: 'stripe',
+    paymentMethod: 'card',
+    reference: 'Invoice #INV-55',
+    invoiceNumber: 'INV-55',
+    paymentDate: '2026-06-14T10:00:00.000Z'
+  }
+  assert.equal(renderTemplate('{{pago_1.monto}} {{pago_1.moneda}}', paymentCtx), '1499 MXN')
+  assert.equal(renderTemplate('{{payment.product}}', paymentCtx), 'Curso')
+  assert.equal(renderTemplate('{{payment.invoice_number}}', paymentCtx), 'INV-55')
+})
+
 test('filtersMatch: coincide / NO coincide / contiene / NO contiene', () => {
   assert.equal(filtersMatch([{ field: 'source', match: 'is', value: 'facebook' }], ctx), true)
   assert.equal(filtersMatch([{ field: 'source', match: 'not', value: 'Facebook' }], ctx), false)
@@ -52,6 +70,25 @@ test('filtersMatch: coincide / NO coincide / contiene / NO contiene', () => {
   assert.equal(filtersMatch([{ field: 'calendar', match: 'is', value: 'x' }], ctx), true)
   // Un campo de contacto reconocido cuyo valor no coincide sí bloquea
   assert.equal(filtersMatch([{ field: 'stage', match: 'is', value: 'x' }], ctx), false)
+})
+
+test('filtersMatch: filtra datos completos del evento de pago', () => {
+  const paymentCtx = {
+    paymentId: 'pay_123',
+    amount: 1499,
+    currency: 'MXN',
+    paymentStatus: 'refunded',
+    product: 'Curso',
+    provider: 'stripe',
+    paymentMethod: 'card',
+    reference: 'Invoice #INV-55',
+    invoiceNumber: 'INV-55'
+  }
+  assert.equal(filtersMatch([{ field: 'payment_status', match: 'is', value: 'refunded' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'amount', match: 'is', value: '1499' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'payment_method', match: 'contains', value: 'card' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'receipt', match: 'contains', value: 'INV-55' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'provider', match: 'is', value: 'paypal' }], paymentCtx), false)
 })
 
 test('evaluateConditionNode: una rama → Sí/No', () => {
@@ -221,6 +258,114 @@ test('logic-wait por clic de disparo reanuda cuando llega el trigger link config
     assert.equal(enrollment.current_node_id, 'done')
     const log = JSON.parse(enrollment.log)
     assert.equal(log.some((entry) => String(entry.detail || '').includes('Clic de disparo recibido')), true)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('trigger Pagos distingue acción del pago y filtros del recibo', async () => {
+  const suffix = randomUUID()
+  const contactId = `rstk_contact_payment_trigger_${suffix}`
+  const automationId = `automation_payment_trigger_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-payment',
+              type: 'trigger-payment-received',
+              config: {
+                paymentAction: 'refunded',
+                filters: [{ field: 'provider', match: 'is', value: 'stripe' }]
+              }
+            }
+          ]
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: {}
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `payment-trigger-${suffix}@example.com`,
+        'Contacto Pago',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test pagos refund', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('payment-received', {
+      contactId,
+      paymentStatus: 'failed',
+      provider: 'stripe',
+      amount: 1200,
+      currency: 'MXN'
+    })
+
+    let enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(Boolean(enrollment), false)
+
+    await handleAutomationEvent('refund', {
+      contactId,
+      paymentStatus: 'refunded',
+      provider: 'paypal',
+      amount: 1200,
+      currency: 'MXN'
+    })
+
+    enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(Boolean(enrollment), false)
+
+    await handleAutomationEvent('refund', {
+      contactId,
+      paymentId: `pay_${suffix}`,
+      paymentStatus: 'refunded',
+      provider: 'stripe',
+      paymentMethod: 'card',
+      product: 'Curso',
+      amount: 1200,
+      currency: 'MXN',
+      invoiceNumber: `INV-${suffix.slice(0, 6)}`
+    })
+
+    enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(enrollment.status, 'completed')
+    assert.equal(enrollment.current_node_id, 'done')
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])

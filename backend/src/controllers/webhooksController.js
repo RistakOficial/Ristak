@@ -212,6 +212,67 @@ function normalizePaymentAmount(value) {
   return Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0;
 }
 
+function buildAutomationPaymentPayload(input = {}) {
+  const status = firstValue(input.paymentStatus, input.status) || '';
+  const paymentId = firstValue(input.paymentId, input.payment_id, input.id) || '';
+  const invoiceId = firstValue(input.invoiceId, input.invoice_id, input.ghl_invoice_id) || '';
+  const invoiceNumber = firstValue(input.invoiceNumber, input.invoice_number) || '';
+  const title = firstValue(input.title, input.name, input.product, input.description) || '';
+  const description = firstValue(input.description, input.product, title) || '';
+  const product = firstValue(input.product, description, title) || '';
+  const provider = firstValue(input.provider, input.paymentProvider, input.gateway, input.processor, input.paymentMethod, input.payment_method) || '';
+  const paymentMethod = firstValue(input.paymentMethod, input.payment_method, input.method, provider) || '';
+  const reference = firstValue(input.reference, input.receipt, invoiceNumber, invoiceId, paymentId) || '';
+  return {
+    contactId: input.contactId || input.contact_id || '',
+    paymentId,
+    amount: input.amount,
+    currency: input.currency || '',
+    status,
+    paymentStatus: status,
+    product,
+    provider,
+    paymentProvider: provider,
+    paymentMethod,
+    paymentMode: input.paymentMode || input.payment_mode || '',
+    reference,
+    title,
+    description,
+    invoiceId,
+    invoiceNumber,
+    receipt: firstValue(input.receipt, reference, invoiceNumber, invoiceId, title) || '',
+    paymentDate: input.paymentDate || input.date || input.createdAt || input.created_at || '',
+    date: input.paymentDate || input.date || input.createdAt || input.created_at || ''
+  };
+}
+
+function buildAutomationPaymentPayloadFromRow(row = {}, overrides = {}) {
+  return buildAutomationPaymentPayload({
+    contactId: row.contact_id,
+    paymentId: row.id,
+    amount: row.amount,
+    currency: row.currency,
+    status: row.status,
+    paymentMethod: row.payment_method,
+    paymentMode: row.payment_mode,
+    reference: row.reference,
+    title: row.title,
+    description: row.description,
+    invoiceId: row.ghl_invoice_id,
+    invoiceNumber: row.invoice_number,
+    paymentDate: row.date,
+    createdAt: row.created_at,
+    ...overrides
+  });
+}
+
+function emitAutomationPaymentEvent(eventType, payload) {
+  if (!payload?.contactId) return;
+  import('../services/automationEngine.js')
+    .then(engine => engine.handleAutomationEvent(eventType, payload))
+    .catch(() => {});
+}
+
 function resolvePaymentPlanId(data, plan) {
   return firstValue(
     data.paymentPlanId,
@@ -698,6 +759,7 @@ export const handlePaymentWebhook = async (req, res) => {
 
     // Extraer método de pago
     const paymentMethod = payment.method || payment.gateway || payment.payment_method || payment.paymentMethod || null;
+    const paymentProvider = payment.gateway || payment.provider || payment.processor || data.gateway || data.provider || paymentMethod || null;
 
     // Crear referencia con el número de factura
     const sourceMeta = maybeJsonObject(payment.entitySourceMeta || payment.entity_source_meta || data.entitySourceMeta || data.entity_source_meta);
@@ -885,11 +947,25 @@ export const handlePaymentWebhook = async (req, res) => {
         currency,
         paymentMode
       });
-
-      import('../services/automationEngine.js')
-        .then(engine => engine.handleAutomationEvent('payment-received', { contactId, amount, product: description || '' }))
-        .catch(() => {});
     }
+
+    emitAutomationPaymentEvent('payment-received', buildAutomationPaymentPayload({
+      contactId,
+      paymentId: effectiveInvoiceId || paymentId,
+      amount,
+      currency,
+      status,
+      paymentMethod,
+      provider: paymentProvider,
+      paymentMode,
+      reference,
+      title,
+      description,
+      invoiceId: effectiveInvoiceId || invoiceId || '',
+      invoiceNumber,
+      paymentDate,
+      createdAt
+    }));
 
     logger.info(`✅ Pago ${paymentId} procesado exitosamente para contacto ${contactId}`);
     res.status(200).json({ success: true, message: 'Pago procesado' });
@@ -1378,8 +1454,8 @@ export const handleRefundWebhook = async (req, res) => {
       return res.status(200).json({ success: true, message: 'Webhook recibido' });
     }
 
-    // Obtener el contactId del pago antes de actualizarlo
-    const payment = await db.get('SELECT contact_id FROM payments WHERE id = ?', [refundId]);
+    // Obtener el pago completo antes de actualizarlo para mandar contexto real a automatizaciones.
+    const payment = await db.get('SELECT * FROM payments WHERE id = ?', [refundId]);
 
     if (!payment) {
       logger.warn(`Pago ${refundId} no encontrado para reembolso`);
@@ -1396,9 +1472,11 @@ export const handleRefundWebhook = async (req, res) => {
     if (payment.contact_id) {
       await updateSingleContactStats(payment.contact_id);
       logger.info(`✅ Reembolso ${refundId} procesado exitosamente para contacto ${payment.contact_id}`);
-      import('../services/automationEngine.js')
-        .then(engine => engine.handleAutomationEvent('refund', { contactId: payment.contact_id, amount: payment.amount }))
-        .catch(() => {});
+      emitAutomationPaymentEvent('refund', buildAutomationPaymentPayloadFromRow(payment, {
+        status: 'refunded',
+        paymentStatus: 'refunded',
+        paymentId: refundId
+      }));
     } else {
       logger.info(`✅ Reembolso ${refundId} procesado exitosamente`);
     }
@@ -1535,13 +1613,16 @@ export const handleInvoiceWebhook = async (req, res) => {
 
       logger.success(`Estado actualizado a '${newStatus}' para invoice: ${invoiceId}`);
 
+      const payment = await db.get(
+        `SELECT id, contact_id, amount, currency, status, payment_method, payment_mode,
+                reference, title, description, date, created_at, ghl_invoice_id, invoice_number
+         FROM payments
+         WHERE ghl_invoice_id = ?`,
+        [invoiceId]
+      );
+
       // Si fue pagado, actualizar estadísticas del contacto
       if (newStatus === 'paid') {
-        const payment = await db.get(
-          'SELECT contact_id, amount, currency, status, payment_mode FROM payments WHERE ghl_invoice_id = ?',
-          [invoiceId]
-        );
-
         if (payment && payment.contact_id) {
           await updateSingleContactStats(payment.contact_id);
           logger.success(`Estadísticas actualizadas para contacto: ${payment.contact_id}`);
@@ -1561,15 +1642,21 @@ export const handleInvoiceWebhook = async (req, res) => {
       // Si fue reembolsado o anulado, recalcular estadísticas para que el pago
       // deje de contar y el contacto no quede marcado como cliente
       if (newStatus === 'refunded' || newStatus === 'void') {
-        const payment = await db.get(
-          'SELECT contact_id FROM payments WHERE ghl_invoice_id = ?',
-          [invoiceId]
-        );
-
         if (payment && payment.contact_id) {
           await updateSingleContactStats(payment.contact_id);
           logger.success(`Estadísticas recalculadas tras ${newStatus === 'void' ? 'anulación' : 'reembolso'} para contacto: ${payment.contact_id}`);
         }
+      }
+
+      if (payment && payment.contact_id) {
+        emitAutomationPaymentEvent(
+          newStatus === 'refunded' ? 'refund' : 'payment-received',
+          buildAutomationPaymentPayloadFromRow(payment, {
+            status: newStatus,
+            paymentStatus: newStatus,
+            invoiceId
+          })
+        );
       }
     }
 

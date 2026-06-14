@@ -56,9 +56,15 @@ const APPOINTMENT_STATUS_OPTIONS = [
 
 const PAYMENT_STATUS_OPTIONS = [
   { value: 'paid', label: 'Pagado' },
+  { value: 'succeeded', label: 'Exitoso' },
   { value: 'pending', label: 'Pendiente' },
+  { value: 'partial', label: 'Parcial / incompleto' },
   { value: 'failed', label: 'Fallido' },
-  { value: 'refunded', label: 'Reembolsado' }
+  { value: 'overdue', label: 'Vencido' },
+  { value: 'void', label: 'Anulado' },
+  { value: 'refunded', label: 'Reembolsado' },
+  { value: 'draft', label: 'Borrador' },
+  { value: 'sent', label: 'Enviado' }
 ]
 
 export const CRM_FIELDS: CrmField[] = [
@@ -472,9 +478,9 @@ export const TRIGGER_FILTER_OPERATORS: Array<{
   noValue?: boolean
 }> = [
   { value: 'is', label: 'es igual a' },
-  { value: 'not', label: 'NO es igual a' },
+  { value: 'not', label: 'no es igual a' },
   { value: 'contains', label: 'contiene' },
-  { value: 'not_contains', label: 'NO contiene' },
+  { value: 'not_contains', label: 'no contiene' },
   { value: 'starts_with', label: 'empieza con' },
   { value: 'ends_with', label: 'termina con' },
   { value: 'empty', label: 'está vacío', noValue: true },
@@ -508,9 +514,15 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'channel', label: 'Canal del mensaje', phrase: 'el canal', options: CHANNEL_FIELD_OPTIONS, category: 'Mensaje', appliesTo: ['message'] },
   { id: 'calendar', label: 'Calendario', phrase: 'el calendario', catalog: 'calendars', category: 'Cita', appliesTo: ['appointment'] },
   { id: 'appointment_type', label: 'Tipo de cita', phrase: 'el tipo de cita', category: 'Cita', appliesTo: ['appointment'] },
+  { id: 'payment_status', label: 'Estado del pago', phrase: 'el estado del pago', options: PAYMENT_STATUS_OPTIONS, category: 'Pago', appliesTo: ['payment'] },
+  { id: 'amount', label: 'Monto', phrase: 'el monto', category: 'Pago', appliesTo: ['payment'] },
   { id: 'product', label: 'Producto / servicio', phrase: 'el producto', catalog: 'products', category: 'Pago', appliesTo: ['payment'] },
   { id: 'currency', label: 'Moneda', phrase: 'la moneda', category: 'Pago', appliesTo: ['payment'] },
   { id: 'provider', label: 'Proveedor de pago', phrase: 'el proveedor', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'payment_method', label: 'Método de pago', phrase: 'el método de pago', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'payment_id', label: 'ID del pago', phrase: 'el ID del pago', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'receipt', label: 'Recibo / factura', phrase: 'el recibo', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'invoice_number', label: 'Número de factura', phrase: 'el número de factura', category: 'Pago', appliesTo: ['payment'] },
   { id: 'campaign', label: 'Campaña', phrase: 'la campaña', catalog: 'campaigns', category: 'Anuncio', appliesTo: ['ads'] },
   { id: 'form_field', label: 'Campo del formulario', phrase: 'el campo del formulario', category: 'Formulario', appliesTo: ['form'] },
   // Atribución de anuncios (vive en el contacto: disponible siempre)
