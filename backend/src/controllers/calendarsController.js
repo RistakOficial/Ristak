@@ -308,7 +308,7 @@ export async function getGoogleCalendarConnectUrl(req, res) {
     }
 
     const data = await createCentralGoogleCalendarConnectUrl({
-      returnPath: req.body?.returnPath || req.body?.return_path || '/integrations/google-calendar'
+      returnPath: req.body?.returnPath || req.body?.return_path || '/settings/calendars/google'
     });
 
     if (!data.url) {

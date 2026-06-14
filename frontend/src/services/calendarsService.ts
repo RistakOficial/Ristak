@@ -243,8 +243,12 @@ export const calendarsService = {
   },
 
   async getGoogleConnectUrl(): Promise<GoogleCalendarConnectUrl> {
+    const returnPath = typeof window !== 'undefined'
+      ? `${window.location.pathname}${window.location.search || ''}`
+      : '/settings/calendars/google';
+
     return apiClient.post<GoogleCalendarConnectUrl>('/calendars/google-integration/connect-url', {
-      returnPath: '/integrations/google-calendar'
+      returnPath
     });
   },
 

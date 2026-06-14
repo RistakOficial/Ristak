@@ -243,7 +243,7 @@ export async function getCentralGoogleCalendarStatus() {
   return data.calendar || {}
 }
 
-export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/integrations/google-calendar' } = {}) {
+export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/settings/calendars/google' } = {}) {
   const data = await callLicenseServer('/api/license/google-calendar/connect-url', {
     return_path: returnPath
   })
