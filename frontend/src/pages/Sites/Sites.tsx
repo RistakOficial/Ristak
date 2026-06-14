@@ -1011,7 +1011,23 @@ const textToFileDataUrl = (content: string, mimeType: string) => {
   const encoded = btoa(binary)
   return `data:${mimeType};base64,${encoded}`
 }
+
+const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
+- Marca textos editables con data-rstk-editable="true", data-rstk-edit-type="heading|text|button|placeholder|form_field|image|video" y data-rstk-edit-id único.
+- Botones: usa <button type="button" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="cta-principal" data-rstk-label="Botón principal">Texto</button>.
+- Acciones de botón: usa data-rstk-button-action="url|next_page|specific_page|submit|disqualify|open_popup|close_popup" y data-rstk-button-actions='[{"id":"action-1","action":"url","buttonUrl":"https://..."}]'.
+- Si un botón envía formulario, debe vivir dentro del mismo <form data-rstk-form-id="..."> que sus campos.
+- Formularios: usa <form data-rstk-form-id="lead-form"> y campos con name, id, data-rstk-edit-type="form_field", data-rstk-label y placeholder.
+- Radio/checkbox: agrúpalos con el mismo name y usa data-rstk-choice-actions en cada input cuando una opción tenga regla.
+- Imágenes: usa <img src="..." alt="..." data-rstk-editable="true" data-rstk-edit-type="image" data-rstk-edit-id="imagen-hero">.
+- Videos: usa <video src="..." playsinline> o iframe/embed y agrega data-rstk-edit-type="video" con data-rstk-edit-id único.
+- Secciones: usa data-rstk-section="Hero|Formulario|Gracias" para que el editor ubique rápido cada bloque.
+- Evita scripts de navegación automática dentro del editor; Ristak bloquea clicks, submits y window.open mientras se edita.`.trim()
+
 const BLANK_IMPORTED_HTML = `<!doctype html>
+<!--
+${IMPORTED_HTML_AI_GUIDE}
+-->
 <html lang="es">
 <head>
   <meta charset="utf-8">
@@ -9224,6 +9240,9 @@ type ImportedEditableSelection = {
   buttonUrl?: string
   buttonPageId?: string
   buttonMessage?: string
+  buttonInsideForm?: boolean
+  codeDescriptor?: ImportedFrameElementDescriptor
+  codeRange?: ImportedCodeSourceRange
 }
 
 type ImportedInlineEditorState = {
@@ -10546,6 +10565,174 @@ const readImportedEditableSelection = (element: HTMLElement): ImportedEditableSe
   }
 }
 
+const importedFormBoundButtonActions = new Set<ImportedButtonAction>(['submit', 'disqualify'])
+
+const doImportedActionsRequireForm = (actions: ImportedButtonActionStep[]) => (
+  actions.some(step => importedFormBoundButtonActions.has(step.action))
+)
+
+const getImportedButtonFormRuleMessage = (selection: ImportedEditableSelection, actions: ImportedButtonActionStep[]) => {
+  if (selection.editType !== 'button') return ''
+  if (!doImportedActionsRequireForm(actions)) return ''
+  if (selection.buttonInsideForm !== false) return ''
+  return 'Para enviar o descalificar, este botón debe estar dentro del mismo formulario que sus campos.'
+}
+
+const escapeImportedHtmlAttribute = (value: string) => String(value || '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}[char] || char))
+
+const escapeImportedHtmlText = (value: string) => String(value || '').replace(/[&<>]/g, (char) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;'
+}[char] || char))
+
+const setImportedHtmlAttribute = (openingTag = '', attrName = '', value = '') => {
+  if (!openingTag || !attrName) return openingTag
+  const attrPattern = new RegExp(`(\\s${escapeImportedRegex(attrName)}\\s*=\\s*)("[^"]*"|'[^']*'|[^\\s>]+)`, 'i')
+  const escapedValue = escapeImportedHtmlAttribute(value)
+  if (attrPattern.test(openingTag)) {
+    return openingTag.replace(attrPattern, (_match, prefix) => `${prefix}"${escapedValue}"`)
+  }
+  const insertAt = openingTag.endsWith('/>') ? openingTag.length - 2 : openingTag.length - 1
+  const spacer = openingTag[insertAt - 1] === ' ' ? '' : ' '
+  return `${openingTag.slice(0, insertAt)}${spacer}${attrName}="${escapedValue}"${openingTag.slice(insertAt)}`
+}
+
+const getImportedCodeButtonText = (element: HTMLElement, descriptor: ImportedFrameElementDescriptor) => {
+  const tagName = element.tagName.toLowerCase()
+  if (tagName === 'input') {
+    const input = element as HTMLInputElement
+    return input.value || element.getAttribute('value') || element.getAttribute('aria-label') || descriptor.text || 'Botón'
+  }
+  return (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || descriptor.text || 'Botón')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const getImportedCodeButtonEditId = (
+  element: HTMLElement,
+  descriptor: ImportedFrameElementDescriptor,
+  range: ImportedCodeSourceRange
+) => (
+  getImportedEditableAttribute(element, 'id') ||
+  descriptor.editId ||
+  descriptor.id ||
+  descriptor.name ||
+  `code-button-${range.line}-${range.start}`
+)
+
+const readImportedCodeButtonSelection = (
+  element: HTMLElement,
+  descriptor: ImportedFrameElementDescriptor,
+  range: ImportedCodeSourceRange
+): ImportedEditableSelection => {
+  const existingSelection = readImportedEditableSelection(element)
+  const baseSelection = existingSelection?.editType === 'button'
+    ? existingSelection
+    : {
+      editId: getImportedCodeButtonEditId(element, descriptor, range),
+      editType: 'button' as ImportedEditableContentType,
+      label: getImportedEditableAttribute(element, 'label') || getImportedCodeButtonText(element, descriptor) || 'Botón',
+      value: getImportedCodeButtonText(element, descriptor),
+      tagName: element.tagName.toLowerCase(),
+      ...readImportedButtonSettings(element, 'button')
+    }
+
+  return {
+    ...baseSelection,
+    buttonInsideForm: Boolean(element.closest('form')),
+    codeDescriptor: descriptor,
+    codeRange: range
+  }
+}
+
+const serializeImportedCodeButtonActions = (actions: ImportedButtonActionStep[]) => (
+  actions.map((step, index) => ({
+    id: step.id || `action-${index + 1}`,
+    action: step.action,
+    buttonUrl: step.buttonUrl?.trim() || '',
+    buttonPageId: step.buttonPageId?.trim() || '',
+    buttonMessage: step.buttonMessage?.trim() || '',
+    automationName: step.automationName?.trim() || ''
+  }))
+)
+
+const applyImportedCodeButtonPatch = (
+  html: string,
+  selection: ImportedEditableSelection,
+  value: string,
+  actions: ImportedButtonActionStep[],
+  range: ImportedCodeSourceRange | null
+) => {
+  if (!range) return null
+  const source = String(html || '')
+  const start = range.start
+  if (start < 0 || start >= source.length) return null
+  const sourceRange = source.slice(start, range.end)
+  const startTagMatch = sourceRange.match(/^<([A-Za-z][\w:-]*)\b[^>]*>/)
+  if (!startTagMatch?.[0] || !startTagMatch[1]) return null
+
+  const tagName = startTagMatch[1].toLowerCase()
+  const firstAction = actions[0] || null
+  const actionName = firstAction?.action || 'none'
+  const serializedActions = serializeImportedCodeButtonActions(actions)
+  const cleanValue = value.trim()
+
+  let openingTag = startTagMatch[0]
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-editable', 'true')
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-type', 'button')
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-id', selection.editId)
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-label', selection.label || cleanValue || 'Botón')
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-button-action', actionName)
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-button-actions', JSON.stringify(serializedActions))
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-button-url', actionName === 'url' ? firstAction?.buttonUrl?.trim() || '' : '')
+  openingTag = setImportedHtmlAttribute(
+    openingTag,
+    'data-rstk-button-page-id',
+    ['specific_page', 'disqualify'].includes(actionName) ? firstAction?.buttonPageId?.trim() || '' : ''
+  )
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-button-message', actionName === 'disqualify' ? firstAction?.buttonMessage?.trim() || '' : '')
+
+  if (tagName === 'a') {
+    const href = actionName === 'url'
+      ? firstAction?.buttonUrl?.trim() || '#'
+      : actionName === 'specific_page' && firstAction?.buttonPageId
+        ? `?page=${encodeURIComponent(firstAction.buttonPageId.trim())}`
+        : '#'
+    openingTag = setImportedHtmlAttribute(openingTag, 'href', href)
+  }
+
+  if (tagName === 'button' || tagName === 'input') {
+    openingTag = setImportedHtmlAttribute(openingTag, 'type', actionName === 'submit' ? 'submit' : 'button')
+  }
+
+  if (tagName === 'input') {
+    openingTag = setImportedHtmlAttribute(openingTag, 'value', cleanValue)
+    return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
+  }
+
+  const closingTagPattern = new RegExp(`</${escapeImportedRegex(tagName)}\\s*>\\s*$`, 'i')
+  const closingTagMatch = sourceRange.match(closingTagPattern)
+  if (!closingTagMatch) {
+    return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
+  }
+
+  const closingStart = range.end - closingTagMatch[0].length
+  return [
+    source.slice(0, start),
+    openingTag,
+    escapeImportedHtmlText(cleanValue),
+    source.slice(closingStart, range.end),
+    source.slice(range.end)
+  ].join('')
+}
+
 // --- Side-panel summary of the form fields detected on the current page ---
 interface ImportedPanelFormField {
   key: string
@@ -11702,6 +11889,14 @@ const ImportedHtmlEditorPanel: React.FC<{
     setContentError('')
   }, [currentPageActionOptions])
 
+  const openCodeButtonEditorForElement = useCallback((
+    element: HTMLElement,
+    descriptor: ImportedFrameElementDescriptor,
+    range: ImportedCodeSourceRange
+  ) => {
+    openButtonEditorForSelection(readImportedCodeButtonSelection(element, descriptor, range))
+  }, [openButtonEditorForSelection])
+
   const openChoiceEditorForSelection = useCallback((selection: ImportedChoiceSelection) => {
     setInlineEditor(null)
     setButtonEditor(null)
@@ -11731,6 +11926,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   const clearInlineSelection = useCallback(() => {
     selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
     selectedIframeElementRef.current = null
+    selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
+    selectedCodePreviewElementRef.current = null
     setInlineEditor(null)
     setButtonEditor(null)
     setChoiceEditor(null)
@@ -12552,9 +12749,13 @@ const ImportedHtmlEditorPanel: React.FC<{
   }
 
   const targetImportedPages = importedPages.filter(page => page.id !== activeImportedPage?.id)
+  const buttonEditorFormRuleMessage = buttonEditor
+    ? getImportedButtonFormRuleMessage(buttonEditor.selection, buttonEditor.buttonActions)
+    : ''
   const canSaveButtonEditor = Boolean(
     buttonEditor &&
     buttonEditor.value.trim() &&
+    !buttonEditorFormRuleMessage &&
     !contentSaving &&
     areImportedActionsValid(buttonEditor.buttonActions, currentPageActionOptions)
   )
@@ -12653,7 +12854,32 @@ const ImportedHtmlEditorPanel: React.FC<{
   const saveButtonEditor = async () => {
     if (!buttonEditor || buttonEditor.selection.editType !== 'button') return
     const buttonActions = getUniqueImportedActionSteps(buttonEditor.buttonActions, currentPageActionOptions)
+    const formRuleMessage = getImportedButtonFormRuleMessage(buttonEditor.selection, buttonActions)
+    if (formRuleMessage) {
+      setContentError(formRuleMessage)
+      return
+    }
     const firstAction = buttonActions[0]
+
+    if (codeEditorOpen && activeCodeFile?.language === 'html') {
+      const range = buttonEditor.selection.codeDescriptor
+        ? findImportedSourceRangeForDescriptor(activeCodeValue, buttonEditor.selection.codeDescriptor)
+        : buttonEditor.selection.codeRange || null
+      const nextHtml = applyImportedCodeButtonPatch(activeCodeValue, buttonEditor.selection, buttonEditor.value, buttonActions, range)
+      if (!nextHtml) {
+        setContentError('No pude actualizar ese botón en el código. Selecciónalo otra vez desde la vista.')
+        return
+      }
+      onCodeDraftChange(activeCodeFile.path, nextHtml, activeCodeFile.content)
+      setButtonEditor(null)
+      setContentError('')
+      selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
+      selectedCodePreviewElementRef.current = null
+      setCodeSelectionNotice('Botón actualizado en el código · cambios sin guardar')
+      showToast('success', 'Botón actualizado', 'Revisa el código y guarda cuando termines.')
+      return
+    }
+
     await saveEditableContent(buttonEditor.selection, buttonEditor.value, undefined, {
       buttonActions,
       buttonAction: firstAction?.action || 'none',
@@ -12726,6 +12952,60 @@ const ImportedHtmlEditorPanel: React.FC<{
     ? resolveImportedVideoPreview(inlineEditor.value)
     : { kind: 'empty' }
 
+  const buttonEditorPanel = buttonEditor ? (
+    <div className={styles.importedButtonActionBox}>
+      <div className={styles.importedButtonActionHeader}>
+        <MousePointerClick size={17} />
+        <div>
+          <span>Botón seleccionado</span>
+          <strong>{buttonEditor.selection.label || 'Botón'}</strong>
+        </div>
+      </div>
+
+      <label className={styles.importedActionField}>
+        <span>Texto del botón</span>
+        <input
+          value={buttonEditor.value}
+          disabled={contentSaving}
+          name="rstk-imported-button-text"
+          {...importedEditorNoAutocompleteAttrs}
+          onChange={(event) => setButtonEditor(current => current ? { ...current, value: event.target.value } : current)}
+        />
+      </label>
+
+      <ImportedActionChainEditor
+        actions={buttonEditor.buttonActions}
+        targetPages={targetImportedPages}
+        actionOptions={currentPageActionOptions}
+        disabled={contentSaving}
+        onChange={(buttonActions) => setButtonEditor(current => current ? { ...current, buttonActions } : current)}
+      />
+
+      {buttonEditorFormRuleMessage && (
+        <div className={styles.importedButtonRuleWarning}>
+          <AlertTriangle size={14} />
+          <span>{buttonEditorFormRuleMessage}</span>
+        </div>
+      )}
+
+      {codeEditorOpen && (
+        <p className={styles.importedButtonCodeHint}>
+          Este cambio se escribe en el HTML como borrador. Se aplica definitivamente cuando guardes el sitio.
+        </p>
+      )}
+
+      <div className={styles.importedButtonActionFooter}>
+        <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
+          Cancelar
+        </Button>
+        <Button type="button" size="sm" onClick={() => void saveButtonEditor()} disabled={!canSaveButtonEditor} loading={contentSaving}>
+          <Save size={14} />
+          Guardar botón
+        </Button>
+      </div>
+    </div>
+  ) : null
+
   const activeCodePreviewHtml = activeCodeFile?.language === 'html'
     ? activeCodeValue
     : previewHtml
@@ -12767,6 +13047,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   useEffect(() => {
     if (!codeEditorOpen) {
       setCodeSelectionNotice('')
+      setButtonEditor(null)
+      setContentError('')
       selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
       selectedCodePreviewElementRef.current = null
     }
@@ -12825,15 +13107,30 @@ const ImportedHtmlEditorPanel: React.FC<{
         return target.closest(importedCodeSelectableSelector) as HTMLElement | null
       }
 
+      const getActionTarget = (target: Element | null) => {
+        if (!target || typeof target.closest !== 'function') return null
+        return target.closest(importedEditorActionSelector) as HTMLElement | null
+      }
+
       const handleCodePreviewClick = (event: MouseEvent) => {
         event.preventDefault()
         event.stopPropagation()
         if (typeof event.stopImmediatePropagation === 'function') {
           event.stopImmediatePropagation()
         }
-        const target = getSelectableTarget(event.target as Element | null)
+        const rawTarget = event.target as Element | null
+        const actionTarget = getActionTarget(rawTarget)
+        const target = actionTarget || getSelectableTarget(rawTarget)
         if (!target) return
-        selectImportedCodePreviewElement(target)
+        const descriptor = getImportedFrameElementDescriptor(target, 'code', event.type)
+        const range = findImportedSourceRangeForDescriptor(activeCodePreviewHtml, descriptor)
+        selectImportedCodePreviewElement(target, descriptor)
+        if (actionTarget && range) {
+          openCodeButtonEditorForElement(actionTarget, descriptor, range)
+        } else {
+          setButtonEditor(null)
+          setContentError('')
+        }
       }
 
       doc.addEventListener('click', handleCodePreviewClick, true)
@@ -12855,6 +13152,13 @@ const ImportedHtmlEditorPanel: React.FC<{
       const element = findImportedFrameElementByDescriptor(doc, event.data)
       if (!element) return
       selectImportedCodePreviewElement(element, event.data)
+      if (element.matches(importedEditorActionSelector)) {
+        const range = findImportedSourceRangeForDescriptor(activeCodePreviewHtml, event.data)
+        if (range) openCodeButtonEditorForElement(element, event.data, range)
+      } else {
+        setButtonEditor(null)
+        setContentError('')
+      }
     }
 
     iframe.addEventListener('load', installCodePreviewHooks)
@@ -12868,7 +13172,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       window.removeEventListener('message', handleCodePreviewMessage)
       cleanupDocument()
     }
-  }, [activeCodePreviewHtml, codeEditorOpen, guardedCodePreviewHtml, selectImportedCodePreviewElement])
+  }, [activeCodePreviewHtml, codeEditorOpen, guardedCodePreviewHtml, openCodeButtonEditorForElement, selectImportedCodePreviewElement])
 
   if (codeEditorOpen) {
     return (
@@ -12915,6 +13219,13 @@ const ImportedHtmlEditorPanel: React.FC<{
               </div>
             </div>
           </div>
+          <details className={styles.importedCodeGuide}>
+            <summary>
+              <Sparkles size={13} />
+              Claves para IA externa
+            </summary>
+            <pre>{IMPORTED_HTML_AI_GUIDE}</pre>
+          </details>
           {activeCodeFile ? (
             <div className={styles.importedCodeEditorShell}>
               <pre
@@ -12967,7 +13278,11 @@ const ImportedHtmlEditorPanel: React.FC<{
           <span />
         </div>
 
-        <section className={`${styles.importedCodePreviewPane} ${codeSelectionNotice ? styles.importedCodePreviewPaneWithNotice : ''}`}>
+        <section className={[
+          styles.importedCodePreviewPane,
+          codeSelectionNotice ? styles.importedCodePreviewPaneWithNotice : '',
+          buttonEditorPanel || contentError ? styles.importedCodePreviewPaneWithTools : ''
+        ].filter(Boolean).join(' ')}>
           <div className={styles.importedCodePaneHeader}>
             <span>Vista de página</span>
             <strong>{activeImportedPage?.title || 'Página'}</strong>
@@ -12976,6 +13291,17 @@ const ImportedHtmlEditorPanel: React.FC<{
             <div className={styles.importedCodeSelectionNotice}>
               <MousePointerClick size={13} />
               <span>{codeSelectionNotice}</span>
+            </div>
+          )}
+          {(buttonEditorPanel || contentError) && (
+            <div className={styles.importedCodeActionDrawer}>
+              {buttonEditorPanel}
+              {contentError && (
+                <div className={styles.importedInlineError}>
+                  <AlertTriangle size={15} />
+                  <span>{contentError}</span>
+                </div>
+              )}
             </div>
           )}
           <div className={`${styles.importedCodePreviewStage} ${device === 'mobile' ? styles.importedCodePreviewStageMobile : ''}`}>
@@ -13222,46 +13548,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           </div>
         )}
 
-        {buttonEditor && (
-          <div className={styles.importedButtonActionBox}>
-            <div className={styles.importedButtonActionHeader}>
-              <MousePointerClick size={17} />
-              <div>
-                <span>Botón seleccionado</span>
-                <strong>{buttonEditor.selection.label || 'Botón'}</strong>
-              </div>
-            </div>
-
-            <label className={styles.importedActionField}>
-              <span>Texto del botón</span>
-              <input
-                value={buttonEditor.value}
-                disabled={contentSaving}
-                name="rstk-imported-button-text"
-                {...importedEditorNoAutocompleteAttrs}
-                onChange={(event) => setButtonEditor(current => current ? { ...current, value: event.target.value } : current)}
-              />
-            </label>
-
-            <ImportedActionChainEditor
-              actions={buttonEditor.buttonActions}
-              targetPages={targetImportedPages}
-              actionOptions={currentPageActionOptions}
-              disabled={contentSaving}
-              onChange={(buttonActions) => setButtonEditor(current => current ? { ...current, buttonActions } : current)}
-            />
-
-            <div className={styles.importedButtonActionFooter}>
-              <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
-                Cancelar
-              </Button>
-              <Button type="button" size="sm" onClick={() => void saveButtonEditor()} disabled={!canSaveButtonEditor} loading={contentSaving}>
-                <Save size={14} />
-                Guardar botón
-              </Button>
-            </div>
-          </div>
-        )}
+        {buttonEditorPanel}
 
         {choiceEditor && (
           <div className={styles.importedButtonActionBox}>

@@ -325,15 +325,30 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 8px;
   background: var(--color-background-primary);
   overflow: hidden;
 }
 
+.importedCodeSourcePane {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.importedCodePreviewPane {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .importedCodePreviewPaneWithNotice {
   grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.importedCodePreviewPaneWithTools {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.importedCodePreviewPaneWithNotice.importedCodePreviewPaneWithTools {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 
 .importedCodePaneHeader {
@@ -447,6 +462,46 @@
   background: var(--color-background-primary) !important;
   color: var(--color-text-primary) !important;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+}
+
+.importedCodeGuide {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: color-mix(in srgb, var(--color-background-primary) 92%, var(--color-primary) 8%);
+  color: var(--color-text-secondary);
+}
+
+.importedCodeGuide summary {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  font-size: 0.76rem;
+  font-weight: 780;
+  cursor: pointer;
+  user-select: none;
+}
+
+.importedCodeGuide summary::marker {
+  color: var(--color-text-tertiary);
+}
+
+.importedCodeGuide summary svg {
+  color: var(--color-text-tertiary);
+}
+
+.importedCodeGuide pre {
+  max-height: 190px;
+  margin: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  padding: 10px 12px 12px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 0.72rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .importedCodeSourcePaneDark {
@@ -618,6 +673,31 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.importedCodeActionDrawer {
+  max-height: min(360px, 38vh);
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: color-mix(in srgb, var(--color-background-primary) 94%, var(--color-primary) 6%);
+  padding: 12px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.importedCodeActionDrawer .importedButtonActionBox {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+
+.importedCodeActionDrawer .importedInlineError {
+  border: 1px solid rgba(248, 113, 113, 0.22);
+  border-radius: 8px;
+  padding: 9px 10px;
 }
 
 .importedCodePreviewStage {
@@ -1125,6 +1205,35 @@
 .importedButtonActionBox {
   display: grid;
   gap: 14px;
+}
+
+.importedButtonRuleWarning,
+.importedButtonCodeHint {
+  margin: 0;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.importedButtonRuleWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.24);
+  background: rgba(245, 158, 11, 0.09);
+  color: #92400e;
+  padding: 9px 10px;
+  font-weight: 760;
+}
+
+.importedButtonRuleWarning svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.importedButtonCodeHint {
+  color: var(--color-text-tertiary);
+  font-weight: 680;
 }
 
 .importedFormFieldsBox {
@@ -13602,6 +13711,14 @@
 .pageFrame .containerFocused:has(.builder) .editorHeader {
   border-bottom: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.14));
   background: var(--color-background-secondary);
+  box-shadow: none;
+}
+
+.pageFrame .importedCodeActionDrawer .importedButtonActionBox {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
   box-shadow: none;
 }
 
