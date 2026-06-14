@@ -9314,6 +9314,7 @@ type ImportedCodeElementEditorState = {
   fieldHtmlId?: string
   fieldInputType?: string
   required?: boolean
+  options?: ImportedFormFieldOption[]
   mediaUrl?: string
 }
 
@@ -10429,6 +10430,7 @@ const importedButtonActions = new Set<ImportedButtonAction>(['none', ...imported
 const importedChoiceQuickActions: Array<{ value: '' | ImportedButtonAction; label: string }> = [
   { value: '', label: 'No hacer nada' },
   { value: 'submit', label: 'Enviar formulario' },
+  { value: 'disqualify', label: 'Descalificar (no califica)' },
   { value: 'specific_page', label: 'Enviar a página específica' },
   { value: 'url', label: 'Redirigir a URL' }
 ]
@@ -10442,7 +10444,11 @@ const patchImportedOptionActionStep = (
   option: ImportedFormFieldOption,
   patch: Partial<ImportedButtonActionStep>
 ): Partial<ImportedFormFieldOption> => ({
-  actions: option.actions?.length ? [{ ...option.actions[0], ...patch }] : option.actions
+  actions: patch.action
+    ? [{ ...makeImportedActionStep(patch.action), ...option.actions?.[0], ...patch }]
+    : option.actions?.length
+      ? [{ ...option.actions[0], ...patch }]
+      : []
 })
 
 // specific_page needs a destination and url needs a link before saving.
@@ -10493,6 +10499,18 @@ const makeImportedActionStep = (action: ImportedButtonAction, patch: Partial<Imp
   buttonMessage: patch.buttonMessage || '',
   automationName: patch.automationName || '',
 })
+
+const duplicateImportedFieldOption = (option: ImportedFormFieldOption, index: number): ImportedFormFieldOption => {
+  const baseLabel = (option.label || option.value || `Opción ${index + 1}`).trim()
+  const baseValue = (option.value || baseLabel).trim()
+  return {
+    label: `${baseLabel} copia`,
+    value: `${baseValue}-copia`,
+    ...(option.actions?.length ? {
+      actions: option.actions.map(step => makeImportedActionStep(step.action, { ...step, id: '' }))
+    } : {})
+  }
+}
 
 const normalizeImportedActionStep = (value: unknown, fallbackId = ''): ImportedButtonActionStep | null => {
   if (!value || typeof value !== 'object') return null
@@ -10956,6 +10974,21 @@ const isImportedCodeFieldElement = (element: HTMLElement) => {
   return !['hidden', 'button', 'submit', 'reset', 'image', 'file'].includes(inputType)
 }
 
+const getImportedCodeFormFieldElementFromTarget = (target: Element | null, doc: Document) => {
+  if (!target || typeof target.closest !== 'function') return null
+  const directField = target.closest('input, textarea, select') as HTMLElement | null
+  if (directField && isImportedCodeFieldElement(directField)) return directField
+  const explicitField = getImportedFormFieldElementFromTarget(target) as HTMLElement | null
+  if (explicitField) return explicitField
+  const label = target.closest('label') as HTMLLabelElement | null
+  const nestedField = label?.querySelector<HTMLElement>('input, textarea, select') || null
+  if (nestedField && isImportedCodeFieldElement(nestedField)) return nestedField
+  const htmlFor = label?.getAttribute('for') || target.getAttribute('for') || ''
+  const linkedField = htmlFor ? doc.getElementById(htmlFor) as HTMLElement | null : null
+  if (linkedField && isImportedCodeFieldElement(linkedField)) return linkedField
+  return null
+}
+
 const getImportedCodeElementEditId = (
   element: HTMLElement,
   descriptor: ImportedFrameElementDescriptor,
@@ -11006,7 +11039,8 @@ const readImportedCodeElementEditor = (
       fieldName: selection.fieldName,
       fieldHtmlId: selection.fieldHtmlId,
       fieldInputType: selection.inputType,
-      required: selection.required
+      required: selection.required,
+      options: selection.options
     }
   }
 
@@ -11042,6 +11076,209 @@ const readImportedCodeElementEditor = (
   }
 }
 
+const normalizeImportedCodeFieldOptions = (options: ImportedFormFieldOption[] = []) => (
+  options
+    .map((option): ImportedFormFieldOption => ({
+      label: (option.label || option.value || '').trim(),
+      value: (option.value || option.label || '').trim(),
+      ...(option.actions?.length ? { actions: option.actions } : {})
+    }))
+    .filter(option => option.label || option.value)
+)
+
+const getImportedHtmlAttributeValue = (openingTag = '', attrName = '') => {
+  const attrPattern = new RegExp(`\\s${escapeImportedRegex(attrName)}\\s*=\\s*("[^"]*"|'[^']*'|[^\\s>]+)`, 'i')
+  const match = openingTag.match(attrPattern)
+  if (!match?.[1]) return ''
+  return match[1].replace(/^["']|["']$/g, '')
+}
+
+const setImportedOptionActionAttributes = (openingTag: string, actions: ImportedButtonActionStep[] = []) => {
+  const serializedActions = serializeImportedCodeButtonActions(actions)
+  const cleanedTag = removeImportedHtmlAttribute(
+    removeImportedHtmlAttribute(
+      removeImportedHtmlAttribute(openingTag, 'data-rstk-choice-actions'),
+      'data-ristak-choice-actions'
+    ),
+    'data-ristack-choice-actions'
+  )
+  return serializedActions.length
+    ? setImportedHtmlAttribute(cleanedTag, 'data-rstk-choice-actions', JSON.stringify(serializedActions))
+    : cleanedTag
+}
+
+const buildImportedCodeOptionTag = (option: ImportedFormFieldOption) => {
+  const cleanLabel = option.label || option.value
+  const cleanValue = option.value || option.label
+  const openingTag = setImportedOptionActionAttributes(
+    setImportedHtmlAttribute('<option>', 'value', cleanValue),
+    option.actions || []
+  )
+  return `${openingTag}${escapeImportedHtmlText(cleanLabel)}</option>`
+}
+
+const getImportedCodeFieldOpeningTag = (
+  openingTag: string,
+  editor: ImportedCodeElementEditorState,
+  tagName: string
+) => {
+  let nextOpeningTag = openingTag
+  nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'data-rstk-editable', 'true')
+  nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'data-rstk-edit-id', editor.editId)
+  nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'data-rstk-label', editor.label.trim() || editor.value.trim() || editor.tagName)
+  nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'data-rstk-edit-type', 'form_field')
+  nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'data-rstk-field-required', editor.required ? 'true' : 'false')
+  nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'aria-required', editor.required ? 'true' : 'false')
+  nextOpeningTag = editor.required
+    ? setImportedHtmlAttribute(nextOpeningTag, 'required', 'required')
+    : removeImportedHtmlAttribute(nextOpeningTag, 'required')
+  if (editor.fieldName?.trim()) nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'name', editor.fieldName.trim())
+  if (editor.fieldHtmlId?.trim()) nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'id', editor.fieldHtmlId.trim())
+  if (tagName === 'input' || tagName === 'textarea') {
+    nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'placeholder', editor.placeholder?.trim() || '')
+  }
+  return nextOpeningTag
+}
+
+const patchImportedCodeSelectOptions = (
+  source: string,
+  editor: ImportedCodeElementEditorState,
+  range: ImportedCodeSourceRange,
+  openingTag: string,
+  originalOpeningTagLength: number
+) => {
+  const sourceRange = source.slice(range.start, range.end)
+  const closingTagMatch = sourceRange.match(/<\/select\s*>\s*$/i)
+  if (!closingTagMatch) return null
+  const closingStart = range.end - closingTagMatch[0].length
+  const currentInnerHtml = source.slice(range.start + originalOpeningTagLength, closingStart)
+  const placeholderOption = currentInnerHtml.match(/<option\b(?=[^>]*\bvalue\s*=\s*(?:""|'')[^>]*>)[\s\S]*?<\/option>/i)?.[0]?.trim() ||
+    '<option value="">Selecciona una opción</option>'
+  const optionsMarkup = normalizeImportedCodeFieldOptions(editor.options)
+    .map(buildImportedCodeOptionTag)
+    .join('\n  ')
+
+  return [
+    source.slice(0, range.start),
+    openingTag,
+    '\n  ',
+    [placeholderOption, optionsMarkup].filter(Boolean).join('\n  '),
+    '\n',
+    source.slice(closingStart, range.end),
+    source.slice(range.end)
+  ].join('')
+}
+
+const getImportedEnclosingFormRange = (source: string, start: number) => {
+  const beforeSelection = source.slice(0, start)
+  const formStart = beforeSelection.lastIndexOf('<form')
+  const formCloseBefore = beforeSelection.lastIndexOf('</form')
+  if (formStart >= 0 && formStart > formCloseBefore) {
+    const formClose = source.indexOf('</form', start)
+    return { start: formStart, end: formClose >= 0 ? formClose : source.length }
+  }
+  return { start: 0, end: source.length }
+}
+
+type ImportedCodeChoiceBlock = {
+  start: number
+  end: number
+  block: string
+  inputTag: string
+}
+
+const findImportedCodeChoiceLabelBlocks = (
+  source: string,
+  scopeStart: number,
+  scopeEnd: number,
+  inputType: string,
+  fieldName: string
+): ImportedCodeChoiceBlock[] => {
+  const scopedSource = source.slice(scopeStart, scopeEnd)
+  const labelRegex = /<label\b[^>]*>[\s\S]*?<\/label>/gi
+  const result: ImportedCodeChoiceBlock[] = []
+  let labelMatch: RegExpExecArray | null
+
+  while ((labelMatch = labelRegex.exec(scopedSource))) {
+    const block = labelMatch[0]
+    const inputMatches = Array.from(block.matchAll(/<input\b[^>]*>/gi))
+    const matchedInput = inputMatches.find(match => {
+      const inputTag = match[0]
+      const currentType = (getImportedHtmlAttributeValue(inputTag, 'type') || 'text').toLowerCase()
+      const currentName = getImportedHtmlAttributeValue(inputTag, 'name') || getImportedHtmlAttributeValue(inputTag, 'id')
+      return currentType === inputType && (!fieldName || currentName === fieldName)
+    })
+    if (!matchedInput?.[0]) continue
+    result.push({
+      start: scopeStart + labelMatch.index,
+      end: scopeStart + labelMatch.index + block.length,
+      block,
+      inputTag: matchedInput[0]
+    })
+  }
+
+  return result
+}
+
+const buildImportedCodeChoiceOptionLabel = (
+  option: ImportedFormFieldOption,
+  index: number,
+  editor: ImportedCodeElementEditorState,
+  baseLabelTag: string,
+  baseInputTag: string,
+  inputType: string,
+  fieldName: string
+) => {
+  const cleanLabel = option.label || option.value || `Opción ${index + 1}`
+  const cleanValue = option.value || option.label || cleanLabel
+  let labelTag = removeImportedHtmlAttribute(baseLabelTag || '<label>', 'for')
+  if (!/^<label\b/i.test(labelTag)) labelTag = '<label>'
+  let inputTag = baseInputTag || '<input>'
+  inputTag = setImportedHtmlAttribute(inputTag, 'type', inputType)
+  inputTag = setImportedHtmlAttribute(inputTag, 'name', fieldName)
+  inputTag = setImportedHtmlAttribute(inputTag, 'value', cleanValue)
+  inputTag = setImportedHtmlAttribute(inputTag, 'data-rstk-editable', 'true')
+  inputTag = setImportedHtmlAttribute(inputTag, 'data-rstk-edit-type', 'form_field')
+  inputTag = setImportedHtmlAttribute(inputTag, 'data-rstk-label', cleanLabel)
+  inputTag = setImportedHtmlAttribute(inputTag, 'data-rstk-field-required', editor.required ? 'true' : 'false')
+  inputTag = setImportedHtmlAttribute(inputTag, 'aria-required', editor.required ? 'true' : 'false')
+  inputTag = editor.required
+    ? setImportedHtmlAttribute(inputTag, 'required', 'required')
+    : removeImportedHtmlAttribute(inputTag, 'required')
+  inputTag = index === 0 && editor.fieldHtmlId?.trim()
+    ? setImportedHtmlAttribute(inputTag, 'id', editor.fieldHtmlId.trim())
+    : removeImportedHtmlAttribute(inputTag, 'id')
+  inputTag = setImportedOptionActionAttributes(inputTag, option.actions || [])
+
+  return `${labelTag}${inputTag}<span>${escapeImportedHtmlText(cleanLabel)}</span></label>`
+}
+
+const patchImportedCodeChoiceGroupOptions = (
+  source: string,
+  editor: ImportedCodeElementEditorState,
+  range: ImportedCodeSourceRange,
+  openingTag: string
+) => {
+  const inputType = (editor.fieldInputType || getImportedHtmlAttributeValue(openingTag, 'type') || '').toLowerCase()
+  if (!['radio', 'checkbox'].includes(inputType)) return null
+  const fieldName = editor.fieldName?.trim() || getImportedHtmlAttributeValue(openingTag, 'name') || getImportedHtmlAttributeValue(openingTag, 'id')
+  if (!fieldName) return null
+  const options = normalizeImportedCodeFieldOptions(editor.options)
+  if (!options.length) return null
+  const scope = getImportedEnclosingFormRange(source, range.start)
+  const blocks = findImportedCodeChoiceLabelBlocks(source, scope.start, scope.end, inputType, fieldName)
+  if (!blocks.length) return null
+  const firstBlock = blocks[0]
+  const lastBlock = blocks[blocks.length - 1]
+  const baseLabelTag = firstBlock.block.match(/^<label\b[^>]*>/i)?.[0] || '<label>'
+  const baseInputTag = firstBlock.inputTag || openingTag
+  const nextGroupMarkup = options
+    .map((option, index) => buildImportedCodeChoiceOptionLabel(option, index, editor, baseLabelTag, baseInputTag, inputType, fieldName))
+    .join('\n')
+
+  return `${source.slice(0, firstBlock.start)}${nextGroupMarkup}${source.slice(lastBlock.end)}`
+}
+
 const applyImportedCodeElementPatch = (
   html: string,
   editor: ImportedCodeElementEditorState,
@@ -11063,16 +11300,14 @@ const applyImportedCodeElementPatch = (
   openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-label', cleanLabel)
 
   if (editor.mode === 'field') {
-    openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-type', 'form_field')
-    openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-field-required', editor.required ? 'true' : 'false')
-    openingTag = setImportedHtmlAttribute(openingTag, 'aria-required', editor.required ? 'true' : 'false')
-    openingTag = editor.required
-      ? setImportedHtmlAttribute(openingTag, 'required', 'required')
-      : removeImportedHtmlAttribute(openingTag, 'required')
-    if (editor.fieldName?.trim()) openingTag = setImportedHtmlAttribute(openingTag, 'name', editor.fieldName.trim())
-    if (editor.fieldHtmlId?.trim()) openingTag = setImportedHtmlAttribute(openingTag, 'id', editor.fieldHtmlId.trim())
-    if (tagName === 'input' || tagName === 'textarea') {
-      openingTag = setImportedHtmlAttribute(openingTag, 'placeholder', editor.placeholder?.trim() || '')
+    openingTag = getImportedCodeFieldOpeningTag(openingTag, editor, tagName)
+    const hasOptions = editor.tagName === 'select' || ['radio', 'checkbox'].includes(editor.fieldInputType || '')
+    if (hasOptions && tagName === 'select') {
+      return patchImportedCodeSelectOptions(source, editor, range, openingTag, startTagMatch[0].length)
+    }
+    if (hasOptions && tagName === 'input') {
+      const nextSource = patchImportedCodeChoiceGroupOptions(source, editor, range, openingTag)
+      if (nextSource) return nextSource
     }
     return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
   }
@@ -11773,6 +12008,7 @@ const ImportedActionChainEditor: React.FC<{
         <CustomSelect
           value="none"
           disabled={disabled}
+          portal
           onChange={(event) => {
             const action = normalizeImportedButtonAction(event.target.value)
             onChange(action === 'none' || !selectableActions.has(action) ? [] : [makeImportedActionStep(action)])
@@ -11797,6 +12033,7 @@ const ImportedActionChainEditor: React.FC<{
               <CustomSelect
                 value={step.action}
                 disabled={disabled}
+                portal
                 onChange={(event) => {
                   const nextAction = normalizeImportedButtonAction(event.target.value)
                   if (nextAction === 'none' || !selectableActions.has(nextAction)) {
@@ -11845,6 +12082,7 @@ const ImportedActionChainEditor: React.FC<{
               <CustomSelect
                 value={step.buttonPageId || ''}
                 disabled={disabled}
+                portal
                 onChange={(event) => setAction(index, { buttonPageId: event.target.value })}
               >
                 <option value="">Selecciona una página</option>
@@ -11892,6 +12130,132 @@ const ImportedActionChainEditor: React.FC<{
     </div>
   )
 }
+
+const ImportedFieldOptionsEditor: React.FC<{
+  title: string
+  options: ImportedFormFieldOption[]
+  targetPages: SitePage[]
+  disabled?: boolean
+  namePrefix: string
+  onAdd: () => void
+  onDuplicate: (index: number) => void
+  onRemove: (index: number) => void
+  onPatch: (index: number, patch: Partial<ImportedFormFieldOption>) => void
+}> = ({
+  title,
+  options,
+  targetPages,
+  disabled = false,
+  namePrefix,
+  onAdd,
+  onDuplicate,
+  onRemove,
+  onPatch
+}) => (
+  <div className={styles.importedFieldOptionsEditor}>
+    <div className={styles.importedFieldOptionsHeader}>
+      <span>{title}</span>
+      <button type="button" onClick={onAdd} disabled={disabled || options.length >= 30}>
+        <Plus size={13} />
+        Agregar
+      </button>
+    </div>
+    {options.map((option, index) => (
+      <div key={`${index}-${option.value}`} className={styles.importedFieldOptionItem}>
+        <div className={styles.importedFieldOptionRow}>
+          <input
+            value={option.label}
+            disabled={disabled}
+            placeholder={`Opción ${index + 1}`}
+            name={`${namePrefix}-label-${index}`}
+            {...importedEditorNoAutocompleteAttrs}
+            onChange={(event) => onPatch(index, {
+              label: event.target.value,
+              value: option.value === option.label ? event.target.value : option.value
+            })}
+          />
+          <input
+            value={option.value}
+            disabled={disabled}
+            placeholder="valor"
+            name={`${namePrefix}-value-${index}`}
+            {...importedEditorNoAutocompleteAttrs}
+            onChange={(event) => onPatch(index, { value: event.target.value })}
+          />
+          <div className={styles.importedFieldOptionRowActions}>
+            <button type="button" onClick={() => onDuplicate(index)} disabled={disabled || options.length >= 30} aria-label={`Duplicar opción ${index + 1}`}>
+              <Copy size={13} />
+            </button>
+            <button type="button" onClick={() => onRemove(index)} disabled={disabled || options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
+              <X size={13} />
+            </button>
+          </div>
+        </div>
+        <label className={styles.importedFieldOptionAction}>
+          <span>Al elegirla</span>
+          <CustomSelect
+            value={getImportedOptionQuickAction(option)}
+            disabled={disabled}
+            portal
+            onChange={(event) => {
+              const action = event.target.value as '' | ImportedButtonAction
+              onPatch(index, { actions: action ? [makeImportedActionStep(action)] : [] })
+            }}
+          >
+            {importedChoiceQuickActions.map(item => (
+              <option key={item.value || 'none'} value={item.value}>{item.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+        {getImportedOptionQuickAction(option) === 'specific_page' && (
+          <label className={styles.importedFieldOptionAction}>
+            <span>Página</span>
+            <CustomSelect
+              value={option.actions?.[0]?.buttonPageId || ''}
+              disabled={disabled}
+              portal
+              onChange={(event) => onPatch(index, patchImportedOptionActionStep(option, { buttonPageId: event.target.value }))}
+            >
+              <option value="">Selecciona una página</option>
+              {targetPages.map(page => (
+                <option key={page.id} value={page.id}>{page.title || page.id}</option>
+              ))}
+            </CustomSelect>
+          </label>
+        )}
+        {getImportedOptionQuickAction(option) === 'url' && (
+          <label className={styles.importedFieldOptionAction}>
+            <span>URL</span>
+            <input
+              value={option.actions?.[0]?.buttonUrl || ''}
+              disabled={disabled}
+              placeholder="https://..."
+              name={`${namePrefix}-url-${index}`}
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => onPatch(index, patchImportedOptionActionStep(option, { buttonUrl: event.target.value }))}
+            />
+          </label>
+        )}
+        {getImportedOptionQuickAction(option) === 'disqualify' && (
+          <label className={styles.importedFieldOptionAction}>
+            <span>Mensaje</span>
+            <input
+              value={option.actions?.[0]?.buttonMessage || ''}
+              disabled={disabled}
+              placeholder="Gracias, por ahora no calificas"
+              name={`${namePrefix}-disqualify-${index}`}
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => onPatch(index, patchImportedOptionActionStep(option, { buttonMessage: event.target.value }))}
+            />
+          </label>
+        )}
+      </div>
+    ))}
+    <p className={styles.importedFieldOptionsHint}>
+      Cada opción puede quedarse normal, enviar el formulario, descalificar o mandar a una página/URL después del envío.
+    </p>
+  </div>
+)
 
 type ImportedCodeTheme = 'dark' | 'light'
 
@@ -12079,6 +12443,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [selectedFieldRouteDraft, setSelectedFieldRouteDraft] = useState<ImportedSelectedFieldRouteDraft | null>(null)
   const [selectedFieldRouteSaving, setSelectedFieldRouteSaving] = useState(false)
   const [codeEditorWidth, setCodeEditorWidth] = useState(50)
+  const codeEditorWidthRef = useRef(50)
   const [codeEditorTheme, setCodeEditorTheme] = useState<ImportedCodeTheme>('dark')
   const [codeSelectionNotice, setCodeSelectionNotice] = useState('')
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
@@ -12195,21 +12560,37 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!container) return
     event.preventDefault()
 
+    let frame = 0
+    let latestWidth = codeEditorWidthRef.current
+    const rect = container.getBoundingClientRect()
+
     const updateWidth = (clientX: number) => {
-      const rect = container.getBoundingClientRect()
       if (!rect.width) return
       const next = ((clientX - rect.left) / rect.width) * 100
-      setCodeEditorWidth(Math.min(88, Math.max(28, next)))
+      latestWidth = Math.min(88, Math.max(28, next))
+      if (frame) return
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        container.style.setProperty('--imported-code-source-width', `${latestWidth}%`)
+      })
     }
 
     updateWidth(event.clientX)
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
+      moveEvent.preventDefault()
       updateWidth(moveEvent.clientX)
     }
     const handlePointerUp = () => {
       window.removeEventListener('pointermove', handlePointerMove)
       window.removeEventListener('pointerup', handlePointerUp)
+      if (frame) {
+        window.cancelAnimationFrame(frame)
+        frame = 0
+      }
+      codeEditorWidthRef.current = latestWidth
+      container.style.setProperty('--imported-code-source-width', `${latestWidth}%`)
+      setCodeEditorWidth(latestWidth)
       document.body.classList.remove('rstk-code-resizing')
     }
 
@@ -12217,6 +12598,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', handlePointerUp, { once: true })
   }, [])
+
+  useEffect(() => {
+    codeEditorWidthRef.current = codeEditorWidth
+  }, [codeEditorWidth])
 
   useEffect(() => {
     if (!routeEditing) setRouteDraft(getRouteEditorValue(site))
@@ -12449,6 +12834,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null
       if (target && elementPopoverRef.current?.contains(target)) return
+      if (target instanceof Element && target.closest('[data-ristak-dropdown-panel]')) return
       clearInlineSelection()
     }
 
@@ -13447,6 +13833,21 @@ const ImportedHtmlEditorPanel: React.FC<{
       }
     })
   }
+  const duplicateChoiceOption = (index: number) => {
+    setChoiceEditor(current => {
+      if (!current) return current
+      const option = current.options[index]
+      if (!option) return current
+      return {
+        ...current,
+        options: [
+          ...current.options.slice(0, index + 1),
+          duplicateImportedFieldOption(option, index),
+          ...current.options.slice(index + 1)
+        ]
+      }
+    })
+  }
   const removeChoiceOption = (index: number) => {
     setChoiceEditor(current => {
       if (!current) return current
@@ -13496,12 +13897,89 @@ const ImportedHtmlEditorPanel: React.FC<{
     })
   }
 
+  const duplicateFieldOption = (index: number) => {
+    setFieldEditor(current => {
+      if (!current) return current
+      const option = current.options[index]
+      if (!option) return current
+      return {
+        ...current,
+        options: [
+          ...current.options.slice(0, index + 1),
+          duplicateImportedFieldOption(option, index),
+          ...current.options.slice(index + 1)
+        ]
+      }
+    })
+  }
+
   const removeFieldOption = (index: number) => {
     setFieldEditor(current => {
       if (!current) return current
       return {
         ...current,
         options: current.options.filter((_, optionIndex) => optionIndex !== index)
+      }
+    })
+  }
+
+  const codeElementFieldHasOptions = Boolean(
+    codeElementEditor?.mode === 'field' &&
+    (codeElementEditor.tagName === 'select' || ['radio', 'checkbox'].includes(codeElementEditor.fieldInputType || ''))
+  )
+  const cleanCodeElementOptions = (codeElementEditor?.options || [])
+    .map((option): ImportedFormFieldOption => ({
+      label: option.label.trim(),
+      value: (option.value || option.label).trim(),
+      ...(option.actions?.length ? { actions: option.actions } : {})
+    }))
+    .filter(option => option.label || option.value)
+
+  const patchCodeElementOption = (index: number, patch: Partial<ImportedFormFieldOption>) => {
+    setCodeElementEditor(current => {
+      if (!current) return current
+      return {
+        ...current,
+        options: (current.options || []).map((option, optionIndex) => optionIndex === index ? { ...option, ...patch } : option)
+      }
+    })
+  }
+
+  const addCodeElementOption = () => {
+    setCodeElementEditor(current => {
+      if (!current) return current
+      const currentOptions = current.options || []
+      const label = `Opción ${currentOptions.length + 1}`
+      return {
+        ...current,
+        options: [...currentOptions, { label, value: label }]
+      }
+    })
+  }
+
+  const duplicateCodeElementOption = (index: number) => {
+    setCodeElementEditor(current => {
+      if (!current) return current
+      const currentOptions = current.options || []
+      const option = currentOptions[index]
+      if (!option) return current
+      return {
+        ...current,
+        options: [
+          ...currentOptions.slice(0, index + 1),
+          duplicateImportedFieldOption(option, index),
+          ...currentOptions.slice(index + 1)
+        ]
+      }
+    })
+  }
+
+  const removeCodeElementOption = (index: number) => {
+    setCodeElementEditor(current => {
+      if (!current) return current
+      return {
+        ...current,
+        options: (current.options || []).filter((_, optionIndex) => optionIndex !== index)
       }
     })
   }
@@ -13603,7 +14081,9 @@ const ImportedHtmlEditorPanel: React.FC<{
     !saving &&
     (
       codeElementEditor.mode === 'field'
-        ? codeElementEditor.label.trim()
+        ? codeElementEditor.label.trim() &&
+          (!codeElementFieldHasOptions || cleanCodeElementOptions.length > 0) &&
+          areImportedOptionQuickActionsValid(codeElementEditor.options || [])
         : codeElementEditor.mode === 'media'
           ? (codeElementEditor.mediaUrl || codeElementEditor.value).trim()
           : codeElementEditor.mode === 'text'
@@ -13615,7 +14095,10 @@ const ImportedHtmlEditorPanel: React.FC<{
   const saveCodeElementEditor = () => {
     if (!codeElementEditor || !activeCodeFile || activeCodeFile.language !== 'html') return
     const range = findImportedSourceRangeForDescriptor(activeCodeValue, codeElementEditor.descriptor) || codeElementEditor.range
-    const nextHtml = applyImportedCodeElementPatch(activeCodeValue, codeElementEditor, range)
+    const editorToSave = codeElementFieldHasOptions
+      ? { ...codeElementEditor, options: cleanCodeElementOptions }
+      : codeElementEditor
+    const nextHtml = applyImportedCodeElementPatch(activeCodeValue, editorToSave, range)
     if (!nextHtml) {
       setContentError('No pude actualizar ese elemento en el código. Selecciónalo otra vez desde la vista.')
       return
@@ -13654,6 +14137,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         <CustomSelect
           value={selectedFieldRouteDraft.destinationType === 'new_custom' ? 'custom' : selectedFieldRouteDraft.destinationType}
           disabled={selectedFieldRouteSaving || saving || contentSaving}
+          portal
           onChange={(event) => {
             const destinationType = event.target.value as ImportedSiteFieldMapping['destinationType']
             setSelectedFieldRouteDraft(current => {
@@ -13688,6 +14172,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           <CustomSelect
             value={selectedFieldRouteDraft.destinationKey || 'full_name'}
             disabled={selectedFieldRouteSaving || saving || contentSaving}
+            portal
             onChange={(event) => setSelectedFieldRouteDraft(current => current ? {
               ...current,
               destinationType: 'standard',
@@ -13824,6 +14309,19 @@ const ImportedHtmlEditorPanel: React.FC<{
             />
             <span>Campo requerido</span>
           </label>
+          {codeElementFieldHasOptions && (
+            <ImportedFieldOptionsEditor
+              title={codeElementEditor.fieldInputType === 'checkbox' ? 'Opciones de checkbox' : 'Opciones del campo'}
+              options={codeElementEditor.options || []}
+              targetPages={targetImportedPages}
+              disabled={saving}
+              namePrefix="rstk-imported-code-field-option"
+              onAdd={addCodeElementOption}
+              onDuplicate={duplicateCodeElementOption}
+              onRemove={removeCodeElementOption}
+              onPatch={patchCodeElementOption}
+            />
+          )}
           {selectedFieldRoutePanel}
         </>
       )}
@@ -13958,14 +14456,21 @@ const ImportedHtmlEditorPanel: React.FC<{
       textarea.focus({ preventScroll: true })
       textarea.setSelectionRange(range.start, range.end)
       const lineHeight = Number.parseFloat(window.getComputedStyle(textarea).lineHeight) || 20
-      const targetScrollTop = Math.max(0, (range.line - 3) * lineHeight)
-      textarea.scrollTop = targetScrollTop
+      const maxScroll = Math.max(0, textarea.scrollHeight - textarea.clientHeight)
+      const nativeScrollTop = textarea.scrollTop
+      const estimatedScrollTop = activeCodeValue.length
+        ? (Math.max(0, Math.min(range.start, activeCodeValue.length)) / activeCodeValue.length) * maxScroll
+        : 0
+      const targetScrollTop = nativeScrollTop > 0 || range.start < 120
+        ? nativeScrollTop
+        : estimatedScrollTop
+      textarea.scrollTop = Math.max(0, Math.min(maxScroll, targetScrollTop - (lineHeight * 3)))
       if (codeHighlightRef.current) {
         codeHighlightRef.current.scrollTop = textarea.scrollTop
         codeHighlightRef.current.scrollLeft = textarea.scrollLeft
       }
     })
-  }, [])
+  }, [activeCodeValue.length])
   const selectImportedCodePreviewElement = useCallback((element: HTMLElement, descriptor?: ImportedFrameElementDescriptor) => {
     const selectionDescriptor = descriptor || getImportedFrameElementDescriptor(element, 'code')
     const range = findImportedSourceRangeForDescriptor(activeCodePreviewHtml, selectionDescriptor)
@@ -14061,7 +14566,9 @@ const ImportedHtmlEditorPanel: React.FC<{
         }
         const rawTarget = event.target as Element | null
         const actionTarget = getActionTarget(rawTarget)
-        const target = actionTarget || getSelectableTarget(rawTarget)
+        const choiceInput = rawTarget ? getImportedChoiceInputFromTarget(rawTarget, doc) : null
+        const formFieldTarget = choiceInput || getImportedCodeFormFieldElementFromTarget(rawTarget, doc)
+        const target = actionTarget || formFieldTarget || getSelectableTarget(rawTarget)
         if (!target) return
         const descriptor = getImportedFrameElementDescriptor(target, 'code', event.type)
         const range = selectImportedCodePreviewElement(target, descriptor)
@@ -14094,11 +14601,18 @@ const ImportedHtmlEditorPanel: React.FC<{
       if (!doc) return
       const element = findImportedFrameElementByDescriptor(doc, event.data)
       if (!element) return
-      const range = selectImportedCodePreviewElement(element, event.data)
-      if (element.matches(importedEditorActionSelector)) {
-        if (range) openCodeButtonEditorForElement(element, event.data, range)
+      const actionElement = element.matches(importedEditorActionSelector) ? element : null
+      const choiceInput = getImportedChoiceInputFromTarget(element, doc)
+      const formFieldElement = choiceInput || getImportedCodeFormFieldElementFromTarget(element, doc)
+      const targetElement = actionElement || formFieldElement || element
+      const descriptor = targetElement === element
+        ? event.data
+        : getImportedFrameElementDescriptor(targetElement, 'code')
+      const range = selectImportedCodePreviewElement(targetElement, descriptor)
+      if (actionElement) {
+        if (range) openCodeButtonEditorForElement(actionElement, descriptor, range)
       } else if (range) {
-        openCodeElementEditorForElement(element, event.data, range)
+        openCodeElementEditorForElement(targetElement, descriptor, range)
       } else {
         setButtonEditor(null)
         setCodeElementEditor(null)
@@ -14510,89 +15024,17 @@ const ImportedHtmlEditorPanel: React.FC<{
               <span>{choiceEditor.selection.choiceInputType === 'radio' ? 'Radio button' : 'Checkbox'}</span>
               <strong>{choiceEditor.selection.choiceName}</strong>
             </div>
-            <div className={styles.importedFieldOptionsEditor}>
-              <div className={styles.importedFieldOptionsHeader}>
-                <span>Opciones del grupo</span>
-                <button type="button" onClick={addChoiceOption} disabled={contentSaving || choiceEditor.options.length >= 30}>
-                  <Plus size={13} />
-                  Agregar
-                </button>
-              </div>
-              {choiceEditor.options.map((option, index) => (
-                <div key={`${index}-${option.value}`} className={styles.importedFieldOptionItem}>
-                  <div className={styles.importedFieldOptionRow}>
-                    <input
-                      value={option.label}
-                      disabled={contentSaving}
-                      placeholder={`Opción ${index + 1}`}
-                      name={`rstk-imported-choice-option-label-${index}`}
-                      {...importedEditorNoAutocompleteAttrs}
-                      onChange={(event) => patchChoiceOption(index, {
-                        label: event.target.value,
-                        value: option.value === option.label ? event.target.value : option.value
-                      })}
-                    />
-                    <input
-                      value={option.value}
-                      disabled={contentSaving}
-                      placeholder="valor"
-                      name={`rstk-imported-choice-option-value-${index}`}
-                      {...importedEditorNoAutocompleteAttrs}
-                      onChange={(event) => patchChoiceOption(index, { value: event.target.value })}
-                    />
-                    <button type="button" onClick={() => removeChoiceOption(index)} disabled={contentSaving || choiceEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
-                      <X size={13} />
-                    </button>
-                  </div>
-                  <label className={styles.importedFieldOptionAction}>
-                    <span>Al elegirla</span>
-                    <CustomSelect
-                      value={getImportedOptionQuickAction(option)}
-                      disabled={contentSaving}
-                      onChange={(event) => {
-                        const action = event.target.value as '' | ImportedButtonAction
-                        patchChoiceOption(index, { actions: action ? [makeImportedActionStep(action)] : [] })
-                      }}
-                    >
-                      {importedChoiceQuickActions.map(item => (
-                        <option key={item.value || 'none'} value={item.value}>{item.label}</option>
-                      ))}
-                    </CustomSelect>
-                  </label>
-                  {getImportedOptionQuickAction(option) === 'specific_page' && (
-                    <label className={styles.importedFieldOptionAction}>
-                      <span>Página</span>
-                      <CustomSelect
-                        value={option.actions?.[0]?.buttonPageId || ''}
-                        disabled={contentSaving}
-                        onChange={(event) => patchChoiceOption(index, patchImportedOptionActionStep(option, { buttonPageId: event.target.value }))}
-                      >
-                        <option value="">Selecciona una página</option>
-                        {targetImportedPages.map(page => (
-                          <option key={page.id} value={page.id}>{page.title || page.id}</option>
-                        ))}
-                      </CustomSelect>
-                    </label>
-                  )}
-                  {getImportedOptionQuickAction(option) === 'url' && (
-                    <label className={styles.importedFieldOptionAction}>
-                      <span>URL</span>
-                      <input
-                        value={option.actions?.[0]?.buttonUrl || ''}
-                        disabled={contentSaving}
-                        placeholder="https://..."
-                        name={`rstk-imported-choice-option-url-${index}`}
-                        {...importedEditorNoAutocompleteAttrs}
-                        onChange={(event) => patchChoiceOption(index, patchImportedOptionActionStep(option, { buttonUrl: event.target.value }))}
-                      />
-                    </label>
-                  )}
-                </div>
-              ))}
-            </div>
-            <p className={styles.importedFieldOptionsHint}>
-              "Enviar a página específica" y "Redirigir a URL" navegan después de enviar el formulario: úsalas para mandar a cada opción a su camino (por ejemplo, una página de "no calificas").
-            </p>
+            <ImportedFieldOptionsEditor
+              title="Opciones del grupo"
+              options={choiceEditor.options}
+              targetPages={targetImportedPages}
+              disabled={contentSaving}
+              namePrefix="rstk-imported-choice-option"
+              onAdd={addChoiceOption}
+              onDuplicate={duplicateChoiceOption}
+              onRemove={removeChoiceOption}
+              onPatch={patchChoiceOption}
+            />
             <div className={styles.importedButtonActionFooter}>
               <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
                 Cancelar
@@ -14653,89 +15095,17 @@ const ImportedHtmlEditorPanel: React.FC<{
             {selectedFieldRoutePanel}
 
             {fieldEditorHasOptions && (
-              <div className={styles.importedFieldOptionsEditor}>
-                <div className={styles.importedFieldOptionsHeader}>
-                  <span>Opciones del campo</span>
-                  <button type="button" onClick={addFieldOption} disabled={contentSaving || fieldEditor.options.length >= 30}>
-                    <Plus size={13} />
-                    Agregar
-                  </button>
-                </div>
-                {fieldEditor.options.map((option, index) => (
-                  <div key={`${index}-${option.value}`} className={styles.importedFieldOptionItem}>
-                    <div className={styles.importedFieldOptionRow}>
-                      <input
-                        value={option.label}
-                        disabled={contentSaving}
-                        placeholder={`Opción ${index + 1}`}
-                        name={`rstk-imported-field-option-label-${index}`}
-                        {...importedEditorNoAutocompleteAttrs}
-                        onChange={(event) => patchFieldOption(index, {
-                          label: event.target.value,
-                          value: option.value === option.label ? event.target.value : option.value
-                        })}
-                      />
-                      <input
-                        value={option.value}
-                        disabled={contentSaving}
-                        placeholder="valor"
-                        name={`rstk-imported-field-option-value-${index}`}
-                        {...importedEditorNoAutocompleteAttrs}
-                        onChange={(event) => patchFieldOption(index, { value: event.target.value })}
-                      />
-                      <button type="button" onClick={() => removeFieldOption(index)} disabled={contentSaving || fieldEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
-                        <X size={13} />
-                      </button>
-                    </div>
-                    <label className={styles.importedFieldOptionAction}>
-                      <span>Al elegirla</span>
-                      <CustomSelect
-                        value={getImportedOptionQuickAction(option)}
-                        disabled={contentSaving}
-                        onChange={(event) => {
-                          const action = event.target.value as '' | ImportedButtonAction
-                          patchFieldOption(index, { actions: action ? [makeImportedActionStep(action)] : [] })
-                        }}
-                      >
-                        {importedChoiceQuickActions.map(item => (
-                          <option key={item.value || 'none'} value={item.value}>{item.label}</option>
-                        ))}
-                      </CustomSelect>
-                    </label>
-                    {getImportedOptionQuickAction(option) === 'specific_page' && (
-                      <label className={styles.importedFieldOptionAction}>
-                        <span>Página</span>
-                        <CustomSelect
-                          value={option.actions?.[0]?.buttonPageId || ''}
-                          disabled={contentSaving}
-                          onChange={(event) => patchFieldOption(index, patchImportedOptionActionStep(option, { buttonPageId: event.target.value }))}
-                        >
-                          <option value="">Selecciona una página</option>
-                          {targetImportedPages.map(page => (
-                            <option key={page.id} value={page.id}>{page.title || page.id}</option>
-                          ))}
-                        </CustomSelect>
-                      </label>
-                    )}
-                    {getImportedOptionQuickAction(option) === 'url' && (
-                      <label className={styles.importedFieldOptionAction}>
-                        <span>URL</span>
-                        <input
-                          value={option.actions?.[0]?.buttonUrl || ''}
-                          disabled={contentSaving}
-                          placeholder="https://..."
-                          name={`rstk-imported-field-option-url-${index}`}
-                          {...importedEditorNoAutocompleteAttrs}
-                          onChange={(event) => patchFieldOption(index, patchImportedOptionActionStep(option, { buttonUrl: event.target.value }))}
-                        />
-                      </label>
-                    )}
-                  </div>
-                ))}
-                <p className={styles.importedFieldOptionsHint}>
-                  "Enviar a página específica" y "Redirigir a URL" navegan después de enviar el formulario: úsalas para mandar a cada opción a su camino (por ejemplo, una página de "no calificas").
-                </p>
-              </div>
+              <ImportedFieldOptionsEditor
+                title="Opciones del campo"
+                options={fieldEditor.options}
+                targetPages={targetImportedPages}
+                disabled={contentSaving}
+                namePrefix="rstk-imported-field-option"
+                onAdd={addFieldOption}
+                onDuplicate={duplicateFieldOption}
+                onRemove={removeFieldOption}
+                onPatch={patchFieldOption}
+              />
             )}
 
             <div className={styles.importedButtonActionFooter}>
