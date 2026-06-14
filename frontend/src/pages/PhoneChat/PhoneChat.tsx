@@ -3516,10 +3516,10 @@ export const PhoneChat: React.FC = () => {
   } as Record<string, string>)[activeConversationAgentStatus] || 'Agente conversacional'
 
   useEffect(() => {
-    if (agentDataHydrated && !agentEnabled && chatFilter === 'agent') {
+    if (chatFilter === 'agent') {
       setChatFilter('all')
     }
-  }, [agentDataHydrated, agentEnabled, chatFilter])
+  }, [chatFilter])
 
   const agentHiddenChatIdSet = useMemo(() => {
     if (!agentEnabled) return new Set<string>()
@@ -7660,7 +7660,7 @@ export const PhoneChat: React.FC = () => {
             >
               <ChevronLeft size={26} />
             </button>
-            <span className={styles.aiAgentHubEyebrow}>Inteligencia artificial</span>
+            <span className={styles.aiAgentHubEyebrow}>Agente conversacional</span>
             <span className={`${styles.aiAgentHubRobot} ${agentEnabled ? styles.aiAgentHubRobotOn : styles.aiAgentHubRobotOff}`}>
               {renderAgentRobotGlyph(agentEnabled)}
               <span className={styles.aiAgentHubRobotPing} aria-hidden="true" />
@@ -7669,7 +7669,6 @@ export const PhoneChat: React.FC = () => {
             </span>
             <div className={styles.aiAgentHubCopy}>
               <p className={`${styles.aiAgentHubStatus} ${agentEnabled ? styles.aiAgentHubStatusOn : styles.aiAgentHubStatusOff}`}>{activeLabel}</p>
-              <h2>Agente conversacional</h2>
               <span>{agentEnabled ? `${agentCountLabel} atendiendo chats.` : `${agentCountLabel}; toca encender para activarlos.`}</span>
             </div>
             <div className={styles.aiAgentHubActions}>
@@ -11988,7 +11987,6 @@ export const PhoneChat: React.FC = () => {
             <div className={styles.filterChips} data-phone-chat-scrollable="true" aria-hidden={chatSearchExpanded}>
               {([
                 ['all', 'Todos'],
-                ...(agentEnabled ? [['agent', 'Agente AI'] as [ChatFilter, string]] : []),
                 ['unread', unreadTotal > 0 ? `No leídos ${unreadTotal > 99 ? '99+' : unreadTotal}` : 'No leídos'],
                 ['appointments', 'Agendados'],
                 ['customers', customersLabel],
