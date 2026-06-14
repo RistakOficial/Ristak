@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import fetch from 'node-fetch'
+import sharp from 'sharp'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { findContactByPhoneCandidates } from './contactIdentityService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
@@ -39,7 +40,8 @@ const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = 'Contacto WhatsApp_API'
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
 const WHATSAPP_IMAGE_PUBLIC_PATH = '/uploads/whatsapp-images'
-const MAX_WHATSAPP_IMAGE_BYTES = 8 * 1024 * 1024
+const MAX_WHATSAPP_IMAGE_INPUT_BYTES = 25 * 1024 * 1024
+const MAX_WHATSAPP_IMAGE_OUTPUT_BYTES = 5 * 1024 * 1024
 const WHATSAPP_AUDIO_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-audio')
 const WHATSAPP_AUDIO_PUBLIC_PATH = '/uploads/whatsapp-audio'
 const MAX_WHATSAPP_AUDIO_BYTES = 16 * 1024 * 1024
@@ -326,6 +328,10 @@ function cleanString(value) {
   return String(value).trim()
 }
 
+function cleanMimeType(value = '') {
+  return cleanString(value).split(';')[0].toLowerCase()
+}
+
 function safeJson(value) {
   try {
     return JSON.stringify(value ?? null)
@@ -559,11 +565,52 @@ function parseImageDataUrl(value = '') {
     throw new Error('La foto está vacía.')
   }
 
-  if (buffer.length > MAX_WHATSAPP_IMAGE_BYTES) {
+  if (buffer.length > MAX_WHATSAPP_IMAGE_INPUT_BYTES) {
     throw new Error('La foto pesa demasiado. Toma otra foto más ligera o recórtala antes de enviarla.')
   }
 
   return { buffer, mimeType, extension }
+}
+
+async function prepareWhatsAppApiImageBuffer({ buffer, mimeType }) {
+  try {
+    const output = await sharp(buffer, { limitInputPixels: 64_000_000 })
+      .rotate()
+      .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
+      .flatten({ background: '#ffffff' })
+      .jpeg({ quality: 82, mozjpeg: true })
+      .toBuffer()
+
+    if (!output.length) {
+      throw new Error('La conversión dejó la foto vacía.')
+    }
+    if (output.length > MAX_WHATSAPP_IMAGE_OUTPUT_BYTES) {
+      throw new Error('La foto sigue pesando demasiado para WhatsApp después de comprimirla.')
+    }
+
+    return {
+      buffer: output,
+      mimeType: 'image/jpeg',
+      extension: 'jpg',
+      compression: 'whatsapp_jpeg'
+    }
+  } catch (error) {
+    const fallbackMimeType = cleanMimeType(mimeType)
+    if (fallbackMimeType === 'image/jpeg' || fallbackMimeType === 'image/png') {
+      if (buffer.length > MAX_WHATSAPP_IMAGE_OUTPUT_BYTES) {
+        throw new Error('La foto pesa demasiado para WhatsApp. Recórtala o toma una versión más ligera.')
+      }
+      logger.warn(`[WhatsApp API] No se pudo optimizar foto a JPEG: ${error.message}; usando ${fallbackMimeType}.`)
+      return {
+        buffer,
+        mimeType: fallbackMimeType,
+        extension: IMAGE_EXTENSION_BY_MIME[fallbackMimeType] || 'jpg',
+        compression: 'original_compatible'
+      }
+    }
+
+    throw new Error('La foto salió en un formato que WhatsApp no acepta y no se pudo convertir a JPEG. Intenta tomarla otra vez.')
+  }
 }
 
 function parseAudioDataUrl(value = '') {
@@ -713,15 +760,23 @@ async function convertAudioToOggOpus({ buffer, extension }) {
 }
 
 export async function saveWhatsAppImageDataUrl(dataUrl = '') {
-  const { buffer, mimeType, extension } = parseImageDataUrl(dataUrl)
+  const parsed = parseImageDataUrl(dataUrl)
+  const prepared = await prepareWhatsAppApiImageBuffer(parsed)
   try {
     const { uploadMediaAsset } = await import('./mediaStorageService.js')
     const asset = await uploadMediaAsset({
-      buffer,
-      mimeType,
-      filename: `whatsapp-image.${extension}`,
+      buffer: prepared.buffer,
+      mimeType: prepared.mimeType,
+      filename: `whatsapp-image.${prepared.extension}`,
       module: 'chat',
-      isPublic: true
+      isPublic: true,
+      skipCompression: true,
+      metadata: {
+        whatsappApiCompatible: true,
+        whatsappImageCompression: prepared.compression,
+        originalMimeType: parsed.mimeType,
+        originalExtension: parsed.extension
+      }
     })
     return {
       mimeType: asset.mimeType,
@@ -736,15 +791,15 @@ export async function saveWhatsAppImageDataUrl(dataUrl = '') {
 
   const dayKey = new Date().toISOString().slice(0, 10)
   const folder = join(WHATSAPP_IMAGE_UPLOAD_ROOT, dayKey)
-  const filename = `${crypto.randomUUID()}.${extension}`
+  const filename = `${crypto.randomUUID()}.${prepared.extension}`
   const filePath = join(folder, filename)
 
   await fs.mkdir(folder, { recursive: true })
-  await fs.writeFile(filePath, buffer)
+  await fs.writeFile(filePath, prepared.buffer)
 
   return {
-    mimeType,
-    size: buffer.length,
+    mimeType: prepared.mimeType,
+    size: prepared.buffer.length,
     publicPath: `${WHATSAPP_IMAGE_PUBLIC_PATH}/${dayKey}/${filename}`,
     filename
   }
