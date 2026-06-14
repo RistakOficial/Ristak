@@ -515,6 +515,7 @@
   --rstk-code-comment: #86efac;
   --rstk-code-keyword: #f0abfc;
   --rstk-code-selection: rgba(96, 165, 250, 0.28);
+  color-scheme: dark;
 }
 
 .importedCodeSourcePaneLight {
@@ -528,6 +529,7 @@
   --rstk-code-comment: #15803d;
   --rstk-code-keyword: #be185d;
   --rstk-code-selection: rgba(71, 85, 105, 0.18);
+  color-scheme: light;
 }
 
 .importedCodeSourcePaneInvalid {
@@ -602,10 +604,13 @@
   width: 100%;
   height: 100%;
   resize: none;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: transparent;
+  border: 0 !important;
+  outline: 0 !important;
+  appearance: none;
+  background: transparent !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent;
+  box-shadow: none !important;
   caret-color: var(--rstk-code-caret);
   overflow: auto;
   scrollbar-gutter: stable;
@@ -613,7 +618,8 @@
 
 .importedCodeTextarea::selection {
   background: var(--rstk-code-selection);
-  color: transparent;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent;
 }
 
 .importedCodeTextarea:disabled {
@@ -1670,6 +1676,23 @@
   outline: none;
 }
 
+.importedCodeCheckboxField {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 780;
+}
+
+.importedCodeCheckboxField input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: var(--color-primary);
+}
+
 .importedFieldOptionsHint {
   margin: 4px 0 0;
   color: var(--color-text-tertiary);
@@ -1682,6 +1705,10 @@
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.9fr) 34px;
   gap: 7px;
   align-items: center;
+}
+
+.importedCodeFieldMetaRow {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .importedFieldOptionRow input {

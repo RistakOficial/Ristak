@@ -9300,6 +9300,24 @@ type ImportedButtonEditorState = {
   buttonActions: ImportedButtonActionStep[]
 }
 
+type ImportedCodeElementEditorMode = 'text' | 'field' | 'media' | 'container'
+
+type ImportedCodeElementEditorState = {
+  mode: ImportedCodeElementEditorMode
+  descriptor: ImportedFrameElementDescriptor
+  range: ImportedCodeSourceRange
+  editId: string
+  editType: ImportedEditableSelection['editType']
+  tagName: string
+  label: string
+  value: string
+  placeholder?: string
+  fieldName?: string
+  fieldHtmlId?: string
+  required?: boolean
+  mediaUrl?: string
+}
+
 type ImportedChoiceSelection = {
   editId: string
   label: string
@@ -9366,6 +9384,10 @@ type ImportedFrameElementDescriptor = {
   mode?: 'visual' | 'code'
   eventType?: string
   tagName: string
+  codeStart?: number
+  codeEnd?: number
+  codeLine?: number
+  codeLabel?: string
   id?: string
   editId?: string
   sectionId?: string
@@ -9426,6 +9448,36 @@ const importedCodeSelectableSelector = [
   'div'
 ].join(', ')
 
+const importedCodeSelectableTagNames = new Set([
+  'a',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  'label',
+  'img',
+  'video',
+  'iframe',
+  'embed',
+  'object',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'p',
+  'section',
+  'article',
+  'main',
+  'header',
+  'footer',
+  'aside',
+  'figure',
+  'form',
+  'div'
+])
+
 const importedHtmlVoidTags = new Set([
   'area',
   'base',
@@ -9451,6 +9503,16 @@ const getImportedFrameDescriptorAttribute = (element: Element, names: string[]) 
     if (value) return value.trim()
   }
   return ''
+}
+
+const getImportedFrameDescriptorNumberAttribute = (element: Element, names: string[]) => {
+  for (const name of names) {
+    const rawValue = element.getAttribute(name)
+    if (!rawValue) continue
+    const parsed = Number.parseInt(rawValue, 10)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
 }
 
 const getImportedFrameElementPath = (element: Element): ImportedFrameElementPathStep[] => {
@@ -9483,6 +9545,10 @@ const getImportedFrameElementDescriptor = (
   mode,
   eventType,
   tagName: element.tagName.toLowerCase(),
+  codeStart: getImportedFrameDescriptorNumberAttribute(element, ['data-rstk-code-start']),
+  codeEnd: getImportedFrameDescriptorNumberAttribute(element, ['data-rstk-code-end']),
+  codeLine: getImportedFrameDescriptorNumberAttribute(element, ['data-rstk-code-line']),
+  codeLabel: getImportedFrameDescriptorAttribute(element, ['data-rstk-code-label']),
   id: element.getAttribute('id') || '',
   editId: getImportedFrameDescriptorAttribute(element, [
     'data-rstk-edit-id',
@@ -9547,6 +9613,12 @@ const findImportedFrameElementByDescriptor = (
   descriptor: ImportedFrameElementDescriptor
 ): HTMLElement | null => {
   const tagName = descriptor.tagName || '*'
+  if (descriptor.codeStart !== undefined) {
+    const codeMarkedElement = doc.querySelector<HTMLElement>(
+      `${tagName}[data-rstk-code-start="${descriptor.codeStart}"], [data-rstk-code-start="${descriptor.codeStart}"]`
+    )
+    if (codeMarkedElement) return codeMarkedElement
+  }
   const queryByAttribute = (names: string[], value?: string) => {
     if (!value) return null
     for (const name of names) {
@@ -9580,6 +9652,10 @@ const buildImportedEditorFrameGuardScript = (mode: ImportedFrameElementDescripto
     }
     return '';
   };
+  const numberAttr = (element, name) => {
+    const value = element && element.getAttribute ? parseInt(element.getAttribute(name) || '', 10) : NaN;
+    return Number.isFinite(value) ? value : undefined;
+  };
   const getPath = (element) => {
     const path = [];
     let current = element;
@@ -9604,6 +9680,10 @@ const buildImportedEditorFrameGuardScript = (mode: ImportedFrameElementDescripto
       mode,
       eventType,
       tagName: element.tagName.toLowerCase(),
+      codeStart: numberAttr(element, 'data-rstk-code-start'),
+      codeEnd: numberAttr(element, 'data-rstk-code-end'),
+      codeLine: numberAttr(element, 'data-rstk-code-line'),
+      codeLabel: element.getAttribute('data-rstk-code-label') || '',
       id: element.getAttribute('id') || '',
       editId: firstAttr(element, editableAliases),
       sectionId: firstAttr(element, sectionAliases),
@@ -9738,12 +9818,120 @@ const findImportedHtmlSourceRangeByStart = (
 }
 
 const getImportedCodeRangeLabel = (descriptor: ImportedFrameElementDescriptor) => {
+  if (descriptor.codeLabel) return descriptor.codeLabel
   const tagName = descriptor.tagName || 'elemento'
   if (descriptor.editId) return `${tagName} · ${descriptor.editId}`
   if (descriptor.id) return `${tagName}#${descriptor.id}`
   if (descriptor.name) return `${tagName}[name="${descriptor.name}"]`
   if (descriptor.text) return `${tagName} · ${descriptor.text.slice(0, 48)}`
   return tagName
+}
+
+const escapeImportedCodeMarkerAttribute = (value: string) => String(value || '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}[char] || char))
+
+const getImportedCodeMarkerLabelFromStartTag = (tagName: string, startTag: string) => {
+  const id = getImportedHtmlStartTagAttribute(startTag, 'id')
+  const name = getImportedHtmlStartTagAttribute(startTag, 'name')
+  const editId = getImportedHtmlStartTagAttribute(startTag, 'data-rstk-edit-id') ||
+    getImportedHtmlStartTagAttribute(startTag, 'data-ristak-edit-id') ||
+    getImportedHtmlStartTagAttribute(startTag, 'data-ristack-edit-id')
+  if (editId) return `${tagName} · ${editId}`
+  if (id) return `${tagName}#${id}`
+  if (name) return `${tagName}[name="${name}"]`
+  return tagName
+}
+
+const shouldMarkImportedCodeStartTag = (tagName: string, startTag: string) => {
+  if (['html', 'head', 'body', 'script', 'style', 'title', 'meta', 'link', 'base', 'noscript'].includes(tagName)) return false
+  if (importedCodeSelectableTagNames.has(tagName)) return true
+  return /\s(?:data-rstk-edit-id|data-ristak-edit-id|data-ristack-edit-id|data-rstk-editable|data-ristak-editable|data-ristack-editable|data-rstk-section|data-ristak-section|data-ristack-section|role|href|name|id)\s*=/i.test(startTag)
+}
+
+const getImportedCodeMarkerSkipRanges = (html: string) => {
+  const ranges: Array<{ start: number; end: number }> = []
+  const skipRegex = /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi
+  let match: RegExpExecArray | null
+  while ((match = skipRegex.exec(html))) {
+    ranges.push({ start: match.index, end: match.index + match[0].length })
+  }
+  return ranges
+}
+
+const isImportedCodeMarkerIndexSkipped = (index: number, ranges: Array<{ start: number; end: number }>) => (
+  ranges.some(range => index > range.start && index < range.end)
+)
+
+const buildImportedCodeRangePreviewHtml = (html: string) => {
+  if (!html.trim()) return html
+  const skipRanges = getImportedCodeMarkerSkipRanges(html)
+  const tagRegex = /<([A-Za-z][\w:-]*)\b[^>]*>/g
+  let output = ''
+  let cursor = 0
+  let match: RegExpExecArray | null
+
+  while ((match = tagRegex.exec(html))) {
+    const rawTag = match[0]
+    const tagName = match[1].toLowerCase()
+    output += html.slice(cursor, match.index)
+    cursor = match.index + rawTag.length
+
+    if (
+      isImportedCodeMarkerIndexSkipped(match.index, skipRanges) ||
+      rawTag.includes('data-rstk-code-start=') ||
+      !shouldMarkImportedCodeStartTag(tagName, rawTag)
+    ) {
+      output += rawTag
+      continue
+    }
+
+    const label = getImportedCodeMarkerLabelFromStartTag(tagName, rawTag)
+    const range = findImportedHtmlSourceRangeByStart(html, match.index, rawTag, tagName, label)
+    const markerAttrs = [
+      `data-rstk-code-start="${range.start}"`,
+      `data-rstk-code-end="${range.end}"`,
+      `data-rstk-code-line="${range.line}"`,
+      `data-rstk-code-label="${escapeImportedCodeMarkerAttribute(label)}"`
+    ].join(' ')
+    const insertAt = rawTag.endsWith('/>') ? rawTag.length - 2 : rawTag.length - 1
+    const spacer = rawTag[insertAt - 1] === ' ' ? '' : ' '
+    output += `${rawTag.slice(0, insertAt)}${spacer}${markerAttrs}${rawTag.slice(insertAt)}`
+  }
+
+  output += html.slice(cursor)
+  return output
+}
+
+const findImportedSourceRangeByCodeMarker = (
+  html: string,
+  descriptor: ImportedFrameElementDescriptor
+): ImportedCodeSourceRange | null => {
+  const start = descriptor.codeStart
+  if (start === undefined || start < 0 || start >= html.length) return null
+  const tagName = descriptor.tagName || ''
+  const startTagEnd = html.indexOf('>', start)
+  if (startTagEnd < 0) return null
+  const startTag = html.slice(start, startTagEnd + 1)
+  if (tagName && !new RegExp(`^<${escapeImportedRegex(tagName)}\\b`, 'i').test(startTag)) return null
+  const computedRange = findImportedHtmlSourceRangeByStart(
+    html,
+    start,
+    startTag,
+    tagName || (startTag.match(/^<([A-Za-z][\w:-]*)\b/)?.[1] || 'div').toLowerCase(),
+    getImportedCodeRangeLabel(descriptor)
+  )
+  const markerEnd = descriptor.codeEnd
+  return {
+    ...computedRange,
+    end: markerEnd !== undefined && markerEnd > start && markerEnd <= html.length ? markerEnd : computedRange.end,
+    line: descriptor.codeLine || computedRange.line,
+    label: getImportedCodeRangeLabel(descriptor)
+  }
 }
 
 const findImportedSourceRangeByAttribute = (
@@ -9861,7 +10049,8 @@ const findImportedSourceRangeForDescriptor = (
   descriptor: ImportedFrameElementDescriptor
 ): ImportedCodeSourceRange | null => {
   if (!html.trim()) return null
-  return findImportedSourceRangeByAttribute(html, descriptor) ||
+  return findImportedSourceRangeByCodeMarker(html, descriptor) ||
+    findImportedSourceRangeByAttribute(html, descriptor) ||
     findImportedSourceRangeByPath(html, descriptor) ||
     findImportedSourceRangeByText(html, descriptor)
 }
@@ -10604,6 +10793,12 @@ const setImportedHtmlAttribute = (openingTag = '', attrName = '', value = '') =>
   return `${openingTag.slice(0, insertAt)}${spacer}${attrName}="${escapedValue}"${openingTag.slice(insertAt)}`
 }
 
+const removeImportedHtmlAttribute = (openingTag = '', attrName = '') => {
+  if (!openingTag || !attrName) return openingTag
+  const attrPattern = new RegExp(`\\s${escapeImportedRegex(attrName)}(?:\\s*=\\s*("[^"]*"|'[^']*'|[^\\s>]+))?`, 'gi')
+  return openingTag.replace(attrPattern, '')
+}
+
 const getImportedCodeButtonText = (element: HTMLElement, descriptor: ImportedFrameElementDescriptor) => {
   const tagName = element.tagName.toLowerCase()
   if (tagName === 'input') {
@@ -10728,6 +10923,176 @@ const applyImportedCodeButtonPatch = (
     source.slice(0, start),
     openingTag,
     escapeImportedHtmlText(cleanValue),
+    source.slice(closingStart, range.end),
+    source.slice(range.end)
+  ].join('')
+}
+
+const isImportedCodeFieldElement = (element: HTMLElement) => {
+  const tagName = element.tagName.toLowerCase()
+  if (tagName === 'textarea' || tagName === 'select') return true
+  if (tagName !== 'input') return false
+  const inputType = (element.getAttribute('type') || 'text').toLowerCase()
+  return !['hidden', 'button', 'submit', 'reset', 'image', 'file'].includes(inputType)
+}
+
+const getImportedCodeElementEditId = (
+  element: HTMLElement,
+  descriptor: ImportedFrameElementDescriptor,
+  range: ImportedCodeSourceRange,
+  prefix = 'element'
+) => (
+  getImportedEditableAttribute(element, 'id') ||
+  descriptor.editId ||
+  descriptor.id ||
+  descriptor.name ||
+  `${prefix}-${range.line}-${range.start}`
+)
+
+const getImportedCodeElementLabel = (
+  element: HTMLElement,
+  descriptor: ImportedFrameElementDescriptor,
+  fallback = 'Elemento'
+) => (
+  getImportedEditableAttribute(element, 'label') ||
+  descriptor.codeLabel ||
+  element.getAttribute('aria-label') ||
+  element.getAttribute('title') ||
+  descriptor.text ||
+  fallback
+)
+
+const readImportedCodeElementEditor = (
+  element: HTMLElement,
+  descriptor: ImportedFrameElementDescriptor,
+  range: ImportedCodeSourceRange,
+  doc: Document
+): ImportedCodeElementEditorState | null => {
+  const tagName = element.tagName.toLowerCase()
+  const inferredType = normalizeImportedEditableType(getImportedEditableAttribute(element, 'type'), element)
+
+  if (isImportedCodeFieldElement(element)) {
+    const selection = readImportedFormFieldSelection(element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, doc)
+    return {
+      mode: 'field',
+      descriptor,
+      range,
+      editId: selection.editId || getImportedCodeElementEditId(element, descriptor, range, 'field'),
+      editType: 'form_field',
+      tagName,
+      label: selection.label,
+      value: selection.label,
+      placeholder: selection.placeholder,
+      fieldName: selection.fieldName,
+      fieldHtmlId: selection.fieldHtmlId,
+      required: selection.required
+    }
+  }
+
+  if (['image', 'video', 'background_image'].includes(inferredType)) {
+    const value = getEditableElementValue(element, inferredType)
+    return {
+      mode: 'media',
+      descriptor,
+      range,
+      editId: getImportedCodeElementEditId(element, descriptor, range, inferredType),
+      editType: inferredType,
+      tagName,
+      label: getImportedCodeElementLabel(element, descriptor, editableTypeLabels[inferredType]),
+      value,
+      mediaUrl: value
+    }
+  }
+
+  const hasNestedElementChildren = Array.from(element.children)
+    .some(child => child.tagName.toLowerCase() !== 'br')
+  const textValue = getEditableElementValue(element, inferredType).trim()
+  const canEditText = Boolean(textValue) && !hasNestedElementChildren
+
+  return {
+    mode: canEditText ? 'text' : 'container',
+    descriptor,
+    range,
+    editId: getImportedCodeElementEditId(element, descriptor, range, inferredType),
+    editType: inferredType,
+    tagName,
+    label: getImportedCodeElementLabel(element, descriptor, canEditText ? editableTypeLabels[inferredType] || 'Texto' : 'Contenedor'),
+    value: canEditText ? textValue : ''
+  }
+}
+
+const applyImportedCodeElementPatch = (
+  html: string,
+  editor: ImportedCodeElementEditorState,
+  range: ImportedCodeSourceRange | null
+) => {
+  if (!range || editor.mode === 'container') return null
+  const source = String(html || '')
+  const start = range.start
+  if (start < 0 || start >= source.length) return null
+  const sourceRange = source.slice(start, range.end)
+  const startTagMatch = sourceRange.match(/^<([A-Za-z][\w:-]*)\b[^>]*>/)
+  if (!startTagMatch?.[0] || !startTagMatch[1]) return null
+
+  const tagName = startTagMatch[1].toLowerCase()
+  const cleanLabel = editor.label.trim() || editor.value.trim() || editor.tagName
+  let openingTag = startTagMatch[0]
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-editable', 'true')
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-id', editor.editId)
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-label', cleanLabel)
+
+  if (editor.mode === 'field') {
+    openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-type', 'form_field')
+    openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-field-required', editor.required ? 'true' : 'false')
+    openingTag = setImportedHtmlAttribute(openingTag, 'aria-required', editor.required ? 'true' : 'false')
+    openingTag = editor.required
+      ? setImportedHtmlAttribute(openingTag, 'required', 'required')
+      : removeImportedHtmlAttribute(openingTag, 'required')
+    if (editor.fieldName?.trim()) openingTag = setImportedHtmlAttribute(openingTag, 'name', editor.fieldName.trim())
+    if (editor.fieldHtmlId?.trim()) openingTag = setImportedHtmlAttribute(openingTag, 'id', editor.fieldHtmlId.trim())
+    if (tagName === 'input' || tagName === 'textarea') {
+      openingTag = setImportedHtmlAttribute(openingTag, 'placeholder', editor.placeholder?.trim() || '')
+    }
+    return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
+  }
+
+  if (editor.mode === 'media') {
+    openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-type', editor.editType)
+    const mediaUrl = (editor.mediaUrl || editor.value || '').trim()
+    if (editor.editType === 'background_image') {
+      const styleValue = openingTag.match(/\sstyle\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i)?.[1] || '""'
+      const unquotedStyle = styleValue.replace(/^["']|["']$/g, '')
+      const nextStyle = /background(?:-image)?\s*:/i.test(unquotedStyle)
+        ? unquotedStyle.replace(/background(?:-image)?\s*:\s*url\([^)]+\)\s*;?/i, `background-image: url('${mediaUrl}');`)
+        : `${unquotedStyle}${unquotedStyle.trim().endsWith(';') || !unquotedStyle.trim() ? '' : ';'} background-image: url('${mediaUrl}');`
+      openingTag = setImportedHtmlAttribute(openingTag, 'style', nextStyle)
+    } else if (tagName === 'object') {
+      openingTag = setImportedHtmlAttribute(openingTag, 'data', mediaUrl)
+    } else if (tagName === 'wistia-player') {
+      openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-video-url', mediaUrl)
+    } else {
+      openingTag = setImportedHtmlAttribute(openingTag, 'src', mediaUrl)
+    }
+    return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
+  }
+
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-type', editor.editType === 'section' ? 'text' : editor.editType)
+  if (tagName === 'input') {
+    openingTag = setImportedHtmlAttribute(openingTag, 'value', editor.value.trim())
+    return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
+  }
+
+  const closingTagPattern = new RegExp(`</${escapeImportedRegex(tagName)}\\s*>\\s*$`, 'i')
+  const closingTagMatch = sourceRange.match(closingTagPattern)
+  if (!closingTagMatch) {
+    return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
+  }
+
+  const closingStart = range.end - closingTagMatch[0].length
+  return [
+    source.slice(0, start),
+    openingTag,
+    escapeImportedHtmlText(editor.value.trim()),
     source.slice(closingStart, range.end),
     source.slice(range.end)
   ].join('')
@@ -11674,6 +12039,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [previewVersion, setPreviewVersion] = useState(0)
   const [inlineEditor, setInlineEditor] = useState<ImportedInlineEditorState | null>(null)
   const [buttonEditor, setButtonEditor] = useState<ImportedButtonEditorState | null>(null)
+  const [codeElementEditor, setCodeElementEditor] = useState<ImportedCodeElementEditorState | null>(null)
   const [choiceEditor, setChoiceEditor] = useState<ImportedChoiceEditorState | null>(null)
   const [aiRegionMode, setAiRegionMode] = useState(false)
   const [aiRegionSelection, setAiRegionSelection] = useState<ImportedAIRegionSelection | null>(null)
@@ -11820,6 +12186,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     selectedIframeElementRef.current = null
     setInlineEditor(null)
     setButtonEditor(null)
+    setCodeElementEditor(null)
     setChoiceEditor(null)
     setAiRegionMode(false)
     setAiRegionSelection(null)
@@ -11836,6 +12203,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     selectedIframeElementRef.current = null
     setInlineEditor(null)
     setButtonEditor(null)
+    setCodeElementEditor(null)
     setChoiceEditor(null)
     setFieldEditor(null)
     setContentError('')
@@ -11855,6 +12223,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   const openInlineEditorForElement = useCallback((element: HTMLElement, selection: ImportedEditableSelection, mode: 'text' | 'image' | 'video') => {
     const position = getInlineEditorPosition(element)
+    setCodeElementEditor(null)
     setFieldEditor(null)
     setInlineEditor({
       selection,
@@ -11867,6 +12236,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   const openButtonEditorForSelection = useCallback((selection: ImportedEditableSelection) => {
     setInlineEditor(null)
+    setCodeElementEditor(null)
     setChoiceEditor(null)
     setFieldEditor(null)
     setButtonEditor({
@@ -11897,9 +12267,25 @@ const ImportedHtmlEditorPanel: React.FC<{
     openButtonEditorForSelection(readImportedCodeButtonSelection(element, descriptor, range))
   }, [openButtonEditorForSelection])
 
+  const openCodeElementEditorForElement = useCallback((
+    element: HTMLElement,
+    descriptor: ImportedFrameElementDescriptor,
+    range: ImportedCodeSourceRange
+  ) => {
+    const doc = element.ownerDocument
+    const editor = readImportedCodeElementEditor(element, descriptor, range, doc)
+    setInlineEditor(null)
+    setButtonEditor(null)
+    setChoiceEditor(null)
+    setFieldEditor(null)
+    setCodeElementEditor(editor)
+    setContentError('')
+  }, [])
+
   const openChoiceEditorForSelection = useCallback((selection: ImportedChoiceSelection) => {
     setInlineEditor(null)
     setButtonEditor(null)
+    setCodeElementEditor(null)
     setFieldEditor(null)
     setChoiceEditor({
       selection,
@@ -11912,6 +12298,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const openFieldEditorForSelection = useCallback((selection: ImportedFormFieldSelection) => {
     setInlineEditor(null)
     setButtonEditor(null)
+    setCodeElementEditor(null)
     setChoiceEditor(null)
     setFieldEditor({
       selection,
@@ -11930,6 +12317,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     selectedCodePreviewElementRef.current = null
     setInlineEditor(null)
     setButtonEditor(null)
+    setCodeElementEditor(null)
     setChoiceEditor(null)
     setFieldEditor(null)
   }, [])
@@ -12941,6 +13329,38 @@ const ImportedHtmlEditorPanel: React.FC<{
     })
   }
 
+  const canSaveCodeElementEditor = Boolean(
+    codeElementEditor &&
+    activeCodeFile?.language === 'html' &&
+    !saving &&
+    (
+      codeElementEditor.mode === 'field'
+        ? codeElementEditor.label.trim()
+        : codeElementEditor.mode === 'media'
+          ? (codeElementEditor.mediaUrl || codeElementEditor.value).trim()
+          : codeElementEditor.mode === 'text'
+            ? codeElementEditor.value.trim()
+            : false
+    )
+  )
+
+  const saveCodeElementEditor = () => {
+    if (!codeElementEditor || !activeCodeFile || activeCodeFile.language !== 'html') return
+    const range = findImportedSourceRangeForDescriptor(activeCodeValue, codeElementEditor.descriptor) || codeElementEditor.range
+    const nextHtml = applyImportedCodeElementPatch(activeCodeValue, codeElementEditor, range)
+    if (!nextHtml) {
+      setContentError('No pude actualizar ese elemento en el código. Selecciónalo otra vez desde la vista.')
+      return
+    }
+    onCodeDraftChange(activeCodeFile.path, nextHtml, activeCodeFile.content)
+    setCodeElementEditor(null)
+    setContentError('')
+    selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
+    selectedCodePreviewElementRef.current = null
+    setCodeSelectionNotice('Elemento actualizado en el código · cambios sin guardar')
+    showToast('success', 'Elemento actualizado', 'Revisa el código y guarda el sitio cuando termines.')
+  }
+
   const canSaveInlineEditor = Boolean(
     inlineEditor &&
     inlineEditor.selection.editType !== 'section' &&
@@ -12951,6 +13371,127 @@ const ImportedHtmlEditorPanel: React.FC<{
   const inlineVideoPreview: EmbedPreviewConfig = inlineEditor?.mode === 'video'
     ? resolveImportedVideoPreview(inlineEditor.value)
     : { kind: 'empty' }
+
+  const codeElementEditorPanel = codeElementEditor ? (
+    <div className={styles.importedButtonActionBox}>
+      <div className={styles.importedButtonActionHeader}>
+        <Code2 size={17} />
+        <div>
+          <span>Elemento seleccionado</span>
+          <strong>{codeElementEditor.label || codeElementEditor.tagName}</strong>
+        </div>
+      </div>
+
+      <div className={styles.importedChoiceMeta}>
+        <span>{codeElementEditor.tagName}</span>
+        <strong>Línea {codeElementEditor.range.line}</strong>
+      </div>
+
+      {codeElementEditor.mode === 'text' && (
+        <label className={styles.importedActionField}>
+          <span>Texto</span>
+          <textarea
+            rows={4}
+            value={codeElementEditor.value}
+            disabled={saving}
+            name="rstk-imported-code-element-text"
+            {...importedEditorNoAutocompleteAttrs}
+            onChange={(event) => setCodeElementEditor(current => current ? { ...current, value: event.target.value } : current)}
+          />
+        </label>
+      )}
+
+      {codeElementEditor.mode === 'field' && (
+        <>
+          <label className={styles.importedActionField}>
+            <span>Etiqueta</span>
+            <input
+              value={codeElementEditor.label}
+              disabled={saving}
+              name="rstk-imported-code-field-label"
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => setCodeElementEditor(current => current ? { ...current, label: event.target.value, value: event.target.value } : current)}
+            />
+          </label>
+          {codeElementEditor.tagName !== 'select' && (
+            <label className={styles.importedActionField}>
+              <span>Texto dentro del campo</span>
+              <input
+                value={codeElementEditor.placeholder || ''}
+                disabled={saving}
+                name="rstk-imported-code-field-placeholder"
+                {...importedEditorNoAutocompleteAttrs}
+                onChange={(event) => setCodeElementEditor(current => current ? { ...current, placeholder: event.target.value } : current)}
+              />
+            </label>
+          )}
+          <div className={`${styles.importedFieldOptionRow} ${styles.importedCodeFieldMetaRow}`}>
+            <input
+              value={codeElementEditor.fieldName || ''}
+              disabled={saving}
+              placeholder="name"
+              name="rstk-imported-code-field-name"
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => setCodeElementEditor(current => current ? { ...current, fieldName: event.target.value } : current)}
+            />
+            <input
+              value={codeElementEditor.fieldHtmlId || ''}
+              disabled={saving}
+              placeholder="id"
+              name="rstk-imported-code-field-id"
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => setCodeElementEditor(current => current ? { ...current, fieldHtmlId: event.target.value } : current)}
+            />
+          </div>
+          <label className={styles.importedCodeCheckboxField}>
+            <input
+              type="checkbox"
+              checked={Boolean(codeElementEditor.required)}
+              disabled={saving}
+              onChange={(event) => setCodeElementEditor(current => current ? { ...current, required: event.target.checked } : current)}
+            />
+            <span>Campo requerido</span>
+          </label>
+        </>
+      )}
+
+      {codeElementEditor.mode === 'media' && (
+        <label className={styles.importedActionField}>
+          <span>{codeElementEditor.editType === 'image' ? 'URL de imagen' : codeElementEditor.editType === 'video' ? 'URL de video' : 'URL de fondo'}</span>
+          <input
+            value={codeElementEditor.mediaUrl || codeElementEditor.value}
+            disabled={saving}
+            placeholder="https://..."
+            name="rstk-imported-code-media-url"
+            {...importedEditorNoAutocompleteAttrs}
+            onChange={(event) => setCodeElementEditor(current => current ? { ...current, mediaUrl: event.target.value, value: event.target.value } : current)}
+          />
+        </label>
+      )}
+
+      {codeElementEditor.mode === 'container' && (
+        <p className={styles.importedButtonCodeHint}>
+          Este contenedor tiene HTML interno. Te marco la línea exacta para editarlo directo en el código sin romper sus elementos hijos.
+        </p>
+      )}
+
+      {codeElementEditor.mode !== 'container' && (
+        <p className={styles.importedButtonCodeHint}>
+          Este cambio se escribe en el HTML como borrador. Se aplica definitivamente cuando guardes el sitio.
+        </p>
+      )}
+
+      <div className={styles.importedButtonActionFooter}>
+        <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={saving}>
+          Cancelar
+        </Button>
+        <Button type="button" size="sm" onClick={saveCodeElementEditor} disabled={!canSaveCodeElementEditor || saving} loading={saving}>
+          <Save size={14} />
+          Guardar elemento
+        </Button>
+      </div>
+    </div>
+  ) : null
 
   const buttonEditorPanel = buttonEditor ? (
     <div className={styles.importedButtonActionBox}>
@@ -13009,9 +13550,13 @@ const ImportedHtmlEditorPanel: React.FC<{
   const activeCodePreviewHtml = activeCodeFile?.language === 'html'
     ? activeCodeValue
     : previewHtml
-  const guardedCodePreviewHtml = useMemo(
-    () => buildImportedEditorPreviewHtml(activeCodePreviewHtml, 'code'),
+  const codePreviewSourceHtml = useMemo(
+    () => buildImportedCodeRangePreviewHtml(activeCodePreviewHtml),
     [activeCodePreviewHtml]
+  )
+  const guardedCodePreviewHtml = useMemo(
+    () => buildImportedEditorPreviewHtml(codePreviewSourceHtml, 'code'),
+    [codePreviewSourceHtml]
   )
   const focusImportedCodeRange = useCallback((range: ImportedCodeSourceRange) => {
     setCodeSelectionNotice(`${range.label} · línea ${range.line}`)
@@ -13038,16 +13583,18 @@ const ImportedHtmlEditorPanel: React.FC<{
 
     if (!range) {
       setCodeSelectionNotice('No pude ubicar ese elemento exacto en el código.')
-      return
+      return null
     }
 
     focusImportedCodeRange(range)
+    return range
   }, [activeCodePreviewHtml, focusImportedCodeRange])
 
   useEffect(() => {
     if (!codeEditorOpen) {
       setCodeSelectionNotice('')
       setButtonEditor(null)
+      setCodeElementEditor(null)
       setContentError('')
       selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
       selectedCodePreviewElementRef.current = null
@@ -13123,12 +13670,14 @@ const ImportedHtmlEditorPanel: React.FC<{
         const target = actionTarget || getSelectableTarget(rawTarget)
         if (!target) return
         const descriptor = getImportedFrameElementDescriptor(target, 'code', event.type)
-        const range = findImportedSourceRangeForDescriptor(activeCodePreviewHtml, descriptor)
-        selectImportedCodePreviewElement(target, descriptor)
+        const range = selectImportedCodePreviewElement(target, descriptor)
         if (actionTarget && range) {
           openCodeButtonEditorForElement(actionTarget, descriptor, range)
+        } else if (range) {
+          openCodeElementEditorForElement(target, descriptor, range)
         } else {
           setButtonEditor(null)
+          setCodeElementEditor(null)
           setContentError('')
         }
       }
@@ -13151,12 +13700,14 @@ const ImportedHtmlEditorPanel: React.FC<{
       if (!doc) return
       const element = findImportedFrameElementByDescriptor(doc, event.data)
       if (!element) return
-      selectImportedCodePreviewElement(element, event.data)
+      const range = selectImportedCodePreviewElement(element, event.data)
       if (element.matches(importedEditorActionSelector)) {
-        const range = findImportedSourceRangeForDescriptor(activeCodePreviewHtml, event.data)
         if (range) openCodeButtonEditorForElement(element, event.data, range)
+      } else if (range) {
+        openCodeElementEditorForElement(element, event.data, range)
       } else {
         setButtonEditor(null)
+        setCodeElementEditor(null)
         setContentError('')
       }
     }
@@ -13172,7 +13723,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       window.removeEventListener('message', handleCodePreviewMessage)
       cleanupDocument()
     }
-  }, [activeCodePreviewHtml, codeEditorOpen, guardedCodePreviewHtml, openCodeButtonEditorForElement, selectImportedCodePreviewElement])
+  }, [activeCodePreviewHtml, codeEditorOpen, guardedCodePreviewHtml, openCodeButtonEditorForElement, openCodeElementEditorForElement, selectImportedCodePreviewElement])
 
   if (codeEditorOpen) {
     return (
@@ -13239,7 +13790,11 @@ const ImportedHtmlEditorPanel: React.FC<{
                 ref={codeTextareaRef}
                 className={styles.importedCodeTextarea}
                 value={activeCodeValue}
+                data-ristak-unstyled="true"
                 spellCheck={false}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
                 disabled={saving}
                 wrap="off"
                 aria-label={`Código de ${activeCodeFile.label || activeCodeFile.path || 'archivo principal'}`}
@@ -13281,7 +13836,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         <section className={[
           styles.importedCodePreviewPane,
           codeSelectionNotice ? styles.importedCodePreviewPaneWithNotice : '',
-          buttonEditorPanel || contentError ? styles.importedCodePreviewPaneWithTools : ''
+          buttonEditorPanel || codeElementEditorPanel || contentError ? styles.importedCodePreviewPaneWithTools : ''
         ].filter(Boolean).join(' ')}>
           <div className={styles.importedCodePaneHeader}>
             <span>Vista de página</span>
@@ -13293,9 +13848,10 @@ const ImportedHtmlEditorPanel: React.FC<{
               <span>{codeSelectionNotice}</span>
             </div>
           )}
-          {(buttonEditorPanel || contentError) && (
+          {(buttonEditorPanel || codeElementEditorPanel || contentError) && (
             <div className={styles.importedCodeActionDrawer}>
               {buttonEditorPanel}
+              {codeElementEditorPanel}
               {contentError && (
                 <div className={styles.importedInlineError}>
                   <AlertTriangle size={15} />
