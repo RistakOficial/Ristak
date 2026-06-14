@@ -8012,7 +8012,21 @@ export async function createBlock(siteId, input = {}) {
     'SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM public_site_blocks WHERE site_id = ?',
     [siteId]
   )
-  const id = crypto.randomUUID()
+  const requestedId = cleanString(input.id)
+  const id = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedId)
+    ? requestedId
+    : crypto.randomUUID()
+  if (requestedId && requestedId === id) {
+    const existingBlock = await db.get(
+      'SELECT id FROM public_site_blocks WHERE id = ?',
+      [id]
+    )
+    if (existingBlock) {
+      const error = new Error('block_id_already_exists')
+      error.status = 409
+      throw error
+    }
+  }
   const isField = FIELD_BLOCK_TYPES.has(blockType)
   const options = Array.isArray(input.options) ? input.options : []
 

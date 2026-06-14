@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { createBlock, createSite, createSubmissionFromRequest, deleteSite } from '../src/services/sitesService.js'
@@ -261,5 +262,34 @@ test('native form option rules redirect to site pages and external URLs with sub
     await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
     await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
     await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
+test('site blocks keep the editor provided id when manually saved', async () => {
+  const blockId = crypto.randomUUID()
+  let site
+
+  try {
+    site = await createSite({
+      name: 'Sitio guardado manual',
+      slug: `manual-save-${Date.now()}`,
+      siteType: 'landing_page',
+      status: 'draft',
+      blankCanvas: true
+    })
+
+    const siteWithBlock = await createBlock(site.id, {
+      id: blockId,
+      blockType: 'text',
+      label: 'Texto local',
+      content: 'Contenido pendiente',
+      settings: { pageId: 'page-1' }
+    })
+
+    assert.ok(siteWithBlock.blocks.some(block => block.id === blockId))
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
   }
 })

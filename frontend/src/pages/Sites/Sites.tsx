@@ -601,7 +601,7 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
 
 const SITES_AI_DRAFT_CREATED_EVENT = 'ristak-sites-ai-draft-created'
 const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
-const EDITOR_AUTOSAVE_CHANGE_THRESHOLD = 10
+const BLOCK_ORDER_ALL_PAGES_KEY = '__all_pages__'
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
 const FORM_THANK_YOU_PAGE_ID = 'page-2'
 const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
@@ -1085,6 +1085,8 @@ type EditorHistoryEntry = {
   afterBlockIds: string[]
   deletedRootBlockId?: string
   deletedBlocks?: SiteBlock[]
+  deletedCreatedBlockIds?: string[]
+  deletedPendingSaveBlockIds?: string[]
 }
 
 type AddBlockOptions = {
@@ -4128,10 +4130,11 @@ export const Sites: React.FC = () => {
   const guardHistoryArmedRef = useRef(false)
   const allowNavigationRef = useRef(false)
   const suppressEditorRouteRestoreRef = useRef(false)
-  const pendingAutosaveChangeCountRef = useRef(0)
   const pendingSiteSaveRef = useRef(false)
+  const pendingCreatedBlockIdsRef = useRef<Set<string>>(new Set())
+  const pendingDeletedBlockIdsRef = useRef<Set<string>>(new Set())
   const pendingBlockSaveIdsRef = useRef<Set<string>>(new Set())
-  const pendingAutosaveTimerRef = useRef<number | null>(null)
+  const pendingBlockOrderScopesRef = useRef<Set<string>>(new Set())
   const savingPendingEditorRef = useRef(false)
 
   const markEditorExitInProgress = () => {
@@ -4444,18 +4447,12 @@ export const Sites: React.FC = () => {
     forceSite?: boolean
   }
 
-  function clearPendingEditorAutosaveTimer() {
-    if (pendingAutosaveTimerRef.current !== null) {
-      window.clearTimeout(pendingAutosaveTimerRef.current)
-      pendingAutosaveTimerRef.current = null
-    }
-  }
-
   function resetPendingEditorSaveQueue() {
-    clearPendingEditorAutosaveTimer()
-    pendingAutosaveChangeCountRef.current = 0
     pendingSiteSaveRef.current = false
+    pendingCreatedBlockIdsRef.current.clear()
+    pendingDeletedBlockIdsRef.current.clear()
     pendingBlockSaveIdsRef.current.clear()
+    pendingBlockOrderScopesRef.current.clear()
   }
 
   function clearEditorDirtyState() {
@@ -4463,13 +4460,108 @@ export const Sites: React.FC = () => {
     setHasUnsavedChanges(false)
   }
 
-  function schedulePendingEditorAutosave() {
-    if (pendingAutosaveChangeCountRef.current < EDITOR_AUTOSAVE_CHANGE_THRESHOLD) return
-    clearPendingEditorAutosaveTimer()
-    pendingAutosaveTimerRef.current = window.setTimeout(() => {
-      pendingAutosaveTimerRef.current = null
-      void flushPendingEditorSaves({ silent: true })
-    }, 420)
+  function getBlockOrderScopeKey(pageId?: string) {
+    return pageId || BLOCK_ORDER_ALL_PAGES_KEY
+  }
+
+  function getBlockOrderPageId(scopeKey: string) {
+    return scopeKey === BLOCK_ORDER_ALL_PAGES_KEY ? undefined : scopeKey
+  }
+
+  function markBlockOrderDirty(pageId?: string) {
+    pendingBlockOrderScopesRef.current.add(getBlockOrderScopeKey(pageId))
+  }
+
+  function getBlocksForOrderScope(site: PublicSite, pageId?: string) {
+    const sitePages = normalizeFunnelPages(site)
+    const siteBlocks = site.blocks || []
+    if (pageId === POPUP_SELECTED_ID) {
+      return siteBlocks.filter(isPopupBlock).sort((a, b) => a.sortOrder - b.sortOrder)
+    }
+    if (pageId) {
+      return siteBlocks
+        .filter(block => {
+          if (isPopupBlock(block)) return false
+          const blockPageId = getBlockPageId(block, sitePages)
+          return isGlobalHeaderBlock(block) || blockPageId === pageId
+        })
+        .sort((a, b) => a.sortOrder - b.sortOrder)
+    }
+    return siteBlocks.filter(block => !isPopupBlock(block)).sort((a, b) => a.sortOrder - b.sortOrder)
+  }
+
+  function applyBlockOrderLocal(site: PublicSite, orderedIds: string[], pageId?: string) {
+    const orderById = new Map(orderedIds.map((id, index) => [id, index]))
+    return {
+      ...site,
+      blocks: (site.blocks || []).map(block => (
+        orderById.has(block.id) ? { ...block, sortOrder: orderById.get(block.id) || 0 } : block
+      ))
+    }
+  }
+
+  function createEditorLocalId() {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return crypto.randomUUID()
+    }
+
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, char => {
+      const value = Math.floor(Math.random() * 16)
+      return (char === 'x' ? value : (value & 0x3) | 0x8).toString(16)
+    })
+  }
+
+  function createLocalBlockFromPayload(site: PublicSite, payload: Partial<SiteBlock> & { blockType: SiteBlockType }, sortOrder?: number): SiteBlock {
+    const now = new Date().toISOString()
+    return {
+      id: createEditorLocalId(),
+      siteId: site.id,
+      blockType: payload.blockType,
+      label: payload.label || 'Nuevo bloque',
+      content: payload.content || '',
+      placeholder: payload.placeholder || '',
+      required: Boolean(payload.required),
+      options: Array.isArray(payload.options) ? payload.options : [],
+      settings: { ...(payload.settings || {}) },
+      sortOrder: Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : (site.blocks || []).length,
+      createdAt: now,
+      updatedAt: now
+    }
+  }
+
+  function markBlocksCreatedLocal(nextBlocks: SiteBlock[]) {
+    for (const block of nextBlocks) {
+      pendingCreatedBlockIdsRef.current.add(block.id)
+      pendingBlockSaveIdsRef.current.add(block.id)
+    }
+  }
+
+  function markBlocksDeletedLocal(blockIds: string[]) {
+    for (const blockId of blockIds) {
+      if (pendingCreatedBlockIdsRef.current.has(blockId)) {
+        pendingCreatedBlockIdsRef.current.delete(blockId)
+        pendingBlockSaveIdsRef.current.delete(blockId)
+        pendingDeletedBlockIdsRef.current.delete(blockId)
+        continue
+      }
+      pendingDeletedBlockIdsRef.current.add(blockId)
+      pendingBlockSaveIdsRef.current.delete(blockId)
+    }
+  }
+
+  function addBlocksLocal(nextBlocks: SiteBlock[], selectBlockId?: string, orderPageId?: string) {
+    const current = selectedSiteRef.current || selectedSite
+    if (!current) return
+    const next = {
+      ...current,
+      blocks: [...(current.blocks || []), ...nextBlocks]
+    }
+    selectedSiteRef.current = next
+    setSelectedSite(next)
+    markBlocksCreatedLocal(nextBlocks)
+    if (orderPageId !== undefined) markBlockOrderDirty(orderPageId)
+    setHasUnsavedChanges(true)
+    if (selectBlockId) selectEditorBlock(selectBlockId)
   }
 
   async function flushPendingEditorSaves(options: PendingEditorSaveOptions = {}) {
@@ -4481,18 +4573,26 @@ export const Sites: React.FC = () => {
       return false
     }
 
-    const shouldSaveSite = Boolean(options.forceSite || options.statusOverride || pendingSiteSaveRef.current)
-    const blockIdsToSave = [...pendingBlockSaveIdsRef.current].filter(blockId =>
-      Boolean(siteToSave.blocks?.some(block => block.id === blockId))
+    const localBlocksById = new Map((siteToSave.blocks || []).map(block => [block.id, block]))
+    const createdBlockIds = [...pendingCreatedBlockIdsRef.current].filter(blockId =>
+      localBlocksById.has(blockId) && !pendingDeletedBlockIdsRef.current.has(blockId)
     )
+    const deletedBlockIds = [...pendingDeletedBlockIdsRef.current].filter(blockId =>
+      !pendingCreatedBlockIdsRef.current.has(blockId)
+    )
+    const blockIdsToSave = [...pendingBlockSaveIdsRef.current].filter(blockId =>
+      localBlocksById.has(blockId) &&
+      !pendingCreatedBlockIdsRef.current.has(blockId) &&
+      !pendingDeletedBlockIdsRef.current.has(blockId)
+    )
+    const orderScopeKeys = [...pendingBlockOrderScopesRef.current]
+    const shouldSaveSite = Boolean(options.forceSite || options.statusOverride || pendingSiteSaveRef.current)
 
-    if (!shouldSaveSite && !blockIdsToSave.length) {
+    if (!shouldSaveSite && !createdBlockIds.length && !deletedBlockIds.length && !blockIdsToSave.length && !orderScopeKeys.length) {
       clearEditorDirtyState()
       return true
     }
 
-    const localBlocksById = new Map((siteToSave.blocks || []).map(block => [block.id, block]))
-    clearPendingEditorAutosaveTimer()
     savingPendingEditorRef.current = true
     setSaving(true)
 
@@ -4512,10 +4612,26 @@ export const Sites: React.FC = () => {
         })
       }
 
+      for (const blockId of deletedBlockIds) {
+        site = await sitesService.deleteBlock(siteToSave.id, blockId)
+      }
+
+      for (const blockId of createdBlockIds) {
+        const block = localBlocksById.get(blockId)
+        if (!block) continue
+        site = await sitesService.createBlock(siteToSave.id, block)
+      }
+
       for (const blockId of blockIdsToSave) {
         const block = localBlocksById.get(blockId)
         if (!block) continue
         site = await sitesService.updateBlock(siteToSave.id, block.id, block)
+      }
+
+      for (const scopeKey of orderScopeKeys) {
+        const pageId = getBlockOrderPageId(scopeKey)
+        const orderedIds = getBlocksForOrderScope(siteToSave, pageId).map(block => block.id)
+        site = await sitesService.reorderBlocks(siteToSave.id, orderedIds, pageId)
       }
 
       syncSelectedSite(site)
@@ -4566,18 +4682,12 @@ export const Sites: React.FC = () => {
     const site = selectedSiteRef.current || editorSite
     if (!site) return
 
-    if (scope.site || !scope.blockIds?.length) pendingSiteSaveRef.current = true
+    if (scope.site) pendingSiteSaveRef.current = true
     for (const blockId of scope.blockIds || []) {
       if (blockId) pendingBlockSaveIdsRef.current.add(blockId)
     }
-    pendingAutosaveChangeCountRef.current += 1
     setHasUnsavedChanges(true)
-    schedulePendingEditorAutosave()
   }
-
-  useEffect(() => {
-    return () => clearPendingEditorAutosaveTimer()
-  }, [])
 
   const markEditorSaved = useCallback(() => {
     resetPendingEditorSaveQueue()
@@ -4742,12 +4852,19 @@ export const Sites: React.FC = () => {
       requestLeaveEditor(() => window.history.back())
     }
 
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
     document.addEventListener('click', handleDocumentClick, true)
     window.addEventListener('popstate', handlePopState)
+    window.addEventListener('beforeunload', handleBeforeUnload)
 
     return () => {
       document.removeEventListener('click', handleDocumentClick, true)
       window.removeEventListener('popstate', handlePopState)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
     }
   }, [hasUnsavedChanges, performUrlNavigation, requestLeaveEditor])
 
@@ -5051,47 +5168,75 @@ export const Sites: React.FC = () => {
 
   const applyEditorHistoryEntry = async (entry: EditorHistoryEntry, direction: 'undo' | 'redo') => {
     if (historyBusyRef.current) return false
+    const siteToEdit = selectedSiteRef.current || selectedSite
+    if (!siteToEdit || siteToEdit.id !== entry.siteId) return false
 
     historyBusyRef.current = true
-    setSaving(true)
     try {
-      let site: PublicSite | null = null
+      let site: PublicSite | null = siteToEdit
 
       if (entry.action === 'reorder') {
-        site = await sitesService.reorderBlocks(
-          entry.siteId,
-          direction === 'undo' ? entry.beforeBlockIds : entry.afterBlockIds,
-          entry.pageId
-        )
+        site = applyBlockOrderLocal(siteToEdit, direction === 'undo' ? entry.beforeBlockIds : entry.afterBlockIds, entry.pageId)
+        markBlockOrderDirty(entry.pageId)
       } else if (entry.action === 'delete') {
+        const deletedBlocks = entry.deletedBlocks || []
+        const deletedIds = deletedBlocks.map(block => block.id)
         if (direction === 'undo') {
-          if (!entry.deletedBlocks?.length) return false
-          site = await sitesService.restoreBlocks(entry.siteId, entry.deletedBlocks)
-          if (entry.beforeBlockIds.length) {
-            site = await sitesService.reorderBlocks(entry.siteId, entry.beforeBlockIds, entry.pageId)
+          if (!deletedBlocks.length) return false
+          const existingIds = new Set((siteToEdit.blocks || []).map(block => block.id))
+          site = {
+            ...siteToEdit,
+            blocks: [
+              ...(siteToEdit.blocks || []),
+              ...deletedBlocks.filter(block => !existingIds.has(block.id)).map(block => cloneJson(block))
+            ]
           }
-        } else if (entry.deletedRootBlockId) {
-          site = await sitesService.deleteBlock(entry.siteId, entry.deletedRootBlockId)
+          for (const blockId of deletedIds) {
+            pendingDeletedBlockIdsRef.current.delete(blockId)
+            if (entry.deletedCreatedBlockIds?.includes(blockId)) {
+              pendingCreatedBlockIdsRef.current.add(blockId)
+              pendingBlockSaveIdsRef.current.add(blockId)
+            } else if (entry.deletedPendingSaveBlockIds?.includes(blockId)) {
+              pendingBlockSaveIdsRef.current.add(blockId)
+            }
+          }
+          if (entry.beforeBlockIds.length) {
+            site = applyBlockOrderLocal(site, entry.beforeBlockIds, entry.pageId)
+          }
+          markBlockOrderDirty(entry.pageId)
+        } else if (entry.deletedRootBlockId && deletedIds.length) {
+          site = {
+            ...siteToEdit,
+            blocks: (siteToEdit.blocks || []).filter(block => !deletedIds.includes(block.id))
+          }
+          markBlocksDeletedLocal(deletedIds)
+          if (entry.afterBlockIds.length) {
+            site = applyBlockOrderLocal(site, entry.afterBlockIds, entry.pageId)
+          }
+          markBlockOrderDirty(entry.pageId)
         }
       }
 
       if (!site) return false
 
-      syncSelectedSite(site)
+      const normalizedSite = normalizeSiteForEditor(site)
+      selectedSiteRef.current = normalizedSite
+      setSelectedSite(normalizedSite)
+      setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
       if (entry.pageId) setActivePageId(entry.pageId)
       setSelectedBlockId(direction === 'undo' ? entry.selectedBefore : entry.selectedAfter)
       if (entry.pageId) {
         navigateSitesEditor({
-          site,
+          site: normalizedSite,
           pageId: entry.pageId,
           blockId: direction === 'undo' ? entry.selectedBefore : entry.selectedAfter
         })
       }
-      clearEditorDirtyState()
+      setHasUnsavedChanges(true)
       showToast(
         'info',
         direction === 'undo' ? 'Cambio deshecho' : 'Cambio rehecho',
-        direction === 'undo' ? 'El editor regreso al paso anterior.' : 'El editor aplico otra vez el cambio.'
+        direction === 'undo' ? 'El editor regreso al paso anterior. Guarda para conservarlo.' : 'El editor aplico otra vez el cambio. Guarda para conservarlo.'
       )
       return true
     } catch (error) {
@@ -5099,7 +5244,6 @@ export const Sites: React.FC = () => {
       return false
     } finally {
       historyBusyRef.current = false
-      setSaving(false)
     }
   }
 
@@ -5179,28 +5323,49 @@ export const Sites: React.FC = () => {
     })
   }
 
-  const persistFunnelPages = async (nextPages: SitePage[], nextActivePageId?: string) => {
-    if (!selectedSite || !hasEditablePages(selectedSite)) return
-    const orderedPages = getOrderedPagesForSite(selectedSite, nextPages)
-    const finalPages = getSitePageMode(selectedSite) === 'website' ? ensureWebsiteSlugs(orderedPages) : orderedPages
+  const applySelectedSiteLocal = (
+    site: PublicSite,
+    options: {
+      activePageId?: string
+      selectedBlockId?: string
+      navigate?: boolean
+      replace?: boolean
+    } = {}
+  ) => {
+    const normalizedSite = normalizeSiteForEditor(site)
+    selectedSiteRef.current = normalizedSite
+    setSelectedSite(normalizedSite)
+    setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
+    if (options.activePageId !== undefined) setActivePageId(options.activePageId)
+    if (options.selectedBlockId !== undefined) setSelectedBlockId(options.selectedBlockId)
+    markEditorDirty({ site: true })
+    if (options.navigate) {
+      navigateSitesEditor({
+        site: normalizedSite,
+        pageId: options.activePageId || activePageId,
+        blockId: options.selectedBlockId || '',
+        replace: options.replace
+      })
+    }
+  }
 
-    setSaving(true)
-    try {
-      const theme = {
-        ...(selectedSite.theme || {}),
+  const persistFunnelPages = async (nextPages: SitePage[], nextActivePageId?: string) => {
+    const site = selectedSiteRef.current || selectedSite
+    if (!site || !hasEditablePages(site)) return
+    const orderedPages = getOrderedPagesForSite(site, nextPages)
+    const finalPages = getSitePageMode(site) === 'website' ? ensureWebsiteSlugs(orderedPages) : orderedPages
+    const targetPageId = nextActivePageId || activePageId
+    applySelectedSiteLocal({
+      ...site,
+      theme: {
+        ...(site.theme || {}),
         pages: normalizePagesForSave(finalPages)
       }
-      const site = await saveSiteTheme(selectedSite, theme)
-      syncSelectedSite(site)
-      const targetPageId = nextActivePageId || activePageId
-      setActivePageId(targetPageId)
-      navigateSitesEditor({ site, pageId: targetPageId, blockId: '' })
-      markEditorSaved()
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron guardar las páginas')
-    } finally {
-      setSaving(false)
-    }
+    }, {
+      activePageId: targetPageId,
+      selectedBlockId: '',
+      navigate: true
+    })
   }
 
   const handleAddPage = () => {
@@ -5286,28 +5451,22 @@ export const Sites: React.FC = () => {
   }
 
   const handleChangePageMode = async (mode: 'funnel' | 'website') => {
-    if (!selectedSite || !isLanding(selectedSite) || isImportedHtmlSite(selectedSite)) return
-    if (getSitePageMode(selectedSite) === mode) return
-    const orderedPages = getOrderedPagesForSite(selectedSite, pages)
+    const site = selectedSiteRef.current || selectedSite
+    if (!site || !isLanding(site) || isImportedHtmlSite(site)) return
+    if (getSitePageMode(site) === mode) return
+    const orderedPages = getOrderedPagesForSite(site, pages)
     const finalPages = mode === 'website' ? ensureWebsiteSlugs(orderedPages) : orderedPages
-    setSaving(true)
-    try {
-      const theme = {
-        ...(selectedSite.theme || {}),
+    applySelectedSiteLocal({
+      ...site,
+      theme: {
+        ...(site.theme || {}),
         pageMode: mode,
         pages: normalizePagesForSave(finalPages)
       }
-      const site = await saveSiteTheme(selectedSite, theme)
-      syncSelectedSite(site)
-      markEditorSaved()
-      showToast('success', mode === 'website' ? 'Modo Sitio web' : 'Modo Embudo', mode === 'website'
-        ? 'Ahora puedes organizar páginas con subpáginas.'
-        : 'Las páginas vuelven a un orden lineal de embudo.')
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo cambiar el modo del sitio')
-    } finally {
-      setSaving(false)
-    }
+    })
+    showToast('info', mode === 'website' ? 'Modo Sitio web' : 'Modo Embudo', mode === 'website'
+      ? 'Ahora puedes organizar páginas con subpáginas. Guarda para conservar el cambio.'
+      : 'Las páginas vuelven a un orden lineal de embudo. Guarda para conservar el cambio.')
   }
 
   const cloneBlockForPage = (block: SiteBlock, pageId: string): Partial<SiteBlock> & { blockType: SiteBlockType } => ({
@@ -5324,13 +5483,14 @@ export const Sites: React.FC = () => {
   })
 
   const handleDuplicatePage = async (pageId: string) => {
-    if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
-    if (isStandardForm(selectedSite) && isFormFinalPageId(pageId)) return
+    const site = selectedSiteRef.current || selectedSite
+    if (!site || !hasEditablePages(site) || !canManagePages(site)) return
+    if (isStandardForm(site) && isFormFinalPageId(pageId)) return
 
     const sourceIndex = pages.findIndex(page => page.id === pageId)
     if (sourceIndex < 0) return
 
-    const websiteMode = getSitePageMode(selectedSite) === 'website'
+    const websiteMode = getSitePageMode(site) === 'website'
     // In website mode duplicate the whole subtree (page + descendants); in funnel
     // mode there are no descendants, so this naturally clones a single page.
     const subtreeIds = websiteMode ? [pageId, ...getDescendantPageIds(pageId, pages)] : [pageId]
@@ -5367,48 +5527,53 @@ export const Sites: React.FC = () => {
       ...clonedPages,
       ...pages.slice(endIndex)
     ]
-    const orderedPages = getOrderedPagesForSite(selectedSite, nextPages)
+    const orderedPages = getOrderedPagesForSite(site, nextPages)
     const finalPages = websiteMode ? ensureWebsiteSlugs(orderedPages) : orderedPages
     const newRootId = idMap.get(pageId) as string
 
-    setSaving(true)
-    try {
-      let site = await saveSiteTheme(selectedSite, {
-        ...(selectedSite.theme || {}),
-        pages: normalizePagesForSave(finalPages)
-      })
-      for (const oldId of subtreeIds) {
-        const sourceBlocks = blocks.filter(block => !isGlobalHeaderBlock(block) && getBlockPageId(block, pages) === oldId)
-        for (const block of sourceBlocks) {
-          site = await sitesService.createBlock(selectedSite.id, cloneBlockForPage(block, idMap.get(oldId) as string))
-        }
+    const clonedBlocks: SiteBlock[] = []
+    for (const oldId of subtreeIds) {
+      const sourceBlocks = blocks.filter(block => !isGlobalHeaderBlock(block) && getBlockPageId(block, pages) === oldId)
+      for (const block of sourceBlocks) {
+        clonedBlocks.push(createLocalBlockFromPayload(site, cloneBlockForPage(block, idMap.get(oldId) as string), (site.blocks || []).length + clonedBlocks.length))
       }
-      syncSelectedSite(site)
-      setActivePageId(newRootId)
-      navigateSitesEditor({ site, pageId: newRootId, blockId: '' })
-      markEditorSaved()
-      showToast('success', subtreeIds.length > 1 ? 'Página y subpáginas duplicadas' : 'Página duplicada', 'Ya está lista para editar.')
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo duplicar la página')
-    } finally {
-      setSaving(false)
     }
+
+    const nextSite = {
+      ...site,
+      blocks: [...(site.blocks || []), ...clonedBlocks],
+      theme: {
+        ...(site.theme || {}),
+        pages: normalizePagesForSave(finalPages)
+      }
+    }
+    markBlocksCreatedLocal(clonedBlocks)
+    for (const newPageId of idMap.values()) {
+      markBlockOrderDirty(newPageId)
+    }
+    applySelectedSiteLocal(nextSite, {
+      activePageId: newRootId,
+      selectedBlockId: '',
+      navigate: true
+    })
+    showToast('success', subtreeIds.length > 1 ? 'Página y subpáginas duplicadas' : 'Página duplicada', 'Ya está lista para editar. Guarda para conservarla.')
   }
 
   const handleDeletePage = async (pageId: string) => {
-    if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
-    if (isStandardForm(selectedSite) && isFormFinalPageId(pageId)) {
+    const site = selectedSiteRef.current || selectedSite
+    if (!site || !hasEditablePages(site) || !canManagePages(site)) return
+    if (isStandardForm(site) && isFormFinalPageId(pageId)) {
       showToast('warning', 'Página fija', 'Esta página se usa para cerrar el formulario y no se puede eliminar.')
       return
     }
-    const websiteMode = getSitePageMode(selectedSite) === 'website'
+    const websiteMode = getSitePageMode(site) === 'website'
     const idsToDelete = websiteMode ? [pageId, ...getDescendantPageIds(pageId, pages)] : [pageId]
     const idsToDeleteSet = new Set(idsToDelete)
-    const remainingPageCount = isStandardForm(selectedSite)
+    const remainingPageCount = isStandardForm(site)
       ? getFormContentPages(pages).filter(page => !idsToDeleteSet.has(page.id)).length
       : pages.filter(page => !idsToDeleteSet.has(page.id)).length
     if (remainingPageCount < 1) {
-      showToast('warning', 'No se puede eliminar', `${getSiteTypeLabel(selectedSite)} debe tener al menos una página.`)
+      showToast('warning', 'No se puede eliminar', `${getSiteTypeLabel(site)} debe tener al menos una página.`)
       return
     }
 
@@ -5422,34 +5587,29 @@ export const Sites: React.FC = () => {
         const deletePage = async () => {
           const pageIndex = pages.findIndex(page => page.id === pageId)
           const nextPages = pages.filter(page => !idsToDeleteSet.has(page.id))
-          const orderedPages = getOrderedPagesForSite(selectedSite, nextPages)
+          const currentSite = selectedSiteRef.current || site
+          const orderedPages = getOrderedPagesForSite(currentSite, nextPages)
           const nextActive = idsToDeleteSet.has(activePageId)
             ? orderedPages[Math.max(0, pageIndex - 1)]?.id || orderedPages[0]?.id
             : activePageId
-
-          setSaving(true)
-          try {
-            let site = selectedSite
-            const pageBlockIds = blocks
-              .filter(block => !isGlobalHeaderBlock(block) && idsToDeleteSet.has(getBlockPageId(block, pages)))
-              .map(block => block.id)
-            for (const blockId of pageBlockIds) {
-              site = await sitesService.deleteBlock(selectedSite.id, blockId)
-            }
-            site = await saveSiteTheme(site, {
-              ...(site.theme || {}),
+          const pageBlockIds = (currentSite.blocks || [])
+            .filter(block => !isGlobalHeaderBlock(block) && idsToDeleteSet.has(getBlockPageId(block, pages)))
+            .map(block => block.id)
+          markBlocksDeletedLocal(pageBlockIds)
+          const nextSite = {
+            ...currentSite,
+            blocks: (currentSite.blocks || []).filter(block => !pageBlockIds.includes(block.id)),
+            theme: {
+              ...(currentSite.theme || {}),
               pages: normalizePagesForSave(orderedPages)
-            })
-            syncSelectedSite(site)
-            setActivePageId(nextActive || DEFAULT_FUNNEL_PAGE_ID)
-            navigateSitesEditor({ site, pageId: nextActive || DEFAULT_FUNNEL_PAGE_ID, blockId: '' })
-            markEditorSaved()
-            showToast('success', 'Página eliminada', `${getSiteTypeLabel(selectedSite)} se actualizo.`)
-          } catch (error) {
-            showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo eliminar la página')
-          } finally {
-            setSaving(false)
+            }
           }
+          applySelectedSiteLocal(nextSite, {
+            activePageId: nextActive || DEFAULT_FUNNEL_PAGE_ID,
+            selectedBlockId: '',
+            navigate: true
+          })
+          showToast('success', 'Página eliminada', `${getSiteTypeLabel(currentSite)} se actualizo. Guarda para conservar el cambio.`)
         }
 
         void deletePage()
@@ -5865,9 +6025,7 @@ export const Sites: React.FC = () => {
   const handleSaveSite = async (statusOverride?: PublicSite['status'], options: { silent?: boolean } = {}) => {
     const siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave) return
-    if (options.silent && !statusOverride && pendingAutosaveChangeCountRef.current < EDITOR_AUTOSAVE_CHANGE_THRESHOLD) {
-      return
-    }
+    if (options.silent && !statusOverride) return
     await flushPendingEditorSaves({
       statusOverride,
       silent: options.silent,
@@ -6252,8 +6410,203 @@ export const Sites: React.FC = () => {
     }
   }
 
+  const handleAddBlockManually = async (blockType: SiteBlockType, addOptions: AddBlockOptions | number = {}) => {
+    const siteForAdd = selectedSiteRef.current || selectedSite
+    if (!siteForAdd) return
+    try {
+      const options = typeof addOptions === 'number' ? { insertIndex: addOptions } : addOptions
+      const initialSettings = options.initialSettings || {}
+      const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, siteForAdd), initialSettings)
+      const blocksToAdd: SiteBlock[] = []
+      let orderPageId: string | undefined = hasEditablePages(siteForAdd) ? activePage?.id : undefined
+
+      const makeLocalBlock = (blockPayload: Partial<SiteBlock> & { blockType: SiteBlockType }) =>
+        createLocalBlockFromPayload(siteForAdd, blockPayload, (siteForAdd.blocks || []).length + blocksToAdd.length)
+
+      if (popupSurfaceSelected) {
+        if (!isPopupEditableBlockType(blockType)) {
+          showToast('error', 'Bloque no disponible', 'Ese panel no se puede usar dentro del pop up.')
+          return
+        }
+
+        orderPageId = POPUP_SELECTED_ID
+        const popupSectionIds = new Set(popupBlocks.filter(isSectionBlock).map(block => block.id))
+        if (blockType === SECTION_BLOCK_TYPE) {
+          const columns = getSettingNumber(initialSettings, 'sectionColumns', 1, 1, 3)
+          payload.label = getSectionColumnLabel(columns)
+          payload.content = ''
+          payload.settings = getPopupBlockSettings({
+            ...(payload.settings || {}),
+            ...initialSettings,
+            sectionColumns: columns,
+            sectionGap: getSettingNumber(initialSettings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)
+          })
+        } else {
+          const selectedTarget = selectedBlock && isPopupBlock(selectedBlock)
+            ? isSectionBlock(selectedBlock)
+              ? { sectionId: selectedBlock.id, sectionColumn: 0 }
+              : getBlockSectionId(selectedBlock) && popupSectionIds.has(getBlockSectionId(selectedBlock))
+                ? { sectionId: getBlockSectionId(selectedBlock), sectionColumn: getBlockSectionColumn(selectedBlock) }
+                : null
+            : null
+          const singleSectionTarget = popupSectionIds.size === 1
+            ? { sectionId: [...popupSectionIds][0], sectionColumn: 0 }
+            : null
+          let targetSectionId = options.sectionId && popupSectionIds.has(options.sectionId)
+            ? options.sectionId
+            : selectedTarget?.sectionId || singleSectionTarget?.sectionId || ''
+          let targetColumn = Number.isFinite(Number(options.sectionColumn))
+            ? Math.min(2, Math.max(0, Math.round(Number(options.sectionColumn))))
+            : selectedTarget?.sectionColumn || singleSectionTarget?.sectionColumn || 0
+
+          if (!targetSectionId) {
+            const sectionPayload = defaultBlockPayload(SECTION_BLOCK_TYPE, siteForAdd)
+            sectionPayload.label = getSectionColumnLabel(1)
+            sectionPayload.content = ''
+            sectionPayload.settings = getPopupBlockSettings({
+              ...(sectionPayload.settings || {}),
+              sectionColumns: 1,
+              sectionGap: DEFAULT_SECTION_GAP
+            })
+            const autoCreatedSection = makeLocalBlock(sectionPayload)
+            blocksToAdd.push(autoCreatedSection)
+            targetSectionId = autoCreatedSection.id
+            targetColumn = 0
+          }
+
+          payload.settings = getPopupBlockSettings({
+            ...(payload.settings || {}),
+            ...initialSettings,
+            sectionId: targetSectionId,
+            sectionColumn: targetColumn
+          })
+        }
+      } else if (isLanding(siteForAdd) && activePage) {
+        const pageSectionIds = new Set(canvasBlocks.filter(isSectionBlock).map(block => block.id))
+        const isSection = blockType === SECTION_BLOCK_TYPE
+        const isPanel = PANEL_BLOCK_TYPES.has(blockType)
+        const selectedTarget = selectedBlock
+          ? isSectionBlock(selectedBlock)
+            ? { sectionId: selectedBlock.id, sectionColumn: 0 }
+            : getBlockSectionId(selectedBlock) && pageSectionIds.has(getBlockSectionId(selectedBlock))
+              ? { sectionId: getBlockSectionId(selectedBlock), sectionColumn: getBlockSectionColumn(selectedBlock) }
+              : null
+          : null
+        const singleSectionTarget = pageSectionIds.size === 1
+          ? { sectionId: [...pageSectionIds][0], sectionColumn: 0 }
+          : null
+        let targetSectionId = options.sectionId && pageSectionIds.has(options.sectionId)
+          ? options.sectionId
+          : selectedTarget?.sectionId || singleSectionTarget?.sectionId || ''
+        let targetColumn = Number.isFinite(Number(options.sectionColumn))
+          ? Math.min(2, Math.max(0, Math.round(Number(options.sectionColumn))))
+          : selectedTarget?.sectionColumn || singleSectionTarget?.sectionColumn || 0
+
+        if (isSection) {
+          const columns = getSettingNumber(initialSettings, 'sectionColumns', 1, 1, 3)
+          payload.label = getSectionColumnLabel(columns)
+          payload.content = ''
+          payload.settings = {
+            ...(payload.settings || {}),
+            ...initialSettings,
+            sectionColumns: columns,
+            sectionGap: getSettingNumber(initialSettings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)
+          }
+        } else if (!isPanel) {
+          if (!targetSectionId) {
+            const sectionPayload = defaultBlockPayload(SECTION_BLOCK_TYPE, siteForAdd)
+            const columns = 1
+            sectionPayload.label = getSectionColumnLabel(columns)
+            sectionPayload.content = ''
+            sectionPayload.settings = {
+              ...(sectionPayload.settings || {}),
+              sectionColumns: columns,
+              sectionGap: DEFAULT_SECTION_GAP,
+              pageId: activePage.id
+            }
+            const autoCreatedSection = makeLocalBlock(sectionPayload)
+            blocksToAdd.push(autoCreatedSection)
+            targetSectionId = autoCreatedSection.id
+            targetColumn = 0
+          }
+
+          payload.settings = {
+            ...(payload.settings || {}),
+            ...initialSettings,
+            sectionId: targetSectionId,
+            sectionColumn: targetColumn
+          }
+        } else {
+          payload.settings = {
+            ...(payload.settings || {}),
+            ...initialSettings
+          }
+        }
+
+        payload.settings = {
+          ...(payload.settings || {}),
+          pageId: activePage.id
+        }
+        if (blockType === HEADER_PANEL_BLOCK_TYPE && !getSettingString(payload.settings || {}, 'headerScope')) {
+          payload.settings = {
+            ...(payload.settings || {}),
+            headerScope: HEADER_SCOPE_PAGE
+          }
+        }
+      } else if (hasEditablePages(siteForAdd) && activePage) {
+        payload.settings = {
+          ...(payload.settings || {}),
+          ...initialSettings,
+          pageId: activePage.id
+        }
+        if (blockType === HEADER_PANEL_BLOCK_TYPE && !getSettingString(payload.settings || {}, 'headerScope')) {
+          payload.settings = {
+            ...(payload.settings || {}),
+            headerScope: HEADER_SCOPE_PAGE
+          }
+        }
+      } else if (Object.keys(initialSettings).length > 0) {
+        payload.settings = {
+          ...(payload.settings || {}),
+          ...initialSettings
+        }
+      }
+
+      const added = makeLocalBlock(payload)
+      blocksToAdd.push(added)
+      let nextSite = {
+        ...siteForAdd,
+        blocks: [...(siteForAdd.blocks || []), ...blocksToAdd]
+      }
+
+      if (Number.isFinite(options.insertIndex)) {
+        const scopedBlocks = getBlocksForOrderScope(nextSite, orderPageId)
+        const insertedIds = new Set(blocksToAdd.map(block => block.id))
+        const withoutInserted = scopedBlocks.filter(block => !insertedIds.has(block.id))
+        const boundedIndex = Math.max(0, Math.min(Number(options.insertIndex), withoutInserted.length))
+        const orderedIds = [
+          ...withoutInserted.slice(0, boundedIndex).map(block => block.id),
+          ...blocksToAdd.map(block => block.id),
+          ...withoutInserted.slice(boundedIndex).map(block => block.id)
+        ]
+        nextSite = applyBlockOrderLocal(nextSite, orderedIds, orderPageId)
+      }
+
+      selectedSiteRef.current = nextSite
+      setSelectedSite(nextSite)
+      setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
+      markBlocksCreatedLocal(blocksToAdd)
+      markBlockOrderDirty(orderPageId)
+      setHasUnsavedChanges(true)
+      selectEditorBlock(added.id)
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo agregar el bloque')
+    }
+  }
+
   const handleCreateHeaderBlock = async (scope: HeaderScope) => {
-    if (!selectedSite || !isLanding(selectedSite)) return
+    const site = selectedSiteRef.current || selectedSite
+    if (!site || !isLanding(site)) return
     if (scope === HEADER_SCOPE_GLOBAL && globalHeaderBlock) {
       selectEditorBlock(globalHeaderBlock.id)
       return
@@ -6264,8 +6617,7 @@ export const Sites: React.FC = () => {
     }
     if (scope === HEADER_SCOPE_PAGE && !activePage) return
 
-    const previousBlockIds = new Set((selectedSite.blocks || []).map(block => block.id))
-    const payload = defaultBlockPayload(HEADER_PANEL_BLOCK_TYPE, selectedSite) as Partial<SiteBlock> & { blockType: SiteBlockType }
+    const payload = defaultBlockPayload(HEADER_PANEL_BLOCK_TYPE, site) as Partial<SiteBlock> & { blockType: SiteBlockType }
     const settings: Record<string, unknown> = {
       ...(payload.settings || {}),
       headerScope: scope
@@ -6279,24 +6631,22 @@ export const Sites: React.FC = () => {
     }
     payload.settings = settings
 
-    setSaving(true)
     try {
-      const site = await sitesService.createBlock(selectedSite.id, payload)
-      const sitePages = normalizeFunnelPages(site)
-      const added = [...(site.blocks || [])]
-        .filter(block => !previousBlockIds.has(block.id))
-        .find(block => (
-          scope === HEADER_SCOPE_GLOBAL
-            ? isGlobalHeaderBlock(block)
-            : activePage && isPageHeaderBlock(block, sitePages, activePage.id)
-        ))
-      syncSelectedSite(site)
-      if (added) selectEditorBlock(added.id)
-      showToast('success', scope === HEADER_SCOPE_GLOBAL ? 'Header global creado' : 'Header de página creado', 'Ya puedes editarlo desde Header.')
+      const added = createLocalBlockFromPayload(site, payload, (site.blocks || []).length)
+      const nextSite = {
+        ...site,
+        blocks: [...(site.blocks || []), added]
+      }
+      selectedSiteRef.current = nextSite
+      setSelectedSite(nextSite)
+      setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
+      markBlocksCreatedLocal([added])
+      markBlockOrderDirty(scope === HEADER_SCOPE_PAGE && activePage ? activePage.id : undefined)
+      setHasUnsavedChanges(true)
+      selectEditorBlock(added.id)
+      showToast('success', scope === HEADER_SCOPE_GLOBAL ? 'Header global creado' : 'Header de página creado', 'Ya puedes editarlo desde Header. Guarda para conservarlo.')
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo crear el header')
-    } finally {
-      setSaving(false)
     }
   }
 
@@ -6528,15 +6878,14 @@ export const Sites: React.FC = () => {
     for (const block of targets) {
       pendingBlockSaveIdsRef.current.add(block.id)
     }
-    await flushPendingEditorSaves({ silent: true })
+    setHasUnsavedChanges(true)
   }
 
   const handleSaveBlock = async (blockId = selectedBlock?.id) => {
     const siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave?.blocks || !blockId) return
     if (!pendingBlockSaveIdsRef.current.has(blockId)) pendingBlockSaveIdsRef.current.add(blockId)
-    if (pendingAutosaveChangeCountRef.current < EDITOR_AUTOSAVE_CHANGE_THRESHOLD) return
-    await flushPendingEditorSaves({ silent: true })
+    setHasUnsavedChanges(true)
   }
 
   const getDeletedBlockIds = (blockId: string) => {
@@ -6560,20 +6909,24 @@ export const Sites: React.FC = () => {
   }
 
   const handleDeleteBlock = async (blockId: string) => {
-    if (!selectedSite) return
+    const siteToEdit = selectedSiteRef.current || selectedSite
+    if (!siteToEdit) return
     try {
       const deletingPopupBlock = popupBlocks.some(block => block.id === blockId)
       const sourceBlocks = deletingPopupBlock ? popupBlocks : canvasBlocks
       const beforeBlockIds = sourceBlocks.map(block => block.id)
       const deletedBlockIds = getDeletedBlockIds(blockId)
       const deletedBlocks = getDeletedBlocks(blockId)
+      const deletedCreatedBlockIds = deletedBlockIds.filter(id => pendingCreatedBlockIdsRef.current.has(id))
+      const deletedPendingSaveBlockIds = deletedBlockIds.filter(id => pendingBlockSaveIdsRef.current.has(id))
       const selectedBefore = selectedBlockId
-      const site = await sitesService.deleteBlock(selectedSite.id, blockId)
-      syncSelectedSite(site)
-      const normalizedSite = normalizeSiteForEditor(site)
-      const normalizedPages = normalizeFunnelPages(normalizedSite)
-      const pageId = deletingPopupBlock ? POPUP_SELECTED_ID : hasEditablePages(selectedSite) ? activePage?.id : undefined
-      const afterBlocks = (normalizedSite.blocks || [])
+      const nextSite = normalizeSiteForEditor({
+        ...siteToEdit,
+        blocks: (siteToEdit.blocks || []).filter(block => !deletedBlockIds.includes(block.id))
+      })
+      const normalizedPages = normalizeFunnelPages(nextSite)
+      const pageId = deletingPopupBlock ? POPUP_SELECTED_ID : hasEditablePages(siteToEdit) ? activePage?.id : undefined
+      const afterBlocks = (nextSite.blocks || [])
         .filter(block => deletingPopupBlock
           ? isPopupBlock(block)
           : !isPopupBlock(block) && (!pageId || getBlockPageId(block, normalizedPages) === pageId))
@@ -6591,22 +6944,30 @@ export const Sites: React.FC = () => {
           findNearestRemainingBlockId(beforeBlockIds, afterBlocks, blockId, deletedBlockIds)
         selectedAfter = nextBlockId || (deletingPopupBlock ? POPUP_SELECTED_ID : PAGE_SELECTED_ID)
       }
+      selectedSiteRef.current = nextSite
+      setSelectedSite(nextSite)
+      setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
+      markBlocksDeletedLocal(deletedBlockIds)
+      markBlockOrderDirty(pageId)
+      setHasUnsavedChanges(true)
       setActiveDragId(null)
       resetPaletteDrag()
       if (deletedSelectedBlock) {
         setSelectedBlockId(selectedAfter)
-        navigateSitesEditor({ site, blockId: selectedAfter })
+        navigateSitesEditor({ site: nextSite, blockId: selectedAfter })
       }
       pushEditorHistory({
         action: 'delete',
-        siteId: selectedSite.id,
+        siteId: siteToEdit.id,
         pageId,
         selectedBefore,
         selectedAfter,
         beforeBlockIds,
         afterBlockIds,
         deletedRootBlockId: blockId,
-        deletedBlocks
+        deletedBlocks,
+        deletedCreatedBlockIds,
+        deletedPendingSaveBlockIds
       })
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo eliminar el bloque')
@@ -6634,48 +6995,35 @@ export const Sites: React.FC = () => {
   }
 
   const persistCanvasBlockOrder = async (orderedBlocks: SiteBlock[], options: { popup?: boolean } = {}) => {
-    if (!selectedSite) return false
+    const siteToEdit = selectedSiteRef.current || selectedSite
+    if (!siteToEdit) return false
 
-    const wasAlreadyDirty = hasUnsavedChanges
     const sourceBlocks = options.popup ? popupBlocks : canvasBlocks
     const beforeBlockIds = sourceBlocks.map(block => block.id)
     const afterBlockIds = orderedBlocks.map(block => block.id)
     if (beforeBlockIds.join('|') === afterBlockIds.join('|')) return true
     const selectedBefore = selectedBlockId
-    const pageId = options.popup ? POPUP_SELECTED_ID : hasEditablePages(selectedSite) ? activePage?.id : undefined
+    const pageId = options.popup ? POPUP_SELECTED_ID : hasEditablePages(siteToEdit) ? activePage?.id : undefined
     const nextPageBlocks = orderedBlocks.map((block, index) => ({ ...block, sortOrder: index }))
     const nextPageBlocksById = new Map(nextPageBlocks.map(block => [block.id, block]))
-    const nextBlocks = blocks.map(block => nextPageBlocksById.get(block.id) || block)
-    const optimisticSite = { ...selectedSite, blocks: nextBlocks }
+    const nextBlocks = (siteToEdit.blocks || []).map(block => nextPageBlocksById.get(block.id) || block)
+    const optimisticSite = { ...siteToEdit, blocks: nextBlocks }
 
     setHasUnsavedChanges(true)
     selectedSiteRef.current = optimisticSite
     setSelectedSite(optimisticSite)
-
-    try {
-      const site = await sitesService.reorderBlocks(
-        selectedSite.id,
-        nextPageBlocks.map(block => block.id),
-        pageId
-      )
-      syncSelectedSite(site)
-      pushEditorHistory({
-        action: 'reorder',
-        siteId: selectedSite.id,
-        pageId,
-        selectedBefore,
-        selectedAfter: selectedBefore,
-        beforeBlockIds,
-        afterBlockIds
-      })
-      if (!wasAlreadyDirty) {
-        markEditorSaved()
-      }
-      return true
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo reordenar')
-      return false
-    }
+    setSites(current => current.map(item => item.id === optimisticSite.id ? { ...item, ...optimisticSite } : item))
+    markBlockOrderDirty(pageId)
+    pushEditorHistory({
+      action: 'reorder',
+      siteId: siteToEdit.id,
+      pageId,
+      selectedBefore,
+      selectedAfter: selectedBefore,
+      beforeBlockIds,
+      afterBlockIds
+    })
+    return true
   }
 
   const getLandingColumnBlocksForMove = (block: SiteBlock, lanes: LandingSectionLane[] = landingSectionLanes) => {
@@ -7030,7 +7378,7 @@ export const Sites: React.FC = () => {
     resetPaletteDrag()
     if (!payload) return
     if (formEditMode && isEmbeddedFormPalettePayload(payload)) return
-    await handleAddBlock(payload.blockType, {
+    await handleAddBlockManually(payload.blockType, {
       insertIndex,
       initialSettings: payload.initialSettings,
       sectionId: target?.sectionId,
@@ -7415,7 +7763,7 @@ export const Sites: React.FC = () => {
 	                  <Palette
 		                    blockTypes={popupSurfaceSelected ? getPopupPaletteBlockTypes(editorSite) : isLanding(editorSite) ? landingBlockTypes : formBlockTypes}
 		                    existingBlocks={editableCanvasBlocks}
-		                    onAdd={handleAddBlock}
+		                    onAdd={handleAddBlockManually}
 	                    onPaletteDragStart={(payload, position) => {
 	                      setActivePaletteDragPayload(payload)
 	                      setPaletteDragPosition(position)
