@@ -9253,6 +9253,11 @@ type ImportedInlineEditorState = {
   left: number
 }
 
+type ImportedElementPopoverPosition = {
+  top: number
+  left: number
+}
+
 type ImportedAIRegionElement = {
   tagName: string
   editId?: string
@@ -12028,6 +12033,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const codeTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const selectedIframeElementRef = useRef<HTMLElement | null>(null)
   const selectedCodePreviewElementRef = useRef<HTMLElement | null>(null)
+  const elementPopoverRef = useRef<HTMLDivElement | null>(null)
   const previewVisualContextRef = useRef<SitesAIPreviewVisualContext | null>(null)
   const inlineImageFileInputRef = useRef<HTMLInputElement | null>(null)
   const [routeEditing, setRouteEditing] = useState(false)
@@ -12040,6 +12046,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [inlineEditor, setInlineEditor] = useState<ImportedInlineEditorState | null>(null)
   const [buttonEditor, setButtonEditor] = useState<ImportedButtonEditorState | null>(null)
   const [codeElementEditor, setCodeElementEditor] = useState<ImportedCodeElementEditorState | null>(null)
+  const [elementPopoverPosition, setElementPopoverPosition] = useState<ImportedElementPopoverPosition | null>(null)
   const [choiceEditor, setChoiceEditor] = useState<ImportedChoiceEditorState | null>(null)
   const [aiRegionMode, setAiRegionMode] = useState(false)
   const [aiRegionSelection, setAiRegionSelection] = useState<ImportedAIRegionSelection | null>(null)
@@ -12187,6 +12194,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     setInlineEditor(null)
     setButtonEditor(null)
     setCodeElementEditor(null)
+    setElementPopoverPosition(null)
     setChoiceEditor(null)
     setAiRegionMode(false)
     setAiRegionSelection(null)
@@ -12204,6 +12212,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     setInlineEditor(null)
     setButtonEditor(null)
     setCodeElementEditor(null)
+    setElementPopoverPosition(null)
     setChoiceEditor(null)
     setFieldEditor(null)
     setContentError('')
@@ -12221,9 +12230,36 @@ const ImportedHtmlEditorPanel: React.FC<{
     }
   }, [])
 
+  const getElementPopoverPosition = useCallback((
+    element: HTMLElement,
+    frame: HTMLIFrameElement | null = iframeRef.current
+  ): ImportedElementPopoverPosition => {
+    const frameRect = frame?.getBoundingClientRect()
+    const elementRect = element.getBoundingClientRect()
+    const viewportPadding = 12
+    const popoverWidth = Math.min(430, Math.max(320, window.innerWidth - viewportPadding * 2))
+    const popoverHeightEstimate = Math.min(620, Math.max(280, window.innerHeight - viewportPadding * 2))
+    const absoluteLeft = (frameRect?.left || 0) + elementRect.left
+    const absoluteRight = (frameRect?.left || 0) + elementRect.right
+    const absoluteTop = (frameRect?.top || 0) + elementRect.top
+    const rightSideLeft = absoluteRight + 12
+    const leftSideLeft = absoluteLeft - popoverWidth - 12
+    const hasRoomRight = rightSideLeft + popoverWidth <= window.innerWidth - viewportPadding
+    const rawLeft = hasRoomRight ? rightSideLeft : leftSideLeft
+    const rawTop = absoluteTop - 8
+
+    return {
+      left: Math.max(viewportPadding, Math.min(rawLeft, window.innerWidth - popoverWidth - viewportPadding)),
+      top: Math.max(viewportPadding, Math.min(rawTop, window.innerHeight - popoverHeightEstimate - viewportPadding))
+    }
+  }, [])
+
   const openInlineEditorForElement = useCallback((element: HTMLElement, selection: ImportedEditableSelection, mode: 'text' | 'image' | 'video') => {
     const position = getInlineEditorPosition(element)
+    setElementPopoverPosition(null)
+    setButtonEditor(null)
     setCodeElementEditor(null)
+    setChoiceEditor(null)
     setFieldEditor(null)
     setInlineEditor({
       selection,
@@ -12234,11 +12270,15 @@ const ImportedHtmlEditorPanel: React.FC<{
     setContentError('')
   }, [getInlineEditorPosition])
 
-  const openButtonEditorForSelection = useCallback((selection: ImportedEditableSelection) => {
+  const openButtonEditorForSelection = useCallback((selection: ImportedEditableSelection, position?: ImportedElementPopoverPosition | null) => {
     setInlineEditor(null)
     setCodeElementEditor(null)
     setChoiceEditor(null)
     setFieldEditor(null)
+    setElementPopoverPosition(position || {
+      left: Math.max(12, window.innerWidth - 456),
+      top: Math.max(12, Math.min(120, window.innerHeight - 320))
+    })
     setButtonEditor({
       selection,
       value: selection.value,
@@ -12264,8 +12304,11 @@ const ImportedHtmlEditorPanel: React.FC<{
     descriptor: ImportedFrameElementDescriptor,
     range: ImportedCodeSourceRange
   ) => {
-    openButtonEditorForSelection(readImportedCodeButtonSelection(element, descriptor, range))
-  }, [openButtonEditorForSelection])
+    openButtonEditorForSelection(
+      readImportedCodeButtonSelection(element, descriptor, range),
+      getElementPopoverPosition(element, codePreviewIframeRef.current)
+    )
+  }, [getElementPopoverPosition, openButtonEditorForSelection])
 
   const openCodeElementEditorForElement = useCallback((
     element: HTMLElement,
@@ -12279,14 +12322,19 @@ const ImportedHtmlEditorPanel: React.FC<{
     setChoiceEditor(null)
     setFieldEditor(null)
     setCodeElementEditor(editor)
+    setElementPopoverPosition(getElementPopoverPosition(element, codePreviewIframeRef.current))
     setContentError('')
-  }, [])
+  }, [getElementPopoverPosition])
 
-  const openChoiceEditorForSelection = useCallback((selection: ImportedChoiceSelection) => {
+  const openChoiceEditorForSelection = useCallback((selection: ImportedChoiceSelection, position?: ImportedElementPopoverPosition | null) => {
     setInlineEditor(null)
     setButtonEditor(null)
     setCodeElementEditor(null)
     setFieldEditor(null)
+    setElementPopoverPosition(position || {
+      left: Math.max(12, window.innerWidth - 456),
+      top: Math.max(12, Math.min(120, window.innerHeight - 320))
+    })
     setChoiceEditor({
       selection,
       options: selection.options.length ? selection.options : [{ label: selection.label || 'Opción 1', value: selection.choiceValue || selection.label || 'Opción 1' }],
@@ -12295,11 +12343,15 @@ const ImportedHtmlEditorPanel: React.FC<{
     setContentError('')
   }, [currentPageActionOptions])
 
-  const openFieldEditorForSelection = useCallback((selection: ImportedFormFieldSelection) => {
+  const openFieldEditorForSelection = useCallback((selection: ImportedFormFieldSelection, position?: ImportedElementPopoverPosition | null) => {
     setInlineEditor(null)
     setButtonEditor(null)
     setCodeElementEditor(null)
     setChoiceEditor(null)
+    setElementPopoverPosition(position || {
+      left: Math.max(12, window.innerWidth - 456),
+      top: Math.max(12, Math.min(120, window.innerHeight - 320))
+    })
     setFieldEditor({
       selection,
       label: selection.label,
@@ -12318,9 +12370,39 @@ const ImportedHtmlEditorPanel: React.FC<{
     setInlineEditor(null)
     setButtonEditor(null)
     setCodeElementEditor(null)
+    setElementPopoverPosition(null)
     setChoiceEditor(null)
     setFieldEditor(null)
   }, [])
+
+  const hasElementPopoverEditor = Boolean(buttonEditor || choiceEditor || fieldEditor || codeElementEditor)
+  const elementPopoverStyle = elementPopoverPosition
+    ? ({
+      '--imported-element-popover-left': `${elementPopoverPosition.left}px`,
+      '--imported-element-popover-top': `${elementPopoverPosition.top}px`
+    } as React.CSSProperties)
+    : undefined
+
+  useEffect(() => {
+    if (!hasElementPopoverEditor) return undefined
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null
+      if (target && elementPopoverRef.current?.contains(target)) return
+      clearInlineSelection()
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') clearInlineSelection()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [clearInlineSelection, hasElementPopoverEditor])
 
   // Open a detected form field's editor from the side panel: locate it in the
   // preview, highlight it and reuse the same choice/field editors as a click.
@@ -12337,12 +12419,13 @@ const ImportedHtmlEditorPanel: React.FC<{
     highlightTarget.classList.add('rstk-imported-selected')
     selectedIframeElementRef.current = highlightTarget
     element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const position = getElementPopoverPosition(highlightTarget, iframeRef.current)
     if (field.kind === 'choice') {
-      openChoiceEditorForSelection(readImportedChoiceSelection(element as HTMLInputElement, doc))
+      openChoiceEditorForSelection(readImportedChoiceSelection(element as HTMLInputElement, doc), position)
     } else {
-      openFieldEditorForSelection(readImportedFormFieldSelection(element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, doc))
+      openFieldEditorForSelection(readImportedFormFieldSelection(element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, doc), position)
     }
-  }, [openChoiceEditorForSelection, openFieldEditorForSelection, showToast])
+  }, [getElementPopoverPosition, openChoiceEditorForSelection, openFieldEditorForSelection, showToast])
 
   const saveEditableContent = useCallback(async (
     selection: ImportedEditableSelection,
@@ -12406,7 +12489,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     aiRegionVoiceDictation.cancelVoice()
     setInlineEditor(null)
     setButtonEditor(null)
+    setCodeElementEditor(null)
+    setElementPopoverPosition(null)
     setChoiceEditor(null)
+    setFieldEditor(null)
     setContentError('')
     setAiRegionSelection(null)
     setAiRegionError('')
@@ -12836,7 +12922,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             formFieldElement) as HTMLElement
           selectElement(visualElement)
           removeMediaActionButton()
-          openFieldEditorForSelection(fieldSelection)
+          openFieldEditorForSelection(fieldSelection, getElementPopoverPosition(visualElement, iframeRef.current))
           return true
         }
 
@@ -12848,7 +12934,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             choiceInput) as HTMLElement
           selectElement(visualElement)
           removeMediaActionButton()
-          openChoiceEditorForSelection(choiceSelection)
+          openChoiceEditorForSelection(choiceSelection, getElementPopoverPosition(visualElement, iframeRef.current))
           return true
         }
 
@@ -12866,7 +12952,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             setChoiceEditor(null)
             openInlineEditorForElement(editableElement, selection, selection.editType === 'video' ? 'video' : 'image')
           } else if (selection.editType === 'button') {
-            openButtonEditorForSelection(selection)
+            openButtonEditorForSelection(selection, getElementPopoverPosition(editableElement, iframeRef.current))
           } else if (selection.editType === 'placeholder') {
             setButtonEditor(null)
             setChoiceEditor(null)
@@ -12885,6 +12971,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           setInlineEditor(null)
           setButtonEditor(null)
           setChoiceEditor(null)
+          setElementPopoverPosition(null)
           setContentError('')
           removeMediaActionButton()
           return true
@@ -13089,7 +13176,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       iframe.removeEventListener('load', installEditorHooks)
       cleanupDocument()
     }
-  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, editorPreviewHtml, guardedEditorPreviewHtml, importedPages, onPreviewContextChange, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, previewLoading, previewVersion, saveEditableContent, site.id, site.name, site.title])
+  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, editorPreviewHtml, getElementPopoverPosition, guardedEditorPreviewHtml, importedPages, onPreviewContextChange, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, previewLoading, previewVersion, saveEditableContent, site.id, site.name, site.title])
 
   const routeValue = getRouteEditorValue(site)
   const saveRoute = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -13260,6 +13347,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       }
       onCodeDraftChange(activeCodeFile.path, nextHtml, activeCodeFile.content)
       setButtonEditor(null)
+      setElementPopoverPosition(null)
       setContentError('')
       selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
       selectedCodePreviewElementRef.current = null
@@ -13354,6 +13442,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     }
     onCodeDraftChange(activeCodeFile.path, nextHtml, activeCodeFile.content)
     setCodeElementEditor(null)
+    setElementPopoverPosition(null)
     setContentError('')
     selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
     selectedCodePreviewElementRef.current = null
@@ -13558,6 +13647,25 @@ const ImportedHtmlEditorPanel: React.FC<{
     () => buildImportedEditorPreviewHtml(codePreviewSourceHtml, 'code'),
     [codePreviewSourceHtml]
   )
+  const codeElementFloatingPanel = (buttonEditorPanel || codeElementEditorPanel || contentError) ? (
+    <div
+      ref={elementPopoverRef}
+      className={styles.importedElementPopoverShell}
+      style={elementPopoverStyle}
+      role="dialog"
+      aria-label="Editar elemento seleccionado en HTML"
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      {buttonEditorPanel}
+      {codeElementEditorPanel}
+      {contentError && (
+        <div className={styles.importedInlineError}>
+          <AlertTriangle size={15} />
+          <span>{contentError}</span>
+        </div>
+      )}
+    </div>
+  ) : null
   const focusImportedCodeRange = useCallback((range: ImportedCodeSourceRange) => {
     setCodeSelectionNotice(`${range.label} · línea ${range.line}`)
     window.requestAnimationFrame(() => {
@@ -13583,6 +13691,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
     if (!range) {
       setCodeSelectionNotice('No pude ubicar ese elemento exacto en el código.')
+      setElementPopoverPosition(null)
       return null
     }
 
@@ -13595,6 +13704,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       setCodeSelectionNotice('')
       setButtonEditor(null)
       setCodeElementEditor(null)
+      setElementPopoverPosition(null)
       setContentError('')
       selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
       selectedCodePreviewElementRef.current = null
@@ -13835,8 +13945,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
         <section className={[
           styles.importedCodePreviewPane,
-          codeSelectionNotice ? styles.importedCodePreviewPaneWithNotice : '',
-          buttonEditorPanel || codeElementEditorPanel || contentError ? styles.importedCodePreviewPaneWithTools : ''
+          codeSelectionNotice ? styles.importedCodePreviewPaneWithNotice : ''
         ].filter(Boolean).join(' ')}>
           <div className={styles.importedCodePaneHeader}>
             <span>Vista de página</span>
@@ -13846,18 +13955,6 @@ const ImportedHtmlEditorPanel: React.FC<{
             <div className={styles.importedCodeSelectionNotice}>
               <MousePointerClick size={13} />
               <span>{codeSelectionNotice}</span>
-            </div>
-          )}
-          {(buttonEditorPanel || codeElementEditorPanel || contentError) && (
-            <div className={styles.importedCodeActionDrawer}>
-              {buttonEditorPanel}
-              {codeElementEditorPanel}
-              {contentError && (
-                <div className={styles.importedInlineError}>
-                  <AlertTriangle size={15} />
-                  <span>{contentError}</span>
-                </div>
-              )}
             </div>
           )}
           <div className={`${styles.importedCodePreviewStage} ${device === 'mobile' ? styles.importedCodePreviewStageMobile : ''}`}>
@@ -13889,6 +13986,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             )}
           </div>
         </section>
+        {codeElementFloatingPanel}
       </div>
     )
   }
@@ -13936,7 +14034,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       </section>
 
       <aside className={styles.importedSidePanel}>
-        {panelFormFields.length > 0 && !buttonEditor && !choiceEditor && !fieldEditor && (
+        {panelFormFields.length > 0 && (
           <div className={styles.importedFormFieldsBox}>
             <div className={styles.importedButtonActionHeader}>
               <ListChecks size={17} />
@@ -14104,9 +14202,18 @@ const ImportedHtmlEditorPanel: React.FC<{
           </div>
         )}
 
-        {buttonEditorPanel}
+        {(buttonEditorPanel || choiceEditor || fieldEditor) && (
+          <div
+            ref={elementPopoverRef}
+            className={styles.importedElementPopoverShell}
+            style={elementPopoverStyle}
+            role="dialog"
+            aria-label="Editar elemento seleccionado"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            {buttonEditorPanel}
 
-        {choiceEditor && (
+            {choiceEditor && (
           <div className={styles.importedButtonActionBox}>
             <div className={styles.importedButtonActionHeader}>
               <ListChecks size={17} />
@@ -14212,9 +14319,9 @@ const ImportedHtmlEditorPanel: React.FC<{
               </Button>
             </div>
           </div>
-        )}
+            )}
 
-        {fieldEditor && (
+            {fieldEditor && (
           <div className={styles.importedButtonActionBox}>
             <div className={styles.importedButtonActionHeader}>
               <FormInput size={17} />
@@ -14354,6 +14461,8 @@ const ImportedHtmlEditorPanel: React.FC<{
                 Guardar campo
               </Button>
             </div>
+          </div>
+            )}
           </div>
         )}
 

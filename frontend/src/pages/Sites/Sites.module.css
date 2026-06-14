@@ -343,14 +343,6 @@
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
-.importedCodePreviewPaneWithTools {
-  grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-.importedCodePreviewPaneWithNotice.importedCodePreviewPaneWithTools {
-  grid-template-rows: auto auto auto minmax(0, 1fr);
-}
-
 .importedCodePaneHeader {
   min-height: 52px;
   display: flex;
@@ -679,31 +671,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.importedCodeActionDrawer {
-  max-height: min(360px, 38vh);
-  display: grid;
-  gap: 10px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
-  background: color-mix(in srgb, var(--color-background-primary) 94%, var(--color-primary) 6%);
-  padding: 12px;
-  overflow: auto;
-  scrollbar-gutter: stable;
-}
-
-.importedCodeActionDrawer .importedButtonActionBox {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-  box-shadow: none;
-}
-
-.importedCodeActionDrawer .importedInlineError {
-  border: 1px solid rgba(248, 113, 113, 0.22);
-  border-radius: 8px;
-  padding: 9px 10px;
 }
 
 .importedCodePreviewStage {
@@ -1211,6 +1178,48 @@
 .importedButtonActionBox {
   display: grid;
   gap: 14px;
+}
+
+.importedElementPopoverShell {
+  position: fixed;
+  left: var(--imported-element-popover-left, 24px);
+  top: var(--imported-element-popover-top, 96px);
+  z-index: 160;
+  width: min(430px, calc(100vw - 24px));
+  max-height: min(620px, calc(100vh - 24px));
+  display: grid;
+  gap: 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  padding: 14px;
+  box-shadow: 0 28px 72px -42px rgba(15, 23, 42, 0.82);
+  animation: imported-element-popover-in 140ms ease-out;
+}
+
+.importedElementPopoverShell .importedButtonActionBox {
+  min-width: 0;
+}
+
+.importedElementPopoverShell .importedInlineError {
+  border: 1px solid rgba(248, 113, 113, 0.22);
+  border-radius: 8px;
+  padding: 9px 10px;
+}
+
+@keyframes imported-element-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .importedButtonRuleWarning,
@@ -13738,14 +13747,6 @@
 .pageFrame .containerFocused:has(.builder) .editorHeader {
   border-bottom: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.14));
   background: var(--color-background-secondary);
-  box-shadow: none;
-}
-
-.pageFrame .importedCodeActionDrawer .importedButtonActionBox {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
   box-shadow: none;
 }
 
