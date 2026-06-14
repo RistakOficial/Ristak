@@ -247,6 +247,7 @@ type ChatSettingsSection = 'appearance' | 'templates' | 'numbers' | 'notificatio
 type WhatsAppNumberMode = 'merged' | 'separated'
 type ConversationSortMode = 'recent' | 'unread'
 type PhotoPickDestination = 'chat' | 'cameraShare'
+type AddDraftAttachmentOptions = { showReadyToast?: boolean }
 type ContactInfoDetailPanel = 'payments' | 'appointments' | 'journey' | null
 type ContactInfoRecordDetail = { type: 'payment'; id: string } | { type: 'appointment'; id: string } | null
 type ContactInfoArchiveTab = 'media' | 'links' | 'documents'
@@ -5964,8 +5965,9 @@ export const PhoneChat: React.FC = () => {
     showToast('info', label, 'Esta opción ya está en el menú. La conexión real se activa cuando los archivos del celular estén conectados.')
   }
 
-  const addDraftAttachment = (attachment: MobileChatAttachment) => {
+  const addDraftAttachment = (attachment: MobileChatAttachment, options: AddDraftAttachmentOptions = {}) => {
     setDraftAttachments((current) => [attachment, ...current].slice(0, 4))
+    if (options.showReadyToast === false) return
     showToast('success', attachment.attachmentType === 'image' ? 'Foto lista' : 'Documento listo', 'Revisa la vista previa y toca enviar.')
   }
 
@@ -5998,7 +6000,7 @@ export const PhoneChat: React.FC = () => {
       openCameraShare(attachment)
       return
     }
-    addDraftAttachment(attachment)
+    addDraftAttachment(attachment, { showReadyToast: false })
   }
 
   const readImageFile = (file: File, source: 'camera' | 'photos', destination: PhotoPickDestination) => {
