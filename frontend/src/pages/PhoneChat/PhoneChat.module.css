@@ -1408,10 +1408,8 @@
   justify-items: center;
   gap: 8px;
   padding: 12px 14px 14px;
-  border-radius: 18px;
-  background:
-    linear-gradient(180deg, rgba(var(--phone-chat-accent-rgb), 0.11), transparent 64%),
-    var(--phone-chat-surface);
+  border-radius: 0;
+  background: transparent;
 }
 
 .aiAgentHubHeroBack {
@@ -1769,6 +1767,72 @@
   border: 0;
   color: var(--phone-chat-muted);
   background: transparent;
+}
+
+.aiAgentHubFilters {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 1px 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.aiAgentHubFilters::-webkit-scrollbar {
+  display: none;
+}
+
+.aiAgentHubFilterChip {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 7px;
+  max-width: min(190px, 72vw);
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: color-mix(in srgb, var(--phone-chat-surface) 88%, transparent);
+  font-size: 13px;
+  font-weight: 780;
+  letter-spacing: 0;
+  white-space: nowrap;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.aiAgentHubFilterChip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aiAgentHubFilterChip small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: inherit;
+  background: rgba(var(--phone-chat-primary-rgb), 0.08);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.aiAgentHubFilterChipActive {
+  border-color: rgba(var(--phone-chat-primary-rgb), 0.34);
+  color: var(--phone-chat-text);
+  background: rgba(var(--phone-chat-primary-rgb), 0.13);
+}
+
+.aiAgentHubFilterChipActive small {
+  color: #047857;
+  background: rgba(16, 185, 129, 0.16);
 }
 
 .aiAgentHubChatList {
