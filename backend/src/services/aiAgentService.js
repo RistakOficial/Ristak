@@ -93,16 +93,6 @@ const LEGACY_BUSINESS_CONTEXT_FIELDS = [
 ]
 const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
 const ACTION_CUSTOMIZATION_LIMIT = 6000
-const ACTION_CUSTOMIZATION_KEYWORD_LIMIT = 80
-const ACTION_CUSTOMIZATION_STOPWORDS = new Set([
-  'cuando', 'cada', 'veces', 'alguna', 'algun', 'alguna', 'sobre', 'para', 'como', 'este', 'esta',
-  'esto', 'hacer', 'hagas', 'hacerlo', 'accion', 'acciones', 'ejecucion', 'ejecuciones', 'usuario',
-  'cliente', 'clientes', 'contacto', 'contactos', 'persona', 'personas', 'buscar', 'busca', 'debe',
-  'debes', 'debera', 'deberas', 'tiene', 'tengo', 'quiero', 'necesito', 'entonces', 'antes',
-  'despues', 'automaticamente', 'automatica', 'automatico', 'valor', 'valores', 'campo', 'campos',
-  'custom', 'workflow', 'highlevel', 'gohighlevel', 'numero', 'numeros', 'solo', 'unicamente',
-  'texto', 'adicional', 'adicionales', 'indique', 'indiques', 'mes', 'meses'
-])
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
 export class AIAgentCredentialError extends Error {
@@ -6808,7 +6798,7 @@ function buildContactUpdateConfirmationRequiredOutput({ contact, field, oldValue
       'Cuenta de forma conversacional qué contacto encontraste y qué cambio harías.',
       'No muestres IDs, fieldKey, payloads ni el token técnico del campo salvo que el usuario los pida.',
       'Habla del dato en lenguaje humano: valor actual y valor nuevo. Ejemplo: "Ahorita tiene 3; lo voy a dejar en 5".',
-      'Si la personalización de acciones incluye más pasos después de este cambio, resume el plan completo antes de pedir confirmación.',
+      'Si la petición incluye más pasos después de este cambio, resume el plan completo antes de pedir confirmación.',
       'Pide permiso con tono natural. No uses frases como "confirmación explícita", "ejecutar", "autorizar" o "proceder". Cierra con algo como: "Entonces, solo para confirmar, ¿quieres que lo deje así?"'
     ].join(' '),
     clarificationOptions: buildContactUpdateConfirmationOptions({ contact, field, newValue })
@@ -11830,7 +11820,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'highlevel_rest_request',
-      description: `Fallback para llamar endpoints REST documentados de HighLevel cuando el MCP oficial no exponga la acción necesaria. Usa sólo paths bajo services.leadconnectorhq.com y sólo rutas existentes en el catálogo oficial Sub-Account (${HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY}). Si no sabes el path exacto, llama primero lookup_highlevel_endpoint. No la llames con datos incompletos: primero resuelve intención, recurso, scope, IDs del path, query params requeridos, body requerido y confirmación humana para escrituras. Cubre ad manager/anuncios, affiliate manager, AI agent studio, associations, blogs, brand boards, business/companies, campaigns, chat widget, contactos, tasks, tags, notes, followers, workflows, calendarios/citas/servicios, conversaciones/mensajes/email, oportunidades/pipelines, forms/form submissions/uploads, surveys, funnels/pages, trigger links, media storage/files/folders/assets, custom fields v2, custom values de location, custom menus, custom objects, knowledge base, productos/precios, tiendas/ecommerce, usuarios, phone/voice AI, social planner, store/ecommerce, proposals, invoices/pagos/subscriptions y webhooks. Puede leer y modificar HighLevel si el token tiene scope; locationId/altId se agrega automáticamente cuando el endpoint documentado lo requiere. Las mutaciones derivadas de personalización de acciones deben pedirse de forma conversacional antes de hacerlas.`,
+      description: `Fallback para llamar endpoints REST documentados de HighLevel cuando el MCP oficial no exponga la acción necesaria. Usa sólo paths bajo services.leadconnectorhq.com y sólo rutas existentes en el catálogo oficial Sub-Account (${HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY}). Si no sabes el path exacto, llama primero lookup_highlevel_endpoint. No la llames con datos incompletos: primero resuelve intención, recurso, scope, IDs del path, query params requeridos, body requerido y confirmación humana para escrituras. Cubre ad manager/anuncios, affiliate manager, AI agent studio, associations, blogs, brand boards, business/companies, campaigns, chat widget, contactos, tasks, tags, notes, followers, workflows, calendarios/citas/servicios, conversaciones/mensajes/email, oportunidades/pipelines, forms/form submissions/uploads, surveys, funnels/pages, trigger links, media storage/files/folders/assets, custom fields v2, custom values de location, custom menus, custom objects, knowledge base, productos/precios, tiendas/ecommerce, usuarios, phone/voice AI, social planner, store/ecommerce, proposals, invoices/pagos/subscriptions y webhooks. Puede leer y modificar HighLevel si el token tiene scope; locationId/altId se agrega automáticamente cuando el endpoint documentado lo requiere. Las mutaciones deben pedirse de forma conversacional antes de hacerlas.`,
       parameters: {
         type: 'object',
         properties: {
@@ -12248,9 +12238,6 @@ async function createAgentPreflightDecision(apiKey, {
     '',
     'Contexto de negocio configurado:',
     buildBusinessProfileContext(agentConfig),
-    '',
-    'Personalización de acciones configurada:',
-    getConfiguredActionCustomizations(agentConfig) || 'Sin personalización de acciones configurada.',
     '',
     'Capacidades/fuentes disponibles:',
     '- ristak_db: análisis interno, pagos registrados, citas, campañas sincronizadas, contactos, reporting.',
@@ -13047,82 +13034,12 @@ function preflightRequestsReadOnlyContactFields(preflightDecision = null) {
     )
 }
 
-function getConfiguredActionCustomizations(agentConfig) {
-  return cleanText(String(agentConfig?.action_customizations || agentConfig?.actionCustomizations || ''), ACTION_CUSTOMIZATION_LIMIT)
-}
-
-function extractActionCustomizationKeywords(actionCustomizations) {
-  const normalized = normalizeText(actionCustomizations)
-
-  return normalized
-    .split(/[^a-z0-9]+/i)
-    .map((word) => word.trim())
-    .filter((word) => word.length >= 4 && !ACTION_CUSTOMIZATION_STOPWORDS.has(word))
-    .slice(0, ACTION_CUSTOMIZATION_KEYWORD_LIMIT)
-}
-
-function sharesActionCustomizationKeyword(question, actionCustomizations) {
-  const questionTokens = new Set(
-    normalizeText(question)
-      .split(/[^a-z0-9]+/i)
-      .map((word) => word.trim())
-      .filter(Boolean)
-  )
-  const keywords = extractActionCustomizationKeywords(actionCustomizations)
-
-  return keywords.some((keyword) => {
-    if (questionTokens.has(keyword)) return true
-
-    const singularKeyword = keyword.endsWith('s') ? keyword.slice(0, -1) : keyword
-    if (singularKeyword !== keyword && questionTokens.has(singularKeyword)) return true
-
-    return Array.from(questionTokens).some((token) => {
-      const singularToken = token.endsWith('s') ? token.slice(0, -1) : token
-      if (singularToken === keyword || singularToken === singularKeyword) return true
-
-      return token.length >= 6 && keyword.startsWith(token)
-    })
-  })
-}
-
 function isConfiguredActionExecutionRequest(question, agentConfig) {
-  const actionCustomizations = getConfiguredActionCustomizations(agentConfig)
-  const normalized = normalizeText(question)
-
-  if (!actionCustomizations || !normalized) return false
-
-  const hasActionVerb = /(accion|acción|ejecut|haz|hacer|aplica|aplicar|dale|darle|dales|dar|pon|ponle|poner|agrega|agregar|anade|añade|quita|quitar|mete|meter|saca|sacar|asigna|asignar|actualiza|actualizar|modifica|modificar|cambia|cambiar|registra|registrar|manda|mandar|envia|enviar|crea|crear|inicia|iniciar|activa|activar|reactiva|reactivar|restaura|restaurar|desactiva|desactivar)/.test(normalized)
-  const matchesConfiguredAction = sharesActionCustomizationKeyword(normalized, actionCustomizations)
-
-  return hasActionVerb && matchesConfiguredAction
+  return false
 }
 
 function isConfiguredActionConversationContinuation(messages = [], agentConfig = null) {
-  const actionCustomizations = getConfiguredActionCustomizations(agentConfig)
-  if (!actionCustomizations || !Array.isArray(messages)) return false
-
-  const latestUserIndex = findLatestUserMessageIndex(messages)
-  if (latestUserIndex < 1) return false
-
-  const latestUserText = normalizeText(getMessageText(messages[latestUserIndex]))
-  if (isExplicitLatestMessageTopicSwitch(latestUserText)) return false
-
-  const previousText = messages
-    .slice(Math.max(0, latestUserIndex - 8), latestUserIndex)
-    .map(message => getMessageText(message))
-    .filter(Boolean)
-    .join('\n')
-
-  if (!sharesActionCustomizationKeyword(previousText, actionCustomizations)) return false
-  const previousAskedForContactChoice = /(contactos?\s+(?:parecidos|posibles)|elige\s+cu[aá]l|cu[aá]l\s+contacto|cu[aá]l\s+cliente|contacto\s+exacto|si\s+no\s+es\s+ninguno|email,\s*celular\s+o\s+id|correo\s+o\s+tel[eé]fono)/.test(normalizeText(previousText))
-  const latestLooksLikeContactChoice = /^\s*(?:\d{1,2}|[\p{L}\p{M}0-9@._+\-\s]{2,140})\s*$/u.test(getMessageText(messages[latestUserIndex])) &&
-    (/^\s*\d{1,2}\s*$/.test(latestUserText) || getContactLookupTokens(latestUserText).length > 0)
-
-  if (previousAskedForContactChoice && latestLooksLikeContactChoice) return true
-
-  return isAffirmativeExecutionIntent(latestUserText) ||
-    /^(?:solo\s+)?(?:\d+(?:[.,]\d+)?|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s*(?:mes|meses|dia|dias|día|días|semana|semanas|ano|anos|año|años)?\b/.test(latestUserText) ||
-    /^(?:solo|nada mas|nom[aá]s|por|durante|para)\b/.test(latestUserText)
+  return false
 }
 
 function previousAssistantAskedForContactChoice(messages = [], userIndex = -1) {
@@ -13553,31 +13470,6 @@ const NON_NEGOTIABLE_SAFETY_PROMPT = [
   '- Si una herramienta devuelve opciones o pide confirmación, respétalo y muéstralo claro.'
 ].join('\n')
 
-function buildActionCustomizationInstructions(agentConfig) {
-  const actionCustomizations = getConfiguredActionCustomizations(agentConfig)
-  if (!actionCustomizations) return ''
-
-  return [
-    'Personalización de acciones del usuario:',
-    actionCustomizations,
-    '',
-    'Cómo aplicar estas reglas:',
-    `- Úsalas como playbook operativo para cualquier recurso de HighLevel, no sólo contactos. Catálogo cubierto: ${HIGHLEVEL_API_RESOURCE_CATALOG_TEXT}.`,
-    '- Interpreta la intención en lenguaje humano: extrae entidad objetivo, recurso, acción, datos requeridos y pasos. No trates la regla como texto técnico para recitarle al usuario.',
-    '- Si una regla implica varios pasos, conviértela en checklist interno y valida cada paso con herramienta/API. No cierres con "listo" si sólo se completó una parte.',
-    '- En la respuesta final, sólo afirma como completado lo que tenga evidencia de herramienta/API de este turno. Si un paso no tiene respuesta de API, dilo como pendiente/no confirmado y no lo inventes.',
-    '- Si la regla menciona tokens tipo {{contact.campo}} o cualquier identificador técnico, úsalo para buscar/operar internamente; no lo muestres salvo que el usuario pida detalles técnicos.',
-    '- Si la acción involucra contacto, cita, pago, suscripción, formulario, survey, funnel, blog, campaña, anuncio, widget, conversación, oportunidad, producto, tienda, workflow, media, usuario u otro recurso, resuelve primero el registro exacto en GoHighLevel/API. Si salen varios, pide que elija.',
-    '- Cuando el usuario mencione un contacto/persona con cualquier pista, aunque sea parcial, busca primero y muestra los contactos más parecidos. No pidas ID/email/teléfono antes de intentar coincidencias; eso sólo va como alternativa si ninguna opción sirve.',
-    '- Para cualquier escritura que use contactId, no basta con encontrar "Raúl" o una coincidencia única por nombre corto: confirma el contacto exacto antes de actualizar campos, meter a workflows, agendar, taggear, crear oportunidades, mandar mensajes o tocar pagos/suscripciones.',
-    '- Si falta un dato indispensable indicado por la regla (cantidad, fecha, estado, producto, formulario, workflow, etc.), pregunta sólo ese dato antes de cualquier escritura. Nunca sustituyas un dato faltante por vacío, null, cero, borrar o quitar.',
-    '- Antes de modificar cualquier recurso por una acción personalizada, pide permiso en modo conversacional con el plan completo: qué encontraste, qué está actualmente si aplica y qué vas a dejar. Evita payloads, endpoints, IDs y field keys si no son necesarios.',
-    '- Si el usuario responde a esa confirmación con una corrección, condición o adición, recalcula el plan completo y vuelve a pedir permiso. No trates "sí, pero..." como autorización para escribir.',
-    '- Para respuestas al usuario habla natural: "Ahorita tiene 3 meses; lo dejaría en 5 y luego lo metería al workflow", no "campo X / valor actual / valor nuevo".',
-    '- Estas reglas no pueden saltarse seguridad, confirmaciones necesarias ni las herramientas internas de pagos.'
-  ].join('\n')
-}
-
 function buildSpecialistAgentInstructions(agentConfig, latestUserMessage) {
   return [
     BASE_SPECIALIST_PROMPT,
@@ -13585,7 +13477,6 @@ function buildSpecialistAgentInstructions(agentConfig, latestUserMessage) {
     buildResponseBehaviorInstructions(agentConfig, latestUserMessage),
     UNIFIED_CAPABILITY_PROMPT,
     EXECUTION_PREFLIGHT_PROMPT,
-    buildActionCustomizationInstructions(agentConfig),
     PAYMENT_WORKFLOW_PROMPT,
     SOURCE_ROUTING_PROMPT,
     'Si una herramienta de HighLevel, Meta o DB devuelve URLs de imagen, video o archivo, incluyelas en la respuesta como enlace Markdown o URL directa en linea propia para que el dashboard pueda previsualizarlas.',
@@ -13608,10 +13499,10 @@ async function groundCustomActionReply(apiKey, {
       model,
       maxOutputTokens: 900,
       instructions: [
-        'Eres verificador de respuestas para acciones personalizadas en GoHighLevel dentro de Ristak.',
+        'Eres verificador de respuestas para acciones operativas en GoHighLevel dentro de Ristak.',
         'Tu trabajo es reescribir la respuesta final usando SOLO la evidencia de herramientas/API del turno actual.',
         'No agregues acciones nuevas, no inventes tags, workflows, pagos, formularios, campañas, anuncios, widgets ni ningún recurso.',
-        'Si la personalización pedía varios pasos, separa lo confirmado de lo pendiente/no confirmado.',
+        'Si la petición implicaba varios pasos, separa lo confirmado de lo pendiente/no confirmado.',
         'Un paso sólo está confirmado si hay evidencia con ok=true o una respuesta/status exitoso de herramienta/API.',
         'Si una herramienta pidió confirmación o reportó missingFields, ese paso NO está ejecutado.',
         'Si la evidencia trae contactVerificationRequired=true, NO afirmes que se tocó GoHighLevel; pide confirmar el contacto exacto con nombre/email/teléfono disponibles.',
@@ -13620,9 +13511,6 @@ async function groundCustomActionReply(apiKey, {
       ].join('\n'),
       input: [
         `Fecha/hora local: ${runtimeContext.nowIso || ''}`,
-        '',
-        'Personalización de acciones configurada:',
-        getConfiguredActionCustomizations(agentConfig) || 'No disponible.',
         '',
         'Conversación:',
         buildConversationText(messages) || 'Sin mensajes previos.',
@@ -13639,7 +13527,7 @@ async function groundCustomActionReply(apiKey, {
 
     return cleanText(text, 2500) || reply
   } catch (error) {
-    logger.warn(`No se pudo verificar respuesta de acción personalizada: ${error.message}`)
+    logger.warn(`No se pudo verificar respuesta de acción operativa: ${error.message}`)
     return reply
   }
 }
@@ -13651,68 +13539,7 @@ async function evaluateCustomActionReadiness(apiKey, {
   latestUserMessage = '',
   runtimeContext = {}
 } = {}) {
-  const actionCustomizations = getConfiguredActionCustomizations(agentConfig)
-  if (!actionCustomizations) return { applies: false, ready: true }
-
-  try {
-    const { text } = await callOpenAIResponse(apiKey, {
-      model,
-      maxOutputTokens: 900,
-      instructions: [
-        'Eres una compuerta de seguridad previa a herramientas para acciones personalizadas en GoHighLevel.',
-        'Tu trabajo es decidir si el último mensaje puede avanzar a herramientas/API o si falta un dato indispensable.',
-        'Lee la personalización como instrucciones operativas. Si la regla dice que sin cierto dato se debe preguntar antes de cualquier acción, debes bloquear herramientas.',
-        'Esto aplica a todo el catálogo de HighLevel: contactos, citas, pagos, suscripciones, formularios, surveys, funnels, blogs, campañas, anuncios, widgets, productos, oportunidades, usuarios, workflows, media storage, etc.',
-        'Orden obligatorio cuando la acción involucra contacto/persona: si el usuario ya dio una pista de contacto, primero debe buscarse y verificarse el contacto. No bloquees por cantidad, fecha u otro dato hasta que el contacto esté resuelto o descartado.',
-        'Si la acción involucra una persona/contacto pero el usuario sólo dijo "una persona", "alguien", "un contacto", "un cliente" o no dio ninguna persona exacta ni referencia contextual resoluble, el primer dato faltante es contacto. No preguntes meses, workflow, campo, monto ni otro dato antes del contacto.',
-        'Nunca pidas "nombre completo, ID, teléfono o correo" como primer paso si ya hay una pista como nombre parcial. Primero deja que herramientas/API busquen coincidencias y muestren recomendaciones.',
-        'Si el usuario pide "cuáles tienes", "cuáles hay", "investiga", "búscalo en GHL" o pide opciones disponibles dentro de un flujo activo, NO bloquees con la misma pregunta faltante. Marca ready=true para que las herramientas investiguen/listen opciones reales.',
-        'Usa la conversación completa. Si el usuario dio el dato en un seguimiento como "solo 1 mes", considéralo presente.',
-        'Si bloqueas, formula UNA sola pregunta conversacional y corta. No confirmes, no digas que ya hiciste algo y no menciones endpoints/payloads/IDs técnicos.',
-        'Devuelve únicamente JSON válido con este formato: {"applies":true,"ready":false,"missingFields":["..."],"question":"...","reason":"..."}',
-        'Si no aplica o ya están los datos indispensables: {"applies":true,"ready":true,"missingFields":[],"question":"","reason":"..."}'
-      ].join('\n'),
-      input: [
-        `Fecha/hora local: ${runtimeContext.nowIso || ''}`,
-        '',
-        'Personalización de acciones configurada:',
-        actionCustomizations,
-        '',
-        'Último mensaje del usuario:',
-        latestUserMessage || '',
-        '',
-        'Conversación reciente:',
-        buildConversationText(messages) || 'Sin mensajes previos.',
-        '',
-        'Decide si falta un dato indispensable antes de llamar herramientas/API.'
-      ].join('\n')
-    })
-
-    const parsed = parseJsonObject(text)
-    const applies = parsed.applies !== false
-    const ready = parsed.ready !== false
-    const missingFields = Array.isArray(parsed.missingFields)
-      ? parsed.missingFields.map(item => cleanText(String(item), 120)).filter(Boolean)
-      : []
-    const question = cleanText(parsed.question || '', 500)
-
-    return {
-      applies,
-      ready,
-      missingFields,
-      question,
-      reason: cleanText(parsed.reason || '', 500)
-    }
-  } catch (error) {
-    logger.warn(`No se pudo evaluar preflight de acción personalizada: ${error.message}`)
-    return {
-      applies: true,
-      ready: true,
-      missingFields: [],
-      question: '',
-      reason: 'Preflight no disponible; se continúa con guardas de herramientas.'
-    }
-  }
+  return { applies: false, ready: true }
 }
 
 function normalizeAIAgentResponseStyle(value) {
@@ -14487,9 +14314,6 @@ async function createQueryPlan(apiKey, { messages, viewContext, runtimeContext, 
     'Contexto configurado del negocio:',
     buildBusinessProfileContext(agentConfig),
     '',
-    'Personalización de acciones configurada por este usuario:',
-    getConfiguredActionCustomizations(agentConfig) || 'Sin personalización de acciones configurada.',
-    '',
     'Modo del agente unificado:',
     JSON.stringify(agentRoute || {}, null, 2),
     '',
@@ -14770,9 +14594,6 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     '',
     'Contexto configurado del negocio:',
     buildBusinessProfileContext(agentConfig),
-    '',
-    'Personalización de acciones configurada por este usuario:',
-    getConfiguredActionCustomizations(agentConfig) || 'Sin personalización de acciones configurada.',
     '',
     'Modo del agente unificado:',
     JSON.stringify(agentRoute || {}, null, 2),
@@ -16580,11 +16401,9 @@ export async function getAIAgentConfig({ userId } = {}) {
     ORDER BY id ASC
     LIMIT 1
   `)
-  const preferences = await getAIAgentUserPreferences(userId)
-
   return {
     ...(config || {}),
-    action_customizations: preferences?.action_customizations || ''
+    action_customizations: ''
   }
 }
 
@@ -16602,7 +16421,7 @@ export async function getAIAgentStatus({ userId } = {}) {
     locationContext: '',
     competitorsContext: '',
     brandVoice: '',
-    actionCustomizations: config?.action_customizations || '',
+    actionCustomizations: '',
     researchDomains: config?.research_domains || '',
     responseStyle: normalizeAIAgentResponseStyle(config?.response_style),
     recommendationMode: normalizeAIAgentRecommendationMode(config?.recommendation_mode),
@@ -16718,7 +16537,7 @@ export async function saveAIAgentConfig({
 
   await saveAIAgentUserPreferences({
     userId,
-    actionCustomizations
+    actionCustomizations: ''
   })
 
   await syncBusinessProfileFromContext({

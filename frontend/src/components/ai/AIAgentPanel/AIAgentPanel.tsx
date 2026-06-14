@@ -537,7 +537,7 @@ function statusToForm(status: AIAgentConfigStatus): AIAgentConfigInput {
     locationContext: '',
     competitorsContext: '',
     brandVoice: '',
-    actionCustomizations: status.actionCustomizations || '',
+    actionCustomizations: '',
     researchDomains: status.researchDomains || '',
     responseStyle: status.responseStyle || 'advisor',
     recommendationMode: status.recommendationMode || 'when_useful',

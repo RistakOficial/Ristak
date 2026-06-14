@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Bot, CheckCircle, Eye, EyeOff, Globe2, ListChecks, Trash2, XCircle } from 'lucide-react'
+import { AlertTriangle, Bot, CheckCircle, Eye, EyeOff, Globe2, Trash2, XCircle } from 'lucide-react'
 import { Button, Card, CustomSelect } from '@/components/common'
 import { DEFAULT_AI_MODEL, aiModelOptionGroups, aiModelOptions, getKnownAIModel } from '@/constants/aiModels'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -70,6 +70,7 @@ function getUnifiedBusinessContext(status: AIAgentConfigStatus) {
 function prepareConfigForSave(form: typeof emptyForm) {
   return {
     ...form,
+    actionCustomizations: '',
     marketContext: '',
     idealCustomer: '',
     locationContext: '',
@@ -87,7 +88,7 @@ function statusToForm(status: AIAgentConfigStatus) {
     locationContext: '',
     competitorsContext: '',
     brandVoice: '',
-    actionCustomizations: status.actionCustomizations || '',
+    actionCustomizations: '',
     researchDomains: status.researchDomains || '',
     responseStyle: status.responseStyle || 'advisor',
     recommendationMode: status.recommendationMode || 'when_useful',
@@ -569,27 +570,6 @@ export const AIAgentSettings: React.FC = () => {
             disabled={loading || disconnecting}
             rows={8}
           />
-        </div>
-
-        <div className={styles.section}>
-          <div className={styles.sectionHeading}>
-            <ListChecks size={17} />
-            <h3 className={styles.sectionTitle}>Personalización de acciones</h3>
-          </div>
-          <div className={styles.fieldWide}>
-            <label className={styles.label}>Instrucciones para ejecuciones</label>
-            <textarea
-              className={`${styles.textarea} ${styles.actionTextarea}`}
-              value={form.actionCustomizations}
-              placeholder={'Ejemplo: Cuando pidan darle tiempo extra a un contacto, busca el campo {{contact.tiempo_extra_en_el_programa}}, guarda sólo el número de meses y agrégalo al workflow "Tiempo extra".'}
-              onChange={(event) => updateField('actionCustomizations', event.target.value)}
-              disabled={loading || disconnecting}
-              rows={7}
-            />
-            <p className={styles.helper}>
-              El agente usa estas reglas cuando detecta una acción operativa antes de llamar herramientas.
-            </p>
-          </div>
         </div>
 
         <div className={styles.section}>
