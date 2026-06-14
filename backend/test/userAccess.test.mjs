@@ -13,6 +13,7 @@ describe('user access config', () => {
     const access = getEffectiveAccessConfig({ role: 'admin' })
 
     assert.equal(access.dashboard, 'write')
+    assert.equal(access.settings_media, 'write')
     assert.equal(access.settings_users, 'write')
     assert.equal(hasUserAccess({ role: 'admin' }, 'settings_users', 'write'), true)
   })
@@ -33,10 +34,11 @@ describe('user access config', () => {
   })
 
   it('serializes unknown or invalid levels as none', () => {
-    const serialized = serializeAccessConfig({ contacts: 'delete', reports: 'write' }, 'employee')
+    const serialized = serializeAccessConfig({ contacts: 'delete', reports: 'write', settings_media: 'read' }, 'employee')
     const parsed = JSON.parse(serialized)
 
     assert.equal(parsed.contacts, 'none')
     assert.equal(parsed.reports, 'write')
+    assert.equal(parsed.settings_media, 'read')
   })
 })

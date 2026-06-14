@@ -13,6 +13,7 @@ import { UserAccessSettings } from './UserAccessSettings'
 import { APIAccessSettings } from './APIAccessSettings'
 import { Domains } from './Domains'
 import { MobileAppSettings } from './MobileAppSettings'
+import { MediaSettings } from './MediaSettings'
 import { CustomFields } from './CustomFields'
 import { VariableFields } from './VariableFields'
 import { TriggerLinks } from './TriggerLinks'
@@ -50,6 +51,7 @@ export const Settings: React.FC = () => {
             <Route path="tracking/*" element={<SettingsAccessGate moduleKey="settings_tracking"><WebTracking /></SettingsAccessGate>} />
             <Route path="domains/*" element={<SettingsAccessGate moduleKey="settings_domains"><Domains /></SettingsAccessGate>} />
             <Route path="payments/*" element={<SettingsAccessGate moduleKey="settings_payments"><PaymentsConfiguration /></SettingsAccessGate>} />
+            <Route path="media" element={<SettingsAccessGate moduleKey="settings_media"><MediaSettings /></SettingsAccessGate>} />
             <Route path="custom-fields/*" element={<SettingsAccessGate moduleKey="settings_custom_fields"><CustomFields /></SettingsAccessGate>} />
             <Route path="variable-fields/*" element={<SettingsAccessGate moduleKey="settings_custom_fields"><VariableFields /></SettingsAccessGate>} />
             <Route path="trigger-links/*" element={<SettingsAccessGate moduleKey="settings_custom_fields"><TriggerLinks /></SettingsAccessGate>} />

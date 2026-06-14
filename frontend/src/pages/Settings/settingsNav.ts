@@ -31,6 +31,7 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/tracking', label: 'Rastreo Web', permissionKey: 'settings_tracking' },
   { to: '/settings/domains', label: 'Dominios', permissionKey: 'settings_domains' },
   { to: '/settings/costs', label: 'Costos', permissionKey: 'settings_costs' },
+  { to: '/settings/media', label: 'Media', permissionKey: 'settings_media' },
   { to: '/settings/custom-fields', label: 'Campos personalizados', permissionKey: 'settings_custom_fields' },
   { to: '/settings/variable-fields', label: 'Campos variables', permissionKey: 'settings_custom_fields' },
   { to: '/settings/trigger-links', label: 'Enlaces de disparo', permissionKey: 'settings_custom_fields' },

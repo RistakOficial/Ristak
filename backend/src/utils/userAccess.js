@@ -23,6 +23,7 @@ export const ACCESS_MODULES = [
   'settings_tracking',
   'settings_domains',
   'settings_costs',
+  'settings_media',
   'settings_custom_fields',
   'settings_api_access',
   'settings_users'

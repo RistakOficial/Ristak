@@ -148,6 +148,13 @@ export const ACCESS_MODULES = [
     path: '/settings/costs'
   },
   {
+    key: 'settings_media',
+    label: 'Media',
+    description: 'Explorador de archivos multimedia guardados en storage.',
+    group: 'Configuración',
+    path: '/settings/media'
+  },
+  {
     key: 'settings_custom_fields',
     label: 'Campos y etiquetas',
     description: 'Campos personalizados, variables, enlaces y etiquetas.',
@@ -239,6 +246,7 @@ export const ROUTE_ACCESS: Array<{ prefix: string; moduleKey: PermissionKey }> =
   { prefix: '/settings/tracking', moduleKey: 'settings_tracking' },
   { prefix: '/settings/domains', moduleKey: 'settings_domains' },
   { prefix: '/settings/costs', moduleKey: 'settings_costs' },
+  { prefix: '/settings/media', moduleKey: 'settings_media' },
   { prefix: '/settings/custom-fields', moduleKey: 'settings_custom_fields' },
   { prefix: '/settings/variable-fields', moduleKey: 'settings_custom_fields' },
   { prefix: '/settings/trigger-links', moduleKey: 'settings_custom_fields' },
