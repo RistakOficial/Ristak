@@ -23,6 +23,7 @@ import { FaFacebook, FaGoogle, FaInstagram, FaTiktok, FaTwitter, FaLinkedin, FaM
 import { SiMacos, SiIos } from 'react-icons/si'
 import {
   getSessionsByDateRange,
+  getSessionMetricsByDateRange,
   getContactsByDate,
   getContactConversionsByDate,
   type ContactsByDate,
@@ -861,14 +862,14 @@ const Analytics: React.FC = () => {
         // Fetch datos del período actual y anterior
         const [
           currentSessions,
-          prevSessions,
+          prevSessionMetrics,
           contactsData,
           prevContactsData,
           contactConversionRows,
           trackingConfig
         ] = await Promise.all([
-          getSessionsByDateRange(startDate, endDate),
-          getSessionsByDateRange(prevStartDate, prevEndDate),
+          getSessionsByDateRange(startDate, endDate, { payload: 'analytics' }),
+          getSessionMetricsByDateRange(prevStartDate, prevEndDate),
           getContactsByDate(startDate, endDate),
           getContactsByDate(prevStartDate, prevEndDate),
           getContactConversionsByDate(startDate, endDate),
@@ -881,7 +882,6 @@ const Analytics: React.FC = () => {
 
         if (currentSessions.length > 0) {
           const currentViewSessions = currentSessions.filter(isTrackingViewEvent)
-          const prevViewSessions = prevSessions.filter(isTrackingViewEvent)
           // Calcular métricas principales
           const uniqueVids = new Set(currentViewSessions.map((s: Session) => s.visitor_id)).size
 
@@ -913,23 +913,13 @@ const Analytics: React.FC = () => {
             (totalPageViews / uniqueSessionIds) : 0
 
           // Calcular métricas del período anterior para trends
-          const prevUniqueVids = prevViewSessions.length > 0 ?
-            new Set(prevViewSessions.map((s: Session) => s.visitor_id)).size : 0
-          const prevTotalPageViews = prevViewSessions.length
-          const prevUniqueSessionIds = prevViewSessions.length > 0 ?
-            new Set(prevViewSessions.map((s: Session) => s.session_id)).size : 0
+          const prevUniqueVids = prevSessionMetrics.uniqueVisitors
+          const prevTotalPageViews = prevSessionMetrics.pageViews
+          const prevUniqueSessionIds = prevSessionMetrics.uniqueSessions
           const prevRegistros = (prevContactsData || []).reduce((sum, item) => sum + item.count, 0)
           const prevConversionRate = prevUniqueVids > 0 ? ((prevRegistros / prevUniqueVids) * 100) : 0
 
-          // Usuarios recurrentes del período anterior
-          const prevVisitorSessionMap: { [key: string]: Set<string> } = {}
-          prevViewSessions.forEach((s: Session) => {
-            if (!prevVisitorSessionMap[s.visitor_id]) {
-              prevVisitorSessionMap[s.visitor_id] = new Set()
-            }
-            prevVisitorSessionMap[s.visitor_id].add(s.session_id)
-          })
-          const prevReturningUsers = Object.values(prevVisitorSessionMap).filter(sessions => sessions.size > 1).length
+          const prevReturningUsers = prevSessionMetrics.returningUsers
           const prevAvgPagePerSession = prevUniqueSessionIds > 0 ?
             (prevTotalPageViews / prevUniqueSessionIds) : 0
 

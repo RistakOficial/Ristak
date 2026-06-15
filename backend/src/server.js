@@ -27,12 +27,14 @@ import webhooksRoutes from './routes/webhooks.routes.js'
 import reportsRoutes from './routes/reports.routes.js'
 import webhookConfigRoutes from './routes/webhookConfig.routes.js'
 import contactsRoutes from './routes/contacts.routes.js'
+import contactTagsRoutes from './routes/contactTags.routes.js'
 import transactionsRoutes from './routes/transactions.routes.js'
 import integrationsRoutes from './routes/integrations.routes.js'
 import attributionRoutes from './routes/attribution.routes.js'
 import settingsRoutes from './routes/settings.routes.js'
 import calendarsRoutes from './routes/calendars.routes.js'
 import trackingRoutes, { publicTrackingRoutes } from './routes/tracking.routes.js'
+import triggerLinksRoutes from './routes/triggerLinks.routes.js'
 import configRoutes from './routes/config.routes.js'
 import costsRoutes from './routes/costs.routes.js'
 import maintenanceRoutes from './routes/maintenance.routes.js'
@@ -41,10 +43,12 @@ import apiAccessRoutes from './routes/apiAccess.routes.js'
 import oauthRoutes from './routes/oauth.routes.js'
 import hiddenContactsRoutes from './routes/hiddenContacts.routes.js'
 import aiAgentRoutes from './routes/aiAgent.routes.js'
+import conversationalAgentRoutes from './routes/conversationalAgent.routes.js'
 import searchRoutes from './routes/search.routes.js'
 import externalRoutes from './routes/external.routes.js'
 import mcpRoutes from './routes/mcp.routes.js'
 import whatsappApiRoutes from './routes/whatsappApi.routes.js'
+import emailRoutes from './routes/email.routes.js'
 import productsRoutes from './routes/products.routes.js'
 import sitesRoutes from './routes/sites.routes.js'
 import mediaRoutes from './routes/media.routes.js'
@@ -56,6 +60,7 @@ import licenseRoutes from './routes/license.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
 import { getHealthInfo } from './services/licenseService.js'
 import { requireFeature } from './middleware/licenseMiddleware.js'
+import { recoverPendingConversationalAgentConversations } from './agents/conversational/runner.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -100,6 +105,7 @@ app.get('/health', (req, res) => {
 // Deben existir antes del host router de Sites para no capturar estas rutas como dominios públicos.
 app.use('/media', mediaRoutes)
 app.use('/internal', internalStorageRoutes)
+app.use('/trigger-links', triggerLinksRoutes)
 
 // Host router para Sites públicos. Debe correr antes de APIs privadas/static.
 app.use(publicSiteHostMiddleware)
@@ -120,6 +126,7 @@ app.use('/api/meta', requireFeature('meta_ads'), metaRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/webhook-config', webhookConfigRoutes)
 app.use('/api/contacts', contactsRoutes)
+app.use('/api/contact-tags', contactTagsRoutes)
 app.use('/api/transactions', transactionsRoutes)
 app.use('/api/integrations', integrationsRoutes)
 app.use('/api/attribution', attributionRoutes)
@@ -132,10 +139,12 @@ app.use('/api', costsRoutes)
 app.use('/api/maintenance', maintenanceRoutes)
 app.use('/api/hidden-contacts', hiddenContactsRoutes)
 app.use('/api/ai-agent', requireFeature('ai'), aiAgentRoutes)
+app.use('/api/conversational-agent', requireFeature('ai'), conversationalAgentRoutes)
 app.use('/api/search', searchRoutes)
 app.use('/api/external', externalRoutes)
 app.use('/api/mcp', mcpRoutes)
 app.use('/api/whatsapp-api', requireFeature('whatsapp'), whatsappApiRoutes)
+app.use('/api/email', emailRoutes)
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
 
@@ -149,11 +158,17 @@ if (process.env.NODE_ENV === 'production') {
   const frontendPath = join(__dirname, '../../frontend/dist')
   app.use(express.static(frontendPath))
 
+  app.get('/assets/*', (req, res) => {
+    res.set('Cache-Control', 'no-store')
+    res.status(404).type('text/plain').send('Static asset not found')
+  })
+
   app.get('*', (req, res) => {
     // No servir index.html para rutas de API o webhooks
     if (req.path.startsWith('/api') || req.path.startsWith('/webhook')) {
       return res.status(404).json({ error: 'Endpoint no encontrado' })
     }
+    res.set('Cache-Control', 'no-cache')
     res.sendFile(join(frontendPath, 'index.html'))
   })
 }
@@ -169,6 +184,9 @@ app.use((err, req, res, next) => {
 
 // Iniciar servidor. Render requiere escuchar en 0.0.0.0 y el puerto de PORT.
 app.listen(PORT, '0.0.0.0', async () => {
+  import('./services/automationEngine.js')
+    .then((engine) => engine.startAutomationScheduler())
+    .catch((error) => logger.error(`No se pudo iniciar el motor de automatizaciones: ${error.message}`))
   logger.success(`🚀 Servidor corriendo en puerto ${PORT}`)
   logger.info(`Entorno: ${process.env.NODE_ENV || 'development'}`)
 
@@ -190,6 +208,10 @@ app.listen(PORT, '0.0.0.0', async () => {
 
   repairPendingPaymentFlows().catch(error => {
     logger.error(`No se pudo ejecutar reparación inicial de parcialidades: ${error.message}`)
+  })
+
+  recoverPendingConversationalAgentConversations().catch(error => {
+    logger.error(`No se pudo recuperar conversaciones pendientes del agente: ${error.message}`)
   })
 
   // Iniciar cron jobs

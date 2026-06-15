@@ -426,6 +426,18 @@ const normalizeFormSelectStyle = (value: unknown) => {
   return ['classic', 'filled', 'underline'].includes(raw) ? raw : 'classic'
 }
 
+const normalizeButtonAlign = (value: unknown) => {
+  const raw = String(value || '').trim()
+  return ['left', 'center', 'right', 'full'].includes(raw) ? raw : 'center'
+}
+
+const justifyForButtonAlign = (align: string) => {
+  if (align === 'center') return 'center'
+  if (align === 'right') return 'end'
+  if (align === 'full') return 'stretch'
+  return 'start'
+}
+
 export interface CanvasTheme {
   /** All --rstk-* variables, applied inline on the canvas root. */
   vars: React.CSSProperties
@@ -529,7 +541,7 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
 	    '--rstk-form-text-decoration': theme.formTextDecoration === 'underline' ? 'underline' : 'none',
 	    '--rstk-form-label-color': paintFallbackColor(themePaint(theme, 'formLabelColor', ink), ink),
 	    '--rstk-form-help-color': paintFallbackColor(themePaint(theme, 'formHelpColor', v.muted), v.muted),
-	    '--rstk-form-field-bg': themePaint(theme, 'formFieldBg', v.inputBg),
+	    '--rstk-form-field-bg': themePaint(theme, 'formFieldBg', 'transparent'),
 	    '--rstk-form-field-text': paintFallbackColor(themePaint(theme, 'formFieldText', v.inputInk), v.inputInk),
 	    '--rstk-form-field-border': paintFallbackColor(themePaint(theme, 'formFieldBorder', v.inputBorder), v.inputBorder),
 	    '--rstk-form-placeholder': paintFallbackColor(themePaint(theme, 'formPlaceholderColor', v.muted), v.muted),
@@ -538,7 +550,8 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
 	    '--rstk-form-field-height': `${themeNumber(theme, 'formFieldHeight', 50, 34, 96)}px`,
 	    '--rstk-form-field-pad-x': `${themeNumber(theme, 'formFieldPaddingX', 14, 6, 48)}px`,
 	    '--rstk-form-field-pad-y': `${themeNumber(theme, 'formFieldPaddingY', 13, 6, 36)}px`,
-	    '--rstk-form-choice-selected-bg': themePaint(theme, 'formChoiceSelectedBg', `color-mix(in srgb, ${accent} 10%, ${v.inputBg})`),
+	    '--rstk-form-field-width': `${themeNumber(theme, 'formFieldWidth', 560, 240, 900)}px`,
+	    '--rstk-form-choice-selected-bg': themePaint(theme, 'formChoiceSelectedBg', `color-mix(in srgb, ${accent} 10%, transparent)`),
 	    '--rstk-form-choice-selected-border': paintFallbackColor(themePaint(theme, 'formChoiceSelectedBorder', accent), accent),
 	    '--rstk-submit-bg': themePaint(theme, 'submitBg', accent),
 	    '--rstk-submit-text': paintFallbackColor(themePaint(theme, 'submitTextColor', v.onAccent), v.onAccent),
@@ -548,6 +561,12 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
 	    '--rstk-submit-pad-x': `${themeNumber(theme, 'submitPaddingX', 22, 8, 72)}px`,
 	    '--rstk-submit-size': `${themeNumber(theme, 'submitFontSize', 16, 11, 32)}px`,
 	    '--rstk-submit-border-width': `${themeNumber(theme, 'submitBorderWidth', 1, 0, 8)}px`,
+	    '--rstk-submit-justify': justifyForButtonAlign(normalizeButtonAlign(theme.submitAlign)),
+	    '--rstk-submit-width': normalizeButtonAlign(theme.submitAlign) === 'full'
+	      ? '100%'
+	      : themeNumber(theme, 'submitWidth', 0, 0, 100) > 0
+	        ? `${themeNumber(theme, 'submitWidth', 0, 0, 100)}%`
+	        : 'fit-content',
 	    ...(textPaint && isCssGradient(textPaint) ? { '--rstk-page-text-paint': textPaint } : {}),
     ...(template.gradient ? { '--rstk-gradient': template.gradient } : {}),
     ...(template.cyan ? { '--rstk-cyan': template.cyan } : {})

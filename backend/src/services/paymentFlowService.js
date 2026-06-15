@@ -10,6 +10,7 @@ import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { prepareInvoiceCatalogItemsForHighLevel } from './localProductService.js'
+import { getGhlContactIdForLocalContact } from './contactIdentityService.js'
 
 export const PAYMENT_FLOW_STATES = {
   DRAFT: 'draft',
@@ -582,10 +583,13 @@ function getPaidAuthorizationInvoiceId(flow) {
 async function findGhlPaymentMethodFromInvoice({ ghlClient, invoiceId, contactId }) {
   if (!invoiceId) return null
 
+  // La API de GHL espera su propio ID de contacto, no el ID local de Ristak.
+  const ghlContactId = contactId ? await getGhlContactIdForLocalContact(contactId) : null
+
   for (let attempt = 0; attempt < 3; attempt++) {
     const response = await ghlClient.listPaymentTransactions({
       entityId: invoiceId,
-      ...(contactId ? { contactId } : {}),
+      ...(ghlContactId ? { contactId: ghlContactId } : {}),
       limit: 20,
       offset: 0
     })
@@ -818,12 +822,14 @@ async function insertLocalInvoicePayment({ invoice, contactId, fallbackAmount, f
 
 async function createInvoice({ ghlClient, basePayload, contact, amount, currency, concept, title, dueDate, summaryDetails }) {
   const context = await getInvoiceSendContext()
+  // El payload remoto necesita el ID de GHL; localmente se conserva contact.id (Ristak).
+  const ghlContactId = await getGhlContactIdForLocalContact(contact.id)
   const payload = buildInvoicePayload({
     basePayload: {
       ...(basePayload || {}),
       timezone: basePayload?.timezone || context.timezone
     },
-    contact,
+    contact: { ...contact, id: ghlContactId || contact.id },
     amount,
     currency,
     concept,
@@ -1460,6 +1466,11 @@ function isGhlScheduleNotFoundError(error) {
 
 async function createDraftInstallmentSchedule({ ghlClient, flow, group, context, planSummary }) {
   const schedulePayload = buildInstallmentSchedulePayload({ flow, group, context, planSummary })
+  // La API de GHL espera su propio ID de contacto, no el ID local de Ristak.
+  const ghlContactId = await getGhlContactIdForLocalContact(flow.contact_id)
+  if (ghlContactId && schedulePayload.contactDetails) {
+    schedulePayload.contactDetails.id = ghlContactId
+  }
   const installmentIds = group.installments.map(installment => installment.id)
   const sequenceLabel = group.installments.map(installment => installment.sequence).join(',')
   const scheduleTiming = schedulePayload.schedule?.rrule
@@ -2537,6 +2548,11 @@ export async function updateScheduledInstallmentPayment(payload = {}) {
     planSummary
   })
   schedulePayload = applyScheduleTextUpdates(schedulePayload, textUpdates)
+  // La API de GHL espera su propio ID de contacto, no el ID local de Ristak.
+  const scheduleGhlContactId = await getGhlContactIdForLocalContact(updatedFlow.contact_id)
+  if (scheduleGhlContactId && schedulePayload.contactDetails) {
+    schedulePayload.contactDetails.id = scheduleGhlContactId
+  }
   const autoPayment = authorizedCard?.customerId && authorizedCard?.paymentMethodId
     ? buildAutoPayment(authorizedCard, {
         amount: newAmount,

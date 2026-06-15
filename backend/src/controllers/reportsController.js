@@ -11,6 +11,7 @@ import {
 } from '../services/analyticsService.js'
 import {
   MANUAL_BUSINESS_EXPENSE_PERIODS,
+  deleteManualBusinessExpenseDescendants,
   normalizeManualBusinessExpensePeriodStart,
   normalizeManualBusinessExpenseRow
 } from '../services/manualBusinessExpensesService.js'
@@ -196,6 +197,8 @@ export const getManualBusinessExpenses = async (req, res) => {
 export const upsertManualBusinessExpense = async (req, res) => {
   try {
     const { period_type, period_start, amount } = req.body || {}
+    const shouldDelete = req.body?.delete === true || req.body?.clear === true
+    const shouldResetChildren = req.body?.reset_children === true || req.body?.resetChildren === true
     const periodType = String(period_type || '').trim()
 
     if (!MANUAL_BUSINESS_EXPENSE_PERIODS.has(periodType)) {
@@ -213,49 +216,69 @@ export const upsertManualBusinessExpense = async (req, res) => {
       })
     }
 
-    const numericAmount = Number(amount)
-    if (!Number.isFinite(numericAmount) || numericAmount < 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'amount debe ser un número positivo'
-      })
-    }
+    const runMutation = async (database) => {
+      const deletedChildCount = shouldResetChildren
+        ? await deleteManualBusinessExpenseDescendants(database, periodType, normalizedPeriodStart)
+        : 0
 
-    if (numericAmount === 0) {
-      await db.run(`
-        DELETE FROM report_manual_business_expenses
+      if (shouldDelete) {
+        await database.run(`
+          DELETE FROM report_manual_business_expenses
+          WHERE period_type = ? AND period_start = ?
+        `, [periodType, normalizedPeriodStart])
+
+        return {
+          expense: null,
+          deletedChildCount
+        }
+      }
+
+      const numericAmount = Number(amount)
+      if (!Number.isFinite(numericAmount) || numericAmount < 0) {
+        const validationError = new Error('amount debe ser un número válido')
+        validationError.statusCode = 400
+        throw validationError
+      }
+
+      await database.run(`
+        INSERT INTO report_manual_business_expenses (period_type, period_start, amount, created_at, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(period_type, period_start) DO UPDATE SET
+          amount = excluded.amount,
+          updated_at = CURRENT_TIMESTAMP
+      `, [periodType, normalizedPeriodStart, numericAmount])
+
+      const expense = await database.get(`
+        SELECT period_type, period_start, amount
+        FROM report_manual_business_expenses
         WHERE period_type = ? AND period_start = ?
       `, [periodType, normalizedPeriodStart])
 
-      return res.json({
-        success: true,
-        data: {
-          expense: null
-        }
-      })
+      return {
+        expense: normalizeManualBusinessExpenseRow(expense),
+        deletedChildCount
+      }
     }
 
-    await db.run(`
-      INSERT INTO report_manual_business_expenses (period_type, period_start, amount, created_at, updated_at)
-      VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      ON CONFLICT(period_type, period_start) DO UPDATE SET
-        amount = excluded.amount,
-        updated_at = CURRENT_TIMESTAMP
-    `, [periodType, normalizedPeriodStart, numericAmount])
-
-    const expense = await db.get(`
-      SELECT period_type, period_start, amount
-      FROM report_manual_business_expenses
-      WHERE period_type = ? AND period_start = ?
-    `, [periodType, normalizedPeriodStart])
+    const mutationResult = shouldResetChildren
+      ? await db.transaction(runMutation)
+      : await runMutation(db)
 
     res.json({
       success: true,
       data: {
-        expense: normalizeManualBusinessExpenseRow(expense)
+        expense: mutationResult.expense,
+        deleted_child_count: mutationResult.deletedChildCount
       }
     })
   } catch (error) {
+    if (error?.statusCode === 400) {
+      return res.status(400).json({
+        success: false,
+        error: error.message
+      })
+    }
+
     logger.error(`Error en upsertManualBusinessExpense: ${error.message}`)
     res.status(500).json({
       success: false,

@@ -12,9 +12,13 @@ import {
   ListChecks,
   Loader2,
   MessageCircle,
+  Mic,
   Moon,
   RefreshCw,
+  Save,
   Smartphone,
+  Sparkles,
+  Square,
   Sun,
   type LucideIcon
 } from 'lucide-react'
@@ -22,9 +26,10 @@ import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAppConfig, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
+import { useAIAgentAvailability, useAppConfig, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
 import { contactsService } from '@/services/contactsService'
+import { aiAgentService, type AIAgentConfigStatus } from '@/services/aiAgentService'
 import { mobileAppService } from '@/services/mobileAppService'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
@@ -36,6 +41,7 @@ type SettingsSection = 'numbers' | 'templates' | 'agent' | 'chats' | 'custom-fie
 type WhatsAppNumberMode = 'merged' | 'separated'
 type ConversationSortMode = 'recent' | 'unread'
 type PhoneNotificationPermission = NotificationPermission | 'native_granted' | 'native_denied' | 'native_prompt' | 'unsupported' | 'checking'
+type BusinessVoiceState = 'idle' | 'recording' | 'processing'
 
 const PHONE_CHAT_THEME_OPTIONS: Array<{
   id: PhoneThemePreference
@@ -50,6 +56,25 @@ const PHONE_CHAT_THEME_OPTIONS: Array<{
 ]
 
 const TEMPLATE_BLOCKED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED'])
+const BUSINESS_VOICE_MIME_CANDIDATES = [
+  'audio/ogg;codecs=opus',
+  'audio/mp4',
+  'audio/webm;codecs=opus',
+  'audio/webm'
+]
+const EMPTY_BUSINESS_CONTEXT_TEXT = new Set([
+  'No se proporcionaron detalles del negocio.'
+])
+
+function getBusinessVoiceMimeType() {
+  if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') return ''
+  return BUSINESS_VOICE_MIME_CANDIDATES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || ''
+}
+
+function normalizeBusinessContextDraft(value = '') {
+  const cleaned = value.trim()
+  return EMPTY_BUSINESS_CONTEXT_TEXT.has(cleaned) ? '' : cleaned
+}
 
 function getNotificationPermission(): PhoneNotificationPermission {
   if (mobileAppService.isNative()) return 'checking'
@@ -104,6 +129,7 @@ export const PhoneSettings: React.FC = () => {
   const [whatsappNumberMode, setWhatsappNumberMode] = useAppConfig<WhatsAppNumberMode>('mobile_chat_whatsapp_number_mode', 'merged')
   const [aiAgentChatEnabled, setAiAgentChatEnabled] = useAppConfig<boolean>('mobile_chat_ai_agent_enabled', true)
   const [aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled] = useAppConfig<boolean>('mobile_chat_ai_reply_suggestions_enabled', false)
+  const aiAvailability = useAIAgentAvailability()
   const [showArchivedChats, setShowArchivedChats] = useAppConfig<boolean>('mobile_chat_show_archived', true)
   const [conversationSortMode, setConversationSortMode] = useAppConfig<ConversationSortMode>('mobile_chat_sort_mode', 'recent')
   const [showLastMessagePreview, setShowLastMessagePreview] = useAppConfig<boolean>('mobile_chat_show_last_preview', true)
@@ -134,6 +160,16 @@ export const PhoneSettings: React.FC = () => {
   const [requestingPush, setRequestingPush] = useState(false)
   const [permission, setPermission] = useState(getNotificationPermission)
   const [backButtonCollapsed, setBackButtonCollapsed] = useState(false)
+  const [aiAgentStatus, setAiAgentStatus] = useState<AIAgentConfigStatus | null>(null)
+  const [aiAgentConfigLoading, setAiAgentConfigLoading] = useState(false)
+  const [businessContextDraft, setBusinessContextDraft] = useState('')
+  const [savedBusinessContext, setSavedBusinessContext] = useState('')
+  const [businessContextSaving, setBusinessContextSaving] = useState(false)
+  const [businessContextMessage, setBusinessContextMessage] = useState('')
+  const [businessVoiceState, setBusinessVoiceState] = useState<BusinessVoiceState>('idle')
+  const businessVoiceRecorderRef = useRef<MediaRecorder | null>(null)
+  const businessVoiceChunksRef = useRef<Blob[]>([])
+  const businessVoiceStreamRef = useRef<MediaStream | null>(null)
   const lastSettingsScrollTopRef = useRef(0)
 
   usePhoneElasticScroll()
@@ -186,6 +222,38 @@ export const PhoneSettings: React.FC = () => {
 
   const saveConfigPreference = useCallback(<T,>(setter: (value: T) => Promise<void>, value: T) => {
     setter(value).catch(() => showToast('error', 'No se guardó el ajuste', 'Intenta otra vez.'))
+  }, [showToast])
+
+  const stopBusinessVoiceStream = useCallback(() => {
+    businessVoiceStreamRef.current?.getTracks().forEach((track) => track.stop())
+    businessVoiceStreamRef.current = null
+  }, [])
+
+  useEffect(() => () => {
+    try {
+      if (businessVoiceRecorderRef.current?.state === 'recording') {
+        businessVoiceRecorderRef.current.stop()
+      }
+    } catch {
+      // ignore cleanup recorder errors
+    }
+    stopBusinessVoiceStream()
+  }, [stopBusinessVoiceStream])
+
+  const loadAIAgentStatus = useCallback(async () => {
+    setAiAgentConfigLoading(true)
+    setBusinessContextMessage('')
+    try {
+      const status = await aiAgentService.getConfig()
+      const context = normalizeBusinessContextDraft(status.businessContext)
+      setAiAgentStatus(status)
+      setBusinessContextDraft(context)
+      setSavedBusinessContext(context)
+    } catch (error: any) {
+      showToast('error', 'No se cargó el agente', error?.message || 'Intenta otra vez.')
+    } finally {
+      setAiAgentConfigLoading(false)
+    }
   }, [showToast])
 
   const loadCalendars = useCallback(async () => {
@@ -251,6 +319,12 @@ export const PhoneSettings: React.FC = () => {
     if (activeSection === 'custom-fields') loadCustomFieldDefinitions()
   }, [activeSection, loadCustomFieldDefinitions])
 
+  useEffect(() => {
+    if (activeSection === 'agent') {
+      void loadAIAgentStatus()
+    }
+  }, [activeSection, loadAIAgentStatus])
+
   const selectedCalendarCount = pushCalendarIds.length || calendars.length
   const permissionLabel = getNotificationPermissionLabel(permission)
   const showPhoneActivation = shouldShowPhoneActivation(permission)
@@ -304,6 +378,172 @@ export const PhoneSettings: React.FC = () => {
     }
   }
 
+  const saveRefinedBusinessContext = useCallback(async (answer: string, successMessage: string) => {
+    if (!aiAvailability.configured) {
+      const message = aiAvailability.needsReconnect
+        ? 'Reconecta OpenAI para pulir la descripción.'
+        : 'Conecta OpenAI para pulir la descripción.'
+      setBusinessContextMessage(message)
+      showToast('warning', 'OpenAI no está listo', message)
+      return false
+    }
+
+    const cleanAnswer = answer.trim()
+
+    if (!cleanAnswer) {
+      showToast('warning', 'Falta la descripción', 'Dicta o escribe lo que hace tu negocio primero.')
+      return false
+    }
+
+    setBusinessContextSaving(true)
+    setBusinessContextMessage('Puliendo y guardando...')
+
+    try {
+      const result = await aiAgentService.saveBusinessContextAnswer('businessContext', cleanAnswer)
+      const nextText = (result.text || result.status?.businessContext || cleanAnswer).trim()
+      setAiAgentStatus(result.status)
+      setBusinessContextDraft(nextText)
+      setSavedBusinessContext(nextText)
+      setBusinessContextMessage('Guardado.')
+      showToast('success', 'Descripción guardada', successMessage)
+      return true
+    } catch (error: any) {
+      const message = error?.message || 'No se pudo guardar la descripción.'
+      setBusinessContextMessage(message)
+      showToast('error', 'No se guardó la descripción', message)
+      return false
+    } finally {
+      setBusinessContextSaving(false)
+    }
+  }, [aiAvailability.configured, aiAvailability.needsReconnect, showToast])
+
+  const completeBusinessVoiceDictation = useCallback(async (audioBlob: Blob) => {
+    if (!audioBlob.size) {
+      setBusinessContextMessage('No se grabó audio. Intenta otra vez.')
+      setBusinessVoiceState('idle')
+      return
+    }
+
+    setBusinessVoiceState('processing')
+    setBusinessContextMessage('Transcribiendo audio...')
+
+    try {
+      const transcription = await aiAgentService.transcribeVoice(audioBlob)
+      const transcript = transcription.text.trim()
+
+      if (!transcript) {
+        throw new Error('No se detectó texto en el audio.')
+      }
+
+      await saveRefinedBusinessContext(transcript, 'Tu dictado quedó pulido y guardado.')
+    } catch (error: any) {
+      const message = error?.message || 'No pude transcribir el audio.'
+      setBusinessContextMessage(message)
+      showToast('error', 'No se pudo usar el dictado', message)
+    } finally {
+      setBusinessVoiceState('idle')
+    }
+  }, [saveRefinedBusinessContext, showToast])
+
+  const startBusinessVoiceDictation = async () => {
+    if (businessVoiceState !== 'idle' || businessContextSaving || aiAgentConfigLoading) return
+
+    if (!aiAvailability.configured) {
+      const message = aiAvailability.needsReconnect
+        ? 'Reconecta OpenAI para dictar la descripción.'
+        : 'Conecta OpenAI para dictar y pulir la descripción.'
+      setBusinessContextMessage(message)
+      showToast('warning', 'OpenAI no está listo', message)
+      return
+    }
+
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      const message = 'Este celular no permite grabar audio desde aquí.'
+      setBusinessContextMessage(message)
+      showToast('warning', 'Micrófono no disponible', message)
+      return
+    }
+
+    try {
+      businessVoiceChunksRef.current = []
+      setBusinessContextMessage('')
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = getBusinessVoiceMimeType()
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      businessVoiceStreamRef.current = stream
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) {
+          businessVoiceChunksRef.current.push(event.data)
+        }
+      }
+
+      recorder.onerror = () => {
+        setBusinessContextMessage('No pude grabar el audio del micrófono.')
+      }
+
+      recorder.onstop = () => {
+        const chunks = businessVoiceChunksRef.current
+        const audioType = recorder.mimeType || mimeType || chunks[0]?.type || 'audio/webm'
+        const audioBlob = new Blob(chunks, { type: audioType })
+        businessVoiceRecorderRef.current = null
+        businessVoiceChunksRef.current = []
+        stopBusinessVoiceStream()
+        void completeBusinessVoiceDictation(audioBlob)
+      }
+
+      businessVoiceRecorderRef.current = recorder
+      recorder.start()
+      setBusinessVoiceState('recording')
+      setBusinessContextMessage('Grabando... toca detener cuando termines.')
+    } catch (error: any) {
+      businessVoiceRecorderRef.current = null
+      businessVoiceChunksRef.current = []
+      stopBusinessVoiceStream()
+      const message = error?.message || 'No pude activar el micrófono.'
+      setBusinessVoiceState('idle')
+      setBusinessContextMessage(message)
+      showToast('error', 'Micrófono bloqueado', message)
+    }
+  }
+
+  const stopBusinessVoiceDictation = () => {
+    if (businessVoiceState !== 'recording') return
+
+    setBusinessContextMessage('Preparando audio...')
+    setBusinessVoiceState('processing')
+
+    try {
+      if (businessVoiceRecorderRef.current?.state === 'recording') {
+        businessVoiceRecorderRef.current.stop()
+        return
+      }
+    } catch {
+      // fallback below
+    }
+
+    const audioBlob = new Blob(businessVoiceChunksRef.current, {
+      type: businessVoiceRecorderRef.current?.mimeType || 'audio/webm'
+    })
+    businessVoiceRecorderRef.current = null
+    businessVoiceChunksRef.current = []
+    stopBusinessVoiceStream()
+    void completeBusinessVoiceDictation(audioBlob)
+  }
+
+  const handleBusinessVoiceButton = () => {
+    if (businessVoiceState === 'recording') {
+      stopBusinessVoiceDictation()
+      return
+    }
+
+    void startBusinessVoiceDictation()
+  }
+
+  const handleSaveBusinessContext = () => {
+    void saveRefinedBusinessContext(businessContextDraft, 'La descripción quedó pulida y guardada.')
+  }
+
   const renderToggle = (
     title: string,
     description: string,
@@ -341,7 +581,7 @@ export const PhoneSettings: React.FC = () => {
     }> = [
       { id: 'numbers', title: 'Números de WhatsApp', description: 'Cómo se muestran tus líneas.', meta: whatsappNumberMode === 'merged' ? 'Juntos' : 'Separados', Icon: Smartphone, tone: 'green' },
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: templates.length ? `${templates.length} guardadas` : 'Revisar', Icon: FileText, tone: 'black' },
-      { id: 'agent', title: 'Agente IA', mobileTitle: 'Agente de inteligencia artificial', description: 'Chat fijo y sugerencias.', meta: aiAgentChatEnabled ? 'Activo' : 'Apagado', Icon: Bot, tone: 'blue' },
+      { id: 'agent', title: 'Agente IA', mobileTitle: 'Agente de inteligencia artificial', description: 'Chat fijo y sugerencias.', meta: aiAvailability.configured ? aiAgentChatEnabled ? 'Activo' : 'Apagado' : 'Sin OpenAI', Icon: Bot, tone: 'blue' },
       { id: 'chats', title: 'Lista de chats', mobileTitle: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
       { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: enabledCustomFieldCount ? `${enabledCustomFieldCount} activo${enabledCustomFieldCount === 1 ? '' : 's'}` : 'Elegir', Icon: ListChecks, tone: 'gold' },
       { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: themeMeta, Icon: Sun, tone: 'blue' },
@@ -439,12 +679,85 @@ export const PhoneSettings: React.FC = () => {
     </>
   )
 
-  const renderAgent = () => (
-    <>
-      {renderToggle('Mostrar como primer chat', 'El agente aparece fijo arriba de tus conversaciones.', aiAgentChatEnabled, (checked) => saveConfigPreference(setAiAgentChatEnabled, checked))}
-      {renderToggle('Sugerir respuestas', 'El agente puede preparar un texto para responder en chats reales.', aiReplySuggestionsEnabled, (checked) => saveConfigPreference(setAiReplySuggestionsEnabled, checked), !aiAgentChatEnabled)}
-    </>
-  )
+  const renderAgent = () => {
+    const aiReady = aiAvailability.configured
+    const descriptionChanged = businessContextDraft.trim() !== savedBusinessContext.trim()
+    const busyDescription = aiAgentConfigLoading || businessContextSaving || businessVoiceState === 'processing'
+    const recording = businessVoiceState === 'recording'
+    const micLabel = recording
+      ? 'Detener'
+      : businessVoiceState === 'processing'
+        ? 'Procesando'
+        : 'Dictar'
+
+    return (
+      <>
+        <section className={styles.businessDescriptionPanel}>
+          {!aiReady && (
+            <div className={styles.emptyState}>
+              {aiAvailability.needsReconnect
+                ? 'Reconecta OpenAI para activar el agente en este celular.'
+                : 'Conecta OpenAI para activar el agente en este celular.'}
+            </div>
+          )}
+          <div className={styles.businessDescriptionHeader}>
+            <span><Sparkles size={18} /></span>
+            <div>
+              <strong>Descripción del negocio</strong>
+              <small>Dicta tu giro, servicios y clientes; la IA lo pule y lo guarda aquí.</small>
+            </div>
+          </div>
+
+          <div className={styles.businessDescriptionField}>
+            <textarea
+              value={businessContextDraft}
+              placeholder="Ejemplo: Somos una clínica dental en Ciudad Juárez, atendemos familias, vendemos tratamientos de ortodoncia y queremos responder con tono cercano..."
+              aria-label="Descripción del negocio para el agente de inteligencia artificial"
+              disabled={busyDescription || recording}
+              onChange={(event) => {
+                setBusinessContextDraft(event.target.value)
+                setBusinessContextMessage('')
+              }}
+              rows={8}
+            />
+            <button
+              type="button"
+              className={`${styles.businessVoiceButton} ${recording ? styles.businessVoiceButtonRecording : ''}`}
+              onClick={handleBusinessVoiceButton}
+              disabled={!aiReady || businessContextSaving || aiAgentConfigLoading || businessVoiceState === 'processing'}
+              aria-label={recording ? 'Detener dictado de descripción del negocio' : 'Dictar descripción del negocio'}
+            >
+              {businessVoiceState === 'processing'
+                ? <Loader2 size={18} className={styles.spinIcon} />
+                : recording
+                  ? <Square size={16} fill="currentColor" />
+                  : <Mic size={18} />}
+              <span>{micLabel}</span>
+            </button>
+          </div>
+
+          <div className={styles.businessDescriptionActions}>
+            <small>
+              {aiAgentConfigLoading
+                ? 'Cargando descripción...'
+                : businessContextMessage || (aiReady ? 'El dictado se guarda automático al terminar.' : 'OpenAI debe estar conectado para dictar y pulir.')}
+            </small>
+            <button
+              type="button"
+              onClick={handleSaveBusinessContext}
+              disabled={!aiReady || busyDescription || recording || !descriptionChanged || !businessContextDraft.trim()}
+            >
+              {businessContextSaving ? <Loader2 size={16} className={styles.spinIcon} /> : <Save size={16} />}
+              Guardar
+            </button>
+          </div>
+        </section>
+
+        {renderToggle('Mostrar como primer chat', 'El agente aparece fijo arriba de tus conversaciones.', aiReady && aiAgentChatEnabled, (checked) => saveConfigPreference(setAiAgentChatEnabled, checked), !aiReady)}
+        {renderToggle('Sugerir respuestas', 'El agente puede preparar un texto para responder en chats reales.', aiReady && aiReplySuggestionsEnabled, (checked) => saveConfigPreference(setAiReplySuggestionsEnabled, checked), !aiReady || !aiAgentChatEnabled)}
+      </>
+    )
+  }
 
   const renderChats = () => (
     <>

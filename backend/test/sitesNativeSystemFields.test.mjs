@@ -1,0 +1,295 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
+
+import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
+import { createBlock, createSite, createSubmissionFromRequest, deleteSite } from '../src/services/sitesService.js'
+import { parseContactCustomFields } from '../src/utils/contactCustomFields.js'
+
+const DOMAIN_KEYS = {
+  domain: 'sites_public_domain',
+  verified: 'sites_public_domain_verified',
+  checkedAt: 'sites_public_domain_checked_at',
+  error: 'sites_public_domain_error'
+}
+
+test('native form system fields save to contact and locked system fields', async () => {
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  const previousCityDefinition = await db.get(
+    'SELECT id FROM contact_custom_field_definitions WHERE field_key = ? LIMIT 1',
+    ['city']
+  )
+  const email = `ana-system-${Date.now()}@example.test`
+  let site
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    site = await createSite({
+      name: 'Formulario campos sistema',
+      slug: `form-system-${Date.now()}`,
+      siteType: 'standard_form',
+      status: 'published',
+      blankCanvas: true
+    })
+
+    await createBlock(site.id, {
+      blockType: 'short_text',
+      label: 'Primer nombre',
+      placeholder: 'Tu primer nombre',
+      required: true,
+      settings: { systemFieldKey: 'first_name', internalName: 'first_name' }
+    })
+    await createBlock(site.id, {
+      blockType: 'email',
+      label: 'Correo electronico',
+      placeholder: 'tu@email.com',
+      required: true,
+      settings: { systemFieldKey: 'email', internalName: 'email', validation: 'email' }
+    })
+    const siteWithCity = await createBlock(site.id, {
+      blockType: 'short_text',
+      label: 'Ciudad',
+      placeholder: 'Tu ciudad',
+      required: false,
+      settings: { systemFieldKey: 'city', internalName: 'city', customFieldDataType: 'text' }
+    })
+
+    const blocks = siteWithCity.blocks || []
+    const firstNameBlock = blocks.find(block => block.settings?.systemFieldKey === 'first_name')
+    const emailBlock = blocks.find(block => block.settings?.systemFieldKey === 'email')
+    const cityBlock = blocks.find(block => block.settings?.systemFieldKey === 'city')
+
+    assert.ok(firstNameBlock)
+    assert.ok(emailBlock)
+    assert.ok(cityBlock)
+
+    const result = await createSubmissionFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId: site.id,
+        finalSubmit: true,
+        responses: {
+          [firstNameBlock.id]: 'Ana',
+          [emailBlock.id]: email,
+          [cityBlock.id]: 'CDMX'
+        }
+      }
+    )
+
+    assert.ok(result.contactId)
+    assert.equal(result.mappedFields.standard.first_name, 'Ana')
+    assert.equal(result.mappedFields.standard.email, email)
+    assert.equal(result.mappedFields.system.city, 'CDMX')
+    assert.equal(result.mappedFields.custom?.city, undefined)
+    assert.equal(result.derivedFields.full_name, 'Ana')
+
+    const contact = await db.get(
+      'SELECT email, full_name, first_name, custom_fields FROM contacts WHERE id = ?',
+      [result.contactId]
+    )
+    assert.equal(contact.email, email)
+    assert.equal(contact.full_name, 'Ana')
+    assert.equal(contact.first_name, 'Ana')
+
+    const customFields = parseContactCustomFields(contact.custom_fields)
+    const cityField = customFields.find(field => field.fieldKey === 'city')
+    assert.equal(cityField?.value, 'CDMX')
+    assert.equal(cityField?.sourceType, 'system')
+    assert.equal(cityField?.syncTarget, 'none')
+
+    const cityDefinition = await db.get(
+      'SELECT field_key, source_type, sync_target FROM contact_custom_field_definitions WHERE field_key = ? LIMIT 1',
+      ['city']
+    )
+    assert.equal(cityDefinition.field_key, 'city')
+    assert.equal(cityDefinition.source_type, 'system')
+    assert.equal(cityDefinition.sync_target, 'none')
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+    await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    if (!previousCityDefinition?.id) {
+      const cityDefinition = await db.get(
+        'SELECT id FROM contact_custom_field_definitions WHERE field_key = ? LIMIT 1',
+        ['city']
+      )
+      if (cityDefinition?.id) {
+        await db.run('DELETE FROM contact_custom_field_definition_sources WHERE definition_id = ?', [cityDefinition.id]).catch(() => undefined)
+        await db.run('DELETE FROM contact_custom_field_definitions WHERE id = ?', [cityDefinition.id]).catch(() => undefined)
+      }
+    }
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
+test('native form option rules redirect to site pages and external URLs with submit preference', async () => {
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  const slug = `form-rules-${Date.now()}`
+  let site
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    site = await createSite({
+      name: 'Formulario reglas',
+      slug,
+      siteType: 'landing_page',
+      status: 'published',
+      blankCanvas: true,
+      theme: {
+        pages: [
+          { id: 'page-1', title: 'Inicio', slug: 'inicio', sortOrder: 0 },
+          { id: 'page-2', title: 'Gracias', slug: 'gracias', sortOrder: 1 }
+        ]
+      }
+    })
+
+    const siteWithField = await createBlock(site.id, {
+      blockType: 'radio',
+      label: 'Destino',
+      required: true,
+      settings: { pageId: 'page-1' },
+      options: [
+        {
+          id: 'internal-page',
+          label: 'Gracias interna',
+          value: 'Gracias interna',
+          action: 'site_page',
+          targetPageId: 'page-2',
+          submitBeforeAction: true
+        },
+        {
+          id: 'external-url',
+          label: 'URL externa',
+          value: 'URL externa',
+          action: 'redirect',
+          redirectUrl: 'https://example.com/oferta',
+          submitBeforeAction: false
+        },
+        {
+          id: 'not-qualified',
+          label: 'No califico',
+          value: 'No califico',
+          action: 'disqualify_after_submit',
+          message: 'No califica por ahora.'
+        }
+      ]
+    })
+
+    const field = siteWithField.blocks.find(block => block.blockType === 'radio')
+    assert.ok(field)
+
+    const baseReq = {
+      headers: { host: 'example.test', 'user-agent': 'node-test' },
+      hostname: 'example.test',
+      path: `/${slug}`,
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' }
+    }
+
+    const internalResult = await createSubmissionFromRequest(baseReq, {
+      siteId: site.id,
+      pageId: 'page-1',
+      responses: {
+        [field.id]: 'Gracias interna'
+      }
+    })
+
+    assert.equal(internalResult.status, 'received')
+    assert.equal(internalResult.redirectUrl, '?page=page-2')
+    assert.equal(internalResult.rules.targetPageId, 'page-2')
+    assert.equal(internalResult.rules.actions[0].action, 'site_page')
+    assert.equal(internalResult.rules.actions[0].submitBeforeAction, true)
+
+    const externalResult = await createSubmissionFromRequest(baseReq, {
+      siteId: site.id,
+      pageId: 'page-1',
+      responses: {
+        [field.id]: 'URL externa'
+      }
+    })
+
+    assert.equal(externalResult.status, 'received')
+    assert.equal(externalResult.redirectUrl, 'https://example.com/oferta')
+    assert.equal(externalResult.rules.actions[0].action, 'redirect')
+    assert.equal(externalResult.rules.actions[0].submitBeforeAction, false)
+
+    const disqualifiedResult = await createSubmissionFromRequest(baseReq, {
+      siteId: site.id,
+      pageId: 'page-1',
+      responses: {
+        [field.id]: 'No califico'
+      }
+    })
+
+    assert.equal(disqualifiedResult.status, 'disqualified')
+    assert.equal(disqualifiedResult.message, 'No califica por ahora.')
+    assert.equal(disqualifiedResult.redirectUrl, '')
+    assert.equal(disqualifiedResult.rules.actions[0].action, 'disqualify_after_submit')
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+    await db.run('DELETE FROM contacts WHERE source = ?', [`ristak_site:${slug}`]).catch(() => undefined)
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
+test('site blocks keep the editor provided id when manually saved', async () => {
+  const blockId = crypto.randomUUID()
+  let site
+
+  try {
+    site = await createSite({
+      name: 'Sitio guardado manual',
+      slug: `manual-save-${Date.now()}`,
+      siteType: 'landing_page',
+      status: 'draft',
+      blankCanvas: true
+    })
+
+    const siteWithBlock = await createBlock(site.id, {
+      id: blockId,
+      blockType: 'text',
+      label: 'Texto local',
+      content: 'Contenido pendiente',
+      settings: { pageId: 'page-1' }
+    })
+
+    assert.ok(siteWithBlock.blocks.some(block => block.id === blockId))
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+  }
+})

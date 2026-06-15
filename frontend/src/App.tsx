@@ -9,12 +9,15 @@ import { LabelsProvider } from '@/contexts/LabelsContext'
 import { usePhoneTheme, usePhoneWakeLock } from '@/hooks'
 import { AppShell } from '@/components/layout/AppShell'
 import { Dashboard } from '@/pages/Dashboard'
+import { Initialization } from '@/pages/Initialization'
+import { useInitialization } from '@/contexts/InitializationContext'
 import { Reports } from '@/pages/Reports'
 import { Campaigns } from '@/pages/Campaigns'
 import { Transactions } from '@/pages/Transactions'
 import { Contacts } from '@/pages/Contacts'
 import { Settings } from '@/pages/Settings'
 import { APIDocumentation } from '@/pages/Settings/APIDocumentation'
+import { AIAgent } from '@/pages/AIAgent'
 import { Appointments } from '@/pages/Appointments'
 import { Analytics } from '@/pages/Analytics'
 import { Sites } from '@/pages/Sites'
@@ -33,7 +36,9 @@ import { Sso } from '@/pages/Login/Sso'
 import { ToastContainer } from '@/components/common/Toast'
 import { Modal } from '@/components/common/Modal'
 import { StorageAlert } from '@/components/common/StorageAlert'
+import { AppStartupLoader } from '@/components/common/AppStartupLoader'
 import { MobileNotificationOnboarding } from '@/components/phone/MobileNotificationOnboarding'
+import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import {
   DESKTOP_LOGIN_PATH,
   PHONE_APP_HOME_PATH,
@@ -50,6 +55,11 @@ import {
   type RedirectLocation,
   type TabletViewPreference
 } from '@/utils/phoneAccess'
+import {
+  getFirstAllowedAppPath,
+  hasModuleAccess,
+  type PermissionKey
+} from '@/utils/accessControl'
 
 type RouteLocationState = {
   from?: RedirectLocation
@@ -185,6 +195,12 @@ function getStandalonePhoneRedirect(pathname: string) {
   return ''
 }
 
+const RouteStartupLoader: React.FC<{ pathname: string; message?: string }> = ({ pathname, message }) => (
+  isPhoneAppPath(pathname)
+    ? <PhoneStartupLoader message={message || 'Abriendo Ristak'} />
+    : <AppStartupLoader message={message || 'Cargando Ristak'} />
+)
+
 // Componente para la ruta de setup (primera vez)
 const SetupRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, needsSetup, isLoading } = useAuth()
@@ -192,18 +208,7 @@ const SetupRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const redirectPath = getPostAuthRedirectPath((location.state as RouteLocationState)?.from)
 
   if (isLoading) {
-    return (
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '100vh',
-        background: 'var(--color-background-primary)',
-        color: 'var(--color-text-primary)'
-      }}>
-        Loading...
-      </div>
-    )
+    return <RouteStartupLoader pathname={location.pathname} />
   }
 
   if (!needsSetup) {
@@ -221,19 +226,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   const location = useLocation()
 
   if (isLoading) {
-    // Mostrar loading mientras verificamos el token
-    return (
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '100vh',
-        background: 'var(--color-background-primary)',
-        color: 'var(--color-text-primary)'
-      }}>
-        Loading...
-      </div>
-    )
+    return <RouteStartupLoader pathname={location.pathname} />
   }
 
   if (needsSetup) {
@@ -245,6 +238,34 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   }
 
   return <>{children}</>
+}
+
+const AccessRoute: React.FC<{ moduleKey: PermissionKey; children: React.ReactNode }> = ({ moduleKey, children }) => {
+  const { user } = useAuth()
+
+  if (!hasModuleAccess(user, moduleKey, 'read')) {
+    return <Navigate to={getFirstAllowedAppPath(user)} replace />
+  }
+
+  return <>{children}</>
+}
+
+// Redirección de la raíz (/): mientras el onboarding de integraciones no esté
+// completo (ni oculto), se lleva al usuario a /initialization; si ya está dado
+// de alta, va al dashboard. Se monta dentro del AppShell (InitializationProvider).
+const HomeRedirect: React.FC = () => {
+  const { loading, isInitialized } = useInitialization()
+  const { user } = useAuth()
+
+  if (loading) {
+    return <AppStartupLoader compact />
+  }
+
+  if (!isInitialized && user?.role === 'admin') {
+    return <Navigate to="/initialization" replace />
+  }
+
+  return <Navigate to={hasModuleAccess(user, 'dashboard', 'read') ? '/dashboard' : getFirstAllowedAppPath(user)} replace />
 }
 
 const PhoneRouteEffects: React.FC = () => {
@@ -277,7 +298,7 @@ const PhoneRouteEffects: React.FC = () => {
     }
   }, [isPhoneRoute])
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const body = document.body
     const root = document.documentElement
     const previousBodyPhoneApp = body.dataset.phoneApp
@@ -665,7 +686,9 @@ const AppWithNotifications: React.FC = () => {
             path="/api-docs"
             element={
               <ProtectedRoute>
-                <APIDocumentation />
+                <AccessRoute moduleKey="settings_api_access">
+                  <APIDocumentation />
+                </AccessRoute>
               </ProtectedRoute>
             }
           />
@@ -677,16 +700,18 @@ const AppWithNotifications: React.FC = () => {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="dashboard/*" element={<Dashboard />} />
-            <Route path="reports/*" element={<Reports />} />
-            <Route path="campaigns/*" element={<Campaigns />} />
-            <Route path="transactions/*" element={<Transactions />} />
-            <Route path="contacts/*" element={<Contacts />} />
-            <Route path="appointments/*" element={<Appointments />} />
-            <Route path="sites/*" element={<Sites />} />
-            <Route path="automations/*" element={<Automations />} />
-            <Route path="analytics/*" element={<Analytics />} />
+            <Route index element={<HomeRedirect />} />
+            <Route path="initialization/*" element={<AccessRoute moduleKey="settings_integrations"><Initialization /></AccessRoute>} />
+            <Route path="dashboard/*" element={<AccessRoute moduleKey="dashboard"><Dashboard /></AccessRoute>} />
+            <Route path="reports/*" element={<AccessRoute moduleKey="reports"><Reports /></AccessRoute>} />
+            <Route path="campaigns/*" element={<AccessRoute moduleKey="campaigns"><Campaigns /></AccessRoute>} />
+            <Route path="transactions/*" element={<AccessRoute moduleKey="payments"><Transactions /></AccessRoute>} />
+            <Route path="contacts/*" element={<AccessRoute moduleKey="contacts"><Contacts /></AccessRoute>} />
+            <Route path="appointments/*" element={<AccessRoute moduleKey="appointments"><Appointments /></AccessRoute>} />
+            <Route path="sites/*" element={<AccessRoute moduleKey="sites"><Sites /></AccessRoute>} />
+            <Route path="automations/*" element={<AccessRoute moduleKey="automations"><Automations /></AccessRoute>} />
+            <Route path="analytics/*" element={<AccessRoute moduleKey="analytics"><Analytics /></AccessRoute>} />
+            <Route path="ai-agent/*" element={<AccessRoute moduleKey="ai_agent"><AIAgent /></AccessRoute>} />
             <Route path="settings/*" element={<Settings />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>

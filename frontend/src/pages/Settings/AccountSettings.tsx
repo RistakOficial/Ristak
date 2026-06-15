@@ -213,6 +213,7 @@ export const AccountSettings: React.FC = () => {
   const localeBootstrappedRef = useRef(false)
 
   const currentUsername = user?.username || 'admin'
+  const currentRoleLabel = user?.role === 'admin' ? 'Administrador' : 'Empleado'
   const accountEmail = user?.email || (currentUsername.includes('@') ? currentUsername : '')
   const visibleProfilePhoto = isEditingPhoto ? profilePhotoDraft : profilePhoto
   const profileNameFallback = user?.name && user.name !== user.username ? user.name : ''
@@ -719,7 +720,7 @@ export const AccountSettings: React.FC = () => {
           <div className={styles.panelHeaderActions}>
             <div className={styles.statusConnected}>
               <CheckCircle size={15} />
-              Administrador
+              {currentRoleLabel}
             </div>
           </div>
         </div>
@@ -754,7 +755,7 @@ export const AccountSettings: React.FC = () => {
                     <span>@{currentUsername}</span>
                   </div>
                 </div>
-                <span className={styles.adminRole}>Administrador</span>
+                <span className={styles.adminRole}>{currentRoleLabel}</span>
               </div>
 
               <input

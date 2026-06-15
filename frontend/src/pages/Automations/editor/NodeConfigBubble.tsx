@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import React, { useEffect, useRef, useState } from 'react'
+import { Check, ChevronRight, Copy, Loader2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
-import { CustomSelect } from '@/components/common'
+import { CustomSelect } from './config/configPrimitives'
 import { validateNodeConfig, type ConfigField, type NodeDefinition } from './nodeRegistry'
-import { genId } from './flowUtils'
+import { genId, type WaitMessageSourceOption } from './flowUtils'
 import {
   CatalogSelect,
   CatalogTags,
@@ -19,6 +19,9 @@ import { WaitConfigEditor } from './config/WaitConfigEditor'
 import { GoalConfigEditor } from './config/GoalConfigEditor'
 import { WhatsAppConfigEditor } from './config/WhatsAppConfigEditor'
 import { MessageBlocksEditor } from './config/MessageBlocksEditor'
+import { TriggerFiltersEditor } from './config/TriggerFiltersEditor'
+import { SchedulerConfigEditor } from './config/SchedulerConfigEditor'
+import type { TriggerFilter } from './crmFields'
 import { MessageComposer, VariableTextInput } from './composer/MessageComposer'
 import type { MessageBlock } from './nodeRegistry'
 import styles from './AutomationEditor.module.css'
@@ -28,10 +31,16 @@ type ConfigValue = Record<string, unknown>
 interface NodeConfigBubbleProps {
   definition: NodeDefinition
   config: ConfigValue
+  /** Posición sugerida (lado derecho del evento) en px del canvas */
+  anchor: { x: number; y: number }
+  bounds: { width: number; height: number }
   onChange: (config: ConfigValue) => void
+  waitMessageSources?: WaitMessageSourceOption[]
   onRefreshWebhookSample?: (endpointId: string) => Promise<Record<string, unknown> | null>
   onClose: () => void
 }
+
+const PANEL_WIDTH = 520
 
 const str = (value: unknown): string =>
   typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
@@ -44,15 +53,37 @@ const hasSampleResponse = (value: unknown): boolean => {
 export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
   definition,
   config,
+  anchor,
+  bounds,
   onChange,
+  waitMessageSources = [],
   onRefreshWebhookSample,
   onClose
 }) => {
   const rootRef = useRef<HTMLDivElement>(null)
   const [copied, setCopied] = useState(false)
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [draftTitle, setDraftTitle] = useState('')
+  const titleInputRef = useRef<HTMLInputElement>(null)
   const [checkingSample, setCheckingSample] = useState(false)
 
-  const errors = useMemo(() => validateNodeConfig(definition, config), [definition, config])
+  const customTitle = str(config.customTitle).trim()
+
+  const startTitleEdit = () => {
+    setDraftTitle(customTitle)
+    setEditingTitle(true)
+    window.setTimeout(() => titleInputRef.current?.focus(), 0)
+  }
+
+  const commitTitle = () => {
+    setEditingTitle(false)
+    onChange({ ...config, customTitle: draftTitle.trim().slice(0, 80) })
+  }
+
+  const requestClose = () => {
+    onClose()
+  }
 
   const setValue = (key: string, value: unknown) => {
     onChange({ ...config, [key]: value })
@@ -180,6 +211,7 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
             <CatalogSelect
               catalog={field.catalog || 'tags'}
               value={str(config[field.key])}
+              includeSystemTags={Boolean(field.includeSystemTags)}
               onChange={(value, label) =>
                 onChange({ ...config, [field.key]: value, [`${field.key}Name`]: label })
               }
@@ -195,6 +227,7 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
             <CatalogTags
               catalog={field.catalog || 'tags'}
               values={Array.isArray(config[field.key]) ? (config[field.key] as string[]) : []}
+              includeSystemTags={Boolean(field.includeSystemTags)}
               onChange={(values) => setValue(field.key, values)}
               aria-label={field.label}
             />
@@ -309,12 +342,14 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
                   value={str(row.key)}
                   onChange={(event) => updateRow(index, { key: event.target.value })}
                 />
-                <TextInput
-                  className={styles.configRowGrow}
-                  placeholder="Valor"
-                  value={str(row.value)}
-                  onChange={(event) => updateRow(index, { value: event.target.value })}
-                />
+                <div className={styles.configRowGrow}>
+                  <VariableTextInput
+                    value={str(row.value)}
+                    placeholder="Valor"
+                    aria-label={`Valor del campo personalizado ${index + 1}`}
+                    onChange={(compiled) => updateRow(index, { value: compiled })}
+                  />
+                </div>
                 <button
                   type="button"
                   className={styles.configIconButton}
@@ -332,6 +367,56 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
             >
               <Plus size={11} />
               Agregar
+            </button>
+          </Field>
+        )
+      }
+
+      case 'customFieldValues': {
+        const rows = Array.isArray(config[field.key])
+          ? (config[field.key] as Array<{ key?: string; keyName?: string; value?: string }>)
+          : []
+        const updateRow = (index: number, patch: { key?: string; keyName?: string; value?: string }) => {
+          setValue(field.key, rows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)))
+        }
+        return (
+          <Field key={field.key} label={field.label} help={field.help}>
+            {rows.map((row, index) => (
+              <div key={index} className={styles.configRow} style={{ marginBottom: 6 }}>
+                <div className={styles.configRowGrow}>
+                  <CatalogSelect
+                    catalog="customFields"
+                    value={str(row.key)}
+                    onChange={(value, label) => updateRow(index, { key: value, keyName: label })}
+                    placeholder="Campo personalizado"
+                    aria-label="Campo personalizado"
+                  />
+                </div>
+                <div className={styles.configRowGrow}>
+                  <VariableTextInput
+                    placeholder="Valor"
+                    value={str(row.value)}
+                    onChange={(compiled) => updateRow(index, { value: compiled })}
+                    aria-label="Valor del campo personalizado"
+                  />
+                </div>
+                <button
+                  type="button"
+                  className={styles.configIconButton}
+                  title="Quitar"
+                  onClick={() => setValue(field.key, rows.filter((_, rowIndex) => rowIndex !== index))}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className={styles.configSmallButton}
+              onClick={() => setValue(field.key, [...rows, { key: '', value: '' }])}
+            >
+              <Plus size={11} />
+              Agregar campo
             </button>
           </Field>
         )
@@ -513,11 +598,30 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
     }
   }
 
+  // El panel aparece a la derecha del evento y A SU ALTURA: si el contenido
+  // es alto y no cabe, se desplaza hacia arriba solo lo necesario.
+  const left = Math.max(12, Math.min(anchor.x, bounds.width - PANEL_WIDTH - 12))
+  const [top, setTop] = useState(() => Math.max(12, anchor.y))
+
+  useEffect(() => {
+    const element = rootRef.current
+    if (!element) return
+    const reposition = () => {
+      const height = element.offsetHeight
+      setTop(Math.max(12, Math.min(anchor.y, bounds.height - height - 12)))
+    }
+    reposition()
+    const observer = new ResizeObserver(reposition)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [anchor.y, bounds.height])
+
   return (
     <div
       ref={rootRef}
       data-automation-interactive="true"
       className={styles.configPanel}
+      style={{ left, top }}
       role="complementary"
       aria-label={`Configurar ${definition.label}`}
       onPointerDown={(event) => event.stopPropagation()}
@@ -526,7 +630,7 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
         if (event.key === 'Escape') {
           event.preventDefault()
           event.stopPropagation()
-          onClose()
+          requestClose()
         }
       }}
     >
@@ -535,25 +639,41 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
           <definition.icon size={14} />
         </span>
         <div className={styles.bubbleTitle}>
-          {definition.label}
+          {editingTitle ? (
+            <input
+              ref={titleInputRef}
+              data-ristak-unstyled
+              className={styles.panelTitleInput}
+              value={draftTitle}
+              maxLength={80}
+              placeholder={definition.label}
+              onChange={(event) => setDraftTitle(event.target.value)}
+              onBlur={commitTitle}
+              onKeyDown={(event) => {
+                event.stopPropagation()
+                if (event.key === 'Enter') commitTitle()
+                if (event.key === 'Escape') setEditingTitle(false)
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              className={styles.panelTitleButton}
+              title="Cambiar el título de esta acción"
+              onClick={startTitleEdit}
+            >
+              {customTitle || definition.label}
+              <Pencil size={12} className={styles.panelTitlePencil} />
+            </button>
+          )}
           {definition.description && <div className={styles.bubbleSubtitle}>{definition.description}</div>}
         </div>
-        <button type="button" className={styles.bubbleClose} onClick={onClose} title="Cerrar (Esc)">
+        <button type="button" className={styles.bubbleClose} onClick={requestClose} title="Cerrar (Esc)">
           <X size={14} />
         </button>
       </div>
 
       <div className={styles.bubbleBody}>
-        {errors.length > 0 && (
-          <div className={styles.configErrors}>
-            {errors.map((error) => (
-              <span key={error} className={styles.configErrorLine}>
-                {error}
-              </span>
-            ))}
-          </div>
-        )}
-
         {definition.configComponent === 'conditions' && (
           <AdvancedConditionBuilder
             value={config}
@@ -561,7 +681,9 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
             allowBranches
           />
         )}
-        {definition.configComponent === 'wait' && <WaitConfigEditor config={config} onChange={onChange} />}
+        {definition.configComponent === 'wait' && (
+          <WaitConfigEditor config={config} onChange={onChange} messageSources={waitMessageSources} />
+        )}
         {definition.configComponent === 'goal' && <GoalConfigEditor config={config} onChange={onChange} />}
         {definition.configComponent === 'whatsapp' && (
           <WhatsAppConfigEditor config={config} onChange={onChange} />
@@ -576,23 +698,45 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
             />
           </>
         )}
+        {definition.configComponent === 'scheduler' && (
+          <SchedulerConfigEditor config={config} onChange={onChange} />
+        )}
 
-        {!definition.configComponent && definition.fields.length === 0 && (
+        {!definition.configComponent && definition.fields.length === 0 && definition.kind !== 'trigger' && (
           <p className={styles.configHelp}>Este paso no necesita configuración.</p>
         )}
-        {!definition.configComponent && definition.fields.map(renderField)}
+        {/* Solo los campos indispensables a la vista */}
+        {!definition.configComponent && definition.fields.filter((field) => !field.advanced).map(renderField)}
 
-        {/* Nombre personalizado del paso (el título de la cajita) */}
-        {definition.configComponent !== 'wait' && (
-          <Field label="Nombre del paso (opcional)" help="Identifica qué hace esta cajita en el canvas">
-            <TextInput
-              value={str(config.customTitle)}
-              maxLength={80}
-              placeholder={definition.label}
-              onChange={(event) => setValue('customTitle', event.target.value)}
-            />
-          </Field>
+        {/* Filtros avanzados del disparador (coincide / NO coincide) */}
+        {definition.kind === 'trigger' && (
+          <TriggerFiltersEditor
+            value={config.filters}
+            onChange={(filters: TriggerFilter[]) => setValue('filters', filters)}
+            contextKey={definition.type}
+          />
         )}
+
+        {/* Lo demás vive detrás de "Opciones avanzadas" (los disparadores
+            no la usan: ahí todo extra se agrega con "+ Añadir filtro") */}
+        {!definition.configComponent && definition.kind !== 'trigger' && definition.fields.some((field) => field.advanced) && (
+          <>
+            <button
+              type="button"
+              className={styles.advancedToggle}
+              onClick={() => setShowAdvanced((value) => !value)}
+            >
+              <ChevronRight
+                size={12}
+                className={cn(styles.varCategoryChevron, showAdvanced && styles.varCategoryChevronOpen)}
+              />
+              Opciones avanzadas
+            </button>
+            {showAdvanced && definition.fields.filter((field) => field.advanced).map(renderField)}
+          </>
+        )}
+
+
 
         {/* Ramas extra del nodo (hasta 10 salidas) */}
         {definition.supportsMultipleBranches && (

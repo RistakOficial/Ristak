@@ -1,4 +1,4 @@
-import { getAppConfig } from '../config/database.js'
+import { getAppConfig, setAppConfig } from '../config/database.js'
 import { getAccountTimezone } from './dateUtils.js'
 import { normalizePhoneForStorage } from './phoneUtils.js'
 
@@ -13,10 +13,10 @@ export const DEFAULT_ACCOUNT_LOCALE = {
 }
 
 export const COUNTRY_OPTIONS = [
-  { value: 'MX', label: 'Mexico', currency: 'MXN', dialCode: '52', timezones: ['America/Mexico_City', 'America/Ciudad_Juarez', 'America/Monterrey', 'America/Tijuana'] },
+  { value: 'MX', label: 'México', currency: 'MXN', dialCode: '52', timezones: ['America/Mexico_City', 'America/Ciudad_Juarez', 'America/Monterrey', 'America/Tijuana'] },
   { value: 'US', label: 'Estados Unidos', currency: 'USD', dialCode: '1', timezones: ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles'] },
-  { value: 'CA', label: 'Canada', currency: 'CAD', dialCode: '1', timezones: ['America/Toronto', 'America/Vancouver'] },
-  { value: 'ES', label: 'Espana', currency: 'EUR', dialCode: '34', timezones: ['Europe/Madrid'] },
+  { value: 'CA', label: 'Canadá', currency: 'CAD', dialCode: '1', timezones: ['America/Toronto', 'America/Vancouver'] },
+  { value: 'ES', label: 'España', currency: 'EUR', dialCode: '34', timezones: ['Europe/Madrid'] },
   { value: 'AR', label: 'Argentina', currency: 'ARS', dialCode: '54', timezones: ['America/Argentina/Buenos_Aires'] },
   { value: 'BO', label: 'Bolivia', currency: 'BOB', dialCode: '591', timezones: ['America/La_Paz'] },
   { value: 'BR', label: 'Brasil', currency: 'BRL', dialCode: '55', timezones: ['America/Sao_Paulo'] },
@@ -24,13 +24,13 @@ export const COUNTRY_OPTIONS = [
   { value: 'CL', label: 'Chile', currency: 'CLP', dialCode: '56', timezones: ['America/Santiago'] },
   { value: 'CO', label: 'Colombia', currency: 'COP', dialCode: '57', timezones: ['America/Bogota'] },
   { value: 'CR', label: 'Costa Rica', currency: 'CRC', dialCode: '506', timezones: ['America/Costa_Rica'] },
-  { value: 'DO', label: 'Republica Dominicana', currency: 'DOP', dialCode: '1', timezones: ['America/Santo_Domingo'] },
+  { value: 'DO', label: 'República Dominicana', currency: 'DOP', dialCode: '1', timezones: ['America/Santo_Domingo'] },
   { value: 'EC', label: 'Ecuador', currency: 'USD', dialCode: '593', timezones: ['America/Guayaquil'] },
   { value: 'GT', label: 'Guatemala', currency: 'GTQ', dialCode: '502', timezones: ['America/Guatemala'] },
   { value: 'HN', label: 'Honduras', currency: 'HNL', dialCode: '504', timezones: ['America/Tegucigalpa'] },
   { value: 'NI', label: 'Nicaragua', currency: 'NIO', dialCode: '505', timezones: ['America/Managua'] },
-  { value: 'PA', label: 'Panama', currency: 'PAB', dialCode: '507', timezones: ['America/Panama'] },
-  { value: 'PE', label: 'Peru', currency: 'PEN', dialCode: '51', timezones: ['America/Lima'] },
+  { value: 'PA', label: 'Panamá', currency: 'PAB', dialCode: '507', timezones: ['America/Panama'] },
+  { value: 'PE', label: 'Perú', currency: 'PEN', dialCode: '51', timezones: ['America/Lima'] },
   { value: 'PR', label: 'Puerto Rico', currency: 'USD', dialCode: '1', timezones: ['America/Puerto_Rico'] },
   { value: 'PY', label: 'Paraguay', currency: 'PYG', dialCode: '595', timezones: ['America/Asuncion'] },
   { value: 'SV', label: 'El Salvador', currency: 'USD', dialCode: '503', timezones: ['America/El_Salvador'] },
@@ -75,6 +75,46 @@ function normalizeDialCode(value) {
 
 function getDefaultsForCountry(countryCode) {
   return COUNTRY_DEFAULTS[countryCode] || DEFAULT_ACCOUNT_LOCALE
+}
+
+export function resolveAccountLocaleInput(input = {}) {
+  const requestedCountryCode = normalizeCountryCode(
+    input.countryCode ||
+    input.country_code ||
+    input.country ||
+    input.pais
+  )
+  const countryCode = COUNTRY_DEFAULTS[requestedCountryCode]
+    ? requestedCountryCode
+    : DEFAULT_ACCOUNT_LOCALE.countryCode
+  const countryDefaults = getDefaultsForCountry(countryCode)
+  const currency = normalizeCurrency(input.currency || input.currencyCode || input.currency_code)
+  const dialCode = normalizeDialCode(
+    input.dialCode ||
+    input.dial_code ||
+    input.defaultDialCode ||
+    input.default_dial_code ||
+    input.phoneDialCode ||
+    input.phone_dial_code
+  )
+
+  return {
+    countryCode,
+    currency: currency || countryDefaults.currency || DEFAULT_ACCOUNT_LOCALE.currency,
+    dialCode: dialCode || countryDefaults.dialCode || DEFAULT_ACCOUNT_LOCALE.dialCode
+  }
+}
+
+export async function saveAccountLocaleSettings(input = {}) {
+  const locale = resolveAccountLocaleInput(input)
+
+  await Promise.all([
+    setAppConfig(ACCOUNT_COUNTRY_CONFIG_KEY, locale.countryCode),
+    setAppConfig(ACCOUNT_CURRENCY_CONFIG_KEY, locale.currency),
+    setAppConfig(ACCOUNT_DIAL_CODE_CONFIG_KEY, locale.dialCode)
+  ])
+
+  return locale
 }
 
 export function getCountryDefaults(countryCode) {

@@ -9,6 +9,7 @@ import { PhoneSelect } from '@/components/phone/PhoneSelect';
 import { PhoneDateTimeField } from '@/components/phone/ui/PhoneDateTimeField';
 import { formatTimeLabel } from '@/components/phone/ui/PhoneTimeField';
 import { PhoneDurationField, formatDurationLabel } from '@/components/phone/ui/PhoneDurationField';
+import { PhoneSegmentedTabs } from '@/components/phone/ui';
 import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot } from '@/services/calendarsService';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
@@ -229,10 +230,11 @@ const convertLocalInputToISO = (value: string, timeZone: string): string | null 
 
   // Extraer componentes
   const [year, month, day] = datePart.split('-');
-  const [hour, minute] = timePart.split(':');
+  const [hour, minute, second = '00'] = timePart.split(':');
+  const safeSecond = String(Math.min(59, Math.max(0, Number(second) || 0))).padStart(2, '0');
 
   // Crear fecha en la timezone especificada para obtener el offset correcto
-  const dateInTz = new Date(`${year}-${month}-${day}T${hour}:${minute}:00`);
+  const dateInTz = new Date(`${year}-${month}-${day}T${hour}:${minute}:${safeSecond}`);
 
   // Obtener el offset usando Intl.DateTimeFormat
   const offsetMinutes = getTimezoneOffset(dateInTz, timeZone);
@@ -244,7 +246,7 @@ const convertLocalInputToISO = (value: string, timeZone: string): string | null 
   const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMins).padStart(2, '0')}`;
 
   // Construir ISO 8601: 2025-10-18T14:30:00-06:00
-  return `${year}-${month}-${day}T${hour}:${minute}:00${offsetStr}`;
+  return `${year}-${month}-${day}T${hour}:${minute}:${safeSecond}${offsetStr}`;
 };
 
 // Helper para obtener el offset de timezone en minutos (formato: -360 para -06:00)
@@ -1230,7 +1232,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     )
   );
   // --- Agendado móvil: fecha + hora de inicio + duración (el fin se calcula solo) ---
-  const fallbackDuration = calendar?.slotDuration || 60;
+  const fallbackDuration = Math.max(1, Number(calendar?.slotDuration || 60) || 60);
   const startLocalValue = formData.startTime
     ? (isAbsoluteIso(formData.startTime) ? toLocalInputValue(formData.startTime, formData.timeZone) : formData.startTime)
     : '';
@@ -1239,13 +1241,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     : '';
   const customDatePart = startLocalValue.slice(0, 10);
   const customTimePart = startLocalValue.slice(11, 16);
-  const customEndTimePart = endLocalValue.slice(11, 16);
   const derivedDuration = (() => {
     if (!startLocalValue || !endLocalValue) return fallbackDuration;
     const startMs = new Date(startLocalValue).getTime();
     const endMs = new Date(endLocalValue).getTime();
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return fallbackDuration;
-    return Math.round((endMs - startMs) / 60000);
+    return (endMs - startMs) / 60000;
   })();
   const effectiveDuration = startLocalValue && endLocalValue ? derivedDuration : (pendingDuration ?? fallbackDuration);
 
@@ -1253,9 +1254,24 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     if (!datePart || !timePart) return;
     const start = new Date(`${datePart}T${timePart}:00`);
     if (Number.isNaN(start.getTime())) return;
-    const end = new Date(start.getTime() + durationMinutes * 60000);
-    const endLocal = `${end.getFullYear()}-${padTwo(end.getMonth() + 1)}-${padTwo(end.getDate())}T${padTwo(end.getHours())}:${padTwo(end.getMinutes())}`;
+    const durationMs = Math.max(1000, Math.round(durationMinutes * 60000));
+    const end = new Date(start.getTime() + durationMs);
+    const includeSeconds = end.getSeconds() > 0 || durationMs % 60000 !== 0;
+    const endLocal = `${end.getFullYear()}-${padTwo(end.getMonth() + 1)}-${padTwo(end.getDate())}T${padTwo(end.getHours())}:${padTwo(end.getMinutes())}${includeSeconds ? `:${padTwo(end.getSeconds())}` : ''}`;
     setFormData((prev) => ({ ...prev, startTime: `${datePart}T${timePart}`, endTime: endLocal }));
+  };
+
+  const formatLocalScheduleTime = (localValue: string) => {
+    const match = /T(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(localValue);
+    if (!match) return '';
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    const second = Number(match[3] || 0);
+    const period = hour >= 12 ? 'p.m.' : 'a.m.';
+    const hour12 = hour % 12 || 12;
+    return second > 0
+      ? `${hour12}:${padTwo(minute)}:${padTwo(second)} ${period}`
+      : `${hour12}:${padTwo(minute)} ${period}`;
   };
 
   const renderMobileCustomSchedule = () => (
@@ -1264,6 +1280,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         dateValue={customDatePart}
         timeValue={customTimePart}
         onChange={(date, time) => applyCustomSchedule(date, time, effectiveDuration)}
+        buttonClassName={styles.mobilePhoneSelectButton}
       />
       <PhoneDurationField
         value={effectiveDuration}
@@ -1271,10 +1288,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           setPendingDuration(minutes);
           applyCustomSchedule(customDatePart, customTimePart, minutes);
         }}
+        buttonClassName={styles.mobilePhoneSelectButton}
       />
-      {customTimePart && customEndTimePart && (
+      {customTimePart && endLocalValue && (
         <p className={styles.mobileCustomScheduleSummary}>
-          De {formatTimeLabel(customTimePart)} a {formatTimeLabel(customEndTimePart)} · {formatDurationLabel(effectiveDuration)}
+          De {formatTimeLabel(customTimePart)} a {formatLocalScheduleTime(endLocalValue)} · {formatDurationLabel(effectiveDuration)}
         </p>
       )}
     </div>
@@ -1311,6 +1329,301 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     });
   };
 
+  const isRoundRobinCalendar = calendar?.calendarType === 'round_robin';
+  const shouldShowAssignmentPanel = showGuestsSection || (
+    showContactAssignment && (
+      (isCreateMode && (isRoundRobinCalendar || loadingUsers || users.length > 0)) ||
+      (!isCreateMode && Boolean(formData.assignedUserId))
+    )
+  );
+
+  const renderContactField = () => {
+    if (!showContactAssignment) return null;
+
+    return (
+      <div className={styles.field}>
+        <label className={styles.label}>
+          Contacto {isCreateMode && <span className={styles.required}>*</span>}
+        </label>
+
+        {selectedContact ? (
+          <div className={styles.selectedContact}>
+            <div className={styles.contactInfo}>
+              <p className={styles.contactName}>{selectedContact.name || 'Sin nombre'}</p>
+              <p className={styles.contactDetail}>
+                {selectedContact.email || selectedContact.phone || 'Sin datos de contacto'}
+              </p>
+            </div>
+            {isCreateMode && (
+              <button
+                type="button"
+                onClick={handleClearContact}
+                className={styles.clearButton}
+                title="Cambiar contacto"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+        ) : isCreateMode ? (
+          <div className={styles.searchWrapper}>
+            <div className={styles.searchInput}>
+              <Search size={16} className={styles.searchIcon} />
+              <input
+                type="text"
+                placeholder="Buscar por nombre, correo o teléfono..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className={styles.input}
+              />
+              {searchingContact && <Loader2 size={16} className={styles.loadingIcon} />}
+            </div>
+
+            {showContactDropdown && (
+              <div className={styles.dropdown} data-ristak-dropdown-panel>
+                {searchingContact && contacts.length === 0 ? (
+                  <div className={styles.dropdownEmpty}>
+                    Buscando contactos...
+                  </div>
+                ) : contacts.length > 0 ? (
+                  contacts.map((contact) => (
+                    <button
+                      key={contact.id}
+                      type="button"
+                      className={styles.dropdownItem}
+                      data-ristak-dropdown-item
+                      onClick={() => handleSelectContact(contact)}
+                    >
+                      <p className={styles.dropdownName}>{contact.name || 'Sin nombre'}</p>
+                      <p className={styles.dropdownDetail}>
+                        {contact.email || contact.phone || 'Sin información de contacto'}
+                      </p>
+                    </button>
+                  ))
+                ) : (
+                  <div className={styles.dropdownEmpty}>
+                    No se encontraron contactos
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className={styles.helpText}>Sin contacto asignado</p>
+        )}
+      </div>
+    );
+  };
+
+  const renderGuestsSection = () => {
+    if (!showGuestsSection) return null;
+
+    return (
+      <div className={`${styles.sectionBlock} ${styles.guestsSectionCompact}`}>
+        <div className={styles.guestToggleHeader}>
+          <div>
+            <label className={styles.label}>¿Agregar invitados?</label>
+            {appointmentGuests.length > 0 && (
+              <p className={styles.helpText}>{appointmentGuests.length} agregado{appointmentGuests.length === 1 ? '' : 's'}</p>
+            )}
+          </div>
+          <div className={styles.guestToggleChips} role="group" aria-label="Agregar invitados">
+            <button
+              type="button"
+              className={guestsEnabled ? styles.guestToggleChipActive : ''}
+              onClick={() => handleToggleGuestsEnabled(true)}
+              aria-pressed={guestsEnabled}
+            >
+              Sí
+            </button>
+            <button
+              type="button"
+              className={!guestsEnabled ? styles.guestToggleChipActive : ''}
+              onClick={() => handleToggleGuestsEnabled(false)}
+              aria-pressed={!guestsEnabled}
+            >
+              No
+            </button>
+          </div>
+        </div>
+
+        {guestsEnabled && (
+          <>
+            <p className={styles.helpText}>Busca un contacto guardado o agrega uno nuevo para esta cita.</p>
+
+            <div className={styles.searchWrapper}>
+              <div className={styles.searchInput}>
+                <Search size={16} className={styles.searchIcon} />
+                <input
+                  type="text"
+                  placeholder="Buscar en contactos..."
+                  value={guestSearchQuery}
+                  onChange={(e) => setGuestSearchQuery(e.target.value)}
+                  className={styles.input}
+                />
+                {searchingGuest && <Loader2 size={16} className={styles.loadingIcon} />}
+              </div>
+
+              {showGuestDropdown && (
+                <div className={styles.dropdown} data-ristak-dropdown-panel>
+                  {searchingGuest && guestContacts.length === 0 ? (
+                    <div className={styles.dropdownEmpty}>
+                      Buscando invitados...
+                    </div>
+                  ) : guestContacts.length > 0 ? (
+                    guestContacts.map((contact) => (
+                      <button
+                        key={contact.id}
+                        type="button"
+                        className={styles.dropdownItem}
+                        data-ristak-dropdown-item
+                        onClick={() => handleSelectGuestContact(contact)}
+                      >
+                        <p className={styles.dropdownName}>{getContactDisplayName(contact)}</p>
+                        <p className={styles.dropdownDetail}>
+                          {getContactDelivery(contact) || 'Sin WhatsApp ni correo'}
+                        </p>
+                      </button>
+                    ))
+                  ) : (
+                    <div className={styles.dropdownEmpty}>
+                      No se encontraron contactos
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className={styles.guestBuilder}>
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor="guestName">
+                  Nombre completo <span className={styles.required}>*</span>
+                </label>
+                <input
+                  id="guestName"
+                  type="text"
+                  className={styles.input}
+                  value={guestName}
+                  placeholder="Ej. Ana López"
+                  onChange={(event) => setGuestName(event.target.value)}
+                />
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor="guestContact">
+                  Num Whats o correo <span className={styles.required}>*</span>
+                </label>
+                <input
+                  id="guestContact"
+                  type="text"
+                  className={styles.input}
+                  value={guestContact}
+                  placeholder="Ej. +52 656 000 0000 o correo@dominio.com"
+                  onChange={(event) => setGuestContact(event.target.value)}
+                />
+              </div>
+
+              <button type="button" className={styles.guestAddButton} onClick={handleAddManualGuest}>
+                Agregar invitado
+              </button>
+            </div>
+
+            {appointmentGuests.length > 0 ? (
+              <div className={styles.guestList} aria-label="Invitados agregados">
+                {appointmentGuests.map((guest) => (
+                  <div key={guest.id} className={styles.guestItem}>
+                    <span>
+                      <strong>{guest.name}</strong>
+                      <small>{guest.contact}</small>
+                    </span>
+                    <button type="button" onClick={() => handleRemoveGuest(guest.id)} aria-label={`Quitar ${guest.name}`}>
+                      <X size={15} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className={styles.helpText}>Todavía no agregas invitados.</p>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const renderAssignmentSection = () => {
+    if (!showContactAssignment) return null;
+
+    if (!isCreateMode && formData.assignedUserId) {
+      return (
+        <div className={styles.sectionBlock}>
+          <label className={styles.label}>
+            {isRoundRobinCalendar ? 'Miembro del equipo' : 'Persona asignada'}
+          </label>
+          <div className={styles.selectedContact}>
+            <div className={styles.contactInfo}>
+              <p className={styles.contactName}>
+                {loadingUsers ? 'Cargando...' : assignedUserLabel}
+              </p>
+              {assignedUser?.email && <p className={styles.contactDetail}>{assignedUser.email}</p>}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (!isCreateMode) return null;
+
+    if (loadingUsers) {
+      return (
+        <div className={styles.sectionBlock}>
+          <p className={styles.helpText}>Cargando equipo disponible...</p>
+        </div>
+      );
+    }
+
+    if (isRoundRobinCalendar && users.length === 0) {
+      return (
+        <div className={styles.sectionBlock}>
+          <p className={styles.helpText}>
+            No pudimos cargar al equipo. Cierra esta ventana y vuelve a intentar.
+          </p>
+        </div>
+      );
+    }
+
+    if (users.length === 0) return null;
+
+    return (
+      <div className={styles.sectionBlock}>
+        <label className={styles.label}>
+          {isRoundRobinCalendar ? (
+            <>
+              Elegir miembro del equipo <span className={styles.required}>*</span>
+            </>
+          ) : (
+            'Persona asignada (opcional)'
+          )}
+        </label>
+
+        {isRoundRobinCalendar && (
+          <p className={styles.helpText}>
+            Este calendario reparte citas entre el equipo. Selecciona quién atenderá esta cita.
+          </p>
+        )}
+
+        {renderSelect({
+          title: 'Persona asignada',
+          value: formData.assignedUserId,
+          options: assignedUserOptions,
+          onChange: (value) => setFormData({ ...formData, assignedUserId: value }),
+          disabled: loadingUsers,
+          placeholder: 'Seleccionar...'
+        })}
+      </div>
+    );
+  };
+
   return (
     <>
       <Modal
@@ -1318,7 +1631,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         onClose={onClose}
         title={modalTitle}
         size="lg"
-        className={isMobileSheet ? styles.mobileSheetModal : undefined}
+        className={isMobileSheet ? styles.mobileSheetModal : styles.appointmentDialogModal}
         backdropClassName={isMobileSheet ? styles.mobileSheetBackdrop : undefined}
         contentClassName={isMobileSheet ? styles.mobileSheetContent : undefined}
         showCloseButton={!isMobileSheet}
@@ -1342,7 +1655,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               disabled: calendarsLoading || !calendars?.length,
               placeholder: 'Elige calendario'
             })}
-            <p className={styles.helpText}>Elige dónde quieres guardar esta cita.</p>
           </div>
         )}
 
@@ -1423,316 +1735,28 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
             </div>
           </section>
         ) : (
-		        <div className={styles.twoColumnLayout}>
-	          {/* COLUMNA IZQUIERDA: Contacto o invitados */}
-	          <div className={styles.leftColumn}>
+		        <div className={`${styles.appointmentFormLayout} ${shouldShowAssignmentPanel ? '' : styles.appointmentFormLayoutSingle}`}>
+	          {/* Panel lateral: invitados o asignación del equipo */}
+	          {shouldShowAssignmentPanel && (
+	          <aside className={styles.assignmentPanel}>
 	            <h4 className={styles.columnTitle}>
 	              <UserPlus size={18} />
 	              {showGuestsSection ? 'Invitados' : 'Asignación'}
 	            </h4>
 
-	            {/* Contacto asignado */}
-	            {showContactAssignment && (
-	            <div className={styles.sectionBlock}>
+	            {renderGuestsSection()}
+	            {renderAssignmentSection()}
+	          </aside>
+	          )}
+
+	          {/* Formulario principal de la cita */}
+	          <div className={styles.formMain}>
+
+              {renderContactField()}
+
+	            <div className={styles.field}>
 	              <label className={styles.label}>
-	                Contacto {isCreateMode && <span className={styles.required}>*</span>}
-	              </label>
-
-              {selectedContact ? (
-                <div className={styles.selectedContact}>
-                  <div className={styles.contactInfo}>
-                    <p className={styles.contactName}>{selectedContact.name || 'Sin nombre'}</p>
-                    <p className={styles.contactDetail}>{selectedContact.email || selectedContact.phone}</p>
-                  </div>
-                  {isCreateMode && (
-                    <button
-                      type="button"
-                      onClick={handleClearContact}
-                      className={styles.clearButton}
-                      title="Cambiar contacto"
-                    >
-                      <X size={16} />
-                    </button>
-                  )}
-                </div>
-              ) : isCreateMode ? (
-                <div className={styles.searchWrapper}>
-                  <div className={styles.searchInput}>
-                    <Search size={16} className={styles.searchIcon} />
-                    <input
-                      type="text"
-                      placeholder="Buscar por nombre, correo o teléfono..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className={styles.input}
-                    />
-                    {searchingContact && <Loader2 size={16} className={styles.loadingIcon} />}
-                  </div>
-
-                  {showContactDropdown && (
-                    <div className={styles.dropdown} data-ristak-dropdown-panel>
-                      {searchingContact && contacts.length === 0 ? (
-                        <div className={styles.dropdownEmpty}>
-                          Buscando contactos...
-                        </div>
-                      ) : contacts.length > 0 ? (
-                        contacts.map((contact) => (
-                          <button
-                            key={contact.id}
-                            type="button"
-                            className={styles.dropdownItem}
-                            data-ristak-dropdown-item
-                            onClick={() => handleSelectContact(contact)}
-                          >
-                            <p className={styles.dropdownName}>{contact.name || 'Sin nombre'}</p>
-                            <p className={styles.dropdownDetail}>
-                              {contact.email || contact.phone || 'Sin información de contacto'}
-                            </p>
-                          </button>
-                        ))
-                      ) : (
-                        <div className={styles.dropdownEmpty}>
-                          No se encontraron contactos
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-	                <p className={styles.helpText}>Sin contacto asignado</p>
-	              )}
-	            </div>
-	            )}
-
-	            {showGuestsSection && (
-	              <div className={`${styles.sectionBlock} ${styles.guestsSectionCompact}`}>
-	                <div className={styles.guestToggleHeader}>
-	                  <div>
-	                    <label className={styles.label}>¿Agregar invitados?</label>
-	                    {appointmentGuests.length > 0 && (
-	                      <p className={styles.helpText}>{appointmentGuests.length} agregado{appointmentGuests.length === 1 ? '' : 's'}</p>
-	                    )}
-	                  </div>
-	                  <div className={styles.guestToggleChips} role="group" aria-label="Agregar invitados">
-	                    <button
-	                      type="button"
-	                      className={guestsEnabled ? styles.guestToggleChipActive : ''}
-	                      onClick={() => handleToggleGuestsEnabled(true)}
-	                      aria-pressed={guestsEnabled}
-	                    >
-	                      Sí
-	                    </button>
-	                    <button
-	                      type="button"
-	                      className={!guestsEnabled ? styles.guestToggleChipActive : ''}
-	                      onClick={() => handleToggleGuestsEnabled(false)}
-	                      aria-pressed={!guestsEnabled}
-	                    >
-	                      No
-	                    </button>
-	                  </div>
-	                </div>
-
-	                {guestsEnabled && (
-	                  <>
-	                    <p className={styles.helpText}>Busca un contacto guardado o agrega uno nuevo para esta cita.</p>
-
-	                    <div className={styles.searchWrapper}>
-	                      <div className={styles.searchInput}>
-	                        <Search size={16} className={styles.searchIcon} />
-	                        <input
-	                          type="text"
-	                          placeholder="Buscar en contactos..."
-	                          value={guestSearchQuery}
-	                          onChange={(e) => setGuestSearchQuery(e.target.value)}
-	                          className={styles.input}
-	                        />
-	                        {searchingGuest && <Loader2 size={16} className={styles.loadingIcon} />}
-	                      </div>
-
-	                      {showGuestDropdown && (
-		                        <div className={styles.dropdown} data-ristak-dropdown-panel>
-	                          {searchingGuest && guestContacts.length === 0 ? (
-	                            <div className={styles.dropdownEmpty}>
-	                              Buscando invitados...
-	                            </div>
-	                          ) : guestContacts.length > 0 ? (
-	                            guestContacts.map((contact) => (
-	                              <button
-	                                key={contact.id}
-		                                type="button"
-		                                className={styles.dropdownItem}
-		                                data-ristak-dropdown-item
-		                                onClick={() => handleSelectGuestContact(contact)}
-	                              >
-	                                <p className={styles.dropdownName}>{getContactDisplayName(contact)}</p>
-	                                <p className={styles.dropdownDetail}>
-	                                  {getContactDelivery(contact) || 'Sin WhatsApp ni correo'}
-	                                </p>
-	                              </button>
-	                            ))
-	                          ) : (
-	                            <div className={styles.dropdownEmpty}>
-	                              No se encontraron contactos
-	                            </div>
-	                          )}
-	                        </div>
-	                      )}
-	                    </div>
-
-	                    <div className={styles.guestBuilder}>
-	                      <div className={styles.field}>
-	                        <label className={styles.label} htmlFor="guestName">
-	                          Nombre completo <span className={styles.required}>*</span>
-	                        </label>
-	                        <input
-	                          id="guestName"
-	                          type="text"
-	                          className={styles.input}
-	                          value={guestName}
-	                          placeholder="Ej. Ana López"
-	                          onChange={(event) => setGuestName(event.target.value)}
-	                        />
-	                      </div>
-
-	                      <div className={styles.field}>
-	                        <label className={styles.label} htmlFor="guestContact">
-	                          Num Whats o correo <span className={styles.required}>*</span>
-	                        </label>
-	                        <input
-	                          id="guestContact"
-	                          type="text"
-	                          className={styles.input}
-	                          value={guestContact}
-	                          placeholder="Ej. +52 656 000 0000 o correo@dominio.com"
-	                          onChange={(event) => setGuestContact(event.target.value)}
-	                        />
-	                      </div>
-
-	                      <button type="button" className={styles.guestAddButton} onClick={handleAddManualGuest}>
-	                        Agregar invitado
-	                      </button>
-	                    </div>
-
-	                    {appointmentGuests.length > 0 ? (
-	                      <div className={styles.guestList} aria-label="Invitados agregados">
-	                        {appointmentGuests.map((guest) => (
-	                          <div key={guest.id} className={styles.guestItem}>
-	                            <span>
-	                              <strong>{guest.name}</strong>
-	                              <small>{guest.contact}</small>
-	                            </span>
-	                            <button type="button" onClick={() => handleRemoveGuest(guest.id)} aria-label={`Quitar ${guest.name}`}>
-	                              <X size={15} />
-	                            </button>
-	                          </div>
-	                        ))}
-	                      </div>
-	                    ) : (
-	                      <p className={styles.helpText}>Todavía no agregas invitados.</p>
-	                    )}
-	                  </>
-	                )}
-	              </div>
-	            )}
-
-	            {/* Usuario asignado */}
-	            {showContactAssignment && (() => {
-              const isRoundRobin = calendar?.calendarType === 'round_robin';
-
-              // En modo view, si hay usuario asignado, buscarlo y mostrarlo
-              if (!isCreateMode && formData.assignedUserId && users.length > 0) {
-                const assignedUser = users.find(u => u.id === formData.assignedUserId);
-                if (assignedUser) {
-                  return (
-                    <div className={styles.sectionBlock}>
-                      <label className={styles.label}>
-                        {isRoundRobin ? 'Miembro del equipo' : 'Persona asignada'}
-                      </label>
-                      <div className={styles.selectedContact}>
-                        <div className={styles.contactInfo}>
-                          <p className={styles.contactName}>{assignedUser.name || assignedUser.email || 'Persona'}</p>
-                          <p className={styles.contactDetail}>{assignedUser.email || ''}</p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
-              }
-
-              // En modo crear, mostrar selector solo si hay usuarios cargados
-              if (isCreateMode) {
-                // Si reparte citas entre el equipo y no hay usuarios, mostrar error
-                if (isRoundRobin && users.length === 0 && !loadingUsers) {
-                  return (
-                    <div className={styles.sectionBlock}>
-                      <p className={styles.helpText}>
-                        No pudimos cargar al equipo. Cierra esta ventana y vuelve a intentar.
-                      </p>
-                    </div>
-                  );
-                }
-
-                // Si no hay usuarios cargados (calendarios normales), no mostrar nada
-                if (users.length === 0) {
-                  return null;
-                }
-
-                return (
-                  <div className={styles.sectionBlock}>
-                    <label className={styles.label}>
-                      {isRoundRobin ? (
-                        <>
-                          Elegir miembro del equipo <span className={styles.required}>*</span>
-                        </>
-                      ) : (
-                        'Persona asignada (opcional)'
-                      )}
-                    </label>
-
-                    {isRoundRobin && (
-                      <p className={styles.helpText}>
-                        Este calendario reparte citas entre el equipo. Selecciona quién atenderá esta cita.
-                      </p>
-                    )}
-
-                    {renderSelect({
-                      title: 'Persona asignada',
-                      value: formData.assignedUserId,
-                      options: assignedUserOptions,
-                      onChange: (value) => setFormData({ ...formData, assignedUserId: value }),
-                      disabled: loadingUsers,
-                      placeholder: 'Seleccionar...'
-                    })}
-                  </div>
-                );
-              }
-
-              return null;
-            })()}
-          </div>
-
-          {/* COLUMNA DERECHA: Configuración de la cita */}
-          <div className={styles.rightColumn}>
-            <h4 className={styles.columnTitle}>Configuración de la cita</h4>
-
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="title">
-                Título
-              </label>
-              <input
-                id="title"
-                type="text"
-                className={styles.input}
-                value={formData.title}
-                placeholder="Ej. Consulta inicial con cliente"
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-              />
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label}>
-                Estado
+	                Estado
               </label>
               {renderSelect({
                 title: 'Estado',
@@ -1754,23 +1778,35 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 <div className={styles.dateTimeSection}>
                   {/* TabList para seleccionar modo */}
                   <div className={styles.tabListWrapper}>
-                    <TabList
-                      tabs={[
-                        {
-                          value: 'default',
-                          label: 'Por defecto',
-                          description: 'Usa el horario sugerido por la disponibilidad del calendario.'
-                        },
-                        {
-                          value: 'custom',
-                          label: 'Personalizado',
-                          description: 'Te deja escoger una fecha y hora exactas para esta cita.'
-                        }
-                      ]}
-                      activeTab={scheduleMode}
-                      onTabChange={(value) => setScheduleMode(value as 'default' | 'custom')}
-                      fullWidth={isMobileSheet}
-                    />
+                    {isMobileSheet ? (
+                      <PhoneSegmentedTabs
+                        ariaLabel="Modo de horario"
+                        options={[
+                          { value: 'default', label: 'Por defecto' },
+                          { value: 'custom', label: 'Personalizado' }
+                        ]}
+                        value={scheduleMode}
+                        onChange={(value) => setScheduleMode(value as 'default' | 'custom')}
+                      />
+                    ) : (
+                      <TabList
+                        tabs={[
+                          {
+                            value: 'default',
+                            label: 'Por defecto',
+                            description: 'Usa el horario sugerido por la disponibilidad del calendario.'
+                          },
+                          {
+                            value: 'custom',
+                            label: 'Personalizado',
+                            description: 'Te deja escoger una fecha y hora exactas para esta cita.'
+                          }
+                        ]}
+                        activeTab={scheduleMode}
+                        onTabChange={(value) => setScheduleMode(value as 'default' | 'custom')}
+                        fullWidth
+                      />
+                    )}
                   </div>
 
                   {/* Modo Por defecto: Selector de slots disponibles */}

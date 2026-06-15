@@ -2,8 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
+  Clock3,
   Copy,
+  GitBranch,
   LayoutGrid,
+  MoreHorizontal,
+  Shuffle,
+  StickyNote,
+  Target,
   Maximize,
   Minus,
   Plus,
@@ -13,6 +19,7 @@ import {
   X
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
+import { WhatsAppIcon, MessengerIcon, InstagramIcon } from './BrandIcons'
 import type {
   AutomationEdge,
   AutomationNode,
@@ -37,6 +44,20 @@ export interface PendingEdge {
   point: { x: number; y: number }
 }
 
+/** Sugerencias de la tarjeta "Elegir primer paso" (automatización vacía) */
+const FIRST_STEP_CONTENT = [
+  { type: 'channel-whatsapp', label: 'WhatsApp', icon: WhatsAppIcon, color: '#25D366' },
+  { type: 'channel-messenger', label: 'Messenger', icon: MessengerIcon, color: '#0084FF' },
+  { type: 'channel-instagram', label: 'Instagram', icon: InstagramIcon, color: '#E4405F' }
+]
+
+const FIRST_STEP_LOGIC = [
+  { type: 'logic-condition', label: 'Condición', icon: GitBranch, color: '#8b5cf6' },
+  { type: 'logic-wait', label: 'Esperar', icon: Clock3, color: '#f59e0b' },
+  { type: 'randomizer', label: 'Aleatorizador', icon: Shuffle, color: '#6366f1' },
+  { type: 'logic-goal', label: 'Evento objetivo', icon: Target, color: '#10b981' }
+]
+
 export interface CanvasActions {
   onSelectNode: (nodeId: string | null) => void
   /** Shift/Cmd + clic sobre un nodo alterna su selección */
@@ -49,9 +70,13 @@ export interface CanvasActions {
   onMoveNodes: (positions: Record<string, { x: number; y: number }>, commit: boolean) => void
   onConnect: (sourceNodeId: string, sourceHandle: string, targetNodeId: string) => void
   onInvalidConnection: (reason: string) => void
+  /** Crea el primer paso desde la tarjeta fantasma de bienvenida */
+  onCreateFirstStep?: (type: string, position: { x: number; y: number }) => void
   onDeleteEdge: (edgeId: string) => void
   onDeleteNode: (node: AutomationNode) => void
   onDuplicateNode: (node: AutomationNode) => void
+  /** Alt + arrastrar: duplica el paso y devuelve la copia para arrastrarla */
+  onDuplicateNodeForDrag: (node: AutomationNode) => AutomationNode | null
   onOpenConfig: (node: AutomationNode, anchor: { x: number; y: number }) => void
   onPatchConfig: (node: AutomationNode, patch: Record<string, unknown>, openConfig?: boolean) => void
   onRequestPicker: (request: PickerRequest) => void
@@ -67,6 +92,8 @@ export interface CanvasActions {
   onClearSelection: () => void
   /** Botón "Ordenar flujo" (recibe las alturas medidas de los nodos) */
   onAutoLayout: (heights: Record<string, number>) => void
+  /** Crea un post-it en el centro visible del canvas */
+  onAddStickyNote: (position: { x: number; y: number }) => void
 }
 
 interface AutomationCanvasProps {
@@ -82,6 +109,10 @@ interface AutomationCanvasProps {
   pendingEdge?: PendingEdge | null
   /** Incrementa para centrar el flujo desde fuera (tras ordenar) */
   fitSignal?: number
+  /** Contactos activos por nodo (badges con silueta) */
+  nodeStats?: Record<string, number>
+  /** Oculta la tarjeta "Elegir primer paso" (cuando el selector está abierto) */
+  hideFirstStepGhost?: boolean
   actions: CanvasActions
   children?: React.ReactNode
 }
@@ -136,6 +167,8 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   initialViewport,
   pendingEdge,
   fitSignal,
+  nodeStats,
+  hideFirstStepGhost,
   actions,
   children
 }) => {
@@ -145,7 +178,11 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   viewportRef.current = viewport
 
   const [panning, setPanning] = useState(false)
-  const panStateRef = useRef<{ pointer: { x: number; y: number }; pan: { x: number; y: number } } | null>(null)
+  const panStateRef = useRef<{
+    pointer: { x: number; y: number }
+    pan: { x: number; y: number }
+    moved: boolean
+  } | null>(null)
 
   const [drag, setDrag] = useState<DragState | null>(null)
   const dragRef = useRef(drag)
@@ -172,6 +209,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
 
   const setAndReportViewport = useCallback(
     (next: AutomationViewport) => {
+      viewportRef.current = next
       setViewport(next)
       actions.onViewportChange(next)
     },
@@ -248,9 +286,15 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
       const panState = panStateRef.current
       if (panState) {
         // Redondeado a píxeles enteros: evita texto borroso durante el pan
-        setViewport({
-          x: Math.round(panState.pan.x + (event.clientX - panState.pointer.x)),
-          y: Math.round(panState.pan.y + (event.clientY - panState.pointer.y)),
+        const dx = event.clientX - panState.pointer.x
+        const dy = event.clientY - panState.pointer.y
+        const moved = panState.moved || Math.hypot(dx, dy) > 3
+        if (moved !== panState.moved) {
+          panStateRef.current = { ...panState, moved }
+        }
+        setAndReportViewport({
+          x: Math.round(panState.pan.x + dx),
+          y: Math.round(panState.pan.y + dy),
           zoom: viewportRef.current.zoom
         })
         return
@@ -308,9 +352,14 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
 
     const handleUp = (event: PointerEvent) => {
       if (panStateRef.current) {
+        const panState = panStateRef.current
         panStateRef.current = null
         setPanning(false)
         actions.onViewportChange(viewportRef.current)
+        if (!panState.moved) {
+          actions.onSelectNode(null)
+          actions.onSelectEdge(null)
+        }
         return
       }
 
@@ -354,9 +403,16 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
             if (node) actions.onMoveNode(currentDrag.nodeId, node.position, true)
           }
         } else if (!currentDrag.withModifier) {
-          // Clic simple sobre el evento: abre su configuración en el panel
+          // Clic simple sobre el evento: abre su configuración junto a la cajita
           const node = nodesRef.current.find((candidate) => candidate.id === currentDrag.nodeId)
-          if (node) actions.onOpenConfig(node, { x: 0, y: 0 })
+          if (node) {
+            const layout = layoutsRef.current[node.id]
+            const { x, y, zoom } = viewportRef.current
+            actions.onOpenConfig(node, {
+              x: (node.position.x + (layout?.width || NODE_WIDTH)) * zoom + x + 36,
+              y: node.position.y * zoom + y
+            })
+          }
         }
         return
       }
@@ -400,7 +456,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
       window.removeEventListener('pointermove', handleMove)
       window.removeEventListener('pointerup', handleUp)
     }
-  }, [actions, clientToEditor, clientToWorld])
+  }, [actions, clientToEditor, clientToWorld, setAndReportViewport])
 
   // ------------------------------------------------------------------
   // Handlers de la superficie
@@ -416,11 +472,10 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
       return
     }
 
-    actions.onSelectNode(null)
-    actions.onSelectEdge(null)
     panStateRef.current = {
       pointer: { x: event.clientX, y: event.clientY },
-      pan: { x: viewportRef.current.x, y: viewportRef.current.y }
+      pan: { x: viewportRef.current.x, y: viewportRef.current.y },
+      moved: false
     }
     setPanning(true)
   }
@@ -441,6 +496,23 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
         'button, input, textarea, select, [data-handle-out], [data-handle-in], [data-automation-interactive="true"]'
       )
     ) {
+      return
+    }
+
+    // Alt + arrastrar = duplicar: la copia nace en el mismo punto y es la
+    // que se arrastra (el original se queda donde estaba)
+    if (event.altKey) {
+      const copy = actions.onDuplicateNodeForDrag(node)
+      if (copy) {
+        setDrag({
+          nodeId: copy.id,
+          pointerStart: { x: event.clientX, y: event.clientY },
+          nodeStart: { ...copy.position },
+          groupStart: null,
+          moved: false,
+          withModifier: true
+        })
+      }
       return
     }
 
@@ -544,6 +616,15 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
     actions.onAutoLayout(heights)
   }
 
+  const handleAddStickyNote = () => {
+    const viewport = viewportRef.current
+    const bounds = getBounds()
+    actions.onAddStickyNote({
+      x: (bounds.width / 2 - viewport.x) / viewport.zoom - NODE_WIDTH / 2,
+      y: (bounds.height / 2 - viewport.y) / viewport.zoom - 70
+    })
+  }
+
   // ------------------------------------------------------------------
   // Geometría de las conexiones
   // ------------------------------------------------------------------
@@ -577,6 +658,31 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
   const emptyOutputs = useMemo(() => new Set<string>(), [])
 
   const draftGeometry = draft ? edgePath(draft.from.x, draft.from.y, draft.to.x, draft.to.y) : null
+
+  // Tarjeta fantasma "Elegir primer paso": solo en automatizaciones vacías
+  const startNodeOnly = nodes.length === 1 && nodes[0].type === 'start' && edges.length === 0 ? nodes[0] : null
+  const firstStepGhost = useMemo(() => {
+    if (!startNodeOnly || !actions.onCreateFirstStep || hideFirstStepGhost) return null
+    const layout = layouts[startNodeOnly.id]
+    const sx = startNodeOnly.position.x + (layout?.width || NODE_WIDTH)
+    const sy = startNodeOnly.position.y + (layout?.outputs.out ?? 40)
+    const x = startNodeOnly.position.x + (layout?.width || NODE_WIDTH) + 190
+    const y = startNodeOnly.position.y - 24
+    return { x, y, geometry: edgePath(sx, sy, x - 6, y + 34) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startNodeOnly, layouts, hideFirstStepGhost])
+
+  // "Otros": reemplaza la tarjeta fantasma por el selector completo de pasos,
+  // conectado a la tarjeta inicial (igual que el globo del doble clic)
+  const openFirstStepPicker = () => {
+    if (!firstStepGhost || !startNodeOnly) return
+    const { x, y, zoom } = viewportRef.current
+    actions.onRequestPicker({
+      anchor: { x: firstStepGhost.x * zoom + x, y: firstStepGhost.y * zoom + y },
+      worldPoint: { x: firstStepGhost.x, y: firstStepGhost.y + 24 },
+      source: { nodeId: startNodeOnly.id, handle: 'out' }
+    })
+  }
 
   // Flecha fantasma: del conector de origen al punto exacto donde se soltó,
   // visible mientras el selector de pasos está abierto.
@@ -637,6 +743,10 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
       <div
         className={cn(styles.canvas, panning && styles.canvasPanning, draft && styles.canvasConnecting)}
         style={{
+          // Al alejarse los puntos se desvanecen (en vez de juntarse y ensuciar la vista)
+          backgroundImage: `radial-gradient(rgba(148, 163, 184, ${
+            (0.16 * Math.min(1, Math.max(0, (viewport.zoom - 0.4) / 0.3))).toFixed(3)
+          }) 1px, transparent 1px)`,
           backgroundSize: `${22 * viewport.zoom}px ${22 * viewport.zoom}px`,
           backgroundPosition: `${viewport.x}px ${viewport.y}px`
         }}
@@ -714,7 +824,61 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
                 />
               </g>
             )}
+            {firstStepGhost && (
+              <path className={styles.edgeDraft} d={firstStepGhost.geometry.path} markerEnd="url(#automation-arrow)" />
+            )}
           </svg>
+
+          {/* Tarjeta fantasma: primeros pasos sugeridos */}
+          {firstStepGhost && (
+            <div
+              className={styles.firstStepGhost}
+              style={{ left: firstStepGhost.x, top: firstStepGhost.y }}
+              data-automation-interactive="true"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <div className={styles.firstStepTitle}>Elegir primer paso 👇</div>
+              <div className={styles.firstStepSection}>Contenido</div>
+              {FIRST_STEP_CONTENT.map((item) => (
+                <button
+                  key={item.type}
+                  type="button"
+                  className={styles.firstStepItem}
+                  onClick={() =>
+                    actions.onCreateFirstStep?.(item.type, { x: firstStepGhost.x, y: firstStepGhost.y })
+                  }
+                >
+                  <span className={styles.firstStepIcon} style={{ color: item.color }}>
+                    <item.icon size={16} />
+                  </span>
+                  {item.label}
+                </button>
+              ))}
+              <div className={styles.firstStepSection}>Lógico</div>
+              {FIRST_STEP_LOGIC.map((item) => (
+                <button
+                  key={item.type}
+                  type="button"
+                  className={styles.firstStepItem}
+                  onClick={() =>
+                    actions.onCreateFirstStep?.(item.type, { x: firstStepGhost.x, y: firstStepGhost.y })
+                  }
+                >
+                  <span className={styles.firstStepIcon} style={{ color: item.color }}>
+                    <item.icon size={15} />
+                  </span>
+                  {item.label}
+                </button>
+              ))}
+              <div className={styles.firstStepSection}>Más</div>
+              <button type="button" className={styles.firstStepItem} onClick={openFirstStepPicker}>
+                <span className={styles.firstStepIcon} style={{ color: 'var(--color-text-tertiary)' }}>
+                  <MoreHorizontal size={15} />
+                </span>
+                Otros…
+              </button>
+            </div>
+          )}
 
           {/* Caja de selección (Shift + arrastrar) */}
           {marqueeRect && (
@@ -740,6 +904,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
               errors={nodeErrors[node.id]}
               dropState={dropStateFor(node)}
               connectedOutputs={connectedOutputsByNode.get(node.id) || emptyOutputs}
+              activeContacts={nodeStats?.[node.id] || 0}
               zoom={viewport.zoom}
               onMeasure={handleMeasure}
               onPointerDownCard={handleNodeCardPointerDown}
@@ -819,26 +984,36 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
           </div>
         )}
 
-        {/* Controles de zoom + ordenar flujo */}
-        <div className={styles.zoomControls} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
-          <button type="button" className={styles.zoomButton} title="Acercar" onClick={() => zoomBy(1.2)}>
-            <Plus size={14} />
-          </button>
-          <span className={styles.zoomLevel}>{Math.round(viewport.zoom * 100)}%</span>
-          <button type="button" className={styles.zoomButton} title="Alejar" onClick={() => zoomBy(1 / 1.2)}>
-            <Minus size={14} />
-          </button>
-          <button type="button" className={styles.zoomButton} title="Centrar flujo" onClick={fitView}>
-            <Maximize size={13} />
-          </button>
+        {/* Herramientas del canvas */}
+        <div className={styles.canvasTools} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
           <button
             type="button"
-            className={styles.zoomButton}
-            title="Ordenar flujo (alinea los pasos de izquierda a derecha)"
-            onClick={handleAutoLayout}
+            className={styles.canvasToolButton}
+            title="Agregar post-it"
+            onClick={handleAddStickyNote}
           >
-            <LayoutGrid size={13} />
+            <StickyNote size={14} />
           </button>
+          <div className={styles.zoomControls}>
+            <button type="button" className={styles.zoomButton} title="Acercar" onClick={() => zoomBy(1.2)}>
+              <Plus size={14} />
+            </button>
+            <span className={styles.zoomLevel}>{Math.round(viewport.zoom * 100)}%</span>
+            <button type="button" className={styles.zoomButton} title="Alejar" onClick={() => zoomBy(1 / 1.2)}>
+              <Minus size={14} />
+            </button>
+            <button type="button" className={styles.zoomButton} title="Centrar flujo" onClick={fitView}>
+              <Maximize size={13} />
+            </button>
+            <button
+              type="button"
+              className={styles.zoomButton}
+              title="Ordenar flujo (alinea los pasos de izquierda a derecha)"
+              onClick={handleAutoLayout}
+            >
+              <LayoutGrid size={13} />
+            </button>
+          </div>
         </div>
 
         {children}

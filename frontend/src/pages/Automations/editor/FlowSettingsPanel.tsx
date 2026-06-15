@@ -1,5 +1,8 @@
 import React from 'react'
-import { Modal, CustomSelect } from '@/components/common'
+import {
+  Modal
+} from '@/components/common'
+import { CustomSelect } from './config/configPrimitives'
 import type { FlowSettings } from '@/services/automationsService'
 import {
   CatalogSelect,
@@ -71,7 +74,7 @@ export const FlowSettingsPanel: React.FC<FlowSettingsPanelProps> = ({
 
         <Field
           label="Zona horaria del flujo"
-          help="Todos los nodos (Esperar, Scheduler, ventanas horarias) usan esta zona horaria"
+          help="Todos los nodos (Esperar, fecha programada y ventanas horarias) usan esta zona horaria"
         >
           <CustomSelect
             options={TIMEZONES}
@@ -192,21 +195,25 @@ export const FlowSettingsPanel: React.FC<FlowSettingsPanelProps> = ({
             />
           </Field>
           <Field label="Página de Messenger por defecto (opcional)">
-            <TextInput
+            <CatalogSelect
+              catalog="messengerPages"
               value={settings.defaultSenders.messengerPageId || ''}
-              placeholder="Página conectada por defecto"
-              onChange={(event) =>
-                set({ defaultSenders: { ...settings.defaultSenders, messengerPageId: event.target.value } })
+              onChange={(value) =>
+                set({ defaultSenders: { ...settings.defaultSenders, messengerPageId: value } })
               }
+              placeholder="Selecciona una página conectada"
+              aria-label="Página de Messenger por defecto"
             />
           </Field>
           <Field label="Cuenta de Instagram por defecto (opcional)">
-            <TextInput
+            <CatalogSelect
+              catalog="instagramAccounts"
               value={settings.defaultSenders.instagramAccountId || ''}
-              placeholder="Cuenta conectada por defecto"
-              onChange={(event) =>
-                set({ defaultSenders: { ...settings.defaultSenders, instagramAccountId: event.target.value } })
+              onChange={(value) =>
+                set({ defaultSenders: { ...settings.defaultSenders, instagramAccountId: value } })
               }
+              placeholder="Selecciona una cuenta conectada"
+              aria-label="Cuenta de Instagram por defecto"
             />
           </Field>
         </ConfigSection>

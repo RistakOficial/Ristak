@@ -1,18 +1,29 @@
 import { logger } from '../utils/logger.js'
 import {
-  createAgentReply,
   deleteAIAgentConfig,
   getAIAgentStatus,
-  getOpenAIApiKey,
   isAIAgentCredentialError,
+  isAIAgentOpenAIRequiredError,
+  requireOpenAIApiKey,
   saveRefinedAIAgentBusinessContextAnswer,
   saveAIAgentConfig,
   transcribeVoiceAudio,
   verifyOpenAIApiKey
 } from '../services/aiAgentService.js'
 import { getAgentRunTrace } from '../services/agentExecutionLedgerService.js'
+import { runSpecializedAgentReply, listAgentCategories } from '../agents/index.js'
 
 function sendAIAgentError(res, error, fallback, statusCode = 500) {
+  if (isAIAgentOpenAIRequiredError(error)) {
+    return res.status(error.statusCode || 409).json({
+      success: false,
+      error: error.message,
+      code: error.code,
+      needsOpenAIConfig: true,
+      ...(error.agentTrace ? { trace: error.agentTrace } : {})
+    })
+  }
+
   if (isAIAgentCredentialError(error)) {
     return res.status(error.statusCode || 409).json({
       success: false,
@@ -144,14 +155,7 @@ export async function saveBusinessContextAnswer(req, res) {
 
 export async function chat(req, res) {
   try {
-    const apiKey = await getOpenAIApiKey()
-
-    if (!apiKey) {
-      return res.status(409).json({
-        success: false,
-        error: 'Primero configura una API Key válida de OpenAI'
-      })
-    }
+    const apiKey = req.openAIApiKey || await requireOpenAIApiKey()
 
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : []
     const lastMessage = messages[messages.length - 1]
@@ -165,8 +169,12 @@ export async function chat(req, res) {
       })
     }
 
-    const result = await createAgentReply({
+    // Todo el chat pasa por los agentes especializados (OpenAI Agents SDK).
+    // Sin categoría (o con 'auto'), el triage clasifica el mensaje y lo
+    // transfiere al especialista correcto; el primer mensaje dirige la conversación.
+    const result = await runSpecializedAgentReply({
       apiKey,
+      category: req.body?.category || 'auto',
       messages,
       viewContext: req.body?.viewContext || {},
       userId: req.user?.userId
@@ -179,6 +187,21 @@ export async function chat(req, res) {
   } catch (error) {
     logger.error('Error en chat del agente AI:', error)
     sendAIAgentError(res, error, 'Error al generar respuesta del agente AI')
+  }
+}
+
+export async function listAgents(req, res) {
+  try {
+    res.json({
+      success: true,
+      data: listAgentCategories()
+    })
+  } catch (error) {
+    logger.error('Error listando agentes especializados:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Error al listar los agentes disponibles'
+    })
   }
 }
 
@@ -207,14 +230,7 @@ export async function getRunTrace(req, res) {
 
 export async function transcribeVoice(req, res) {
   try {
-    const apiKey = await getOpenAIApiKey()
-
-    if (!apiKey) {
-      return res.status(409).json({
-        success: false,
-        error: 'Primero configura una API Key válida de OpenAI'
-      })
-    }
+    const apiKey = req.openAIApiKey || await requireOpenAIApiKey()
 
     const audioBuffer = Buffer.isBuffer(req.body) ? req.body : null
 

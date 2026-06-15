@@ -163,17 +163,24 @@ async function getLocalContact(contactId) {
 
 /**
  * Garantiza que el contacto del mensaje exista localmente.
- * Si no existe lo descarga desde HighLevel (reutiliza la lógica del sync).
+ * El contactId que manda GHL se resuelve al ID local de Ristak (ghl_contact_id);
+ * si no existe se descarga desde HighLevel (reutiliza la lógica del sync).
  */
 async function ensureLocalContact({ contactId, apiToken, locationId }) {
-  let contact = await getLocalContact(contactId)
-  if (contact) return { contact, created: false }
+  if (!cleanString(contactId)) return { contact: null, created: false }
+
+  const { resolveContactIdByGhlId } = await import('./contactIdentityService.js')
+  const resolvedId = await resolveContactIdByGhlId(contactId)
+  if (resolvedId) {
+    const contact = await getLocalContact(resolvedId)
+    if (contact) return { contact, created: false }
+  }
 
   const { ensureContactExists } = await import('./highlevelSyncService.js')
   const usePostgres = Boolean(process.env.DATABASE_URL)
-  const created = await ensureContactExists(contactId, apiToken, usePostgres, locationId)
-  contact = await getLocalContact(contactId)
-  return { contact, created }
+  const ensured = await ensureContactExists(contactId, apiToken, usePostgres, locationId)
+  const contact = ensured.localContactId ? await getLocalContact(ensured.localContactId) : null
+  return { contact, created: Boolean(ensured.created) }
 }
 
 async function upsertWhatsAppRow({ message, contact, transport, direction, notifyNewInbound }) {

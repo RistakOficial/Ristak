@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { logger } from '../utils/logger.js'
@@ -10,6 +11,40 @@ const DATABASE_URL = process.env.DATABASE_URL
 const usePostgres = !!DATABASE_URL
 
 let db
+
+const DEFAULT_REPORT_TABLE_COLUMN_CONFIG = [
+  ['date', true],
+  ['profit', true],
+  ['revenue', true],
+  ['fixedBusinessExpenses', true],
+  ['businessExpenses', true],
+  ['spend', true],
+  ['roas', true],
+  ['new_customers', true],
+  ['cac', true],
+  ['appointments', true],
+  ['leads', true],
+  ['attendances', false],
+  ['transactions', false],
+  ['clicks', false],
+  ['reach', false],
+  ['cpc', false],
+  ['cpl', false],
+  ['cpa', false],
+  ['cpaAttendance', false],
+  ['visitors', false],
+  ['cpv', false],
+  ['webToInteresadosRate', false],
+  ['interesadosToApptsRate', false],
+  ['apptsToAttendanceRate', false],
+  ['attendanceToSalesRate', false],
+  ['attendanceToCustomersRate', false],
+  ['apptsToSalesRate', false]
+].map(([id, visible], order) => ({ id, visible, order }))
+
+const DEFAULT_REPORT_TABLE_CONFIG_VALUE = JSON.stringify(DEFAULT_REPORT_TABLE_COLUMN_CONFIG)
+const DEFAULT_REPORT_TABLE_CONFIG_KEYS = ['cashflow', 'attribution', 'campaigns']
+  .flatMap(reportType => ['day', 'month', 'year'].map(viewType => `table_reports_metrics_${reportType}_${viewType}`))
 
 const POSTGRES_CONNECT_RETRY_CODES = new Set([
   'ECONNREFUSED',
@@ -167,24 +202,52 @@ if (usePostgres) {
     return sql.replace(/'(?:[^']|'')*'|\?/g, (match) => (match === '?' ? `$${index++}` : match))
   }
 
+  const normalizePostgresSql = (sql) => (
+    sql
+      .replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'SERIAL PRIMARY KEY')
+      .replace(/AUTOINCREMENT/g, 'GENERATED ALWAYS AS IDENTITY')
+      .replace(/DATETIME/g, 'TIMESTAMP')
+  )
+
+  const createPostgresAdapter = (client) => ({
+    run: async (sql, params = []) => {
+      sql = normalizePostgresSql(sql)
+      sql = convertPlaceholders(sql)
+
+      const result = await client.query(sql, params)
+      return {
+        lastID: result.rows[0]?.id || null,
+        changes: result.rowCount
+      }
+    },
+
+    get: async (sql, params = []) => {
+      sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
+      sql = convertPlaceholders(sql)
+
+      const result = await client.query(sql, params)
+      return result.rows[0] || null
+    },
+
+    all: async (sql, params = []) => {
+      sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
+      sql = convertPlaceholders(sql)
+
+      const result = await client.query(sql, params)
+      return result.rows
+    },
+
+    exec: async (sql) => {
+      sql = normalizePostgresSql(sql)
+      await client.query(sql)
+    }
+  })
+
   db = {
     run: async (sql, params = []) => {
       const client = await connectWithRetry()
       try {
-        // Convertir sintaxis SQLite a PostgreSQL
-        sql = sql.replace(/AUTOINCREMENT/g, 'GENERATED ALWAYS AS IDENTITY')
-        sql = sql.replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'SERIAL PRIMARY KEY')
-        sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
-        // INSERT OR IGNORE se maneja específicamente donde se usa (ver app_config INSERT)
-
-        // Convertir placeholders ? a $1, $2, etc.
-        sql = convertPlaceholders(sql)
-
-        const result = await client.query(sql, params)
-        return {
-          lastID: result.rows[0]?.id || null,
-          changes: result.rowCount
-        }
+        return await createPostgresAdapter(client).run(sql, params)
       } finally {
         client.release()
       }
@@ -193,11 +256,7 @@ if (usePostgres) {
     get: async (sql, params = []) => {
       const client = await connectWithRetry()
       try {
-        sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
-        sql = convertPlaceholders(sql)
-
-        const result = await client.query(sql, params)
-        return result.rows[0] || null
+        return await createPostgresAdapter(client).get(sql, params)
       } finally {
         client.release()
       }
@@ -206,11 +265,7 @@ if (usePostgres) {
     all: async (sql, params = []) => {
       const client = await connectWithRetry()
       try {
-        sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
-        sql = convertPlaceholders(sql)
-
-        const result = await client.query(sql, params)
-        return result.rows
+        return await createPostgresAdapter(client).all(sql, params)
       } finally {
         client.release()
       }
@@ -219,10 +274,23 @@ if (usePostgres) {
     exec: async (sql) => {
       const client = await connectWithRetry()
       try {
-        sql = sql.replace(/AUTOINCREMENT/g, 'GENERATED ALWAYS AS IDENTITY')
-        sql = sql.replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'SERIAL PRIMARY KEY')
-        sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
-        await client.query(sql)
+        await createPostgresAdapter(client).exec(sql)
+      } finally {
+        client.release()
+      }
+    },
+
+    transaction: async (callback) => {
+      const client = await pool.connect()
+      const txDb = createPostgresAdapter(client)
+      try {
+        await client.query('BEGIN')
+        const result = await callback(txDb)
+        await client.query('COMMIT')
+        return result
+      } catch (error) {
+        await client.query('ROLLBACK')
+        throw error
       } finally {
         client.release()
       }
@@ -276,6 +344,18 @@ if (usePostgres) {
           else resolve()
         })
       })
+    },
+
+    transaction: async (callback) => {
+      await db.run('BEGIN IMMEDIATE')
+      try {
+        const result = await callback(db)
+        await db.run('COMMIT')
+        return result
+      } catch (error) {
+        await db.run('ROLLBACK')
+        throw error
+      }
     }
   }
 }
@@ -295,12 +375,63 @@ const CONTACT_PHONE_REFERENCE_TABLES = [
   { table: 'sessions', column: 'contact_id' }
 ]
 
-function getContactPhoneScore(contact = {}, canonicalPhone = '') {
-  let score = 0
+// Tablas que NO referencian contacts.id aunque tengan columna contact_id propia
+// (hoy no existe ninguna; las columnas tipo whatsapp_api_contact_id ya quedan
+// fuera porque la búsqueda es por nombre exacto de columna).
+let contactReferenceTablesCache = null
+
+// Descubre dinámicamente todas las tablas con columna contact_id (FK lógica a
+// contacts.id). Evita que merges/migraciones dejen referencias huérfanas cuando
+// se agregan tablas nuevas y nadie actualiza las listas estáticas.
+export async function getContactReferenceTables() {
+  if (contactReferenceTablesCache) return contactReferenceTablesCache
+
+  const names = []
+  try {
+    if (usePostgres) {
+      const rows = await db.all(`
+        SELECT c.table_name AS name
+        FROM information_schema.columns c
+        JOIN information_schema.tables t
+          ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+        WHERE c.column_name = 'contact_id'
+          AND c.table_schema = 'public'
+          AND t.table_type = 'BASE TABLE'
+      `)
+      for (const row of rows) names.push(row.name)
+    } else {
+      const tables = await db.all(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+      for (const table of tables) {
+        const columns = await db.all(`PRAGMA table_info("${table.name}")`)
+        if (columns.some(column => column.name === 'contact_id')) names.push(table.name)
+      }
+    }
+  } catch (err) {
+    logger.warn(`No se pudieron descubrir tablas con contact_id, usando lista estática: ${err.message}`)
+    return CONTACT_PHONE_REFERENCE_TABLES.map(reference => ({
+      table: reference.table,
+      deleteOnConflict: Boolean(reference.deleteOnConflict)
+    }))
+  }
+
+  contactReferenceTablesCache = names
+    .filter(name => name !== 'contacts')
+    .map(name => ({ table: name, deleteOnConflict: name === 'appointment_attendance_signals' }))
+
+  return contactReferenceTablesCache
+}
+
+export function isWhatsAppAutoCreatedContact(contact = {}) {
   const id = String(contact.id || '')
   const source = String(contact.source || '').toLowerCase()
+  return id.startsWith('waapi_contact_') || source === 'whatsapp_api'
+}
 
-  if (!id.startsWith('waapi_contact_')) score += 1000
+function getContactPhoneScore(contact = {}, canonicalPhone = '') {
+  let score = 0
+  const source = String(contact.source || '').toLowerCase()
+
+  if (!isWhatsAppAutoCreatedContact(contact)) score += 1000
   if (Number(contact.total_paid || 0) > 0) score += 500
   if (Number(contact.purchases_count || 0) > 0) score += 250
   if (source.includes('gohighlevel') || source.includes('highlevel')) score += 150
@@ -318,19 +449,21 @@ function pickContactPhoneWinner(contacts = [], canonicalPhone = '') {
 }
 
 async function updateContactReferences(fromId, toId) {
-  for (const reference of CONTACT_PHONE_REFERENCE_TABLES) {
+  const references = await getContactReferenceTables()
+
+  for (const reference of references) {
     try {
       await db.run(
-        `UPDATE ${reference.table} SET ${reference.column} = ? WHERE ${reference.column} = ?`,
+        `UPDATE ${reference.table} SET contact_id = ? WHERE contact_id = ?`,
         [toId, fromId]
       )
     } catch (err) {
       if (reference.deleteOnConflict) {
-        await db.run(`DELETE FROM ${reference.table} WHERE ${reference.column} = ?`, [fromId])
+        await db.run(`DELETE FROM ${reference.table} WHERE contact_id = ?`, [fromId])
         continue
       }
 
-      logger.warn(`Advertencia al fusionar referencias ${reference.table}.${reference.column}: ${err.message}`)
+      logger.warn(`Advertencia al fusionar referencias ${reference.table}.contact_id: ${err.message}`)
     }
   }
 }
@@ -459,6 +592,91 @@ async function reconcileCanonicalContactPhones() {
 
   if (changed > 0) {
     logger.success(`✅ Migración: ${changed} contactos normalizados/fusionados por teléfono`)
+  }
+}
+
+// Prefijos de IDs generados por Ristak. Cualquier contacto cuyo id NO tenga uno
+// de estos prefijos se asume keyed por el ID de HighLevel (comportamiento legacy:
+// el sync usaba el ID de GHL como primary key local).
+const RISTAK_CONTACT_ID_PREFIXES = ['rstk_', 'waapi_', 'manual_contact_', 'meta_social_contact_', 'site_contact_']
+
+// Copia el ID de GHL (que era la primary key) a la columna ghl_contact_id para
+// que el vínculo con HighLevel sea explícito y deje de depender de la PK.
+async function backfillGhlContactIds() {
+  const exclusions = RISTAK_CONTACT_ID_PREFIXES.map(prefix => `id NOT LIKE '${prefix}%'`).join(' AND ')
+  const result = await db.run(`
+    UPDATE contacts
+    SET ghl_contact_id = id
+    WHERE (ghl_contact_id IS NULL OR ghl_contact_id = '')
+      AND ${exclusions}
+  `)
+
+  if (result?.changes > 0) {
+    logger.success(`✅ Migración: ${result.changes} contactos de HighLevel ligados vía ghl_contact_id`)
+  }
+}
+
+// Re-identifica los contactos creados por WhatsApp (waapi_contact_<hash>) con el
+// ID propio de Ristak (rstk_contact_<uuid>), re-apuntando todas las tablas que
+// los referencian. El orden insertar-copia → mover referencias → borrar original
+// es seguro tanto en SQLite como en PostgreSQL con FKs activas.
+async function migrateWhatsAppContactIdsToRistak() {
+  const legacyRows = await db.all(`SELECT id FROM contacts WHERE id LIKE 'waapi_contact_%'`)
+  if (!legacyRows.length) return
+
+  const referenceTables = await getContactReferenceTables()
+  let migrated = 0
+
+  for (const legacy of legacyRows) {
+    const contact = await db.get('SELECT * FROM contacts WHERE id = ?', [legacy.id])
+    if (!contact) continue
+
+    const newId = `rstk_contact_${crypto.randomUUID()}`
+    const columns = Object.keys(contact)
+    const values = columns.map(column => {
+      if (column === 'id') return newId
+      // phone/email se insertan NULL y se restauran al final para no chocar con
+      // sus constraints UNIQUE mientras conviven la copia y el original.
+      if (column === 'phone' || column === 'email') return null
+      const value = contact[column]
+      if (value instanceof Date) return value
+      if (value && typeof value === 'object') {
+        try { return JSON.stringify(value) } catch { return null }
+      }
+      return value
+    })
+
+    try {
+      await db.run(
+        `INSERT INTO contacts (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+        values
+      )
+
+      for (const reference of referenceTables) {
+        try {
+          await db.run(`UPDATE ${reference.table} SET contact_id = ? WHERE contact_id = ?`, [newId, legacy.id])
+        } catch (err) {
+          if (reference.deleteOnConflict) {
+            await db.run(`DELETE FROM ${reference.table} WHERE contact_id = ?`, [legacy.id])
+            continue
+          }
+          logger.warn(`No se pudo reasignar ${reference.table}.contact_id de ${legacy.id} a ${newId}: ${err.message}`)
+        }
+      }
+
+      await db.run('DELETE FROM contacts WHERE id = ?', [legacy.id])
+      await db.run(
+        'UPDATE contacts SET phone = ?, email = ? WHERE id = ?',
+        [contact.phone || null, contact.email || null, newId]
+      )
+      migrated += 1
+    } catch (err) {
+      logger.warn(`No se pudo migrar el contacto ${legacy.id} a ID Ristak: ${err.message}`)
+    }
+  }
+
+  if (migrated > 0) {
+    logger.success(`✅ Migración: ${migrated} contactos WhatsApp ahora usan ID propio rstk_contact_*`)
   }
 }
 
@@ -718,7 +936,7 @@ async function initTables() {
       CREATE TABLE IF NOT EXISTS ai_agent_config (
         id ${usePostgres ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
         openai_api_key_encrypted TEXT,
-        model TEXT DEFAULT 'gpt-5.5',
+        model TEXT DEFAULT 'gpt-5.4-nano',
         business_context TEXT,
         market_context TEXT,
         ideal_customer TEXT,
@@ -755,6 +973,64 @@ async function initTables() {
       }
     }
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS ai_business_profile (
+        id ${usePostgres ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
+        source_context TEXT,
+        source_hash TEXT,
+        profile_json TEXT,
+        prompt_parameters_json TEXT,
+        profile_summary TEXT,
+        business_name TEXT,
+        industry TEXT,
+        business_type TEXT,
+        offerings_summary TEXT,
+        pricing_summary TEXT,
+        location_summary TEXT,
+        payment_summary TEXT,
+        contact_summary TEXT,
+        extraction_status TEXT DEFAULT 'empty',
+        extraction_error TEXT,
+        extracted_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    const aiBusinessProfileColumns = [
+      ['source_context', 'TEXT'],
+      ['source_hash', 'TEXT'],
+      ['profile_json', 'TEXT'],
+      ['prompt_parameters_json', 'TEXT'],
+      ['profile_summary', 'TEXT'],
+      ['business_name', 'TEXT'],
+      ['industry', 'TEXT'],
+      ['business_type', 'TEXT'],
+      ['offerings_summary', 'TEXT'],
+      ['pricing_summary', 'TEXT'],
+      ['location_summary', 'TEXT'],
+      ['payment_summary', 'TEXT'],
+      ['contact_summary', 'TEXT'],
+      ['extraction_status', "TEXT DEFAULT 'empty'"],
+      ['extraction_error', 'TEXT'],
+      ['extracted_at', 'DATETIME']
+    ]
+
+    for (const [columnName, columnType] of aiBusinessProfileColumns) {
+      try {
+        await db.run(`ALTER TABLE ai_business_profile ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Ignore if the column already exists.
+      }
+    }
+
+    try {
+      await db.run('CREATE INDEX IF NOT EXISTS idx_ai_business_profile_source_hash ON ai_business_profile(source_hash)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_ai_business_profile_status ON ai_business_profile(extraction_status)')
+    } catch (err) {
+      logger.warn('Advertencia al crear índices de ai_business_profile:', err.message)
+    }
+
     // Insertar configuración por defecto de Analytics (visible por defecto)
     // Usar INSERT con ON CONFLICT para compatibilidad SQLite/PostgreSQL
     try {
@@ -780,11 +1056,23 @@ async function initTables() {
     try {
       await db.run(`
         INSERT INTO app_config (config_key, config_value)
-        VALUES ('report_manual_business_expenses_enabled', '0')
+        VALUES ('report_manual_business_expenses_enabled', '1')
         ON CONFLICT (config_key) DO NOTHING
       `)
     } catch (err) {
       // Ignore si ya existe
+    }
+
+    for (const configKey of DEFAULT_REPORT_TABLE_CONFIG_KEYS) {
+      try {
+        await db.run(`
+          INSERT INTO app_config (config_key, config_value)
+          VALUES (?, ?)
+          ON CONFLICT (config_key) DO NOTHING
+        `, [configKey, DEFAULT_REPORT_TABLE_CONFIG_VALUE])
+      } catch (err) {
+        // Ignore si ya existe
+      }
     }
 
     // Almacenamiento multimedia centralizado. Estas tablas son seguras para
@@ -1148,6 +1436,23 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definition_sources_definition ON contact_custom_field_definition_sources(definition_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definition_sources_site ON contact_custom_field_definition_sources(source_site_id)')
 
+    // Campos variables: parámetros de cuenta/negocio que no dependen de un contacto.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS variable_fields (
+        id TEXT PRIMARY KEY,
+        field_key TEXT NOT NULL,
+        label TEXT NOT NULL,
+        value_text TEXT,
+        description TEXT,
+        archived INTEGER DEFAULT 0,
+        created_by_user_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_variable_fields_key ON variable_fields(LOWER(field_key)) WHERE archived = 0')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_variable_fields_archived ON variable_fields(archived, updated_at)')
+
     // Tabla de contactos
     await db.run(`
       CREATE TABLE IF NOT EXISTS contacts (
@@ -1176,6 +1481,7 @@ async function initTables() {
         meta_purchase_event_sent_at DATETIME,
         meta_purchase_event_id TEXT,
         preferred_whatsapp_phone_number_id TEXT,
+        ghl_contact_id TEXT,
         custom_fields ${usePostgres ? "JSONB DEFAULT '[]'::jsonb" : "TEXT DEFAULT '[]'"},
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -1188,7 +1494,14 @@ async function initTables() {
       // Columna ya existe, ignorar.
     }
 
+    try {
+      await db.run('ALTER TABLE contacts ADD COLUMN ghl_contact_id TEXT')
+    } catch (err) {
+      // Columna ya existe, ignorar.
+    }
+
     // Índices para contacts
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_ghl_contact_id ON contacts(ghl_contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at)')
@@ -1202,6 +1515,48 @@ async function initTables() {
         throw err
       }
     }
+
+    // Enlaces de disparo: URL publica con ID propio que registra cada visita
+    // antes de redirigir al destino final.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS trigger_links (
+        id TEXT PRIMARY KEY,
+        public_id TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        destination_url TEXT NOT NULL,
+        description TEXT,
+        active INTEGER DEFAULT 1,
+        archived INTEGER DEFAULT 0,
+        click_count INTEGER DEFAULT 0,
+        last_clicked_at DATETIME,
+        created_by_user_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS trigger_link_events (
+        id TEXT PRIMARY KEY,
+        trigger_link_id TEXT NOT NULL,
+        public_id TEXT NOT NULL,
+        contact_id TEXT,
+        visitor_id TEXT,
+        ip_address TEXT,
+        user_agent TEXT,
+        referrer TEXT,
+        query_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (trigger_link_id) REFERENCES trigger_links(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_trigger_links_public_id ON trigger_links(public_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_trigger_links_active ON trigger_links(active, archived)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_trigger_links_updated ON trigger_links(updated_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_trigger_link_events_link ON trigger_link_events(trigger_link_id, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_trigger_link_events_contact ON trigger_link_events(contact_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_trigger_link_events_public ON trigger_link_events(public_id, created_at)')
 
     // Catálogo local de productos/precios.
     // Ristak puede operar sin HighLevel; cuando GHL se conecta, estos registros
@@ -2097,13 +2452,6 @@ async function initTables() {
       )
     `)
 
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS whatsapp_meta_direct_nonces (
-        nonce TEXT PRIMARY KEY,
-        purpose TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_qr_sessions (
@@ -2124,6 +2472,14 @@ async function initTables() {
         last_connected_at DATETIME,
         last_disconnected_at DATETIME,
         FOREIGN KEY (phone_number_id) REFERENCES whatsapp_api_phone_numbers(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_meta_direct_nonces (
+        nonce TEXT PRIMARY KEY,
+        purpose TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
 
@@ -2937,11 +3293,168 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_agent_pending_actions_run ON agent_pending_actions(run_id, status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_agent_tool_idempotency_run ON agent_tool_idempotency(run_id, tool_name)')
 
+    // Memoria persistente de los agentes IA por especialidad (citas, pagos, etc.)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS ai_agent_memories (
+        id TEXT PRIMARY KEY,
+        category TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_ai_agent_memories_category ON ai_agent_memories(category, updated_at)')
+
+    // Agente conversacional (atiende chats de WhatsApp): configuración global,
+    // estado por conversación/contacto y bitácora de eventos auditables.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agent_config (
+        id INTEGER PRIMARY KEY,
+        enabled INTEGER DEFAULT 0,
+        model TEXT DEFAULT 'gpt-5.4-nano',
+        objective TEXT DEFAULT 'citas',
+        custom_objective TEXT,
+        success_action TEXT DEFAULT 'ready_for_human',
+        required_data TEXT,
+        handoff_rules TEXT,
+        extra_instructions TEXT,
+        allow_emojis INTEGER DEFAULT 0,
+        hide_attended INTEGER DEFAULT 0,
+        hide_attended_notifications INTEGER DEFAULT 0,
+        default_calendar_id TEXT,
+        closing_strategy_mode TEXT DEFAULT 'system',
+        closing_strategy_custom TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    // Columnas agregadas después del despliegue inicial del agente conversacional
+    for (const [columnName, columnType] of [
+      ['model', "TEXT DEFAULT 'gpt-5.4-nano'"],
+      ['hide_attended_notifications', 'INTEGER'],
+      ['closing_strategy_mode', "TEXT DEFAULT 'system'"],
+      ['closing_strategy_custom', 'TEXT']
+    ]) {
+      try {
+        if (usePostgres) {
+          await db.run(`ALTER TABLE conversational_agent_config ADD COLUMN IF NOT EXISTS ${columnName} ${columnType}`)
+        } else {
+          await db.run(`ALTER TABLE conversational_agent_config ADD COLUMN ${columnName} ${columnType}`)
+        }
+      } catch (err) {
+        // La columna ya existe.
+      }
+    }
+
+    // Varios agentes conversacionales: cada uno con su objetivo, estrategia,
+    // acciones al cumplir y filtros de entrada (etiquetas, frases, canal, calendario).
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agents (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        enabled INTEGER DEFAULT 1,
+        model TEXT DEFAULT 'gpt-5.4-nano',
+        position INTEGER DEFAULT 0,
+        objective TEXT DEFAULT 'citas',
+        custom_objective TEXT,
+        success_action TEXT DEFAULT 'ready_for_human',
+        success_extras TEXT,
+        required_data TEXT,
+        handoff_rules TEXT,
+        extra_instructions TEXT,
+        allow_emojis INTEGER DEFAULT 0,
+        hide_attended INTEGER DEFAULT 0,
+        hide_attended_notifications INTEGER DEFAULT 0,
+        default_calendar_id TEXT,
+        closing_strategy_mode TEXT DEFAULT 'system',
+        closing_strategy_custom TEXT,
+        response_delay_config TEXT,
+        reply_delivery_config TEXT,
+        goal_workflow_config TEXT,
+        entry_filters TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    for (const [columnName, columnType] of [
+      ['model', "TEXT DEFAULT 'gpt-5.4-nano'"],
+      ['hide_attended', 'INTEGER DEFAULT 0'],
+      ['hide_attended_notifications', 'INTEGER DEFAULT 0'],
+      ['response_delay_config', 'TEXT'],
+      ['reply_delivery_config', 'TEXT'],
+      ['goal_workflow_config', 'TEXT']
+    ]) {
+      try {
+        if (usePostgres) {
+          await db.run(`ALTER TABLE conversational_agents ADD COLUMN IF NOT EXISTS ${columnName} ${columnType}`)
+        } else {
+          await db.run(`ALTER TABLE conversational_agents ADD COLUMN ${columnName} ${columnType}`)
+        }
+      } catch (err) {
+        // La columna ya existe.
+      }
+    }
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conversational_agents_enabled ON conversational_agents(enabled, position)')
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agent_state (
+        contact_id TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'active',
+        signal TEXT,
+        signal_reason TEXT,
+        signal_summary TEXT,
+        signal_at DATETIME,
+        last_inbound_message_id TEXT,
+        last_answered_inbound_message_id TEXT,
+        last_reply_at DATETIME,
+        updated_by TEXT,
+        agent_id TEXT,
+        closing_context_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_state_signal ON conversational_agent_state(signal, signal_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_state_status ON conversational_agent_state(status, updated_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_state_agent_status ON conversational_agent_state(agent_id, status, updated_at)')
+
+    // Columnas agregadas al evolucionar el agente conversacional.
+    for (const [columnName, columnType] of [
+      ['agent_id', 'TEXT'],
+      ['last_answered_inbound_message_id', 'TEXT'],
+      ['closing_context_json', 'TEXT']
+    ]) {
+      try {
+        if (usePostgres) {
+          await db.run(`ALTER TABLE conversational_agent_state ADD COLUMN IF NOT EXISTS ${columnName} ${columnType}`)
+        } else {
+          await db.run(`ALTER TABLE conversational_agent_state ADD COLUMN ${columnName} ${columnType}`)
+        }
+      } catch (err) {
+        // La columna ya existe.
+      }
+    }
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agent_events (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT,
+        event_type TEXT NOT NULL,
+        detail_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_events_contact ON conversational_agent_events(contact_id, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_events_type ON conversational_agent_events(event_type, created_at)')
+
     const userOptionalColumns = [
       ['first_name', 'TEXT'],
       ['last_name', 'TEXT'],
       ['phone', 'TEXT'],
       ['business_name', 'TEXT'],
+      ['access_config', 'TEXT'],
       ['api_token_hash', 'TEXT'],
       ['api_token_prefix', 'TEXT'],
       ['api_token_last_four', 'TEXT'],
@@ -2963,6 +3476,7 @@ async function initTables() {
     }
 
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_token_hash ON users(api_token_hash)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone)')
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS oauth_clients (
@@ -3111,15 +3625,123 @@ async function initTables() {
         description TEXT,
         status TEXT DEFAULT 'draft',
         flow ${usePostgres ? "JSONB DEFAULT '{}'::jsonb" : "TEXT DEFAULT '{}'"},
+        published_flow ${usePostgres ? 'JSONB' : 'TEXT'},
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         published_at DATETIME
       )
     `)
 
+    try {
+      await db.run(`ALTER TABLE automations ADD COLUMN published_flow ${usePostgres ? 'JSONB' : 'TEXT'}`)
+    } catch (err) {
+      if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+        logger.warn(`Advertencia al migrar automations.published_flow: ${err.message}`)
+      }
+    }
+    await db
+      .run("UPDATE automations SET published_flow = flow WHERE status = 'published' AND published_flow IS NULL")
+      .catch((err) => logger.warn(`Advertencia al poblar automations.published_flow: ${err.message}`))
+
     await db.run('CREATE INDEX IF NOT EXISTS idx_automations_folder ON automations(folder_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_automations_status ON automations(status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_automation_folders_position ON automation_folders(position)')
+
+    // Inscripciones de contactos en automatizaciones (historial y posición
+    // actual en el flujo; las llena el motor de ejecución)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS automation_enrollments (
+        id TEXT PRIMARY KEY,
+        automation_id TEXT NOT NULL,
+        contact_id TEXT,
+        contact_name TEXT,
+        status TEXT DEFAULT 'active',
+        current_node_id TEXT,
+        log ${usePostgres ? "JSONB DEFAULT '[]'::jsonb" : "TEXT DEFAULT '[]'"},
+        entered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automation_enrollments_auto ON automation_enrollments(automation_id, status)')
+    // Columnas de espera del motor (tablas creadas antes de este cambio)
+    for (const column of ['resume_at DATETIME', 'wait_kind TEXT', "context TEXT DEFAULT '{}'"]) {
+      await db.run(`ALTER TABLE automation_enrollments ADD COLUMN ${column}`).catch(() => {})
+    }
+
+    // Ejecuciones ya tomadas por el disparador programado. La llave única evita
+    // que el tick del motor dispare varias veces el mismo horario.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS automation_schedule_runs (
+        id TEXT PRIMARY KEY,
+        automation_id TEXT NOT NULL,
+        trigger_id TEXT NOT NULL,
+        run_key TEXT NOT NULL,
+        scheduled_for DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (automation_id, trigger_id, run_key)
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automation_schedule_runs_auto ON automation_schedule_runs(automation_id, created_at)')
+
+    // Contactos agregados manualmente a una automatización desde su ficha.
+    // Permite mandarlos al flujo en ese momento o dejarlos programados para
+    // que el tick del motor los inscriba después.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS automation_contact_enrollment_jobs (
+        id TEXT PRIMARY KEY,
+        automation_id TEXT NOT NULL,
+        contact_id TEXT NOT NULL,
+        contact_name TEXT,
+        scheduled_at DATETIME NOT NULL,
+        status TEXT DEFAULT 'scheduled',
+        enrollment_id TEXT,
+        error TEXT,
+        created_by TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        executed_at DATETIME
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automation_contact_jobs_contact ON automation_contact_enrollment_jobs(contact_id, status, scheduled_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automation_contact_jobs_due ON automation_contact_enrollment_jobs(status, scheduled_at)')
+    // Etiquetas locales de contactos (array JSON), usadas por automatizaciones
+    await db.run(`ALTER TABLE contacts ADD COLUMN tags TEXT DEFAULT '[]'`).catch(() => {})
+
+    // Catálogo de etiquetas de contactos: contacts.tags guarda los IDs, así el
+    // usuario puede renombrar una etiqueta sin romper filtros ni automatizaciones.
+    // Las etiquetas internas (Cliente, Cita agendada, Prospecto) no viven aquí:
+    // se calculan en contactTagsService según la actividad del contacto.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS contact_tags (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    // Carpetas para organizar etiquetas (mismo patrón que campos personalizados)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS contact_tag_folders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run(`ALTER TABLE contact_tags ADD COLUMN folder_id TEXT`).catch(() => {})
+
+    // Archivos adjuntos de automatizaciones (imágenes, videos, audios, docs)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS automation_assets (
+        id TEXT PRIMARY KEY,
+        filename TEXT,
+        content_type TEXT NOT NULL,
+        content_base64 TEXT NOT NULL,
+        size_bytes INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
 
     // Mensajes automáticos de citas (recordatorios y confirmaciones).
     // Cada fila es una "cajita" configurable desde la página de Calendarios.
@@ -3181,11 +3803,304 @@ async function initTables() {
       logger.warn('Advertencia al reconciliar teléfonos de contactos:', err.message)
     }
 
+    try {
+      await backfillGhlContactIds()
+    } catch (err) {
+      logger.warn('Advertencia al ligar contactos con ghl_contact_id:', err.message)
+    }
+
+    try {
+      await migrateWhatsAppContactIdsToRistak()
+    } catch (err) {
+      logger.warn('Advertencia al migrar IDs de contactos WhatsApp a Ristak:', err.message)
+    }
+
+    try {
+      await migrateLegacyContactTagsToCatalog()
+    } catch (err) {
+      logger.warn('Advertencia al migrar etiquetas de contactos al catálogo:', err.message)
+    }
+
+    try {
+      await migrateTagIdsToSlugs()
+    } catch (err) {
+      logger.warn('Advertencia al migrar IDs de etiquetas a slugs:', err.message)
+    }
+
+    try {
+      await cleanupReservedSystemContactTags()
+    } catch (err) {
+      logger.warn('Advertencia al limpiar etiquetas internas de contactos:', err.message)
+    }
+
+    try {
+      await db.run("ALTER TABLE appointment_reminders ADD COLUMN no_confirm_action TEXT DEFAULT 'no_action'")
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run("ALTER TABLE appointment_reminders ADD COLUMN bypass_automations INTEGER DEFAULT 0")
+    } catch (_) { /* columna ya existe */ }
+
+    // Ventanas de confirmación con IA: acumula mensajes durante 3 min antes de clasificar.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS appointment_confirmation_windows (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        appointment_id TEXT NOT NULL,
+        reminder_send_id TEXT NOT NULL,
+        status TEXT DEFAULT 'waiting',
+        accumulated_messages TEXT DEFAULT '[]',
+        bypass_automations INTEGER DEFAULT 0,
+        last_message_at DATETIME NOT NULL,
+        result TEXT,
+        result_detail TEXT,
+        processed_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(contact_id, appointment_id)
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conf_windows_contact ON appointment_confirmation_windows(contact_id, status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conf_windows_last_msg ON appointment_confirmation_windows(last_message_at, status)')
+
     logger.success('Todas las tablas inicializadas correctamente')
   } catch (error) {
     logger.error('Error inicializando tablas:', error)
     throw error
   }
+}
+
+/**
+ * Migración única: contacts.tags guardaba nombres sueltos; ahora guarda IDs del
+ * catálogo contact_tags. Crea las etiquetas que falten y reescribe los arrays.
+ * Idempotente: cuando todo ya son IDs del catálogo no toca nada.
+ * Vive aquí (y no en contactTagsService) para no crear un ciclo de imports
+ * durante el top-level await de initTables().
+ */
+
+// IDs/nombres de las etiquetas internas calculadas (viven en contactTagsService;
+// se duplican aquí para no crear un ciclo de imports durante initTables).
+const SYSTEM_TAG_ALIASES = {
+  client: 'client',
+  customer: 'client',
+  cliente: 'client',
+  booked: 'booked',
+  appointment: 'booked',
+  cita: 'booked',
+  cita_agendada: 'booked',
+  lead: 'lead',
+  prospecto: 'lead',
+  tag_sys_customer: 'client',
+  tag_sys_appointment: 'booked',
+  tag_sys_lead: 'lead'
+}
+const SYSTEM_TAG_SLUG_IDS = new Set(Object.keys(SYSTEM_TAG_ALIASES))
+const SYSTEM_TAG_NAMES = new Set(['cliente', 'cita agendada', 'prospecto'])
+
+function normalizeSystemTagValue(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+}
+
+function isReservedSystemTagValue(value) {
+  const normalized = normalizeSystemTagValue(value)
+  return SYSTEM_TAG_SLUG_IDS.has(normalized) || SYSTEM_TAG_NAMES.has(normalized)
+}
+
+/** Slug legible para el ID de una etiqueta: "Carromagic" → carromagic */
+function tagSlug(name) {
+  const slug = String(name || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60)
+  return slug || 'etiqueta'
+}
+
+/** Slug único: agrega sufijo numérico si ya está ocupado o es una interna */
+function uniqueTagSlug(name, takenIds) {
+  const base = tagSlug(name)
+  let candidate = base
+  for (let n = 2; takenIds.has(candidate) || SYSTEM_TAG_SLUG_IDS.has(candidate); n += 1) {
+    candidate = `${base}_${n}`
+  }
+  return candidate
+}
+
+async function migrateLegacyContactTagsToCatalog() {
+  const normalizeName = (value) => String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+
+  const rows = await db.all(
+    `SELECT id, tags FROM contacts WHERE tags IS NOT NULL AND tags != '[]' AND tags != ''`
+  ).catch(() => [])
+  if (!rows.length) return
+
+  const catalogRows = await db.all('SELECT id, name FROM contact_tags').catch(() => [])
+  const idsInCatalog = new Set(catalogRows.map((row) => row.id))
+  const idByName = new Map(catalogRows.map((row) => [normalizeName(row.name), row.id]))
+
+  let migrated = 0
+  for (const row of rows) {
+    let tags
+    try {
+      tags = JSON.parse(row.tags)
+    } catch {
+      continue
+    }
+    if (!Array.isArray(tags) || tags.length === 0) continue
+    if (tags.every((value) => idsInCatalog.has(String(value)) || isReservedSystemTagValue(value))) continue
+
+    const next = []
+    for (const value of tags) {
+      const raw = String(value || '').trim()
+      if (!raw) continue
+      if (isReservedSystemTagValue(raw)) {
+        continue
+      }
+      if (idsInCatalog.has(raw)) {
+        next.push(raw)
+        continue
+      }
+      const existingId = idByName.get(normalizeName(raw))
+      if (existingId) {
+        next.push(existingId)
+        continue
+      }
+      const newId = uniqueTagSlug(normalizeName(raw), idsInCatalog)
+      await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [newId, raw.slice(0, 60)])
+      idsInCatalog.add(newId)
+      idByName.set(normalizeName(raw), newId)
+      next.push(newId)
+    }
+
+    await db.run('UPDATE contacts SET tags = ? WHERE id = ?', [JSON.stringify([...new Set(next)]), row.id])
+    migrated += 1
+  }
+  if (migrated > 0) {
+    logger.info(`Etiquetas de contactos migradas a IDs de catálogo en ${migrated} contactos`)
+  }
+}
+
+async function cleanupReservedSystemContactTags() {
+  const catalogRows = await db.all('SELECT id, name FROM contact_tags').catch(() => [])
+  const reservedRows = catalogRows.filter((row) => (
+    isReservedSystemTagValue(row.id) || isReservedSystemTagValue(row.name)
+  ))
+  const reservedIds = new Set(reservedRows.map((row) => String(row.id)))
+
+  for (const row of reservedRows) {
+    await db.run('DELETE FROM contact_tags WHERE id = ?', [row.id])
+  }
+
+  const contactRows = await db.all(
+    `SELECT id, tags FROM contacts WHERE tags IS NOT NULL AND tags != '[]' AND tags != ''`
+  ).catch(() => [])
+  let cleanedContacts = 0
+  for (const row of contactRows) {
+    let tags
+    try {
+      tags = JSON.parse(row.tags)
+    } catch {
+      continue
+    }
+    if (!Array.isArray(tags)) continue
+    const next = tags.filter((value) => {
+      const raw = String(value || '').trim()
+      return raw && !reservedIds.has(raw) && !isReservedSystemTagValue(raw)
+    })
+    if (next.length === tags.length) continue
+    await db.run('UPDATE contacts SET tags = ? WHERE id = ?', [JSON.stringify([...new Set(next)]), row.id])
+    cleanedContacts += 1
+  }
+
+  if (reservedRows.length > 0 || cleanedContacts > 0) {
+    logger.info(`Etiquetas internas retiradas del catálogo editable: ${reservedRows.length}; contactos limpiados: ${cleanedContacts}`)
+  }
+}
+
+/**
+ * Migración única: los IDs de etiquetas pasaron de tag_<uuid> a slugs legibles
+ * derivados del nombre ("Carromagic" → carromagic). Reescribe el catálogo,
+ * los arrays de contacts.tags y las referencias guardadas en automatizaciones
+ * y agentes conversacionales. Idempotente: sin IDs con formato uuid no hace nada.
+ */
+async function migrateTagIdsToSlugs() {
+  const UUID_TAG_ID = /^tag_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+  const rows = await db.all('SELECT id, name FROM contact_tags').catch(() => [])
+  const legacyRows = rows.filter((row) => UUID_TAG_ID.test(String(row.id)))
+  if (!legacyRows.length) return
+
+  const taken = new Set(rows.map((row) => row.id))
+  const renames = []
+  for (const row of legacyRows) {
+    const newId = uniqueTagSlug(row.name, taken)
+    taken.delete(row.id)
+    taken.add(newId)
+    renames.push({ oldId: row.id, newId })
+  }
+
+  for (const { oldId, newId } of renames) {
+    await db.run('UPDATE contact_tags SET id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newId, oldId])
+  }
+
+  // contacts.tags: reemplazar ID viejo → slug en cada array
+  for (const { oldId, newId } of renames) {
+    const contacts = await db.all('SELECT id, tags FROM contacts WHERE tags LIKE ?', [`%${oldId}%`]).catch(() => [])
+    for (const contact of contacts) {
+      let tags
+      try {
+        tags = JSON.parse(contact.tags)
+      } catch {
+        continue
+      }
+      if (!Array.isArray(tags)) continue
+      const next = [...new Set(tags.map((value) => (value === oldId ? newId : value)))]
+      await db.run('UPDATE contacts SET tags = ? WHERE id = ?', [JSON.stringify(next), contact.id])
+    }
+  }
+
+  // Referencias guardadas en JSON: flujos de automatizaciones y reglas de los
+  // agentes conversacionales (los uuid son únicos: el replace textual es seguro)
+  const jsonTargets = [
+    { table: 'automations', key: 'id', columns: ['flow'] },
+    { table: 'conversational_agents', key: 'id', columns: ['entry_filters', 'success_extras', 'handoff_rules', 'required_data'] },
+    { table: 'conversational_agent_config', key: 'id', columns: ['handoff_rules', 'required_data'] }
+  ]
+  for (const target of jsonTargets) {
+    const tableRows = await db.all(`SELECT * FROM ${target.table}`).catch(() => [])
+    for (const row of tableRows) {
+      const updates = []
+      const params = []
+      for (const column of target.columns) {
+        const raw = row[column]
+        if (typeof raw !== 'string' || !raw) continue
+        let next = raw
+        for (const { oldId, newId } of renames) {
+          if (next.includes(oldId)) next = next.split(oldId).join(newId)
+        }
+        if (next !== raw) {
+          updates.push(`${column} = ?`)
+          params.push(next)
+        }
+      }
+      if (updates.length > 0) {
+        params.push(row[target.key])
+        await db.run(`UPDATE ${target.table} SET ${updates.join(', ')} WHERE ${target.key} = ?`, params)
+      }
+    }
+  }
+
+  logger.info(`IDs de etiquetas migrados a slugs legibles: ${renames.length} etiqueta${renames.length === 1 ? '' : 's'}`)
 }
 
 // Inicializar al importar

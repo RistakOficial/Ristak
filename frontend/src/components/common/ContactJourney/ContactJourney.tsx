@@ -442,7 +442,7 @@ const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyE
   })
 
   return [...otherEvents, ...mergedDailyContactEvents].sort(
-    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
   )
 }
 

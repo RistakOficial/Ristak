@@ -218,11 +218,11 @@ async function fetchMetaPages(accessToken, params) {
         const fallbackPages = await fetchMetaConnection(`${API_URLS.META_GRAPH}/${encodeURIComponent(userId)}/${edge}?${params.toString()}`)
         pages.push(...fallbackPages)
       } catch (fallbackError) {
-        logger.warn(`No se pudieron leer paginas Meta desde ${edge}: ${fallbackError.message}`)
+        logger.warn(`No se pudieron leer páginas Meta desde ${edge}: ${fallbackError.message}`)
       }
     }
   } catch (error) {
-    logger.warn(`No se pudo revisar rutas alternas de paginas Meta: ${error.message}`)
+    logger.warn(`No se pudo revisar rutas alternas de páginas Meta: ${error.message}`)
   }
 
   return pages
@@ -237,7 +237,7 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
         instagram_account_id: cleanString(options.instagramAccountId)
       }
     : await getMetaConfig().catch(error => {
-      logger.warn(`No se pudo leer configuracion Meta para perfiles sociales: ${error.message}`)
+      logger.warn(`No se pudo leer configuración Meta para perfiles sociales: ${error.message}`)
       return null
     })
 
@@ -295,7 +295,7 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
     try {
       pages = await fetchMetaPages(accessToken, params)
     } catch (fallbackError) {
-      logger.warn(`No se pudieron leer paginas Meta conectadas: ${fallbackError.message}`)
+      logger.warn(`No se pudieron leer páginas Meta conectadas: ${fallbackError.message}`)
       pages = []
     }
   }
@@ -333,7 +333,7 @@ function applyProfileToSettings(settings = {}, profile) {
       ? 'Perfil de Instagram conectado'
       : profile.platform === 'threads'
         ? 'Perfil de Threads conectado'
-        : 'Pagina de Facebook conectada',
+        : 'Página de Facebook conectada',
     brandAvatar: profile.avatarUrl || settings.brandAvatar || '',
     followers: profile.followersLabel || '',
     socialAutoSync: true,
@@ -355,7 +355,7 @@ function applyProfileToTheme(theme = {}, profile) {
       ? 'Perfil de Instagram conectado'
       : profile.platform === 'threads'
         ? 'Perfil de Threads conectado'
-        : 'Pagina de Facebook conectada',
+        : 'Página de Facebook conectada',
     brandAvatar: profile.avatarUrl || theme.brandAvatar || '',
     followers: profile.followersLabel || '',
     socialAutoSync: true,

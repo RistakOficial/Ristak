@@ -1,8 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { spawn } from 'node:child_process'
+import { promises as fs } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const VALID_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAGUlEQVQokWMwXpVGEmIY1bBqNJSMh2vSAACFAkMQ6K3QUQAAAABJRU5ErkJggg=='
+const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg'
 
 const ENV_KEYS = [
   'DATABASE_URL',
@@ -41,6 +46,32 @@ function restoreEnv(snapshot) {
     }
   }
 }
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(FFMPEG, args)
+    let stderr = ''
+    child.stderr.on('data', chunk => {
+      stderr += chunk.toString()
+    })
+    child.on('error', reject)
+    child.on('close', code => {
+      if (code === 0) resolve()
+      else reject(new Error(stderr.trim().slice(-500) || `ffmpeg salió con código ${code}`))
+    })
+  })
+}
+
+async function hasFfmpeg() {
+  try {
+    await runFfmpeg(['-version'])
+    return true
+  } catch {
+    return false
+  }
+}
+
+const ffmpegAvailable = await hasFfmpeg()
 
 test('requirePublicMediaUrl conserva URLs CDN absolutas y exige base HTTPS para paths locales', async () => {
   const previousEnv = snapshotEnv()
@@ -208,6 +239,111 @@ test('saveWhatsAppImageDataUrl recupera configuración Bunny desde Installer cua
     }
     server?.closeAllConnections?.()
     server?.close()
+    restoreEnv(previousEnv)
+  }
+})
+
+test('saveWhatsAppAudioDataUrl convierte grabaciones MP4 a nota de voz Ogg Opus antes de Bunny', {
+  skip: ffmpegAvailable ? false : 'ffmpeg no está instalado en este entorno'
+}, async () => {
+  const previousEnv = snapshotEnv()
+  let server = null
+  let baseUrl = ''
+  let db = null
+  let mediaAssetId = ''
+  const uploads = []
+  const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-whatsapp-audio-test-'))
+
+  try {
+    const mp4Path = join(folder, 'voice.mp4')
+    await runFfmpeg([
+      '-y',
+      '-f', 'lavfi',
+      '-i', 'sine=frequency=440:duration=1.2',
+      '-vn',
+      '-c:a', 'aac',
+      '-b:a', '64k',
+      '-movflags', '+faststart',
+      mp4Path
+    ])
+    const mp4Buffer = await fs.readFile(mp4Path)
+    const audioDataUrl = `data:video/mp4;base64,${mp4Buffer.toString('base64')}`
+
+    server = http.createServer((req, res) => {
+      if (req.method === 'PUT' && req.url?.startsWith('/storage/voice-zone/')) {
+        let size = 0
+        req.on('data', chunk => { size += chunk.length })
+        req.on('end', () => {
+          uploads.push({
+            url: req.url,
+            contentType: req.headers['content-type'],
+            size
+          })
+          res.statusCode = 201
+          res.end('ok')
+        })
+        return
+      }
+
+      res.statusCode = 404
+      res.end('not found')
+    })
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    baseUrl = `http://127.0.0.1:${server.address().port}`
+
+    delete process.env.DATABASE_URL
+    delete process.env.WHATSAPP_LOCAL_MEDIA_FALLBACK
+    process.env.MEDIA_STORAGE_PROVIDER = 'bunny'
+    process.env.MEDIA_STORAGE_REQUIRE_BUNNY = 'true'
+    process.env.BUNNY_STORAGE_ZONE = 'voice-zone'
+    process.env.BUNNY_STORAGE_REGION = ''
+    process.env.BUNNY_STORAGE_ENDPOINT = `${baseUrl}/storage`
+    process.env.BUNNY_STORAGE_API_KEY = 'voice-storage-secret'
+    process.env.BUNNY_CDN_BASE_URL = `${baseUrl}/cdn`
+
+    const [whatsappApiService, mediaStorageService, database] = await Promise.all([
+      import('../src/services/whatsappApiService.js'),
+      import('../src/services/mediaStorageService.js'),
+      import('../src/config/database.js')
+    ])
+    mediaStorageService.resetCentralStorageConfigCache()
+    db = database.db
+
+    const savedAudio = await whatsappApiService.saveWhatsAppAudioDataUrl(audioDataUrl)
+    mediaAssetId = savedAudio.mediaAssetId
+
+    assert.equal(savedAudio.mimeType, 'audio/ogg; codecs=opus')
+    assert.equal(savedAudio.originalMimeType, 'video/mp4')
+    assert.match(savedAudio.publicPath, new RegExp(`^${baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/cdn/`))
+    assert.match(savedAudio.filename, /\.ogg$/)
+    assert.ok(uploads.length >= 1)
+    assert.ok(
+      uploads.some(upload => decodeURIComponent(upload.url).endsWith('-whatsapp-audio.ogg')),
+      'la nota de voz debe subirse a Bunny como .ogg'
+    )
+    assert.ok(
+      uploads.every(upload => !decodeURIComponent(upload.url).endsWith('-whatsapp-audio.mp4')),
+      'la nota de voz no debe llegar a Bunny como .mp4'
+    )
+    assert.equal(uploads[0].contentType, 'audio/ogg')
+
+    const row = await db.get('SELECT mime_type, media_type, extension, stored_filename, metadata_json FROM media_assets WHERE id = ?', [mediaAssetId])
+    assert.equal(row.mime_type, 'audio/ogg')
+    assert.equal(row.media_type, 'audio')
+    assert.equal(row.extension, 'ogg')
+    assert.match(row.stored_filename, /\.ogg$/)
+    const metadata = JSON.parse(row.metadata_json || '{}')
+    assert.equal(metadata.whatsappApiCompatible, true)
+    assert.equal(metadata.whatsappVoiceNote, true)
+    assert.equal(metadata.whatsappAudioCompression, 'whatsapp_ogg_opus')
+    assert.equal(metadata.originalMimeType, 'video/mp4')
+  } finally {
+    if (db && mediaAssetId) {
+      await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+    }
+    server?.closeAllConnections?.()
+    server?.close()
+    await fs.rm(folder, { recursive: true, force: true }).catch(() => undefined)
     restoreEnv(previousEnv)
   }
 })

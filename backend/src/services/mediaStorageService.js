@@ -451,6 +451,20 @@ async function deleteFromBunny({ config, objectPath }) {
   }
 }
 
+async function readBunnyObjectBuffer({ config, objectPath, publicUrl = '' }) {
+  const urls = [
+    /^https?:\/\//i.test(publicUrl) ? { url: publicUrl, headers: {} } : null,
+    objectPath && config.bunnyConfigured ? { url: bunnyObjectUrl(config, objectPath), headers: { AccessKey: config.bunnyStorageApiKey } } : null
+  ].filter(Boolean)
+
+  for (const request of urls) {
+    const response = await fetch(request.url, { headers: request.headers })
+    if (response.ok) return Buffer.from(await response.arrayBuffer())
+  }
+
+  throw errorWithStatus('No se pudo leer el archivo desde Bunny para moverlo.', 502, 'bunny_move_read_failed')
+}
+
 async function detectMimeType(buffer, declaredMimeType = '', filename = '') {
   const detected = await fileTypeFromBuffer(buffer).catch(() => null)
   const declared = mimeBase(declaredMimeType)
@@ -667,6 +681,59 @@ async function saveLocalFile({ objectPath, buffer }) {
   await fs.mkdir(dirname(localPath), { recursive: true })
   await fs.writeFile(localPath, buffer)
   return localPath
+}
+
+function sanitizeFolderSegment(value = '') {
+  const clean = cleanString(value)
+    .replace(/[/\\?%*:|"<>]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120)
+  if (!clean || clean === '.' || clean === '..') return ''
+  return clean
+}
+
+function normalizeMediaFolderPath(value = '') {
+  return cleanString(value)
+    .split('/')
+    .map(sanitizeFolderSegment)
+    .filter(Boolean)
+    .join('/')
+}
+
+function getStoredObjectFilename(asset) {
+  const pathName = cleanString(asset.bunnyPath).split('/').filter(Boolean).pop()
+  return sanitizeFilename(pathName || asset.storedFilename || `${asset.id}-${filenameBase(asset.originalFilename)}.${asset.extension || 'bin'}`)
+}
+
+function buildMovedObjectPath(asset, targetFolderPath = '') {
+  return [
+    'businesses',
+    normalizeBusinessId(asset.businessId),
+    ...normalizeMediaFolderPath(targetFolderPath).split('/').filter(Boolean),
+    getStoredObjectFilename(asset)
+  ].join('/')
+}
+
+function nextVariantPath(nextObjectPath, currentVariantPath = '') {
+  const currentName = cleanString(currentVariantPath).split('/').filter(Boolean).pop()
+  if (!currentName) return ''
+  return [dirname(nextObjectPath), currentName].join('/')
+}
+
+async function moveLocalFile(currentPath, nextObjectPath) {
+  if (!currentPath) return ''
+  const nextPath = join(LOCAL_MEDIA_ROOT, nextObjectPath)
+  if (currentPath === nextPath) return nextPath
+  await fs.mkdir(dirname(nextPath), { recursive: true })
+  try {
+    await fs.rename(currentPath, nextPath)
+  } catch (error) {
+    if (error?.code !== 'EXDEV') throw error
+    await fs.copyFile(currentPath, nextPath)
+    await fs.rm(currentPath, { force: true })
+  }
+  return nextPath
 }
 
 export async function uploadMediaAsset(input = {}) {
@@ -938,6 +1005,147 @@ export async function getStorageUsage({ businessId = 'default' } = {}) {
     storage_enabled: boolValue(quota.storage_enabled, true),
     last_calculated_at: nowIso()
   }
+}
+
+async function moveSingleMediaAsset({ assetId, targetFolderPath = '', businessId = '' }) {
+  const asset = await getMediaAsset(assetId)
+  const normalizedBusinessId = businessId ? normalizeBusinessId(businessId) : asset.businessId
+  if (asset.businessId !== normalizedBusinessId) {
+    throw errorWithStatus('Archivo multimedia no encontrado.', 404, 'media_not_found')
+  }
+
+  const nextFolderPath = normalizeMediaFolderPath(targetFolderPath)
+  const nextObjectPath = buildMovedObjectPath(asset, nextFolderPath)
+  if (asset.bunnyPath === nextObjectPath) return asset
+
+  const metadata = {
+    ...(asset.metadata || {}),
+    movedAt: nowIso(),
+    previousBunnyPath: asset.bunnyPath || ''
+  }
+  const thumbnail = metadata.variants?.thumbnail || null
+  const nextThumbnailObjectPath = thumbnail?.path ? nextVariantPath(nextObjectPath, thumbnail.path) : ''
+  let nextPublicUrl = asset.publicUrl || buildAppPublicUrl(`/media/assets/${asset.id}/file`)
+  let nextPrivateUrl = asset.privateUrl || null
+  let bunnyCleanupPaths = []
+
+  if (asset.storageProvider === 'bunny') {
+    const config = await getStorageRuntimeConfig()
+    if (!config.bunnyConfigured) {
+      throw errorWithStatus('Bunny.net no está configurado para mover este archivo.', 503, 'bunny_not_configured')
+    }
+
+    const { buffer } = await getMediaAssetBuffer(asset.id)
+    await uploadToBunny({ config, objectPath: nextObjectPath, buffer, mimeType: asset.mimeType })
+
+    if (thumbnail?.path && nextThumbnailObjectPath) {
+      const thumbnailBuffer = await readBunnyObjectBuffer({
+        config,
+        objectPath: thumbnail.path,
+        publicUrl: thumbnail.publicUrl
+      })
+      await uploadToBunny({
+        config,
+        objectPath: nextThumbnailObjectPath,
+        buffer: thumbnailBuffer,
+        mimeType: thumbnail.mimeType || 'image/webp'
+      })
+      metadata.variants = {
+        ...(metadata.variants || {}),
+        thumbnail: {
+          ...thumbnail,
+          path: nextThumbnailObjectPath,
+          publicUrl: bunnyPublicUrl(config, nextThumbnailObjectPath)
+        }
+      }
+      bunnyCleanupPaths.push(thumbnail.path)
+    }
+
+    nextPublicUrl = bunnyPublicUrl(config, nextObjectPath)
+    nextPrivateUrl = asset.privateUrl ? nextPublicUrl : null
+    bunnyCleanupPaths.push(asset.bunnyPath)
+  } else {
+    if (metadata.localPath) {
+      metadata.localPath = await moveLocalFile(metadata.localPath, nextObjectPath)
+    }
+
+    if (thumbnail?.localPath && nextThumbnailObjectPath) {
+      const nextLocalThumbPath = await moveLocalFile(thumbnail.localPath, nextThumbnailObjectPath)
+      metadata.variants = {
+        ...(metadata.variants || {}),
+        thumbnail: {
+          ...thumbnail,
+          path: nextThumbnailObjectPath,
+          localPath: nextLocalThumbPath
+        }
+      }
+    }
+  }
+
+  await db.run(
+    `UPDATE media_assets
+     SET bunny_path = ?,
+         public_url = ?,
+         private_url = ?,
+         metadata_json = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      nextObjectPath,
+      nextPublicUrl,
+      nextPrivateUrl,
+      JSON.stringify(metadata),
+      asset.id
+    ]
+  )
+
+  if (bunnyCleanupPaths.length) {
+    const config = await getStorageRuntimeConfig()
+    for (const objectPath of bunnyCleanupPaths.filter(Boolean)) {
+      await deleteFromBunny({ config, objectPath }).catch((error) => {
+        logger.warn(`[MediaStorage] No se pudo borrar ruta vieja al mover ${asset.id}: ${error.message}`)
+      })
+    }
+  }
+
+  await refreshQuotaUsage(asset.businessId)
+  logger.info(`[MediaStorage] Archivo movido: ${asset.id} -> ${nextObjectPath}`)
+  return await getMediaAsset(asset.id)
+}
+
+export async function moveMediaAssets({ entries = [], assetIds = [], targetFolderPath = '', businessId = 'default' } = {}) {
+  const normalizedEntries = Array.isArray(entries) && entries.length
+    ? entries
+    : Array.isArray(assetIds)
+      ? assetIds.map((id) => ({ id, targetFolderPath }))
+      : []
+
+  const seen = new Set()
+  const cleanEntries = normalizedEntries
+    .map((entry) => ({
+      id: cleanString(typeof entry === 'string' ? entry : entry?.id),
+      targetFolderPath: normalizeMediaFolderPath(typeof entry === 'object' && entry ? entry.targetFolderPath ?? entry.folderPath ?? targetFolderPath : targetFolderPath)
+    }))
+    .filter((entry) => {
+      if (!entry.id || seen.has(entry.id)) return false
+      seen.add(entry.id)
+      return true
+    })
+
+  if (!cleanEntries.length) {
+    throw errorWithStatus('Selecciona al menos un archivo para mover.', 400, 'invalid_media_move')
+  }
+
+  const moved = []
+  for (const entry of cleanEntries) {
+    moved.push(await moveSingleMediaAsset({
+      assetId: entry.id,
+      targetFolderPath: entry.targetFolderPath,
+      businessId
+    }))
+  }
+
+  return moved
 }
 
 export async function softDeleteMediaAsset(assetId) {

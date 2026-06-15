@@ -1,5 +1,6 @@
 import express from 'express'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import {
   createBlockHandler,
   importSiteHtmlHandler,
@@ -16,11 +17,13 @@ import {
   metaPageEventPublicHandler,
   previewCalendarHandler,
   previewSiteHandler,
+  removeSitesDomainHandler,
   previewSiteSessionHandler,
   reorderBlocksHandler,
   restoreBlocksHandler,
   submitPublicSiteHandler,
   updateBlockHandler,
+  updateImportedSiteCodeFilesHandler,
   updateImportedSiteEditableContentHandler,
   updateImportedSiteHtmlWithAIHandler,
   updateImportedSiteMappingHandler,
@@ -38,6 +41,7 @@ router.get('/public/imported-assets/:siteId/*', importedSiteAssetHandler)
 router.get('/:siteId/preview-session/:token', previewSiteSessionHandler)
 
 router.use(requireAuth)
+router.use(requireModuleAccess('sites'))
 
 router.get('/', getSitesHandler)
 router.post('/', createSiteHandler)
@@ -45,6 +49,7 @@ router.post('/ai-create-html', createSiteWithAIHtmlHandler)
 router.post('/import-html', importSiteHtmlHandler)
 router.get('/domain', getSitesDomainHandler)
 router.post('/domain/verify', verifySitesDomainHandler)
+router.delete('/domain', removeSitesDomainHandler)
 router.get('/:siteId/import-mapping', getImportedSiteMappingHandler)
 router.get('/:siteId', getSiteHandler)
 router.put('/:siteId', updateSiteHandler)
@@ -53,6 +58,7 @@ router.get('/:siteId/preview', previewSiteHandler)
 router.post('/:siteId/preview-session', createPreviewSessionHandler)
 router.post('/:siteId/ai-edit-html', updateImportedSiteHtmlWithAIHandler)
 router.patch('/:siteId/import-content', updateImportedSiteEditableContentHandler)
+router.patch('/:siteId/import-code', updateImportedSiteCodeFilesHandler)
 router.put('/:siteId/import-mapping', updateImportedSiteMappingHandler)
 router.post('/:siteId/verify-domain', verifySiteDomainHandler)
 router.post('/:siteId/blocks', createBlockHandler)

@@ -1,5 +1,16 @@
 .phonePage {
-  --phone-frame-bg: color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%);
+  /* Tokens de la página mapeados al tema del celular (claro/oscuro). Antes
+     estas variables NUNCA se definían y la página vivía de colores fijos de
+     tema claro: por eso en modo noche los iconos y textos quedaban negros. */
+  --phone-payments-text: var(--phone-chat-text, #111111);
+  --phone-payments-muted: var(--phone-chat-muted, #737373);
+  --phone-payments-surface: var(--phone-chat-surface, #ffffff);
+  --phone-payments-soft: var(--phone-chat-surface-soft, #f4f4f4);
+  --phone-payments-border: var(--phone-chat-border, rgba(17, 24, 39, 0.08));
+  --phone-payments-primary: var(--phone-chat-primary, #111111);
+  --phone-payments-on-primary: var(--phone-chat-text-on-primary, #ffffff);
+  --phone-payments-accent: var(--phone-chat-accent, #25d366);
+  --phone-frame-bg: var(--phone-chat-bg, color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%));
   position: fixed;
   inset: 0;
   isolation: isolate;
@@ -21,7 +32,7 @@
   z-index: 1;
   isolation: isolate;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   width: 100%;
   max-width: none;
   min-height: 0;
@@ -32,18 +43,20 @@
 
 /* Header content sits in the safe area without painting a separate top panel. */
 .header {
-  position: relative;
-  grid-row: 1;
-  z-index: 2;
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
+  left: max(14px, env(safe-area-inset-left, 0px));
+  z-index: 12;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  width: auto;
   min-width: 0;
-  min-height: calc(74px + env(safe-area-inset-top));
-  padding: calc(env(safe-area-inset-top) + 14px) 14px 12px;
+  min-height: 0;
+  padding: 0;
   background: transparent;
   backdrop-filter: none;
+  pointer-events: none;
 }
 
 .headerMain {
@@ -127,6 +140,7 @@
   font-size: 16px;
   font-weight: 650;
   cursor: pointer;
+  pointer-events: auto;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -146,13 +160,13 @@
 
 /* Host del formulario embebido */
 .formHost {
-  --record-payment-footer-bottom-offset: calc(76px + env(safe-area-inset-bottom, 0px));
-  grid-row: 2;
+  --record-payment-embedded-top-padding: calc(env(safe-area-inset-top, 0px) + 74px);
+  grid-row: 1 / -1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  background: var(--phone-payments-surface);
+  background: var(--phone-frame-bg);
   overflow: hidden;
 }
 
@@ -235,7 +249,7 @@
 }
 
 .choiceIconBlue {
-  color: #111111;
+  color: var(--phone-payments-text);
   background: transparent;
 }
 
@@ -256,17 +270,17 @@
 .choiceText small {
   font-size: 13px;
   line-height: 1.4;
-  color: #737373;
+  color: var(--phone-payments-muted);
 }
 
 .choiceChevron {
   flex: 0 0 auto;
-  color: #737373;
+  color: var(--phone-payments-muted);
 }
 
 .selectHint {
   margin: 2px 4px 0;
-  color: #737373;
+  color: var(--phone-payments-muted);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -278,7 +292,7 @@
   gap: 10px;
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid rgba(17, 24, 39, 0.08);
+  border-top: 1px solid var(--phone-payments-border);
 }
 
 .recentPaymentsToggle {
@@ -291,7 +305,7 @@
   padding: 8px 4px;
   border: 0;
   border-radius: 0;
-  color: #111111;
+  color: var(--phone-payments-text);
   background: transparent;
   text-align: left;
   box-shadow: none;
@@ -315,7 +329,7 @@
 
 .recentPaymentsToggle small {
   overflow: hidden;
-  color: #737373;
+  color: var(--phone-payments-muted);
   font-size: 12px;
   font-weight: 650;
   line-height: 1.2;
@@ -325,7 +339,7 @@
 
 .recentPaymentsToggle svg {
   flex: 0 0 auto;
-  color: #111111;
+  color: var(--phone-payments-text);
   transition: transform 160ms ease;
 }
 
@@ -355,8 +369,8 @@
   padding: 0 8px;
   border: 0;
   border-radius: 999px;
-  color: #737373;
-  background: #f7f6f2;
+  color: var(--phone-payments-muted);
+  background: var(--phone-payments-soft);
   font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
@@ -364,8 +378,8 @@
 }
 
 .recentPeriodPicker .recentPeriodActive {
-  color: #ffffff;
-  background: #111111;
+  color: var(--phone-payments-on-primary);
+  background: var(--phone-payments-primary);
 }
 
 .recentPaymentsState {
@@ -377,7 +391,7 @@
   min-height: 62px;
   padding: 10px 4px;
   border-radius: 0;
-  color: #737373;
+  color: var(--phone-payments-muted);
   background: transparent;
   font-size: 13px;
   font-weight: 700;
@@ -393,8 +407,8 @@
   margin: 4px auto;
   padding: 0 10px;
   border-radius: 999px;
-  color: #52525b;
-  background: #f4f4f5;
+  color: var(--phone-payments-muted);
+  background: var(--phone-payments-soft);
   font-size: 12px;
   font-weight: 780;
 }
@@ -414,9 +428,9 @@
   min-height: 62px;
   padding: 11px 4px;
   border: 0;
-  border-top: 1px solid rgba(17, 24, 39, 0.08);
+  border-top: 1px solid var(--phone-payments-border);
   border-radius: 0;
-  color: #111111;
+  color: var(--phone-payments-text);
   background: transparent;
   text-align: left;
   -webkit-tap-highlight-color: transparent;
@@ -442,7 +456,7 @@
 }
 
 .recentPaymentMain strong {
-  color: #111111;
+  color: var(--phone-payments-text);
   font-size: 17px;
   font-weight: 850;
   line-height: 1.1;
@@ -457,7 +471,7 @@
 }
 
 .recentPaymentMain small {
-  color: #737373;
+  color: var(--phone-payments-muted);
   font-size: 12px;
   font-weight: 680;
 }
@@ -467,17 +481,17 @@
   gap: 4px;
   max-width: 132px;
   padding-right: 2px;
-  color: #737373;
+  color: var(--phone-payments-muted);
 }
 
 .recentPaymentMeta span {
-  color: #111111;
+  color: var(--phone-payments-text);
   font-size: 12px;
   font-weight: 780;
 }
 
 .recentPaymentMeta small {
-  color: #737373;
+  color: var(--phone-payments-muted);
   font-size: 11px;
   font-weight: 650;
 }
@@ -490,12 +504,12 @@
 }
 
 .productsHost {
-  grid-row: 2;
+  grid-row: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 0 16px calc(132px + env(safe-area-inset-bottom, 0px));
+  padding: calc(env(safe-area-inset-top, 0px) + 76px) 16px calc(132px + env(safe-area-inset-bottom, 0px));
   background: var(--phone-payments-surface);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -516,14 +530,14 @@
 }
 
 .productsToolbarCopy strong {
-  color: #111111;
+  color: var(--phone-payments-text);
   font-size: 22px;
   font-weight: 850;
   line-height: 1.1;
 }
 
 .productsToolbarCopy small {
-  color: #737373;
+  color: var(--phone-payments-muted);
   font-size: 12px;
   font-weight: 720;
 }
@@ -552,8 +566,8 @@
 .productIconButton {
   width: 38px;
   border-radius: 999px;
-  color: #111111;
-  background: #f7f6f2;
+  color: var(--phone-payments-text);
+  background: var(--phone-payments-soft);
 }
 
 .productPrimaryButton {
@@ -561,15 +575,15 @@
   padding: 0 13px;
   border-radius: 999px;
   color: var(--phone-payments-text-on-accent);
-  background: #111111;
+  background: var(--phone-payments-primary);
   font-size: 13px;
 }
 
 .productSecondaryButton {
   padding: 0 13px;
   border-radius: 999px;
-  color: #111111;
-  background: #f7f6f2;
+  color: var(--phone-payments-text);
+  background: var(--phone-payments-soft);
   font-size: 13px;
 }
 
@@ -586,9 +600,9 @@
   gap: 12px;
   margin-bottom: 8px;
   padding: 14px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
+  border: 1px solid var(--phone-payments-border);
   border-radius: 8px;
-  background: #f7f6f2;
+  background: var(--phone-payments-soft);
 }
 
 .productFormHeader {
@@ -605,14 +619,14 @@
 }
 
 .productFormHeader strong {
-  color: #111111;
+  color: var(--phone-payments-text);
   font-size: 17px;
   font-weight: 850;
   line-height: 1.15;
 }
 
 .productFormHeader small {
-  color: #737373;
+  color: var(--phone-payments-muted);
   font-size: 12px;
   font-weight: 650;
   line-height: 1.35;
@@ -627,8 +641,8 @@
   height: 34px;
   border: 0;
   border-radius: 999px;
-  color: #111111;
-  background: #ffffff;
+  color: var(--phone-payments-text);
+  background: var(--phone-payments-surface);
 }
 
 .productField {
@@ -638,7 +652,7 @@
 }
 
 .productField span {
-  color: #111111;
+  color: var(--phone-payments-text);
   font-size: 12px;
   font-weight: 800;
   line-height: 1.2;
@@ -652,10 +666,10 @@
   min-height: 42px;
   box-sizing: border-box;
   padding: 0 11px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
+  border: 1px solid var(--phone-payments-border);
   border-radius: 8px;
-  color: #111111;
-  background: #ffffff;
+  color: var(--phone-payments-text);
+  background: var(--phone-payments-surface);
   font: inherit;
   font-size: 15px;
   font-weight: 650;
@@ -710,7 +724,7 @@
   gap: 8px;
   min-height: 170px;
   padding: 22px 12px;
-  color: #737373;
+  color: var(--phone-payments-muted);
   text-align: center;
 }
 
@@ -723,7 +737,7 @@
 
 .productsState span,
 .productsEmpty span {
-  color: #737373;
+  color: var(--phone-payments-muted);
   font-size: 13px;
   font-weight: 650;
   line-height: 1.42;
@@ -741,9 +755,9 @@
   gap: 12px;
   min-height: 78px;
   padding: 12px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
+  border: 1px solid var(--phone-payments-border);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--phone-payments-surface);
 }
 
 .productItemMain {
@@ -782,20 +796,20 @@
 }
 
 .productItemCopy strong {
-  color: #111111;
+  color: var(--phone-payments-text);
   font-size: 16px;
   font-weight: 840;
   line-height: 1.1;
 }
 
 .productItemCopy span {
-  color: #737373;
+  color: var(--phone-payments-muted);
   font-size: 12px;
   font-weight: 640;
 }
 
 .productItemCopy small {
-  color: #737373;
+  color: var(--phone-payments-muted);
   font-size: 12px;
   font-weight: 780;
 }
@@ -810,8 +824,8 @@
   width: 38px;
   height: 38px;
   border-radius: 999px;
-  color: #111111;
-  background: #f7f6f2;
+  color: var(--phone-payments-text);
+  background: var(--phone-payments-soft);
 }
 
 .productItemActions .productDeleteButton {
@@ -824,7 +838,6 @@
 }
 
 /* Estados de carga / bloqueo */
-.loadingPage,
 .blockedPage {
   display: grid;
   min-height: 100dvh;
@@ -834,15 +847,6 @@
     linear-gradient(180deg, rgba(148, 163, 184, 0.08), transparent 42%),
     var(--color-background-primary);
   place-items: center;
-}
-
-.loadingDot {
-  width: 18px;
-  height: 18px;
-  border: 2px solid var(--color-text-tertiary);
-  border-top-color: transparent;
-  border-radius: 999px;
-  animation: spin 0.8s linear infinite;
 }
 
 .blockedPanel {

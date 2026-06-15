@@ -3,6 +3,7 @@ import dns from 'node:dns/promises'
 import path from 'node:path'
 import JSZip from 'jszip'
 import fetch from 'node-fetch'
+import { Agent, Runner, OpenAIProvider } from '@openai/agents'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
@@ -19,7 +20,7 @@ import {
   getCountryFlagEmoji,
   normalizePhoneForAccount
 } from '../utils/accountLocale.js'
-import { getAIAgentConfig, getOpenAIApiKey } from './aiAgentService.js'
+import { getAIAgentConfig, requireOpenAIApiKey } from './aiAgentService.js'
 import { prepareContactCustomFieldsForStorage } from './contactCustomFieldDefinitionsService.js'
 import {
   finalizePreparedPhoneUpsert,
@@ -67,6 +68,8 @@ export const FIELD_BLOCK_TYPES = new Set([
   'email',
   'date'
 ])
+const EMBEDDED_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image', 'video', 'embed'])
+const EMBEDDED_FORM_BLOCK_TYPES = new Set([...FIELD_BLOCK_TYPES, ...EMBEDDED_FORM_CONTENT_BLOCK_TYPES])
 export const BLOCK_TYPES = new Set([...CONTENT_BLOCK_TYPES, ...FIELD_BLOCK_TYPES])
 export const OPTION_ACTIONS = new Set([
   'continue',
@@ -79,6 +82,7 @@ export const OPTION_ACTIONS = new Set([
   'end_form',
   'jump',
   'redirect',
+  'site_page',
   'tag',
   'category'
 ])
@@ -105,6 +109,28 @@ const SITE_META_NO_EVENT = 'none'
 const SITE_META_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'FormSubmitted', 'ViewContent', 'CompleteRegistration', 'Contact'])
 const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'ViewContent', 'CompleteRegistration', 'Contact'])
 const SITE_META_TRIGGERS = new Set(['page_view', 'form_submit'])
+const SITE_META_PARAMETER_FIELDS = {
+  Lead: ['value', 'predictedLtv', 'currency', 'status'],
+  Schedule: ['value', 'predictedLtv', 'currency', 'status'],
+  FormSubmitted: ['value', 'predictedLtv', 'currency', 'status'],
+  CompleteRegistration: ['value', 'predictedLtv', 'currency', 'status'],
+  Contact: ['value', 'predictedLtv', 'currency', 'status'],
+  Purchase: ['value', 'currency', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
+  ViewContent: ['value', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType']
+}
+const SITE_META_PARAMETER_ALIASES = {
+  value: ['value', 'conversionValue', 'conversion_value'],
+  predictedLtv: ['predictedLtv', 'predicted_ltv', 'leadValue', 'lead_value', 'prospectValue', 'prospect_value'],
+  currency: ['currency', 'moneda'],
+  contentName: ['contentName', 'content_name'],
+  contentCategory: ['contentCategory', 'content_category'],
+  contentIds: ['contentIds', 'content_ids'],
+  contentType: ['contentType', 'content_type'],
+  numItems: ['numItems', 'num_items'],
+  orderId: ['orderId', 'order_id'],
+  status: ['status', 'estado'],
+  searchString: ['searchString', 'search_string']
+}
 const SITES_PUBLIC_DOMAIN_CONFIG_KEYS = {
   domain: 'sites_public_domain',
   verified: 'sites_public_domain_verified',
@@ -118,6 +144,8 @@ const IMPORTED_HTML_MAX_BYTES = 2 * 1024 * 1024
 const IMPORTED_ZIP_MAX_BYTES = 15 * 1024 * 1024
 const IMPORTED_ASSET_MAX_BYTES = 8 * 1024 * 1024
 const IMPORTED_ASSET_TOTAL_MAX_BYTES = 25 * 1024 * 1024
+const IMPORTED_CODE_FILE_MAX_BYTES = 8 * 1024 * 1024
+const IMPORTED_POPUP_CODE_PATH = 'ristak-popup.html'
 const IMPORTED_ZIP_MAX_FILES = 250
 const IMPORTED_HTML_EXTENSIONS = new Set(['html', 'htm'])
 const IMPORTED_ASSET_CONTENT_TYPES = new Map([
@@ -182,6 +210,18 @@ const IMPORTED_EDITABLE_CONTENT_TYPES = new Set([
   'choice_option'
 ])
 const IMPORTED_FORM_STANDARD_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone', 'email', 'message'])
+const NATIVE_FORM_STANDARD_SYSTEM_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone', 'email'])
+const NATIVE_FORM_CUSTOM_SYSTEM_FIELDS = new Set(['city', 'company', 'address_1'])
+const NATIVE_FORM_SYSTEM_FIELD_LABELS = {
+  full_name: 'Nombre completo',
+  first_name: 'Primer nombre',
+  last_name: 'Apellido',
+  phone: 'Telefono / WhatsApp',
+  email: 'Correo electronico',
+  city: 'Ciudad',
+  company: 'Empresa',
+  address_1: 'Direccion 1'
+}
 const IMPORTED_AMBIGUOUS_PERSON_NAME_ALIASES = [
   'name',
   'nombre',
@@ -229,6 +269,7 @@ const IMPORTED_FORM_CUSTOM_FIELD_HINTS = new Map([
   ['dob', 'birth_date'],
   ['direccion_completa', 'full_address'],
   ['direccion', 'address'],
+  ['dirección', 'address'],
   ['domicilio', 'address'],
   ['address_line_1', 'address_line_1'],
   ['address1', 'address_line_1'],
@@ -244,6 +285,7 @@ const IMPORTED_FORM_CUSTOM_FIELD_HINTS = new Map([
   ['provincia', 'state'],
   ['province', 'state'],
   ['pais', 'country'],
+  ['país', 'country'],
   ['country', 'country'],
   ['codigo_postal', 'postal_code'],
   ['cp', 'postal_code'],
@@ -251,6 +293,7 @@ const IMPORTED_FORM_CUSTOM_FIELD_HINTS = new Map([
   ['zip_code', 'postal_code'],
   ['postal_code', 'postal_code'],
   ['ubicacion', 'location'],
+  ['ubicación', 'location'],
   ['location', 'location'],
   ['empresa', 'company_name'],
   ['compania', 'company_name'],
@@ -471,6 +514,156 @@ function normalizeSiteMetaTrigger(value) {
   return SITE_META_TRIGGERS.has(trigger) ? trigger : 'page_view'
 }
 
+function getMetaParameterFieldsForEvent(eventName) {
+  return SITE_META_PARAMETER_FIELDS[normalizeSiteMetaEventName(eventName, { allowNone: true, fallback: SITE_META_NO_EVENT })] || []
+}
+
+function firstMetaParameterValue(source = {}, key) {
+  const aliases = SITE_META_PARAMETER_ALIASES[key] || [key]
+  for (const alias of aliases) {
+    const value = source?.[alias]
+    if (value !== undefined && value !== null && cleanString(value)) return cleanString(value)
+  }
+  return ''
+}
+
+function normalizeSiteMetaCustomParameterKey(value = '') {
+  const key = cleanString(value)
+    .replace(/[^a-zA-Z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64)
+
+  if (!key) return ''
+  return /^[a-zA-Z_]/.test(key) ? key : `param_${key}`
+}
+
+function normalizeSiteMetaEventParameters(value = {}) {
+  const source = value && typeof value === 'object' ? value : parseJson(value, {})
+  const normalized = {}
+
+  Object.keys(SITE_META_PARAMETER_ALIASES).forEach(key => {
+    const fieldValue = firstMetaParameterValue(source, key)
+    if (fieldValue) normalized[key] = key === 'currency' ? fieldValue.toUpperCase().slice(0, 3) : fieldValue
+  })
+
+  const customSource = Array.isArray(source.custom)
+    ? source.custom
+    : Array.isArray(source.customParameters)
+      ? source.customParameters
+      : Array.isArray(source.custom_parameters)
+        ? source.custom_parameters
+        : []
+
+  const custom = customSource
+    .map((parameter = {}) => ({
+      id: cleanString(parameter.id),
+      key: cleanString(parameter.key || parameter.name),
+      value: cleanString(parameter.value)
+    }))
+    .filter(parameter => parameter.key || parameter.value)
+    .slice(0, 12)
+
+  if (custom.length) normalized.custom = custom
+
+  return normalized
+}
+
+function hasSiteMetaEventParameters(parameters = {}) {
+  const normalized = normalizeSiteMetaEventParameters(parameters)
+  return Object.keys(SITE_META_PARAMETER_ALIASES).some(key => cleanString(normalized[key])) ||
+    (Array.isArray(normalized.custom) && normalized.custom.some(parameter => cleanString(parameter.key) || cleanString(parameter.value)))
+}
+
+function pruneSiteMetaEventParametersForEvent(parameters = {}, eventName = SITE_META_NO_EVENT) {
+  const normalized = normalizeSiteMetaEventParameters(parameters)
+  const fields = getMetaParameterFieldsForEvent(eventName)
+  if (!fields.length) return {}
+  const allowed = new Set(fields)
+  const pruned = {}
+
+  allowed.forEach(key => {
+    const value = cleanString(normalized[key])
+    if (value) pruned[key] = value
+  })
+
+  if (Array.isArray(normalized.custom) && normalized.custom.length) {
+    pruned.custom = normalized.custom
+  }
+
+  return pruned
+}
+
+function parseMetaNumber(value) {
+  const raw = cleanString(value).replace(/[$,\s]/g, '')
+  if (!raw) return null
+  const number = Number(raw)
+  return Number.isFinite(number) ? number : null
+}
+
+function parseMetaContentIds(value) {
+  return cleanString(value)
+    .split(',')
+    .map(item => cleanString(item))
+    .filter(Boolean)
+    .slice(0, 50)
+}
+
+function buildSiteMetaConfiguredCustomData(parameters = {}, eventName = SITE_META_NO_EVENT) {
+  const pruned = pruneSiteMetaEventParametersForEvent(parameters, eventName)
+  const customData = {}
+
+  const value = parseMetaNumber(pruned.value)
+  if (value !== null) customData.value = value
+
+  const predictedLtv = parseMetaNumber(pruned.predictedLtv)
+  if (predictedLtv !== null) customData.predicted_ltv = predictedLtv
+
+  const currency = cleanString(pruned.currency).toUpperCase().slice(0, 3)
+  if (/^[A-Z]{3}$/.test(currency)) customData.currency = currency
+
+  const contentIds = parseMetaContentIds(pruned.contentIds)
+  if (contentIds.length) customData.content_ids = contentIds
+
+  const numItems = parseMetaNumber(pruned.numItems)
+  if (numItems !== null) customData.num_items = Math.max(0, Math.round(numItems))
+
+  ;[
+    ['contentName', 'content_name'],
+    ['contentCategory', 'content_category'],
+    ['contentType', 'content_type'],
+    ['orderId', 'order_id'],
+    ['status', 'status'],
+    ['searchString', 'search_string']
+  ].forEach(([sourceKey, targetKey]) => {
+    const value = cleanString(pruned[sourceKey])
+    if (value) customData[targetKey] = value
+  })
+
+  if (Array.isArray(pruned.custom)) {
+    pruned.custom.forEach(parameter => {
+      const key = normalizeSiteMetaCustomParameterKey(parameter.key)
+      const value = cleanString(parameter.value)
+      if (key && value) customData[key] = value
+    })
+  }
+
+  return customData
+}
+
+function mergeSiteMetaCustomData(base = {}, configured = {}) {
+  const reserved = {}
+  ;['source', 'site_id', 'site_name', 'public_page_id', 'public_page_title', 'conversion_type'].forEach(key => {
+    if (base[key] !== undefined) reserved[key] = base[key]
+  })
+
+  const merged = { ...base, ...configured, ...reserved }
+  Object.keys(merged).forEach(key => {
+    if (merged[key] === undefined || merged[key] === null || merged[key] === '') delete merged[key]
+  })
+  return merged
+}
+
 function normalizeFormCompletionAction(value, fallback = 'form_default') {
   const action = cleanString(value)
   return ['form_default', 'next_page', 'next_page_if_qualified'].includes(action) ? action : fallback
@@ -560,6 +753,14 @@ function normalizeImportedAssetPath(value = '') {
   return normalized
 }
 
+function normalizeImportedCodeUpdatePath(value = '') {
+  const rawPath = cleanString(value)
+  if (!rawPath || rawPath === '__main__' || rawPath === 'main') return ''
+  const assetPath = normalizeImportedAssetPath(rawPath)
+  if (assetPath === IMPORTED_POPUP_CODE_PATH || rawPath === POPUP_SELECTED_ID) return IMPORTED_POPUP_CODE_PATH
+  return assetPath
+}
+
 function getImportedAssetExtension(assetPath = '') {
   const basename = normalizeImportedAssetPath(assetPath).split('/').pop() || ''
   const extension = basename.includes('.') ? basename.split('.').pop()?.toLowerCase() : ''
@@ -568,6 +769,32 @@ function getImportedAssetExtension(assetPath = '') {
 
 function getImportedAssetContentType(assetPath = '') {
   return IMPORTED_ASSET_CONTENT_TYPES.get(getImportedAssetExtension(assetPath)) || 'application/octet-stream'
+}
+
+function isImportedCodeContentType(contentType = '', assetPath = '') {
+  const normalizedContentType = cleanString(contentType).split(';')[0].toLowerCase()
+  const extension = getImportedAssetExtension(assetPath)
+  return IMPORTED_HTML_EXTENSIONS.has(extension) ||
+    normalizedContentType.startsWith('text/') ||
+    [
+      'application/json',
+      'application/xml',
+      'application/manifest+json',
+      'image/svg+xml'
+    ].includes(normalizedContentType) ||
+    ['css', 'js', 'mjs', 'json', 'txt', 'svg', 'xml', 'webmanifest', 'map'].includes(extension)
+}
+
+function getImportedCodeLanguage(assetPath = '', contentType = '') {
+  const extension = getImportedAssetExtension(assetPath)
+  const normalizedContentType = cleanString(contentType).split(';')[0].toLowerCase()
+  if (IMPORTED_HTML_EXTENSIONS.has(extension) || normalizedContentType === 'text/html') return 'html'
+  if (extension === 'css' || normalizedContentType === 'text/css') return 'css'
+  if (extension === 'js' || extension === 'mjs' || normalizedContentType.includes('javascript')) return 'javascript'
+  if (extension === 'json' || extension === 'map' || normalizedContentType === 'application/json') return 'json'
+  if (extension === 'svg' || normalizedContentType === 'image/svg+xml') return 'svg'
+  if (extension === 'xml' || normalizedContentType === 'application/xml') return 'xml'
+  return 'text'
 }
 
 function shouldStoreImportedAssetInMediaStorage(file = {}) {
@@ -866,7 +1093,7 @@ function sanitizeImportedHtml(html = '') {
   }
 
   if (Buffer.byteLength(sanitized, 'utf8') > IMPORTED_HTML_MAX_BYTES) {
-    throw new Error('El HTML es demasiado grande. Sube un archivo de maximo 2 MB.')
+    throw new Error('El HTML es demasiado grande. Sube un archivo de máximo 2 MB.')
   }
 
   sanitized = replaceImportedWistiaPlayers(sanitized, report)
@@ -926,7 +1153,10 @@ function getNearbyText(html = '', startIndex = 0) {
   const before = html.slice(Math.max(0, startIndex - 360), startIndex)
   const headingMatch = before.match(/<(h1|h2|h3|legend|strong|b|p)\b[^>]*>([\s\S]*?)<\/\1>/gi)
   const lastHeading = headingMatch?.[headingMatch.length - 1] || ''
-  return stripHtmlTags(lastHeading || before.slice(-180))
+  // The raw slice can start mid-tag; drop the leading tag fragment (attribute
+  // soup ending in ">") so it does not leak into the visible title.
+  const fallback = before.slice(-180).replace(/^[^<>]*>/, '')
+  return limitString(stripHtmlTags(lastHeading || fallback), 120)
 }
 
 function getImportedFieldRequiredFromAttrs(attrs = {}) {
@@ -947,7 +1177,7 @@ function getImportedFieldRequiredFromAttrs(attrs = {}) {
 
 function normalizeImportedFieldOptionValue(option = {}, index = 0) {
   const source = option && typeof option === 'object' ? option : { label: option, value: option }
-  const label = limitString(stripHtmlTags(source.label || source.text || source.value || `Opcion ${index + 1}`), 140)
+  const label = limitString(stripHtmlTags(source.label || source.text || source.value || `Opción ${index + 1}`), 140)
   const value = limitString(cleanString(source.value || source.label || source.text || label), 140)
   if (!label && !value) return null
 
@@ -1323,7 +1553,7 @@ function annotateImportedInputs(html = '', usedIds = new Set()) {
     if (['radio', 'checkbox'].includes(type)) {
       const editableTag = addImportedEditableAttributesToTag('input', attrsText, selfClose, {
         type: 'form_field',
-        label: getImportedElementLabel('input', attrs, attrs.value || attrs.name || 'Opcion'),
+        label: getImportedElementLabel('input', attrs, attrs.value || attrs.name || 'Opción'),
         usedIds
       })
       return setImportedDefaultFieldRequired(editableTag, attrsText)
@@ -1332,7 +1562,7 @@ function annotateImportedInputs(html = '', usedIds = new Set()) {
     if (['submit', 'button'].includes(type)) {
       return addImportedEditableAttributesToTag('input', attrsText, selfClose, {
         type: 'button',
-        label: getImportedElementLabel('input', attrs, attrs.value || 'Boton'),
+        label: getImportedElementLabel('input', attrs, attrs.value || 'Botón'),
         usedIds
       })
     }
@@ -1618,7 +1848,7 @@ function setImportedDefaultFieldRequired(openingTag = '', attrsText = '') {
 function normalizeImportedEditableImageUrl(value = '') {
   const raw = cleanString(value)
   if (!raw) {
-    const error = new Error('La URL de la imagen esta vacia')
+    const error = new Error('La URL de la imagen está vacía')
     error.status = 400
     throw error
   }
@@ -1724,7 +1954,7 @@ function normalizeImportedVideoEmbed(value = '') {
 
   const safeCandidate = safeEmbedUrl(source.candidate)
   if (!safeCandidate) {
-    const error = new Error('Usa una URL de video con http o https, o un iframe valido.')
+    const error = new Error('Usa una URL de video con http o https, o un iframe válido.')
     error.status = 400
     throw error
   }
@@ -1849,13 +2079,13 @@ function normalizeImportedActionStep(input = {}, index = 0) {
   const automationName = limitString(cleanString(source.automationName || source.automation_name || source.automation || source.label), 140)
 
   if (action === 'url' && !safeHref(buttonUrl, '')) {
-    const error = new Error('Usa una URL valida para el boton')
+    const error = new Error('Usa una URL válida para el botón')
     error.status = 400
     throw error
   }
 
   if (action === 'specific_page' && !buttonPageId) {
-    const error = new Error('Selecciona la pagina destino del boton')
+    const error = new Error('Selecciona la página destino del botón')
     error.status = 400
     throw error
   }
@@ -2034,7 +2264,7 @@ function buildImportedSelectOptions(options = [], existingBody = '') {
   const keepsEmptyOption = firstOptionMatch && !firstOptionValue
   const emptyOption = keepsEmptyOption
     ? firstOptionMatch[0]
-    : '<option value="">Selecciona una opcion</option>'
+    : '<option value="">Selecciona una opción</option>'
 
   return [
     emptyOption,
@@ -2149,7 +2379,7 @@ function applyImportedEditableContentUpdate(html = '', input = {}) {
   const formFieldPatch = editType === 'form_field' ? getImportedFormFieldPatch(input, value) : null
 
   if (!editId || !editType) {
-    const error = new Error('Seleccion invalida para editar contenido')
+    const error = new Error('Selección inválida para editar contenido')
     error.status = 400
     throw error
   }
@@ -2329,7 +2559,7 @@ function applyImportedEditableContentUpdate(html = '', input = {}) {
   }
 
   if (!updated) {
-    const error = new Error('No encontramos ese elemento editable en la pagina')
+    const error = new Error('No encontramos ese elemento editable en la página')
     error.status = 404
     throw error
   }
@@ -2526,7 +2756,7 @@ function getSocialProfileDefaults(site = {}, platform = 'facebook') {
   return {
     platform: normalizedPlatform,
     brandName: cleanString(theme.brandName) || cleanString(site.title) || cleanString(site.name) || 'Tu marca',
-    brandSubtitle: cleanString(theme.brandSubtitle) || (normalizedPlatform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'),
+    brandSubtitle: cleanString(theme.brandSubtitle) || (normalizedPlatform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'),
     brandAvatar: cleanString(theme.brandAvatar),
     followers: cleanString(theme.followers),
     brandVerified: theme.brandVerified === undefined ? true : theme.brandVerified !== false
@@ -2758,7 +2988,7 @@ function mapSubmission(row) {
 function validateSiteType(value) {
   const siteType = cleanString(value) || 'standard_form'
   if (!SITE_TYPES.has(siteType)) {
-    throw new Error('Tipo de site invalido')
+    throw new Error('Tipo de site inválido')
   }
   return siteType
 }
@@ -2766,7 +2996,7 @@ function validateSiteType(value) {
 function validateSiteStatus(value) {
   const status = cleanString(value) || 'draft'
   if (!SITE_STATUSES.has(status)) {
-    throw new Error('Estado de site invalido')
+    throw new Error('Estado de site inválido')
   }
   return status
 }
@@ -2774,7 +3004,7 @@ function validateSiteStatus(value) {
 function validateBlockType(value) {
   const blockType = cleanString(value)
   if (!BLOCK_TYPES.has(blockType)) {
-    throw new Error('Tipo de bloque invalido')
+    throw new Error('Tipo de bloque inválido')
   }
   return blockType
 }
@@ -2813,18 +3043,33 @@ function normalizeOptionAction(value) {
     finalizar: 'end_form',
     saltar: 'jump',
     saltar_pregunta: 'jump',
+    saltar_a_pregunta: 'jump',
     dirigir: 'redirect',
     dirigir_a_sitio: 'redirect',
     redirigir: 'redirect',
     redirigir_a_sitio: 'redirect',
     sitio: 'redirect',
+    pagina: 'site_page',
+    página: 'site_page',
+    pagina_sitio: 'site_page',
+    pagina_del_sitio: 'site_page',
+    dirigir_a_pagina: 'site_page',
+    dirigir_a_pagina_del_sitio: 'site_page',
+    redirigir_a_pagina: 'site_page',
+    redirigir_a_pagina_del_sitio: 'site_page',
     etiqueta: 'tag',
     asignar_etiqueta: 'tag',
-    categoria: 'category'
+    categoria: 'category',
+    categoría: 'category'
   }
 
   const resolvedAction = aliases[action] || action
   return OPTION_ACTIONS.has(resolvedAction) ? resolvedAction : 'continue'
+}
+
+function normalizeSubmitBeforeAction(value) {
+  if (value === undefined || value === null || value === '') return true
+  return Boolean(normalizeBoolean(value))
 }
 
 const TEMPLATE_IMAGE_URLS = {
@@ -2852,7 +3097,7 @@ const SITES_AI_STOCK_IMAGE_LIBRARY = [
   },
   {
     id: 'local_business',
-    label: 'Negocio local, tienda, mostrador y atencion al cliente',
+    label: 'Negocio local, tienda, mostrador y atención al cliente',
     keywords: ['local', 'tienda', 'restaurante', 'boutique', 'negocio local', 'cliente', 'mostrador', 'retail', 'servicio local'],
     backgroundImage: TEMPLATE_IMAGE_URLS.local,
     images: [
@@ -3089,7 +3334,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
   }
   const makeLandingPanel = (kind, sortOrder) => {
     const isHeader = kind === 'header'
-    return makeBlock(isHeader ? 'header_panel' : 'footer_panel', isHeader ? 'Panel superior' : 'Panel inferior', isHeader ? 'Tu marca' : 'Tu informacion esta protegida.', {
+    return makeBlock(isHeader ? 'header_panel' : 'footer_panel', isHeader ? 'Panel superior' : 'Panel inferior', isHeader ? 'Tu marca' : 'Tu información esta protegida.', {
       sortOrder,
       settings: {
         ...getLandingSpacing(isHeader ? 'header_panel' : 'footer_panel'),
@@ -3196,13 +3441,13 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
       settings: { internalName: 'full_name' },
       sortOrder: startOrder
     }),
-    makeBlock('phone', 'Telefono / WhatsApp', '', {
-      placeholder: '10 digitos',
+    makeBlock('phone', 'Teléfono / WhatsApp', '', {
+      placeholder: '10 dígitos',
       required: true,
       settings: { internalName: 'phone', validation: 'phone', phoneCountrySelectorEnabled: true },
       sortOrder: startOrder + 1
     }),
-    makeBlock('email', 'Correo electronico', '', {
+    makeBlock('email', 'Correo electrónico', '', {
       placeholder: 'tu@email.com',
       required: true,
       settings: { internalName: 'email', validation: 'email' },
@@ -3225,8 +3470,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
   })
   const embeddedContactFields = () => [
     makeEmbeddedField('short_text', 'Nombre completo', 'Tu nombre', { internalName: 'full_name' }, 0),
-    makeEmbeddedField('phone', 'Telefono / WhatsApp', '10 digitos', { internalName: 'phone', validation: 'phone', phoneCountrySelectorEnabled: true }, 1),
-    makeEmbeddedField('email', 'Correo electronico', 'tu@email.com', { internalName: 'email', validation: 'email' }, 2)
+    makeEmbeddedField('phone', 'Teléfono / WhatsApp', '10 dígitos', { internalName: 'phone', validation: 'phone', phoneCountrySelectorEnabled: true }, 1),
+    makeEmbeddedField('email', 'Correo electrónico', 'tu@email.com', { internalName: 'email', validation: 'email' }, 2)
   ]
   const formEmbedSettings = (description, settings = {}) => withLandingSpacing('form_embed', {
     description,
@@ -3282,12 +3527,12 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
     }
   })
   const makeFormThankYouBlocks = () => [
-    makeBlock('title', 'Titulo', 'Gracias, recibimos tu informacion', { sortOrder: 0 }),
-    makeBlock('subtitle', 'Subtitulo', 'Te contactaremos pronto con el siguiente paso.', { sortOrder: 1 })
+    makeBlock('title', 'Título', 'Gracias, recibimos tu información', { sortOrder: 0 }),
+    makeBlock('subtitle', 'Subtítulo', 'Te contactaremos pronto con el siguiente paso.', { sortOrder: 1 })
   ]
   const makeFormDisqualifiedBlocks = () => [
-    makeBlock('title', 'Titulo', 'Gracias por responder', { sortOrder: 0 }),
-    makeBlock('subtitle', 'Subtitulo', 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo despues.', { sortOrder: 1 })
+    makeBlock('title', 'Título', 'Gracias por responder', { sortOrder: 0 }),
+    makeBlock('subtitle', 'Subtítulo', 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo después.', { sortOrder: 1 })
   ]
   const withStandardFormPages = (blocks) => [
     ...assignBlocksToPage(blocks, DEFAULT_FUNNEL_PAGE_ID),
@@ -3327,8 +3572,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
             settings: withLandingSpacing('hero', {
               textAlign: 'left',
               kicker: options.kicker || 'Agenda',
-              subtitle: options.subtitle || 'El prospecto ya dejo sus datos. Ahora puede elegir un horario para continuar la conversacion.',
-              buttonText: options.buttonText || 'Continuar a confirmacion',
+              subtitle: options.subtitle || 'El prospecto ya dejó sus datos. Ahora puede elegir un horario para continuar la conversación.',
+              buttonText: options.buttonText || 'Continuar a confirmación',
               buttonAction: 'next_page',
               buttonAlign: 'left',
               buttonBg: options.buttonBg || '#2563eb',
@@ -3364,11 +3609,11 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         blockPaddingBottom: 48
       },
       blocks: [
-        makeBlock('cta', 'Continuar', 'Ya quedo el siguiente paso?', {
+        makeBlock('cta', 'Continuar', '¿Ya quedó el siguiente paso?', {
           settings: withLandingSpacing('cta', {
             textAlign: 'center',
-            subtitle: options.ctaSubtitle || 'Cuando termines de agendar, avanza a la pagina de confirmacion.',
-            buttonText: options.ctaButtonText || 'Ver confirmacion',
+            subtitle: options.ctaSubtitle || 'Cuando termines de agendar, avanza a la página de confirmación.',
+            buttonText: options.ctaButtonText || 'Ver confirmación',
             buttonAction: 'next_page',
             ...defaultButtonSettings
           })
@@ -3390,8 +3635,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           settings: withLandingSpacing('hero', {
             textAlign: 'center',
             kicker: options.kicker || 'Antes de confirmar',
-            subtitle: options.subtitle || 'Usa esta pagina para explicar fechas, cupos, bonos, condiciones o lo que el cliente debe saber antes de avanzar.',
-            buttonText: options.buttonText || 'Confirmar mi interes',
+            subtitle: options.subtitle || 'Usa esta página para explicar fechas, cupos, bonos, condiciones o lo que el cliente debe saber antes de avanzar.',
+            buttonText: options.buttonText || 'Confirmar mi interés',
             buttonAction: 'next_page',
             buttonBg: options.buttonBg || '#ea580c',
             ...defaultButtonSettings
@@ -3409,9 +3654,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         blockPaddingBottom: 48
       },
       columnBlocks: [
-        [makeBlock('text', 'Que incluye', 'Aclara el beneficio principal de la oferta.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
-        [makeBlock('text', 'Para quien es', 'Explica quien aprovecha mejor esta oportunidad.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
-        [makeBlock('text', 'Que sigue', 'Deja claro como lo contactaran despues.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })]
+        [makeBlock('text', 'Qué incluye', 'Aclara el beneficio principal de la oferta.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
+        [makeBlock('text', 'Para quién es', 'Explica quién aprovecha mejor esta oportunidad.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
+        [makeBlock('text', 'Qué sigue', 'Deja claro cómo lo contactarán después.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })]
       ]
     },
     {
@@ -3423,10 +3668,10 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         blockPaddingBottom: 48
       },
       blocks: [
-        makeBlock('cta', 'Confirmar', 'Confirmar interes', {
+        makeBlock('cta', 'Confirmar', 'Confirmar interés', {
           settings: withLandingSpacing('cta', {
             textAlign: 'center',
-            subtitle: 'La persona ya entiende la oferta y puede avanzar a la confirmacion.',
+            subtitle: 'La persona ya entiende la oferta y puede avanzar a la confirmación.',
             buttonText: 'Continuar',
             buttonAction: 'next_page',
             ...defaultButtonSettings
@@ -3451,7 +3696,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
             settings: withLandingSpacing('hero', {
               textAlign: 'left',
               kicker: options.kicker || 'Contacto',
-              subtitle: options.subtitle || 'Esta pagina sirve para pedir datos finales, sucursal, servicio o cualquier detalle necesario antes de responder.',
+              subtitle: options.subtitle || 'Esta página sirve para pedir datos finales, sucursal, servicio o cualquier detalle necesario antes de responder.',
               buttonText: 'Enviar datos',
               buttonUrl: '#form',
               buttonAlign: 'left',
@@ -3486,11 +3731,11 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
       },
       columnBlocks: [
         [
-          makeBlock('hero', 'Gracias', options.headline || 'Gracias, recibimos tu informacion', {
+          makeBlock('hero', 'Gracias', options.headline || 'Gracias, recibimos tu información', {
             settings: withLandingSpacing('hero', {
               textAlign: 'left',
-              kicker: options.kicker || 'Confirmacion',
-              subtitle: options.subtitle || 'El siguiente paso queda claro para que la persona sepa que pasara despues.',
+              kicker: options.kicker || 'Confirmación',
+              subtitle: options.subtitle || 'El siguiente paso queda claro para que la persona sepa qué pasará después.',
               buttonText: options.buttonText || 'Volver al inicio',
               buttonUrl: options.buttonUrl || '#',
               buttonAlign: 'left',
@@ -3518,8 +3763,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         blockPaddingBottom: 48
       },
       columnBlocks: [
-        [makeBlock('text', 'Paso recibido', 'Tu equipo ya tiene la informacion para dar seguimiento.', { settings: withLandingSpacing('text', { blockBg: options.cardBg || '#f8fafc', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: options.cardBorder || '#e2e8f0' }) })],
-        [makeBlock('text', 'Respuesta clara', 'Edita este texto para explicar en cuanto tiempo contactaran.', { settings: withLandingSpacing('text', { blockBg: options.cardBg || '#f8fafc', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: options.cardBorder || '#e2e8f0' }) })],
+        [makeBlock('text', 'Paso recibido', 'Tu equipo ya tiene la información para dar seguimiento.', { settings: withLandingSpacing('text', { blockBg: options.cardBg || '#f8fafc', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: options.cardBorder || '#e2e8f0' }) })],
+        [makeBlock('text', 'Respuesta clara', 'Edita este texto para explicar en cuánto tiempo contactarán.', { settings: withLandingSpacing('text', { blockBg: options.cardBg || '#f8fafc', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: options.cardBorder || '#e2e8f0' }) })],
         [makeBlock('text', 'Siguiente paso', 'Puedes indicar si deben revisar WhatsApp, correo o una llamada.', { settings: withLandingSpacing('text', { blockBg: options.cardBg || '#f8fafc', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: options.cardBorder || '#e2e8f0' }) })]
       ]
     }
@@ -3533,7 +3778,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         ...makeDetailsPageLayout('page-2'),
         ...makeThankYouPageLayout('page-3', {
           blockBg: 'linear-gradient(120deg, rgba(124,45,18,.98), rgba(234,88,12,.72))',
-          headline: 'Gracias, tu registro quedo recibido',
+          headline: 'Gracias, tu registro quedó recibido',
           subtitle: 'Ahora la persona sabe que el equipo puede contactarla con los detalles del lanzamiento.',
           imageUrl: TEMPLATE_IMAGE_URLS.planning
         })
@@ -3547,7 +3792,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         ...makeThankYouPageLayout('page-3', {
           blockBg: 'linear-gradient(120deg, rgba(20,83,45,.98), rgba(22,163,74,.72))',
           headline: 'Gracias, recibimos tu solicitud',
-          subtitle: 'El visitante queda con una confirmacion clara y listo para que el negocio lo contacte.',
+          subtitle: 'El visitante queda con una confirmación clara y listo para que el negocio lo contacte.',
           imageUrl: TEMPLATE_IMAGE_URLS.local,
           stepsText: '#14532d',
           cardBg: '#f0fdf4',
@@ -3564,7 +3809,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
             ? 'linear-gradient(120deg, rgba(0,0,0,.98), rgba(31,31,31,.86))'
             : 'linear-gradient(120deg, rgba(17,24,39,.98), rgba(59,130,246,.74))',
           headline: 'Listo, recibimos tus datos',
-          subtitle: 'Esta pagina corta confirma la accion despues de venir desde redes sociales.',
+          subtitle: 'Esta página corta confirma la acción después de venir desde redes sociales.',
           imageUrl: TEMPLATE_IMAGE_URLS.consult
         })
       ]
@@ -3577,7 +3822,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           blockBg: 'linear-gradient(120deg, rgba(16,16,16,.98), rgba(39,39,42,.82))',
           blockText: '#f8fafc',
           headline: 'Agenda una llamada privada',
-          subtitle: 'Despues de aplicar, la persona puede elegir el horario ideal para revisar la propuesta.',
+          subtitle: 'Después de aplicar, la persona puede elegir el horario ideal para revisar la propuesta.',
           buttonBg: '#d4af37',
           buttonTextColor: '#121212',
           calendarBg: '#18181b',
@@ -3588,7 +3833,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         ...makeThankYouPageLayout('page-3', {
           blockBg: 'linear-gradient(120deg, rgba(16,16,16,.98), rgba(212,175,55,.45))',
           headline: 'Gracias, tu solicitud esta en proceso',
-          subtitle: 'El cierre mantiene la sensacion premium y explica que el equipo dara seguimiento.',
+          subtitle: 'El cierre mantiene la sensación premium y explica que el equipo dará seguimiento.',
           imageUrl: TEMPLATE_IMAGE_URLS.premium,
           stepsBg: '#18181b',
           stepsText: '#f8fafc',
@@ -3605,15 +3850,15 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           blockBg: 'linear-gradient(120deg, rgba(17,24,39,.98), rgba(30,64,175,.72))',
           blockText: '#ffffff',
           headline: 'Elige una llamada para revisar la oferta',
-          subtitle: 'Despues de leer la carta de ventas, el prospecto puede pasar directo a una conversacion.',
+          subtitle: 'Después de leer la carta de ventas, el prospecto puede pasar directo a una conversación.',
           buttonBg: '#ffffff',
           buttonTextColor: '#111827',
           ctaBg: '#111827'
         }),
         ...makeThankYouPageLayout('page-3', {
           blockBg: 'linear-gradient(120deg, rgba(17,24,39,.98), rgba(30,64,175,.72))',
-          headline: 'Gracias, tu solicitud quedo enviada',
-          subtitle: 'La persona termina con una confirmacion limpia y una idea clara del siguiente paso.'
+          headline: 'Gracias, tu solicitud quedó enviada',
+          subtitle: 'La persona termina con una confirmación limpia y una idea clara del siguiente paso.'
         })
       ]
     }
@@ -3624,15 +3869,15 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         ...makeSchedulePageLayout('page-2', {
           blockBg: 'linear-gradient(120deg, rgba(240,253,250,.98), rgba(204,251,241,.78))',
           blockText: '#0f172a',
-          headline: 'Agenda el diagnostico',
-          subtitle: 'Despues de explicar el servicio, este paso mueve al prospecto a una llamada concreta.',
+          headline: 'Agenda el diagnóstico',
+          subtitle: 'Después de explicar el servicio, este paso mueve al prospecto a una llamada concreta.',
           buttonBg: '#0f766e',
           ctaBg: '#0f766e'
         }),
         ...makeThankYouPageLayout('page-3', {
           blockBg: 'linear-gradient(120deg, rgba(15,118,110,.98), rgba(45,212,191,.64))',
-          headline: 'Gracias, tu diagnostico quedo solicitado',
-          subtitle: 'La pagina final confirma que el equipo recibio la informacion y dara seguimiento.'
+          headline: 'Gracias, tu diagnóstico quedó solicitado',
+          subtitle: 'La página final confirma que el equipo recibió la información y dará seguimiento.'
         })
       ]
     }
@@ -3661,9 +3906,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               makeBlock('hero', 'Hero', 'Convierte visitas en conversaciones de negocio', {
                 settings: withLandingSpacing('hero', {
                   textAlign: 'left',
-                  kicker: 'Pagina completa',
-                  subtitle: 'Presenta tu oferta, muestra por que vale la pena y deja listo el siguiente paso para quien ya esta interesado.',
-                  buttonText: 'Quiero informacion',
+                  kicker: 'Página completa',
+                  subtitle: 'Presenta tu oferta, muestra por qué vale la pena y deja listo el siguiente paso para quien ya está interesado.',
+                  buttonText: 'Quiero información',
                   buttonUrl: '#form',
                   buttonAlign: 'left',
                   buttonBg: '#111827',
@@ -3689,7 +3934,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
                 cardBg: '#f8fafc',
                 cardBorderColor: '#e2e8f0',
                 cardRadius: 16,
-                items: [{ title: 'Que haces', text: 'Explica tu servicio sin palabras complicadas.' }]
+                items: [{ title: 'Qué haces', text: 'Explica tu servicio sin palabras complicadas.' }]
               })
             })],
             [makeBlock('services', 'Confianza', 'Pruebas y beneficios', {
@@ -3698,16 +3943,16 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
                 cardBg: '#f8fafc',
                 cardBorderColor: '#e2e8f0',
                 cardRadius: 16,
-                items: [{ title: 'Por que elegirte', text: 'Muestra beneficios concretos y faciles de leer.' }]
+                items: [{ title: 'Por qué elegirte', text: 'Muestra beneficios concretos y fáciles de leer.' }]
               })
             })],
-            [makeBlock('services', 'Accion', 'Siguiente paso', {
+            [makeBlock('services', 'Acción', 'Siguiente paso', {
               settings: withLandingSpacing('services', {
                 listColumns: 1,
                 cardBg: '#f8fafc',
                 cardBorderColor: '#e2e8f0',
                 cardRadius: 16,
-                items: [{ title: 'Como avanzar', text: 'Lleva al prospecto a pedir informacion o agendar.' }]
+                items: [{ title: 'Como avanzar', text: 'Lleva al prospecto a pedir información o agendar.' }]
               })
             })]
           ]
@@ -3717,18 +3962,18 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           settings: { blockBg: '#111827', blockText: '#ffffff', sectionGap: 32, blockPaddingTop: 58, blockPaddingBottom: 60 },
           columnBlocks: [
             [
-              makeBlock('benefits', 'Beneficios', 'Lo que esta pagina deja claro', {
+              makeBlock('benefits', 'Beneficios', 'Lo que esta página deja claro', {
                 settings: withLandingSpacing('benefits', {
                   items: [
                     { title: '+ Oferta entendible', text: 'El visitante sabe si esto es para el.' },
-                    { title: '+ Datos listos', text: 'La informacion llega completa para dar seguimiento.' },
-                    { title: '+ Diseno editable', text: 'Puedes cambiar textos, colores, fotos y secciones.' }
+                    { title: '+ Datos listos', text: 'La información llega completa para dar seguimiento.' },
+                    { title: '+ Diseño editable', text: 'Puedes cambiar textos, colores, fotos y secciones.' }
                   ]
                 })
               })
             ],
             [
-              makeBlock('form_embed', 'Contacto', 'Pide informacion', {
+              makeBlock('form_embed', 'Contacto', 'Pide información', {
                 settings: formEmbedSettings('Deja tus datos y tu equipo podra dar seguimiento.', {
                   blockBg: '#ffffff',
                   blockText: '#0f172a',
@@ -3746,7 +3991,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               settings: withLandingSpacing('cta', {
                 textAlign: 'center',
                 subtitle: 'Edita esta plantilla con tu oferta real y publicala cuando este lista.',
-                buttonText: 'Editar mi pagina',
+                buttonText: 'Editar mi página',
                 buttonUrl: '#form',
                 ...defaultButtonSettings
               })
@@ -3769,7 +4014,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           },
           columnBlocks: [
             [
-              makeBlock('hero', 'Hero', 'Una oferta clara para que el cliente diga: quiero saber mas', {
+              makeBlock('hero', 'Hero', 'Una oferta clara para que el cliente diga: quiero saber más', {
                 settings: withLandingSpacing('hero', {
                   textAlign: 'left',
                   kicker: 'Carta de ventas',
@@ -3798,9 +4043,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               settings: withLandingSpacing('benefits', {
                 contentMaxWidth: 28,
                 items: [
-                  { title: '+ Resultado facil de entender', text: 'Explica el cambio que ayudas a lograr.' },
-                  { title: '+ Proceso sin confusion', text: 'Muestra que pasa despues de dejar sus datos.' },
-                  { title: '- Sin promesas raras', text: 'Mantiene la pagina generica y editable para cualquier negocio.' }
+                  { title: '+ Resultado fácil de entender', text: 'Explica el cambio que ayudas a lograr.' },
+                  { title: '+ Proceso sin confusion', text: 'Muestra que pasa después de dejar sus datos.' },
+                  { title: '- Sin promesas raras', text: 'Mantiene la página generica y editable para cualquier negocio.' }
                 ]
               })
             })
@@ -3818,14 +4063,14 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
                   cardBorderColor: '#e5e7eb',
                   cardRadius: 16,
                   items: [
-                    { title: 'Mensaje mas claro', text: 'La oferta se entiende antes de pedir una llamada.', author: 'Cliente actual' },
-                    { title: 'Seguimiento mas ordenado', text: 'Los datos llegan listos para contactar.', author: 'Equipo comercial' }
+                    { title: 'Mensaje más claro', text: 'La oferta se entiende antes de pedir una llamada.', author: 'Cliente actual' },
+                    { title: 'Seguimiento más ordenado', text: 'Los datos llegan listos para contactar.', author: 'Equipo comercial' }
                   ]
                 })
               })
             ],
             [
-              makeBlock('form_embed', 'Solicitar informacion', 'Hablemos de lo que necesitas', {
+              makeBlock('form_embed', 'Solicitar información', 'Hablemos de lo que necesitas', {
                 settings: formEmbedSettings('Deja tus datos y tu equipo podra dar seguimiento.', {
                   blockBg: '#f8fafc',
                   blockText: '#111827',
@@ -3838,11 +4083,11 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         {
           settings: { blockBg: '#111827', blockText: '#ffffff', textAlign: 'center', blockPaddingTop: 46, blockPaddingBottom: 52 },
           blocks: [
-            makeBlock('cta', 'CTA final', 'Listo para convertir mas visitas?', {
+            makeBlock('cta', 'CTA final', '¿Listo para convertir más visitas?', {
               settings: withLandingSpacing('cta', {
                 textAlign: 'center',
                 subtitle: 'Cambia el texto, la foto y los beneficios para aterrizar tu oferta real.',
-                buttonText: 'Quiero mas informacion',
+                buttonText: 'Quiero más información',
                 buttonUrl: '#form',
                 ...defaultButtonSettings
               })
@@ -3915,7 +4160,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               })
             ],
             [
-              makeBlock('form_embed', 'Agenda una llamada', 'Cuentanos que necesitas', {
+              makeBlock('form_embed', 'Agenda una llamada', 'Cuéntanos qué necesitas', {
                 settings: formEmbedSettings('Completa tus datos y te contactamos para revisar opciones.', {
                   blockBg: '#ffffff',
                   blockText: '#0f172a',
@@ -3940,11 +4185,11 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
             blockPaddingBottom: 58
           },
           blocks: [
-            makeBlock('hero', 'Hero', 'Lanza tu nueva oferta con una pagina lista para captar interesados', {
+            makeBlock('hero', 'Hero', 'Lanza tu nueva oferta con una página lista para captar interesados', {
               settings: withLandingSpacing('hero', {
                 textAlign: 'center',
                 kicker: 'Nuevo lanzamiento',
-                subtitle: 'Ideal para promociones, aperturas, preventas o cualquier oferta que necesita respuestas rapido.',
+                subtitle: 'Ideal para promociones, aperturas, preventas o cualquier oferta que necesita respuestas rápido.',
                 buttonText: 'Quiero registrarme',
                 buttonUrl: '#form',
                 buttonBg: '#ea580c',
@@ -3958,7 +4203,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           settings: { blockBg: '#ffffff', blockText: '#1f2937', sectionGap: 16, blockPaddingTop: 44, blockPaddingBottom: 46 },
           columnBlocks: [
             [makeBlock('text', 'Paso 1', 'Cuenta que estas ofreciendo y para quien es.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
-            [makeBlock('text', 'Paso 2', 'Muestra el beneficio principal y por que conviene actuar ahora.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
+            [makeBlock('text', 'Paso 2', 'Muestra el beneficio principal y por qué conviene actuar ahora.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })],
             [makeBlock('text', 'Paso 3', 'Pide los datos para dar seguimiento desde tu equipo.', { settings: withLandingSpacing('text', { blockBg: '#fff7ed', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#fed7aa' }) })]
           ]
         },
@@ -3973,10 +4218,10 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               })
             ],
             [
-              makeBlock('cta', 'CTA', 'Aparta tu lugar o pide informacion', {
+              makeBlock('cta', 'CTA', 'Aparta tu lugar o pide información', {
                 settings: withLandingSpacing('cta', {
                   textAlign: 'left',
-                  subtitle: 'Edita este bloque segun tu promocion, cupo o fecha limite.',
+                  subtitle: 'Edita este bloque según tu promoción, cupo o fecha límite.',
                   buttonText: 'Enviar mis datos',
                   buttonUrl: '#form',
                   buttonAlign: 'left',
@@ -3989,8 +4234,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         {
           settings: { blockBg: '#fff7ed', blockText: '#7c2d12', textAlign: 'center', blockPaddingTop: 46, blockPaddingBottom: 56 },
           blocks: [
-            makeBlock('form_embed', 'Registro', 'Registro rapido', {
-              settings: formEmbedSettings('Deja tus datos para recibir la informacion completa.', {
+            makeBlock('form_embed', 'Registro', 'Registro rápido', {
+              settings: formEmbedSettings('Deja tus datos para recibir la información completa.', {
                 blockBg: '#ffffff',
                 blockText: '#1f2937',
                 fieldBorder: '#fdba74'
@@ -4018,7 +4263,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
                 settings: withLandingSpacing('hero', {
                   textAlign: 'left',
                   kicker: 'Servicio premium',
-                  subtitle: 'Usa este diseno para propuestas donde la confianza, el detalle y la claridad pesan mas que el volumen.',
+                  subtitle: 'Usa este diseño para propuestas donde la confianza, el detalle y la claridad pesan más que el volumen.',
                   buttonText: 'Solicitar una llamada',
                   buttonUrl: '#form',
                   buttonAlign: 'left',
@@ -4058,18 +4303,17 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
                   cardRadius: 10,
                   items: [
                     { title: 'Proceso cuidado', text: 'El cliente entiende cada paso antes de dejar sus datos.' },
-                    { title: 'Presentacion sobria', text: 'El diseno ayuda a comunicar calidad sin saturar.' }
+                    { title: 'Presentacion sobria', text: 'El diseño ayuda a comunicar calidad sin saturar.' }
                   ]
                 })
               })
             ],
             [
-              makeBlock('form_embed', 'Aplicar', 'Solicita informacion', {
+              makeBlock('form_embed', 'Aplicar', 'Solicita información', {
                 settings: formEmbedSettings('Completa tus datos para recibir una respuesta personalizada.', {
                   blockBg: '#101010',
                   blockText: '#f8fafc',
                   blockBorderColor: '#3f3f46',
-                  fieldBg: '#202023',
                   fieldBorder: '#3f3f46',
                   fieldRadius: 8
                 })
@@ -4099,11 +4343,11 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               })
             ],
             [
-              makeBlock('hero', 'Hero', 'Haz que mas personas encuentren y contacten tu negocio', {
+              makeBlock('hero', 'Hero', 'Haz que más personas encuentren y contacten tu negocio', {
                 settings: withLandingSpacing('hero', {
                   textAlign: 'left',
                   kicker: 'Negocio local',
-                  subtitle: 'Una pagina sencilla para explicar que haces, mostrar beneficios y recibir mensajes de clientes interesados.',
+                  subtitle: 'Una página sencilla para explicar qué haces, mostrar beneficios y recibir mensajes de clientes interesados.',
                   buttonText: 'Quiero que me contacten',
                   buttonUrl: '#form',
                   buttonAlign: 'left',
@@ -4118,9 +4362,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           columns: 3,
           settings: { blockBg: '#ffffff', blockText: '#14532d', sectionGap: 28, blockPaddingTop: 52, blockPaddingBottom: 52 },
           columnBlocks: [
-            [makeBlock('text', 'Atencion rapida', 'Responde cuando el cliente todavia trae interes caliente.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })],
-            [makeBlock('text', 'Informacion clara', 'Muestra horarios, servicios o promociones sin hacerlo pesado.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })],
-            [makeBlock('text', 'Seguimiento facil', 'Cada respuesta queda lista para contactar desde tu equipo.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })]
+            [makeBlock('text', 'Atención rápida', 'Responde cuando el cliente todavía trae interés caliente.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })],
+            [makeBlock('text', 'Información clara', 'Muestra horarios, servicios o promociones sin hacerlo pesado.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })],
+            [makeBlock('text', 'Seguimiento fácil', 'Cada respuesta queda lista para contactar desde tu equipo.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })]
           ]
         },
         {
@@ -4132,8 +4376,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
                 cardBorderColor: '#86efac',
                 cardRadius: 16,
                 items: [
-                  { title: 'Cuando me contactan?', text: 'Puedes ajustar este texto segun tus tiempos de respuesta.' },
-                  { title: 'Que informacion debo dejar?', text: 'Nombre, telefono y correo para dar seguimiento sin perder datos.' }
+                  { title: '¿Cuándo me contactan?', text: 'Puedes ajustar este texto según tus tiempos de respuesta.' },
+                  { title: '¿Qué información debo dejar?', text: 'Nombre, teléfono y correo para dar seguimiento sin perder datos.' }
                 ]
               })
             })
@@ -4142,8 +4386,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         {
           settings: { blockBg: '#dcfce7', blockText: '#14532d', textAlign: 'center', blockPaddingTop: 48, blockPaddingBottom: 56 },
           blocks: [
-            makeBlock('form_embed', 'Contacto', 'Pide informacion', {
-              settings: formEmbedSettings('Deja tus datos y te contactamos con mas detalles.', {
+            makeBlock('form_embed', 'Contacto', 'Pide información', {
+              settings: formEmbedSettings('Deja tus datos y te contactamos con más detalles.', {
                 blockBg: '#ffffff',
                 blockText: '#14532d',
                 fieldBorder: '#86efac',
@@ -4165,17 +4409,16 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
               settings: withLandingSpacing('hero', {
                 textAlign: 'center',
                 kicker: 'Anuncio',
-                subtitle: 'Pagina corta para continuar una conversacion que viene desde redes sociales.',
-                buttonText: 'Quiero informacion',
+                subtitle: 'Página corta para continuar una conversación que viene desde redes sociales.',
+                buttonText: 'Quiero información',
                 buttonUrl: '#form',
                 ...defaultButtonSettings
               })
             }),
             makeBlock('form_embed', 'Formulario', 'Deja tus datos', {
-              settings: formEmbedSettings('Completa la informacion y te contactamos.', {
+              settings: formEmbedSettings('Completa la información y te contactamos.', {
                 blockBg: tpl === 'tiktok' ? '#161616' : '#f8fafc',
                 blockText: tpl === 'tiktok' ? '#ffffff' : '#111827',
-                fieldBg: tpl === 'tiktok' ? '#1f1f1f' : '#ffffff',
                 fieldBorder: tpl === 'tiktok' ? 'rgba(255,255,255,.16)' : '#dbe3ef'
               })
             })
@@ -4192,7 +4435,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         settings: withLandingSpacing('hero', {
           textAlign: 'center',
           kicker: 'Nuevo',
-          subtitle: 'Una pagina clara para convertir visitas en leads calificados.',
+          subtitle: 'Una página clara para convertir visitas en leads calificados.',
           buttonText: 'Quiero una consulta',
           buttonUrl: '#form',
           ...defaultButtonSettings
@@ -4205,19 +4448,19 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         settings: { blockBg: '#ffffff', blockText: '#111827', sectionGap: 28, blockPaddingTop: 52, blockPaddingBottom: 52 },
         columnBlocks: [
           [
-      makeBlock('benefits', 'Beneficios', 'Por que elegirnos', {
+      makeBlock('benefits', 'Beneficios', 'Por qué elegirnos', {
         settings: withLandingSpacing('benefits', {
           items: [
-            { title: '+ Atencion rapida', text: 'Captura datos y responde sin friccion.' },
+            { title: '+ Atención rápida', text: 'Captura datos y responde sin fricción.' },
             { title: '+ Leads ordenados', text: 'Todo llega al dashboard y a la misma base de datos.' },
-            { title: '+ Dominio propio', text: 'Publica solo en dominios verificados.' }
+            { title: '+ Dominio propio', text: 'Pública solo en dominios verificados.' }
           ]
         })
       })
           ],
           [
             makeBlock('form_embed', 'Formulario', 'Deja tus datos', {
-              settings: formEmbedSettings('Completa la informacion y nuestro equipo te contactara.', {
+              settings: formEmbedSettings('Completa la información y nuestro equipo te contactará.', {
                 blockBg: '#f8fafc',
                 blockText: '#111827'
               })
@@ -4228,7 +4471,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
       {
         settings: { blockBg: '#111827', blockText: '#ffffff', textAlign: 'center', blockPaddingTop: 46, blockPaddingBottom: 50 },
         blocks: [
-      makeBlock('cta', 'CTA final', 'Listo para empezar?', {
+      makeBlock('cta', 'CTA final', '¿Listo para empezar?', {
         settings: withLandingSpacing('cta', {
           textAlign: 'center',
           subtitle: 'Deja tus datos y te contactamos.',
@@ -4245,9 +4488,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
   if (siteType === 'interactive_form') {
     if (tpl === 'callback') {
       return [
-        makeBlock('title', 'Titulo', 'Veamos si tiene sentido hablar', { sortOrder: 0 }),
-        makeBlock('subtitle', 'Subtitulo', 'Contesta estas preguntas y te decimos el siguiente paso.', { sortOrder: 1 }),
-        makeBlock('radio', 'Que tan pronto quieres avanzar?', '', {
+        makeBlock('title', 'Título', 'Veamos si tiene sentido hablar', { sortOrder: 0 }),
+        makeBlock('subtitle', 'Subtítulo', 'Contesta estas preguntas y te decimos el siguiente paso.', { sortOrder: 1 }),
+        makeBlock('radio', '¿Qué tan pronto quieres avanzar?', '', {
           required: true,
           options: [
             { label: 'Esta semana', action: 'hot_lead', category: 'caliente' },
@@ -4257,7 +4500,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           settings: { internalName: 'urgency' },
           sortOrder: 2
         }),
-        makeBlock('paragraph', 'Que necesitas resolver?', '', {
+        makeBlock('paragraph', '¿Qué necesitas resolver?', '', {
           placeholder: 'Escribe el contexto principal',
           required: false,
           settings: { internalName: 'need' },
@@ -4269,9 +4512,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
 
     if (tpl === 'quote') {
       return [
-        makeBlock('title', 'Titulo', 'Cotiza sin dar vueltas', { sortOrder: 0 }),
-        makeBlock('subtitle', 'Subtitulo', 'Primero entendemos lo que necesitas y despues pedimos tus datos.', { sortOrder: 1 }),
-        makeBlock('dropdown', 'Que tipo de ayuda necesitas?', '', {
+        makeBlock('title', 'Título', 'Cotiza sin dar vueltas', { sortOrder: 0 }),
+        makeBlock('subtitle', 'Subtítulo', 'Primero entendemos lo que necesitas y después pedimos tus datos.', { sortOrder: 1 }),
+        makeBlock('dropdown', '¿Qué tipo de ayuda necesitas?', '', {
           required: true,
           options: ['Servicio principal', 'Paquete completo', 'No estoy seguro'],
           settings: { internalName: 'service_type' },
@@ -4283,8 +4526,8 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
           settings: { internalName: 'budget' },
           sortOrder: 3
         }),
-        makeBlock('paragraph', 'Cuentanos el contexto', '', {
-          placeholder: 'Que quieres lograr?',
+        makeBlock('paragraph', 'Cuéntanos el contexto', '', {
+          placeholder: '¿Qué quieres lograr?',
           required: false,
           settings: { internalName: 'context' },
           sortOrder: 4
@@ -4296,19 +4539,19 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
     if (tpl === 'event' || tpl === 'waitlist') {
       const isWaitlist = tpl === 'waitlist'
       return [
-        makeBlock('title', 'Titulo', isWaitlist ? 'Entra a la lista de espera' : 'Confirma tu registro', { sortOrder: 0 }),
-        makeBlock('subtitle', 'Subtitulo', isWaitlist ? 'Te avisamos cuando haya cupo o acceso disponible.' : 'Responde rapido para reservar tu lugar o recibir detalles.', { sortOrder: 1 }),
-        makeBlock('radio', isWaitlist ? 'Que acceso quieres?' : 'Que quieres recibir?', '', {
+        makeBlock('title', 'Título', isWaitlist ? 'Entra a la lista de espera' : 'Confirma tu registro', { sortOrder: 0 }),
+        makeBlock('subtitle', 'Subtítulo', isWaitlist ? 'Te avisamos cuando haya cupo o acceso disponible.' : 'Responde rápido para reservar tu lugar o recibir detalles.', { sortOrder: 1 }),
+        makeBlock('radio', isWaitlist ? '¿Qué acceso quieres?' : '¿Qué quieres recibir?', '', {
           required: true,
           options: isWaitlist
-            ? ['Acceso anticipado', 'Cupo prioritario', 'Mas informacion']
+            ? ['Acceso anticipado', 'Cupo prioritario', 'Más información']
             : ['Confirmar asistencia', 'Recibir detalles', 'Agendar una llamada'],
           settings: { internalName: isWaitlist ? 'access_interest' : 'registration_interest' },
           sortOrder: 2
         }),
         makeBlock('dropdown', 'Mejor horario de contacto', '', {
           required: false,
-          options: ['Manana', 'Tarde', 'Noche'],
+          options: ['Mañana', 'Tarde', 'Noche'],
           settings: { internalName: 'contact_window' },
           sortOrder: 3
         }),
@@ -4319,26 +4562,26 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
     if (tpl === 'facebook' || tpl === 'instagram' || tpl === 'tiktok') {
       return [
         socialProfileBlock(0),
-        makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 1 }),
-        makeBlock('subtitle', 'Subtitulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 2 }),
+        makeBlock('title', 'Título', 'Deja tus datos y te contactamos', { sortOrder: 1 }),
+        makeBlock('subtitle', 'Subtítulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 2 }),
         ...contactFields(3)
       ]
     }
 
     return [
-      makeBlock('title', 'Titulo', 'Vamos paso a paso', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Estas preguntas ayudan a saber si eres buen candidato.', { sortOrder: 1 }),
-      makeBlock('radio', 'Que buscas hoy?', '', {
+      makeBlock('title', 'Título', 'Vamos paso a paso', { sortOrder: 0 }),
+      makeBlock('subtitle', 'Subtítulo', 'Estas preguntas ayudan a saber si eres buen candidato.', { sortOrder: 1 }),
+      makeBlock('radio', '¿Qué buscas hoy?', '', {
         required: true,
         options: [
           { label: 'Quiero comprar o contratar', action: 'hot_lead', category: 'caliente' },
-          { label: 'Necesito orientacion', action: 'warm_lead', category: 'tibio' },
+          { label: 'Necesito orientación', action: 'warm_lead', category: 'tibio' },
           { label: 'Solo estoy investigando', action: 'cold_lead', category: 'frio' }
         ],
         settings: { internalName: 'intent' },
         sortOrder: 2
       }),
-      makeBlock('paragraph', 'Cuentanos mas', '', {
+      makeBlock('paragraph', 'Cuéntanos más', '', {
         placeholder: 'Escribe una respuesta breve',
         required: false,
         settings: { internalName: 'details' },
@@ -4350,9 +4593,9 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
 
   if (tpl === 'compact') {
     return withStandardFormPages([
-      makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Completa este formulario rapido para que podamos darte seguimiento.', { sortOrder: 1 }),
-      makeBlock('description', 'Nota', 'Tardas menos de un minuto. Usa este formato cuando solo necesitas datos basicos.', { sortOrder: 2 }),
+      makeBlock('title', 'Título', 'Deja tus datos y te contactamos', { sortOrder: 0 }),
+      makeBlock('subtitle', 'Subtítulo', 'Completa este formulario rápido para que podamos darte seguimiento.', { sortOrder: 1 }),
+      makeBlock('description', 'Nota', 'Tardas menos de un minuto. Usa este formato cuando solo necesitas datos básicos.', { sortOrder: 2 }),
       ...contactFields(3)
     ])
   }
@@ -4360,11 +4603,11 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
   if (tpl === 'event') {
     return withStandardFormPages([
       formImageBlock('Imagen de registro', TEMPLATE_IMAGE_URLS.planning, 0, { mediaRadius: 22 }),
-      makeBlock('title', 'Titulo', 'Registro rapido', { sortOrder: 1 }),
-      makeBlock('subtitle', 'Subtitulo', 'Deja tus datos para confirmar informacion y recibir los siguientes pasos.', { sortOrder: 2 }),
-      makeBlock('dropdown', 'Que te interesa?', '', {
+      makeBlock('title', 'Título', 'Registro rápido', { sortOrder: 1 }),
+      makeBlock('subtitle', 'Subtítulo', 'Deja tus datos para confirmar información y recibir los siguientes pasos.', { sortOrder: 2 }),
+      makeBlock('dropdown', '¿Qué te interesa?', '', {
         required: true,
-        options: ['Recibir informacion', 'Agendar una llamada', 'Cotizar un servicio'],
+        options: ['Recibir información', 'Agendar una llamada', 'Cotizar un servicio'],
         settings: { internalName: 'interest' },
         sortOrder: 3
       }),
@@ -4379,12 +4622,12 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
 
   if (tpl === 'quote') {
     return withStandardFormPages([
-      formImageBlock('Imagen de cotizacion', TEMPLATE_IMAGE_URLS.quote, 0, { mediaRadius: 18 }),
-      makeBlock('title', 'Titulo', 'Cuentanos que necesitas cotizar', { sortOrder: 1 }),
-      makeBlock('subtitle', 'Subtitulo', 'Mientras mas claro sea el contexto, mas facil sera responderte bien.', { sortOrder: 2 }),
-      makeBlock('dropdown', 'Servicio de interes', '', {
+      formImageBlock('Imagen de cotización', TEMPLATE_IMAGE_URLS.quote, 0, { mediaRadius: 18 }),
+      makeBlock('title', 'Título', 'Cuéntanos qué necesitas cotizar', { sortOrder: 1 }),
+      makeBlock('subtitle', 'Subtítulo', 'Mientras más claro sea el contexto, más fácil será responderte bien.', { sortOrder: 2 }),
+      makeBlock('dropdown', 'Servicio de interés', '', {
         required: true,
-        options: ['Servicio principal', 'Paquete completo', 'Aun no se'],
+        options: ['Servicio principal', 'Paquete completo', 'Aún no sé'],
         settings: { internalName: 'service_interest' },
         sortOrder: 3
       }),
@@ -4395,7 +4638,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         sortOrder: 4
       }),
       makeBlock('paragraph', 'Detalles importantes', '', {
-        placeholder: 'Cuentanos que quieres lograr',
+        placeholder: 'Cuéntanos qué quieres lograr',
         required: false,
         settings: { internalName: 'project_details' },
         sortOrder: 5
@@ -4406,20 +4649,20 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
 
   if (tpl === 'callback') {
     return withStandardFormPages([
-      makeBlock('title', 'Titulo', 'Solicita una llamada consultiva', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Este formulario ayuda a preparar la conversacion antes de contactarte.', { sortOrder: 1 }),
+      makeBlock('title', 'Título', 'Solicita una llamada consultiva', { sortOrder: 0 }),
+      makeBlock('subtitle', 'Subtítulo', 'Este formulario ayuda a preparar la conversación antes de contactarte.', { sortOrder: 1 }),
       makeBlock('radio', 'Nivel de urgencia', '', {
         required: true,
         options: [
           { label: 'Necesito resolverlo pronto', action: 'hot_lead', category: 'caliente' },
           { label: 'Estoy evaluando opciones', action: 'warm_lead', category: 'tibio' },
-          { label: 'Solo quiero informacion', action: 'cold_lead', category: 'frio' }
+          { label: 'Solo quiero información', action: 'cold_lead', category: 'frio' }
         ],
         settings: { internalName: 'urgency' },
         sortOrder: 2
       }),
-      makeBlock('paragraph', 'Que te gustaria revisar?', '', {
-        placeholder: 'Describe brevemente tu situacion',
+      makeBlock('paragraph', '¿Qué te gustaría revisar?', '', {
+        placeholder: 'Describe brevemente tu situación',
         required: false,
         settings: { internalName: 'call_topic' },
         sortOrder: 3
@@ -4430,16 +4673,16 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
 
   if (tpl === 'waitlist') {
     return withStandardFormPages([
-      makeBlock('title', 'Titulo', 'Entra a la lista de espera', { sortOrder: 0 }),
+      makeBlock('title', 'Título', 'Entra a la lista de espera', { sortOrder: 0 }),
       formImageBlock('Imagen de lista', TEMPLATE_IMAGE_URLS.handshake, 1, { mediaRadius: 26 }),
-      makeBlock('subtitle', 'Subtitulo', 'Deja tus datos y te avisamos cuando haya cupo, fecha o acceso disponible.', { sortOrder: 2 }),
-      makeBlock('dropdown', 'Que quieres recibir?', '', {
+      makeBlock('subtitle', 'Subtítulo', 'Deja tus datos y te avisamos cuando haya cupo, fecha o acceso disponible.', { sortOrder: 2 }),
+      makeBlock('dropdown', '¿Qué quieres recibir?', '', {
         required: true,
-        options: ['Acceso anticipado', 'Aviso de cupo', 'Mas informacion'],
+        options: ['Acceso anticipado', 'Aviso de cupo', 'Más información'],
         settings: { internalName: 'waitlist_interest' },
         sortOrder: 3
       }),
-      makeBlock('checkboxes', 'Temas de interes', '', {
+      makeBlock('checkboxes', 'Temas de interés', '', {
         required: false,
         options: ['Promociones', 'Nuevas fechas', 'Paquetes especiales'],
         settings: { internalName: 'topics' },
@@ -4451,10 +4694,10 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
 
   if (tpl === 'executive' || tpl === 'local' || tpl === 'premium' || tpl === 'ristak') {
     return withStandardFormPages([
-      makeBlock('title', 'Titulo', 'Solicita informacion', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Cuentanos que necesitas y te contactamos con el siguiente paso.', { sortOrder: 1 }),
-      makeBlock('paragraph', 'Que necesitas resolver?', '', {
-        placeholder: 'Escribe una descripcion breve',
+      makeBlock('title', 'Título', 'Solicita información', { sortOrder: 0 }),
+      makeBlock('subtitle', 'Subtítulo', 'Cuéntanos qué necesitas y te contactamos con el siguiente paso.', { sortOrder: 1 }),
+      makeBlock('paragraph', '¿Qué necesitas resolver?', '', {
+        placeholder: 'Escribe una descripción breve',
         required: false,
         settings: { internalName: 'need' },
         sortOrder: 2
@@ -4466,17 +4709,17 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
   if (tpl === 'facebook' || tpl === 'instagram' || tpl === 'tiktok') {
     return withStandardFormPages([
       socialProfileBlock(0),
-      makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 1 }),
-      makeBlock('subtitle', 'Subtitulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 2 }),
+      makeBlock('title', 'Título', 'Deja tus datos y te contactamos', { sortOrder: 1 }),
+      makeBlock('subtitle', 'Subtítulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 2 }),
       ...contactFields(3)
     ])
   }
 
   return withStandardFormPages([
-    makeBlock('title', 'Titulo', siteType === 'interactive_form' ? 'Vamos paso a paso' : 'Cuentanos que necesitas', {
+    makeBlock('title', 'Título', siteType === 'interactive_form' ? 'Vamos paso a paso' : 'Cuéntanos qué necesitas', {
       sortOrder: 0
     }),
-    makeBlock('subtitle', 'Subtitulo', 'Completa la informacion y nuestro equipo te contactara.', {
+    makeBlock('subtitle', 'Subtítulo', 'Completa la información y nuestro equipo te contactará.', {
       sortOrder: 1
     }),
     ...contactFields(2)
@@ -4554,9 +4797,18 @@ function normalizeSitesAIMessages(messages = []) {
     .filter(message => message.content)
 }
 
+function sanitizeOpenAIErrorMessage(message = '') {
+  const text = cleanString(message)
+  if (!text) return ''
+  if (/incorrect api key|invalid_api_key/i.test(text)) {
+    return 'La API key de OpenAI no es válida o fue revocada. Revisa Configuración > Agente AI y vuelve a conectar OpenAI.'
+  }
+  return text.replace(/sk-(?:proj-)?[a-zA-Z0-9_-]{8,}/g, '[API key oculta]')
+}
+
 function getOpenAIErrorMessage(data, fallback = 'OpenAI no pudo generar el site') {
   if (!data) return fallback
-  return cleanString(data?.error?.message || data?.message || data?.error) || fallback
+  return sanitizeOpenAIErrorMessage(data?.error?.message || data?.message || data?.error) || fallback
 }
 
 function extractOpenAIResponseText(data) {
@@ -4580,7 +4832,7 @@ function extractOpenAIResponseText(data) {
 
 function parseSitesAIJson(text) {
   const rawText = cleanString(text)
-  if (!rawText) throw new Error('La IA respondio vacia')
+  if (!rawText) throw new Error('La IA respondió vacía')
 
   const fenced = rawText.match(/```(?:json)?\s*([\s\S]*?)```/i)
   const candidate = fenced?.[1] || rawText
@@ -4591,7 +4843,7 @@ function parseSitesAIJson(text) {
   try {
     return JSON.parse(jsonText)
   } catch {
-    const error = new Error('La IA no devolvio JSON valido para Sites')
+    const error = new Error('La IA no devolvio JSON válido para Sites')
     error.status = 502
     throw error
   }
@@ -4606,7 +4858,7 @@ function getSitesAITargetType(siteKind) {
 function validateSitesAICreationKind(value) {
   const siteKind = cleanString(value)
   if (!['landing', 'form', 'interactive_form'].includes(siteKind)) {
-    const error = new Error('Tipo de creacion con IA invalido')
+    const error = new Error('Tipo de creación con IA inválido')
     error.status = 400
     throw error
   }
@@ -4614,12 +4866,32 @@ function validateSitesAICreationKind(value) {
 }
 
 const SITES_AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
+const SITES_AI_REQUEST_TIMEOUT_MS = Number(process.env.SITES_AI_REQUEST_TIMEOUT_MS || 120_000) || 120_000
 
 function normalizeSitesAIModel(value, fallback = '') {
   const model = cleanString(value)
   if (model && SITES_AI_MODEL_ID_PATTERN.test(model)) return model
   const fallbackModel = cleanString(fallback)
   return SITES_AI_MODEL_ID_PATTERN.test(fallbackModel) ? fallbackModel : ''
+}
+
+function createSitesAITimeoutError(label = 'OpenAI') {
+  const error = new Error(`${label} tardó demasiado en responder. Intenta de nuevo con una instrucción más específica o un modelo más rápido.`)
+  error.status = 504
+  return error
+}
+
+async function runSitesAIWithTimeout(promise, label = 'OpenAI') {
+  let timeoutId = null
+  promise.catch(() => {})
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(createSitesAITimeoutError(label)), SITES_AI_REQUEST_TIMEOUT_MS)
+  })
+  try {
+    return await Promise.race([promise, timeoutPromise])
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
 }
 
 function getSitesAIKindFromSiteType(siteType = 'landing_page') {
@@ -4642,51 +4914,70 @@ function getSitesAIBusinessContext(agentConfig = {}) {
 
 function getSitesAIImageCatalogText() {
   return SITES_AI_STOCK_IMAGE_LIBRARY
-    .map(group => `- ${group.id}: ${group.label}. Fondo: ${group.backgroundImage}. Imagenes: ${group.images.join(' | ')}`)
+    .map(group => `- ${group.id}: ${group.label}. Fondo: ${group.backgroundImage}. Imágenes: ${group.images.join(' | ')}`)
     .join('\n')
 }
 
-function buildSitesAIHtmlInstructions({ siteKind, agentConfig = {}, editMode = false }) {
-  const businessContext = getSitesAIBusinessContext(agentConfig)
+export function buildSitesAIHtmlInstructions({ siteKind, agentConfig = {}, editMode = false, includeBusinessContext = !editMode } = {}) {
+  const businessContext = includeBusinessContext ? getSitesAIBusinessContext(agentConfig) : ''
   const imageCatalog = getSitesAIImageCatalogText()
   const targetSiteType = getSitesAITargetType(siteKind)
+  const contextScopeBlock = includeBusinessContext
+    ? `
+Contexto del negocio configurado en Ristak:
+${businessContext || 'Sin contexto adicional configurado.'}`
+    : `
+Alcance privado del editor HTML:
+- Solo puedes usar el HTML/CSS/JS activo que viene en currentHtml, activePage, importedPages, visualContext y la solicitud escrita por el usuario.
+- No tienes acceso al contexto del negocio, CRM, contactos, conversaciones, campañas, pagos, automatizaciones, configuraciones del chatbot ni memoria del Agente AI.
+- No inventes datos del negocio ni uses información guardada fuera de este archivo. Si el usuario pide algo que requiere ese contexto, pídele que lo pegue en la instrucción.
+- Trata visualContext como una captura interna derivada del mismo HTML activo; úsala solo para ubicar elementos visibles.`
 
   return `
-Eres el creador libre de paginas HTML de Ristak. Genera o modifica una pagina completa en HTML/CSS para que Ristak la importe como codigo propio.
+Eres el creador libre de páginas HTML de Ristak. Genera o modifica una página completa en HTML/CSS para que Ristak la importe como código propio.
 
 Reglas duras:
-- Responde SOLO JSON valido, sin markdown.
+- Responde SOLO JSON válido, sin markdown.
 - No uses React, JSX, Tailwind, dependencias externas ni JavaScript obligatorio. El importador de Ristak puede quitar scripts por seguridad.
 - Entrega un documento HTML completo con <!doctype html>, <html lang="es">, <head>, <meta charset>, <meta viewport>, <title>, meta description y CSS dentro de <style>.
-- Si el embudo necesita varias paginas, devuelve cada pagina por separado en page.pages. No juntes todo en una sola pagina cuando el flujo naturalmente tiene pasos separados.
-- Cada pagina de page.pages debe traer id, title, filename, description y html completo. Usa nombres claros de negocio: Inicio, Video de venta, Agenda, Aplicacion, Gracias, Diagnostico, Oferta, Checkout, etc. No uses "Pagina 1" si puedes nombrarla mejor.
-- Cuando un boton mande a otra pagina del mismo embudo, usa data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la pagina destino. Si solo avanza, usa data-rstk-button-action="next_page".
-- La pagina debe ser responsiva, profesional y lista para publicarse.
-- Copy corto: titulares de 4 a 10 palabras cuando sea posible, parrafos breves de 1 a 2 lineas, listas cortas para explicar detalles.
+- Si el embudo necesita varias páginas, devuelve cada página por separado en page.pages. No juntes todo en una sola página cuando el flujo naturalmente tiene pasos separados.
+- Cada página de page.pages debe traer id, title, filename, description y html completo. Usa nombres claros de negocio: Inicio, Video de venta, Agenda, Aplicacion, Gracias, Diagnostico, Oferta, Checkout, etc. No uses "Página 1" si puedes nombrarla mejor.
+- Cuando un botón mande a otra página del mismo embudo, usa data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la página destino. Si solo avanza, usa data-rstk-button-action="next_page".
+- La página debe ser responsiva, profesional y lista para publicarse.
+- Copy corto: titulares de 4 a 10 palabras cuando sea posible, párrafos breves de 1 a 2 líneas, listas cortas para explicar detalles.
 - Si un texto largo es necesario, ajusta el CSS con font-size menor, max-width razonable, line-height claro y espacios suficientes. No dejes titulares enormes que rompan el layout.
-- Usa imagenes HTTPS directas y visibles. Prefiere el catalogo incluido. Tambien puedes usar URLs directas publicas/licenciadas de bancos conocidos cuando el usuario las proporcione o esten permitidas; no uses previews con marca de agua.
+- Usa imágenes HTTPS directas y visibles. Prefiere el catalogo incluido. También puedes usar URLs directas públicas/licenciadas de bancos conocidos cuando el usuario las proporcione o esten permitidas; no uses previews con marca de agua.
 - No uses formularios que dependan de JavaScript. El submit lo intercepta Ristak.
 - No agregues action externo en formularios.
 - No escondas campos importantes ni uses inputs sin name.
-- No metas tarjetas dentro de tarjetas sin necesidad; usa secciones limpias, buena jerarquia y aire visual.
+- No metas tarjetas dentro de tarjetas sin necesidad; usa secciones limpias, buena jerarquía y aire visual.
 - Tipo solicitado: ${targetSiteType}.
 
 Estructuras de landing (el mensaje del usuario te dice cual eligio; respetala):
-- EMBUDO: una sola mision de conversion. SIN menu de navegacion ni enlaces que saquen del flujo. CTA repetido hacia la misma accion. Si el flujo tiene pasos (ej. registro → gracias), cada paso es una pagina de page.pages enlazada con data-rstk-button-page-id.
-- SITIO WEB: presentacion completa del negocio en varias paginas de page.pages (Inicio, Servicios, Nosotros, Contacto u otras que apliquen). TODAS las paginas comparten un header con menu de navegacion cuyos enlaces usan data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la pagina destino, y un footer con datos de contacto. Un solo h1 por pagina y title + meta description propios de cada pagina. El formulario principal vive en Contacto; el resto del sitio invita sin presionar.
-- Si el usuario no especifica estructura, usa EMBUDO para peticiones de venta/captura y SITIO WEB cuando pida presencia, varias paginas o "sitio web".
+- EMBUDO: una sola mision de conversion. SIN menu de navegacion ni enlaces que saquen del flujo. CTA repetido hacia la misma acción. Si el flujo tiene pasos (ej. registro → gracias), cada paso es una página de page.pages enlazada con data-rstk-button-page-id.
+- SITIO WEB: presentación completa del negocio en varias páginas de page.pages (Inicio, Servicios, Nosotros, Contacto u otras que apliquen). TODAS las páginas comparten un header con menú de navegación cuyos enlaces usan data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la página destino, y un footer con datos de contacto. Un solo h1 por página y title + meta description propios de cada página. El formulario principal vive en Contacto; el resto del sitio invita sin presionar.
+- Si el usuario no especifica estructura, usa EMBUDO para peticiones de venta/captura y SITIO WEB cuando pida presencia, varias páginas o "sitio web".
 
-Marcado para edicion rapida:
-- Marca los elementos importantes que el usuario podria querer cambiar sin tocar codigo.
+Marcado para edición rapida:
+- Marca los elementos importantes que el usuario podria querer cambiar sin tocar código.
 - Usa data-rstk-editable="true", data-rstk-edit-type, data-rstk-label y data-rstk-edit-id.
-- Cuando puedas, agrega tambien aliases data-ristak-* o data-ristack-* para compatibilidad.
+- Cuando puedas, agrega también aliases data-ristak-* o data-ristack-* para compatibilidad.
 - Tipos permitidos: heading, text, button, form_label, placeholder, image, background_image, video.
-- Marca titulares, subtitulares, parrafos breves, botones, labels de formularios, placeholders, imagenes, logos, elementos con fondo de imagen y espacios de video/iframe/embed.
-- Si incluyes un video, usa URL o iframe seguro y marca el contenedor con data-rstk-edit-type="video" para que el usuario pueda reemplazarlo despues.
-- En botones editables, cuando sepas la accion, agrega data-rstk-button-actions como JSON de acciones. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
-- Acciones permitidas: submit, next_page, specific_page, url, automation, none. La accion automation puede quedar como demo.
-- Mantén tambien data-rstk-button-action con la primera accion para compatibilidad. Si el boton abre enlace, agrega data-rstk-button-url. Si va a una pagina interna, agrega data-rstk-button-page-id cuando exista un id claro.
-- En radio buttons y checkboxes, no agregues acciones para descalificar o detener el flujo. Si una opcion debe avanzar, agrega data-rstk-choice-actions con acciones permitidas como submit, next_page, specific_page o url.
+- Marca titulares, subtitulares, párrafos breves, botones, labels de formularios, placeholders, imágenes, logos, elementos con fondo de imagen y espacios de video/iframe/embed.
+- Si incluyes un video, NUNCA dejes un <video>, <iframe>, <embed> u <object> suelto. Siempre envuélvelo en un contenedor editable con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-edit-id único, data-rstk-label y data-rstk-video-url.
+- Formato MP4/WebM/MOV correcto:
+  <div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-edit-id="video-principal" data-rstk-label="Video principal" data-rstk-video-url="https://cdn.ejemplo.com/video.mp4" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:18px;">
+    <video src="https://cdn.ejemplo.com/video.mp4" controls playsinline preload="metadata" style="width:100%;height:100%;display:block;object-fit:cover;background:#000;"></video>
+  </div>
+- Formato iframe/embed correcto:
+  <div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-edit-id="video-principal" data-rstk-label="Video principal" data-rstk-video-url="https://www.youtube.com/embed/VIDEO_ID" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:18px;">
+    <iframe src="https://www.youtube.com/embed/VIDEO_ID" title="Video principal" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="width:100%;height:100%;display:block;border:0;background:#000;"></iframe>
+  </div>
+- Mantén el mismo valor en data-rstk-video-url y en src para que Ristak pueda reemplazar el video desde el editor.
+- En botones editables, cuando sepas la acción, agrega data-rstk-button-actions como JSON de acciones. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
+- Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
+- Mantén también data-rstk-button-action con la primera acción para compatibilidad. Si el botón abre enlace, agrega data-rstk-button-url. Si va a una página interna, agrega data-rstk-button-page-id cuando exista un id claro.
+- En radio buttons y checkboxes, no agregues acciones para descalificar o detener el flujo. Si una opción debe avanzar, agrega data-rstk-choice-actions con acciones permitidas como submit, next_page, specific_page o url.
 - Marca secciones principales con data-rstk-section y un nombre claro.
 - No envuelvas textos editables en demasiadas etiquetas. Deja un elemento claro para cada texto importante.
 
@@ -4696,13 +4987,13 @@ Convenciones de formularios para Ristak:
 - Agrega data-rstk-field y data-ristak-field en campos estandar para que Ristak los entienda.
 - Campos estandar permitidos: full_name, first_name, last_name, phone, email, message.
 - Para campos personalizados usa data-rstk-custom-field y data-ristak-field con una llave clara.
-- Campos personalizados utiles: treatment_interest, service_interest, preferred_date, preferred_time, appointment_reason, budget, branch, notes, company_name, job_title, city, state, postal_code.
+- Campos personalizados útiles: treatment_interest, service_interest, preferred_date, preferred_time, appointment_reason, budget, branch, notes, company_name, job_title, city, state, postal_code.
 - Ejemplo de nombre: <input id="full_name" name="full_name" data-rstk-field="full_name" data-ristak-field="full_name" autocomplete="name" required>
 - Ejemplo de tratamiento: <select id="treatment_interest" name="treatment_interest" data-rstk-custom-field="treatment_interest" data-ristak-field="treatment_interest" required>.
-- Si hay telefono, usa type="tel", name="phone", data-rstk-field="phone", autocomplete="tel".
+- Si hay teléfono, usa type="tel", name="phone", data-rstk-field="phone", autocomplete="tel".
 - Si hay email, usa type="email", name="email", data-rstk-field="email", autocomplete="email".
 
-JSON cuando falta informacion:
+JSON cuando falta información:
 {
   "status": "needs_more_info",
   "reply": "Pregunta breve al usuario"
@@ -4711,39 +5002,39 @@ JSON cuando falta informacion:
 JSON cuando esta listo:
 {
   "status": "ready",
-  "reply": "Pagina HTML lista para importar.",
+  "reply": "Página HTML lista para importar.",
   "page": {
     "siteType": "${targetSiteType}",
     "filename": "pagina-generada.html",
     "name": "Nombre interno",
-    "title": "Titulo publico",
-    "description": "Descripcion corta",
+    "title": "Título público",
+    "description": "Descripción corta",
     "html": "<!doctype html>..."
   }
 }
 
-JSON cuando esta listo con varias paginas:
+JSON cuando esta listo con varias páginas:
 {
   "status": "ready",
   "reply": "Embudo HTML listo para importar.",
   "page": {
     "siteType": "${targetSiteType}",
     "name": "Nombre interno",
-    "title": "Titulo publico",
-    "description": "Descripcion corta",
+    "title": "Título público",
+    "description": "Descripción corta",
     "pages": [
       {
         "id": "inicio",
         "title": "Inicio",
         "filename": "inicio.html",
-        "description": "Primera pagina del embudo",
+        "description": "Primera página del embudo",
         "html": "<!doctype html>..."
       },
       {
         "id": "gracias",
         "title": "Gracias",
         "filename": "gracias.html",
-        "description": "Confirmacion despues del formulario",
+        "description": "Confirmación después del formulario",
         "html": "<!doctype html>..."
       }
     ]
@@ -4751,29 +5042,30 @@ JSON cuando esta listo con varias paginas:
 }
 
 ${editMode ? `
-Modo edicion:
+Modo edición:
 - Recibiras el HTML actual y la peticion del usuario.
+- Esta prohibido responderle al usuario dentro del HTML. No agregues textos como "Claro", "Aqui tienes", "He creado", "Listo", explicaciones, resúmenes, notas del asistente ni la solicitud/prompt del usuario como contenido visible de la página.
+- Aplica cambios en silencio: la página final solo debe contener el sitio editado. El campo reply del JSON debe ser breve y operativo, nunca contenido para mostrar dentro del HTML.
 - Si recibes visualContext, úsalo como referencia visual de la página actual: ubica logos, imágenes, botones, formularios, colores, textos visibles y la página activa antes de editar.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
-- Si recibes importedPages con varias paginas, conserva el embudo multipagina y responde con page.pages incluyendo todas las paginas completas. Mantén ids, title y filename de cada pagina salvo que el usuario pida renombrar, agregar, quitar o reordenar paginas.
+- Si recibes importedPages con varias páginas, conserva el embudo multipágina y responde con page.pages incluyendo todas las páginas completas. Mantén ids, title y filename de cada página salvo que el usuario pida renombrar, agregar, quitar o reordenar páginas.
 - Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
-- Puedes cambiar titulo, imagenes, videos, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
-- En ediciones de una zona seleccionada, las instrucciones de posicion, orden o alineacion como "centra el titular", "pon el video debajo" o "mueve el boton abajo" ya son suficientes. No respondas needs_more_info por no tener ids exactos; identifica titulo, video/player y CTA por jerarquia visual dentro de la zona y aplica el cambio.
+- Puedes cambiar título, imágenes, videos, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
+- En ediciones de una zona seleccionada, las instrucciones de posición, orden o alineación como "centra el titular", "pon el video debajo" o "mueve el botón abajo" ya son suficientes. No respondas needs_more_info por no tener ids exactos; identifica título, video/player y CTA por jerarquía visual dentro de la zona y aplica el cambio.
 - Si el usuario dice que algo se transparenta, no se lee, se pierde, esta muy claro o tiene poco contraste, interpreta eso como una peticion visual directa: aumenta opacidad, oscurece/aclara el fondo, mejora contraste y conserva el contenido.
-- Usa needs_more_info solo si literalmente no hay una accion que ejecutar o la peticion contradice el HTML actual de forma imposible.
+- Usa needs_more_info solo si literalmente no hay una acción que ejecutar o la peticion contradice el HTML actual de forma imposible.
 ` : `
-Modo creacion:
+Modo creación:
 - Si el usuario pidio formulario, incluyelo completo y bien mapeado.
 - Si no especifica campos, usa los campos minimos razonables para el objetivo.
-- Para landings de captura, incluye nombre completo, telefono o email y un campo de interes si aplica.
+- Para landings de captura, incluye nombre completo, teléfono o email y un campo de interés si aplica.
 `}
 
-Catalogo de imagenes permitido:
+Catalogo de imágenes permitido:
 ${imageCatalog}
 
-Contexto del negocio configurado en Ristak:
-${businessContext || 'Sin contexto adicional configurado.'}
+${contextScopeBlock}
 `.trim()
 }
 
@@ -4840,19 +5132,30 @@ function buildSitesAIResponsesInput(input = {}) {
 }
 
 async function callSitesAIJson({ apiKey, model, instructions, input, maxOutputTokens = 7200, fallbackError = 'OpenAI no pudo generar el site' }) {
-  const response = await fetch(OPENAI_RESPONSES_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: cleanString(model) || 'gpt-5.5',
-      instructions,
-      input: buildSitesAIResponsesInput(input),
-      max_output_tokens: maxOutputTokens
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), SITES_AI_REQUEST_TIMEOUT_MS)
+  let response = null
+  try {
+    response = await fetch(OPENAI_RESPONSES_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: cleanString(model) || 'gpt-5.5',
+        instructions,
+        input: buildSitesAIResponsesInput(input),
+        max_output_tokens: maxOutputTokens
+      }),
+      signal: controller.signal
     })
-  })
+  } catch (error) {
+    if (error?.name === 'AbortError') throw createSitesAITimeoutError('OpenAI')
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
 
   let data = null
   try {
@@ -4871,6 +5174,59 @@ async function callSitesAIJson({ apiKey, model, instructions, input, maxOutputTo
   return parseSitesAIJson(text)
 }
 
+function buildSitesAIAgentInputText(input = {}) {
+  const visualContext = normalizeSitesAIVisualContext(input?.visualContext)
+  const safeInput = {
+    ...input,
+    ...(visualContext
+      ? {
+        visualContext: {
+          ...visualContext,
+          screenshotDataUrl: visualContext.screenshotDataUrl
+            ? '[captura interna disponible; usa el resumen visual y el HTML como fuente de verdad]'
+            : ''
+        }
+      }
+      : {})
+  }
+  return JSON.stringify(safeInput)
+}
+
+async function callSitesAIJsonWithAgentSdk({ apiKey, model, instructions, input, maxOutputTokens = 7200, fallbackError = 'OpenAI no pudo generar el site', agentName = 'Editor HTML de Ristak' }) {
+  try {
+    const agent = new Agent({
+      name: agentName,
+      model: cleanString(model) || 'gpt-5.5',
+      instructions
+    })
+    const runner = new Runner({
+      modelProvider: new OpenAIProvider({ apiKey }),
+      tracingDisabled: true
+    })
+    const result = await runSitesAIWithTimeout(
+      runner.run(
+        agent,
+        [{ role: 'user', content: buildSitesAIAgentInputText(input) }],
+        { maxTurns: 4, context: { category: 'site_html_editor' } }
+      ),
+      'Agents SDK'
+    )
+    const output = String(result.finalOutput || '').trim()
+    return parseSitesAIJson(output)
+  } catch (error) {
+    const safeAgentError = sanitizeOpenAIErrorMessage(error?.message) || 'error no especificado'
+    logger.warn(`[Sites AI HTML edit] Agents SDK falló; usando Responses API como respaldo: ${safeAgentError}`)
+    return callSitesAIJson({
+      apiKey,
+      model,
+      instructions,
+      input,
+      maxOutputTokens,
+      fallbackError
+    })
+  }
+}
+
 async function callSitesAIHtmlGenerator({ apiKey, model, siteKind, messages, agentConfig }) {
   return callSitesAIJson({
     apiKey,
@@ -4886,27 +5242,18 @@ async function callSitesAIHtmlGenerator({ apiKey, model, siteKind, messages, age
   })
 }
 
-async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, agentConfig, site, importedSite, importedPages = [], visualContext = null, activePageId = '', aiRegionRequest = '' }) {
+async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, importedSite, importedPages = [], visualContext = null, activePageId = '', aiRegionRequest = '' }) {
   const activePage = findImportedAIActivePageContext(importedPages, activePageId)
-  return callSitesAIJson({
+  return callSitesAIJsonWithAgentSdk({
     apiKey,
     model,
-    instructions: buildSitesAIHtmlInstructions({ siteKind, agentConfig, editMode: true }),
+    instructions: buildSitesAIHtmlInstructions({ siteKind, editMode: true, includeBusinessContext: false }),
     input: {
       siteKind,
       targetSiteType: getSitesAITargetType(siteKind),
-      site: {
-        id: site?.id,
-        name: site?.name,
-        title: site?.title,
-        description: site?.description,
-        siteType: site?.siteType
-      },
       importedSite: {
         importType: importedSite?.importType,
-        originalFilename: importedSite?.originalFilename,
-        detectedForms: importedSite?.detectedForms || [],
-        formMappings: importedSite?.formMappings || []
+        originalFilename: importedSite?.originalFilename
       },
       activePageId: cleanString(activePageId),
       activePage: activePage
@@ -4924,7 +5271,8 @@ async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, agentC
       conversation: messages
     },
     maxOutputTokens: 30000,
-    fallbackError: 'OpenAI no pudo editar el HTML'
+    fallbackError: 'OpenAI no pudo editar el HTML',
+    agentName: 'Asistente de código HTML'
   })
 }
 
@@ -4963,6 +5311,72 @@ function normalizeAIHtmlPagePayload(aiPayload = {}, siteKind = 'landing') {
     html,
     pages: pages.length ? pages : []
   }
+}
+
+function normalizeSitesAIComparableText(value = '') {
+  return decodeHtmlEntities(String(value || ''))
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+function getSitesAIVisibleHtmlText(html = '') {
+  const withoutNonVisible = String(html || '')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<template\b[\s\S]*?<\/template>/gi, ' ')
+    .replace(/<head\b[\s\S]*?<\/head>/gi, ' ')
+  return normalizeSitesAIComparableText(stripHtmlTags(withoutNonVisible))
+}
+
+function getSitesAIEditorUserRequestFragments(messages = [], aiRegionRequest = '') {
+  const fragments = [
+    cleanString(aiRegionRequest),
+    getImportedAIRegionUserRequestText(getSitesAIConversationText(messages))
+  ]
+  return [...new Set(fragments
+    .map(fragment => normalizeSitesAIComparableText(fragment))
+    .filter(fragment => fragment.length >= 16 && fragment.length <= 260))]
+}
+
+const SITES_AI_EDITOR_REPLY_PATTERNS = [
+  /\bclaro[,!.]?\s+(aqui|te|he|lo|voy|vamos)\b/,
+  /\bpor supuesto[,!.]?\s+(aqui|te|he|lo|voy|vamos)\b/,
+  /\baqui tienes\b/,
+  /\bte dejo\b/,
+  /\bte (hice|cree|prepare|actualice|edite)\b/,
+  /\bhe (creado|preparado|actualizado|editado|hecho)\b/,
+  /\bcomo (pediste|solicitaste|me pediste)\b/,
+  /\blisto[,!.]?\s+(ya|he|te|queda|quedo)\b/
+]
+
+export function getSitesAIEditorReplyContaminationReason(page = {}, { messages = [], aiRegionRequest = '' } = {}) {
+  const htmlValues = []
+  if (cleanString(page.html)) htmlValues.push(String(page.html || ''))
+  if (Array.isArray(page.pages)) {
+    page.pages.forEach(nextPage => {
+      if (cleanString(nextPage?.html)) htmlValues.push(String(nextPage.html || ''))
+    })
+  }
+  if (!htmlValues.length) return ''
+
+  const visibleText = normalizeSitesAIComparableText(htmlValues.map(getSitesAIVisibleHtmlText).filter(Boolean).join(' '))
+  if (!visibleText) return ''
+
+  const promptEcho = getSitesAIEditorUserRequestFragments(messages, aiRegionRequest)
+    .find(fragment => visibleText.includes(fragment))
+  if (promptEcho) return 'prompt_echo'
+
+  const openingText = visibleText.slice(0, 1200)
+  if (SITES_AI_EDITOR_REPLY_PATTERNS.some(pattern => pattern.test(openingText))) {
+    return 'assistant_reply_copy'
+  }
+
+  return ''
 }
 
 function hasSitesAIHtmlPayload(aiPayload = {}) {
@@ -5036,7 +5450,7 @@ function buildImportedAIRegionOperationalPromptText(promptText = '', requestText
   if (!cleanRequest) return rawPrompt
   if (/Solicitud del usuario:/i.test(rawPrompt)) {
     return rawPrompt.replace(
-      /(Solicitud del usuario:\s*)[\s\S]*?(\n\nReglas para esta edicion:|$)/i,
+      /(Solicitud del usuario:\s*)[\s\S]*?(\n\nReglas para esta edición:|$)/i,
       (_match, prefix, suffix = '') => `${prefix}${cleanRequest}${suffix}`
     )
   }
@@ -5045,7 +5459,7 @@ function buildImportedAIRegionOperationalPromptText(promptText = '', requestText
 
 function getImportedAIRegionUserRequestText(text = '') {
   const raw = String(text || '')
-  const match = raw.match(/Solicitud del usuario:\s*([\s\S]*?)(?:\n\nReglas para esta edicion:|$)/i)
+  const match = raw.match(/Solicitud del usuario:\s*([\s\S]*?)(?:\n\nReglas para esta edición:|$)/i)
   return match ? match[1] : raw
 }
 
@@ -5056,7 +5470,7 @@ function getImportedAIRegionNormalizedUserRequestText(text = '') {
 function shouldApplyImportedAIRegionCenteredLayoutFallback(text = '') {
   const normalized = getImportedAIRegionNormalizedUserRequestText(text)
   const asksForLayout = /\b(centrad|centrar|center|alinear|alineado|dise[nñ]o|orden|primero|luego|debajo|abajo|arriba|apilad|vertical)\b/i.test(normalized)
-  const mentionsTitle = /\b(titular|titulo|t[ií]tulo|headline|encabezado)\b/i.test(normalized)
+  const mentionsTitle = /\b(titular|título|t[ií]tulo|headline|encabezado)\b/i.test(normalized)
   const mentionsVideo = /\b(video|player|wistia|vsl|presentacion|presentaci[oó]n)\b/i.test(normalized)
   const mentionsButton = /\b(bot[oó]n|cta|agendar|llamada|agenda)\b/i.test(normalized)
   return asksForLayout && mentionsTitle && mentionsVideo && mentionsButton
@@ -5066,7 +5480,7 @@ function shouldApplyImportedAIRegionVideoOnlyFallback(text = '') {
   const normalized = getImportedAIRegionNormalizedUserRequestText(text)
   const asksToRemove = /\b(borra|borrar|borres|quita|quitar|quites|elimina|eliminar|elimin[aá]|limpia|limpiar|deja|dejar|solo|solamente|unicamente|únicamente)\b/i.test(normalized)
   const mentionsVideo = /\b(video|player|wistia|youtube|iframe|embed|vsl|presentacion|presentaci[oó]n)\b/i.test(normalized)
-  const mentionsOtherContent = /\b(contenedor|contenedores|caja|cajas|card|cards|bloque|bloques|elemento|elementos|texto|textos|titular|titulo|t[ií]tulo|subtitulo|subt[ií]tulo|bot[oó]n|cta)\b/i.test(normalized)
+  const mentionsOtherContent = /\b(contenedor|contenedores|caja|cajas|card|cards|bloque|bloques|elemento|elementos|texto|textos|titular|título|t[ií]tulo|subtitulo|subt[ií]tulo|bot[oó]n|cta)\b/i.test(normalized)
   const asksBigCentered = /\b(grande|centrad|centrar|center|ancho|completo|full|principal)\b/i.test(normalized)
   return asksToRemove && mentionsVideo && (mentionsOtherContent || asksBigCentered)
 }
@@ -5093,7 +5507,7 @@ function parseImportedAIRegionMetaLine(line = '') {
 
 function parseImportedAIRegionElementHints(promptText = '') {
   const hints = []
-  const pattern = /^\d+\.\s+([^\n]*)(?:\nHTML:\s*([\s\S]*?))?(?=\n\n\d+\.\s+|\n\nSolicitud del usuario:|\n\nReglas para esta edicion:|$)/gm
+  const pattern = /^\d+\.\s+([^\n]*)(?:\nHTML:\s*([\s\S]*?))?(?=\n\n\d+\.\s+|\n\nSolicitud del usuario:|\n\nReglas para esta edición:|$)/gm
   let match
   while ((match = pattern.exec(String(promptText || '')))) {
     const meta = parseImportedAIRegionMetaLine(match[1] || '')
@@ -5278,13 +5692,13 @@ ${videoMarkup}
 function applyImportedAIRegionCenteredLayoutFallbackToHtml(html = '', promptText = '') {
   const source = String(html || '')
   if (!shouldApplyImportedAIRegionCenteredLayoutFallback(promptText)) {
-    return { html: source, applied: false, reason: 'La solicitud no pidio layout centrado con titular, video y boton.' }
+    return { html: source, applied: false, reason: 'La solicitud no pidió layout centrado con titular, video y botón.' }
   }
 
   const hints = parseImportedAIRegionElementHints(promptText)
   const layoutHints = pickImportedAIRegionLayoutHints(hints)
   if (!layoutHints.title || !layoutHints.video || !layoutHints.button) {
-    return { html: source, applied: false, reason: 'Faltan titular, video o boton detectados en la seleccion.' }
+    return { html: source, applied: false, reason: 'Faltan titular, video o botón detectados en la selección.' }
   }
 
   const titleRange = findImportedEditableElementById(source, layoutHints.title.editId, layoutHints.title.editType || '')
@@ -5319,7 +5733,7 @@ function applyImportedAIRegionCenteredLayoutFallbackToHtml(html = '', promptText
   return {
     html: `${source.slice(0, container.start)}${replacement}${source.slice(container.end)}`,
     applied: true,
-    reason: 'Se reordeno la zona como titular, subtitulo, video y boton.'
+    reason: 'Se reordenó la zona como titular, subtítulo, video y botón.'
   }
 }
 
@@ -5400,7 +5814,7 @@ function buildImportedAIRegionFallbackPageResult({ currentImport = {}, importedP
     }
   }
 
-  const title = sourcePage?.title || getImportedHtmlTitle(fallback.html, currentImport.originalFilename || 'Pagina importada')
+  const title = sourcePage?.title || getImportedHtmlTitle(fallback.html, currentImport.originalFilename || 'Página importada')
   const basePage = {
     siteType: getSitesAITargetType(siteKind),
     filename: sourcePage?.filename || currentImport.originalFilename || 'pagina-generada.html',
@@ -5449,7 +5863,7 @@ function extractImportedAIRegionReplacementText(requestText = '') {
 
   const patterns = [
     /\b(?:cambia|cambiar|cambiale|reemplaza|reemplazar|pon|poner|actualiza|actualizar|edita|editar|modifica|modificar)\b[\s\S]{0,90}?\b(?:a|por|como|que diga|para que diga|que sea)\s+([\s\S]{1,320})$/i,
-    /\b(?:titular|titulo|t[ií]tulo|headline|encabezado|subtitulo|subt[ií]tulo|bot[oó]n|cta)\b[\s\S]{0,50}?\b(?:a|por|como|que diga|para que diga|que sea)\s+([\s\S]{1,320})$/i
+    /\b(?:titular|título|t[ií]tulo|headline|encabezado|subtitulo|subt[ií]tulo|bot[oó]n|cta)\b[\s\S]{0,50}?\b(?:a|por|como|que diga|para que diga|que sea)\s+([\s\S]{1,320})$/i
   ]
 
   for (const pattern of patterns) {
@@ -5471,10 +5885,10 @@ function getImportedAIRegionTextTargetKind(requestText = '', hints = []) {
   if (!hasReplacement) return ''
   const asksToChange = /\b(cambia|cambiar|cambiale|reemplaza|reemplazar|pon|poner|actualiza|actualizar|edita|editar|modifica|modificar)\b/i.test(normalized)
   if (!asksToChange) return ''
-  if (/\b(titular|titulo|t[ií]tulo|headline|encabezado|hero title)\b/i.test(normalized)) return 'heading'
-  if (/\b(subtitulo|subt[ií]tulo|descripcion|descripci[oó]n|bajada)\b/i.test(normalized)) return 'subtitle'
+  if (/\b(titular|título|t[ií]tulo|headline|encabezado|hero title)\b/i.test(normalized)) return 'heading'
+  if (/\b(subtitulo|subt[ií]tulo|descripción|descripci[oó]n|bajada)\b/i.test(normalized)) return 'subtitle'
   if (/\b(bot[oó]n|cta|call to action)\b/i.test(normalized)) return 'button'
-  if (/\b(texto|copy|parrafo|p[aá]rrafo)\b/i.test(normalized)) return 'text'
+  if (/\b(texto|copy|párrafo|p[aá]rrafo)\b/i.test(normalized)) return 'text'
 
   const editableHints = hints.filter(hint => cleanString(hint.editId))
   const headingHints = editableHints.filter(hint => hint.role === 'titular' || hint.editType === 'heading' || /^h[1-6]$/i.test(hint.tagName || ''))
@@ -5540,7 +5954,7 @@ function applyImportedAIRegionTextReplacementOperation(html = '', { promptText =
     return { html: source, attempted: false, applied: false, operation: 'replace_text', reason: 'La solicitud no pidio reemplazar un texto concreto.' }
   }
   if (!hints.length) {
-    return { html: source, attempted: false, applied: false, operation: 'replace_text', reason: 'Sin zona seleccionada; la edicion de texto se delega a OpenAI con toda la pagina.' }
+    return { html: source, attempted: false, applied: false, operation: 'replace_text', reason: 'Sin zona seleccionada; la edición de texto se delega a OpenAI con toda la página.' }
   }
 
   const hint = pickImportedAIRegionTextHint(hints, targetKind)
@@ -5574,7 +5988,7 @@ function applyImportedAIRegionTextReplacementOperation(html = '', { promptText =
       operation: `replace_${targetKind}_text`,
       reason: applied
         ? `Se cambio ${hint.label || hint.role || targetKind} a "${replacementText}".`
-        : 'La operacion de texto no produjo diferencias visibles.'
+        : 'La operación de texto no produjo diferencias visibles.'
     }
   } catch (error) {
     return {
@@ -5611,13 +6025,13 @@ function applyImportedAIRegionVideoReplacementOperation(html = '', { promptText 
   const source = String(html || '')
   const videoValue = extractImportedAIRegionVideoValue(requestText)
   if (!shouldApplyImportedAIRegionVideoReplacement(requestText) || !videoValue) {
-    return { html: source, attempted: false, applied: false, operation: 'replace_video', reason: 'La solicitud no incluyo un video valido para reemplazar.' }
+    return { html: source, attempted: false, applied: false, operation: 'replace_video', reason: 'La solicitud no incluyo un video válido para reemplazar.' }
   }
 
   const operationalPrompt = buildImportedAIRegionOperationalPromptText(promptText, requestText)
   const hints = parseImportedAIRegionElementHints(operationalPrompt)
   if (!hints.length) {
-    return { html: source, attempted: false, applied: false, operation: 'replace_video', reason: 'Sin zona seleccionada; el reemplazo de video se delega a OpenAI con toda la pagina.' }
+    return { html: source, attempted: false, applied: false, operation: 'replace_video', reason: 'Sin zona seleccionada; el reemplazo de video se delega a OpenAI con toda la página.' }
   }
   const videoHint = getImportedAIRegionVideoHint(hints)
   if (!videoHint) {
@@ -5696,7 +6110,7 @@ function applyImportedAIRegionContrastFallbackToHtml(html = '', promptText = '')
   return {
     html: `${source.slice(0, container.start)}${replacement}${source.slice(container.end)}`,
     applied: true,
-    reason: 'Se hizo mas solida y legible la zona seleccionada.'
+    reason: 'Se hizo más sólida y legible la zona seleccionada.'
   }
 }
 
@@ -5782,7 +6196,7 @@ function applyImportedAIRegionAgentOperationsToHtml(html = '', { promptText = ''
     attempted: operations.length > 0,
     applied,
     operation: operations.length > 1 ? 'site_agent_operations' : (operations[0]?.split(':')[0] || ''),
-    reason: applied ? 'El agente interno aplico operaciones deterministas y verifico diferencias en el HTML.' : 'No habia una operacion determinista suficiente para esta solicitud.',
+    reason: applied ? 'La regla interna del editor aplicó operaciones deterministas y verificó diferencias en el HTML.' : 'No había una operación determinista suficiente para esta solicitud.',
     operations
   }
 }
@@ -5790,7 +6204,7 @@ function applyImportedAIRegionAgentOperationsToHtml(html = '', { promptText = ''
 function buildImportedAIRegionPagePayloadFromHtml({ html = '', currentImport = {}, importedPages = [], activePageId = '', siteKind = 'landing' } = {}) {
   const sourcePage = findImportedAIActivePageContext(importedPages, activePageId)
   const nextHtml = String(html || '')
-  const title = sourcePage?.title || getImportedHtmlTitle(nextHtml, currentImport.originalFilename || 'Pagina importada')
+  const title = sourcePage?.title || getImportedHtmlTitle(nextHtml, currentImport.originalFilename || 'Página importada')
   const basePage = {
     siteType: getSitesAITargetType(siteKind),
     filename: sourcePage?.filename || currentImport.originalFilename || 'pagina-generada.html',
@@ -5848,7 +6262,7 @@ function buildImportedAIRegionAgentPageResult({ currentImport = {}, importedPage
     attempted: true,
     missingTarget: false,
     operation: agentResult.operation || 'site_agent_operations',
-    reason: agentResult.reason || 'Operacion aplicada por agente interno.',
+    reason: agentResult.reason || 'Operacion aplicada por una regla interna del editor.',
     operations: agentResult.operations || []
   }
 }
@@ -5859,18 +6273,18 @@ function getImportedAIRegionMissingTargetMessage(fallbackResult = {}) {
   const reason = cleanString(fallbackResult.reason)
   if (fallbackType === 'video_only') {
     if (/no se detecto un video/i.test(reason)) {
-      return 'La zona que seleccionaste no incluye un video detectable. Para cambiar o dejar solo el video, selecciona tambien el video dentro del rectangulo.'
+      return 'La zona que seleccionaste no incluye un video detectable. Para cambiar o dejar solo el video, selecciona también el video dentro del rectangulo.'
     }
     if (/ya no coincide/i.test(reason)) {
-      return 'El video de esa seleccion ya no coincide con el HTML guardado. Recarga la vista previa y vuelve a seleccionar la zona.'
+      return 'El video de esa selección ya no coincide con el HTML guardado. Recarga la vista previa y vuelve a seleccionar la zona.'
     }
   }
   if (fallbackType === 'centered_title_video_button') {
     if (/faltan titular, video o boton/i.test(reason)) {
-      return 'La zona seleccionada no incluye todos los elementos necesarios: titulo, video y boton. Selecciona la franja completa que quieres reordenar.'
+      return 'La zona seleccionada no incluye todos los elementos necesarios: título, video y botón. Selecciona la franja completa que quieres reordenar.'
     }
     if (/ya no coinciden/i.test(reason)) {
-      return 'Los elementos de esa seleccion ya no coinciden con el HTML guardado. Recarga la vista previa y vuelve a seleccionar la zona.'
+      return 'Los elementos de esa selección ya no coinciden con el HTML guardado. Recarga la vista previa y vuelve a seleccionar la zona.'
     }
   }
   return ''
@@ -5878,10 +6292,10 @@ function getImportedAIRegionMissingTargetMessage(fallbackResult = {}) {
 
 function buildImportedAIRegionMissingTargetResponse(debugOrMessage = '', message = '') {
   const debug = debugOrMessage && typeof debugOrMessage === 'object' ? debugOrMessage : null
-  const reply = cleanString(debug ? message : debugOrMessage) || 'La zona seleccionada no incluye el elemento que pediste cambiar. Selecciona la parte correcta de la pagina y vuelve a intentar.'
+  const reply = cleanString(debug ? message : debugOrMessage) || 'La zona seleccionada no incluye el elemento que pediste cambiar. Selecciona la parte correcta de la página y vuelve a intentar.'
   if (debug) {
     debug.finalStatus = 'selection_target_missing'
-    addSitesAIEditDebugStep(debug, `No se guardo el HTML porque falta el objetivo en la seleccion: ${reply}`)
+    addSitesAIEditDebugStep(debug, `No se guardo el HTML porque falta el objetivo en la selección: ${reply}`)
     logSitesAIEditDebug(debug, 'selection_target_missing')
   }
   const response = {
@@ -6016,7 +6430,7 @@ function isGenericSocialProfileName(value) {
 
 function isGenericSocialProfileSubtitle(value) {
   const subtitle = cleanString(value).toLowerCase()
-  return !subtitle || subtitle === 'patrocinado' || subtitle === 'publicacion pagada'
+  return !subtitle || subtitle === 'patrocinado' || subtitle === 'publicación pagada'
 }
 
 function isSupportedSocialPlatform(value) {
@@ -6201,6 +6615,17 @@ export async function createSite(input = {}) {
   if (isSocialTemplate(theme.template)) {
     theme[SOCIAL_PROFILE_BLOCK_READY_KEY] = true
   }
+  const initialMetaEventName = normalizeSiteMetaEventName(input.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
+  const initialMetaEventParameters = pruneSiteMetaEventParametersForEvent(
+    theme.metaEventParameters || theme.meta_event_parameters,
+    initialMetaEventName
+  )
+  delete theme.meta_event_parameters
+  if (hasSiteMetaEventParameters(initialMetaEventParameters)) {
+    theme.metaEventParameters = initialMetaEventParameters
+  } else {
+    delete theme.metaEventParameters
+  }
   const status = validateSiteStatus(input.status || 'draft')
 
   await db.run(`
@@ -6219,7 +6644,7 @@ export async function createSite(input = {}) {
     description || null,
     jsonString(theme),
     normalizeBoolean(input.metaCapiEnabled),
-    normalizeSiteMetaEventName(input.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
+    initialMetaEventName
   ])
 
   if (!blankCanvas) {
@@ -6247,7 +6672,7 @@ export async function createSite(input = {}) {
   return getSite(id, { includeBlocks: true, includeSubmissions: true })
 }
 
-function getImportedHtmlTitle(html = '', fallback = 'Pagina importada') {
+function getImportedHtmlTitle(html = '', fallback = 'Página importada') {
   const titleMatch = String(html || '').match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)
   return limitString(stripHtmlTags(titleMatch?.[1] || fallback), 120)
 }
@@ -6302,7 +6727,7 @@ function sortImportedZipHtmlPaths(paths = [], mainPath = '') {
 }
 
 function getImportedPageDisplayTitle(value = '', index = 0) {
-  return limitString(cleanString(value), 80) || `Pagina ${index + 1}`
+  return limitString(cleanString(value), 80) || `Página ${index + 1}`
 }
 
 function normalizeImportedPageId(value = '', index = 0, usedIds = new Set()) {
@@ -6329,7 +6754,7 @@ function normalizeGeneratedImportedPageAssetPath(page = {}, index = 0, usedPaths
     page.id ||
     page.title ||
     page.name ||
-    `pagina-${index + 1}`
+    `página-${index + 1}`
   )
   const existingHtmlPath = normalizeImportedAssetPath(rawBase)
   if (existingHtmlPath && /\.html?$/i.test(existingHtmlPath)) {
@@ -6408,7 +6833,7 @@ async function extractImportedZipArchive(filename = '', buffer = Buffer.alloc(0)
   }
 
   if (buffer.byteLength > IMPORTED_ZIP_MAX_BYTES) {
-    const error = new Error('El ZIP es demasiado grande. Sube un archivo de maximo 15 MB.')
+    const error = new Error('El ZIP es demasiado grande. Sube un archivo de máximo 15 MB.')
     error.status = 400
     throw error
   }
@@ -6445,21 +6870,21 @@ async function extractImportedZipArchive(filename = '', buffer = Buffer.alloc(0)
     }
 
     if (filesByPath.size >= IMPORTED_ZIP_MAX_FILES) {
-      const error = new Error(`El ZIP trae demasiados archivos. Sube maximo ${IMPORTED_ZIP_MAX_FILES} archivos web.`)
+      const error = new Error(`El ZIP trae demasiados archivos. Sube máximo ${IMPORTED_ZIP_MAX_FILES} archivos web.`)
       error.status = 400
       throw error
     }
 
     const content = await entry.async('nodebuffer')
     if (content.byteLength > IMPORTED_ASSET_MAX_BYTES) {
-      const error = new Error(`El archivo ${assetPath} es demasiado grande. Cada archivo interno debe pesar maximo 8 MB.`)
+      const error = new Error(`El archivo ${assetPath} es demasiado grande. Cada archivo interno debe pesar máximo 8 MB.`)
       error.status = 400
       throw error
     }
 
     totalBytes += content.byteLength
     if (totalBytes > IMPORTED_ASSET_TOTAL_MAX_BYTES) {
-      const error = new Error('El ZIP trae demasiados assets. Reduce imagenes o videos e intenta otra vez.')
+      const error = new Error('El ZIP trae demasiados assets. Reduce imágenes o videos e intenta otra vez.')
       error.status = 400
       throw error
     }
@@ -6489,7 +6914,7 @@ async function extractImportedZipArchive(filename = '', buffer = Buffer.alloc(0)
     htmlPaths: sortImportedZipHtmlPaths(htmlPaths, mainPath),
     report: [
       `Se importo ZIP con ${filesByPath.size} archivos web`,
-      `Pagina principal detectada: ${mainPath}`,
+      `Página principal detectada: ${mainPath}`,
       ...report
     ]
   }
@@ -6587,13 +7012,13 @@ async function addImportedEditableImageAsset(siteId, currentImport, input = {}) 
 
   const buffer = decodeBase64Buffer(fileBase64)
   if (!buffer.length) {
-    const error = new Error('La imagen esta vacia.')
+    const error = new Error('La imagen está vacía.')
     error.status = 400
     throw error
   }
 
   if (buffer.byteLength > IMPORTED_ASSET_MAX_BYTES) {
-    const error = new Error('La imagen es demasiado grande. Sube una imagen de maximo 8 MB.')
+    const error = new Error('La imagen es demasiado grande. Sube una imagen de máximo 8 MB.')
     error.status = 400
     throw error
   }
@@ -6651,7 +7076,7 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
       pagesByPath.set(file.assetPath, makeImportedZipPage(
         file.assetPath,
         pageIndex,
-        getImportedHtmlTitle(sanitized.html, `Pagina ${pageIndex + 1}`)
+        getImportedHtmlTitle(sanitized.html, `Página ${pageIndex + 1}`)
       ))
 
       assets.push(buildImportedAssetRow({
@@ -6709,7 +7134,7 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
 async function prepareGeneratedImportedPagesContent({ pages = [], siteId, importId }) {
   const normalizedPages = normalizeGeneratedImportedPages(pages)
   if (!normalizedPages.length) {
-    const error = new Error('La IA no devolvio paginas HTML validas para importar')
+    const error = new Error('La IA no devolvió páginas HTML válidas para importar')
     error.status = 502
     throw error
   }
@@ -6809,6 +7234,95 @@ async function deleteImportedSiteMediaAssets(siteId) {
   }
 }
 
+async function listImportedSiteCodeFiles(siteId, imported = {}) {
+  const siteRow = await db.get('SELECT * FROM public_sites WHERE id = ? LIMIT 1', [siteId]).catch(() => null)
+  const site = mapSite(siteRow)
+  const pages = normalizeSitePages(site)
+  const theme = site?.theme || {}
+  const importedPopupHtml = cleanString(theme.importedPopupHtml ?? theme.imported_popup_html)
+  const pageByAssetPath = new Map()
+  const orderedPageAssetPaths = []
+
+  for (const page of pages) {
+    const assetPath = normalizeImportedAssetPath(page.importedAssetPath || page.imported_asset_path)
+    if (!assetPath) continue
+    pageByAssetPath.set(assetPath, page)
+    orderedPageAssetPaths.push(assetPath)
+  }
+
+  const rows = await db.all(`
+    SELECT asset_path, content_type, content_base64, size_bytes, updated_at, media_asset_id, public_url
+    FROM public_site_import_assets
+    WHERE site_id = ?
+    ORDER BY asset_path COLLATE NOCASE ASC
+  `, [siteId]).catch(() => [])
+
+  const assetFiles = rows
+    .map(row => {
+      const assetPath = normalizeImportedAssetPath(row.asset_path)
+      const contentType = row.content_type || getImportedAssetContentType(assetPath)
+      if (!assetPath || row.media_asset_id || row.public_url || !isImportedCodeContentType(contentType, assetPath)) return null
+      const page = pageByAssetPath.get(assetPath)
+      return {
+        path: assetPath,
+        label: page?.title || assetPath.split('/').pop() || assetPath,
+        pageId: page?.id || '',
+        pageTitle: page?.title || '',
+        contentType,
+        language: getImportedCodeLanguage(assetPath, contentType),
+        content: Buffer.from(row.content_base64 || '', 'base64').toString('utf8'),
+        sizeBytes: Number(row.size_bytes || 0),
+        updatedAt: row.updated_at || imported.updatedAt || '',
+        role: page ? 'page_asset' : 'asset'
+      }
+    })
+    .filter(Boolean)
+
+  const assetByPath = new Map(assetFiles.map(file => [file.path, file]))
+  const orderedAssetFiles = [
+    ...orderedPageAssetPaths.map(assetPath => assetByPath.get(assetPath)).filter(Boolean),
+    ...assetFiles.filter(file => !orderedPageAssetPaths.includes(file.path))
+  ]
+
+  const hasPageHtmlAssets = orderedPageAssetPaths.some(assetPath => {
+    const file = assetByPath.get(assetPath)
+    return file && file.language === 'html'
+  })
+
+  const mainHtml = imported.htmlSanitized || imported.htmlOriginal || ''
+  const files = []
+  if (mainHtml && !hasPageHtmlAssets) {
+    files.push({
+      path: '',
+      label: imported.originalFilename || 'index.html',
+      pageId: pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID,
+      pageTitle: pages[0]?.title || 'Página 1',
+      contentType: 'text/html; charset=utf-8',
+      language: 'html',
+      content: mainHtml,
+      sizeBytes: Buffer.byteLength(mainHtml, 'utf8'),
+      updatedAt: imported.updatedAt || '',
+      role: 'main_html'
+    })
+  }
+  if (importedPopupHtml) {
+    files.push({
+      path: IMPORTED_POPUP_CODE_PATH,
+      label: 'Pop up',
+      pageId: POPUP_SELECTED_ID,
+      pageTitle: 'Pop up',
+      contentType: 'text/html; charset=utf-8',
+      language: 'html',
+      content: importedPopupHtml,
+      sizeBytes: Buffer.byteLength(importedPopupHtml, 'utf8'),
+      updatedAt: siteRow?.updated_at || imported.updatedAt || '',
+      role: 'popup'
+    })
+  }
+
+  return [...files, ...orderedAssetFiles]
+}
+
 export async function getImportedSiteBySiteId(siteId) {
   const row = await db.get('SELECT * FROM public_site_imports WHERE site_id = ? LIMIT 1', [siteId])
   if (!row) return null
@@ -6862,7 +7376,7 @@ export async function getImportedSiteBySiteId(siteId) {
     }
   }
 
-  return {
+  const imported = {
     id: row.id,
     siteId: row.site_id,
     originalFilename: row.original_filename || '',
@@ -6876,6 +7390,8 @@ export async function getImportedSiteBySiteId(siteId) {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
+  imported.codeFiles = await listImportedSiteCodeFiles(siteId, imported)
+  return imported
 }
 
 async function getImportedSiteAssetByPath(siteId, assetPath) {
@@ -6977,15 +7493,15 @@ export async function createImportedSiteFromHtml(input = {}) {
         report: sanitized.report
       },
       detectedForms,
-      pages: [makeImportedZipPage('', 0, getImportedHtmlTitle(sanitized.html, 'Pagina 1'))],
+      pages: [makeImportedZipPage('', 0, getImportedHtmlTitle(sanitized.html, 'Página 1'))],
       assets: []
     }
   }
 
   const detectedForms = prepared.detectedForms
   const mappings = buildDefaultImportedFormMappings(detectedForms)
-  const publicTitle = getImportedHtmlTitle(prepared.sanitized.html, input.title || filename.replace(/\.[^.]+$/, '') || 'Pagina importada')
-  const publicDescription = getImportedHtmlDescription(prepared.sanitized.html, input.description || 'Pagina importada desde HTML propio')
+  const publicTitle = getImportedHtmlTitle(prepared.sanitized.html, input.title || filename.replace(/\.[^.]+$/, '') || 'Página importada')
+  const publicDescription = getImportedHtmlDescription(prepared.sanitized.html, input.description || 'Página importada desde HTML propio')
   const slug = await ensureUniqueSlug(slugify(input.slug || publicTitle || 'pagina-importada'))
   const theme = {
     ...DEFAULT_THEME,
@@ -6996,7 +7512,7 @@ export async function createImportedSiteFromHtml(input = {}) {
     importAssetCount: prepared.assets.length,
     pages: Array.isArray(prepared.pages) && prepared.pages.length
       ? prepared.pages
-      : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+      : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   }
 
   await db.run(`
@@ -7006,11 +7522,11 @@ export async function createImportedSiteFromHtml(input = {}) {
     ) VALUES (?, ?, ?, ?, 'draft', NULL, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, [
     siteId,
-    limitString(input.name || publicTitle || 'Pagina importada', 100),
+    limitString(input.name || publicTitle || 'Página importada', 100),
     slug,
     siteType,
     publicTitle,
-    publicDescription || 'Pagina importada desde HTML propio',
+    publicDescription || 'Página importada desde HTML propio',
     jsonString(theme),
     normalizeBoolean(input.metaCapiEnabled),
     normalizeSiteMetaEventName(input.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
@@ -7097,7 +7613,7 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
       currentImport.formMappings,
       buildDefaultImportedFormMappings(prepared.detectedForms)
     )
-    const publicTitle = getImportedHtmlTitle(prepared.sanitized.html, input.title || currentSite.title || 'Pagina importada')
+    const publicTitle = getImportedHtmlTitle(prepared.sanitized.html, input.title || currentSite.title || 'Página importada')
     const publicDescription = getImportedHtmlDescription(prepared.sanitized.html, input.description || currentSite.description || '')
     const nextTheme = {
       ...DEFAULT_THEME,
@@ -7171,7 +7687,7 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
     currentImport.formMappings,
     buildDefaultImportedFormMappings(detectedForms)
   )
-  const publicTitle = getImportedHtmlTitle(htmlSanitized, input.title || 'Pagina importada')
+  const publicTitle = getImportedHtmlTitle(htmlSanitized, input.title || 'Página importada')
   const publicDescription = getImportedHtmlDescription(htmlSanitized, input.description || '')
 
   await db.run(`
@@ -7220,7 +7736,7 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
   }
 
   if (currentImport.importType !== 'html') {
-    const error = new Error('La edicion rapida funciona con paginas HTML de un solo archivo. Para ZIP, sube una nueva version del archivo.')
+    const error = new Error('La edición rapida funciona con páginas HTML de un solo archivo. Para ZIP, sube una nueva version del archivo.')
     error.status = 400
     throw error
   }
@@ -7236,7 +7752,7 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
   if (cleanString(updateInput.fileBase64 || updateInput.file_base64)) {
     const editType = normalizeImportedEditableContentType(updateInput.editType || updateInput.edit_type)
     if (!['image', 'background_image'].includes(editType)) {
-      const error = new Error('La subida de archivo solo aplica para imagenes.')
+      const error = new Error('La subida de archivo solo aplica para imágenes.')
       error.status = 400
       throw error
     }
@@ -7274,7 +7790,7 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
     currentImport.formMappings,
     buildDefaultImportedFormMappings(nextDetectedForms)
   )
-  const publicTitle = getImportedHtmlTitle(htmlSanitized, 'Pagina importada')
+  const publicTitle = getImportedHtmlTitle(htmlSanitized, 'Página importada')
   const publicDescription = getImportedHtmlDescription(htmlSanitized, '')
 
   if (editsAssetPage && activeAsset) {
@@ -7334,6 +7850,230 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
   }
 }
 
+export async function updateImportedSiteCodeFiles(siteId, input = {}) {
+  const currentImport = await getImportedSiteBySiteId(siteId)
+  if (!currentImport) {
+    const error = new Error('Importacion no encontrada')
+    error.status = 404
+    throw error
+  }
+
+  const currentSite = await getSite(siteId, { includeBlocks: false })
+  if (!currentSite) {
+    const error = new Error('Site no encontrado')
+    error.status = 404
+    throw error
+  }
+
+  const updates = Array.isArray(input.files) ? input.files : []
+  const updateByPath = new Map()
+
+  for (const file of updates) {
+    const rawPath = cleanString(file?.path ?? file?.assetPath ?? file?.asset_path ?? '')
+    const assetPath = normalizeImportedCodeUpdatePath(rawPath)
+    if (rawPath && assetPath === '' && rawPath !== '__main__' && rawPath !== 'main') {
+      const error = new Error('Ruta de archivo inválida')
+      error.status = 400
+      throw error
+    }
+
+    const content = String(file?.content ?? '')
+    if (Buffer.byteLength(content, 'utf8') > IMPORTED_CODE_FILE_MAX_BYTES) {
+      const error = new Error(`El archivo ${assetPath || 'principal'} supera el límite permitido.`)
+      error.status = 413
+      throw error
+    }
+
+    updateByPath.set(assetPath, content)
+  }
+
+  if (!updateByPath.size) {
+    return {
+      site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
+      import: await getImportedSiteBySiteId(siteId)
+    }
+  }
+
+  const assetRows = await db.all(`
+    SELECT *
+    FROM public_site_import_assets
+    WHERE site_id = ?
+    ORDER BY asset_path COLLATE NOCASE ASC
+  `, [siteId]).catch(() => [])
+  const assetByPath = new Map(assetRows.map(row => [normalizeImportedAssetPath(row.asset_path), row]))
+  const pages = normalizeSitePages(currentSite)
+  const pageByAssetPath = new Map()
+  const orderedPageAssetPaths = []
+
+  for (const page of pages) {
+    const assetPath = normalizeImportedAssetPath(page.importedAssetPath || page.imported_asset_path)
+    if (!assetPath) continue
+    pageByAssetPath.set(assetPath, page)
+    orderedPageAssetPaths.push(assetPath)
+  }
+
+  for (const assetPath of updateByPath.keys()) {
+    if (!assetPath || assetPath === IMPORTED_POPUP_CODE_PATH) continue
+    const row = assetByPath.get(assetPath)
+    const contentType = row?.content_type || getImportedAssetContentType(assetPath)
+    if (!row || row.media_asset_id || row.public_url || !isImportedCodeContentType(contentType, assetPath)) {
+      const error = new Error(`El archivo ${assetPath} no se puede editar como código.`)
+      error.status = 400
+      throw error
+    }
+  }
+
+  const htmlAssetRows = assetRows.filter(row => {
+    const assetPath = normalizeImportedAssetPath(row.asset_path)
+    const contentType = row.content_type || getImportedAssetContentType(assetPath)
+    return assetPath && isImportedCodeContentType(contentType, assetPath) && getImportedCodeLanguage(assetPath, contentType) === 'html'
+  })
+  const htmlAssetByPath = new Map(htmlAssetRows.map(row => [normalizeImportedAssetPath(row.asset_path), row]))
+  const orderedHtmlAssetPaths = [
+    ...orderedPageAssetPaths.filter(assetPath => htmlAssetByPath.has(assetPath)),
+    ...htmlAssetRows
+      .map(row => normalizeImportedAssetPath(row.asset_path))
+      .filter(assetPath => assetPath && !orderedPageAssetPaths.includes(assetPath))
+  ]
+  const shouldProcessMainHtml = updateByPath.has('') || orderedHtmlAssetPaths.length === 0
+  const currentTheme = currentSite.theme || {}
+  const currentImportedPopupHtml = cleanString(currentTheme.importedPopupHtml ?? currentTheme.imported_popup_html)
+  const hasPopupCodeUpdate = updateByPath.has(IMPORTED_POPUP_CODE_PATH)
+  const nextRawPopupHtml = hasPopupCodeUpdate ? updateByPath.get(IMPORTED_POPUP_CODE_PATH) : currentImportedPopupHtml
+  const shouldProcessPopupHtml = Boolean(cleanString(nextRawPopupHtml))
+  const htmlTargets = [
+    ...(shouldProcessMainHtml ? [{ assetPath: '', row: null }] : []),
+    ...orderedHtmlAssetPaths.map(assetPath => ({ assetPath, row: htmlAssetByPath.get(assetPath) })),
+    ...(shouldProcessPopupHtml ? [{ assetPath: IMPORTED_POPUP_CODE_PATH, row: null }] : [])
+  ]
+
+  const usedFormIds = new Set()
+  const detectedForms = []
+  const securityReport = []
+  const sanitizedHtmlByPath = new Map()
+  let storedMainHtml = currentImport.htmlSanitized || currentImport.htmlOriginal || '<!doctype html><html><body></body></html>'
+
+  for (const target of htmlTargets) {
+    const assetPath = target.assetPath
+    const sourceHtml = updateByPath.has(assetPath)
+      ? updateByPath.get(assetPath)
+      : assetPath
+        ? assetPath === IMPORTED_POPUP_CODE_PATH
+          ? currentImportedPopupHtml
+          : Buffer.from(target.row?.content_base64 || '', 'base64').toString('utf8')
+        : currentImport.htmlSanitized || currentImport.htmlOriginal || ''
+    const sanitized = sanitizeImportedHtml(sourceHtml)
+    const pageForms = namespaceImportedPageForms(detectImportedForms(sanitized.html), assetPath, usedFormIds)
+    pageForms.forEach(form => {
+      const formId = cleanString(form?.id)
+      if (formId) usedFormIds.add(formId)
+    })
+    detectedForms.push(...pageForms)
+    const htmlSanitized = annotateImportedEditableHtml(assignImportedFormIds(sanitized.html, pageForms))
+    sanitizedHtmlByPath.set(assetPath, htmlSanitized)
+    securityReport.push(...sanitized.report.map(item => (
+      assetPath ? `${pageByAssetPath.get(assetPath)?.title || assetPath}: ${item}` : item
+    )))
+  }
+
+  for (const [assetPath, content] of updateByPath.entries()) {
+    if (!assetPath || assetPath === IMPORTED_POPUP_CODE_PATH) continue
+    const row = assetByPath.get(assetPath)
+    if (!row) continue
+    const contentType = row.content_type || getImportedAssetContentType(assetPath)
+    const language = getImportedCodeLanguage(assetPath, contentType)
+    const nextContent = language === 'html' && sanitizedHtmlByPath.has(assetPath)
+      ? sanitizedHtmlByPath.get(assetPath)
+      : content
+    const buffer = Buffer.from(nextContent || '', 'utf8')
+    await db.run(`
+      UPDATE public_site_import_assets SET
+        content_base64 = ?,
+        size_bytes = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      buffer.toString('base64'),
+      buffer.byteLength,
+      row.id
+    ])
+  }
+
+  if (sanitizedHtmlByPath.has('')) {
+    storedMainHtml = sanitizedHtmlByPath.get('')
+  } else {
+    const firstPageAssetPath = normalizeImportedAssetPath(pages[0]?.importedAssetPath || pages[0]?.imported_asset_path)
+    if (firstPageAssetPath && sanitizedHtmlByPath.has(firstPageAssetPath)) {
+      storedMainHtml = sanitizedHtmlByPath.get(firstPageAssetPath)
+    }
+  }
+
+  if (hasPopupCodeUpdate) {
+    const nextPopupHtml = shouldProcessPopupHtml
+      ? sanitizedHtmlByPath.get(IMPORTED_POPUP_CODE_PATH) || ''
+      : ''
+    await db.run(`
+      UPDATE public_sites SET
+        theme_json = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      jsonString({
+        ...currentTheme,
+        importedPopupHtml: nextPopupHtml,
+        popupEnabled: Boolean(nextPopupHtml.trim())
+      }),
+      siteId
+    ])
+  }
+
+  const nextMappings = mergeImportedFormMappings(
+    currentImport.formMappings,
+    buildDefaultImportedFormMappings(detectedForms)
+  )
+  const publicTitle = getImportedHtmlTitle(storedMainHtml, currentSite.title || 'Página importada')
+  const publicDescription = getImportedHtmlDescription(storedMainHtml, currentSite.description || '')
+
+  await db.run(`
+    UPDATE public_site_imports SET
+      html_original = ?,
+      html_sanitized = ?,
+      detected_forms_json = ?,
+      form_mappings_json = ?,
+      security_report_json = ?,
+      status = 'mapping_pending',
+      updated_at = CURRENT_TIMESTAMP
+    WHERE site_id = ?
+  `, [
+    storedMainHtml,
+    storedMainHtml,
+    jsonString(detectedForms.length ? detectedForms : currentImport.detectedForms),
+    jsonString(nextMappings),
+    jsonString(Array.from(new Set([
+      ...(Array.isArray(currentImport.securityReport) ? currentImport.securityReport : []),
+      ...securityReport
+    ]))),
+    siteId
+  ])
+
+  await db.run(`
+    UPDATE public_sites SET
+      title = ?,
+      description = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    publicTitle,
+    publicDescription || null,
+    siteId
+  ])
+
+  return {
+    site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
+    import: await getImportedSiteBySiteId(siteId)
+  }
+}
+
 export async function createSiteWithAIHtml(input = {}) {
   const siteKind = validateSitesAICreationKind(input.siteKind || input.site_kind)
   const messages = normalizeSitesAIMessages(input.messages)
@@ -7341,17 +8081,12 @@ export async function createSiteWithAIHtml(input = {}) {
     return {
       status: 'needs_more_info',
       reply: siteKind === 'landing'
-        ? 'Cuentame el negocio, oferta, objetivo, estilo visual, CTA y que campos quieres capturar si llevara formulario.'
-        : 'Cuentame que formulario quieres, que datos debe pedir, estilo visual y que mensaje debe ver la persona al terminar.'
+        ? 'Cuéntame el negocio, oferta, objetivo, estilo visual, CTA y qué campos quieres capturar si llevará formulario.'
+        : 'Cuéntame qué formulario quieres, qué datos debe pedir, estilo visual y qué mensaje debe ver la persona al terminar.'
     }
   }
 
-  const apiKey = await getOpenAIApiKey()
-  if (!apiKey) {
-    const error = new Error('Primero configura la API key de OpenAI en Configuracion.')
-    error.status = 409
-    throw error
-  }
+  const apiKey = await requireOpenAIApiKey()
 
   const agentConfig = await getAIAgentConfig({ userId: input.userId })
   const model = normalizeSitesAIModel(input.model || input.chatgptModel || input.chatgpt_model, agentConfig?.model)
@@ -7367,7 +8102,7 @@ export async function createSiteWithAIHtml(input = {}) {
   if (status === 'needs_more_info' || !hasSitesAIHtmlPayload(aiPayload)) {
     return {
       status: 'needs_more_info',
-      reply: limitString(aiPayload?.reply, 1000) || 'Me falta un dato clave para armar la pagina HTML. Cuentame un poco mas del negocio, objetivo y campos.'
+      reply: limitString(aiPayload?.reply, 1000) || 'Me falta un dato clave para armar la página HTML. Cuéntame un poco más del negocio, objetivo y campos.'
     }
   }
 
@@ -7379,7 +8114,7 @@ export async function createSiteWithAIHtml(input = {}) {
     pages: page.pages,
     name: page.name,
     title: page.title,
-    description: page.description || 'Pagina generada con IA desde HTML.',
+    description: page.description || 'Página generada con IA desde HTML.',
     userId: input.userId,
     metaCapiEnabled: input.metaCapiEnabled,
     metaEventName: input.metaEventName
@@ -7387,7 +8122,7 @@ export async function createSiteWithAIHtml(input = {}) {
 
   return {
     status: 'created',
-    reply: limitString(aiPayload?.reply, 1000) || 'Listo, genere la pagina HTML y la importe para revisar sus formularios.',
+    reply: limitString(aiPayload?.reply, 1000) || 'Listo, genere la página HTML y la importe para revisar sus formularios.',
     site: result.site,
     import: result.import
   }
@@ -7417,6 +8152,7 @@ function createSitesAIEditDebug({ traceId, siteId, activePageId, model, imported
     fallbackType: '',
     fallbackReason: '',
     finalStatus: '',
+    progressSteps: [],
     steps: []
   }
 }
@@ -7425,6 +8161,30 @@ function addSitesAIEditDebugStep(debug, message = '') {
   const cleanMessage = limitString(message, 420)
   if (!debug || !cleanMessage) return
   debug.steps.push(cleanMessage)
+}
+
+function addSitesAIEditProgressStep(debug, {
+  id = '',
+  label = '',
+  detail = '',
+  status = 'done'
+} = {}) {
+  if (!debug) return
+  const cleanId = cleanString(id || label).replace(/[^a-z0-9_-]+/gi, '_').slice(0, 64)
+  const cleanLabel = limitString(label, 80)
+  if (!cleanId || !cleanLabel) return
+  const cleanStep = {
+    id: cleanId,
+    label: cleanLabel,
+    detail: limitString(detail, 420),
+    status: ['pending', 'active', 'done', 'error'].includes(status) ? status : 'done'
+  }
+  const index = debug.progressSteps.findIndex(step => step.id === cleanStep.id)
+  if (index >= 0) {
+    debug.progressSteps[index] = { ...debug.progressSteps[index], ...cleanStep }
+  } else {
+    debug.progressSteps.push(cleanStep)
+  }
 }
 
 function getSitesAIEditDebugPayload(debug = {}) {
@@ -7450,6 +8210,7 @@ function getSitesAIEditDebugPayload(debug = {}) {
     fallbackType: debug.fallbackType,
     fallbackReason: debug.fallbackReason,
     finalStatus: debug.finalStatus,
+    progressSteps: Array.isArray(debug.progressSteps) ? debug.progressSteps.slice(-12) : [],
     steps: Array.isArray(debug.steps) ? debug.steps.slice(-12) : []
   }
 }
@@ -7460,6 +8221,112 @@ function logSitesAIEditDebug(debug = {}, event = 'step', extra = {}) {
     ...getSitesAIEditDebugPayload(debug),
     ...extra
   })
+}
+
+const SITES_AI_DRAFT_HTML_MAX_CHARS = 750000
+
+function getSitesAIDraftHtmlInput(input = {}) {
+  const rawValue = input.currentHtml ?? input.current_html ?? input.draftHtml ?? input.draft_html
+  if (typeof rawValue !== 'string') return ''
+  const trimmed = rawValue.trim()
+  if (!trimmed) return ''
+  return rawValue.length > SITES_AI_DRAFT_HTML_MAX_CHARS
+    ? rawValue.slice(0, SITES_AI_DRAFT_HTML_MAX_CHARS)
+    : rawValue
+}
+
+function getSitesAIDraftFilePathInput(input = {}) {
+  return cleanString(input.currentFilePath || input.current_file_path || input.currentFilename || input.current_filename)
+}
+
+function shouldReturnSitesAIDraft(input = {}) {
+  return normalizeBoolean(input.draftOnly || input.draft_only || input.returnDraft || input.return_draft) === 1
+}
+
+function applySitesAIDraftHtmlToContext({ currentImport = {}, importedPages = [], activePageId = '', currentHtml = '', currentFilePath = '' } = {}) {
+  if (!currentHtml) {
+    return {
+      currentImport,
+      importedPages
+    }
+  }
+
+  const cleanActivePageId = cleanString(activePageId)
+  const cleanFilePath = cleanString(currentFilePath)
+  let replacedPage = false
+  const nextPages = Array.isArray(importedPages)
+    ? importedPages.map((page, index) => {
+      const isMatch = (
+        (cleanActivePageId && (
+          cleanString(page.id) === cleanActivePageId ||
+          cleanString(page.filename) === cleanActivePageId
+        )) ||
+        (cleanFilePath && cleanString(page.filename) === cleanFilePath) ||
+        (!cleanActivePageId && !cleanFilePath && index === 0)
+      )
+      if (!isMatch) return page
+      replacedPage = true
+      return {
+        ...page,
+        filename: page.filename || cleanFilePath || currentImport.originalFilename || '',
+        html: currentHtml
+      }
+    })
+    : []
+
+  const shouldPatchMainImport = !nextPages.length || nextPages.length === 1 || !replacedPage
+  return {
+    currentImport: shouldPatchMainImport
+      ? {
+        ...currentImport,
+        htmlOriginal: currentHtml,
+        htmlSanitized: currentHtml
+      }
+      : currentImport,
+    importedPages: replacedPage
+      ? nextPages
+      : nextPages.length
+        ? nextPages
+        : [{
+          id: cleanActivePageId || DEFAULT_FUNNEL_PAGE_ID,
+          title: 'Página actual',
+          filename: cleanFilePath || currentImport.originalFilename || '',
+          html: currentHtml
+        }]
+  }
+}
+
+function getSitesAIDraftHtmlFromPagePayload(page = {}, currentImport = {}, importedPages = [], activePageId = '') {
+  if (Array.isArray(page.pages) && page.pages.length) {
+    const activePage = findImportedAIActivePageContext(page.pages, activePageId) || page.pages[0]
+    return String(activePage?.html || page.html || currentImport.htmlSanitized || currentImport.htmlOriginal || '')
+  }
+
+  if (cleanString(page.html)) return String(page.html || '')
+
+  const activePage = findImportedAIActivePageContext(importedPages, activePageId)
+  return String(activePage?.html || currentImport.htmlSanitized || currentImport.htmlOriginal || '')
+}
+
+function getSitesAIDraftPagesFromPagePayload(page = {}) {
+  if (!Array.isArray(page.pages) || !page.pages.length) return []
+  return page.pages.map(nextPage => ({
+    id: cleanString(nextPage.id),
+    title: cleanString(nextPage.title),
+    filename: cleanString(nextPage.filename),
+    html: String(nextPage.html || '')
+  }))
+}
+
+function buildSitesAIDraftOnlyUpdateResponse({ page = {}, currentImport = {}, importedPages = [], activePageId = '', reply = '', debug = null } = {}) {
+  const response = {
+    status: 'updated',
+    reply: limitString(reply, 1000) || 'Listo, el asistente preparó el cambio en el borrador del HTML.',
+    draftHtml: getSitesAIDraftHtmlFromPagePayload(page, currentImport, importedPages, activePageId),
+    draftPages: getSitesAIDraftPagesFromPagePayload(page)
+  }
+  if (debug) response.debug = getSitesAIEditDebugPayload(debug)
+  return response
 }
 
 export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
@@ -7484,15 +8351,27 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   if (messages.length === 0 && !aiRegionRequest) {
     return {
       status: 'needs_more_info',
-      reply: 'Dime que quieres cambiar del HTML: titulo, imagen, orden de secciones, colores, textos o campos del formulario.'
+      reply: 'Dime que quieres cambiar del HTML: título, imagen, orden de secciones, colores, textos o campos del formulario.'
     }
   }
 
   const agentConfig = await getAIAgentConfig({ userId: input.userId })
   const model = normalizeSitesAIModel(input.model || input.chatgptModel || input.chatgpt_model, agentConfig?.model)
-  const importedPages = await getImportedSitePagesForAIContext(currentSite, currentImport)
   const visualContext = normalizeSitesAIVisualContext(input.visualContext || input.visual_context)
   const activePageId = getImportedAIActivePageId(input, visualContext)
+  const draftOnly = shouldReturnSitesAIDraft(input)
+  const draftHtml = getSitesAIDraftHtmlInput(input)
+  const draftFilePath = getSitesAIDraftFilePathInput(input)
+  const initialImportedPages = await getImportedSitePagesForAIContext(currentSite, currentImport)
+  const draftContext = applySitesAIDraftHtmlToContext({
+    currentImport,
+    importedPages: initialImportedPages,
+    activePageId,
+    currentHtml: draftHtml,
+    currentFilePath: draftFilePath
+  })
+  const currentImportForAI = draftContext.currentImport
+  const importedPages = draftContext.importedPages
   const promptText = getSitesAIConversationText(messages)
   const operationalPromptText = buildImportedAIRegionOperationalPromptText(promptText, aiRegionRequest)
   const hasSelectedRegionHints = parseImportedAIRegionElementHints(operationalPromptText).length > 0
@@ -7506,12 +8385,27 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
     messages,
     aiRegionRequest
   })
-  addSitesAIEditDebugStep(debug, `Inicio de edicion IA para pagina ${activePageId || 'activa'} con ${debug.selectedElements} elementos visuales.`)
+  addSitesAIEditDebugStep(debug, `Inicio de edición IA para página ${activePageId || 'activa'} con ${debug.selectedElements} elementos visuales.`)
+  addSitesAIEditProgressStep(debug, {
+    id: 'context',
+    label: 'Contexto preparado',
+    detail: `${importedPages.length || 1} página(s), ${debug.selectedElements} elemento(s) visuales y borrador activo listos para analizar.`,
+    status: 'done'
+  })
   logSitesAIEditDebug(debug, 'request_started')
 
-  const agentImportedPages = await getImportedSitePagesForAIContext(currentSite, currentImport, { htmlLimit: 0 })
-  const agentResult = buildImportedAIRegionAgentPageResult({
+  const initialAgentImportedPages = await getImportedSitePagesForAIContext(currentSite, currentImport, { htmlLimit: 0 })
+  const agentDraftContext = applySitesAIDraftHtmlToContext({
     currentImport,
+    importedPages: initialAgentImportedPages,
+    activePageId,
+    currentHtml: draftHtml,
+    currentFilePath: draftFilePath
+  })
+  const agentImportedPages = agentDraftContext.importedPages
+  const agentCurrentImport = agentDraftContext.currentImport
+  const agentResult = buildImportedAIRegionAgentPageResult({
+    currentImport: agentCurrentImport,
     importedPages: agentImportedPages.length ? agentImportedPages : importedPages,
     activePageId,
     promptText: operationalPromptText,
@@ -7524,13 +8418,39 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   debug.agentReason = agentResult.reason || ''
   debug.agentOperations = agentResult.operations || []
   if (agentResult.attempted) {
-    addSitesAIEditDebugStep(debug, `Agente interno ${agentResult.operation || 'operacion'}: ${agentResult.reason || 'sin detalle'}`)
+    addSitesAIEditDebugStep(debug, `Regla interna ${agentResult.operation || 'operación'}: ${agentResult.reason || 'sin detalle'}`)
+    addSitesAIEditProgressStep(debug, {
+      id: 'site_agent',
+      label: agentResult.page ? 'Regla interna aplicada' : 'Regla interna revisada',
+      detail: agentResult.reason || 'Ristak revisó si el cambio se podía resolver sin llamar a OpenAI.',
+      status: agentResult.page ? 'done' : 'done'
+    })
     logSitesAIEditDebug(debug, agentResult.page ? 'site_agent_updated' : 'site_agent_no_change', {
       agentOperations: debug.agentOperations
     })
   }
 
   if (agentResult.page) {
+    if (draftOnly) {
+      debug.finalStatus = 'draft_updated_with_site_agent'
+      addSitesAIEditDebugStep(debug, 'Se devolvio el HTML del borrador aplicado por una regla interna.')
+      addSitesAIEditProgressStep(debug, {
+        id: 'draft',
+        label: 'Borrador listo',
+        detail: 'El cambio quedó aplicado como borrador local, pendiente de guardar el sitio.',
+        status: 'done'
+      })
+      logSitesAIEditDebug(debug, 'draft_updated_with_site_agent')
+      return buildSitesAIDraftOnlyUpdateResponse({
+        page: agentResult.page,
+        currentImport: currentImportForAI,
+        importedPages,
+        activePageId,
+        reply: agentResult.reason || 'Ristak aplicó el cambio con una regla interna del editor.',
+        debug
+      })
+    }
+
     const result = await replaceImportedSiteHtml(siteId, {
       html: agentResult.page.html,
       pages: agentResult.page.pages,
@@ -7538,12 +8458,18 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
       description: agentResult.page.description || currentSite.description
     })
     debug.finalStatus = 'updated_with_site_agent'
-    addSitesAIEditDebugStep(debug, 'Se guardo el HTML aplicado por el agente interno.')
+    addSitesAIEditDebugStep(debug, 'Se guardo el HTML aplicado por una regla interna.')
+    addSitesAIEditProgressStep(debug, {
+      id: 'save',
+      label: 'HTML guardado',
+      detail: 'El cambio interno se guardó en el sitio.',
+      status: 'done'
+    })
     logSitesAIEditDebug(debug, 'updated_with_site_agent')
 
     return {
       status: 'updated',
-      reply: agentResult.reason || 'Ristak aplico el cambio con el agente interno del editor.',
+      reply: agentResult.reason || 'Ristak aplicó el cambio con una regla interna del editor.',
       site: result.site,
       import: result.import,
       debug: getSitesAIEditDebugPayload(debug)
@@ -7557,61 +8483,125 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
     )
   }
 
-  const apiKey = await getOpenAIApiKey()
-  if (!apiKey) {
-    const error = new Error('Primero configura la API key de OpenAI en Configuracion.')
-    error.status = 409
-    throw error
-  }
+  const apiKey = await requireOpenAIApiKey()
 
   let aiPayload = null
   try {
+    addSitesAIEditDebugStep(debug, `Solicitud enviada a OpenAI con modelo ${model}.`)
+    addSitesAIEditProgressStep(debug, {
+      id: 'openai_request',
+      label: 'IA consultada',
+      detail: `${model}. Se mandó el HTML activo y la instrucción del usuario.`,
+      status: 'done'
+    })
     aiPayload = await callSitesAIHtmlEditor({
       apiKey,
       model,
       siteKind,
       messages,
-      agentConfig,
-      site: currentSite,
-      importedSite: currentImport,
+      importedSite: currentImportForAI,
       importedPages,
       visualContext,
       activePageId,
       aiRegionRequest
     })
+    debug.aiStatus = cleanString(aiPayload?.status || 'updated')
+    debug.aiReply = limitString(aiPayload?.reply, 900)
+    addSitesAIEditDebugStep(debug, `OpenAI respondió con estado ${debug.aiStatus || 'sin estado explícito'}.`)
+    addSitesAIEditProgressStep(debug, {
+      id: 'openai_response',
+      label: 'Respuesta recibida',
+      detail: debug.aiReply || 'La IA devolvió una propuesta de HTML para revisar.',
+      status: 'done'
+    })
   } catch (error) {
+    addSitesAIEditDebugStep(debug, `OpenAI no completó la edición: ${sanitizeOpenAIErrorMessage(error?.message) || 'sin detalle'}`)
+    addSitesAIEditProgressStep(debug, {
+      id: 'openai_error',
+      label: 'IA no disponible',
+      detail: sanitizeOpenAIErrorMessage(error?.message) || 'OpenAI no completó la edición.',
+      status: 'error'
+    })
+    error.debug = getSitesAIEditDebugPayload(debug)
     throw error
   }
 
   const status = cleanString(aiPayload?.status)
 
   if (status === 'needs_more_info' || !hasSitesAIHtmlPayload(aiPayload)) {
+    debug.finalStatus = 'needs_more_info'
+    addSitesAIEditProgressStep(debug, {
+      id: 'needs_more_info',
+      label: 'Falta información',
+      detail: limitString(aiPayload?.reply, 420) || 'La IA pidió más detalle antes de editar.',
+      status: 'error'
+    })
     return {
       status: 'needs_more_info',
-      reply: limitString(aiPayload?.reply, 1000) || 'Me falta saber que cambio quieres hacer en esta pagina HTML.'
+      reply: limitString(aiPayload?.reply, 1000) || 'Me falta saber que cambio quieres hacer en esta página HTML.',
+      debug: getSitesAIEditDebugPayload(debug)
     }
   }
 
   const aiPage = normalizeAIHtmlPagePayload(aiPayload, siteKind)
+  const replyContaminationReason = getSitesAIEditorReplyContaminationReason(aiPage, {
+    messages,
+    aiRegionRequest
+  })
+  if (replyContaminationReason) {
+    debug.finalStatus = replyContaminationReason
+    addSitesAIEditDebugStep(debug, `La respuesta IA fue bloqueada porque intentó escribir una respuesta del asistente dentro del HTML (${replyContaminationReason}).`)
+    addSitesAIEditProgressStep(debug, {
+      id: 'assistant_reply_blocked',
+      label: 'Respuesta bloqueada',
+      detail: 'La IA intentó contestar dentro de la página en vez de aplicar solo el cambio.',
+      status: 'error'
+    })
+    return {
+      status: 'needs_more_info',
+      reason: replyContaminationReason,
+      reply: 'El asistente intentó escribir una respuesta dentro de la página. No se aplicó al HTML.',
+      debug: getSitesAIEditDebugPayload(debug)
+    }
+  }
+  addSitesAIEditProgressStep(debug, {
+    id: 'normalize',
+    label: 'HTML normalizado',
+    detail: 'Ristak validó la respuesta de la IA y la convirtió al formato editable del sitio.',
+    status: 'done'
+  })
   const aiPageHasPages = Array.isArray(aiPage.pages) && aiPage.pages.length > 0
   const shouldMergeSingleActivePage = !aiPageHasPages && importedPages.length > 1 && Boolean(cleanString(aiPage.html))
   const shouldMergePartialPages = aiPageHasPages && importedPages.length > aiPage.pages.length
   const mergeImportedPages = shouldMergeSingleActivePage || shouldMergePartialPages
-    ? await getImportedSitePagesForAIContext(currentSite, currentImport, { htmlLimit: 0 })
+    ? applySitesAIDraftHtmlToContext({
+      currentImport,
+      importedPages: await getImportedSitePagesForAIContext(currentSite, currentImport, { htmlLimit: 0 }),
+      activePageId,
+      currentHtml: draftHtml,
+      currentFilePath: draftFilePath
+    }).importedPages
     : importedPages
   const page = normalizeImportedAIHtmlPageForActivePage(
     aiPage,
-    currentImport,
+    currentImportForAI,
     mergeImportedPages,
     activePageId
   )
-  const changedByAI = didAIChangeImportedHtml(page, currentImport, mergeImportedPages)
+  const changedByAI = didAIChangeImportedHtml(page, currentImportForAI, mergeImportedPages)
+  debug.changedByAI = Boolean(changedByAI)
 
   if (hasSelectedRegionHints && (shouldApplyImportedAIRegionCenteredLayoutFallback(operationalPromptText) || shouldApplyImportedAIRegionVideoOnlyFallback(operationalPromptText))) {
     debug.fallbackAttempted = true
-    const layoutFallbackPages = await getImportedSitePagesForAIContext(currentSite, currentImport, { htmlLimit: 0 })
-    const layoutFallbackResult = buildImportedAIRegionFallbackPageResult({
+    const layoutFallbackPages = applySitesAIDraftHtmlToContext({
       currentImport,
+      importedPages: await getImportedSitePagesForAIContext(currentSite, currentImport, { htmlLimit: 0 }),
+      activePageId,
+      currentHtml: draftHtml,
+      currentFilePath: draftFilePath
+    }).importedPages
+    const layoutFallbackResult = buildImportedAIRegionFallbackPageResult({
+      currentImport: currentImportForAI,
       importedPages: layoutFallbackPages.length ? layoutFallbackPages : mergeImportedPages,
       activePageId,
       promptText: operationalPromptText,
@@ -7619,7 +8609,35 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
     })
     const layoutFallbackPage = layoutFallbackResult.page
 
-    if (layoutFallbackPage && didAIChangeImportedHtml(layoutFallbackPage, currentImport, layoutFallbackPages.length ? layoutFallbackPages : mergeImportedPages)) {
+    if (layoutFallbackPage && didAIChangeImportedHtml(layoutFallbackPage, currentImportForAI, layoutFallbackPages.length ? layoutFallbackPages : mergeImportedPages)) {
+      if (draftOnly) {
+        debug.finalStatus = 'draft_updated_with_layout_fallback'
+        addSitesAIEditDebugStep(debug, 'Se devolvio el HTML del borrador aplicado por fallback de layout.')
+        addSitesAIEditProgressStep(debug, {
+          id: 'layout_fallback',
+          label: 'Ajuste interno aplicado',
+          detail: 'La IA no dejó el resultado final suficiente, así que Ristak aplicó el ajuste de layout detectado.',
+          status: 'done'
+        })
+        addSitesAIEditProgressStep(debug, {
+          id: 'draft',
+          label: 'Borrador listo',
+          detail: 'El cambio quedó aplicado como borrador local, pendiente de guardar el sitio.',
+          status: 'done'
+        })
+        logSitesAIEditDebug(debug, 'draft_updated_with_layout_fallback')
+        return buildSitesAIDraftOnlyUpdateResponse({
+          page: layoutFallbackPage,
+          currentImport: currentImportForAI,
+          importedPages: layoutFallbackPages.length ? layoutFallbackPages : mergeImportedPages,
+          activePageId,
+          reply: layoutFallbackResult.type === 'video_only'
+            ? 'Ristak dejó solo el video grande y centrado en la zona seleccionada.'
+            : 'Ristak aplicó el reordenamiento de la zona seleccionada: titular, subtítulo, video y botón.',
+          debug
+        })
+      }
+
       const layoutResult = await replaceImportedSiteHtml(siteId, {
         html: layoutFallbackPage.html,
         pages: layoutFallbackPage.pages,
@@ -7630,15 +8648,15 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
       return {
         status: 'updated',
         reply: layoutFallbackResult.type === 'video_only'
-          ? 'Ristak dejo solo el video grande y centrado en la zona seleccionada.'
-          : 'Ristak aplico el reordenamiento de la zona seleccionada: titular, subtitulo, video y boton.',
+          ? 'Ristak dejó solo el video grande y centrado en la zona seleccionada.'
+          : 'Ristak aplicó el reordenamiento de la zona seleccionada: titular, subtítulo, video y botón.',
         site: layoutResult.site,
         import: layoutResult.import
       }
     }
     const missingTargetMessage = getImportedAIRegionMissingTargetMessage(layoutFallbackResult)
     if (missingTargetMessage) {
-      return buildImportedAIRegionMissingTargetResponse(missingTargetMessage)
+      return buildImportedAIRegionMissingTargetResponse(debug, missingTargetMessage)
     }
   }
 
@@ -7648,14 +8666,42 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
         ? mergeImportedPages
         : importedPages
       const fallbackResultPage = buildImportedAIRegionFallbackPageResult({
-        currentImport,
+        currentImport: currentImportForAI,
         importedPages: fallbackImportedPages,
         activePageId,
         promptText: operationalPromptText,
         siteKind
       })
       const fallbackPage = fallbackResultPage.page
-      if (fallbackPage && didAIChangeImportedHtml(fallbackPage, currentImport, fallbackImportedPages)) {
+      if (fallbackPage && didAIChangeImportedHtml(fallbackPage, currentImportForAI, fallbackImportedPages)) {
+        if (draftOnly) {
+          debug.finalStatus = 'draft_updated_with_fallback'
+          addSitesAIEditDebugStep(debug, 'Se devolvio el HTML del borrador aplicado por fallback.')
+          addSitesAIEditProgressStep(debug, {
+            id: 'fallback',
+            label: 'Ajuste interno aplicado',
+            detail: 'Ristak aplicó una corrección local porque la IA no dejó cambios visibles.',
+            status: 'done'
+          })
+          addSitesAIEditProgressStep(debug, {
+            id: 'draft',
+            label: 'Borrador listo',
+            detail: 'El cambio quedó aplicado como borrador local, pendiente de guardar el sitio.',
+            status: 'done'
+          })
+          logSitesAIEditDebug(debug, 'draft_updated_with_fallback')
+          return buildSitesAIDraftOnlyUpdateResponse({
+            page: fallbackPage,
+            currentImport: currentImportForAI,
+            importedPages: fallbackImportedPages,
+            activePageId,
+            reply: fallbackResultPage.type === 'video_only'
+              ? 'La IA no hizo cambios visibles, así que Ristak dejó solo el video grande y centrado en la zona seleccionada.'
+              : 'La IA no hizo cambios visibles, así que Ristak aplicó el ajuste de layout en la zona seleccionada.',
+            debug
+          })
+        }
+
         const fallbackResult = await replaceImportedSiteHtml(siteId, {
           html: fallbackPage.html,
           pages: fallbackPage.pages,
@@ -7666,20 +8712,50 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
         return {
           status: 'updated',
           reply: fallbackResultPage.type === 'video_only'
-            ? 'La IA no hizo cambios visibles, asi que Ristak dejo solo el video grande y centrado en la zona seleccionada.'
-            : 'La IA no hizo cambios visibles, asi que Ristak aplico el ajuste de layout en la zona seleccionada.',
+            ? 'La IA no hizo cambios visibles, así que Ristak dejó solo el video grande y centrado en la zona seleccionada.'
+            : 'La IA no hizo cambios visibles, así que Ristak aplicó el ajuste de layout en la zona seleccionada.',
           site: fallbackResult.site,
           import: fallbackResult.import
         }
       }
     }
 
+    debug.finalStatus = 'unchanged'
+    addSitesAIEditProgressStep(debug, {
+      id: 'unchanged',
+      label: 'Sin cambio visible',
+      detail: hasSelectedRegionHints
+        ? 'La IA respondió, pero el HTML de la zona seleccionada quedó igual.'
+        : 'La IA respondió, pero el HTML de la página quedó igual.',
+      status: 'error'
+    })
     return {
       status: 'needs_more_info',
       reply: hasSelectedRegionHints
         ? 'La IA devolvio el mismo HTML sin cambios visibles. Reintenta indicando exactamente que debe cambiar en la zona seleccionada.'
-        : 'La IA devolvio el mismo HTML sin cambios visibles. Reintenta indicando exactamente que debe cambiar en la pagina.'
+        : 'La IA devolvio el mismo HTML sin cambios visibles. Reintenta indicando exactamente que debe cambiar en la página.',
+      debug: getSitesAIEditDebugPayload(debug)
     }
+  }
+
+  if (draftOnly) {
+    debug.finalStatus = 'draft_updated_with_ai'
+    addSitesAIEditDebugStep(debug, 'Se devolvio el HTML del borrador generado por la IA sin guardar en base de datos.')
+    addSitesAIEditProgressStep(debug, {
+      id: 'draft',
+      label: 'Borrador listo',
+      detail: 'El cambio de la IA quedó aplicado como borrador local, pendiente de guardar el sitio.',
+      status: 'done'
+    })
+    logSitesAIEditDebug(debug, 'draft_updated_with_ai')
+    return buildSitesAIDraftOnlyUpdateResponse({
+      page,
+      currentImport: currentImportForAI,
+      importedPages: mergeImportedPages,
+      activePageId,
+      reply: limitString(aiPayload?.reply, 1000) || 'Listo, actualice el HTML del borrador.',
+      debug
+    })
   }
 
   const result = await replaceImportedSiteHtml(siteId, {
@@ -7693,7 +8769,8 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
     status: 'updated',
     reply: limitString(aiPayload?.reply, 1000) || 'Listo, actualice el HTML y volvi a revisar los formularios.',
     site: result.site,
-    import: result.import
+    import: result.import,
+    debug: getSitesAIEditDebugPayload(debug)
   }
 }
 
@@ -7718,6 +8795,17 @@ export async function updateSite(siteId, input = {}) {
     nextTheme.formCompletionAction = normalizeFormCompletionAction(nextTheme.formCompletionAction || nextTheme.form_completion_action, 'next_page_if_qualified')
   } else if (nextSiteType === 'interactive_form' && (!Array.isArray(nextTheme.pages) || nextTheme.pages.length === 0)) {
     nextTheme.pages = normalizeSitePages({ siteType: nextSiteType, theme: nextTheme })
+  }
+  const nextMetaEventName = normalizeSiteMetaEventName(input.metaEventName || current.metaEventName, { allowNone: true })
+  const nextMetaEventParameters = pruneSiteMetaEventParametersForEvent(
+    nextTheme.metaEventParameters || nextTheme.meta_event_parameters,
+    nextMetaEventName
+  )
+  delete nextTheme.meta_event_parameters
+  if (hasSiteMetaEventParameters(nextMetaEventParameters)) {
+    nextTheme.metaEventParameters = nextMetaEventParameters
+  } else {
+    delete nextTheme.metaEventParameters
   }
 
   await db.run(`
@@ -7754,7 +8842,7 @@ export async function updateSite(siteId, input = {}) {
     input.description === undefined ? current.description : cleanString(input.description) || null,
     jsonString(nextTheme),
     input.metaCapiEnabled === undefined ? normalizeBoolean(current.metaCapiEnabled) : normalizeBoolean(input.metaCapiEnabled),
-    normalizeSiteMetaEventName(input.metaEventName || current.metaEventName, { allowNone: true }),
+    nextMetaEventName,
     domainChanged ? 1 : 0,
     domainChanged ? 1 : 0,
     domainChanged ? 1 : 0,
@@ -7784,7 +8872,21 @@ export async function createBlock(siteId, input = {}) {
     'SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM public_site_blocks WHERE site_id = ?',
     [siteId]
   )
-  const id = crypto.randomUUID()
+  const requestedId = cleanString(input.id)
+  const id = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedId)
+    ? requestedId
+    : crypto.randomUUID()
+  if (requestedId && requestedId === id) {
+    const existingBlock = await db.get(
+      'SELECT id FROM public_site_blocks WHERE id = ?',
+      [id]
+    )
+    if (existingBlock) {
+      const error = new Error('block_id_already_exists')
+      error.status = 409
+      throw error
+    }
+  }
   const isField = FIELD_BLOCK_TYPES.has(blockType)
   const options = Array.isArray(input.options) ? input.options : []
 
@@ -8030,6 +9132,20 @@ export async function getSitesPublicDomain() {
   return getSitesPublicDomainConfig()
 }
 
+/**
+ * Quita el dominio público de la cuenta. Las páginas siguen existiendo y
+ * vuelven a servirse solo desde el host por defecto de la app.
+ */
+export async function removeSitesPublicDomain() {
+  await Promise.all([
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.domain, null),
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.verified, null),
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.checkedAt, null),
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.error, null)
+  ])
+  return getSitesPublicDomainConfig()
+}
+
 export async function refreshSitesPublicDomain(input = {}) {
   const current = await getSitesPublicDomainConfig()
   const hasDomainCandidate = Object.prototype.hasOwnProperty.call(input, 'domain')
@@ -8037,7 +9153,7 @@ export async function refreshSitesPublicDomain(input = {}) {
   const domain = normalizeDomain(rawDomain)
 
   if (hasDomainCandidate && cleanString(rawDomain) && !domain) {
-    const result = { verified: false, error: 'Dominio invalido' }
+    const result = { verified: false, error: 'Dominio inválido' }
     return {
       ...current,
       domain: cleanString(rawDomain),
@@ -8106,25 +9222,25 @@ function getExpectedPublicDomainTargets() {
 
 function describeDnsSignal(dnsInfo) {
   if (!dnsInfo.cnames.length && !dnsInfo.addresses.length) {
-    return 'No encuentro registros DNS publicos para ese dominio'
+    return 'No encuentro registros DNS públicos para ese dominio'
   }
 
   const expectedTargets = getExpectedPublicDomainTargets()
   const matchingTarget = dnsInfo.cnames.find(cname => expectedTargets.has(cname))
   if (matchingTarget) {
-    return `DNS apunta a ${matchingTarget}, pero el dominio todavia no responde a esta app`
+    return `DNS apunta a ${matchingTarget}, pero el dominio todavía no responde a esta app`
   }
 
   const renderTarget = dnsInfo.cnames.find(cname => cname.endsWith('.onrender.com'))
   if (renderTarget) {
-    return `DNS apunta a ${renderTarget}, pero el dominio todavia no responde a esta app`
+    return `DNS apunta a ${renderTarget}, pero el dominio todavía no responde a esta app`
   }
 
   if (dnsInfo.cnames.length) {
     return `DNS apunta a ${dnsInfo.cnames.join(', ')}, pero no responde a esta app`
   }
 
-  return 'DNS resuelve, pero el dominio todavia no responde a esta app'
+  return 'DNS resuelve, pero el dominio todavía no responde a esta app'
 }
 
 async function checkDomainHealth(domain, protocol) {
@@ -8149,13 +9265,13 @@ async function checkDomainHealth(domain, protocol) {
 
     return {
       ok: false,
-      error: `${url} respondio ${response.status}, pero no parece ser el health de Ristak`
+      error: `${url} respondió ${response.status}, pero no parece ser el health de Ristak`
     }
   } catch (error) {
     return {
       ok: false,
       error: error.name === 'AbortError'
-        ? `${url} no respondio a tiempo`
+        ? `${url} no respondió a tiempo`
         : `${url} fallo: ${error.message}`
     }
   } finally {
@@ -8166,7 +9282,7 @@ async function checkDomainHealth(domain, protocol) {
 export async function verifyPublicDomainConnection(domainValue) {
   const domain = normalizeDomain(domainValue)
   if (!domain) {
-    return { verified: false, error: 'Dominio invalido' }
+    return { verified: false, error: 'Dominio inválido' }
   }
 
   // Probamos el dominio tal cual y su variante con/sin www: en Render es comun
@@ -8264,7 +9380,7 @@ function matchesPublicDomain(hostValue, domainValue) {
 export async function resolveConnectedPublicDomainForHost(hostValue, { forceRefresh = false } = {}) {
   const host = normalizeDomain(hostValue)
   if (!host) {
-    return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio invalido' }
+    return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio inválido' }
   }
 
   const config = await getSitesPublicDomainConfig()
@@ -8331,7 +9447,7 @@ async function hydrateEmbeddedForms(blocks = []) {
 export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false, path = '/' } = {}) {
   const host = normalizeDomain(hostValue)
   if (!host) {
-    return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio invalido' }
+    return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio inválido' }
   }
 
   const domainResolution = await resolveConnectedPublicDomainForHost(host, { forceRefresh })
@@ -8342,7 +9458,7 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
     site = await findDefaultPublishedSite()
   }
   if (!site) {
-    return { ok: false, status: 404, reason: 'route_not_configured', message: 'Ruta publica no configurada' }
+    return { ok: false, status: 404, reason: 'route_not_configured', message: 'Ruta pública no configurada' }
   }
 
   if (site.status !== 'published') {
@@ -8455,6 +9571,25 @@ function popupCloseIconText(value = '') {
   return '×'
 }
 
+function getImportedPopupHtmlFragment(html = '') {
+  const source = String(html || '').trim()
+  if (!source) return ''
+
+  const styleBlocks = (source.match(/<style\b[\s\S]*?<\/style>/gi) || []).join('\n')
+  const bodyMatch = source.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)
+  if (bodyMatch) {
+    return `${styleBlocks}\n${bodyMatch[1] || ''}`.trim()
+  }
+
+  return `${styleBlocks}\n${source
+    .replace(/<!doctype\b[^>]*>/gi, '')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
+    .replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, '')
+    .replace(/<\/?html\b[^>]*>/gi, '')
+    .replace(/<\/?body\b[^>]*>/gi, '')
+  }`.trim()
+}
+
 function siteHasPopupOpenAction(site) {
   return (Array.isArray(site?.blocks) ? site.blocks : []).some(block => {
     const settings = block?.settings || {}
@@ -8472,9 +9607,10 @@ function renderSitePopup(site, context = {}) {
   const body = cleanString(theme.popupBody ?? theme.popup_body)
   const buttonText = cleanString(theme.popupButtonText ?? theme.popup_button_text)
   const buttonUrl = safeUrl(theme.popupButtonUrl ?? theme.popup_button_url)
+  const importedPopupHtml = getImportedPopupHtmlFragment(theme.importedPopupHtml ?? theme.imported_popup_html)
   const delaySeconds = themeNumber(theme, 'popupDelaySeconds', 8, 0, 120)
   const hasLegacyContent = Boolean(title || body || buttonText || buttonUrl)
-  if (!popupBlocks.length && !hasLegacyContent && trigger === 'never' && !hasOpenAction) return ''
+  if (!importedPopupHtml && !popupBlocks.length && !hasLegacyContent && trigger === 'never' && !hasOpenAction) return ''
 
   const backdrop = normalizeCssPaint(theme.popupBackdropColor ?? theme.popup_backdrop_color, 'rgba(2, 6, 23, 0.62)')
   const boxBg = normalizeCssPaint(theme.popupBackgroundColor ?? theme.popup_background_color, '#0f172a')
@@ -8495,11 +9631,12 @@ function renderSitePopup(site, context = {}) {
     ...(context.renderContext || {}),
     insidePopup: true
   }
-  const popupBlocksHtml = popupBlocks.length
-    ? site?.siteType === 'landing_page'
-      ? renderLandingBlocks(popupBlocks, popupRenderContext)
-      : popupBlocks.map(block => renderPublicBlock(block, popupRenderContext)).join('\n')
-    : ''
+  const popupBlocksHtml = importedPopupHtml ||
+    (popupBlocks.length
+      ? site?.siteType === 'landing_page'
+        ? renderLandingBlocks(popupBlocks, popupRenderContext)
+        : popupBlocks.map(block => renderPublicBlock(block, popupRenderContext)).join('\n')
+      : '')
   const legacyHtml = !popupBlocks.length
     ? `
       ${title ? `<h2 id="rstk-site-popup-title">${escapeHtml(title)}</h2>` : ''}
@@ -8773,13 +9910,15 @@ function normalizeOption(option) {
   if (option && typeof option === 'object') {
     const label = cleanString(option.label || option.value || option.text)
     return {
-      id: cleanString(option.id) || slugify(label || 'opcion'),
+      id: cleanString(option.id) || slugify(label || 'opción'),
       label,
       value: cleanString(option.value) || label,
       action: normalizeOptionAction(option.action),
       targetBlockId: cleanString(option.targetBlockId || option.target_block_id),
+      targetPageId: cleanString(option.targetPageId || option.target_page_id || option.pageId || option.page_id),
       message: cleanString(option.message),
       redirectUrl: safeHref(option.redirectUrl || option.redirect_url || option.siteUrl || option.site_url || option.url || option.sitio, ''),
+      submitBeforeAction: normalizeSubmitBeforeAction(option.submitBeforeAction ?? option.submit_before_action ?? option.saveBeforeAction ?? option.save_before_action),
       tag: cleanString(option.tag),
       category: cleanString(option.category)
     }
@@ -8787,13 +9926,15 @@ function normalizeOption(option) {
 
   const label = cleanString(option)
   return {
-    id: slugify(label || 'opcion'),
+    id: slugify(label || 'opción'),
     label,
     value: label,
     action: 'continue',
     targetBlockId: '',
+    targetPageId: '',
     message: '',
     redirectUrl: '',
+    submitBeforeAction: true,
     tag: '',
     category: ''
   }
@@ -8809,8 +9950,10 @@ function optionRuleAttributes(option) {
   const rule = {
     action: option.action || 'continue',
     targetBlockId: option.targetBlockId || '',
+    targetPageId: option.targetPageId || '',
     message: option.message || '',
     redirectUrl: safeHref(option.redirectUrl, ''),
+    submitBeforeAction: option.submitBeforeAction !== false,
     tag: option.tag || '',
     category: option.category || ''
   }
@@ -8917,16 +10060,22 @@ function normalizePageList(rawPages = []) {
       const headerTrackingCode = typeof (page?.headerTrackingCode ?? page?.header_tracking_code) === 'string'
         ? page.headerTrackingCode ?? page.header_tracking_code
         : ''
+      const metaEventName = normalizeSiteMetaEventName(page?.metaEventName || page?.meta_event_name, { allowNone: true, fallback: SITE_META_NO_EVENT })
+      const metaEventParameters = pruneSiteMetaEventParametersForEvent(
+        page?.metaEventParameters || page?.meta_event_parameters,
+        metaEventName
+      )
       const parentPageId = cleanString(page?.parentPageId || page?.parent_page_id)
       const slug = slugifyPageSegment(page?.slug)
 
       return {
         id: cleanString(page?.id) || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
-        title: cleanString(page?.title) || `Pagina ${index + 1}`,
+        title: cleanString(page?.title) || `Página ${index + 1}`,
         sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
         metaCapiEnabled: Boolean(normalizeBoolean(page?.metaCapiEnabled ?? page?.meta_capi_enabled)),
-        metaEventName: normalizeSiteMetaEventName(page?.metaEventName || page?.meta_event_name, { allowNone: true, fallback: SITE_META_NO_EVENT }),
+        metaEventName,
         metaTrigger: normalizeSiteMetaTrigger(page?.metaTrigger || page?.meta_trigger),
+        ...(hasSiteMetaEventParameters(metaEventParameters) ? { metaEventParameters } : {}),
         ...(parentPageId ? { parentPageId } : {}),
         ...(slug ? { slug } : {}),
         ...(importedAssetPath ? { importedAssetPath } : {}),
@@ -8959,7 +10108,10 @@ function normalizeFormPages(site) {
       ...(existing?.headerTrackingCode !== undefined ? { headerTrackingCode: existing.headerTrackingCode } : {}),
       metaCapiEnabled: Boolean(existing?.metaCapiEnabled),
       metaEventName: normalizeSiteMetaEventName(existing?.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT }),
-      metaTrigger: normalizeSiteMetaTrigger(existing?.metaTrigger)
+      metaTrigger: normalizeSiteMetaTrigger(existing?.metaTrigger),
+      ...(hasSiteMetaEventParameters(existing?.metaEventParameters)
+        ? { metaEventParameters: pruneSiteMetaEventParametersForEvent(existing.metaEventParameters, existing.metaEventName) }
+        : {})
     }
   }
 
@@ -8973,13 +10125,13 @@ function normalizeFormPages(site) {
 function normalizeSitePages(site) {
   if (isImportedHtmlSite(site)) {
     const pages = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
-    return pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+    return pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   }
 
   if (site?.siteType === 'standard_form') return normalizeFormPages(site)
 
   const pages = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
-  return pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+  return pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
 }
 
 // 'website' = landing site whose pages form a tree with hierarchical URLs + auto nav.
@@ -9118,8 +10270,8 @@ function getDefaultFormThankYouBlocks(siteId) {
       id: 'default-thank-you-title',
       siteId,
       blockType: 'title',
-      label: 'Titulo',
-      content: 'Gracias, recibimos tu informacion',
+      label: 'Título',
+      content: 'Gracias, recibimos tu información',
       placeholder: '',
       required: false,
       options: [],
@@ -9132,7 +10284,7 @@ function getDefaultFormThankYouBlocks(siteId) {
       id: 'default-thank-you-subtitle',
       siteId,
       blockType: 'subtitle',
-      label: 'Subtitulo',
+      label: 'Subtítulo',
       content: 'Te contactaremos pronto con el siguiente paso.',
       placeholder: '',
       required: false,
@@ -9151,7 +10303,7 @@ function getDefaultFormDisqualifiedBlocks(siteId) {
       id: 'default-disqualified-title',
       siteId,
       blockType: 'title',
-      label: 'Titulo',
+      label: 'Título',
       content: 'Gracias por responder',
       placeholder: '',
       required: false,
@@ -9165,8 +10317,8 @@ function getDefaultFormDisqualifiedBlocks(siteId) {
       id: 'default-disqualified-subtitle',
       siteId,
       blockType: 'subtitle',
-      label: 'Subtitulo',
-      content: 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo despues.',
+      label: 'Subtítulo',
+      content: 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo después.',
       placeholder: '',
       required: false,
       options: [],
@@ -9322,7 +10474,8 @@ function getPageMetaConfig(site, pageId) {
   return {
     page,
     eventName,
-    trigger: normalizeSiteMetaTrigger(page.metaTrigger)
+    trigger: normalizeSiteMetaTrigger(page.metaTrigger),
+    parameters: pruneSiteMetaEventParametersForEvent(page.metaEventParameters, eventName)
   }
 }
 
@@ -9336,6 +10489,15 @@ function getFormSubmitMetaEventName(site, pageId) {
   }
 
   return normalizeSiteMetaEventName(site.metaEventName, { allowNone: true })
+}
+
+function getFormSubmitMetaEventParameters(site, pageId, eventName) {
+  if (site?.siteType === 'landing_page') {
+    const page = getSitePage(site, pageId)
+    return pruneSiteMetaEventParametersForEvent(page?.metaEventParameters, eventName)
+  }
+
+  return pruneSiteMetaEventParametersForEvent(site?.theme?.metaEventParameters || site?.theme?.meta_event_parameters, eventName)
 }
 
 function resolveButtonHref(settings = {}, context = {}) {
@@ -9401,6 +10563,128 @@ function scriptJson(value) {
     .replace(/&/g, '\\u0026')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029')
+}
+
+// Política estricta de preservación de parámetros de URL en páginas publicadas:
+// los query params de la visita (UTMs, fbclid, gclid, IDs de afiliado, variables
+// custom, etc.) nunca deben perderse al navegar entre páginas, enviar formularios
+// o redirigir. Este script persiste los params en sessionStorage, decora todos los
+// links/navegaciones internas con TODOS los params preservados y los redirects
+// externos con los params de tracking, y expone helpers globales para el resto
+// de los runtimes (window.ristakPreserveParams / window.ristakPreservedParams).
+function buildParamPreservationScript() {
+  return `
+  <script>
+    (() => {
+      const STORAGE_KEY = 'rstk:params';
+      const RESERVED_KEYS = ['page'];
+      const isTrackingKey = (key) => (
+        key.indexOf('utm_') === 0 ||
+        ['gclid', 'fbclid', 'msclkid', 'ttclid', 'wbraid', 'gbraid', 'campaign_id', 'adset_id', 'ad_id', 'campaign_name', 'adset_name', 'ad_name', 'placement', 'site_source_name', 'campaignid', 'adgroupid', 'creative', 'keyword', 'matchtype', 'network', 'device', 'target', 'ref', 'affiliate', 'affiliate_id', 'aff_id', 'sub_id', 'click_id', 'clickid'].includes(key)
+      );
+      const readStored = () => {
+        try {
+          const raw = window.sessionStorage.getItem(STORAGE_KEY);
+          const parsed = raw ? JSON.parse(raw) : {};
+          return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch (_) {
+          return {};
+        }
+      };
+      const writeStored = (value) => {
+        try {
+          window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+        } catch (_) {}
+      };
+      const currentParams = () => {
+        const params = {};
+        try {
+          new URLSearchParams(window.location.search || '').forEach((value, key) => {
+            if (RESERVED_KEYS.includes(key)) return;
+            params[key] = value;
+          });
+        } catch (_) {}
+        return params;
+      };
+      // Los params presentes en la URL actual ganan; los guardados en la sesión
+      // rellenan los que se hayan perdido en alguna navegación intermedia.
+      const preservedParams = () => Object.assign({}, readStored(), currentParams());
+      const persist = () => {
+        const merged = preservedParams();
+        if (Object.keys(merged).length) writeStored(merged);
+      };
+      const decorateUrl = (rawUrl) => {
+        const raw = String(rawUrl || '');
+        if (!raw || raw.charAt(0) === '#') return raw;
+        let target;
+        try {
+          target = new URL(raw, window.location.href);
+        } catch (_) {
+          return raw;
+        }
+        if (target.protocol !== 'http:' && target.protocol !== 'https:') return raw;
+        const internal = target.origin === window.location.origin;
+        const params = preservedParams();
+        let changed = false;
+        Object.keys(params).forEach((key) => {
+          if (RESERVED_KEYS.includes(key)) return;
+          if (!internal && !isTrackingKey(key)) return;
+          if (target.searchParams.has(key)) return;
+          target.searchParams.append(key, params[key]);
+          changed = true;
+        });
+        if (!changed) return raw;
+        if (internal && !/^https?:/i.test(raw) && raw.slice(0, 2) !== '//') {
+          return target.pathname + target.search + target.hash;
+        }
+        return target.toString();
+      };
+      const decorateAnchor = (anchor) => {
+        if (!anchor || !anchor.getAttribute) return;
+        const href = anchor.getAttribute('href') || '';
+        if (!href || href.charAt(0) === '#') return;
+        const decorated = decorateUrl(href);
+        if (decorated && decorated !== href) anchor.setAttribute('href', decorated);
+      };
+      const decorateAllAnchors = () => {
+        try {
+          Array.prototype.forEach.call(document.querySelectorAll('a[href]'), decorateAnchor);
+        } catch (_) {}
+      };
+      const handleAnchorEvent = (event) => {
+        const anchor = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+        if (anchor) decorateAnchor(anchor);
+      };
+      const patchHistory = (method) => {
+        const original = window.history && window.history[method];
+        if (typeof original !== 'function') return;
+        window.history[method] = function (state, title, url) {
+          let nextUrl = url;
+          if (typeof url === 'string' && url) {
+            try {
+              nextUrl = decorateUrl(url);
+            } catch (_) {
+              nextUrl = url;
+            }
+          }
+          return original.call(this, state, title, nextUrl);
+        };
+      };
+
+      persist();
+      window.ristakPreservedParams = preservedParams;
+      window.ristakPreserveParams = decorateUrl;
+      patchHistory('pushState');
+      patchHistory('replaceState');
+      document.addEventListener('click', handleAnchorEvent, true);
+      document.addEventListener('auxclick', handleAnchorEvent, true);
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', decorateAllAnchors);
+      } else {
+        decorateAllAnchors();
+      }
+    })();
+  </script>`
 }
 
 function buildNativeSiteTrackingScript(context) {
@@ -9480,15 +10764,20 @@ function buildNativeSiteTrackingScript(context) {
 
       const getParams = () => {
         const params = {};
-        const searchParams = new URLSearchParams(window.location.search || '');
-        searchParams.forEach((value, key) => {
+        const collect = (value, key) => {
           if (
             key.indexOf('utm_') === 0 ||
             ['gclid', 'fbclid', 'msclkid', 'ttclid', 'wbraid', 'gbraid', 'campaign_id', 'adset_id', 'ad_id', 'campaign_name', 'adset_name', 'ad_name', 'placement', 'site_source_name', 'campaignid', 'adgroupid', 'creative', 'keyword', 'matchtype', 'network', 'device', 'target'].includes(key)
           ) {
             params[key] = value;
           }
-        });
+        };
+        // Primero los params preservados de la sesión y encima los de la URL
+        // actual, para no perder atribución si una navegación los quitó de la URL.
+        const stored = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
+        Object.keys(stored).forEach((key) => collect(stored[key], key));
+        const searchParams = new URLSearchParams(window.location.search || '');
+        searchParams.forEach(collect);
         return params;
       };
 
@@ -9861,10 +11150,11 @@ function renderBlockStyleVars(block) {
   const cardRadius = blockSettingNumber(settings, 'cardRadius', 0, 48)
   const cardBorderWidth = blockSettingNumber(settings, 'cardBorderWidth', 0, 8)
   const listColumns = blockSettingNumber(settings, 'listColumns', 1, 4)
+  const fieldWidth = blockSettingNumber(settings, 'fieldWidth', 20, 100)
   const fieldRadius = blockSettingNumber(settings, 'fieldRadius', 0, 32)
   const sectionGap = blockSettingNumber(settings, 'sectionGap', 0, 80)
   const blockHasNativeBorder = ['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'embed', 'calendar_embed'].includes(block.blockType)
-  const supportsButton = ['hero', 'button', 'cta'].includes(block.blockType)
+  const supportsButton = ['hero', 'button', 'cta', 'form_embed'].includes(block.blockType)
 
   if (blockBg) {
     vars.push(`--rstk-block-bg:${blockBg}`)
@@ -9963,6 +11253,7 @@ function renderBlockStyleVars(block) {
   if (cardBorderWidth !== null) vars.push(`--rstk-card-border-width:${cardBorderWidth}px`)
   if (listColumns !== null) vars.push(`--rstk-list-columns:repeat(${listColumns},minmax(0,1fr))`)
   if (settings.cardAlign !== undefined) vars.push(`--rstk-card-align:${blockHorizontalAlign(settings, 'cardAlign', 'left')}`)
+  if (fieldWidth !== null) vars.push(`--rstk-field-width:${fieldWidth}%`)
   if (fieldRadius !== null) vars.push(`--rstk-field-radius:${fieldRadius}px`)
   if (block.blockType === 'section') {
     vars.push(`--rstk-section-columns:${getSectionColumns(block)}`)
@@ -10112,9 +11403,14 @@ function renderSubmitButtonContent(label, subtitle = '') {
 }
 
 function renderVideoPlayer(src, block, settings = {}) {
-  const controlsMode = cleanString(settings.videoControlsMode) || (settings.videoControls === false ? 'none' : 'native')
+  const requestedControlsMode = cleanString(settings.videoControlsMode)
+  const controlsMode = ['native', 'clean', 'none'].includes(requestedControlsMode)
+    ? requestedControlsMode
+    : settings.videoControls === false
+      ? 'none'
+      : 'clean'
   const showNativeControls = controlsMode === 'native'
-  const showOverlay = controlsMode !== 'native'
+  const showOverlay = controlsMode === 'clean'
   const soundHint = settings.videoSoundHint !== false
   const previewEnabled = settings.videoPreviewEnabled !== false
   const muted = settings.videoMuted !== false
@@ -10125,15 +11421,17 @@ function renderVideoPlayer(src, block, settings = {}) {
   const fit = ['cover', 'contain', 'fill'].includes(cleanString(settings.videoFit)) ? cleanString(settings.videoFit) : 'cover'
   const playerColor = normalizeCssPaint(settings.videoPlayerColor, 'rgba(0,0,0,.52)') || 'rgba(0,0,0,.52)'
   const playColor = normalizeCssPaint(settings.videoPlayColor, '#ffffff') || '#ffffff'
+  const rawPlaySize = Number(settings.videoPlaySize || 64)
+  const playSize = Number.isFinite(rawPlaySize) ? Math.min(110, Math.max(42, rawPlaySize)) : 64
   const classes = [
     'rstk-video',
     'rstk-video-player',
-    showNativeControls ? 'rstk-video-native-controls' : 'rstk-video-custom-controls',
+    showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     soundHint && showOverlay ? 'rstk-video-sound-hint' : ''
   ].filter(Boolean).join(' ')
 
   return `
-    <div class="${classes}" style="--rstk-video-player-color:${escapeHtml(playerColor)};--rstk-video-play-color:${escapeHtml(playColor)}">
+    <div class="${classes}" style="--rstk-video-player-color:${escapeHtml(playerColor)};--rstk-video-play-color:${escapeHtml(playColor)};--rstk-video-play-size:${escapeHtml(String(playSize))}px">
       <video src="${escapeHtml(src)}" title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${muted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${previewEnabled ? 'auto' : 'metadata'}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
       ${showOverlay ? `
         <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
@@ -10152,7 +11450,7 @@ function renderContentBlock(block, context = {}) {
   if (block.blockType === 'header_panel' || block.blockType === 'footer_panel') {
     const isHeader = block.blockType === 'header_panel'
     const links = getPanelLinks(settings)
-    const copy = content || (isHeader ? escapeHtml(block.label || 'Tu marca') : 'Tu informacion esta protegida.')
+    const copy = content || (isHeader ? escapeHtml(block.label || 'Tu marca') : 'Tu información esta protegida.')
     return `
       <div class="rstk-site-panel ${isHeader ? 'rstk-site-panel-header' : 'rstk-site-panel-footer'}">
         ${isHeader ? `<strong class="rstk-site-panel-copy">${copy}</strong>` : `<p class="rstk-site-panel-copy">${copy}</p>`}
@@ -10270,25 +11568,37 @@ function renderContentBlock(block, context = {}) {
   }
 
   if (block.blockType === 'form_embed') {
-    const embeddedBlocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks : []
-    const fields = collectFieldBlocks(embeddedBlocks)
     const embeddedPages = normalizeEmbeddedFormPages(settings.embeddedPages)
+    const embeddedPageIds = new Set(embeddedPages.map(page => page.id))
+    const embeddedItems = (Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks : [])
+      .filter(item => {
+        const rawPageId = cleanString(item?.settings?.pageId)
+        return EMBEDDED_FORM_BLOCK_TYPES.has(item?.blockType) && (!rawPageId || embeddedPageIds.has(rawPageId))
+      })
+    const fields = collectFieldBlocks(embeddedItems)
     const hasEmbeddedPages = embeddedPages.length > 1
     const submitButtonContent = renderSubmitButtonContent(context.submitText, context.submitSubtitle)
-    const renderEmbeddedFields = () => {
-      if (!fields.length) return '<p class="rstk-help">Selecciona o crea un formulario embebido para capturar respuestas.</p>'
+    const renderEmbeddedItem = (item, pageId) => {
+      if (FIELD_BLOCK_TYPES.has(item.blockType)) {
+        return wrapRenderedBlock(item, renderFieldBlock(item, false, pageId || getBlockPageId(item, embeddedPages), context))
+      }
+
+      return wrapRenderedBlock(item, renderContentBlock(item, context))
+    }
+    const renderEmbeddedItems = () => {
+      if (!embeddedItems.length) return '<p class="rstk-help">Agrega campos o contenido al formulario.</p>'
       if (!hasEmbeddedPages) {
-        return fields.map(field => renderFieldBlock(field, false, getBlockPageId(field, embeddedPages), context)).join('\n')
+        return embeddedItems.map(item => renderEmbeddedItem(item, getBlockPageId(item, embeddedPages))).join('\n')
       }
       return `
         <div class="rstk-embedded-pages" data-embedded-form-pages>
           ${embeddedPages.map((page, index) => {
-            const pageFields = getEmbeddedFormPageFields(fields, embeddedPages, page.id)
+            const pageItems = getEmbeddedFormPageFields(embeddedItems, embeddedPages, page.id)
             return `
               <div data-embedded-page-content="${escapeHtml(page.id)}"${index === 0 ? '' : ' hidden'}>
-                ${pageFields.length
-                  ? pageFields.map(field => renderFieldBlock(field, false, page.id, context)).join('\n')
-                  : `<p class="rstk-help">Esta pagina no tiene campos.</p>`}
+                ${pageItems.length
+                  ? pageItems.map(item => renderEmbeddedItem(item, page.id)).join('\n')
+                  : `<p class="rstk-help">Esta página no tiene contenido.</p>`}
               </div>
             `
           }).join('\n')}
@@ -10297,9 +11607,7 @@ function renderContentBlock(block, context = {}) {
     }
     return `
       <section class="rstk-embedded-form" id="form">
-        <h2>${content || escapeHtml(block.label || 'Formulario')}</h2>
-        ${settings.description ? `<p class="rstk-help">${escapeHtml(settings.description)}</p>` : ''}
-        ${renderEmbeddedFields()}
+        ${renderEmbeddedItems()}
         ${fields.length ? `
           <div class="rstk-actions rstk-embed-actions">
             ${hasEmbeddedPages ? `<button type="button" class="rstk-secondary" data-embedded-back hidden>${escapeHtml(context.backText || 'Anterior')}</button>` : ''}
@@ -10385,10 +11693,10 @@ function renderFieldInput(block, context = {}) {
       ).toUpperCase()
       return `
         <div class="rstk-phone-input" data-phone-country-field>
-          <select id="${id}__country" name="${id}__country" data-phone-country-select aria-label="Pais y lada">
+          <select id="${id}__country" name="${id}__country" data-phone-country-select aria-label="País y lada">
             ${renderPhoneCountryOptions(defaultCountryCode)}
           </select>
-          <input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="${placeholder || 'Numero'}" data-phone-number-input ${required}>
+          <input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="${placeholder || 'Número'}" data-phone-number-input ${required}>
         </div>
       `
     }
@@ -10403,7 +11711,7 @@ function renderFieldInput(block, context = {}) {
   if (block.blockType === 'dropdown') {
     return `
       <select id="${id}" name="${id}" ${required}>
-        <option value="">Selecciona una opcion</option>
+        <option value="">Selecciona una opción</option>
         ${options.map(option => `<option value="${escapeHtml(option.value)}" ${optionRuleAttributes(option)}>${escapeHtml(option.label)}</option>`).join('')}
       </select>
     `
@@ -10920,7 +12228,7 @@ function resolveTemplate(site) {
 function getBrand(site, template) {
   const theme = (site && site.theme) || {}
   const name = cleanString(theme.brandName) || cleanString(site && site.title) || cleanString(site && site.name) || 'Tu marca'
-  const subtitleDefault = template.chrome === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'
+  const subtitleDefault = template.chrome === 'instagram' ? 'Publicación pagada' : 'Patrocinado'
   const subtitle = cleanString(theme.brandSubtitle) || subtitleDefault
   const avatarUrl = safeUrl(theme.brandAvatar)
   const followers = cleanString(theme.followers || theme.followersCount || theme.followerCount)
@@ -10957,7 +12265,7 @@ function renderSocialProfileBlock(block, context = {}) {
   const template = SITE_TEMPLATES[platform] || siteTemplate
   const siteBrand = getBrand(context.site || {}, template)
   const name = cleanString(settings.brandName) || siteBrand.name
-  const subtitleDefault = platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'
+  const subtitleDefault = platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'
   const subtitle = cleanString(settings.brandSubtitle) || siteBrand.subtitle || subtitleDefault
   const followers = cleanString(settings.followers || settings.followersCount || settings.followerCount) || siteBrand.followers
   const avatarUrl = safeUrl(settings.brandAvatar) || siteBrand.avatarUrl
@@ -10992,7 +12300,7 @@ function renderLegalFooter(brand) {
   return `
     <p class="rstk-footer">
       <span class="rstk-lock" aria-hidden="true">${RSTK_ICONS.lock}</span>
-      Tu informacion esta protegida. ${escapeHtml(brand.name)} no la comparte con terceros.
+      Tu información esta protegida. ${escapeHtml(brand.name)} no la comparte con terceros.
     </p>
   `
 }
@@ -11152,7 +12460,7 @@ const RSTK_BASE_CSS = `
   .rstk-video video{background:#000;object-fit:cover}
   .rstk-video-player{isolation:isolate}
   .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:linear-gradient(180deg,transparent,rgba(0,0,0,.12));color:var(--rstk-video-play-color,#fff);cursor:pointer}
-  .rstk-video-play-dot{width:64px;height:64px;display:grid;place-items:center;border-radius:999px;background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:0 16px 38px rgba(0,0,0,.28)}
+  .rstk-video-play-dot{width:var(--rstk-video-play-size,64px);height:var(--rstk-video-play-size,64px);display:grid;place-items:center;border-radius:999px;background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:0 16px 38px rgba(0,0,0,.28)}
   .rstk-video-sound{position:absolute;right:14px;bottom:14px;display:inline-flex;align-items:center;gap:4px;border-radius:999px;background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);padding:8px 10px}
   .rstk-video-sound i{width:5px;height:12px;border-radius:999px;background:currentColor;animation:rstkVideoSound 1s ease-in-out infinite}
   .rstk-video-sound i:last-child{height:18px;animation-delay:.18s}
@@ -11169,49 +12477,50 @@ const RSTK_BASE_CSS = `
   .rstk-site-panel-footer .rstk-site-panel-links{justify-content:center}
 
   .rstk-field{display:grid;gap:8px;text-align:left}
-  .rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-options,.rstk-embedded-form > .rstk-actions{width:min(100%,560px);justify-self:center}
-  .rstk-embedded-form > .rstk-field{text-align:left}
+  .rstk-kind-form .rstk-field,.rstk-kind-form .rstk-options,.rstk-kind-form .rstk-actions,.rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-block-style,.rstk-embedded-form > .rstk-options,.rstk-embedded-form > .rstk-actions{width:min(100%,var(--rstk-form-field-width,560px));justify-self:center}
+  .rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-block-style > .rstk-field{text-align:left}
   .rstk-embedded-form > .rstk-help{width:min(100%,620px);justify-self:center}
-  .rstk-embedded-pages,.rstk-embedded-pages [data-embedded-page-content]{width:min(100%,560px);justify-self:center;display:grid;gap:14px}
-	  .rstk-kind-form form{font-family:var(--rstk-form-font,var(--rstk-font))}
+  .rstk-embedded-pages,.rstk-embedded-pages [data-embedded-page-content]{width:min(100%,var(--rstk-form-field-width,560px));justify-self:center;display:grid;gap:14px}
+  .rstk-block-style.rstk-field,.rstk-block-style > .rstk-field{width:min(100%,var(--rstk-field-width,100%));justify-self:center}
+	  .rstk-kind-form form,.rstk-embedded-form{font-family:var(--rstk-form-font,var(--rstk-font))}
 	  label{font-size:.95rem;font-weight:700;color:var(--rstk-ink)}
-	  .rstk-kind-form .rstk-field > label{color:var(--rstk-form-label-color,var(--rstk-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-label-size,.95rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none)}
+	  .rstk-kind-form .rstk-field > label,.rstk-embedded-form .rstk-field > label{color:var(--rstk-form-label-color,var(--rstk-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-label-size,.95rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none)}
 	  .rstk-required{color:#dc2626;margin-left:3px}
 	  .rstk-help{margin:0;color:var(--rstk-muted);font-size:.9rem}
-	  .rstk-kind-form .rstk-help{color:var(--rstk-form-help-color,var(--rstk-muted));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-help-size,.9rem);font-style:var(--rstk-form-font-style,normal);text-decoration:var(--rstk-form-text-decoration,none)}
+	  .rstk-kind-form .rstk-help,.rstk-embedded-form .rstk-help{color:var(--rstk-form-help-color,var(--rstk-muted));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-help-size,.9rem);font-style:var(--rstk-form-font-style,normal);text-decoration:var(--rstk-form-text-decoration,none)}
 	  input,textarea,select{
 	    width:100%;border:1px solid var(--rstk-input-border);border-radius:var(--rstk-field-radius,var(--rstk-radius));
 	    background:var(--rstk-input-bg);color:var(--rstk-input-ink);font:inherit;font-size:1rem;
 	    padding:13px 14px;outline:none;transition:border-color .15s ease,box-shadow .15s ease;
 	  }
-	  .rstk-kind-form .rstk-field > input,.rstk-kind-form .rstk-field > textarea,.rstk-kind-form .rstk-field > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
+	  .rstk-kind-form .rstk-field > input,.rstk-kind-form .rstk-field > textarea,.rstk-kind-form .rstk-field > select,.rstk-embedded-form .rstk-field > input,.rstk-embedded-form .rstk-field > textarea,.rstk-embedded-form .rstk-field > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
 	  .rstk-phone-input{display:grid;grid-template-columns:minmax(92px,.24fr) minmax(0,1fr);gap:8px;align-items:stretch}
 	  .rstk-phone-input > select,.rstk-phone-input > input{min-width:0}
-	  .rstk-kind-form .rstk-field .rstk-phone-input > input,.rstk-kind-form .rstk-field .rstk-phone-input > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
+	  .rstk-kind-form .rstk-field .rstk-phone-input > input,.rstk-kind-form .rstk-field .rstk-phone-input > select,.rstk-embedded-form .rstk-field .rstk-phone-input > input,.rstk-embedded-form .rstk-field .rstk-phone-input > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
 	  textarea{resize:vertical;min-height:108px}
 	  input::placeholder,textarea::placeholder{color:color-mix(in srgb,var(--rstk-muted) 80%,transparent)}
-	  .rstk-kind-form input::placeholder,.rstk-kind-form textarea::placeholder{color:var(--rstk-form-placeholder,color-mix(in srgb,var(--rstk-muted) 80%,transparent))}
+	  .rstk-kind-form input::placeholder,.rstk-kind-form textarea::placeholder,.rstk-embedded-form input::placeholder,.rstk-embedded-form textarea::placeholder{color:var(--rstk-form-placeholder,color-mix(in srgb,var(--rstk-muted) 80%,transparent))}
 	  input:focus,textarea:focus,select:focus{border-color:var(--rstk-accent);box-shadow:0 0 0 4px var(--rstk-ring)}
 	  select{appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%),linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%);background-position:calc(100% - 20px) calc(50% - 3px),calc(100% - 15px) calc(50% - 3px);background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:42px}
-	  .rstk-kind-form.rstk-select-filled .rstk-field select{background-color:color-mix(in srgb,var(--rstk-form-field-bg,var(--rstk-input-bg)) 88%,var(--rstk-accent) 12%)}
-	  .rstk-kind-form.rstk-select-underline .rstk-field select{border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background-color:transparent;padding-left:0;padding-right:36px}
+	  .rstk-kind-form.rstk-select-filled .rstk-field select,.rstk-select-filled .rstk-embedded-form select{background-color:color-mix(in srgb,var(--rstk-form-field-bg,transparent) 88%,var(--rstk-accent) 12%)}
+	  .rstk-kind-form.rstk-select-underline .rstk-field select,.rstk-select-underline .rstk-embedded-form select{border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background-color:transparent;padding-left:0;padding-right:36px}
 	  .rstk-phone-input > select{background:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px)/5px 5px no-repeat,linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%) calc(100% - 15px) calc(50% - 3px)/5px 5px no-repeat,var(--rstk-input-bg)}
-	  .rstk-kind-form .rstk-field .rstk-phone-input > select,.rstk-kind-form.rstk-select-filled .rstk-field .rstk-phone-input > select,.rstk-kind-form.rstk-select-underline .rstk-field .rstk-phone-input > select{border-width:var(--rstk-form-field-border-width,1px);border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px)/5px 5px no-repeat,linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%) calc(100% - 15px) calc(50% - 3px)/5px 5px no-repeat,var(--rstk-form-field-bg,var(--rstk-input-bg));padding-left:var(--rstk-form-field-pad-x,14px);padding-right:42px}
+	  .rstk-kind-form .rstk-field .rstk-phone-input > select,.rstk-kind-form.rstk-select-filled .rstk-field .rstk-phone-input > select,.rstk-kind-form.rstk-select-underline .rstk-field .rstk-phone-input > select,.rstk-embedded-form .rstk-field .rstk-phone-input > select,.rstk-select-filled .rstk-embedded-form .rstk-field .rstk-phone-input > select,.rstk-select-underline .rstk-embedded-form .rstk-field .rstk-phone-input > select{border-width:var(--rstk-form-field-border-width,1px);border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px)/5px 5px no-repeat,linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%) calc(100% - 15px) calc(50% - 3px)/5px 5px no-repeat,var(--rstk-form-field-bg,var(--rstk-input-bg));padding-left:var(--rstk-form-field-pad-x,14px);padding-right:42px}
 
 	  .rstk-options{display:grid;gap:10px}
 	  .rstk-option{display:flex;align-items:center;gap:11px;min-height:50px;border:1px solid var(--rstk-input-border);border-radius:var(--rstk-field-radius,var(--rstk-radius));padding:11px 14px;background:var(--rstk-input-bg);color:var(--rstk-input-ink);font-weight:600;cursor:pointer;transition:border-color .15s ease,background .15s ease}
 	  .rstk-option:hover{border-color:var(--rstk-accent)}
 	  .rstk-option:has(input:checked){border-color:var(--rstk-accent);background:color-mix(in srgb,var(--rstk-accent) 8%,var(--rstk-input-bg))}
 	  .rstk-option input{width:19px;height:19px;padding:0;flex:0 0 auto;accent-color:var(--rstk-accent)}
-	  .rstk-kind-form .rstk-options .rstk-option{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
-	  .rstk-kind-form .rstk-option:has(input:checked){border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));background:var(--rstk-form-choice-selected-bg,color-mix(in srgb,var(--rstk-accent) 8%,var(--rstk-form-field-bg,var(--rstk-input-bg))))}
-	  .rstk-kind-form.rstk-choice-cards .rstk-option,.rstk-kind-form.rstk-choice-pills .rstk-option{position:relative;gap:0}
-	  .rstk-kind-form.rstk-choice-cards .rstk-option input,.rstk-kind-form.rstk-choice-pills .rstk-option input{position:absolute;opacity:0;pointer-events:none}
-	  .rstk-kind-form.rstk-choice-cards .rstk-option{padding-left:var(--rstk-form-field-pad-x,14px);box-shadow:inset 4px 0 0 transparent}
-	  .rstk-kind-form.rstk-choice-cards .rstk-option:has(input:checked){box-shadow:inset 4px 0 0 var(--rstk-form-choice-selected-border,var(--rstk-accent))}
-	  .rstk-kind-form.rstk-choice-pills .rstk-options{display:flex;flex-wrap:wrap;gap:8px}
-	  .rstk-kind-form.rstk-choice-pills .rstk-option{flex:0 1 auto;min-height:40px;border-radius:999px;padding:9px 16px}
-	  .rstk-kind-form.rstk-choice-minimal .rstk-option{min-height:38px;border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background:transparent;padding-inline:0}
+	  .rstk-kind-form .rstk-options .rstk-option,.rstk-embedded-form .rstk-option{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
+	  .rstk-kind-form .rstk-option:has(input:checked),.rstk-embedded-form .rstk-option:has(input:checked){border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));background:var(--rstk-form-choice-selected-bg,color-mix(in srgb,var(--rstk-accent) 8%,transparent))}
+	  .rstk-kind-form.rstk-choice-cards .rstk-option,.rstk-kind-form.rstk-choice-pills .rstk-option,.rstk-choice-cards .rstk-embedded-form .rstk-option,.rstk-choice-pills .rstk-embedded-form .rstk-option{position:relative;gap:0}
+	  .rstk-kind-form.rstk-choice-cards .rstk-option input,.rstk-kind-form.rstk-choice-pills .rstk-option input,.rstk-choice-cards .rstk-embedded-form .rstk-option input,.rstk-choice-pills .rstk-embedded-form .rstk-option input{position:absolute;opacity:0;pointer-events:none}
+	  .rstk-kind-form.rstk-choice-cards .rstk-option,.rstk-choice-cards .rstk-embedded-form .rstk-option{padding-left:var(--rstk-form-field-pad-x,14px);box-shadow:inset 4px 0 0 transparent}
+	  .rstk-kind-form.rstk-choice-cards .rstk-option:has(input:checked),.rstk-choice-cards .rstk-embedded-form .rstk-option:has(input:checked){box-shadow:inset 4px 0 0 var(--rstk-form-choice-selected-border,var(--rstk-accent))}
+	  .rstk-kind-form.rstk-choice-pills .rstk-options,.rstk-choice-pills .rstk-embedded-form .rstk-options{display:flex;flex-wrap:wrap;gap:8px}
+	  .rstk-kind-form.rstk-choice-pills .rstk-option,.rstk-choice-pills .rstk-embedded-form .rstk-option{flex:0 1 auto;min-height:40px;border-radius:999px;padding:9px 16px}
+	  .rstk-kind-form.rstk-choice-minimal .rstk-option,.rstk-choice-minimal .rstk-embedded-form .rstk-option{min-height:38px;border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background:transparent;padding-inline:0}
 
   .rstk-embed{width:100%;min-height:var(--rstk-embed-height,360px);display:block;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius));background:var(--rstk-block-bg,var(--rstk-surface2))}
   .rstk-calendar-embed{min-height:760px}
@@ -11221,7 +12530,8 @@ const RSTK_BASE_CSS = `
 
 	  .rstk-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
 	  .rstk-actions [data-submit],.rstk-actions [data-next]{flex:1 1 auto}
-	  .rstk-kind-form .rstk-actions [data-submit]{min-height:var(--rstk-submit-height,var(--rstk-button-height,50px));border-width:var(--rstk-submit-border-width,var(--rstk-button-border-width,1px));border-color:var(--rstk-submit-border,var(--rstk-button-border,var(--rstk-accent)));border-radius:var(--rstk-submit-radius,var(--rstk-btn-radius));background:var(--rstk-submit-bg,var(--rstk-accent));color:var(--rstk-submit-text,var(--rstk-on-accent));flex-direction:column;gap:2px;font-size:var(--rstk-submit-size,var(--rstk-button-size,1.02rem));padding-left:var(--rstk-submit-pad-x,var(--rstk-button-pad-x,22px));padding-right:var(--rstk-submit-pad-x,var(--rstk-button-pad-x,22px))}
+	  .rstk-kind-form .rstk-actions,.rstk-embedded-form .rstk-actions{justify-content:var(--rstk-submit-justify,center)}
+	  .rstk-kind-form .rstk-actions [data-submit],.rstk-embedded-form .rstk-actions [data-submit]{min-height:var(--rstk-submit-height,var(--rstk-button-height,50px));border-width:var(--rstk-submit-border-width,var(--rstk-button-border-width,1px));border-color:var(--rstk-submit-border,var(--rstk-button-border,var(--rstk-accent)));border-radius:var(--rstk-submit-radius,var(--rstk-btn-radius));background:var(--rstk-submit-bg,var(--rstk-accent));color:var(--rstk-submit-text,var(--rstk-on-accent));flex-direction:column;gap:2px;font-size:var(--rstk-submit-size,var(--rstk-button-size,1.02rem));padding-left:var(--rstk-submit-pad-x,var(--rstk-button-pad-x,22px));padding-right:var(--rstk-submit-pad-x,var(--rstk-button-pad-x,22px));flex:0 1 var(--rstk-submit-width,fit-content);width:var(--rstk-submit-width,fit-content)}
 	  .rstk-actions [data-back]{flex:0 0 auto;min-width:120px}
   .rstk-error{margin:2px 0 0;color:#dc2626;font-size:.85rem;font-weight:650}
   .rstk-submit-message{margin:0;color:var(--rstk-muted);font-weight:650;text-align:center}
@@ -11522,17 +12832,19 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
   const formFont = sanitizeCssFont(theme.formFontFamily) || baseFont
   const formLabel = themePaint(theme, 'formLabelColor') || ink
   const formHelp = themePaint(theme, 'formHelpColor') || muted
-  const formFieldBg = themePaint(theme, 'formFieldBg') || v.inputBg
+  const formFieldBg = themePaint(theme, 'formFieldBg') || 'transparent'
   const formFieldText = themePaint(theme, 'formFieldText') || v.inputInk
   const formFieldBorder = themePaint(theme, 'formFieldBorder') || v.inputBorder
   const formPlaceholder = themePaint(theme, 'formPlaceholderColor') || muted
-  const choiceSelectedBg = themePaint(theme, 'formChoiceSelectedBg') || `color-mix(in srgb, ${accent} 10%, ${v.inputBg})`
+  const choiceSelectedBg = themePaint(theme, 'formChoiceSelectedBg') || `color-mix(in srgb, ${accent} 10%, transparent)`
   const choiceSelectedBorder = themePaint(theme, 'formChoiceSelectedBorder') || accent
   const submitBg = themePaint(theme, 'submitBg') || accent
   const submitText = themePaint(theme, 'submitTextColor') || v.onAccent
   const submitBorder = themePaint(theme, 'submitBorderColor') || accent
   const defaultRadius = Number.parseInt(v.radius, 10) || 12
   const defaultButtonRadius = Number.parseInt(v.btnRadius, 10) || 12
+  const submitAlign = blockButtonAlign({ buttonAlign: theme.submitAlign }, 'center')
+  const submitWidth = themeNumber(theme, 'submitWidth', 0, 0, 100)
 
   return `
 	    --rstk-form-font:${formFont};
@@ -11553,6 +12865,7 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
 	    --rstk-form-field-height:${themeNumber(theme, 'formFieldHeight', 50, 34, 96)}px;
 	    --rstk-form-field-pad-x:${themeNumber(theme, 'formFieldPaddingX', 14, 6, 48)}px;
 	    --rstk-form-field-pad-y:${themeNumber(theme, 'formFieldPaddingY', 13, 6, 36)}px;
+	    --rstk-form-field-width:${themeNumber(theme, 'formFieldWidth', 560, 240, 900)}px;
 	    --rstk-form-choice-selected-bg:${choiceSelectedBg};
 	    --rstk-form-choice-selected-border:${paintFallbackColor(choiceSelectedBorder, accent)};
 	    --rstk-submit-bg:${submitBg};
@@ -11563,6 +12876,8 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
 	    --rstk-submit-pad-x:${themeNumber(theme, 'submitPaddingX', 22, 8, 72)}px;
 	    --rstk-submit-size:${themeNumber(theme, 'submitFontSize', 16, 11, 32)}px;
 	    --rstk-submit-border-width:${themeNumber(theme, 'submitBorderWidth', 1, 0, 8)}px;
+	    --rstk-submit-justify:${justifyForAlign(submitAlign)};
+	    --rstk-submit-width:${submitAlign === 'full' ? '100%' : submitWidth > 0 ? `${submitWidth}%` : 'fit-content'};
   `
 }
 
@@ -11642,6 +12957,11 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
   const submitEventName = getFormSubmitMetaEventName(site, activePage?.id)
   const pageMeta = getPageMetaConfig(site, activePage?.id)
   const pageViewEventName = pageMeta?.trigger === 'page_view' ? pageMeta.eventName : ''
+  const submitConfiguredCustomData = buildSiteMetaConfiguredCustomData(
+    getFormSubmitMetaEventParameters(site, activePage?.id, submitEventName),
+    submitEventName
+  )
+  const pageConfiguredCustomData = buildSiteMetaConfiguredCustomData(pageMeta?.parameters, pageViewEventName)
 
   return `
   <script>
@@ -11671,7 +12991,11 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
       }
     };
     window.ristakMetaTrackSiteSubmit = function(eventId, customData, eventName) {
-      window.ristakMetaTrackSiteEvent(eventName || ${JSON.stringify(submitEventName)}, eventId, customData);
+      window.ristakMetaTrackSiteEvent(
+        eventName || ${JSON.stringify(submitEventName)},
+        eventId,
+        Object.assign({}, ${scriptJson(submitConfiguredCustomData)}, customData || {})
+      );
     };
     window.ristakMetaSendServerEvent = function(payload) {
       fetch('/api/sites/public/meta-event', {
@@ -11695,6 +13019,7 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
         public_page_id: ${JSON.stringify(activePage?.id || '')},
         public_page_title: ${JSON.stringify(activePage?.title || '')}
       };
+      Object.assign(pageData, ${scriptJson(pageConfiguredCustomData)});
       window.ristakMetaTrackSiteEvent(${JSON.stringify(pageViewEventName)}, pageEventId, pageData);
       window.ristakMetaSendServerEvent({
         siteId: ${JSON.stringify(site.id)},
@@ -11737,11 +13062,14 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         return (document.cookie.match(new RegExp('(?:^|; )' + escaped + '=([^;]+)')) || [])[1] || null;
       };
       const getParams = () => {
+        // Params preservados de la sesión + los de la URL actual (estos ganan),
+        // para no perder atribución si una navegación intermedia los quitó.
+        const stored = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
+        let current = {};
         try {
-          return Object.fromEntries(new URL(window.location.href).searchParams.entries());
-        } catch (_) {
-          return {};
-        }
+          current = Object.fromEntries(new URL(window.location.href).searchParams.entries());
+        } catch (_) {}
+        return Object.assign({}, stored, current);
       };
       const getFieldKey = (field, fallback) => (
         field.getAttribute('data-ristack-field') ||
@@ -11916,8 +13244,19 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
               });
             }
             form.reset();
-            setMessage(form, submission.message || 'Listo. Recibimos tu informacion.', 'success');
+            setMessage(form, submission.message || 'Listo. Recibimos tu información.', 'success');
             window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
+            if (submission.status !== 'disqualified') {
+              const navigationAction = selectedChoiceActions.find(item => (
+                (item.action === 'url' && item.buttonUrl) ||
+                (item.action === 'specific_page' && item.buttonPageId)
+              ));
+              if (navigationAction && typeof window.ristakRunImportedActions === 'function') {
+                window.setTimeout(() => {
+                  window.ristakRunImportedActions(form, [navigationAction], { source: 'choice_option' });
+                }, 200);
+              }
+            }
             if (selectedChoiceActions.length && window.ristakRunImportedActions) {
               const followUpActions = selectedChoiceActions.filter(item => item.action !== 'submit');
               if (followUpActions.length) {
@@ -11949,11 +13288,16 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
     (() => {
       const PAGES = ${scriptJson(pages)};
       const CURRENT_PAGE_ID = ${scriptJson(pageId || DEFAULT_FUNNEL_PAGE_ID)};
+      // Conservar los params de la URL original (UTMs, fbclid, gclid, etc.)
+      // en cualquier navegación o redirect disparado por acciones de botones.
+      const preserveUrl = (value) => (
+        value && window.ristakPreserveParams ? window.ristakPreserveParams(value) : value
+      );
       const getPageHref = (targetPageId) => {
         if (!targetPageId) return '#';
         const nextUrl = new URL(window.location.href);
         nextUrl.searchParams.set('page', targetPageId);
-        return nextUrl.toString();
+        return preserveUrl(nextUrl.toString());
       };
       const getNextPageId = () => {
         const index = PAGES.findIndex(page => page.id === CURRENT_PAGE_ID);
@@ -12079,7 +13423,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
           if (done) return;
           done = true;
           window.removeEventListener('ristak:submitted', handleSubmitted);
-          reject(new Error('No se pudo confirmar el envio del formulario'));
+          reject(new Error('No se pudo confirmar el envío del formulario'));
         }, 10000);
         const handleSubmitted = (submitEvent) => {
           if (done) return;
@@ -12124,7 +13468,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
               context
             }
           }));
-          showActionMessage(source, 'Accion demo registrada: ' + action.action, 'success');
+          showActionMessage(source, 'Acción demo registrada: ' + action.action, 'success');
           return;
         }
         if (action.action === 'disqualify') {
@@ -12137,7 +13481,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
         if (!action) return;
         if (action.action === 'url') {
           const targetUrl = action.buttonUrl || (source.getAttribute ? source.getAttribute('href') : '') || '';
-          if (targetUrl) window.location.href = targetUrl;
+          if (targetUrl) window.location.href = preserveUrl(targetUrl);
           return;
         }
         if (action.action === 'next_page') {
@@ -12175,7 +13519,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
 
         event.preventDefault();
         runImportedActions(button, actions, { source: 'button' }).catch(error => {
-          showActionMessage(button, error && error.message ? error.message : 'No se pudo ejecutar la accion', 'error');
+          showActionMessage(button, error && error.message ? error.message : 'No se pudo ejecutar la acción', 'error');
         });
       }, true);
     })();
@@ -12184,7 +13528,11 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
 
 async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabled = true, pageId = DEFAULT_FUNNEL_PAGE_ID, pageTitle = '' } = {}) {
   const activePageId = cleanString(pageId) || DEFAULT_FUNNEL_PAGE_ID
-  const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, { id: activePageId, title: pageTitle || site.title || site.name })
+  const activePage = getSitePage(site, activePageId) || { id: activePageId, title: pageTitle || site.title || site.name }
+  const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, {
+    ...activePage,
+    title: activePage.title || pageTitle || site.title || site.name
+  })
   const nativeTrackingScript = trackingEnabled
     ? buildNativeSiteTrackingScript({
       siteId: site.id,
@@ -12201,7 +13549,10 @@ async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabl
   const buttonActionScript = buildImportedButtonActionScript(site, { pageId: activePageId })
   const captureScript = buildImportedFormCaptureScript(site, imported, { pageId: activePageId })
   const popupHtml = renderSitePopup(site)
-  return `${metaPixelSnippet}${nativeTrackingScript}${buttonActionScript}${captureScript}${popupHtml}`
+  // El script de preservación de params va primero: define los helpers globales
+  // que usan el tracking, los botones y la captura de formularios.
+  const paramPreservationScript = buildParamPreservationScript()
+  return `${paramPreservationScript}${metaPixelSnippet}${nativeTrackingScript}${buttonActionScript}${captureScript}${popupHtml}`
 }
 
 function injectImportedHtmlRuntime(html = '', injection = '') {
@@ -12235,7 +13586,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
   if (!imported) {
     return renderDomainErrorHtml({
       host: site.domain,
-      message: 'La pagina importada no se encontro. Vuelve a subir el HTML desde Sites.'
+      message: 'La página importada no se encontro. Vuelve a subir el HTML desde Sites.'
     })
   }
 
@@ -12360,7 +13711,7 @@ function renderSiteNavItems(site, parentId, activeIds, linkStyle, depth) {
     if (submenu) classes.push('rstk-nav-has-children')
     if (activeIds.has(page.id)) classes.push('rstk-nav-active')
     return `<li class="${classes.join(' ')}">`
-      + `<a class="rstk-nav-link" href="${escapeHtml(href)}">${escapeHtml(page.title || 'Pagina')}`
+      + `<a class="rstk-nav-link" href="${escapeHtml(href)}">${escapeHtml(page.title || 'Página')}`
       + `${submenu ? '<span class="rstk-nav-caret" aria-hidden="true">&#9662;</span>' : ''}</a>`
       + `${submenu ? `<div class="rstk-nav-submenu">${submenu}</div>` : ''}`
       + `</li>`
@@ -12530,6 +13881,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       pageTitle: activePage?.title || ''
     })
     : ''
+  // En páginas publicadas (no preview) los params de URL se preservan siempre,
+  // aunque el tracking esté apagado: la atribución no debe perderse nunca.
+  const paramPreservationScript = preview ? '' : buildParamPreservationScript()
   const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, activePage)
   const headerTrackingCode = buildHeaderTrackingCode(site, activePage)
   const popupHtml = renderSitePopup(site, {
@@ -12572,6 +13926,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     </main>
   </div>
   ${popupHtml}
+  ${paramPreservationScript}
   ${siteNavHtml ? `<script>${SITE_NAV_SCRIPT}</script>` : ''}
   <script>
     (() => {
@@ -12776,11 +14131,38 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         });
       };
 
+      // Toda navegación o redirect debe conservar los params de la URL original
+      // (UTMs, fbclid, gclid, etc.); ristakPreserveParams los repone si faltan.
+      const preserveUrl = (value) => (
+        value && window.ristakPreserveParams ? window.ristakPreserveParams(value) : value
+      );
+
       const pageUrl = (targetPageId) => {
         if (!targetPageId) return '';
         const url = new URL(window.location.href);
         url.searchParams.set('page', targetPageId);
-        return url.toString();
+        return preserveUrl(url.toString());
+      };
+      const isExitRule = (rule) => rule && (rule.action === 'redirect' || rule.action === 'site_page');
+      const shouldSubmitRule = (rule) => !isExitRule(rule) || rule.submitBeforeAction !== false;
+      const getRuleRedirectUrl = (rule) => {
+        if (!rule) return '';
+        if (rule.action === 'redirect') return preserveUrl(rule.redirectUrl || '');
+        if (rule.action === 'site_page') return pageUrl(rule.targetPageId || '');
+        return '';
+      };
+      const handleBlockingRule = (rule, rulePageId, targetMessage) => {
+        if (!rule) return false;
+        if (isExitRule(rule) && !shouldSubmitRule(rule)) {
+          const targetUrl = getRuleRedirectUrl(rule);
+          if (targetUrl) window.location.href = targetUrl;
+          return true;
+        }
+        if (targetMessage) targetMessage.textContent = isExitRule(rule) ? 'Enviando...' : (rule.message || 'Gracias. Tu información fue recibida.');
+        form.dataset.ruleSubmit = 'true';
+        form.dataset.rulePageId = rulePageId || getCurrentPageId();
+        form.requestSubmit();
+        return true;
       };
 
       const readSelectedRules = (field) => {
@@ -12865,14 +14247,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           const currentFields = getEmbeddedPageFields(state);
           if (!currentFields.every(validateField)) return;
           const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
-          const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect');
-          if (blockingRule) {
-            if (state.message) state.message.textContent = blockingRule.action === 'redirect' ? 'Enviando...' : (blockingRule.message || 'Gracias. Tu informacion fue recibida.');
-            form.dataset.ruleSubmit = 'true';
-            form.dataset.rulePageId = state.pageIds[state.index] || '';
-            form.requestSubmit();
-            return;
-          }
+          const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect' || item.action === 'site_page');
+          if (blockingRule && handleBlockingRule(blockingRule, state.pageIds[state.index] || '', state.message)) return;
           const jumpRule = rules.find(item => item.action === 'jump' && item.targetBlockId);
           const targetPageId = jumpRule && jumpRule.targetBlockId ? targetBlockPageMap[jumpRule.targetBlockId] : '';
           const targetIndex = state.pageIds.indexOf(targetPageId);
@@ -12890,13 +14266,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         const currentFields = getPageFields(getCurrentPageId());
         if (!currentFields.every(validateField)) return;
         const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
-        const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect');
-        if (blockingRule) {
-          if (message) message.textContent = blockingRule.action === 'redirect' ? 'Enviando...' : (blockingRule.message || 'Gracias. Tu informacion fue recibida.');
-          form.dataset.ruleSubmit = 'true';
-          form.requestSubmit();
-          return;
-        }
+        const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect' || item.action === 'site_page');
+        if (blockingRule && handleBlockingRule(blockingRule, getCurrentPageId(), message)) return;
         const jumpRule = rules.find(item => item.action === 'jump' && item.targetBlockId);
         if (jumpRule && jumpRule.targetBlockId) {
           const targetField = fields.find(field => field.getAttribute('data-block-id') === jumpRule.targetBlockId);
@@ -12915,13 +14286,10 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         const currentResponses = getCurrentResponses();
         const mergedResponses = { ...readStoredResponses(), ...currentResponses };
         const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
-        const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect');
+        const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect' || item.action === 'site_page');
         if (blockingRule) {
-          writeStoredResponses(mergedResponses);
-          if (message) message.textContent = blockingRule.action === 'redirect' ? 'Enviando...' : (blockingRule.message || 'Gracias. Tu informacion fue recibida.');
-          form.dataset.ruleSubmit = 'true';
-          form.requestSubmit();
-          return;
+          if (shouldSubmitRule(blockingRule)) writeStoredResponses(mergedResponses);
+          if (handleBlockingRule(blockingRule, pageId, message)) return;
         }
 
         writeStoredResponses(mergedResponses);
@@ -12933,7 +14301,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           ? pageUrl(targetPageId)
           : standardFormNextPageUrl;
         if (targetUrl) {
-          window.location.href = targetUrl;
+          window.location.href = preserveUrl(targetUrl);
         }
       });
 
@@ -12958,7 +14326,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           : getCurrentResponses();
 
         const url = new URL(window.location.href);
-        const params = Object.fromEntries(url.searchParams.entries());
+        const storedParams = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
+        const params = Object.assign({}, storedParams, Object.fromEntries(url.searchParams.entries()));
         const nativeIdentity = window.ristakNativeIdentity ? window.ristakNativeIdentity() : {};
         const nativeTracking = window.ristakNativeBuildData ? window.ristakNativeBuildData({ conversion_type: 'form_submit' }) : null;
         if (submitButton) submitButton.disabled = true;
@@ -13022,19 +14391,19 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             renderEmbeddedForm(state);
           });
           if (submission.redirectUrl) {
-            window.location.href = submission.redirectUrl;
+            window.location.href = preserveUrl(submission.redirectUrl);
             return;
           }
           const qualifies = submission.status !== 'disqualified';
           if (!qualifies && disqualifiedPageUrl && completionAction === 'next_page_if_qualified') {
-            window.location.href = disqualifiedPageUrl;
+            window.location.href = preserveUrl(disqualifiedPageUrl);
             return;
           }
           if (nextPageUrl && (completionAction === 'next_page' || (completionAction === 'next_page_if_qualified' && qualifies))) {
-            window.location.href = nextPageUrl;
+            window.location.href = preserveUrl(nextPageUrl);
             return;
           }
-          if (message) message.textContent = (data && data.data && data.data.message) || ${JSON.stringify('Listo. Recibimos tu informacion.')};
+          if (message) message.textContent = (data && data.data && data.data.message) || ${JSON.stringify('Listo. Recibimos tu información.')};
         } catch (error) {
           if (message) message.textContent = error.message || 'No se pudo enviar el formulario';
         } finally {
@@ -13124,9 +14493,121 @@ function splitName(fullName) {
   }
 }
 
+function getNativeSystemFieldKey(block) {
+  const settings = block?.settings || {}
+  const key = normalizeImportedFieldKey(
+    settings.systemFieldKey ||
+    settings.system_field_key ||
+    '',
+    ''
+  )
+
+  return NATIVE_FORM_STANDARD_SYSTEM_FIELDS.has(key) || NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(key)
+    ? key
+    : ''
+}
+
+function getNativeStandardFieldKey(block) {
+  const systemFieldKey = getNativeSystemFieldKey(block)
+  if (NATIVE_FORM_STANDARD_SYSTEM_FIELDS.has(systemFieldKey)) return systemFieldKey
+
+  const settings = block?.settings || {}
+  const internalFieldKey = normalizeImportedFieldKey(
+    settings.internalName ||
+    settings.internal_name ||
+    '',
+    ''
+  )
+
+  return NATIVE_FORM_STANDARD_SYSTEM_FIELDS.has(internalFieldKey) ? internalFieldKey : ''
+}
+
+function getNativeSystemFieldLabel(fieldKey, fallback = '') {
+  return NATIVE_FORM_SYSTEM_FIELD_LABELS[fieldKey] || cleanString(fallback) || fieldKey
+}
+
+function setMappedFieldValue(target, key, value) {
+  if (!key || isEmptyImportedValue(value)) return
+  target[key] = value
+}
+
+function buildNativeSubmissionLayers({ site, blocks = [], responses = {} }) {
+  const rawFields = {}
+  const mappedFields = {
+    standard: {},
+    system: {},
+    custom: {}
+  }
+  const derivedFields = {}
+
+  for (const block of collectFieldBlocks(blocks)) {
+    const value = responses[block.id]
+    if (isEmptyImportedValue(value)) continue
+
+    const settings = block.settings || {}
+    const systemFieldKey = getNativeSystemFieldKey(block)
+    const standardFieldKey = getNativeStandardFieldKey(block)
+    const fallbackKey = normalizeImportedFieldKey(
+      standardFieldKey ||
+      systemFieldKey ||
+      settings.internalName ||
+      settings.internal_name ||
+      block.label ||
+      block.id,
+      block.id
+    )
+    const rawKey = fallbackKey || block.id
+    rawFields[rawKey] = value
+
+    if (standardFieldKey) {
+      setMappedFieldValue(mappedFields.standard, standardFieldKey, value)
+      continue
+    }
+
+    if (NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(systemFieldKey)) {
+      setMappedFieldValue(mappedFields.system, systemFieldKey, value)
+      continue
+    }
+
+    const target = getBlockCustomFieldTarget(block)
+    if (target?.fieldKey) {
+      setMappedFieldValue(mappedFields.custom, target.fieldKey, value)
+    }
+  }
+
+  if (mappedFields.standard.full_name) {
+    const names = splitName(mappedFields.standard.full_name)
+    if (names.firstName && !mappedFields.standard.first_name) derivedFields.first_name = names.firstName
+    if (names.lastName && !mappedFields.standard.last_name) derivedFields.last_name = names.lastName
+  }
+
+  if (!mappedFields.standard.full_name && (mappedFields.standard.first_name || mappedFields.standard.last_name)) {
+    derivedFields.full_name = [mappedFields.standard.first_name, mappedFields.standard.last_name]
+      .map(cleanString)
+      .filter(Boolean)
+      .join(' ')
+  }
+
+  if (mappedFields.standard.email) {
+    derivedFields.email = normalizeEmail(mappedFields.standard.email)
+  }
+
+  if (mappedFields.standard.phone) {
+    derivedFields.phone = cleanString(mappedFields.standard.phone)
+  }
+
+  return {
+    rawFields,
+    mappedFields,
+    derivedFields
+  }
+}
+
 function inferContactFromResponses(blocks, responseEntries) {
   const contact = {
     fullName: '',
+    firstName: '',
+    lastName: '',
     email: '',
     phone: ''
   }
@@ -13137,8 +14618,34 @@ function inferContactFromResponses(blocks, responseEntries) {
     const label = cleanString(block.label).toLowerCase()
     const value = responseEntries[block.id]
     const normalizedValue = Array.isArray(value) ? value.join(', ') : cleanString(value)
+    const standardFieldKey = getNativeStandardFieldKey(block)
 
     if (!normalizedValue) continue
+
+    if (standardFieldKey === 'email' && !contact.email) {
+      contact.email = normalizeEmail(normalizedValue)
+      continue
+    }
+
+    if (standardFieldKey === 'phone' && !contact.phone) {
+      contact.phone = normalizedValue
+      continue
+    }
+
+    if (standardFieldKey === 'full_name' && !contact.fullName) {
+      contact.fullName = normalizedValue
+      continue
+    }
+
+    if (standardFieldKey === 'first_name' && !contact.firstName) {
+      contact.firstName = normalizedValue
+      continue
+    }
+
+    if (standardFieldKey === 'last_name' && !contact.lastName) {
+      contact.lastName = normalizedValue
+      continue
+    }
 
     if (!contact.email && (
       block.blockType === 'email' ||
@@ -13152,7 +14659,7 @@ function inferContactFromResponses(blocks, responseEntries) {
 
     if (!contact.phone && (
       block.blockType === 'phone' ||
-      label.includes('telefono') ||
+      label.includes('teléfono') ||
       label.includes('teléfono') ||
       label.includes('celular') ||
       label.includes('whatsapp')
@@ -13166,11 +14673,27 @@ function inferContactFromResponses(blocks, responseEntries) {
     }
   }
 
+  if (!contact.fullName && (contact.firstName || contact.lastName)) {
+    contact.fullName = [contact.firstName, contact.lastName].filter(Boolean).join(' ')
+  }
+
   return contact
 }
 
 function getBlockCustomFieldTarget(block) {
   const settings = block?.settings || {}
+  const systemFieldKey = getNativeSystemFieldKey(block)
+  if (NATIVE_FORM_STANDARD_SYSTEM_FIELDS.has(systemFieldKey)) return null
+  if (NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(systemFieldKey)) {
+    return {
+      definitionId: '',
+      fieldKey: systemFieldKey,
+      label: getNativeSystemFieldLabel(systemFieldKey, block?.label),
+      dataType: cleanString(settings.customFieldDataType || settings.custom_field_data_type || block?.blockType || 'text'),
+      system: true
+    }
+  }
+
   const definitionId = cleanString(
     settings.customFieldDefinitionId ||
     settings.custom_field_definition_id ||
@@ -13188,6 +14711,7 @@ function getBlockCustomFieldTarget(block) {
     ''
   )
 
+  if (NATIVE_FORM_STANDARD_SYSTEM_FIELDS.has(fieldKey)) return null
   if (!definitionId && !fieldKey) return null
 
   return {
@@ -13231,8 +14755,8 @@ function buildNativeCustomFieldsFromResponses({ site, blocks = [], responses = {
       dataType: target.dataType,
       options: getNativeCustomFieldOptions(block),
       value,
-      syncTarget: 'local',
-      sourceType: 'native_site',
+      syncTarget: target.system ? 'none' : 'local',
+      sourceType: target.system ? 'system' : 'native_site',
       sourceId: site.id,
       sourceSiteId: site.id,
       sourcePageId: pageId,
@@ -13244,6 +14768,7 @@ function buildNativeCustomFieldsFromResponses({ site, blocks = [], responses = {
       sourceContext: {
         siteType: site.siteType,
         blockType: block.blockType,
+        systemFieldKey: target.system ? fieldKey : '',
         native: true
       }
     })
@@ -13271,7 +14796,8 @@ async function upsertNativeContactCustomFields({ site, contactId, blocks, respon
     sourceType: 'native_site',
     sourceId: site.id,
     sourceSiteId: site.id,
-    syncTarget: 'local'
+    syncTarget: 'local',
+    allowSystemContactCustomFields: true
   })
   const existing = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
   const merged = mergeContactCustomFields(
@@ -13312,7 +14838,10 @@ async function findExistingContact({ email, phone }) {
 async function upsertContactFromSubmission({ site, contact, meta }) {
   const email = normalizeEmail(contact.email)
   const phone = await normalizePhoneForAccount(contact.phone) || cleanString(contact.phone)
-  const fullName = cleanString(contact.fullName) || email || phone || 'Lead de site'
+  const explicitFirstName = cleanString(contact.firstName || contact.first_name)
+  const explicitLastName = cleanString(contact.lastName || contact.last_name)
+  const joinedName = [explicitFirstName, explicitLastName].filter(Boolean).join(' ')
+  const fullName = cleanString(contact.fullName) || joinedName || email || phone || 'Lead de site'
 
   if (!email && !phone && !fullName) return null
 
@@ -13320,6 +14849,8 @@ async function upsertContactFromSubmission({ site, contact, meta }) {
   const contactId = existing?.id || `site_contact_${crypto.randomUUID()}`
   const phoneUpsert = await prepareContactPhoneUpsert({ contactId, phone })
   const names = splitName(fullName)
+  const firstName = explicitFirstName || names.firstName
+  const lastName = explicitLastName || names.lastName
   const params = meta?.params || {}
   const visitorId = cleanString(meta?.visitorId || meta?.visitor_id)
 
@@ -13344,8 +14875,8 @@ async function upsertContactFromSubmission({ site, contact, meta }) {
       phoneUpsert.phone || phone || null,
       email || null,
       fullName || null,
-      names.firstName || null,
-      names.lastName || null,
+      firstName || null,
+      lastName || null,
       `ristak_site:${site.slug}`,
       cleanString(meta?.pageUrl) || null,
       cleanString(params.utm_source || params.source) || null,
@@ -13378,8 +14909,8 @@ async function upsertContactFromSubmission({ site, contact, meta }) {
     phoneUpsert.phone || phone || null,
     email || null,
     fullName,
-    names.firstName || null,
-    names.lastName || null,
+    firstName || null,
+    lastName || null,
     `ristak_site:${site.slug}`,
     cleanString(meta?.pageUrl) || null,
     cleanString(params.utm_source || params.source) || null,
@@ -13418,19 +14949,19 @@ function normalizeSubmissionResponses(blocks, responses = {}) {
 
     if (!missing) {
       if (block.blockType === 'email' && !normalizeEmail(value)) {
-        errors.push(`${block.label || 'Correo electronico'} debe ser un correo valido`)
+        errors.push(`${block.label || 'Correo electrónico'} debe ser un correo válido`)
       }
 
       if (block.blockType === 'phone' && cleanString(value).replace(/[^\d]/g, '').length < 7) {
-        errors.push(`${block.label || 'Telefono'} debe tener un telefono valido`)
+        errors.push(`${block.label || 'Teléfono'} debe tener un teléfono válido`)
       }
 
       if ((block.blockType === 'number' || block.blockType === 'currency') && !Number.isFinite(Number(value))) {
-        errors.push(`${block.label || 'Numero'} debe ser numerico`)
+        errors.push(`${block.label || 'Número'} debe ser numerico`)
       }
 
       if (block.blockType === 'date' && Number.isNaN(Date.parse(value))) {
-        errors.push(`${block.label || 'Fecha'} debe tener una fecha valida`)
+        errors.push(`${block.label || 'Fecha'} debe tener una fecha válida`)
       }
     }
 
@@ -13439,7 +14970,7 @@ function normalizeSubmissionResponses(blocks, responses = {}) {
       const selectedValues = Array.isArray(value) ? value : [value].filter(Boolean)
       for (const selectedValue of selectedValues) {
         if (optionValues.size > 0 && !optionValues.has(selectedValue)) {
-          errors.push(`${block.label || 'Pregunta'} tiene una opcion invalida`)
+          errors.push(`${block.label || 'Pregunta'} tiene una opción inválida`)
           break
         }
       }
@@ -13459,6 +14990,7 @@ function evaluateSubmissionRules(blocks, responses = {}) {
   let disqualified = false
   let message = ''
   let redirectUrl = ''
+  let targetPageId = ''
 
   for (const block of fields) {
     if (!['dropdown', 'radio', 'checkboxes'].includes(block.blockType)) continue
@@ -13486,8 +15018,10 @@ function evaluateSubmissionRules(blocks, responses = {}) {
           option: option.label,
           action,
           targetBlockId: option.targetBlockId || '',
+          targetPageId: option.targetPageId || '',
           message: option.message || '',
           redirectUrl: option.redirectUrl || '',
+          submitBeforeAction: option.submitBeforeAction !== false,
           tag: option.tag || '',
           category: option.category || ''
         })
@@ -13501,11 +15035,15 @@ function evaluateSubmissionRules(blocks, responses = {}) {
       }
 
       if (action === 'end_form' && !message) {
-        message = option.message || 'Gracias. Tu informacion fue recibida.'
+        message = option.message || 'Gracias. Tu información fue recibida.'
       }
 
       if (action === 'redirect' && !redirectUrl) {
         redirectUrl = safeHref(option.redirectUrl, '')
+      }
+
+      if (action === 'site_page' && !targetPageId) {
+        targetPageId = cleanString(option.targetPageId)
       }
     }
   }
@@ -13515,6 +15053,7 @@ function evaluateSubmissionRules(blocks, responses = {}) {
     disqualified,
     message,
     redirectUrl,
+    targetPageId,
     tags: Array.from(tags),
     categories: Array.from(categories),
     actions
@@ -13545,7 +15084,7 @@ function getSiteFinalMessage(site, ruleEvaluation) {
     return cleanString(finalMessages.disqualified)
   }
 
-  return cleanString(finalMessages.success) || 'Listo. Recibimos tu informacion.'
+  return cleanString(finalMessages.success) || 'Listo. Recibimos tu información.'
 }
 
 async function logMetaEvent({ contactId, eventType, metaEventName, eventId, status, requestPayload, responsePayload, errorMessage }) {
@@ -13578,7 +15117,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   }
 
   const metaConfig = await getMetaConfig().catch(error => {
-    logger.warn(`No se pudo leer configuracion Meta para Sites CAPI: ${error.message}`)
+    logger.warn(`No se pudo leer configuración Meta para Sites CAPI: ${error.message}`)
     return null
   })
   const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
@@ -13634,12 +15173,15 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
         event_source_url: cleanString(requestMeta.meta?.pageUrl) || `https://${site.domain}`,
         event_id: eventId,
         user_data: userData,
-        custom_data: {
+        custom_data: mergeSiteMetaCustomData({
           source: 'ristak_site',
           site_id: site.id,
           site_name: site.name,
           content_name: site.title || site.name
-        }
+        }, buildSiteMetaConfiguredCustomData(
+          getFormSubmitMetaEventParameters(site, submittedPageId, eventName),
+          eventName
+        ))
       }
     ]
   }
@@ -13688,7 +15230,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
 
 async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId, requestMeta }) {
   const metaConfig = await getMetaConfig().catch(error => {
-    logger.warn(`No se pudo leer configuracion Meta para evento de pagina Site: ${error.message}`)
+    logger.warn(`No se pudo leer configuración Meta para evento de página Site: ${error.message}`)
     return null
   })
   const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
@@ -13739,7 +15281,7 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
         event_source_url: cleanString(requestMeta.meta?.pageUrl) || `https://${site.domain}`,
         event_id: eventId,
         user_data: userData,
-        custom_data: {
+        custom_data: mergeSiteMetaCustomData({
           source: 'ristak_site',
           conversion_type: 'page_view',
           site_id: site.id,
@@ -13747,7 +15289,7 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
           public_page_id: page?.id || '',
           public_page_title: page?.title || '',
           content_name: page?.title || site.title || site.name
-        }
+        }, buildSiteMetaConfiguredCustomData(page?.metaEventParameters, eventName))
       }
     ]
   }
@@ -14133,7 +15675,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
   const submissionStatus = importedDisqualified ? 'disqualified' : 'received'
   const responseMessage = importedDisqualified
     ? cleanString(meta.importedDisqualifiedMessage || meta.imported_disqualified_message) || 'Gracias. Por ahora esta solicitud no califica.'
-    : 'Listo. Recibimos tu informacion.'
+    : 'Listo. Recibimos tu información.'
   const contactId = await upsertImportedContactFromSubmission({
     site,
     contact,
@@ -14161,6 +15703,21 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
     jsonString(meta),
     submissionStatus
   ])
+
+  // Motor de automatizaciones: formulario enviado
+  import('./automationEngine.js')
+    .then(engine => engine.handleAutomationEvent('form-submitted', {
+      contactId,
+      formId: site.id,
+      formName: site.name || '',
+      submissionId,
+      formStatus: submissionStatus,
+      status: submissionStatus,
+      formDisqualified: submissionStatus === 'disqualified',
+      submittedAt: meta.submittedAt,
+      formResponses: layers.mappedFields
+    }))
+    .catch(() => {})
 
   const capi = await sendSiteLeadMetaEvent({
     site,
@@ -14219,7 +15776,7 @@ export async function createSubmissionFromRequest(req, body = {}) {
     : await findSiteByRoutePath(req.path)
 
   if (!site) {
-    const error = new Error('Site publico no encontrado')
+    const error = new Error('Site público no encontrado')
     error.status = 404
     throw error
   }
@@ -14268,6 +15825,8 @@ export async function createSubmissionFromRequest(req, body = {}) {
   }
 
   const ruleEvaluation = evaluateSubmissionRules(submissionBlocks, responses)
+  const ruleRedirectUrl = ruleEvaluation.redirectUrl ||
+    (ruleEvaluation.targetPageId ? buildPageHref(ruleEvaluation.targetPageId, { site }) : '')
 
   const meta = {
     ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),
@@ -14276,6 +15835,7 @@ export async function createSubmissionFromRequest(req, body = {}) {
     userAgent: req.headers['user-agent'] || '',
     submittedAt: new Date().toISOString()
   }
+  const nativeLayers = buildNativeSubmissionLayers({ site, blocks: submissionBlocks, responses })
   const inferredContact = inferContactFromResponses(collectFieldBlocks(submissionBlocks), responses)
   const contactId = await upsertContactFromSubmission({ site, contact: inferredContact, meta })
   const preparedCustomFields = await upsertNativeContactCustomFields({
@@ -14284,25 +15844,50 @@ export async function createSubmissionFromRequest(req, body = {}) {
     blocks: submissionBlocks,
     responses
   })
-  const mappedFields = preparedCustomFields.length
-    ? { custom: buildNativeMappedCustomFields(preparedCustomFields) }
-    : {}
+  const preparedUserCustomFields = preparedCustomFields.filter(field => (
+    !NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(cleanString(field.fieldKey || field.key))
+  ))
+  const mappedFields = {
+    ...(Object.keys(nativeLayers.mappedFields.standard || {}).length ? { standard: nativeLayers.mappedFields.standard } : {}),
+    ...(Object.keys(nativeLayers.mappedFields.system || {}).length ? { system: nativeLayers.mappedFields.system } : {}),
+    ...(Object.keys(nativeLayers.mappedFields.custom || {}).length || preparedUserCustomFields.length
+      ? { custom: { ...(nativeLayers.mappedFields.custom || {}), ...buildNativeMappedCustomFields(preparedUserCustomFields) } }
+      : {})
+  }
   const submissionId = crypto.randomUUID()
 
   await db.run(`
     INSERT INTO public_site_submissions (
-      id, site_id, contact_id, domain, response_json, mapped_fields_json, meta_json, status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      id, site_id, contact_id, domain, response_json, raw_fields_json,
+      mapped_fields_json, derived_fields_json, meta_json, status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `, [
     submissionId,
     site.id,
     contactId,
     host,
     jsonString(responses),
+    jsonString(nativeLayers.rawFields),
     jsonString(mappedFields),
+    jsonString(nativeLayers.derivedFields),
     jsonString(meta),
     ruleEvaluation.status
   ])
+
+  // Motor de automatizaciones: formulario enviado
+  import('./automationEngine.js')
+    .then(engine => engine.handleAutomationEvent('form-submitted', {
+      contactId,
+      formId: site.id,
+      formName: site.name || '',
+      submissionId,
+      formStatus: ruleEvaluation.status,
+      status: ruleEvaluation.status,
+      formDisqualified: ruleEvaluation.status === 'disqualified' || ruleEvaluation.disqualified === true,
+      submittedAt: meta.submittedAt,
+      formResponses: responses
+    }))
+    .catch(() => {})
 
   const capi = await sendSiteLeadMetaEvent({
     site,
@@ -14339,8 +15924,11 @@ export async function createSubmissionFromRequest(req, body = {}) {
     contactPhone: inferredContact.phone || '',
     status: ruleEvaluation.status,
     message: getSiteFinalMessage(site, ruleEvaluation),
-    redirectUrl: ruleEvaluation.redirectUrl || '',
+    redirectUrl: ruleRedirectUrl,
     rules: ruleEvaluation,
+    rawFields: nativeLayers.rawFields,
+    mappedFields,
+    derivedFields: nativeLayers.derivedFields,
     capi
   }
 }
@@ -14364,7 +15952,7 @@ export async function createMetaPageEventFromRequest(req, body = {}) {
 
   const site = await getSite(siteId, { includeBlocks: false, includeSubmissions: false })
   if (!site) {
-    const error = new Error('Site publico no encontrado')
+    const error = new Error('Site público no encontrado')
     error.status = 404
     throw error
   }

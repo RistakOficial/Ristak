@@ -49,6 +49,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   calendarsService,
   type Calendar as CalendarType,
+  type GoogleCalendarOption,
   type GoogleCalendarIntegrationStatus,
   type GoogleCalendarMergePreview
 } from '@/services/calendarsService'
@@ -141,6 +142,10 @@ const normalizeGoogleCalendarIdInput = (value: string) => {
 
 const normalizeCalendarMatchValue = (value?: string | null) => String(value || '').trim().toLowerCase()
 
+const canWriteGoogleCalendarOption = (calendar: GoogleCalendarOption) => (
+  ['owner', 'writer'].includes(String(calendar.accessRole || '').toLowerCase())
+)
+
 const googleDefaultPromptKey = (calendar?: CalendarType | null) => (
   normalizeCalendarMatchValue(calendar?.googleCalendarId || calendar?.id)
 )
@@ -223,6 +228,8 @@ export const CalendarsConfiguration: React.FC = () => {
   const [loadingCalendars, setLoadingCalendars] = useState(true)
   const [activeView, setActiveView] = useState<CalendarSettingsView>(routeState.view)
   const [googleIntegration, setGoogleIntegration] = useState<GoogleCalendarIntegrationStatus | null>(null)
+  const [googleCalendarOptions, setGoogleCalendarOptions] = useState<GoogleCalendarOption[]>([])
+  const [loadingGoogleCalendarOptions, setLoadingGoogleCalendarOptions] = useState(false)
   const [loadingGoogleIntegration, setLoadingGoogleIntegration] = useState(true)
   const [savingGoogleIntegration, setSavingGoogleIntegration] = useState(false)
   const [testingGoogleIntegration, setTestingGoogleIntegration] = useState(false)
@@ -235,6 +242,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const [googleMergePrompt, setGoogleMergePrompt] = useState<GoogleCalendarMergePreview | null>(null)
   const [savingGoogleMergePrompt, setSavingGoogleMergePrompt] = useState(false)
   const [googleCalendarId, setGoogleCalendarId] = useState('')
+  const [savingGoogleSyncCalendarId, setSavingGoogleSyncCalendarId] = useState<string | null>(null)
   const [serviceAccountJson, setServiceAccountJson] = useState('')
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showNotificationsModal, setShowNotificationsModal] = useState(false)
@@ -273,6 +281,14 @@ export const CalendarsConfiguration: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    if (googleIntegration?.connected) {
+      loadGoogleCalendarOptions()
+    } else {
+      setGoogleCalendarOptions([])
+    }
+  }, [googleIntegration?.connected])
+
+  useEffect(() => {
     setActiveView(current => current === routeState.view ? current : routeState.view)
     setShowCreateModal(routeState.create)
 
@@ -295,8 +311,8 @@ export const CalendarsConfiguration: React.FC = () => {
     if (!highLevelLoading && !highLevelConnected && calendarSourcePreference === 'ghl') {
       setCalendarSourcePreference('ristak').catch(() => {})
     }
-    if (!loadingGoogleIntegration && !googleIntegration?.connected && calendarSourcePreference === 'google') {
-      setCalendarSourcePreference('ristak').catch(() => {})
+    if (!loadingGoogleIntegration && calendarSourcePreference === 'google') {
+      setCalendarSourcePreference(highLevelConnected ? 'combined' : 'ristak').catch(() => {})
     }
   }, [highLevelLoading, highLevelConnected, loadingGoogleIntegration, googleIntegration?.connected, calendarSourcePreference, setCalendarSourcePreference])
 
@@ -328,7 +344,7 @@ export const CalendarsConfiguration: React.FC = () => {
       const data = await calendarsService.getGoogleIntegration()
       setGoogleIntegration(data)
       setGoogleCalendarId(data.calendarId || '')
-      if (data.connected) {
+      if (data.connected && data.connectionMode !== 'oauth') {
         try {
           const revealed = await calendarsService.revealGoogleServiceAccount()
           setServiceAccountJson(revealed.serviceAccountJson || '')
@@ -338,13 +354,37 @@ export const CalendarsConfiguration: React.FC = () => {
       } else {
         setServiceAccountJson('')
       }
-      setEditingGoogleIntegration(!data.connected)
+      setEditingGoogleIntegration(data.connectionMode !== 'oauth' && !data.connected)
     } catch (error: any) {
       showToast('error', 'Error al cargar Google Calendar', error.message || 'No se pudo leer la integración')
     } finally {
       setLoadingGoogleIntegration(false)
     }
   }
+
+  const loadGoogleCalendarOptions = async (integrationStatus: GoogleCalendarIntegrationStatus | null = googleIntegration) => {
+    if (!integrationStatus?.connected) {
+      setGoogleCalendarOptions([])
+      return []
+    }
+
+    try {
+      setLoadingGoogleCalendarOptions(true)
+      const data = await calendarsService.getGoogleCalendarOptions()
+      setGoogleCalendarOptions(data)
+      return data
+    } catch (error: any) {
+      setGoogleCalendarOptions([])
+      showToast('warning', 'No se pudieron cargar calendarios Google', error.message || 'Revisa permisos del Service Account')
+      return []
+    } finally {
+      setLoadingGoogleCalendarOptions(false)
+    }
+  }
+
+  const getGoogleLinkedCalendars = (items: CalendarType[] = calendars) => (
+    items.filter((calendar) => calendar.source !== 'google' && Boolean(calendar.googleCalendarId))
+  )
 
   const parsedServiceAccountEmail = useMemo(() => {
     if (!serviceAccountJson.trim()) return ''
@@ -457,14 +497,22 @@ export const CalendarsConfiguration: React.FC = () => {
     }
   }
 
-  const handleSaveGoogleIntegration = async () => {
-    const normalizedCalendarId = normalizeGoogleCalendarIdInput(googleCalendarId)
-
-    if (!normalizedCalendarId) {
-      showToast('error', 'Calendar ID requerido', 'Pega el ID del calendario de Google que quieres conectar')
-      return
+  const handleConnectGoogleOAuth = async () => {
+    setSavingGoogleIntegration(true)
+    try {
+      const data = await calendarsService.getGoogleConnectUrl()
+      if (!data.url) {
+        throw new Error('El portal no devolvió la URL de conexión')
+      }
+      window.location.assign(data.url)
+    } catch (error: any) {
+      showToast('error', 'No se pudo abrir Google Calendar', error.message || 'Intenta de nuevo en unos minutos')
+    } finally {
+      setSavingGoogleIntegration(false)
     }
+  }
 
+  const handleSaveGoogleIntegration = async () => {
     if (!serviceAccountJson.trim() && !googleIntegration?.connected) {
       showToast('error', 'Credenciales requeridas', 'Pega el JSON del Service Account para conectar por primera vez')
       return
@@ -473,11 +521,11 @@ export const CalendarsConfiguration: React.FC = () => {
     setSavingGoogleIntegration(true)
     try {
       const data = await calendarsService.saveGoogleIntegration({
-        calendarId: normalizedCalendarId,
+        calendarId: '',
         serviceAccountJson: serviceAccountJson.trim()
       })
       setGoogleIntegration(data)
-      setGoogleCalendarId(data.calendarId || normalizedCalendarId)
+      setGoogleCalendarId(data.calendarId || '')
       try {
         const revealed = await calendarsService.revealGoogleServiceAccount()
         setServiceAccountJson(revealed.serviceAccountJson || serviceAccountJson.trim())
@@ -485,11 +533,11 @@ export const CalendarsConfiguration: React.FC = () => {
         setServiceAccountJson(serviceAccountJson.trim())
       }
       setEditingGoogleIntegration(false)
-      const updatedCalendars = await loadCalendars()
-      await maybeShowGooglePostConnectPrompts(updatedCalendars, data)
-      showToast('success', 'Google Calendar guardado', 'La conexión quedó guardada. Ahora puedes probar o sincronizar manualmente.')
+      await loadCalendars()
+      await loadGoogleCalendarOptions(data)
+      showToast('success', 'Google Calendar guardado', 'La conexión quedó guardada. Ahora elige en cada calendario si se sincroniza con Google.')
     } catch (error: any) {
-      showToast('error', 'No se pudo guardar Google Calendar', error.message || 'Revisa el JSON y Calendar ID')
+      showToast('error', 'No se pudo guardar Google Calendar', error.message || 'Revisa el JSON del Service Account')
     } finally {
       setSavingGoogleIntegration(false)
     }
@@ -502,8 +550,7 @@ export const CalendarsConfiguration: React.FC = () => {
       setGoogleIntegration(data)
       setGoogleCalendarId(data.calendarId || googleCalendarId)
       setEditingGoogleIntegration(false)
-      const updatedCalendars = await loadCalendars()
-      await maybeShowGooglePostConnectPrompts(updatedCalendars, data)
+      await loadGoogleCalendarOptions(data)
       showToast('success', 'Google Calendar probado', data.lastTestMessage || 'Permisos validados correctamente')
     } catch (error: any) {
       await loadGoogleIntegration()
@@ -514,14 +561,25 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleSyncGoogleIntegration = async () => {
+    const calendarSnapshot = calendars.length ? calendars : await loadCalendars()
+    if (googleIntegration?.connected && getGoogleLinkedCalendars(calendarSnapshot).length === 0) {
+      setActiveView('calendars')
+      navigate(buildCalendarSettingsPath('calendars'))
+      showToast(
+        'warning',
+        'Elige calendario de Google',
+        'Abre un calendario de Ristak y selecciona con qué calendario de Google se va a sincronizar.'
+      )
+      return
+    }
+
     setSyncingGoogleIntegration(true)
     try {
       const data = await calendarsService.syncGoogleIntegration()
       setGoogleIntegration(data)
       setGoogleCalendarId(data.calendarId || googleCalendarId)
-      const updatedCalendars = await loadCalendars()
-      await maybeShowGooglePostConnectPrompts(updatedCalendars, data)
-      showToast('success', 'Google Calendar sincronizado', data.lastSyncMessage || 'Calendarios y citas importados a Ristak')
+      await loadCalendars()
+      showToast('success', 'Google Calendar sincronizado', data.lastSyncMessage || 'Citas sincronizadas en calendarios vinculados')
     } catch (error: any) {
       await loadGoogleIntegration()
       showToast('error', 'No se pudo sincronizar Google Calendar', error.message || 'Revisa permisos y comparte el calendario con el Service Account')
@@ -642,7 +700,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const handleDisconnectGoogleIntegration = async () => {
     showConfirm(
       'Desconectar Google Calendar',
-      'Las citas locales se conservan, pero esta instalacion dejara de sincronizar con Google Calendar.',
+      'Las citas locales se conservan, pero esta instalación dejará de sincronizar con Google Calendar.',
       () => {
         const disconnectGoogleIntegration = async () => {
           setDisconnectingGoogleIntegration(true)
@@ -650,6 +708,7 @@ export const CalendarsConfiguration: React.FC = () => {
             const data = await calendarsService.deleteGoogleIntegration()
             setGoogleIntegration(data)
             setGoogleCalendarId('')
+            setGoogleCalendarOptions([])
             setServiceAccountJson('')
             setEditingGoogleIntegration(false)
             await loadCalendars()
@@ -747,6 +806,9 @@ export const CalendarsConfiguration: React.FC = () => {
 
     setSelectedCalendar(calendar)
     setExpandedCalendarId(calendar.id)
+    if (googleIntegration?.connected && !loadingGoogleCalendarOptions && !googleCalendarOptions.length) {
+      loadGoogleCalendarOptions()
+    }
     navigate(buildCalendarSettingsPath('calendars', calendar.id))
   }
 
@@ -760,7 +822,12 @@ export const CalendarsConfiguration: React.FC = () => {
     if (!selectedCalendar) return
 
     setSavingConfig(true)
+    setSavingGoogleSyncCalendarId(selectedCalendar.id)
     try {
+      const previousGoogleCalendarId = calendars.find((item) => item.id === selectedCalendar.id)?.googleCalendarId || ''
+      const nextGoogleCalendarId = selectedCalendar.googleCalendarId || ''
+      const googleSyncChanged = nextGoogleCalendarId !== previousGoogleCalendarId
+
       // Construir payload con todos los campos editables
       const updateData: any = {
         name: selectedCalendar.name?.trim() || 'Calendario',
@@ -798,13 +865,25 @@ export const CalendarsConfiguration: React.FC = () => {
 
       await calendarsService.updateCalendar(selectedCalendar.id, updateData, accessToken || undefined)
 
-      showToast('success', 'Configuración de calendario actualizada', accessToken ? `Los cambios se guardaron en ${selectedCalendar.name}` : `Los cambios quedaron guardados en Ristak y pendientes de sync`)
+      if (googleSyncChanged) {
+        await calendarsService.updateCalendarGoogleSync(selectedCalendar.id, nextGoogleCalendarId)
+      }
+
+      const syncMessage = googleSyncChanged
+        ? nextGoogleCalendarId
+          ? `Este calendario ya está ligado a ${googleCalendarOptions.find(option => option.id === nextGoogleCalendarId)?.summary || nextGoogleCalendarId}.`
+          : 'Este calendario dejó de sincronizarse con Google Calendar.'
+        : accessToken
+          ? `Los cambios se guardaron en ${selectedCalendar.name}`
+          : 'Los cambios quedaron guardados en Ristak y pendientes de sync'
+      showToast('success', 'Configuración de calendario actualizada', syncMessage)
       handleCloseCalendarEditor()
       loadCalendars() // Recargar calendarios para ver cambios
     } catch (error: any) {
       showToast('error', 'Error al actualizar calendario', error.message)
     } finally {
       setSavingConfig(false)
+      setSavingGoogleSyncCalendarId(null)
     }
   }
 
@@ -865,7 +944,7 @@ export const CalendarsConfiguration: React.FC = () => {
 
   const handleCopyPublicUrl = async (calendar: CalendarType) => {
     if (!calendar.publicUrl) {
-      showToast('warning', 'URL no disponible', calendar.publicUrlUnavailableReason || 'Conecta y verifica el dominio publico general primero')
+      showToast('warning', 'URL no disponible', calendar.publicUrlUnavailableReason || 'Conecta y verifica el dominio público general primero')
       return
     }
 
@@ -1196,24 +1275,20 @@ export const CalendarsConfiguration: React.FC = () => {
         ? 'Todos los calendarios se mostrarán juntos'
         : nextValue === 'ristak'
           ? 'Solo se mostrarán calendarios de Ristak'
-          : nextValue === 'ghl'
-            ? 'Solo se mostrarán calendarios de HighLevel'
-            : 'Solo se mostrarán calendarios de Google'
+          : 'Solo se mostrarán calendarios de HighLevel'
     )
     await loadCalendars()
   }
 
   const renderCalendarSourceSelect = () => {
-    const showSourceSelector = highLevelConnected || googleIntegration?.connected
+    const showSourceSelector = highLevelConnected
     if (!showSourceSelector) return null
 
     const options = [
       { value: 'combined', label: 'Todos' },
       { value: 'ristak', label: 'Solo Ristak' },
-      ...(highLevelConnected ? [{ value: 'ghl', label: 'Solo HighLevel' }] : []),
-      ...(googleIntegration?.connected ? [{ value: 'google', label: 'Solo Google' }] : [])
+      ...(highLevelConnected ? [{ value: 'ghl', label: 'Solo HighLevel' }] : [])
     ]
-    const selectedSourceLabel = options.find((option) => option.value === calendarSourcePreference)?.label ?? 'Todos'
 
     return (
       <div className={pageStyles.sourceControl}>
@@ -1248,6 +1323,41 @@ export const CalendarsConfiguration: React.FC = () => {
 
     const updateSelectedCalendar = (patch: Partial<CalendarType>) => {
       setSelectedCalendar({ ...selectedCalendar, ...patch })
+    }
+
+    const showGoogleSyncSettings = Boolean(googleIntegration?.connected && calendar.source !== 'google')
+    const isCentralGoogleOAuth = googleIntegration?.connectionMode === 'oauth'
+    const currentGoogleCalendarId = selectedCalendar.googleCalendarId || ''
+    const currentGoogleOption = googleCalendarOptions.find((option) => option.id === currentGoogleCalendarId)
+    const googleAccountLabel = isCentralGoogleOAuth
+      ? googleIntegration?.googleAccountEmail || googleIntegration?.googleAccountName || 'Cuenta Google conectada'
+      : googleIntegration?.serviceAccountEmail || 'Google Calendar conectado'
+    const googleSyncBlocked = isCentralGoogleOAuth && (!googleIntegration?.canListCalendars || !googleIntegration?.canManageEvents)
+    const writableGoogleCalendarCount = googleCalendarOptions.filter(canWriteGoogleCalendarOption).length
+    const googleSyncOptions = [
+      ...googleCalendarOptions.map((option) => ({
+        value: option.id,
+        label: `${option.summary || option.id}${option.primary ? ' (principal)' : ''}${canWriteGoogleCalendarOption(option) ? '' : ' (solo lectura)'}`,
+        disabled: !canWriteGoogleCalendarOption(option)
+      }))
+    ]
+
+    if (currentGoogleCalendarId && !currentGoogleOption) {
+      googleSyncOptions.push({
+        value: currentGoogleCalendarId,
+        label: selectedCalendar.googleCalendarSummary || `${currentGoogleCalendarId} (sin acceso actual)`,
+        disabled: false
+      })
+    }
+
+    const clearGoogleCalendarSync = () => {
+      showConfirm(
+        'Dejar de sincronizar Google Calendar',
+        'Este calendario de Ristak se quedará local. Las citas ya guardadas no se borran, pero ya no se actualizarán con Google.',
+        () => updateSelectedCalendar({ googleCalendarId: '' }),
+        'Dejar de sincronizar',
+        'Cancelar'
+      )
     }
 
     return (
@@ -1303,15 +1413,20 @@ export const CalendarsConfiguration: React.FC = () => {
 
               <div className={pageStyles.editorField}>
                 <span>Estado</span>
-                <button
-                  type="button"
-                  className={`${pageStyles.editorToggle} ${selectedCalendar.isActive ? pageStyles.editorToggleActive : ''}`}
-                  onClick={() => updateSelectedCalendar({ isActive: !selectedCalendar.isActive })}
-                  aria-pressed={selectedCalendar.isActive}
-                >
-                  <span />
-                  {selectedCalendar.isActive ? 'Activo' : 'Inactivo'}
-                </button>
+                <div className={styles.toggleContainer}>
+                  <button
+                    type="button"
+                    className={`${styles.toggle} ${selectedCalendar.isActive ? styles.toggleActive : ''}`}
+                    onClick={() => updateSelectedCalendar({ isActive: !selectedCalendar.isActive })}
+                    aria-pressed={selectedCalendar.isActive}
+                    aria-label={selectedCalendar.isActive ? 'Desactivar calendario' : 'Activar calendario'}
+                  >
+                    <span className={styles.toggleThumb} />
+                  </button>
+                  <span className={`${styles.toggleLabel} ${selectedCalendar.isActive ? styles.toggleLabelActive : ''}`}>
+                    {selectedCalendar.isActive ? 'Activo' : 'Inactivo'}
+                  </span>
+                </div>
               </div>
             </div>
           </section>
@@ -1535,6 +1650,73 @@ export const CalendarsConfiguration: React.FC = () => {
               </div>
             </div>
           </section>
+
+          {showGoogleSyncSettings && (
+            <section className={pageStyles.editorSection}>
+              <div className={pageStyles.editorSectionHeader}>
+                <strong>Sincronización Google</strong>
+                <span>Liga este calendario de Ristak con uno existente en la cuenta conectada.</span>
+              </div>
+              <div className={pageStyles.editorFields}>
+                <div className={`${pageStyles.editorField} ${pageStyles.editorFieldLarge}`}>
+                  <span>Cuenta conectada</span>
+                  <div className={pageStyles.googleLinkedAccount}>
+                    <span className={pageStyles.googleLinkedAccountIcon}>
+                      <Calendar size={15} />
+                    </span>
+                    <div>
+                      <strong>{isCentralGoogleOAuth ? 'OAuth de Google' : 'Service Account'}</strong>
+                      <span>{googleAccountLabel}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`${pageStyles.editorField} ${pageStyles.editorFieldLarge}`}>
+                  <div className={pageStyles.googleSyncFieldTop}>
+                    <span>Calendario de Google</span>
+                    {currentGoogleCalendarId && (
+                      <Button
+                        variant="ghost"
+                        size="small"
+                        onClick={clearGoogleCalendarSync}
+                        disabled={savingGoogleSyncCalendarId === calendar.id}
+                      >
+                        <XCircle size={14} />
+                        Dejar de sincronizar
+                      </Button>
+                    )}
+                  </div>
+                  <CustomSelect
+                    value={currentGoogleCalendarId}
+                    onValueChange={(value) => updateSelectedCalendar({ googleCalendarId: value })}
+                    options={googleSyncOptions}
+                    placeholder={googleCalendarOptions.length ? 'Elige el calendario de Google' : 'Sin calendarios disponibles'}
+                    disabled={loadingGoogleCalendarOptions || savingGoogleSyncCalendarId === calendar.id || googleSyncBlocked || !googleSyncOptions.length}
+                  />
+                  <small>
+                    {googleSyncBlocked
+                      ? 'Vuelve a conectar Google Calendar aceptando permisos para leer calendarios y editar citas.'
+                      : loadingGoogleCalendarOptions
+                        ? 'Cargando calendarios de Google...'
+                        : currentGoogleCalendarId
+                          ? `Se sincroniza con ${currentGoogleOption?.summary || selectedCalendar.googleCalendarSummary || currentGoogleCalendarId}.`
+                          : googleCalendarOptions.length && !writableGoogleCalendarCount
+                            ? 'Los calendarios disponibles están en solo lectura. Elige uno con permiso para editar eventos.'
+                            : googleCalendarOptions.length
+                              ? 'Elige el calendario de Google que quieres ligar con este calendario de Ristak.'
+                              : 'No hay calendarios de Google disponibles para vincular.'}
+                  </small>
+                </div>
+
+                <div className={pageStyles.googleSyncHint}>
+                  <Link2 size={16} />
+                  <span>
+                    Al guardar, Ristak traerá citas de ese calendario de Google y actualizará ese mismo calendario cuando crees o edites citas aquí.
+                  </span>
+                </div>
+              </div>
+            </section>
+          )}
         </div>
 
         <div className={pageStyles.editorFooter}>
@@ -1605,15 +1787,20 @@ export const CalendarsConfiguration: React.FC = () => {
             </div>
           </div>
 
-          <button
-            type="button"
-            className={`${pageStyles.editorToggle} ${calendarPushEnabled ? pageStyles.editorToggleActive : ''}`}
-            onClick={handleCalendarPushEnabledToggle}
-            aria-pressed={calendarPushEnabled}
-          >
-            <span />
-            {calendarPushEnabled ? 'Encendidos' : 'Apagados'}
-          </button>
+          <div className={styles.toggleContainer}>
+            <button
+              type="button"
+              className={`${styles.toggle} ${calendarPushEnabled ? styles.toggleActive : ''}`}
+              onClick={handleCalendarPushEnabledToggle}
+              aria-pressed={calendarPushEnabled}
+              aria-label={calendarPushEnabled ? 'Desactivar notificaciones' : 'Activar notificaciones'}
+            >
+              <span className={styles.toggleThumb} />
+            </button>
+            <span className={`${styles.toggleLabel} ${calendarPushEnabled ? styles.toggleLabelActive : ''}`}>
+              {calendarPushEnabled ? 'Encendidos' : 'Apagados'}
+            </span>
+          </div>
         </section>
 
         <section className={pageStyles.notificationSettingsSection}>
@@ -1720,6 +1907,9 @@ export const CalendarsConfiguration: React.FC = () => {
                 <span>{calendar.slotDuration} {calendar.slotDurationUnit}</span>
                 <span>Cada {calendar.slotInterval} {calendar.slotIntervalUnit}</span>
                 <span>{calendar.isActive ? 'Activo' : 'Inactivo'}</span>
+                {calendar.googleCalendarId && (
+                  <span>Google: {calendar.googleCalendarSummary || calendar.googleCalendarId}</span>
+                )}
               </div>
             </div>
           </div>
@@ -1844,6 +2034,7 @@ export const CalendarsConfiguration: React.FC = () => {
 
   const renderGoogleCalendarTab = () => {
     const isConnected = Boolean(googleIntegration?.connected)
+    const isCentralGoogleOAuth = googleIntegration?.connectionMode === 'oauth'
     const testFailed = googleIntegration?.lastTestStatus === 'error'
     const syncFailed = googleIntegration?.lastSyncStatus === 'error'
     const showWizard = !isConnected || editingGoogleIntegration
@@ -1855,6 +2046,155 @@ export const CalendarsConfiguration: React.FC = () => {
         : ''
     const failureHelp = latestGoogleError ? getGoogleFailureHelp(latestGoogleError) : null
     const guideToggleLabel = googleGuideExpanded ? 'Contraer guía' : 'Expandir guía'
+
+    const renderCentralOAuthPanel = () => {
+      const accountName = googleIntegration?.googleAccountName || googleIntegration?.googleAccountEmail || 'Google Calendar'
+      const accountEmail = googleIntegration?.googleAccountEmail || 'Conecta tu cuenta para ver calendarios disponibles'
+      const canConnect = googleIntegration?.configured !== false
+
+      return (
+        <div className={pageStyles.googleLayoutSingle}>
+          <section className={pageStyles.connectionPanel}>
+            <div className={pageStyles.connectionHeader}>
+              <div>
+                <h2>Google Calendar</h2>
+                <p>Conecta tu cuenta con Google desde el portal de Ristak. No necesitas pegar JSON ni crear Service Accounts.</p>
+              </div>
+              <span className={`${pageStyles.statusPill} ${isConnected ? pageStyles.statusOk : canConnect ? pageStyles.statusWarn : pageStyles.statusOff}`}>
+                {isConnected ? <CheckCircle size={15} /> : canConnect ? <Info size={15} /> : <XCircle size={15} />}
+                {isConnected ? 'Conectado' : canConnect ? 'Listo' : 'Pendiente'}
+              </span>
+            </div>
+
+            <div className={pageStyles.oauthConnectionCard}>
+              <div className={pageStyles.oauthAccountAvatar}>
+                {googleIntegration?.googleAccountPictureUrl ? (
+                  <img src={googleIntegration.googleAccountPictureUrl} alt="" />
+                ) : (
+                  <Calendar size={22} />
+                )}
+              </div>
+              <div className={pageStyles.connectedMain}>
+                <div className={pageStyles.connectedTitle}>
+                  <h3>{isConnected ? accountName : 'Conectar con Google'}</h3>
+                  {isConnected && <span>OAuth</span>}
+                </div>
+                <p>{isConnected ? accountEmail : 'Te vamos a llevar al portal seguro para autorizar Google Calendar con los permisos correctos.'}</p>
+              </div>
+            </div>
+
+            {isConnected ? (
+              <>
+                <div className={pageStyles.oauthPermissionGrid}>
+                  <span>
+                    <ShieldCheck size={15} />
+                    {googleIntegration?.canManageEvents ? 'Puede crear y editar citas' : 'Sin permiso para editar citas'}
+                  </span>
+                  <span>
+                    <ListChecks size={15} />
+                    {googleIntegration?.canListCalendars ? 'Puede leer tus calendarios' : 'Sin permiso para listar calendarios'}
+                  </span>
+                  <span>
+                    <Calendar size={15} />
+                    {loadingGoogleCalendarOptions
+                      ? 'Leyendo calendarios...'
+                      : `${googleCalendarOptions.length} calendario${googleCalendarOptions.length === 1 ? '' : 's'} disponible${googleCalendarOptions.length === 1 ? '' : 's'}`}
+                  </span>
+                </div>
+
+                <div className={pageStyles.connectedActions}>
+                  <Button onClick={handleSyncGoogleIntegration} disabled={busyGoogleAction}>
+                    {syncingGoogleIntegration ? (
+                      <>
+                        <Loader2 size={16} className={styles.spinIcon} />
+                        Sincronizando...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={16} />
+                        Sincronizar ahora
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      await loadGoogleIntegration()
+                      await loadGoogleCalendarOptions()
+                    }}
+                    disabled={busyGoogleAction}
+                  >
+                    <RefreshCw size={16} />
+                    Actualizar
+                  </Button>
+                  <Button variant="ghost" onClick={handleConnectGoogleOAuth} disabled={busyGoogleAction}>
+                    {savingGoogleIntegration ? (
+                      <>
+                        <Loader2 size={16} className={styles.spinIcon} />
+                        Abriendo...
+                      </>
+                    ) : (
+                      <>
+                        <KeyRound size={16} />
+                        Cambiar cuenta
+                      </>
+                    )}
+                  </Button>
+                  <Button variant="ghost" onClick={handleDisconnectGoogleIntegration} disabled={busyGoogleAction}>
+                    {disconnectingGoogleIntegration ? (
+                      <>
+                        <Loader2 size={16} className={styles.spinIcon} />
+                        Desconectando...
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 size={16} />
+                        Desconectar
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className={pageStyles.wizardIntro}>
+                  <strong>{canConnect ? 'Conexión central' : 'Falta configuración del portal'}</strong>
+                  <span>
+                    {canConnect
+                      ? 'Al continuar, Google te pedirá permiso para leer calendarios y crear eventos. La autorización se guarda cifrada en el portal.'
+                      : 'Primero configura Google OAuth en el portal de Ristak para poder conectar calendarios desde las instalaciones.'}
+                  </span>
+                </div>
+
+                <div className={pageStyles.formActions}>
+                  <Button onClick={handleConnectGoogleOAuth} disabled={!canConnect || savingGoogleIntegration}>
+                    {savingGoogleIntegration ? (
+                      <>
+                        <Loader2 size={16} className={styles.spinIcon} />
+                        Abriendo...
+                      </>
+                    ) : (
+                      <>
+                        <KeyRound size={16} />
+                        Conectar con Google
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {googleIntegration?.lastTestStatus === 'error' && googleIntegration.lastTestMessage && (
+              <div className={pageStyles.resultStack}>
+                <div className={`${pageStyles.testResult} ${pageStyles.testError}`}>
+                  {googleIntegration.lastTestMessage}
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      )
+    }
 
     const renderGoogleGuide = () => (
       <aside className={pageStyles.guidePanel}>
@@ -1957,10 +2297,10 @@ export const CalendarsConfiguration: React.FC = () => {
                 <span className={pageStyles.stepNumber}>8</span>
                 <div className={pageStyles.stepBody}>
                   <strong>Conecta en Ristak</strong>
-                  <p>Pega en Ristak el JSON completo y el correo real del calendario que quieres conectar.</p>
-                  <span>Para el calendario principal normalmente ese Calendar ID es tu Gmail, por ejemplo <code>cliente@gmail.com</code>.</span>
-                  <span>No pegues el correo largo del Service Account como Calendar ID, a menos que de verdad sea el ID del calendario.</span>
-                  <span>Después presiona <code>Conectar</code>, luego <code>Probar conexión</code> y finalmente <code>Sincronizar ahora</code>.</span>
+                  <p>Pega en Ristak el JSON completo del Service Account.</p>
+                  <span>Después de conectar, vuelve a la lista de calendarios de Ristak.</span>
+                  <span>En cada calendario podrás elegir si no se sincroniza o si se liga con uno de los calendarios de Google compartidos.</span>
+                  <span>Después presiona <code>Probar conexión</code> y usa <code>Sincronizar ahora</code> para actualizar los calendarios vinculados.</span>
                 </div>
               </li>
             </ol>
@@ -2004,6 +2344,29 @@ export const CalendarsConfiguration: React.FC = () => {
       </aside>
     )
 
+    if (loadingGoogleIntegration) {
+      return (
+        <div className={pageStyles.googleLayoutSingle}>
+          <section className={pageStyles.connectionPanel}>
+            <div className={pageStyles.connectionHeader}>
+              <div>
+                <h2>Google Calendar</h2>
+                <p>Revisando conexión...</p>
+              </div>
+              <span className={`${pageStyles.statusPill} ${pageStyles.statusWarn}`}>
+                <Loader2 size={15} className={styles.spinIcon} />
+                Cargando
+              </span>
+            </div>
+          </section>
+        </div>
+      )
+    }
+
+    if (isCentralGoogleOAuth) {
+      return renderCentralOAuthPanel()
+    }
+
     return (
       <div className={pageStyles.googleLayout}>
         {renderGoogleGuide()}
@@ -2024,22 +2387,10 @@ export const CalendarsConfiguration: React.FC = () => {
 
               <div className={pageStyles.wizardIntro}>
                 <strong>Clave</strong>
-                <span>Calendar ID = correo real del calendario. Service Account = email técnico para compartir permisos.</span>
+                <span>Conecta el Service Account una vez. Después eliges en cada calendario de Ristak con cuál Google Calendar se sincroniza.</span>
               </div>
 
               <div className={pageStyles.formGrid}>
-                <label className={pageStyles.field}>
-                  <span>Correo del calendario o Calendar ID real</span>
-                  <input
-                    value={googleCalendarId}
-                    onChange={(event) => setGoogleCalendarId(event.target.value)}
-                    onBlur={() => setGoogleCalendarId(normalizeGoogleCalendarIdInput(googleCalendarId))}
-                    placeholder="cliente@gmail.com, cliente@empresa.com, nombre@group.calendar.google.com o link con cid"
-                    autoComplete="off"
-                  />
-                  <small>Normalmente es el Gmail real del cliente. No pegues el email técnico aquí.</small>
-                </label>
-
                 <label className={pageStyles.field}>
                   <span>JSON del Service Account</span>
                   <textarea
@@ -2109,10 +2460,10 @@ export const CalendarsConfiguration: React.FC = () => {
                 </div>
                 <div className={pageStyles.connectedMain}>
                   <div className={pageStyles.connectedTitle}>
-                    <h3>{googleIntegration?.calendarSummary || 'Google Calendar'}</h3>
+                    <h3>{googleIntegration?.serviceAccountEmail || 'Google Calendar'}</h3>
                     <span>Conectado</span>
                   </div>
-                  <p>{googleIntegration?.calendarId || 'Calendar ID pendiente'}</p>
+                  <p>{googleCalendarOptions.length ? `${googleCalendarOptions.length} calendario${googleCalendarOptions.length === 1 ? '' : 's'} disponible${googleCalendarOptions.length === 1 ? '' : 's'} para vincular` : 'Elige el calendario de Google desde cada calendario de Ristak'}</p>
                 </div>
               </div>
 
@@ -2261,8 +2612,6 @@ export const CalendarsConfiguration: React.FC = () => {
       </Card>
 
       {renderCreateCalendarModal()}
-      {renderGoogleDefaultPromptModal()}
-      {renderGoogleMergePromptModal()}
     </div>
   )
 }

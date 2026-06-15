@@ -12,8 +12,26 @@ import {
   verifyLicenseWithServer,
   verifyOwnerCredentialsWithServer,
   verifySetupToken,
-  consumeSetupToken
+  consumeSetupToken,
+  createCentralGoogleLoginUrl
 } from '../services/licenseService.js'
+import { saveAccountLocaleSettings } from '../utils/accountLocale.js'
+import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { getEffectiveAccessConfig } from '../utils/userAccess.js'
+
+function sanitizeAuthReturnPath(value, fallbackPath = '/dashboard') {
+  const fallback = typeof fallbackPath === 'string'
+    && fallbackPath.startsWith('/')
+    && !fallbackPath.startsWith('//')
+    && !fallbackPath.startsWith('/api/')
+    ? fallbackPath
+    : '/dashboard'
+  const path = String(value || '').trim()
+  if (!path.startsWith('/') || path.startsWith('//') || path.startsWith('/api/')) {
+    return fallback
+  }
+  return path.slice(0, 700)
+}
 
 function cleanProfileText(value, maxLength = 160) {
   if (value === undefined || value === null) return ''
@@ -38,7 +56,8 @@ function serializeAuthUser(user) {
     fullName,
     phone: cleanProfileText(user.phone, 40),
     businessName: cleanProfileText(user.business_name),
-    role: user.role
+    role: user.role,
+    accessConfig: getEffectiveAccessConfig(user)
   }
 }
 
@@ -97,10 +116,12 @@ export async function login(req, res) {
       })
     }
 
-    // Buscar usuario por username o email
+    const normalizedLoginPhone = normalizePhoneForStorage(username)
+
+    // Buscar usuario por username, email o teléfono.
     const user = await db.get(
-      'SELECT * FROM users WHERE username = ? OR email = ?',
-      [username, username]
+      'SELECT * FROM users WHERE username = ? OR email = ? OR phone = ?',
+      [username, username, normalizedLoginPhone]
     )
 
     if (!user) {
@@ -266,6 +287,43 @@ export async function localDevSession(req, res) {
 }
 
 /**
+ * POST /api/auth/google/start
+ * Abre el OAuth central del portal para que Google termine regresando a esta
+ * instalación vía SSO (/sso?token=...), sin guardar secretos de Google aquí.
+ */
+export async function startGoogleLogin(req, res) {
+  try {
+    if (!isLicenseEnforced()) {
+      return res.status(503).json({
+        success: false,
+        code: 'central_login_not_configured',
+        message: 'Google solo está disponible cuando esta instalación está conectada al portal central.'
+      })
+    }
+
+    const returnPath = sanitizeAuthReturnPath(req.body?.return_path || req.body?.returnPath)
+    const data = await createCentralGoogleLoginUrl({ returnPath })
+    if (!data.url) {
+      return res.status(502).json({
+        success: false,
+        message: 'El portal central no devolvió una URL válida para Google.'
+      })
+    }
+
+    res.json({
+      success: true,
+      ...data
+    })
+  } catch (error) {
+    logger.error('❌ Error iniciando Google Login central:', error)
+    res.status(502).json({
+      success: false,
+      message: error.message || 'No se pudo iniciar sesión con Google.'
+    })
+  }
+}
+
+/**
  * POST /api/auth/verify
  * Verifica si un token JWT es válido
  */
@@ -291,7 +349,7 @@ export async function verifyTokenEndpoint(req, res) {
 
     // Verificar que el usuario todavía exista y esté activo
     const user = await db.get(
-      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role, is_active
+      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role, access_config, is_active
        FROM users
        WHERE id = ?`,
       [payload.userId]
@@ -408,7 +466,7 @@ export async function getMe(req, res) {
     }
 
     const user = await db.get(
-      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role
+      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role, access_config
        FROM users
        WHERE id = ? AND is_active = 1`,
       [payload.userId]
@@ -546,7 +604,7 @@ export async function updateProfile(req, res) {
     )
 
     const user = await db.get(
-      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role
+      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role, access_config
        FROM users
        WHERE id = ? AND is_active = 1`,
       [payload.userId]
@@ -912,6 +970,13 @@ export async function setup(req, res) {
 
     if (!userId) {
       throw new Error('No se pudo resolver el ID del usuario creado')
+    }
+
+    try {
+      const locale = await saveAccountLocaleSettings(req.body.accountLocale || {})
+      logger.info(`🌎 Locale inicial guardado: país ${locale.countryCode}, moneda ${locale.currency}, lada +${locale.dialCode}`)
+    } catch (localeError) {
+      logger.warn(`No se pudo guardar país/moneda/lada inicial: ${localeError.message}`)
     }
 
     const [{ token: apiToken, metadata: apiTokenMetadata }, appId] = await Promise.all([

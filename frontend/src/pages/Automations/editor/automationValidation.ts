@@ -1,6 +1,6 @@
 import type { AutomationEdge, AutomationNode } from '@/services/automationsService'
 import { getNodeDefinition, validateNodeConfig } from './nodeRegistry'
-import { getStartTriggers, hasPath, isStartNode, nodeHasInput } from './flowUtils'
+import { getStartTriggers, getWaitMessageSourceOptions, hasPath, isStartNode, nodeHasInput } from './flowUtils'
 import {
   BASE_VARIABLES,
   buildFlowVariableCatalog,
@@ -60,6 +60,27 @@ function unavailableDynamicTokens(
   return [...tokens].filter((token) => isDynamicToken(token) && !available.has(token))
 }
 
+function validateWaitReplyMessageSource(
+  node: AutomationNode,
+  nodes: AutomationNode[],
+  edges: AutomationEdge[],
+  result: FlowValidationResult
+) {
+  if (node.type !== 'logic-wait') return
+  const config = node.config || {}
+  const selectedSource =
+    config.mode === 'reply'
+      ? typeof config.replySourceNodeId === 'string' ? config.replySourceNodeId : ''
+      : config.mode === 'action' && config.expectedAction === 'reply_message'
+        ? typeof config.actionResource === 'string' ? config.actionResource : ''
+        : ''
+  if (!selectedSource) return
+  const validSources = new Set(getWaitMessageSourceOptions(nodes, edges, node.id).map((source) => source.value))
+  if (!validSources.has(selectedSource)) {
+    pushNodeError(result, node.id, 'El mensaje enviado seleccionado ya no está antes de esta espera')
+  }
+}
+
 /**
  * Validación completa del flujo antes de publicar.
  * Devuelve mensajes claros en español y los errores por nodo.
@@ -106,6 +127,7 @@ export function validateAutomationFlow(
     unavailableDynamicTokens(node, nodes, edges).forEach((token) => {
       pushNodeError(result, node.id, `La variable {{${token}}} ya no está disponible`)
     })
+    validateWaitReplyMessageSource(node, nodes, edges, result)
   })
 
   // 3. Conexiones válidas

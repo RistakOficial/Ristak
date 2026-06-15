@@ -1,5 +1,7 @@
 import React from 'react'
 import { getCatalog } from '@/services/automationCatalogsService'
+import { triggerLinksService } from '@/services/triggerLinksService'
+import { variableFieldsService } from '@/services/variableFieldsService'
 import type {
   AutomationEdge,
   AutomationNode,
@@ -55,6 +57,8 @@ export const FlowVariablesContext = React.createContext<FlowVariableCatalog>({
 export const VARIABLE_CATEGORIES: FlowVariableCategory[] = [
   { id: 'contact', label: 'Contacto' },
   { id: 'custom', label: 'Campos personalizados' },
+  { id: 'variable', label: 'Campos variables' },
+  { id: 'trigger_link', label: 'Enlaces de disparo' },
   { id: 'conversation', label: 'Conversación' },
   { id: 'appointment', label: 'Citas' },
   { id: 'payment', label: 'Pagos' },
@@ -110,10 +114,14 @@ export const BASE_VARIABLES: FlowVariable[] = [
   { fieldId: 'flow.previous_result', label: 'Resultado del nodo anterior', category: 'automation' }
 ]
 
-/** Variables + campos personalizados reales del CRM (vía adaptador) */
+/** Variables + campos configurados reales del CRM/app (vía adaptadores) */
 export async function loadAllVariables(): Promise<FlowVariable[]> {
   try {
-    const customFields = await getCatalog('contactFields')
+    const [customFields, variableFields, triggerLinks] = await Promise.all([
+      getCatalog('contactFields'),
+      variableFieldsService.list().catch(() => []),
+      triggerLinksService.list().catch(() => [])
+    ])
     const custom = customFields
       .filter((field) => field.value.startsWith('custom:'))
       .map((field) => ({
@@ -121,7 +129,17 @@ export async function loadAllVariables(): Promise<FlowVariable[]> {
         label: field.label,
         category: 'custom'
       }))
-    return [...BASE_VARIABLES, ...custom]
+    const accountVariables = variableFields.map((field) => ({
+      fieldId: `variable.${field.fieldKey}`,
+      label: field.label,
+      category: 'variable'
+    }))
+    const triggerLinkVariables = triggerLinks.map((link) => ({
+      fieldId: `trigger_link.${link.publicId}`,
+      label: link.name,
+      category: 'trigger_link'
+    }))
+    return [...BASE_VARIABLES, ...custom, ...accountVariables, ...triggerLinkVariables]
   } catch {
     return BASE_VARIABLES
   }
@@ -371,6 +389,11 @@ export function tokenFor(variable: Pick<FlowVariable, 'fieldId'>): string {
   return `{{${variable.fieldId}}}`
 }
 
+export function fallbackLabelForFieldId(fieldId: string): string {
+  if (fieldId.startsWith('trigger_link.')) return 'Enlace de disparo'
+  return fieldId
+}
+
 export const TOKEN_PATTERN = /\{\{\s*([^{}\s]+)\s*\}\}/g
 
 export function extractTokens(compiled: string): string[] {
@@ -398,7 +421,7 @@ export function parseCompiledText(compiled: string, variables: FlowVariable[]): 
     parts.push({
       type: 'variable',
       fieldId,
-      label: known?.label || fieldId,
+      label: known?.label || fallbackLabelForFieldId(fieldId),
       token: `{{${fieldId}}}`
     })
     lastIndex = index + match[0].length

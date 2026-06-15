@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ristak-branding-v17'
+const CACHE_NAME = 'ristak-branding-v20'
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
 const SHELL_ASSETS = [
@@ -13,9 +13,10 @@ const SHELL_ASSETS = [
   '/manifest.phone-chat.webmanifest',
   '/favicon.svg',
   '/logo.svg',
-  '/logo-web.png',
-  '/logo-web-320.webp',
-  '/logo-web-640.webp',
+  '/logo-web-black-320.webp',
+  '/logo-web-black-640.webp',
+  '/logo-web-white-320.webp',
+  '/logo-web-white-640.webp',
   '/ristak-icon-192.png',
   '/ristak-icon-512.png',
   '/apple-touch-icon.png',
@@ -47,18 +48,35 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const request = event.request
+  const requestUrl = new URL(request.url)
+  const isAppAsset = requestUrl.origin === self.location.origin && requestUrl.pathname.startsWith('/assets/')
+  const isNavigationRequest = request.mode === 'navigate'
 
   if (request.method !== 'GET') return
-  if (new URL(request.url).pathname.startsWith('/api/')) return
+  if (requestUrl.pathname.startsWith('/api/')) return
 
   event.respondWith(
     fetch(request)
       .then((response) => {
-        const copy = response.clone()
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => undefined)
+        const contentType = response.headers.get('content-type') || ''
+
+        if (isAppAsset && contentType.includes('text/html')) {
+          return new Response('', { status: 404, statusText: 'Static asset not found' })
+        }
+
+        if (response.ok && requestUrl.origin === self.location.origin) {
+          const copy = response.clone()
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => undefined)
+        }
+
         return response
       })
-      .catch(() => caches.match(request).then((cached) => cached || caches.match('/')))
+      .catch(() => caches.match(request).then((cached) => {
+        if (cached) return cached
+        if (isAppAsset) return new Response('', { status: 504, statusText: 'Static asset unavailable' })
+        if (isNavigationRequest) return caches.match('/')
+        return new Response('', { status: 504, statusText: 'Network unavailable' })
+      }))
   )
 })
 
@@ -95,6 +113,28 @@ function getNotificationBody(payload) {
   return body && !isAppNameNotificationText(body) ? body : DEFAULT_NOTIFICATION_BODY
 }
 
+function getNotificationData(payload) {
+  return {
+    url: payload?.url || '/phone/chat',
+    category: payload?.category || 'ristak',
+    tag: payload?.tag || 'ristak-chat',
+    messageId: payload?.messageId || '',
+    contactId: payload?.contactId || ''
+  }
+}
+
+function notifyOpenClients(payload) {
+  const data = getNotificationData(payload)
+  return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+    clientList.forEach((client) => {
+      client.postMessage({
+        type: 'ristak:push-notification',
+        payload: data
+      })
+    })
+  }).catch(() => undefined)
+}
+
 self.addEventListener('push', (event) => {
   let payload = {
     title: DEFAULT_NOTIFICATION_TITLE,
@@ -111,23 +151,27 @@ self.addEventListener('push', (event) => {
     payload.body = event.data ? event.data.text() : payload.body
   }
 
+  const notificationData = getNotificationData(payload)
+
   event.waitUntil(
-    self.registration.showNotification(getNotificationTitle(payload), {
-      body: getNotificationBody(payload),
-      icon: '/ristak-chat-icon-192.png',
-      badge: '/ristak-chat-icon-192.png',
-      tag: payload.tag || 'ristak-chat',
-      renotify: true,
-      data: {
-        url: payload.url || '/phone/chat'
-      }
-    })
+    Promise.all([
+      notifyOpenClients(payload),
+      self.registration.showNotification(getNotificationTitle(payload), {
+        body: getNotificationBody(payload),
+        icon: '/ristak-chat-icon-192.png',
+        badge: '/ristak-chat-icon-192.png',
+        tag: notificationData.tag,
+        renotify: true,
+        data: notificationData
+      })
+    ])
   )
 })
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const targetUrl = event.notification.data?.url || '/phone/chat'
+  const notificationData = event.notification.data || {}
+  const targetUrl = notificationData.url || '/phone/chat'
   const normalizedTarget = new URL(targetUrl, self.location.origin)
 
   event.waitUntil(
@@ -135,6 +179,10 @@ self.addEventListener('notificationclick', (event) => {
       for (const client of clientList) {
         const clientUrl = new URL(client.url)
         if (clientUrl.pathname === normalizedTarget.pathname && 'focus' in client) {
+          client.postMessage({
+            type: 'ristak:push-notification',
+            payload: notificationData
+          })
           if ('navigate' in client && clientUrl.href !== normalizedTarget.href) {
             return client.navigate(normalizedTarget.href).then(() => client.focus())
           }

@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { sendHighLevelConversationMessageCore } from '../controllers/highlevelController.js'
 import { sendWhatsAppApiTextMessage } from './whatsappApiService.js'
+import { renderTemplateVariables } from './templateVariablesService.js'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 
@@ -283,23 +284,29 @@ async function claimScheduledMessage(id) {
 }
 
 async function sendScheduledChatMessage(row) {
+  const renderedText = await renderTemplateVariables(row.message_text, {
+    contactId: row.contact_id,
+    phone: row.to_phone
+  })
+
   if (row.provider === 'highlevel') {
     return sendHighLevelConversationMessageCore({
       contactId: row.contact_id,
       channel: row.channel || 'whatsapp_api',
-      message: row.message_text,
+      message: renderedText,
       fromNumber: row.from_phone,
       toNumber: row.to_phone,
       externalId: row.external_id || row.id
-    })
+    }, { markHumanTakeover: false })
   }
 
   return sendWhatsAppApiTextMessage({
     to: row.to_phone,
     from: row.from_phone,
-    text: row.message_text,
+    text: renderedText,
     externalId: row.external_id || row.id,
     transport: normalizeWhatsappTransport(row.transport),
+    contactId: row.contact_id,
     phoneNumberId: row.business_phone_number_id
   })
 }

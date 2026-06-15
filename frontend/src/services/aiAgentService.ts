@@ -99,6 +99,19 @@ export interface AIAgentConfigStatus {
   connectionIssue?: string | null
   connectionIssueCode?: string | null
   businessContext: string
+  businessProfile?: {
+    configured?: boolean
+    status?: string
+    extractionStatus?: string
+    extractionError?: string | null
+    summary?: string | null
+    businessName?: string | null
+    industry?: string | null
+    businessType?: string | null
+    profile?: unknown
+    promptParameters?: Record<string, string>
+    updatedAt?: string | null
+  }
   marketContext: string
   idealCustomer: string
   locationContext: string
@@ -138,6 +151,7 @@ export interface AIAgentViewContext {
 interface AIAgentChatResult {
   reply: string
   model: string
+  category?: string
   sources?: Array<{
     title: string
     url: string
@@ -146,6 +160,13 @@ interface AIAgentChatResult {
   usage?: unknown
   agentMemory?: AIAgentMessageMemory | null
   trace?: AIAgentTraceSummary | null
+}
+
+export interface AIAgentCategory {
+  id: string
+  label: string
+  icon: string
+  description: string
 }
 
 interface AIAgentTranscriptionResult {
@@ -188,6 +209,7 @@ interface AIAgentBusinessContextAnswerResult {
 
 type AIAgentRequestOptions = {
   signal?: AbortSignal
+  category?: string
 }
 
 export const AI_AGENT_RECONNECT_REQUIRED_CODE = 'OPENAI_CREDENTIAL_RECONNECT_REQUIRED'
@@ -263,8 +285,16 @@ export const aiAgentService = {
     return request<AIAgentChatResult>('/chat', {
       method: 'POST',
       signal: options.signal,
-      body: JSON.stringify({ messages, viewContext })
+      body: JSON.stringify({
+        messages,
+        viewContext,
+        ...(options.category ? { category: options.category } : {})
+      })
     })
+  },
+
+  getAgents(): Promise<AIAgentCategory[]> {
+    return request<AIAgentCategory[]>('/agents')
   },
 
   getRunTrace(traceId: string): Promise<AIAgentRunTrace> {

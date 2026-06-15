@@ -11,16 +11,19 @@ import {
   getContactsChart,
   syncContactsStats,
   updateContact,
+  bulkUpdateContactTags,
   updateContactCustomFieldDefinitionHandler,
   deleteContact,
   getContactJourney,
   getContactWhatsAppRoutingEvents
 } from '../controllers/contactsController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
 
 router.use(requireAuth)
+router.use(requireModuleAccess('contacts'))
 
 // Rutas principales
 router.get('/', getContacts)
@@ -33,6 +36,7 @@ router.post('/custom-fields', createContactCustomFieldDefinition)
 router.put('/custom-fields/:definitionId', updateContactCustomFieldDefinitionHandler)
 router.post('/', createContact)
 router.post('/sync-stats', syncContactsStats)
+router.post('/bulk/tags', bulkUpdateContactTags)
 router.get('/:id', getContactById)
 router.get('/:id/journey', getContactJourney)
 router.get('/:id/whatsapp-routing-events', getContactWhatsAppRoutingEvents)

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { CheckCircle2, Globe2, RefreshCw } from 'lucide-react'
+import { CheckCircle2, Globe2, RefreshCw, Trash2 } from 'lucide-react'
 import { Button, Loading } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { sitesService, type SitesDomainConfig } from '@/services/sitesService'
@@ -19,11 +19,13 @@ const getDomainStatus = (config: SitesDomainConfig) => {
 }
 
 export const Domains: React.FC = () => {
-  const { showToast } = useNotification()
+  const { showToast, showConfirm } = useNotification()
   const [domainConfig, setDomainConfig] = useState<SitesDomainConfig>(emptyDomainConfig)
   const [domain, setDomain] = useState('')
+  const [savedDomain, setSavedDomain] = useState('')
   const [loading, setLoading] = useState(true)
   const [verifying, setVerifying] = useState(false)
+  const [removing, setRemoving] = useState(false)
 
   useEffect(() => {
     loadDomain()
@@ -35,6 +37,7 @@ export const Domains: React.FC = () => {
       const config = await sitesService.getDomain()
       setDomainConfig(config)
       setDomain(config.domain)
+      setSavedDomain(config.domain)
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo cargar el dominio')
     } finally {
@@ -59,15 +62,39 @@ export const Domains: React.FC = () => {
       setDomainConfig(result)
       setDomain(result.domain)
       if (result.verification?.verified) {
+        setSavedDomain(result.domain)
         showToast('success', 'Dominio verificado y guardado', 'El dominio ya responde con esta app.')
       } else {
-        showToast('warning', 'Dominio pendiente', result.verification?.error || result.renderDomainError || 'El dominio todavia no responde con esta app')
+        showToast('warning', 'Dominio pendiente', result.verification?.error || result.renderDomainError || 'El dominio todavía no responde con esta app')
       }
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo verificar el dominio')
     } finally {
       setVerifying(false)
     }
+  }
+
+  const confirmRemoveDomain = () => {
+    showConfirm(
+      'Eliminar dominio',
+      `Se quitará ${savedDomain} de tu cuenta y tus páginas dejarán de abrirse con ese dominio. Puedes volver a conectarlo cuando quieras.`,
+      async () => {
+        setRemoving(true)
+        try {
+          const config = await sitesService.removeDomain()
+          setDomainConfig(config)
+          setDomain('')
+          setSavedDomain('')
+          showToast('success', 'Dominio eliminado', 'Tu cuenta ya no usa ese dominio')
+        } catch (error) {
+          showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo eliminar el dominio')
+        } finally {
+          setRemoving(false)
+        }
+      },
+      'Eliminar',
+      'Cancelar'
+    )
   }
 
   if (loading) {
@@ -98,8 +125,8 @@ export const Domains: React.FC = () => {
       <article className={styles.domainCard}>
         <div className={styles.domainMeta}>
           <div>
-            <h3>Dominio publico</h3>
-            <p>Se guarda cuando el dominio responde al health publico de esta app.</p>
+            <h3>Dominio público</h3>
+            <p>Se guarda cuando el dominio responde al health público de esta app.</p>
           </div>
           <span className={`${styles.statusPill} ${status.className}`}>{status.label}</span>
         </div>
@@ -121,6 +148,15 @@ export const Domains: React.FC = () => {
 
         {domainConfig.renderDomainError && (
           <p className={styles.errorText}>{domainConfig.renderDomainError}</p>
+        )}
+
+        {savedDomain && (
+          <div className={styles.actions}>
+            <Button variant="danger" onClick={confirmRemoveDomain} loading={removing}>
+              <Trash2 size={16} />
+              Eliminar dominio
+            </Button>
+          </div>
         )}
       </article>
     </div>

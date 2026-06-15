@@ -220,11 +220,18 @@
   margin-top: 2px;
 }
 
-.switchControl input {
-  position: absolute;
+.switchControl input[type="checkbox"] {
+  position: absolute !important;
   inset: 0;
-  opacity: 0;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  opacity: 0 !important;
   cursor: pointer;
+  z-index: 1;
+  appearance: none !important;
+  -webkit-appearance: none !important;
 }
 
 .switchTrack {
@@ -256,6 +263,24 @@
 
 .switchControl input:checked + .switchTrack::before {
   transform: translateX(18px);
+}
+
+.noConfirmBox {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 0.85rem;
+  background: var(--color-background-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.noConfirmTitle {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .footer {

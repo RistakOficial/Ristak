@@ -1,9 +1,10 @@
-import React, { useState, useEffect, FormEvent } from 'react'
+import React, { useMemo, useState, useEffect, FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Lock, Mail, User, UserPlus } from 'lucide-react'
 import { Button } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
-import { getLoginPathForRoute, getPostAuthRedirectPath, type RedirectLocation } from '@/utils/phoneAccess'
+import { getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
+import { getLoginPathForRoute, getPostAuthRedirectPath, sanitizeAuthRedirectPath, type RedirectLocation } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -33,7 +34,11 @@ export const Setup: React.FC = () => {
   const [searchParams] = useSearchParams()
   const setupToken = searchParams.get('token') || ''
   const fromLocation = (location.state as SetupLocationState)?.from
-  const redirectPath = getPostAuthRedirectPath(fromLocation)
+  const redirectPath = sanitizeAuthRedirectPath(
+    searchParams.get('return_path'),
+    getPostAuthRedirectPath(fromLocation)
+  )
+  const detectedAccountLocale = useMemo(getDetectedAccountLocaleDefaults, [])
 
   const [tokenState, setTokenState] = useState<TokenState>({
     loading: true,
@@ -110,7 +115,7 @@ export const Setup: React.FC = () => {
 
     const runAutoSetup = async () => {
       try {
-        await setupAccount(tokenState.email, '', setupToken)
+        await setupAccount(tokenState.email, '', setupToken, detectedAccountLocale)
         if (!cancelled) navigate(redirectPath, { replace: true })
       } catch (err: any) {
         if (cancelled) return
@@ -128,7 +133,7 @@ export const Setup: React.FC = () => {
 
     runAutoSetup()
     return () => { cancelled = true }
-  }, [tokenModeReady, autoSetup, needsSetup])
+  }, [tokenModeReady, autoSetup, needsSetup, setupAccount, tokenState.email, setupToken, detectedAccountLocale, navigate, redirectPath])
 
   // Si el setup ya terminó, mandar a la pantalla correcta sin pedir los datos otra vez.
   if (!needsSetup) {
@@ -169,7 +174,7 @@ export const Setup: React.FC = () => {
     setIsLoading(true)
 
     try {
-      await setupAccount(effectiveUsername, password, tokenMode ? setupToken : undefined)
+      await setupAccount(effectiveUsername, password, tokenMode ? setupToken : undefined, detectedAccountLocale)
       navigate(redirectPath, { replace: true })
     } catch (err: any) {
       if (err.code === 'license_blocked') {

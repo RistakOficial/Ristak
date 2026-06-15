@@ -58,6 +58,7 @@ const destructiveConfirmTextSignals = [
 const destructiveTitleSignals = [
   ...destructiveConfirmTextSignals,
   'cancelar suscripcion',
+  'cancelar suscripción',
   'cancelar subscripcion'
 ]
 

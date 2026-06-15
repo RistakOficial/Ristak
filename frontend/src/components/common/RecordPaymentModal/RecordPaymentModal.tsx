@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal } from '../Modal'
 import { Button } from '../Button'
 import { TabList } from '../TabList'
@@ -6,10 +6,13 @@ import { CustomSelect } from '../CustomSelect'
 import { NumberInput } from '../NumberInput'
 import { PhoneDateField } from '@/components/phone/PhoneDateField'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
+import { PhoneSegmentedTabs } from '@/components/phone/ui'
 import {
   Search,
   Loader2,
   X,
+  ChevronLeft,
+  ChevronRight,
   DollarSign,
   Link as LinkIcon,
   Check,
@@ -18,7 +21,8 @@ import {
   Percent,
   Plus,
   Trash2,
-  ShieldCheck
+  ShieldCheck,
+  User
 } from 'lucide-react'
 import styles from './RecordPaymentModal.module.css'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -52,6 +56,7 @@ type FirstPaymentMethod = '' | 'cash' | 'bank_transfer' | 'deposit' | 'card'
 type RemainingFrequency = 'custom' | 'weekly' | 'biweekly' | 'monthly'
 type SendMethod = 'whatsapp' | 'sms' | 'email' | 'email_whatsapp' | 'email_sms' | 'all'
 type InvoiceSendMethod = 'email' | 'sms' | 'both'
+type PaymentSegmentedOption = { value: string; label: string }
 
 const INSTALLMENT_VALUE_TYPE_OPTIONS = [
   { value: 'percentage', label: 'Porcentaje' },
@@ -100,6 +105,7 @@ interface RecordPaymentModalProps {
   initialPaymentMode?: PaymentMode
   initialContact?: Partial<Contact> | null
   lockInitialContact?: boolean
+  showEmbeddedBackButton?: boolean
   /**
    * 'modal' (default) renderiza dentro del overlay Modal.
    * 'embedded' renderiza el mismo flujo sin overlay, para incrustarlo en una
@@ -141,6 +147,14 @@ const getContactInitials = (contact?: Partial<Contact> | null) => {
 
   return initials || 'C'
 }
+
+const getContactDisplayName = (contact?: Partial<Contact> | null) => (
+  contact?.name || `${contact?.firstName || ''} ${contact?.lastName || ''}`.trim() || contact?.email || contact?.phone || 'Sin nombre'
+)
+
+const getContactDisplayDetail = (contact?: Partial<Contact> | null) => (
+  contact?.email || contact?.phone || 'Sin información de contacto'
+)
 
 const EMAIL_SEND_METHODS = new Set<SendMethod>(['email', 'email_whatsapp', 'email_sms', 'all'])
 const PHONE_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'sms', 'email_whatsapp', 'email_sms', 'all'])
@@ -352,6 +366,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   initialPaymentMode = 'single',
   initialContact = null,
   lockInitialContact = false,
+  showEmbeddedBackButton = true,
   variant = 'modal'
 }) => {
   const [loading, setLoading] = useState(false)
@@ -363,6 +378,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [contacts, setContacts] = useState<Contact[]>([])
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
   const [showContactDropdown, setShowContactDropdown] = useState(false)
+  const [contactPickerOpen, setContactPickerOpen] = useState(false)
 
   // Charge type
   const [chargeType, setChargeType] = useState<'direct' | 'product'>('direct')
@@ -433,6 +449,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const { showToast } = useNotification()
   const detectedLocaleDefaults = useMemo(getDetectedAccountLocaleDefaults, [])
   const [defaultCurrency] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedLocaleDefaults.currency)
+  const embeddedScrollRef = useRef<HTMLDivElement | null>(null)
   const currencyOptions = useMemo(
     () => CURRENCY_OPTIONS.map((option) => ({ value: option.value, label: option.value })),
     []
@@ -515,6 +532,41 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const sendMethodOptions = useMemo(() => getSendMethodOptions(selectedContact), [selectedContact?.email, selectedContact?.phone])
   const selectedSendMethodOption = sendMethodOptions.find(option => option.value === sendMethod)
   const contactLocked = Boolean(lockInitialContact && initialContact?.id)
+  const isEmbedded = variant === 'embedded'
+  const renderPaymentSegmentedTabs = ({
+    options,
+    value,
+    onChange,
+    ariaLabel,
+    desktopFullWidth = true
+  }: {
+    options: PaymentSegmentedOption[]
+    value: string
+    onChange: (value: string) => void
+    ariaLabel: string
+    desktopFullWidth?: boolean
+  }) => {
+    if (isEmbedded) {
+      return (
+        <PhoneSegmentedTabs
+          ariaLabel={ariaLabel}
+          options={options}
+          value={value}
+          onChange={onChange}
+        />
+      )
+    }
+
+    return (
+      <TabList
+        tabs={options}
+        activeTab={value}
+        onTabChange={onChange}
+        variant="compact"
+        className={desktopFullWidth ? styles.fullWidthTabList : undefined}
+      />
+    )
+  }
 
   useEffect(() => {
     if (sendMethodOptions.length === 0) return
@@ -522,6 +574,20 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setSendMethod(getDefaultSendMethod(sendMethodOptions))
     }
   }, [sendMethodOptions, selectedSendMethodOption])
+
+  useEffect(() => {
+    if (!isEmbedded || typeof document === 'undefined') return
+
+    if (contactPickerOpen) {
+      document.body.dataset.paymentContactPicker = 'open'
+    } else {
+      delete document.body.dataset.paymentContactPicker
+    }
+
+    return () => {
+      delete document.body.dataset.paymentContactPicker
+    }
+  }, [contactPickerOpen, isEmbedded])
 
   const resetForm = () => {
     const resolvedInitialContact = normalizePaymentContact(initialContact)
@@ -533,6 +599,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setContacts([])
     setSelectedContact(resolvedInitialContact)
     setShowContactDropdown(false)
+    setContactPickerOpen(false)
     setChargeType('direct')
     setAmount('')
     setPaymentTitle('')
@@ -632,13 +699,22 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (contactLocked) {
       setContacts([])
       setShowContactDropdown(false)
+      setContactPickerOpen(false)
+      setSearchingContact(false)
+      return
+    }
+
+    if (isEmbedded && !contactPickerOpen) {
+      setContacts([])
+      setShowContactDropdown(false)
       setSearchingContact(false)
       return
     }
 
     const query = searchQuery.trim()
+    const shouldLoadRecentContacts = isEmbedded && contactPickerOpen && query.length < 2
 
-    if (query.length < 2) {
+    if (query.length < 2 && !shouldLoadRecentContacts) {
       setContacts([])
       setShowContactDropdown(false)
       setSearchingContact(false)
@@ -647,14 +723,44 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     const controller = new AbortController()
     setSearchingContact(true)
-    setShowContactDropdown(true)
+    setShowContactDropdown(!isEmbedded)
 
     const timer = window.setTimeout(async () => {
       setSearchingContact(true)
       try {
         let formattedContacts: Contact[]
 
-        if (highLevelConnected) {
+        if (shouldLoadRecentContacts) {
+          const params = new URLSearchParams({
+            page: '1',
+            limit: '60',
+            sortBy: 'created_at',
+            sortOrder: 'DESC'
+          })
+          const response = await fetch(`/api/contacts?${params.toString()}`, {
+            signal: controller.signal
+          })
+          if (!response.ok) {
+            throw new Error('Error al cargar contactos')
+          }
+          const data = await response.json()
+          const recentContacts = Array.isArray(data)
+            ? data
+            : Array.isArray(data.data)
+              ? data.data
+              : Array.isArray(data.contacts)
+                ? data.contacts
+                : []
+
+          formattedContacts = recentContacts.map((contact: any) => ({
+            id: contact.id,
+            name: contact.full_name || contact.name || 'Sin nombre',
+            email: contact.email || '',
+            phone: contact.phone || '',
+            firstName: contact.firstName || contact.first_name || '',
+            lastName: contact.lastName || contact.last_name || ''
+          }))
+        } else if (highLevelConnected) {
           const response = await fetch('/api/highlevel/contacts/search', {
             method: 'POST',
             headers: {
@@ -702,7 +808,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
         if (!controller.signal.aborted) {
           setContacts(formattedContacts)
-          setShowContactDropdown(true)
+          setShowContactDropdown(!isEmbedded)
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -713,19 +819,24 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           setSearchingContact(false)
         }
       }
-    }, CONTACT_SEARCH_DELAY_MS)
+    }, shouldLoadRecentContacts ? 0 : CONTACT_SEARCH_DELAY_MS)
 
     return () => {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [searchQuery, highLevelConnected, contactLocked])
+  }, [searchQuery, highLevelConnected, contactLocked, contactPickerOpen, isEmbedded])
 
   useEffect(() => {
     if (isOpen && chargeType === 'product' && products.length === 0) {
       loadProducts()
     }
   }, [isOpen, chargeType])
+
+  useEffect(() => {
+    if (!isEmbedded) return
+    embeddedScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+  }, [isEmbedded, step])
 
   useEffect(() => {
     if (selectedProduct) {
@@ -912,6 +1023,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSendMethod(getDefaultSendMethod(getSendMethodOptions(nextContact)))
     setSearchQuery('')
     setShowContactDropdown(false)
+    setContactPickerOpen(false)
     setContacts([])
   }
 
@@ -919,6 +1031,46 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (contactLocked) return
     setSelectedContact(null)
     setSearchQuery('')
+    setContacts([])
+    setShowContactDropdown(false)
+    setContactPickerOpen(false)
+  }
+
+  const openContactPicker = () => {
+    if (contactLocked) return
+    setSearchQuery('')
+    setContacts([])
+    setShowContactDropdown(false)
+    setContactPickerOpen(true)
+  }
+
+  const closeContactPicker = () => {
+    setContactPickerOpen(false)
+    setSearchQuery('')
+    setContacts([])
+    setShowContactDropdown(false)
+    setSearchingContact(false)
+  }
+
+  const returnToPaymentForm = () => {
+    setStep('form')
+    setInvoicePayload(null)
+    setInvoiceSummary(null)
+    setPaymentOption(highLevelConnected ? 'send' : 'manual')
+  }
+
+  const handleEmbeddedBack = () => {
+    if (contactPickerOpen) {
+      closeContactPicker()
+      return
+    }
+
+    if (step === 'options') {
+      returnToPaymentForm()
+      return
+    }
+
+    onClose()
   }
 
   const updateRemainingInstallment = (id: string, updates: Partial<InstallmentDraft>) => {
@@ -1461,7 +1613,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     const taxAmount = includeIVA ? normalizeAmount(subtotalAmount * IVA_RATE) : 0
     const totalAmount = includeIVA ? normalizeAmount(subtotalAmount + taxAmount) : subtotalAmount
-    const isEmbedded = variant === 'embedded'
 
     const renderPaymentModeField = () => {
       // Las parcialidades dependen de HighLevel. En modo local solo hay pago único.
@@ -1470,25 +1621,98 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       return (
       <div className={styles.field}>
         <label className={styles.label}>Tipo de pago</label>
-        <div style={{ marginTop: '4px' }}>
-          <TabList
-            tabs={[
+        <div className={styles.segmentedTabsField}>
+          {renderPaymentSegmentedTabs({
+            ariaLabel: 'Tipo de pago',
+            options: [
               { value: 'single', label: 'Único' },
               { value: 'partial', label: 'Parcialidades' }
-            ]}
-            activeTab={paymentMode}
-            onTabChange={(value) => {
+            ],
+            value: paymentMode,
+            onChange: (value) => {
               const nextPaymentMode = value as PaymentMode
               if (nextPaymentMode === 'partial' && paymentMode !== 'partial') {
                 setFirstPaymentMethod('')
               }
               setPaymentMode(nextPaymentMode)
-            }}
-            variant="compact"
-            className={styles.fullWidthTabList}
-          />
+            }
+          })}
         </div>
       </div>
+      )
+    }
+
+    const renderEmbeddedContactPicker = () => {
+      if (!isEmbedded || !contactPickerOpen) return null
+
+      const trimmedQuery = searchQuery.trim()
+      const shouldPromptSearch = trimmedQuery.length < 2 && !searchingContact
+
+      return (
+        <div className={styles.embeddedSheetOverlay} onClick={closeContactPicker}>
+          <section
+            className={styles.embeddedSheet}
+            aria-label="Buscar contacto para cobrar"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className={styles.embeddedSheetHeader}>
+              <div>
+                <span>Cliente</span>
+                <strong>Seleccionar contacto</strong>
+              </div>
+              <button type="button" onClick={closeContactPicker} aria-label="Cerrar búsqueda">
+                <ChevronLeft size={19} />
+              </button>
+            </header>
+
+            <div className={styles.contactSearchBox} data-ristak-unstyled>
+              <Search size={16} className={styles.searchIcon} />
+              <input
+                type="text"
+                placeholder="Buscar contacto"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                className={styles.input}
+                aria-label="Buscar contacto para cobrar"
+                autoFocus
+              />
+              {searchingContact && <Loader2 size={16} className={styles.loadingIcon} />}
+            </div>
+
+            <div className={styles.contactList} data-phone-scrollable="true">
+              {searchingContact && contacts.length === 0 ? (
+                <div className={styles.contactListState}>
+                  <Loader2 size={18} className={styles.inlineSpinner} />
+                  <span>Buscando contactos...</span>
+                </div>
+              ) : contacts.length > 0 ? (
+                contacts.map((contact) => (
+                  <button
+                    key={contact.id}
+                    type="button"
+                    className={styles.contactOption}
+                    onClick={() => handleSelectContact(contact)}
+                  >
+                    <span className={styles.contactAvatar}>{getContactInitials(contact)}</span>
+                    <span className={styles.contactMain}>
+                      <strong>{getContactDisplayName(contact)}</strong>
+                      <small>{getContactDisplayDetail(contact)}</small>
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <div className={styles.contactListState}>
+                  <User size={22} />
+                  <span>
+                    {shouldPromptSearch
+                      ? 'Busca por nombre, teléfono o correo.'
+                      : 'No se encontraron contactos.'}
+                  </span>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
       )
     }
 
@@ -1498,11 +1722,41 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           <div className={styles.field}>
             <label className={styles.label}>Cliente</label>
 
-            {selectedContact ? (
+            {isEmbedded ? (
+              <>
+                <div className={styles.contactPickerControl}>
+                  <button
+                    type="button"
+                    className={styles.contactPickerTrigger}
+                    onClick={openContactPicker}
+                  >
+                    <span className={selectedContact ? styles.contactAvatar : styles.contactPickerIcon}>
+                      {selectedContact ? getContactInitials(selectedContact) : <Search size={18} />}
+                    </span>
+                    <span className={styles.contactMain}>
+                      <strong>{selectedContact ? getContactDisplayName(selectedContact) : 'Seleccionar contacto'}</strong>
+                      <small>{selectedContact ? getContactDisplayDetail(selectedContact) : 'Busca por nombre, teléfono o correo'}</small>
+                    </span>
+                    <ChevronRight size={18} className={styles.contactPickerChevron} aria-hidden="true" />
+                  </button>
+                  {selectedContact && (
+                    <button
+                      type="button"
+                      onClick={handleClearContact}
+                      className={styles.contactPickerClear}
+                      aria-label="Quitar contacto seleccionado"
+                    >
+                      <X size={17} />
+                    </button>
+                  )}
+                </div>
+                {renderEmbeddedContactPicker()}
+              </>
+            ) : selectedContact ? (
               <div className={styles.selectedContact}>
                 <div className={styles.contactInfo}>
-                  <p className={styles.contactName}>{selectedContact.name || 'Sin nombre'}</p>
-                  <p className={styles.contactDetail}>{selectedContact.email || selectedContact.phone}</p>
+                  <p className={styles.contactName}>{getContactDisplayName(selectedContact)}</p>
+                  <p className={styles.contactDetail}>{getContactDisplayDetail(selectedContact)}</p>
                 </div>
                 <button
                   type="button"
@@ -1515,11 +1769,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               </div>
             ) : (
               <div className={styles.searchWrapper}>
-                <div className={isEmbedded ? styles.contactSearchBox : styles.searchInput} data-ristak-unstyled={isEmbedded || undefined}>
+                <div className={styles.searchInput}>
                   <Search size={16} className={styles.searchIcon} />
                   <input
                     type="text"
-                    placeholder={isEmbedded ? 'Buscar contacto' : 'Buscar por nombre, email o teléfono...'}
+                    placeholder="Buscar por nombre, email o teléfono..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className={styles.input}
@@ -1530,12 +1784,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
                 {showContactDropdown && (
                   <div
-                    className={isEmbedded ? styles.contactList : styles.dropdown}
+                    className={styles.dropdown}
                     data-phone-scrollable="true"
-                    data-ristak-dropdown-panel={!isEmbedded ? 'true' : undefined}
+                    data-ristak-dropdown-panel="true"
                   >
                     {searchingContact && contacts.length === 0 ? (
-                      <div className={isEmbedded ? styles.contactListState : styles.dropdownEmpty}>
+                      <div className={styles.dropdownEmpty}>
                         Buscando contactos...
                       </div>
                     ) : contacts.length > 0 ? (
@@ -1543,30 +1797,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                         <button
                           key={contact.id}
 	                          type="button"
-	                          className={isEmbedded ? styles.contactOption : styles.dropdownItem}
-                            data-ristak-dropdown-item={!isEmbedded ? 'true' : undefined}
+	                          className={styles.dropdownItem}
+                            data-ristak-dropdown-item="true"
 	                          onClick={() => handleSelectContact(contact)}
                         >
-                          {isEmbedded ? (
-                            <>
-                              <span className={styles.contactAvatar}>{getContactInitials(contact)}</span>
-                              <span className={styles.contactMain}>
-                                <strong>{contact.name || 'Sin nombre'}</strong>
-                                <small>{contact.email || contact.phone || 'Sin información de contacto'}</small>
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <p className={styles.dropdownName}>{contact.name || 'Sin nombre'}</p>
-                              <p className={styles.dropdownDetail}>
-                                {contact.email || contact.phone || 'Sin información de contacto'}
-                              </p>
-                            </>
-                          )}
+                          <p className={styles.dropdownName}>{getContactDisplayName(contact)}</p>
+                          <p className={styles.dropdownDetail}>{getContactDisplayDetail(contact)}</p>
                         </button>
                       ))
                     ) : (
-                      <div className={isEmbedded ? styles.contactListState : styles.dropdownEmpty}>
+                      <div className={styles.dropdownEmpty}>
                         No se encontraron contactos
                       </div>
                     )}
@@ -1579,14 +1819,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
         <div className={styles.field}>
           <label className={styles.label}>Tipo de cobro</label>
-          <div style={{ marginTop: '4px' }}>
-            <TabList
-              tabs={[
+          <div className={styles.segmentedTabsField}>
+            {renderPaymentSegmentedTabs({
+              ariaLabel: 'Tipo de cobro',
+              options: [
                 { value: 'direct', label: 'Cobro directo' },
-                { value: 'product', label: 'Productos guardados' }
-              ]}
-              activeTab={chargeType}
-              onTabChange={(value) => {
+                { value: 'product', label: 'Guardados' }
+              ],
+              value: chargeType,
+              onChange: (value) => {
                 if (value === 'direct') {
                   setChargeType('direct')
                   setSelectedProduct(null)
@@ -1600,10 +1841,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   setAmount('')
                   setNewProductCurrency(currency || defaultCurrency || 'MXN')
                 }
-              }}
-              variant="compact"
-              className={styles.fullWidthTabList}
-            />
+              }
+            })}
           </div>
         </div>
 
@@ -1820,17 +2059,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
         <div className={styles.field}>
           <label className={styles.label}>IVA</label>
-          <div style={{ marginTop: '4px' }}>
-            <TabList
-              tabs={[
+          <div className={styles.segmentedTabsField}>
+            {renderPaymentSegmentedTabs({
+              ariaLabel: 'IVA',
+              options: [
                 { value: 'sin', label: 'Sin IVA' },
                 { value: 'con', label: 'Aplicar IVA 16%' }
-              ]}
-              activeTab={includeIVA ? 'con' : 'sin'}
-              onTabChange={(value) => setIncludeIVA(value === 'con')}
-              variant="compact"
-              className={styles.fullWidthTabList}
-            />
+              ],
+              value: includeIVA ? 'con' : 'sin',
+              onChange: (value) => setIncludeIVA(value === 'con')
+            })}
           </div>
         </div>
 
@@ -1856,18 +2094,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     <span>El enganche con el que arranca el plan.</span>
                   </div>
                 </div>
-                <TabList
-                  tabs={[
+                {renderPaymentSegmentedTabs({
+                  ariaLabel: 'Primer pago',
+                  options: [
                     { value: 'yes', label: 'Con enganche' },
                     { value: 'no', label: 'Sin enganche' }
-                  ]}
-                  activeTab={firstPaymentEnabled ? 'yes' : 'no'}
-                  onTabChange={(value) => {
+                  ],
+                  value: firstPaymentEnabled ? 'yes' : 'no',
+                  onChange: (value) => {
                     setFirstPaymentEnabled(value === 'yes')
                     setAutoDistributeRemaining(true)
-                  }}
-                  variant="compact"
-                />
+                  },
+                  desktopFullWidth: false
+                })}
               </div>
 
               {firstPaymentEnabled && (
@@ -2387,7 +2626,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   value={manualPaymentData.reference}
                   onChange={(e) => setManualPaymentData({ ...manualPaymentData, reference: e.target.value })}
                   className={styles.input}
-                  placeholder="Numero de transferencia, cheque, etc."
+                  placeholder="Número de transferencia, cheque, etc."
                 />
               </div>
               <div className={styles.manualField}>
@@ -2428,18 +2667,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       return (
         <div className={styles.footer}>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              setStep('form')
-              setInvoicePayload(null)
-              setInvoiceSummary(null)
-              setPaymentOption(highLevelConnected ? 'send' : 'manual')
-            }}
-            disabled={loading}
-          >
-            Regresar
-          </Button>
+          {!isEmbedded && (
+            <Button
+              variant="secondary"
+              onClick={returnToPaymentForm}
+              disabled={loading}
+            >
+              Regresar
+            </Button>
+          )}
           <div className={styles.confirmButtonWrapper}>
             <Button
               variant="primary"
@@ -2508,30 +2744,37 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   if (variant === 'embedded') {
     if (!isOpen) return null
 
-    // En celular el contenido scrollea solo y la barra inferior (total + botón)
-    // es parte fija del layout: nunca flota encima de los campos ni queda
-    // detrás del dock de navegación.
     return (
-      <div className={styles.embeddedRoot}>
-        <div className={styles.embeddedScroll} data-phone-chat-scrollable="true" data-phone-scrollable="true">
+      <div className={`${styles.embeddedRoot} ${showEmbeddedBackButton ? '' : styles.embeddedRootNoBack}`}>
+        {showEmbeddedBackButton && step !== 'processing' && (
+          <button
+            type="button"
+            className={styles.embeddedBackButton}
+            onClick={handleEmbeddedBack}
+          >
+            <ChevronLeft size={20} aria-hidden="true" />
+            <span>Atrás</span>
+          </button>
+        )}
+        <div ref={embeddedScrollRef} className={styles.embeddedScroll} data-phone-chat-scrollable="true" data-phone-scrollable="true">
           {step === 'processing' && renderProcessing()}
           {step === 'form' && renderForm()}
           {step === 'options' && renderPaymentOptions()}
+          {step !== 'processing' && (
+            <div className={styles.embeddedActions}>
+              {step === 'form' && (
+                <div className={styles.embeddedTotalRow}>
+                  <span>
+                    Total a cobrar
+                    {includeIVA && <small>Incluye IVA · {formatCurrency(taxAmount, currency)}</small>}
+                  </span>
+                  <strong>{formatCurrency(totalAmount, currency)}</strong>
+                </div>
+              )}
+              {renderFooter()}
+            </div>
+          )}
         </div>
-        {step !== 'processing' && (
-          <div className={styles.embeddedBar}>
-            {step === 'form' && (
-              <div className={styles.embeddedTotalRow}>
-                <span>
-                  Total a cobrar
-                  {includeIVA && <small>Incluye IVA · {formatCurrency(taxAmount, currency)}</small>}
-                </span>
-                <strong>{formatCurrency(totalAmount, currency)}</strong>
-              </div>
-            )}
-            {renderFooter()}
-          </div>
-        )}
       </div>
     )
   }

@@ -73,7 +73,7 @@ function getNotificationTone(severity?: string) {
       icon: CircleAlert,
       dot: 'bg-amber-500',
       iconClass: 'text-amber-500 bg-amber-500/10 border-amber-500/20',
-      label: 'Atencion'
+      label: 'Atención'
     }
   }
 

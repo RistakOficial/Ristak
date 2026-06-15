@@ -14,11 +14,13 @@ import {
   handleInvoiceWebhook,
   handleConversationWebhook,
   handleMetaSocialWebhook,
-  verifyMetaSocialWebhook
+  verifyMetaSocialWebhook,
+  handleAutomationIncomingWebhook
 } from '../controllers/webhooksController.js'
 
 const router = express.Router()
 
+router.post('/automation/:endpointId', handleAutomationIncomingWebhook)
 router.all('/automations/:endpointId', automationWebhookSampleHandler)
 router.post('/contact', handleContactWebhook)
 router.post('/payment', handlePaymentWebhook)

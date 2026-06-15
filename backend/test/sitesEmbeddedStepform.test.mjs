@@ -35,6 +35,18 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
           ],
           embeddedBlocks: [
             {
+              id: 'content-title',
+              siteId: 'site_embedded_stepform',
+              blockType: 'title',
+              label: 'Título',
+              content: 'Título interno del formulario',
+              placeholder: '',
+              required: false,
+              options: [],
+              sortOrder: 0,
+              settings: { pageId: 'step-1' }
+            },
+            {
               id: 'field-name',
               siteId: 'site_embedded_stepform',
               blockType: 'short_text',
@@ -43,7 +55,7 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
               placeholder: 'Tu nombre',
               required: true,
               options: [],
-              sortOrder: 0,
+              sortOrder: 1,
               settings: { pageId: 'step-1' }
             },
             {
@@ -55,8 +67,20 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
               placeholder: 'tu@email.com',
               required: true,
               options: [],
-              sortOrder: 1,
+              sortOrder: 2,
               settings: { pageId: 'step-2' }
+            },
+            {
+              id: 'final-page-copy',
+              siteId: 'site_embedded_stepform',
+              blockType: 'text',
+              label: 'Texto',
+              content: 'Texto de página final que no debe aparecer',
+              placeholder: '',
+              required: false,
+              options: [],
+              sortOrder: 3,
+              settings: { pageId: 'page-2' }
             }
           ]
         },
@@ -78,8 +102,11 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
   assert.match(html, /data-embedded-next/)
   assert.match(html, /data-embedded-back hidden/)
   assert.match(html, /data-submit hidden/)
+  assert.match(html, /Título interno del formulario/)
   assert.match(html, /data-block-id="field-name" data-page-id="step-1"/)
   assert.match(html, /data-block-id="field-email" data-page-id="step-2"/)
+  assert.doesNotMatch(html, /Texto de página final que no debe aparecer/)
+  assert.doesNotMatch(html, /<h2>Formulario<\/h2>/)
   assert.match(html, /getEmbeddedPageFields/)
   assert.match(html, /embeddedForms\.forEach\(renderEmbeddedForm\)/)
   assert.match(html, /state\.index = 0;/)

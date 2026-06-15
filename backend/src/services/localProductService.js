@@ -558,7 +558,7 @@ export async function createLocalProduct(input = {}, options = {}) {
     try {
       const syncResult = await syncProductWithSavedConfig(product.id)
       if (highLevelConnected && syncResult?.skipped) {
-        throw new Error('HighLevel esta conectado, pero no se pudo iniciar la sincronizacion del producto.')
+        throw new Error('HighLevel esta conectado, pero no se pudo iniciar la sincronización del producto.')
       }
     } catch (error) {
       if (highLevelConnected) {
@@ -591,7 +591,7 @@ export async function createLocalPrice(productId, input = {}, options = {}) {
     try {
       const syncResult = await syncProductWithSavedConfig(price.product_id)
       if (highLevelConnected && syncResult?.skipped) {
-        throw new Error('HighLevel esta conectado, pero no se pudo iniciar la sincronizacion del precio.')
+        throw new Error('HighLevel esta conectado, pero no se pudo iniciar la sincronización del precio.')
       }
     } catch (error) {
       if (highLevelConnected) {
@@ -672,7 +672,7 @@ export async function updateLocalProduct(productId, input = {}, options = {}) {
     try {
       const syncResult = await syncProductWithSavedConfig(existing.id)
       if (highLevelConnected && syncResult?.skipped) {
-        throw new Error('HighLevel esta conectado, pero no se pudo iniciar la sincronizacion del producto.')
+        throw new Error('HighLevel esta conectado, pero no se pudo iniciar la sincronización del producto.')
       }
     } catch (error) {
       if (highLevelConnected) {
@@ -829,7 +829,7 @@ async function findRemotePriceMatch(client, productRow, priceRow) {
 }
 
 export async function syncProductRowToHighLevel(productRow, client, locationId) {
-  if (!productRow?.id) throw new Error('Producto local invalido para sincronizar.')
+  if (!productRow?.id) throw new Error('Producto local inválido para sincronizar.')
 
   let row = productRow
   const payload = buildGhlProductPayload(row, locationId)
@@ -889,7 +889,7 @@ export async function syncProductRowToHighLevel(productRow, client, locationId) 
 }
 
 export async function syncPriceRowToHighLevel(priceRow, client, locationId) {
-  if (!priceRow?.id) throw new Error('Precio local invalido para sincronizar.')
+  if (!priceRow?.id) throw new Error('Precio local inválido para sincronizar.')
 
   let productRow = await getLocalProduct(priceRow.product_id)
   if (!productRow?.ghl_product_id) {

@@ -13,7 +13,8 @@ import {
   ViewSelector,
   PageContainer,
   PageHeader,
-  Loading
+  Loading,
+  Modal
 } from '@/components/common'
 import type { Column } from '@/components/common'
 import { useDateRange } from '@/contexts/DateRangeContext'
@@ -41,7 +42,8 @@ import {
   Layers,
   MousePointerClick,
   Table as TableIcon,
-  BarChart3
+  BarChart3,
+  Lock
 } from 'lucide-react'
 import {
   BarChart,
@@ -67,11 +69,45 @@ const MANUAL_BUSINESS_EXPENSES_COLUMN_KEY = 'businessExpenses'
 const FIXED_BUSINESS_EXPENSES_COLUMN_KEY = 'fixedBusinessExpenses'
 const MANUAL_BUSINESS_EXPENSES_CONFIG_KEY = 'report_manual_business_expenses_enabled'
 const MS_PER_DAY = 24 * 60 * 60 * 1000
+const DEFAULT_REPORTS_COLUMN_ORDER = [
+  'date',
+  'profit',
+  'revenue',
+  FIXED_BUSINESS_EXPENSES_COLUMN_KEY,
+  MANUAL_BUSINESS_EXPENSES_COLUMN_KEY,
+  'spend',
+  'roas',
+  'new_customers',
+  'cac',
+  'appointments',
+  'leads',
+  'attendances',
+  'transactions',
+  'clicks',
+  'reach',
+  'cpc',
+  'cpl',
+  'cpa',
+  'cpaAttendance',
+  'visitors',
+  'cpv',
+  'webToInteresadosRate',
+  'interesadosToApptsRate',
+  'apptsToAttendanceRate',
+  'attendanceToSalesRate',
+  'attendanceToCustomersRate',
+  'apptsToSalesRate'
+]
 
 type ViewType = 'day' | 'month' | 'year'
 type ReportType = 'cashflow' | 'attribution' | 'campaigns'
 type DisplayMode = 'table' | 'metrics'
 type ModalType = 'interesados' | 'sales' | 'appointments' | 'attendances' | 'customers'
+
+type MetricsLoadState = {
+  rows: ReportMetricRow[]
+  viewType: ViewType | null
+}
 
 type TableRow = {
   id: string
@@ -166,6 +202,66 @@ const isReportType = (value?: string): value is ReportType =>
 
 const buildReportsPath = (displayMode: DisplayMode, viewType: ViewType, reportType: ReportType) =>
   `/reports/${displayMode}/${viewType}/${reportType}`
+
+const isMetricDateCompatibleWithView = (date: string, viewType: ViewType) => {
+  if (viewType === 'day') return /^\d{4}-\d{2}-\d{2}$/.test(date)
+  if (viewType === 'month') return /^\d{4}-\d{2}$/.test(date)
+  return /^\d{4}$/.test(date)
+}
+
+const getMetricPeriodKey = (date: string, viewType: ViewType) => {
+  const sanitized = date.includes('T') ? date.split('T')[0] : date
+  const [year = '', month = '', day = ''] = sanitized.split('-')
+
+  if (viewType === 'day' && year && month && day) return `${year}-${month}-${day}`
+  if (viewType === 'month' && year && month) return `${year}-${month}`
+  if (viewType === 'year' && year) return year
+  return sanitized
+}
+
+const createEmptyMetricRow = (date: string): ReportMetricRow => ({
+  date,
+  spend: 0,
+  revenue: 0,
+  leads: 0,
+  customers: 0,
+  appointments: 0,
+  attendances: 0,
+  sales: 0,
+  clicks: 0,
+  reach: 0,
+  visitors: 0,
+  new_customers: 0,
+  roas: 0,
+  profit: 0
+})
+
+const mergeMetricRowsByView = (metrics: ReportMetricRow[], viewType: ViewType) => {
+  const rowsByPeriod = new Map<string, ReportMetricRow>()
+
+  metrics.forEach((metric) => {
+    const period = getMetricPeriodKey(metric.date, viewType)
+    const current = rowsByPeriod.get(period) || createEmptyMetricRow(period)
+
+    current.spend += Number(metric.spend || 0)
+    current.revenue += Number(metric.revenue || 0)
+    current.leads += Number(metric.leads || 0)
+    current.customers += Number(metric.customers || 0)
+    current.appointments += Number(metric.appointments || 0)
+    current.attendances += Number(metric.attendances || 0)
+    current.sales += Number(metric.sales || 0)
+    current.clicks += Number(metric.clicks || 0)
+    current.reach += Number(metric.reach || 0)
+    current.visitors += Number(metric.visitors || 0)
+    current.new_customers += Number(metric.new_customers || 0)
+    current.roas = current.spend > 0 ? current.revenue / current.spend : 0
+    current.profit = current.revenue - current.spend
+
+    rowsByPeriod.set(period, current)
+  })
+
+  return Array.from(rowsByPeriod.values())
+}
 
 const parseReportsPath = (pathname: string) => {
   const parts = pathname.replace(/^\/reports\/?/, '').split('/').filter(Boolean)
@@ -321,7 +417,11 @@ const getManualExpenseRange = (expense: ManualBusinessExpense) => {
     return { from: `${parts.year}-${month}-01`, to: `${parts.year}-${month}-${lastDay}` }
   }
 
-  return { from: `${parts.year}-01-01`, to: `${parts.year}-12-31` }
+  if (expense.period_type === 'year') {
+    return { from: `${parts.year}-01-01`, to: `${parts.year}-12-31` }
+  }
+
+  return null
 }
 
 const roundCurrencyValue = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
@@ -407,47 +507,210 @@ const calculateManualBusinessExpensesForRange = (
   const targetStart = toUtcDayIndex(targetRange.from)
   const targetEnd = toUtcDayIndex(targetRange.to)
 
-  if (targetStart === null || targetEnd === null) return 0
+  if (targetStart === null || targetEnd === null || targetEnd < targetStart) return 0
 
-  const total = expenses.reduce((sum, expense) => {
-    const amount = Number(expense.amount || 0)
-    if (!Number.isFinite(amount) || amount <= 0) return sum
+  const allocations = expenses
+    .map((expense) => {
+      const amount = Number(expense.amount ?? 0)
+      if (!Number.isFinite(amount) || amount < 0) return null
 
-    const sourceRange = getManualExpenseRange(expense)
-    if (!sourceRange) return sum
+      const sourceRange = getManualExpenseRange(expense)
+      if (!sourceRange) return null
 
-    const sourceStart = toUtcDayIndex(sourceRange.from)
-    const sourceEnd = toUtcDayIndex(sourceRange.to)
-    if (sourceStart === null || sourceEnd === null || sourceEnd < sourceStart) return sum
+      const sourceStart = toUtcDayIndex(sourceRange.from)
+      const sourceEnd = toUtcDayIndex(sourceRange.to)
+      if (sourceStart === null || sourceEnd === null || sourceEnd < sourceStart) return null
 
-    const overlapStart = Math.max(targetStart, sourceStart)
-    const overlapEnd = Math.min(targetEnd, sourceEnd)
-    if (overlapEnd < overlapStart) return sum
+      const sourceDays = sourceEnd - sourceStart + 1
+      const priority = expense.period_type === 'day' ? 3 : expense.period_type === 'month' ? 2 : 1
 
-    const sourceDays = sourceEnd - sourceStart + 1
-    const overlapDays = overlapEnd - overlapStart + 1
-    return sum + (amount * overlapDays) / sourceDays
-  }, 0)
+      return {
+        start: sourceStart,
+        end: sourceEnd,
+        priority,
+        amountPerDay: amount / sourceDays
+      }
+    })
+    .filter((allocation): allocation is {
+      start: number
+      end: number
+      priority: number
+      amountPerDay: number
+    } => Boolean(allocation))
+    .sort((a, b) => b.priority - a.priority)
+
+  let total = 0
+
+  for (let day = targetStart; day <= targetEnd; day += 1) {
+    const allocation = allocations.find((item) => day >= item.start && day <= item.end)
+    if (allocation) {
+      total += allocation.amountPerDay
+    }
+  }
 
   return roundCurrencyValue(total)
 }
 
 const getManualExpensePeriodStart = (period: string, viewType: ViewType) => {
-  if (viewType === 'day') return period
-  if (viewType === 'month') return `${period}-01`
-  return `${period}-01-01`
+  const parts = parseDateKeyParts(period)
+  if (!parts) return period
+
+  const year = String(parts.year).padStart(4, '0')
+  const month = String(parts.month).padStart(2, '0')
+  const day = String(parts.day).padStart(2, '0')
+
+  if (viewType === 'day') return `${year}-${month}-${day}`
+  if (viewType === 'month') return `${year}-${month}-01`
+  return `${year}-01-01`
 }
 
 const getManualExpenseRecordKey = (periodType: ViewType, periodStart: string) => `${periodType}:${periodStart}`
 
 const parseManualExpenseInput = (value: string) => {
   const normalized = value.replace(/[$,\s]/g, '')
-  if (!normalized) return 0
+  if (!normalized) return { amount: 0, shouldDelete: true }
 
   const amount = Number(normalized)
   if (!Number.isFinite(amount) || amount < 0) return null
 
-  return roundCurrencyValue(amount)
+  return { amount: roundCurrencyValue(amount), shouldDelete: false }
+}
+
+const businessExpenseViewNames: Record<ViewType, string> = {
+  day: 'día',
+  month: 'mes',
+  year: 'año'
+}
+
+const businessExpenseViewAdjectives: Record<ViewType, string> = {
+  day: 'diario',
+  month: 'mensual',
+  year: 'anual'
+}
+
+const businessExpenseParentActionLabels: Record<ViewType, string> = {
+  day: 'día',
+  month: 'mes',
+  year: 'año'
+}
+
+const findManualExpenseRecord = (
+  expenses: ManualBusinessExpense[],
+  periodType: ViewType,
+  periodStart: string
+) => expenses.find((expense) => (
+  getManualExpenseRecordKey(expense.period_type, expense.period_start) === getManualExpenseRecordKey(periodType, periodStart)
+)) || null
+
+const isSameManualExpenseMonth = (left: string, right: string) => {
+  const leftParts = parseDateKeyParts(left)
+  const rightParts = parseDateKeyParts(right)
+  return Boolean(leftParts && rightParts && leftParts.year === rightParts.year && leftParts.month === rightParts.month)
+}
+
+const isSameManualExpenseYear = (left: string, right: string) => {
+  const leftParts = parseDateKeyParts(left)
+  const rightParts = parseDateKeyParts(right)
+  return Boolean(leftParts && rightParts && leftParts.year === rightParts.year)
+}
+
+const getManualExpenseParentRecord = (
+  period: BusinessExpensePeriodTarget,
+  expenses: ManualBusinessExpense[]
+) => {
+  const parts = parseDateKeyParts(period.start)
+  if (!parts) return null
+
+  const year = String(parts.year).padStart(4, '0')
+  const month = String(parts.month).padStart(2, '0')
+  const monthStart = `${year}-${month}-01`
+  const yearStart = `${year}-01-01`
+
+  if (period.type === 'day') {
+    return findManualExpenseRecord(expenses, 'month', monthStart) ||
+      findManualExpenseRecord(expenses, 'year', yearStart)
+  }
+
+  if (period.type === 'month') {
+    return findManualExpenseRecord(expenses, 'year', yearStart)
+  }
+
+  return null
+}
+
+const getManualExpenseDescendantRecords = (
+  period: BusinessExpensePeriodTarget,
+  expenses: ManualBusinessExpense[]
+) => {
+  if (period.type === 'day') return []
+
+  return expenses.filter((expense) => {
+    if (period.type === 'month') {
+      return expense.period_type === 'day' && isSameManualExpenseMonth(expense.period_start, period.start)
+    }
+
+    return (
+      (expense.period_type === 'day' || expense.period_type === 'month') &&
+      isSameManualExpenseYear(expense.period_start, period.start)
+    )
+  })
+}
+
+const describeBusinessExpenseDescendants = (descendants: ManualBusinessExpense[]) => {
+  const dailyCount = descendants.filter((expense) => expense.period_type === 'day').length
+  const monthlyCount = descendants.filter((expense) => expense.period_type === 'month').length
+  const pieces = []
+
+  if (monthlyCount > 0) pieces.push(monthlyCount === 1 ? '1 mes' : `${monthlyCount} meses`)
+  if (dailyCount > 0) pieces.push(dailyCount === 1 ? '1 día' : `${dailyCount} días`)
+
+  return pieces.join(' y ')
+}
+
+const buildBusinessExpenseEditGuard = (
+  period: BusinessExpensePeriodTarget,
+  row: TableRow,
+  expenses: ManualBusinessExpense[]
+): BusinessExpenseEditGuard | null => {
+  const descendants = getManualExpenseDescendantRecords(period, expenses)
+
+  if (period.type !== 'day' && descendants.length > 0) {
+    const detailLabel = describeBusinessExpenseDescendants(descendants)
+    const targetName = businessExpenseViewNames[period.type]
+    const targetAdjective = businessExpenseViewAdjectives[period.type]
+    const childLabel = period.type === 'month' ? 'diarios' : 'mensuales o diarios'
+
+    return {
+      kind: 'reset-descendants',
+      key: period.key,
+      title: `Reemplazar costo ${targetAdjective}`,
+      message: `${row.displayDate} ya tiene costos ${childLabel} editados (${detailLabel}). Si guardas un costo ${targetAdjective}, esos detalles se van a borrar y el total se volverá a repartir desde el ${targetName}.`,
+      confirmText: `Usar valor ${targetAdjective}`,
+      cancelText: 'Conservar detalle',
+      inputHint: `Tiene ${detailLabel} con detalle; confirma para editar el ${targetName}.`
+    }
+  }
+
+  const exactRecord = findManualExpenseRecord(expenses, period.type, period.start)
+  if (exactRecord) return null
+
+  const parentRecord = getManualExpenseParentRecord(period, expenses)
+  if (!parentRecord) return null
+
+  const targetName = businessExpenseViewNames[period.type]
+  const targetAdjective = businessExpenseViewAdjectives[period.type]
+  const parentName = businessExpenseViewNames[parentRecord.period_type]
+  const parentActionLabel = businessExpenseParentActionLabels[parentRecord.period_type]
+
+  return {
+    kind: 'switch-to-specific',
+    key: period.key,
+    title: `Editar costo por ${targetName}`,
+    message: `Este valor viene de un costo registrado por ${parentName}. Si lo cambias aquí, ${row.displayDate} tendrá su propio costo ${targetAdjective} y el total del ${parentName} va a cambiar. Si prefieres evitar ajustes finos, registra todo en la vista de ${parentActionLabel}.`,
+    confirmText: `Editar este ${targetName}`,
+    cancelText: `Mejor en ${parentActionLabel}`,
+    inputHint: `Este valor viene del ${parentName}; confirma para editar este ${targetName}.`
+  }
 }
 
 const computeRangeForView = (
@@ -1236,11 +1499,37 @@ const mapContactsToModalData = (contacts: ContactListItem[]): ContactListItem[] 
     created_at: contact.created_at || (contact as any).createdAt
   }))
 
+type BusinessExpensePeriodTarget = {
+  type: ViewType
+  start: string
+  key: string
+  resetChildren?: boolean
+}
+
+type BusinessExpenseEditGuard = {
+  kind: 'switch-to-specific' | 'reset-descendants'
+  key: string
+  title: string
+  message: string
+  confirmText: string
+  cancelText: string
+  inputHint: string
+}
+
+type BusinessExpenseGuardDialogState = {
+  guard: BusinessExpenseEditGuard
+  onAllowed: () => void
+}
+
 interface BusinessExpenseCellProps {
   value: number
   row: TableRow
+  period: BusinessExpensePeriodTarget
   saving: boolean
-  onCommit: (row: TableRow, value: string) => Promise<number | null>
+  editGuard: BusinessExpenseEditGuard | null
+  unlocked: boolean
+  onRequestEdit: (guard: BusinessExpenseEditGuard, onAllowed: () => void) => void
+  onCommit: (period: BusinessExpensePeriodTarget, value: string) => Promise<number | null>
 }
 
 const formatBusinessExpenseDraft = (value: number) => {
@@ -1251,51 +1540,133 @@ const formatBusinessExpenseDraft = (value: number) => {
   }).format(roundCurrencyValue(value))
 }
 
-const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, saving, onCommit }) => {
-  const [draft, setDraft] = React.useState(formatBusinessExpenseDraft(value))
+const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({
+  value,
+  row,
+  period,
+  saving,
+  editGuard,
+  unlocked,
+  onRequestEdit,
+  onCommit
+}) => {
+  const formattedValue = formatBusinessExpenseDraft(value)
+  const [draft, setDraft] = React.useState(formattedValue)
   const [focused, setFocused] = React.useState(false)
+  const [dirty, setDirty] = React.useState(false)
+  const committingRef = React.useRef(false)
+  const inputRef = React.useRef<HTMLInputElement | null>(null)
+  const focusAfterUnlockRef = React.useRef(false)
+  const locked = Boolean(editGuard && !unlocked)
 
   React.useEffect(() => {
     if (!focused) {
-      setDraft(formatBusinessExpenseDraft(value))
+      setDraft(formattedValue)
+      setDirty(false)
     }
-  }, [value, focused])
+  }, [formattedValue, focused])
+
+  React.useEffect(() => {
+    if (!unlocked || !focusAfterUnlockRef.current) return
+
+    focusAfterUnlockRef.current = false
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    })
+  }, [unlocked])
 
   const handleCommit = async () => {
-    const savedAmount = await onCommit(row, draft)
-    if (savedAmount !== null) {
-      setDraft(formatBusinessExpenseDraft(savedAmount))
+    if (locked) return
+    if (committingRef.current) return
+    committingRef.current = true
+
+    try {
+      const savedAmount = await onCommit(period, draft)
+      if (savedAmount !== null) {
+        setDraft(formatBusinessExpenseDraft(savedAmount))
+        setDirty(false)
+      } else {
+        setDraft(formattedValue)
+        setDirty(false)
+      }
+    } finally {
+      committingRef.current = false
     }
   }
 
+  const shouldCommitDraft = () => {
+    if (!dirty) return false
+
+    const parsed = parseManualExpenseInput(draft)
+    if (parsed === null) return true
+    if (parsed.shouldDelete) return formattedValue !== ''
+
+    return roundCurrencyValue(parsed.amount) !== roundCurrencyValue(value)
+  }
+
   return (
-    <div className={styles.businessExpenseInputShell} data-ristak-unstyled onClick={(event) => event.stopPropagation()}>
+    <div
+      className={`${styles.businessExpenseInputShell} ${locked ? styles.businessExpenseInputShellLocked : ''}`.trim()}
+      data-period-key={period.key}
+      data-ristak-unstyled
+      title={locked ? editGuard?.inputHint : undefined}
+      onClick={(event) => event.stopPropagation()}
+    >
       <span className={styles.businessExpensePrefix}>$</span>
       <input
+        ref={inputRef}
         className={styles.businessExpenseInput}
         value={draft}
         inputMode="decimal"
         aria-label={`Costos variables para ${row.displayDate}`}
         placeholder="0.00"
         disabled={saving}
-        onFocus={() => setFocused(true)}
+        readOnly={locked}
+        onFocus={(event) => {
+          if (!locked) {
+            setFocused(true)
+            return
+          }
+
+          event.currentTarget.blur()
+          if (!editGuard) return
+
+          onRequestEdit(editGuard, () => {
+            focusAfterUnlockRef.current = true
+          })
+        }}
         onBlur={() => {
           setFocused(false)
-          setDraft(formatBusinessExpenseDraft(value))
+          if (shouldCommitDraft()) {
+            void handleCommit()
+          }
         }}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => {
+          if (locked) return
+          setDraft(event.target.value)
+          setDirty(true)
+        }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
             event.preventDefault()
-            void handleCommit()
+            if (shouldCommitDraft()) {
+              void handleCommit()
+            }
           }
           if (event.key === 'Escape') {
             event.preventDefault()
-            setDraft(formatBusinessExpenseDraft(value))
+            setDraft(formattedValue)
+            setDirty(false)
             event.currentTarget.blur()
           }
         }}
       />
+      {locked && (
+        <span className={styles.businessExpenseLockIcon} aria-hidden="true">
+          <Lock size={13} strokeWidth={2} />
+        </span>
+      )}
     </div>
   )
 }
@@ -1316,7 +1687,7 @@ export const Reports: React.FC = () => {
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
   const [manualBusinessExpensesEnabledConfig] = useAppConfig<string | number | boolean>(
     MANUAL_BUSINESS_EXPENSES_CONFIG_KEY,
-    '0'
+    '1'
   )
 
   const visitorSource = visitorSourceConfig
@@ -1333,13 +1704,14 @@ export const Reports: React.FC = () => {
   const [monthPreset, setMonthPreset] = useState<'last12' | 'thisYear' | 'custom'>('last12')
   const [yearRange, setYearRange] = useState(defaultYearRange)
 
-  const [metrics, setMetrics] = useState<ReportMetricRow[]>([])
+  const [metricsState, setMetricsState] = useState<MetricsLoadState>({ rows: [], viewType: null })
   const [metricsRange, setMetricsRange] = useState<ReportRange | null>(null)
   const [summary, setSummary] = useState<ReportsSummary | null>(null)
   const [loadingMetrics, setLoadingMetrics] = useState(false)
   const [loadingSummary, setLoadingSummary] = useState(false)
   const [hasLoadedMetrics, setHasLoadedMetrics] = useState(false)
   const [hasLoadedSummary, setHasLoadedSummary] = useState(false)
+  const metricsRequestRef = React.useRef(0)
 
   const [modalState, setModalState] = useState<{
     open: boolean
@@ -1428,32 +1800,48 @@ export const Reports: React.FC = () => {
 
   const manualBusinessExpensesEnabled = parseAnalyticsFlag(manualBusinessExpensesEnabledConfig)
   const manualBusinessExpensesColumnVisible = useMemo(() => {
-    if (!Array.isArray(reportsTableConfig)) return false
+    if (!Array.isArray(reportsTableConfig)) return true
     const columnConfig = reportsTableConfig.find((column) => column.id === MANUAL_BUSINESS_EXPENSES_COLUMN_KEY)
-    return Boolean(columnConfig?.visible)
+    return columnConfig ? columnConfig.visible !== false : true
   }, [reportsTableConfig])
   const fixedBusinessExpensesColumnVisible = useMemo(() => {
     if (!Array.isArray(reportsTableConfig)) return true
     const columnConfig = reportsTableConfig.find((column) => column.id === FIXED_BUSINESS_EXPENSES_COLUMN_KEY)
     return columnConfig ? columnConfig.visible !== false : true
   }, [reportsTableConfig])
-  const applyManualBusinessExpenses = manualBusinessExpensesEnabled && manualBusinessExpensesColumnVisible
+  const applyManualBusinessExpenses = manualBusinessExpensesEnabled || manualBusinessExpensesColumnVisible
   const applyFixedBusinessExpenses = fixedBusinessExpensesColumnVisible
 
   const [manualBusinessExpenses, setManualBusinessExpenses] = useState<ManualBusinessExpense[]>([])
   const [configuredCosts, setConfiguredCosts] = useState<Cost[]>([])
   const [savingManualBusinessExpenseKey, setSavingManualBusinessExpenseKey] = useState<string | null>(null)
+  const [unlockedBusinessExpenseKeys, setUnlockedBusinessExpenseKeys] = useState<Set<string>>(() => new Set())
+  const [businessExpenseGuardDialog, setBusinessExpenseGuardDialog] = useState<BusinessExpenseGuardDialogState | null>(null)
 
   useEffect(() => {
+    const requestId = metricsRequestRef.current + 1
+    metricsRequestRef.current = requestId
+    let cancelled = false
+    const requestedViewType = viewType
+    const isCurrentRequest = () => !cancelled && metricsRequestRef.current === requestId
+    const commitMetrics = (rows: ReportMetricRow[]) => {
+      if (!isCurrentRequest()) return
+      setMetricsState({ rows, viewType: requestedViewType })
+    }
+
     const fetchMetrics = async () => {
       try {
         setLoadingMetrics(true)
+        setHasLoadedMetrics(false)
+        setMetricsState({ rows: [], viewType: requestedViewType })
         const result = await reportsService.getMetrics({
           from: apiRange.from,
           to: apiRange.to,
-          groupBy: viewType,
+          groupBy: requestedViewType,
           scope: scopeParam
         })
+
+        if (!isCurrentRequest()) return
 
         // Si estamos en modo tracking, obtener visitantes del tracking
         if (visitorSource === 'tracking') {
@@ -1462,13 +1850,14 @@ export const Reports: React.FC = () => {
               `/api/tracking/visitors-by-period?` + new URLSearchParams({
                 startDate: apiRange.from,
                 endDate: apiRange.to,
-                groupBy: viewType,
+                groupBy: requestedViewType,
                 scope: scopeParam // Pasar el scope actual para que respete la vista
               })
             )
 
             if (trackingResponse.ok) {
               const trackingData = await trackingResponse.json()
+              if (!isCurrentRequest()) return
 
               // Actualizar las métricas con los visitantes del tracking
               const updatedMetrics = result.metrics.map((metric: ReportMetricRow) => {
@@ -1479,29 +1868,36 @@ export const Reports: React.FC = () => {
                 }
               })
 
-              setMetrics(updatedMetrics)
+              commitMetrics(updatedMetrics)
             } else {
-              setMetrics(result.metrics)
+              commitMetrics(result.metrics)
             }
           } catch (trackingError) {
             // Si falla el tracking, usar métricas originales
-            setMetrics(result.metrics)
+            commitMetrics(result.metrics)
           }
         } else {
-          setMetrics(result.metrics)
+          commitMetrics(result.metrics)
         }
 
+        if (!isCurrentRequest()) return
         setMetricsRange(result.range)
       } catch (error) {
-        setMetrics([])
+        if (!isCurrentRequest()) return
+        setMetricsState({ rows: [], viewType: requestedViewType })
         showToast('error', 'No se pudieron cargar las métricas', 'Revisa tu conexión e intenta nuevamente')
       } finally {
-        setLoadingMetrics(false)
-        setHasLoadedMetrics(true)
+        if (isCurrentRequest()) {
+          setLoadingMetrics(false)
+          setHasLoadedMetrics(true)
+        }
       }
     }
 
     fetchMetrics()
+    return () => {
+      cancelled = true
+    }
   }, [apiRange.from, apiRange.to, scopeParam, viewType, showToast, dateRange, visitorSource])
 
   useEffect(() => {
@@ -1556,14 +1952,29 @@ export const Reports: React.FC = () => {
     }))
   }, [reportType, viewType])
 
+  useEffect(() => {
+    setUnlockedBusinessExpenseKeys(new Set())
+    setBusinessExpenseGuardDialog(null)
+  }, [reportType, viewType])
+
   const includeYearForTable = viewType === 'day'
     ? new Date(apiRange.from).getFullYear() !== new Date(apiRange.to).getFullYear()
     : true
 
+  const currentMetrics = useMemo(() => {
+    if (metricsState.viewType !== viewType) return []
+
+    const compatibleRows = metricsState.rows.filter((item) => (
+      isMetricDateCompatibleWithView(item.date, viewType)
+    ))
+
+    return mergeMetricRowsByView(compatibleRows, viewType)
+  }, [metricsState, viewType])
+
   const businessExpensesByPeriod = useMemo(() => {
     const expensesByPeriod: Record<string, number> = {}
 
-    metrics.forEach((item) => {
+    currentMetrics.forEach((item) => {
       expensesByPeriod[item.date] = calculateManualBusinessExpensesForRange(
         resolvePeriodRange(item.date, viewType),
         manualBusinessExpenses
@@ -1571,12 +1982,12 @@ export const Reports: React.FC = () => {
     })
 
     return expensesByPeriod
-  }, [metrics, viewType, manualBusinessExpenses])
+  }, [currentMetrics, viewType, manualBusinessExpenses])
 
   const fixedBusinessExpensesByPeriod = useMemo(() => {
     const expensesByPeriod: Record<string, number> = {}
 
-    metrics.forEach((item) => {
+    currentMetrics.forEach((item) => {
       expensesByPeriod[item.date] = calculateConfiguredBusinessCostsForRange(
         resolvePeriodRange(item.date, viewType),
         configuredCosts,
@@ -1585,39 +1996,71 @@ export const Reports: React.FC = () => {
     })
 
     return expensesByPeriod
-  }, [metrics, viewType, configuredCosts, apiRange])
+  }, [currentMetrics, viewType, configuredCosts, apiRange])
 
   const manualBusinessExpensesTotalForRange = useMemo(() => (
     calculateManualBusinessExpensesForRange(apiRange, manualBusinessExpenses)
   ), [apiRange, manualBusinessExpenses])
 
   const fixedBusinessExpensesTotalForRange = useMemo(() => {
-    const revenue = summary?.payments.totalRevenue ?? metrics.reduce((sum, item) => sum + item.revenue, 0)
+    const revenue = summary?.payments.totalRevenue ?? currentMetrics.reduce((sum, item) => sum + item.revenue, 0)
     return calculateConfiguredBusinessCostsForRange(apiRange, configuredCosts, revenue)
-  }, [apiRange, configuredCosts, summary?.payments.totalRevenue, metrics])
+  }, [apiRange, configuredCosts, summary?.payments.totalRevenue, currentMetrics])
 
-  const handleSaveBusinessExpense = useCallback(async (row: TableRow, rawValue: string): Promise<number | null> => {
-    const amount = parseManualExpenseInput(rawValue)
+  const handleRequestBusinessExpenseEdit = useCallback((
+    guard: BusinessExpenseEditGuard,
+    onAllowed: () => void
+  ) => {
+    setBusinessExpenseGuardDialog({ guard, onAllowed })
+  }, [])
 
-    if (amount === null) {
-      showToast('warning', 'Gasto inválido', 'Ingresa un monto positivo')
+  const handleConfirmBusinessExpenseEdit = useCallback(() => {
+    const pending = businessExpenseGuardDialog
+    if (!pending) return
+
+    pending.onAllowed()
+    setUnlockedBusinessExpenseKeys((current) => {
+      const next = new Set(current)
+      next.add(pending.guard.key)
+      return next
+    })
+  }, [businessExpenseGuardDialog])
+
+  const handleCloseBusinessExpenseGuard = useCallback(() => {
+    setBusinessExpenseGuardDialog(null)
+  }, [])
+
+  const handleSaveBusinessExpense = useCallback(async (
+    period: BusinessExpensePeriodTarget,
+    rawValue: string
+  ): Promise<number | null> => {
+    const parsed = parseManualExpenseInput(rawValue)
+
+    if (parsed === null) {
+      showToast('warning', 'Gasto inválido', 'Ingresa un monto válido')
       return null
     }
 
-    const periodStart = getManualExpensePeriodStart(row.date, viewType)
-    const expenseKey = getManualExpenseRecordKey(viewType, periodStart)
-
-    setSavingManualBusinessExpenseKey(expenseKey)
+    setSavingManualBusinessExpenseKey(period.key)
     try {
       const result = await reportsService.saveManualBusinessExpense({
-        period_type: viewType,
-        period_start: periodStart,
-        amount
+        period_type: period.type,
+        period_start: period.start,
+        amount: parsed.amount,
+        delete: parsed.shouldDelete,
+        reset_children: period.resetChildren === true
       })
 
       setManualBusinessExpenses((current) => {
+        const descendantKeys = period.resetChildren
+          ? new Set(getManualExpenseDescendantRecords(period, current).map((expense) => (
+            getManualExpenseRecordKey(expense.period_type, expense.period_start)
+          )))
+          : new Set<string>()
+
         const next = current.filter((expense) => (
-          getManualExpenseRecordKey(expense.period_type, expense.period_start) !== expenseKey
+          getManualExpenseRecordKey(expense.period_type, expense.period_start) !== period.key &&
+          !descendantKeys.has(getManualExpenseRecordKey(expense.period_type, expense.period_start))
         ))
 
         if (result.expense) {
@@ -1631,13 +2074,21 @@ export const Reports: React.FC = () => {
       return null
     } finally {
       setSavingManualBusinessExpenseKey(null)
+      setUnlockedBusinessExpenseKeys((current) => {
+        if (!current.has(period.key)) return current
+        const next = new Set(current)
+        next.delete(period.key)
+        return next
+      })
     }
 
-    return amount
-  }, [showToast, viewType])
+    return parsed.amount
+  }, [showToast])
 
   const tableData: TableRow[] = useMemo(() => (
-    metrics.map((item, index) => {
+    currentMetrics.map((item) => {
+      const periodStart = getManualExpensePeriodStart(item.date, viewType)
+      const periodKey = getManualExpenseRecordKey(viewType, periodStart)
       const businessExpenses = businessExpensesByPeriod[item.date] || 0
       const fixedBusinessExpenses = fixedBusinessExpensesByPeriod[item.date] || 0
       const profit = item.revenue -
@@ -1658,7 +2109,7 @@ export const Reports: React.FC = () => {
       const apptsToSalesRate = item.appointments > 0 ? (item.sales / item.appointments) * 100 : 0
 
       return {
-        id: `${item.date}-${index}`,
+        id: periodKey,
         date: item.date,
         displayDate: formatPeriodLabel(
           timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.date) : item.date,
@@ -1699,7 +2150,7 @@ export const Reports: React.FC = () => {
       const dateB = new Date(b.date).getTime()
       return dateB - dateA
     })
-  ), [metrics, viewType, includeYearForTable, timezoneInfo, businessExpensesByPeriod, fixedBusinessExpensesByPeriod, applyManualBusinessExpenses, applyFixedBusinessExpenses])
+  ), [currentMetrics, viewType, includeYearForTable, timezoneInfo, businessExpensesByPeriod, fixedBusinessExpensesByPeriod, applyManualBusinessExpenses, applyFixedBusinessExpenses])
 
   const handleOpenModal = React.useCallback(async (
     type: ModalType,
@@ -1900,19 +2351,39 @@ export const Reports: React.FC = () => {
       },
       {
         key: MANUAL_BUSINESS_EXPENSES_COLUMN_KEY,
-        header: 'Costos variables',
+        header: (
+          <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+            <div>Costos variables</div>
+            <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Insertar manual)</div>
+          </div>
+        ),
         sortable: true,
-        visible: false,
+        visible: true,
         width: '160px',
         render: (value: number, row) => {
           const periodStart = getManualExpensePeriodStart(row.date, viewType)
           const expenseKey = getManualExpenseRecordKey(viewType, periodStart)
+          const basePeriod = {
+            type: viewType,
+            start: periodStart,
+            key: expenseKey
+          }
+          const editGuard = buildBusinessExpenseEditGuard(basePeriod, row, manualBusinessExpenses)
+          const unlocked = !editGuard || unlockedBusinessExpenseKeys.has(expenseKey)
 
           return (
             <BusinessExpenseCell
+              key={expenseKey}
               value={value}
               row={row}
+              period={{
+                ...basePeriod,
+                resetChildren: unlocked && editGuard?.kind === 'reset-descendants'
+              }}
               saving={savingManualBusinessExpenseKey === expenseKey}
+              editGuard={editGuard}
+              unlocked={unlocked}
+              onRequestEdit={handleRequestBusinessExpenseEdit}
               onCommit={handleSaveBusinessExpense}
             />
           )
@@ -2047,7 +2518,7 @@ export const Reports: React.FC = () => {
         key: 'attendances',
         header: 'Asistencias',
         sortable: true,
-        visible: true,
+        visible: false,
         render: (value: number, row) => {
           const hasValue = (value || 0) > 0
           return hasValue ? (
@@ -2200,7 +2671,11 @@ export const Reports: React.FC = () => {
     ]
 
     // Filtrar columnas según configuración
-    let filteredColumns = columns
+    const columnOrder = new Map(DEFAULT_REPORTS_COLUMN_ORDER.map((key, index) => [key, index]))
+    let filteredColumns = [...columns].sort((a, b) => (
+      (columnOrder.get(String(a.key)) ?? DEFAULT_REPORTS_COLUMN_ORDER.length) -
+      (columnOrder.get(String(b.key)) ?? DEFAULT_REPORTS_COLUMN_ORDER.length)
+    ))
 
     // Filtrar columnas de visitantes si analytics no está habilitado
     if (!analyticsEnabled) {
@@ -2214,7 +2689,24 @@ export const Reports: React.FC = () => {
     }
 
     return filteredColumns
-  }, [reportType, viewType, visitorSource, handleOpenModal, handleOpenVisitorsModal, handleOpenTransactionsModal, handleSaveBusinessExpense, savingManualBusinessExpenseKey, labels.lead, labels.leads, labels.customer, labels.customers, analyticsEnabled])
+  }, [
+    reportType,
+    viewType,
+    visitorSource,
+    manualBusinessExpenses,
+    unlockedBusinessExpenseKeys,
+    handleOpenModal,
+    handleOpenVisitorsModal,
+    handleOpenTransactionsModal,
+    handleRequestBusinessExpenseEdit,
+    handleSaveBusinessExpense,
+    savingManualBusinessExpenseKey,
+    labels.lead,
+    labels.leads,
+    labels.customer,
+    labels.customers,
+    analyticsEnabled
+  ])
 
   const appliedManualBusinessExpensesTotal = applyManualBusinessExpenses ? manualBusinessExpensesTotalForRange : 0
   const appliedFixedBusinessExpensesTotal = applyFixedBusinessExpenses ? fixedBusinessExpensesTotalForRange : 0
@@ -2419,7 +2911,7 @@ export const Reports: React.FC = () => {
         </Card>
       ) : (
         <MetricsGrid
-          metrics={metrics}
+          metrics={currentMetrics}
           loading={loadingMetrics && !hasLoadedMetrics}
           reportType={reportType}
           showVisitors={analyticsEnabled}
@@ -2430,6 +2922,18 @@ export const Reports: React.FC = () => {
           applyFixedBusinessExpenses={applyFixedBusinessExpenses}
         />
       )}
+
+        <Modal
+          isOpen={Boolean(businessExpenseGuardDialog)}
+          onClose={handleCloseBusinessExpenseGuard}
+          title={businessExpenseGuardDialog?.guard.title || 'Confirmar cambio'}
+          message={businessExpenseGuardDialog?.guard.message}
+          type="confirm"
+          size="sm"
+          confirmText={businessExpenseGuardDialog?.guard.confirmText || 'Continuar'}
+          cancelText={businessExpenseGuardDialog?.guard.cancelText || 'Cancelar'}
+          onConfirm={handleConfirmBusinessExpenseEdit}
+        />
 
         <ContactDetailsModal
           isOpen={modalState.open}

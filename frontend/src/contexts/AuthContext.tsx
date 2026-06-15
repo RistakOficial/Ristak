@@ -1,27 +1,30 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { ensureLocalDevAuth } from '@/services/authFetch'
 import { getIntegrationsStatus } from '@/services/integrationsService'
+import type { AccountLocaleDefaults } from '@/utils/accountLocale'
+import type { AccessConfig, UserRole } from '@/utils/accessControl'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 
-interface User {
+export interface User {
   id: string
   name: string
   email: string
-  role: 'admin' | 'manager' | 'viewer'
+  role: UserRole
   tenant: string
   username?: string
   firstName?: string
   lastName?: string
   phone?: string
   businessName?: string
+  accessConfig?: AccessConfig
 }
 
 interface AuthContextType {
   user: User | null
   isAuthenticated: boolean
   login: (username: string, password: string) => Promise<void>
-  setupAccount: (username: string, password: string, setupToken?: string) => Promise<void>
+  setupAccount: (username: string, password: string, setupToken?: string, accountLocale?: AccountLocaleDefaults) => Promise<void>
   updateProfile: (profile: {
     firstName: string
     lastName: string
@@ -42,13 +45,14 @@ function mapUserFromApi(apiUser: any): User {
     id: apiUser.id,
     name: apiUser.fullName || apiUser.username,
     email: apiUser.email || '',
-    role: 'admin',
+    role: apiUser.role === 'admin' ? 'admin' : 'employee',
     tenant: 'Ristak',
     username: apiUser.username,
     firstName: apiUser.firstName || '',
     lastName: apiUser.lastName || '',
     phone: apiUser.phone || '',
-    businessName: apiUser.businessName || ''
+    businessName: apiUser.businessName || '',
+    accessConfig: apiUser.accessConfig || undefined
   }
 }
 
@@ -91,7 +95,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
           }
         } catch {
-          // Se maneja igual que un token invalido.
+          // Se maneja igual que un token inválido.
         }
 
         localStorage.removeItem('auth_token')
@@ -187,14 +191,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }
 
-  const setupAccount = async (username: string, password: string, setupToken?: string) => {
+  const setupAccount = async (username: string, password: string, setupToken?: string, accountLocale?: AccountLocaleDefaults) => {
     try {
       const response = await fetch(`${API_URL}/api/auth/setup`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ username, password, token: setupToken })
+        body: JSON.stringify({ username, password, token: setupToken, accountLocale })
       })
 
       const data = await response.json()

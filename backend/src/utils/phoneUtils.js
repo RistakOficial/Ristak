@@ -15,8 +15,8 @@ function normalizeMexicoPhoneDigits(digits = '') {
   const national = digits.slice(-10)
   if (national.length !== 10) return ''
 
-  // WhatsApp Mexico can expose mobile JIDs as 521 + 10 digits. Business/contact
-  // storage must stay in E.164 for Mexico without that WhatsApp-only carrier digit.
+  // WhatsApp México can expose mobile JIDs as 521 + 10 digits. Business/contact
+  // storage must stay in E.164 for México without that WhatsApp-only carrier digit.
   if (digits.startsWith('521') && digits.length >= 13) return `52${national}`
   if (digits.startsWith('52') && digits.length >= 12) return `52${national}`
   return ''

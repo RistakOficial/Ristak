@@ -333,6 +333,99 @@
   margin-top: 18px;
 }
 
+.conversationSettingsCard {
+  overflow: visible;
+}
+
+.compactToggle {
+  font-size: 13px;
+}
+
+.compactSettingsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.responseDelayGrid {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(280px, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.replyDeliveryGrid {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(360px, 1fr);
+  align-items: start;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.responseDelayControls {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.replyDeliveryControls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.replyDeliveryControls .selectionToggle {
+  min-height: 42px;
+}
+
+.replyDeliveryToggle {
+  min-height: 42px;
+  align-items: center;
+}
+
+.replyOptionToggle {
+  min-height: 40px;
+  padding-right: 4px;
+}
+
+.delayNumberField {
+  min-width: 0;
+}
+
+.replyPartSizeField {
+  min-width: 0;
+}
+
+.delayUnitField {
+  min-width: 0;
+}
+
+.delayNumberInput {
+  padding-right: 12px;
+}
+
+.mutedField {
+  opacity: 0.58;
+}
+
+.responseDelayHelp {
+  grid-column: 1 / -1;
+}
+
+.agentTextGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.agentTextGrid .textarea {
+  min-height: 112px;
+}
+
 .detailsGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -438,11 +531,86 @@
   gap: 10px;
   color: var(--color-text-secondary);
   font-size: 14px;
+  min-height: 36px;
 }
 
-.inlineToggle input {
-  width: 16px;
-  height: 16px;
+.inlineToggle input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  place-content: center;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  margin: 0;
+  border: 1.5px solid rgba(148, 163, 184, 0.42);
+  border-radius: 999px;
+  background: var(--color-background-primary);
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.inlineToggle input[type="checkbox"]::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  border: solid transparent;
+  border-width: 0 2px 2px 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.inlineToggle input[type="checkbox"]:checked {
+  border-color: var(--color-status-success);
+  background: var(--color-status-success);
+}
+
+.inlineToggle input[type="checkbox"]:checked::after {
+  border-color: #ffffff;
+}
+
+.inlineToggle input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18);
+}
+
+.inlineToggle input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+:global(html body) .container .inlineToggle input[type="checkbox"] {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  display: inline-grid !important;
+  place-content: center !important;
+  width: 18px !important;
+  min-width: 18px !important;
+  height: 18px !important;
+  min-height: 18px !important;
+  border: 1.5px solid rgba(148, 163, 184, 0.42) !important;
+  border-radius: 999px !important;
+  background: var(--color-background-primary) !important;
+  box-shadow: none !important;
+}
+
+:global(html body) .container .inlineToggle input[type="checkbox"]::after {
+  content: "" !important;
+  width: 5px !important;
+  height: 9px !important;
+  border: solid transparent !important;
+  border-width: 0 2px 2px 0 !important;
+  transform: translateY(-1px) rotate(45deg) !important;
+}
+
+:global(html body) .container .inlineToggle input[type="checkbox"]:checked {
+  border-color: var(--color-status-success) !important;
+  background: var(--color-status-success) !important;
+}
+
+:global(html body) .container .inlineToggle input[type="checkbox"]:checked::after {
+  border-color: #ffffff !important;
 }
 
 .inlineToggle span {
@@ -454,6 +622,91 @@
 .inlineToggle svg {
   color: var(--color-status-success);
   flex-shrink: 0;
+}
+
+.selectionToggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.045);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.selectionToggle:hover {
+  border-color: rgba(100, 116, 139, 0.32);
+  background: rgba(148, 163, 184, 0.075);
+}
+
+.selectionToggleChecked {
+  border-color: rgba(16, 185, 129, 0.34);
+  background: rgba(16, 185, 129, 0.09);
+  color: var(--color-text-primary);
+}
+
+.selectionToggleDisabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.selectionToggleCopy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.selectionToggleCopy strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 760;
+  line-height: 1.25;
+}
+
+.selectionToggleCopy small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+:global(html body) .container .selectionToggle input[type="checkbox"] {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  display: inline-grid !important;
+  place-content: center !important;
+  width: 18px !important;
+  min-width: 18px !important;
+  height: 18px !important;
+  min-height: 18px !important;
+  margin: 1px 0 0 !important;
+  border: 1.5px solid rgba(148, 163, 184, 0.42) !important;
+  border-radius: 999px !important;
+  background: var(--color-background-primary) !important;
+  box-shadow: none !important;
+}
+
+:global(html body) .container .selectionToggle input[type="checkbox"]::after {
+  content: "" !important;
+  width: 5px !important;
+  height: 9px !important;
+  border: solid transparent !important;
+  border-width: 0 2px 2px 0 !important;
+  transform: translateY(-1px) rotate(45deg) !important;
+}
+
+:global(html body) .container .selectionToggle input[type="checkbox"]:checked {
+  border-color: var(--color-status-success) !important;
+  background: var(--color-status-success) !important;
+}
+
+:global(html body) .container .selectionToggle input[type="checkbox"]:checked::after {
+  border-color: #ffffff !important;
 }
 
 .detailItem {
@@ -524,6 +777,11 @@
 
   .detailsGrid,
   .settingsGrid,
+  .conversationSetupGrid,
+  .compactSettingsGrid,
+  .responseDelayGrid,
+  .replyDeliveryGrid,
+  .agentTextGrid,
   .contextGrid,
   .modelGrid,
   .behaviorGrid,
@@ -533,6 +791,23 @@
 
   .actions {
     justify-content: stretch;
+  }
+
+  .responseDelayControls,
+  .replyDeliveryControls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .replyOptionToggle,
+  .delayNumberField,
+  .replyPartSizeField,
+  .delayUnitField {
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+    flex: 1 1 auto;
   }
 }
 
@@ -548,19 +823,35 @@
     border-radius: 10px !important;
   }
 
+  .responseDelayControls,
+  .replyDeliveryControls {
+    grid-template-columns: 1fr;
+  }
+
   .header {
     gap: 12px;
     padding-bottom: 14px;
   }
 
   .headerLeft {
-    align-items: center;
+    align-items: flex-start;
+    flex-direction: column;
     min-width: 0;
     gap: 10px;
   }
 
   .headerLeft > div:last-child {
     min-width: 0;
+  }
+
+  .headerActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .headerActions button {
+    justify-content: center;
+    width: 100%;
   }
 
   .iconBox {
@@ -571,12 +862,14 @@
   .title {
     font-size: 17px;
     line-height: 1.2;
+    overflow-wrap: anywhere;
   }
 
   .description {
     max-width: 100%;
     font-size: 13px;
     line-height: 1.45;
+    overflow-wrap: anywhere;
   }
 
   .settingsGrid {
@@ -629,6 +922,10 @@
     min-height: 228px;
   }
 
+  .conversationAgentCard .actionTextarea {
+    min-height: 160px;
+  }
+
   .inlineToggle {
     align-items: flex-start;
     gap: 9px;
@@ -654,4 +951,1137 @@
   .inlineActionButton {
     padding-inline: 8px;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Agente conversacional: contenedores de agentes                      */
+/* ------------------------------------------------------------------ */
+
+.agentDirectoryStats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 136px), 1fr));
+  align-items: stretch;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.agentDirectoryStats > div {
+  display: grid;
+  gap: 3px;
+  min-width: 136px;
+  padding: 11px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.agentDirectoryStatError {
+  border-color: rgba(239, 68, 68, 0.24) !important;
+  background: rgba(239, 68, 68, 0.07) !important;
+}
+
+.agentDirectoryStatError span {
+  color: var(--color-status-error);
+}
+
+.agentDirectoryStats span {
+  color: var(--color-text-primary);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.agentDirectoryStats small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.agentDirectoryGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.agentDirectoryCard {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  width: 100%;
+  min-height: 196px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  text-align: left;
+  overflow: hidden;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.agentDirectoryCard:hover {
+  border-color: rgba(16, 185, 129, 0.38);
+  transform: translateY(-1px);
+}
+
+.agentDirectoryOpenButton {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  width: 100%;
+  padding: 16px 16px 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agentDirectoryOpenButton:hover,
+.agentDirectoryOpenButton:focus-visible {
+  background: rgba(16, 185, 129, 0.05);
+  outline: none;
+}
+
+.agentDirectoryCardMuted {
+  background: rgba(148, 163, 184, 0.04);
+}
+
+.agentDirectoryCardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.agentDirectoryCardCopy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agentDirectoryCardCopy h3 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 17px;
+  font-weight: 780;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentDirectoryCardCopy p {
+  margin: 0;
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.35;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.agentDirectoryMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agentDirectoryMeta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  max-width: 100%;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.11);
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.agentDirectoryActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px 14px;
+}
+
+.agentDirectoryActions button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.emptyAgentDirectory {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.emptyAgentDirectory h3,
+.emptyAgentDirectory p {
+  margin: 0;
+}
+
+.emptyAgentDirectory h3 {
+  color: var(--color-text-primary);
+  font-size: 16px;
+  font-weight: 780;
+}
+
+.emptyAgentDirectory p {
+  max-width: 520px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.agentDetailTopbar {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  margin-bottom: 14px;
+  padding: 0 0 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.agentStickyActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 4px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.agentStickyActions button {
+  min-width: 112px;
+}
+
+.agentDetailLayout {
+  --agent-test-panel-width: clamp(320px, 24vw, 400px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--agent-test-panel-width);
+  align-items: start;
+  gap: 20px;
+}
+
+.agentConfigColumn,
+.agentTestColumn {
+  min-width: 0;
+}
+
+.agentConfigColumn {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agentTestColumn {
+  position: fixed;
+  top: 230px;
+  right: max(68px, calc((100vw - 224px - var(--app-page-max, 1664px)) / 2 + 25px));
+  bottom: 20px;
+  z-index: 30;
+  width: var(--agent-test-panel-width);
+}
+
+.agentStatusPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.agentStatusPill::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  content: '';
+}
+
+.agentStatusPillActive {
+  color: var(--color-status-success);
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.22);
+}
+
+.agentStatusPillMuted {
+  color: var(--color-text-tertiary);
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.agentOpsGrid {
+  display: grid;
+  grid-template-columns: minmax(220px, 360px) minmax(280px, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.agentOpsToggles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.agentTestPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  max-height: none;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: var(--color-background-secondary);
+}
+
+.agentTestHeader {
+  display: grid;
+  gap: 6px;
+}
+
+@media (max-width: 1180px) {
+  .agentDirectoryGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .agentOpsGrid,
+  .agentDetailLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .agentTestPanel {
+    height: auto;
+    max-height: none;
+  }
+
+  .agentTestColumn {
+    position: static;
+    width: auto;
+  }
+
+  .agentTestPanel .testChatBox {
+    min-height: 320px;
+  }
+}
+
+@media (max-width: 640px) {
+  .agentDirectoryGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .agentDirectoryCard {
+    min-height: 188px;
+  }
+
+  .agentDirectoryStats > div {
+    min-width: 0;
+  }
+
+  .agentDetailTopbar,
+  .agentCardHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .agentStickyActions {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .agentStickyActions button {
+    flex: 1 1 auto;
+  }
+
+  .agentCardActions {
+    justify-content: space-between;
+  }
+}
+
+.agentCardHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 0 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.agentCardToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+}
+
+.agentCardChevron {
+  transition: transform 0.15s ease;
+}
+
+.agentCardChevronOpen {
+  transform: rotate(180deg);
+}
+
+.iconBoxMuted {
+  opacity: 0.45;
+}
+
+.agentNameInput {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  background: var(--color-background-primary);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.agentNameInput:hover {
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
+.agentNameInput:focus {
+  outline: none;
+  border-color: rgba(148, 163, 184, 0.45);
+  background: var(--color-background-primary);
+}
+
+.agentCardActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.agentCardActions .iconButton {
+  position: static;
+  transform: none;
+}
+
+.agentCardSummary {
+  margin: 10px 0 2px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+}
+
+/* Secciones internas del agente: separadores sutiles, sin cajas extra */
+.agentSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.agentSectionHint {
+  margin: -6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+}
+
+.agentNestedSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.agentSubsectionHeader {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agentSubsectionHeader h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.agentSubsectionHeader span {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.conversationAgentCard,
+.conversationAgentCard:global([data-ristak-card]) {
+  overflow: visible !important;
+}
+
+.conversationAgentCard .actionTextarea {
+  min-height: 132px;
+}
+
+.advancedDetails {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.advancedDetails summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  list-style: none;
+}
+
+.advancedDetails summary::-webkit-details-marker {
+  display: none;
+}
+
+.advancedDetails summary span {
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.advancedDetails summary small {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.advancedContent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Constructor de reglas (filtros de entrada / salida)                 */
+/* ------------------------------------------------------------------ */
+
+.ruleGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ruleGroupTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.ruleRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  font-size: 13.5px;
+  color: var(--color-text-primary);
+}
+
+.rulePrefix {
+  flex-shrink: 0;
+  min-width: 52px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+.ruleSelect,
+.ruleInput {
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.ruleSelect:focus,
+.ruleInput:focus {
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.ruleInput {
+  flex: 1;
+  min-width: 120px;
+}
+
+.ruleDelete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.ruleDelete:hover {
+  color: var(--color-text-primary);
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.ruleEmptyHint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+}
+
+.ruleAddWrap {
+  position: relative;
+  align-self: flex-start;
+}
+
+.ruleAddButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px dashed rgba(148, 163, 184, 0.4);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.ruleAddButton:hover {
+  color: var(--color-text-primary);
+  border-color: rgba(148, 163, 184, 0.7);
+}
+
+.ruleAddMenu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 280px;
+  padding: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ruleAddMenuItem {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.ruleAddMenuItem:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+/* ------------------------------------------------------------------ */
+/* Acciones adicionales al cumplir el objetivo                         */
+/* ------------------------------------------------------------------ */
+
+.extraRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+}
+
+.extraRow .ruleSelect {
+  min-width: 200px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Estrategia de cierre                                                */
+/* ------------------------------------------------------------------ */
+
+.strategyHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.strategyBadge {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--color-text-tertiary);
+}
+
+.strategyBadgeCustom {
+  background: rgba(37, 99, 235, 0.12);
+  color: #3b82f6;
+}
+
+.resetStrategyButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.resetStrategyButton:hover {
+  color: var(--color-text-primary);
+  border-color: rgba(148, 163, 184, 0.6);
+}
+
+/* ------------------------------------------------------------------ */
+/* Conversación simulada para probar el agente                         */
+/* ------------------------------------------------------------------ */
+
+.testChatBox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  min-height: 130px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.agentTestPanel .testChatBox {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 220px;
+  max-height: none;
+}
+
+.testChatEmpty {
+  margin: auto;
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.testChatMessage {
+  max-width: 82%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.testChatUser {
+  align-self: flex-end;
+  background: #2563eb;
+  color: #ffffff;
+  border-bottom-right-radius: 4px;
+}
+
+.testChatAssistant {
+  align-self: flex-start;
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--color-text-primary);
+  border-bottom-left-radius: 4px;
+}
+
+.testChatInternal {
+  background: transparent;
+  border: 1px dashed rgba(148, 163, 184, 0.4);
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+  font-style: italic;
+}
+
+.testChatComposer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agentTestPanel .testChatComposer {
+  align-items: stretch;
+}
+
+.testChatComposer .input {
+  flex: 1;
+  padding-right: 12px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Constructor de condiciones (grupos Y unidos por O)                  */
+/* ------------------------------------------------------------------ */
+
+.conditionBuilder {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.conditionGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.05);
+}
+
+.conditionGroup > .ruleAddWrap {
+  align-self: flex-start;
+  flex: 0 0 auto;
+}
+
+.orDivider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0;
+}
+
+.orDivider span {
+  flex: 1;
+  height: 1px;
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.orDivider strong {
+  flex-shrink: 0;
+  padding: 2px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+  background: var(--color-background-primary);
+}
+
+.conditionRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  width: 100%;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  font-size: 13.5px;
+  color: var(--color-text-primary);
+  transition: border-color 0.15s ease;
+}
+
+.conditionPrefix {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.conditionRow:hover {
+  border-color: rgba(148, 163, 184, 0.34);
+}
+
+.conditionRowEditing {
+  border-color: rgba(148, 163, 184, 0.45);
+}
+
+.conditionSentence {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conditionActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.conditionActions .ruleDelete {
+  margin-left: 0;
+}
+
+.conditionRow:not(.conditionRowEditing):not(:hover) .conditionActions {
+  opacity: 0.35;
+}
+
+.conditionActions {
+  transition: opacity 0.15s ease;
+}
+
+.conditionNumberInput {
+  flex: 0 0 auto;
+  width: 88px;
+  min-width: 0;
+}
+
+.conditionListEditor {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.conditionListEditor .ruleInput {
+  min-width: 140px;
+}
+
+.conditionListChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.conditionListChip button {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+}
+
+.conditionListChip button:hover {
+  color: var(--color-text-primary);
+}
+
+/* Selector de etiquetas dentro de filas de condiciones/acciones */
+.conditionTagPicker {
+  min-width: 180px;
+  flex: 1 1 200px;
+}
+
+/* Selector de días de la semana en condiciones */
+.weekdayPicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.weekdayButton {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 7px;
+  background: var(--color-background-primary);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.weekdayButton:hover {
+  border-color: rgba(148, 163, 184, 0.55);
+  color: var(--color-text-primary);
+}
+
+.weekdayButtonActive {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.45);
+  color: #3b82f6;
+}
+
+/* Panel de edición jerárquico de una condición (categoría + parámetros) */
+.conditionEditPanel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+}
+
+.conditionBaseHint {
+  flex: 1 1 260px;
+  min-width: 180px;
+  font-size: 12.5px;
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.conditionTypeSelect {
+  flex: 0 1 200px;
+  min-width: 150px;
+  max-width: 260px;
+}
+
+.conditionParamRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  flex: 1 1 520px;
+  gap: 8px;
+  min-width: min(100%, 340px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.conditionParamRowPrimary {
+  flex-basis: 720px;
+}
+
+.conditionParamRow + .conditionParamRow {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.conditionParamJoin {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.conditionFieldSelect {
+  flex: 0 1 210px;
+  min-width: 150px;
+  max-width: 300px;
+}
+
+.conditionSubfieldSelect {
+  flex: 1 1 210px;
+  min-width: 170px;
+  max-width: 340px;
+}
+
+.conditionOperatorSelect {
+  flex: 0 1 170px;
+  min-width: 130px;
+  max-width: 240px;
+}
+
+.conditionParamRow > .ruleSelect:not(.conditionTypeSelect):not(.conditionFieldSelect):not(.conditionSubfieldSelect):not(.conditionOperatorSelect) {
+  flex: 1 1 200px;
+  min-width: 140px;
+}
+
+.conditionInlineActions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+  margin-left: 0;
+}
+
+.conditionInlineActions .ruleDelete {
+  margin-left: 0;
+}
+
+.ruleAddButtonSmall {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
 }

@@ -20,6 +20,7 @@ const COARSE_POINTER_QUERY = '(pointer: coarse)'
 const PHONE_SHORT_SIDE_LIMIT = 768
 const IPAD_DESKTOP_SHORT_SIDE_LIMIT = 700
 const TABLET_SHORT_SIDE_LIMIT = 1366
+const LOCAL_PHONE_PREVIEW_HOSTNAMES = new Set(['localhost', '0.0.0.0', '::1', '[::1]'])
 
 export function isPhoneAppPath(pathname = '') {
   return pathname === '/phone' || pathname.startsWith('/phone/')
@@ -29,18 +30,30 @@ export function getLoginPathForRoute(pathname = '') {
   return isPhoneAppPath(pathname) ? PHONE_APP_LOGIN_PATH : DESKTOP_LOGIN_PATH
 }
 
+function isSafeAuthPath(path = '') {
+  return path.startsWith('/') && !path.startsWith('//') && !path.startsWith('/api/')
+}
+
+export function sanitizeAuthRedirectPath(value?: string | null, fallbackPath = '/dashboard') {
+  const fallback = isSafeAuthPath(fallbackPath) ? fallbackPath : '/dashboard'
+  const path = String(value || '').trim()
+  if (!isSafeAuthPath(path)) return fallback
+  return path.slice(0, 700)
+}
+
 export function getPostAuthRedirectPath(from?: RedirectLocation, fallbackPath = '/dashboard') {
   const pathname = from?.pathname
+  const fallback = sanitizeAuthRedirectPath(fallbackPath, '/dashboard')
 
   if (!pathname?.startsWith('/') || pathname === DESKTOP_LOGIN_PATH || pathname === SETUP_PATH) {
-    return fallbackPath
+    return fallback
   }
 
   if (pathname === PHONE_APP_LOGIN_PATH) {
     return PHONE_APP_HOME_PATH
   }
 
-  return `${pathname}${from?.search || ''}${from?.hash || ''}`
+  return sanitizeAuthRedirectPath(`${pathname}${from?.search || ''}${from?.hash || ''}`, fallback)
 }
 
 function getScreenShortSide() {
@@ -63,6 +76,53 @@ function getViewportShortSide() {
   if (!viewportWidth || !viewportHeight) return 0
 
   return Math.min(viewportWidth, viewportHeight)
+}
+
+function getViewportLongSide() {
+  if (typeof window === 'undefined') return 0
+
+  const viewportWidth = window.visualViewport?.width || window.innerWidth || 0
+  const viewportHeight = window.visualViewport?.height || window.innerHeight || 0
+
+  if (!viewportWidth || !viewportHeight) return 0
+
+  return Math.max(viewportWidth, viewportHeight)
+}
+
+function isPrivateIPv4Address(hostname: string) {
+  const parts = hostname.split('.').map((part) => Number(part))
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
+
+  const [first, second] = parts
+  if (first === 10) return true
+  if (first === 127) return true
+  if (first === 169 && second === 254) return true
+  if (first === 172 && second >= 16 && second <= 31) return true
+  if (first === 192 && second === 168) return true
+
+  return false
+}
+
+export function isLocalPhonePreviewHost(hostname = typeof window !== 'undefined' ? window.location.hostname : '') {
+  const normalizedHostname = hostname.trim().toLowerCase()
+  if (!normalizedHostname) return false
+  if (LOCAL_PHONE_PREVIEW_HOSTNAMES.has(normalizedHostname)) return true
+  if (normalizedHostname.endsWith('.localhost') || normalizedHostname.endsWith('.local')) return true
+  if (!normalizedHostname.includes('.') && !normalizedHostname.includes(':')) return true
+  if (isPrivateIPv4Address(normalizedHostname)) return true
+
+  return false
+}
+
+export function getLocalPhonePreviewDeviceMode(): PortableDeviceMode | null {
+  if (!isLocalPhonePreviewHost()) return null
+
+  const shortSide = getViewportShortSide()
+  const longSide = getViewportLongSide()
+  if (shortSide > 0 && shortSide < PHONE_SHORT_SIDE_LIMIT) return 'phone'
+  if (longSide > 0 && longSide <= TABLET_SHORT_SIDE_LIMIT) return 'tablet'
+
+  return 'tablet'
 }
 
 export function isCellphoneDevice() {

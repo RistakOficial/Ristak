@@ -7,6 +7,7 @@ import {
   FlowVariablesContext,
   TOKEN_PATTERN,
   VARIABLE_CATEGORIES,
+  fallbackLabelForFieldId,
   isDynamicToken,
   loadAllVariables,
   tokenFor,
@@ -177,7 +178,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
         }
         const fieldId = match[1]
         const known = variablesById.get(fieldId)
-        editor.appendChild(buildChip(fieldId, known?.label || fieldId, !known && isDynamicToken(fieldId)))
+        editor.appendChild(buildChip(fieldId, known?.label || fallbackLabelForFieldId(fieldId), !known && isDynamicToken(fieldId)))
         lastIndex = index + match[0].length
       }
       if (lastIndex < text.length) {
@@ -460,6 +461,8 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
       <div className={styles.composerPopoverSearch}>
         <Search size={12} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
         <input
+          data-ristak-unstyled
+          className={styles.cleanSearchInput}
           autoFocus
           value={query}
           placeholder="Buscar variable o ruta…"
@@ -618,7 +621,7 @@ export const VariableTextInput: React.FC<Omit<MessageComposerProps, 'multiline' 
 /** Útil para mostrar texto compilado de forma legible en resúmenes */
 export function compiledToReadable(compiled: string, variables: FlowVariable[] = BASE_VARIABLES): string {
   const byId = new Map(variables.map((variable) => [variable.fieldId, variable.label]))
-  return (compiled || '').replace(TOKEN_PATTERN, (_, fieldId) => byId.get(fieldId) || fieldId)
+  return (compiled || '').replace(TOKEN_PATTERN, (_, fieldId) => byId.get(fieldId) || fallbackLabelForFieldId(fieldId))
 }
 
 export { tokenFor }

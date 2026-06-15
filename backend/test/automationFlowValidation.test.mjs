@@ -200,6 +200,56 @@ test('publicar valida el horario global del flujo', () => {
   assert.deepEqual(validateFlowForPublish(flow), [])
 })
 
+test('publicar exige clic de disparo seleccionado en esperas por alias interno', () => {
+  const waitNode = {
+    id: 'wait1',
+    type: 'logic-wait',
+    position: { x: 100, y: 0 },
+    config: { mode: 'action', expectedAction: 'trigger_link_click', actionResource: '' }
+  }
+  const flow = {
+    nodes: [startNode(), waitNode],
+    edges: [edge('e1', 'start', 'wait1')]
+  }
+
+  let errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('clic de disparo')))
+
+  waitNode.config.actionResource = 'trigger_link_123'
+  errors = validateFlowForPublish(flow)
+  assert.deepEqual(errors, [])
+})
+
+test('publicar exige mensaje enviado anterior en esperas por respuesta a mensaje', () => {
+  const messageNode = {
+    id: 'msg1',
+    type: 'channel-messenger',
+    position: { x: 100, y: 0 },
+    config: { messageBlocks: [{ id: 'b1', type: 'text', compiledText: 'Hola' }] }
+  }
+  const waitNode = {
+    id: 'wait1',
+    type: 'logic-wait',
+    position: { x: 200, y: 0 },
+    config: { mode: 'action', expectedAction: 'reply_message', actionResource: '' }
+  }
+  const flow = {
+    nodes: [startNode(), messageNode, waitNode],
+    edges: [edge('e1', 'start', 'msg1'), edge('e2', 'msg1', 'wait1')]
+  }
+
+  let errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('mensaje enviado anterior')))
+
+  waitNode.config.actionResource = 'msg1'
+  errors = validateFlowForPublish(flow)
+  assert.deepEqual(errors, [])
+
+  flow.edges = [edge('e1', 'start', 'wait1'), edge('e2', 'wait1', 'msg1')]
+  errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('ya no está antes')))
+})
+
 test('publicar detecta ciclos en el flujo', () => {
   const flow = {
     nodes: [startNode(), actionNode('a1'), actionNode('a2')],

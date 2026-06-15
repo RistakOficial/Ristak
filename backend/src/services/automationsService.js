@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { normalizeFlow, validateFlowForPublish, START_NODE_TYPE } from './automationFlowValidation.js'
+import { enrollContactManually } from './automationEngine.js'
 
 const usePostgres = !!process.env.DATABASE_URL
 const flowPlaceholder = usePostgres ? '?::jsonb' : '?'
@@ -33,6 +34,18 @@ function parseFlow(rawFlow) {
   }
 }
 
+function sameFlow(left, right) {
+  if (!left || !right) return false
+  const leftFlow = normalizeFlow(left)
+  const rightFlow = normalizeFlow(right)
+  const comparable = (flow) => ({
+    nodes: flow.nodes,
+    edges: flow.edges,
+    settings: flow.settings || {}
+  })
+  return JSON.stringify(comparable(leftFlow)) === JSON.stringify(comparable(rightFlow))
+}
+
 function mapFolderRow(row) {
   return {
     id: row.id,
@@ -45,6 +58,9 @@ function mapFolderRow(row) {
 }
 
 function mapAutomationRow(row, { includeFlow = false } = {}) {
+  const canComparePublication = row.flow !== undefined && row.published_flow !== undefined
+  const draftFlow = canComparePublication ? parseFlow(row.flow) : null
+  const publishedFlow = canComparePublication && row.published_flow ? parseFlow(row.published_flow) : null
   const automation = {
     id: row.id,
     folderId: row.folder_id || null,
@@ -53,11 +69,16 @@ function mapAutomationRow(row, { includeFlow = false } = {}) {
     status: row.status || 'draft',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    publishedAt: row.published_at || null
+    publishedAt: row.published_at || null,
+    hasUnpublishedChanges: Boolean(
+      publishedFlow &&
+        ['published', 'paused'].includes(row.status || 'draft') &&
+        !sameFlow(draftFlow, publishedFlow)
+    )
   }
 
   if (includeFlow) {
-    automation.flow = normalizeFlow(parseFlow(row.flow))
+    automation.flow = normalizeFlow(draftFlow || parseFlow(row.flow))
   }
 
   return automation
@@ -238,13 +259,14 @@ export async function updateAutomation(automationId, input = {}) {
 
   let status = current.status
   let publishedAt = current.publishedAt
+  let publishedFlow = row.published_flow ? normalizeFlow(parseFlow(row.published_flow)) : null
   if (input.status !== undefined) {
     if (!AUTOMATION_STATUSES.includes(input.status)) {
       throw badRequest('Estado de automatización inválido')
     }
     status = input.status
 
-    if (status === 'published' && current.status !== 'published') {
+    if (status === 'published') {
       const errors = validateFlowForPublish(flow)
       if (errors.length > 0) {
         const error = badRequest(errors.join('. '))
@@ -252,15 +274,25 @@ export async function updateAutomation(automationId, input = {}) {
         throw error
       }
       publishedAt = new Date().toISOString()
+      publishedFlow = flow
     }
   }
 
   await db.run(
     `UPDATE automations
      SET name = ?, description = ?, folder_id = ?, status = ?, flow = ${flowPlaceholder},
-         published_at = ?, updated_at = CURRENT_TIMESTAMP
+         published_flow = ${flowPlaceholder}, published_at = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
-    [name, description, folderId, status, JSON.stringify(flow), publishedAt, automationId]
+    [
+      name,
+      description,
+      folderId,
+      status,
+      JSON.stringify(flow),
+      publishedFlow ? JSON.stringify(publishedFlow) : null,
+      publishedAt,
+      automationId
+    ]
   )
 
   return getAutomation(automationId)
@@ -355,6 +387,309 @@ export async function getAutomationsOverview() {
   return { folders, automations }
 }
 
+
+// ---------------------------------------------------------------------------
+// Inscripciones y registros de ejecución (los llena el motor al correr)
+// ---------------------------------------------------------------------------
+
+function parseLog(raw) {
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  try { return JSON.parse(raw) } catch { return [] }
+}
+
+function contactDisplayName(row) {
+  return String(row?.full_name || row?.first_name || row?.phone || row?.email || row?.id || 'Contacto')
+}
+
+async function getContactForAutomation(contactId) {
+  const id = typeof contactId === 'string' ? contactId.trim() : ''
+  if (!id) throw badRequest('Selecciona un contacto')
+  const contact = await db.get(
+    'SELECT id, full_name, first_name, phone, email FROM contacts WHERE id = ?',
+    [id]
+  )
+  if (!contact) throw notFound('Contacto no encontrado')
+  return contact
+}
+
+async function getPublishedAutomationForEnrollment(automationId) {
+  const id = typeof automationId === 'string' ? automationId.trim() : ''
+  if (!id) throw badRequest('Selecciona una automatización')
+  const automation = await db.get(
+    `SELECT id, name, status
+     FROM automations
+     WHERE id = ?`,
+    [id]
+  )
+  if (!automation) throw notFound('Automatización no encontrada')
+  if (automation.status !== 'published') {
+    throw badRequest('Solo puedes meter contactos a automatizaciones publicadas')
+  }
+  return automation
+}
+
+function normalizeScheduledAt(value) {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!raw) throw badRequest('Elige cuándo quieres agregar el contacto')
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) throw badRequest('La fecha programada no es válida')
+  if (date.getTime() < Date.now() - 60_000) throw badRequest('Elige una fecha futura')
+  return date.toISOString()
+}
+
+function mapContactEnrollmentRow(row) {
+  return {
+    id: row.id,
+    kind: 'enrollment',
+    automationId: row.automation_id,
+    automationName: row.automation_name || 'Automatización',
+    status: row.status || 'active',
+    contactId: row.contact_id || null,
+    contactName: row.contact_name || 'Contacto',
+    currentNodeId: row.current_node_id || null,
+    log: parseLog(row.log),
+    enteredAt: row.entered_at,
+    updatedAt: row.updated_at
+  }
+}
+
+function mapContactEnrollmentJobRow(row) {
+  return {
+    id: row.id,
+    kind: 'scheduled',
+    automationId: row.automation_id,
+    automationName: row.automation_name || 'Automatización',
+    status: row.status || 'scheduled',
+    contactId: row.contact_id || null,
+    contactName: row.contact_name || 'Contacto',
+    scheduledAt: row.scheduled_at,
+    enrollmentId: row.enrollment_id || null,
+    error: row.error || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    executedAt: row.executed_at || null
+  }
+}
+
+function activityTime(item) {
+  return new Date(item.scheduledAt || item.updatedAt || item.executedAt || item.enteredAt || item.createdAt || 0).getTime() || 0
+}
+
+function mapMetaCatalogRow(row) {
+  return {
+    id: String(row.id || row.name || ''),
+    name: String(row.name || row.id || ''),
+    campaignId: row.campaign_id ? String(row.campaign_id) : undefined,
+    campaignName: row.campaign_name ? String(row.campaign_name) : undefined,
+    adsetId: row.adset_id ? String(row.adset_id) : undefined,
+    adsetName: row.adset_name ? String(row.adset_name) : undefined,
+    lastDate: row.last_date || undefined
+  }
+}
+
+/**
+ * Campañas reales sincronizadas desde Meta Ads: alimentan filtros y triggers
+ * donde el usuario antes tenia que adivinar nombres o IDs.
+ */
+export async function listAttributionCampaigns() {
+  const rows = await db.all(
+    `SELECT
+       campaign_id AS id,
+       COALESCE(MAX(NULLIF(campaign_name, '')), campaign_id) AS name,
+       MAX(date) AS last_date
+     FROM meta_ads
+     WHERE campaign_id IS NOT NULL AND campaign_id != ''
+     GROUP BY campaign_id
+     ORDER BY MAX(date) DESC, name ASC
+     LIMIT 300`
+  )
+  return rows.map(mapMetaCatalogRow)
+}
+
+/**
+ * Conjuntos de anuncios sincronizados desde Meta Ads.
+ */
+export async function listAttributionAdsets() {
+  const rows = await db.all(
+    `SELECT
+       adset_id AS id,
+       COALESCE(MAX(NULLIF(adset_name, '')), adset_id) AS name,
+       MAX(campaign_id) AS campaign_id,
+       COALESCE(MAX(NULLIF(campaign_name, '')), MAX(campaign_id)) AS campaign_name,
+       MAX(date) AS last_date
+     FROM meta_ads
+     WHERE adset_id IS NOT NULL AND adset_id != ''
+     GROUP BY adset_id
+     ORDER BY MAX(date) DESC, name ASC
+     LIMIT 300`
+  )
+  return rows.map(mapMetaCatalogRow)
+}
+
+/**
+ * Anuncios reales detectados en la atribución de los contactos y en Meta Ads:
+ * alimenta el selector "Anuncio de origen" de los filtros de automatizaciones.
+ */
+export async function listAttributionAds() {
+  const metaRows = await db.all(
+    `SELECT
+       ad_id AS id,
+       COALESCE(MAX(NULLIF(ad_name, '')), ad_id) AS name,
+       MAX(campaign_id) AS campaign_id,
+       COALESCE(MAX(NULLIF(campaign_name, '')), MAX(campaign_id)) AS campaign_name,
+       MAX(adset_id) AS adset_id,
+       COALESCE(MAX(NULLIF(adset_name, '')), MAX(adset_id)) AS adset_name,
+       MAX(date) AS last_date
+     FROM meta_ads
+     WHERE ad_id IS NOT NULL AND ad_id != ''
+     GROUP BY ad_id
+     ORDER BY MAX(date) DESC, name ASC
+     LIMIT 300`
+  )
+  if (metaRows.length > 0) return metaRows.map(mapMetaCatalogRow)
+
+  const rows = await db.all(
+    `SELECT attribution_ad_name AS name, attribution_ad_id AS id, COUNT(*) AS total
+     FROM contacts
+     WHERE (attribution_ad_name IS NOT NULL AND attribution_ad_name != '')
+        OR (attribution_ad_id IS NOT NULL AND attribution_ad_id != '')
+     GROUP BY attribution_ad_name, attribution_ad_id
+     ORDER BY total DESC
+     LIMIT 200`
+  )
+  return rows.map(mapMetaCatalogRow)
+}
+
+export async function listEnrollments(automationId) {
+  const rows = await db.all(
+    `SELECT * FROM automation_enrollments WHERE automation_id = ? ORDER BY updated_at DESC LIMIT 200`,
+    [automationId]
+  )
+  return rows.map((row) => ({
+    id: row.id,
+    contactId: row.contact_id,
+    contactName: row.contact_name || 'Contacto',
+    status: row.status || 'active',
+    currentNodeId: row.current_node_id || null,
+    log: parseLog(row.log),
+    enteredAt: row.entered_at,
+    updatedAt: row.updated_at
+  }))
+}
+
+export async function listContactAutomationActivity(contactId) {
+  await getContactForAutomation(contactId)
+  const [enrollmentRows, jobRows] = await Promise.all([
+    db.all(
+      `SELECT e.*, COALESCE(a.name, 'Automatización eliminada') AS automation_name
+       FROM automation_enrollments e
+       LEFT JOIN automations a ON a.id = e.automation_id
+       WHERE e.contact_id = ?
+       ORDER BY e.updated_at DESC
+       LIMIT 200`,
+      [contactId]
+    ),
+    db.all(
+      `SELECT j.*, COALESCE(a.name, 'Automatización eliminada') AS automation_name
+       FROM automation_contact_enrollment_jobs j
+       LEFT JOIN automations a ON a.id = j.automation_id
+       WHERE j.contact_id = ?
+       ORDER BY j.scheduled_at DESC, j.created_at DESC
+       LIMIT 200`,
+      [contactId]
+    )
+  ])
+
+  const enrollmentItems = enrollmentRows.map(mapContactEnrollmentRow)
+  const jobItems = jobRows.map(mapContactEnrollmentJobRow)
+  const activeStatuses = new Set(['active', 'waiting'])
+  const active = [
+    ...jobItems.filter((item) => ['scheduled', 'processing'].includes(item.status)),
+    ...enrollmentItems.filter((item) => activeStatuses.has(item.status))
+  ].sort((left, right) => activityTime(left) - activityTime(right))
+
+  const past = [
+    ...enrollmentItems.filter((item) => !activeStatuses.has(item.status)),
+    ...jobItems.filter((item) => !['scheduled', 'processing', 'completed'].includes(item.status) || (item.status === 'completed' && !item.enrollmentId))
+  ].sort((left, right) => activityTime(right) - activityTime(left))
+
+  return { active, past }
+}
+
+export async function enrollContactInAutomation(automationId, input = {}) {
+  const contact = await getContactForAutomation(input.contactId)
+  const automation = await getPublishedAutomationForEnrollment(automationId)
+  const mode = input.mode === 'scheduled' ? 'scheduled' : 'now'
+
+  if (mode === 'scheduled') {
+    const scheduledAt = normalizeScheduledAt(input.scheduledAt)
+    const id = makeId('autojob')
+    await db.run(
+      `INSERT INTO automation_contact_enrollment_jobs
+         (id, automation_id, contact_id, contact_name, scheduled_at, status, created_by)
+       VALUES (?, ?, ?, ?, ?, 'scheduled', ?)`,
+      [
+        id,
+        automation.id,
+        contact.id,
+        contactDisplayName(contact),
+        scheduledAt,
+        input.userId || null
+      ]
+    )
+    const row = await db.get(
+      `SELECT j.*, a.name AS automation_name
+       FROM automation_contact_enrollment_jobs j
+       LEFT JOIN automations a ON a.id = j.automation_id
+       WHERE j.id = ?`,
+      [id]
+    )
+    return { mode, job: mapContactEnrollmentJobRow(row) }
+  }
+
+  const enrollment = await enrollContactManually({
+    automationId: automation.id,
+    contactId: contact.id,
+    source: 'manual'
+  })
+  return {
+    mode,
+    enrollment: {
+      ...enrollment,
+      kind: 'enrollment',
+      automationName: automation.name
+    }
+  }
+}
+
+/** Conteo de contactos activos por nodo (para los badges del canvas) */
+export async function getEnrollmentStats(automationId) {
+  const rows = await db.all(
+    `SELECT current_node_id, COUNT(*) AS total
+     FROM automation_enrollments
+     WHERE automation_id = ? AND status IN ('active', 'waiting')
+     GROUP BY current_node_id`,
+    [automationId]
+  )
+  const byNode = {}
+  let active = 0
+  rows.forEach((row) => {
+    if (row.current_node_id) byNode[row.current_node_id] = Number(row.total) || 0
+    active += Number(row.total) || 0
+  })
+  const totals = await db.get(
+    `SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ?`,
+    [automationId]
+  )
+  return { active, total: Number(totals?.total) || 0, byNode }
+}
+
+
+// ---------------------------------------------------------------------------
+// Archivos adjuntos (imágenes/videos/audios/docs de los bloques de mensaje)
+// ---------------------------------------------------------------------------
+
 export async function saveAutomationAsset({ fileBase64, filename, userId }) {
   const { uploadMediaAssetFromDataUrl } = await import('./mediaStorageService.js')
   const asset = await uploadMediaAssetFromDataUrl({
@@ -375,4 +710,14 @@ export async function saveAutomationAsset({ fileBase64, filename, userId }) {
     status: asset.status,
     mediaType: asset.mediaType
   }
+}
+
+export async function getAutomationAsset(assetId) {
+  const row = await db.get('SELECT * FROM automation_assets WHERE id = ?', [assetId])
+  if (!row) {
+    const error = new Error('Archivo no encontrado')
+    error.status = 404
+    throw error
+  }
+  return row
 }

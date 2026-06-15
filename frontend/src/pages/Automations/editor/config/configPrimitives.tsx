@@ -1,8 +1,15 @@
 import React, { useEffect, useState } from 'react'
 import { cn } from '@/utils/cn'
-import { CustomSelect } from '@/components/common'
+import { CustomSelect as BaseCustomSelect, TagPicker } from '@/components/common'
+
+/** CustomSelect con portal: el dropdown se dibuja por delante del panel
+ *  de configuración (los contenedores con scroll lo recortaban). */
+export const CustomSelect: React.FC<React.ComponentProps<typeof BaseCustomSelect>> = (props) => (
+  <BaseCustomSelect portal size="large" {...props} />
+)
 import { getCatalog, type CatalogKind, type CatalogOption } from '@/services/automationCatalogsService'
 import { CONTACT_VARIABLES } from '../nodeRegistry'
+import { DrillSelect } from './DrillSelect'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -100,6 +107,7 @@ interface CatalogSelectProps {
   catalog: CatalogKind
   value: string
   placeholder?: string
+  includeSystemTags?: boolean
   'aria-label'?: string
   /** Recibe el valor y la etiqueta legible de la opción elegida */
   onChange: (value: string, label: string) => void
@@ -109,17 +117,78 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
   catalog,
   value,
   placeholder,
+  includeSystemTags = false,
   onChange,
   ...rest
 }) => {
   const { options, loading } = useCatalogOptions(catalog)
 
+  // Etiquetas: selector con buscador y "crear etiqueta" inline (catálogo real)
+  if (catalog === 'tags') {
+    return (
+      <TagPicker
+        value={value}
+        onValueChange={(next, label) => onChange(next, label)}
+        includeSystem={includeSystemTags}
+        allowCreate
+        portal
+        size="large"
+        placeholder={placeholder || 'Selecciona una etiqueta'}
+        aria-label={rest['aria-label']}
+      />
+    )
+  }
+
   if (loading) {
     return <span className={styles.configHelp}>Cargando opciones…</span>
   }
 
+  if (catalog === 'customFields') {
+    const selectOptions = options.map((option) => ({
+      value: option.value,
+      label: option.meta ? `${option.label} · ${option.meta}` : option.label
+    }))
+    const hasSavedValue = Boolean(value) && !selectOptions.some((option) => option.value === value)
+    if (hasSavedValue) {
+      selectOptions.unshift({ value, label: `${value} · guardado` })
+    }
+    if (selectOptions.length === 0) {
+      return <span className={styles.configHelp}>No hay campos personalizados activos todavía.</span>
+    }
+    return (
+      <CustomSelect
+        options={selectOptions}
+        value={value}
+        onValueChange={(next) => {
+          const selected = options.find((option) => option.value === next)
+          onChange(next, selected?.label || next)
+        }}
+        placeholder={placeholder || 'Selecciona el campo personalizado'}
+        aria-label={rest['aria-label']}
+      />
+    )
+  }
+
   if (options.length === 0) {
     return <span className={styles.configHelp}>No hay opciones disponibles todavía.</span>
+  }
+
+  // Campos de contacto: drill-down con categorías (datos básicos vs personalizados)
+  if (catalog === 'contactFields') {
+    const basics = options.filter((option) => !option.value.startsWith('custom:'))
+    const custom = options.filter((option) => option.value.startsWith('custom:'))
+    return (
+      <DrillSelect
+        groups={[
+          { id: 'basics', label: 'Datos del contacto', items: basics.map((option) => ({ value: option.value, label: option.label })) },
+          { id: 'custom', label: 'Campos personalizados', items: custom.map((option) => ({ value: option.value, label: option.label })) }
+        ]}
+        value={value}
+        onValueChange={(next, label) => onChange(next, label)}
+        placeholder={placeholder || 'Selecciona el campo'}
+        aria-label={rest['aria-label']}
+      />
+    )
   }
 
   return (
@@ -143,11 +212,28 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
 export const CatalogTags: React.FC<{
   catalog: CatalogKind
   values: string[]
+  includeSystemTags?: boolean
   onChange: (values: string[]) => void
   'aria-label'?: string
-}> = ({ catalog, values, onChange, ...rest }) => {
+}> = ({ catalog, values, includeSystemTags = false, onChange, ...rest }) => {
   const { options, loading } = useCatalogOptions(catalog)
   const remaining = options.filter((option) => !values.includes(option.value))
+
+  // Etiquetas: chips con buscador y "crear etiqueta" inline (catálogo real)
+  if (catalog === 'tags') {
+    return (
+      <TagPicker
+        multiple
+        selectedIds={values}
+        onChange={onChange}
+        includeSystem={includeSystemTags}
+        allowCreate
+        portal
+        size="large"
+        aria-label={rest['aria-label']}
+      />
+    )
+  }
 
   return (
     <div>

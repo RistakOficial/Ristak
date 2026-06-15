@@ -11,6 +11,13 @@ import { sendCalendarAppointmentNotification } from '../services/pushNotificatio
 import { getRequestHost, resolveConnectedPublicDomainForHost } from '../services/sitesService.js';
 import { normalizePhoneForAccount } from '../utils/accountLocale.js';
 import {
+  isLicenseEnforced,
+  getCentralGoogleCalendarStatus,
+  createCentralGoogleCalendarConnectUrl,
+  listCentralGoogleCalendars,
+  disconnectCentralGoogleCalendar
+} from '../services/licenseService.js';
+import {
   finalizePreparedPhoneUpsert,
   findContactByPhoneCandidates,
   prepareContactPhoneUpsert
@@ -34,7 +41,8 @@ async function getHighLevelContext(req, source = {}) {
 
 function normalizeCalendarSourcePreference(value) {
   const normalized = cleanString(value || 'combined').toLowerCase();
-  return ['combined', 'ristak', 'ghl', 'google'].includes(normalized) ? normalized : 'combined';
+  if (normalized === 'google') return 'combined';
+  return ['combined', 'ristak', 'ghl'].includes(normalized) ? normalized : 'combined';
 }
 
 async function getCalendarSourcePreference(override = '') {
@@ -52,6 +60,107 @@ async function getCalendarSourcePreference(override = '') {
 
 function cleanString(value) {
   return String(value ?? '').trim();
+}
+
+function canWriteGoogleCalendarRole(role) {
+  return ['owner', 'writer'].includes(cleanString(role).toLowerCase());
+}
+
+function serviceAccountGoogleStatus(config = {}) {
+  return {
+    connectionMode: 'service_account',
+    configured: true,
+    ...config
+  };
+}
+
+function centralGoogleStatus(calendar = {}) {
+  const connected = Boolean(calendar.connected);
+  const connectedAt = calendar.connected_at || calendar.connectedAt || null;
+
+  return {
+    connectionMode: 'oauth',
+    configured: calendar.configured !== false,
+    connected,
+    calendarId: '',
+    serviceAccountEmail: '',
+    projectId: '',
+    privateKeyId: '',
+    calendarSummary: calendar.email || '',
+    calendarTimeZone: '',
+    lastTestAt: connectedAt,
+    lastTestStatus: connected ? 'success' : null,
+    lastTestMessage: connected ? 'Conectado con Google desde el portal de Ristak.' : '',
+    lastSyncAt: null,
+    lastSyncStatus: null,
+    lastSyncMessage: '',
+    syncedCalendarsCount: 0,
+    syncedEventsCount: 0,
+    connectedAt,
+    updatedAt: connectedAt,
+    googleAccountEmail: calendar.email || '',
+    googleAccountName: calendar.name || '',
+    googleAccountPictureUrl: calendar.picture_url || calendar.pictureUrl || '',
+    scopes: Array.isArray(calendar.scopes) ? calendar.scopes : [],
+    canManageEvents: Boolean(calendar.can_manage_events || calendar.canManageEvents),
+    canListCalendars: Boolean(calendar.can_list_calendars || calendar.canListCalendars)
+  };
+}
+
+function centralGoogleCalendarOption(calendar = {}) {
+  const accessRole = cleanString(calendar.access_role || calendar.accessRole);
+  const summary = cleanString(calendar.name || calendar.summary || calendar.id);
+
+  return {
+    id: cleanString(calendar.id),
+    summary,
+    name: summary,
+    timeZone: cleanString(calendar.time_zone || calendar.timeZone),
+    accessRole,
+    primary: Boolean(calendar.primary),
+    selected: true,
+    backgroundColor: cleanString(calendar.background_color || calendar.backgroundColor),
+    foregroundColor: cleanString(calendar.foreground_color || calendar.foregroundColor)
+  };
+}
+
+async function updateCentralCalendarGoogleSync({ calendarId, googleCalendarId }) {
+  const localCalendar = await localCalendarService.getLocalCalendar(calendarId);
+  if (!localCalendar?.id) {
+    throw new Error('Calendario de Ristak no encontrado');
+  }
+
+  const normalizedGoogleCalendarId = cleanString(googleCalendarId);
+  if (!normalizedGoogleCalendarId) {
+    return localCalendarService.updateLocalCalendar(localCalendar.id, {
+      googleCalendarId: '',
+      googleAccessRole: '',
+      googleCalendarSummary: '',
+      googleCalendarTimeZone: ''
+    }, {
+      syncStatus: localCalendar.syncStatus || 'pending'
+    });
+  }
+
+  const options = (await listCentralGoogleCalendars()).map(centralGoogleCalendarOption);
+  const googleCalendar = options.find((option) => cleanString(option.id).toLowerCase() === normalizedGoogleCalendarId.toLowerCase());
+
+  if (!googleCalendar?.id) {
+    throw new Error('Ese calendario de Google no está disponible en la cuenta conectada.');
+  }
+
+  if (!canWriteGoogleCalendarRole(googleCalendar.accessRole)) {
+    throw new Error('Ese calendario de Google necesita permiso para hacer cambios en eventos.');
+  }
+
+  return localCalendarService.updateLocalCalendar(localCalendar.id, {
+    googleCalendarId: googleCalendar.id,
+    googleAccessRole: googleCalendar.accessRole,
+    googleCalendarSummary: googleCalendar.summary,
+    googleCalendarTimeZone: googleCalendar.timeZone
+  }, {
+    syncStatus: localCalendar.syncStatus || 'pending'
+  });
 }
 
 function normalizeEmail(value) {
@@ -88,14 +197,14 @@ async function getSavedHighLevelOnlyContext() {
 async function ensurePublicCalendarRequest(req, slugOrId) {
   const host = getRequestHost(req);
   if (!host) {
-    const error = new Error('Dominio invalido');
+    const error = new Error('Dominio inválido');
     error.status = 404;
     throw error;
   }
 
   const domainResolution = await resolveConnectedPublicDomainForHost(host);
   if (!domainResolution.ok) {
-    const error = new Error(domainResolution.message || 'Dominio publico no verificado');
+    const error = new Error(domainResolution.message || 'Dominio público no verificado');
     error.status = domainResolution.status || 404;
     throw error;
   }
@@ -150,17 +259,72 @@ async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, tim
 
 /**
  * GET /api/calendars/google-integration
- * Estado publico de la integración Google Calendar por Service Account.
+ * Estado público de la integración Google Calendar por Service Account.
  */
 export async function getGoogleCalendarIntegration(req, res) {
   try {
+    if (isLicenseEnforced()) {
+      return res.json({
+        success: true,
+        data: centralGoogleStatus(await getCentralGoogleCalendarStatus())
+      });
+    }
+
     res.json({
       success: true,
-      data: await googleCalendarService.getGoogleCalendarConfig()
+      data: serviceAccountGoogleStatus(await googleCalendarService.getGoogleCalendarConfig())
     });
   } catch (error) {
     logger.error(`[Calendars Controller] Error en getGoogleCalendarIntegration: ${error.message}`);
+    if (isLicenseEnforced()) {
+      return res.json({
+        success: true,
+        data: {
+          ...centralGoogleStatus({ configured: false, connected: false }),
+          lastTestStatus: 'error',
+          lastTestMessage: error.message
+        }
+      });
+    }
+
     res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+/**
+ * POST /api/calendars/google-integration/connect-url
+ * Genera la URL central de OAuth para Google Calendar desde el portal Ristak.
+ */
+export async function getGoogleCalendarConnectUrl(req, res) {
+  try {
+    if (!isLicenseEnforced()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Esta instalación usa conexión manual por Service Account.'
+      });
+    }
+
+    const data = await createCentralGoogleCalendarConnectUrl({
+      returnPath: req.body?.returnPath || req.body?.return_path || '/settings/calendars/google'
+    });
+
+    if (!data.url) {
+      return res.status(503).json({
+        success: false,
+        error: 'El portal central no devolvió la URL de Google Calendar.'
+      });
+    }
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    logger.warn(`[Calendars Controller] No se pudo generar OAuth Google Calendar: ${error.message}`);
+    res.status(400).json({
       success: false,
       error: error.message
     });
@@ -173,6 +337,13 @@ export async function getGoogleCalendarIntegration(req, res) {
  */
 export async function revealGoogleCalendarServiceAccount(req, res) {
   try {
+    if (isLicenseEnforced()) {
+      return res.status(404).json({
+        success: false,
+        error: 'Esta instalación usa OAuth central de Google Calendar.'
+      });
+    }
+
     res.json({
       success: true,
       data: {
@@ -194,17 +365,20 @@ export async function revealGoogleCalendarServiceAccount(req, res) {
  */
 export async function saveGoogleCalendarIntegration(req, res) {
   try {
+    if (isLicenseEnforced()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Esta instalación usa OAuth central. Conecta Google Calendar desde el botón de Google.'
+      });
+    }
+
     const body = req.body || {};
     const config = await googleCalendarService.saveGoogleCalendarConfig({
-      calendarId: body.calendarId || body.calendar_id,
+      calendarId: body.calendarId ?? body.calendar_id ?? '',
       credentials: body.credentials || body.serviceAccountJson || body.service_account_json
     });
 
-    await googleCalendarService.syncGoogleCalendarsToLocal().catch(error => {
-      logger.warn(`[Calendars Controller] Google guardado, pero sync de calendarios falló: ${error.message}`);
-    });
-
-    await localCalendarService.reconcileCalendarDefaults({ sourcePreference: 'google' }).catch(error => {
+    await localCalendarService.reconcileCalendarDefaults().catch(error => {
       logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras guardar Google: ${error.message}`);
     });
 
@@ -227,14 +401,16 @@ export async function saveGoogleCalendarIntegration(req, res) {
  */
 export async function testGoogleCalendarIntegration(req, res) {
   try {
-    let config = await googleCalendarService.testGoogleCalendarConnection();
-    try {
-      config = await googleCalendarService.syncGoogleIntegrationNow();
-    } catch (syncError) {
-      logger.warn(`[Calendars Controller] Prueba Google OK, pero sync manual falló: ${syncError.message}`);
+    if (isLicenseEnforced()) {
+      return res.json({
+        success: true,
+        data: centralGoogleStatus(await getCentralGoogleCalendarStatus())
+      });
     }
 
-    await localCalendarService.reconcileCalendarDefaults({ sourcePreference: 'google' }).catch(error => {
+    const config = await googleCalendarService.testGoogleCalendarConnection();
+
+    await localCalendarService.reconcileCalendarDefaults().catch(error => {
       logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras probar Google: ${error.message}`);
     });
 
@@ -257,13 +433,41 @@ export async function testGoogleCalendarIntegration(req, res) {
  */
 export async function syncGoogleCalendarIntegration(req, res) {
   try {
+    if (isLicenseEnforced()) {
+      const now = new Date();
+      const syncStart = req.body?.startTime || req.body?.start_time || new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const syncEnd = req.body?.endTime || req.body?.end_time || new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString();
+      const inboundResult = await googleCalendarService.syncGoogleEventsToLocal({
+        startTime: syncStart,
+        endTime: syncEnd
+      });
+      const syncResult = await googleCalendarService.syncLocalAppointmentsToGoogle({
+        startTime: req.body?.startTime || req.body?.start_time,
+        endTime: req.body?.endTime || req.body?.end_time
+      });
+      const syncedEventsCount = Number(inboundResult.saved || 0) + Number(syncResult.synced || 0);
+      const linkedCalendarsCount = Number(inboundResult.linkedCalendars || syncResult.linkedCalendars || 0);
+      const status = centralGoogleStatus(await getCentralGoogleCalendarStatus());
+      return res.json({
+        success: true,
+        data: {
+          ...status,
+          lastSyncAt: new Date().toISOString(),
+          lastSyncStatus: syncResult.failed > 0 ? 'warning' : 'success',
+          lastSyncMessage: `${syncedEventsCount} cita(s) sincronizadas con Google Calendar${syncResult.failed > 0 ? `; ${syncResult.failed} quedaron pendientes` : ''}`,
+          syncedCalendarsCount: linkedCalendarsCount,
+          syncedEventsCount
+        }
+      });
+    }
+
     const body = req.body || {};
     const config = await googleCalendarService.syncGoogleIntegrationNow({
       startTime: body.startTime || body.start_time,
       endTime: body.endTime || body.end_time
     });
 
-    await localCalendarService.reconcileCalendarDefaults({ sourcePreference: 'google' }).catch(error => {
+    await localCalendarService.reconcileCalendarDefaults().catch(error => {
       logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras sincronizar Google: ${error.message}`);
     });
 
@@ -281,11 +485,99 @@ export async function syncGoogleCalendarIntegration(req, res) {
 }
 
 /**
+ * GET /api/calendars/google-integration/calendars
+ * Lista calendarios Google disponibles para vincular con calendarios Ristak.
+ */
+export async function listGoogleCalendarOptions(req, res) {
+  try {
+    if (isLicenseEnforced()) {
+      return res.json({
+        success: true,
+        data: (await listCentralGoogleCalendars()).map(centralGoogleCalendarOption)
+      });
+    }
+
+    res.json({
+      success: true,
+      data: await googleCalendarService.listGoogleCalendarOptions()
+    });
+  } catch (error) {
+    logger.warn(`[Calendars Controller] No se pudieron listar calendarios Google: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+/**
+ * PUT /api/calendars/:id/google-sync
+ * Vincula o desvincula un calendario local con un calendario Google existente.
+ */
+export async function updateCalendarGoogleSync(req, res) {
+  try {
+    const { id } = req.params;
+    const body = req.body || {};
+    const googleCalendarId = body.googleCalendarId || body.google_calendar_id || '';
+    const calendar = isLicenseEnforced()
+      ? await updateCentralCalendarGoogleSync({ calendarId: id, googleCalendarId })
+      : await googleCalendarService.updateLocalCalendarGoogleSync({ calendarId: id, googleCalendarId });
+
+    if (calendar?.googleCalendarId) {
+      const now = new Date();
+      const startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const endTime = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString();
+
+      await googleCalendarService.syncGoogleEventsToLocal({
+        startTime,
+        endTime,
+        calendarId: calendar.id
+      }).catch(error => {
+        logger.warn(`[Calendars Controller] Vinculo Google guardado, pero import inicial falló: ${error.message}`);
+      });
+
+      await googleCalendarService.syncLocalAppointmentsToGoogle({
+        calendarId: calendar.id
+      }).catch(error => {
+        logger.warn(`[Calendars Controller] Vinculo Google guardado, pero export inicial falló: ${error.message}`);
+      });
+    }
+
+    res.json({
+      success: true,
+      data: await localCalendarService.attachPublicCalendarUrl(
+        await localCalendarService.getLocalCalendar(id),
+        await localCalendarService.getCalendarPublicUrlStatus()
+      )
+    });
+  } catch (error) {
+    logger.warn(`[Calendars Controller] No se pudo actualizar sync Google del calendario: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+/**
  * GET /api/calendars/google-integration/merge-preview
  * Indica si hay citas locales de Ristak que se pueden combinar hacia el Google Calendar conectado.
  */
 export async function getGoogleCalendarMergePreview(req, res) {
   try {
+    if (isLicenseEnforced()) {
+      return res.json({
+        success: true,
+        data: {
+          connected: Boolean((await getCentralGoogleCalendarStatus()).connected),
+          mergeAvailable: false,
+          googleCalendar: null,
+          sourceCalendars: [],
+          totalAppointments: 0
+        }
+      });
+    }
+
     res.json({
       success: true,
       data: await googleCalendarService.getGoogleCalendarMergePreview()
@@ -305,11 +597,18 @@ export async function getGoogleCalendarMergePreview(req, res) {
  */
 export async function mergeGoogleCalendarAppointments(req, res) {
   try {
+    if (isLicenseEnforced()) {
+      return res.status(400).json({
+        success: false,
+        error: 'La combinación automática todavía no aplica para Google Calendar conectado desde el portal.'
+      });
+    }
+
     const result = await googleCalendarService.mergeRistakAppointmentsIntoGoogle({
       sourceCalendarIds: req.body?.sourceCalendarIds || req.body?.source_calendar_ids || null
     });
 
-    await localCalendarService.reconcileCalendarDefaults({ sourcePreference: 'google' }).catch(error => {
+    await localCalendarService.reconcileCalendarDefaults().catch(error => {
       logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras combinar Google: ${error.message}`);
     });
 
@@ -332,6 +631,17 @@ export async function mergeGoogleCalendarAppointments(req, res) {
  */
 export async function deleteGoogleCalendarIntegration(req, res) {
   try {
+    if (isLicenseEnforced()) {
+      const calendar = await disconnectCentralGoogleCalendar();
+      await localCalendarService.reconcileCalendarDefaults().catch(error => {
+        logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras desconectar Google central: ${error.message}`);
+      });
+      return res.json({
+        success: true,
+        data: centralGoogleStatus(calendar)
+      });
+    }
+
     await googleCalendarService.deleteGoogleCalendarConfig();
     await localCalendarService.reconcileCalendarDefaults().catch(error => {
       logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras desconectar Google: ${error.message}`);
@@ -361,7 +671,7 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl 
   }
 
   if (!phone || phone.replace(/[^\d]/g, '').length < 7) {
-    const error = new Error('El telefono es requerido');
+    const error = new Error('El teléfono es requerido');
     error.status = 400;
     throw error;
   }
@@ -448,10 +758,6 @@ export async function getCalendars(req, res) {
         }
       }
     }
-
-    await googleCalendarService.syncGoogleCalendarsToLocal().catch(error => {
-      logger.warn(`[Calendars Controller] No se pudieron espejear calendarios Google: ${error.message}`);
-    });
 
     const sourcePreference = await getCalendarSourcePreference(req.query?.sourcePreference);
     await localCalendarService.reconcileCalendarDefaults({ sourcePreference }).catch(error => {
@@ -773,7 +1079,7 @@ export async function createPublicAppointment(req, res) {
     if (Number.isNaN(start.getTime())) {
       return res.status(400).json({
         success: false,
-        error: 'Horario invalido'
+        error: 'Horario inválido'
       });
     }
 
@@ -1395,8 +1701,11 @@ export default {
   createAppointment,
   updateAppointment,
   updateCalendar,
+  updateCalendarGoogleSync,
   deleteEvent,
   getGoogleCalendarIntegration,
+  getGoogleCalendarConnectUrl,
+  listGoogleCalendarOptions,
   saveGoogleCalendarIntegration,
   testGoogleCalendarIntegration,
   syncGoogleCalendarIntegration,

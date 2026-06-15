@@ -5,12 +5,14 @@ import { RecordPaymentModal } from '@/components/common'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
+import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useHighLevelConnected, usePhoneElasticScroll } from '@/hooks'
 import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
+import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import styles from './PhonePayments.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -72,6 +74,7 @@ const PRODUCT_CURRENCY_OPTIONS = CURRENCY_OPTIONS.map((option) => {
 
 function hasPortableAccess() {
   if (typeof window === 'undefined') return false
+  if (isLocalPhonePreviewHost()) return true
 
   const portableViewport = window.matchMedia(PORTABLE_WIDTH_QUERY).matches
   const phoneViewport = window.matchMedia(PHONE_WIDTH_QUERY).matches
@@ -566,7 +569,7 @@ export const PhonePayments: React.FC = () => {
           <div className={styles.productFormHeader}>
             <div>
               <strong>{productFormMode === 'edit' ? 'Editar producto' : 'Nuevo producto'}</strong>
-              <small>Estos datos aparecerán al cobrar desde productos guardados.</small>
+              <small>Estos datos aparecerán al cobrar desde Guardados.</small>
             </div>
             <button type="button" onClick={closeProductForm} aria-label="Cerrar formulario">
               <X size={18} />
@@ -701,11 +704,7 @@ export const PhonePayments: React.FC = () => {
   )
 
   if (accessState === 'checking') {
-    return (
-      <main className={styles.loadingPage}>
-        <span className={styles.loadingDot} />
-      </main>
-    )
+    return <PhoneStartupLoader />
   }
 
   if (accessState === 'blocked') {
@@ -730,17 +729,15 @@ export const PhonePayments: React.FC = () => {
     )
   }
 
-  const isForm = view !== 'select'
   const isPaymentForm = view === 'single' || view === 'partial'
   const formMode = view === 'partial' ? 'partial' : 'single'
-  const formTitle = view === 'products' ? 'Precios Guardados' : view === 'partial' ? 'Plan de pago' : 'Registrar pago'
   const selectedRecentPeriod = RECENT_PAYMENT_PERIODS.find((period) => period.id === recentPaymentsPeriod) || RECENT_PAYMENT_PERIODS[2]
   const selectedRecentPayment = recentPayments.find((payment) => payment.id === selectedRecentPaymentId) || null
 
   return (
     <main className={styles.phonePage} aria-label="Pagos móviles de Ristak">
       <PhonePageTransition active="payments" className={styles.phoneFrame}>
-        {isForm && (
+        {view === 'products' && (
           <header className={styles.header}>
             <button
               type="button"
@@ -750,7 +747,6 @@ export const PhonePayments: React.FC = () => {
               <ArrowLeft size={18} />
               <span>Atrás</span>
             </button>
-            <h2 className={styles.headerFormTitle}>{formTitle}</h2>
           </header>
         )}
 

@@ -99,7 +99,7 @@ export const setTimezone = async (req, res) => {
 
 const getRequestUserId = (req) => req.user?.userId || req.user?.id || null;
 
-const sendSettingsError = (res, error, fallback = 'Error al guardar la configuracion') => {
+const sendSettingsError = (res, error, fallback = 'Error al guardar la configuración') => {
   res.status(error.status || 500).json({
     success: false,
     error: error.message || fallback
@@ -143,7 +143,7 @@ export const createCustomField = async (req, res) => {
     if (!field) {
       return res.status(400).json({
         success: false,
-        error: 'Usa un ID de campo valido y que no sea reservado'
+        error: 'Usa un ID de campo válido y que no sea reservado'
       });
     }
 

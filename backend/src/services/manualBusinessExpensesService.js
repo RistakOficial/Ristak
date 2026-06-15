@@ -80,7 +80,80 @@ export const getManualBusinessExpenseRange = (expense) => {
   return null
 }
 
+export const getManualBusinessExpenseDescendantScope = (periodType, periodStart) => {
+  const normalizedPeriodStart = normalizeManualBusinessExpensePeriodStart(periodType, periodStart)
+  if (!normalizedPeriodStart || periodType === 'day') return null
+
+  const range = getManualBusinessExpenseRange({
+    period_type: periodType,
+    period_start: normalizedPeriodStart
+  })
+  if (!range) return null
+
+  if (periodType === 'month') {
+    return {
+      from: range.from,
+      to: range.to,
+      periodTypes: ['day']
+    }
+  }
+
+  if (periodType === 'year') {
+    return {
+      from: range.from,
+      to: range.to,
+      periodTypes: ['day', 'month']
+    }
+  }
+
+  return null
+}
+
+export const deleteManualBusinessExpenseDescendants = async (database, periodType, periodStart) => {
+  const scope = getManualBusinessExpenseDescendantScope(periodType, periodStart)
+  if (!scope) return 0
+
+  const periodTypePlaceholders = scope.periodTypes.map(() => '?').join(', ')
+  const result = await database.run(`
+    DELETE FROM report_manual_business_expenses
+    WHERE period_type IN (${periodTypePlaceholders})
+      AND period_start >= ?
+      AND period_start <= ?
+  `, [...scope.periodTypes, scope.from, scope.to])
+
+  return Number(result?.changes || 0)
+}
+
 export const roundCurrencyValue = (value) => Math.round((value + Number.EPSILON) * 100) / 100
+
+const MANUAL_BUSINESS_EXPENSE_PRIORITY = {
+  year: 1,
+  month: 2,
+  day: 3
+}
+
+const buildManualBusinessExpenseAllocation = (expense) => {
+  const amount = Number(expense.amount ?? 0)
+  if (!Number.isFinite(amount) || amount < 0) return null
+
+  const sourceRange = getManualBusinessExpenseRange(expense)
+  if (!sourceRange) return null
+
+  const sourceStart = toUtcDayIndex(sourceRange.from)
+  const sourceEnd = toUtcDayIndex(sourceRange.to)
+  if (sourceStart === null || sourceEnd === null || sourceEnd < sourceStart) return null
+
+  const sourceDays = sourceEnd - sourceStart + 1
+  const priority = MANUAL_BUSINESS_EXPENSE_PRIORITY[expense.period_type] || 0
+  if (priority <= 0) return null
+
+  return {
+    start: sourceStart,
+    end: sourceEnd,
+    priority,
+    amountPerDay: amount / sourceDays
+  }
+}
 
 export const calculateManualBusinessExpensesForRange = (targetRange, expenses = []) => {
   const targetStart = toUtcDayIndex(targetRange?.from)
@@ -88,26 +161,19 @@ export const calculateManualBusinessExpensesForRange = (targetRange, expenses = 
 
   if (targetStart === null || targetEnd === null || targetEnd < targetStart) return 0
 
-  const total = expenses.reduce((sum, expense) => {
-    const amount = Number(expense.amount || 0)
-    if (!Number.isFinite(amount) || amount <= 0) return sum
+  const allocations = expenses
+    .map(buildManualBusinessExpenseAllocation)
+    .filter(Boolean)
+    .sort((a, b) => b.priority - a.priority)
 
-    const sourceRange = getManualBusinessExpenseRange(expense)
-    if (!sourceRange) return sum
+  let total = 0
 
-    const sourceStart = toUtcDayIndex(sourceRange.from)
-    const sourceEnd = toUtcDayIndex(sourceRange.to)
-    if (sourceStart === null || sourceEnd === null || sourceEnd < sourceStart) return sum
-
-    const overlapStart = Math.max(targetStart, sourceStart)
-    const overlapEnd = Math.min(targetEnd, sourceEnd)
-    if (overlapEnd < overlapStart) return sum
-
-    const sourceDays = sourceEnd - sourceStart + 1
-    const overlapDays = overlapEnd - overlapStart + 1
-
-    return sum + (amount * overlapDays) / sourceDays
-  }, 0)
+  for (let day = targetStart; day <= targetEnd; day += 1) {
+    const allocation = allocations.find((item) => day >= item.start && day <= item.end)
+    if (allocation) {
+      total += allocation.amountPerDay
+    }
+  }
 
   return roundCurrencyValue(total)
 }

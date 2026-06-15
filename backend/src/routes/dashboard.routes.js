@@ -1,10 +1,12 @@
 import express from 'express'
 import { getMetrics, getChartData, getRoasData, getNewCustomersData, getVisitorsData, getLeadsData, getAppointmentsData, getAttendancesData, getSalesData, getStorageStatus, getTrafficSources, getOriginDistribution, getFunnelData, getFinancialOverview } from '../controllers/dashboardController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
 
 router.use(requireAuth)
+router.use(requireModuleAccess('dashboard'))
 
 router.get('/metrics', getMetrics)
 router.get('/chart-data', getChartData)

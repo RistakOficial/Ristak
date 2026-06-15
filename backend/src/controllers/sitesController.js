@@ -17,6 +17,7 @@ import {
   isDashboardHost,
   listSites,
   refreshSitesPublicDomain,
+  removeSitesPublicDomain,
   renderDomainErrorHtml,
   renderPublicSiteHtml,
   reorderBlocks,
@@ -25,6 +26,7 @@ import {
   restoreBlocks,
   updateBlock,
   updateImportedSiteEditableContent,
+  updateImportedSiteCodeFiles,
   updateImportedSiteHtmlWithAI,
   updateImportedSiteFormMappings,
   updateSite
@@ -168,6 +170,20 @@ export async function updateImportedSiteEditableContentHandler(req, res) {
     logger.error(`Error editando contenido HTML importado: ${error.message}`)
     error.status = error.status || 400
     sendError(res, error, 'Error editando contenido HTML')
+  }
+}
+
+export async function updateImportedSiteCodeFilesHandler(req, res) {
+  try {
+    const result = await updateImportedSiteCodeFiles(req.params.siteId, {
+      ...(req.body || {}),
+      userId: req.user?.userId || req.user?.id
+    })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error editando archivos HTML importados: ${error.message}`)
+    error.status = error.status || 400
+    sendError(res, error, 'Error editando archivos HTML')
   }
 }
 
@@ -319,7 +335,7 @@ export async function previewSiteSessionHandler(req, res) {
       preview: true
     }))
   } catch (error) {
-    logger.error(`Error previsualizando sesion temporal de site: ${error.message}`)
+    logger.error(`Error previsualizando sesión temporal de site: ${error.message}`)
     return res.status(500).type('html').send('Error previsualizando site')
   }
 }
@@ -452,7 +468,7 @@ export async function getSitesDomainHandler(req, res) {
   try {
     res.json({ success: true, data: await getSitesPublicDomain() })
   } catch (error) {
-    logger.error(`Error obteniendo dominio publico de Sites: ${error.message}`)
+    logger.error(`Error obteniendo dominio público de Sites: ${error.message}`)
     sendError(res, error, 'Error obteniendo dominio')
   }
 }
@@ -462,8 +478,17 @@ export async function verifySitesDomainHandler(req, res) {
     const result = await refreshSitesPublicDomain(req.body || {})
     res.json({ success: true, data: result })
   } catch (error) {
-    logger.error(`Error verificando dominio publico de Sites: ${error.message}`)
+    logger.error(`Error verificando dominio público de Sites: ${error.message}`)
     sendError(res, error, 'Error verificando dominio')
+  }
+}
+
+export async function removeSitesDomainHandler(req, res) {
+  try {
+    res.json({ success: true, data: await removeSitesPublicDomain() })
+  } catch (error) {
+    logger.error(`Error eliminando dominio público de Sites: ${error.message}`)
+    sendError(res, error, 'Error eliminando dominio')
   }
 }
 
@@ -472,7 +497,7 @@ export async function submitPublicSiteHandler(req, res) {
     const result = await createSubmissionFromRequest(req, req.body || {})
     res.status(201).json({ success: true, data: result })
   } catch (error) {
-    logger.warn(`Submit publico rechazado: ${error.message}`)
+    logger.warn(`Submit público rechazado: ${error.message}`)
     sendError(res, error, 'No se pudo enviar el formulario')
   }
 }
@@ -482,8 +507,8 @@ export async function metaPageEventPublicHandler(req, res) {
     const result = await createMetaPageEventFromRequest(req, req.body || {})
     res.status(200).json({ success: true, data: result })
   } catch (error) {
-    logger.warn(`Evento publico de pagina Site rechazado: ${error.message}`)
-    sendError(res, error, 'No se pudo enviar el evento de pagina')
+    logger.warn(`Evento público de página Site rechazado: ${error.message}`)
+    sendError(res, error, 'No se pudo enviar el evento de página')
   }
 }
 
@@ -558,7 +583,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
       }
 
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        return sendDomainError(req, res, 404, 'Ruta no disponible en este calendario publico')
+        return sendDomainError(req, res, 404, 'Ruta no disponible en este calendario público')
       }
 
       return res.status(200).type('html').send(renderPublicCalendarHtml(calendar, { host }))
@@ -567,11 +592,11 @@ export async function publicSiteHostMiddleware(req, res, next) {
     const resolution = await resolvePublicSiteForHost(host, { path: req.path })
     if (resolution.ok) {
       if (req.path.startsWith('/api') || req.path.startsWith('/webhook')) {
-        return sendDomainError(req, res, 404, 'La API privada no esta disponible en dominios publicos de Sites')
+        return sendDomainError(req, res, 404, 'La API privada no esta disponible en dominios públicos de Sites')
       }
 
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        return sendDomainError(req, res, 404, 'Ruta no disponible en este dominio publico')
+        return sendDomainError(req, res, 404, 'Ruta no disponible en este dominio público')
       }
 
       // First path segment is the site slug; the rest is the page path used by
@@ -595,9 +620,9 @@ export async function publicSiteHostMiddleware(req, res, next) {
       return next()
     }
 
-    return sendDomainError(req, res, 404, 'Este dominio no esta configurado como dashboard ni como Site publico verificado')
+    return sendDomainError(req, res, 404, 'Este dominio no esta configurado como dashboard ni como Site público verificado')
   } catch (error) {
-    logger.error(`Error resolviendo dominio publico: ${error.message}`)
-    return sendDomainError(req, res, 500, 'Error resolviendo configuracion del dominio')
+    logger.error(`Error resolviendo dominio público: ${error.message}`)
+    return sendDomainError(req, res, 500, 'Error resolviendo configuración del dominio')
   }
 }

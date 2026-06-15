@@ -53,10 +53,12 @@ import {
   List,
   ListChecks,
   ListOrdered,
+  Lock,
   Maximize2,
   Mic,
   Monitor,
   MoreVertical,
+  Moon,
   Music2,
   MousePointerClick,
   PanelBottom,
@@ -73,6 +75,7 @@ import {
   Sparkles,
   Smartphone,
   Strikethrough,
+  Sun,
   Trash2,
   Type,
   Underline,
@@ -87,6 +90,7 @@ import {
   Loading,
   NumberInput,
   CustomSelect,
+  TabList,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -102,6 +106,7 @@ import {
   type ImportedButtonActionStep,
   type ImportedEditableContentType,
   type ImportedSiteCreateResult,
+  type ImportedSiteCodeFile,
   type ImportedSiteFieldMapping,
   type ImportedSiteFormMapping,
   type ImportedSiteImport,
@@ -118,6 +123,8 @@ import {
   type SiteBlock,
   type SiteBlockOption,
   type SiteBlockType,
+  type SiteMetaCustomParameter,
+  type SiteMetaEventParameters,
   type SiteMetaTrigger,
   type SiteOptionAction,
   type SitePage,
@@ -130,7 +137,7 @@ import {
 import { aiAgentService } from '@/services/aiAgentService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
-import mediaService from '@/services/mediaService'
+import mediaService, { type MediaAsset } from '@/services/mediaService'
 import {
   customFieldsService,
   isSystemCustomFieldDefinition,
@@ -166,6 +173,11 @@ type SitesAICreationModalState = {
   siteKind: SitesAICreationKind
   editSite?: PublicSite | null
 } | null
+
+const IMPORTED_CODE_MAIN_FILE_KEY = '__main__'
+const IMPORTED_POPUP_CODE_PATH = 'ristak-popup.html'
+const getImportedCodeFileKey = (pathValue = '') => pathValue || IMPORTED_CODE_MAIN_FILE_KEY
+const getImportedCodeFilePathFromKey = (key = '') => key === IMPORTED_CODE_MAIN_FILE_KEY ? '' : key
 
 type AIEditorGenerationState = {
   siteId: string
@@ -233,24 +245,115 @@ const normalizeMetaEventName = (value?: string, fallback = 'Lead') =>
 const normalizeMetaTrigger = (value?: string): SiteMetaTrigger =>
   value === 'form_submit' ? 'form_submit' : 'page_view'
 
+type SiteMetaParameterFieldKey = Exclude<keyof SiteMetaEventParameters, 'custom'>
+
+const metaParameterFieldLabels: Record<SiteMetaParameterFieldKey, string> = {
+  value: 'Valor conversion',
+  predictedLtv: 'Valor lead',
+  currency: 'Moneda',
+  contentName: 'Contenido',
+  contentCategory: 'Categoría',
+  contentIds: 'IDs contenido',
+  contentType: 'Tipo contenido',
+  numItems: 'Cantidad',
+  orderId: 'Orden',
+  status: 'Estado',
+  searchString: 'Búsqueda'
+}
+
+const metaParameterFieldPlaceholders: Record<SiteMetaParameterFieldKey, string> = {
+  value: '1200',
+  predictedLtv: '3500',
+  currency: 'MXN',
+  contentName: 'Oferta principal',
+  contentCategory: 'Consulta',
+  contentIds: 'sku-1, sku-2',
+  contentType: 'product',
+  numItems: '1',
+  orderId: 'ORD-123',
+  status: 'qualified',
+  searchString: 'servicio premium'
+}
+
+const metaParameterFieldsByEvent: Record<string, SiteMetaParameterFieldKey[]> = {
+  Lead: ['value', 'predictedLtv', 'currency', 'status'],
+  Schedule: ['value', 'predictedLtv', 'currency', 'status'],
+  FormSubmitted: ['value', 'predictedLtv', 'currency', 'status'],
+  CompleteRegistration: ['value', 'predictedLtv', 'currency', 'status'],
+  Contact: ['value', 'predictedLtv', 'currency', 'status'],
+  Purchase: ['value', 'currency', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
+  ViewContent: ['value', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType']
+}
+
+const getMetaParameterFieldsForEvent = (eventName?: string): SiteMetaParameterFieldKey[] =>
+  metaParameterFieldsByEvent[normalizeMetaEventName(eventName, 'none')] || []
+
+const cleanMetaParameterString = (value: unknown) => String(value ?? '').trim()
+
+const normalizeMetaCustomParameter = (parameter?: Partial<SiteMetaCustomParameter> | null): SiteMetaCustomParameter => ({
+  ...(cleanMetaParameterString(parameter?.id) ? { id: cleanMetaParameterString(parameter?.id) } : {}),
+  key: cleanMetaParameterString(parameter?.key).replace(/[^a-zA-Z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64),
+  value: cleanMetaParameterString(parameter?.value)
+})
+
+const normalizeMetaEventParameters = (parameters?: SiteMetaEventParameters | null): SiteMetaEventParameters => {
+  const source = parameters && typeof parameters === 'object' ? parameters : {}
+  const normalized: SiteMetaEventParameters = {}
+
+  Object.keys(metaParameterFieldLabels).forEach((fieldKey) => {
+    const key = fieldKey as SiteMetaParameterFieldKey
+    const value = cleanMetaParameterString(source[key])
+    if (value) {
+      normalized[key] = key === 'currency' ? value.toUpperCase().slice(0, 3) : value
+    }
+  })
+
+  const custom = Array.isArray(source.custom)
+    ? source.custom
+      .map(normalizeMetaCustomParameter)
+      .filter(parameter => parameter.key || parameter.value)
+      .slice(0, 12)
+    : []
+
+  if (custom.length) normalized.custom = custom
+  return normalized
+}
+
+const hasMetaEventParameters = (parameters?: SiteMetaEventParameters | null) => {
+  const normalized = normalizeMetaEventParameters(parameters)
+  return Object.keys(metaParameterFieldLabels).some(fieldKey => Boolean(cleanMetaParameterString(normalized[fieldKey as SiteMetaParameterFieldKey]))) ||
+    Boolean(normalized.custom?.some(parameter => parameter.key || parameter.value))
+}
+
+const pruneMetaEventParametersForEvent = (parameters?: SiteMetaEventParameters | null, eventName?: string): SiteMetaEventParameters => {
+  const normalized = normalizeMetaEventParameters(parameters)
+  const fields = getMetaParameterFieldsForEvent(eventName)
+  if (!fields.length) return {}
+  const allowed = new Set(fields)
+  const pruned: SiteMetaEventParameters = {}
+
+  allowed.forEach((key) => {
+    const value = cleanMetaParameterString(normalized[key])
+    if (value) pruned[key] = value
+  })
+
+  if (normalized.custom?.length) pruned.custom = normalized.custom
+  return pruned
+}
+
 const ruleActions: Array<{ value: SiteOptionAction; label: string }> = [
-  { value: 'continue', label: 'Continuar' },
-  { value: 'cold_lead', label: 'Clasificar lead frio' },
-  { value: 'warm_lead', label: 'Clasificar lead tibio' },
-  { value: 'hot_lead', label: 'Clasificar lead caliente' },
-  { value: 'jump', label: 'Saltar a otra pregunta' },
-  { value: 'show_message', label: 'Mostrar mensaje' },
-  { value: 'end_form', label: 'Terminar formulario' },
+  { value: 'continue', label: 'Continuar normalmente' },
+  { value: 'jump', label: 'Saltar a una pregunta' },
+  { value: 'site_page', label: 'Dirigir a página del sitio' },
+  { value: 'redirect', label: 'Dirigir a URL externa' },
   { value: 'disqualify', label: 'Descalificar inmediatamente' },
-  { value: 'disqualify_after_submit', label: 'Descalificar al finalizar formulario' },
-  { value: 'redirect', label: 'Dirigir a sitio' },
-  { value: 'tag', label: 'Agregar etiqueta' },
-  { value: 'category', label: 'Asignar categoria' }
+  { value: 'disqualify_after_submit', label: 'Descalificar al enviar' }
 ]
 const visibleRuleActionValues = new Set<SiteOptionAction>(ruleActions.map(action => action.value))
 const normalizeVisibleRuleAction = (action?: SiteOptionAction): SiteOptionAction => (
   action && visibleRuleActionValues.has(action) ? action : 'continue'
 )
+const exitRuleActions = new Set<SiteOptionAction>(['redirect', 'site_page'])
 
 const embeddedFormFieldTypes: SiteBlockType[] = [
   'short_text',
@@ -264,6 +367,215 @@ const embeddedFormFieldTypes: SiteBlockType[] = [
   'checkboxes',
   'date'
 ]
+const embeddedFormFreeFieldTypes = embeddedFormFieldTypes.filter(type => type !== 'email' && type !== 'phone')
+const embeddedFormContentTypes: SiteBlockType[] = ['title', 'subtitle', 'text', 'image', 'video', 'embed']
+const embeddedFormBlockTypes: SiteBlockType[] = [...embeddedFormFieldTypes, ...embeddedFormContentTypes]
+const embeddedFormBlockTypeSet = new Set<SiteBlockType>(embeddedFormBlockTypes)
+
+type SystemFormFieldKey =
+  | 'full_name'
+  | 'first_name'
+  | 'last_name'
+  | 'email'
+  | 'phone'
+  | 'city'
+  | 'company'
+  | 'address_1'
+
+type SystemFormFieldPreset = {
+  key: SystemFormFieldKey
+  label: string
+  destinationLabel: string
+  blockType: SiteBlockType
+  placeholder: string
+  validation?: string
+  dataType: string
+  required?: boolean
+  settings?: Record<string, unknown>
+}
+
+const systemFormFieldPresets: SystemFormFieldPreset[] = [
+  {
+    key: 'full_name',
+    label: 'Nombre completo',
+    destinationLabel: 'Nombre completo del contacto',
+    blockType: 'short_text',
+    placeholder: 'Tu nombre completo',
+    dataType: 'text',
+    required: true
+  },
+  {
+    key: 'first_name',
+    label: 'Primer nombre',
+    destinationLabel: 'Primer nombre del contacto',
+    blockType: 'short_text',
+    placeholder: 'Tu primer nombre',
+    dataType: 'text'
+  },
+  {
+    key: 'last_name',
+    label: 'Apellido',
+    destinationLabel: 'Apellido del contacto',
+    blockType: 'short_text',
+    placeholder: 'Tu apellido',
+    dataType: 'text'
+  },
+  {
+    key: 'email',
+    label: 'Correo electrónico',
+    destinationLabel: 'Correo del contacto',
+    blockType: 'email',
+    placeholder: 'tu@email.com',
+    validation: 'email',
+    dataType: 'email',
+    required: true
+  },
+  {
+    key: 'phone',
+    label: 'Teléfono / WhatsApp',
+    destinationLabel: 'Teléfono del contacto',
+    blockType: 'phone',
+    placeholder: '10 dígitos',
+    validation: 'phone',
+    dataType: 'phone',
+    required: true,
+    settings: { phoneCountrySelectorEnabled: true }
+  },
+  {
+    key: 'city',
+    label: 'Ciudad',
+    destinationLabel: 'Ciudad del contacto',
+    blockType: 'short_text',
+    placeholder: 'Tu ciudad',
+    dataType: 'text'
+  },
+  {
+    key: 'company',
+    label: 'Empresa',
+    destinationLabel: 'Empresa del contacto',
+    blockType: 'short_text',
+    placeholder: 'Nombre de la empresa',
+    dataType: 'text'
+  },
+  {
+    key: 'address_1',
+    label: 'Dirección 1',
+    destinationLabel: 'Dirección principal del contacto',
+    blockType: 'short_text',
+    placeholder: 'Calle, número, colonia',
+    dataType: 'text'
+  }
+]
+
+const systemFormFieldPresetByKey = new Map<SystemFormFieldKey, SystemFormFieldPreset>(
+  systemFormFieldPresets.map(preset => [preset.key, preset])
+)
+
+const getSystemFormFieldPreset = (value: unknown): SystemFormFieldPreset | null => {
+  const key = String(value || '').trim() as SystemFormFieldKey
+  return systemFormFieldPresetByKey.get(key) || null
+}
+
+const normalizeSystemFieldMatchValue = (value: unknown) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+
+const systemFormFieldPresetByLegacyAlias = new Map<string, SystemFormFieldPreset>()
+systemFormFieldPresets.forEach(preset => {
+  [
+    preset.key,
+    preset.label,
+    preset.placeholder,
+    preset.destinationLabel,
+    preset.key.replace(/_/g, ' '),
+    preset.key === 'email' ? 'correo electronico' : '',
+    preset.key === 'phone' ? 'telefono whatsapp' : '',
+    preset.key === 'address_1' ? 'address 1' : ''
+  ]
+    .map(normalizeSystemFieldMatchValue)
+    .filter(Boolean)
+    .forEach(alias => systemFormFieldPresetByLegacyAlias.set(alias, preset))
+})
+
+const getSystemFormFieldPresetForBlock = (block?: SiteBlock | null) => {
+  const explicitPreset = getSystemFormFieldPreset(block?.settings?.systemFieldKey || block?.settings?.system_field_key)
+  if (explicitPreset || !block) return explicitPreset
+
+  const settings = block.settings || {}
+  const candidates = [
+    settings.internalName,
+    settings.internal_name,
+    block.label,
+    block.placeholder
+  ]
+
+  for (const candidate of candidates) {
+    const preset = systemFormFieldPresetByLegacyAlias.get(normalizeSystemFieldMatchValue(candidate))
+    if (preset && preset.blockType === block.blockType) return preset
+  }
+
+  return null
+}
+
+const buildSystemFormFieldSettings = (preset: SystemFormFieldPreset, currentSettings: Record<string, unknown> = {}) => ({
+  ...currentSettings,
+  ...(preset.settings || {}),
+  systemFieldKey: preset.key,
+  systemFieldLabel: preset.label,
+  systemFieldTarget: ['full_name', 'first_name', 'last_name', 'email', 'phone'].includes(preset.key) ? 'standard' : 'system_custom',
+  internalName: preset.key,
+  validation: preset.validation || '',
+  customFieldDefinitionId: '',
+  customFieldKey: '',
+  customFieldLabel: '',
+  customFieldDataType: ''
+})
+
+const applySystemFormFieldPreset = <T extends {
+  blockType?: SiteBlockType
+  label?: string
+  content?: string
+  placeholder?: string
+  required?: boolean
+  settings?: Record<string, unknown>
+}>(payload: T, initialSettings: Record<string, unknown> = {}): T => {
+  const preset = getSystemFormFieldPreset(initialSettings.systemFieldKey || initialSettings.system_field_key)
+  if (!preset) {
+    return {
+      ...payload,
+      settings: {
+        ...(payload.settings || {}),
+        ...initialSettings
+      }
+    }
+  }
+
+  return {
+    ...payload,
+    blockType: preset.blockType,
+    label: preset.label,
+    placeholder: preset.placeholder,
+    required: preset.required ?? payload.required ?? false,
+    settings: buildSystemFormFieldSettings(preset, {
+      ...(payload.settings || {}),
+      ...initialSettings,
+      customFieldDataType: preset.dataType
+    })
+  }
+}
+
+const systemFormFieldPaletteItems: PaletteItem[] = systemFormFieldPresets.map(preset => ({
+  id: `system-${preset.key}`,
+  label: preset.label,
+  blockType: preset.blockType,
+  initialSettings: {
+    systemFieldKey: preset.key
+  }
+}))
 
 const videoSpeedOptions: Array<{ value: string; label: string }> = [
   { value: '0.75', label: '0.75x' },
@@ -273,9 +585,31 @@ const videoSpeedOptions: Array<{ value: string; label: string }> = [
   { value: '2', label: '2x' }
 ]
 
+const videoControlsModeOptions = [
+  { value: 'clean', label: 'Tipo Wistia' },
+  { value: 'native', label: 'Controles del navegador' },
+  { value: 'none', label: 'Sin reproductor visible' }
+] as const
+type VideoControlsMode = typeof videoControlsModeOptions[number]['value']
+const DEFAULT_VIDEO_CONTROLS_MODE: VideoControlsMode = 'clean'
+const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
+  videoControlsMode: DEFAULT_VIDEO_CONTROLS_MODE,
+  videoControls: false,
+  videoPreviewEnabled: true,
+  videoSoundHint: true,
+  videoMuted: true,
+  videoAutoplay: false,
+  videoLoop: false,
+  videoDefaultSpeed: 1,
+  videoFit: 'cover',
+  videoPlayerColor: 'rgba(0,0,0,.52)',
+  videoPlayColor: '#ffffff',
+  videoPlaySize: 64
+}
+
 const SITES_AI_DRAFT_CREATED_EVENT = 'ristak-sites-ai-draft-created'
 const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
-const EDITOR_AUTOSAVE_CHANGE_THRESHOLD = 10
+const BLOCK_ORDER_ALL_PAGES_KEY = '__all_pages__'
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
 const FORM_THANK_YOU_PAGE_ID = 'page-2'
 const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
@@ -669,6 +1003,116 @@ const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
   reader.onerror = () => reject(reader.error || new Error('No se pudo leer el archivo'))
   reader.readAsDataURL(file)
 })
+const textToFileDataUrl = (content: string, mimeType: string) => {
+  const bytes = new TextEncoder().encode(content)
+  let binary = ''
+  bytes.forEach(byte => {
+    binary += String.fromCharCode(byte)
+  })
+  const encoded = btoa(binary)
+  return `data:${mimeType};base64,${encoded}`
+}
+
+const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
+- Marca textos editables con data-rstk-editable="true", data-rstk-edit-type="heading|text|button|placeholder|form_field|image|video" y data-rstk-edit-id único.
+- Botones: usa <button type="button" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="cta-principal" data-rstk-label="Botón principal">Texto</button>.
+- Acciones de botón: usa data-rstk-button-action="url|next_page|specific_page|submit|disqualify|open_popup|close_popup" y data-rstk-button-actions='[{"id":"action-1","action":"url","buttonUrl":"https://..."}]'.
+- Si un botón envía formulario, debe vivir dentro del mismo <form data-rstk-form-id="..."> que sus campos.
+- Formularios: usa <form data-rstk-form-id="lead-form"> y campos con name, id, data-rstk-edit-type="form_field", data-rstk-label y placeholder.
+- Radio/checkbox: agrúpalos con el mismo name y usa data-rstk-choice-actions en cada input cuando una opción tenga regla.
+- Imágenes: usa <img src="..." alt="..." data-rstk-editable="true" data-rstk-edit-type="image" data-rstk-edit-id="imagen-hero">.
+- Videos: NUNCA dejes un <video>, <iframe>, <embed> u <object> suelto. Siempre envuélvelo en un contenedor editable con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-edit-id único, data-rstk-label y data-rstk-video-url.
+- Video MP4/WebM/MOV correcto:
+  <div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-edit-id="video-principal" data-rstk-label="Video principal" data-rstk-video-url="https://cdn.ejemplo.com/video.mp4" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:18px;">
+    <video src="https://cdn.ejemplo.com/video.mp4" controls playsinline preload="metadata" style="width:100%;height:100%;display:block;object-fit:cover;background:#000;"></video>
+  </div>
+- Video iframe/embed correcto:
+  <div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-edit-id="video-principal" data-rstk-label="Video principal" data-rstk-video-url="https://www.youtube.com/embed/VIDEO_ID" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:18px;">
+    <iframe src="https://www.youtube.com/embed/VIDEO_ID" title="Video principal" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="width:100%;height:100%;display:block;border:0;background:#000;"></iframe>
+  </div>
+- Mantén el mismo valor en data-rstk-video-url y en src para que Ristak pueda reemplazar el video desde el editor.
+- Secciones: usa data-rstk-section="Hero|Formulario|Gracias" para que el editor ubique rápido cada bloque.
+- Evita scripts de navegación automática dentro del editor; Ristak bloquea clicks, submits y window.open mientras se edita.`.trim()
+
+const BLANK_IMPORTED_HTML = `<!doctype html>
+<!--
+${IMPORTED_HTML_AI_GUIDE}
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sitio HTML en blanco</title>
+  <style>
+    :root {
+      color: #111827;
+      background: #ffffff;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background: #ffffff;
+    }
+  </style>
+</head>
+<body>
+</body>
+</html>`
+
+const DEFAULT_IMPORTED_POPUP_HTML = `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pop up</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #f8fafc;
+      color: #111827;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .popup {
+      width: min(520px, calc(100vw - 32px));
+      display: grid;
+      gap: 16px;
+      padding: 32px;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      border-radius: 18px;
+      background: #ffffff;
+      box-shadow: 0 24px 80px -48px rgba(15, 23, 42, 0.5);
+    }
+    h2, p { margin: 0; }
+    h2 { font-size: 28px; line-height: 1.05; }
+    p { color: #475569; line-height: 1.55; }
+    button {
+      min-height: 46px;
+      border: 0;
+      border-radius: 12px;
+      background: #111827;
+      color: #ffffff;
+      font-weight: 800;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <section class="popup" data-rstk-editable="true" data-rstk-edit-type="section" data-rstk-label="Pop up">
+    <h2 data-rstk-editable="true" data-rstk-edit-type="heading" data-rstk-edit-id="popup_title" data-rstk-label="Título del pop up">Título del pop up</h2>
+    <p data-rstk-editable="true" data-rstk-edit-type="text" data-rstk-edit-id="popup_copy" data-rstk-label="Texto del pop up">Escribe aquí el mensaje que quieres mostrar.</p>
+    <button type="button" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="popup_cta" data-rstk-label="Botón del pop up" data-rstk-button-action="close_popup">Cerrar</button>
+  </section>
+</body>
+</html>`
 const DEFAULT_BUTTON_SETTINGS = {
   buttonAlign: 'center',
   buttonRadius: 28,
@@ -730,13 +1174,18 @@ type BlockMoveState = {
   canMoveUp: boolean
   canMoveDown: boolean
 }
+type EmbeddedFormActiveElement = 'field' | 'submit'
 type EmbeddedFormCanvasEditorBridge = {
   parentBlockId: string
   activeFieldId: string
+  submitSelected: boolean
   activePageId: string
   pages: SitePage[]
   insertIndex: number | null
   onSelectField: (fieldId: string) => void
+  onSelectSubmit: () => void
+  onPatchField: (fieldId: string, patch: Partial<SiteBlock>) => void
+  onSaveField: () => void
   onDragOverField: (event: React.DragEvent<HTMLElement>, insertIndex: number) => void
   onDropField: (event: React.DragEvent<HTMLElement>, insertIndex: number) => void
   onDragLeave: (event: React.DragEvent<HTMLElement>) => void
@@ -754,6 +1203,8 @@ type EditorHistoryEntry = {
   afterBlockIds: string[]
   deletedRootBlockId?: string
   deletedBlocks?: SiteBlock[]
+  deletedCreatedBlockIds?: string[]
+  deletedPendingSaveBlockIds?: string[]
 }
 
 type AddBlockOptions = {
@@ -961,6 +1412,18 @@ const getPublicTitleEditorValue = (site?: PublicSite | null) =>
 
 const getPublicTitleForSave = (site: PublicSite) =>
   isLegacyPublicTitleDefault(site) ? '' : site.title
+
+const formatEditorSavedAt = (savedAt: number, now: number) => {
+  const elapsedSeconds = Math.max(0, Math.floor((now - savedAt) / 1000))
+  if (elapsedSeconds < 10) return 'Guardado hace unos segundos'
+  if (elapsedSeconds < 60) return `Guardado hace ${elapsedSeconds} segundos`
+
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60)
+  if (elapsedMinutes <= 1) return 'Guardado hace 1 minuto'
+  if (elapsedMinutes < 60) return `Guardado hace ${elapsedMinutes} minutos`
+
+  return 'Guardado'
+}
 
 const templateMetaById = (id?: string) => siteTemplates.find(template => template.id === id)
 
@@ -1216,14 +1679,14 @@ const getLibraryTitle = (section: SitesSection) => {
 }
 
 const getLibraryDescription = (section: SitesSection) => {
-  if (section === 'landings') return 'Biblioteca de paginas publicas, sitios web y embudos listos para editar.'
-  if (section === 'forms') return 'Biblioteca de formularios publicos para capturar prospectos y respuestas.'
-  return 'Biblioteca de sitios publicos.'
+  if (section === 'landings') return 'Biblioteca de páginas públicas, sitios web y embudos listos para editar.'
+  if (section === 'forms') return 'Biblioteca de formularios públicos para capturar prospectos y respuestas.'
+  return 'Biblioteca de sitios públicos.'
 }
 
 const getLibraryEmptyMessage = (section: SitesSection) => {
-  if (section === 'landings') return 'Crea un sitio web para verlo aqui como tarjeta editable.'
-  if (section === 'forms') return 'Crea un formulario para verlo aqui como tarjeta editable.'
+  if (section === 'landings') return 'Crea un sitio web para verlo aquí como tarjeta editable.'
+  if (section === 'forms') return 'Crea un formulario para verlo aquí como tarjeta editable.'
   return getEmptyEditorMessage(section)
 }
 
@@ -1276,7 +1739,7 @@ const getCreateFlowHeaderCopy = (step: CreateFlow) => {
 
   if (step === 'interactive-start') {
     return {
-      title: 'Formulario interactivo multipagina',
+    title: 'Formulario interactivo multipágina',
       subtitle: 'Ahora elige si quieres empezar en blanco, con plantilla o con IA.'
     }
   }
@@ -1290,7 +1753,7 @@ const getCreateFlowHeaderCopy = (step: CreateFlow) => {
 
   return {
     title: 'Sitios',
-    subtitle: 'Constructor visual controlado para sitios web, formularios, leads y publicacion por dominio verificado.'
+    subtitle: 'Constructor visual controlado para sitios web, formularios, leads y publicación por dominio verificado.'
   }
 }
 
@@ -1324,6 +1787,26 @@ const getSettingString = (settings: Record<string, unknown>, key: string) => {
   const value = settings?.[key]
   return typeof value === 'string' ? value : ''
 }
+
+const isVideoControlsMode = (value: string): value is VideoControlsMode =>
+  videoControlsModeOptions.some(option => option.value === value)
+
+const getVideoControlsMode = (settings: Record<string, unknown>): VideoControlsMode => {
+  const rawMode = getSettingString(settings, 'videoControlsMode')
+  if (isVideoControlsMode(rawMode)) return rawMode
+  if (settings.videoControls === false) return 'none'
+  return DEFAULT_VIDEO_CONTROLS_MODE
+}
+
+const withDefaultVideoPlayerSettings = (settings: Record<string, unknown> = {}) => ({
+  ...DEFAULT_VIDEO_PLAYER_SETTINGS,
+  ...settings
+})
+
+const withUploadedVideoSettings = (settings: Record<string, unknown> = {}, mediaUrl: string) => ({
+  ...withDefaultVideoPlayerSettings(settings),
+  mediaUrl
+})
 
 const isPhoneCountrySelectorEnabled = (block: SiteBlock) => {
   const settings = block.settings || {}
@@ -1371,7 +1854,7 @@ const getPopupTrigger = (theme?: SiteTheme | null): PopupTrigger => {
 
 const popupTriggerLabels: Record<PopupTrigger, string> = {
   never: 'Nunca',
-  delay: 'Despues de unos segundos',
+  delay: 'Después de unos segundos',
   exit_intent: 'Cuando intenta salir'
 }
 
@@ -1412,7 +1895,8 @@ const hasThemePopupConfig = (theme?: SiteTheme | null) => Boolean(
   getThemeString(theme || undefined, 'popupButtonText').trim() ||
   getThemeString(theme || undefined, 'popupButtonUrl').trim() ||
   getThemeString(theme || undefined, 'popupBackgroundColor').trim() ||
-  getThemeString(theme || undefined, 'popupBackdropColor').trim()
+  getThemeString(theme || undefined, 'popupBackdropColor').trim() ||
+  getThemeString(theme || undefined, 'importedPopupHtml').trim()
 )
 
 const getThemeBackgroundVideo = (theme: SiteTheme | undefined) => {
@@ -1468,13 +1952,13 @@ const formChoiceStyleOptions: Array<{ value: FormChoiceStyle; label: string }> =
   { value: 'native', label: 'Clasico con circulo' },
   { value: 'cards', label: 'Fila seleccionada' },
   { value: 'pills', label: 'Pildoras' },
-  { value: 'minimal', label: 'Linea simple' }
+  { value: 'minimal', label: 'Línea simple' }
 ]
 
 const formSelectStyleOptions: Array<{ value: FormSelectStyle; label: string }> = [
   { value: 'classic', label: 'Clasico' },
   { value: 'filled', label: 'Relleno moderno' },
-  { value: 'underline', label: 'Linea inferior' }
+  { value: 'underline', label: 'Línea inferior' }
 ]
 
 const socialPlatformOptions: Array<{ value: SocialPlatform; label: string }> = [
@@ -1512,7 +1996,7 @@ const connectedSocialProfileBlockPatch = (profile: ConnectedSocialProfile): Reco
   brandSubtitle: profile.platform === 'instagram'
     ? 'Perfil de Instagram conectado'
     : profile.platform === 'facebook'
-      ? 'Pagina de Facebook conectada'
+      ? 'Página de Facebook conectada'
       : 'Perfil conectado',
   brandAvatar: profile.avatarUrl || '',
   followers: profile.followersLabel || '',
@@ -1553,7 +2037,7 @@ const socialProfileDefaultsForSite = (site?: PublicSite | null): Record<string, 
   return {
     platform,
     brandName: theme.brandName || getPublicTitleEditorValue(site) || site?.name || 'Tu marca',
-    brandSubtitle: theme.brandSubtitle || (platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'),
+    brandSubtitle: theme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'),
     brandAvatar: theme.brandAvatar || '',
     followers: theme.followers || '',
     brandVerified: theme.brandVerified === undefined ? true : theme.brandVerified !== false,
@@ -1607,6 +2091,11 @@ const getHorizontalAlign = (settings: Record<string, unknown>, key: string, fall
 
 const getButtonAlign = (settings: Record<string, unknown>, fallback: ButtonAlign = 'center'): ButtonAlign => {
   const value = settings.buttonAlign
+  return isButtonAlign(value) ? value : fallback
+}
+
+const getThemeButtonAlign = (theme: SiteTheme | undefined, key: keyof SiteTheme, fallback: ButtonAlign = 'center'): ButtonAlign => {
+  const value = theme?.[key]
   return isButtonAlign(value) ? value : fallback
 }
 
@@ -1743,8 +2232,9 @@ const getPanelStyleSettings = (site: PublicSite, block: SiteBlock, blocks: SiteB
     mediaAlign: 'center',
     mediaWidth: 100,
     mediaRadius: 18,
-    fieldBg: '#ffffff',
+    fieldBg: 'transparent',
     fieldBorder: '#dbe3ef',
+    fieldWidth: 100,
     fieldRadius: 12,
     buttonRadius: 28,
     buttonHeight: 54,
@@ -1847,7 +2337,7 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   const blockBorder = getSettingString(settings, 'blockBorderColor')
   const blockBackgroundImage = getSettingString(settings, 'blockBackgroundImage')
   const blockHasNativeBorder = nativeBorderBlockTypes.has(block.blockType)
-  const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta'
+  const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed'
 
   if (isCssPaint(bg)) {
     const normalized = normalizeCssPaint(bg, '#ffffff')
@@ -1969,6 +2459,7 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   if (settings.cardBorderWidth !== undefined) style['--rstk-card-border-width'] = `${getSettingNumber(settings, 'cardBorderWidth', 1, 0, 8)}px`
   if (settings.listColumns !== undefined) style['--rstk-list-columns'] = `repeat(${getSettingNumber(settings, 'listColumns', 3, 1, 4)}, minmax(0, 1fr))`
   if (settings.cardAlign !== undefined) style['--rstk-card-align'] = getHorizontalAlign(settings, 'cardAlign', 'left')
+  if (settings.fieldWidth !== undefined) style['--rstk-field-width'] = `${getSettingNumber(settings, 'fieldWidth', 100, 20, 100)}%`
   if (settings.fieldRadius !== undefined) style['--rstk-field-radius'] = `${getSettingNumber(settings, 'fieldRadius', 12, 0, 32)}px`
   if (block.blockType === SECTION_BLOCK_TYPE) {
     style['--rstk-section-columns'] = `${getSectionColumns(block)}`
@@ -2014,7 +2505,7 @@ const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
   const normalized = rawPages
     .map((page, index) => ({
       id: page?.id || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
-      title: page?.title || `Pagina ${index + 1}`,
+      title: page?.title || `Página ${index + 1}`,
       sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
       ...(page?.parentPageId ? { parentPageId: page.parentPageId } : {}),
       ...(page?.slug ? { slug: page.slug } : {}),
@@ -2023,7 +2514,10 @@ const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
       ...(page?.headerTrackingCode !== undefined ? { headerTrackingCode: page.headerTrackingCode } : {}),
       metaCapiEnabled: Boolean(page?.metaCapiEnabled),
       metaEventName: normalizeMetaEventName(page?.metaEventName, 'none'),
-      metaTrigger: normalizeMetaTrigger(page?.metaTrigger)
+      metaTrigger: normalizeMetaTrigger(page?.metaTrigger),
+      ...(hasMetaEventParameters(page?.metaEventParameters)
+        ? { metaEventParameters: pruneMetaEventParametersForEvent(page?.metaEventParameters, page?.metaEventName) }
+        : {})
     }))
     .filter(page => {
       if (!page.id || seen.has(page.id)) return false
@@ -2050,7 +2544,10 @@ const normalizeFormPages = (site?: PublicSite | null): SitePage[] => {
       ...(existing?.headerTrackingCode !== undefined ? { headerTrackingCode: existing.headerTrackingCode } : {}),
       metaCapiEnabled: Boolean(existing?.metaCapiEnabled),
       metaEventName: normalizeMetaEventName(existing?.metaEventName, 'none'),
-      metaTrigger: normalizeMetaTrigger(existing?.metaTrigger)
+      metaTrigger: normalizeMetaTrigger(existing?.metaTrigger),
+      ...(hasMetaEventParameters(existing?.metaEventParameters)
+        ? { metaEventParameters: pruneMetaEventParametersForEvent(existing?.metaEventParameters, existing?.metaEventName) }
+        : {})
     }
   }
 
@@ -2064,13 +2561,13 @@ const normalizeFormPages = (site?: PublicSite | null): SitePage[] => {
 const normalizeFunnelPages = (site?: PublicSite | null): SitePage[] => {
   if (isImportedHtmlSite(site)) {
     const normalized = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
-    return normalized.length ? normalized : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+    return normalized.length ? normalized : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   }
 
   if (isStandardForm(site)) return normalizeFormPages(site)
 
   const normalized = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
-  return normalized.length ? normalized : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+  return normalized.length ? normalized : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
 }
 
 const getFormContentPages = (pages: SitePage[]) => pages.filter(page => !isFormFinalPage(page))
@@ -2115,7 +2612,7 @@ const isLastFormContentPage = (site: PublicSite, pages: SitePage[], pageId?: str
 
 const makeFunnelPage = (index: number, extra?: Partial<SitePage>): SitePage => ({
   id: `page-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-  title: `Pagina ${index + 1}`,
+  title: `Página ${index + 1}`,
   sortOrder: index,
   metaCapiEnabled: false,
   metaEventName: 'none',
@@ -2126,7 +2623,7 @@ const makeFunnelPage = (index: number, extra?: Partial<SitePage>): SitePage => (
 const normalizePagesForSave = (pages: SitePage[]) =>
   pages.map((page, index) => ({
     id: page.id,
-    title: page.title || `Pagina ${index + 1}`,
+    title: page.title || `Página ${index + 1}`,
     sortOrder: index,
     ...(page.parentPageId ? { parentPageId: page.parentPageId } : {}),
     ...(page.slug ? { slug: page.slug } : {}),
@@ -2135,7 +2632,10 @@ const normalizePagesForSave = (pages: SitePage[]) =>
     ...(page.headerTrackingCode !== undefined ? { headerTrackingCode: page.headerTrackingCode } : {}),
     metaCapiEnabled: Boolean(page.metaCapiEnabled),
     metaEventName: normalizeMetaEventName(page.metaEventName, 'none'),
-    metaTrigger: normalizeMetaTrigger(page.metaTrigger)
+    metaTrigger: normalizeMetaTrigger(page.metaTrigger),
+    ...(hasMetaEventParameters(page.metaEventParameters)
+      ? { metaEventParameters: pruneMetaEventParametersForEvent(page.metaEventParameters, page.metaEventName) }
+      : {})
   }))
 
 // --- Website page hierarchy (subpages) helpers ---
@@ -2442,15 +2942,17 @@ const normalizeOption = (option: string | SiteBlockOption, index: number): SiteB
     }
   }
 
-  const label = option.label || option.value || `Opcion ${index + 1}`
+  const label = option.label || option.value || `Opción ${index + 1}`
   return {
     id: option.id || `option-${index}`,
     label,
     value: option.value || label,
     action: normalizeVisibleRuleAction(option.action),
     targetBlockId: option.targetBlockId || '',
+    targetPageId: option.targetPageId || '',
     message: option.message || '',
     redirectUrl: option.redirectUrl || '',
+    submitBeforeAction: option.submitBeforeAction !== false,
     tag: option.tag || '',
     category: option.category || ''
   }
@@ -2778,50 +3280,27 @@ const resolveImportedVideoPreview = (rawValue: string): EmbedPreviewConfig => {
   return resolveEmbedPreview(raw)
 }
 
-const createEmbeddedBlocks = (siteId: string): SiteBlock[] => [
-  {
-    id: `embedded_${crypto.randomUUID()}`,
-    siteId,
-    blockType: 'short_text',
-    label: 'Nombre completo',
-    content: '',
-    placeholder: 'Tu nombre',
-    required: true,
-    options: [],
-    settings: { internalName: 'full_name', pageId: DEFAULT_FUNNEL_PAGE_ID },
-    sortOrder: 0,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: `embedded_${crypto.randomUUID()}`,
-    siteId,
-    blockType: 'phone',
-    label: 'Telefono / WhatsApp',
-    content: '',
-    placeholder: '10 digitos',
-    required: true,
-    options: [],
-    settings: { internalName: 'phone', validation: 'phone', phoneCountrySelectorEnabled: true, pageId: DEFAULT_FUNNEL_PAGE_ID },
-    sortOrder: 1,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: `embedded_${crypto.randomUUID()}`,
-    siteId,
-    blockType: 'email',
-    label: 'Correo electronico',
-    content: '',
-    placeholder: 'tu@email.com',
-    required: true,
-    options: [],
-    settings: { internalName: 'email', validation: 'email', pageId: DEFAULT_FUNNEL_PAGE_ID },
-    sortOrder: 2,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  }
-]
+const createEmbeddedBlocks = (siteId: string): SiteBlock[] =>
+  (['full_name', 'phone', 'email'] as SystemFormFieldKey[]).map((systemFieldKey, sortOrder) => {
+    const preset = getSystemFormFieldPreset(systemFieldKey)
+    const now = new Date().toISOString()
+    return {
+      id: `embedded_${crypto.randomUUID()}`,
+      siteId,
+      blockType: preset?.blockType || 'short_text',
+      label: preset?.label || 'Campo',
+      content: '',
+      placeholder: preset?.placeholder || '',
+      required: Boolean(preset?.required),
+      options: [],
+      settings: preset
+        ? buildSystemFormFieldSettings(preset, { pageId: DEFAULT_FUNNEL_PAGE_ID, customFieldDataType: preset.dataType })
+        : { internalName: systemFieldKey, pageId: DEFAULT_FUNNEL_PAGE_ID },
+      sortOrder,
+      createdAt: now,
+      updatedAt: now
+    }
+  })
 
 const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | string, siteType?: SiteType) => {
   const site = typeof siteOrId === 'string' ? null : siteOrId
@@ -2850,7 +3329,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       settings: blockSettings({
         textAlign: 'center',
         kicker: 'Nuevo',
-        subtitle: 'Subtitulo del sitio web',
+        subtitle: 'Subtítulo del sitio web',
         buttonText: 'Comenzar',
         buttonUrl: '#form',
         ...DEFAULT_BUTTON_SETTINGS
@@ -2910,7 +3389,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     return {
       blockType,
       label,
-      content: 'Tu informacion esta protegida.',
+      content: 'Tu información está protegida.',
       settings: blockSettings({
         panelLinks: [
           { label: 'API docs', url: '/docs' },
@@ -2933,7 +3412,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     return {
       blockType,
       label,
-      content: 'Listo para empezar?',
+      content: '¿Listo para empezar?',
       settings: blockSettings({
         textAlign: 'center',
         subtitle: 'Deja tus datos y te contactamos.',
@@ -2948,7 +3427,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     return {
       blockType,
       label,
-      content: 'Boton',
+      content: 'Botón',
       settings: blockSettings({ buttonText: 'Continuar', buttonUrl: '#form', ...DEFAULT_BUTTON_SETTINGS })
     }
   }
@@ -2958,7 +3437,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       blockType,
       label,
       content: label,
-      settings: blockSettings({ items: [{ title: 'Elemento 1', text: 'Descripcion breve.' }, { title: 'Elemento 2', text: 'Descripcion breve.' }] })
+      settings: blockSettings({ items: [{ title: 'Elemento 1', text: 'Descripción breve.' }, { title: 'Elemento 2', text: 'Descripción breve.' }] })
     }
   }
 
@@ -2966,9 +3445,9 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     return {
       blockType,
       label,
-      content: 'Formulario',
+      content: '',
       settings: blockSettings({
-        description: 'Completa tus datos.',
+        description: '',
         embeddedPages: normalizePagesForSave(normalizeEmbeddedFormPages()),
         embeddedBlocks: createEmbeddedBlocks(siteId)
       })
@@ -2991,7 +3470,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       blockType,
       label,
       content: '',
-      settings: blockSettings()
+      settings: blockSettings(blockType === 'video' ? DEFAULT_VIDEO_PLAYER_SETTINGS : {})
     }
   }
 
@@ -3017,12 +3496,12 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     blockType,
     label,
     content: isField ? '' : label,
-    placeholder: isField ? (blockType === 'dropdown' ? 'Selecciona una opcion' : 'Escribe aqui') : '',
+    placeholder: isField ? (blockType === 'dropdown' ? 'Selecciona una opción' : 'Escribe aquí') : '',
     required: false,
     options: isChoiceBlock(blockType)
       ? [
-          { label: 'Opcion 1', value: 'Opcion 1', action: 'continue' as SiteOptionAction },
-          { label: 'Opcion 2', value: 'Opcion 2', action: 'continue' as SiteOptionAction }
+          { label: 'Opción 1', value: 'Opción 1', action: 'continue' as SiteOptionAction },
+          { label: 'Opción 2', value: 'Opción 2', action: 'continue' as SiteOptionAction }
         ]
       : [],
     settings: blockSettings(baseSettings)
@@ -3030,11 +3509,11 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
 }
 
 const makePreviewBlock = (blockType: SiteBlockType, site: PublicSite, pageId?: string, initialSettings: Record<string, unknown> = {}): SiteBlock => {
-  const payload = defaultBlockPayload(blockType, site)
+  const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, site), initialSettings)
   return {
     id: '__palette-preview__',
     siteId: site.id,
-    blockType,
+    blockType: payload.blockType || blockType,
     label: payload.label || blockLabels[blockType],
     content: payload.content || '',
     placeholder: payload.placeholder || '',
@@ -3042,7 +3521,6 @@ const makePreviewBlock = (blockType: SiteBlockType, site: PublicSite, pageId?: s
     options: payload.options || [],
     settings: {
       ...(payload.settings || {}),
-      ...initialSettings,
       ...(pageId ? { pageId } : {})
     },
     sortOrder: -1,
@@ -3051,14 +3529,20 @@ const makePreviewBlock = (blockType: SiteBlockType, site: PublicSite, pageId?: s
   }
 }
 
-const createEmbeddedFieldBlock = (site: PublicSite, blockType: SiteBlockType, sortOrder = 0, pageId = DEFAULT_FUNNEL_PAGE_ID): SiteBlock => {
-  const payload = defaultBlockPayload(blockType, site)
+const createEmbeddedFieldBlock = (
+  site: PublicSite,
+  blockType: SiteBlockType,
+  sortOrder = 0,
+  pageId = DEFAULT_FUNNEL_PAGE_ID,
+  initialSettings: Record<string, unknown> = {}
+): SiteBlock => {
+  const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, site), initialSettings)
   const now = new Date().toISOString()
   return {
     id: `embedded_${crypto.randomUUID()}`,
     siteId: site.id,
-    blockType,
-    label: payload.label || blockLabels[blockType] || 'Campo',
+    blockType: payload.blockType || blockType,
+    label: payload.label || blockLabels[payload.blockType || blockType] || 'Elemento',
     content: payload.content || '',
     placeholder: payload.placeholder || '',
     required: Boolean(payload.required),
@@ -3083,27 +3567,27 @@ const getEditableEmbeddedFormPages = (block: SiteBlock, forms: PublicSite[]): Si
   return getEmbeddedFormContentPagesFromSite(linkedForm)
 }
 
-const cloneFormFieldsForEmbed = (site: PublicSite, sourceFields: SiteBlock[], parentBlockId: string): SiteBlock[] => {
+const cloneFormBlocksForEmbed = (site: PublicSite, sourceBlocks: SiteBlock[], parentBlockId: string): SiteBlock[] => {
   const idMap = new Map<string, string>()
-  sourceFields.forEach(field => {
-    idMap.set(field.id, `embedded_${parentBlockId}_${field.id}`.replace(/[^a-zA-Z0-9_-]/g, '_'))
+  sourceBlocks.forEach(block => {
+    idMap.set(block.id, `embedded_${parentBlockId}_${block.id}`.replace(/[^a-zA-Z0-9_-]/g, '_'))
   })
 
-  return sourceFields.map((field, index) => {
-    const nextId = idMap.get(field.id) || `embedded_${crypto.randomUUID()}`
+  return sourceBlocks.map((block, index) => {
+    const nextId = idMap.get(block.id) || `embedded_${crypto.randomUUID()}`
     return {
-      ...cloneJson(field),
+      ...cloneJson(block),
       id: nextId,
       siteId: site.id,
       sortOrder: index,
-      options: (field.options || []).map((option, optionIndex) => {
+      options: (block.options || []).map((option, optionIndex) => {
         const normalizedOption = normalizeOption(option, optionIndex)
         return {
           ...normalizedOption,
           targetBlockId: normalizedOption.targetBlockId ? idMap.get(normalizedOption.targetBlockId) || normalizedOption.targetBlockId : ''
         }
       }),
-      settings: cloneJson(field.settings || {})
+      settings: cloneJson(block.settings || {})
     }
   })
 }
@@ -3115,11 +3599,16 @@ const getEditableEmbeddedFormBlocks = (site: PublicSite, block: SiteBlock, forms
 
   const linkedFormId = getSettingString(settings, 'formSiteId')
   const linkedForm = forms.find(form => form.id === linkedFormId)
-  const linkedFields = Array.isArray(linkedForm?.blocks)
-    ? linkedForm.blocks.filter(field => fieldBlockTypes.has(field.blockType))
+  const linkedPages = getEmbeddedFormContentPagesFromSite(linkedForm)
+  const linkedPageIds = new Set(linkedPages.map(page => page.id))
+  const linkedBlocks = Array.isArray(linkedForm?.blocks)
+    ? linkedForm.blocks.filter(item => {
+      const rawPageId = getSettingString(item.settings || {}, 'pageId')
+      return embeddedFormBlockTypeSet.has(item.blockType) && (!rawPageId || linkedPageIds.has(rawPageId))
+    })
     : []
 
-  return linkedFields.length ? cloneFormFieldsForEmbed(site, linkedFields, block.id) : []
+  return linkedBlocks.length ? cloneFormBlocksForEmbed(site, linkedBlocks, block.id) : []
 }
 
 function FormModePalette({
@@ -3132,54 +3621,82 @@ function FormModePalette({
 }: {
   fieldsCount: number
   activePageTitle: string
-  onAddField: (blockType: SiteBlockType) => void
+  onAddField: (blockType: SiteBlockType, initialSettings?: Record<string, unknown>) => void
   onPaletteDragStart: (payload: PaletteDragPayload, position: PaletteDragPosition | null) => void
   onPaletteDragMove: (position: PaletteDragPosition | null) => void
   onPaletteDragEnd: () => void
 }) {
+  const sections: Array<{ label: string; items: PaletteItem[] }> = [
+    { label: 'Sistema', items: systemFormFieldPaletteItems },
+    {
+      label: 'Campos libres',
+      items: embeddedFormFreeFieldTypes.map(blockType => ({
+        id: blockType,
+        label: blockLabels[blockType] || 'Campo',
+        blockType
+      }))
+    },
+    {
+      label: 'Contenido',
+      items: embeddedFormContentTypes.map(blockType => ({
+        id: `content-${blockType}`,
+        label: blockLabels[blockType] || 'Contenido',
+        blockType
+      }))
+    }
+  ]
+
   return (
     <div className={styles.formModePalette}>
       <div className={styles.formModePaletteHeader}>
         <span className={styles.formModeIcon}><FormInput size={17} /></span>
         <div>
-          <strong>Modo formulario</strong>
-          <small>{activePageTitle || 'Formulario'} - {fieldsCount} {fieldsCount === 1 ? 'campo' : 'campos'}</small>
+          <strong>Formulario</strong>
+          <small>{activePageTitle || 'Formulario'} - {fieldsCount} {fieldsCount === 1 ? 'elemento' : 'elementos'}</small>
         </div>
       </div>
-      <p className={styles.formModePaletteHint}>Arrastra componentes al formulario o haz click para agregarlos al final.</p>
-      <div className={styles.formModePaletteList}>
-        {embeddedFormFieldTypes.map(blockType => (
-          <button
-            key={blockType}
-            type="button"
-            draggable
-            onDragStart={(event) => {
-              event.dataTransfer.effectAllowed = 'move'
-              event.dataTransfer.dropEffect = 'move'
-              event.dataTransfer.setData('application/ristak-block', blockType)
-              hideNativeDragPreview(event.dataTransfer)
-              const rect = event.currentTarget.getBoundingClientRect()
-              onPaletteDragStart(
-                { blockType },
-                event.clientX || event.clientY
-                  ? { x: event.clientX, y: event.clientY }
-                  : { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-              )
-            }}
-            onDrag={(event) => {
-              if (event.clientX || event.clientY) {
-                onPaletteDragMove({ x: event.clientX, y: event.clientY })
-              }
-            }}
-            onDragEnd={onPaletteDragEnd}
-            onClick={() => onAddField(blockType)}
-          >
-            <span>{blockIcons[blockType]}</span>
-            <strong>{blockLabels[blockType] || 'Campo'}</strong>
-            <GripVertical size={14} />
-          </button>
-        ))}
-      </div>
+      <p className={styles.formModePaletteHint}>Arrastra componentes al formulario o haz click para agregarlos.</p>
+      {sections.map(section => (
+        <div key={section.label} className={styles.formModePaletteSection}>
+          <span>{section.label}</span>
+          <div className={styles.formModePaletteList}>
+            {section.items.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = 'move'
+                  event.dataTransfer.dropEffect = 'move'
+                  event.dataTransfer.setData('application/ristak-block', item.blockType)
+                  if (item.initialSettings) {
+                    event.dataTransfer.setData('application/ristak-block-settings', JSON.stringify(item.initialSettings))
+                  }
+                  hideNativeDragPreview(event.dataTransfer)
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  onPaletteDragStart(
+                    { blockType: item.blockType, initialSettings: item.initialSettings },
+                    event.clientX || event.clientY
+                      ? { x: event.clientX, y: event.clientY }
+                      : { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+                  )
+                }}
+                onDrag={(event) => {
+                  if (event.clientX || event.clientY) {
+                    onPaletteDragMove({ x: event.clientX, y: event.clientY })
+                  }
+                }}
+                onDragEnd={onPaletteDragEnd}
+                onClick={() => onAddField(item.blockType, item.initialSettings)}
+              >
+                <span>{blockIcons[item.blockType]}</span>
+                <strong>{item.label}</strong>
+                <GripVertical size={14} />
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
@@ -3188,241 +3705,465 @@ function FormEmbedEditorPanel({
   site,
   block,
   forms,
+  fields,
+  activeField,
+  activeElement,
   customFields,
   pages,
   activePageId,
-  activeFieldId,
+  sitePages,
+  activeSitePageId,
   onPatchBlock,
   onPatchSettings,
+  onPatchTheme,
+  onPatchField,
+  onPatchFieldSettings,
+  onDeleteField,
   onSave,
+  onSaveSite,
   onActivePageChange,
   onAddPage,
   onRenamePage,
-  onDeletePage,
-  onActiveFieldChange,
-  onAddField,
-  onPatchField,
-  onPatchFieldSettings,
-  onRemoveField,
-  onMoveField
+  onDeletePage
 }: {
   site: PublicSite
   block: SiteBlock
   forms: PublicSite[]
+  fields: SiteBlock[]
+  activeField: SiteBlock | null
+  activeElement: EmbeddedFormActiveElement
   customFields: CustomFieldDefinition[]
   pages: SitePage[]
   activePageId: string
-  activeFieldId: string
+  sitePages: SitePage[]
+  activeSitePageId: string
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onPatchField: (fieldId: string, patch: Partial<SiteBlock>) => void
+  onPatchFieldSettings: (field: SiteBlock, patch: Record<string, unknown>) => void
+  onDeleteField: (fieldId: string) => void
   onSave: () => void
+  onSaveSite: () => void
   onActivePageChange: (pageId: string) => void
   onAddPage: () => void
   onRenamePage: (pageId: string, title: string) => void
   onDeletePage: (pageId: string) => void
-  onActiveFieldChange: (fieldId: string) => void
-  onAddField: (blockType: SiteBlockType) => void
-  onPatchField: (fieldId: string, patch: Partial<SiteBlock>) => void
-  onPatchFieldSettings: (field: SiteBlock, patch: Record<string, unknown>) => void
-  onRemoveField: (fieldId: string) => void
-  onMoveField: (fieldId: string, direction: BlockMoveDirection) => void
 }) {
   const settings = block.settings || {}
-  const fields = useMemo(() => getEditableEmbeddedFormBlocks(site, block, forms), [block, forms, site])
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
-  const visibleFields = useMemo(
-    () => getEmbeddedFormPageFields(fields, pages, activePage?.id),
-    [activePage?.id, fields, pages]
-  )
-  const activeField = visibleFields.find(field => field.id === activeFieldId) || visibleFields[0] || null
   const selectedFormId = getSettingString(settings, 'formSiteId')
+  const activeFieldSettings = activeField?.settings || {}
+  const activeBlockIsField = Boolean(activeField && fieldBlockTypes.has(activeField.blockType))
+  const activeFieldSystemPreset = activeBlockIsField ? getSystemFormFieldPresetForBlock(activeField) : null
+  const activeFieldPageId = activeField ? getBlockPageId(activeField, pages) : activePage?.id || DEFAULT_FUNNEL_PAGE_ID
+  const ruleFieldBlocks = fields.filter(field => fieldBlockTypes.has(field.blockType))
+  const patchActiveField = (patch: Partial<SiteBlock>) => {
+    if (!activeField) return
+    onPatchField(activeField.id, patch)
+  }
+  const patchActiveFieldSettings = (patch: Record<string, unknown>) => {
+    if (!activeField) return
+    onPatchFieldSettings(activeField, patch)
+  }
+  const changeActiveFieldType = (nextType: SiteBlockType) => {
+    if (!activeField || !activeBlockIsField || activeFieldSystemPreset) return
+    const nextSettings = {
+      ...activeFieldSettings,
+      validation: nextType === 'email' ? 'email' : nextType === 'phone' ? 'phone' : '',
+      ...(nextType === 'phone' ? { phoneCountrySelectorEnabled: true } : {}),
+      customFieldDefinitionId: '',
+      customFieldKey: '',
+      customFieldLabel: '',
+      customFieldDataType: ''
+    }
+    patchActiveField({ blockType: nextType, settings: nextSettings })
+  }
+  const isSubmitSelected = activeElement === 'submit'
 
-  return (
-    <aside className={`${styles.propertiesPanel} ${styles.formModePanel}`} aria-label="Editor de formulario embebido">
-      <div className={styles.formModePanelHeader}>
-        <span className={styles.formModeIcon}><FormInput size={18} /></span>
-        <div>
-          <strong>Editando formulario</strong>
-          <small>Se guarda con el sitio web</small>
-        </div>
-      </div>
-      <div className={styles.propertiesBody}>
-        <div className={styles.settingsGroup}>
-          <div className={styles.panelSubheader}>Contenido del formulario</div>
-          <label className={styles.field}>
-            <span>Titulo</span>
-            <input value={block.content || ''} placeholder="Formulario" onChange={(event) => onPatchBlock({ content: event.target.value })} onBlur={onSave} />
-          </label>
-          <label className={styles.field}>
-            <span>Descripcion</span>
-            <textarea rows={2} value={getSettingString(settings, 'description')} onChange={(event) => onPatchSettings({ description: event.target.value })} onBlur={onSave} />
-          </label>
-          <label className={styles.field}>
-            <span>Formulario base</span>
-            <CustomSelect value={selectedFormId} onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined, embeddedPages: undefined })} onBlur={onSave}>
-              <option value="">Inline editable</option>
-              {forms.filter(form => form.id !== site.id).map(form => <option key={form.id} value={form.id}>{form.name}</option>)}
-            </CustomSelect>
-          </label>
-          <label className={styles.field}>
-            <span>Al terminar</span>
-            <CustomSelect value={getFormCompletionAction(settings)} onChange={(event) => onPatchSettings({ completionAction: event.target.value })} onBlur={onSave}>
-              <option value="next_page">Ir a la siguiente pagina</option>
-              <option value="next_page_if_qualified">Siguiente pagina solo si califica</option>
-              <option value="form_default">Mostrar mensaje del formulario</option>
-            </CustomSelect>
-          </label>
-        </div>
+  const renderActiveContentControls = () => {
+    if (!activeField) return null
 
-        <div className={styles.settingsGroup}>
-          <div className={styles.optionRulesHeader}>
-            <strong>Paginas</strong>
-            <button type="button" onClick={onAddPage}>
-              <Plus size={14} />
-              Pagina
-            </button>
-          </div>
-          <div className={styles.embeddedPageTabs}>
-            {pages.map(page => (
-              <button
-                key={page.id}
-                type="button"
-                className={page.id === activePage?.id ? styles.embeddedPageTabActive : ''}
-                onClick={() => onActivePageChange(page.id)}
-              >
-                <FileText size={14} />
-                <span>{page.title || 'Pagina'}</span>
-              </button>
-            ))}
-          </div>
-          {activePage && (
-            <div className={styles.embeddedPageEditor}>
-              <label className={styles.field}>
-                <span>Nombre de esta pagina</span>
-                <input value={activePage.title || ''} onChange={(event) => onRenamePage(activePage.id, event.target.value)} onBlur={onSave} />
-              </label>
-              <button type="button" onClick={() => onDeletePage(activePage.id)} disabled={pages.length <= 1}>
-                <Trash2 size={14} />
-                Eliminar pagina
-              </button>
-            </div>
+    if (activeField.blockType === 'image' || activeField.blockType === 'video') {
+      const mediaKind = activeField.blockType
+      const mediaUrl = getSettingString(activeFieldSettings, 'mediaUrl') || activeField.content || ''
+      const urlLabel = mediaKind === 'image' ? 'URL de imagen' : 'URL de video'
+
+      return (
+        <>
+          <MediaUploadControl
+            kind={mediaKind}
+            label={mediaKind === 'image' ? 'Elegir imagen' : 'Elegir video'}
+            moduleEntityId={site.id}
+            currentUrl={mediaUrl}
+            onUploaded={(url) => patchActiveField({
+              content: url,
+              settings: mediaKind === 'video'
+                ? withUploadedVideoSettings(activeFieldSettings, url)
+                : { ...activeFieldSettings, mediaUrl: url }
+            })}
+            onCommit={onSave}
+          />
+          <label className={styles.field}>
+            <span>{urlLabel}</span>
+            <input
+              value={mediaUrl}
+              placeholder="https://..."
+              onChange={(event) => {
+                const nextUrl = event.target.value
+                patchActiveField({ content: nextUrl, settings: { ...activeFieldSettings, mediaUrl: nextUrl } })
+              }}
+              onBlur={onSave}
+            />
+          </label>
+          <label className={styles.field}>
+            <span>Texto alternativo</span>
+            <input value={activeField.label || ''} onChange={(event) => patchActiveField({ label: event.target.value })} onBlur={onSave} />
+          </label>
+          {mediaKind === 'video' && (
+            <VideoPlayerSettingsControls
+              settings={activeFieldSettings}
+              onPatchSettings={patchActiveFieldSettings}
+              onSave={onSave}
+            />
           )}
-        </div>
+        </>
+      )
+    }
 
-        <div className={styles.settingsGroup}>
-          <div className={styles.optionRulesHeader}>
-            <strong>Campos</strong>
-            <button type="button" onClick={() => onAddField('short_text')}>
-              <Plus size={14} />
-              Campo
+    if (activeField.blockType === 'embed') {
+      return (
+        <label className={styles.field}>
+          <span>Código</span>
+          <textarea
+            rows={7}
+            value={activeField.content || ''}
+            placeholder="Pega una URL, iframe o código embed"
+            onChange={(event) => patchActiveField({ content: event.target.value })}
+            onBlur={onSave}
+          />
+        </label>
+      )
+    }
+
+    const textLabel = activeField.blockType === 'title'
+      ? 'Texto del título'
+      : activeField.blockType === 'subtitle'
+        ? 'Texto del subtítulo'
+        : 'Texto'
+
+    return (
+      <label className={styles.field}>
+        <span>{textLabel}</span>
+        {activeField.blockType === 'text' ? (
+          <textarea rows={5} value={activeField.content || ''} onChange={(event) => patchActiveField({ content: event.target.value })} onBlur={onSave} />
+        ) : (
+          <input value={activeField.content || ''} onChange={(event) => patchActiveField({ content: event.target.value })} onBlur={onSave} />
+        )}
+      </label>
+    )
+  }
+
+  const selectedFieldContent = (
+    <div className={styles.settingsGroup}>
+      <div className={styles.formFieldEditorHeader}>
+        <div>
+          <strong>Elemento seleccionado</strong>
+          <small>{activeField ? blockLabels[activeField.blockType] : 'Selecciona algo dentro del formulario'}</small>
+        </div>
+        {activeField && (
+          <div className={styles.formFieldActions}>
+            <button type="button" onClick={() => onDeleteField(activeField.id)} aria-label="Eliminar elemento">
+              <Trash2 size={14} />
             </button>
           </div>
-          <div className={styles.formFieldList}>
-            {visibleFields.map((field, index) => (
-              <button key={field.id} type="button" className={`${styles.formFieldItem} ${activeField?.id === field.id ? styles.formFieldItemActive : ''}`} onClick={() => onActiveFieldChange(field.id)}>
-                <span>{blockIcons[field.blockType]}</span>
-                <span>
-                  <strong>{field.label || blockLabels[field.blockType] || 'Campo'}</strong>
-                  <small>{blockLabels[field.blockType] || field.blockType}</small>
-                </span>
-                <em>{index + 1}</em>
-              </button>
-            ))}
-            {visibleFields.length === 0 && (
-              <p className={styles.muted}>Esta pagina todavia no tiene campos. Agrega uno desde la izquierda o con el boton Campo.</p>
-            )}
-          </div>
-        </div>
+        )}
+      </div>
 
-        {activeField && (
-          <div className={styles.settingsGroup}>
-            <div className={styles.formFieldEditorHeader}>
-              <div>
-                <span className={styles.panelSubheader}>Campo seleccionado</span>
-                <strong>{activeField.label || blockLabels[activeField.blockType]}</strong>
-              </div>
-              <div className={styles.formFieldActions}>
-                <button type="button" onClick={() => onMoveField(activeField.id, 'up')} disabled={visibleFields[0]?.id === activeField.id} title="Subir"><ArrowUp size={14} /></button>
-                <button type="button" onClick={() => onMoveField(activeField.id, 'down')} disabled={visibleFields[visibleFields.length - 1]?.id === activeField.id} title="Bajar"><ArrowDown size={14} /></button>
-                <button type="button" onClick={() => onRemoveField(activeField.id)} title="Eliminar"><Trash2 size={14} /></button>
-              </div>
-            </div>
+      {!activeField ? (
+        <InspectorEmptyState>Selecciona un elemento del formulario para editarlo.</InspectorEmptyState>
+      ) : !activeBlockIsField ? (
+        <>
+          <label className={styles.field}>
+            <span>Página</span>
+            <CustomSelect
+              value={activeFieldPageId}
+              onChange={(event) => patchActiveFieldSettings({ pageId: event.target.value })}
+              onBlur={onSave}
+            >
+              {pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Página'}</option>)}
+            </CustomSelect>
+          </label>
+          {renderActiveContentControls()}
+        </>
+      ) : (
+        <>
+          <label className={styles.field}>
+            <span>Pregunta visible</span>
+            <input value={activeField.label} onChange={(event) => patchActiveField({ label: event.target.value })} onBlur={onSave} />
+          </label>
 
+          <label className={styles.field}>
+            <span>Texto de ayuda</span>
+            <textarea rows={2} value={activeField.content} onChange={(event) => patchActiveField({ content: event.target.value })} onBlur={onSave} />
+          </label>
+
+          {activeFieldSystemPreset ? (
+            <label className={styles.field}>
+              <span>Página</span>
+              <CustomSelect
+                value={activeFieldPageId}
+                onChange={(event) => patchActiveFieldSettings({ pageId: event.target.value })}
+                onBlur={onSave}
+              >
+                {pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Página'}</option>)}
+              </CustomSelect>
+            </label>
+          ) : (
             <div className={styles.twoColumn}>
               <label className={styles.field}>
-                <span>Tipo</span>
-                <CustomSelect value={activeField.blockType} onChange={(event) => onPatchField(activeField.id, { blockType: event.target.value as SiteBlockType })} onBlur={onSave}>
+                <span>Tipo de campo</span>
+                <CustomSelect
+                  value={activeField.blockType}
+                  onChange={(event) => changeActiveFieldType(event.target.value as SiteBlockType)}
+                  onBlur={onSave}
+                >
                   {embeddedFormFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
                 </CustomSelect>
               </label>
               <label className={styles.field}>
-                <span>Pagina</span>
+                <span>Página</span>
                 <CustomSelect
-                  value={getBlockPageId(activeField, pages)}
-                  onChange={(event) => {
-                    onPatchFieldSettings(activeField, { pageId: event.target.value })
-                    onActivePageChange(event.target.value)
-                  }}
+                  value={activeFieldPageId}
+                  onChange={(event) => patchActiveFieldSettings({ pageId: event.target.value })}
                   onBlur={onSave}
                 >
-                  {pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Pagina'}</option>)}
+                  {pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Página'}</option>)}
                 </CustomSelect>
               </label>
             </div>
+          )}
 
+          {!isChoiceBlock(activeField.blockType) && (
+            <label className={styles.field}>
+              <span>Texto dentro del campo</span>
+              <input value={activeField.placeholder} onChange={(event) => patchActiveField({ placeholder: event.target.value })} onBlur={onSave} />
+            </label>
+          )}
+
+          {activeFieldSystemPreset ? (
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={Boolean(activeField.required)}
+                onChange={(event) => {
+                  patchActiveField({ required: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Campo requerido</span>
+            </label>
+          ) : (
             <div className={styles.twoColumn}>
+              <label className={styles.field}>
+                <span>Validación</span>
+                <CustomSelect
+                  value={getSettingString(activeFieldSettings, 'validation')}
+                  onChange={(event) => patchActiveFieldSettings({ validation: event.target.value })}
+                  onBlur={onSave}
+                >
+                  <option value="">Ninguna</option>
+                  <option value="email">Correo</option>
+                  <option value="phone">Teléfono</option>
+                  <option value="number">Número</option>
+                  <option value="currency">Moneda</option>
+                  <option value="date">Fecha</option>
+                </CustomSelect>
+              </label>
               <label className={styles.checkboxLabel}>
                 <input
                   type="checkbox"
                   checked={Boolean(activeField.required)}
                   onChange={(event) => {
-                    onPatchField(activeField.id, { required: event.target.checked })
+                    patchActiveField({ required: event.target.checked })
                     window.setTimeout(onSave, 0)
                   }}
                 />
-                <span>Requerido</span>
+                <span>Campo requerido</span>
               </label>
             </div>
+          )}
 
-            <label className={styles.field}>
-              <span>Pregunta / etiqueta</span>
-              <input value={activeField.label || ''} onChange={(event) => onPatchField(activeField.id, { label: event.target.value })} onBlur={onSave} />
+          {activeField.blockType === 'phone' && !activeFieldSystemPreset && (
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={isPhoneCountrySelectorEnabled(activeField)}
+                onChange={(event) => {
+                  patchActiveFieldSettings({ phoneCountrySelectorEnabled: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Mostrar país y lada</span>
             </label>
+          )}
+
+          <CustomFieldBindingControl
+            block={activeField}
+            customFields={customFields}
+            onPatchSettings={patchActiveFieldSettings}
+            onSave={onSave}
+          />
+
+          {isChoiceBlock(activeField.blockType) && (
+            <OptionsRulesEditor
+              block={activeField}
+              blocks={ruleFieldBlocks}
+              pages={pages}
+              sitePages={sitePages}
+              activeSitePageId={activeSitePageId}
+              onPatchBlock={patchActiveField}
+              onSave={onSave}
+            />
+          )}
+
+        </>
+      )}
+    </div>
+  )
+
+  const selectedSubmitContent = (
+    <div className={styles.settingsGroup}>
+      <div className={styles.formFieldEditorHeader}>
+        <div>
+          <strong>Botón de envío</strong>
+          <small>Texto, navegación y acción final del formulario</small>
+        </div>
+      </div>
+      <FormSubmitContentControls
+        site={site}
+        settings={settings}
+        embedded
+        onPatchTheme={onPatchTheme}
+        onPatchSettings={onPatchSettings}
+        onSaveSite={onSaveSite}
+        onSaveSettings={onSave}
+      />
+    </div>
+  )
+
+  const editContent = (
+    <>
+      {isSubmitSelected ? selectedSubmitContent : selectedFieldContent}
+    </>
+  )
+
+  const pagesContent = (
+    <>
+      <div className={styles.settingsGroup}>
+        <div className={styles.panelSubheader}>Contenido del formulario</div>
+        <label className={styles.field}>
+          <span>Origen del formulario</span>
+          <CustomSelect
+            value={selectedFormId}
+            onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined, embeddedPages: undefined })}
+            onBlur={onSave}
+          >
+            <option value="">Crear nuevo formulario</option>
+            {forms.filter(form => form.id !== site.id).map(form => (
+              <option key={form.id} value={form.id}>Usar formulario guardado: {form.name}</option>
+            ))}
+          </CustomSelect>
+        </label>
+        <p className={styles.customFieldHint}>
+          Si creas uno nuevo, los elementos se editan directamente dentro de este componente.
+        </p>
+      </div>
+
+      <div className={styles.settingsGroup}>
+        <div className={styles.optionRulesHeader}>
+          <strong>Páginas del formulario</strong>
+          <button type="button" onClick={onAddPage}>
+            <Plus size={14} />
+            Página
+          </button>
+        </div>
+        <div className={styles.embeddedPageTabs}>
+          {pages.map(page => (
+            <button
+              key={page.id}
+              type="button"
+              className={page.id === activePage?.id ? styles.embeddedPageTabActive : ''}
+              onClick={() => onActivePageChange(page.id)}
+            >
+              <FileText size={14} />
+              <span>{page.title || 'Página'}</span>
+            </button>
+          ))}
+        </div>
+        {activePage && (
+          <div className={styles.embeddedPageEditor}>
             <label className={styles.field}>
-              <span>Texto de ayuda</span>
-              <textarea rows={2} value={activeField.content || ''} onChange={(event) => onPatchField(activeField.id, { content: event.target.value })} onBlur={onSave} />
+              <span>Nombre de esta página</span>
+              <input value={activePage.title || ''} onChange={(event) => onRenamePage(activePage.id, event.target.value)} onBlur={onSave} />
             </label>
-            {!isChoiceBlock(activeField.blockType) && (
-              <label className={styles.field}>
-                <span>Placeholder</span>
-                <input value={activeField.placeholder || ''} onChange={(event) => onPatchField(activeField.id, { placeholder: event.target.value })} onBlur={onSave} />
-              </label>
-            )}
-            {activeField.blockType === 'phone' && (
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={isPhoneCountrySelectorEnabled(activeField)}
-                  onChange={(event) => {
-                    onPatchFieldSettings(activeField, { phoneCountrySelectorEnabled: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Mostrar pais y lada</span>
-              </label>
-            )}
-
-            <CustomFieldBindingControl block={activeField} customFields={customFields} onPatchSettings={(patch) => onPatchFieldSettings(activeField, patch)} onSave={onSave} />
-
-            {isChoiceBlock(activeField.blockType) && (
-              <OptionsRulesEditor block={activeField} blocks={fields} pages={pages} onPatchBlock={(patch) => onPatchField(activeField.id, patch)} onSave={onSave} />
-            )}
+            <button type="button" onClick={() => onDeletePage(activePage.id)} disabled={pages.length <= 1}>
+              <Trash2 size={14} />
+              Eliminar página
+            </button>
           </div>
         )}
-
-        <InlineBlockStyleControls site={site} block={block} blocks={[block]} onPatchSettings={onPatchSettings} onSave={onSave} />
       </div>
-    </aside>
+    </>
+  )
+
+  const designContent = (
+    <>
+      <div className={styles.settingsGroup}>
+        {isSubmitSelected ? (
+          <FormSubmitGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+        ) : activeField && activeBlockIsField ? (
+          <>
+            <FormTypographyGlobalControls site={site} title="Tipografía de campos" onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+            <FormFieldGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+            {isChoiceBlock(activeField.blockType) && (
+              <FormOptionGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+            )}
+          </>
+        ) : activeField ? (
+          <InlineBlockStyleControls site={site} block={activeField} blocks={fields} onPatchSettings={patchActiveFieldSettings} onSave={onSave} />
+        ) : (
+          <InspectorEmptyState>Selecciona un elemento, campo o el botón de envío dentro del formulario.</InspectorEmptyState>
+        )}
+      </div>
+      <div className={styles.settingsGroup}>
+        <div className={styles.panelSubheader}>Contenedor del formulario</div>
+        <InlineBlockStyleControls site={site} block={block} blocks={[block]} surfaceOnly onPatchSettings={onPatchSettings} onSave={onSave} />
+      </div>
+    </>
+  )
+
+  return (
+    <InspectorTabbedPanel
+      title="Componente de formulario"
+      subtitle="Se guarda con el sitio web"
+      className={styles.formModePanel}
+      ariaLabel="Editor de componente de formulario"
+      header={(
+        <div className={styles.formModePanelHeader}>
+          <span className={styles.formModeIcon}><FormInput size={18} /></span>
+          <div>
+            <strong>Componente de formulario</strong>
+            <small>Edita elementos y páginas</small>
+          </div>
+        </div>
+      )}
+      tabs={[
+        { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
+        { value: 'settings', label: 'Páginas', icon: <FileText size={14} />, content: pagesContent },
+        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent }
+      ]}
+    />
   )
 }
 
@@ -3478,17 +4219,21 @@ export const Sites: React.FC = () => {
   const [paletteInsertIndex, setPaletteInsertIndex] = useState<number | null>(null)
   const [embeddedFieldInsertIndex, setEmbeddedFieldInsertIndex] = useState<number | null>(null)
   const [activeEmbeddedFormFieldId, setActiveEmbeddedFormFieldId] = useState('')
+  const [activeEmbeddedFormSubmitSelected, setActiveEmbeddedFormSubmitSelected] = useState(false)
   const [activeEmbeddedFormPageId, setActiveEmbeddedFormPageId] = useState('')
   const [paletteSectionTarget, setPaletteSectionTarget] = useState<PaletteSectionTarget | null>(null)
   const [paletteDragPosition, setPaletteDragPosition] = useState<PaletteDragPosition | null>(null)
   const [leadRows, setLeadRows] = useState<LeadRow[]>([])
   const [loadingLeads, setLoadingLeads] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
+  const [saveStatusNow, setSaveStatusNow] = useState(() => Date.now())
   const [seoModalOpen, setSeoModalOpen] = useState(false)
   const [headerModalOpen, setHeaderModalOpen] = useState(false)
   const [pendingImportSiteType, setPendingImportSiteType] = useState<SiteType>('landing_page')
   const [importReview, setImportReview] = useState<ImportReviewState | null>(null)
   const [selectedImportData, setSelectedImportData] = useState<ImportedSiteImport | null>(null)
+  const [importedCodeDrafts, setImportedCodeDrafts] = useState<Record<string, string>>({})
   const [aiCreationModal, setAiCreationModal] = useState<SitesAICreationModalState>(null)
   const [aiEditorGeneration, setAiEditorGeneration] = useState<AIEditorGenerationState>(null)
   const [importedPreviewContexts, setImportedPreviewContexts] = useState<Record<string, SitesAIPreviewVisualContext>>({})
@@ -3506,10 +4251,12 @@ export const Sites: React.FC = () => {
   const guardHistoryArmedRef = useRef(false)
   const allowNavigationRef = useRef(false)
   const suppressEditorRouteRestoreRef = useRef(false)
-  const pendingAutosaveChangeCountRef = useRef(0)
   const pendingSiteSaveRef = useRef(false)
+  const pendingCreatedBlockIdsRef = useRef<Set<string>>(new Set())
+  const pendingDeletedBlockIdsRef = useRef<Set<string>>(new Set())
   const pendingBlockSaveIdsRef = useRef<Set<string>>(new Set())
-  const pendingAutosaveTimerRef = useRef<number | null>(null)
+  const pendingBlockOrderScopesRef = useRef<Set<string>>(new Set())
+  const pendingImportedCodeDraftsRef = useRef<Map<string, string>>(new Map())
   const savingPendingEditorRef = useRef(false)
 
   const markEditorExitInProgress = () => {
@@ -3519,6 +4266,24 @@ export const Sites: React.FC = () => {
   useEffect(() => {
     selectedSiteRef.current = selectedSite
   }, [selectedSite])
+
+  useEffect(() => {
+    setImportedCodeDrafts({})
+    pendingImportedCodeDraftsRef.current.clear()
+  }, [selectedSite?.id])
+
+  useEffect(() => {
+    setLastSavedAt(null)
+    setSaveStatusNow(Date.now())
+  }, [selectedSite?.id])
+
+  useEffect(() => {
+    if (!lastSavedAt || saving || hasUnsavedChanges) return
+
+    setSaveStatusNow(Date.now())
+    const interval = window.setInterval(() => setSaveStatusNow(Date.now()), 10000)
+    return () => window.clearInterval(interval)
+  }, [hasUnsavedChanges, lastSavedAt, saving])
 
   useEffect(() => {
     let cancelled = false
@@ -3622,9 +4387,14 @@ export const Sites: React.FC = () => {
     () => getEmbeddedFormPageFields(formEditFields, formEditPages, activeEmbeddedFormPage?.id),
     [activeEmbeddedFormPage?.id, formEditFields, formEditPages]
   )
+  const activeEmbeddedFormField = useMemo(
+    () => formEditFields.find(field => field.id === activeEmbeddedFormFieldId) || null,
+    [activeEmbeddedFormFieldId, formEditFields]
+  )
   useEffect(() => {
     if (!formEditMode) {
       setActiveEmbeddedFormFieldId('')
+      setActiveEmbeddedFormSubmitSelected(false)
       setActiveEmbeddedFormPageId('')
       setEmbeddedFieldInsertIndex(null)
       return
@@ -3638,22 +4408,20 @@ export const Sites: React.FC = () => {
     }
 
     const visibleFields = getEmbeddedFormPageFields(formEditFields, formEditPages, nextPageId)
+    if (activeEmbeddedFormSubmitSelected) return
+
     if (!visibleFields.length) {
       setActiveEmbeddedFormFieldId('')
       return
     }
 
     setActiveEmbeddedFormFieldId(current => visibleFields.some(field => field.id === current) ? current : visibleFields[0].id)
-  }, [activeEmbeddedFormPageId, formEditMode, formEditBlock?.id, formEditFields, formEditPages])
+  }, [activeEmbeddedFormPageId, activeEmbeddedFormSubmitSelected, formEditMode, formEditBlock?.id, formEditFields, formEditPages])
   const importedPopupDetected = useMemo(
     () => isImportedHtmlSite(editorSite) && importedHtmlHasPopup(selectedImportData),
     [editorSite, selectedImportData]
   )
-  const canConfigurePopup = Boolean(editorSite && isLanding(editorSite) && (
-    !isImportedHtmlSite(editorSite) ||
-    importedPopupDetected ||
-    hasThemePopupConfig(editorSite.theme)
-  ))
+  const canConfigurePopup = Boolean(editorSite && isLanding(editorSite))
   const popupSurfaceSelected = canConfigurePopup && (selectedBlockId === POPUP_SELECTED_ID || popupBlocks.some(block => block.id === selectedBlockId))
   const editableCanvasBlocks = popupSurfaceSelected ? popupBlocks : canvasBlocks
   const activeDragBlock = editableCanvasBlocks.find(block => block.id === activeDragId) || null
@@ -3664,6 +4432,32 @@ export const Sites: React.FC = () => {
     ? getThemeString(editorSite.theme, 'continueText') || 'Continuar'
     : undefined
   const seoValidation = editorSite ? getSeoValidationState(editorSite) : null
+  const editorSaveStatus = useMemo(() => {
+    if (saving) {
+      return {
+        label: 'Guardando...',
+        tone: 'saving' as const,
+        icon: <RefreshCw size={14} />
+      }
+    }
+    if (hasUnsavedChanges) {
+      return {
+        label: 'Cambios sin guardar',
+        tone: 'dirty' as const,
+        icon: <AlertTriangle size={14} />
+      }
+    }
+    return {
+      label: lastSavedAt ? formatEditorSavedAt(lastSavedAt, saveStatusNow) : 'Guardado',
+      tone: 'saved' as const,
+      icon: <CheckCircle2 size={14} />
+    }
+  }, [hasUnsavedChanges, lastSavedAt, saveStatusNow, saving])
+  const editorSaveStatusClass = editorSaveStatus.tone === 'saving'
+    ? styles.editorSaveStatusSaving
+    : editorSaveStatus.tone === 'dirty'
+      ? styles.editorSaveStatusDirty
+      : styles.editorSaveStatusSaved
   const editorActive = Boolean(editorSite)
   const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
   const createFlowHeaderCopy = getCreateFlowHeaderCopy(createFlow)
@@ -3776,18 +4570,13 @@ export const Sites: React.FC = () => {
     forceSite?: boolean
   }
 
-  function clearPendingEditorAutosaveTimer() {
-    if (pendingAutosaveTimerRef.current !== null) {
-      window.clearTimeout(pendingAutosaveTimerRef.current)
-      pendingAutosaveTimerRef.current = null
-    }
-  }
-
   function resetPendingEditorSaveQueue() {
-    clearPendingEditorAutosaveTimer()
-    pendingAutosaveChangeCountRef.current = 0
     pendingSiteSaveRef.current = false
+    pendingCreatedBlockIdsRef.current.clear()
+    pendingDeletedBlockIdsRef.current.clear()
     pendingBlockSaveIdsRef.current.clear()
+    pendingBlockOrderScopesRef.current.clear()
+    pendingImportedCodeDraftsRef.current.clear()
   }
 
   function clearEditorDirtyState() {
@@ -3795,13 +4584,108 @@ export const Sites: React.FC = () => {
     setHasUnsavedChanges(false)
   }
 
-  function schedulePendingEditorAutosave() {
-    if (pendingAutosaveChangeCountRef.current < EDITOR_AUTOSAVE_CHANGE_THRESHOLD) return
-    clearPendingEditorAutosaveTimer()
-    pendingAutosaveTimerRef.current = window.setTimeout(() => {
-      pendingAutosaveTimerRef.current = null
-      void flushPendingEditorSaves({ silent: true })
-    }, 420)
+  function getBlockOrderScopeKey(pageId?: string) {
+    return pageId || BLOCK_ORDER_ALL_PAGES_KEY
+  }
+
+  function getBlockOrderPageId(scopeKey: string) {
+    return scopeKey === BLOCK_ORDER_ALL_PAGES_KEY ? undefined : scopeKey
+  }
+
+  function markBlockOrderDirty(pageId?: string) {
+    pendingBlockOrderScopesRef.current.add(getBlockOrderScopeKey(pageId))
+  }
+
+  function getBlocksForOrderScope(site: PublicSite, pageId?: string) {
+    const sitePages = normalizeFunnelPages(site)
+    const siteBlocks = site.blocks || []
+    if (pageId === POPUP_SELECTED_ID) {
+      return siteBlocks.filter(isPopupBlock).sort((a, b) => a.sortOrder - b.sortOrder)
+    }
+    if (pageId) {
+      return siteBlocks
+        .filter(block => {
+          if (isPopupBlock(block)) return false
+          const blockPageId = getBlockPageId(block, sitePages)
+          return isGlobalHeaderBlock(block) || blockPageId === pageId
+        })
+        .sort((a, b) => a.sortOrder - b.sortOrder)
+    }
+    return siteBlocks.filter(block => !isPopupBlock(block)).sort((a, b) => a.sortOrder - b.sortOrder)
+  }
+
+  function applyBlockOrderLocal(site: PublicSite, orderedIds: string[], pageId?: string) {
+    const orderById = new Map(orderedIds.map((id, index) => [id, index]))
+    return {
+      ...site,
+      blocks: (site.blocks || []).map(block => (
+        orderById.has(block.id) ? { ...block, sortOrder: orderById.get(block.id) || 0 } : block
+      ))
+    }
+  }
+
+  function createEditorLocalId() {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return crypto.randomUUID()
+    }
+
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, char => {
+      const value = Math.floor(Math.random() * 16)
+      return (char === 'x' ? value : (value & 0x3) | 0x8).toString(16)
+    })
+  }
+
+  function createLocalBlockFromPayload(site: PublicSite, payload: Partial<SiteBlock> & { blockType: SiteBlockType }, sortOrder?: number): SiteBlock {
+    const now = new Date().toISOString()
+    return {
+      id: createEditorLocalId(),
+      siteId: site.id,
+      blockType: payload.blockType,
+      label: payload.label || 'Nuevo bloque',
+      content: payload.content || '',
+      placeholder: payload.placeholder || '',
+      required: Boolean(payload.required),
+      options: Array.isArray(payload.options) ? payload.options : [],
+      settings: { ...(payload.settings || {}) },
+      sortOrder: Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : (site.blocks || []).length,
+      createdAt: now,
+      updatedAt: now
+    }
+  }
+
+  function markBlocksCreatedLocal(nextBlocks: SiteBlock[]) {
+    for (const block of nextBlocks) {
+      pendingCreatedBlockIdsRef.current.add(block.id)
+      pendingBlockSaveIdsRef.current.add(block.id)
+    }
+  }
+
+  function markBlocksDeletedLocal(blockIds: string[]) {
+    for (const blockId of blockIds) {
+      if (pendingCreatedBlockIdsRef.current.has(blockId)) {
+        pendingCreatedBlockIdsRef.current.delete(blockId)
+        pendingBlockSaveIdsRef.current.delete(blockId)
+        pendingDeletedBlockIdsRef.current.delete(blockId)
+        continue
+      }
+      pendingDeletedBlockIdsRef.current.add(blockId)
+      pendingBlockSaveIdsRef.current.delete(blockId)
+    }
+  }
+
+  function addBlocksLocal(nextBlocks: SiteBlock[], selectBlockId?: string, orderPageId?: string) {
+    const current = selectedSiteRef.current || selectedSite
+    if (!current) return
+    const next = {
+      ...current,
+      blocks: [...(current.blocks || []), ...nextBlocks]
+    }
+    selectedSiteRef.current = next
+    setSelectedSite(next)
+    markBlocksCreatedLocal(nextBlocks)
+    if (orderPageId !== undefined) markBlockOrderDirty(orderPageId)
+    setHasUnsavedChanges(true)
+    if (selectBlockId) selectEditorBlock(selectBlockId)
   }
 
   async function flushPendingEditorSaves(options: PendingEditorSaveOptions = {}) {
@@ -3813,18 +4697,27 @@ export const Sites: React.FC = () => {
       return false
     }
 
-    const shouldSaveSite = Boolean(options.forceSite || options.statusOverride || pendingSiteSaveRef.current)
-    const blockIdsToSave = [...pendingBlockSaveIdsRef.current].filter(blockId =>
-      Boolean(siteToSave.blocks?.some(block => block.id === blockId))
+    const localBlocksById = new Map((siteToSave.blocks || []).map(block => [block.id, block]))
+    const createdBlockIds = [...pendingCreatedBlockIdsRef.current].filter(blockId =>
+      localBlocksById.has(blockId) && !pendingDeletedBlockIdsRef.current.has(blockId)
     )
+    const deletedBlockIds = [...pendingDeletedBlockIdsRef.current].filter(blockId =>
+      !pendingCreatedBlockIdsRef.current.has(blockId)
+    )
+    const blockIdsToSave = [...pendingBlockSaveIdsRef.current].filter(blockId =>
+      localBlocksById.has(blockId) &&
+      !pendingCreatedBlockIdsRef.current.has(blockId) &&
+      !pendingDeletedBlockIdsRef.current.has(blockId)
+    )
+    const orderScopeKeys = [...pendingBlockOrderScopesRef.current]
+    const importedCodeFilesToSave = [...pendingImportedCodeDraftsRef.current.entries()].map(([path, content]) => ({ path, content }))
+    const shouldSaveSite = Boolean(options.forceSite || options.statusOverride || pendingSiteSaveRef.current)
 
-    if (!shouldSaveSite && !blockIdsToSave.length) {
+    if (!shouldSaveSite && !createdBlockIds.length && !deletedBlockIds.length && !blockIdsToSave.length && !orderScopeKeys.length && !importedCodeFilesToSave.length) {
       clearEditorDirtyState()
       return true
     }
 
-    const localBlocksById = new Map((siteToSave.blocks || []).map(block => [block.id, block]))
-    clearPendingEditorAutosaveTimer()
     savingPendingEditorRef.current = true
     setSaving(true)
 
@@ -3844,14 +4737,40 @@ export const Sites: React.FC = () => {
         })
       }
 
+      for (const blockId of deletedBlockIds) {
+        site = await sitesService.deleteBlock(siteToSave.id, blockId)
+      }
+
+      for (const blockId of createdBlockIds) {
+        const block = localBlocksById.get(blockId)
+        if (!block) continue
+        site = await sitesService.createBlock(siteToSave.id, block)
+      }
+
       for (const blockId of blockIdsToSave) {
         const block = localBlocksById.get(blockId)
         if (!block) continue
         site = await sitesService.updateBlock(siteToSave.id, block.id, block)
       }
 
+      for (const scopeKey of orderScopeKeys) {
+        const pageId = getBlockOrderPageId(scopeKey)
+        const orderedIds = getBlocksForOrderScope(siteToSave, pageId).map(block => block.id)
+        site = await sitesService.reorderBlocks(siteToSave.id, orderedIds, pageId)
+      }
+
+      if (importedCodeFilesToSave.length) {
+        const result = await sitesService.updateImportedCodeFiles(siteToSave.id, {
+          files: importedCodeFilesToSave
+        })
+        site = normalizeSiteForEditor(result.site)
+        setSelectedImportData(result.import)
+        setImportedCodeDrafts({})
+      }
+
       syncSelectedSite(site)
       clearEditorDirtyState()
+      setLastSavedAt(Date.now())
       if (!options.silent) {
         showToast('success', options.statusOverride === 'published' ? 'Publicado' : 'Guardado', 'Sitio actualizado')
       }
@@ -3885,7 +4804,7 @@ export const Sites: React.FC = () => {
 
     showConfirm(
       'Cambios sin guardar',
-      'Hay cambios en el editor que todavia no se han guardado o publicado. Si sales ahora, esos ajustes se van a perder.',
+      'Hay cambios en el editor que todavía no se han guardado o publicado. Si sales ahora, esos ajustes se van a perder.',
       () => handleConfirmLeaveEditor(action),
       'Salir sin guardar',
       'Seguir editando',
@@ -3897,17 +4816,41 @@ export const Sites: React.FC = () => {
     const site = selectedSiteRef.current || editorSite
     if (!site) return
 
-    if (scope.site || !scope.blockIds?.length) pendingSiteSaveRef.current = true
+    if (scope.site) pendingSiteSaveRef.current = true
     for (const blockId of scope.blockIds || []) {
       if (blockId) pendingBlockSaveIdsRef.current.add(blockId)
     }
-    pendingAutosaveChangeCountRef.current += 1
     setHasUnsavedChanges(true)
-    schedulePendingEditorAutosave()
   }
 
-  useEffect(() => {
-    return () => clearPendingEditorAutosaveTimer()
+  const handleImportedCodeDraftChange = useCallback((filePath: string, content: string, originalContent: string) => {
+    const key = getImportedCodeFileKey(filePath)
+    const normalizedPath = getImportedCodeFilePathFromKey(key)
+
+    setImportedCodeDrafts(current => {
+      const next = { ...current }
+      if (content === originalContent) {
+        delete next[key]
+      } else {
+        next[key] = content
+      }
+      return next
+    })
+
+    if (content === originalContent) {
+      pendingImportedCodeDraftsRef.current.delete(normalizedPath)
+      return
+    }
+
+    pendingImportedCodeDraftsRef.current.set(normalizedPath, content)
+    setHasUnsavedChanges(true)
+  }, [])
+
+  const markEditorSaved = useCallback(() => {
+    resetPendingEditorSaveQueue()
+    setImportedCodeDrafts({})
+    setHasUnsavedChanges(false)
+    setLastSavedAt(Date.now())
   }, [])
 
   useEffect(() => {
@@ -4067,12 +5010,19 @@ export const Sites: React.FC = () => {
       requestLeaveEditor(() => window.history.back())
     }
 
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
     document.addEventListener('click', handleDocumentClick, true)
     window.addEventListener('popstate', handlePopState)
+    window.addEventListener('beforeunload', handleBeforeUnload)
 
     return () => {
       document.removeEventListener('click', handleDocumentClick, true)
       window.removeEventListener('popstate', handlePopState)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
     }
   }, [hasUnsavedChanges, performUrlNavigation, requestLeaveEditor])
 
@@ -4376,47 +5326,75 @@ export const Sites: React.FC = () => {
 
   const applyEditorHistoryEntry = async (entry: EditorHistoryEntry, direction: 'undo' | 'redo') => {
     if (historyBusyRef.current) return false
+    const siteToEdit = selectedSiteRef.current || selectedSite
+    if (!siteToEdit || siteToEdit.id !== entry.siteId) return false
 
     historyBusyRef.current = true
-    setSaving(true)
     try {
-      let site: PublicSite | null = null
+      let site: PublicSite | null = siteToEdit
 
       if (entry.action === 'reorder') {
-        site = await sitesService.reorderBlocks(
-          entry.siteId,
-          direction === 'undo' ? entry.beforeBlockIds : entry.afterBlockIds,
-          entry.pageId
-        )
+        site = applyBlockOrderLocal(siteToEdit, direction === 'undo' ? entry.beforeBlockIds : entry.afterBlockIds, entry.pageId)
+        markBlockOrderDirty(entry.pageId)
       } else if (entry.action === 'delete') {
+        const deletedBlocks = entry.deletedBlocks || []
+        const deletedIds = deletedBlocks.map(block => block.id)
         if (direction === 'undo') {
-          if (!entry.deletedBlocks?.length) return false
-          site = await sitesService.restoreBlocks(entry.siteId, entry.deletedBlocks)
-          if (entry.beforeBlockIds.length) {
-            site = await sitesService.reorderBlocks(entry.siteId, entry.beforeBlockIds, entry.pageId)
+          if (!deletedBlocks.length) return false
+          const existingIds = new Set((siteToEdit.blocks || []).map(block => block.id))
+          site = {
+            ...siteToEdit,
+            blocks: [
+              ...(siteToEdit.blocks || []),
+              ...deletedBlocks.filter(block => !existingIds.has(block.id)).map(block => cloneJson(block))
+            ]
           }
-        } else if (entry.deletedRootBlockId) {
-          site = await sitesService.deleteBlock(entry.siteId, entry.deletedRootBlockId)
+          for (const blockId of deletedIds) {
+            pendingDeletedBlockIdsRef.current.delete(blockId)
+            if (entry.deletedCreatedBlockIds?.includes(blockId)) {
+              pendingCreatedBlockIdsRef.current.add(blockId)
+              pendingBlockSaveIdsRef.current.add(blockId)
+            } else if (entry.deletedPendingSaveBlockIds?.includes(blockId)) {
+              pendingBlockSaveIdsRef.current.add(blockId)
+            }
+          }
+          if (entry.beforeBlockIds.length) {
+            site = applyBlockOrderLocal(site, entry.beforeBlockIds, entry.pageId)
+          }
+          markBlockOrderDirty(entry.pageId)
+        } else if (entry.deletedRootBlockId && deletedIds.length) {
+          site = {
+            ...siteToEdit,
+            blocks: (siteToEdit.blocks || []).filter(block => !deletedIds.includes(block.id))
+          }
+          markBlocksDeletedLocal(deletedIds)
+          if (entry.afterBlockIds.length) {
+            site = applyBlockOrderLocal(site, entry.afterBlockIds, entry.pageId)
+          }
+          markBlockOrderDirty(entry.pageId)
         }
       }
 
       if (!site) return false
 
-      syncSelectedSite(site)
+      const normalizedSite = normalizeSiteForEditor(site)
+      selectedSiteRef.current = normalizedSite
+      setSelectedSite(normalizedSite)
+      setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
       if (entry.pageId) setActivePageId(entry.pageId)
       setSelectedBlockId(direction === 'undo' ? entry.selectedBefore : entry.selectedAfter)
       if (entry.pageId) {
         navigateSitesEditor({
-          site,
+          site: normalizedSite,
           pageId: entry.pageId,
           blockId: direction === 'undo' ? entry.selectedBefore : entry.selectedAfter
         })
       }
-      clearEditorDirtyState()
+      setHasUnsavedChanges(true)
       showToast(
         'info',
         direction === 'undo' ? 'Cambio deshecho' : 'Cambio rehecho',
-        direction === 'undo' ? 'El editor regreso al paso anterior.' : 'El editor aplico otra vez el cambio.'
+        direction === 'undo' ? 'El editor regreso al paso anterior. Guarda para conservarlo.' : 'El editor aplico otra vez el cambio. Guarda para conservarlo.'
       )
       return true
     } catch (error) {
@@ -4424,7 +5402,6 @@ export const Sites: React.FC = () => {
       return false
     } finally {
       historyBusyRef.current = false
-      setSaving(false)
     }
   }
 
@@ -4504,28 +5481,49 @@ export const Sites: React.FC = () => {
     })
   }
 
-  const persistFunnelPages = async (nextPages: SitePage[], nextActivePageId?: string) => {
-    if (!selectedSite || !hasEditablePages(selectedSite)) return
-    const orderedPages = getOrderedPagesForSite(selectedSite, nextPages)
-    const finalPages = getSitePageMode(selectedSite) === 'website' ? ensureWebsiteSlugs(orderedPages) : orderedPages
+  const applySelectedSiteLocal = (
+    site: PublicSite,
+    options: {
+      activePageId?: string
+      selectedBlockId?: string
+      navigate?: boolean
+      replace?: boolean
+    } = {}
+  ) => {
+    const normalizedSite = normalizeSiteForEditor(site)
+    selectedSiteRef.current = normalizedSite
+    setSelectedSite(normalizedSite)
+    setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
+    if (options.activePageId !== undefined) setActivePageId(options.activePageId)
+    if (options.selectedBlockId !== undefined) setSelectedBlockId(options.selectedBlockId)
+    markEditorDirty({ site: true })
+    if (options.navigate) {
+      navigateSitesEditor({
+        site: normalizedSite,
+        pageId: options.activePageId || activePageId,
+        blockId: options.selectedBlockId || '',
+        replace: options.replace
+      })
+    }
+  }
 
-    setSaving(true)
-    try {
-      const theme = {
-        ...(selectedSite.theme || {}),
+  const persistFunnelPages = async (nextPages: SitePage[], nextActivePageId?: string) => {
+    const site = selectedSiteRef.current || selectedSite
+    if (!site || !hasEditablePages(site)) return
+    const orderedPages = getOrderedPagesForSite(site, nextPages)
+    const finalPages = getSitePageMode(site) === 'website' ? ensureWebsiteSlugs(orderedPages) : orderedPages
+    const targetPageId = nextActivePageId || activePageId
+    applySelectedSiteLocal({
+      ...site,
+      theme: {
+        ...(site.theme || {}),
         pages: normalizePagesForSave(finalPages)
       }
-      const site = await saveSiteTheme(selectedSite, theme)
-      syncSelectedSite(site)
-      const targetPageId = nextActivePageId || activePageId
-      setActivePageId(targetPageId)
-      navigateSitesEditor({ site, pageId: targetPageId, blockId: '' })
-      clearEditorDirtyState()
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron guardar las paginas')
-    } finally {
-      setSaving(false)
-    }
+    }, {
+      activePageId: targetPageId,
+      selectedBlockId: '',
+      navigate: true
+    })
   }
 
   const handleAddPage = () => {
@@ -4611,28 +5609,22 @@ export const Sites: React.FC = () => {
   }
 
   const handleChangePageMode = async (mode: 'funnel' | 'website') => {
-    if (!selectedSite || !isLanding(selectedSite) || isImportedHtmlSite(selectedSite)) return
-    if (getSitePageMode(selectedSite) === mode) return
-    const orderedPages = getOrderedPagesForSite(selectedSite, pages)
+    const site = selectedSiteRef.current || selectedSite
+    if (!site || !isLanding(site) || isImportedHtmlSite(site)) return
+    if (getSitePageMode(site) === mode) return
+    const orderedPages = getOrderedPagesForSite(site, pages)
     const finalPages = mode === 'website' ? ensureWebsiteSlugs(orderedPages) : orderedPages
-    setSaving(true)
-    try {
-      const theme = {
-        ...(selectedSite.theme || {}),
+    applySelectedSiteLocal({
+      ...site,
+      theme: {
+        ...(site.theme || {}),
         pageMode: mode,
         pages: normalizePagesForSave(finalPages)
       }
-      const site = await saveSiteTheme(selectedSite, theme)
-      syncSelectedSite(site)
-      clearEditorDirtyState()
-      showToast('success', mode === 'website' ? 'Modo Sitio web' : 'Modo Embudo', mode === 'website'
-        ? 'Ahora puedes organizar paginas con subpaginas.'
-        : 'Las paginas vuelven a un orden lineal de embudo.')
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo cambiar el modo del sitio')
-    } finally {
-      setSaving(false)
-    }
+    })
+    showToast('info', mode === 'website' ? 'Modo Sitio web' : 'Modo Embudo', mode === 'website'
+      ? 'Ahora puedes organizar páginas con subpáginas. Guarda para conservar el cambio.'
+      : 'Las páginas vuelven a un orden lineal de embudo. Guarda para conservar el cambio.')
   }
 
   const cloneBlockForPage = (block: SiteBlock, pageId: string): Partial<SiteBlock> & { blockType: SiteBlockType } => ({
@@ -4649,13 +5641,14 @@ export const Sites: React.FC = () => {
   })
 
   const handleDuplicatePage = async (pageId: string) => {
-    if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
-    if (isStandardForm(selectedSite) && isFormFinalPageId(pageId)) return
+    const site = selectedSiteRef.current || selectedSite
+    if (!site || !hasEditablePages(site) || !canManagePages(site)) return
+    if (isStandardForm(site) && isFormFinalPageId(pageId)) return
 
     const sourceIndex = pages.findIndex(page => page.id === pageId)
     if (sourceIndex < 0) return
 
-    const websiteMode = getSitePageMode(selectedSite) === 'website'
+    const websiteMode = getSitePageMode(site) === 'website'
     // In website mode duplicate the whole subtree (page + descendants); in funnel
     // mode there are no descendants, so this naturally clones a single page.
     const subtreeIds = websiteMode ? [pageId, ...getDescendantPageIds(pageId, pages)] : [pageId]
@@ -4692,89 +5685,89 @@ export const Sites: React.FC = () => {
       ...clonedPages,
       ...pages.slice(endIndex)
     ]
-    const orderedPages = getOrderedPagesForSite(selectedSite, nextPages)
+    const orderedPages = getOrderedPagesForSite(site, nextPages)
     const finalPages = websiteMode ? ensureWebsiteSlugs(orderedPages) : orderedPages
     const newRootId = idMap.get(pageId) as string
 
-    setSaving(true)
-    try {
-      let site = await saveSiteTheme(selectedSite, {
-        ...(selectedSite.theme || {}),
-        pages: normalizePagesForSave(finalPages)
-      })
-      for (const oldId of subtreeIds) {
-        const sourceBlocks = blocks.filter(block => !isGlobalHeaderBlock(block) && getBlockPageId(block, pages) === oldId)
-        for (const block of sourceBlocks) {
-          site = await sitesService.createBlock(selectedSite.id, cloneBlockForPage(block, idMap.get(oldId) as string))
-        }
+    const clonedBlocks: SiteBlock[] = []
+    for (const oldId of subtreeIds) {
+      const sourceBlocks = blocks.filter(block => !isGlobalHeaderBlock(block) && getBlockPageId(block, pages) === oldId)
+      for (const block of sourceBlocks) {
+        clonedBlocks.push(createLocalBlockFromPayload(site, cloneBlockForPage(block, idMap.get(oldId) as string), (site.blocks || []).length + clonedBlocks.length))
       }
-      syncSelectedSite(site)
-      setActivePageId(newRootId)
-      navigateSitesEditor({ site, pageId: newRootId, blockId: '' })
-      clearEditorDirtyState()
-      showToast('success', subtreeIds.length > 1 ? 'Pagina y subpaginas duplicadas' : 'Pagina duplicada', 'Ya esta lista para editar.')
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo duplicar la pagina')
-    } finally {
-      setSaving(false)
     }
+
+    const nextSite = {
+      ...site,
+      blocks: [...(site.blocks || []), ...clonedBlocks],
+      theme: {
+        ...(site.theme || {}),
+        pages: normalizePagesForSave(finalPages)
+      }
+    }
+    markBlocksCreatedLocal(clonedBlocks)
+    for (const newPageId of idMap.values()) {
+      markBlockOrderDirty(newPageId)
+    }
+    applySelectedSiteLocal(nextSite, {
+      activePageId: newRootId,
+      selectedBlockId: '',
+      navigate: true
+    })
+    showToast('success', subtreeIds.length > 1 ? 'Página y subpáginas duplicadas' : 'Página duplicada', 'Ya está lista para editar. Guarda para conservarla.')
   }
 
   const handleDeletePage = async (pageId: string) => {
-    if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
-    if (isStandardForm(selectedSite) && isFormFinalPageId(pageId)) {
-      showToast('warning', 'Pagina fija', 'Esta pagina se usa para cerrar el formulario y no se puede eliminar.')
+    const site = selectedSiteRef.current || selectedSite
+    if (!site || !hasEditablePages(site) || !canManagePages(site)) return
+    if (isStandardForm(site) && isFormFinalPageId(pageId)) {
+      showToast('warning', 'Página fija', 'Esta página se usa para cerrar el formulario y no se puede eliminar.')
       return
     }
-    const websiteMode = getSitePageMode(selectedSite) === 'website'
+    const websiteMode = getSitePageMode(site) === 'website'
     const idsToDelete = websiteMode ? [pageId, ...getDescendantPageIds(pageId, pages)] : [pageId]
     const idsToDeleteSet = new Set(idsToDelete)
-    const remainingPageCount = isStandardForm(selectedSite)
+    const remainingPageCount = isStandardForm(site)
       ? getFormContentPages(pages).filter(page => !idsToDeleteSet.has(page.id)).length
       : pages.filter(page => !idsToDeleteSet.has(page.id)).length
     if (remainingPageCount < 1) {
-      showToast('warning', 'No se puede eliminar', `${getSiteTypeLabel(selectedSite)} debe tener al menos una pagina.`)
+      showToast('warning', 'No se puede eliminar', `${getSiteTypeLabel(site)} debe tener al menos una página.`)
       return
     }
 
     const hasSubpages = idsToDelete.length > 1
     showConfirm(
-      hasSubpages ? 'Eliminar pagina y subpaginas' : 'Eliminar pagina',
+      hasSubpages ? 'Eliminar página y subpáginas' : 'Eliminar página',
       hasSubpages
-        ? 'Se eliminaran esta pagina, sus subpaginas y todos sus bloques. Esta accion no se puede deshacer.'
-        : 'Se eliminara esta pagina y todos sus bloques. Esta accion no se puede deshacer.',
+        ? 'Se eliminarán esta página, sus subpáginas y todos sus bloques. Esta acción no se puede deshacer.'
+        : 'Se eliminará esta página y todos sus bloques. Esta acción no se puede deshacer.',
       () => {
         const deletePage = async () => {
           const pageIndex = pages.findIndex(page => page.id === pageId)
           const nextPages = pages.filter(page => !idsToDeleteSet.has(page.id))
-          const orderedPages = getOrderedPagesForSite(selectedSite, nextPages)
+          const currentSite = selectedSiteRef.current || site
+          const orderedPages = getOrderedPagesForSite(currentSite, nextPages)
           const nextActive = idsToDeleteSet.has(activePageId)
             ? orderedPages[Math.max(0, pageIndex - 1)]?.id || orderedPages[0]?.id
             : activePageId
-
-          setSaving(true)
-          try {
-            let site = selectedSite
-            const pageBlockIds = blocks
-              .filter(block => !isGlobalHeaderBlock(block) && idsToDeleteSet.has(getBlockPageId(block, pages)))
-              .map(block => block.id)
-            for (const blockId of pageBlockIds) {
-              site = await sitesService.deleteBlock(selectedSite.id, blockId)
-            }
-            site = await saveSiteTheme(site, {
-              ...(site.theme || {}),
+          const pageBlockIds = (currentSite.blocks || [])
+            .filter(block => !isGlobalHeaderBlock(block) && idsToDeleteSet.has(getBlockPageId(block, pages)))
+            .map(block => block.id)
+          markBlocksDeletedLocal(pageBlockIds)
+          const nextSite = {
+            ...currentSite,
+            blocks: (currentSite.blocks || []).filter(block => !pageBlockIds.includes(block.id)),
+            theme: {
+              ...(currentSite.theme || {}),
               pages: normalizePagesForSave(orderedPages)
-            })
-            syncSelectedSite(site)
-            setActivePageId(nextActive || DEFAULT_FUNNEL_PAGE_ID)
-            navigateSitesEditor({ site, pageId: nextActive || DEFAULT_FUNNEL_PAGE_ID, blockId: '' })
-            clearEditorDirtyState()
-            showToast('success', 'Pagina eliminada', `${getSiteTypeLabel(selectedSite)} se actualizo.`)
-          } catch (error) {
-            showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo eliminar la pagina')
-          } finally {
-            setSaving(false)
+            }
           }
+          applySelectedSiteLocal(nextSite, {
+            activePageId: nextActive || DEFAULT_FUNNEL_PAGE_ID,
+            selectedBlockId: '',
+            navigate: true
+          })
+          showToast('success', 'Página eliminada', `${getSiteTypeLabel(currentSite)} se actualizo. Guarda para conservar el cambio.`)
         }
 
         void deletePage()
@@ -4830,7 +5823,7 @@ export const Sites: React.FC = () => {
     if (!cleanTitle) return
     const websiteMode = getSitePageMode(selectedSite) === 'website'
     const nextPages = pages.map((page, index) => page.id === pageId
-      ? { ...page, title: cleanTitle || `Pagina ${index + 1}`, ...(websiteMode ? { slug: undefined } : {}) }
+      ? { ...page, title: cleanTitle || `Página ${index + 1}`, ...(websiteMode ? { slug: undefined } : {}) }
       : page
     )
     void persistFunnelPages(nextPages, activePageId)
@@ -4865,13 +5858,13 @@ export const Sites: React.FC = () => {
                 pageMode: isBlank ? 'website' : 'funnel',
                 pages: normalizePagesForSave(
                   isBlank
-                    ? [makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Pagina 1', 0)]
+                    ? [makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Página 1', 0)]
                     : getTemplateFunnelPages(template)
                 )
               }
             : siteType === 'interactive_form'
               ? {
-                  pages: normalizePagesForSave([makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Pagina 1', 0)])
+                  pages: normalizePagesForSave([makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Página 1', 0)])
                 }
             : siteType === 'standard_form'
               ? {
@@ -4905,7 +5898,7 @@ export const Sites: React.FC = () => {
         pageId: nextPageId,
         device
       }))
-      showToast('success', 'Sitio creado', 'Ya estas en el editor visual')
+      showToast('success', 'Sitio creado', 'Ya estás en el editor visual')
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo crear el sitio')
     } finally {
@@ -4954,7 +5947,7 @@ export const Sites: React.FC = () => {
         '- Usa textos cortos, titulares compactos y párrafos fáciles de escanear.',
         '- Si algún texto necesita ser largo, ajusta font-size, line-height y ancho para que no rompa el diseño.',
         '- Usa fotos HTTPS visibles cuando ayuden al objetivo.',
-        '- Marca textos e imagenes editables con los atributos internos de Ristak.',
+        '- Marca textos e imágenes editables con los atributos internos de Ristak.',
         '- Prepara formularios con campos claros para que Ristak detecte y mapee datos automaticamente.'
       ].join('\n')
     ].filter(Boolean)
@@ -5101,13 +6094,48 @@ export const Sites: React.FC = () => {
     }
   }
 
+  const handleCreateBlankHtmlSite = async (siteType: SiteType) => {
+    setCreating(true)
+    try {
+      const result = await sitesService.importHtmlSite({
+        siteType,
+        filename: 'sitio-html-en-blanco.html',
+        fileBase64: textToFileDataUrl(BLANK_IMPORTED_HTML, 'text/html'),
+        metaCapiEnabled: metaPixelConnected
+      })
+      const site = normalizeSiteForEditor(result.site)
+      const nextPageId = normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+      setSites(current => [site, ...current])
+      setSelectedSite(site)
+      selectedSiteRef.current = site
+      setSelectedBlockId('')
+      setActivePageId(nextPageId)
+      setSection(getSiteSection(site))
+      setCreateFlow('closed')
+      clearEditorDirtyState()
+      setSelectedImportData(result.import)
+      setImportReview(result.import.detectedForms?.length ? { site, importData: result.import } : null)
+      navigate(buildSitesEditorPath({
+        section: getSiteSection(site),
+        siteId: site.id,
+        pageId: nextPageId,
+        device
+      }))
+      showToast('success', 'HTML en blanco creado', 'Se abrió el editor de código para que escribas o pegues tu página.')
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo crear el HTML en blanco')
+    } finally {
+      setCreating(false)
+    }
+  }
+
   const handleImportHtmlFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
 
     if (!/\.(html?|zip)$/i.test(file.name)) {
-      showToast('error', 'Archivo no valido', 'Sube un archivo .html o un .zip con tu sitio.')
+      showToast('error', 'Archivo no válido', 'Sube un archivo .html o un .zip con tu sitio.')
       return
     }
 
@@ -5173,7 +6201,7 @@ export const Sites: React.FC = () => {
       setSelectedImportData(importData)
       setImportReview({ site, importData })
     } catch (error) {
-      showToast('error', 'No se pudo abrir la ruta de datos', error instanceof Error ? error.message : 'Intentalo otra vez.')
+      showToast('error', 'No se pudo abrir la ruta de datos', error instanceof Error ? error.message : 'Inténtalo otra vez.')
     } finally {
       setLoadingImportData(false)
     }
@@ -5185,14 +6213,14 @@ export const Sites: React.FC = () => {
     selectedSiteRef.current = normalizedSite
     setSelectedSite(normalizedSite)
     setSelectedImportData(result.import)
+    setImportedCodeDrafts({})
+    pendingImportedCodeDraftsRef.current.clear()
   }
 
   const handleSaveSite = async (statusOverride?: PublicSite['status'], options: { silent?: boolean } = {}) => {
     const siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave) return
-    if (options.silent && !statusOverride && pendingAutosaveChangeCountRef.current < EDITOR_AUTOSAVE_CHANGE_THRESHOLD) {
-      return
-    }
+    if (options.silent && !statusOverride) return
     await flushPendingEditorSaves({
       statusOverride,
       silent: options.silent,
@@ -5265,7 +6293,7 @@ export const Sites: React.FC = () => {
       if (result.verification?.verified) {
         showToast('success', 'Dominio verificado y guardado', 'El dominio ya responde con esta app')
       } else {
-        showToast('warning', 'Dominio pendiente', result.verification?.error || result.renderDomainError || 'El dominio todavia no responde con esta app')
+        showToast('warning', 'Dominio pendiente', result.verification?.error || result.renderDomainError || 'El dominio todavía no responde con esta app')
       }
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo verificar el dominio')
@@ -5307,7 +6335,7 @@ export const Sites: React.FC = () => {
     if (!siteToDelete) return
     showConfirm(
       'Eliminar sitio',
-      `Se eliminara "${siteToDelete.name}" y sus respuestas. Esta accion no se puede deshacer.`,
+      `Se eliminará "${siteToDelete.name}" y sus respuestas. Esta acción no se puede deshacer.`,
       () => {
         const deleteSite = async () => {
           try {
@@ -5339,8 +6367,8 @@ export const Sites: React.FC = () => {
     try {
       const options = typeof addOptions === 'number' ? { insertIndex: addOptions } : addOptions
       const previousBlockIds = new Set((selectedSite.blocks || []).map(block => block.id))
-      const payload = defaultBlockPayload(blockType, selectedSite)
       const initialSettings = options.initialSettings || {}
+      const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, selectedSite), initialSettings)
       let blockIdsBeforeContent = previousBlockIds
       let autoCreatedSection: SiteBlock | null = null
       if (popupSurfaceSelected) {
@@ -5577,8 +6605,203 @@ export const Sites: React.FC = () => {
     }
   }
 
+  const handleAddBlockManually = async (blockType: SiteBlockType, addOptions: AddBlockOptions | number = {}) => {
+    const siteForAdd = selectedSiteRef.current || selectedSite
+    if (!siteForAdd) return
+    try {
+      const options = typeof addOptions === 'number' ? { insertIndex: addOptions } : addOptions
+      const initialSettings = options.initialSettings || {}
+      const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, siteForAdd), initialSettings)
+      const blocksToAdd: SiteBlock[] = []
+      let orderPageId: string | undefined = hasEditablePages(siteForAdd) ? activePage?.id : undefined
+
+      const makeLocalBlock = (blockPayload: Partial<SiteBlock> & { blockType: SiteBlockType }) =>
+        createLocalBlockFromPayload(siteForAdd, blockPayload, (siteForAdd.blocks || []).length + blocksToAdd.length)
+
+      if (popupSurfaceSelected) {
+        if (!isPopupEditableBlockType(blockType)) {
+          showToast('error', 'Bloque no disponible', 'Ese panel no se puede usar dentro del pop up.')
+          return
+        }
+
+        orderPageId = POPUP_SELECTED_ID
+        const popupSectionIds = new Set(popupBlocks.filter(isSectionBlock).map(block => block.id))
+        if (blockType === SECTION_BLOCK_TYPE) {
+          const columns = getSettingNumber(initialSettings, 'sectionColumns', 1, 1, 3)
+          payload.label = getSectionColumnLabel(columns)
+          payload.content = ''
+          payload.settings = getPopupBlockSettings({
+            ...(payload.settings || {}),
+            ...initialSettings,
+            sectionColumns: columns,
+            sectionGap: getSettingNumber(initialSettings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)
+          })
+        } else {
+          const selectedTarget = selectedBlock && isPopupBlock(selectedBlock)
+            ? isSectionBlock(selectedBlock)
+              ? { sectionId: selectedBlock.id, sectionColumn: 0 }
+              : getBlockSectionId(selectedBlock) && popupSectionIds.has(getBlockSectionId(selectedBlock))
+                ? { sectionId: getBlockSectionId(selectedBlock), sectionColumn: getBlockSectionColumn(selectedBlock) }
+                : null
+            : null
+          const singleSectionTarget = popupSectionIds.size === 1
+            ? { sectionId: [...popupSectionIds][0], sectionColumn: 0 }
+            : null
+          let targetSectionId = options.sectionId && popupSectionIds.has(options.sectionId)
+            ? options.sectionId
+            : selectedTarget?.sectionId || singleSectionTarget?.sectionId || ''
+          let targetColumn = Number.isFinite(Number(options.sectionColumn))
+            ? Math.min(2, Math.max(0, Math.round(Number(options.sectionColumn))))
+            : selectedTarget?.sectionColumn || singleSectionTarget?.sectionColumn || 0
+
+          if (!targetSectionId) {
+            const sectionPayload = defaultBlockPayload(SECTION_BLOCK_TYPE, siteForAdd)
+            sectionPayload.label = getSectionColumnLabel(1)
+            sectionPayload.content = ''
+            sectionPayload.settings = getPopupBlockSettings({
+              ...(sectionPayload.settings || {}),
+              sectionColumns: 1,
+              sectionGap: DEFAULT_SECTION_GAP
+            })
+            const autoCreatedSection = makeLocalBlock(sectionPayload)
+            blocksToAdd.push(autoCreatedSection)
+            targetSectionId = autoCreatedSection.id
+            targetColumn = 0
+          }
+
+          payload.settings = getPopupBlockSettings({
+            ...(payload.settings || {}),
+            ...initialSettings,
+            sectionId: targetSectionId,
+            sectionColumn: targetColumn
+          })
+        }
+      } else if (isLanding(siteForAdd) && activePage) {
+        const pageSectionIds = new Set(canvasBlocks.filter(isSectionBlock).map(block => block.id))
+        const isSection = blockType === SECTION_BLOCK_TYPE
+        const isPanel = PANEL_BLOCK_TYPES.has(blockType)
+        const selectedTarget = selectedBlock
+          ? isSectionBlock(selectedBlock)
+            ? { sectionId: selectedBlock.id, sectionColumn: 0 }
+            : getBlockSectionId(selectedBlock) && pageSectionIds.has(getBlockSectionId(selectedBlock))
+              ? { sectionId: getBlockSectionId(selectedBlock), sectionColumn: getBlockSectionColumn(selectedBlock) }
+              : null
+          : null
+        const singleSectionTarget = pageSectionIds.size === 1
+          ? { sectionId: [...pageSectionIds][0], sectionColumn: 0 }
+          : null
+        let targetSectionId = options.sectionId && pageSectionIds.has(options.sectionId)
+          ? options.sectionId
+          : selectedTarget?.sectionId || singleSectionTarget?.sectionId || ''
+        let targetColumn = Number.isFinite(Number(options.sectionColumn))
+          ? Math.min(2, Math.max(0, Math.round(Number(options.sectionColumn))))
+          : selectedTarget?.sectionColumn || singleSectionTarget?.sectionColumn || 0
+
+        if (isSection) {
+          const columns = getSettingNumber(initialSettings, 'sectionColumns', 1, 1, 3)
+          payload.label = getSectionColumnLabel(columns)
+          payload.content = ''
+          payload.settings = {
+            ...(payload.settings || {}),
+            ...initialSettings,
+            sectionColumns: columns,
+            sectionGap: getSettingNumber(initialSettings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)
+          }
+        } else if (!isPanel) {
+          if (!targetSectionId) {
+            const sectionPayload = defaultBlockPayload(SECTION_BLOCK_TYPE, siteForAdd)
+            const columns = 1
+            sectionPayload.label = getSectionColumnLabel(columns)
+            sectionPayload.content = ''
+            sectionPayload.settings = {
+              ...(sectionPayload.settings || {}),
+              sectionColumns: columns,
+              sectionGap: DEFAULT_SECTION_GAP,
+              pageId: activePage.id
+            }
+            const autoCreatedSection = makeLocalBlock(sectionPayload)
+            blocksToAdd.push(autoCreatedSection)
+            targetSectionId = autoCreatedSection.id
+            targetColumn = 0
+          }
+
+          payload.settings = {
+            ...(payload.settings || {}),
+            ...initialSettings,
+            sectionId: targetSectionId,
+            sectionColumn: targetColumn
+          }
+        } else {
+          payload.settings = {
+            ...(payload.settings || {}),
+            ...initialSettings
+          }
+        }
+
+        payload.settings = {
+          ...(payload.settings || {}),
+          pageId: activePage.id
+        }
+        if (blockType === HEADER_PANEL_BLOCK_TYPE && !getSettingString(payload.settings || {}, 'headerScope')) {
+          payload.settings = {
+            ...(payload.settings || {}),
+            headerScope: HEADER_SCOPE_PAGE
+          }
+        }
+      } else if (hasEditablePages(siteForAdd) && activePage) {
+        payload.settings = {
+          ...(payload.settings || {}),
+          ...initialSettings,
+          pageId: activePage.id
+        }
+        if (blockType === HEADER_PANEL_BLOCK_TYPE && !getSettingString(payload.settings || {}, 'headerScope')) {
+          payload.settings = {
+            ...(payload.settings || {}),
+            headerScope: HEADER_SCOPE_PAGE
+          }
+        }
+      } else if (Object.keys(initialSettings).length > 0) {
+        payload.settings = {
+          ...(payload.settings || {}),
+          ...initialSettings
+        }
+      }
+
+      const added = makeLocalBlock(payload)
+      blocksToAdd.push(added)
+      let nextSite = {
+        ...siteForAdd,
+        blocks: [...(siteForAdd.blocks || []), ...blocksToAdd]
+      }
+
+      if (Number.isFinite(options.insertIndex)) {
+        const scopedBlocks = getBlocksForOrderScope(nextSite, orderPageId)
+        const insertedIds = new Set(blocksToAdd.map(block => block.id))
+        const withoutInserted = scopedBlocks.filter(block => !insertedIds.has(block.id))
+        const boundedIndex = Math.max(0, Math.min(Number(options.insertIndex), withoutInserted.length))
+        const orderedIds = [
+          ...withoutInserted.slice(0, boundedIndex).map(block => block.id),
+          ...blocksToAdd.map(block => block.id),
+          ...withoutInserted.slice(boundedIndex).map(block => block.id)
+        ]
+        nextSite = applyBlockOrderLocal(nextSite, orderedIds, orderPageId)
+      }
+
+      selectedSiteRef.current = nextSite
+      setSelectedSite(nextSite)
+      setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
+      markBlocksCreatedLocal(blocksToAdd)
+      markBlockOrderDirty(orderPageId)
+      setHasUnsavedChanges(true)
+      selectEditorBlock(added.id)
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo agregar el bloque')
+    }
+  }
+
   const handleCreateHeaderBlock = async (scope: HeaderScope) => {
-    if (!selectedSite || !isLanding(selectedSite)) return
+    const site = selectedSiteRef.current || selectedSite
+    if (!site || !isLanding(site)) return
     if (scope === HEADER_SCOPE_GLOBAL && globalHeaderBlock) {
       selectEditorBlock(globalHeaderBlock.id)
       return
@@ -5589,39 +6812,36 @@ export const Sites: React.FC = () => {
     }
     if (scope === HEADER_SCOPE_PAGE && !activePage) return
 
-    const previousBlockIds = new Set((selectedSite.blocks || []).map(block => block.id))
-    const payload = defaultBlockPayload(HEADER_PANEL_BLOCK_TYPE, selectedSite) as Partial<SiteBlock> & { blockType: SiteBlockType }
+    const payload = defaultBlockPayload(HEADER_PANEL_BLOCK_TYPE, site) as Partial<SiteBlock> & { blockType: SiteBlockType }
     const settings: Record<string, unknown> = {
       ...(payload.settings || {}),
       headerScope: scope
     }
     if (scope === HEADER_SCOPE_PAGE && activePage) {
       settings.pageId = activePage.id
-      payload.label = 'Header de pagina'
+      payload.label = 'Header de página'
     } else {
       delete settings.pageId
       payload.label = 'Header global'
     }
     payload.settings = settings
 
-    setSaving(true)
     try {
-      const site = await sitesService.createBlock(selectedSite.id, payload)
-      const sitePages = normalizeFunnelPages(site)
-      const added = [...(site.blocks || [])]
-        .filter(block => !previousBlockIds.has(block.id))
-        .find(block => (
-          scope === HEADER_SCOPE_GLOBAL
-            ? isGlobalHeaderBlock(block)
-            : activePage && isPageHeaderBlock(block, sitePages, activePage.id)
-        ))
-      syncSelectedSite(site)
-      if (added) selectEditorBlock(added.id)
-      showToast('success', scope === HEADER_SCOPE_GLOBAL ? 'Header global creado' : 'Header de pagina creado', 'Ya puedes editarlo desde Header.')
+      const added = createLocalBlockFromPayload(site, payload, (site.blocks || []).length)
+      const nextSite = {
+        ...site,
+        blocks: [...(site.blocks || []), added]
+      }
+      selectedSiteRef.current = nextSite
+      setSelectedSite(nextSite)
+      setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
+      markBlocksCreatedLocal([added])
+      markBlockOrderDirty(scope === HEADER_SCOPE_PAGE && activePage ? activePage.id : undefined)
+      setHasUnsavedChanges(true)
+      selectEditorBlock(added.id)
+      showToast('success', scope === HEADER_SCOPE_GLOBAL ? 'Header global creado' : 'Header de página creado', 'Ya puedes editarlo desde Header. Guarda para conservarlo.')
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo crear el header')
-    } finally {
-      setSaving(false)
     }
   }
 
@@ -5712,7 +6932,7 @@ export const Sites: React.FC = () => {
   const addEmbeddedFormPage = () => {
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
-    const nextPage = makeFunnelPage(context.pages.length, { title: `Pagina ${context.pages.length + 1}` })
+    const nextPage = makeFunnelPage(context.pages.length, { title: `Página ${context.pages.length + 1}` })
     const nextPages = normalizeEmbeddedFormPages([...context.pages, nextPage])
     patchEmbeddedFormFieldsLocal(context.fields, '', nextPages)
     setActiveEmbeddedFormPageId(nextPage.id)
@@ -5741,11 +6961,11 @@ export const Sites: React.FC = () => {
     setActiveEmbeddedFormPageId(fallbackPage.id)
   }
 
-  const handleAddEmbeddedFormField = (blockType: SiteBlockType, insertIndex?: number) => {
-    if (!embeddedFormFieldTypes.includes(blockType)) return
+  const handleAddEmbeddedFormField = (blockType: SiteBlockType, insertIndex?: number, initialSettings: Record<string, unknown> = {}) => {
+    if (!embeddedFormBlockTypeSet.has(blockType)) return
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
-    const nextField = createEmbeddedFieldBlock(context.site, blockType, context.fields.length, context.activePageId)
+    const nextField = createEmbeddedFieldBlock(context.site, blockType, context.fields.length, context.activePageId, initialSettings)
     const pageFields = getEmbeddedFormPageFields(context.fields, context.pages, context.activePageId)
     const boundedIndex = Number.isFinite(Number(insertIndex))
       ? Math.max(0, Math.min(Number(insertIndex), pageFields.length))
@@ -5853,15 +7073,14 @@ export const Sites: React.FC = () => {
     for (const block of targets) {
       pendingBlockSaveIdsRef.current.add(block.id)
     }
-    await flushPendingEditorSaves({ silent: true })
+    setHasUnsavedChanges(true)
   }
 
   const handleSaveBlock = async (blockId = selectedBlock?.id) => {
     const siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave?.blocks || !blockId) return
     if (!pendingBlockSaveIdsRef.current.has(blockId)) pendingBlockSaveIdsRef.current.add(blockId)
-    if (pendingAutosaveChangeCountRef.current < EDITOR_AUTOSAVE_CHANGE_THRESHOLD) return
-    await flushPendingEditorSaves({ silent: true })
+    setHasUnsavedChanges(true)
   }
 
   const getDeletedBlockIds = (blockId: string) => {
@@ -5885,20 +7104,24 @@ export const Sites: React.FC = () => {
   }
 
   const handleDeleteBlock = async (blockId: string) => {
-    if (!selectedSite) return
+    const siteToEdit = selectedSiteRef.current || selectedSite
+    if (!siteToEdit) return
     try {
       const deletingPopupBlock = popupBlocks.some(block => block.id === blockId)
       const sourceBlocks = deletingPopupBlock ? popupBlocks : canvasBlocks
       const beforeBlockIds = sourceBlocks.map(block => block.id)
       const deletedBlockIds = getDeletedBlockIds(blockId)
       const deletedBlocks = getDeletedBlocks(blockId)
+      const deletedCreatedBlockIds = deletedBlockIds.filter(id => pendingCreatedBlockIdsRef.current.has(id))
+      const deletedPendingSaveBlockIds = deletedBlockIds.filter(id => pendingBlockSaveIdsRef.current.has(id))
       const selectedBefore = selectedBlockId
-      const site = await sitesService.deleteBlock(selectedSite.id, blockId)
-      syncSelectedSite(site)
-      const normalizedSite = normalizeSiteForEditor(site)
-      const normalizedPages = normalizeFunnelPages(normalizedSite)
-      const pageId = deletingPopupBlock ? POPUP_SELECTED_ID : hasEditablePages(selectedSite) ? activePage?.id : undefined
-      const afterBlocks = (normalizedSite.blocks || [])
+      const nextSite = normalizeSiteForEditor({
+        ...siteToEdit,
+        blocks: (siteToEdit.blocks || []).filter(block => !deletedBlockIds.includes(block.id))
+      })
+      const normalizedPages = normalizeFunnelPages(nextSite)
+      const pageId = deletingPopupBlock ? POPUP_SELECTED_ID : hasEditablePages(siteToEdit) ? activePage?.id : undefined
+      const afterBlocks = (nextSite.blocks || [])
         .filter(block => deletingPopupBlock
           ? isPopupBlock(block)
           : !isPopupBlock(block) && (!pageId || getBlockPageId(block, normalizedPages) === pageId))
@@ -5916,22 +7139,30 @@ export const Sites: React.FC = () => {
           findNearestRemainingBlockId(beforeBlockIds, afterBlocks, blockId, deletedBlockIds)
         selectedAfter = nextBlockId || (deletingPopupBlock ? POPUP_SELECTED_ID : PAGE_SELECTED_ID)
       }
+      selectedSiteRef.current = nextSite
+      setSelectedSite(nextSite)
+      setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
+      markBlocksDeletedLocal(deletedBlockIds)
+      markBlockOrderDirty(pageId)
+      setHasUnsavedChanges(true)
       setActiveDragId(null)
       resetPaletteDrag()
       if (deletedSelectedBlock) {
         setSelectedBlockId(selectedAfter)
-        navigateSitesEditor({ site, blockId: selectedAfter })
+        navigateSitesEditor({ site: nextSite, blockId: selectedAfter })
       }
       pushEditorHistory({
         action: 'delete',
-        siteId: selectedSite.id,
+        siteId: siteToEdit.id,
         pageId,
         selectedBefore,
         selectedAfter,
         beforeBlockIds,
         afterBlockIds,
         deletedRootBlockId: blockId,
-        deletedBlocks
+        deletedBlocks,
+        deletedCreatedBlockIds,
+        deletedPendingSaveBlockIds
       })
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo eliminar el bloque')
@@ -5944,7 +7175,7 @@ export const Sites: React.FC = () => {
     const deletedCount = getDeletedBlockIds(blockId).length
     const targetLabel = deletesContainer ? 'contenedor' : 'elemento'
     const detail = deletesContainer && deletedCount > 1
-      ? 'Tambien se quitaran los elementos que esten dentro.'
+      ? 'También se quitaran los elementos que esten dentro.'
       : 'Se quitara del editor.'
 
     showConfirm(
@@ -5959,48 +7190,35 @@ export const Sites: React.FC = () => {
   }
 
   const persistCanvasBlockOrder = async (orderedBlocks: SiteBlock[], options: { popup?: boolean } = {}) => {
-    if (!selectedSite) return false
+    const siteToEdit = selectedSiteRef.current || selectedSite
+    if (!siteToEdit) return false
 
-    const wasAlreadyDirty = hasUnsavedChanges
     const sourceBlocks = options.popup ? popupBlocks : canvasBlocks
     const beforeBlockIds = sourceBlocks.map(block => block.id)
     const afterBlockIds = orderedBlocks.map(block => block.id)
     if (beforeBlockIds.join('|') === afterBlockIds.join('|')) return true
     const selectedBefore = selectedBlockId
-    const pageId = options.popup ? POPUP_SELECTED_ID : hasEditablePages(selectedSite) ? activePage?.id : undefined
+    const pageId = options.popup ? POPUP_SELECTED_ID : hasEditablePages(siteToEdit) ? activePage?.id : undefined
     const nextPageBlocks = orderedBlocks.map((block, index) => ({ ...block, sortOrder: index }))
     const nextPageBlocksById = new Map(nextPageBlocks.map(block => [block.id, block]))
-    const nextBlocks = blocks.map(block => nextPageBlocksById.get(block.id) || block)
-    const optimisticSite = { ...selectedSite, blocks: nextBlocks }
+    const nextBlocks = (siteToEdit.blocks || []).map(block => nextPageBlocksById.get(block.id) || block)
+    const optimisticSite = { ...siteToEdit, blocks: nextBlocks }
 
     setHasUnsavedChanges(true)
     selectedSiteRef.current = optimisticSite
     setSelectedSite(optimisticSite)
-
-    try {
-      const site = await sitesService.reorderBlocks(
-        selectedSite.id,
-        nextPageBlocks.map(block => block.id),
-        pageId
-      )
-      syncSelectedSite(site)
-      pushEditorHistory({
-        action: 'reorder',
-        siteId: selectedSite.id,
-        pageId,
-        selectedBefore,
-        selectedAfter: selectedBefore,
-        beforeBlockIds,
-        afterBlockIds
-      })
-      if (!wasAlreadyDirty) {
-        clearEditorDirtyState()
-      }
-      return true
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo reordenar')
-      return false
-    }
+    setSites(current => current.map(item => item.id === optimisticSite.id ? { ...item, ...optimisticSite } : item))
+    markBlockOrderDirty(pageId)
+    pushEditorHistory({
+      action: 'reorder',
+      siteId: siteToEdit.id,
+      pageId,
+      selectedBefore,
+      selectedAfter: selectedBefore,
+      beforeBlockIds,
+      afterBlockIds
+    })
+    return true
   }
 
   const getLandingColumnBlocksForMove = (block: SiteBlock, lanes: LandingSectionLane[] = landingSectionLanes) => {
@@ -6304,7 +7522,7 @@ export const Sites: React.FC = () => {
   }
 
   const isEmbeddedFormPalettePayload = (payload?: PaletteDragPayload | null) =>
-    Boolean(payload && embeddedFormFieldTypes.includes(payload.blockType))
+    Boolean(payload && embeddedFormBlockTypeSet.has(payload.blockType))
 
   const handleEmbeddedFormFieldDragOver = (event: React.DragEvent<HTMLElement>, insertIndex: number) => {
     if (!isPaletteDragEvent(event)) return
@@ -6335,7 +7553,7 @@ export const Sites: React.FC = () => {
     const payload = getPalettePayloadForDrag(event.dataTransfer)
     resetPaletteDrag()
     if (!isEmbeddedFormPalettePayload(payload)) return
-    handleAddEmbeddedFormField(payload!.blockType, insertIndex)
+    handleAddEmbeddedFormField(payload!.blockType, insertIndex, payload!.initialSettings || {})
   }
 
   const handleEmbeddedFormFieldDragLeave = (event: React.DragEvent<HTMLElement>) => {
@@ -6355,7 +7573,7 @@ export const Sites: React.FC = () => {
     resetPaletteDrag()
     if (!payload) return
     if (formEditMode && isEmbeddedFormPalettePayload(payload)) return
-    await handleAddBlock(payload.blockType, {
+    await handleAddBlockManually(payload.blockType, {
       insertIndex,
       initialSettings: payload.initialSettings,
       sectionId: target?.sectionId,
@@ -6410,16 +7628,53 @@ export const Sites: React.FC = () => {
   const embeddedFormEditorBridge: EmbeddedFormCanvasEditorBridge | null = formEditBlock ? {
     parentBlockId: formEditBlock.id,
     activeFieldId: activeEmbeddedFormFieldId,
+    submitSelected: activeEmbeddedFormSubmitSelected,
     activePageId: activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID,
     pages: formEditPages,
     insertIndex: embeddedFieldInsertIndex,
-    onSelectField: setActiveEmbeddedFormFieldId,
+    onSelectField: (fieldId) => {
+      setActiveEmbeddedFormSubmitSelected(false)
+      setActiveEmbeddedFormFieldId(fieldId)
+    },
+    onSelectSubmit: () => {
+      setActiveEmbeddedFormSubmitSelected(true)
+    },
+    onPatchField: patchEmbeddedFormField,
+    onSaveField: () => { void handleSaveBlock(formEditBlock.id) },
     onDragOverField: handleEmbeddedFormFieldDragOver,
     onDropField: handleEmbeddedFormFieldDrop,
     onDragLeave: handleEmbeddedFormFieldDragLeave,
     onMoveField: moveEmbeddedFormField,
     onDeleteField: removeEmbeddedFormField
   } : null
+
+  const editorPageSelector = editorSite && hasEditablePages(editorSite) ? (
+    <FunnelPagesPanel
+      pages={pages}
+      activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+      locked={!canManagePages(editorSite) || editorAIGenerating}
+      draggingPageId={draggingPageId}
+      colorFinalPages={isStandardForm(editorSite)}
+      isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
+      pageMode={getSitePageMode(editorSite)}
+      onChangeMode={isLanding(editorSite) && !isImportedHtmlSite(editorSite) ? handleChangePageMode : undefined}
+      onAddSubpage={handleAddSubpage}
+      onPromotePage={handlePromotePage}
+      onDemotePage={handleDemotePage}
+      getPageDepth={(page) => getPageDepth(page, pages)}
+      canDeletePage={(page) => isStandardForm(editorSite)
+        ? !isFormFinalPage(page) && getFormContentPages(pages).length > 1
+        : pages.length > 1}
+      canDuplicatePage={(page) => !isStandardForm(editorSite) || !isFormFinalPage(page)}
+      onSelectPage={selectEditorPage}
+      onAddPage={handleAddPage}
+      onDuplicatePage={handleDuplicatePage}
+      onDeletePage={handleDeletePage}
+      onDragPage={setDraggingPageId}
+      onReorderPages={handleReorderPages}
+      onRenamePage={handleRenamePage}
+    />
+  ) : null
 
   if (loading) {
     return <Loading page="dashboard" />
@@ -6440,113 +7695,71 @@ export const Sites: React.FC = () => {
             <>
               <div className={`${styles.editorUnifiedToolbar} ${formEditMode ? styles.editorUnifiedToolbarFormMode : ''}`}>
                 <div className={styles.editorToolbarTop}>
-                  <div className={styles.editorToolbarLeft}>
+                  <div className={styles.editorToolbarContext}>
                     <button type="button" className={styles.backButton} onClick={handleBackToLibrary}>
                       <ArrowLeft size={15} />
                       <span>Volver</span>
                     </button>
-                    {editorSite.status !== 'draft' && (
+                    {!isImportedHtmlSite(editorSite) && (
+                      <label className={`${styles.editorNameField} ${styles.editorToolbarNameField}`}>
+                        <input
+                          value={editorSite.name}
+                          aria-label="Nombre interno del site"
+                          disabled={editorAIGenerating}
+                          onChange={(event) => updateSelectedSite({ name: event.target.value })}
+                          onBlur={() => handleSaveSite(undefined, { silent: true })}
+                        />
+                      </label>
+                    )}
+                    {editorSite.status !== 'draft' && !formEditMode && (
                       <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
                     )}
-                    <label className={`${styles.editorNameField} ${styles.editorToolbarNameField}`}>
-                      <input
-                        value={editorSite.name}
-                        aria-label="Nombre interno del site"
-                        disabled={editorAIGenerating}
-                        onChange={(event) => updateSelectedSite({ name: event.target.value })}
-                        onBlur={() => handleSaveSite(undefined, { silent: true })}
-                      />
-                    </label>
-                    {!formEditMode && (
-                      <button
-                        type="button"
-                        className={`${styles.seoToolbarButton} ${seoValidation?.totalIssues ? styles.seoToolbarButtonWarning : ''}`}
-                        onClick={() => setSeoModalOpen(true)}
-                        disabled={editorAIGenerating}
-                        title={seoValidation?.totalIssues ? `SEO tiene ${seoValidation.totalIssues} pendientes` : 'SEO completo'}
-                      >
-                        <Search size={15} />
-                        <span>SEO</span>
-                        {Boolean(seoValidation?.totalIssues) && (
-                          <span className={styles.seoToolbarAlert} aria-label={`${seoValidation?.totalIssues} pendientes de SEO`}>
-                            <AlertTriangle size={13} />
-                            <strong>{seoValidation?.totalIssues}</strong>
-                          </span>
-                        )}
-                      </button>
-                    )}
-                    {!formEditMode && hasEditablePages(editorSite) && (
-                      <button
-                        type="button"
-                        className={`${styles.seoToolbarButton} ${styles.headerToolbarButton}`}
-                        onClick={() => setHeaderModalOpen(true)}
-                        disabled={editorAIGenerating}
-                        title="Codigos del header global y de esta pagina"
-                      >
-                        <PanelTop size={15} />
-                        <span>Header</span>
-                      </button>
-                    )}
-                    {!formEditMode && canConfigurePopup && (
-                      <button
-                        type="button"
-                        className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${popupSurfaceSelected ? styles.headerToolbarButtonActive : ''}`}
-                        onClick={() => selectEditorBlock(popupSurfaceSelected ? PAGE_SELECTED_ID : POPUP_SELECTED_ID)}
-                        disabled={editorAIGenerating}
-                        title="Configurar Pop up"
-                      >
-                        <MousePointerClick size={15} />
-                        <span>Pop up</span>
-                      </button>
+                    {formEditMode && editorPageSelector && (
+                      <div className={styles.editorPageSelectorSlot}>
+                        {editorPageSelector}
+                      </div>
                     )}
                   </div>
-                  <div className={styles.editorActions}>
-                    <div className={styles.editorRouteControls}>
-                      {hasEditablePages(editorSite) && (
-                        <FunnelPagesPanel
-                          pages={pages}
-                          activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                          locked={!canManagePages(editorSite) || editorAIGenerating}
-                          draggingPageId={draggingPageId}
-                          colorFinalPages={isStandardForm(editorSite)}
-                          isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
-                          pageMode={getSitePageMode(editorSite)}
-                          onChangeMode={isLanding(editorSite) && !isImportedHtmlSite(editorSite) ? handleChangePageMode : undefined}
-                          onAddSubpage={handleAddSubpage}
-                          onPromotePage={handlePromotePage}
-                          onDemotePage={handleDemotePage}
-                          getPageDepth={(page) => getPageDepth(page, pages)}
-                          canDeletePage={(page) => isStandardForm(editorSite)
-                            ? !isFormFinalPage(page) && getFormContentPages(pages).length > 1
-                            : pages.length > 1}
-                          canDuplicatePage={(page) => !isStandardForm(editorSite) || !isFormFinalPage(page)}
-                          onSelectPage={selectEditorPage}
-                          onAddPage={handleAddPage}
-                          onDuplicatePage={handleDuplicatePage}
-                          onDeletePage={handleDeletePage}
-                          onDragPage={setDraggingPageId}
-                          onReorderPages={handleReorderPages}
-                          onRenamePage={handleRenamePage}
-                        />
+                  {!formEditMode && (
+                    <div className={styles.editorToolbarTools} aria-label="Herramientas de edición">
+                      {editorPageSelector && (
+                        <div className={styles.editorPageSelectorSlot}>
+                          {editorPageSelector}
+                        </div>
                       )}
-                      {!formEditMode && (
-                      <label className={styles.routeField}>
-                        <span className={`${styles.publicRouteBox} ${domainConfig.domain ? '' : styles.publicRouteBoxStandalone}`}>
-                          <span className={styles.publicRouteDomain} title={`${getPublicDomainPreview(domainConfig)}/`}>
-                            {getPublicDomainPreview(domainConfig)}/
-                          </span>
-                          <input
-                            value={getRouteEditorValue(editorSite)}
-                            aria-label="Ruta pública"
-                            placeholder={editorSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
-                            disabled={editorAIGenerating}
-                            onChange={(event) => updateSelectedSite({ slug: normalizeRouteEditorInput(event.target.value, domainConfig) })}
-                            onBlur={() => handleSaveSite(undefined, { silent: true })}
-                          />
-                        </span>
-                      </label>
+                      {canConfigurePopup && (
+                        <button
+                          type="button"
+                          className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${popupSurfaceSelected ? styles.headerToolbarButtonActive : ''}`}
+                          onClick={() => selectEditorBlock(popupSurfaceSelected ? PAGE_SELECTED_ID : POPUP_SELECTED_ID)}
+                          disabled={editorAIGenerating}
+                          title="Configurar Pop up"
+                        >
+                          <MousePointerClick size={15} />
+                          <span>Pop up</span>
+                        </button>
                       )}
+                      <EditorSettingsDropdown
+                        site={editorSite}
+                        pages={pages}
+                        activePage={activePage}
+                        domainConfig={domainConfig}
+                        seoIssues={seoValidation?.totalIssues || 0}
+                        metaPixelConnected={metaPixelConnected}
+                        disabled={editorAIGenerating}
+                        canEditHeader={hasEditablePages(editorSite)}
+                        routeValue={getRouteEditorValue(editorSite)}
+                        routePlaceholder={editorSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
+                        onRouteChange={(value) => updateSelectedSite({ slug: normalizeRouteEditorInput(value, domainConfig) })}
+                        onPatchSite={updateSelectedSite}
+                        onPatchTheme={patchSiteTheme}
+                        onSaveSite={() => handleSaveSite(undefined, { silent: true })}
+                        onOpenSeo={() => setSeoModalOpen(true)}
+                        onOpenHeader={() => setHeaderModalOpen(true)}
+                      />
                     </div>
+                  )}
+                  <div className={styles.editorToolbarPrimary}>
                     {formEditMode && (
                       <div className={styles.formModeStatus}>
                         <span aria-hidden="true" />
@@ -6555,29 +7768,33 @@ export const Sites: React.FC = () => {
                         <small>{formEditBlock?.content || formEditBlock?.label || 'Formulario'}</small>
                       </div>
                     )}
+                    <span className={`${styles.editorSaveStatus} ${styles.editorSaveStatusBeforeDevice} ${editorSaveStatusClass}`} aria-live="polite">
+                      {editorSaveStatus.icon}
+                      <span>{editorSaveStatus.label}</span>
+                    </span>
                     <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
                       <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('desktop')} disabled={editorAIGenerating} title="Escritorio">
                         <Monitor size={15} />
                       </button>
-                      <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} disabled={editorAIGenerating} title="Movil">
+                      <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} disabled={editorAIGenerating} title="Móvil">
                         <Smartphone size={15} />
                       </button>
                     </div>
                     {isPublicSiteLive(editorSite, domainConfig) && (
-                      <Button variant="secondary" size="lg" onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating}>
+                      <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating}>
                         <ExternalLink size={15} />
                         Ver en vivo
                       </Button>
                     )}
-                    <Button variant="secondary" size="lg" onClick={handlePreviewSite} disabled={editorAIGenerating}>
+                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handlePreviewSite} disabled={editorAIGenerating}>
                       <Eye size={15} />
                       Previsualizar
                     </Button>
-                    <Button variant="secondary" size="lg" onClick={() => handleSaveSite()} loading={saving} disabled={editorAIGenerating}>
+                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={() => handleSaveSite()} loading={saving} disabled={editorAIGenerating}>
                       <Save size={15} />
                       Guardar
                     </Button>
-                    <Button size="lg" onClick={() => handleSaveSite('published')} loading={saving} disabled={editorAIGenerating}>
+                    <Button size="md" className={styles.editorPublishButton} onClick={() => handleSaveSite('published')} loading={saving} disabled={editorAIGenerating}>
                       <Send size={15} />
                       Publicar
                     </Button>
@@ -6616,9 +7833,7 @@ export const Sites: React.FC = () => {
             site={editorSite}
             pages={pages}
             activePage={activePage}
-            metaPixelConnected={metaPixelConnected}
             onClose={() => setHeaderModalOpen(false)}
-            onPatchSite={updateSelectedSite}
             onPatchTheme={patchSiteTheme}
             onSaveSite={() => handleSaveSite(undefined, { silent: true })}
           />
@@ -6666,6 +7881,7 @@ export const Sites: React.FC = () => {
                 aiAgentAvailable={aiAgentConfigured}
                 onCreate={handleCreateSite}
                 onCreateWithAI={handleCreateSiteWithAI}
+                onCreateBlankHtml={handleCreateBlankHtmlSite}
                 onImportHtml={handleOpenImportHtml}
                 onAdvance={(nextFlow) => {
                   setCreateFlow(nextFlow)
@@ -6721,13 +7937,19 @@ export const Sites: React.FC = () => {
                   saving={saving}
                   aiAgentAvailable={aiAgentConfigured}
                   importData={selectedImportData}
+                  customFields={customFields}
+                  codeEditorOpen={true}
+                  codeDrafts={importedCodeDrafts}
+                  popupCodeActive={popupSurfaceSelected}
                   loadingImportData={loadingImportData}
                   onSelectPage={selectEditorPage}
+                  onCodeDraftChange={handleImportedCodeDraftChange}
                   onPreview={handlePreviewSite}
                   onPublish={() => handleSaveSite('published')}
                   onEditFields={() => void handleOpenImportMappingEditor(editorSite)}
                   onPreviewContextChange={handleImportedPreviewContextChange}
                   onContentUpdated={handleImportedContentUpdated}
+                  onImportMappingUpdated={setSelectedImportData}
                   onUpdateRoute={handleUpdateLibraryRoute}
                   onDelete={() => void handleDeleteSite(editorSite)}
                 />
@@ -6738,7 +7960,7 @@ export const Sites: React.FC = () => {
                     <FormModePalette
                       fieldsCount={formEditVisibleFields.length}
                       activePageTitle={activeEmbeddedFormPage?.title || 'Formulario'}
-                      onAddField={handleAddEmbeddedFormField}
+                      onAddField={(blockType, initialSettings) => handleAddEmbeddedFormField(blockType, undefined, initialSettings || {})}
                       onPaletteDragStart={(payload, position) => {
                         setActivePaletteDragPayload(payload)
                         setPaletteDragPosition(position)
@@ -6754,7 +7976,7 @@ export const Sites: React.FC = () => {
 	                  <Palette
 		                    blockTypes={popupSurfaceSelected ? getPopupPaletteBlockTypes(editorSite) : isLanding(editorSite) ? landingBlockTypes : formBlockTypes}
 		                    existingBlocks={editableCanvasBlocks}
-		                    onAdd={handleAddBlock}
+		                    onAdd={handleAddBlockManually}
 	                    onPaletteDragStart={(payload, position) => {
 	                      setActivePaletteDragPayload(payload)
 	                      setPaletteDragPosition(position)
@@ -6940,23 +8162,26 @@ export const Sites: React.FC = () => {
                     site={editorSite}
                     block={formEditBlock}
                     forms={forms}
+                    fields={formEditFields}
+                    activeField={activeEmbeddedFormField}
+                    activeElement={activeEmbeddedFormSubmitSelected ? 'submit' : 'field'}
                     customFields={customFields}
                     pages={formEditPages}
                     activePageId={activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                    activeFieldId={activeEmbeddedFormFieldId}
+                    sitePages={pages}
+                    activeSitePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                     onPatchBlock={(patch) => patchSelectedBlock(patch)}
                     onPatchSettings={(patch) => patchSelectedBlockSettings(patch)}
+                    onPatchTheme={patchSiteTheme}
+                    onPatchField={patchEmbeddedFormField}
+                    onPatchFieldSettings={patchEmbeddedFormFieldSettings}
+                    onDeleteField={removeEmbeddedFormField}
                     onSave={() => handleSaveBlock()}
+                    onSaveSite={() => handleSaveSite()}
                     onActivePageChange={selectEmbeddedFormPage}
                     onAddPage={addEmbeddedFormPage}
                     onRenamePage={renameEmbeddedFormPage}
                     onDeletePage={deleteEmbeddedFormPage}
-                    onActiveFieldChange={setActiveEmbeddedFormFieldId}
-                    onAddField={handleAddEmbeddedFormField}
-                    onPatchField={patchEmbeddedFormField}
-                    onPatchFieldSettings={patchEmbeddedFormFieldSettings}
-                    onRemoveField={removeEmbeddedFormField}
-                    onMoveField={moveEmbeddedFormField}
                   />
                 ) : (
                   <PropertiesPanel
@@ -7065,10 +8290,10 @@ const siteStructureOptions: Array<{
     optimizes: 'Se optimiza para verte profesional, generar confianza y que te encuentren en Google.',
     prompt: [
       'Estructura elegida: SITIO WEB completo (no es un embudo).',
-      '- Crea un sitio multipagina y devuelvelo en page.pages: Inicio mas las paginas que apliquen (Servicios, Nosotros, Contacto, etc.), cada una con id, title y filename claros.',
-      '- Todas las paginas comparten un header con menu de navegacion y un footer con datos de contacto. Los enlaces del menu llevan a las otras paginas con data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la pagina destino.',
-      '- Optimiza para presentacion y confianza: un solo h1 por pagina, title y meta description propios por pagina, jerarquia clara y secciones escaneables.',
-      '- La pagina de Contacto incluye un formulario bien mapeado; el resto del sitio puede invitar a contactar sin presionar como un embudo.'
+      '- Crea un sitio multipágina y devuélvelo en page.pages: Inicio más las páginas que apliquen (Servicios, Nosotros, Contacto, etc.), cada una con id, title y filename claros.',
+      '- Todas las páginas comparten un header con menú de navegación y un footer con datos de contacto. Los enlaces del menú llevan a las otras páginas con data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la página destino.',
+      '- Optimiza para presentación y confianza: un solo h1 por página, title y meta description propios por página, jerarquía clara y secciones escaneables.',
+      '- La página de Contacto incluye un formulario bien mapeado; el resto del sitio puede invitar a contactar sin presionar como un embudo.'
     ].join('\n')
   },
   {
@@ -7079,9 +8304,9 @@ const siteStructureOptions: Array<{
     optimizes: 'Se optimiza para campañas y anuncios: sin menú ni distracciones, solo el siguiente paso.',
     prompt: [
       'Estructura elegida: EMBUDO de conversion.',
-      '- Una sola mision: llevar al visitante a UNA accion principal. Sin menu de navegacion ni enlaces que distraigan.',
-      '- CTA repetido hacia la misma accion a lo largo de la pagina.',
-      '- Si el flujo tiene pasos naturales (ej. registro → gracias), devuelve cada paso como pagina separada en page.pages.'
+      '- Una sola mision: llevar al visitante a UNA acción principal. Sin menu de navegacion ni enlaces que distraigan.',
+      '- CTA repetido hacia la misma acción a lo largo de la página.',
+      '- Si el flujo tiene pasos naturales (ej. registro → gracias), devuelve cada paso como página separada en page.pages.'
     ].join('\n')
   }
 ]
@@ -7105,8 +8330,8 @@ const websiteStyleOptions: Array<{
     bestFor: 'Mostrar tus servicios, dónde estás y cómo contactarte.',
     prompt: [
       'Tipo de sitio web elegido: Negocio de servicios.',
-      'Paginas esperadas: Inicio (hero con propuesta clara, servicios destacados, prueba social y CTA a contacto), Servicios (detalle de cada servicio con beneficios), Nosotros (historia, equipo, por que confiar) y Contacto (formulario, telefono, direccion y horarios).',
-      'El menu lleva a todas las paginas y el footer repite contacto y ubicacion.'
+      'Páginas esperadas: Inicio (hero con propuesta clara, servicios destacados, prueba social y CTA a contacto), Servicios (detalle de cada servicio con beneficios), Nosotros (historia, equipo, por que confiar) y Contacto (formulario, teléfono, dirección y horarios).',
+      'El menu lleva a todas las páginas y el footer repite contacto y ubicación.'
     ].join('\n'),
     sections: ['Inicio', 'Servicios', 'Nosotros', 'Contacto']
   },
@@ -7118,7 +8343,7 @@ const websiteStyleOptions: Array<{
     bestFor: 'Presentarte, mostrar lo que haces y abrir la puerta a trabajar contigo.',
     prompt: [
       'Tipo de sitio web elegido: Marca personal.',
-      'Paginas esperadas: Inicio (quien eres y que resuelves, foto o presencia personal, CTA a contacto), Sobre mi (historia, trayectoria, autoridad), Lo que hago (servicios, proyectos o contenido) y Contacto (formulario y redes).',
+      'Páginas esperadas: Inicio (quien eres y que resuelves, foto o presencia personal, CTA a contacto), Sobre mi (historia, trayectoria, autoridad), Lo que hago (servicios, proyectos o contenido) y Contacto (formulario y redes).',
       'El tono es cercano y humano; la cara y la historia de la persona son protagonistas.'
     ].join('\n'),
     sections: ['Inicio', 'Sobre mí', 'Lo que hago', 'Contacto']
@@ -7131,8 +8356,8 @@ const websiteStyleOptions: Array<{
     bestFor: 'Explicar tu producto, resolver dudas y canalizar interesados.',
     prompt: [
       'Tipo de sitio web elegido: Empresa o producto.',
-      'Paginas esperadas: Inicio (propuesta de valor, beneficios clave, prueba social), Producto o Soluciones (que hace, como funciona, para quien), Preguntas frecuentes (objeciones y dudas reales) y Contacto (formulario para interesados).',
-      'El diseño transmite solidez: jerarquia clara, datos concretos y llamados a contacto presentes sin ser agresivos.'
+      'Páginas esperadas: Inicio (propuesta de valor, beneficios clave, prueba social), Producto o Soluciones (que hace, como funciona, para quien), Preguntas frecuentes (objeciones y dudas reales) y Contacto (formulario para interesados).',
+      'El diseño transmite solidez: jerarquía clara, datos concretos y llamados a contacto presentes sin ser agresivos.'
     ].join('\n'),
     sections: ['Inicio', 'Producto', 'Preguntas', 'Contacto']
   }
@@ -8068,12 +9293,20 @@ type ImportedEditableSelection = {
   buttonUrl?: string
   buttonPageId?: string
   buttonMessage?: string
+  buttonInsideForm?: boolean
+  codeDescriptor?: ImportedFrameElementDescriptor
+  codeRange?: ImportedCodeSourceRange
 }
 
 type ImportedInlineEditorState = {
   selection: ImportedEditableSelection
   mode: 'text' | 'image' | 'video'
   value: string
+  top: number
+  left: number
+}
+
+type ImportedElementPopoverPosition = {
   top: number
   left: number
 }
@@ -8119,10 +9352,75 @@ type ImportedAIRegionAttempt = {
   debug?: SitesAIEditDebug
 }
 
+type ImportedCodeAssistantWorkStep = {
+  id: string
+  label: string
+  detail: string
+  status: 'pending' | 'active' | 'done' | 'error'
+}
+
+function getImportedCodeAssistantStepsFromDebug(debug?: SitesAIEditDebug | null): ImportedCodeAssistantWorkStep[] {
+  const structuredSteps = Array.isArray(debug?.progressSteps)
+    ? debug.progressSteps
+    : []
+  if (structuredSteps.length) {
+    return structuredSteps.map((step, index) => ({
+      id: String(step.id || `debug-step-${index}`),
+      label: String(step.label || `Fase ${index + 1}`),
+      detail: String(step.detail || ''),
+      status: ['pending', 'active', 'done', 'error'].includes(String(step.status))
+        ? step.status as ImportedCodeAssistantWorkStep['status']
+        : 'done'
+    }))
+  }
+  const textSteps = Array.isArray(debug?.steps)
+    ? debug.steps.map(step => String(step || '').trim()).filter(Boolean)
+    : []
+  return textSteps.map((step, index) => ({
+    id: `debug-${index}-${step.slice(0, 24)}`,
+    label: index === textSteps.length - 1 ? 'Resultado' : `Fase ${index + 1}`,
+    detail: step,
+    status: 'done'
+  }))
+}
+
+function getImportedCodeAssistantActivityLabel(steps: ImportedCodeAssistantWorkStep[], saving = false) {
+  if (!steps.length) return ''
+  const errorStep = steps.find(step => step.status === 'error')
+  if (errorStep) return 'Revisar instrucción'
+  if (!saving && steps.every(step => step.status === 'done')) return 'Cambio preparado'
+  const activeStep = steps.find(step => step.status === 'active')
+  const activeId = String(activeStep?.id || '').toLowerCase()
+  if (/context|selection|model|openai_request/.test(activeId)) return 'Analizando código'
+  if (/patch|openai|response|normalize/.test(activeId)) return 'Editando HTML'
+  if (/draft|save/.test(activeId)) return 'Preparando borrador'
+  return saving ? 'Editando HTML' : 'Cambio preparado'
+}
+
 type ImportedButtonEditorState = {
   selection: ImportedEditableSelection
   value: string
   buttonActions: ImportedButtonActionStep[]
+}
+
+type ImportedCodeElementEditorMode = 'text' | 'field' | 'media' | 'container'
+
+type ImportedCodeElementEditorState = {
+  mode: ImportedCodeElementEditorMode
+  descriptor: ImportedFrameElementDescriptor
+  range: ImportedCodeSourceRange
+  editId: string
+  editType: ImportedEditableSelection['editType']
+  tagName: string
+  label: string
+  value: string
+  placeholder?: string
+  fieldName?: string
+  fieldHtmlId?: string
+  fieldInputType?: string
+  required?: boolean
+  options?: ImportedFormFieldOption[]
+  mediaUrl?: string
 }
 
 type ImportedChoiceSelection = {
@@ -8165,6 +9463,32 @@ type ImportedFormFieldEditorState = {
   options: ImportedFormFieldOption[]
 }
 
+type ImportedSelectedFieldRouteContext = {
+  editId: string
+  label: string
+  placeholder: string
+  fieldName: string
+  fieldHtmlId: string
+  inputType: string
+  tagName: string
+}
+
+type ImportedSelectedFieldRouteMatch = {
+  formIndex: number
+  fieldIndex: number
+  field: ImportedSiteFieldMapping
+}
+
+type ImportedSelectedFieldRouteDraft = {
+  destinationType: ImportedSiteFieldMapping['destinationType']
+  destinationKey: string
+  customFieldDefinitionId?: string
+  customFieldKey?: string
+  customFieldLabel?: string
+  customFieldDataType?: string
+  customFieldSyncTarget?: string
+}
+
 const importedEditableSelector = [
   '[data-rstk-edit-id]',
   '[data-ristak-edit-id]',
@@ -8179,6 +9503,688 @@ const importedSectionSelector = [
   '[data-ristak-section]',
   '[data-ristack-section]'
 ].join(', ')
+
+type ImportedFrameElementPathStep = {
+  tag: string
+  childIndex: number
+  tagIndex: number
+}
+
+type ImportedFrameElementDescriptor = {
+  source: 'ristak-imported-editor-preview'
+  mode?: 'visual' | 'code'
+  eventType?: string
+  tagName: string
+  codeStart?: number
+  codeEnd?: number
+  codeLine?: number
+  codeLabel?: string
+  id?: string
+  editId?: string
+  sectionId?: string
+  name?: string
+  href?: string
+  role?: string
+  text?: string
+  classes?: string[]
+  path?: ImportedFrameElementPathStep[]
+}
+
+type ImportedCodeSourceRange = {
+  start: number
+  end: number
+  line: number
+  label: string
+}
+
+const IMPORTED_EDITOR_MESSAGE_SOURCE = 'ristak-imported-editor-preview'
+const importedEditorActionSelector = [
+  'a[href]',
+  'button',
+  'input[type="submit"]',
+  'input[type="button"]',
+  'input[type="image"]',
+  '[role="button"]',
+  '[data-submit]'
+].join(', ')
+
+const importedCodeSelectableSelector = [
+  importedEditableSelector,
+  importedSectionSelector,
+  'a[href]',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  'label',
+  'img',
+  'video',
+  'iframe',
+  'embed',
+  'object',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'p',
+  'section',
+  'article',
+  'main',
+  'header',
+  'footer',
+  'aside',
+  'figure',
+  'div'
+].join(', ')
+
+const importedCodeSelectableTagNames = new Set([
+  'a',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  'label',
+  'img',
+  'video',
+  'iframe',
+  'embed',
+  'object',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'p',
+  'section',
+  'article',
+  'main',
+  'header',
+  'footer',
+  'aside',
+  'figure',
+  'form',
+  'div'
+])
+
+const importedHtmlVoidTags = new Set([
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr'
+])
+
+const escapeImportedRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const getImportedFrameDescriptorAttribute = (element: Element, names: string[]) => {
+  for (const name of names) {
+    const value = element.getAttribute(name)
+    if (value) return value.trim()
+  }
+  return ''
+}
+
+const getImportedFrameDescriptorNumberAttribute = (element: Element, names: string[]) => {
+  for (const name of names) {
+    const rawValue = element.getAttribute(name)
+    if (!rawValue) continue
+    const parsed = Number.parseInt(rawValue, 10)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
+const getImportedFrameElementPath = (element: Element): ImportedFrameElementPathStep[] => {
+  const path: ImportedFrameElementPathStep[] = []
+  let current: Element | null = element
+
+  while (current?.parentElement && current !== current.ownerDocument.documentElement && path.length < 18) {
+    const currentElement: Element = current
+    const parent: HTMLElement | null = currentElement.parentElement
+    if (!parent) break
+    const siblings: Element[] = Array.from(parent.children)
+    const sameTagSiblings = siblings.filter(sibling => sibling.tagName === currentElement.tagName)
+    path.unshift({
+      tag: currentElement.tagName.toLowerCase(),
+      childIndex: siblings.indexOf(currentElement),
+      tagIndex: sameTagSiblings.indexOf(currentElement)
+    })
+    current = parent
+  }
+
+  return path
+}
+
+const getImportedFrameElementDescriptor = (
+  element: Element,
+  mode: ImportedFrameElementDescriptor['mode'],
+  eventType = 'select'
+): ImportedFrameElementDescriptor => ({
+  source: IMPORTED_EDITOR_MESSAGE_SOURCE,
+  mode,
+  eventType,
+  tagName: element.tagName.toLowerCase(),
+  codeStart: getImportedFrameDescriptorNumberAttribute(element, ['data-rstk-code-start']),
+  codeEnd: getImportedFrameDescriptorNumberAttribute(element, ['data-rstk-code-end']),
+  codeLine: getImportedFrameDescriptorNumberAttribute(element, ['data-rstk-code-line']),
+  codeLabel: getImportedFrameDescriptorAttribute(element, ['data-rstk-code-label']),
+  id: element.getAttribute('id') || '',
+  editId: getImportedFrameDescriptorAttribute(element, [
+    'data-rstk-edit-id',
+    'data-ristak-edit-id',
+    'data-ristack-edit-id'
+  ]),
+  sectionId: getImportedFrameDescriptorAttribute(element, [
+    'data-rstk-section',
+    'data-ristak-section',
+    'data-ristack-section'
+  ]),
+  name: element.getAttribute('name') || '',
+  href: element.getAttribute('href') || '',
+  role: element.getAttribute('role') || '',
+  text: (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180),
+  classes: String(element.getAttribute('class') || '')
+    .split(/\s+/)
+    .map(value => value.trim())
+    .filter(Boolean)
+    .filter(value => !value.startsWith('rstk-imported-'))
+    .slice(0, 8),
+  path: getImportedFrameElementPath(element)
+})
+
+const isImportedFrameElementDescriptor = (value: unknown): value is ImportedFrameElementDescriptor => {
+  if (!value || typeof value !== 'object') return false
+  const payload = value as Partial<ImportedFrameElementDescriptor>
+  return payload.source === IMPORTED_EDITOR_MESSAGE_SOURCE && typeof payload.tagName === 'string'
+}
+
+const escapeImportedCssValue = (value: string) => {
+  if (typeof window !== 'undefined' && window.CSS && typeof window.CSS.escape === 'function') {
+    return window.CSS.escape(value)
+  }
+  return value.replace(/["\\#.:,[\]>+~*'=()\s]/g, '\\$&')
+}
+
+const findImportedFrameElementByPath = (
+  doc: Document,
+  path: ImportedFrameElementPathStep[] = []
+): HTMLElement | null => {
+  let current: Element | null = doc.documentElement
+
+  for (const step of path) {
+    if (!current) return null
+    const children: Element[] = Array.from(current.children)
+    let next: Element | null = children[step.childIndex] || null
+    if (next?.tagName.toLowerCase() !== step.tag) {
+      next = children.filter(child => child.tagName.toLowerCase() === step.tag)[step.tagIndex] || null
+    }
+    current = next
+  }
+
+  return current instanceof HTMLElement ? current : null
+}
+
+const findImportedFrameElementByDescriptor = (
+  doc: Document,
+  descriptor: ImportedFrameElementDescriptor
+): HTMLElement | null => {
+  const tagName = descriptor.tagName || '*'
+  if (descriptor.codeStart !== undefined) {
+    const codeMarkedElement = doc.querySelector<HTMLElement>(
+      `${tagName}[data-rstk-code-start="${descriptor.codeStart}"], [data-rstk-code-start="${descriptor.codeStart}"]`
+    )
+    if (codeMarkedElement) return codeMarkedElement
+  }
+  const queryByAttribute = (names: string[], value?: string) => {
+    if (!value) return null
+    for (const name of names) {
+      const element = doc.querySelector<HTMLElement>(`${tagName}[${name}="${escapeImportedCssValue(value)}"], [${name}="${escapeImportedCssValue(value)}"]`)
+      if (element) return element
+    }
+    return null
+  }
+
+  return queryByAttribute(['data-rstk-edit-id', 'data-ristak-edit-id', 'data-ristack-edit-id'], descriptor.editId) ||
+    queryByAttribute(['data-rstk-section', 'data-ristak-section', 'data-ristack-section'], descriptor.sectionId) ||
+    (descriptor.id ? doc.querySelector<HTMLElement>(`${tagName}#${escapeImportedCssValue(descriptor.id)}, #${escapeImportedCssValue(descriptor.id)}`) : null) ||
+    (descriptor.name ? doc.querySelector<HTMLElement>(`${tagName}[name="${escapeImportedCssValue(descriptor.name)}"], [name="${escapeImportedCssValue(descriptor.name)}"]`) : null) ||
+    findImportedFrameElementByPath(doc, descriptor.path)
+}
+
+const buildImportedEditorFrameGuardScript = (mode: ImportedFrameElementDescriptor['mode']) => `
+<script data-rstk-imported-editor-guard="true">
+(() => {
+  if (window.__RSTK_IMPORTED_EDITOR_GUARD__) return;
+  window.__RSTK_IMPORTED_EDITOR_GUARD__ = true;
+  const messageSource = ${JSON.stringify(IMPORTED_EDITOR_MESSAGE_SOURCE)};
+  const mode = ${JSON.stringify(mode)};
+  const actionSelector = ${JSON.stringify(importedEditorActionSelector)};
+  const editableAliases = ['data-rstk-edit-id', 'data-ristak-edit-id', 'data-ristack-edit-id'];
+  const sectionAliases = ['data-rstk-section', 'data-ristak-section', 'data-ristack-section'];
+  const firstAttr = (element, names) => {
+    for (const name of names) {
+      const value = element && element.getAttribute ? element.getAttribute(name) : '';
+      if (value) return String(value).trim();
+    }
+    return '';
+  };
+  const numberAttr = (element, name) => {
+    const value = element && element.getAttribute ? parseInt(element.getAttribute(name) || '', 10) : NaN;
+    return Number.isFinite(value) ? value : undefined;
+  };
+  const getPath = (element) => {
+    const path = [];
+    let current = element;
+    while (current && current.parentElement && current !== document.documentElement && path.length < 18) {
+      const parent = current.parentElement;
+      const children = Array.from(parent.children);
+      const sameTag = children.filter(child => child.tagName === current.tagName);
+      path.unshift({
+        tag: current.tagName.toLowerCase(),
+        childIndex: children.indexOf(current),
+        tagIndex: sameTag.indexOf(current)
+      });
+      current = parent;
+    }
+    return path;
+  };
+  const describe = (rawElement, eventType) => {
+    const element = rawElement && rawElement.nodeType === 1 ? rawElement : rawElement?.parentElement;
+    if (!element || !element.tagName) return null;
+    return {
+      source: messageSource,
+      mode,
+      eventType,
+      tagName: element.tagName.toLowerCase(),
+      codeStart: numberAttr(element, 'data-rstk-code-start'),
+      codeEnd: numberAttr(element, 'data-rstk-code-end'),
+      codeLine: numberAttr(element, 'data-rstk-code-line'),
+      codeLabel: element.getAttribute('data-rstk-code-label') || '',
+      id: element.getAttribute('id') || '',
+      editId: firstAttr(element, editableAliases),
+      sectionId: firstAttr(element, sectionAliases),
+      name: element.getAttribute('name') || '',
+      href: element.getAttribute('href') || '',
+      role: element.getAttribute('role') || '',
+      text: String(element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '').replace(/\\s+/g, ' ').trim().slice(0, 180),
+      classes: String(element.getAttribute('class') || '').split(/\\s+/).map(value => value.trim()).filter(Boolean).filter(value => !value.startsWith('rstk-imported-')).slice(0, 8),
+      path: getPath(element)
+    };
+  };
+  const post = (element, eventType) => {
+    const descriptor = describe(element, eventType);
+    if (!descriptor) return;
+    try {
+      window.parent.postMessage(descriptor, '*');
+    } catch {}
+  };
+  const block = (event, actionElement) => {
+    post(actionElement || event.target, event.type);
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+    return false;
+  };
+  const handleActivation = (event) => {
+    const target = event.target && event.target.nodeType === 1 ? event.target : event.target?.parentElement;
+    const actionElement = event.type === 'submit'
+      ? event.target
+      : target?.closest ? target.closest(actionSelector) : null;
+    if (!actionElement) return;
+    return block(event, actionElement);
+  };
+  const handleKeydown = (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const target = event.target && event.target.nodeType === 1 ? event.target : event.target?.parentElement;
+    const actionElement = target?.closest ? target.closest(actionSelector) : null;
+    if (!actionElement) return;
+    return block(event, actionElement);
+  };
+  document.addEventListener('click', handleActivation, true);
+  document.addEventListener('auxclick', handleActivation, true);
+  document.addEventListener('submit', handleActivation, true);
+  document.addEventListener('keydown', handleKeydown, true);
+  try {
+    const originalSubmit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function submitBlockedInRistakEditor() {
+      post(this, 'submit');
+      return undefined;
+    };
+    const originalRequestSubmit = HTMLFormElement.prototype.requestSubmit;
+    if (originalRequestSubmit) {
+      HTMLFormElement.prototype.requestSubmit = function requestSubmitBlockedInRistakEditor() {
+        post(this, 'submit');
+        return undefined;
+      };
+    }
+    window.__RSTK_IMPORTED_EDITOR_ORIGINAL_FORM_SUBMIT__ = originalSubmit;
+  } catch {}
+  try {
+    window.open = function openBlockedInRistakEditor() {
+      post(document.activeElement || document.body, 'open');
+      return null;
+    };
+  } catch {}
+})();
+</script>
+`
+
+const buildImportedEditorPreviewHtml = (html: string, mode: ImportedFrameElementDescriptor['mode']) => {
+  if (!html) return ''
+  const guard = buildImportedEditorFrameGuardScript(mode)
+  if (/<head\b[^>]*>/i.test(html)) {
+    return html.replace(/<head\b[^>]*>/i, match => `${match}${guard}`)
+  }
+  if (/<html\b[^>]*>/i.test(html)) {
+    return html.replace(/<html\b[^>]*>/i, match => `${match}${guard}`)
+  }
+  return `${guard}${html}`
+}
+
+const getImportedHtmlStartTagAttribute = (startTag: string, attrName: string) => {
+  const attrRegex = new RegExp(`\\s${escapeImportedRegex(attrName)}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>` + '`' + `]+))`, 'i')
+  const match = startTag.match(attrRegex)
+  return (match?.[1] || match?.[2] || match?.[3] || '').trim()
+}
+
+const isImportedHtmlSelfClosingTag = (tagName: string, startTag: string) => (
+  importedHtmlVoidTags.has(tagName) || /\/\s*>$/.test(startTag)
+)
+
+const findImportedHtmlElementRangeEnd = (html: string, tagName: string, startEnd: number) => {
+  if (importedHtmlVoidTags.has(tagName)) return startEnd
+
+  const tagRegex = new RegExp(`<\\/?${escapeImportedRegex(tagName)}\\b[^>]*>`, 'gi')
+  tagRegex.lastIndex = startEnd
+  let depth = 1
+  let match: RegExpExecArray | null
+
+  while ((match = tagRegex.exec(html))) {
+    const tag = match[0]
+    if (/^<\//.test(tag)) {
+      depth -= 1
+      if (depth <= 0) return match.index + tag.length
+      continue
+    }
+    if (!isImportedHtmlSelfClosingTag(tagName, tag)) {
+      depth += 1
+    }
+  }
+
+  return startEnd
+}
+
+const findImportedHtmlSourceRangeByStart = (
+  html: string,
+  start: number,
+  startTag: string,
+  tagName: string,
+  label: string
+): ImportedCodeSourceRange => {
+  const startEnd = start + startTag.length
+  const end = isImportedHtmlSelfClosingTag(tagName, startTag)
+    ? startEnd
+    : findImportedHtmlElementRangeEnd(html, tagName, startEnd)
+  return {
+    start,
+    end: Math.max(startEnd, end),
+    line: html.slice(0, start).split('\n').length,
+    label
+  }
+}
+
+const getImportedCodeRangeLabel = (descriptor: ImportedFrameElementDescriptor) => {
+  if (descriptor.codeLabel) return descriptor.codeLabel
+  const tagName = descriptor.tagName || 'elemento'
+  if (descriptor.editId) return `${tagName} · ${descriptor.editId}`
+  if (descriptor.id) return `${tagName}#${descriptor.id}`
+  if (descriptor.name) return `${tagName}[name="${descriptor.name}"]`
+  if (descriptor.text) return `${tagName} · ${descriptor.text.slice(0, 48)}`
+  return tagName
+}
+
+const escapeImportedCodeMarkerAttribute = (value: string) => String(value || '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}[char] || char))
+
+const getImportedCodeMarkerLabelFromStartTag = (tagName: string, startTag: string) => {
+  const id = getImportedHtmlStartTagAttribute(startTag, 'id')
+  const name = getImportedHtmlStartTagAttribute(startTag, 'name')
+  const editId = getImportedHtmlStartTagAttribute(startTag, 'data-rstk-edit-id') ||
+    getImportedHtmlStartTagAttribute(startTag, 'data-ristak-edit-id') ||
+    getImportedHtmlStartTagAttribute(startTag, 'data-ristack-edit-id')
+  if (editId) return `${tagName} · ${editId}`
+  if (id) return `${tagName}#${id}`
+  if (name) return `${tagName}[name="${name}"]`
+  return tagName
+}
+
+const shouldMarkImportedCodeStartTag = (tagName: string, startTag: string) => {
+  if (['html', 'head', 'body', 'script', 'style', 'title', 'meta', 'link', 'base', 'noscript'].includes(tagName)) return false
+  if (importedCodeSelectableTagNames.has(tagName)) return true
+  return /\s(?:data-rstk-edit-id|data-ristak-edit-id|data-ristack-edit-id|data-rstk-editable|data-ristak-editable|data-ristack-editable|data-rstk-section|data-ristak-section|data-ristack-section|role|href|name|id)\s*=/i.test(startTag)
+}
+
+const getImportedCodeMarkerSkipRanges = (html: string) => {
+  const ranges: Array<{ start: number; end: number }> = []
+  const skipRegex = /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi
+  let match: RegExpExecArray | null
+  while ((match = skipRegex.exec(html))) {
+    ranges.push({ start: match.index, end: match.index + match[0].length })
+  }
+  return ranges
+}
+
+const isImportedCodeMarkerIndexSkipped = (index: number, ranges: Array<{ start: number; end: number }>) => (
+  ranges.some(range => index > range.start && index < range.end)
+)
+
+const buildImportedCodeRangePreviewHtml = (html: string) => {
+  if (!html.trim()) return html
+  const skipRanges = getImportedCodeMarkerSkipRanges(html)
+  const tagRegex = /<([A-Za-z][\w:-]*)\b[^>]*>/g
+  let output = ''
+  let cursor = 0
+  let match: RegExpExecArray | null
+
+  while ((match = tagRegex.exec(html))) {
+    const rawTag = match[0]
+    const tagName = match[1].toLowerCase()
+    output += html.slice(cursor, match.index)
+    cursor = match.index + rawTag.length
+
+    if (
+      isImportedCodeMarkerIndexSkipped(match.index, skipRanges) ||
+      rawTag.includes('data-rstk-code-start=') ||
+      !shouldMarkImportedCodeStartTag(tagName, rawTag)
+    ) {
+      output += rawTag
+      continue
+    }
+
+    const label = getImportedCodeMarkerLabelFromStartTag(tagName, rawTag)
+    const range = findImportedHtmlSourceRangeByStart(html, match.index, rawTag, tagName, label)
+    const markerAttrs = [
+      `data-rstk-code-start="${range.start}"`,
+      `data-rstk-code-end="${range.end}"`,
+      `data-rstk-code-line="${range.line}"`,
+      `data-rstk-code-label="${escapeImportedCodeMarkerAttribute(label)}"`
+    ].join(' ')
+    const insertAt = rawTag.endsWith('/>') ? rawTag.length - 2 : rawTag.length - 1
+    const spacer = rawTag[insertAt - 1] === ' ' ? '' : ' '
+    output += `${rawTag.slice(0, insertAt)}${spacer}${markerAttrs}${rawTag.slice(insertAt)}`
+  }
+
+  output += html.slice(cursor)
+  return output
+}
+
+const findImportedSourceRangeByCodeMarker = (
+  html: string,
+  descriptor: ImportedFrameElementDescriptor
+): ImportedCodeSourceRange | null => {
+  const start = descriptor.codeStart
+  if (start === undefined || start < 0 || start >= html.length) return null
+  const tagName = descriptor.tagName || ''
+  const startTagEnd = html.indexOf('>', start)
+  if (startTagEnd < 0) return null
+  const startTag = html.slice(start, startTagEnd + 1)
+  if (tagName && !new RegExp(`^<${escapeImportedRegex(tagName)}\\b`, 'i').test(startTag)) return null
+  const computedRange = findImportedHtmlSourceRangeByStart(
+    html,
+    start,
+    startTag,
+    tagName || (startTag.match(/^<([A-Za-z][\w:-]*)\b/)?.[1] || 'div').toLowerCase(),
+    getImportedCodeRangeLabel(descriptor)
+  )
+  const markerEnd = descriptor.codeEnd
+  return {
+    ...computedRange,
+    end: markerEnd !== undefined && markerEnd > start && markerEnd <= html.length ? markerEnd : computedRange.end,
+    line: descriptor.codeLine || computedRange.line,
+    label: getImportedCodeRangeLabel(descriptor)
+  }
+}
+
+const findImportedSourceRangeByAttribute = (
+  html: string,
+  descriptor: ImportedFrameElementDescriptor
+): ImportedCodeSourceRange | null => {
+  const attrCandidates: Array<{ names: string[]; value?: string }> = [
+    { names: ['data-rstk-edit-id', 'data-ristak-edit-id', 'data-ristack-edit-id'], value: descriptor.editId },
+    { names: ['data-rstk-section', 'data-ristak-section', 'data-ristack-section'], value: descriptor.sectionId },
+    { names: ['id'], value: descriptor.id },
+    { names: ['name'], value: descriptor.name },
+    { names: ['href'], value: descriptor.href }
+  ].filter(candidate => Boolean(candidate.value))
+
+  if (!attrCandidates.length) return null
+
+  const tagRegex = /<([A-Za-z][\w:-]*)\b[^>]*>/g
+  let match: RegExpExecArray | null
+  while ((match = tagRegex.exec(html))) {
+    const tagName = match[1].toLowerCase()
+    if (descriptor.tagName && tagName !== descriptor.tagName) continue
+    const startTag = match[0]
+    const found = attrCandidates.some(candidate => candidate.names.some(name => getImportedHtmlStartTagAttribute(startTag, name) === candidate.value))
+    if (!found) continue
+    return findImportedHtmlSourceRangeByStart(html, match.index, startTag, tagName, getImportedCodeRangeLabel(descriptor))
+  }
+
+  return null
+}
+
+const importedSourcePathMatches = (
+  currentPath: ImportedFrameElementPathStep[],
+  targetPath: ImportedFrameElementPathStep[] = []
+) => {
+  if (!targetPath.length || currentPath.length !== targetPath.length) return false
+  return currentPath.every((step, index) => {
+    const target = targetPath[index]
+    return step.tag === target.tag && step.childIndex === target.childIndex
+  })
+}
+
+const findImportedSourceRangeByPath = (
+  html: string,
+  descriptor: ImportedFrameElementDescriptor
+): ImportedCodeSourceRange | null => {
+  const targetPath = descriptor.path || []
+  if (!targetPath.length) return null
+
+  const stack: Array<{
+    tag: string
+    path: ImportedFrameElementPathStep[]
+    childIndex: number
+    tagCounts: Map<string, number>
+  }> = [{ tag: '#document', path: [], childIndex: 0, tagCounts: new Map() }]
+  const tagRegex = /<!--[\s\S]*?-->|<!doctype[^>]*>|<\/?([A-Za-z][\w:-]*)\b[^>]*>/gi
+  let match: RegExpExecArray | null
+
+  while ((match = tagRegex.exec(html))) {
+    const rawTag = match[0]
+    if (rawTag.startsWith('<!--') || /^<!doctype/i.test(rawTag)) continue
+    const tagName = (match[1] || '').toLowerCase()
+    if (!tagName) continue
+
+    if (/^<\//.test(rawTag)) {
+      for (let index = stack.length - 1; index > 0; index -= 1) {
+        const entry = stack.pop()
+        if (entry?.tag === tagName) break
+      }
+      continue
+    }
+
+    const parent = stack[stack.length - 1]
+    const childIndex = parent.childIndex
+    parent.childIndex += 1
+    const tagIndex = parent.tagCounts.get(tagName) || 0
+    parent.tagCounts.set(tagName, tagIndex + 1)
+    const currentPath = [...parent.path, { tag: tagName, childIndex, tagIndex }]
+
+    if (importedSourcePathMatches(currentPath, targetPath)) {
+      return findImportedHtmlSourceRangeByStart(html, match.index, rawTag, tagName, getImportedCodeRangeLabel(descriptor))
+    }
+
+    if (!isImportedHtmlSelfClosingTag(tagName, rawTag)) {
+      stack.push({ tag: tagName, path: currentPath, childIndex: 0, tagCounts: new Map() })
+    }
+  }
+
+  return null
+}
+
+const findImportedSourceRangeByText = (
+  html: string,
+  descriptor: ImportedFrameElementDescriptor
+): ImportedCodeSourceRange | null => {
+  const text = (descriptor.text || '').trim()
+  if (!text || text.length < 3 || text.length > 180) return null
+  const normalizedNeedle = text.replace(/\s+/g, ' ')
+  const normalizedHtml = html.replace(/\s+/g, ' ')
+  const normalizedIndex = normalizedHtml.indexOf(normalizedNeedle)
+  if (normalizedIndex < 0) return null
+
+  const beforeNormalized = normalizedHtml.slice(0, normalizedIndex)
+  const approximateRawIndex = Math.min(html.length - 1, beforeNormalized.length)
+  const tagName = descriptor.tagName || 'div'
+  const start = html.lastIndexOf(`<${tagName}`, approximateRawIndex)
+  if (start < 0) return null
+  const startTagEnd = html.indexOf('>', start)
+  if (startTagEnd < 0) return null
+  const startTag = html.slice(start, startTagEnd + 1)
+  return findImportedHtmlSourceRangeByStart(html, start, startTag, tagName, getImportedCodeRangeLabel(descriptor))
+}
+
+const findImportedSourceRangeForDescriptor = (
+  html: string,
+  descriptor: ImportedFrameElementDescriptor
+): ImportedCodeSourceRange | null => {
+  if (!html.trim()) return null
+  return findImportedSourceRangeByCodeMarker(html, descriptor) ||
+    findImportedSourceRangeByAttribute(html, descriptor) ||
+    findImportedSourceRangeByPath(html, descriptor) ||
+    findImportedSourceRangeByText(html, descriptor)
+}
 
 const IMPORTED_AI_VISUAL_MAX_ELEMENTS = 42
 const IMPORTED_AI_VISUAL_SCREENSHOT_WIDTH = 900
@@ -8411,16 +10417,16 @@ const buildImportedPreviewVisualContext = async (
 }
 
 const editableTypeLabels: Record<ImportedEditableSelection['editType'], string> = {
-  heading: 'Titulo',
+  heading: 'Título',
   text: 'Texto',
-  button: 'Boton',
+  button: 'Botón',
   form_label: 'Texto de campo',
   placeholder: 'Texto dentro del campo',
   form_field: 'Campo de formulario',
   image: 'Imagen',
   background_image: 'Imagen de fondo',
   video: 'Video',
-  choice_option: 'Opcion',
+  choice_option: 'Opción',
   section: 'Seccion'
 }
 
@@ -8529,17 +10535,40 @@ const importedSelectableButtonActions = new Set<ImportedButtonAction>(importedBu
 const importedChoiceOnlyActions: ImportedButtonAction[] = ['disqualify_after_submit']
 const importedButtonActions = new Set<ImportedButtonAction>(['none', ...importedSelectableButtonActions, ...importedChoiceOnlyActions])
 
-// Quick per-option action selector for choice fields (filtering people).
+// Quick per-option action selector for choice fields. Disqualification flows
+// se arman enviando la opción a una página especifica (p.ej. "no calificas").
 const importedChoiceQuickActions: Array<{ value: '' | ImportedButtonAction; label: string }> = [
   { value: '', label: 'No hacer nada' },
-  { value: 'disqualify', label: 'Descalificar inmediatamente' },
-  { value: 'disqualify_after_submit', label: 'Descalificar al enviar formulario' },
-  { value: 'submit', label: 'Enviar formulario' }
+  { value: 'submit', label: 'Enviar formulario' },
+  { value: 'disqualify', label: 'Descalificar (no califica)' },
+  { value: 'specific_page', label: 'Enviar a página específica' },
+  { value: 'url', label: 'Redirigir a URL' }
 ]
 
 const getImportedOptionQuickAction = (option: ImportedFormFieldOption): '' | ImportedButtonAction => (
   option.actions?.find(step => importedChoiceQuickActions.some(item => item.value && item.value === step.action))?.action || ''
 )
+
+// Patch the option's quick action step in place (keeps id/action intact).
+const patchImportedOptionActionStep = (
+  option: ImportedFormFieldOption,
+  patch: Partial<ImportedButtonActionStep>
+): Partial<ImportedFormFieldOption> => ({
+  actions: patch.action
+    ? [{ ...makeImportedActionStep(patch.action), ...option.actions?.[0], ...patch }]
+    : option.actions?.length
+      ? [{ ...option.actions[0], ...patch }]
+      : []
+})
+
+// specific_page needs a destination and url needs a link before saving.
+const areImportedOptionQuickActionsValid = (options: ImportedFormFieldOption[]) => options.every(option => {
+  const step = option.actions?.[0]
+  if (!step) return true
+  if (step.action === 'specific_page') return Boolean(step.buttonPageId)
+  if (step.action === 'url') return Boolean(step.buttonUrl?.trim())
+  return true
+})
 
 const importedSubmittableFieldSelector = [
   'form input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"])',
@@ -8580,6 +10609,18 @@ const makeImportedActionStep = (action: ImportedButtonAction, patch: Partial<Imp
   buttonMessage: patch.buttonMessage || '',
   automationName: patch.automationName || '',
 })
+
+const duplicateImportedFieldOption = (option: ImportedFormFieldOption, index: number): ImportedFormFieldOption => {
+  const baseLabel = (option.label || option.value || `Opción ${index + 1}`).trim()
+  const baseValue = (option.value || baseLabel).trim()
+  return {
+    label: `${baseLabel} copia`,
+    value: `${baseValue}-copia`,
+    ...(option.actions?.length ? {
+      actions: option.actions.map(step => makeImportedActionStep(step.action, { ...step, id: '' }))
+    } : {})
+  }
+}
 
 const normalizeImportedActionStep = (value: unknown, fallbackId = ''): ImportedButtonActionStep | null => {
   if (!value || typeof value !== 'object') return null
@@ -8678,7 +10719,7 @@ const getImportedChoiceLabel = (input: HTMLInputElement, doc: Document) => {
     const label = doc.querySelector(`label[for="${id.replace(/"/g, '\\"')}"]`)
     if (label?.textContent?.trim()) return label.textContent.replace(/\s+/g, ' ').trim()
   }
-  return input.getAttribute('value') || input.getAttribute('name') || 'Opcion'
+  return input.getAttribute('value') || input.getAttribute('name') || 'Opción'
 }
 
 const getImportedChoiceInputFromTarget = (target: Element, doc: Document) => {
@@ -8861,6 +10902,568 @@ const readImportedEditableSelection = (element: HTMLElement): ImportedEditableSe
   }
 }
 
+const importedFormBoundButtonActions = new Set<ImportedButtonAction>(['submit', 'disqualify'])
+
+const doImportedActionsRequireForm = (actions: ImportedButtonActionStep[]) => (
+  actions.some(step => importedFormBoundButtonActions.has(step.action))
+)
+
+const getImportedButtonFormRuleMessage = (selection: ImportedEditableSelection, actions: ImportedButtonActionStep[]) => {
+  if (selection.editType !== 'button') return ''
+  if (!doImportedActionsRequireForm(actions)) return ''
+  if (selection.buttonInsideForm !== false) return ''
+  return 'Para enviar o descalificar, este botón debe estar dentro del mismo formulario que sus campos.'
+}
+
+const escapeImportedHtmlAttribute = (value: string) => String(value || '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}[char] || char))
+
+const escapeImportedHtmlText = (value: string) => String(value || '').replace(/[&<>]/g, (char) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;'
+}[char] || char))
+
+const setImportedHtmlAttribute = (openingTag = '', attrName = '', value = '') => {
+  if (!openingTag || !attrName) return openingTag
+  const attrPattern = new RegExp(`(\\s${escapeImportedRegex(attrName)}\\s*=\\s*)("[^"]*"|'[^']*'|[^\\s>]+)`, 'i')
+  const escapedValue = escapeImportedHtmlAttribute(value)
+  if (attrPattern.test(openingTag)) {
+    return openingTag.replace(attrPattern, (_match, prefix) => `${prefix}"${escapedValue}"`)
+  }
+  const insertAt = openingTag.endsWith('/>') ? openingTag.length - 2 : openingTag.length - 1
+  const spacer = openingTag[insertAt - 1] === ' ' ? '' : ' '
+  return `${openingTag.slice(0, insertAt)}${spacer}${attrName}="${escapedValue}"${openingTag.slice(insertAt)}`
+}
+
+const removeImportedHtmlAttribute = (openingTag = '', attrName = '') => {
+  if (!openingTag || !attrName) return openingTag
+  const attrPattern = new RegExp(`\\s${escapeImportedRegex(attrName)}(?:\\s*=\\s*("[^"]*"|'[^']*'|[^\\s>]+))?`, 'gi')
+  return openingTag.replace(attrPattern, '')
+}
+
+const getImportedCodeButtonText = (element: HTMLElement, descriptor: ImportedFrameElementDescriptor) => {
+  const tagName = element.tagName.toLowerCase()
+  if (tagName === 'input') {
+    const input = element as HTMLInputElement
+    return input.value || element.getAttribute('value') || element.getAttribute('aria-label') || descriptor.text || 'Botón'
+  }
+  return (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || descriptor.text || 'Botón')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const getImportedCodeButtonEditId = (
+  element: HTMLElement,
+  descriptor: ImportedFrameElementDescriptor,
+  range: ImportedCodeSourceRange
+) => (
+  getImportedEditableAttribute(element, 'id') ||
+  descriptor.editId ||
+  descriptor.id ||
+  descriptor.name ||
+  `code-button-${range.line}-${range.start}`
+)
+
+const readImportedCodeButtonSelection = (
+  element: HTMLElement,
+  descriptor: ImportedFrameElementDescriptor,
+  range: ImportedCodeSourceRange
+): ImportedEditableSelection => {
+  const existingSelection = readImportedEditableSelection(element)
+  const baseSelection = existingSelection?.editType === 'button'
+    ? existingSelection
+    : {
+      editId: getImportedCodeButtonEditId(element, descriptor, range),
+      editType: 'button' as ImportedEditableContentType,
+      label: getImportedEditableAttribute(element, 'label') || getImportedCodeButtonText(element, descriptor) || 'Botón',
+      value: getImportedCodeButtonText(element, descriptor),
+      tagName: element.tagName.toLowerCase(),
+      ...readImportedButtonSettings(element, 'button')
+    }
+
+  return {
+    ...baseSelection,
+    buttonInsideForm: Boolean(element.closest('form')),
+    codeDescriptor: descriptor,
+    codeRange: range
+  }
+}
+
+const serializeImportedCodeButtonActions = (actions: ImportedButtonActionStep[]) => (
+  actions.map((step, index) => ({
+    id: step.id || `action-${index + 1}`,
+    action: step.action,
+    buttonUrl: step.buttonUrl?.trim() || '',
+    buttonPageId: step.buttonPageId?.trim() || '',
+    buttonMessage: step.buttonMessage?.trim() || '',
+    automationName: step.automationName?.trim() || ''
+  }))
+)
+
+const applyImportedCodeButtonPatch = (
+  html: string,
+  selection: ImportedEditableSelection,
+  value: string,
+  actions: ImportedButtonActionStep[],
+  range: ImportedCodeSourceRange | null
+) => {
+  if (!range) return null
+  const source = String(html || '')
+  const start = range.start
+  if (start < 0 || start >= source.length) return null
+  const sourceRange = source.slice(start, range.end)
+  const startTagMatch = sourceRange.match(/^<([A-Za-z][\w:-]*)\b[^>]*>/)
+  if (!startTagMatch?.[0] || !startTagMatch[1]) return null
+
+  const tagName = startTagMatch[1].toLowerCase()
+  const firstAction = actions[0] || null
+  const actionName = firstAction?.action || 'none'
+  const serializedActions = serializeImportedCodeButtonActions(actions)
+  const cleanValue = value.trim()
+
+  let openingTag = startTagMatch[0]
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-editable', 'true')
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-type', 'button')
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-id', selection.editId)
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-label', selection.label || cleanValue || 'Botón')
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-button-action', actionName)
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-button-actions', JSON.stringify(serializedActions))
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-button-url', actionName === 'url' ? firstAction?.buttonUrl?.trim() || '' : '')
+  openingTag = setImportedHtmlAttribute(
+    openingTag,
+    'data-rstk-button-page-id',
+    ['specific_page', 'disqualify'].includes(actionName) ? firstAction?.buttonPageId?.trim() || '' : ''
+  )
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-button-message', actionName === 'disqualify' ? firstAction?.buttonMessage?.trim() || '' : '')
+
+  if (tagName === 'a') {
+    const href = actionName === 'url'
+      ? firstAction?.buttonUrl?.trim() || '#'
+      : actionName === 'specific_page' && firstAction?.buttonPageId
+        ? `?page=${encodeURIComponent(firstAction.buttonPageId.trim())}`
+        : '#'
+    openingTag = setImportedHtmlAttribute(openingTag, 'href', href)
+  }
+
+  if (tagName === 'button' || tagName === 'input') {
+    openingTag = setImportedHtmlAttribute(openingTag, 'type', actionName === 'submit' ? 'submit' : 'button')
+  }
+
+  if (tagName === 'input') {
+    openingTag = setImportedHtmlAttribute(openingTag, 'value', cleanValue)
+    return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
+  }
+
+  const closingTagPattern = new RegExp(`</${escapeImportedRegex(tagName)}\\s*>\\s*$`, 'i')
+  const closingTagMatch = sourceRange.match(closingTagPattern)
+  if (!closingTagMatch) {
+    return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
+  }
+
+  const closingStart = range.end - closingTagMatch[0].length
+  return [
+    source.slice(0, start),
+    openingTag,
+    escapeImportedHtmlText(cleanValue),
+    source.slice(closingStart, range.end),
+    source.slice(range.end)
+  ].join('')
+}
+
+const isImportedCodeFieldElement = (element: HTMLElement) => {
+  const tagName = element.tagName.toLowerCase()
+  if (tagName === 'textarea' || tagName === 'select') return true
+  if (tagName !== 'input') return false
+  const inputType = (element.getAttribute('type') || 'text').toLowerCase()
+  return !['hidden', 'button', 'submit', 'reset', 'image', 'file'].includes(inputType)
+}
+
+const getImportedCodeFormFieldElementFromTarget = (target: Element | null, doc: Document) => {
+  if (!target || typeof target.closest !== 'function') return null
+  const directField = target.closest('input, textarea, select') as HTMLElement | null
+  if (directField && isImportedCodeFieldElement(directField)) return directField
+  const explicitField = getImportedFormFieldElementFromTarget(target) as HTMLElement | null
+  if (explicitField) return explicitField
+  const label = target.closest('label') as HTMLLabelElement | null
+  const nestedField = label?.querySelector<HTMLElement>('input, textarea, select') || null
+  if (nestedField && isImportedCodeFieldElement(nestedField)) return nestedField
+  const htmlFor = label?.getAttribute('for') || target.getAttribute('for') || ''
+  const linkedField = htmlFor ? doc.getElementById(htmlFor) as HTMLElement | null : null
+  if (linkedField && isImportedCodeFieldElement(linkedField)) return linkedField
+  return null
+}
+
+const getImportedCodeElementEditId = (
+  element: HTMLElement,
+  descriptor: ImportedFrameElementDescriptor,
+  range: ImportedCodeSourceRange,
+  prefix = 'element'
+) => (
+  getImportedEditableAttribute(element, 'id') ||
+  descriptor.editId ||
+  descriptor.id ||
+  descriptor.name ||
+  `${prefix}-${range.line}-${range.start}`
+)
+
+const getImportedCodeElementLabel = (
+  element: HTMLElement,
+  descriptor: ImportedFrameElementDescriptor,
+  fallback = 'Elemento'
+) => (
+  getImportedEditableAttribute(element, 'label') ||
+  descriptor.codeLabel ||
+  element.getAttribute('aria-label') ||
+  element.getAttribute('title') ||
+  descriptor.text ||
+  fallback
+)
+
+const readImportedCodeElementEditor = (
+  element: HTMLElement,
+  descriptor: ImportedFrameElementDescriptor,
+  range: ImportedCodeSourceRange,
+  doc: Document
+): ImportedCodeElementEditorState | null => {
+  const tagName = element.tagName.toLowerCase()
+  const inferredType = normalizeImportedEditableType(getImportedEditableAttribute(element, 'type'), element)
+
+  if (isImportedCodeFieldElement(element)) {
+    const selection = readImportedFormFieldSelection(element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, doc)
+    return {
+      mode: 'field',
+      descriptor,
+      range,
+      editId: selection.editId || getImportedCodeElementEditId(element, descriptor, range, 'field'),
+      editType: 'form_field',
+      tagName,
+      label: selection.label,
+      value: selection.label,
+      placeholder: selection.placeholder,
+      fieldName: selection.fieldName,
+      fieldHtmlId: selection.fieldHtmlId,
+      fieldInputType: selection.inputType,
+      required: selection.required,
+      options: selection.options
+    }
+  }
+
+  if (['image', 'video', 'background_image'].includes(inferredType)) {
+    const value = getEditableElementValue(element, inferredType)
+    return {
+      mode: 'media',
+      descriptor,
+      range,
+      editId: getImportedCodeElementEditId(element, descriptor, range, inferredType),
+      editType: inferredType,
+      tagName,
+      label: getImportedCodeElementLabel(element, descriptor, editableTypeLabels[inferredType]),
+      value,
+      mediaUrl: value
+    }
+  }
+
+  const hasNestedElementChildren = Array.from(element.children)
+    .some(child => child.tagName.toLowerCase() !== 'br')
+  const textValue = getEditableElementValue(element, inferredType).trim()
+  const canEditText = Boolean(textValue) && !hasNestedElementChildren
+
+  return {
+    mode: canEditText ? 'text' : 'container',
+    descriptor,
+    range,
+    editId: getImportedCodeElementEditId(element, descriptor, range, inferredType),
+    editType: inferredType,
+    tagName,
+    label: getImportedCodeElementLabel(element, descriptor, canEditText ? editableTypeLabels[inferredType] || 'Texto' : 'Contenedor'),
+    value: canEditText ? textValue : ''
+  }
+}
+
+const normalizeImportedCodeFieldOptions = (options: ImportedFormFieldOption[] = []) => (
+  options
+    .map((option): ImportedFormFieldOption => ({
+      label: (option.label || option.value || '').trim(),
+      value: (option.value || option.label || '').trim(),
+      ...(option.actions?.length ? { actions: option.actions } : {})
+    }))
+    .filter(option => option.label || option.value)
+)
+
+const getImportedHtmlAttributeValue = (openingTag = '', attrName = '') => {
+  const attrPattern = new RegExp(`\\s${escapeImportedRegex(attrName)}\\s*=\\s*("[^"]*"|'[^']*'|[^\\s>]+)`, 'i')
+  const match = openingTag.match(attrPattern)
+  if (!match?.[1]) return ''
+  return match[1].replace(/^["']|["']$/g, '')
+}
+
+const setImportedOptionActionAttributes = (openingTag: string, actions: ImportedButtonActionStep[] = []) => {
+  const serializedActions = serializeImportedCodeButtonActions(actions)
+  const cleanedTag = removeImportedHtmlAttribute(
+    removeImportedHtmlAttribute(
+      removeImportedHtmlAttribute(openingTag, 'data-rstk-choice-actions'),
+      'data-ristak-choice-actions'
+    ),
+    'data-ristack-choice-actions'
+  )
+  return serializedActions.length
+    ? setImportedHtmlAttribute(cleanedTag, 'data-rstk-choice-actions', JSON.stringify(serializedActions))
+    : cleanedTag
+}
+
+const buildImportedCodeOptionTag = (option: ImportedFormFieldOption) => {
+  const cleanLabel = option.label || option.value
+  const cleanValue = option.value || option.label
+  const openingTag = setImportedOptionActionAttributes(
+    setImportedHtmlAttribute('<option>', 'value', cleanValue),
+    option.actions || []
+  )
+  return `${openingTag}${escapeImportedHtmlText(cleanLabel)}</option>`
+}
+
+const getImportedCodeFieldOpeningTag = (
+  openingTag: string,
+  editor: ImportedCodeElementEditorState,
+  tagName: string
+) => {
+  let nextOpeningTag = openingTag
+  nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'data-rstk-editable', 'true')
+  nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'data-rstk-edit-id', editor.editId)
+  nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'data-rstk-label', editor.label.trim() || editor.value.trim() || editor.tagName)
+  nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'data-rstk-edit-type', 'form_field')
+  nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'data-rstk-field-required', editor.required ? 'true' : 'false')
+  nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'aria-required', editor.required ? 'true' : 'false')
+  nextOpeningTag = editor.required
+    ? setImportedHtmlAttribute(nextOpeningTag, 'required', 'required')
+    : removeImportedHtmlAttribute(nextOpeningTag, 'required')
+  if (editor.fieldName?.trim()) nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'name', editor.fieldName.trim())
+  if (editor.fieldHtmlId?.trim()) nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'id', editor.fieldHtmlId.trim())
+  if (tagName === 'input' || tagName === 'textarea') {
+    nextOpeningTag = setImportedHtmlAttribute(nextOpeningTag, 'placeholder', editor.placeholder?.trim() || '')
+  }
+  return nextOpeningTag
+}
+
+const patchImportedCodeSelectOptions = (
+  source: string,
+  editor: ImportedCodeElementEditorState,
+  range: ImportedCodeSourceRange,
+  openingTag: string,
+  originalOpeningTagLength: number
+) => {
+  const sourceRange = source.slice(range.start, range.end)
+  const closingTagMatch = sourceRange.match(/<\/select\s*>\s*$/i)
+  if (!closingTagMatch) return null
+  const closingStart = range.end - closingTagMatch[0].length
+  const currentInnerHtml = source.slice(range.start + originalOpeningTagLength, closingStart)
+  const placeholderOption = currentInnerHtml.match(/<option\b(?=[^>]*\bvalue\s*=\s*(?:""|'')[^>]*>)[\s\S]*?<\/option>/i)?.[0]?.trim() ||
+    '<option value="">Selecciona una opción</option>'
+  const optionsMarkup = normalizeImportedCodeFieldOptions(editor.options)
+    .map(buildImportedCodeOptionTag)
+    .join('\n  ')
+
+  return [
+    source.slice(0, range.start),
+    openingTag,
+    '\n  ',
+    [placeholderOption, optionsMarkup].filter(Boolean).join('\n  '),
+    '\n',
+    source.slice(closingStart, range.end),
+    source.slice(range.end)
+  ].join('')
+}
+
+const getImportedEnclosingFormRange = (source: string, start: number) => {
+  const beforeSelection = source.slice(0, start)
+  const formStart = beforeSelection.lastIndexOf('<form')
+  const formCloseBefore = beforeSelection.lastIndexOf('</form')
+  if (formStart >= 0 && formStart > formCloseBefore) {
+    const formClose = source.indexOf('</form', start)
+    return { start: formStart, end: formClose >= 0 ? formClose : source.length }
+  }
+  return { start: 0, end: source.length }
+}
+
+type ImportedCodeChoiceBlock = {
+  start: number
+  end: number
+  block: string
+  inputTag: string
+}
+
+const findImportedCodeChoiceLabelBlocks = (
+  source: string,
+  scopeStart: number,
+  scopeEnd: number,
+  inputType: string,
+  fieldName: string
+): ImportedCodeChoiceBlock[] => {
+  const scopedSource = source.slice(scopeStart, scopeEnd)
+  const labelRegex = /<label\b[^>]*>[\s\S]*?<\/label>/gi
+  const result: ImportedCodeChoiceBlock[] = []
+  let labelMatch: RegExpExecArray | null
+
+  while ((labelMatch = labelRegex.exec(scopedSource))) {
+    const block = labelMatch[0]
+    const inputMatches = Array.from(block.matchAll(/<input\b[^>]*>/gi))
+    const matchedInput = inputMatches.find(match => {
+      const inputTag = match[0]
+      const currentType = (getImportedHtmlAttributeValue(inputTag, 'type') || 'text').toLowerCase()
+      const currentName = getImportedHtmlAttributeValue(inputTag, 'name') || getImportedHtmlAttributeValue(inputTag, 'id')
+      return currentType === inputType && (!fieldName || currentName === fieldName)
+    })
+    if (!matchedInput?.[0]) continue
+    result.push({
+      start: scopeStart + labelMatch.index,
+      end: scopeStart + labelMatch.index + block.length,
+      block,
+      inputTag: matchedInput[0]
+    })
+  }
+
+  return result
+}
+
+const buildImportedCodeChoiceOptionLabel = (
+  option: ImportedFormFieldOption,
+  index: number,
+  editor: ImportedCodeElementEditorState,
+  baseLabelTag: string,
+  baseInputTag: string,
+  inputType: string,
+  fieldName: string
+) => {
+  const cleanLabel = option.label || option.value || `Opción ${index + 1}`
+  const cleanValue = option.value || option.label || cleanLabel
+  let labelTag = removeImportedHtmlAttribute(baseLabelTag || '<label>', 'for')
+  if (!/^<label\b/i.test(labelTag)) labelTag = '<label>'
+  let inputTag = baseInputTag || '<input>'
+  inputTag = setImportedHtmlAttribute(inputTag, 'type', inputType)
+  inputTag = setImportedHtmlAttribute(inputTag, 'name', fieldName)
+  inputTag = setImportedHtmlAttribute(inputTag, 'value', cleanValue)
+  inputTag = setImportedHtmlAttribute(inputTag, 'data-rstk-editable', 'true')
+  inputTag = setImportedHtmlAttribute(inputTag, 'data-rstk-edit-type', 'form_field')
+  inputTag = setImportedHtmlAttribute(inputTag, 'data-rstk-label', cleanLabel)
+  inputTag = setImportedHtmlAttribute(inputTag, 'data-rstk-field-required', editor.required ? 'true' : 'false')
+  inputTag = setImportedHtmlAttribute(inputTag, 'aria-required', editor.required ? 'true' : 'false')
+  inputTag = editor.required
+    ? setImportedHtmlAttribute(inputTag, 'required', 'required')
+    : removeImportedHtmlAttribute(inputTag, 'required')
+  inputTag = index === 0 && editor.fieldHtmlId?.trim()
+    ? setImportedHtmlAttribute(inputTag, 'id', editor.fieldHtmlId.trim())
+    : removeImportedHtmlAttribute(inputTag, 'id')
+  inputTag = setImportedOptionActionAttributes(inputTag, option.actions || [])
+
+  return `${labelTag}${inputTag}<span>${escapeImportedHtmlText(cleanLabel)}</span></label>`
+}
+
+const patchImportedCodeChoiceGroupOptions = (
+  source: string,
+  editor: ImportedCodeElementEditorState,
+  range: ImportedCodeSourceRange,
+  openingTag: string
+) => {
+  const inputType = (editor.fieldInputType || getImportedHtmlAttributeValue(openingTag, 'type') || '').toLowerCase()
+  if (!['radio', 'checkbox'].includes(inputType)) return null
+  const fieldName = editor.fieldName?.trim() || getImportedHtmlAttributeValue(openingTag, 'name') || getImportedHtmlAttributeValue(openingTag, 'id')
+  if (!fieldName) return null
+  const options = normalizeImportedCodeFieldOptions(editor.options)
+  if (!options.length) return null
+  const scope = getImportedEnclosingFormRange(source, range.start)
+  const blocks = findImportedCodeChoiceLabelBlocks(source, scope.start, scope.end, inputType, fieldName)
+  if (!blocks.length) return null
+  const firstBlock = blocks[0]
+  const lastBlock = blocks[blocks.length - 1]
+  const baseLabelTag = firstBlock.block.match(/^<label\b[^>]*>/i)?.[0] || '<label>'
+  const baseInputTag = firstBlock.inputTag || openingTag
+  const nextGroupMarkup = options
+    .map((option, index) => buildImportedCodeChoiceOptionLabel(option, index, editor, baseLabelTag, baseInputTag, inputType, fieldName))
+    .join('\n')
+
+  return `${source.slice(0, firstBlock.start)}${nextGroupMarkup}${source.slice(lastBlock.end)}`
+}
+
+const applyImportedCodeElementPatch = (
+  html: string,
+  editor: ImportedCodeElementEditorState,
+  range: ImportedCodeSourceRange | null
+) => {
+  if (!range || editor.mode === 'container') return null
+  const source = String(html || '')
+  const start = range.start
+  if (start < 0 || start >= source.length) return null
+  const sourceRange = source.slice(start, range.end)
+  const startTagMatch = sourceRange.match(/^<([A-Za-z][\w:-]*)\b[^>]*>/)
+  if (!startTagMatch?.[0] || !startTagMatch[1]) return null
+
+  const tagName = startTagMatch[1].toLowerCase()
+  const cleanLabel = editor.label.trim() || editor.value.trim() || editor.tagName
+  let openingTag = startTagMatch[0]
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-editable', 'true')
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-id', editor.editId)
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-label', cleanLabel)
+
+  if (editor.mode === 'field') {
+    openingTag = getImportedCodeFieldOpeningTag(openingTag, editor, tagName)
+    const hasOptions = editor.tagName === 'select' || ['radio', 'checkbox'].includes(editor.fieldInputType || '')
+    if (hasOptions && tagName === 'select') {
+      return patchImportedCodeSelectOptions(source, editor, range, openingTag, startTagMatch[0].length)
+    }
+    if (hasOptions && tagName === 'input') {
+      const nextSource = patchImportedCodeChoiceGroupOptions(source, editor, range, openingTag)
+      if (nextSource) return nextSource
+    }
+    return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
+  }
+
+  if (editor.mode === 'media') {
+    openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-type', editor.editType)
+    const mediaUrl = (editor.mediaUrl || editor.value || '').trim()
+    if (editor.editType === 'background_image') {
+      const styleValue = openingTag.match(/\sstyle\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i)?.[1] || '""'
+      const unquotedStyle = styleValue.replace(/^["']|["']$/g, '')
+      const nextStyle = /background(?:-image)?\s*:/i.test(unquotedStyle)
+        ? unquotedStyle.replace(/background(?:-image)?\s*:\s*url\([^)]+\)\s*;?/i, `background-image: url('${mediaUrl}');`)
+        : `${unquotedStyle}${unquotedStyle.trim().endsWith(';') || !unquotedStyle.trim() ? '' : ';'} background-image: url('${mediaUrl}');`
+      openingTag = setImportedHtmlAttribute(openingTag, 'style', nextStyle)
+    } else if (tagName === 'object') {
+      openingTag = setImportedHtmlAttribute(openingTag, 'data', mediaUrl)
+    } else if (tagName === 'wistia-player') {
+      openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-video-url', mediaUrl)
+    } else {
+      openingTag = setImportedHtmlAttribute(openingTag, 'src', mediaUrl)
+    }
+    return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
+  }
+
+  openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-type', editor.editType === 'section' ? 'text' : editor.editType)
+  if (tagName === 'input') {
+    openingTag = setImportedHtmlAttribute(openingTag, 'value', editor.value.trim())
+    return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
+  }
+
+  const closingTagPattern = new RegExp(`</${escapeImportedRegex(tagName)}\\s*>\\s*$`, 'i')
+  const closingTagMatch = sourceRange.match(closingTagPattern)
+  if (!closingTagMatch) {
+    return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
+  }
+
+  const closingStart = range.end - closingTagMatch[0].length
+  return [
+    source.slice(0, start),
+    openingTag,
+    escapeImportedHtmlText(editor.value.trim()),
+    source.slice(closingStart, range.end),
+    source.slice(range.end)
+  ].join('')
+}
+
 // --- Side-panel summary of the form fields detected on the current page ---
 interface ImportedPanelFormField {
   key: string
@@ -8877,14 +11480,14 @@ interface ImportedPanelFormField {
 const importedPanelFieldTypeLabels: Record<string, string> = {
   text: 'Texto',
   email: 'Email',
-  tel: 'Telefono',
-  number: 'Numero',
+  tel: 'Teléfono',
+  number: 'Número',
   date: 'Fecha',
   url: 'URL',
   password: 'Contraseña',
   textarea: 'Texto largo',
   select: 'Desplegable',
-  radio: 'Opcion unica',
+  radio: 'Opción única',
   checkbox: 'Casillas'
 }
 
@@ -9358,16 +11961,16 @@ const buildImportedAIRegionPrompt = (
       ].filter(Boolean).join(', ')
       return `${index + 1}. ${meta}\nHTML: ${element.html || ''}`
     }).join('\n\n')
-    : 'No se detectaron elementos editables claros dentro del rectangulo. Usa las coordenadas y el contexto visual del HTML actual.'
+    : 'No se detectaron elementos editables claros dentro del rectángulo. Usa las coordenadas y el contexto visual del HTML actual.'
 
   return `
-El usuario selecciono una zona especifica del HTML importado y quiere que la IA modifique SOLO esa zona salvo que sea indispensable ajustar CSS cercano para que se vea bien.
-${options.forceApply ? '\nLa respuesta anterior pidio mas informacion, pero esta peticion ya es suficiente. No preguntes otra vez; aplica la mejor interpretacion posible.' : ''}
+El usuario seleccionó una zona específica del HTML importado y quiere que la IA modifique SOLO esa zona salvo que sea indispensable ajustar CSS cercano para que se vea bien.
+${options.forceApply ? '\nLa respuesta anterior pidió más información, pero esta petición ya es suficiente. No preguntes otra vez; aplica la mejor interpretación posible.' : ''}
 ${options.previousReply ? `\nRespuesta anterior que NO debe repetirse: ${options.previousReply}` : ''}
 
-Pagina activa: ${selection.pageTitle} (${selection.pageId})
+Página activa: ${selection.pageTitle} (${selection.pageId})
 Site: ${site.title || site.name}
-Rectangulo seleccionado en viewport: x=${Math.round(selection.bounds.x)}, y=${Math.round(selection.bounds.y)}, ancho=${Math.round(selection.bounds.width)}, alto=${Math.round(selection.bounds.height)}, viewport=${Math.round(selection.bounds.viewportWidth)}x${Math.round(selection.bounds.viewportHeight)}.
+Rectángulo seleccionado en viewport: x=${Math.round(selection.bounds.x)}, y=${Math.round(selection.bounds.y)}, ancho=${Math.round(selection.bounds.width)}, alto=${Math.round(selection.bounds.height)}, viewport=${Math.round(selection.bounds.viewportWidth)}x${Math.round(selection.bounds.viewportHeight)}.
 
 Resumen visual renderizado de la zona:
 ${selection.visualSummary || 'Sin resumen visual disponible.'}
@@ -9378,15 +11981,15 @@ ${elementLines}
 Solicitud del usuario:
 ${userPrompt.trim()}
 
-Reglas para esta edicion:
-- Devuelve el HTML completo actualizado, conservando todas las paginas del embudo si existen.
-- No cambies otras secciones que el usuario no selecciono.
-- La instruccion del usuario es suficiente aunque no mencione ids exactos. Si dice titular, video, boton, arriba, abajo, centrado, hero, orden o layout, identifica esos elementos dentro del rectangulo seleccionado y aplica el cambio.
-- Si hay varios candidatos, usa el mas importante por jerarquia visual: titular principal, video/player dentro de la zona y CTA principal.
-- No respondas con needs_more_info ni con preguntas para cambios de posicion, alineacion, orden, tamano, video, boton, titular o layout. Haz tu mejor edicion con el HTML actual.
-- Si el usuario pide titular arriba, video debajo y boton debajo, convierte esa zona en un layout vertical centrado y conserva los estilos visuales importantes.
-- Si el usuario menciona que algo "se transparenta", "se ve muy transparente", "no se lee", "se pierde", "muy claro" o "poco contraste", usa el resumen visual para localizar fondos/textos con alpha u opacidad baja y vuelve esa parte mas solida/legible sin cambiar contenido.
-- Si la solicitud pide insertar un video, acepta URL o codigo iframe/embed y colocalo como un elemento editable de video con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-label y data-rstk-edit-id.
+Reglas para esta edición:
+- Devuelve el HTML completo actualizado, conservando todas las páginas del embudo si existen.
+- No cambies otras secciones que el usuario no seleccionó.
+- La instrucción del usuario es suficiente aunque no mencione ids exactos. Si dice titular, video, botón, arriba, abajo, centrado, hero, orden o layout, identifica esos elementos dentro del rectángulo seleccionado y aplica el cambio.
+- Si hay varios candidatos, usa el más importante por jerarquía visual: titular principal, video/player dentro de la zona y CTA principal.
+- No respondas con needs_more_info ni con preguntas para cambios de posición, alineación, orden, tamaño, video, botón, titular o layout. Haz tu mejor edición con el HTML actual.
+- Si el usuario pide titular arriba, video debajo y botón debajo, convierte esa zona en un layout vertical centrado y conserva los estilos visuales importantes.
+- Si el usuario menciona que algo "se transparenta", "se ve muy transparente", "no se lee", "se pierde", "muy claro" o "poco contraste", usa el resumen visual para localizar fondos/textos con alpha u opacidad baja y vuelve esa parte más sólida/legible sin cambiar contenido.
+- Si la solicitud pide insertar un video, acepta URL o código iframe/embed y colócalo como un elemento editable de video con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-label y data-rstk-edit-id.
 - Conserva formularios, campos, rutas de datos y acciones de botones existentes salvo que el usuario pida cambiarlos.
   `.trim()
 }
@@ -9398,25 +12001,25 @@ const buildImportedAIPagePrompt = (
   visualContext: SitesAIPreviewVisualContext | null,
   options: { forceApply?: boolean; previousReply?: string } = {}
 ) => `
-El usuario quiere modificar la pagina HTML completa desde el panel derecho del editor. No selecciono una zona especifica, asi que puedes usar toda la pagina activa como contexto.
-${options.forceApply ? '\nLa respuesta anterior pidio mas informacion, pero esta peticion ya es suficiente. No preguntes otra vez; aplica la mejor interpretacion posible.' : ''}
+El usuario quiere modificar la página HTML completa desde el panel derecho del editor. No seleccionó una zona específica, así que puedes usar toda la página activa como contexto.
+${options.forceApply ? '\nLa respuesta anterior pidió más información, pero esta petición ya es suficiente. No preguntes otra vez; aplica la mejor interpretación posible.' : ''}
 ${options.previousReply ? `\nRespuesta anterior que NO debe repetirse: ${options.previousReply}` : ''}
 
-Pagina activa: ${page?.title || site.title || site.name} (${page?.id || DEFAULT_FUNNEL_PAGE_ID})
+Página activa: ${page?.title || site.title || site.name} (${page?.id || DEFAULT_FUNNEL_PAGE_ID})
 Site: ${site.title || site.name}
 
-Resumen visual de la pagina:
+Resumen visual de la página:
 ${visualContext?.summary || 'Sin resumen visual disponible.'}
 
 Solicitud del usuario:
 ${userPrompt.trim()}
 
-Reglas para esta edicion:
-- Devuelve el HTML completo actualizado, conservando todas las paginas del embudo si existen.
-- Aplica el cambio a la pagina activa completa.
+Reglas para esta edición:
+- Devuelve el HTML completo actualizado, conservando todas las páginas del embudo si existen.
+- Aplica el cambio a la página activa completa.
 - Conserva formularios, campos, rutas de datos, tracking y acciones de botones salvo que el usuario pida cambiarlos.
-- Si el usuario pide cambiar copy, layout, video, contraste, imagenes o botones, aplica el cambio directamente con el HTML actual.
-- Usa needs_more_info solo si no hay una accion concreta que ejecutar.
+- Si el usuario pide cambiar copy, layout, video, contraste, imágenes o botones, aplica el cambio directamente con el HTML actual.
+- Usa needs_more_info solo si no hay una acción concreta que ejecutar.
 `.trim()
 
 const normalizeImportedAIRegionPreviewHtml = (html = '') => (
@@ -9515,6 +12118,7 @@ const ImportedActionChainEditor: React.FC<{
         <CustomSelect
           value="none"
           disabled={disabled}
+          portal
           onChange={(event) => {
             const action = normalizeImportedButtonAction(event.target.value)
             onChange(action === 'none' || !selectableActions.has(action) ? [] : [makeImportedActionStep(action)])
@@ -9539,6 +12143,7 @@ const ImportedActionChainEditor: React.FC<{
               <CustomSelect
                 value={step.action}
                 disabled={disabled}
+                portal
                 onChange={(event) => {
                   const nextAction = normalizeImportedButtonAction(event.target.value)
                   if (nextAction === 'none' || !selectableActions.has(nextAction)) {
@@ -9587,6 +12192,7 @@ const ImportedActionChainEditor: React.FC<{
               <CustomSelect
                 value={step.buttonPageId || ''}
                 disabled={disabled}
+                portal
                 onChange={(event) => setAction(index, { buttonPageId: event.target.value })}
               >
                 <option value="">Selecciona una página</option>
@@ -9635,6 +12241,261 @@ const ImportedActionChainEditor: React.FC<{
   )
 }
 
+const ImportedFieldOptionsEditor: React.FC<{
+  title: string
+  selectionMode?: 'single' | 'multiple'
+  options: ImportedFormFieldOption[]
+  targetPages: SitePage[]
+  disabled?: boolean
+  namePrefix: string
+  onAdd: () => void
+  onDuplicate: (index: number) => void
+  onRemove: (index: number) => void
+  onPatch: (index: number, patch: Partial<ImportedFormFieldOption>) => void
+}> = ({
+  title,
+  selectionMode,
+  options,
+  targetPages,
+  disabled = false,
+  namePrefix,
+  onAdd,
+  onDuplicate,
+  onRemove,
+  onPatch
+}) => (
+  <div className={styles.importedFieldOptionsEditor}>
+    <div className={styles.importedFieldOptionsHeader}>
+      <span>{title}</span>
+      <button type="button" onClick={onAdd} disabled={disabled || options.length >= 30}>
+        <Plus size={13} />
+        Agregar
+      </button>
+    </div>
+    {selectionMode && (
+      <div className={styles.importedFieldChoiceMode}>
+        <span>Tipo de selección</span>
+        <strong>{selectionMode === 'multiple' ? 'Campo múltiple' : 'Campo único'}</strong>
+        <small>
+          {selectionMode === 'multiple'
+            ? 'El visitante puede marcar varias opciones.'
+            : 'El visitante solo puede elegir una opción.'}
+        </small>
+      </div>
+    )}
+    {options.map((option, index) => (
+      <div key={`${index}-${option.value}`} className={styles.importedFieldOptionItem}>
+        <div className={styles.importedFieldOptionRow}>
+          <label className={styles.importedFieldOptionInput}>
+            <span>Texto visible</span>
+            <input
+              value={option.label}
+              disabled={disabled}
+              placeholder={`Opción ${index + 1}`}
+              name={`${namePrefix}-label-${index}`}
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => onPatch(index, {
+                label: event.target.value,
+                value: option.value === option.label ? event.target.value : option.value
+              })}
+            />
+          </label>
+          <label className={styles.importedFieldOptionInput}>
+            <span>Valor interno</span>
+            <input
+              value={option.value}
+              disabled={disabled}
+              placeholder="valor"
+              name={`${namePrefix}-value-${index}`}
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => onPatch(index, { value: event.target.value })}
+            />
+          </label>
+          <div className={styles.importedFieldOptionRowActions}>
+            <button type="button" onClick={() => onDuplicate(index)} disabled={disabled || options.length >= 30} aria-label={`Duplicar opción ${index + 1}`}>
+              <Copy size={13} />
+            </button>
+            <button type="button" onClick={() => onRemove(index)} disabled={disabled || options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
+              <X size={13} />
+            </button>
+          </div>
+        </div>
+        <label className={styles.importedFieldOptionAction}>
+          <span>Al elegirla, ¿qué quieres que suceda?</span>
+          <CustomSelect
+            value={getImportedOptionQuickAction(option)}
+            disabled={disabled}
+            portal
+            onChange={(event) => {
+              const action = event.target.value as '' | ImportedButtonAction
+              onPatch(index, { actions: action ? [makeImportedActionStep(action)] : [] })
+            }}
+          >
+            {importedChoiceQuickActions.map(item => (
+              <option key={item.value || 'none'} value={item.value}>{item.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+        {getImportedOptionQuickAction(option) === 'specific_page' && (
+          <label className={styles.importedFieldOptionAction}>
+            <span>Página de este sitio</span>
+            <CustomSelect
+              value={option.actions?.[0]?.buttonPageId || ''}
+              disabled={disabled}
+              portal
+              onChange={(event) => onPatch(index, patchImportedOptionActionStep(option, { buttonPageId: event.target.value }))}
+            >
+              <option value="">Selecciona una página</option>
+              {targetPages.map(page => (
+                <option key={page.id} value={page.id}>{page.title || page.id}</option>
+              ))}
+            </CustomSelect>
+          </label>
+        )}
+        {getImportedOptionQuickAction(option) === 'url' && (
+          <label className={styles.importedFieldOptionAction}>
+            <span>URL a donde se manda</span>
+            <input
+              value={option.actions?.[0]?.buttonUrl || ''}
+              disabled={disabled}
+              placeholder="https://..."
+              name={`${namePrefix}-url-${index}`}
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => onPatch(index, patchImportedOptionActionStep(option, { buttonUrl: event.target.value }))}
+            />
+          </label>
+        )}
+        {getImportedOptionQuickAction(option) === 'disqualify' && (
+          <label className={styles.importedFieldOptionAction}>
+            <span>Mensaje de descalificación</span>
+            <input
+              value={option.actions?.[0]?.buttonMessage || ''}
+              disabled={disabled}
+              placeholder="Gracias, por ahora no calificas"
+              name={`${namePrefix}-disqualify-${index}`}
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => onPatch(index, patchImportedOptionActionStep(option, { buttonMessage: event.target.value }))}
+            />
+          </label>
+        )}
+      </div>
+    ))}
+    <p className={styles.importedFieldOptionsHint}>
+      Cada opción puede quedarse normal, enviar el formulario, descalificar o mandar a una página/URL después del envío.
+    </p>
+  </div>
+)
+
+type ImportedCodeTheme = 'dark' | 'light'
+
+function escapeImportedCodeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function wrapImportedCodeToken(token: 'tag' | 'attr' | 'string' | 'comment' | 'keyword', value: string) {
+  return `<span class=rstk-code-token-${token}>${value}</span>`
+}
+
+function highlightImportedHtmlTag(rawTag: string) {
+  if (rawTag.startsWith('<!--')) {
+    return wrapImportedCodeToken('comment', escapeImportedCodeHtml(rawTag))
+  }
+
+  const tagNameMatch = rawTag.match(/^<\/?\s*([A-Za-z][\w:-]*)/)
+  if (!tagNameMatch?.[1]) return escapeImportedCodeHtml(rawTag)
+
+  const tagName = tagNameMatch[1]
+  const tagNameIndex = rawTag.indexOf(tagName)
+  const beforeTagName = rawTag.slice(0, tagNameIndex)
+  const afterTagName = rawTag.slice(tagNameIndex + tagName.length)
+  let output = `${escapeImportedCodeHtml(beforeTagName)}${wrapImportedCodeToken('tag', escapeImportedCodeHtml(tagName))}`
+  let cursor = 0
+  const attrRegex = /([^\s=/>]+)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)?/g
+  let match: RegExpExecArray | null
+
+  while ((match = attrRegex.exec(afterTagName))) {
+    output += escapeImportedCodeHtml(afterTagName.slice(cursor, match.index))
+    output += wrapImportedCodeToken('attr', escapeImportedCodeHtml(match[1] || ''))
+    output += escapeImportedCodeHtml(match[2] || '')
+    if (match[3]) output += wrapImportedCodeToken('string', escapeImportedCodeHtml(match[3]))
+    cursor = match.index + match[0].length
+  }
+
+  output += escapeImportedCodeHtml(afterTagName.slice(cursor))
+  return output
+}
+
+function highlightImportedHtmlCode(value: string) {
+  const tagRegex = /(<!--[\s\S]*?-->|<!doctype[^>]*>|<\/?[A-Za-z][^>]*>)/gi
+  let output = ''
+  let cursor = 0
+  let match: RegExpExecArray | null
+
+  while ((match = tagRegex.exec(value))) {
+    output += escapeImportedCodeHtml(value.slice(cursor, match.index))
+    output += highlightImportedHtmlTag(match[0])
+    cursor = match.index + match[0].length
+  }
+
+  output += escapeImportedCodeHtml(value.slice(cursor))
+  return output
+}
+
+function highlightImportedCode(value: string, language = 'html') {
+  if (!value) return ' '
+  const normalizedLanguage = language.toLowerCase()
+  if (normalizedLanguage.includes('html') || normalizedLanguage.includes('xml')) {
+    return highlightImportedHtmlCode(value)
+  }
+  return escapeImportedCodeHtml(value)
+}
+
+function getImportedCodeDiagnostics(value: string, language = 'html') {
+  const diagnostics: string[] = []
+  const normalizedLanguage = language.toLowerCase()
+  if (!value.trim()) return diagnostics
+  const diagnosticSource = value
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
+    .replace(/<textarea\b[\s\S]*?<\/textarea>/gi, '')
+
+  if ((diagnosticSource.match(/</g)?.length || 0) > (diagnosticSource.match(/>/g)?.length || 0)) {
+    diagnostics.push('Hay una etiqueta sin cerrar.')
+  }
+
+  if (normalizedLanguage.includes('html')) {
+    const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
+    const stack: string[] = []
+    const tagRegex = /<\/?([A-Za-z][\w:-]*)\b[^>]*>/g
+    let match: RegExpExecArray | null
+    while ((match = tagRegex.exec(diagnosticSource))) {
+      const fullTag = match[0]
+      const tagName = match[1].toLowerCase()
+      if (voidTags.has(tagName) || fullTag.startsWith('<!--') || fullTag.startsWith('<!') || fullTag.endsWith('/>')) continue
+      if (fullTag.startsWith('</')) {
+        const expected = stack.pop()
+        if (expected && expected !== tagName) {
+          diagnostics.push(`Se esperaba cerrar <${expected}> antes de </${tagName}>.`)
+          break
+        }
+        continue
+      }
+      stack.push(tagName)
+    }
+    if (!diagnostics.length && stack.length) {
+      diagnostics.push(`Falta cerrar <${stack[stack.length - 1]}>.`)
+    }
+  }
+
+  return diagnostics.slice(0, 2)
+}
+
 const ImportedHtmlEditorPanel: React.FC<{
   site: PublicSite
   pages: SitePage[]
@@ -9644,13 +12505,19 @@ const ImportedHtmlEditorPanel: React.FC<{
   saving: boolean
   aiAgentAvailable: boolean
   importData: ImportedSiteImport | null
+  customFields: CustomFieldDefinition[]
+  codeEditorOpen: boolean
+  codeDrafts: Record<string, string>
+  popupCodeActive: boolean
   loadingImportData: boolean
   onSelectPage: (pageId: string) => void
+  onCodeDraftChange: (filePath: string, content: string, originalContent: string) => void
   onPreview: () => void
   onPublish: () => void
   onEditFields: () => void
   onPreviewContextChange: (siteId: string, context: SitesAIPreviewVisualContext) => void
   onContentUpdated: (result: ImportedSiteCreateResult) => void
+  onImportMappingUpdated: (importData: ImportedSiteImport) => void
   onUpdateRoute: (site: PublicSite, route: string) => Promise<void>
   onDelete: () => void
 }> = ({
@@ -9662,19 +12529,31 @@ const ImportedHtmlEditorPanel: React.FC<{
   saving,
   aiAgentAvailable,
   importData,
+  customFields,
+  codeEditorOpen,
+  codeDrafts,
+  popupCodeActive,
   loadingImportData,
   onSelectPage,
+  onCodeDraftChange,
   onPreview,
   onPublish,
   onEditFields,
   onPreviewContextChange,
   onContentUpdated,
+  onImportMappingUpdated,
   onUpdateRoute,
   onDelete
 }) => {
   const { showToast } = useNotification()
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const codePreviewIframeRef = useRef<HTMLIFrameElement | null>(null)
+  const codeSplitRef = useRef<HTMLDivElement | null>(null)
+  const codeHighlightRef = useRef<HTMLPreElement | null>(null)
+  const codeTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const selectedIframeElementRef = useRef<HTMLElement | null>(null)
+  const selectedCodePreviewElementRef = useRef<HTMLElement | null>(null)
+  const elementPopoverRef = useRef<HTMLDivElement | null>(null)
   const previewVisualContextRef = useRef<SitesAIPreviewVisualContext | null>(null)
   const inlineImageFileInputRef = useRef<HTMLInputElement | null>(null)
   const [routeEditing, setRouteEditing] = useState(false)
@@ -9686,6 +12565,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [previewVersion, setPreviewVersion] = useState(0)
   const [inlineEditor, setInlineEditor] = useState<ImportedInlineEditorState | null>(null)
   const [buttonEditor, setButtonEditor] = useState<ImportedButtonEditorState | null>(null)
+  const [codeElementEditor, setCodeElementEditor] = useState<ImportedCodeElementEditorState | null>(null)
+  const [elementPopoverPosition, setElementPopoverPosition] = useState<ImportedElementPopoverPosition | null>(null)
   const [choiceEditor, setChoiceEditor] = useState<ImportedChoiceEditorState | null>(null)
   const [aiRegionMode, setAiRegionMode] = useState(false)
   const [aiRegionSelection, setAiRegionSelection] = useState<ImportedAIRegionSelection | null>(null)
@@ -9697,8 +12578,91 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [panelFormFields, setPanelFormFields] = useState<ImportedPanelFormField[]>([])
   const [contentSaving, setContentSaving] = useState(false)
   const [contentError, setContentError] = useState('')
+  const [selectedFieldRouteDraft, setSelectedFieldRouteDraft] = useState<ImportedSelectedFieldRouteDraft | null>(null)
+  const [selectedFieldRouteSaving, setSelectedFieldRouteSaving] = useState(false)
+  const [importedEditorCustomFields, setImportedEditorCustomFields] = useState<CustomFieldDefinition[]>(customFields)
+  const [codeEditorWidth, setCodeEditorWidth] = useState(50)
+  const codeEditorWidthRef = useRef(50)
+  const [codeEditorTheme, setCodeEditorTheme] = useState<ImportedCodeTheme>('dark')
+  const [codeSelectionNotice, setCodeSelectionNotice] = useState('')
+  const [codeAssistantPrompt, setCodeAssistantPrompt] = useState('')
+  const [codeAssistantModel, setCodeAssistantModel] = useState(getDefaultSiteChatGPTModel(true))
+  const [codeAssistantSaving, setCodeAssistantSaving] = useState(false)
+  const [codeAssistantError, setCodeAssistantError] = useState('')
+  const [codeAssistantWorkSteps, setCodeAssistantWorkSteps] = useState<ImportedCodeAssistantWorkStep[]>([])
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
+  const popupCodeFile = useMemo<ImportedSiteCodeFile>(() => ({
+    path: IMPORTED_POPUP_CODE_PATH,
+    label: 'Pop up',
+    pageId: POPUP_SELECTED_ID,
+    pageTitle: 'Pop up',
+    contentType: 'text/html; charset=utf-8',
+    language: 'html',
+    content: getThemeString(site.theme, 'importedPopupHtml') || DEFAULT_IMPORTED_POPUP_HTML,
+    role: 'popup'
+  }), [site.theme])
+  const codeFiles = useMemo<ImportedSiteCodeFile[]>(() => {
+    const backendFiles = Array.isArray(importData?.codeFiles) ? importData.codeFiles : []
+    if (backendFiles.length) return backendFiles
+    const fallbackContent = importData?.htmlSanitized || importData?.htmlOriginal || ''
+    if (!fallbackContent) return []
+    return [{
+      path: '',
+      label: importData?.originalFilename || 'index.html',
+      pageId: activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID,
+      pageTitle: activeImportedPage?.title || 'Página 1',
+      contentType: 'text/html; charset=utf-8',
+      language: 'html',
+      content: fallbackContent,
+      role: 'main_html'
+    }]
+  }, [activeImportedPage?.id, activeImportedPage?.title, importData])
+  const activePageCodeFile = useMemo(() => (
+    codeFiles.find(file => file.pageId && file.pageId === activeImportedPage?.id) ||
+    codeFiles.find(file => file.path && file.path === activeImportedPage?.importedAssetPath) ||
+    codeFiles.find(file => file.language === 'html') ||
+    codeFiles[0] ||
+    null
+  ), [activeImportedPage?.id, activeImportedPage?.importedAssetPath, codeFiles])
+  const activeCodeFile = popupCodeActive ? popupCodeFile : activePageCodeFile
+  const activeCodeKey = activeCodeFile ? getImportedCodeFileKey(activeCodeFile.path) : ''
+  const activeCodeValue = activeCodeFile ? codeDrafts[activeCodeKey] ?? activeCodeFile.content : ''
+  const activeCodeDirty = Boolean(activeCodeKey && Object.prototype.hasOwnProperty.call(codeDrafts, activeCodeKey))
+  const activePageDraftPreviewHtml = !popupCodeActive && activeCodeFile?.language === 'html' && activeCodeDirty ? activeCodeValue : ''
+  const editorPreviewHtml = activePageDraftPreviewHtml || previewHtml
+  const guardedEditorPreviewHtml = useMemo(
+    () => buildImportedEditorPreviewHtml(editorPreviewHtml, 'visual'),
+    [editorPreviewHtml]
+  )
+  const activeCodeDiagnostics = useMemo(
+    () => getImportedCodeDiagnostics(activeCodeValue, activeCodeFile?.language || 'html'),
+    [activeCodeFile?.language, activeCodeValue]
+  )
+  const highlightedActiveCode = useMemo(
+    () => highlightImportedCode(activeCodeValue, activeCodeFile?.language || 'html'),
+    [activeCodeFile?.language, activeCodeValue]
+  )
+  useEffect(() => {
+    setImportedEditorCustomFields(customFields)
+  }, [customFields])
+
+  useEffect(() => {
+    if (customFields.length) return
+    let mounted = true
+    customFieldsService.listCatalog()
+      .then(catalog => {
+        if (!mounted) return
+        setImportedEditorCustomFields((catalog.fields || []).filter(field => !isSystemCustomFieldDefinition(field)))
+      })
+      .catch(() => {
+        if (mounted) setImportedEditorCustomFields([])
+      })
+    return () => {
+      mounted = false
+    }
+  }, [customFields.length])
+
   const mappingStats = useMemo(() => {
     const formMappings = Array.isArray(importData?.formMappings) ? importData.formMappings : []
     const fields = formMappings.flatMap(form => Array.isArray(form.fields) ? form.fields : [])
@@ -9711,6 +12675,47 @@ const ImportedHtmlEditorPanel: React.FC<{
       ignored: fields.filter(field => field.ignored || field.destinationType === 'ignored').length
     }
   }, [importData])
+  const activeImportedCustomFields = useMemo(() => getImportedActiveCustomFields(importedEditorCustomFields), [importedEditorCustomFields])
+  const selectedFieldRouteContext = useMemo<ImportedSelectedFieldRouteContext | null>(() => {
+    if (fieldEditor) {
+      return {
+        editId: fieldEditor.selection.editId,
+        label: fieldEditor.label,
+        placeholder: fieldEditor.placeholder,
+        fieldName: fieldEditor.selection.fieldName,
+        fieldHtmlId: fieldEditor.selection.fieldHtmlId,
+        inputType: fieldEditor.selection.inputType,
+        tagName: fieldEditor.selection.tagName
+      }
+    }
+
+    if (codeElementEditor?.mode === 'field') {
+      return {
+        editId: codeElementEditor.editId,
+        label: codeElementEditor.label,
+        placeholder: codeElementEditor.placeholder || '',
+        fieldName: codeElementEditor.fieldName || '',
+        fieldHtmlId: codeElementEditor.fieldHtmlId || '',
+        inputType: codeElementEditor.fieldInputType || codeElementEditor.tagName,
+        tagName: codeElementEditor.tagName
+      }
+    }
+
+    return null
+  }, [codeElementEditor, fieldEditor])
+  const selectedFieldRouteContextKey = buildImportedSelectedFieldRouteContextKey(selectedFieldRouteContext)
+  const selectedFieldRouteMatch = useMemo(
+    () => findImportedFieldRouteMatch(importData?.formMappings, selectedFieldRouteContext),
+    [importData?.formMappings, selectedFieldRouteContextKey]
+  )
+
+  useEffect(() => {
+    if (!selectedFieldRouteContext) {
+      setSelectedFieldRouteDraft(null)
+      return
+    }
+    setSelectedFieldRouteDraft(buildImportedSelectedFieldRouteDraft(selectedFieldRouteMatch, selectedFieldRouteContext))
+  }, [selectedFieldRouteContext, selectedFieldRouteContextKey, selectedFieldRouteMatch])
   const appendAIRegionPromptText = useCallback((text: string) => {
     setAiRegionPrompt(current => appendDictatedText(current, text))
   }, [])
@@ -9719,6 +12724,128 @@ const ImportedHtmlEditorPanel: React.FC<{
     onError: setAiRegionError,
     onStart: () => setAiRegionError('')
   })
+  const appendCodeAssistantPromptText = useCallback((text: string) => {
+    setCodeAssistantPrompt(current => appendDictatedText(current, text))
+  }, [])
+  const codeAssistantVoiceDictation = useAIVoiceDictation({
+    onTranscription: appendCodeAssistantPromptText,
+    onError: setCodeAssistantError,
+    onStart: () => setCodeAssistantError('')
+  })
+  const syncCodeHighlightScroll = useCallback((event: React.UIEvent<HTMLTextAreaElement>) => {
+    const highlight = codeHighlightRef.current
+    if (!highlight) return
+    highlight.scrollTop = event.currentTarget.scrollTop
+    highlight.scrollLeft = event.currentTarget.scrollLeft
+  }, [])
+  const handleCodeSplitPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const container = codeSplitRef.current
+    if (!container) return
+    event.preventDefault()
+
+    let frame = 0
+    let latestWidth = codeEditorWidthRef.current
+    const rect = container.getBoundingClientRect()
+
+    const updateWidth = (clientX: number) => {
+      if (!rect.width) return
+      const next = ((clientX - rect.left) / rect.width) * 100
+      latestWidth = Math.min(88, Math.max(28, next))
+      if (frame) return
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        container.style.setProperty('--imported-code-source-width', `${latestWidth}%`)
+      })
+    }
+
+    updateWidth(event.clientX)
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      moveEvent.preventDefault()
+      updateWidth(moveEvent.clientX)
+    }
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      if (frame) {
+        window.cancelAnimationFrame(frame)
+        frame = 0
+      }
+      codeEditorWidthRef.current = latestWidth
+      container.style.setProperty('--imported-code-source-width', `${latestWidth}%`)
+      setCodeEditorWidth(latestWidth)
+      document.body.classList.remove('rstk-code-resizing')
+    }
+
+    document.body.classList.add('rstk-code-resizing')
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp, { once: true })
+  }, [])
+
+  useEffect(() => {
+    codeEditorWidthRef.current = codeEditorWidth
+  }, [codeEditorWidth])
+
+  const stopCodeAssistantProgress = useCallback(() => {
+    // The assistant progress intentionally advances only when the editor or
+    // backend reaches a real execution phase. Keep this callback for cleanup
+    // symmetry without running a fake timer.
+  }, [])
+
+  const setCodeAssistantProgressStep = useCallback((index: number, status: ImportedCodeAssistantWorkStep['status']) => {
+    setCodeAssistantWorkSteps(current => current.map((step, stepIndex) => {
+      if (stepIndex < index && status !== 'error') return { ...step, status: 'done' }
+      if (stepIndex === index) return { ...step, status }
+      if (status === 'error') return step
+      return { ...step, status: 'pending' }
+    }))
+  }, [])
+
+  const completeCodeAssistantProgress = useCallback((debug?: SitesAIEditDebug | null, fallback = 'Listo, el borrador quedó actualizado.') => {
+    stopCodeAssistantProgress()
+    const debugSteps = getImportedCodeAssistantStepsFromDebug(debug)
+    if (debugSteps.length) {
+      setCodeAssistantWorkSteps(debugSteps.slice(-6))
+      return
+    }
+    setCodeAssistantWorkSteps(current => current.length
+      ? current.map(step => ({ ...step, status: 'done' }))
+      : [{
+        id: 'assistant-completed',
+        label: 'Resultado',
+        detail: fallback,
+        status: 'done'
+      }]
+    )
+  }, [stopCodeAssistantProgress])
+
+  const failCodeAssistantProgress = useCallback((message: string) => {
+    stopCodeAssistantProgress()
+    setCodeAssistantWorkSteps(current => {
+      if (!current.length) {
+        return [{
+          id: 'assistant-error',
+          label: 'No se pudo completar',
+          detail: message,
+          status: 'error'
+        }]
+      }
+      const preferredErrorIndex = /openai|api key|modelo|ia/i.test(message)
+        ? current.findIndex(step => step.id === 'model')
+        : -1
+      const activeIndex = preferredErrorIndex >= 0
+        ? preferredErrorIndex
+        : Math.max(0, current.findIndex(step => step.status === 'active'))
+      return current.map((step, index) => index === activeIndex
+        ? { ...step, status: 'error', detail: message || step.detail }
+        : step
+      )
+    })
+  }, [stopCodeAssistantProgress])
+
+  useEffect(() => () => {
+    stopCodeAssistantProgress()
+  }, [stopCodeAssistantProgress])
 
   useEffect(() => {
     if (!routeEditing) setRouteDraft(getRouteEditorValue(site))
@@ -9744,8 +12871,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [loadInlinePreview])
 
   const currentPageCanSubmitForm = useMemo(() => (
-    hasImportedSubmittableFormFields(previewHtml)
-  ), [previewHtml])
+    hasImportedSubmittableFormFields(editorPreviewHtml)
+  ), [editorPreviewHtml])
   const currentPageActionOptions = useMemo(() => (
     getImportedButtonActionOptionsForPage(currentPageCanSubmitForm)
   ), [currentPageCanSubmitForm])
@@ -9755,6 +12882,8 @@ const ImportedHtmlEditorPanel: React.FC<{
     selectedIframeElementRef.current = null
     setInlineEditor(null)
     setButtonEditor(null)
+    setCodeElementEditor(null)
+    setElementPopoverPosition(null)
     setChoiceEditor(null)
     setAiRegionMode(false)
     setAiRegionSelection(null)
@@ -9762,15 +12891,21 @@ const ImportedHtmlEditorPanel: React.FC<{
     setAiRegionError('')
     setAiRegionLastAttempt(null)
     aiRegionVoiceDictation.cancelVoice()
+    codeAssistantVoiceDictation.cancelVoice()
+    setCodeAssistantError('')
+    setCodeAssistantWorkSteps([])
     setFieldEditor(null)
     setContentError('')
-  }, [activeImportedPage?.id, aiRegionVoiceDictation.cancelVoice, site.id])
+    stopCodeAssistantProgress()
+  }, [activeImportedPage?.id, aiRegionVoiceDictation.cancelVoice, codeAssistantVoiceDictation.cancelVoice, site.id, stopCodeAssistantProgress])
 
   useEffect(() => {
     selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
     selectedIframeElementRef.current = null
     setInlineEditor(null)
     setButtonEditor(null)
+    setCodeElementEditor(null)
+    setElementPopoverPosition(null)
     setChoiceEditor(null)
     setFieldEditor(null)
     setContentError('')
@@ -9788,8 +12923,36 @@ const ImportedHtmlEditorPanel: React.FC<{
     }
   }, [])
 
+  const getElementPopoverPosition = useCallback((
+    element: HTMLElement,
+    frame: HTMLIFrameElement | null = iframeRef.current
+  ): ImportedElementPopoverPosition => {
+    const frameRect = frame?.getBoundingClientRect()
+    const elementRect = element.getBoundingClientRect()
+    const viewportPadding = 12
+    const popoverWidth = Math.min(430, Math.max(320, window.innerWidth - viewportPadding * 2))
+    const popoverHeightEstimate = Math.min(620, Math.max(280, window.innerHeight - viewportPadding * 2))
+    const absoluteLeft = (frameRect?.left || 0) + elementRect.left
+    const absoluteRight = (frameRect?.left || 0) + elementRect.right
+    const absoluteTop = (frameRect?.top || 0) + elementRect.top
+    const rightSideLeft = absoluteRight + 12
+    const leftSideLeft = absoluteLeft - popoverWidth - 12
+    const hasRoomRight = rightSideLeft + popoverWidth <= window.innerWidth - viewportPadding
+    const rawLeft = hasRoomRight ? rightSideLeft : leftSideLeft
+    const rawTop = absoluteTop - 8
+
+    return {
+      left: Math.max(viewportPadding, Math.min(rawLeft, window.innerWidth - popoverWidth - viewportPadding)),
+      top: Math.max(viewportPadding, Math.min(rawTop, window.innerHeight - popoverHeightEstimate - viewportPadding))
+    }
+  }, [])
+
   const openInlineEditorForElement = useCallback((element: HTMLElement, selection: ImportedEditableSelection, mode: 'text' | 'image' | 'video') => {
     const position = getInlineEditorPosition(element)
+    setElementPopoverPosition(null)
+    setButtonEditor(null)
+    setCodeElementEditor(null)
+    setChoiceEditor(null)
     setFieldEditor(null)
     setInlineEditor({
       selection,
@@ -9800,10 +12963,15 @@ const ImportedHtmlEditorPanel: React.FC<{
     setContentError('')
   }, [getInlineEditorPosition])
 
-  const openButtonEditorForSelection = useCallback((selection: ImportedEditableSelection) => {
+  const openButtonEditorForSelection = useCallback((selection: ImportedEditableSelection, position?: ImportedElementPopoverPosition | null) => {
     setInlineEditor(null)
+    setCodeElementEditor(null)
     setChoiceEditor(null)
     setFieldEditor(null)
+    setElementPopoverPosition(position || {
+      left: Math.max(12, window.innerWidth - 456),
+      top: Math.max(12, Math.min(120, window.innerHeight - 320))
+    })
     setButtonEditor({
       selection,
       value: selection.value,
@@ -9824,10 +12992,42 @@ const ImportedHtmlEditorPanel: React.FC<{
     setContentError('')
   }, [currentPageActionOptions])
 
-  const openChoiceEditorForSelection = useCallback((selection: ImportedChoiceSelection) => {
+  const openCodeButtonEditorForElement = useCallback((
+    element: HTMLElement,
+    descriptor: ImportedFrameElementDescriptor,
+    range: ImportedCodeSourceRange
+  ) => {
+    openButtonEditorForSelection(
+      readImportedCodeButtonSelection(element, descriptor, range),
+      getElementPopoverPosition(element, codePreviewIframeRef.current)
+    )
+  }, [getElementPopoverPosition, openButtonEditorForSelection])
+
+  const openCodeElementEditorForElement = useCallback((
+    element: HTMLElement,
+    descriptor: ImportedFrameElementDescriptor,
+    range: ImportedCodeSourceRange
+  ) => {
+    const doc = element.ownerDocument
+    const editor = readImportedCodeElementEditor(element, descriptor, range, doc)
     setInlineEditor(null)
     setButtonEditor(null)
+    setChoiceEditor(null)
     setFieldEditor(null)
+    setCodeElementEditor(editor)
+    setElementPopoverPosition(getElementPopoverPosition(element, codePreviewIframeRef.current))
+    setContentError('')
+  }, [getElementPopoverPosition])
+
+  const openChoiceEditorForSelection = useCallback((selection: ImportedChoiceSelection, position?: ImportedElementPopoverPosition | null) => {
+    setInlineEditor(null)
+    setButtonEditor(null)
+    setCodeElementEditor(null)
+    setFieldEditor(null)
+    setElementPopoverPosition(position || {
+      left: Math.max(12, window.innerWidth - 456),
+      top: Math.max(12, Math.min(120, window.innerHeight - 320))
+    })
     setChoiceEditor({
       selection,
       options: selection.options.length ? selection.options : [{ label: selection.label || 'Opción 1', value: selection.choiceValue || selection.label || 'Opción 1' }],
@@ -9836,10 +13036,15 @@ const ImportedHtmlEditorPanel: React.FC<{
     setContentError('')
   }, [currentPageActionOptions])
 
-  const openFieldEditorForSelection = useCallback((selection: ImportedFormFieldSelection) => {
+  const openFieldEditorForSelection = useCallback((selection: ImportedFormFieldSelection, position?: ImportedElementPopoverPosition | null) => {
     setInlineEditor(null)
     setButtonEditor(null)
+    setCodeElementEditor(null)
     setChoiceEditor(null)
+    setElementPopoverPosition(position || {
+      left: Math.max(12, window.innerWidth - 456),
+      top: Math.max(12, Math.min(120, window.innerHeight - 320))
+    })
     setFieldEditor({
       selection,
       label: selection.label,
@@ -9853,11 +13058,45 @@ const ImportedHtmlEditorPanel: React.FC<{
   const clearInlineSelection = useCallback(() => {
     selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
     selectedIframeElementRef.current = null
+    selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
+    selectedCodePreviewElementRef.current = null
     setInlineEditor(null)
     setButtonEditor(null)
+    setCodeElementEditor(null)
+    setElementPopoverPosition(null)
     setChoiceEditor(null)
     setFieldEditor(null)
   }, [])
+
+  const hasElementPopoverEditor = Boolean(buttonEditor || choiceEditor || fieldEditor || codeElementEditor)
+  const elementPopoverStyle = elementPopoverPosition
+    ? ({
+      '--imported-element-popover-left': `${elementPopoverPosition.left}px`,
+      '--imported-element-popover-top': `${elementPopoverPosition.top}px`
+    } as React.CSSProperties)
+    : undefined
+
+  useEffect(() => {
+    if (!hasElementPopoverEditor) return undefined
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null
+      if (target && elementPopoverRef.current?.contains(target)) return
+      if (target instanceof Element && target.closest('[data-ristak-dropdown-panel]')) return
+      clearInlineSelection()
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') clearInlineSelection()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [clearInlineSelection, hasElementPopoverEditor])
 
   // Open a detected form field's editor from the side panel: locate it in the
   // preview, highlight it and reuse the same choice/field editors as a click.
@@ -9874,12 +13113,13 @@ const ImportedHtmlEditorPanel: React.FC<{
     highlightTarget.classList.add('rstk-imported-selected')
     selectedIframeElementRef.current = highlightTarget
     element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const position = getElementPopoverPosition(highlightTarget, iframeRef.current)
     if (field.kind === 'choice') {
-      openChoiceEditorForSelection(readImportedChoiceSelection(element as HTMLInputElement, doc))
+      openChoiceEditorForSelection(readImportedChoiceSelection(element as HTMLInputElement, doc), position)
     } else {
-      openFieldEditorForSelection(readImportedFormFieldSelection(element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, doc))
+      openFieldEditorForSelection(readImportedFormFieldSelection(element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, doc), position)
     }
-  }, [openChoiceEditorForSelection, openFieldEditorForSelection, showToast])
+  }, [getElementPopoverPosition, openChoiceEditorForSelection, openFieldEditorForSelection, showToast])
 
   const saveEditableContent = useCallback(async (
     selection: ImportedEditableSelection,
@@ -9937,13 +13177,147 @@ const ImportedHtmlEditorPanel: React.FC<{
     }
   }, [activeImportedPage?.id, clearInlineSelection, loadInlinePreview, onContentUpdated, showToast, site.id])
 
+  const saveSelectedFieldRoute = useCallback(async () => {
+    if (!selectedFieldRouteContext || !selectedFieldRouteDraft) return
+    if (!importData) {
+      setContentError('Todavía no se cargó la ruta de datos de este HTML. Intenta recargar la página.')
+      return
+    }
+
+    const draftDestinationType = selectedFieldRouteDraft.destinationType
+    const selectedExistingCustomField = draftDestinationType !== 'standard' && draftDestinationType !== 'ignored'
+      ? findImportedCustomFieldDefinitionForDraft(activeImportedCustomFields, selectedFieldRouteDraft)
+      : null
+    const destinationKey = draftDestinationType === 'standard'
+      ? selectedFieldRouteDraft.destinationKey
+      : selectedExistingCustomField
+        ? selectedExistingCustomField.fieldKey || selectedExistingCustomField.key
+        : normalizeImportedDestinationKey(selectedFieldRouteDraft.destinationKey, getImportedFieldRouteDefaultKey(selectedFieldRouteContext))
+
+    if (draftDestinationType !== 'ignored' && !destinationKey) {
+      setContentError('Elige a dónde se guarda este campo.')
+      return
+    }
+
+    const nextMappings = cloneImportedFormMappings(importData.formMappings || [])
+    if (!nextMappings.length) {
+      nextMappings.push({
+        formId: `form-${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}`,
+        formTitle: activeImportedPage?.title || 'Formulario',
+        fields: []
+      })
+    }
+
+    let routeMatch = findImportedFieldRouteMatch(nextMappings, selectedFieldRouteContext)
+    if (!routeMatch) {
+      const targetForm = nextMappings[0]
+      if (!targetForm) {
+        setContentError('No pude preparar el formulario para guardar esta ruta.')
+        return
+      }
+      const sourceName = selectedFieldRouteContext.fieldName ||
+        selectedFieldRouteContext.fieldHtmlId ||
+        selectedFieldRouteContext.editId ||
+        getImportedFieldRouteDefaultKey(selectedFieldRouteContext)
+      const label = selectedFieldRouteContext.label || selectedFieldRouteContext.placeholder || sourceName
+      const addedField: ImportedSiteFieldMapping = {
+        fieldId: selectedFieldRouteContext.editId || sourceName,
+        sourceName,
+        label,
+        type: selectedFieldRouteContext.inputType || selectedFieldRouteContext.tagName || 'text',
+        destinationType: 'custom',
+        destinationKey: getImportedFieldRouteDefaultKey(selectedFieldRouteContext),
+        saveMode: 'custom',
+        ignored: false,
+        options: []
+      }
+      targetForm.fields.push(addedField)
+      routeMatch = {
+        formIndex: 0,
+        fieldIndex: targetForm.fields.length - 1,
+        field: addedField
+      }
+    }
+
+    const matchedForm = nextMappings[routeMatch.formIndex]
+    const currentField = matchedForm?.fields[routeMatch.fieldIndex]
+    if (!matchedForm || !currentField) {
+      setContentError('No pude encontrar ese campo para guardar su ruta.')
+      return
+    }
+    const nextField: ImportedSiteFieldMapping = draftDestinationType === 'ignored'
+      ? {
+        ...currentField,
+        ...clearImportedCustomFieldPatch,
+        destinationType: 'ignored',
+        saveMode: 'ignored',
+        ignored: true,
+        destinationKey: currentField.destinationKey || destinationKey
+      }
+      : draftDestinationType === 'standard'
+        ? {
+          ...currentField,
+          ...clearImportedCustomFieldPatch,
+          destinationType: 'standard',
+          saveMode: 'standard',
+          ignored: false,
+          destinationKey: destinationKey || inferImportedStandardKey(currentField)
+        }
+        : selectedExistingCustomField
+          ? {
+            ...currentField,
+            ...buildExistingImportedCustomFieldPatch(selectedExistingCustomField)
+          }
+          : {
+          ...currentField,
+          ...clearImportedCustomFieldPatch,
+          destinationType: 'new_custom',
+          saveMode: 'new_custom',
+          ignored: false,
+          destinationKey,
+          customFieldKey: destinationKey,
+          customFieldLabel: selectedFieldRouteContext.label || currentField.label || destinationKey,
+          customFieldDataType: currentField.customFieldDataType || 'text',
+          customFieldSyncTarget: currentField.customFieldSyncTarget || 'local'
+        }
+
+    matchedForm.fields[routeMatch.fieldIndex] = nextField
+
+    setSelectedFieldRouteSaving(true)
+    setContentError('')
+    try {
+      const updatedImportData = await sitesService.updateImportMapping(site.id, nextMappings)
+      onImportMappingUpdated(updatedImportData)
+      const updatedMatch = findImportedFieldRouteMatch(updatedImportData.formMappings, selectedFieldRouteContext)
+      setSelectedFieldRouteDraft(buildImportedSelectedFieldRouteDraft(updatedMatch, selectedFieldRouteContext))
+      showToast('success', 'Ruta de campo guardada', 'Este campo ya apunta al dato correcto.')
+    } catch (error) {
+      setContentError(error instanceof Error ? error.message : 'No se pudo guardar la ruta de este campo.')
+    } finally {
+      setSelectedFieldRouteSaving(false)
+    }
+  }, [
+    activeImportedPage?.id,
+    activeImportedPage?.title,
+    activeImportedCustomFields,
+    importData,
+    onImportMappingUpdated,
+    selectedFieldRouteContext,
+    selectedFieldRouteDraft,
+    showToast,
+    site.id
+  ])
+
   const startAIRegionMode = useCallback(() => {
     selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
     selectedIframeElementRef.current = null
     aiRegionVoiceDictation.cancelVoice()
     setInlineEditor(null)
     setButtonEditor(null)
+    setCodeElementEditor(null)
+    setElementPopoverPosition(null)
     setChoiceEditor(null)
+    setFieldEditor(null)
     setContentError('')
     setAiRegionSelection(null)
     setAiRegionError('')
@@ -9962,9 +13336,9 @@ const ImportedHtmlEditorPanel: React.FC<{
     selection: ImportedAIRegionSelection | null,
     nextAttempt: Pick<ImportedAIRegionAttempt, 'status' | 'message' | 'prompt'> & { debug?: SitesAIEditDebug }
   ) => {
-    const activePageId = activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID
+    const activeCodePageId = popupCodeActive ? POPUP_SELECTED_ID : activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID
     const fullPageVisualContext = previewVisualContextRef.current?.siteId === site.id &&
-      previewVisualContextRef.current?.pageId === activePageId
+      previewVisualContextRef.current?.pageId === activeCodePageId
       ? previewVisualContextRef.current
       : null
     setAiRegionLastAttempt({
@@ -9980,7 +13354,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!prompt) {
       setAiRegionError(aiRegionSelection
         ? 'Escribe que quieres que cambie la IA en esa zona.'
-        : 'Escribe que quieres que cambie la IA en la pagina.'
+        : 'Escribe que quieres que cambie la IA en la página.'
       )
       return
     }
@@ -10096,8 +13470,158 @@ const ImportedHtmlEditorPanel: React.FC<{
     }
   }
 
+  const applyCodeAssistantEdit = async () => {
+    const prompt = codeAssistantPrompt.trim()
+    if (!activeCodeFile) {
+      setCodeAssistantError('No hay un archivo HTML activo para editar.')
+      return
+    }
+    if (!prompt) {
+      setCodeAssistantError('Dime qué quieres cambiar en este HTML.')
+      return
+    }
+
+    const activeCodePageId = popupCodeActive ? POPUP_SELECTED_ID : activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID
+    const fullPageVisualContext = previewVisualContextRef.current?.siteId === site.id &&
+      previewVisualContextRef.current?.pageId === activeCodePageId
+      ? previewVisualContextRef.current
+      : null
+    const selectedRange = buttonEditor?.selection.codeRange || codeElementEditor?.range || null
+    const selectedSnippet = selectedRange
+      ? activeCodeValue.slice(selectedRange.start, selectedRange.end).slice(0, 9000)
+      : ''
+    const selectedContext = selectedRange
+      ? [
+        `Elemento seleccionado en vista previa: ${selectedRange.label}.`,
+        `Linea aproximada: ${selectedRange.line}.`,
+        `HTML del elemento o contenedor seleccionado:\n${selectedSnippet}`
+      ].join('\n')
+      : codeSelectionNotice
+        ? `Elemento seleccionado en vista previa: ${codeSelectionNotice}.`
+        : popupCodeActive
+          ? 'No hay elemento seleccionado; aplica el cambio al pop up solo si la instrucción lo pide.'
+          : 'No hay elemento seleccionado; aplica el cambio a la página activa solo si la instrucción lo pide.'
+    const assistantInstruction = [
+      'Eres el asistente de código HTML de Ristak.',
+      'Edita el HTML actual que Ristak te manda como currentHtml. No reconstruyas toda la página salvo que el usuario lo pida de forma explícita.',
+      'No respondas al prompt dentro del HTML. Prohibido agregar "Claro", "Aquí tienes", resúmenes, explicaciones, notas del asistente o la solicitud del usuario como texto visible en la página.',
+      'Trabaja en silencio: solo modifica el código necesario y devuelve el HTML final.',
+      'Si el usuario menciona "este", "ese botón", "este campo" o una sección seleccionada, usa primero el contexto del elemento seleccionado.',
+      'Conserva scripts de Ristak, atributos data-rstk/data-ristak, formularios, tracking y acciones existentes salvo que el usuario pida cambiarlos.',
+      `Archivo activo: ${activeCodeFile.label || activeCodeFile.path || 'HTML principal'}.`,
+      popupCodeActive ? 'Superficie activa: Pop up.' : `Página activa: ${activeImportedPage?.title || 'Página actual'}.`,
+      selectedContext,
+      `Solicitud del usuario: ${prompt}`
+    ].join('\n\n')
+    const selectedStepDetail = selectedRange
+      ? `${selectedRange.label || 'Elemento seleccionado'} cerca de la línea ${selectedRange.line || 'detectada'}.`
+      : codeSelectionNotice
+        ? codeSelectionNotice
+        : popupCodeActive
+          ? 'Sin elemento seleccionado: revisando el pop up completo.'
+          : 'Sin elemento seleccionado: revisando la página activa completa.'
+    const selectedModelLabel = getChatGPTSiteModelOption(codeAssistantModel, true).label
+    const selectedModelDisplay = selectedModelLabel.replace(/\s*·\s*\$+.*$/, '').trim() || selectedModelLabel
+    const workPlan: ImportedCodeAssistantWorkStep[] = [
+      {
+        id: 'context',
+        label: 'Contexto preparado',
+        detail: `${activeCodeFile.label || activeCodeFile.path || 'HTML principal'} · ${(activeCodeValue.length / 1000).toFixed(1)}k caracteres.`,
+        status: 'pending'
+      },
+      {
+        id: 'selection',
+        label: 'Zona definida',
+        detail: selectedStepDetail,
+        status: 'pending'
+      },
+      {
+        id: 'model',
+        label: 'Consultando modelo',
+        detail: `${selectedModelDisplay}. Se manda el HTML activo como borrador, sin guardarlo todavía.`,
+        status: 'pending'
+      },
+      {
+        id: 'patch',
+        label: 'Recibiendo propuesta',
+        detail: 'Esperando la respuesta del modelo con el HTML modificado o una solicitud de más detalle.',
+        status: 'pending'
+      },
+      {
+        id: 'draft',
+        label: 'Preparando borrador',
+        detail: 'Si hay cambios visibles, se actualiza el preview y queda pendiente de guardar.',
+        status: 'pending'
+      }
+    ]
+
+    setCodeAssistantSaving(true)
+    setCodeAssistantError('')
+    stopCodeAssistantProgress()
+    setCodeAssistantWorkSteps(workPlan.map((step, index) => ({
+      ...step,
+      status: index < 2 ? 'done' : index === 2 ? 'active' : 'pending'
+    })))
+
+    try {
+      const result = await sitesService.editImportedHtmlWithAI(site.id, {
+        siteKind: getAIAgentSiteKindForSite(site),
+        model: codeAssistantModel,
+        pageId: activeCodePageId,
+        visualContext: fullPageVisualContext,
+        aiRegionRequest: prompt,
+        draftOnly: true,
+        currentHtml: activeCodeValue,
+        currentFilePath: activeCodeFile.path || activeCodeFile.label || '',
+        messages: [
+          {
+            role: 'user',
+            content: assistantInstruction
+          }
+        ]
+      })
+
+      const draftPage = result.draftPages?.find(page => (
+        page.id === activeCodePageId ||
+        page.filename === activeCodeFile.path ||
+        page.filename === activeCodeFile.label
+      ))
+      const nextHtml = result.draftHtml || draftPage?.html || ''
+      if (result.status === 'needs_more_info' || !nextHtml.trim()) {
+        const message = result.reply || 'El asistente necesita más detalle para aplicar el cambio.'
+        setCodeAssistantError(message)
+        const debugSteps = getImportedCodeAssistantStepsFromDebug(result.debug)
+        if (debugSteps.length) setCodeAssistantWorkSteps(debugSteps)
+        else failCodeAssistantProgress(message)
+        return
+      }
+
+      if (normalizeImportedAIRegionPreviewHtml(nextHtml) === normalizeImportedAIRegionPreviewHtml(activeCodeValue)) {
+        const message = result.reply || 'El asistente respondió, pero no cambió el HTML visible. Intenta pedir el ajuste con más precisión.'
+        setCodeAssistantError(message)
+        const debugSteps = getImportedCodeAssistantStepsFromDebug(result.debug)
+        if (debugSteps.length) setCodeAssistantWorkSteps(debugSteps)
+        else failCodeAssistantProgress(message)
+        return
+      }
+
+      setCodeAssistantProgressStep(3, 'active')
+      onCodeDraftChange(activeCodeFile.path, nextHtml, activeCodeFile.content)
+      setCodeAssistantPrompt('')
+      const assistantReply = result.reply || 'Listo, apliqué el cambio en el borrador del HTML. Revisa la vista previa y guarda cuando esté correcto.'
+      completeCodeAssistantProgress(result.debug, assistantReply)
+      showToast('success', 'Cambio preparado', 'El asistente editó el HTML como borrador. Guarda el sitio para aplicarlo.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo editar el HTML con el asistente.'
+      setCodeAssistantError(message)
+      failCodeAssistantProgress(message)
+    } finally {
+      setCodeAssistantSaving(false)
+    }
+  }
+
   useEffect(() => {
-    if (previewLoading || !previewHtml) return
+    if (previewLoading || !editorPreviewHtml) return
     const iframe = iframeRef.current
     if (!iframe) return
 
@@ -10106,12 +13630,20 @@ const ImportedHtmlEditorPanel: React.FC<{
     const installEditorHooks = () => {
       if (cancelled) return
       cleanupDocument()
-      const doc = iframe.contentDocument
+      const doc = (() => {
+        try {
+          const frameDoc = iframe.contentDocument
+          if (frameDoc?.location.href && frameDoc.location.href !== 'about:srcdoc') {
+            iframe.srcdoc = guardedEditorPreviewHtml
+            return null
+          }
+          return frameDoc
+        } catch {
+          iframe.srcdoc = guardedEditorPreviewHtml
+          return null
+        }
+      })()
       if (!doc) return
-      if (doc.location.href !== 'about:srcdoc') {
-        iframe.srcdoc = previewHtml
-        return
-      }
 
       const contextPage = activeImportedPage || importedPages[0] || { id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }
       void buildImportedPreviewVisualContext(iframe, site, contextPage)
@@ -10355,6 +13887,74 @@ const ImportedHtmlEditorPanel: React.FC<{
         return target.closest('a[href], button, input[type="submit"], input[type="button"], input[type="image"], [role="button"], [data-submit]') as HTMLElement | null
       }
 
+      const selectImportedFrameTarget = (target: Element) => {
+        const formFieldElement = getFormFieldFromFrameTarget(target)
+        if (formFieldElement) {
+          formFieldElement.blur()
+          const fieldSelection = readImportedFormFieldSelection(formFieldElement, doc)
+          const visualElement = (formFieldElement.closest('label') ||
+            (fieldSelection.fieldHtmlId ? doc.querySelector(`label[for="${fieldSelection.fieldHtmlId.replace(/"/g, '\\"')}"]`) : null) ||
+            formFieldElement) as HTMLElement
+          selectElement(visualElement)
+          removeMediaActionButton()
+          openFieldEditorForSelection(fieldSelection, getElementPopoverPosition(visualElement, iframeRef.current))
+          return true
+        }
+
+        const choiceInput = getImportedChoiceInputFromTarget(target, doc)
+        if (choiceInput) {
+          const choiceSelection = readImportedChoiceSelection(choiceInput, doc)
+          const visualElement = (choiceInput.closest('label') ||
+            (choiceInput.id ? doc.querySelector(`label[for="${choiceInput.id.replace(/"/g, '\\"')}"]`) : null) ||
+            choiceInput) as HTMLElement
+          selectElement(visualElement)
+          removeMediaActionButton()
+          openChoiceEditorForSelection(choiceSelection, getElementPopoverPosition(visualElement, iframeRef.current))
+          return true
+        }
+
+        const editableElement = target.closest(importedEditableSelector) as HTMLElement | null
+        if (editableElement) {
+          const selection = readImportedEditableSelection(editableElement)
+          if (!selection) return false
+          selectElement(editableElement)
+          removeMediaActionButton()
+          setAiRegionMode(false)
+          setAiRegionSelection(null)
+          setAiRegionError('')
+          if (selection.editType === 'image' || selection.editType === 'background_image' || selection.editType === 'video') {
+            setButtonEditor(null)
+            setChoiceEditor(null)
+            openInlineEditorForElement(editableElement, selection, selection.editType === 'video' ? 'video' : 'image')
+          } else if (selection.editType === 'button') {
+            openButtonEditorForSelection(selection, getElementPopoverPosition(editableElement, iframeRef.current))
+          } else if (selection.editType === 'placeholder') {
+            setButtonEditor(null)
+            setChoiceEditor(null)
+            openInlineEditorForElement(editableElement, selection, 'text')
+          } else {
+            setButtonEditor(null)
+            setChoiceEditor(null)
+            beginTextEdit(editableElement, selection)
+          }
+          return true
+        }
+
+        const sectionElement = target.closest(importedSectionSelector) as HTMLElement | null
+        if (sectionElement) {
+          selectElement(sectionElement)
+          setInlineEditor(null)
+          setButtonEditor(null)
+          setChoiceEditor(null)
+          setElementPopoverPosition(null)
+          setContentError('')
+          removeMediaActionButton()
+          return true
+        }
+
+        return false
+      }
+
       const handleFrameSubmit = (event: SubmitEvent) => {
         blockImportedPreviewActivation(event)
       }
@@ -10384,70 +13984,8 @@ const ImportedHtmlEditorPanel: React.FC<{
           blockImportedPreviewActivation(event)
         }
 
-        const formFieldElement = getFormFieldFromFrameTarget(target)
-        if (formFieldElement) {
+        if (selectImportedFrameTarget(target)) {
           blockImportedPreviewActivation(event)
-          formFieldElement.blur()
-          const fieldSelection = readImportedFormFieldSelection(formFieldElement, doc)
-          const visualElement = (formFieldElement.closest('label') ||
-            (fieldSelection.fieldHtmlId ? doc.querySelector(`label[for="${fieldSelection.fieldHtmlId.replace(/"/g, '\\"')}"]`) : null) ||
-            formFieldElement) as HTMLElement
-          selectElement(visualElement)
-          removeMediaActionButton()
-          openFieldEditorForSelection(fieldSelection)
-          return
-        }
-
-        const choiceInput = getImportedChoiceInputFromTarget(target, doc)
-        if (choiceInput) {
-          blockImportedPreviewActivation(event)
-          const choiceSelection = readImportedChoiceSelection(choiceInput, doc)
-          const visualElement = (choiceInput.closest('label') ||
-            (choiceInput.id ? doc.querySelector(`label[for="${choiceInput.id.replace(/"/g, '\\"')}"]`) : null) ||
-            choiceInput) as HTMLElement
-          selectElement(visualElement)
-          removeMediaActionButton()
-          openChoiceEditorForSelection(choiceSelection)
-          return
-        }
-
-        const editableElement = target.closest(importedEditableSelector) as HTMLElement | null
-        if (editableElement) {
-          const selection = readImportedEditableSelection(editableElement)
-          if (!selection) return
-          blockImportedPreviewActivation(event)
-          selectElement(editableElement)
-          removeMediaActionButton()
-          setAiRegionMode(false)
-          setAiRegionSelection(null)
-          setAiRegionError('')
-          if (selection.editType === 'image' || selection.editType === 'background_image' || selection.editType === 'video') {
-            setButtonEditor(null)
-            setChoiceEditor(null)
-            openInlineEditorForElement(editableElement, selection, selection.editType === 'video' ? 'video' : 'image')
-          } else if (selection.editType === 'button') {
-            openButtonEditorForSelection(selection)
-          } else if (selection.editType === 'placeholder') {
-            setButtonEditor(null)
-            setChoiceEditor(null)
-            openInlineEditorForElement(editableElement, selection, 'text')
-          } else {
-            setButtonEditor(null)
-            setChoiceEditor(null)
-            beginTextEdit(editableElement, selection)
-          }
-          return
-        }
-
-        const sectionElement = target.closest(importedSectionSelector) as HTMLElement | null
-        if (sectionElement) {
-          blockImportedPreviewActivation(event)
-          selectElement(sectionElement)
-          setInlineEditor(null)
-          setButtonEditor(null)
-          setChoiceEditor(null)
-          setContentError('')
-          removeMediaActionButton()
           return
         }
 
@@ -10580,6 +14118,14 @@ const ImportedHtmlEditorPanel: React.FC<{
       doc.addEventListener('click', handleFrameClick, true)
       doc.addEventListener('auxclick', handleFrameClick, true)
       doc.addEventListener('submit', handleFrameSubmit, true)
+      const handleFrameGuardMessage = (event: MessageEvent) => {
+        if (event.source !== iframe.contentWindow) return
+        if (!isImportedFrameElementDescriptor(event.data) || event.data.mode !== 'visual') return
+        const messageElement = findImportedFrameElementByDescriptor(doc, event.data)
+        if (!messageElement) return
+        selectImportedFrameTarget(messageElement)
+      }
+      window.addEventListener('message', handleFrameGuardMessage)
       setPanelFormFields(collectImportedPanelFormFields(doc))
       cleanupDocument = () => {
         doc.removeEventListener('mouseover', handleFrameMouseOver, true)
@@ -10587,6 +14133,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         doc.removeEventListener('click', handleFrameClick, true)
         doc.removeEventListener('auxclick', handleFrameClick, true)
         doc.removeEventListener('submit', handleFrameSubmit, true)
+        window.removeEventListener('message', handleFrameGuardMessage)
         removeRegionDragHandlers()
         removeMediaActionButton()
         removeRegionBox()
@@ -10604,7 +14151,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       iframe.removeEventListener('load', installEditorHooks)
       cleanupDocument()
     }
-  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, importedPages, onPreviewContextChange, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, previewHtml, previewLoading, previewVersion, saveEditableContent, site.id, site.name, site.title])
+  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, editorPreviewHtml, getElementPopoverPosition, guardedEditorPreviewHtml, importedPages, onPreviewContextChange, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, previewLoading, previewVersion, saveEditableContent, site.id, site.name, site.title])
 
   const routeValue = getRouteEditorValue(site)
   const saveRoute = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -10636,7 +14183,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!file || !inlineEditor || inlineEditor.mode !== 'image') return
 
     if (!file.type.startsWith('image/')) {
-      setContentError('Sube una imagen valida.')
+      setContentError('Sube una imagen válida.')
       return
     }
 
@@ -10652,9 +14199,13 @@ const ImportedHtmlEditorPanel: React.FC<{
   }
 
   const targetImportedPages = importedPages.filter(page => page.id !== activeImportedPage?.id)
+  const buttonEditorFormRuleMessage = buttonEditor
+    ? getImportedButtonFormRuleMessage(buttonEditor.selection, buttonEditor.buttonActions)
+    : ''
   const canSaveButtonEditor = Boolean(
     buttonEditor &&
     buttonEditor.value.trim() &&
+    !buttonEditorFormRuleMessage &&
     !contentSaving &&
     areImportedActionsValid(buttonEditor.buttonActions, currentPageActionOptions)
   )
@@ -10662,7 +14213,8 @@ const ImportedHtmlEditorPanel: React.FC<{
     choiceEditor &&
     !contentSaving &&
     areImportedActionsValid(choiceEditor.actions, currentPageActionOptions) &&
-    choiceEditor.options.length > 0
+    choiceEditor.options.length > 0 &&
+    areImportedOptionQuickActionsValid(choiceEditor.options)
   )
   const cleanChoiceOptions = (choiceEditor?.options || [])
     .map((option): ImportedFormFieldOption => ({
@@ -10690,6 +14242,21 @@ const ImportedHtmlEditorPanel: React.FC<{
       }
     })
   }
+  const duplicateChoiceOption = (index: number) => {
+    setChoiceEditor(current => {
+      if (!current) return current
+      const option = current.options[index]
+      if (!option) return current
+      return {
+        ...current,
+        options: [
+          ...current.options.slice(0, index + 1),
+          duplicateImportedFieldOption(option, index),
+          ...current.options.slice(index + 1)
+        ]
+      }
+    })
+  }
   const removeChoiceOption = (index: number) => {
     setChoiceEditor(current => {
       if (!current) return current
@@ -10714,7 +14281,8 @@ const ImportedHtmlEditorPanel: React.FC<{
     fieldEditor &&
     fieldEditor.label.trim() &&
     !contentSaving &&
-    (!fieldEditorHasOptions || cleanFieldOptions.length > 0)
+    (!fieldEditorHasOptions || cleanFieldOptions.length > 0) &&
+    areImportedOptionQuickActionsValid(fieldEditor?.options || [])
   )
 
   const patchFieldOption = (index: number, patch: Partial<ImportedFormFieldOption>) => {
@@ -10738,6 +14306,22 @@ const ImportedHtmlEditorPanel: React.FC<{
     })
   }
 
+  const duplicateFieldOption = (index: number) => {
+    setFieldEditor(current => {
+      if (!current) return current
+      const option = current.options[index]
+      if (!option) return current
+      return {
+        ...current,
+        options: [
+          ...current.options.slice(0, index + 1),
+          duplicateImportedFieldOption(option, index),
+          ...current.options.slice(index + 1)
+        ]
+      }
+    })
+  }
+
   const removeFieldOption = (index: number) => {
     setFieldEditor(current => {
       if (!current) return current
@@ -10748,10 +14332,97 @@ const ImportedHtmlEditorPanel: React.FC<{
     })
   }
 
+  const codeElementFieldHasOptions = Boolean(
+    codeElementEditor?.mode === 'field' &&
+    (codeElementEditor.tagName === 'select' || ['radio', 'checkbox'].includes(codeElementEditor.fieldInputType || ''))
+  )
+  const cleanCodeElementOptions = (codeElementEditor?.options || [])
+    .map((option): ImportedFormFieldOption => ({
+      label: option.label.trim(),
+      value: (option.value || option.label).trim(),
+      ...(option.actions?.length ? { actions: option.actions } : {})
+    }))
+    .filter(option => option.label || option.value)
+
+  const patchCodeElementOption = (index: number, patch: Partial<ImportedFormFieldOption>) => {
+    setCodeElementEditor(current => {
+      if (!current) return current
+      return {
+        ...current,
+        options: (current.options || []).map((option, optionIndex) => optionIndex === index ? { ...option, ...patch } : option)
+      }
+    })
+  }
+
+  const addCodeElementOption = () => {
+    setCodeElementEditor(current => {
+      if (!current) return current
+      const currentOptions = current.options || []
+      const label = `Opción ${currentOptions.length + 1}`
+      return {
+        ...current,
+        options: [...currentOptions, { label, value: label }]
+      }
+    })
+  }
+
+  const duplicateCodeElementOption = (index: number) => {
+    setCodeElementEditor(current => {
+      if (!current) return current
+      const currentOptions = current.options || []
+      const option = currentOptions[index]
+      if (!option) return current
+      return {
+        ...current,
+        options: [
+          ...currentOptions.slice(0, index + 1),
+          duplicateImportedFieldOption(option, index),
+          ...currentOptions.slice(index + 1)
+        ]
+      }
+    })
+  }
+
+  const removeCodeElementOption = (index: number) => {
+    setCodeElementEditor(current => {
+      if (!current) return current
+      return {
+        ...current,
+        options: (current.options || []).filter((_, optionIndex) => optionIndex !== index)
+      }
+    })
+  }
+
   const saveButtonEditor = async () => {
     if (!buttonEditor || buttonEditor.selection.editType !== 'button') return
     const buttonActions = getUniqueImportedActionSteps(buttonEditor.buttonActions, currentPageActionOptions)
+    const formRuleMessage = getImportedButtonFormRuleMessage(buttonEditor.selection, buttonActions)
+    if (formRuleMessage) {
+      setContentError(formRuleMessage)
+      return
+    }
     const firstAction = buttonActions[0]
+
+    if (codeEditorOpen && activeCodeFile?.language === 'html') {
+      const range = buttonEditor.selection.codeDescriptor
+        ? findImportedSourceRangeForDescriptor(activeCodeValue, buttonEditor.selection.codeDescriptor)
+        : buttonEditor.selection.codeRange || null
+      const nextHtml = applyImportedCodeButtonPatch(activeCodeValue, buttonEditor.selection, buttonEditor.value, buttonActions, range)
+      if (!nextHtml) {
+        setContentError('No pude actualizar ese botón en el código. Selecciónalo otra vez desde la vista.')
+        return
+      }
+      onCodeDraftChange(activeCodeFile.path, nextHtml, activeCodeFile.content)
+      setButtonEditor(null)
+      setElementPopoverPosition(null)
+      setContentError('')
+      selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
+      selectedCodePreviewElementRef.current = null
+      setCodeSelectionNotice('Botón actualizado en el código · cambios sin guardar')
+      showToast('success', 'Botón actualizado', 'Revisa el código y guarda cuando termines.')
+      return
+    }
+
     await saveEditableContent(buttonEditor.selection, buttonEditor.value, undefined, {
       buttonActions,
       buttonAction: firstAction?.action || 'none',
@@ -10813,6 +14484,44 @@ const ImportedHtmlEditorPanel: React.FC<{
     })
   }
 
+  const canSaveCodeElementEditor = Boolean(
+    codeElementEditor &&
+    activeCodeFile?.language === 'html' &&
+    !saving &&
+    (
+      codeElementEditor.mode === 'field'
+        ? codeElementEditor.label.trim() &&
+          (!codeElementFieldHasOptions || cleanCodeElementOptions.length > 0) &&
+          areImportedOptionQuickActionsValid(codeElementEditor.options || [])
+        : codeElementEditor.mode === 'media'
+          ? (codeElementEditor.mediaUrl || codeElementEditor.value).trim()
+          : codeElementEditor.mode === 'text'
+            ? codeElementEditor.value.trim()
+            : false
+    )
+  )
+
+  const saveCodeElementEditor = () => {
+    if (!codeElementEditor || !activeCodeFile || activeCodeFile.language !== 'html') return
+    const range = findImportedSourceRangeForDescriptor(activeCodeValue, codeElementEditor.descriptor) || codeElementEditor.range
+    const editorToSave = codeElementFieldHasOptions
+      ? { ...codeElementEditor, options: cleanCodeElementOptions }
+      : codeElementEditor
+    const nextHtml = applyImportedCodeElementPatch(activeCodeValue, editorToSave, range)
+    if (!nextHtml) {
+      setContentError('No pude actualizar ese elemento en el código. Selecciónalo otra vez desde la vista.')
+      return
+    }
+    onCodeDraftChange(activeCodeFile.path, nextHtml, activeCodeFile.content)
+    setCodeElementEditor(null)
+    setElementPopoverPosition(null)
+    setContentError('')
+    selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
+    selectedCodePreviewElementRef.current = null
+    setCodeSelectionNotice('Elemento actualizado en el código · cambios sin guardar')
+    showToast('success', 'Elemento actualizado', 'Revisa el código y guarda el sitio cuando termines.')
+  }
+
   const canSaveInlineEditor = Boolean(
     inlineEditor &&
     inlineEditor.selection.editType !== 'section' &&
@@ -10823,30 +14532,833 @@ const ImportedHtmlEditorPanel: React.FC<{
   const inlineVideoPreview: EmbedPreviewConfig = inlineEditor?.mode === 'video'
     ? resolveImportedVideoPreview(inlineEditor.value)
     : { kind: 'empty' }
+  const selectedRouteCustomField = selectedFieldRouteDraft && selectedFieldRouteDraft.destinationType !== 'standard' && selectedFieldRouteDraft.destinationType !== 'ignored'
+    ? findImportedCustomFieldDefinitionForDraft(activeImportedCustomFields, selectedFieldRouteDraft)
+    : null
+  const selectedRouteCustomFieldId = selectedFieldRouteDraft?.customFieldDefinitionId || selectedRouteCustomField?.definitionId || ''
+  const selectedFieldRouteNeedsCustomSelection = Boolean(
+    selectedFieldRouteDraft &&
+    selectedFieldRouteDraft.destinationType !== 'standard' &&
+    selectedFieldRouteDraft.destinationType !== 'ignored' &&
+    activeImportedCustomFields.length &&
+    !selectedRouteCustomField
+  )
+  const selectedFieldRoutePanel = selectedFieldRouteContext && selectedFieldRouteDraft ? (
+    <div className={styles.importedFieldRouteBox}>
+      <div className={styles.importedFieldRouteHeader}>
+        <Link2 size={15} />
+        <div>
+          <span>Ruta de datos</span>
+          <strong>{selectedFieldRouteMatch ? 'Campo detectado' : 'Campo nuevo detectado'}</strong>
+        </div>
+      </div>
+      <label className={styles.importedActionField}>
+        <span>Guardar como</span>
+        <CustomSelect
+          value={selectedFieldRouteDraft.destinationType === 'new_custom' ? 'custom' : selectedFieldRouteDraft.destinationType}
+          disabled={selectedFieldRouteSaving || saving || contentSaving}
+          portal
+          onChange={(event) => {
+            const destinationType = event.target.value as ImportedSiteFieldMapping['destinationType']
+            setSelectedFieldRouteDraft(current => {
+              if (!current) return current
+              if (destinationType === 'standard') {
+                return {
+                  destinationType: 'standard',
+                  destinationKey: selectedFieldRouteMatch?.field ? inferImportedStandardKey(selectedFieldRouteMatch.field) : 'full_name'
+                }
+              }
+              if (destinationType === 'ignored') {
+                return {
+                  destinationType: 'ignored',
+                  destinationKey: current.destinationKey
+                }
+              }
+              const matchedCustomField = selectedFieldRouteMatch?.field
+                ? findImportedCustomFieldDefinition(activeImportedCustomFields, selectedFieldRouteMatch.field)
+                : null
+              const defaultCustomField = matchedCustomField || selectedRouteCustomField || activeImportedCustomFields[0]
+              if (defaultCustomField) {
+                return {
+                  destinationType: 'custom',
+                  destinationKey: defaultCustomField.fieldKey || defaultCustomField.key,
+                  customFieldDefinitionId: defaultCustomField.definitionId,
+                  customFieldKey: defaultCustomField.fieldKey || defaultCustomField.key,
+                  customFieldLabel: defaultCustomField.label || defaultCustomField.name || defaultCustomField.fieldKey || defaultCustomField.key,
+                  customFieldDataType: defaultCustomField.dataType || 'text',
+                  customFieldSyncTarget: defaultCustomField.syncTarget || 'local'
+                }
+              }
+              return {
+                destinationType: 'custom',
+                destinationKey: current.destinationKey || getImportedFieldRouteDefaultKey(selectedFieldRouteContext)
+              }
+            })
+          }}
+        >
+          <option value="standard">Dato del contacto</option>
+          <option value="custom">Campo personalizado</option>
+          <option value="ignored">No guardar</option>
+        </CustomSelect>
+      </label>
+      {selectedFieldRouteDraft.destinationType === 'standard' ? (
+        <label className={styles.importedActionField}>
+          <span>Dato del contacto</span>
+          <CustomSelect
+            value={selectedFieldRouteDraft.destinationKey || 'full_name'}
+            disabled={selectedFieldRouteSaving || saving || contentSaving}
+            portal
+            onChange={(event) => setSelectedFieldRouteDraft(current => current ? {
+              ...current,
+              destinationType: 'standard',
+              destinationKey: event.target.value
+            } : current)}
+          >
+            {importedStandardFieldOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+      ) : selectedFieldRouteDraft.destinationType === 'ignored' ? (
+        <p className={styles.importedFieldRouteHint}>
+          Este campo no se guardará cuando el visitante envíe el formulario.
+        </p>
+      ) : (
+        <>
+          <label className={styles.importedActionField}>
+            <span>Campo personalizado</span>
+            <CustomSelect
+              value={selectedRouteCustomFieldId}
+              disabled={selectedFieldRouteSaving || saving || contentSaving || !activeImportedCustomFields.length}
+              portal
+              onChange={(event) => {
+                const customField = activeImportedCustomFields.find(item => item.definitionId === event.target.value)
+                if (!customField) return
+                setSelectedFieldRouteDraft(current => current ? {
+                  ...current,
+                  destinationType: 'custom',
+                  destinationKey: customField.fieldKey || customField.key,
+                  customFieldDefinitionId: customField.definitionId,
+                  customFieldKey: customField.fieldKey || customField.key,
+                  customFieldLabel: customField.label || customField.name || customField.fieldKey || customField.key,
+                  customFieldDataType: customField.dataType || 'text',
+                  customFieldSyncTarget: customField.syncTarget || 'local'
+                } : current)
+              }}
+            >
+              <option value="" disabled>
+                {activeImportedCustomFields.length ? 'Elige un campo guardado' : 'No hay campos personalizados'}
+              </option>
+              {selectedRouteCustomFieldId && !selectedRouteCustomField && (
+                <option value={selectedRouteCustomFieldId}>{selectedFieldRouteDraft.customFieldLabel || selectedFieldRouteDraft.destinationKey || 'Campo guardado'}</option>
+              )}
+              {activeImportedCustomFields.map(customField => (
+                <option key={customField.definitionId} value={customField.definitionId}>
+                  {customField.label || customField.name || customField.fieldKey}
+                </option>
+              ))}
+            </CustomSelect>
+          </label>
+          {activeImportedCustomFields.length ? (
+            <p className={styles.importedFieldRouteHint}>
+              {selectedRouteCustomField
+                ? `Se guardará en ${selectedRouteCustomField.label || selectedRouteCustomField.name || selectedRouteCustomField.fieldKey}.`
+                : 'Elige el campo personalizado exacto donde se guardará esta respuesta.'}
+            </p>
+          ) : (
+            <p className={styles.importedFieldRouteHint}>
+              No hay campos personalizados guardados. Usa una clave nueva para esta respuesta.
+            </p>
+          )}
+          {!activeImportedCustomFields.length && (
+            <label className={styles.importedActionField}>
+              <span>Clave del campo personalizado</span>
+              <input
+                value={selectedFieldRouteDraft.destinationKey}
+                disabled={selectedFieldRouteSaving || saving || contentSaving}
+                placeholder="ej. presupuesto_estimado"
+                name="rstk-imported-field-route-custom-key"
+                {...importedEditorNoAutocompleteAttrs}
+                onChange={(event) => setSelectedFieldRouteDraft(current => current ? {
+                  ...current,
+                  destinationType: 'custom',
+                  destinationKey: event.target.value,
+                  customFieldDefinitionId: '',
+                  customFieldKey: event.target.value,
+                  customFieldLabel: ''
+                } : current)}
+              />
+            </label>
+          )}
+        </>
+      )}
+      <div className={styles.importedFieldRouteActions}>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => setSelectedFieldRouteDraft(buildImportedSelectedFieldRouteDraft(selectedFieldRouteMatch, selectedFieldRouteContext))}
+          disabled={selectedFieldRouteSaving || saving || contentSaving}
+        >
+          Restablecer
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => void saveSelectedFieldRoute()}
+          disabled={selectedFieldRouteSaving || saving || contentSaving || selectedFieldRouteNeedsCustomSelection || (selectedFieldRouteDraft.destinationType !== 'ignored' && !selectedFieldRouteDraft.destinationKey.trim())}
+          loading={selectedFieldRouteSaving}
+        >
+          <Save size={14} />
+          Guardar ruta
+        </Button>
+      </div>
+    </div>
+  ) : null
+
+  const codeElementEditorPanel = codeElementEditor ? (
+    <div className={styles.importedButtonActionBox}>
+      <div className={styles.importedButtonActionHeader}>
+        <Code2 size={17} />
+        <div>
+          <span>Elemento seleccionado</span>
+          <strong>{codeElementEditor.label || codeElementEditor.tagName}</strong>
+        </div>
+      </div>
+
+      <div className={styles.importedChoiceMeta}>
+        <span>{codeElementEditor.tagName}</span>
+        <strong>Línea {codeElementEditor.range.line}</strong>
+      </div>
+
+      {codeElementEditor.mode === 'text' && (
+        <label className={styles.importedActionField}>
+          <span>Texto</span>
+          <textarea
+            rows={4}
+            value={codeElementEditor.value}
+            disabled={saving}
+            name="rstk-imported-code-element-text"
+            {...importedEditorNoAutocompleteAttrs}
+            onChange={(event) => setCodeElementEditor(current => current ? { ...current, value: event.target.value } : current)}
+          />
+        </label>
+      )}
+
+      {codeElementEditor.mode === 'field' && (
+        <>
+          <label className={styles.importedActionField}>
+            <span>Etiqueta</span>
+            <input
+              value={codeElementEditor.label}
+              disabled={saving}
+              name="rstk-imported-code-field-label"
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => setCodeElementEditor(current => current ? { ...current, label: event.target.value, value: event.target.value } : current)}
+            />
+          </label>
+          {codeElementEditor.tagName !== 'select' && (
+            <label className={styles.importedActionField}>
+              <span>Texto dentro del campo</span>
+              <input
+                value={codeElementEditor.placeholder || ''}
+                disabled={saving}
+                name="rstk-imported-code-field-placeholder"
+                {...importedEditorNoAutocompleteAttrs}
+                onChange={(event) => setCodeElementEditor(current => current ? { ...current, placeholder: event.target.value } : current)}
+              />
+            </label>
+          )}
+          <div className={`${styles.importedFieldOptionRow} ${styles.importedCodeFieldMetaRow}`}>
+            <input
+              value={codeElementEditor.fieldName || ''}
+              disabled={saving}
+              placeholder="name"
+              name="rstk-imported-code-field-name"
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => setCodeElementEditor(current => current ? { ...current, fieldName: event.target.value } : current)}
+            />
+            <input
+              value={codeElementEditor.fieldHtmlId || ''}
+              disabled={saving}
+              placeholder="id"
+              name="rstk-imported-code-field-id"
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => setCodeElementEditor(current => current ? { ...current, fieldHtmlId: event.target.value } : current)}
+            />
+          </div>
+          <label className={styles.importedCodeCheckboxField}>
+            <input
+              type="checkbox"
+              checked={Boolean(codeElementEditor.required)}
+              disabled={saving}
+              onChange={(event) => setCodeElementEditor(current => current ? { ...current, required: event.target.checked } : current)}
+            />
+            <span>Campo requerido</span>
+          </label>
+          {codeElementFieldHasOptions && (
+            <ImportedFieldOptionsEditor
+              title={codeElementEditor.fieldInputType === 'checkbox' ? 'Opciones de checkbox' : 'Opciones del campo'}
+              selectionMode={codeElementEditor.fieldInputType === 'checkbox' ? 'multiple' : 'single'}
+              options={codeElementEditor.options || []}
+              targetPages={targetImportedPages}
+              disabled={saving}
+              namePrefix="rstk-imported-code-field-option"
+              onAdd={addCodeElementOption}
+              onDuplicate={duplicateCodeElementOption}
+              onRemove={removeCodeElementOption}
+              onPatch={patchCodeElementOption}
+            />
+          )}
+          {selectedFieldRoutePanel}
+        </>
+      )}
+
+      {codeElementEditor.mode === 'media' && (
+        <label className={styles.importedActionField}>
+          <span>{codeElementEditor.editType === 'image' ? 'URL de imagen' : codeElementEditor.editType === 'video' ? 'URL de video' : 'URL de fondo'}</span>
+          <input
+            value={codeElementEditor.mediaUrl || codeElementEditor.value}
+            disabled={saving}
+            placeholder="https://..."
+            name="rstk-imported-code-media-url"
+            {...importedEditorNoAutocompleteAttrs}
+            onChange={(event) => setCodeElementEditor(current => current ? { ...current, mediaUrl: event.target.value, value: event.target.value } : current)}
+          />
+        </label>
+      )}
+
+      {codeElementEditor.mode === 'container' && (
+        <p className={styles.importedButtonCodeHint}>
+          Este contenedor tiene HTML interno. Te marco la línea exacta para editarlo directo en el código sin romper sus elementos hijos.
+        </p>
+      )}
+
+      {codeElementEditor.mode !== 'container' && (
+        <p className={styles.importedButtonCodeHint}>
+          Este cambio se escribe en el HTML como borrador. Se aplica definitivamente cuando guardes el sitio.
+        </p>
+      )}
+
+      <div className={styles.importedButtonActionFooter}>
+        <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={saving}>
+          Cancelar
+        </Button>
+        <Button type="button" size="sm" onClick={saveCodeElementEditor} disabled={!canSaveCodeElementEditor || saving} loading={saving}>
+          <Save size={14} />
+          Guardar elemento
+        </Button>
+      </div>
+    </div>
+  ) : null
+
+  const buttonEditorPanel = buttonEditor ? (
+    <div className={styles.importedButtonActionBox}>
+      <div className={styles.importedButtonActionHeader}>
+        <MousePointerClick size={17} />
+        <div>
+          <span>Botón seleccionado</span>
+          <strong>{buttonEditor.selection.label || 'Botón'}</strong>
+        </div>
+      </div>
+
+      <label className={styles.importedActionField}>
+        <span>Texto del botón</span>
+        <input
+          value={buttonEditor.value}
+          disabled={contentSaving}
+          name="rstk-imported-button-text"
+          {...importedEditorNoAutocompleteAttrs}
+          onChange={(event) => setButtonEditor(current => current ? { ...current, value: event.target.value } : current)}
+        />
+      </label>
+
+      <ImportedActionChainEditor
+        actions={buttonEditor.buttonActions}
+        targetPages={targetImportedPages}
+        actionOptions={currentPageActionOptions}
+        disabled={contentSaving}
+        onChange={(buttonActions) => setButtonEditor(current => current ? { ...current, buttonActions } : current)}
+      />
+
+      {buttonEditorFormRuleMessage && (
+        <div className={styles.importedButtonRuleWarning}>
+          <AlertTriangle size={14} />
+          <span>{buttonEditorFormRuleMessage}</span>
+        </div>
+      )}
+
+      {codeEditorOpen && (
+        <p className={styles.importedButtonCodeHint}>
+          Este cambio se escribe en el HTML como borrador. Se aplica definitivamente cuando guardes el sitio.
+        </p>
+      )}
+
+      <div className={styles.importedButtonActionFooter}>
+        <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
+          Cancelar
+        </Button>
+        <Button type="button" size="sm" onClick={() => void saveButtonEditor()} disabled={!canSaveButtonEditor} loading={contentSaving}>
+          <Save size={14} />
+          Guardar botón
+        </Button>
+      </div>
+    </div>
+  ) : null
+
+  const activeCodePreviewHtml = activeCodeFile?.language === 'html'
+    ? activeCodeValue
+    : previewHtml
+  const codePreviewSourceHtml = useMemo(
+    () => buildImportedCodeRangePreviewHtml(activeCodePreviewHtml),
+    [activeCodePreviewHtml]
+  )
+  const guardedCodePreviewHtml = useMemo(
+    () => buildImportedEditorPreviewHtml(codePreviewSourceHtml, 'code'),
+    [codePreviewSourceHtml]
+  )
+  const codeElementFloatingPanel = (buttonEditorPanel || codeElementEditorPanel || contentError) ? (
+    <div
+      ref={elementPopoverRef}
+      className={styles.importedElementPopoverShell}
+      style={elementPopoverStyle}
+      role="dialog"
+      aria-label="Editar elemento seleccionado en HTML"
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      {buttonEditorPanel}
+      {codeElementEditorPanel}
+      {contentError && (
+        <div className={styles.importedInlineError}>
+          <AlertTriangle size={15} />
+          <span>{contentError}</span>
+        </div>
+      )}
+    </div>
+  ) : null
+  const focusImportedCodeRange = useCallback((range: ImportedCodeSourceRange) => {
+    setCodeSelectionNotice(`${range.label} · línea ${range.line}`)
+    window.requestAnimationFrame(() => {
+      const textarea = codeTextareaRef.current
+      if (!textarea) return
+      textarea.focus({ preventScroll: true })
+      textarea.setSelectionRange(range.start, range.end)
+      const lineHeight = Number.parseFloat(window.getComputedStyle(textarea).lineHeight) || 20
+      const maxScroll = Math.max(0, textarea.scrollHeight - textarea.clientHeight)
+      const nativeScrollTop = textarea.scrollTop
+      const estimatedScrollTop = activeCodeValue.length
+        ? (Math.max(0, Math.min(range.start, activeCodeValue.length)) / activeCodeValue.length) * maxScroll
+        : 0
+      const targetScrollTop = nativeScrollTop > 0 || range.start < 120
+        ? nativeScrollTop
+        : estimatedScrollTop
+      textarea.scrollTop = Math.max(0, Math.min(maxScroll, targetScrollTop - (lineHeight * 3)))
+      if (codeHighlightRef.current) {
+        codeHighlightRef.current.scrollTop = textarea.scrollTop
+        codeHighlightRef.current.scrollLeft = textarea.scrollLeft
+      }
+    })
+  }, [activeCodeValue.length])
+  const selectImportedCodePreviewElement = useCallback((element: HTMLElement, descriptor?: ImportedFrameElementDescriptor) => {
+    const selectionDescriptor = descriptor || getImportedFrameElementDescriptor(element, 'code')
+    const range = findImportedSourceRangeForDescriptor(activeCodePreviewHtml, selectionDescriptor)
+    selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
+    selectedCodePreviewElementRef.current = element
+    element.classList.add('rstk-imported-code-selected')
+
+    if (!range) {
+      setCodeSelectionNotice('No pude ubicar ese elemento exacto en el código.')
+      setElementPopoverPosition(null)
+      return null
+    }
+
+    focusImportedCodeRange(range)
+    return range
+  }, [activeCodePreviewHtml, focusImportedCodeRange])
+
+  useEffect(() => {
+    if (!codeEditorOpen) {
+      setCodeSelectionNotice('')
+      setButtonEditor(null)
+      setCodeElementEditor(null)
+      setElementPopoverPosition(null)
+      setContentError('')
+      setCodeAssistantError('')
+      codeAssistantVoiceDictation.cancelVoice()
+      selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
+      selectedCodePreviewElementRef.current = null
+    }
+  }, [codeAssistantVoiceDictation.cancelVoice, codeEditorOpen])
+
+  useEffect(() => {
+    if (!codeEditorOpen || !activeCodePreviewHtml) return
+    const iframe = codePreviewIframeRef.current
+    if (!iframe) return
+
+    let cleanupDocument = () => {}
+    let cancelled = false
+
+    const installCodePreviewHooks = () => {
+      if (cancelled) return
+      cleanupDocument()
+
+      let doc: Document | null = null
+      try {
+        doc = iframe.contentDocument
+        if (doc?.location.href && doc.location.href !== 'about:srcdoc') {
+          iframe.srcdoc = guardedCodePreviewHtml
+          return
+        }
+      } catch {
+        iframe.srcdoc = guardedCodePreviewHtml
+        return
+      }
+
+      if (!doc) return
+
+      const style = doc.createElement('style')
+      style.setAttribute('data-rstk-imported-code-overlay', 'true')
+      style.textContent = `
+        ${importedCodeSelectableSelector} {
+          cursor: pointer !important;
+        }
+        ${importedCodeSelectableSelector}:hover {
+          outline: 1px dashed rgba(100, 116, 139, 0.5) !important;
+          outline-offset: 4px !important;
+          border-radius: 4px !important;
+        }
+        .rstk-imported-code-selected {
+          outline: 2px dashed #2563eb !important;
+          outline-offset: 5px !important;
+          border-radius: 6px !important;
+          box-shadow:
+            0 0 0 1px rgba(15, 23, 42, 0.18),
+            0 0 0 4px rgba(37, 99, 235, 0.14) !important;
+        }
+      `
+      doc.head?.appendChild(style)
+
+      const getSelectableTarget = (target: Element | null) => {
+        if (!target || typeof target.closest !== 'function') return null
+        return target.closest(importedCodeSelectableSelector) as HTMLElement | null
+      }
+
+      const getActionTarget = (target: Element | null) => {
+        if (!target || typeof target.closest !== 'function') return null
+        return target.closest(importedEditorActionSelector) as HTMLElement | null
+      }
+
+      const handleCodePreviewClick = (event: MouseEvent) => {
+        event.preventDefault()
+        event.stopPropagation()
+        if (typeof event.stopImmediatePropagation === 'function') {
+          event.stopImmediatePropagation()
+        }
+        const rawTarget = event.target as Element | null
+        const actionTarget = getActionTarget(rawTarget)
+        const choiceInput = rawTarget ? getImportedChoiceInputFromTarget(rawTarget, doc) : null
+        const formFieldTarget = choiceInput || getImportedCodeFormFieldElementFromTarget(rawTarget, doc)
+        const target = actionTarget || formFieldTarget || getSelectableTarget(rawTarget)
+        if (!target) return
+        const descriptor = getImportedFrameElementDescriptor(target, 'code', event.type)
+        const range = selectImportedCodePreviewElement(target, descriptor)
+        if (actionTarget && range) {
+          openCodeButtonEditorForElement(actionTarget, descriptor, range)
+        } else if (range) {
+          openCodeElementEditorForElement(target, descriptor, range)
+        } else {
+          setButtonEditor(null)
+          setCodeElementEditor(null)
+          setContentError('')
+        }
+      }
+
+      doc.addEventListener('click', handleCodePreviewClick, true)
+      doc.addEventListener('auxclick', handleCodePreviewClick, true)
+      cleanupDocument = () => {
+        doc?.removeEventListener('click', handleCodePreviewClick, true)
+        doc?.removeEventListener('auxclick', handleCodePreviewClick, true)
+        selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
+        selectedCodePreviewElementRef.current = null
+        style.remove()
+      }
+    }
+
+    const handleCodePreviewMessage = (event: MessageEvent) => {
+      if (event.source !== iframe.contentWindow) return
+      if (!isImportedFrameElementDescriptor(event.data) || event.data.mode !== 'code') return
+      const doc = iframe.contentDocument
+      if (!doc) return
+      const element = findImportedFrameElementByDescriptor(doc, event.data)
+      if (!element) return
+      const actionElement = element.matches(importedEditorActionSelector) ? element : null
+      const choiceInput = getImportedChoiceInputFromTarget(element, doc)
+      const formFieldElement = choiceInput || getImportedCodeFormFieldElementFromTarget(element, doc)
+      const targetElement = actionElement || formFieldElement || element
+      const descriptor = targetElement === element
+        ? event.data
+        : getImportedFrameElementDescriptor(targetElement, 'code')
+      const range = selectImportedCodePreviewElement(targetElement, descriptor)
+      if (actionElement) {
+        if (range) openCodeButtonEditorForElement(actionElement, descriptor, range)
+      } else if (range) {
+        openCodeElementEditorForElement(targetElement, descriptor, range)
+      } else {
+        setButtonEditor(null)
+        setCodeElementEditor(null)
+        setContentError('')
+      }
+    }
+
+    iframe.addEventListener('load', installCodePreviewHooks)
+    window.addEventListener('message', handleCodePreviewMessage)
+    const installTimeout = window.setTimeout(installCodePreviewHooks, 0)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(installTimeout)
+      iframe.removeEventListener('load', installCodePreviewHooks)
+      window.removeEventListener('message', handleCodePreviewMessage)
+      cleanupDocument()
+    }
+  }, [activeCodePreviewHtml, codeEditorOpen, guardedCodePreviewHtml, openCodeButtonEditorForElement, openCodeElementEditorForElement, selectImportedCodePreviewElement])
+
+  const codeAssistantActivityLabel = getImportedCodeAssistantActivityLabel(codeAssistantWorkSteps, codeAssistantSaving)
+
+  if (codeEditorOpen) {
+    return (
+      <div
+        ref={codeSplitRef}
+        className={styles.importedCodeEditorPanel}
+        style={{ '--imported-code-source-width': `${codeEditorWidth}%` } as React.CSSProperties}
+      >
+        <section
+          className={`${styles.importedCodeSourcePane} ${codeEditorTheme === 'dark' ? styles.importedCodeSourcePaneDark : styles.importedCodeSourcePaneLight} ${activeCodeDiagnostics.length ? styles.importedCodeSourcePaneInvalid : ''}`}
+        >
+          <div className={styles.importedCodePaneHeader}>
+            <div className={styles.importedCodeTitleBlock}>
+              <span>Editor HTML</span>
+              <strong>{activeCodeFile?.label || activeImportedPage?.title || 'Código de la página'}</strong>
+            </div>
+            <div className={styles.importedCodeHeaderActions}>
+              {activeCodeDiagnostics.length > 0 && (
+                <span className={styles.importedCodeDiagnostic}>
+                  <AlertTriangle size={13} />
+                  {activeCodeDiagnostics[0]}
+                </span>
+              )}
+              <strong className={activeCodeDirty ? styles.importedCodeDirtyStatus : styles.importedCodeSavedStatus}>
+                {activeCodeDirty ? 'Cambios sin guardar' : 'Guardado'}
+              </strong>
+              <div className={styles.importedCodeThemeToggle} aria-label="Tema del editor de código">
+                <button
+                  type="button"
+                  className={codeEditorTheme === 'light' ? styles.importedCodeThemeButtonActive : ''}
+                  onClick={() => setCodeEditorTheme('light')}
+                  aria-pressed={codeEditorTheme === 'light'}
+                >
+                  <Sun size={13} />
+                  Claro
+                </button>
+                <button
+                  type="button"
+                  className={codeEditorTheme === 'dark' ? styles.importedCodeThemeButtonActive : ''}
+                  onClick={() => setCodeEditorTheme('dark')}
+                  aria-pressed={codeEditorTheme === 'dark'}
+                >
+                  <Moon size={13} />
+                  Oscuro
+                </button>
+              </div>
+            </div>
+          </div>
+          <details className={styles.importedCodeGuide}>
+            <summary>
+              <Sparkles size={13} />
+              Claves para IA externa
+            </summary>
+            <pre>{IMPORTED_HTML_AI_GUIDE}</pre>
+          </details>
+          {activeCodeFile ? (
+            <div className={styles.importedCodeEditorShell}>
+              <pre
+                ref={codeHighlightRef}
+                className={styles.importedCodeHighlight}
+                aria-hidden="true"
+              >
+                <code dangerouslySetInnerHTML={{ __html: highlightedActiveCode }} />
+              </pre>
+              <textarea
+                ref={codeTextareaRef}
+                className={styles.importedCodeTextarea}
+                value={activeCodeValue}
+                data-ristak-unstyled="true"
+                spellCheck={false}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                disabled={saving}
+                wrap="soft"
+                aria-label={`Código de ${activeCodeFile.label || activeCodeFile.path || 'archivo principal'}`}
+                onScroll={syncCodeHighlightScroll}
+                onChange={(event) => onCodeDraftChange(activeCodeFile.path, event.target.value, activeCodeFile.content)}
+              />
+            </div>
+          ) : (
+            <div className={styles.importedCodeEmptyState}>
+              <Code2 size={18} />
+              <span>No hay HTML editable para esta página.</span>
+            </div>
+          )}
+          <div className={styles.importedCodeAssistantPanel}>
+            <div className={styles.importedCodeAssistantHeader}>
+              <div className={styles.importedCodeAssistantTitle}>
+                <Sparkles size={14} />
+                <div>
+                  <span>Asistente de código</span>
+                  <strong>Solo ve el HTML activo</strong>
+                </div>
+              </div>
+              {codeAssistantActivityLabel && (
+                <div className={`${styles.importedCodeAssistantGlassStatus} ${codeAssistantSaving ? styles.importedCodeAssistantGlassStatusActive : ''}`} aria-live="polite">
+                  <span className={styles.importedCodeAssistantGlassDot} aria-hidden="true" />
+                  <strong>{codeAssistantActivityLabel}</strong>
+                </div>
+              )}
+            </div>
+            {codeAssistantError && (
+              <div className={styles.importedAIRegionError}>
+                <AlertTriangle size={14} />
+                <span>{codeAssistantError}</span>
+              </div>
+            )}
+            <div
+              className={`${styles.importedCodeAssistantComposer} ${codeAssistantVoiceDictation.voiceIsActive ? styles.importedCodeAssistantComposerVoiceActive : ''}`}
+              data-ristak-unstyled
+            >
+              <AIVoiceDictationControl
+                voice={codeAssistantVoiceDictation}
+                disabled={codeAssistantSaving || !aiAgentAvailable}
+                className={styles.importedCodeAssistantVoice}
+              />
+              <label className={styles.importedCodeAssistantInputWrap}>
+                <textarea
+                  rows={1}
+                  value={codeAssistantPrompt}
+                  disabled={codeAssistantSaving || !aiAgentAvailable}
+                  data-ristak-unstyled="true"
+                  placeholder={aiAgentAvailable ? 'Dile qué quieres cambiar...' : 'Configura OpenAI para usar el asistente...'}
+                  name="rstk-imported-code-assistant-prompt"
+                  {...importedEditorNoAutocompleteAttrs}
+                  onChange={(event) => setCodeAssistantPrompt(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' || event.shiftKey) return
+                    event.preventDefault()
+                    if (!activeCodeFile || !codeAssistantPrompt.trim() || codeAssistantSaving || !aiAgentAvailable) return
+                    void applyCodeAssistantEdit()
+                  }}
+                />
+              </label>
+              <CustomSelect
+                value={codeAssistantModel}
+                portal
+                disabled={codeAssistantSaving || !aiAgentAvailable}
+                className={styles.importedCodeAssistantInlineModel}
+                aria-label="Modelo del asistente de código"
+                onChange={(event) => setCodeAssistantModel(event.target.value)}
+              >
+                {chatgptSiteModelOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+              <button
+                type="button"
+                className={styles.importedCodeAssistantSendButton}
+                onClick={() => void applyCodeAssistantEdit()}
+                disabled={!aiAgentAvailable || !activeCodeFile || !codeAssistantPrompt.trim() || codeAssistantSaving}
+                aria-label={codeAssistantSaving ? 'Analizando cambio' : 'Enviar instrucción'}
+                title={codeAssistantSaving ? 'Analizando cambio' : 'Enviar instrucción'}
+              >
+                {codeAssistantSaving ? <RefreshCw size={18} /> : <ArrowUp size={20} />}
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <div
+          className={styles.importedCodeResizeHandle}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Cambiar tamaño entre código y vista"
+          aria-valuemin={28}
+          aria-valuemax={88}
+          aria-valuenow={Math.round(codeEditorWidth)}
+          tabIndex={0}
+          onPointerDown={handleCodeSplitPointerDown}
+          onDoubleClick={() => setCodeEditorWidth(50)}
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+            event.preventDefault()
+            if (event.key === 'ArrowLeft') setCodeEditorWidth(current => Math.max(28, current - 4))
+            if (event.key === 'ArrowRight') setCodeEditorWidth(current => Math.min(88, current + 4))
+            if (event.key === 'Home') setCodeEditorWidth(28)
+            if (event.key === 'End') setCodeEditorWidth(88)
+          }}
+        >
+          <span />
+        </div>
+
+        <section className={[
+          styles.importedCodePreviewPane,
+          codeSelectionNotice ? styles.importedCodePreviewPaneWithNotice : ''
+        ].filter(Boolean).join(' ')}>
+          <div className={styles.importedCodePaneHeader}>
+            <span>{popupCodeActive ? 'Vista de pop up' : 'Vista de página'}</span>
+            <strong>{popupCodeActive ? 'Pop up' : activeImportedPage?.title || 'Página'}</strong>
+          </div>
+          {codeSelectionNotice && (
+            <div className={styles.importedCodeSelectionNotice}>
+              <MousePointerClick size={13} />
+              <span>{codeSelectionNotice}</span>
+            </div>
+          )}
+          <div className={`${styles.importedCodePreviewStage} ${device === 'mobile' ? styles.importedCodePreviewStageMobile : ''}`}>
+            {previewLoading && !activeCodePreviewHtml ? (
+              <div className={styles.importedPreviewState}>
+                <RefreshCw size={18} />
+                <span>Cargando vista previa...</span>
+              </div>
+            ) : previewError && !activeCodePreviewHtml ? (
+              <div className={styles.importedPreviewState}>
+                <AlertTriangle size={18} />
+                <span>{previewError}</span>
+              </div>
+            ) : activeCodePreviewHtml ? (
+              <iframe
+                key={`${site.id}-${activeCodeKey}-${activeCodeValue.length}-${device}`}
+                ref={codePreviewIframeRef}
+                className={styles.importedCodePreviewFrame}
+                title={`Vista previa de ${popupCodeActive ? 'Pop up' : activeImportedPage?.title || site.name}`}
+                srcDoc={guardedCodePreviewHtml}
+                sandbox="allow-same-origin allow-scripts"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            ) : (
+              <div className={styles.importedPreviewState}>
+                <FileText size={18} />
+                <span>Sin vista previa.</span>
+              </div>
+            )}
+          </div>
+        </section>
+        {codeElementFloatingPanel}
+      </div>
+    )
+  }
 
   return (
     <div className={styles.importedEditorPanel}>
       <section className={styles.importedPreviewPane}>
-        <div className={styles.importedPreviewToolbar}>
-          <div>
-            <span>Vista editable</span>
-            <strong>{site.title || site.name}</strong>
-          </div>
-          <div className={styles.importedPreviewTools}>
-            <span>{device === 'mobile' ? 'Movil' : 'Escritorio'}</span>
-            <button
-              type="button"
-              className={styles.importedPreviewRefresh}
-              onClick={() => void loadInlinePreview()}
-              disabled={previewLoading}
-              title="Recargar vista previa"
-              aria-label="Recargar vista previa"
-            >
-              <RefreshCw size={15} />
-            </button>
-          </div>
-        </div>
-
         <div className={`${styles.importedPreviewStage} ${device === 'mobile' ? styles.importedPreviewStageMobile : ''}`}>
           {previewLoading && (
             <div className={styles.importedPreviewState}>
@@ -10860,21 +15372,21 @@ const ImportedHtmlEditorPanel: React.FC<{
               <span>{previewError}</span>
             </div>
           )}
-          {!previewLoading && !previewError && previewHtml && (
+          {!previewLoading && !previewError && editorPreviewHtml && (
             <iframe
               ref={iframeRef}
-              key={`${site.id}-${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}-${previewVersion}-${device}`}
+              key={`${site.id}-${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}-${previewVersion}-${device}-${activePageDraftPreviewHtml.length}`}
               className={styles.importedPreviewFrame}
               title={`Vista previa de ${activeImportedPage?.title || site.name}`}
-              srcDoc={previewHtml}
+              srcDoc={guardedEditorPreviewHtml}
               sandbox="allow-same-origin allow-scripts"
               referrerPolicy="no-referrer-when-downgrade"
             />
           )}
-          {!previewLoading && !previewError && !previewHtml && (
+          {!previewLoading && !previewError && !editorPreviewHtml && (
             <div className={styles.importedPreviewState}>
               <FileText size={18} />
-              <span>La vista previa todavia no tiene contenido.</span>
+              <span>La vista previa todavía no tiene contenido.</span>
             </div>
           )}
         </div>
@@ -10887,6 +15399,42 @@ const ImportedHtmlEditorPanel: React.FC<{
       </section>
 
       <aside className={styles.importedSidePanel}>
+        {panelFormFields.length > 0 && (
+          <div className={styles.importedFormFieldsBox}>
+            <div className={styles.importedButtonActionHeader}>
+              <ListChecks size={17} />
+              <div>
+                <span>Formulario de esta página</span>
+                <strong>{panelFormFields.length} {panelFormFields.length === 1 ? 'campo' : 'campos'}</strong>
+              </div>
+            </div>
+            <p className={styles.importedFormFieldsHint}>
+              Edita cada campo desde aquí: etiqueta, opciones, obligatorio y a dónde manda cada opción.
+            </p>
+            <div className={styles.importedFormFieldsList}>
+              {panelFormFields.map(field => (
+                <button
+                  key={field.key}
+                  type="button"
+                  className={styles.importedFormFieldRow}
+                  onClick={() => openPanelFormField(field)}
+                  disabled={contentSaving}
+                >
+                  <span className={styles.importedFormFieldRowMain}>
+                    <strong>{field.label}</strong>
+                    <small>
+                      {field.typeLabel}
+                      {field.optionsCount > 0 ? ` · ${field.optionsCount} ${field.optionsCount === 1 ? 'opción' : 'opciones'}` : ''}
+                    </small>
+                  </span>
+                  {field.hasDisqualify && <span className={styles.importedFormFieldBadge}>Descalifica</span>}
+                  <Pencil size={13} />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {aiAgentAvailable && (
           <div className={styles.importedAIRegionBox}>
             <div className={styles.importedButtonActionHeader}>
@@ -10898,30 +15446,30 @@ const ImportedHtmlEditorPanel: React.FC<{
                     ? 'Dibuja una zona'
                     : aiRegionSelection
                       ? `${aiRegionSelection.elements.length || 1} elementos detectados`
-                      : 'Toda la pagina activa'}
+                      : 'Toda la página activa'}
                 </strong>
               </div>
             </div>
             <label className={styles.importedActionField}>
-              <span>{aiRegionSelection ? 'Que quieres cambiar en esta zona?' : 'Que quieres cambiar en esta pagina?'}</span>
+              <span>{aiRegionSelection ? '¿Qué quieres cambiar en esta zona?' : '¿Qué quieres cambiar en esta página?'}</span>
               <textarea
                 rows={5}
                 value={aiRegionPrompt}
                 onChange={(event) => setAiRegionPrompt(event.target.value)}
                 placeholder={aiRegionSelection
-                  ? 'Ejemplo: centra el titular, pon el video debajo y deja el boton al final...'
-                  : 'Ejemplo: mejora el hero, reemplaza el video o reorganiza la pagina...'}
+                  ? 'Ejemplo: centra el titular, pon el video debajo y deja el botón al final...'
+                  : 'Ejemplo: mejora el hero, reemplaza el video o reorganiza la página...'}
                 disabled={aiRegionSaving}
                 name="rstk-imported-ai-region-prompt"
                 {...importedEditorNoAutocompleteAttrs}
               />
             </label>
             {aiRegionMode ? (
-              <p>Arrastra sobre la vista previa la parte exacta que quieres cambiar. La instruccion se queda aqui lista para aplicar.</p>
+              <p>Arrastra sobre la vista previa la parte exacta que quieres cambiar. La instrucción se queda aquí lista para aplicar.</p>
             ) : aiRegionSelection ? (
-              <p>La IA usara esta zona como contexto. Puedes cambiar la seleccion o escribir algo para toda la pagina despues.</p>
+              <p>La IA usará esta zona como contexto. Puedes cambiar la selección o escribir algo para toda la página después.</p>
             ) : (
-              <p>Si no seleccionas zona, la IA revisa toda la pagina activa y aplica el cambio completo.</p>
+              <p>Si no seleccionas zona, la IA revisa toda la página activa y aplica el cambio completo.</p>
             )}
             {aiRegionError && (
               <div className={styles.importedAIRegionError}>
@@ -10946,7 +15494,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 </small>
                 {aiRegionLastAttempt.debug && (
                   <div className={styles.importedAIRegionDebug}>
-                    <span>Respuesta y diagnostico</span>
+                    <span>Respuesta y diagnóstico</span>
                     {aiRegionLastAttempt.debug.traceId && (
                       <small>Rastro para logs: {aiRegionLastAttempt.debug.traceId}</small>
                     )}
@@ -10954,19 +15502,19 @@ const ImportedHtmlEditorPanel: React.FC<{
                       <p><b>Respuesta de IA:</b> {aiRegionLastAttempt.debug.aiReply}</p>
                     )}
                     <p>
-                      <b>Que hizo Ristak:</b>{' '}
+                      <b>Qué hizo Ristak:</b>{' '}
                       {aiRegionLastAttempt.debug.agentApplied
-                        ? `Ejecuto ${aiRegionLastAttempt.debug.agentOperation || 'una operacion interna'} y guardo el HTML verificado.`
+                        ? `Ejecutó ${aiRegionLastAttempt.debug.agentOperation || 'una operación interna'} y guardó el HTML verificado.`
                         : aiRegionLastAttempt.debug.finalStatus === 'selection_target_missing'
                         ? 'Detuvo el guardado porque la zona seleccionada no incluye el elemento que pediste cambiar.'
                         : aiRegionLastAttempt.debug.fallbackApplied
-                        ? `Aplico ${aiRegionLastAttempt.debug.fallbackType || 'un ajuste automatico'} porque era mas confiable para esta zona.`
+                        ? `Aplicó ${aiRegionLastAttempt.debug.fallbackType || 'un ajuste automático'} porque era más confiable para esta zona.`
                         : aiRegionLastAttempt.debug.changedByAI
-                          ? 'Guardo el HTML que devolvio la IA.'
-                          : 'No detecto cambios visibles en el HTML.'}
+                          ? 'Guardó el HTML que devolvió la IA.'
+                          : 'No detectó cambios visibles en el HTML.'}
                     </p>
                     {aiRegionLastAttempt.debug.agentReason && (
-                      <p><b>Operacion:</b> {aiRegionLastAttempt.debug.agentReason}</p>
+                      <p><b>Operación:</b> {aiRegionLastAttempt.debug.agentReason}</p>
                     )}
                     {aiRegionLastAttempt.debug.agentOperations?.length ? (
                       <ul>
@@ -11003,7 +15551,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 disabled={saving || aiRegionSaving || previewLoading || Boolean(previewError)}
               >
                 <MousePointerClick size={14} />
-                {aiRegionMode ? 'Cancelar seleccion' : 'Seleccionar y modificar con IA'}
+                {aiRegionMode ? 'Cancelar selección' : 'Seleccionar y modificar con IA'}
               </Button>
               <Button
                 type="button"
@@ -11019,96 +15567,23 @@ const ImportedHtmlEditorPanel: React.FC<{
           </div>
         )}
 
-        {panelFormFields.length > 0 && !buttonEditor && !choiceEditor && !fieldEditor && (
-          <div className={styles.importedFormFieldsBox}>
-            <div className={styles.importedButtonActionHeader}>
-              <ListChecks size={17} />
-              <div>
-                <span>Formulario de esta pagina</span>
-                <strong>{panelFormFields.length} {panelFormFields.length === 1 ? 'campo' : 'campos'}</strong>
-              </div>
-            </div>
-            <p className={styles.importedFormFieldsHint}>
-              Edita cada campo desde aqui: etiqueta, opciones, obligatorio y acciones para calificar o descalificar.
-            </p>
-            <div className={styles.importedFormFieldsList}>
-              {panelFormFields.map(field => (
-                <button
-                  key={field.key}
-                  type="button"
-                  className={styles.importedFormFieldRow}
-                  onClick={() => openPanelFormField(field)}
-                  disabled={contentSaving}
-                >
-                  <span className={styles.importedFormFieldRowMain}>
-                    <strong>{field.label}</strong>
-                    <small>
-                      {field.typeLabel}
-                      {field.optionsCount > 0 ? ` · ${field.optionsCount} ${field.optionsCount === 1 ? 'opcion' : 'opciones'}` : ''}
-                    </small>
-                  </span>
-                  {field.hasDisqualify && <span className={styles.importedFormFieldBadge}>Descalifica</span>}
-                  <Pencil size={13} />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {(buttonEditorPanel || choiceEditor || fieldEditor) && (
+          <div
+            ref={elementPopoverRef}
+            className={styles.importedElementPopoverShell}
+            style={elementPopoverStyle}
+            role="dialog"
+            aria-label="Editar elemento seleccionado"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            {buttonEditorPanel}
 
-        <div className={styles.importedSidePanelActions}>
-          <Button type="button" variant="secondary" onClick={onEditFields} disabled={loadingImportData}>
-            {loadingImportData ? <RefreshCw size={15} /> : <Settings2 size={15} />}
-            Editar ruta de datos
-          </Button>
-        </div>
-
-        {buttonEditor && (
-          <div className={styles.importedButtonActionBox}>
-            <div className={styles.importedButtonActionHeader}>
-              <MousePointerClick size={17} />
-              <div>
-                <span>Botón seleccionado</span>
-                <strong>{buttonEditor.selection.label || 'Botón'}</strong>
-              </div>
-            </div>
-
-            <label className={styles.importedActionField}>
-              <span>Texto del botón</span>
-              <input
-                value={buttonEditor.value}
-                disabled={contentSaving}
-                name="rstk-imported-button-text"
-                {...importedEditorNoAutocompleteAttrs}
-                onChange={(event) => setButtonEditor(current => current ? { ...current, value: event.target.value } : current)}
-              />
-            </label>
-
-            <ImportedActionChainEditor
-              actions={buttonEditor.buttonActions}
-              targetPages={targetImportedPages}
-              actionOptions={currentPageActionOptions}
-              disabled={contentSaving}
-              onChange={(buttonActions) => setButtonEditor(current => current ? { ...current, buttonActions } : current)}
-            />
-
-            <div className={styles.importedButtonActionFooter}>
-              <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
-                Cancelar
-              </Button>
-              <Button type="button" size="sm" onClick={() => void saveButtonEditor()} disabled={!canSaveButtonEditor} loading={contentSaving}>
-                <Save size={14} />
-                Guardar botón
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {choiceEditor && (
+            {choiceEditor && (
           <div className={styles.importedButtonActionBox}>
             <div className={styles.importedButtonActionHeader}>
               <ListChecks size={17} />
               <div>
-                <span>Opcion seleccionada</span>
+                <span>Opción seleccionada</span>
                 <strong>{choiceEditor.selection.label}</strong>
               </div>
             </div>
@@ -11116,74 +15591,31 @@ const ImportedHtmlEditorPanel: React.FC<{
               <span>{choiceEditor.selection.choiceInputType === 'radio' ? 'Radio button' : 'Checkbox'}</span>
               <strong>{choiceEditor.selection.choiceName}</strong>
             </div>
-            <div className={styles.importedFieldOptionsEditor}>
-              <div className={styles.importedFieldOptionsHeader}>
-                <span>Opciones del grupo</span>
-                <button type="button" onClick={addChoiceOption} disabled={contentSaving || choiceEditor.options.length >= 30}>
-                  <Plus size={13} />
-                  Agregar
-                </button>
-              </div>
-              {choiceEditor.options.map((option, index) => (
-                <div key={`${index}-${option.value}`} className={styles.importedFieldOptionItem}>
-                  <div className={styles.importedFieldOptionRow}>
-                    <input
-                      value={option.label}
-                      disabled={contentSaving}
-                      placeholder={`Opción ${index + 1}`}
-                      name={`rstk-imported-choice-option-label-${index}`}
-                      {...importedEditorNoAutocompleteAttrs}
-                      onChange={(event) => patchChoiceOption(index, {
-                        label: event.target.value,
-                        value: option.value === option.label ? event.target.value : option.value
-                      })}
-                    />
-                    <input
-                      value={option.value}
-                      disabled={contentSaving}
-                      placeholder="valor"
-                      name={`rstk-imported-choice-option-value-${index}`}
-                      {...importedEditorNoAutocompleteAttrs}
-                      onChange={(event) => patchChoiceOption(index, { value: event.target.value })}
-                    />
-                    <button type="button" onClick={() => removeChoiceOption(index)} disabled={contentSaving || choiceEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
-                      <X size={13} />
-                    </button>
-                  </div>
-                  <label className={styles.importedFieldOptionAction}>
-                    <span>Al elegirla</span>
-                    <CustomSelect
-                      value={getImportedOptionQuickAction(option)}
-                      disabled={contentSaving}
-                      onChange={(event) => {
-                        const action = event.target.value as '' | ImportedButtonAction
-                        patchChoiceOption(index, { actions: action ? [makeImportedActionStep(action)] : [] })
-                      }}
-                    >
-                      {importedChoiceQuickActions.map(item => (
-                        <option key={item.value || 'none'} value={item.value}>{item.label}</option>
-                      ))}
-                    </CustomSelect>
-                  </label>
-                </div>
-              ))}
-            </div>
-            <p className={styles.importedFieldOptionsHint}>
-              Usa "Descalificar" en las opciones que no son tu cliente ideal: Ristak marca el contacto como no calificado.
-            </p>
+            <ImportedFieldOptionsEditor
+              title="Opciones del grupo"
+              selectionMode={choiceEditor.selection.choiceInputType === 'checkbox' ? 'multiple' : 'single'}
+              options={choiceEditor.options}
+              targetPages={targetImportedPages}
+              disabled={contentSaving}
+              namePrefix="rstk-imported-choice-option"
+              onAdd={addChoiceOption}
+              onDuplicate={duplicateChoiceOption}
+              onRemove={removeChoiceOption}
+              onPatch={patchChoiceOption}
+            />
             <div className={styles.importedButtonActionFooter}>
               <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
                 Cancelar
               </Button>
               <Button type="button" size="sm" onClick={() => void saveChoiceEditor()} disabled={!canSaveChoiceEditor} loading={contentSaving}>
                 <Save size={14} />
-                Guardar opcion
+                Guardar opción
               </Button>
             </div>
           </div>
-        )}
+            )}
 
-        {fieldEditor && (
+            {fieldEditor && (
           <div className={styles.importedButtonActionBox}>
             <div className={styles.importedButtonActionHeader}>
               <FormInput size={17} />
@@ -11228,62 +15660,21 @@ const ImportedHtmlEditorPanel: React.FC<{
               <span>Campo obligatorio</span>
             </label>
 
+            {selectedFieldRoutePanel}
+
             {fieldEditorHasOptions && (
-              <div className={styles.importedFieldOptionsEditor}>
-                <div className={styles.importedFieldOptionsHeader}>
-                  <span>Opciones del campo</span>
-                  <button type="button" onClick={addFieldOption} disabled={contentSaving || fieldEditor.options.length >= 30}>
-                    <Plus size={13} />
-                    Agregar
-                  </button>
-                </div>
-                {fieldEditor.options.map((option, index) => (
-                  <div key={`${index}-${option.value}`} className={styles.importedFieldOptionItem}>
-                    <div className={styles.importedFieldOptionRow}>
-                      <input
-                        value={option.label}
-                        disabled={contentSaving}
-                        placeholder={`Opción ${index + 1}`}
-                        name={`rstk-imported-field-option-label-${index}`}
-                        {...importedEditorNoAutocompleteAttrs}
-                        onChange={(event) => patchFieldOption(index, {
-                          label: event.target.value,
-                          value: option.value === option.label ? event.target.value : option.value
-                        })}
-                      />
-                      <input
-                        value={option.value}
-                        disabled={contentSaving}
-                        placeholder="valor"
-                        name={`rstk-imported-field-option-value-${index}`}
-                        {...importedEditorNoAutocompleteAttrs}
-                        onChange={(event) => patchFieldOption(index, { value: event.target.value })}
-                      />
-                      <button type="button" onClick={() => removeFieldOption(index)} disabled={contentSaving || fieldEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
-                        <X size={13} />
-                      </button>
-                    </div>
-                    <label className={styles.importedFieldOptionAction}>
-                      <span>Al elegirla</span>
-                      <CustomSelect
-                        value={getImportedOptionQuickAction(option)}
-                        disabled={contentSaving}
-                        onChange={(event) => {
-                          const action = event.target.value as '' | ImportedButtonAction
-                          patchFieldOption(index, { actions: action ? [makeImportedActionStep(action)] : [] })
-                        }}
-                      >
-                        {importedChoiceQuickActions.map(item => (
-                          <option key={item.value || 'none'} value={item.value}>{item.label}</option>
-                        ))}
-                      </CustomSelect>
-                    </label>
-                  </div>
-                ))}
-                <p className={styles.importedFieldOptionsHint}>
-                  Usa "Descalificar" en las opciones que no son tu cliente ideal: Ristak marca el contacto como no calificado.
-                </p>
-              </div>
+              <ImportedFieldOptionsEditor
+                title="Opciones del campo"
+                selectionMode={fieldEditor.selection.inputType === 'checkbox' ? 'multiple' : 'single'}
+                options={fieldEditor.options}
+                targetPages={targetImportedPages}
+                disabled={contentSaving}
+                namePrefix="rstk-imported-field-option"
+                onAdd={addFieldOption}
+                onDuplicate={duplicateFieldOption}
+                onRemove={removeFieldOption}
+                onPatch={patchFieldOption}
+              />
             )}
 
             <div className={styles.importedButtonActionFooter}>
@@ -11296,7 +15687,16 @@ const ImportedHtmlEditorPanel: React.FC<{
               </Button>
             </div>
           </div>
+            )}
+          </div>
         )}
+
+        <div className={styles.importedSidePanelActions}>
+          <Button type="button" variant="secondary" onClick={onEditFields} disabled={loadingImportData}>
+            {loadingImportData ? <RefreshCw size={15} /> : <Settings2 size={15} />}
+            Editar ruta de datos
+          </Button>
+        </div>
       </aside>
 
       <input
@@ -11384,7 +15784,7 @@ const ImportedHtmlEditorPanel: React.FC<{
               )}
               {inlineVideoPreview.kind === 'empty' && inlineEditor.value.trim() && (
                 <div className={styles.importedInlineVideoHint}>
-                  No se pudo mostrar aqui, pero Ristak intentara guardarlo como video seguro.
+                  No se pudo mostrar aquí, pero Ristak intentará guardarlo como video seguro.
                 </div>
               )}
               <div className={styles.importedInlineEditorActions}>
@@ -11428,8 +15828,8 @@ const importedStandardFieldOptions = [
   { value: 'full_name', label: 'Nombre completo' },
   { value: 'first_name', label: 'Nombre' },
   { value: 'last_name', label: 'Apellido' },
-  { value: 'email', label: 'Correo electronico' },
-  { value: 'phone', label: 'Telefono / WhatsApp' },
+  { value: 'email', label: 'Correo electrónico' },
+  { value: 'phone', label: 'Teléfono / WhatsApp' },
   { value: 'message', label: 'Mensaje o nota' }
 ]
 
@@ -11466,7 +15866,7 @@ const importedStandardFieldAliases: Record<string, string[]> = {
     'phone_no',
     'tel',
     'telephone',
-    'telefono',
+    'teléfono',
     'numero_telefono',
     'numero_de_telefono',
     'telefono_contacto',
@@ -11478,7 +15878,7 @@ const importedStandardFieldAliases: Record<string, string[]> = {
     'mobile',
     'mobile_phone',
     'mobile_number',
-    'movil',
+    'móvil',
     'cel',
     'cell',
     'cellphone',
@@ -11568,7 +15968,7 @@ const importedStandardFieldAliases: Record<string, string[]> = {
     'detalle',
     'detalles',
     'description',
-    'descripcion'
+    'descripción'
   ]
 }
 
@@ -11617,9 +16017,122 @@ const getImportedActiveCustomFields = (customFields: CustomFieldDefinition[]) =>
 const getImportedFieldRouteType = (field: ImportedSiteFieldMapping): ImportedSiteFieldMapping['destinationType'] => {
   if (field.ignored || field.destinationType === 'ignored' || field.saveMode === 'ignored') return 'ignored'
   if (field.destinationType === 'standard' || field.saveMode === 'standard') return 'standard'
-  if (field.destinationType === 'custom' && (field.customFieldDefinitionId || field.customFieldKey)) return 'custom'
-  if (field.destinationType === 'new_custom' || field.saveMode === 'new_custom') return 'new_custom'
-  return 'new_custom'
+  if (field.destinationType === 'custom' || field.saveMode === 'custom' || field.destinationType === 'new_custom' || field.saveMode === 'new_custom') return 'custom'
+  return 'custom'
+}
+
+const buildImportedSelectedFieldRouteContextKey = (context: ImportedSelectedFieldRouteContext | null) => (
+  context
+    ? [
+      context.editId,
+      context.fieldName,
+      context.fieldHtmlId,
+      context.label,
+      context.placeholder,
+      context.inputType,
+      context.tagName
+    ].join('|')
+    : ''
+)
+
+const getImportedFieldRouteTokens = (context: ImportedSelectedFieldRouteContext | null) => {
+  if (!context) return []
+  return [
+    context.editId,
+    context.fieldName,
+    context.fieldHtmlId,
+    context.label,
+    context.placeholder
+  ]
+    .map(value => normalizeImportedDestinationKey(value || '', ''))
+    .filter(Boolean)
+}
+
+const getImportedMappingTokens = (field: ImportedSiteFieldMapping) => (
+  [
+    field.fieldId,
+    field.sourceName,
+    field.label,
+    field.destinationKey,
+    field.customFieldKey,
+    field.customFieldLabel
+  ]
+    .map(value => normalizeImportedDestinationKey(value || '', ''))
+    .filter(Boolean)
+)
+
+const findImportedFieldRouteMatch = (
+  formMappings: ImportedSiteFormMapping[] | undefined,
+  context: ImportedSelectedFieldRouteContext | null
+): ImportedSelectedFieldRouteMatch | null => {
+  const routeTokens = getImportedFieldRouteTokens(context)
+  if (!formMappings?.length || !routeTokens.length) return null
+
+  let bestMatch: ImportedSelectedFieldRouteMatch | null = null
+  let bestScore = 0
+
+  formMappings.forEach((form, formIndex) => {
+    form.fields.forEach((field, fieldIndex) => {
+      const mappingTokens = getImportedMappingTokens(field)
+      if (!mappingTokens.length) return
+      let score = 0
+      routeTokens.forEach(token => {
+        if (!token) return
+        if (mappingTokens.includes(token)) {
+          score += 4
+          return
+        }
+        if (mappingTokens.some(mappingToken => mappingToken.includes(token) || token.includes(mappingToken))) {
+          score += 1
+        }
+      })
+
+      if (context?.inputType && field.type && normalizeImportedDestinationKey(field.type, '') === normalizeImportedDestinationKey(context.inputType, '')) {
+        score += 1
+      }
+
+      if (score > bestScore) {
+        bestScore = score
+        bestMatch = { formIndex, fieldIndex, field }
+      }
+    })
+  })
+
+  return bestScore > 0 ? bestMatch : null
+}
+
+const getImportedFieldRouteDefaultKey = (context: ImportedSelectedFieldRouteContext | null) => (
+  normalizeImportedDestinationKey(
+    context?.fieldName || context?.fieldHtmlId || context?.label || context?.placeholder || '',
+    'campo_personalizado'
+  )
+)
+
+const buildImportedSelectedFieldRouteDraft = (
+  match: ImportedSelectedFieldRouteMatch | null,
+  context: ImportedSelectedFieldRouteContext | null
+): ImportedSelectedFieldRouteDraft => {
+  if (!match) {
+    return {
+      destinationType: 'custom',
+      destinationKey: getImportedFieldRouteDefaultKey(context)
+    }
+  }
+
+  const destinationType = getImportedFieldRouteType(match.field)
+  return {
+    destinationType,
+    destinationKey: destinationType === 'standard'
+      ? match.field.destinationKey || inferImportedStandardKey(match.field)
+      : destinationType === 'custom'
+        ? match.field.customFieldKey || match.field.destinationKey || getImportedFieldRouteDefaultKey(context)
+        : match.field.destinationKey || getImportedFieldRouteDefaultKey(context),
+    customFieldDefinitionId: match.field.customFieldDefinitionId || '',
+    customFieldKey: match.field.customFieldKey || '',
+    customFieldLabel: match.field.customFieldLabel || '',
+    customFieldDataType: match.field.customFieldDataType || '',
+    customFieldSyncTarget: match.field.customFieldSyncTarget || ''
+  }
 }
 
 const findImportedCustomFieldDefinition = (
@@ -11628,6 +16141,18 @@ const findImportedCustomFieldDefinition = (
 ) => {
   const definitionId = field.customFieldDefinitionId || ''
   const customKey = normalizeImportedDestinationKey(field.customFieldKey || field.destinationKey || '', '')
+  return customFields.find(customField => (
+    (definitionId && customField.definitionId === definitionId) ||
+    (customKey && normalizeImportedDestinationKey(customField.fieldKey || customField.key, '') === customKey)
+  )) || null
+}
+
+const findImportedCustomFieldDefinitionForDraft = (
+  customFields: CustomFieldDefinition[],
+  draft: ImportedSelectedFieldRouteDraft
+) => {
+  const definitionId = draft.customFieldDefinitionId || ''
+  const customKey = normalizeImportedDestinationKey(draft.customFieldKey || draft.destinationKey || '', '')
   return customFields.find(customField => (
     (definitionId && customField.definitionId === definitionId) ||
     (customKey && normalizeImportedDestinationKey(customField.fieldKey || customField.key, '') === customKey)
@@ -11680,6 +16205,29 @@ const ImportedHtmlReviewModal: React.FC<{
     }))
   }
 
+  const customRouteNeedsSelection = (field: ImportedSiteFieldMapping) => (
+    getImportedFieldRouteType(field) === 'custom' &&
+    !findImportedCustomFieldDefinition(activeCustomFields, field)
+  )
+
+  const hasUnresolvedCustomRoutes = draft.some(form => form.fields.some(customRouteNeedsSelection))
+
+  const normalizeDraftForConfirm = () => draft.map(form => ({
+    ...form,
+    fields: form.fields.map(field => {
+      if (getImportedFieldRouteType(field) !== 'custom') return field
+      const selectedField = findImportedCustomFieldDefinition(activeCustomFields, field)
+      if (selectedField) return { ...field, ...buildExistingImportedCustomFieldPatch(selectedField) }
+      return {
+        ...field,
+        ...clearImportedCustomFieldPatch,
+        destinationType: 'ignored' as const,
+        ignored: true,
+        saveMode: 'ignored'
+      }
+    })
+  }))
+
   const updateDestinationType = (formIndex: number, fieldIndex: number, field: ImportedSiteFieldMapping, destinationType: ImportedSiteFieldMapping['destinationType']) => {
     if (destinationType === 'standard') {
       patchField(formIndex, fieldIndex, {
@@ -11698,16 +16246,12 @@ const ImportedHtmlReviewModal: React.FC<{
         patchField(formIndex, fieldIndex, buildExistingImportedCustomFieldPatch(selectedField))
         return
       }
-      destinationType = 'new_custom'
-    }
-
-    if (destinationType === 'new_custom') {
       patchField(formIndex, fieldIndex, {
         ...clearImportedCustomFieldPatch,
-        destinationType,
+        destinationType: 'custom',
         ignored: false,
-        saveMode: destinationType,
-        destinationKey: normalizeImportedDestinationKey(field.destinationKey || field.sourceName || field.label, 'campo_personalizado')
+        saveMode: 'custom',
+        destinationKey: ''
       })
       return
     }
@@ -11728,7 +16272,7 @@ const ImportedHtmlReviewModal: React.FC<{
           <div>
             <span>Ruta de datos</span>
             <h2 id="import-review-title">Enruta los campos del formulario</h2>
-            <p>Ristak ya lo hace automatico; aqui puedes ajustar donde se guarda cada dato de {review.importData.originalFilename || review.site.name}.</p>
+            <p>Ristak ya lo hace automático; aquí puedes ajustar dónde se guarda cada dato de {review.importData.originalFilename || review.site.name}.</p>
           </div>
           <button type="button" className={styles.importReviewClose} onClick={onClose} aria-label="Cerrar">
             <X size={18} />
@@ -11746,7 +16290,7 @@ const ImportedHtmlReviewModal: React.FC<{
           {draft.length === 0 ? (
             <div className={styles.importEmptyFields}>
               <CheckCircle2 size={20} />
-              <p>No encontramos formularios en este HTML. Puedes previsualizarlo y publicarlo como pagina informativa.</p>
+              <p>No encontramos formularios en este HTML. Puedes previsualizarlo y publicarlo como página informativa.</p>
             </div>
           ) : draft.map((form, formIndex) => (
             <section key={form.formId || formIndex} className={styles.importFormSection}>
@@ -11780,7 +16324,6 @@ const ImportedHtmlReviewModal: React.FC<{
                         >
                           <option value="standard">Dato del contacto</option>
                           <option value="custom">Campo personalizado</option>
-                          <option value="new_custom">Nuevo campo personalizado</option>
                           <option value="ignored">No guardar</option>
                         </CustomSelect>
                       </label>
@@ -11805,14 +16348,24 @@ const ImportedHtmlReviewModal: React.FC<{
                           <CustomSelect
                             value={selectedCustomFieldId}
                             onChange={(event) => {
+                              if (!event.target.value) {
+                                patchField(formIndex, fieldIndex, {
+                                  ...clearImportedCustomFieldPatch,
+                                  destinationType: 'custom',
+                                  ignored: false,
+                                  saveMode: 'custom',
+                                  destinationKey: ''
+                                })
+                                return
+                              }
                               const customField = activeCustomFields.find(item => item.definitionId === event.target.value)
                               if (!customField) return
                               patchField(formIndex, fieldIndex, buildExistingImportedCustomFieldPatch(customField))
                             }}
                           >
-                            {!activeCustomFields.length && (
-                              <option value="">No hay campos disponibles</option>
-                            )}
+                            <option value="" disabled>
+                              {activeCustomFields.length ? 'Elige un campo guardado' : 'No hay campos disponibles'}
+                            </option>
                             {selectedCustomFieldId && !selectedCustomField && (
                               <option value={selectedCustomFieldId}>{field.customFieldLabel || field.destinationKey || 'Campo guardado'}</option>
                             )}
@@ -11822,17 +16375,6 @@ const ImportedHtmlReviewModal: React.FC<{
                               </option>
                             ))}
                           </CustomSelect>
-                        </label>
-                      ) : destinationType === 'new_custom' ? (
-                        <label>
-                          <span>Nombre interno</span>
-                          <input
-                            value={field.destinationKey || ''}
-                            placeholder="campo_personalizado"
-                            onChange={(event) => patchField(formIndex, fieldIndex, {
-                              destinationKey: normalizeImportedDestinationKey(event.target.value, field.sourceName || field.label)
-                            })}
-                          />
                         </label>
                       ) : (
                         <label>
@@ -11852,9 +16394,9 @@ const ImportedHtmlReviewModal: React.FC<{
           <Button variant="secondary" onClick={onClose} disabled={saving}>
             Cerrar
           </Button>
-          <Button onClick={() => onConfirm(draft)} loading={saving}>
+          <Button onClick={() => onConfirm(normalizeDraftForConfirm())} loading={saving} disabled={hasUnresolvedCustomRoutes}>
             <Check size={15} />
-            Guardar ruta de datos
+            {hasUnresolvedCustomRoutes ? 'Elige campos guardados' : 'Guardar ruta de datos'}
           </Button>
         </footer>
       </div>
@@ -11937,7 +16479,7 @@ const LibrarySitePreview: React.FC<{
                 ) : (
                   <div className="rstkDropEmpty">
                     {isLandingPreview ? <LayoutTemplate size={22} /> : <FormInput size={22} />}
-                    <p>Sin bloques todavia</p>
+                    <p>Sin bloques todavía</p>
                   </div>
                 )}
                 {hasFields && (
@@ -12020,8 +16562,8 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
             {sites.length === 0
               ? getLibraryEmptyMessage(section)
               : isLandingLibrary
-                ? 'Agrega otra pagina o embudo a tu biblioteca.'
-                : 'Agrega otro formulario publico a tu biblioteca.'}
+                ? 'Agrega otra página o embudo a tu biblioteca.'
+                : 'Agrega otro formulario público a tu biblioteca.'}
           </small>
         </button>
 
@@ -12113,7 +16655,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           >
             <div className={styles.libraryRouteEditorHeader}>
               <div>
-                <span>Ruta publica</span>
+                <span>Ruta pública</span>
                 <strong>{routeEditingSite.name}</strong>
               </div>
               <button type="button" className={styles.libraryRouteClose} disabled={routeSavingId === routeEditingSite.id} onClick={cancelRouteEdit} aria-label="Cerrar editor de ruta">
@@ -12164,6 +16706,7 @@ interface CreateFlowPanelProps {
   aiAgentAvailable: boolean
   onCreate: (siteType: SiteType, mode?: 'blank' | 'template', templateId?: SiteTemplateId) => void
   onCreateWithAI: (siteKind: SitesAICreationKind) => void
+  onCreateBlankHtml: (siteType: SiteType) => void
   onImportHtml: (siteType: SiteType) => void
   onAdvance: (step: CreateFlow) => void
 }
@@ -12180,19 +16723,19 @@ const LANDING_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
   {
     id: 'full-page',
     title: 'Web grandes',
-    description: 'Embudos completos con pagina principal, captura, agenda o confirmacion.',
+    description: 'Embudos completos con página principal, captura, agenda o confirmación.',
     ids: ['ristak', 'executive', 'local']
   },
   {
     id: 'sales-pages',
     title: 'Cartas y lanzamientos',
-    description: 'Flujos completos para vender, registrar interesados y cerrar con pagina de gracias.',
+    description: 'Flujos completos para vender, registrar interesados y cerrar con página de gracias.',
     ids: ['vsl', 'launch', 'premium']
   },
   {
     id: 'social',
     title: 'Redes sociales',
-    description: 'Flujos cortos para anuncios sociales con captura y confirmacion final.',
+    description: 'Flujos cortos para anuncios sociales con captura y confirmación final.',
     ids: ['facebook', 'instagram', 'tiktok']
   }
 ]
@@ -12324,37 +16867,62 @@ const TemplateCategoryGallery: React.FC<{
   </div>
 )
 
-const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAgentAvailable, onCreate, onCreateWithAI, onImportHtml, onAdvance }) => {
+const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAgentAvailable, onCreate, onCreateWithAI, onCreateBlankHtml, onImportHtml, onAdvance }) => {
   return (
     <section className={styles.createPanel}>
       {step === 'landing-start' && (
-        <div className={styles.choiceGrid}>
-          <button type="button" disabled={creating} onClick={() => onCreate('landing_page', 'blank', 'ristak')}>
-            <FileText size={22} />
-            <strong>En blanco</strong>
-            <p>Canvas limpio para agregar solo los bloques que necesitas.</p>
-            <ChevronRight size={18} />
-          </button>
-          <button type="button" disabled={creating} onClick={() => onAdvance('landing-template')}>
-            <LayoutTemplate size={22} />
-            <strong>Desde plantilla</strong>
-            <p>Elige embudos completos para web, ventas, lanzamientos o redes sociales.</p>
-            <ChevronRight size={18} />
-          </button>
-          {aiAgentAvailable && (
-            <button type="button" disabled={creating} onClick={() => onCreateWithAI('landing')}>
-              <Sparkles size={22} />
-              <strong>Usando IA</strong>
-              <p>Genera una pagina HTML completa; Ristak la importa y revisa sus formularios.</p>
-              <ChevronRight size={18} />
-            </button>
-          )}
-          <button type="button" disabled={creating} onClick={() => onImportHtml('landing_page')}>
-            <Upload size={22} />
-            <strong>Subir HTML o ZIP</strong>
-            <p>Usa tu pagina actual o un sitio comprimido; Ristak detecta sus formularios para guardar contactos.</p>
-            <ChevronRight size={18} />
-          </button>
+        <div className={styles.createChoiceCategories}>
+          <section className={styles.createChoiceCategory}>
+            <div className={styles.createChoiceCategoryHeader}>
+              <span>Editor de bloques</span>
+              <strong>Crea el sitio visualmente</strong>
+              <p>Empieza desde cero o usa una plantilla para editar con secciones y bloques.</p>
+            </div>
+            <div className={styles.choiceGrid}>
+              <button type="button" disabled={creating} onClick={() => onCreate('landing_page', 'blank', 'ristak')}>
+                <FileText size={22} />
+                <strong>En blanco</strong>
+                <p>Canvas limpio para agregar solo los bloques que necesitas.</p>
+                <ChevronRight size={18} />
+              </button>
+              <button type="button" disabled={creating} onClick={() => onAdvance('landing-template')}>
+                <LayoutTemplate size={22} />
+                <strong>Desde plantilla</strong>
+                <p>Elige embudos completos para web, ventas, lanzamientos o redes sociales.</p>
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          </section>
+
+          <section className={styles.createChoiceCategory}>
+            <div className={styles.createChoiceCategoryHeader}>
+              <span>Editor HTML</span>
+              <strong>Trae o escribe tu propio código</strong>
+              <p>Abre una hoja HTML limpia, importa archivos o genera una página completa con IA.</p>
+            </div>
+            <div className={styles.choiceGrid}>
+              <button type="button" disabled={creating} onClick={() => onCreateBlankHtml('landing_page')}>
+                <Code2 size={22} />
+                <strong>Hoja HTML en blanco</strong>
+                <p>Escribe tu código o pega una versión editada con ChatGPT en otra ventana.</p>
+                <ChevronRight size={18} />
+              </button>
+              <button type="button" disabled={creating} onClick={() => onImportHtml('landing_page')}>
+                <Upload size={22} />
+                <strong>Subir HTML o ZIP</strong>
+                <p>Usa tu página actual o un sitio comprimido; Ristak detecta sus formularios.</p>
+                <ChevronRight size={18} />
+              </button>
+              {aiAgentAvailable && (
+                <button type="button" disabled={creating} onClick={() => onCreateWithAI('landing')}>
+                  <Sparkles size={22} />
+                  <strong>Usando IA</strong>
+                  <p>Genera una página HTML completa; Ristak la importa y revisa sus formularios.</p>
+                  <ChevronRight size={18} />
+                </button>
+              )}
+            </div>
+          </section>
         </div>
       )}
 
@@ -12371,14 +16939,14 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
         <div className={styles.choiceGrid}>
           <button type="button" disabled={creating} onClick={() => onAdvance('form-start')}>
             <FileText size={22} />
-            <strong>Formulario + paginas finales</strong>
-            <p>La persona responde y despues ve agradecimiento o descalificacion segun sus respuestas.</p>
+            <strong>Formulario + páginas finales</strong>
+            <p>La persona responde y después ve agradecimiento o descalificacion segun sus respuestas.</p>
             <ChevronRight size={18} />
           </button>
           <button type="button" disabled={creating} onClick={() => onAdvance('interactive-start')}>
             <FormInput size={22} />
-            <strong>Interactivo o multipagina</strong>
-            <p>Divide las preguntas en pasos o paginas para guiar mejor a la persona que responde.</p>
+            <strong>Interactivo o multipágina</strong>
+            <p>Divide las preguntas en pasos o páginas para guiar mejor a la persona que responde.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -12389,7 +16957,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
           <button type="button" disabled={creating} onClick={() => onCreate('standard_form', 'blank', 'compact')}>
             <FileText size={22} />
             <strong>En blanco</strong>
-            <p>Formulario limpio con paginas finales listas para personalizar.</p>
+            <p>Formulario limpio con páginas finales listas para personalizar.</p>
             <ChevronRight size={18} />
           </button>
           <button type="button" disabled={creating} onClick={() => onAdvance('form-template')}>
@@ -12409,7 +16977,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
           <button type="button" disabled={creating} onClick={() => onImportHtml('standard_form')}>
             <Upload size={22} />
             <strong>Subir HTML o ZIP</strong>
-            <p>Conserva tu formulario actual, aunque venga con varias paginas, y decide como guardar cada campo.</p>
+            <p>Conserva tu formulario actual, aunque venga con varias páginas, y decide como guardar cada campo.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -12440,7 +17008,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
           <button type="button" disabled={creating} onClick={() => onImportHtml('interactive_form')}>
             <Upload size={22} />
             <strong>Subir HTML o ZIP</strong>
-            <p>Importa formularios multipagina y revisa que datos se guardan en el contacto.</p>
+            <p>Importa formularios multipágina y revisa qué datos se guardan en el contacto.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -13058,7 +17626,7 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
                         </button>
                       </div>
                       <label className={styles.colorSlider}>
-                        <span>Direccion</span>
+                        <span>Dirección</span>
                         <input
                           type="range"
                           min={0}
@@ -13113,28 +17681,112 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
   )
 }
 
-const MediaUploadControl: React.FC<{
+const mediaPickerAssetLimit = 250
+
+function formatMediaPickerAssetSize(asset: MediaAsset) {
+  const bytes = Number(asset.quotaSize || asset.sizeProcessed || asset.sizeOriginal || 0)
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB'
+  const gb = bytes / 1024 / 1024 / 1024
+  if (gb >= 1) return `${gb.toFixed(gb >= 10 ? 0 : 1)} GB`
+  const mb = bytes / 1024 / 1024
+  if (mb >= 1) return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`
+  const kb = bytes / 1024
+  if (kb >= 1) return `${Math.max(1, Math.round(kb))} KB`
+  return `${Math.max(1, Math.round(bytes))} B`
+}
+
+function getMediaPickerAssetName(asset: MediaAsset) {
+  return asset.originalFilename || asset.storedFilename || asset.bunnyPath?.split('/').pop() || `Archivo ${asset.id.slice(0, 8)}`
+}
+
+function getMediaPickerAssetUrl(asset: MediaAsset, variant: 'file' | 'thumbnail' = 'file') {
+  const thumbnailValue = asset.metadata?.thumbnailUrl
+  const thumbnailUrl = typeof thumbnailValue === 'string' ? thumbnailValue.trim() : ''
+  if (variant === 'thumbnail' && thumbnailUrl) return thumbnailUrl
+  if (variant === 'thumbnail' && asset.mediaType === 'image' && asset.publicUrl) return asset.publicUrl
+  if (asset.publicUrl) return asset.publicUrl
+
+  const path = `/api/media/assets/${encodeURIComponent(asset.id)}/${variant}`
+  const baseUrl = import.meta.env.VITE_API_URL || ''
+  return `${baseUrl}${path}`
+}
+
+const SitesMediaPickerModal: React.FC<{
   kind: 'image' | 'video'
-  label?: string
   moduleEntityId?: string
-  onUploaded: (url: string) => void
-  onCommit: () => void
-}> = ({ kind, label, moduleEntityId, onUploaded, onCommit }) => {
+  onClose: () => void
+  onSelect: (url: string) => void
+}> = ({ kind, moduleEntityId, onClose, onSelect }) => {
   const inputRef = useRef<HTMLInputElement>(null)
+  const [assets, setAssets] = useState<MediaAsset[]>([])
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
-  const { showToast } = useNotification()
+  const [deletingAssetId, setDeletingAssetId] = useState('')
+  const { showToast, showConfirm } = useNotification()
   const accept = kind === 'image' ? 'image/*' : 'video/*'
+  const title = kind === 'image' ? 'Elegir imagen' : 'Elegir video'
+  const uploadText = uploading ? 'Subiendo...' : kind === 'image' ? 'Subir imagen nueva' : 'Subir video nuevo'
+
+  const loadAssets = useCallback(async () => {
+    setLoading(true)
+    try {
+      const list = await mediaService.listAllAssets({
+        mediaType: kind,
+        status: 'ready'
+      })
+      setAssets(list
+        .filter(asset => asset.status !== 'deleted' && asset.mediaType === kind)
+        .slice(0, mediaPickerAssetLimit))
+    } catch (error) {
+      showToast('error', 'No se pudo cargar Media', error instanceof Error ? error.message : 'Inténtalo otra vez.')
+    } finally {
+      setLoading(false)
+    }
+  }, [kind, showToast])
+
+  useEffect(() => {
+    void loadAssets()
+  }, [loadAssets])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  const filteredAssets = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase()
+    if (!normalizedQuery) return assets
+    return assets.filter(asset => {
+      const name = getMediaPickerAssetName(asset).toLowerCase()
+      const url = getMediaPickerAssetUrl(asset).toLowerCase()
+      return name.includes(normalizedQuery) || url.includes(normalizedQuery)
+    })
+  }, [assets, query])
+
+  const selectAsset = (asset: MediaAsset) => {
+    const url = getMediaPickerAssetUrl(asset)
+    if (!url) {
+      showToast('error', 'Archivo sin URL', 'Este archivo no tiene una URL pública disponible.')
+      return
+    }
+    onSelect(url)
+    onClose()
+  }
 
   const handleFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
     if (kind === 'image' && !file.type.startsWith('image/')) {
-      showToast('error', 'Archivo no valido', 'Sube una imagen JPG, PNG, GIF o WebP.')
+      showToast('error', 'Archivo no válido', 'Sube una imagen JPG, PNG, GIF o WebP.')
       return
     }
     if (kind === 'video' && !file.type.startsWith('video/')) {
-      showToast('error', 'Archivo no valido', 'Sube un video MP4, WebM o MOV.')
+      showToast('error', 'Archivo no válido', 'Sube un video MP4, WebM o MOV.')
       return
     }
 
@@ -13146,23 +17798,302 @@ const MediaUploadControl: React.FC<{
         moduleEntityId,
         isPublic: true
       })
-      onUploaded(uploaded.publicUrl)
-      window.setTimeout(onCommit, 0)
-      showToast('success', kind === 'image' ? 'Imagen subida' : 'Video subido', 'El archivo ya esta listo en el editor.')
+      setAssets(current => [uploaded, ...current.filter(asset => asset.id !== uploaded.id)].slice(0, mediaPickerAssetLimit))
+      onSelect(getMediaPickerAssetUrl(uploaded))
+      onClose()
+      showToast('success', kind === 'image' ? 'Imagen seleccionada' : 'Video seleccionado', 'El archivo ya quedó puesto en el editor.')
     } catch (error) {
-      showToast('error', 'No se pudo subir', error instanceof Error ? error.message : 'Intentalo otra vez.')
+      showToast('error', 'No se pudo subir', error instanceof Error ? error.message : 'Inténtalo otra vez.')
     } finally {
       setUploading(false)
     }
   }
 
+  const deleteAsset = async (asset: MediaAsset) => {
+    setDeletingAssetId(asset.id)
+    try {
+      await mediaService.deleteAsset(asset.id)
+      setAssets(current => current.filter(item => item.id !== asset.id))
+      showToast('success', 'Archivo eliminado', 'Se quitó de la biblioteca de Media.')
+    } catch (error) {
+      showToast('error', 'No se pudo eliminar', error instanceof Error ? error.message : 'Inténtalo otra vez.')
+    } finally {
+      setDeletingAssetId('')
+    }
+  }
+
+  const requestDeleteAsset = (asset: MediaAsset, event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    showConfirm(
+      'Eliminar archivo',
+      `Esto eliminará "${getMediaPickerAssetName(asset)}" de Media. Los sitios que ya usen su URL podrían dejar de mostrarlo.`,
+      () => { void deleteAsset(asset) },
+      'Eliminar',
+      'Cancelar'
+    )
+  }
+
+  return (
+    <div className={styles.mediaPickerOverlay} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <div className={styles.mediaPickerModal} role="dialog" aria-modal="true" aria-label={title}>
+        <header className={styles.mediaPickerHeader}>
+          <div>
+            <span>{kind === 'image' ? 'Biblioteca de imágenes' : 'Biblioteca de videos'}</span>
+            <strong>{title}</strong>
+          </div>
+          <button type="button" className={styles.mediaPickerIconButton} onClick={onClose} aria-label="Cerrar selector">
+            <X size={16} />
+          </button>
+        </header>
+        <div className={styles.mediaPickerToolbar}>
+          <label className={styles.mediaPickerSearch}>
+            <Search size={15} />
+            <input
+              value={query}
+              placeholder={kind === 'image' ? 'Buscar imagen...' : 'Buscar video...'}
+              onChange={(event) => setQuery(event.target.value)}
+              autoFocus
+            />
+          </label>
+          <div className={styles.mediaPickerActions}>
+            <button type="button" className={styles.mediaPickerSecondaryButton} onClick={() => void loadAssets()} disabled={loading || uploading}>
+              <RefreshCw size={14} />
+              <span>Actualizar</span>
+            </button>
+            <input ref={inputRef} type="file" accept={accept} onChange={handleFile} className={styles.hiddenFileInput} />
+            <button type="button" className={styles.mediaPickerUploadButton} onClick={() => inputRef.current?.click()} disabled={uploading}>
+              <Upload size={14} />
+              <span>{uploadText}</span>
+            </button>
+          </div>
+        </div>
+        <div className={styles.mediaPickerBody} aria-busy={loading || uploading}>
+          {loading ? (
+            <div className={styles.mediaPickerEmpty}>
+              <RefreshCw size={18} />
+              <span>Cargando biblioteca...</span>
+            </div>
+          ) : filteredAssets.length ? (
+            <div className={styles.mediaPickerGrid}>
+              {filteredAssets.map(asset => {
+                const assetUrl = getMediaPickerAssetUrl(asset)
+                const previewUrl = getMediaPickerAssetUrl(asset, 'thumbnail')
+                const name = getMediaPickerAssetName(asset)
+                const deleting = deletingAssetId === asset.id
+
+                return (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    key={asset.id}
+                    className={styles.mediaPickerAsset}
+                    onClick={() => selectAsset(asset)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        selectAsset(asset)
+                      }
+                    }}
+                  >
+                    <span className={styles.mediaPickerAssetPreview}>
+                      {kind === 'image' ? (
+                        <img src={previewUrl} alt="" loading="lazy" />
+                      ) : (
+                        assetUrl
+                          ? <video src={assetUrl} muted playsInline preload="metadata" />
+                          : <Video size={24} />
+                      )}
+                    </span>
+                    <span className={styles.mediaPickerAssetInfo}>
+                      <strong title={name}>{name}</strong>
+                      <small>{formatMediaPickerAssetSize(asset)}</small>
+                    </span>
+                    <span className={styles.mediaPickerAssetFooter}>
+                      <span>Elegir</span>
+                      <button
+                        type="button"
+                        className={styles.mediaPickerDeleteButton}
+                        onClick={(event) => requestDeleteAsset(asset, event)}
+                        disabled={deleting}
+                        aria-label={`Eliminar ${name}`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className={styles.mediaPickerEmpty}>
+              {kind === 'image' ? <Image size={20} /> : <Video size={20} />}
+              <strong>No hay {kind === 'image' ? 'imágenes' : 'videos'} listos</strong>
+              <span>Sube uno nuevo desde aquí o cambia la búsqueda.</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const MediaUploadControl: React.FC<{
+  kind: 'image' | 'video'
+  label?: string
+  moduleEntityId?: string
+  currentUrl?: string
+  onUploaded: (url: string) => void
+  onCommit?: () => void
+}> = ({ kind, label, moduleEntityId, currentUrl, onUploaded }) => {
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const buttonLabel = label || (currentUrl ? (kind === 'image' ? 'Cambiar imagen' : 'Cambiar video') : (kind === 'image' ? 'Elegir imagen' : 'Elegir video'))
+
   return (
     <div className={styles.mediaUploadControl}>
-      <input ref={inputRef} type="file" accept={accept} onChange={handleFile} className={styles.hiddenFileInput} />
-      <button type="button" onClick={() => inputRef.current?.click()} disabled={uploading}>
-        <Upload size={14} />
-        <span>{uploading ? 'Subiendo...' : label || (kind === 'image' ? 'Subir imagen' : 'Subir video')}</span>
+      <button type="button" onClick={() => setPickerOpen(true)}>
+        {kind === 'image' ? <Image size={14} /> : <Video size={14} />}
+        <span>{buttonLabel}</span>
       </button>
+      {pickerOpen && (
+        <SitesMediaPickerModal
+          kind={kind}
+          moduleEntityId={moduleEntityId}
+          onClose={() => setPickerOpen(false)}
+          onSelect={onUploaded}
+        />
+      )}
+    </div>
+  )
+}
+
+const VideoPlayerSettingsControls: React.FC<{
+  settings: Record<string, unknown>
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ settings, onPatchSettings, onSave }) => {
+  const controlsMode = getVideoControlsMode(settings)
+  const showWistiaControls = controlsMode === 'clean'
+
+  return (
+    <div className={styles.videoSettingsBox}>
+      <div className={styles.panelSubheader}>Reproductor</div>
+      <label className={styles.field}>
+        <span>Estilo del reproductor</span>
+        <CustomSelect
+          value={controlsMode}
+          onChange={(event) => {
+            const nextMode = isVideoControlsMode(event.target.value) ? event.target.value : DEFAULT_VIDEO_CONTROLS_MODE
+            onPatchSettings({
+              videoControlsMode: nextMode,
+              videoControls: nextMode === 'native'
+            })
+          }}
+          onBlur={onSave}
+        >
+          {videoControlsModeOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
+
+      <div className={styles.twoColumn}>
+        <label className={styles.field}>
+          <span>Velocidad inicial</span>
+          <CustomSelect
+            value={String(getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4))}
+            onChange={(event) => onPatchSettings({ videoDefaultSpeed: Number(event.target.value) })}
+            onBlur={onSave}
+          >
+            {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </CustomSelect>
+        </label>
+        <label className={styles.field}>
+          <span>Ajuste del video</span>
+          <CustomSelect value={getSettingString(settings, 'videoFit') || 'cover'} onChange={(event) => onPatchSettings({ videoFit: event.target.value })} onBlur={onSave}>
+            <option value="cover">Cubrir espacio</option>
+            <option value="contain">Mostrar completo</option>
+            <option value="fill">Estirar</option>
+          </CustomSelect>
+        </label>
+      </div>
+
+      <div className={styles.twoColumn}>
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={settings.videoPreviewEnabled !== false}
+            onChange={(event) => {
+              onPatchSettings({ videoPreviewEnabled: event.target.checked })
+              window.setTimeout(onSave, 0)
+            }}
+          />
+          <span>Preview de primeros segundos</span>
+        </label>
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={Boolean(settings.videoAutoplay)}
+            onChange={(event) => {
+              onPatchSettings({ videoAutoplay: event.target.checked, videoMuted: event.target.checked ? true : settings.videoMuted })
+              window.setTimeout(onSave, 0)
+            }}
+          />
+          <span>Autoplay</span>
+        </label>
+      </div>
+
+      <div className={styles.twoColumn}>
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={settings.videoMuted !== false}
+            onChange={(event) => {
+              onPatchSettings({ videoMuted: event.target.checked })
+              window.setTimeout(onSave, 0)
+            }}
+          />
+          <span>Iniciar silenciado</span>
+        </label>
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={Boolean(settings.videoLoop)}
+            onChange={(event) => {
+              onPatchSettings({ videoLoop: event.target.checked })
+              window.setTimeout(onSave, 0)
+            }}
+          />
+          <span>Repetir video</span>
+        </label>
+      </div>
+
+      {showWistiaControls && (
+        <>
+          <div className={styles.twoColumn}>
+            <ColorField label="Fondo del player" value={getSettingString(settings, 'videoPlayerColor') || 'rgba(0,0,0,.52)'} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
+            <ColorField label="Ícono play" value={getSettingString(settings, 'videoPlayColor') || '#ffffff'} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
+          </div>
+          <DimensionField
+            label="Tamaño del play"
+            value={getSettingNumber(settings, 'videoPlaySize', 64, 42, 110)}
+            min={42}
+            max={110}
+            onChange={(value) => onPatchSettings({ videoPlaySize: value })}
+            onCommit={onSave}
+          />
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={settings.videoSoundHint !== false}
+              onChange={(event) => {
+                onPatchSettings({ videoSoundHint: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Mostrar bocina animada</span>
+          </label>
+        </>
+      )}
     </div>
   )
 }
@@ -13217,7 +18148,7 @@ const CanvasChrome: React.FC<{
 }> = ({ platform, site, embedded = false }) => {
   const theme = site.theme || {}
   const name = theme.brandName || site.title || site.name || 'Tu marca'
-  const subtitle = theme.brandSubtitle || (platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado')
+  const subtitle = theme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado')
   const followers = String(theme.followers || '')
   const secondary = followers ? `${followers} seguidores` : subtitle
   const platformClass = platform === 'facebook'
@@ -13282,8 +18213,12 @@ const paletteGroups: Array<{ label: string; items: PaletteItem[] }> = [
       .map(blockType => ({ id: blockType, label: blockLabels[blockType as SiteBlockType], blockType: blockType as SiteBlockType }))
   },
   {
+    label: 'Sistema',
+    items: systemFormFieldPaletteItems
+  },
+  {
     label: 'Campos',
-    items: ['short_text', 'paragraph', 'email', 'phone', 'number', 'currency', 'date', 'dropdown', 'radio', 'checkboxes', 'description']
+    items: ['short_text', 'paragraph', 'number', 'currency', 'date', 'dropdown', 'radio', 'checkboxes', 'description']
       .map(blockType => ({ id: blockType, label: blockLabels[blockType as SiteBlockType], blockType: blockType as SiteBlockType }))
   }
 ]
@@ -13454,8 +18389,8 @@ const SeoOptimizationModal: React.FC<{
       >
         <div className={styles.seoModalHeader}>
           <div>
-            <span>Configuracion del sitio</span>
-            <h2 id="seo-modal-title">SEO & optimizacion de busqueda</h2>
+            <span>Configuración del sitio</span>
+            <h2 id="seo-modal-title">SEO & optimización de búsqueda</h2>
           </div>
           <button type="button" className={styles.seoModalClose} onClick={onClose} aria-label="Cerrar SEO">
             <X size={18} />
@@ -13466,28 +18401,28 @@ const SeoOptimizationModal: React.FC<{
           <section className={styles.seoSection}>
             <SeoSectionTitle icon={<FileText size={17} />} title="Contenido" issues={validation.contentIssues} />
             <label className={styles.seoField}>
-              <span>Titulo publico</span>
+              <span>Título público</span>
               <input
                 value={publicTitle}
-                placeholder="Nombre que vera la gente"
+                placeholder="Nombre que verá la gente"
                 onChange={(event) => onPatchSite({ title: event.target.value })}
                 onBlur={onSave}
               />
             </label>
-            <SeoCheckLine ok={checks.titlePresent}>La pagina tiene un titulo.</SeoCheckLine>
-            <SeoCheckLine ok={checks.titleLength}>El titulo tiene menos de 70 caracteres.</SeoCheckLine>
+            <SeoCheckLine ok={checks.titlePresent}>La página tiene un título.</SeoCheckLine>
+            <SeoCheckLine ok={checks.titleLength}>El título tiene menos de 70 caracteres.</SeoCheckLine>
             <label className={styles.seoField}>
-              <span>Descripcion</span>
+              <span>Descripción</span>
               <textarea
                 value={description}
-                placeholder="Explica en una frase clara que ofrece esta pagina."
+                placeholder="Explica en una frase clara que ofrece esta página."
                 rows={4}
                 onChange={(event) => onPatchSite({ description: event.target.value })}
                 onBlur={onSave}
               />
             </label>
-            <SeoCheckLine ok={checks.descriptionPresent}>La pagina tiene una descripcion para buscadores.</SeoCheckLine>
-            <SeoCheckLine ok={checks.descriptionLength}>La descripcion tiene menos de 155 caracteres.</SeoCheckLine>
+            <SeoCheckLine ok={checks.descriptionPresent}>La página tiene una descripción para buscadores.</SeoCheckLine>
+            <SeoCheckLine ok={checks.descriptionLength}>La descripción tiene menos de 155 caracteres.</SeoCheckLine>
           </section>
 
           <section className={styles.seoSection}>
@@ -13502,7 +18437,7 @@ const SeoOptimizationModal: React.FC<{
                 onBlur={onSave}
               />
             </label>
-            <SeoCheckLine ok={checks.keywordsPresent}>La pagina tiene palabras clave.</SeoCheckLine>
+            <SeoCheckLine ok={checks.keywordsPresent}>La página tiene palabras clave.</SeoCheckLine>
           </section>
 
           <section className={styles.seoSection}>
@@ -13516,11 +18451,11 @@ const SeoOptimizationModal: React.FC<{
                 onBlur={onSave}
               />
             </label>
-            <SeoCheckLine ok={checks.authorPresent}>La pagina tiene nombre de autor.</SeoCheckLine>
+            <SeoCheckLine ok={checks.authorPresent}>La página tiene nombre de autor.</SeoCheckLine>
           </section>
 
           <section className={styles.seoSection}>
-            <SeoSectionTitle icon={<Image size={17} />} title="Imagenes" issues={validation.imageIssues} />
+            <SeoSectionTitle icon={<Image size={17} />} title="Imágenes" issues={validation.imageIssues} />
             <label className={styles.seoField}>
               <span>Imagen principal para compartir</span>
               <div className={styles.seoUrlField}>
@@ -13533,7 +18468,7 @@ const SeoOptimizationModal: React.FC<{
                 <Image size={17} />
               </div>
             </label>
-            <SeoCheckLine ok={checks.imagePresent}>La pagina tiene imagen para compartir.</SeoCheckLine>
+            <SeoCheckLine ok={checks.imagePresent}>La página tiene imagen para compartir.</SeoCheckLine>
           </section>
 
           <section className={styles.seoSection}>
@@ -13545,7 +18480,7 @@ const SeoOptimizationModal: React.FC<{
                 onClick={() => addThemeLine('seoMetaTags', metaTags, '<meta name="robots" content="index, follow">')}
               >
                 <Plus size={15} />
-                Anadir
+                Añadir
               </button>
             </div>
             <textarea
@@ -13556,15 +18491,15 @@ const SeoOptimizationModal: React.FC<{
               onChange={(event) => patchThemeText('seoMetaTags', event.target.value)}
               onBlur={onSave}
             />
-            <SeoCheckLine ok={checks.metaTagsPresent}>La pagina tiene metaetiquetas personalizadas.</SeoCheckLine>
+            <SeoCheckLine ok={checks.metaTagsPresent}>La página tiene metaetiquetas personalizadas.</SeoCheckLine>
             <div className={styles.seoFieldHeader}>
-              <span>Enlaces canonicos</span>
+              <span>Enlaces canónicos</span>
               <button
                 type="button"
                 onClick={() => addThemeLine('seoCanonicalLinks', canonicalLinks, getRoutePath(site))}
               >
                 <Plus size={15} />
-                Anadir
+                Añadir
               </button>
             </div>
             <textarea
@@ -13576,7 +18511,7 @@ const SeoOptimizationModal: React.FC<{
               onBlur={onSave}
             />
             <SeoCheckLine ok={checks.outgoingLinksLimit}>
-              La pagina tiene menos de 300 enlaces salientes.
+              La página tiene menos de 300 enlaces salientes.
             </SeoCheckLine>
           </section>
 
@@ -13594,7 +18529,7 @@ const SeoOptimizationModal: React.FC<{
                 ))}
               </CustomSelect>
             </label>
-            <SeoCheckLine ok={checks.languagePresent}>La pagina tiene idioma seleccionado.</SeoCheckLine>
+            <SeoCheckLine ok={checks.languagePresent}>La página tiene idioma seleccionado.</SeoCheckLine>
           </section>
         </div>
 
@@ -13656,7 +18591,7 @@ const HeaderBlockControls: React.FC<{
         <span>Texto del header</span>
         <input
           value={block.content || ''}
-          placeholder="Nombre que vera la gente"
+          placeholder="Nombre que verá la gente"
           onChange={(event) => onPatchBlock(block, { content: event.target.value })}
           onBlur={() => onSaveBlock(block.id)}
         />
@@ -13681,12 +18616,126 @@ const HeaderBlockControls: React.FC<{
   )
 }
 
-const HeaderToolbarModal: React.FC<{
+const MetaEventParametersEditor: React.FC<{
+  eventName: string
+  parameters?: SiteMetaEventParameters
+  disabled?: boolean
+  onChange: (parameters: SiteMetaEventParameters) => void
+  onCommit: () => void
+}> = ({ eventName, parameters, disabled, onChange, onCommit }) => {
+  const fields = getMetaParameterFieldsForEvent(eventName)
+  const normalized = normalizeMetaEventParameters(parameters)
+  const customRows = normalized.custom || []
+  const visibleCustomRows = [
+    ...customRows,
+    { id: '__new_meta_parameter__', key: '', value: '' }
+  ]
+
+  const commitNext = (next: SiteMetaEventParameters) => {
+    onChange(pruneMetaEventParametersForEvent(next, eventName))
+  }
+
+  const patchField = (key: SiteMetaParameterFieldKey, value: string) => {
+    const next: SiteMetaEventParameters = { ...normalized }
+    const cleanValue = key === 'currency'
+      ? cleanMetaParameterString(value).toUpperCase().slice(0, 3)
+      : cleanMetaParameterString(value)
+    if (cleanValue) {
+      next[key] = cleanValue
+    } else {
+      delete next[key]
+    }
+    commitNext(next)
+  }
+
+  const patchCustomRow = (index: number, patch: Partial<SiteMetaCustomParameter>) => {
+    const rows = customRows.map(row => ({ ...row }))
+    while (rows.length <= index) {
+      rows.push({ id: `meta-param-${Date.now()}-${rows.length}`, key: '', value: '' })
+    }
+    rows[index] = normalizeMetaCustomParameter({ ...rows[index], ...patch })
+    const next: SiteMetaEventParameters = {
+      ...normalized,
+      custom: rows
+        .map(normalizeMetaCustomParameter)
+        .filter(parameter => parameter.key || parameter.value)
+        .slice(0, 12)
+    }
+    if (!next.custom?.length) delete next.custom
+    commitNext(next)
+  }
+
+  const removeCustomRow = (index: number) => {
+    const nextCustom = customRows.filter((_, rowIndex) => rowIndex !== index)
+    const next: SiteMetaEventParameters = {
+      ...normalized,
+      custom: nextCustom
+    }
+    if (!next.custom?.length) delete next.custom
+    commitNext(next)
+    onCommit()
+  }
+
+  if (!fields.length) return null
+
+  return (
+    <div className={styles.metaParametersForm}>
+      <div className={styles.metaParametersGrid}>
+        {fields.map(fieldKey => (
+          <label key={fieldKey} className={styles.metaParameterField}>
+            <span>{metaParameterFieldLabels[fieldKey]}</span>
+            <input
+              value={normalized[fieldKey] || ''}
+              placeholder={metaParameterFieldPlaceholders[fieldKey]}
+              disabled={disabled}
+              inputMode={fieldKey === 'value' || fieldKey === 'predictedLtv' || fieldKey === 'numItems' ? 'decimal' : undefined}
+              onChange={(event) => patchField(fieldKey, event.target.value)}
+              onBlur={onCommit}
+            />
+          </label>
+        ))}
+      </div>
+      <div className={styles.metaCustomParameters}>
+        <span>Parámetros custom</span>
+        {visibleCustomRows.map((parameter, index) => {
+          const isNewRow = index >= customRows.length
+          return (
+            <div key={parameter.id || `meta-param-${index}`} className={styles.metaCustomParameterRow}>
+              <input
+                value={parameter.key}
+                placeholder="parametro_meta"
+                disabled={disabled}
+                onChange={(event) => patchCustomRow(index, { key: event.target.value })}
+                onBlur={onCommit}
+              />
+              <input
+                value={parameter.value}
+                placeholder="valor"
+                disabled={disabled}
+                onChange={(event) => patchCustomRow(index, { value: event.target.value })}
+                onBlur={onCommit}
+              />
+              <button
+                type="button"
+                disabled={disabled || isNewRow}
+                title="Eliminar parámetro"
+                onClick={() => removeCustomRow(index)}
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+const MetaPageConversionToolbar: React.FC<{
   site: PublicSite
   pages: SitePage[]
-  activePage: SitePage | null
-  metaPixelConnected: boolean
-  onClose: () => void
+  activePage: SitePage
+  disabled?: boolean
   onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void | Promise<void>
@@ -13694,14 +18743,465 @@ const HeaderToolbarModal: React.FC<{
   site,
   pages,
   activePage,
-  metaPixelConnected,
-  onClose,
+  disabled,
   onPatchSite,
   onPatchTheme,
   onSaveSite
 }) => {
+  const [paramsOpen, setParamsOpen] = useState(false)
+  const metaEnabled = Boolean(site.metaCapiEnabled)
+  const activePageEventName = activePage.metaCapiEnabled
+    ? normalizeMetaEventName(activePage.metaEventName, 'none')
+    : 'none'
+  const activePageHasConversion = activePageEventName !== 'none'
+  const activePageHasParameters = hasMetaEventParameters(activePage.metaEventParameters)
+
+  useEffect(() => {
+    if (!metaEnabled || !activePageHasConversion) {
+      setParamsOpen(false)
+    }
+  }, [activePageHasConversion, metaEnabled])
+
+  const saveSoon = () => {
+    window.setTimeout(() => { void onSaveSite() }, 0)
+  }
+
+  const patchActivePage = (patch: Partial<SitePage>) => {
+    onPatchTheme({
+      pages: normalizePagesForSave(pages.map(page => (
+        page.id === activePage.id ? { ...page, ...patch } : page
+      )))
+    })
+  }
+
+  return (
+    <div
+      className={`${styles.metaConversionToolbar} ${metaEnabled && activePageHasConversion ? styles.metaConversionToolbarActive : ''}`}
+      title={metaEnabled ? 'Conversión de Meta para esta página' : 'Activa Meta para configurar conversiones'}
+    >
+      <span className={styles.metaMark} aria-hidden="true">∞</span>
+      <label className={styles.metaSwitch}>
+        <input
+          type="checkbox"
+          checked={metaEnabled}
+          disabled={disabled}
+          aria-label="Activar medición de Meta"
+          onChange={(event) => {
+            onPatchSite({ metaCapiEnabled: event.target.checked })
+            saveSoon()
+          }}
+        />
+        <span className={styles.metaSwitchTrack} />
+      </label>
+      <label className={styles.metaConversionField}>
+        <span>Cuando</span>
+        <CustomSelect
+          className={styles.metaConversionSelect}
+          value={normalizeMetaTrigger(activePage.metaTrigger)}
+          disabled={disabled || !metaEnabled || !activePageHasConversion}
+          portal
+          onChange={(event) => {
+            patchActivePage({ metaTrigger: event.target.value as SiteMetaTrigger })
+            saveSoon()
+          }}
+        >
+          {metaTriggerOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
+      <label className={`${styles.metaConversionField} ${styles.metaConversionEventField}`}>
+        <span>Evento</span>
+        <CustomSelect
+          className={styles.metaConversionSelect}
+          value={activePageEventName}
+          disabled={disabled || !metaEnabled}
+          portal
+          onChange={(event) => {
+            const metaEventName = event.target.value
+            patchActivePage({
+              metaEventName,
+              metaCapiEnabled: metaEventName !== 'none',
+              metaEventParameters: pruneMetaEventParametersForEvent(activePage.metaEventParameters, metaEventName)
+            })
+            saveSoon()
+          }}
+        >
+          {metaEventOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
+      <button
+        type="button"
+        className={[
+          styles.metaParametersToggle,
+          paramsOpen ? styles.metaParametersToggleActive : '',
+          activePageHasParameters ? styles.metaParametersToggleFilled : ''
+        ].filter(Boolean).join(' ')}
+        disabled={disabled || !metaEnabled || !activePageHasConversion}
+        aria-expanded={paramsOpen}
+        title="Parámetros opcionales de Meta"
+        onClick={() => setParamsOpen(open => !open)}
+      >
+        <Settings2 size={14} />
+        <span>Params</span>
+        <ChevronDown size={13} />
+      </button>
+      {paramsOpen && metaEnabled && activePageHasConversion && (
+        <div className={styles.metaParametersPopover}>
+          <div className={styles.metaParametersHeader}>
+            <strong>Parámetros Meta</strong>
+            <span>{activePageEventName}</span>
+          </div>
+          <MetaEventParametersEditor
+            eventName={activePageEventName}
+            parameters={activePage.metaEventParameters}
+            disabled={disabled}
+            onChange={(metaEventParameters) => patchActivePage({ metaEventParameters })}
+            onCommit={saveSoon}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+const MetaBrandMark: React.FC<{ size?: number }> = ({ size = 18 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path
+      d="M3.25 14.45c0-4.38 2.03-7.58 4.55-7.58 1.82 0 3.18 1.28 4.2 3.3 1.02-2.02 2.38-3.3 4.2-3.3 2.52 0 4.55 3.2 4.55 7.58 0 2.34-.88 3.68-2.38 3.68-1.56 0-2.72-1.36-4.28-4.08L12 10.43l-2.09 3.62c-1.56 2.72-2.72 4.08-4.28 4.08-1.5 0-2.38-1.34-2.38-3.68Z"
+      stroke="currentColor"
+      strokeWidth="2.25"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+)
+
+const MetaPageConversionSettingsPanel: React.FC<{
+  site: PublicSite
+  pages: SitePage[]
+  activePage: SitePage
+  disabled?: boolean
+  onPatchSite: (patch: Partial<PublicSite>) => void
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void | Promise<void>
+}> = ({
+  site,
+  pages,
+  activePage,
+  disabled,
+  onPatchSite,
+  onPatchTheme,
+  onSaveSite
+}) => {
+  const [paramsOpen, setParamsOpen] = useState(false)
+  const metaEnabled = Boolean(site.metaCapiEnabled)
+  const activePageEventName = activePage.metaCapiEnabled
+    ? normalizeMetaEventName(activePage.metaEventName, 'none')
+    : 'none'
+  const activePageHasConversion = activePageEventName !== 'none'
+  const activePageHasParameters = hasMetaEventParameters(activePage.metaEventParameters)
+
+  useEffect(() => {
+    if (!metaEnabled || !activePageHasConversion) setParamsOpen(false)
+  }, [activePageHasConversion, metaEnabled])
+
+  const saveSoon = () => {
+    window.setTimeout(() => { void onSaveSite() }, 0)
+  }
+
+  const patchActivePage = (patch: Partial<SitePage>) => {
+    onPatchTheme({
+      pages: normalizePagesForSave(pages.map(page => (
+        page.id === activePage.id ? { ...page, ...patch } : page
+      )))
+    })
+  }
+
+  return (
+    <div className={styles.editorSettingsMetaControls}>
+      <div className={`${styles.editorSettingsMetaRow} ${metaEnabled ? styles.editorSettingsMetaRowActive : ''}`}>
+        <span className={styles.editorSettingsMetaLogo} aria-hidden="true">
+          <MetaBrandMark size={18} />
+        </span>
+        <div>
+          <strong>Meta Pixel + CAPI</strong>
+          <small>{metaEnabled ? 'Encendido para visitas y conversiones' : 'Apagado para esta página'}</small>
+        </div>
+        <label className={styles.metaSwitch}>
+          <input
+            type="checkbox"
+            checked={metaEnabled}
+            disabled={disabled}
+            aria-label="Activar medición de Meta"
+            onChange={(event) => {
+              onPatchSite({ metaCapiEnabled: event.target.checked })
+              saveSoon()
+            }}
+          />
+          <span className={styles.metaSwitchTrack} />
+        </label>
+      </div>
+
+      <div className={styles.editorSettingsTwoColumn}>
+        <label className={styles.editorSettingsField}>
+          <span>Cuando</span>
+          <CustomSelect
+            value={normalizeMetaTrigger(activePage.metaTrigger)}
+            disabled={disabled || !metaEnabled || !activePageHasConversion}
+            portal
+            onChange={(event) => {
+              patchActivePage({ metaTrigger: event.target.value as SiteMetaTrigger })
+              saveSoon()
+            }}
+          >
+            {metaTriggerOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+
+        <label className={styles.editorSettingsField}>
+          <span>Evento</span>
+          <CustomSelect
+            value={activePageEventName}
+            disabled={disabled || !metaEnabled}
+            portal
+            onChange={(event) => {
+              const metaEventName = event.target.value
+              patchActivePage({
+                metaEventName,
+                metaCapiEnabled: metaEventName !== 'none',
+                metaEventParameters: pruneMetaEventParametersForEvent(activePage.metaEventParameters, metaEventName)
+              })
+              saveSoon()
+            }}
+          >
+            {metaEventOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+      </div>
+
+      <button
+        type="button"
+        className={[
+          styles.editorSettingsInlineToggle,
+          paramsOpen ? styles.editorSettingsInlineToggleActive : '',
+          activePageHasParameters ? styles.editorSettingsInlineToggleFilled : ''
+        ].filter(Boolean).join(' ')}
+        disabled={disabled || !metaEnabled || !activePageHasConversion}
+        aria-expanded={paramsOpen}
+        onClick={() => setParamsOpen(open => !open)}
+      >
+        <Settings2 size={14} />
+        <span>Parámetros</span>
+        <ChevronDown size={13} />
+      </button>
+
+      {paramsOpen && metaEnabled && activePageHasConversion && (
+        <MetaEventParametersEditor
+          eventName={activePageEventName}
+          parameters={activePage.metaEventParameters}
+          disabled={disabled}
+          onChange={(metaEventParameters) => patchActivePage({ metaEventParameters })}
+          onCommit={saveSoon}
+        />
+      )}
+    </div>
+  )
+}
+
+const EditorSettingsDropdown: React.FC<{
+  site: PublicSite
+  pages: SitePage[]
+  activePage: SitePage | null
+  domainConfig: SitesDomainConfig
+  seoIssues: number
+  metaPixelConnected: boolean
+  disabled?: boolean
+  canEditHeader: boolean
+  routeValue: string
+  routePlaceholder: string
+  onRouteChange: (value: string) => void
+  onPatchSite: (patch: Partial<PublicSite>) => void
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void | Promise<void>
+  onOpenSeo: () => void
+  onOpenHeader: () => void
+}> = ({
+  site,
+  pages,
+  activePage,
+  domainConfig,
+  seoIssues,
+  metaPixelConnected,
+  disabled,
+  canEditHeader,
+  routeValue,
+  routePlaceholder,
+  onRouteChange,
+  onPatchSite,
+  onPatchTheme,
+  onSaveSite,
+  onOpenSeo,
+  onOpenHeader
+}) => {
+  const [open, setOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement | null>(null)
+  const publicDomain = getPublicDomainPreview(domainConfig)
+  const routePreview = `${publicDomain}/${routeValue || routePlaceholder}`
+
+  useEffect(() => {
+    if (!open) return
+
+    const handleMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (dropdownRef.current?.contains(target)) return
+      if (target instanceof Element && target.closest('[data-ristak-dropdown-panel]')) return
+      setOpen(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+
+    document.addEventListener('mousedown', handleMouseDown)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
+
+  const openNestedPanel = (callback: () => void) => {
+    setOpen(false)
+    callback()
+  }
+
+  return (
+    <div ref={dropdownRef} className={styles.editorSettingsDropdown}>
+      <button
+        type="button"
+        className={`${styles.editorSettingsButton} ${open ? styles.editorSettingsButtonActive : ''} ${seoIssues ? styles.editorSettingsButtonWarning : ''}`}
+        disabled={disabled}
+        aria-expanded={open}
+        onClick={() => setOpen(current => !current)}
+        title="Ajustes del sitio"
+      >
+        <Settings2 size={15} />
+        <span>Ajustes</span>
+        {Boolean(seoIssues) && (
+          <span className={styles.editorSettingsBadge} aria-label={`${seoIssues} pendientes de SEO`}>
+            {seoIssues}
+          </span>
+        )}
+        <ChevronDown size={13} />
+      </button>
+
+      {open && (
+        <div className={styles.editorSettingsPanel} data-ristak-dropdown-panel>
+          <section className={styles.editorSettingsSection}>
+            <div className={styles.editorSettingsSectionHeader}>
+              <span className={styles.editorSettingsSectionIcon}><Link2 size={15} /></span>
+              <div>
+                <strong>Ruta pública</strong>
+                <small>Edita la dirección de esta página</small>
+              </div>
+            </div>
+            <label className={styles.editorSettingsRouteField}>
+              <span>{publicDomain}/</span>
+              <input
+                value={routeValue}
+                aria-label="Ruta pública"
+                placeholder={routePlaceholder}
+                disabled={disabled}
+                onChange={(event) => onRouteChange(event.target.value)}
+                onBlur={() => { void onSaveSite() }}
+              />
+            </label>
+            <div className={styles.editorSettingsRoutePreview}>
+              <ExternalLink size={13} />
+              <span>{routePreview}</span>
+            </div>
+          </section>
+
+          {canEditHeader && (
+            <section className={styles.editorSettingsSection}>
+              <div className={styles.editorSettingsSectionHeader}>
+                <span className={styles.editorSettingsSectionIcon}><PanelTop size={15} /></span>
+                <div>
+                  <strong>Headers</strong>
+                  <small>Código global y código de esta página</small>
+                </div>
+                <button type="button" onClick={() => openNestedPanel(onOpenHeader)}>
+                  Editar
+                </button>
+              </div>
+            </section>
+          )}
+
+          <section className={styles.editorSettingsSection}>
+            {metaPixelConnected && isLanding(site) && activePage ? (
+              <MetaPageConversionSettingsPanel
+                site={site}
+                pages={pages}
+                activePage={activePage}
+                disabled={disabled}
+                onPatchSite={onPatchSite}
+                onPatchTheme={onPatchTheme}
+                onSaveSite={onSaveSite}
+              />
+            ) : (
+              <div className={styles.editorSettingsMetaRow}>
+                <span className={styles.editorSettingsMetaLogo} aria-hidden="true">
+                  <MetaBrandMark size={18} />
+                </span>
+                <div>
+                  <strong>Meta Pixel + CAPI</strong>
+                  <small>{metaPixelConnected ? 'No disponible para esta vista' : 'Conecta Meta en Configuración'}</small>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className={styles.editorSettingsSection}>
+            <div className={styles.editorSettingsSectionHeader}>
+              <span className={styles.editorSettingsSectionIcon}><Search size={15} /></span>
+              <div>
+                <strong>SEO</strong>
+                <small>{seoIssues ? `${seoIssues} pendientes detectados` : 'SEO completo'}</small>
+              </div>
+              <button type="button" onClick={() => openNestedPanel(onOpenSeo)}>
+                Revisar
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const HeaderToolbarModal: React.FC<{
+  site: PublicSite
+  pages: SitePage[]
+  activePage: SitePage | null
+  onClose: () => void
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void | Promise<void>
+}> = ({
+  site,
+  pages,
+  activePage,
+  onClose,
+  onPatchTheme,
+  onSaveSite
+}) => {
   const [savingModal, setSavingModal] = useState(false)
-  const activePageTitle = activePage?.title || 'esta pagina'
+  const activePageTitle = activePage?.title || 'esta página'
   const siteKindLabel = isFormSite(site) ? 'formulario' : 'sitio'
   const theme = site.theme || {}
   const globalHeaderCode = getThemeString(theme, 'headerTrackingCode')
@@ -13746,7 +19246,7 @@ const HeaderToolbarModal: React.FC<{
       >
         <div className={styles.seoModalHeader}>
           <div>
-            <span>Codigos de tracking</span>
+            <span>Códigos de tracking</span>
             <h2 id="header-modal-title">Header</h2>
           </div>
           <button type="button" className={styles.seoModalClose} onClick={onClose} aria-label="Cerrar Header">
@@ -13758,31 +19258,10 @@ const HeaderToolbarModal: React.FC<{
           <section className={styles.seoSection}>
             <div className={styles.headerModalIntro}>
               <SeoSectionTitle icon={<PanelTop size={17} />} title="Header global" />
-              <p>Pega aqui el codigo que debe cargarse en todas las paginas del {siteKindLabel}.</p>
+              <p>Pega aquí el código que debe cargarse en todas las páginas del {siteKindLabel}.</p>
             </div>
-            {metaPixelConnected && (
-              <div className={`${styles.metaCard} ${styles.headerModalMetaCard} ${site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
-                <span className={styles.metaMark} aria-hidden="true">∞</span>
-                <div className={styles.metaCardInfo}>
-                  <strong>{site.metaCapiEnabled ? 'Meta encendido' : 'Meta apagado'}</strong>
-                  <small>{site.metaCapiEnabled ? 'Se mediran visitas y conversiones' : 'Activalo para enviar eventos'}</small>
-                </div>
-                <label className={styles.metaSwitch}>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(site.metaCapiEnabled)}
-                    aria-label="Activar medicion de Meta"
-                    onChange={(event) => {
-                      onPatchSite({ metaCapiEnabled: event.target.checked })
-                      window.setTimeout(() => { void onSaveSite() }, 0)
-                    }}
-                  />
-                  <span className={styles.metaSwitchTrack} />
-                </label>
-              </div>
-            )}
             <label className={styles.seoField}>
-              <span>Codigo global en header</span>
+              <span>Código global en header</span>
               <textarea
                 className={styles.headerCodeTextarea}
                 rows={8}
@@ -13792,17 +19271,17 @@ const HeaderToolbarModal: React.FC<{
                 onChange={(event) => onPatchTheme({ headerTrackingCode: event.target.value })}
                 onBlur={() => { void onSaveSite() }}
               />
-              <small>Se insertara antes de cerrar el &lt;/head&gt; en todas las paginas publicas.</small>
+              <small>Se insertará antes de cerrar el &lt;/head&gt; en todas las páginas públicas.</small>
             </label>
           </section>
 
           <section className={styles.seoSection}>
             <div className={styles.headerModalIntro}>
-              <SeoSectionTitle icon={<PanelTop size={17} />} title="Header de esta pagina" />
-              <p>Usalo cuando {activePageTitle} necesita un codigo diferente o adicional.</p>
+              <SeoSectionTitle icon={<PanelTop size={17} />} title="Header de esta página" />
+              <p>Úsalo cuando {activePageTitle} necesita un código diferente o adicional.</p>
             </div>
             <label className={styles.seoField}>
-              <span>Codigo solo para esta pagina</span>
+              <span>Código solo para esta página</span>
               <textarea
                 className={styles.headerCodeTextarea}
                 rows={8}
@@ -13813,7 +19292,7 @@ const HeaderToolbarModal: React.FC<{
                 onChange={(event) => patchActivePage({ headerTrackingCode: event.target.value })}
                 onBlur={() => { void onSaveSite() }}
               />
-              <small>Se agregara despues del codigo global y solo se cargara en esta pagina.</small>
+              <small>Se agregará después del código global y solo se cargará en esta página.</small>
             </label>
           </section>
         </div>
@@ -13957,13 +19436,13 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
       >
         <FileText size={15} />
         <span className={styles.pagesDropdownTriggerText}>
-          <strong>{activePage?.title || 'Pagina 1'}</strong>
+          <strong>{activePage?.title || 'Página 1'}</strong>
         </span>
         <ChevronDown size={15} className={styles.pagesDropdownChevron} />
       </button>
 
       {open && (
-        <div className={styles.pagesDropdownPanel} role="dialog" aria-label="Paginas del sitio">
+        <div className={styles.pagesDropdownPanel} role="dialog" aria-label="Páginas del sitio">
           {onChangeMode && (
             <div style={{ padding: '10px 12px 0' }}>
               <div
@@ -14005,7 +19484,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
             </div>
           )}
           <div className={styles.pagesDropdownHeader}>
-            <span>{websiteMode ? 'Paginas y subpaginas' : 'Paginas'}</span>
+            <span>{websiteMode ? 'Páginas y subpáginas' : 'Páginas'}</span>
             <strong>{pages.length}</strong>
           </div>
           <DndContext
@@ -14071,7 +19550,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                 {!locked && (
                   <button type="button" className={styles.pagesDropdownAddButton} onClick={() => { onAddPage() }}>
                     <Plus size={15} />
-                    {websiteMode ? 'Agregar pagina principal' : 'Agregar pagina'}
+                    {websiteMode ? 'Agregar página principal' : 'Agregar página'}
                   </button>
                 )}
               </div>
@@ -14079,7 +19558,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
           </DndContext>
 
           {fixedPages.length > 0 && (
-            <div className={styles.pagesDropdownFixedSection} aria-label="Paginas de resultado del formulario">
+            <div className={styles.pagesDropdownFixedSection} aria-label="Páginas de resultado del formulario">
               <div className={styles.pagesDropdownFixedHeader}>
                 <span>Resultado del formulario</span>
                 <strong>Orden fijo</strong>
@@ -14167,7 +19646,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   onDoneRename
 }) => {
   const [menuOpen, setMenuOpen] = useState(false)
-  const title = page.title || `Pagina ${index + 1}`
+  const title = page.title || `Página ${index + 1}`
   const dragDisabled = locked || fixedPage
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: page.id,
@@ -14194,7 +19673,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
           {...(!dragDisabled ? attributes : {})}
           {...(!dragDisabled ? listeners : {})}
           aria-label={!dragDisabled ? `Arrastrar ${title}` : undefined}
-          title={!dragDisabled ? 'Arrastra para ordenar' : 'Esta pagina no se puede mover'}
+          title={!dragDisabled ? 'Arrastra para ordenar' : 'Esta página no se puede mover'}
           onClick={(event) => event.stopPropagation()}
         >
           <GripVertical size={18} />
@@ -14239,7 +19718,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                 <button
                   type="button"
                   className={styles.pagesDropdownMenuButton}
-                  aria-label="Opciones de pagina"
+                  aria-label="Opciones de página"
                   onPointerDown={(event) => event.stopPropagation()}
                   onKeyDown={(event) => event.stopPropagation()}
                 >
@@ -14269,7 +19748,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                   }}
                 >
                   <Copy size={14} />
-                  Duplicar pagina
+                  Duplicar página
                 </DropdownMenuItem>
                 {showAddSubpage && onAddSubpage && (
                   <DropdownMenuItem
@@ -14318,7 +19797,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                   }}
                 >
                   <Trash2 size={14} />
-                  Eliminar pagina
+                  Eliminar página
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -14346,7 +19825,7 @@ const FunnelFixedPageDropdownItem: React.FC<FunnelFixedPageDropdownItemProps> = 
   pageToneClass,
   onSelect
 }) => {
-  const title = page.title || `Pagina ${index + 1}`
+  const title = page.title || `Página ${index + 1}`
 
   return (
     <div className={styles.pagesDropdownItemWrap}>
@@ -14401,7 +19880,7 @@ const EditablePageTitle: React.FC<{
       className={inputClassName || styles.pageTitleInput}
       value={draft}
       draggable={false}
-      aria-label="Nombre de pagina"
+      aria-label="Nombre de página"
       onFocus={onFocus}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
@@ -15228,7 +20707,7 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
               <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
             )}
             {lane.section && columnBlocks.length === 0 && !isTargetColumn && (
-              <div className="rstkColumnDropZone">Suelta contenido aqui</div>
+              <div className="rstkColumnDropZone">Suelta contenido aquí</div>
             )}
           </div>
         )
@@ -15340,7 +20819,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
       <div className="rstk-section-inner">
         {hasHeading && (
           <div className="rstk-section-heading">
-            <InlineEditable as="h2" value={section.content} placeholder="Titulo opcional" onChange={(value) => onPatchBlock(section.id, { content: value })} onCommit={() => onSaveBlock(section.id)} />
+            <InlineEditable as="h2" value={section.content} placeholder="Título opcional" onChange={(value) => onPatchBlock(section.id, { content: value })} onCommit={() => onSaveBlock(section.id)} />
             <InlineEditable as="p" multiline value={getSettingString(settings, 'subtitle')} placeholder="Texto breve opcional" onChange={(value) => onPatchBlockSettings(section, { subtitle: value })} onCommit={() => onSaveBlock(section.id)} />
           </div>
         )}
@@ -15413,22 +20892,22 @@ const fontWeightEditorOptions = [
 
 const textStylePresetOptions = [
   { value: '', label: 'Ninguno' },
-  { value: 'uppercase', label: 'Mayusculas' },
+  { value: 'uppercase', label: 'Mayúsculas' },
   { value: 'capitalize', label: 'Capitalizado' }
 ] as const
 
 const lineHeightEditorOptions = [
-  { value: '', label: 'Automatico' },
+  { value: '', label: 'Automático' },
   { value: '1', label: '1.0 - Sencillo' },
   { value: '1.2', label: '1.2 - Compacto' },
-  { value: '1.5', label: '1.5 - Comodo' },
+  { value: '1.5', label: '1.5 - Cómodo' },
   { value: '1.75', label: '1.75 - Amplio' },
   { value: '2', label: '2.0 - Doble' }
 ] as const
 
 const listStyleEditorOptions = [
   { value: '', label: 'Ninguno' },
-  { value: 'disc', label: 'Vinetas' },
+  { value: 'disc', label: 'Viñetas' },
   { value: 'decimal', label: 'Numerada' }
 ] as const
 
@@ -15546,11 +21025,11 @@ const TypographyFormatInspector: React.FC<{
       </div>
 
       <div className={styles.typographyButtonRow}>
-        <div className={styles.typographySegmented} role="group" aria-label={isButton ? 'Formato del boton' : 'Formato de texto'}>
+        <div className={styles.typographySegmented} role="group" aria-label={isButton ? 'Formato del botón' : 'Formato de texto'}>
           <button type="button" className={isBold ? styles.typographyActive : ''} aria-pressed={isBold} title="Negrita" onClick={() => patchAndSave({ [fontWeightKey]: isBold ? 'normal' : 'bold' })}>
             <Bold size={14} />
           </button>
-          <button type="button" className={isItalic ? styles.typographyActive : ''} aria-pressed={isItalic} title="Italica" onClick={() => patchAndSave({ [fontStyleKey]: isItalic ? '' : 'italic' })}>
+          <button type="button" className={isItalic ? styles.typographyActive : ''} aria-pressed={isItalic} title="Itálica" onClick={() => patchAndSave({ [fontStyleKey]: isItalic ? '' : 'italic' })}>
             <Italic size={14} />
           </button>
           <button type="button" className={isUnderline ? styles.typographyActive : ''} aria-pressed={isUnderline} title="Subrayado" onClick={() => patchAndSave({ [textDecorationKey]: toggleTextDecorationToken(textDecoration, 'underline') })}>
@@ -15560,7 +21039,7 @@ const TypographyFormatInspector: React.FC<{
             <Strikethrough size={14} />
           </button>
         </div>
-        <div className={styles.typographyMiniMenu} aria-label="Opciones tipograficas">
+        <div className={styles.typographyMiniMenu} aria-label="Opciones tipográficas">
           <Type size={14} />
           <ChevronDown size={13} />
         </div>
@@ -15589,7 +21068,7 @@ const TypographyFormatInspector: React.FC<{
         onCommit={onSave}
       />
 
-      <div className={styles.typographyAlignGrid} role="group" aria-label={isButton ? 'Alineacion del boton' : 'Alineacion de texto'}>
+      <div className={styles.typographyAlignGrid} role="group" aria-label={isButton ? 'Alineación del botón' : 'Alineación de texto'}>
         {alignOptions.map(option => {
           const active = alignValue === option.value
           return (
@@ -15609,7 +21088,7 @@ const TypographyFormatInspector: React.FC<{
       </div>
 
       {supportsList && (
-        <div className={styles.typographyIndentGrid} aria-label="Sangria">
+        <div className={styles.typographyIndentGrid} aria-label="Sangría">
           <button type="button" disabled><List size={14} /></button>
           <button type="button" disabled><ListOrdered size={14} /></button>
           <button type="button" disabled><ChevronRight size={14} /></button>
@@ -15631,7 +21110,7 @@ const TypographyFormatInspector: React.FC<{
 
       {supportsList && (
         <label className={styles.typographySelectRow}>
-          <span>Vinetas y listas</span>
+          <span>Viñetas y listas</span>
           <CustomSelect
             value={getSettingString(settings, 'textListStyle')}
             onChange={(event) => patchAndSave({ textListStyle: event.target.value })}
@@ -15651,19 +21130,20 @@ const InlineBlockStyleControls: React.FC<{
   site: PublicSite
   block: SiteBlock
   blocks: SiteBlock[]
+  surfaceOnly?: boolean
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ site, block, blocks, onPatchSettings, onSave }) => {
+}> = ({ site, block, blocks, surfaceOnly = false, onPatchSettings, onSave }) => {
   const settings = getPanelStyleSettings(site, block, blocks)
   const defaultAccent = defaultAccentForSite(site)
   const isSection = block.blockType === SECTION_BLOCK_TYPE
   const isLandingContent = isLanding(site) && !isSection
-  const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta'
-  const supportsField = fieldBlockTypes.has(block.blockType)
+  const supportsButton = !surfaceOnly && (block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed')
+  const supportsField = !surfaceOnly && fieldBlockTypes.has(block.blockType)
   const isHardEmbed = block.blockType === 'embed' || block.blockType === 'calendar_embed'
-  const supportsTextStyle = isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType)
-  const supportsMedia = block.blockType === 'image' || block.blockType === 'video'
-  const supportsCards = ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
+  const supportsTextStyle = !surfaceOnly && (supportsField || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType))
+  const supportsMedia = !surfaceOnly && (block.blockType === 'image' || block.blockType === 'video')
+  const supportsCards = !surfaceOnly && ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
   const defaultBorderWidth = getBlockBorderWidthFallback(site, block)
   const blockTextPaint = getSettingPaint(settings, 'blockText', getPageTextPaint(site))
   const currentFontFamily = getSettingString(settings, 'fontFamily')
@@ -15734,25 +21214,16 @@ const InlineBlockStyleControls: React.FC<{
             onPatchSettings={onPatchSettings}
             onSave={onSave}
           />
-          <div className={styles.twoColumn}>
-            <ColorField
-              label="Fondo del boton"
-              value={getSettingPaint(settings, 'buttonBg', defaultAccent)}
-              allowGradient
-              onChange={(value) => onPatchSettings({ buttonBg: value })}
-              onCommit={onSave}
-            />
-            <ColorField
-              label="Texto del boton"
-              value={getSettingPaint(settings, 'buttonTextColor', onAccentFor(defaultAccent))}
-              allowGradient
-              onChange={(value) => onPatchSettings({ buttonTextColor: value })}
-              onCommit={onSave}
-            />
-          </div>
+          <ColorField
+            label="Fondo del botón"
+            value={getSettingPaint(settings, 'buttonBg', defaultAccent)}
+            allowGradient
+            onChange={(value) => onPatchSettings({ buttonBg: value })}
+            onCommit={onSave}
+          />
           <div className={styles.twoColumn}>
             <DimensionField
-              label="Radio boton"
+              label="Radio botón"
               value={getSettingNumber(settings, 'buttonRadius', 28, 0, 80)}
               min={0}
               max={80}
@@ -15760,7 +21231,7 @@ const InlineBlockStyleControls: React.FC<{
               onCommit={onSave}
             />
             <DimensionField
-              label="Alto boton"
+              label="Alto botón"
               value={getSettingNumber(settings, 'buttonHeight', 54, 34, 88)}
               min={34}
               max={88}
@@ -15778,7 +21249,7 @@ const InlineBlockStyleControls: React.FC<{
               onCommit={onSave}
             />
             <DimensionField
-              label="Texto boton"
+              label="Tamano texto"
               value={getSettingNumber(settings, 'buttonFontSize', 16, 11, 32)}
               min={11}
               max={32}
@@ -15788,7 +21259,7 @@ const InlineBlockStyleControls: React.FC<{
           </div>
           <div className={styles.twoColumn}>
             <DimensionField
-              label="Ancho boton"
+              label="Ancho botón"
               value={getSettingNumber(settings, 'buttonWidth', 0, 0, 100)}
               min={0}
               max={100}
@@ -15797,7 +21268,7 @@ const InlineBlockStyleControls: React.FC<{
               onCommit={onSave}
             />
             <DimensionField
-              label="Subtexto"
+              label="Tamano subtexto"
               value={getSettingNumber(settings, 'buttonSubtitleFontSize', 13, 10, 24)}
               min={10}
               max={24}
@@ -15807,7 +21278,7 @@ const InlineBlockStyleControls: React.FC<{
           </div>
           <div className={styles.twoColumn}>
             <DimensionField
-              label="Borde boton"
+              label="Borde botón"
               value={getSettingNumber(settings, 'buttonBorderWidth', 1, 0, 8)}
               min={0}
               max={8}
@@ -15831,7 +21302,7 @@ const InlineBlockStyleControls: React.FC<{
           <div className={styles.twoColumn}>
             <ColorField
               label="Caja del campo"
-              value={getSettingPaint(settings, 'fieldBg', '#ffffff')}
+              value={getSettingPaint(settings, 'fieldBg', 'transparent')}
               allowGradient
               onChange={(value) => onPatchSettings({ fieldBg: value })}
               onCommit={onSave}
@@ -15852,6 +21323,15 @@ const InlineBlockStyleControls: React.FC<{
             onChange={(value) => onPatchSettings({ fieldRadius: value })}
             onCommit={onSave}
           />
+          <DimensionField
+            label="Ancho caja"
+            value={getSettingNumber(settings, 'fieldWidth', 100, 20, 100)}
+            min={20}
+            max={100}
+            unit="%"
+            onChange={(value) => onPatchSettings({ fieldWidth: value })}
+            onCommit={onSave}
+          />
         </>
       )}
 
@@ -15859,7 +21339,7 @@ const InlineBlockStyleControls: React.FC<{
         <>
           <div className={styles.panelSubheader}>{block.blockType === 'image' ? 'Personalizacion de imagen' : 'Personalizacion de video'}</div>
           <AlignmentControl
-            label="Alineacion"
+            label="Alineación"
             value={getHorizontalAlign(settings, 'mediaAlign', 'center')}
             options={horizontalAlignOptions}
             onChange={(value) => onPatchSettings({ mediaAlign: value })}
@@ -15988,7 +21468,7 @@ const InlineBlockStyleControls: React.FC<{
                   </CustomSelect>
                 </label>
                 <label className={styles.field}>
-                  <span>Visualizacion</span>
+                  <span>Visualización</span>
                   <CustomSelect
                     value={getSettingString(settings, 'blockBackgroundFit') || 'cover'}
                     onChange={(event) => onPatchSettings({ blockBackgroundFit: event.target.value })}
@@ -16001,6 +21481,17 @@ const InlineBlockStyleControls: React.FC<{
                   </CustomSelect>
                 </label>
               </div>
+              <MediaUploadControl
+                kind={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'}
+                label={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'Elegir video de franja' : 'Elegir imagen de franja'}
+                moduleEntityId={site.id}
+                currentUrl={getSettingString(settings, 'blockBackgroundImage')}
+                onUploaded={(url) => onPatchSettings({
+                  blockBackgroundImage: url,
+                  blockBackgroundMediaType: getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'
+                })}
+                onCommit={onSave}
+              />
               <label className={styles.field}>
                 <span>URL de fondo de franja</span>
                 <input
@@ -16010,16 +21501,6 @@ const InlineBlockStyleControls: React.FC<{
                   onBlur={onSave}
                 />
               </label>
-              <MediaUploadControl
-                kind={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'}
-                label={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'Subir video de franja' : 'Subir imagen de franja'}
-                moduleEntityId={site.id}
-                onUploaded={(url) => onPatchSettings({
-                  blockBackgroundImage: url,
-                  blockBackgroundMediaType: getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'
-                })}
-                onCommit={onSave}
-              />
             </div>
           )}
           <div className={styles.twoColumn}>
@@ -16074,9 +21555,9 @@ const VideoPlayerPreview: React.FC<{
   settings: Record<string, unknown>
 }> = ({ src, label, settings }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const controlsMode = getSettingString(settings, 'videoControlsMode') || (settings.videoControls === false ? 'none' : 'native')
+  const controlsMode = getVideoControlsMode(settings)
   const showNativeControls = controlsMode === 'native'
-  const showOverlay = controlsMode !== 'native'
+  const showOverlay = controlsMode === 'clean'
   const soundHint = settings.videoSoundHint !== false
   const previewEnabled = settings.videoPreviewEnabled !== false
   const muted = settings.videoMuted !== false
@@ -16086,10 +21567,11 @@ const VideoPlayerPreview: React.FC<{
   const fit = getSettingString(settings, 'videoFit') || 'cover'
   const playerColor = getSettingString(settings, 'videoPlayerColor') || 'rgba(0,0,0,.52)'
   const playColor = getSettingString(settings, 'videoPlayColor') || '#ffffff'
+  const playSize = `${getSettingNumber(settings, 'videoPlaySize', 64, 42, 110)}px`
   const className = [
     'rstk-video',
     'rstk-video-player',
-    showNativeControls ? 'rstk-video-native-controls' : 'rstk-video-custom-controls',
+    showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     soundHint && showOverlay ? 'rstk-video-sound-hint' : ''
   ].filter(Boolean).join(' ')
 
@@ -16115,7 +21597,8 @@ const VideoPlayerPreview: React.FC<{
       className={className}
       style={{
         ['--rstk-video-player-color' as string]: playerColor,
-        ['--rstk-video-play-color' as string]: playColor
+        ['--rstk-video-play-color' as string]: playColor,
+        ['--rstk-video-play-size' as string]: playSize
       } as React.CSSProperties}
     >
       <video
@@ -16179,7 +21662,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         ...fallbackTheme,
         template: platform,
         brandName,
-        brandSubtitle: getSettingString(settings, 'brandSubtitle') || fallbackTheme.brandSubtitle || (platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'),
+        brandSubtitle: getSettingString(settings, 'brandSubtitle') || fallbackTheme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'),
         brandAvatar: getSettingString(settings, 'brandAvatar') || fallbackTheme.brandAvatar || '',
         followers: getSettingString(settings, 'followers') || fallbackTheme.followers || '',
         brandVerified: settings.brandVerified === undefined ? fallbackTheme.brandVerified : settings.brandVerified !== false
@@ -16199,7 +21682,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
           className="rstk-site-panel-copy"
           multiline={!isHeader}
           value={block.content}
-          placeholder={isHeader ? 'Nombre de marca' : 'Texto del pie de pagina'}
+          placeholder={isHeader ? 'Nombre de marca' : 'Texto del pie de página'}
           disabled={!editable}
           onChange={(value) => patchBlock({ content: value })}
           onCommit={save}
@@ -16220,11 +21703,11 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       <section className="rstk-hero">
         <InlineEditable as="p" className="rstk-kicker" value={getSettingString(settings, 'kicker')} placeholder="Kicker (opcional)" disabled={!editable} onChange={(value) => patchSettings({ kicker: value })} onCommit={save} />
         <InlineEditable as="h1" className="rstk-headline" multiline value={block.content} placeholder={block.label || 'Titular principal'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
-        <InlineEditable as="p" className="rstk-subheading" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtitulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
+        <InlineEditable as="p" className="rstk-subheading" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtítulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
         <InlineButtonEditable
           value={getSettingString(settings, 'buttonText')}
           subtitle={getSettingString(settings, 'buttonSubtitle')}
-          placeholder="Texto del boton"
+          placeholder="Texto del botón"
           disabled={!editable}
           onChange={(value) => patchSettings({ buttonText: value })}
           onSubtitleChange={getSettingString(settings, 'buttonSubtitle') ? (value) => patchSettings({ buttonSubtitle: value }) : undefined}
@@ -16236,13 +21719,13 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
 
   if (['headline', 'title'].includes(block.blockType)) {
     return (
-      <InlineEditable as="h1" className="rstk-headline" multiline value={block.content} placeholder={block.label || 'Titulo'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+      <InlineEditable as="h1" className="rstk-headline" multiline value={block.content} placeholder={block.label || 'Título'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
     )
   }
 
   if (['subheading', 'subtitle', 'description'].includes(block.blockType)) {
     return (
-      <InlineEditable as="p" className="rstk-subheading" multiline value={block.content} placeholder={block.label || 'Subtitulo'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+      <InlineEditable as="p" className="rstk-subheading" multiline value={block.content} placeholder={block.label || 'Subtítulo'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
     )
   }
 
@@ -16289,7 +21772,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       <InlineButtonEditable
         value={getSettingString(settings, 'buttonText') || block.content || ''}
         subtitle={getSettingString(settings, 'buttonSubtitle')}
-        placeholder="Boton"
+        placeholder="Botón"
         disabled={!editable}
         onChange={(value) => patchSettings({ buttonText: value })}
         onSubtitleChange={getSettingString(settings, 'buttonSubtitle') ? (value) => patchSettings({ buttonSubtitle: value }) : undefined}
@@ -16302,7 +21785,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const items = getCanvasItems(settings)
     return (
       <section className="rstk-section-list rstk-checklist">
-        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Titulo de seccion'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Título de seccion'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
         <ul className="rstk-check-list">
           {(items.length ? items : [{ title: 'Agrega elementos en el panel', text: '', author: '' }]).map((item, index) => {
             const tone = getItemTone(item)
@@ -16327,7 +21810,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const items = getCanvasItems(settings)
     return (
       <section className="rstk-section-list">
-        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Titulo de seccion'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Título de seccion'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
         <div className="rstk-list-grid">
           {(items.length ? items : [{ title: 'Elemento', text: 'Agrega elementos en el panel', author: '' }]).map((item, index) => (
             <article key={index}>
@@ -16345,28 +21828,52 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const formSiteId = getSettingString(settings, 'formSiteId')
     const form = forms.find(item => item.id === formSiteId)
     const embeddedBlocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks as SiteBlock[] : []
-    const selectedFormFields = Array.isArray(form?.blocks)
-      ? form.blocks.filter(field => fieldBlockTypes.has(field.blockType))
+    const selectedFormPages = getEmbeddedFormContentPagesFromSite(form)
+    const selectedFormPageIds = new Set(selectedFormPages.map(page => page.id))
+    const selectedFormBlocks = Array.isArray(form?.blocks)
+      ? form.blocks.filter(item => {
+        const rawPageId = getSettingString(item.settings || {}, 'pageId')
+        return embeddedFormBlockTypeSet.has(item.blockType) && (!rawPageId || selectedFormPageIds.has(rawPageId))
+      })
       : []
-    const description = getSettingString(settings, 'description') || (form ? `Usando formulario: ${form.name}` : '')
-    const resolvedFields = embeddedBlocks.length ? embeddedBlocks : selectedFormFields
-    const visibleEditorFields = embeddedFormEditor
-      ? getEmbeddedFormPageFields(resolvedFields, embeddedFormEditor.pages, embeddedFormEditor.activePageId)
-      : resolvedFields
-    const fields = resolvedFields.length
-      ? resolvedFields
-      : [{ id: 'placeholder', blockType: 'short_text', label: 'Campo', required: true, placeholder: 'Respuesta' } as SiteBlock]
+    const resolvedItems = embeddedBlocks.length ? embeddedBlocks : selectedFormBlocks
+    const visibleEditorItems = embeddedFormEditor
+      ? getEmbeddedFormPageFields(resolvedItems, embeddedFormEditor.pages, embeddedFormEditor.activePageId)
+      : resolvedItems
     return (
       <section className="rstk-embedded-form">
-        <InlineEditable as="h2" value={block.content} placeholder="Formulario" disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
-        {description && <p className="rstk-help">{description}</p>}
         {embeddedFormEditor ? (
-          <EmbeddedFormCanvasFields fields={visibleEditorFields} editor={embeddedFormEditor} />
+          <EmbeddedFormCanvasFields
+            fields={visibleEditorItems}
+            editor={embeddedFormEditor}
+            site={site}
+            forms={forms}
+            calendars={calendars}
+          />
         ) : (
-          fields.map(field => <FieldStaticPreview key={field.id} block={field} />)
+          resolvedItems.length
+            ? resolvedItems.map(item => (
+              <EmbeddedFormStaticBlockPreview
+                key={item.id}
+                block={item}
+                site={site}
+                forms={forms}
+                calendars={calendars}
+              />
+            ))
+            : <p className="rstk-help">Agrega campos o contenido al formulario.</p>
         )}
-        <div className="rstk-actions rstk-embed-actions">
-          <button type="button" data-submit>Enviar</button>
+        <div className={`rstk-actions rstk-embed-actions ${embeddedFormEditor?.submitSelected ? 'rstkEmbeddedFormSubmitActive' : ''}`}>
+          <button
+            type="button"
+            data-submit
+            onClick={embeddedFormEditor ? (event) => {
+              event.stopPropagation()
+              embeddedFormEditor.onSelectSubmit()
+            } : undefined}
+          >
+            <SubmitButtonContent theme={site?.theme} />
+          </button>
         </div>
       </section>
     )
@@ -16376,11 +21883,11 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     return (
       <section className="rstk-cta">
         <InlineEditable as="h2" value={block.content} placeholder={block.label || 'CTA final'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
-        <InlineEditable as="p" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtitulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
+        <InlineEditable as="p" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtítulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
         <InlineButtonEditable
           value={getSettingString(settings, 'buttonText')}
           subtitle={getSettingString(settings, 'buttonSubtitle')}
-          placeholder="Texto del boton"
+          placeholder="Texto del botón"
           disabled={!editable}
           onChange={(value) => patchSettings({ buttonText: value })}
           onSubtitleChange={getSettingString(settings, 'buttonSubtitle') ? (value) => patchSettings({ buttonSubtitle: value }) : undefined}
@@ -16472,14 +21979,14 @@ const PhoneCountryInputPreview: React.FC<{ placeholder?: string }> = ({ placehol
 
   return (
     <div className="rstk-phone-input">
-      <select aria-label="Pais y lada" defaultValue={selectedCountry.value}>
+      <select aria-label="País y lada" defaultValue={selectedCountry.value}>
         {COUNTRY_OPTIONS.map(country => (
           <option key={country.value} value={country.value}>
             {getCountryFlagEmoji(country.value)} +{country.dialCode}
           </option>
         ))}
       </select>
-      <input type="tel" readOnly placeholder={placeholder || 'Numero'} />
+      <input type="tel" readOnly placeholder={placeholder || 'Número'} />
     </div>
   )
 }
@@ -16494,7 +22001,7 @@ const getFieldPreviewInputType = (blockType: SiteBlockType) => {
 
 const getPreviewOptions = (block: SiteBlock): SiteBlockOption[] => {
   const options = getOptions(block)
-  return options.length ? options : [{ id: 'preview-option', label: 'Opcion', value: 'Opcion', action: 'continue' }]
+  return options.length ? options : [{ id: 'preview-option', label: 'Opción', value: 'Opción', action: 'continue' }]
 }
 
 const FieldControlPreview: React.FC<{ block: SiteBlock }> = ({ block }) => {
@@ -16505,7 +22012,7 @@ const FieldControlPreview: React.FC<{ block: SiteBlock }> = ({ block }) => {
   if (block.blockType === 'dropdown') {
     return (
       <select defaultValue="" aria-label={block.label || 'Pregunta'}>
-        <option value="">{block.placeholder || 'Selecciona una opcion'}</option>
+        <option value="">{block.placeholder || 'Selecciona una opción'}</option>
         {getPreviewOptions(block).map(option => (
           <option key={option.id || option.label} value={option.value || option.label}>{option.label}</option>
         ))}
@@ -16535,11 +22042,26 @@ const FieldControlPreview: React.FC<{ block: SiteBlock }> = ({ block }) => {
 
 // Read-only field preview (rstk markup) for embedded form fields on the canvas.
 const FieldStaticPreview: React.FC<{ block: SiteBlock }> = ({ block }) => (
-  <section className="rstk-field">
+  <section className={getBlockStyleClassName(block, 'rstk-field')} style={getBlockCanvasStyle(block)}>
     <label>{block.label || 'Pregunta'}{block.required ? <span className="rstk-required">*</span> : null}</label>
     {block.content ? <p className="rstk-help">{block.content}</p> : null}
     <FieldControlPreview block={block} />
   </section>
+)
+
+const EmbeddedFormStaticBlockPreview: React.FC<{
+  block: SiteBlock
+  site?: PublicSite
+  forms: PublicSite[]
+  calendars: CalendarType[]
+}> = ({ block, site, forms, calendars }) => (
+  fieldBlockTypes.has(block.blockType) ? (
+    <FieldStaticPreview block={block} />
+  ) : (
+    <div className={getBlockStyleClassName(block)} style={getBlockCanvasStyle(block)}>
+      <CanvasPreviewBlock block={block} site={site} forms={forms} calendars={calendars} />
+    </div>
+  )
 )
 
 const EmbeddedFormCanvasDropZone: React.FC<{
@@ -16554,14 +22076,17 @@ const EmbeddedFormCanvasDropZone: React.FC<{
     onDrop={(event) => editor.onDropField(event, insertIndex)}
   >
     <Plus size={empty ? 18 : 12} />
-    <span>{empty ? 'Arrastra campos aqui' : 'Soltar aqui'}</span>
+    <span>{empty ? 'Arrastra contenido aquí' : 'Soltar aquí'}</span>
   </div>
 )
 
 const EmbeddedFormCanvasFields: React.FC<{
   fields: SiteBlock[]
   editor: EmbeddedFormCanvasEditorBridge
-}> = ({ fields, editor }) => (
+  site?: PublicSite
+  forms: PublicSite[]
+  calendars: CalendarType[]
+}> = ({ fields, editor, site, forms, calendars }) => (
   <div
     className="rstkEmbeddedFormEditor"
     onDragLeave={editor.onDragLeave}
@@ -16578,11 +22103,17 @@ const EmbeddedFormCanvasFields: React.FC<{
       <>
         <EmbeddedFormCanvasDropZone active={editor.insertIndex === 0} insertIndex={0} editor={editor} />
         {fields.map((field, index) => {
-          const selected = editor.activeFieldId === field.id
+          const selected = !editor.submitSelected && editor.activeFieldId === field.id
+          const isFieldBlock = fieldBlockTypes.has(field.blockType)
           return (
             <React.Fragment key={field.id}>
               <section
-                className={`rstkEmbeddedFormField ${selected ? 'rstkEmbeddedFormFieldActive' : ''}`}
+                className={[
+                  isFieldBlock ? 'rstkEmbeddedFormField' : 'rstkEmbeddedFormItem',
+                  selected ? (isFieldBlock ? 'rstkEmbeddedFormFieldActive' : 'rstkEmbeddedFormItemActive') : '',
+                  getBlockStyleClassName(field)
+                ].filter(Boolean).join(' ')}
+                style={getBlockCanvasStyle(field)}
                 onClick={(event) => {
                   event.stopPropagation()
                   editor.onSelectField(field.id)
@@ -16596,7 +22127,7 @@ const EmbeddedFormCanvasFields: React.FC<{
                       event.stopPropagation()
                       editor.onMoveField(field.id, 'up')
                     }}
-                    aria-label="Subir campo"
+                    aria-label="Subir elemento"
                   >
                     <ArrowUp size={13} />
                   </button>
@@ -16607,7 +22138,7 @@ const EmbeddedFormCanvasFields: React.FC<{
                       event.stopPropagation()
                       editor.onMoveField(field.id, 'down')
                     }}
-                    aria-label="Bajar campo"
+                    aria-label="Bajar elemento"
                   >
                     <ArrowDown size={13} />
                   </button>
@@ -16617,12 +22148,35 @@ const EmbeddedFormCanvasFields: React.FC<{
                       event.stopPropagation()
                       editor.onDeleteField(field.id)
                     }}
-                    aria-label="Eliminar campo"
+                    aria-label="Eliminar elemento"
                   >
                     <Trash2 size={13} />
                   </button>
                 </div>
-                <FieldStaticPreview block={field} />
+                {isFieldBlock ? (
+                  <FieldPreview
+                    block={field}
+                    editable={false}
+                    onPatchBlock={(patch) => editor.onPatchField(field.id, patch)}
+                    onSave={editor.onSaveField}
+                  />
+                ) : (
+                  <CanvasPreviewBlock
+                    block={field}
+                    site={site}
+                    blocks={fields}
+                    forms={forms}
+                    calendars={calendars}
+                    onPatchBlock={(patch) => editor.onPatchField(field.id, patch)}
+                    onPatchSettings={(patch) => editor.onPatchField(field.id, {
+                      settings: {
+                        ...(field.settings || {}),
+                        ...patch
+                      }
+                    })}
+                    onSave={editor.onSaveField}
+                  />
+                )}
               </section>
               <EmbeddedFormCanvasDropZone active={editor.insertIndex === index + 1} insertIndex={index + 1} editor={editor} />
             </React.Fragment>
@@ -16681,12 +22235,245 @@ interface PropertiesPanelProps {
   onSave: () => void
 }
 
-const FormGlobalStyleControls: React.FC<{
+const FormTypographyGlobalControls: React.FC<{
+  site: PublicSite
+  title?: string
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ site, title = 'Tipografía del formulario', onPatchTheme, onSaveSite }) => {
+  const theme = site.theme || {}
+  const currentFontFamily = getThemeString(theme, 'formFontFamily')
+  const fontOptions = currentFontFamily && !GOOGLE_FONT_OPTIONS.some(option => option.value === currentFontFamily)
+    ? [...GOOGLE_FONT_OPTIONS, { label: 'Fuente actual', value: currentFontFamily }]
+    : GOOGLE_FONT_OPTIONS
+  const isBold = theme.formFontWeight === 'bold'
+  const isItalic = theme.formFontStyle === 'italic'
+  const isUnderline = theme.formTextDecoration === 'underline'
+  const patchTextFormat = (patch: Partial<SiteTheme>) => {
+    onPatchTheme(patch)
+    window.setTimeout(onSaveSite, 0)
+  }
+
+  return (
+    <>
+      <div className={styles.panelSubheader}>{title}</div>
+      <div className={styles.textFormatPanel}>
+        <div className={styles.textToolbar}>
+          <label className={styles.textFontSelect}>
+            <span>Tipografía</span>
+            <CustomSelect value={currentFontFamily} onChange={(event) => onPatchTheme({ formFontFamily: event.target.value })} onBlur={onSaveSite}>
+              {fontOptions.map(option => (
+                <option key={option.label} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </label>
+          <div className={styles.textFormatButtons} role="group" aria-label="Formato global de formulario">
+            <button type="button" className={isBold ? styles.textFormatActive : ''} aria-pressed={isBold} title="Negrita" aria-label="Negrita" onClick={() => patchTextFormat({ formFontWeight: isBold ? 'normal' : 'bold' })}>
+              <Bold size={15} />
+            </button>
+            <button type="button" className={isItalic ? styles.textFormatActive : ''} aria-pressed={isItalic} title="Itálica" aria-label="Itálica" onClick={() => patchTextFormat({ formFontStyle: isItalic ? 'normal' : 'italic' })}>
+              <Italic size={15} />
+            </button>
+            <button type="button" className={isUnderline ? styles.textFormatActive : ''} aria-pressed={isUnderline} title="Subrayado" aria-label="Subrayado" onClick={() => patchTextFormat({ formTextDecoration: isUnderline ? 'none' : 'underline' })}>
+              <Underline size={15} />
+            </button>
+          </div>
+        </div>
+        <div className={styles.twoColumn}>
+          <DimensionField label="Texto pregunta" value={getThemeNumber(theme, 'formLabelSize', 15, 11, 28)} min={11} max={28} onChange={(value) => onPatchTheme({ formLabelSize: value })} onCommit={onSaveSite} />
+          <DimensionField label="Texto respuesta" value={getThemeNumber(theme, 'formInputSize', 16, 11, 28)} min={11} max={28} onChange={(value) => onPatchTheme({ formInputSize: value })} onCommit={onSaveSite} />
+        </div>
+        <DimensionField label="Texto ayuda" value={getThemeNumber(theme, 'formHelpSize', 14, 10, 24)} min={10} max={24} onChange={(value) => onPatchTheme({ formHelpSize: value })} onCommit={onSaveSite} />
+      </div>
+    </>
+  )
+}
+
+const FormFieldGlobalStyleControls: React.FC<{
   site: PublicSite
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void
 }> = ({ site, onPatchTheme, onSaveSite }) => {
-  if (!isFormSite(site)) return null
+  const theme = site.theme || {}
+  const inputText = isSiteDark(site) ? '#ffffff' : '#111827'
+
+  return (
+    <>
+      <div className={styles.panelSubheader}>Diseño global de campos</div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Pregunta" value={getThemePaint(theme, 'formLabelColor', getThemePaint(theme, 'textColor', inputText))} allowGradient onChange={(value) => onPatchTheme({ formLabelColor: value })} onCommit={onSaveSite} />
+        <ColorField label="Ayuda" value={getThemePaint(theme, 'formHelpColor', '#64748b')} allowGradient onChange={(value) => onPatchTheme({ formHelpColor: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Caja" value={getThemePaint(theme, 'formFieldBg', 'transparent')} allowGradient onChange={(value) => onPatchTheme({ formFieldBg: value })} onCommit={onSaveSite} />
+        <ColorField label="Texto caja" value={getThemePaint(theme, 'formFieldText', inputText)} allowGradient onChange={(value) => onPatchTheme({ formFieldText: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Borde caja" value={getThemePaint(theme, 'formFieldBorder', '#dbe3ef')} allowGradient onChange={(value) => onPatchTheme({ formFieldBorder: value })} onCommit={onSaveSite} />
+        <ColorField label="Placeholder" value={getThemePaint(theme, 'formPlaceholderColor', '#94a3b8')} allowGradient onChange={(value) => onPatchTheme({ formPlaceholderColor: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField label="Alto caja" value={getThemeNumber(theme, 'formFieldHeight', 50, 34, 96)} min={34} max={96} onChange={(value) => onPatchTheme({ formFieldHeight: value })} onCommit={onSaveSite} />
+        <DimensionField label="Radio caja" value={getThemeNumber(theme, 'formFieldRadius', 12, 0, 36)} min={0} max={36} onChange={(value) => onPatchTheme({ formFieldRadius: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField label="Borde caja" value={getThemeNumber(theme, 'formFieldBorderWidth', 1, 0, 8)} min={0} max={8} onChange={(value) => onPatchTheme({ formFieldBorderWidth: value })} onCommit={onSaveSite} />
+        <DimensionField label="Relleno lados" value={getThemeNumber(theme, 'formFieldPaddingX', 14, 6, 48)} min={6} max={48} onChange={(value) => onPatchTheme({ formFieldPaddingX: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField label="Relleno vertical" value={getThemeNumber(theme, 'formFieldPaddingY', 13, 6, 36)} min={6} max={36} onChange={(value) => onPatchTheme({ formFieldPaddingY: value })} onCommit={onSaveSite} />
+        <DimensionField label="Ancho cajas" value={getThemeNumber(theme, 'formFieldWidth', 560, 240, 900)} min={240} max={900} step={10} onChange={(value) => onPatchTheme({ formFieldWidth: value })} onCommit={onSaveSite} />
+      </div>
+    </>
+  )
+}
+
+const FormOptionGlobalStyleControls: React.FC<{
+  site: PublicSite
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ site, onPatchTheme, onSaveSite }) => {
+  const theme = site.theme || {}
+  const defaultAccent = defaultAccentForSite(site)
+  const accentRgb = cssColorToHex(defaultAccent, '#111827').replace('#', '').match(/.{2}/g)?.map(hex => parseInt(hex, 16)).join(', ') || '17, 24, 39'
+  const defaultChoiceSelectedBg = `rgba(${accentRgb}, 0.10)`
+
+  return (
+    <>
+      <div className={styles.panelSubheader}>Diseño global de opciones</div>
+      <div className={styles.twoColumn}>
+        <label className={styles.field}>
+          <span>Radio y checks</span>
+          <CustomSelect value={normalizeFormChoiceStyle(theme.formChoiceStyle)} onChange={(event) => onPatchTheme({ formChoiceStyle: event.target.value as FormChoiceStyle })} onBlur={onSaveSite}>
+            {formChoiceStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </CustomSelect>
+        </label>
+        <label className={styles.field}>
+          <span>Desplegable</span>
+          <CustomSelect value={normalizeFormSelectStyle(theme.formSelectStyle)} onChange={(event) => onPatchTheme({ formSelectStyle: event.target.value as FormSelectStyle })} onBlur={onSaveSite}>
+            {formSelectStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </CustomSelect>
+        </label>
+      </div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Opción activa" value={getThemePaint(theme, 'formChoiceSelectedBg', defaultChoiceSelectedBg)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBg: value })} onCommit={onSaveSite} />
+        <ColorField label="Borde activo" value={getThemePaint(theme, 'formChoiceSelectedBorder', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBorder: value })} onCommit={onSaveSite} />
+      </div>
+    </>
+  )
+}
+
+const FormSubmitContentControls: React.FC<{
+  site: PublicSite
+  settings?: Record<string, unknown>
+  embedded?: boolean
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onPatchSettings?: (patch: Record<string, unknown>) => void
+  onSaveSite: () => void
+  onSaveSettings?: () => void
+}> = ({ site, settings = {}, embedded = false, onPatchTheme, onPatchSettings, onSaveSite, onSaveSettings }) => {
+  const theme = site.theme || {}
+  return (
+    <>
+      <div className={styles.panelSubheader}>Contenido del botón</div>
+      <div className={styles.twoColumn}>
+        <label className={styles.field}>
+          <span>Texto del botón</span>
+          <input value={theme.submitText || ''} placeholder="Enviar" onChange={(event) => onPatchTheme({ submitText: event.target.value })} onBlur={onSaveSite} />
+        </label>
+        <label className={styles.field}>
+          <span>Subtexto</span>
+          <input value={theme.submitSubtitle || ''} placeholder="Tarda menos de un minuto" onChange={(event) => onPatchTheme({ submitSubtitle: event.target.value })} onBlur={onSaveSite} />
+        </label>
+      </div>
+      {(isInteractiveForm(site) || embedded) && (
+        <div className={styles.twoColumn}>
+          <label className={styles.field}>
+            <span>Texto siguiente</span>
+            <input value={theme.nextText || ''} placeholder="Siguiente" onChange={(event) => onPatchTheme({ nextText: event.target.value })} onBlur={onSaveSite} />
+          </label>
+          <label className={styles.field}>
+            <span>Texto anterior</span>
+            <input value={theme.backText || ''} placeholder="Anterior" onChange={(event) => onPatchTheme({ backText: event.target.value })} onBlur={onSaveSite} />
+          </label>
+        </div>
+      )}
+      {isStandardForm(site) && (
+        <label className={styles.field}>
+          <span>Texto continuar</span>
+          <input value={theme.continueText || ''} placeholder="Continuar" onChange={(event) => onPatchTheme({ continueText: event.target.value })} onBlur={onSaveSite} />
+        </label>
+      )}
+      {embedded && onPatchSettings && (
+        <label className={styles.field}>
+          <span>Al enviar</span>
+          <CustomSelect value={getFormCompletionAction(settings)} onChange={(event) => onPatchSettings({ completionAction: event.target.value })} onBlur={onSaveSettings || onSaveSite}>
+            <option value="next_page">Ir a la siguiente página</option>
+            <option value="next_page_if_qualified">Siguiente página solo si califica</option>
+            <option value="form_default">Mostrar mensaje del formulario</option>
+          </CustomSelect>
+        </label>
+      )}
+    </>
+  )
+}
+
+const FormSubmitGlobalStyleControls: React.FC<{
+  site: PublicSite
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ site, onPatchTheme, onSaveSite }) => {
+  const theme = site.theme || {}
+  const defaultAccent = defaultAccentForSite(site)
+
+  return (
+    <>
+      <div className={styles.panelSubheader}>Diseño global del botón</div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Fondo botón" value={getThemePaint(theme, 'submitBg', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBg: value })} onCommit={onSaveSite} />
+        <ColorField label="Texto botón" value={getThemePaint(theme, 'submitTextColor', onAccentFor(defaultAccent))} allowGradient onChange={(value) => onPatchTheme({ submitTextColor: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Borde botón" value={getThemePaint(theme, 'submitBorderColor', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBorderColor: value })} onCommit={onSaveSite} />
+        <DimensionField label="Radio botón" value={getThemeNumber(theme, 'submitRadius', 12, 0, 80)} min={0} max={80} onChange={(value) => onPatchTheme({ submitRadius: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField label="Alto botón" value={getThemeNumber(theme, 'submitHeight', 50, 34, 96)} min={34} max={96} onChange={(value) => onPatchTheme({ submitHeight: value })} onCommit={onSaveSite} />
+        <DimensionField label="Texto botón" value={getThemeNumber(theme, 'submitFontSize', 16, 11, 32)} min={11} max={32} onChange={(value) => onPatchTheme({ submitFontSize: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField label="Relleno botón" value={getThemeNumber(theme, 'submitPaddingX', 22, 8, 72)} min={8} max={72} onChange={(value) => onPatchTheme({ submitPaddingX: value })} onCommit={onSaveSite} />
+        <DimensionField label="Borde botón" value={getThemeNumber(theme, 'submitBorderWidth', 1, 0, 8)} min={0} max={8} onChange={(value) => onPatchTheme({ submitBorderWidth: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <AlignmentControl
+          label="Alineación botón"
+          value={getThemeButtonAlign(theme, 'submitAlign', 'center')}
+          options={buttonAlignOptions}
+          onChange={(value) => onPatchTheme({ submitAlign: value as SiteTheme['submitAlign'] })}
+          onCommit={onSaveSite}
+        />
+        <DimensionField
+          label="Ancho botón"
+          value={getThemeNumber(theme, 'submitWidth', 0, 0, 100)}
+          min={0}
+          max={100}
+          unit="%"
+          onChange={(value) => onPatchTheme({ submitWidth: value })}
+          onCommit={onSaveSite}
+        />
+      </div>
+    </>
+  )
+}
+
+const FormGlobalStyleControls: React.FC<{
+  site: PublicSite
+  embedded?: boolean
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ site, embedded = false, onPatchTheme, onSaveSite }) => {
+  if (!embedded && !isFormSite(site)) return null
 
   const theme = site.theme || {}
   const defaultAccent = defaultAccentForSite(site)
@@ -16707,7 +22494,7 @@ const FormGlobalStyleControls: React.FC<{
 
   return (
     <div className={styles.formGlobalControls}>
-      <div className={styles.panelSubheader}>Formulario global</div>
+      <div className={styles.panelSubheader}>{embedded ? 'Diseño del formulario' : 'Formulario global'}</div>
       <div className={styles.textFormatPanel}>
         <div className={styles.textToolbar}>
           <label className={styles.textFontSelect}>
@@ -16722,7 +22509,7 @@ const FormGlobalStyleControls: React.FC<{
             <button type="button" className={isBold ? styles.textFormatActive : ''} aria-pressed={isBold} title="Negrita" aria-label="Negrita" onClick={() => patchTextFormat({ formFontWeight: isBold ? 'normal' : 'bold' })}>
               <Bold size={15} />
             </button>
-            <button type="button" className={isItalic ? styles.textFormatActive : ''} aria-pressed={isItalic} title="Italica" aria-label="Italica" onClick={() => patchTextFormat({ formFontStyle: isItalic ? 'normal' : 'italic' })}>
+            <button type="button" className={isItalic ? styles.textFormatActive : ''} aria-pressed={isItalic} title="Itálica" aria-label="Itálica" onClick={() => patchTextFormat({ formFontStyle: isItalic ? 'normal' : 'italic' })}>
               <Italic size={15} />
             </button>
             <button type="button" className={isUnderline ? styles.textFormatActive : ''} aria-pressed={isUnderline} title="Subrayado" aria-label="Subrayado" onClick={() => patchTextFormat({ formTextDecoration: isUnderline ? 'none' : 'underline' })}>
@@ -16742,7 +22529,7 @@ const FormGlobalStyleControls: React.FC<{
         <ColorField label="Ayuda" value={getThemePaint(theme, 'formHelpColor', '#64748b')} allowGradient onChange={(value) => onPatchTheme({ formHelpColor: value })} onCommit={onSaveSite} />
       </div>
       <div className={styles.twoColumn}>
-        <ColorField label="Caja" value={getThemePaint(theme, 'formFieldBg', '#ffffff')} allowGradient onChange={(value) => onPatchTheme({ formFieldBg: value })} onCommit={onSaveSite} />
+        <ColorField label="Caja" value={getThemePaint(theme, 'formFieldBg', 'transparent')} allowGradient onChange={(value) => onPatchTheme({ formFieldBg: value })} onCommit={onSaveSite} />
         <ColorField label="Texto caja" value={getThemePaint(theme, 'formFieldText', inputText)} allowGradient onChange={(value) => onPatchTheme({ formFieldText: value })} onCommit={onSaveSite} />
       </div>
       <div className={styles.twoColumn}>
@@ -16759,6 +22546,7 @@ const FormGlobalStyleControls: React.FC<{
         <DimensionField label="Relleno lados" value={getThemeNumber(theme, 'formFieldPaddingX', 14, 6, 48)} min={6} max={48} onChange={(value) => onPatchTheme({ formFieldPaddingX: value })} onCommit={onSaveSite} />
       </div>
       <DimensionField label="Relleno vertical" value={getThemeNumber(theme, 'formFieldPaddingY', 13, 6, 36)} min={6} max={36} onChange={(value) => onPatchTheme({ formFieldPaddingY: value })} onCommit={onSaveSite} />
+      <DimensionField label="Ancho cajas" value={getThemeNumber(theme, 'formFieldWidth', 560, 240, 900)} min={240} max={900} step={10} onChange={(value) => onPatchTheme({ formFieldWidth: value })} onCommit={onSaveSite} />
 
       <div className={styles.twoColumn}>
         <label className={styles.field}>
@@ -16775,14 +22563,14 @@ const FormGlobalStyleControls: React.FC<{
         </label>
       </div>
       <div className={styles.twoColumn}>
-        <ColorField label="Opcion seleccionada" value={getThemePaint(theme, 'formChoiceSelectedBg', defaultChoiceSelectedBg)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBg: value })} onCommit={onSaveSite} />
+        <ColorField label="Opción seleccionada" value={getThemePaint(theme, 'formChoiceSelectedBg', defaultChoiceSelectedBg)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBg: value })} onCommit={onSaveSite} />
         <ColorField label="Borde seleccionado" value={getThemePaint(theme, 'formChoiceSelectedBorder', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBorder: value })} onCommit={onSaveSite} />
       </div>
 
-      <div className={styles.panelSubheader}>Boton de envio</div>
+      <div className={styles.panelSubheader}>Botón de envío</div>
       <div className={styles.twoColumn}>
         <label className={styles.field}>
-          <span>Texto del boton</span>
+          <span>Texto del botón</span>
           <input value={theme.submitText || ''} placeholder="Enviar" onChange={(event) => onPatchTheme({ submitText: event.target.value })} onBlur={onSaveSite} />
         </label>
         <label className={styles.field}>
@@ -16793,38 +22581,56 @@ const FormGlobalStyleControls: React.FC<{
       {isStandardForm(site) && (
         <div className={styles.twoColumn}>
           <label className={styles.field}>
-            <span>Texto boton continuar</span>
+            <span>Texto botón continuar</span>
             <input value={theme.continueText || ''} placeholder="Continuar" onChange={(event) => onPatchTheme({ continueText: event.target.value })} onBlur={onSaveSite} />
           </label>
         </div>
       )}
-      {isInteractiveForm(site) && (
+      {(isInteractiveForm(site) || embedded) && (
         <div className={styles.twoColumn}>
           <label className={styles.field}>
-            <span>Texto boton siguiente</span>
+            <span>Texto botón siguiente</span>
             <input value={theme.nextText || ''} placeholder="Siguiente" onChange={(event) => onPatchTheme({ nextText: event.target.value })} onBlur={onSaveSite} />
           </label>
           <label className={styles.field}>
-            <span>Texto boton anterior</span>
+            <span>Texto botón anterior</span>
             <input value={theme.backText || ''} placeholder="Anterior" onChange={(event) => onPatchTheme({ backText: event.target.value })} onBlur={onSaveSite} />
           </label>
         </div>
       )}
       <div className={styles.twoColumn}>
-        <ColorField label="Fondo boton" value={getThemePaint(theme, 'submitBg', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBg: value })} onCommit={onSaveSite} />
-        <ColorField label="Texto boton" value={getThemePaint(theme, 'submitTextColor', onAccentFor(defaultAccent))} allowGradient onChange={(value) => onPatchTheme({ submitTextColor: value })} onCommit={onSaveSite} />
+        <ColorField label="Fondo botón" value={getThemePaint(theme, 'submitBg', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBg: value })} onCommit={onSaveSite} />
+        <ColorField label="Texto botón" value={getThemePaint(theme, 'submitTextColor', onAccentFor(defaultAccent))} allowGradient onChange={(value) => onPatchTheme({ submitTextColor: value })} onCommit={onSaveSite} />
       </div>
       <div className={styles.twoColumn}>
-        <ColorField label="Borde boton" value={getThemePaint(theme, 'submitBorderColor', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBorderColor: value })} onCommit={onSaveSite} />
-        <DimensionField label="Radio boton" value={getThemeNumber(theme, 'submitRadius', 12, 0, 80)} min={0} max={80} onChange={(value) => onPatchTheme({ submitRadius: value })} onCommit={onSaveSite} />
+        <ColorField label="Borde botón" value={getThemePaint(theme, 'submitBorderColor', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBorderColor: value })} onCommit={onSaveSite} />
+        <DimensionField label="Radio botón" value={getThemeNumber(theme, 'submitRadius', 12, 0, 80)} min={0} max={80} onChange={(value) => onPatchTheme({ submitRadius: value })} onCommit={onSaveSite} />
       </div>
       <div className={styles.twoColumn}>
-        <DimensionField label="Alto boton" value={getThemeNumber(theme, 'submitHeight', 50, 34, 96)} min={34} max={96} onChange={(value) => onPatchTheme({ submitHeight: value })} onCommit={onSaveSite} />
-        <DimensionField label="Texto boton" value={getThemeNumber(theme, 'submitFontSize', 16, 11, 32)} min={11} max={32} onChange={(value) => onPatchTheme({ submitFontSize: value })} onCommit={onSaveSite} />
+        <DimensionField label="Alto botón" value={getThemeNumber(theme, 'submitHeight', 50, 34, 96)} min={34} max={96} onChange={(value) => onPatchTheme({ submitHeight: value })} onCommit={onSaveSite} />
+        <DimensionField label="Texto botón" value={getThemeNumber(theme, 'submitFontSize', 16, 11, 32)} min={11} max={32} onChange={(value) => onPatchTheme({ submitFontSize: value })} onCommit={onSaveSite} />
       </div>
       <div className={styles.twoColumn}>
-        <DimensionField label="Relleno boton" value={getThemeNumber(theme, 'submitPaddingX', 22, 8, 72)} min={8} max={72} onChange={(value) => onPatchTheme({ submitPaddingX: value })} onCommit={onSaveSite} />
-        <DimensionField label="Borde boton" value={getThemeNumber(theme, 'submitBorderWidth', 1, 0, 8)} min={0} max={8} onChange={(value) => onPatchTheme({ submitBorderWidth: value })} onCommit={onSaveSite} />
+        <DimensionField label="Relleno botón" value={getThemeNumber(theme, 'submitPaddingX', 22, 8, 72)} min={8} max={72} onChange={(value) => onPatchTheme({ submitPaddingX: value })} onCommit={onSaveSite} />
+        <DimensionField label="Borde botón" value={getThemeNumber(theme, 'submitBorderWidth', 1, 0, 8)} min={0} max={8} onChange={(value) => onPatchTheme({ submitBorderWidth: value })} onCommit={onSaveSite} />
+      </div>
+      <div className={styles.twoColumn}>
+        <AlignmentControl
+          label="Alineación botón"
+          value={getThemeButtonAlign(theme, 'submitAlign', 'center')}
+          options={buttonAlignOptions}
+          onChange={(value) => onPatchTheme({ submitAlign: value as SiteTheme['submitAlign'] })}
+          onCommit={onSaveSite}
+        />
+        <DimensionField
+          label="Ancho botón"
+          value={getThemeNumber(theme, 'submitWidth', 0, 0, 100)}
+          min={0}
+          max={100}
+          unit="%"
+          onChange={(value) => onPatchTheme({ submitWidth: value })}
+          onCommit={onSaveSite}
+        />
       </div>
     </div>
   )
@@ -16855,7 +22661,7 @@ const PopupInspector: React.FC<{
           {importedPopupDetected && (
             <div className={styles.popupDetectedCard}>
               <strong>Detectado en el HTML</strong>
-              <p>Encontramos un popup o modal dentro del sitio importado. Si activas este panel, Ristak mostrara el popup configurado aqui.</p>
+              <p>Encontramos un popup o modal dentro del sitio importado. Si activas este panel, Ristak mostrará el popup configurado aquí.</p>
             </div>
           )}
 
@@ -16910,7 +22716,7 @@ const PopupInspector: React.FC<{
           </div>
           <ColorField label="Color borde" value={getThemePaint(theme, 'popupBorderColor', 'rgba(148, 163, 184, 0.32)')} allowGradient onChange={(value) => onPatchTheme({ popupBorderColor: value })} onCommit={onSaveSite} />
 
-          <div className={styles.panelSubheader}>Boton de cerrar</div>
+          <div className={styles.panelSubheader}>Botón de cerrar</div>
           <div className={styles.twoColumn}>
             <label className={styles.field}>
               <span>Mostrar</span>
@@ -16937,6 +22743,141 @@ const PopupInspector: React.FC<{
   )
 }
 
+type InspectorTabId = 'edit' | 'design' | 'settings'
+
+interface InspectorTab {
+  value: InspectorTabId
+  label: string
+  icon: React.ReactNode
+  content: React.ReactNode
+}
+
+const InspectorTabbedPanel: React.FC<{
+  title: string
+  subtitle: string
+  tabs: InspectorTab[]
+  defaultTab?: InspectorTabId
+  className?: string
+  ariaLabel?: string
+  header?: React.ReactNode
+}> = ({ title, subtitle, tabs, defaultTab = 'edit', className, ariaLabel, header }) => {
+  const [activeTab, setActiveTab] = useState<InspectorTabId>(defaultTab)
+  const activeContent = tabs.find(tab => tab.value === activeTab)?.content || tabs[0]?.content
+
+  useEffect(() => {
+    if (!tabs.some(tab => tab.value === activeTab)) {
+      setActiveTab(defaultTab)
+    }
+  }, [activeTab, defaultTab, tabs])
+
+  return (
+    <aside className={[styles.propertiesPanel, className].filter(Boolean).join(' ')} aria-label={ariaLabel}>
+      <div className={styles.inspectorStickyTop}>
+        {header || (
+          <div className={styles.panelHeader}>
+            <strong>{title}</strong>
+            <span>{subtitle}</span>
+          </div>
+        )}
+        <TabList
+          tabs={tabs.map(({ value, label, icon }) => ({ value, label, icon }))}
+          activeTab={activeTab}
+          onTabChange={(value) => setActiveTab(value as InspectorTabId)}
+          variant="compact"
+          fullWidth
+          className={styles.inspectorTabList}
+        />
+      </div>
+      <div className={`${styles.propertiesBody} ${styles.inspectorTabBody}`} data-inspector-tab={activeTab}>
+        {activeContent}
+      </div>
+    </aside>
+  )
+}
+
+const InspectorEmptyState: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <p className={styles.inspectorEmptyText}>{children}</p>
+)
+
+const ActivePageSettings: React.FC<{
+  pages: SitePage[]
+  activePageId: string
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ pages, activePageId, onPatchTheme, onSaveSite }) => {
+  const activePage = pages.find(page => page.id === activePageId) || pages[0]
+  if (!activePage) return null
+
+  const patchActivePage = (patch: Partial<SitePage>) => {
+    onPatchTheme({
+      pages: normalizePagesForSave(pages.map(page => (
+        page.id === activePage.id ? { ...page, ...patch } : page
+      )))
+    })
+  }
+
+  return (
+    <div className={styles.settingsGroup}>
+      <div className={styles.panelSubheader}>Página activa</div>
+      <label className={styles.field}>
+        <span>Nombre de página</span>
+        <input
+          value={activePage.title || ''}
+          placeholder="Página"
+          onChange={(event) => patchActivePage({ title: event.target.value })}
+          onBlur={onSaveSite}
+        />
+      </label>
+    </div>
+  )
+}
+
+const SiteGlobalSettings: React.FC<{
+  site: PublicSite
+  onPatchSite: (patch: Partial<PublicSite>) => void
+  onSaveSite: () => void
+}> = ({ site, onPatchSite, onSaveSite }) => (
+  <div className={styles.settingsGroup}>
+    <div className={styles.panelSubheader}>Público</div>
+    <label className={styles.field}>
+      <span>Título público</span>
+      <input
+        value={getPublicTitleEditorValue(site)}
+        placeholder={site.name || 'Nombre público'}
+        onChange={(event) => onPatchSite({ title: event.target.value })}
+        onBlur={onSaveSite}
+      />
+    </label>
+    <label className={styles.field}>
+      <span>Descripción</span>
+      <textarea
+        rows={3}
+        value={site.description || ''}
+        placeholder="Descripción corta para buscadores y previews"
+        onChange={(event) => onPatchSite({ description: event.target.value })}
+        onBlur={onSaveSite}
+      />
+    </label>
+  </div>
+)
+
+const hasBlockSettingsTabContent = (block: SiteBlock, isField: boolean) => (
+  isField ||
+  isChoiceBlock(block.blockType) ||
+  isPanelBlock(block) ||
+  block.blockType === SECTION_BLOCK_TYPE ||
+  [
+    'hero',
+    'cta',
+    'button',
+    'social_profile',
+    'image',
+    'video',
+    'calendar_embed',
+    'form_embed'
+  ].includes(block.blockType)
+)
+
 const PageInspector: React.FC<{
   site: PublicSite
   pages: SitePage[]
@@ -16946,262 +22887,260 @@ const PageInspector: React.FC<{
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void
 }> = ({ site, pages, activePageId, metaPixelConnected, onPatchSite, onPatchTheme, onSaveSite }) => {
+  const [formMetaParamsOpen, setFormMetaParamsOpen] = useState(false)
   const theme = site.theme || {}
-  const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
-  const activePageEventName = activePage?.metaCapiEnabled
-    ? normalizeMetaEventName(activePage.metaEventName, 'none')
-    : 'none'
-  const activePageHasConversion = activePageEventName !== 'none'
   const formEventName = normalizeMetaEventName(site.metaEventName, 'none')
   const formHasConversion = formEventName !== 'none'
-  const patchActivePage = (patch: Partial<SitePage>) => {
-    if (!activePage) return
+  const formHasParameters = hasMetaEventParameters(theme.metaEventParameters)
 
-    onPatchTheme({
-      pages: normalizePagesForSave(pages.map(page => (
-        page.id === activePage.id ? { ...page, ...patch } : page
-      )))
-    })
-  }
-  return (
-    <aside className={styles.propertiesPanel}>
-      <div className={styles.panelHeader}>
-        <strong>Pagina</strong>
-        <span>{isLanding(site) ? (site.theme?.pageMode === 'website' ? 'Sitio web' : 'Embudo') : 'Formulario'}</span>
-      </div>
-      <div className={styles.propertiesBody}>
-        <>
-            <div className={styles.settingsGroup}>
-              <div className={styles.panelSubheader}>Colores</div>
-          <div className={styles.twoColumn}>
-            <ColorField
-              label="Fondo de pagina"
-              value={getThemePaint(theme, 'backgroundColor', userBgColor(site) || resolvedPageBg(site))}
-              allowGradient
-              onChange={(value) => onPatchTheme({ backgroundColor: value })}
-              onCommit={onSaveSite}
-            />
-            <ColorField
-              label="Texto de pagina"
-              value={getThemePaint(theme, 'textColor', isSiteDark(site) ? '#ffffff' : '#111827')}
-              allowGradient
-              onChange={(value) => onPatchTheme({ textColor: value, textColorCustom: true })}
-              onCommit={onSaveSite}
-            />
+  useEffect(() => {
+    if (!site.metaCapiEnabled || !formHasConversion) {
+      setFormMetaParamsOpen(false)
+    }
+  }, [formHasConversion, site.metaCapiEnabled])
+
+  const pageConfigContent = (
+    <>
+      <ActivePageSettings pages={pages} activePageId={activePageId} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      {metaPixelConnected && isFormSite(site) && (
+        <div className={styles.settingsGroup}>
+          <div className={styles.panelSubheader}>Conversión del formulario</div>
+          <div className={`${styles.metaCard} ${formHasConversion && site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
+            <span className={styles.metaMark} aria-hidden="true">∞</span>
+            <div className={styles.metaCardInfo}>
+              <strong>{formHasConversion ? 'Evento de submit' : 'Sin evento'}</strong>
+              <small>{!site.metaCapiEnabled ? 'Requiere Meta del sitio' : formHasConversion ? 'Se envía al enviar formulario' : 'Solo PageView global'}</small>
+            </div>
           </div>
-          <ColorField
-            label="Acento"
-            value={getThemePaint(theme, 'accentColor', userAccentColor(site) || (isSiteDark(site) ? '#ffffff' : '#111827'))}
-            allowGradient
-            onChange={(value) => onPatchTheme({ accentColor: value })}
-            onCommit={onSaveSite}
-          />
           <label className={styles.field}>
-            <span>URL de fondo</span>
-            <input
-              value={getThemeString(theme, 'backgroundImage')}
-              placeholder={theme.backgroundMediaType === 'video' ? 'https://.../video.mp4' : 'https://...'}
-              onChange={(event) => onPatchTheme({ backgroundImage: event.target.value })}
+            <span>Evento de submit</span>
+            <CustomSelect
+              value={formEventName}
+              disabled={!site.metaCapiEnabled}
+              onChange={(event) => {
+                const metaEventName = event.target.value
+                onPatchSite({ metaEventName })
+                onPatchTheme({
+                  metaEventParameters: pruneMetaEventParametersForEvent(theme.metaEventParameters, metaEventName)
+                })
+              }}
               onBlur={onSaveSite}
-            />
+            >
+              {metaEventOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
           </label>
-          <MediaUploadControl
-            kind={theme.backgroundMediaType === 'video' ? 'video' : 'image'}
-            label={theme.backgroundMediaType === 'video' ? 'Subir video de fondo' : 'Subir imagen de fondo'}
-            moduleEntityId={site.id}
-            onUploaded={(url) => onPatchTheme({
-              backgroundImage: url,
-              backgroundMediaType: theme.backgroundMediaType === 'video' ? 'video' : 'image'
-            })}
-            onCommit={onSaveSite}
-          />
-          <div className={styles.twoColumn}>
-            <label className={styles.field}>
-              <span>Tipo</span>
-              <CustomSelect
-                value={getThemeString(theme, 'backgroundMediaType') || 'image'}
-                onChange={(event) => onPatchTheme({ backgroundMediaType: event.target.value as SiteTheme['backgroundMediaType'] })}
-                onBlur={onSaveSite}
+          {formHasConversion && (
+            <div className={styles.metaParametersInspector}>
+              <button
+                type="button"
+                className={[
+                  styles.metaParametersInspectorToggle,
+                  formMetaParamsOpen ? styles.metaParametersInspectorToggleActive : '',
+                  formHasParameters ? styles.metaParametersInspectorToggleFilled : ''
+                ].filter(Boolean).join(' ')}
+                disabled={!site.metaCapiEnabled}
+                aria-expanded={formMetaParamsOpen}
+                onClick={() => setFormMetaParamsOpen(open => !open)}
               >
-                {backgroundMediaTypeOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </CustomSelect>
-            </label>
-            <label className={styles.field}>
-              <span>Visualizacion</span>
-              <CustomSelect
-                value={getBackgroundVisualValue(theme)}
-                onChange={(event) => onPatchTheme(backgroundVisualPatch(event.target.value))}
-                onBlur={onSaveSite}
-              >
-                {backgroundVisualOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </CustomSelect>
-            </label>
-          </div>
-
-          <div className={styles.panelSubheader}>Dimensiones</div>
-          <DimensionField
-            label="Ancho maximo"
-            value={isLanding(site) && Number(theme.pageMaxWidth) === 1160 ? 1440 : getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1440 : 520, 360, 1440)}
-            min={360}
-            max={1440}
-            step={10}
-            onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
-            onCommit={onSaveSite}
-          />
-          <div className={styles.twoColumn}>
-            <DimensionField
-              label="Relleno de pagina"
-              value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, 120)}
-              min={0}
-              max={120}
-              onChange={(value) => onPatchTheme({ pagePadding: value })}
-              onCommit={onSaveSite}
-            />
-            <DimensionField
-              label="Radio"
-              value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, 40)}
-              min={0}
-              max={40}
-              onChange={(value) => onPatchTheme({ pageRadius: value })}
-              onCommit={onSaveSite}
-            />
-          </div>
-	          <div className={styles.panelSubheader}>Borde de pagina</div>
-	          <div className={styles.twoColumn}>
-            <DimensionField
-              label="Grosor"
-              value={getThemeNumber(theme, 'pageBorderWidth', 0, 0, 12)}
-              min={0}
-              max={12}
-              onChange={(value) => onPatchTheme({ pageBorderWidth: value })}
-              onCommit={onSaveSite}
-            />
-            <ColorField
-              label="Color"
-              value={getThemePaint(theme, 'pageBorderColor', '#dbe3ef')}
-              allowGradient
-              onChange={(value) => onPatchTheme({ pageBorderColor: value })}
-              onCommit={onSaveSite}
-            />
-          </div>
-          {metaPixelConnected && isLanding(site) && activePage && (
-            <>
-              <div className={styles.panelSubheader}>Conversion de esta pagina</div>
-              <div className={`${styles.metaCard} ${activePageHasConversion && site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
-                <span className={styles.metaMark} aria-hidden="true">∞</span>
-                <div className={styles.metaCardInfo}>
-                  <strong>{activePageHasConversion ? 'Evento configurado' : 'Sin evento'}</strong>
-                  <small>{!site.metaCapiEnabled ? 'Requiere Meta del sitio' : activePageHasConversion ? 'Se envia desde esta pagina' : 'Solo PageView global'}</small>
-                </div>
-              </div>
-              <div className={styles.twoColumn}>
-                <label className={styles.field}>
-                  <span>Cuando</span>
-                  <CustomSelect
-                    value={normalizeMetaTrigger(activePage.metaTrigger)}
-                    disabled={!site.metaCapiEnabled || !activePageHasConversion}
-                    onChange={(event) => patchActivePage({ metaTrigger: event.target.value as SiteMetaTrigger })}
-                    onBlur={onSaveSite}
-                  >
-                    {metaTriggerOptions.map(option => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </CustomSelect>
-                </label>
-                <label className={styles.field}>
-                  <span>Evento</span>
-                  <CustomSelect
-                    value={activePageEventName}
-                    disabled={!site.metaCapiEnabled}
-                    onChange={(event) => {
-                      const metaEventName = event.target.value
-                      patchActivePage({
-                        metaEventName,
-                        metaCapiEnabled: metaEventName !== 'none'
-                      })
-                    }}
-                    onBlur={onSaveSite}
-                  >
-                    {metaEventOptions.map(option => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </CustomSelect>
-                </label>
-              </div>
-            </>
-          )}
-          {metaPixelConnected && isFormSite(site) && (
-            <>
-              <div className={styles.panelSubheader}>Conversion del formulario</div>
-              <div className={`${styles.metaCard} ${formHasConversion && site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
-                <span className={styles.metaMark} aria-hidden="true">∞</span>
-                <div className={styles.metaCardInfo}>
-                  <strong>{formHasConversion ? 'Evento de submit' : 'Sin evento'}</strong>
-                  <small>{!site.metaCapiEnabled ? 'Requiere Meta del sitio' : formHasConversion ? 'Se envia al enviar formulario' : 'Solo PageView global'}</small>
-                </div>
-              </div>
-              <label className={styles.field}>
-                <span>Evento de submit</span>
-                <CustomSelect
-                  value={formEventName}
+                <Settings2 size={14} />
+                <span>Parámetros Meta</span>
+                <ChevronDown size={13} />
+              </button>
+              {formMetaParamsOpen && (
+                <MetaEventParametersEditor
+                  eventName={formEventName}
+                  parameters={theme.metaEventParameters}
                   disabled={!site.metaCapiEnabled}
-                  onChange={(event) => onPatchSite({ metaEventName: event.target.value })}
+                  onChange={(metaEventParameters) => onPatchTheme({ metaEventParameters })}
+                  onCommit={onSaveSite}
+                />
+              )}
+            </div>
+          )}
+          {isStandardForm(site) && (
+            <>
+              <label className={styles.field}>
+                <span>Al enviar formulario</span>
+                <CustomSelect
+                  value={getThemeFormCompletionAction(theme)}
+                  onChange={(event) => onPatchTheme({ formCompletionAction: event.target.value as FormCompletionAction })}
                   onBlur={onSaveSite}
                 >
-                  {metaEventOptions.map(option => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
+                  <option value="next_page_if_qualified">Mostrar Agradecimiento o Descalificacion segun resultado</option>
+                  <option value="next_page">Siempre mostrar página Agradecimiento</option>
+                  <option value="form_default">Mostrar mensaje en este formulario</option>
                 </CustomSelect>
               </label>
-	              {isStandardForm(site) && (
-                <>
-                  <label className={styles.field}>
-                    <span>Al enviar formulario</span>
-                    <CustomSelect
-                      value={getThemeFormCompletionAction(theme)}
-                      onChange={(event) => onPatchTheme({ formCompletionAction: event.target.value as FormCompletionAction })}
-                      onBlur={onSaveSite}
-                    >
-                      <option value="next_page_if_qualified">Mostrar Agradecimiento o Descalificacion segun resultado</option>
-                      <option value="next_page">Siempre mostrar pagina Agradecimiento</option>
-                      <option value="form_default">Mostrar mensaje en este formulario</option>
-                    </CustomSelect>
-                  </label>
-                  <label className={styles.field}>
-                    <span>Mensaje si califica</span>
-                    <textarea
-                      rows={2}
-                      value={theme.finalMessages?.success || ''}
-                      placeholder="Listo. Recibimos tu informacion."
-                      onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), success: event.target.value } })}
-                      onBlur={onSaveSite}
-                    />
-                  </label>
-                  <label className={styles.field}>
-                    <span>Mensaje si no califica</span>
-                    <textarea
-                      rows={2}
-                      value={theme.finalMessages?.disqualified || ''}
-                      placeholder="Gracias por responder. Por ahora no parece ser el siguiente paso ideal."
-                      onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), disqualified: event.target.value } })}
-                      onBlur={onSaveSite}
-                    />
-                  </label>
-                </>
-              )}
+              <label className={styles.field}>
+                <span>Mensaje si califica</span>
+                <textarea
+                  rows={2}
+                  value={theme.finalMessages?.success || ''}
+                  placeholder="Listo. Recibimos tu información."
+                  onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), success: event.target.value } })}
+                  onBlur={onSaveSite}
+                />
+              </label>
+              <label className={styles.field}>
+                <span>Mensaje si no califica</span>
+                <textarea
+                  rows={2}
+                  value={theme.finalMessages?.disqualified || ''}
+                  placeholder="Gracias por responder. Por ahora no parece ser el siguiente paso ideal."
+                  onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), disqualified: event.target.value } })}
+                  onBlur={onSaveSite}
+                />
+              </label>
             </>
           )}
-          {isFormSite(site) && (
-            <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-          )}
         </div>
-        </>
+      )}
+    </>
+  )
+
+  const pageDesignContent = (
+    <div className={styles.settingsGroup}>
+      <div className={styles.panelSubheader}>Colores</div>
+      <div className={styles.twoColumn}>
+        <ColorField
+          label="Fondo de página"
+          value={getThemePaint(theme, 'backgroundColor', userBgColor(site) || resolvedPageBg(site))}
+          allowGradient
+          onChange={(value) => onPatchTheme({ backgroundColor: value })}
+          onCommit={onSaveSite}
+        />
+        <ColorField
+          label="Texto de página"
+          value={getThemePaint(theme, 'textColor', isSiteDark(site) ? '#ffffff' : '#111827')}
+          allowGradient
+          onChange={(value) => onPatchTheme({ textColor: value, textColorCustom: true })}
+          onCommit={onSaveSite}
+        />
       </div>
-    </aside>
+      <ColorField
+        label="Acento"
+        value={getThemePaint(theme, 'accentColor', userAccentColor(site) || (isSiteDark(site) ? '#ffffff' : '#111827'))}
+        allowGradient
+        onChange={(value) => onPatchTheme({ accentColor: value })}
+        onCommit={onSaveSite}
+      />
+      <div className={styles.twoColumn}>
+        <label className={styles.field}>
+          <span>Tipo</span>
+          <CustomSelect
+            value={getThemeString(theme, 'backgroundMediaType') || 'image'}
+            onChange={(event) => onPatchTheme({ backgroundMediaType: event.target.value as SiteTheme['backgroundMediaType'] })}
+            onBlur={onSaveSite}
+          >
+            {backgroundMediaTypeOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+        <label className={styles.field}>
+          <span>Visualización</span>
+          <CustomSelect
+            value={getBackgroundVisualValue(theme)}
+            onChange={(event) => onPatchTheme(backgroundVisualPatch(event.target.value))}
+            onBlur={onSaveSite}
+          >
+            {backgroundVisualOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+      </div>
+      <MediaUploadControl
+        kind={theme.backgroundMediaType === 'video' ? 'video' : 'image'}
+        label={theme.backgroundMediaType === 'video' ? 'Elegir video de fondo' : 'Elegir imagen de fondo'}
+        moduleEntityId={site.id}
+        currentUrl={getThemeString(theme, 'backgroundImage')}
+        onUploaded={(url) => onPatchTheme({
+          backgroundImage: url,
+          backgroundMediaType: theme.backgroundMediaType === 'video' ? 'video' : 'image'
+        })}
+        onCommit={onSaveSite}
+      />
+      <label className={styles.field}>
+        <span>URL de fondo</span>
+        <input
+          value={getThemeString(theme, 'backgroundImage')}
+          placeholder={theme.backgroundMediaType === 'video' ? 'https://.../video.mp4' : 'https://...'}
+          onChange={(event) => onPatchTheme({ backgroundImage: event.target.value })}
+          onBlur={onSaveSite}
+        />
+      </label>
+
+      <div className={styles.panelSubheader}>Dimensiones</div>
+      <DimensionField
+        label="Ancho máximo"
+        value={isLanding(site) && Number(theme.pageMaxWidth) === 1160 ? 1440 : getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1440 : 520, 360, 1440)}
+        min={360}
+        max={1440}
+        step={10}
+        onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
+        onCommit={onSaveSite}
+      />
+      <div className={styles.twoColumn}>
+        <DimensionField
+          label="Relleno de página"
+          value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, 120)}
+          min={0}
+          max={120}
+          onChange={(value) => onPatchTheme({ pagePadding: value })}
+          onCommit={onSaveSite}
+        />
+        <DimensionField
+          label="Radio"
+          value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, 40)}
+          min={0}
+          max={40}
+          onChange={(value) => onPatchTheme({ pageRadius: value })}
+          onCommit={onSaveSite}
+        />
+      </div>
+      <div className={styles.panelSubheader}>Borde de página</div>
+      <div className={styles.twoColumn}>
+        <DimensionField
+          label="Grosor"
+          value={getThemeNumber(theme, 'pageBorderWidth', 0, 0, 12)}
+          min={0}
+          max={12}
+          onChange={(value) => onPatchTheme({ pageBorderWidth: value })}
+          onCommit={onSaveSite}
+        />
+        <ColorField
+          label="Color"
+          value={getThemePaint(theme, 'pageBorderColor', '#dbe3ef')}
+          allowGradient
+          onChange={(value) => onPatchTheme({ pageBorderColor: value })}
+          onCommit={onSaveSite}
+        />
+      </div>
+    </div>
+  )
+
+  const pageGlobalContent = (
+    <>
+      <SiteGlobalSettings site={site} onPatchSite={onPatchSite} onSaveSite={onSaveSite} />
+      {isFormSite(site) && (
+        <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      )}
+    </>
+  )
+
+  return (
+    <InspectorTabbedPanel
+      title="Página"
+      subtitle={isLanding(site) ? (site.theme?.pageMode === 'website' ? 'Sitio web' : 'Embudo') : 'Formulario'}
+      tabs={[
+        { value: 'edit', label: 'Página', icon: <FileText size={14} />, content: pageConfigContent },
+        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: pageDesignContent },
+        { value: 'settings', label: 'Global', icon: <Globe2 size={14} />, content: pageGlobalContent }
+      ]}
+    />
   )
 }
 
@@ -17227,15 +23166,15 @@ const normalizeCustomFieldDataType = (value = '') => {
 const customFieldTypeLabel = (value = '') => {
   const type = normalizeCustomFieldDataType(value)
   if (type === 'text') return 'Texto corto'
-  if (type === 'textarea') return 'Parrafo'
-  if (type === 'radio') return 'Opcion unica'
+  if (type === 'textarea') return 'Párrafo'
+  if (type === 'radio') return 'Opción única'
   if (type === 'dropdown') return 'Lista desplegable'
   if (type === 'checkboxes') return 'Varias opciones'
-  if (type === 'number') return 'Numero'
+  if (type === 'number') return 'Número'
   if (type === 'currency') return 'Moneda'
   if (type === 'date') return 'Fecha'
   if (type === 'email') return 'Correo'
-  if (type === 'phone') return 'Telefono'
+  if (type === 'phone') return 'Teléfono'
   return value || 'Campo'
 }
 
@@ -17253,6 +23192,22 @@ const CustomFieldBindingControl: React.FC<{
   onSave: () => void
 }> = ({ block, customFields, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
+  const systemPreset = getSystemFormFieldPresetForBlock(block)
+  if (systemPreset) {
+    return (
+      <div className={styles.customFieldBinding}>
+        <div className={styles.panelSubheader}>Guardado de respuesta</div>
+        <div className={styles.systemFieldLock}>
+          <span><Lock size={14} /></span>
+          <div>
+            <strong>{systemPreset.destinationLabel}</strong>
+            <p>Este campo es del sistema y se guarda automaticamente al enviar el formulario.</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const currentDefinitionId = getSettingString(settings, 'customFieldDefinitionId')
   const compatibleFields = customFields
     .filter(field => !field.archived && !isSystemCustomFieldDefinition(field) && isCustomFieldCompatibleWithBlock(block.blockType, field))
@@ -17320,7 +23275,7 @@ const CustomFieldBindingControl: React.FC<{
         </p>
       ) : (
         <p className={styles.customFieldHint}>
-          Crea campos compatibles en Configuracion para guardar este dato dentro del contacto.
+          Crea campos compatibles en Configuración para guardar este dato dentro del contacto.
         </p>
       )}
     </div>
@@ -17380,74 +23335,142 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   const isField = fieldBlockTypes.has(block.blockType)
   const settings = block.settings || {}
+  const hasButtonCopy = block.blockType === 'hero' || block.blockType === 'cta' || block.blockType === 'button'
+  const hasListCopy = ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
+  const isPrimaryTextBlock = ['headline', 'title'].includes(block.blockType)
+  const isSecondaryTextBlock = ['subheading', 'subtitle', 'description'].includes(block.blockType)
+  const systemFieldPreset = getSystemFormFieldPresetForBlock(block)
+  const showBlockNameFirst = isField || block.blockType === SECTION_BLOCK_TYPE
+  const isMediaBlock = block.blockType === 'image' || block.blockType === 'video'
+  const showContentField = block.blockType !== 'calendar_embed' && block.blockType !== 'button' && !isMediaBlock
   const contentLabel = isField
     ? 'Texto de ayuda'
     : block.blockType === SECTION_BLOCK_TYPE
-      ? 'Titulo visible opcional'
+      ? 'Título visible opcional'
       : block.blockType === 'embed'
-        ? 'Codigo externo, iframe o URL'
-        : 'Contenido'
+        ? 'Código externo, iframe o URL'
+        : block.blockType === 'hero'
+          ? 'Título principal'
+          : block.blockType === 'cta'
+            ? 'Título'
+            : hasListCopy
+              ? 'Título de seccion'
+              : isPrimaryTextBlock
+                ? 'Texto del título'
+                : isSecondaryTextBlock
+                  ? 'Texto del subtítulo'
+                  : block.blockType === 'text'
+                    ? 'Texto'
+                    : 'Contenido'
   const contentRows = block.blockType === 'embed' ? 7 : isField || block.blockType === SECTION_BLOCK_TYPE ? 2 : 3
+  const buttonTextEditorValue = Object.prototype.hasOwnProperty.call(settings, 'buttonText')
+    ? getSettingString(settings, 'buttonText')
+    : block.blockType === 'button'
+      ? block.content
+      : ''
+  const blockNameField = (
+    <label className={styles.field}>
+      <span>{isField ? 'Pregunta visible' : block.blockType === SECTION_BLOCK_TYPE ? 'Nombre de la franja' : 'Nombre interno del bloque'}</span>
+      <input value={block.label} onChange={(event) => onPatchBlock({ label: event.target.value })} onBlur={onSave} />
+    </label>
+  )
+  const contentField = showContentField ? (
+    <label className={styles.field}>
+      <span>{contentLabel}</span>
+      <textarea
+        rows={contentRows}
+        value={block.content}
+        placeholder={block.blockType === 'embed' ? '<iframe src="https://..."></iframe> o código HTML del widget' : undefined}
+        onChange={(event) => onPatchBlock({ content: event.target.value })}
+        onBlur={onSave}
+      />
+    </label>
+  ) : null
 
-  return (
-    <aside className={styles.propertiesPanel}>
-      <div className={styles.panelHeader}>
-        <strong>Propiedades</strong>
-        <span>{blockLabels[block.blockType]}</span>
-      </div>
+  const blockHasSettingsContent = hasBlockSettingsTabContent(block, isField)
+  const defaultInspectorTab: InspectorTabId = isMediaBlock ? 'settings' : 'edit'
+  const editContent = (
+    <>
+      {showBlockNameFirst && blockNameField}
 
-      <div className={styles.propertiesBody}>
+      {contentField}
+
+      {block.blockType === 'hero' && (
         <label className={styles.field}>
-          <span>{isField ? 'Pregunta visible' : block.blockType === SECTION_BLOCK_TYPE ? 'Nombre de la franja' : 'Nombre del bloque'}</span>
-          <input value={block.label} onChange={(event) => onPatchBlock({ label: event.target.value })} onBlur={onSave} />
+          <span>Kicker</span>
+          <input value={getSettingString(settings, 'kicker')} onChange={(event) => onPatchSettings({ kicker: event.target.value })} onBlur={onSave} />
         </label>
+      )}
 
-        {block.blockType !== 'calendar_embed' && (
+      {(block.blockType === 'hero' || block.blockType === 'cta') && (
+        <label className={styles.field}>
+          <span>Subtítulo</span>
+          <textarea rows={2} value={getSettingString(settings, 'subtitle')} onChange={(event) => onPatchSettings({ subtitle: event.target.value })} onBlur={onSave} />
+        </label>
+      )}
+
+      {hasButtonCopy && (
+        <div className={styles.twoColumn}>
           <label className={styles.field}>
-            <span>{contentLabel}</span>
-            <textarea
-              rows={contentRows}
-              value={block.content}
-              placeholder={block.blockType === 'embed' ? '<iframe src="https://..."></iframe> o codigo HTML del widget' : undefined}
-              onChange={(event) => onPatchBlock({ content: event.target.value })}
+            <span>Texto del botón</span>
+            <input
+              value={buttonTextEditorValue}
+              onChange={(event) => onPatchSettings({ buttonText: event.target.value })}
               onBlur={onSave}
             />
           </label>
-        )}
+          <label className={styles.field}>
+            <span>Subtexto del botón</span>
+            <input value={getSettingString(settings, 'buttonSubtitle')} onChange={(event) => onPatchSettings({ buttonSubtitle: event.target.value })} onBlur={onSave} />
+          </label>
+        </div>
+      )}
 
-        {isField && (
-          <>
-            <div className={styles.twoColumn}>
+      {!showBlockNameFirst && blockNameField}
+
+      {hasListCopy && (
+        <label className={styles.field}>
+          <span>Items (uno por línea: título | texto | autor)</span>
+          <textarea
+            rows={5}
+            value={stringifyItems(settings)}
+            onChange={(event) => onPatchSettings({ items: parseItems(event.target.value) })}
+            onBlur={onSave}
+          />
+        </label>
+      )}
+    </>
+  )
+
+  const settingsContent = (
+    <>
+      {isField && (
+        <>
+          <div className={styles.settingsGroup}>
+            <div className={styles.panelSubheader}>Campo</div>
+            {systemFieldPreset ? (
               <label className={styles.field}>
                 <span>Texto dentro del campo</span>
                 <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
               </label>
-              <label className={styles.field}>
-                <span>Nombre interno</span>
-                <input
-                  value={getSettingString(settings, 'internalName')}
-                  onChange={(event) => onPatchSettings({ internalName: event.target.value })}
-                  onBlur={onSave}
-                />
-              </label>
-            </div>
+            ) : (
+              <div className={styles.twoColumn}>
+                <label className={styles.field}>
+                  <span>Texto dentro del campo</span>
+                  <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
+                </label>
+                <label className={styles.field}>
+                  <span>Nombre interno</span>
+                  <input
+                    value={getSettingString(settings, 'internalName')}
+                    onChange={(event) => onPatchSettings({ internalName: event.target.value })}
+                    onBlur={onSave}
+                  />
+                </label>
+              </div>
+            )}
 
-            <div className={styles.twoColumn}>
-              <label className={styles.field}>
-                <span>Validacion</span>
-                <CustomSelect
-                  value={getSettingString(settings, 'validation')}
-                  onChange={(event) => onPatchSettings({ validation: event.target.value })}
-                  onBlur={onSave}
-                >
-                  <option value="">Ninguna</option>
-                  <option value="email">Correo</option>
-                  <option value="phone">Telefono</option>
-                  <option value="number">Numero</option>
-                  <option value="currency">Moneda</option>
-                  <option value="date">Fecha</option>
-                </CustomSelect>
-              </label>
+            {systemFieldPreset ? (
               <label className={styles.checkboxLabel}>
                 <input
                   type="checkbox"
@@ -17459,9 +23482,38 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 />
                 <span>Campo requerido</span>
               </label>
-            </div>
+            ) : (
+              <div className={styles.twoColumn}>
+                <label className={styles.field}>
+                  <span>Validación</span>
+                  <CustomSelect
+                    value={getSettingString(settings, 'validation')}
+                    onChange={(event) => onPatchSettings({ validation: event.target.value })}
+                    onBlur={onSave}
+                  >
+                    <option value="">Ninguna</option>
+                    <option value="email">Correo</option>
+                    <option value="phone">Teléfono</option>
+                    <option value="number">Número</option>
+                    <option value="currency">Moneda</option>
+                    <option value="date">Fecha</option>
+                  </CustomSelect>
+                </label>
+                <label className={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={block.required}
+                    onChange={(event) => {
+                      onPatchBlock({ required: event.target.checked })
+                      window.setTimeout(onSave, 0)
+                    }}
+                  />
+                  <span>Campo requerido</span>
+                </label>
+              </div>
+            )}
 
-            {block.blockType === 'phone' && (
+            {block.blockType === 'phone' && !systemFieldPreset && (
               <label className={styles.checkboxLabel}>
                 <input
                   type="checkbox"
@@ -17471,52 +23523,81 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     window.setTimeout(onSave, 0)
                   }}
                 />
-                <span>Mostrar pais y lada</span>
+                <span>Mostrar país y lada</span>
               </label>
             )}
+          </div>
 
-            <CustomFieldBindingControl
-              block={block}
-              customFields={customFields}
-              onPatchSettings={onPatchSettings}
-              onSave={onSave}
-            />
-          </>
-        )}
-
-        {isChoiceBlock(block.blockType) && (
-          <OptionsRulesEditor block={block} blocks={allBlocks || blocks} pages={pages} onPatchBlock={onPatchBlock} onSave={onSave} />
-        )}
-
-        {!isField && (
-          <LandingBlockSettings
-            site={site}
+          <CustomFieldBindingControl
             block={block}
-            forms={forms}
-            calendars={calendars}
-            pages={pages}
-            activePageId={activePageId}
-            connectedSocialProfiles={connectedSocialProfiles}
-            loadingSocialProfiles={loadingSocialProfiles}
+            customFields={customFields}
             onPatchSettings={onPatchSettings}
             onSave={onSave}
           />
-        )}
+        </>
+      )}
 
-        <InlineBlockStyleControls
+      {isChoiceBlock(block.blockType) && (
+        <OptionsRulesEditor
+          block={block}
+          blocks={allBlocks || blocks}
+          pages={pages}
+          sitePages={pages}
+          activeSitePageId={activePageId}
+          onPatchBlock={onPatchBlock}
+          onSave={onSave}
+        />
+      )}
+
+      {!isField && (
+        <LandingBlockSettings
           site={site}
           block={block}
-          blocks={blocks}
+          forms={forms}
+          calendars={calendars}
+          pages={pages}
+          activePageId={activePageId}
+          connectedSocialProfiles={connectedSocialProfiles}
+          loadingSocialProfiles={loadingSocialProfiles}
           onPatchSettings={onPatchSettings}
           onSave={onSave}
         />
+      )}
 
-        {isFormSite(site) && isField && (
-          <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-        )}
+      {!blockHasSettingsContent && (
+        <InspectorEmptyState>Este bloque no tiene ajustes extra.</InspectorEmptyState>
+      )}
+    </>
+  )
 
-      </div>
-    </aside>
+  const designContent = (
+    <>
+      <InlineBlockStyleControls
+        site={site}
+        block={block}
+        blocks={blocks}
+        onPatchSettings={onPatchSettings}
+        onSave={onSave}
+      />
+
+      {isFormSite(site) && isField && (
+        <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      )}
+    </>
+  )
+
+  return (
+    <InspectorTabbedPanel
+      key={`${block.id}:${block.blockType}`}
+      title="Propiedades"
+      subtitle={blockLabels[block.blockType]}
+      defaultTab={defaultInspectorTab}
+      tabs={[
+        { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
+        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent },
+        { value: 'settings', label: 'Ajustes', icon: <Settings2 size={14} />, content: settingsContent }
+      ]}
+    />
   )
 }
 
@@ -17524,15 +23605,17 @@ interface OptionsRulesEditorProps {
   block: SiteBlock
   blocks: SiteBlock[]
   pages: SitePage[]
+  sitePages?: SitePage[]
+  activeSitePageId?: string
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onSave: () => void
 }
 
-const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, pages, onPatchBlock, onSave }) => {
+const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, pages, sitePages, activeSitePageId, onPatchBlock, onSave }) => {
   const options = getOptions(block)
   const fieldTargets = blocks.filter(item => fieldBlockTypes.has(item.blockType) && item.id !== block.id)
-  const messageActions = new Set<SiteOptionAction>(['show_message', 'end_form', 'disqualify', 'disqualify_after_submit'])
-  const categoryActions = new Set<SiteOptionAction>(['category', 'cold_lead', 'warm_lead', 'hot_lead'])
+  const pageTargets = (sitePages && sitePages.length ? sitePages : pages)
+    .filter(page => page.id !== activeSitePageId)
   const getTargetLabel = (target: SiteBlock) => {
     const page = pages.find(item => item.id === getBlockPageId(target, pages))
     return page ? `${target.label} - ${page.title}` : target.label
@@ -17549,8 +23632,8 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
         ...options,
         {
           id: `option-${Date.now()}`,
-          label: `Opcion ${options.length + 1}`,
-          value: `Opcion ${options.length + 1}`,
+          label: `Opción ${options.length + 1}`,
+          value: `Opción ${options.length + 1}`,
           action: 'continue'
         }
       ]
@@ -17568,10 +23651,12 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
   const buildRuleActionPatch = (option: SiteBlockOption, action: SiteOptionAction): Partial<SiteBlockOption> => ({
     action,
     targetBlockId: action === 'jump' ? option.targetBlockId || '' : '',
+    targetPageId: action === 'site_page' ? option.targetPageId || '' : '',
     redirectUrl: action === 'redirect' ? option.redirectUrl || '' : '',
-    message: messageActions.has(action) ? option.message || '' : '',
-    tag: action === 'tag' ? option.tag || '' : '',
-    category: categoryActions.has(action) ? option.category || '' : ''
+    submitBeforeAction: exitRuleActions.has(action) ? option.submitBeforeAction !== false : undefined,
+    message: action === 'disqualify' || action === 'disqualify_after_submit' ? option.message || '' : '',
+    tag: '',
+    category: ''
   })
 
   return (
@@ -17587,7 +23672,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
         <div key={option.id || index} className={styles.optionRuleCard}>
           <div className={styles.twoColumn}>
             <label className={styles.field}>
-              <span>Opcion</span>
+              <span>Opción</span>
               <input
                 value={option.label}
                 onChange={(event) => patchOption(index, { label: event.target.value, value: event.target.value })}
@@ -17621,7 +23706,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
 
           {option.action === 'redirect' && (
             <label className={styles.field}>
-              <span>Sitio</span>
+              <span>URL destino</span>
               <input
                 value={option.redirectUrl || ''}
                 placeholder="https://tusitio.com"
@@ -17631,38 +23716,43 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
             </label>
           )}
 
-          {messageActions.has(getVisibleRuleAction(option.action)) && (
+          {option.action === 'site_page' && (
+            <label className={styles.field}>
+              <span>Página del sitio</span>
+              <CustomSelect value={option.targetPageId || ''} onChange={(event) => patchOption(index, { targetPageId: event.target.value })} onBlur={onSave}>
+                <option value="">Selecciona una página</option>
+                {pageTargets.map(page => <option key={page.id} value={page.id}>{page.title || 'Página'}</option>)}
+              </CustomSelect>
+            </label>
+          )}
+
+          {exitRuleActions.has(getVisibleRuleAction(option.action)) && (
+            <>
+              <label className={styles.field}>
+                <span>Datos del formulario</span>
+                <CustomSelect
+                  value={option.submitBeforeAction === false ? 'skip' : 'submit'}
+                  onChange={(event) => patchOption(index, { submitBeforeAction: event.target.value !== 'skip' })}
+                  onBlur={onSave}
+                >
+                  <option value="submit">Guardar datos y luego redirigir</option>
+                  <option value="skip">Redirigir sin guardar datos</option>
+                </CustomSelect>
+              </label>
+              <p className={styles.customFieldHint}>
+                Si guarda datos, el formulario se envía antes de mandar al usuario al destino.
+              </p>
+            </>
+          )}
+
+          {(option.action === 'disqualify' || option.action === 'disqualify_after_submit') && (
             <label className={styles.field}>
               <span>Mensaje</span>
               <textarea
                 rows={2}
                 value={option.message || ''}
-                placeholder={option.action === 'disqualify' ? 'Gracias. Por ahora no califica.' : 'Gracias. Tu informacion fue recibida.'}
+                placeholder={option.action === 'disqualify' ? 'Gracias. Por ahora no califica.' : 'Gracias. Tu información fue recibida.'}
                 onChange={(event) => patchOption(index, { message: event.target.value })}
-                onBlur={onSave}
-              />
-            </label>
-          )}
-
-          {option.action === 'tag' && (
-            <label className={styles.field}>
-              <span>Etiqueta</span>
-              <input
-                value={option.tag || ''}
-                placeholder="lead_prioritario"
-                onChange={(event) => patchOption(index, { tag: event.target.value })}
-                onBlur={onSave}
-              />
-            </label>
-          )}
-
-          {categoryActions.has(getVisibleRuleAction(option.action)) && (
-            <label className={styles.field}>
-              <span>Categoria</span>
-              <input
-                value={option.category || ''}
-                placeholder={option.action === 'cold_lead' ? 'frio' : option.action === 'warm_lead' ? 'tibio' : option.action === 'hot_lead' ? 'caliente' : 'categoria'}
-                onChange={(event) => patchOption(index, { category: event.target.value })}
                 onBlur={onSave}
               />
             </label>
@@ -17670,7 +23760,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
 
           <button type="button" className={styles.removeOption} onClick={() => removeOption(index)}>
             <Trash2 size={14} />
-            Quitar opcion
+            Quitar opción
           </button>
         </div>
       ))}
@@ -17704,11 +23794,11 @@ const ButtonActionFields: React.FC<{
   return (
     <>
       <label className={styles.field}>
-        <span>Accion del boton</span>
+        <span>Acción del botón</span>
         <CustomSelect value={action} onChange={(event) => onPatchSettings({ buttonAction: event.target.value })} onBlur={onSave}>
           <option value="url">Enviar a una URL</option>
-          <option value="next_page">Ir a la siguiente pagina del embudo</option>
-          <option value="specific_page">Ir a una pagina especifica del embudo</option>
+          <option value="next_page">Ir a la siguiente página del embudo</option>
+          <option value="specific_page">Ir a una página específica del embudo</option>
           <option value="open_popup">Abrir pop up</option>
           <option value="close_popup">Cerrar pop up</option>
         </CustomSelect>
@@ -17723,9 +23813,9 @@ const ButtonActionFields: React.FC<{
 
       {action === 'specific_page' && (
         <label className={styles.field}>
-          <span>Pagina destino</span>
+          <span>Página destino</span>
           <CustomSelect value={getSettingString(settings, 'buttonPageId')} onChange={(event) => onPatchSettings({ buttonPageId: event.target.value })} onBlur={onSave}>
-            <option value="">Selecciona una pagina</option>
+            <option value="">Selecciona una página</option>
             {targetPages.map(page => <option key={page.id} value={page.id}>{page.title}</option>)}
           </CustomSelect>
         </label>
@@ -17811,7 +23901,13 @@ const SocialProfileSettings: React.FC<{
           }}
           onBlur={onSave}
         >
-          <option value="">{loadingSocialProfiles ? 'Buscando perfiles...' : 'Escribir manualmente'}</option>
+          <option value="">
+            {loadingSocialProfiles
+              ? 'Buscando perfiles...'
+              : connectedProfilesForPlatform.length > 0
+                ? 'Selecciona un perfil conectado'
+                : 'Sin perfiles conectados'}
+          </option>
           {connectedProfilesForPlatform.map(profile => (
             <option key={profile.id} value={profile.id}>{socialProfileOptionLabel(profile)}</option>
           ))}
@@ -17819,16 +23915,16 @@ const SocialProfileSettings: React.FC<{
       </label>
       <p className={styles.muted}>
         {connectedProfilesForPlatform.length > 0
-          ? 'Elige un perfil para llenar los datos. Despues puedes cambiar el texto, foto o seguidores aqui mismo.'
-          : 'Puedes llenar este perfil manualmente y moverlo dentro del formulario como cualquier bloque.'}
+          ? 'Elige un perfil conectado para llenar estos datos. Después puedes ajustar texto, foto o seguidores aquí mismo.'
+          : 'No hay perfiles conectados para esta red. Puedes llenar este bloque manualmente mientras conectas la cuenta.'}
       </p>
       <label className={styles.field}>
-        <span>Nombre que se vera</span>
+        <span>Nombre que se verá</span>
         <input value={getSettingString(settings, 'brandName')} placeholder={site.title || site.name || 'Tu marca'} onChange={(event) => onPatchSettings({ brandName: event.target.value })} onBlur={onSave} />
       </label>
       <label className={styles.field}>
         <span>Texto secundario</span>
-        <input value={getSettingString(settings, 'brandSubtitle')} placeholder={platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'} onChange={(event) => onPatchSettings({ brandSubtitle: event.target.value })} onBlur={onSave} />
+        <input value={getSettingString(settings, 'brandSubtitle')} placeholder={platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'} onChange={(event) => onPatchSettings({ brandSubtitle: event.target.value })} onBlur={onSave} />
       </label>
       <label className={styles.field}>
         <span>Foto de perfil (URL)</span>
@@ -17860,7 +23956,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
 
   if (isPanelBlock(block)) {
     const panelTitle = block.blockType === HEADER_PANEL_BLOCK_TYPE
-      ? getHeaderScope(block) === HEADER_SCOPE_GLOBAL ? 'Header global' : 'Header de esta pagina'
+      ? getHeaderScope(block) === HEADER_SCOPE_GLOBAL ? 'Header global' : 'Header de esta página'
       : 'Panel inferior'
     return (
       <div className={styles.settingsGroup}>
@@ -17875,7 +23971,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
             onBlur={onSave}
           />
         </label>
-        <p className={styles.muted}>Escribe un enlace por linea. Si no quieres enlaces, deja esta caja vacia.</p>
+        <p className={styles.muted}>Escribe un enlace por línea. Si no quieres enlaces, deja esta caja vacía.</p>
       </div>
     )
   }
@@ -17911,29 +24007,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
   if (['hero', 'cta'].includes(block.blockType)) {
     return (
       <div className={styles.settingsGroup}>
-        {block.blockType === 'hero' && (
-          <label className={styles.field}>
-            <span>Kicker</span>
-            <input value={getSettingString(settings, 'kicker')} onChange={(event) => onPatchSettings({ kicker: event.target.value })} onBlur={onSave} />
-          </label>
-        )}
-        <label className={styles.field}>
-          <span>Subtitulo</span>
-          <textarea rows={2} value={getSettingString(settings, 'subtitle')} onChange={(event) => onPatchSettings({ subtitle: event.target.value })} onBlur={onSave} />
-        </label>
-        <div className={styles.twoColumn}>
-          <label className={styles.field}>
-            <span>Texto del boton</span>
-            <input value={getSettingString(settings, 'buttonText')} onChange={(event) => onPatchSettings({ buttonText: event.target.value })} onBlur={onSave} />
-          </label>
-          <label className={styles.field}>
-            <span>Subtexto del boton</span>
-            <input value={getSettingString(settings, 'buttonSubtitle')} onChange={(event) => onPatchSettings({ buttonSubtitle: event.target.value })} onBlur={onSave} />
-          </label>
-        </div>
-        <div className={styles.twoColumn}>
-          <ButtonActionFields settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={onPatchSettings} onSave={onSave} />
-        </div>
+        <ButtonActionFields settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={onPatchSettings} onSave={onSave} />
       </div>
     )
   }
@@ -17941,16 +24015,6 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
   if (block.blockType === 'button') {
     return (
       <div className={styles.settingsGroup}>
-        <div className={styles.twoColumn}>
-          <label className={styles.field}>
-            <span>Texto del boton</span>
-            <input value={getSettingString(settings, 'buttonText')} onChange={(event) => onPatchSettings({ buttonText: event.target.value })} onBlur={onSave} />
-          </label>
-          <label className={styles.field}>
-            <span>Subtexto del boton</span>
-            <input value={getSettingString(settings, 'buttonSubtitle')} onChange={(event) => onPatchSettings({ buttonSubtitle: event.target.value })} onBlur={onSave} />
-          </label>
-        </div>
         <ButtonActionFields settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={onPatchSettings} onSave={onSave} />
       </div>
     )
@@ -17970,136 +24034,31 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
   }
 
   if (block.blockType === 'image' || block.blockType === 'video') {
+    const mediaKind = block.blockType === 'image' ? 'image' : 'video'
     return (
       <div className={styles.settingsGroup}>
+        <MediaUploadControl
+          kind={mediaKind}
+          label={mediaKind === 'image' ? 'Elegir imagen' : 'Elegir video'}
+          moduleEntityId={site.id}
+          currentUrl={getSettingString(settings, 'mediaUrl')}
+          onUploaded={(url) => onPatchSettings(mediaKind === 'video'
+            ? withUploadedVideoSettings(settings, url)
+            : { mediaUrl: url })}
+          onCommit={onSave}
+        />
         <label className={styles.field}>
           <span>{block.blockType === 'image' ? 'URL de imagen' : 'URL de video'}</span>
           <input value={getSettingString(settings, 'mediaUrl')} onChange={(event) => onPatchSettings({ mediaUrl: event.target.value })} onBlur={onSave} />
         </label>
-        <MediaUploadControl
-          kind={block.blockType === 'image' ? 'image' : 'video'}
-          moduleEntityId={site.id}
-          onUploaded={(url) => onPatchSettings({ mediaUrl: url })}
-          onCommit={onSave}
-        />
         {block.blockType === 'video' && (
-          <div className={styles.videoSettingsBox}>
-            <div className={styles.panelSubheader}>Reproductor</div>
-            <div className={styles.twoColumn}>
-              <label className={styles.field}>
-                <span>Controles</span>
-                <CustomSelect
-                  value={getSettingString(settings, 'videoControlsMode') || (settings.videoControls === false ? 'none' : 'native')}
-                  onChange={(event) => onPatchSettings({
-                    videoControlsMode: event.target.value,
-                    videoControls: event.target.value === 'native'
-                  })}
-                  onBlur={onSave}
-                >
-                  <option value="native">Controles nativos</option>
-                  <option value="clean">Boton play limpio</option>
-                  <option value="none">Sin controles visibles</option>
-                </CustomSelect>
-              </label>
-              <label className={styles.field}>
-                <span>Velocidad</span>
-                <CustomSelect
-                  value={String(getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4))}
-                  onChange={(event) => onPatchSettings({ videoDefaultSpeed: Number(event.target.value) })}
-                  onBlur={onSave}
-                >
-                  {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </CustomSelect>
-              </label>
-            </div>
-            <div className={styles.twoColumn}>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={settings.videoPreviewEnabled !== false}
-                  onChange={(event) => {
-                    onPatchSettings({ videoPreviewEnabled: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Preview de primeros segundos</span>
-              </label>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={settings.videoSoundHint !== false}
-                  onChange={(event) => {
-                    onPatchSettings({ videoSoundHint: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Animacion de bocina</span>
-              </label>
-            </div>
-            <div className={styles.twoColumn}>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(settings.videoAutoplay)}
-                  onChange={(event) => {
-                    onPatchSettings({ videoAutoplay: event.target.checked, videoMuted: event.target.checked ? true : settings.videoMuted })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Autoplay</span>
-              </label>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(settings.videoLoop)}
-                  onChange={(event) => {
-                    onPatchSettings({ videoLoop: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Loop</span>
-              </label>
-            </div>
-            <div className={styles.twoColumn}>
-              <ColorField label="Fondo controles" value={getSettingString(settings, 'videoPlayerColor') || 'rgba(0,0,0,.52)'} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
-              <ColorField label="Play" value={getSettingString(settings, 'videoPlayColor') || '#ffffff'} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
-            </div>
-            <div className={styles.twoColumn}>
-              <label className={styles.field}>
-                <span>Ajuste</span>
-                <CustomSelect value={getSettingString(settings, 'videoFit') || 'cover'} onChange={(event) => onPatchSettings({ videoFit: event.target.value })} onBlur={onSave}>
-                  <option value="cover">Cubrir espacio</option>
-                  <option value="contain">Mostrar completo</option>
-                  <option value="fill">Estirar</option>
-                </CustomSelect>
-              </label>
-              <DimensionField
-                label="Ancho"
-                value={getSettingNumber(settings, 'mediaWidth', 100, 20, 100)}
-                min={20}
-                max={100}
-                unit="%"
-                onChange={(value) => onPatchSettings({ mediaWidth: value })}
-                onCommit={onSave}
-              />
-            </div>
-          </div>
+          <VideoPlayerSettingsControls
+            settings={settings}
+            onPatchSettings={onPatchSettings}
+            onSave={onSave}
+          />
         )}
       </div>
-    )
-  }
-
-  if (['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)) {
-    return (
-      <label className={styles.field}>
-        <span>Items (uno por linea: titulo | texto | autor)</span>
-        <textarea
-          rows={5}
-          value={stringifyItems(settings)}
-          onChange={(event) => onPatchSettings({ items: parseItems(event.target.value) })}
-          onBlur={onSave}
-        />
-      </label>
     )
   }
 
@@ -18132,11 +24091,11 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
         {selectedCalendar ? (
           <p className={styles.muted}>
             {selectedCalendar.publicUrlEnabled
-              ? `Se mostrara como iframe usando ${selectedCalendar.publicBookingPath || '/calendar/...'}`
-              : selectedCalendar.publicUrlUnavailableReason || 'Conecta el dominio publico general para que funcione publicamente.'}
+              ? `Se mostrará como iframe usando ${selectedCalendar.publicBookingPath || '/calendar/...'}`
+              : selectedCalendar.publicUrlUnavailableReason || 'Conecta el dominio público general para que funcione publicamente.'}
           </p>
         ) : (
-          <p className={styles.muted}>Este bloque usa la URL publica del calendario en el mismo dominio del site.</p>
+          <p className={styles.muted}>Este bloque usa la URL pública del calendario en el mismo dominio del site.</p>
         )}
       </div>
     )
@@ -18148,24 +24107,20 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
     return (
       <div className={styles.settingsGroup}>
         <label className={styles.field}>
-          <span>Formulario existente</span>
+          <span>Origen del formulario</span>
           <CustomSelect value={getSettingString(settings, 'formSiteId')} onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined, embeddedPages: undefined })} onBlur={onSave}>
-            <option value="">Formulario inline dentro de este sitio embudo</option>
+            <option value="">Crear nuevo formulario</option>
             {forms.filter(form => form.id !== site.id).map(form => (
-              <option key={form.id} value={form.id}>{form.name}</option>
+              <option key={form.id} value={form.id}>Usar formulario guardado: {form.name}</option>
             ))}
           </CustomSelect>
         </label>
         <label className={styles.field}>
-          <span>Descripcion del formulario</span>
-          <textarea rows={2} value={getSettingString(settings, 'description')} onChange={(event) => onPatchSettings({ description: event.target.value })} onBlur={onSave} />
-        </label>
-        <label className={styles.field}>
           <span>Al terminar el formulario</span>
           <CustomSelect value={getFormCompletionAction(settings)} onChange={(event) => onPatchSettings({ completionAction: event.target.value })} onBlur={onSave}>
-            <option value="next_page">Ir a la siguiente pagina al terminar</option>
-            <option value="next_page_if_qualified">Ir a la siguiente pagina solo si califica</option>
-            <option value="form_default">Mantener la configuracion actual del formulario</option>
+            <option value="next_page">Ir a la siguiente página al terminar</option>
+            <option value="next_page_if_qualified">Ir a la siguiente página solo si califica</option>
+            <option value="form_default">Mantener la configuración actual del formulario</option>
           </CustomSelect>
         </label>
         <button
@@ -18177,10 +24132,10 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           }}
         >
           <Plus size={15} />
-          Crear formulario inline basico
+          Crear formulario básico
         </button>
         {embeddedBlocks.length > 0 && (
-          <p className={styles.muted}>{embeddedBlocks.length} campos inline guardados en este bloque.</p>
+          <p className={styles.muted}>{embeddedBlocks.length} elementos guardados en este componente.</p>
         )}
       </div>
     )
@@ -18194,7 +24149,7 @@ const LeadsPanel: React.FC<{ rows: LeadRow[]; loading: boolean; onRefresh: () =>
     <div className={styles.builderHeader}>
       <div>
         <h2>Respuestas</h2>
-        <p>Respuestas recibidas desde sitios web y formularios publicos.</p>
+        <p>Respuestas recibidas desde sitios web y formularios públicos.</p>
       </div>
       <Button variant="secondary" onClick={onRefresh} loading={loading}>
         <RefreshCw size={16} />
@@ -18213,7 +24168,7 @@ const LeadsPanel: React.FC<{ rows: LeadRow[]; loading: boolean; onRefresh: () =>
       {rows.length === 0 ? (
         <div className={styles.emptyState}>
           <ListChecks size={24} />
-          <p>No hay respuestas todavia.</p>
+          <p>No hay respuestas todavía.</p>
         </div>
       ) : rows.map(row => {
         const rules = row.meta?.rules && typeof row.meta.rules === 'object' ? row.meta.rules as Record<string, unknown> : {}
@@ -18268,7 +24223,7 @@ const DomainsPanel: React.FC<DomainsPanelProps> = ({
 
       <div className={styles.domainEditor}>
         <label className={styles.field}>
-          <span>Dominio publico general</span>
+          <span>Dominio público general</span>
           <input
             value={domainInput}
             placeholder="www.doctorramirez.com"

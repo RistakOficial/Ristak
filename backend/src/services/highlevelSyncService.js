@@ -15,7 +15,11 @@ import {
 import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js'
 import {
   finalizePreparedPhoneUpsert,
-  prepareContactPhoneUpsert
+  linkContactToGhl,
+  mergeContactIds,
+  prepareContactPhoneUpsert,
+  resolveContactIdByGhlId,
+  resolveOrCreateContactForGhl
 } from './contactIdentityService.js'
 import { sanitizeContactName } from '../utils/phoneUtils.js'
 import GHLClient from './ghlClient.js'
@@ -587,14 +591,17 @@ async function fetchCalendarEventsByCalendar({
   return { events, total }
 }
 
+// Garantiza que el contacto de HighLevel exista localmente.
+// Devuelve { localContactId, created }: el ID local de Ristak (rstk_contact_*)
+// resuelto vía ghl_contact_id (o id legacy), creándolo desde HighLevel si hace falta.
 export async function ensureContactExists(contactId, apiToken, usePostgres, locationId) {
   if (!contactId) {
-    return false
+    return { localContactId: null, created: false }
   }
 
-  const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId])
-  if (contactExists) {
-    return false
+  const resolvedId = await resolveContactIdByGhlId(contactId)
+  if (resolvedId) {
+    return { localContactId: resolvedId, created: false }
   }
 
   try {
@@ -610,7 +617,7 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
 
     if (!contactRes.ok) {
       logger.warn(`No se pudo obtener contacto ${contactId} desde HighLevel (${contactRes.status})`)
-      return false
+      return { localContactId: null, created: false }
     }
 
     const contactData = await contactRes.json()
@@ -624,8 +631,17 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
     const contact = customFieldsResult.contact
     const customFieldsJson = customFieldsResult.customFieldsJson
     const highLevelContactId = contact.id || contactId
+    // Resolver/crear el contacto local con ID propio; el ID de GHL queda ligado
+    // en ghl_contact_id, nunca como primary key.
+    const { contactId: localContactId, created } = await resolveOrCreateContactForGhl({
+      ghlContactId: highLevelContactId,
+      phone: contact.phone || contact.contactPhone,
+      email: contact.email,
+      fullName: contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
+      createdAt: contact.dateAdded || null
+    })
     const phoneUpsert = await prepareContactPhoneUpsert({
-      contactId: highLevelContactId,
+      contactId: localContactId,
       phone: contact.phone || contact.contactPhone
     })
 
@@ -652,11 +668,12 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
     }
 
     const query = usePostgres
-      ? `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source,
+      ? `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, first_name, last_name, source,
           attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name,
           visitor_id, custom_fields, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14::jsonb, '[]'::jsonb), $15, $16)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE($15::jsonb, '[]'::jsonb), $16, $17)
          ON CONFLICT (id) DO UPDATE SET
+          ghl_contact_id = COALESCE(EXCLUDED.ghl_contact_id, contacts.ghl_contact_id),
           phone = EXCLUDED.phone,
           email = EXCLUDED.email,
           full_name = COALESCE(NULLIF(EXCLUDED.full_name, ''), contacts.full_name),
@@ -671,11 +688,12 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
           visitor_id = COALESCE(EXCLUDED.visitor_id, contacts.visitor_id),
           custom_fields = COALESCE(EXCLUDED.custom_fields, contacts.custom_fields),
           updated_at = EXCLUDED.updated_at`
-      : `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source,
+      : `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, first_name, last_name, source,
           attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name,
           visitor_id, custom_fields, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '[]'), ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '[]'), ?, ?)
          ON CONFLICT (id) DO UPDATE SET
+          ghl_contact_id = COALESCE(excluded.ghl_contact_id, contacts.ghl_contact_id),
           phone = excluded.phone,
           email = excluded.email,
           full_name = COALESCE(NULLIF(excluded.full_name, ''), contacts.full_name),
@@ -700,6 +718,7 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
     )
 
     await db.run(query, [
+      localContactId,
       highLevelContactId,
       phoneUpsert.phone || null,
       contact.email,
@@ -717,12 +736,12 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
       contact.dateAdded || new Date().toISOString(),
       contact.dateUpdated || contact.dateAdded || new Date().toISOString()
     ])
-    await finalizePreparedPhoneUpsert(phoneUpsert, highLevelContactId)
+    await finalizePreparedPhoneUpsert(phoneUpsert, localContactId)
 
-    return true
+    return { localContactId, created }
   } catch (error) {
     logger.error(`Error obteniendo contacto ${contactId}: ${error.message}`)
-    return false
+    return { localContactId: null, created: false }
   }
 }
 
@@ -817,8 +836,17 @@ async function syncHighLevelContacts(locationId, apiToken) {
       const contact = customFieldsResult.contact
       const customFieldsJson = customFieldsResult.customFieldsJson
       const highLevelContactId = contact.id || rawContact.id || rawContact._id
+      // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
+      // queda solo como referencia en ghl_contact_id.
+      const { contactId: localContactId } = await resolveOrCreateContactForGhl({
+        ghlContactId: highLevelContactId,
+        phone: contact.phone || contact.contactPhone,
+        email: contact.email,
+        fullName: contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
+        createdAt: contact.dateAdded || null
+      })
       const phoneUpsert = await prepareContactPhoneUpsert({
-        contactId: highLevelContactId,
+        contactId: localContactId,
         phone: contact.phone || contact.contactPhone
       })
 
@@ -845,11 +873,12 @@ async function syncHighLevelContacts(locationId, apiToken) {
       }
 
       const query = usePostgres
-        ? `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source,
+        ? `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, first_name, last_name, source,
             attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name,
             visitor_id, custom_fields, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14::jsonb, '[]'::jsonb), $15, $16)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE($15::jsonb, '[]'::jsonb), $16, $17)
            ON CONFLICT (id) DO UPDATE SET
+            ghl_contact_id = COALESCE(EXCLUDED.ghl_contact_id, contacts.ghl_contact_id),
             phone = EXCLUDED.phone,
             email = EXCLUDED.email,
             full_name = COALESCE(NULLIF(EXCLUDED.full_name, ''), contacts.full_name),
@@ -864,11 +893,12 @@ async function syncHighLevelContacts(locationId, apiToken) {
             visitor_id = COALESCE(EXCLUDED.visitor_id, contacts.visitor_id),
             custom_fields = COALESCE(EXCLUDED.custom_fields, contacts.custom_fields),
             updated_at = EXCLUDED.updated_at`
-        : `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source,
+        : `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, first_name, last_name, source,
             attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name,
             visitor_id, custom_fields, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '[]'), ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '[]'), ?, ?)
            ON CONFLICT (id) DO UPDATE SET
+            ghl_contact_id = COALESCE(excluded.ghl_contact_id, contacts.ghl_contact_id),
             phone = excluded.phone,
             email = excluded.email,
             full_name = COALESCE(NULLIF(excluded.full_name, ''), contacts.full_name),
@@ -893,6 +923,7 @@ async function syncHighLevelContacts(locationId, apiToken) {
       )
 
       await db.run(query, [
+        localContactId,
         highLevelContactId,
         phoneUpsert.phone || null,
         contact.email,
@@ -910,7 +941,7 @@ async function syncHighLevelContacts(locationId, apiToken) {
         contact.dateAdded || new Date().toISOString(),
         contact.dateUpdated || contact.dateAdded || new Date().toISOString()
       ])
-      await finalizePreparedPhoneUpsert(phoneUpsert, highLevelContactId)
+      await finalizePreparedPhoneUpsert(phoneUpsert, localContactId)
 
       saved++
 
@@ -939,12 +970,15 @@ function serializeCustomFieldsForUpsert(value) {
 }
 
 async function getWhatsAppOnlyContactsForHighLevelUpload() {
+  // Contactos creados por WhatsApp que todavía no están ligados a HighLevel.
+  // El prefijo waapi_contact_ se conserva solo por compatibilidad con datos legacy.
   return db.all(`
     SELECT id, phone, email, full_name, first_name, last_name, source, visitor_id,
       attribution_url, attribution_session_source, attribution_medium, attribution_ctwa_clid,
       attribution_ad_name, attribution_ad_id, custom_fields, created_at
     FROM contacts
-    WHERE id LIKE 'waapi_contact_%'
+    WHERE (id LIKE 'waapi_contact_%' OR LOWER(COALESCE(source, '')) = 'whatsapp_api')
+      AND (ghl_contact_id IS NULL OR ghl_contact_id = '')
       AND phone IS NOT NULL
       AND phone != ''
     ORDER BY created_at ASC
@@ -970,8 +1004,21 @@ async function findHighLevelContactForLocal(client, contact) {
 }
 
 async function upsertHighLevelContactLocallyFromWhatsApp({ localContact, highLevelContact }) {
-  const targetId = highLevelContact.id || highLevelContact._id
-  if (!targetId) throw new Error('HighLevel no devolvio id de contacto')
+  const ghlContactId = highLevelContact.id || highLevelContact._id
+  if (!ghlContactId) throw new Error('HighLevel no devolvio id de contacto')
+
+  // El contacto conserva su ID local de Ristak; el ID de GHL solo se liga.
+  // Si otro contacto local ya estaba ligado/keyed con ese ID de GHL (datos
+  // legacy o duplicados), se fusiona conservando el ID local de WhatsApp.
+  let targetId = localContact.id
+  const alreadyLinkedId = await resolveContactIdByGhlId(ghlContactId)
+  if (alreadyLinkedId && alreadyLinkedId !== localContact.id) {
+    targetId = await mergeContactIds({
+      fromId: alreadyLinkedId,
+      toId: localContact.id,
+      canonicalPhone: localContact.phone || null
+    })
+  }
 
   // Nunca usar el teléfono como nombre: searchContacts rellena `name` con el
   // teléfono cuando el contacto de HighLevel no tiene nombre real.
@@ -990,49 +1037,28 @@ async function upsertHighLevelContactLocallyFromWhatsApp({ localContact, highLev
     contactId: targetId,
     phone: highLevelContact.phone || localContact.phone
   })
-  const usePostgres = process.env.DATABASE_URL ? true : false
-  const customFieldsPlaceholder = usePostgres ? '?::jsonb' : '?'
 
   try {
     await db.run(`
-      INSERT INTO contacts (
-        id, phone, email, full_name, first_name, last_name, source, visitor_id,
-        attribution_url, attribution_session_source, attribution_medium, attribution_ctwa_clid,
-        attribution_ad_name, attribution_ad_id, custom_fields, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${customFieldsPlaceholder}, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
-      ON CONFLICT (id) DO UPDATE SET
-        phone = COALESCE(excluded.phone, contacts.phone),
-        email = COALESCE(excluded.email, contacts.email),
-        full_name = COALESCE(excluded.full_name, contacts.full_name),
-        first_name = COALESCE(excluded.first_name, contacts.first_name),
-        last_name = COALESCE(excluded.last_name, contacts.last_name),
-        source = COALESCE(excluded.source, contacts.source),
-        visitor_id = COALESCE(excluded.visitor_id, contacts.visitor_id),
-        attribution_url = COALESCE(excluded.attribution_url, contacts.attribution_url),
-        attribution_session_source = COALESCE(excluded.attribution_session_source, contacts.attribution_session_source),
-        attribution_medium = COALESCE(excluded.attribution_medium, contacts.attribution_medium),
-        attribution_ctwa_clid = COALESCE(excluded.attribution_ctwa_clid, contacts.attribution_ctwa_clid),
-        attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), excluded.attribution_ad_name),
-        attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), excluded.attribution_ad_id),
-        custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
+      UPDATE contacts SET
+        ghl_contact_id = ?,
+        phone = COALESCE(?, phone),
+        email = COALESCE(?, email),
+        full_name = COALESCE(?, full_name),
+        first_name = COALESCE(?, first_name),
+        last_name = COALESCE(?, last_name),
+        source = COALESCE(NULLIF(source, ''), ?),
         updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
     `, [
-      targetId,
+      ghlContactId,
       phoneUpsert.phone || null,
       highLevelContact.email || localContact.email || null,
       fullName || null,
       firstName || null,
       lastName || null,
       localContact.source || highLevelContact.source || 'WhatsApp Business',
-      localContact.visitor_id || null,
-      localContact.attribution_url || null,
-      localContact.attribution_session_source || null,
-      localContact.attribution_medium || null,
-      localContact.attribution_ctwa_clid || null,
-      localContact.attribution_ad_name || null,
-      localContact.attribution_ad_id || null,
-      serializeCustomFieldsForUpsert(localContact.custom_fields),
-      localContact.created_at || null
+      targetId
     ])
 
     await finalizePreparedPhoneUpsert(phoneUpsert, targetId)
@@ -1172,11 +1198,12 @@ async function syncHighLevelAppointments(locationId, apiToken) {
 
   for (const { normalized } of uniqueEvents) {
     try {
-      // Verificar si el contacto existe
-      const createdContact = await ensureContactExists(normalized.contactId, apiToken, usePostgres, locationId)
-      if (createdContact) {
+      // Verificar si el contacto existe y resolver su ID local de Ristak
+      const ensuredContact = await ensureContactExists(normalized.contactId, apiToken, usePostgres, locationId)
+      if (ensuredContact.created) {
         contactsCreated++
       }
+      const localContactId = ensuredContact.localContactId || normalized.contactId || null
 
       const localCalendar = normalized.calendarId
         ? await getLocalCalendar(normalized.calendarId)
@@ -1184,6 +1211,7 @@ async function syncHighLevelAppointments(locationId, apiToken) {
 
       await upsertLocalAppointment({
         ...normalized,
+        contactId: localContactId,
         id: normalized.id,
         ghlAppointmentId: normalized.id,
         calendarId: localCalendar?.id || normalized.calendarId
@@ -1196,13 +1224,13 @@ async function syncHighLevelAppointments(locationId, apiToken) {
       })
 
       // Actualizar appointment_date del contacto con la fecha de la cita más próxima
-      if (normalized.contactId && normalized.startTime) {
+      if (localContactId && normalized.startTime) {
         await db.run(`
           UPDATE contacts
           SET appointment_date = ?
           WHERE id = ?
           AND (appointment_date IS NULL OR appointment_date > ?)
-        `, [normalized.startTime, normalized.contactId, normalized.startTime])
+        `, [normalized.startTime, localContactId, normalized.startTime])
       }
 
       saved++

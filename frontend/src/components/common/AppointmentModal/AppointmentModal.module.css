@@ -1,20 +1,18 @@
 .container {
   display: flex;
   flex-direction: column;
-  gap: 1.75rem;
+  gap: 1.25rem;
   width: 100%;
-  max-width: 1000px; /* Aumentado para acomodar 2 columnas cómodamente */
+  max-width: none;
   margin: 0 auto;
-  padding: 24px 32px; /* Padding propio porque Modal.content tiene padding: 0 en modo custom */
-  max-height: calc(88vh - 140px); /* Altura máxima para permitir scroll */
-  overflow-y: auto; /* Habilitar scroll vertical */
+  padding: 22px 28px;
+  max-height: calc(88vh - 132px);
+  overflow-y: auto;
 }
 
-/* En pantallas grandes, aumentar ancho máximo */
-@media (min-width: 1920px) {
-  .container {
-    max-width: 1200px;
-  }
+.appointmentDialogModal {
+  width: min(90vw, 780px) !important;
+  max-width: min(90vw, 780px) !important;
 }
 
 /* Responsive: Ajustar padding en pantallas medianas */
@@ -58,7 +56,8 @@
 }
 
 .mobileSheetModal {
-  --appointment-mobile-bg: var(--phone-chat-bg, #f5f5f7);
+  /* Mismo fondo que el Registrar pago móvil (superficie, no el bg de página) */
+  --appointment-mobile-bg: var(--phone-chat-surface, #ffffff);
   --appointment-mobile-surface: var(--phone-chat-surface, #ffffff);
   --appointment-mobile-soft: var(--phone-chat-surface-soft, #f5f5f7);
   --appointment-mobile-panel: var(--phone-chat-panel, #ffffff);
@@ -83,9 +82,9 @@
   height: min(86dvh, 820px);
   max-height: min(86dvh, 820px) !important;
   margin: 0;
-  border-right: 0;
-  border-bottom: 0;
-  border-left: 0;
+  /* Sin borde, igual que el sheet del Registrar pago */
+  border: 0;
+  box-shadow: none;
   border-radius: 24px 24px 0 0;
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-bg);
@@ -316,54 +315,51 @@
   cursor: not-allowed;
 }
 
-/* Layout de 2 columnas */
-.twoColumnLayout {
+/* Layout del formulario de cita */
+.appointmentFormLayout {
   display: grid;
-  grid-template-columns: minmax(280px, 320px) 1fr;
-  gap: 2rem;
+  grid-template-columns: minmax(0, 1fr) 236px;
+  align-items: start;
+  gap: 1.25rem;
   width: 100%;
 }
 
-/* En pantallas medianas, ajustar proporción de columnas */
-@media (max-width: 1024px) and (min-width: 769px) {
-  .twoColumnLayout {
-    grid-template-columns: 280px 1fr;
-    gap: 1.5rem;
-  }
+.appointmentFormLayoutSingle {
+  display: block;
 }
 
-.leftColumn {
+.formMain {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
-  padding: 1.75rem 2rem;
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  gap: 1rem;
+}
+
+.assignmentPanel {
+  display: flex;
+  flex-direction: column;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  gap: 1rem;
+  padding: 1rem;
   background: var(--color-background-secondary);
-  border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
-}
-
-@media (min-width: 1920px) {
-  .leftColumn {
-    padding: 2rem 2.5rem;
-  }
-}
-
-.rightColumn {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
+  border-radius: var(--radius-md);
 }
 
 .columnTitle {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin: 0 0 0.75rem 0;
-  font-size: 0.95rem;
+  margin: 0;
+  font-size: 0.78rem;
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--color-text-secondary);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.04em;
 }
 
 .columnTitle svg {
@@ -376,39 +372,31 @@
   gap: 0.75rem;
 }
 
-/* Tablets en modo portrait (iPad vertical) - Mantener 2 columnas pero más estrechas */
-@media (max-width: 900px) and (min-width: 769px) {
-  .twoColumnLayout {
-    grid-template-columns: 260px 1fr;
-    gap: 1.5rem;
-  }
-
-  .leftColumn {
-    padding: 1.5rem 1.75rem;
-  }
-}
-
 /* Responsive: En pantallas pequeñas, las columnas se apilan */
 @media (max-width: 768px) {
-  .twoColumnLayout {
+  .appointmentFormLayout {
     grid-template-columns: 1fr;
-    gap: 1.5rem;
+    gap: 1rem;
   }
 
-  .leftColumn {
+  .assignmentPanel {
+    grid-column: auto;
+    grid-row: auto;
     order: 2;
-    padding: 1.25rem 1.5rem; /* Reducir padding en móvil */
+    padding: 1rem;
   }
 
-  .rightColumn {
+  .formMain {
+    grid-column: auto;
+    grid-row: auto;
     order: 1;
   }
 }
 
 /* Móviles pequeños */
 @media (max-width: 480px) {
-  .leftColumn {
-    padding: 1rem 1.25rem;
+  .assignmentPanel {
+    padding: 0.9rem;
   }
 
   .summary {
@@ -463,17 +451,17 @@
   font-size: 0.92rem;
 }
 
-.mobileSheetContainer .twoColumnLayout {
+.mobileSheetContainer .appointmentFormLayout {
   grid-template-columns: 1fr;
   gap: 15px;
 }
 
-.mobileSheetContainer .leftColumn,
-.mobileSheetContainer .rightColumn {
+.mobileSheetContainer .assignmentPanel,
+.mobileSheetContainer .formMain {
   min-width: 0;
 }
 
-.mobileSheetContainer .leftColumn {
+.mobileSheetContainer .assignmentPanel {
   order: 2;
   gap: 15px;
   padding: 0;
@@ -482,7 +470,7 @@
   background: transparent;
 }
 
-.mobileSheetContainer .rightColumn {
+.mobileSheetContainer .formMain {
   order: 1;
   gap: 15px;
 }
@@ -530,11 +518,13 @@
   font-weight: 620;
 }
 
+/* Cajas sin contorno, como las del Registrar pago: solo el relleno oscuro
+   sobre la superficie las define. */
 .mobileSheetContainer .input,
 .mobileSheetContainer .select,
 .mobileSheetContainer .textarea {
   min-height: 44px;
-  border-color: var(--appointment-mobile-border);
+  border-color: transparent;
   border-radius: 12px;
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-panel);
@@ -545,7 +535,7 @@
 
 .mobileSheetContainer :global([data-ristak-dropdown-trigger]) {
   min-height: 44px;
-  border-color: var(--appointment-mobile-border) !important;
+  border-color: transparent !important;
   border-radius: 12px !important;
   color: var(--appointment-mobile-text) !important;
   background: var(--appointment-mobile-panel) !important;
@@ -637,7 +627,7 @@
   border-radius: 12px;
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-panel);
-  border-color: var(--appointment-mobile-border);
+  border-color: transparent;
   font-size: 16px;
   font-weight: 650;
 }
@@ -1158,7 +1148,7 @@
   border-top: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 0;
   background: transparent;
-  padding: 1.25rem;
+  padding: 1rem 0 0;
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -1172,27 +1162,25 @@
 
 /* Wrapper del TabList centrado */
 .tabListWrapper {
-  display: flex;
-  justify-content: center;
+  display: block;
+  width: 100%;
   padding-bottom: 0.75rem;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
 }
 
+.tabListWrapper :global([data-ristak-tablist]) {
+  width: 100%;
+}
+
+.tabListWrapper :global([data-ristak-tablist-tab]) {
+  min-width: 0;
+  justify-content: center;
+}
+
 /* En celular el TabList ocupa todo el ancho del formulario */
 .mobileSheetContainer .tabListWrapper {
-  justify-content: stretch;
   border-bottom: 0;
   padding-bottom: 0;
-}
-
-.mobileSheetContainer :global([data-ristak-tablist]) {
-  border-color: var(--appointment-mobile-border);
-  background: var(--appointment-mobile-panel);
-}
-
-.mobileSheetContainer :global([data-ristak-tablist-tab][data-active="true"]) {
-  color: var(--appointment-mobile-text);
-  background: var(--appointment-mobile-surface);
 }
 
 /* Contenido de slots (tanto para modo default como custom) */

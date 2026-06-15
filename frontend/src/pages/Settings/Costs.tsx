@@ -10,6 +10,7 @@ import styles from './Costs.module.css'
 
 const MANUAL_BUSINESS_EXPENSES_CONFIG_KEY = 'report_manual_business_expenses_enabled'
 const MANUAL_BUSINESS_EXPENSES_COLUMN_KEY = 'businessExpenses'
+const FIXED_BUSINESS_EXPENSES_COLUMN_KEY = 'fixedBusinessExpenses'
 const REPORT_TYPES = ['cashflow', 'attribution', 'campaigns']
 const REPORT_VIEW_TYPES = ['day', 'month', 'year']
 const REPORT_TABLE_CONFIG_KEYS = REPORT_TYPES.flatMap((reportType) => (
@@ -52,6 +53,17 @@ const normalizeTableConfigOrder = (config: TableColumnConfig[]) => (
   }))
 )
 
+const getManualExpenseColumnInsertIndex = (config: TableColumnConfig[]) => {
+  const dateIndex = config.findIndex((column) => column.id === 'date')
+  const fixedExpensesIndex = config.findIndex((column) => column.id === FIXED_BUSINESS_EXPENSES_COLUMN_KEY)
+  const spendIndex = config.findIndex((column) => column.id === 'spend')
+
+  if (fixedExpensesIndex >= 0) return fixedExpensesIndex + 1
+  if (spendIndex >= 0) return spendIndex
+  if (dateIndex >= 0) return dateIndex + 1
+  return Math.min(4, config.length)
+}
+
 const setManualExpenseColumnVisibilityInConfig = (
   config: TableColumnConfig[],
   visible: boolean
@@ -60,25 +72,25 @@ const setManualExpenseColumnVisibilityInConfig = (
   const existingIndex = currentConfig.findIndex((column) => column.id === MANUAL_BUSINESS_EXPENSES_COLUMN_KEY)
 
   if (existingIndex >= 0) {
-    currentConfig[existingIndex] = {
-      ...currentConfig[existingIndex],
+    const [existingColumn] = currentConfig.splice(existingIndex, 1)
+    const insertIndex = visible
+      ? getManualExpenseColumnInsertIndex(currentConfig)
+      : Math.min(existingIndex, currentConfig.length)
+
+    currentConfig.splice(insertIndex, 0, {
+      ...existingColumn,
       visible
-    }
+    })
+
     return normalizeTableConfigOrder(currentConfig)
   }
 
   const manualColumn = {
     id: MANUAL_BUSINESS_EXPENSES_COLUMN_KEY,
     visible,
-    order: 1
+    order: 4
   }
-  const dateIndex = currentConfig.findIndex((column) => column.id === 'date')
-  const spendIndex = currentConfig.findIndex((column) => column.id === 'spend')
-  const insertIndex = dateIndex >= 0
-    ? dateIndex + 1
-    : spendIndex >= 0
-      ? spendIndex
-      : Math.min(1, currentConfig.length)
+  const insertIndex = getManualExpenseColumnInsertIndex(currentConfig)
 
   const nextConfig = [...currentConfig]
   nextConfig.splice(insertIndex, 0, manualColumn)
@@ -94,7 +106,7 @@ export const Costs: React.FC = () => {
   const [showModal, setShowModal] = useState(false)
   const [editingCost, setEditingCost] = useState<Cost | null>(null)
   const [manualBusinessExpensesEnabled, setManualBusinessExpensesEnabled, syncingManualBusinessExpenses] =
-    useAppConfig<string | number | boolean>(MANUAL_BUSINESS_EXPENSES_CONFIG_KEY, '0')
+    useAppConfig<string | number | boolean>(MANUAL_BUSINESS_EXPENSES_CONFIG_KEY, '1')
   const [manualExpenseColumnVisible, setManualExpenseColumnVisible] = useState(false)
   const [savingManualExpenseToggle, setSavingManualExpenseToggle] = useState(false)
 

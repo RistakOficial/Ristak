@@ -5,7 +5,7 @@ import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizeToUtcIso, getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
-import { finalizePreparedPhoneUpsert, prepareContactPhoneUpsert } from './contactIdentityService.js'
+import { isRistakContactId, linkContactToGhl } from './contactIdentityService.js'
 import GHLClient from './ghlClient.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
 import { getSitesPublicDomain } from './sitesService.js'
@@ -99,7 +99,8 @@ function normalizeCalendarSource(value) {
 
 function normalizeCalendarSourcePreference(value) {
   const normalized = cleanString(value).toLowerCase()
-  if (['combined', 'ristak', 'ghl', 'google'].includes(normalized)) {
+  if (normalized === 'google') return 'combined'
+  if (['combined', 'ristak', 'ghl'].includes(normalized)) {
     return normalized
   }
   return 'combined'
@@ -136,7 +137,7 @@ async function getConnectedSourceFlags() {
   const googleCalendarId = cleanString(googleConfigData?.calendarId)
 
   return {
-    google: Boolean(googleCalendarId && googleConfigData?.credentialsEncrypted),
+    google: Boolean(googleConfigData?.credentialsEncrypted),
     googleCalendarId,
     ghl: Boolean(highlevelConfig)
   }
@@ -385,7 +386,7 @@ export async function getCalendarPublicUrlStatus() {
     return {
       enabled: false,
       domain: domainConfig.domain,
-      reason: 'El dominio publico general existe, pero todavia no responde a esta app.'
+      reason: 'El dominio público general existe, pero todavía no responde a esta app.'
     }
   }
 
@@ -455,6 +456,9 @@ function calendarRowToApi(row = {}) {
     ghlCalendarId: row.ghl_calendar_id || null,
     googleCalendarId: rawJson?.googleCalendarId || rawJson?.google_calendar_id || '',
     googleAccessRole: rawJson?.accessRole || rawJson?.access_role || '',
+    googleCalendarSummary: rawJson?.googleCalendarSummary || rawJson?.google_calendar_summary || rawJson?.summary || '',
+    googleCalendarTimeZone: rawJson?.googleCalendarTimeZone || rawJson?.google_calendar_time_zone || rawJson?.timeZone || rawJson?.time_zone || '',
+    googleSyncEnabled: Boolean(rawJson?.googleCalendarId || rawJson?.google_calendar_id),
     locationId: row.location_id || '',
     groupId: row.group_id || undefined,
     name: row.name || 'Calendario',
@@ -787,14 +791,14 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
         <p class="description">${escapeHtml(calendar.description || 'Selecciona una fecha y horario disponible para confirmar tu cita.')}</p>
         <div class="meta">
           <span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>${duration} min</span>
-          <span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Confirmacion ${calendar.autoConfirm ? 'automatica' : 'pendiente'}</span>
+          <span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Confirmación ${calendar.autoConfirm ? 'automática' : 'pendiente'}</span>
         </div>
       </section>
 
       <section class="calendarPane" data-calendar-pane>
         <div class="paneTitle">
           <h2>Selecciona fecha y hora</h2>
-          <p>Elige un dia disponible para ver horarios.</p>
+          <p>Elige un día disponible para ver horarios.</p>
         </div>
         <div class="monthBar">
           <button class="navBtn" type="button" data-prev aria-label="Mes anterior">
@@ -806,7 +810,7 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
           </button>
         </div>
         <div class="weekdays" aria-hidden="true">
-          <span>Dom</span><span>Lun</span><span>Mar</span><span>Mie</span><span>Jue</span><span>Vie</span><span>Sab</span>
+          <span>Dom</span><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span>
         </div>
         <div class="days" data-days></div>
         <div class="timezone">
@@ -818,15 +822,15 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
       <section class="timesPane">
         <div class="selectedDate">
           <h3 data-selected-title>Selecciona una fecha</h3>
-          <p data-selected-subtitle>Los horarios apareceran aqui.</p>
+          <p data-selected-subtitle>Los horarios aparecerán aquí.</p>
         </div>
         <div class="slotList" data-slots>
-          <div class="slotEmpty">Elige un dia con disponibilidad.</div>
+          <div class="slotEmpty">Elige un día con disponibilidad.</div>
         </div>
         <form data-form>
           <h2>Tus datos</h2>
           <label>Nombre completo<input name="name" autocomplete="name" required placeholder="Tu nombre"></label>
-          <label>Telefono / WhatsApp<input name="phone" autocomplete="tel" inputmode="tel" required placeholder="10 digitos"></label>
+          <label>Teléfono / WhatsApp<input name="phone" autocomplete="tel" inputmode="tel" required placeholder="10 dígitos"></label>
           <label>Correo<input name="email" autocomplete="email" type="email" placeholder="tu@email.com"></label>
           <label>Notas<textarea name="notes" rows="3" placeholder="Algo que debamos saber"></textarea></label>
           <button class="submit" type="submit" disabled data-submit>Selecciona un horario</button>
@@ -951,18 +955,18 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
 
         if (!key) {
           selectedTitle.textContent = 'Selecciona una fecha';
-          selectedSubtitle.textContent = 'Los horarios apareceran aqui.';
-          slotsEl.innerHTML = '<div class="slotEmpty">Elige un dia con disponibilidad.</div>';
+          selectedSubtitle.textContent = 'Los horarios aparecerán aquí.';
+          slotsEl.innerHTML = '<div class="slotEmpty">Elige un día con disponibilidad.</div>';
           return;
         }
 
         const [year, month, day] = key.split('-').map(Number);
         const selectedDate = new Date(year, month - 1, day);
         selectedTitle.textContent = formatCalendarDate(selectedDate);
-        selectedSubtitle.textContent = slots.length ? 'Elige un horario disponible.' : 'No hay horarios en este dia.';
+        selectedSubtitle.textContent = slots.length ? 'Elige un horario disponible.' : 'No hay horarios en este día.';
 
         if (!slots.length) {
-          slotsEl.innerHTML = '<div class="slotEmpty">No hay horarios disponibles este dia.</div>';
+          slotsEl.innerHTML = '<div class="slotEmpty">No hay horarios disponibles este día.</div>';
           return;
         }
 
@@ -1026,7 +1030,7 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
           }
         } catch (error) {
           daysEl.innerHTML = '';
-          slotsEl.innerHTML = '<div class="slotEmpty">No se pudieron cargar horarios. Intenta mas tarde.</div>';
+          slotsEl.innerHTML = '<div class="slotEmpty">No se pudieron cargar horarios. Intenta más tarde.</div>';
         } finally {
           setLoading(false);
         }
@@ -1126,6 +1130,19 @@ export async function listLocalCalendars({ sourcePreference = 'combined' } = {})
   const appointmentCounts = await getCalendarAppointmentCounts(calendars.map(calendar => calendar.id))
   const visibleCalendars = calendars.filter(calendar => !isEmptySeedRistakCalendar(calendar, appointmentCounts))
   return visibleCalendars.length ? visibleCalendars : calendars
+}
+
+export async function listGoogleLinkedLocalCalendars({ includeInactive = false } = {}) {
+  const rows = await db.all(`
+    SELECT *
+    FROM calendars
+    ${includeInactive ? '' : 'WHERE COALESCE(is_active, 1) != 0'}
+    ORDER BY is_active DESC, LOWER(name) ASC
+  `)
+
+  return rows
+    .map(calendarRowToApi)
+    .filter(calendar => cleanString(calendar.googleCalendarId))
 }
 
 export async function updateLocalCalendar(calendarId, updateData = {}, { syncStatus = 'pending' } = {}) {
@@ -1729,15 +1746,26 @@ export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
   return { total: rows.length, created, updated, matched, failed }
 }
 
+// Devuelve el ID de HighLevel a usar en el payload remoto de la cita.
+// La cita y el contacto conservan SIEMPRE su ID local de Ristak; el ID de GHL
+// solo se liga en contacts.ghl_contact_id.
 async function ensureHighLevelContactForAppointment(client, appointment = {}) {
   if (!appointment.contactId) return null
 
-  if (!String(appointment.contactId).startsWith('rstk_') && !String(appointment.contactId).startsWith('waapi_contact_')) {
+  const contact = await db.get('SELECT * FROM contacts WHERE id = ?', [appointment.contactId])
+  if (!contact) {
+    // Datos legacy: la cita puede traer directamente un ID de GHL
     return appointment.contactId
   }
 
-  const contact = await db.get('SELECT * FROM contacts WHERE id = ?', [appointment.contactId])
-  if (!contact) return appointment.contactId
+  if (String(contact.ghl_contact_id || '').trim()) {
+    return contact.ghl_contact_id
+  }
+
+  if (!isRistakContactId(contact.id)) {
+    // Legacy: la primary key era el ID de GHL
+    return contact.id
+  }
 
   const searches = []
   if (contact.email) searches.push({ email: contact.email })
@@ -1747,7 +1775,7 @@ async function ensureHighLevelContactForAppointment(client, appointment = {}) {
     const result = await client.searchContacts({ ...search, limit: 5 }).catch(() => null)
     const match = result?.contacts?.find(candidate => candidate.id)
     if (match?.id) {
-      await db.run('UPDATE appointments SET contact_id = ? WHERE contact_id = ?', [match.id, appointment.contactId])
+      await linkContactToGhl(contact.id, match.id)
       return match.id
     }
   }
@@ -1762,39 +1790,11 @@ async function ensureHighLevelContactForAppointment(client, appointment = {}) {
   const targetId = highLevelContact.id
 
   if (targetId) {
-    const phoneUpsert = await prepareContactPhoneUpsert({
-      contactId: targetId,
-      phone: highLevelContact.phone || contact.phone
-    })
-
-    await db.run(`
-      INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
-      ON CONFLICT (id) DO UPDATE SET
-        phone = COALESCE(excluded.phone, contacts.phone),
-        email = COALESCE(excluded.email, contacts.email),
-        full_name = COALESCE(excluded.full_name, contacts.full_name),
-        first_name = COALESCE(excluded.first_name, contacts.first_name),
-        last_name = COALESCE(excluded.last_name, contacts.last_name),
-        source = COALESCE(excluded.source, contacts.source),
-        updated_at = CURRENT_TIMESTAMP
-    `, [
-      targetId,
-      phoneUpsert.phone || null,
-      highLevelContact.email || contact.email || null,
-      highLevelContact.name || fullName,
-      highLevelContact.firstName || contact.first_name || null,
-      highLevelContact.lastName || contact.last_name || null,
-      contact.source || 'ristak',
-      contact.created_at || null
-    ])
-
-    await finalizePreparedPhoneUpsert(phoneUpsert, targetId)
-    await db.run('UPDATE appointments SET contact_id = ? WHERE contact_id = ?', [targetId, appointment.contactId])
+    await linkContactToGhl(contact.id, targetId)
     return targetId
   }
 
-  return appointment.contactId
+  return null
 }
 
 export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {

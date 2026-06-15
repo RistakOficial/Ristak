@@ -1,11 +1,10 @@
 import React from 'react'
-import { AlertTriangle, Plus, Trash2 } from 'lucide-react'
-import { CustomSelect } from '@/components/common'
+import { AlertTriangle } from 'lucide-react'
+import { CustomSelect } from './configPrimitives'
 import {
   CatalogSelect,
   ConfigSection,
   Field,
-  TextInput,
   useCatalogOptions
 } from './configPrimitives'
 import { MessageBlocksEditor } from './MessageBlocksEditor'
@@ -29,9 +28,19 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   const { options: numbers, loading: loadingNumbers } = useCatalogOptions('whatsappNumbers')
   const messageType = str(config.messageType) || 'text'
 
-  const templateVariables = Array.isArray(config.templateVariables)
-    ? (config.templateVariables as Array<{ key?: string; value?: string }>)
-    : []
+  // Compatibilidad: si la config vieja solo tenía templateId, se ve como bloque
+  const rawBlocks = Array.isArray(config.messageBlocks) ? (config.messageBlocks as MessageBlock[]) : []
+  const templateBlocks =
+    rawBlocks.some((block) => block.type === 'template') || !str(config.templateId)
+      ? rawBlocks.filter((block) => block.type === 'template' || block.type === 'delay')
+      : [
+          {
+            id: 'tpl_legacy',
+            type: 'template' as const,
+            templateId: str(config.templateId),
+            templateName: str(config.templateName)
+          }
+        ]
 
   return (
     <div className={styles.whatsappConfig}>
@@ -43,14 +52,17 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
             No hay números de WhatsApp conectados. Conéctalos en Configuración → WhatsApp.
           </div>
         )}
-        <Field label="Enviar desde">
+        <Field
+          label="Enviar desde"
+          help="Recomendado: responder por el mismo número donde el contacto te escribió"
+        >
           <CustomSelect
             options={[
-              { value: 'last-channel', label: 'Último número por el que contactó el contacto' },
-              { value: 'default', label: 'Número principal de la cuenta' },
-              { value: 'specific', label: 'Número específico…' }
+              { value: 'last-channel', label: 'El número donde te escribió el contacto (recomendado)' },
+              { value: 'default', label: 'El número principal de tu cuenta' },
+              { value: 'specific', label: 'Elegir un número específico…' }
             ]}
-            value={str(config.sender) || 'default'}
+            value={str(config.sender) || 'last-channel'}
             onValueChange={(next) => set({ sender: next })}
             aria-label="Remitente"
           />
@@ -92,97 +104,20 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
 
         {messageType === 'template' && (
           <>
-            <Field label="Plantilla">
-              <CatalogSelect
-                catalog="whatsappTemplates"
-                value={str(config.templateId)}
-                onChange={(value, label) => set({ templateId: value, templateName: label })}
-                placeholder="Selecciona la plantilla aprobada"
-                aria-label="Plantilla"
-              />
-            </Field>
-            <Field label="Idioma de la plantilla">
-              <TextInput
-                value={str(config.templateLanguage)}
-                placeholder="es_MX"
-                onChange={(event) => set({ templateLanguage: event.target.value })}
-              />
-            </Field>
-            <Field label="Variables de la plantilla">
-              {templateVariables.map((variable, index) => (
-                <div key={index} className={styles.configRow} style={{ marginBottom: 6 }}>
-                  <TextInput
-                    className={styles.configRowGrow}
-                    placeholder={`{{${index + 1}}}`}
-                    value={str(variable.key) || `{{${index + 1}}}`}
-                    onChange={(event) => {
-                      const next = templateVariables.map((candidate, candidateIndex) =>
-                        candidateIndex === index ? { ...candidate, key: event.target.value } : candidate
-                      )
-                      set({ templateVariables: next })
-                    }}
-                  />
-                  <TextInput
-                    className={styles.configRowGrow}
-                    placeholder="Valor (ej. {{nombre}})"
-                    value={str(variable.value)}
-                    onChange={(event) => {
-                      const next = templateVariables.map((candidate, candidateIndex) =>
-                        candidateIndex === index ? { ...candidate, value: event.target.value } : candidate
-                      )
-                      set({ templateVariables: next })
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className={styles.configIconButton}
-                    title="Quitar variable"
-                    onClick={() =>
-                      set({ templateVariables: templateVariables.filter((_, candidateIndex) => candidateIndex !== index) })
-                    }
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                className={styles.configSmallButton}
-                onClick={() =>
-                  set({
-                    templateVariables: [
-                      ...templateVariables,
-                      { key: `{{${templateVariables.length + 1}}}`, value: '' }
-                    ]
-                  })
-                }
-              >
-                <Plus size={11} />
-                Agregar variable
-              </button>
-            </Field>
+            <MessageBlocksEditor
+              value={templateBlocks}
+              onChange={(messageBlocks: MessageBlock[]) => set({ messageBlocks })}
+              variant="template"
+            />
+            <p className={styles.configHelp}>
+              Cada plantilla ya incluye su idioma y sus variables: encadena varias con retrasos entre ellas si lo necesitas.
+            </p>
           </>
         )}
       </ConfigSection>
 
       {/* ------------------------------- Preview ------------------------------ */}
-      {messageType === 'template' && str(config.templateName) && (
-        <ConfigSection title="Vista previa">
-          <div className={styles.waPreview}>
-            <div className={styles.waPreviewBubble}>
-              {`Plantilla: ${str(config.templateName)}${str(config.templateLanguage) ? ` (${str(config.templateLanguage)})` : ''}`}
-            </div>
-          </div>
-        </ConfigSection>
-      )}
 
-      <Field label="Guardar respuesta en variable (opcional)">
-        <TextInput
-          value={str(config.saveAs)}
-          placeholder="Ej. respuesta_whatsapp"
-          onChange={(event) => set({ saveAs: event.target.value })}
-        />
-      </Field>
     </div>
   )
 }

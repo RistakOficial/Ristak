@@ -1,10 +1,12 @@
 import { Router } from 'express'
 import * as costsController from '../controllers/costsController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 const router = Router()
 
 router.use(requireAuth)
+router.use(requireModuleAccess('settings_costs'))
 
 // Obtener todos los costos
 router.get('/costs', costsController.getAllCosts)

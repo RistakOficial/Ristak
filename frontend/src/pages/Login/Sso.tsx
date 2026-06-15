@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { getLoginPathForRoute, isPhoneAppPath, sanitizeAuthRedirectPath } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -13,6 +14,8 @@ export const Sso: React.FC = () => {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token') || ''
+  const redirectPath = sanitizeAuthRedirectPath(searchParams.get('return_path'), '/dashboard')
+  const isPhoneReturn = isPhoneAppPath(redirectPath)
   const [error, setError] = useState('')
   const startedRef = useRef(false)
 
@@ -40,13 +43,17 @@ export const Sso: React.FC = () => {
             sessionStorage.setItem('ristak_latest_api_token', data.apiToken)
           }
           // Recarga completa para que la app levante la sesión nueva
-          window.location.href = '/dashboard'
+          window.location.href = redirectPath
           return
         }
 
         if (data.code === 'needs_setup') {
           // La app todavía no tiene usuarios: el mismo token sirve para el setup
-          navigate(`/setup?token=${encodeURIComponent(token)}`, { replace: true })
+          const setupParams = new URLSearchParams({
+            token,
+            return_path: redirectPath
+          })
+          navigate(`/setup?${setupParams.toString()}`, { replace: true })
           return
         }
 
@@ -62,11 +69,11 @@ export const Sso: React.FC = () => {
     }
 
     run()
-  }, [token, navigate])
+  }, [token, navigate, redirectPath])
 
   return (
-    <div className={styles.container}>
-      <div className={styles.loginBox}>
+    <div className={`${styles.container} ${isPhoneReturn ? styles.phoneContainer : ''}`}>
+      <div className={`${styles.loginBox} ${isPhoneReturn ? styles.phoneLoginBox : ''}`}>
         <div className={styles.header}>
           <h1 className={styles.title}>Ristak</h1>
           <p className={styles.subtitle}>
@@ -75,7 +82,7 @@ export const Sso: React.FC = () => {
         </div>
         {error && (
           <p style={{ textAlign: 'center', fontSize: '0.875rem' }}>
-            <Link to="/login">Iniciar sesión con mi correo y contraseña</Link>
+            <Link to={getLoginPathForRoute(redirectPath)}>Iniciar sesión con mi correo y contraseña</Link>
           </p>
         )}
       </div>

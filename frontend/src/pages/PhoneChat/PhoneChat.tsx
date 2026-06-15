@@ -23,6 +23,7 @@ import {
   Forward,
   Globe2,
   Image as ImageIcon,
+  KeyRound,
   Layers,
   Languages,
   Link2,
@@ -42,6 +43,7 @@ import {
   Pin,
   Play,
   Plus,
+  Power,
   ReceiptText,
   Reply,
   Search,
@@ -62,14 +64,35 @@ import { AppointmentModal, Icon, Modal, RecordPaymentModal } from '@/components/
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
-import { PhoneSheet } from '@/components/phone/ui'
+import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
+import { PhoneSheet, PhoneTextArea, PhoneTextField } from '@/components/phone/ui'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { useAppConfig, useBottomSheetDismiss, useHighLevelConnected, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
+import { useAIAgentAvailability, useAppConfig, useBottomSheetDismiss, useHighLevelConnected, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { RistakRobot } from '@/components/ai'
 import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
+import {
+  CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT,
+  conversationalAgentService,
+  readConversationalAgentLiveCache,
+  type AgentReplyDeliveryConfig,
+  type AgentReplyDeliveryMode,
+  type AgentResponseDelayConfig,
+  type AgentResponseDelayMode,
+  type AgentResponseDelayUnit,
+  type AgentGoalWorkflowConfig,
+  type ConversationalAgentLiveCache,
+  type ConversationAgentState,
+  type ConversationStateAction,
+  type ConversationalAgentConfig,
+  type ConversationalAgentDef,
+  type ConversationalAgentDefInput,
+  type ConversationalObjective,
+  type ConversationalSuccessAction
+} from '@/services/conversationalAgentService'
+import { DEFAULT_AI_MODEL, aiModelOptions, getKnownAIModel } from '@/constants/aiModels'
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
@@ -79,7 +102,15 @@ import {
   type MessageTemplateCategory,
   type MessageTemplatePayload
 } from '@/services/messageTemplatesService'
-import { mobileAppService, type MobileChatAttachment, type MobileDocumentAttachment, type MobilePhotoAttachment } from '@/services/mobileAppService'
+import {
+  MOBILE_APP_NOTIFICATION_EVENT,
+  mobileAppService,
+  triggerLightHapticFeedback,
+  type MobileAppNotificationDetail,
+  type MobileChatAttachment,
+  type MobileDocumentAttachment,
+  type MobilePhotoAttachment
+} from '@/services/mobileAppService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
@@ -92,7 +123,7 @@ import {
   getContactCustomFieldKeys
 } from '@/utils/contactCustomFields'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
-import { getPortableDeviceMode, writeTabletViewPreference, type PortableDeviceMode } from '@/utils/phoneAccess'
+import { getLocalPhonePreviewDeviceMode, getPortableDeviceMode, isLocalPhonePreviewHost, writeTabletViewPreference, type PortableDeviceMode } from '@/utils/phoneAccess'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import styles from './PhoneChat.module.css'
 
@@ -106,6 +137,39 @@ const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
 const AI_AGENT_MESSAGES_KEY = 'ristak_phone_chat_ai_agent_messages_v1'
+const AGENT_STATUS_PHRASE_ROTATION_MS = 4400
+const AGENT_STATUS_PHRASES = [
+  'Modo chamba: leyendo chats.',
+  'Ando cazando mensajes nuevos.',
+  'Checando el chisme del cliente.',
+  'Aquí atento como compa de guardia.',
+  'Leyendo y armando respuesta.',
+  'Si preguntan, aquí estoy.',
+  'Revisando tono y urgencia.',
+  'Atento al chat, sin drama.',
+  'Sacando la respuesta fina.',
+  'No se me va ni un mensaje.',
+  'En vivo y con café digital.',
+  'Este chat ya lo traigo.',
+  'Buscando la mejor jugada.',
+  'Leyendo entre líneas, jefe.',
+  'Ojo puesto en prospectos.',
+  'Midiendo si quiere comprar.',
+  'Listo para entrar al quite.',
+  'Afinando respuesta con flow.',
+  'Aquí, chambeando bonito.',
+  'Escaneando mensajes pendientes.',
+  'Si se pone bueno, aviso.',
+  'Traigo radar de citas prendido.',
+  'Viendo quién necesita ayuda.',
+  'Procesando el cotorreo.',
+  'Poniéndome trucha con este chat.',
+  'Revisando señales de compra.',
+  'No descanso, nomás cargo pila.',
+  'Cuidando la bandeja, compa.',
+  'Leyendo rápido y sin hacer show.',
+  'Listo para responder como pro.'
+]
 const CHAT_SWIPE_ACTION_WIDTH = 184
 const CHAT_SWIPE_TRANSITION_MS = 260
 const CHAT_SWIPE_OPEN_THRESHOLD = 44
@@ -118,7 +182,6 @@ const MESSAGE_INFO_SWIPE_ACTIVATE_THRESHOLD = 9
 const MESSAGE_INFO_SWIPE_RENDER_STEP = 2
 const MESSAGE_ACTION_LONG_PRESS_MS = 460
 const MESSAGE_ACTION_MOVE_TOLERANCE = 9
-const MESSAGE_ACTION_LONG_PRESS_VIBRATION_MS = 14
 const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024
 const DOCUMENT_ATTACHMENT_ACCEPT = [
@@ -178,14 +241,18 @@ type PhoneChatDeviceMode = PortableDeviceMode | 'checking'
 type ComposerStatus = 'idle' | 'sending'
 type MessageAudioRate = typeof MESSAGE_AUDIO_RATE_OPTIONS[number]
 type PaymentMode = 'single' | 'partial'
-type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | null
-type ChatFilter = 'all' | 'unread' | 'appointments' | 'customers' | 'leads'
+type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | 'agentMenu' | null
+type ChatMoreMode = 'default' | 'agentControls'
+type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'ready_human'
+type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'leads'
 type TemplateMode = 'choice' | 'send' | 'create'
 type ChatSettingsSection = 'appearance' | 'templates' | 'numbers' | 'notifications' | 'agent' | 'chats' | 'display' | null
 type WhatsAppNumberMode = 'merged' | 'separated'
 type ConversationSortMode = 'recent' | 'unread'
 type PhotoPickDestination = 'chat' | 'cameraShare'
-type ContactInfoDetailPanel = 'payments' | 'appointments' | null
+type AddDraftAttachmentOptions = { showReadyToast?: boolean }
+type ContactInfoDetailPanel = 'payments' | 'appointments' | 'journey' | null
+type ContactInfoRecordDetail = { type: 'payment'; id: string } | { type: 'appointment'; id: string } | null
 type ContactInfoArchiveTab = 'media' | 'links' | 'documents'
 type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
 type MessageActionMenuMode = 'main' | 'more'
@@ -194,6 +261,165 @@ type MessageActionMenuAlign = 'start' | 'end'
 type SendMessageOptions = {
   textOverride?: string
   preserveComposer?: boolean
+}
+
+const DEFAULT_PHONE_AGENT_RESPONSE_DELAY: AgentResponseDelayConfig = {
+  mode: 'none',
+  fixedValue: 10,
+  fixedUnit: 'seconds',
+  minValue: 1,
+  maxValue: 10,
+  rangeUnit: 'minutes'
+}
+
+const DEFAULT_PHONE_AGENT_REPLY_DELIVERY: AgentReplyDeliveryConfig = {
+  mode: 'single',
+  splitMessagesEnabled: false,
+  minMessageLengthToSplit: 120,
+  maxBubbles: 5,
+  minBubbleLength: 20,
+  maxBubbleLength: 350,
+  targetChars: 350,
+  randomizeSplitting: true,
+  delayBetweenBubblesEnabled: true,
+  minDelaySeconds: 2,
+  maxDelaySeconds: 7
+}
+
+const PHONE_AGENT_RESPONSE_DELAY_MODE_OPTIONS: Array<{ value: AgentResponseDelayMode; label: string; description: string }> = [
+  { value: 'none', label: 'No esperar', description: 'Responde en cuanto termina de preparar el mensaje.' },
+  { value: 'fixed', label: 'Tiempo fijo', description: 'Siempre espera el mismo tiempo antes de responder.' },
+  { value: 'random', label: 'Rango aleatorio', description: 'Espera un rango para sentirse más natural.' }
+]
+
+const PHONE_AGENT_RESPONSE_DELAY_UNIT_OPTIONS: Array<{ value: AgentResponseDelayUnit; label: string }> = [
+  { value: 'seconds', label: 'Segundos' },
+  { value: 'minutes', label: 'Minutos' }
+]
+
+const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
+  appointments: {
+    owner: 'human',
+    calendarId: null
+  },
+  sales: {
+    owner: 'human',
+    productId: '',
+    priceId: '',
+    productName: '',
+    priceName: '',
+    amount: null,
+    currency: ''
+  },
+  data: {
+    afterComplete: 'human'
+  },
+  qualification: {
+    questions: '',
+    qualifies: '',
+    disqualifies: ''
+  }
+}
+
+const PHONE_AGENT_OWNER_OPTIONS = [
+  { value: 'human', label: 'Pasar a humano' },
+  { value: 'ai', label: 'Que lo haga la IA' }
+]
+
+interface ProductPrice {
+  id?: string
+  _id?: string
+  localId?: string
+  name?: string
+  amount?: number
+  price?: number
+  currency?: string
+}
+
+interface ProductItem {
+  id?: string
+  _id?: string
+  localId?: string
+  name: string
+  description?: string
+  currency?: string
+  prices?: ProductPrice[]
+}
+
+function getPhoneAgentResponseDelay(agent: ConversationalAgentDef): AgentResponseDelayConfig {
+  return {
+    ...DEFAULT_PHONE_AGENT_RESPONSE_DELAY,
+    ...((agent.responseDelay || {}) as Partial<AgentResponseDelayConfig>)
+  }
+}
+
+function getPhoneAgentReplyDelivery(agent: ConversationalAgentDef): AgentReplyDeliveryConfig {
+  return {
+    ...DEFAULT_PHONE_AGENT_REPLY_DELIVERY,
+    ...((agent.replyDelivery || {}) as Partial<AgentReplyDeliveryConfig>)
+  }
+}
+
+function getPhoneAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowConfig {
+  const workflow = (agent.goalWorkflow || {}) as Partial<AgentGoalWorkflowConfig>
+  return {
+    ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW,
+    ...workflow,
+    appointments: {
+      ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.appointments,
+      ...((workflow.appointments || {}) as Partial<AgentGoalWorkflowConfig['appointments']>)
+    },
+    sales: {
+      ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.sales,
+      ...((workflow.sales || {}) as Partial<AgentGoalWorkflowConfig['sales']>)
+    },
+    data: {
+      ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.data,
+      ...((workflow.data || {}) as Partial<AgentGoalWorkflowConfig['data']>)
+    },
+    qualification: {
+      ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.qualification,
+      ...((workflow.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+    }
+  }
+}
+
+function getProductId(product: ProductItem) {
+  return product.id || product._id || product.localId || ''
+}
+
+function getPriceId(price?: ProductPrice | null) {
+  return price?.id || price?._id || price?.localId || ''
+}
+
+function getPrimaryPrice(product?: ProductItem | null) {
+  return Array.isArray(product?.prices) ? product.prices[0] || null : null
+}
+
+function getPriceAmount(price?: ProductPrice | null) {
+  return Number(price?.amount ?? price?.price ?? 0) || 0
+}
+
+function getPhoneDelayUnitLabel(unit: AgentResponseDelayUnit, value: number) {
+  if (unit === 'minutes') return Number(value) === 1 ? 'minuto' : 'minutos'
+  return Number(value) === 1 ? 'segundo' : 'segundos'
+}
+
+function getPhoneResponseDelaySummary(delay: AgentResponseDelayConfig) {
+  if (delay.mode === 'fixed') {
+    return `${delay.fixedValue} ${getPhoneDelayUnitLabel(delay.fixedUnit, delay.fixedValue)}`
+  }
+  if (delay.mode === 'random') {
+    return `${delay.minValue} a ${delay.maxValue} ${getPhoneDelayUnitLabel(delay.rangeUnit, delay.maxValue)}`
+  }
+  return 'Sin espera'
+}
+
+function getPhoneReplyDeliverySummary(delivery: AgentReplyDeliveryConfig) {
+  if (delivery.splitMessagesEnabled || delivery.mode === 'split') {
+    return `${delivery.maxBubbles} globos, pausas ${delivery.delayBetweenBubblesEnabled ? 'activas' : 'apagadas'}`
+  }
+  return 'Un solo mensaje'
 }
 
 type SchedulePeriod = 'AM' | 'PM'
@@ -229,6 +455,7 @@ interface ChatSwipeGesture {
   offset: number
   lastRenderedOffset: number
   active: boolean
+  verticalScroll: boolean
 }
 
 interface MessageInfoSwipeGesture {
@@ -260,6 +487,12 @@ interface MessageActionPressGesture {
   startX: number
   startY: number
   timerId: number
+}
+
+interface PhonePullReleasePayload {
+  edge: 'top' | 'bottom'
+  offset: number
+  scrollable: HTMLElement
 }
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
@@ -329,6 +562,11 @@ const GHL_CHAT_CHANNEL_LABELS: Record<HighLevelChatChannel, string> = {
   sms_qr: 'SMS',
   messenger: 'Messenger',
   instagram: 'Instagram'
+}
+type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms'
+type ContactChannelBadge = {
+  kind: ContactChannelBadgeKind
+  label: string
 }
 
 interface ChatMessage {
@@ -422,6 +660,7 @@ interface ContactInfoPayment {
   amount: number
   status?: string | null
   date: string
+  title?: string | null
 }
 
 interface ContactInfoAppointment {
@@ -429,6 +668,8 @@ interface ContactInfoAppointment {
   title: string
   status?: string | null
   startTime: string
+  endTime?: string | null
+  notes?: string | null
 }
 
 interface ContactInfoArchiveItem {
@@ -457,11 +698,12 @@ interface ContactInfoCustomFieldView {
 
 function getPhoneChatDeviceMode(): PhoneChatDeviceMode {
   if (typeof window === 'undefined') return 'checking'
-  return getPortableDeviceMode()
+  return getLocalPhonePreviewDeviceMode() || getPortableDeviceMode()
 }
 
 function getAccessState(deviceMode = getPhoneChatDeviceMode()): AccessState {
   if (deviceMode === 'checking') return 'checking'
+  if (isLocalPhonePreviewHost()) return 'allowed'
   return deviceMode === 'desktop' ? 'blocked' : 'allowed'
 }
 
@@ -542,6 +784,44 @@ function readAIAgentMobileMessages(): AIAgentMessage[] {
 function writeAIAgentMobileMessages(messages: AIAgentMessage[]) {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(AI_AGENT_MESSAGES_KEY, JSON.stringify(messages.slice(-60)))
+}
+
+function getMobileNotificationContactId(payload: Partial<MobileAppNotificationDetail> | Record<string, unknown> | null | undefined) {
+  if (!payload) return ''
+  const directContactId = typeof payload.contactId === 'string' ? payload.contactId : ''
+  if (directContactId) return directContactId
+
+  const url = typeof payload.url === 'string' ? payload.url : ''
+  if (!url || typeof window === 'undefined') return ''
+
+  try {
+    const parsed = new URL(url, window.location.origin)
+    return parsed.searchParams.get('contact') || ''
+  } catch {
+    return ''
+  }
+}
+
+function isChatNotificationPayload(payload: Partial<MobileAppNotificationDetail> | Record<string, unknown> | null | undefined) {
+  if (!payload) return false
+  const category = typeof payload.category === 'string' ? payload.category : ''
+  const url = typeof payload.url === 'string' ? payload.url : ''
+  if (category === 'chat') return true
+
+  try {
+    const parsed = new URL(url || '/phone/chat', typeof window === 'undefined' ? 'http://localhost' : window.location.origin)
+    return parsed.pathname === '/phone/chat'
+  } catch {
+    return false
+  }
+}
+
+function mapAgentStatesByContactId(states: ConversationAgentState[] = []) {
+  const next: Record<string, ConversationAgentState> = {}
+  for (const state of states) {
+    next[state.contactId] = state
+  }
+  return next
 }
 
 function getAIAgentMessagePreview(message?: AIAgentMessage | null) {
@@ -1452,12 +1732,8 @@ function getMessageActionText(message: ChatMessage) {
 }
 
 function triggerMessageActionHapticFeedback() {
-  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return
-  try {
-    navigator.vibrate(MESSAGE_ACTION_LONG_PRESS_VIBRATION_MS)
-  } catch {
-    // intentionally ignore
-  }
+  // Háptico nativo en la app instalada, vibración web como respaldo.
+  void triggerLightHapticFeedback()
 }
 
 async function copyTextToClipboard(text: string) {
@@ -1501,12 +1777,57 @@ function getHighLevelChatChannelLabel(channel?: string | null) {
   return normalized ? GHL_CHAT_CHANNEL_LABELS[normalized] : ''
 }
 
+function normalizeChannelProbe(value?: string | null) {
+  return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+}
+
+function getContactChannelBadge(contact?: (Partial<Contact> & {
+  lastMessageChannel?: string | null
+  lastMessageTransport?: string | null
+}) | null): ContactChannelBadge | null {
+  const channelValues = [
+    contact?.lastMessageChannel,
+    contact?.lastMessageTransport,
+    contact?.whatsappAttributionPlatform,
+    contact?.attribution_session_source,
+    contact?.source
+  ]
+
+  for (const value of channelValues) {
+    const channel = normalizeGhlChatChannelValue(value)
+    if (channel === 'instagram') return { kind: 'instagram', label: 'Instagram' }
+    if (channel === 'messenger') return { kind: 'messenger', label: 'Messenger' }
+    if (channel === 'sms_qr') return { kind: 'sms', label: 'SMS' }
+    if (channel === 'whatsapp_api') return { kind: 'whatsapp', label: 'WhatsApp' }
+
+    const normalized = normalizeChannelProbe(value)
+    if (!normalized) continue
+    if (normalized.includes('instagram') || normalized === 'ig') return { kind: 'instagram', label: 'Instagram' }
+    if (normalized.includes('messenger') || normalized === 'fb_messenger') return { kind: 'messenger', label: 'Messenger' }
+    if (normalized.includes('email') || normalized.includes('mail') || normalized.includes('correo')) return { kind: 'email', label: 'Correo' }
+    if (normalized.includes('sms')) return { kind: 'sms', label: 'SMS' }
+    if (normalized.includes('whatsapp') || normalized === 'api' || normalized === 'qr') return { kind: 'whatsapp', label: 'WhatsApp' }
+  }
+
+  return null
+}
+
 function getAvatarChannelClass(contact?: (Partial<Contact> & { lastMessageChannel?: string | null }) | null) {
-  const channel = normalizeGhlChatChannelValue(contact?.lastMessageChannel)
-  if (channel === 'instagram') return styles.avatarInstagram
-  if (channel === 'messenger') return styles.avatarMessenger
-  if (channel === 'whatsapp_api' || channel === 'sms_qr') return styles.avatarWhatsapp
+  const badge = getContactChannelBadge(contact)
+  if (badge?.kind === 'instagram') return styles.avatarInstagram
+  if (badge?.kind === 'messenger') return styles.avatarMessenger
+  if (badge?.kind === 'email') return styles.avatarEmail
+  if (badge?.kind === 'sms') return styles.avatarSms
+  if (badge?.kind === 'whatsapp') return styles.avatarWhatsapp
   return ''
+}
+
+function getAvatarChannelBadgeClass(kind: ContactChannelBadgeKind) {
+  if (kind === 'instagram') return styles.avatarChannelBadgeInstagram
+  if (kind === 'messenger') return styles.avatarChannelBadgeMessenger
+  if (kind === 'email') return styles.avatarChannelBadgeEmail
+  if (kind === 'sms') return styles.avatarChannelBadgeSms
+  return styles.avatarChannelBadgeWhatsapp
 }
 
 function getMessageTransportBadge(transport?: string | null) {
@@ -1579,7 +1900,8 @@ function getContactInfoPayments(contact?: Contact | null, journey: JourneyEvent[
       id: String(payment.id || `${contact?.id || 'contact'}-payment-${index}`),
       amount: Number(payment.amount || 0),
       status: payment.status,
-      date: payment.date || contact?.createdAt || new Date().toISOString()
+      date: payment.date || contact?.createdAt || new Date().toISOString(),
+      title: null
     }))
 
   if (contactPayments.length > 0) {
@@ -1592,7 +1914,8 @@ function getContactInfoPayments(contact?: Contact | null, journey: JourneyEvent[
       id: String(event.data?.id || `${contact?.id || 'contact'}-journey-payment-${index}`),
       amount: Number(event.data?.amount || 0),
       status: event.data?.status || null,
-      date: event.date
+      date: event.date,
+      title: event.data?.title || event.data?.type || null
     }))
     .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
 }
@@ -1603,7 +1926,9 @@ function getContactInfoAppointments(contact?: Contact | null, journey: JourneyEv
       id: String(appointment.id || `${contact?.id || 'contact'}-appointment-${index}`),
       title: appointment.title || 'Cita',
       status: appointment.appointment_status || appointment.status || null,
-      startTime: appointment.start_time || appointment.end_time || contact?.createdAt || new Date().toISOString()
+      startTime: appointment.start_time || appointment.end_time || contact?.createdAt || new Date().toISOString(),
+      endTime: appointment.end_time || null,
+      notes: appointment.notes || null
     }))
 
   if (contactAppointments.length > 0) {
@@ -1616,7 +1941,9 @@ function getContactInfoAppointments(contact?: Contact | null, journey: JourneyEv
       id: String(event.data?.id || `${contact?.id || 'contact'}-journey-appointment-${index}`),
       title: String(event.data?.title || 'Cita'),
       status: event.data?.status || null,
-      startTime: String(event.data?.start_time || event.date)
+      startTime: String(event.data?.start_time || event.date),
+      endTime: event.data?.end_time ? String(event.data.end_time) : null,
+      notes: event.data?.notes ? String(event.data.notes) : null
     }))
     .sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime))
 }
@@ -1805,8 +2132,22 @@ function buildContactCustomFieldsForSave(contact: Contact, customField: ContactI
   ]
 }
 
+function isJourneyFormEvent(event: JourneyEvent) {
+  if (event.type !== 'page_visit') return false
+  const data = event.data || {}
+  const eventName = String(data.event_name || '').toLowerCase()
+  const conversionType = String(data.conversion_type || '').toLowerCase()
+
+  return Boolean(
+    data.submission_id ||
+    data.form_site_name ||
+    eventName.includes('form') ||
+    conversionType.includes('form')
+  )
+}
+
 function getJourneyEventLabel(event: JourneyEvent, leadLabel: string) {
-  if (event.type === 'page_visit') return 'Visitó una página'
+  if (event.type === 'page_visit') return isJourneyFormEvent(event) ? 'Llenó formulario' : 'Visitó una página'
   if (event.type === 'contact_created') return `Se hizo ${leadLabel.toLowerCase()}`
   if (event.type === 'appointment') return 'Agendó una cita'
   if (event.type === 'payment') return 'Registró un pago'
@@ -2108,10 +2449,14 @@ function getJourneyEventDescription(event: JourneyEvent) {
 
   if (event.type === 'page_visit') {
     const source = getJourneyPlatformLabel(event)
-    const pageName = getPageName(data.page_url || data.landing_page)
+    const pageName = getReadableValue(data.form_site_name || data.public_page_title) || getPageName(data.page_url || data.landing_page)
     const campaign = getReadableValue(data.campaign_name || data.utm_campaign)
 
-    return [source, pageName, campaign ? `Campaña ${campaign}` : ''].filter(Boolean).join(' · ') || 'Visita registrada'
+    return [
+      isJourneyFormEvent(event) ? 'Formulario enviado' : source,
+      pageName,
+      campaign ? `Campaña ${campaign}` : ''
+    ].filter(Boolean).join(' · ') || 'Visita registrada'
   }
 
   if (event.type === 'contact_created') {
@@ -2416,6 +2761,7 @@ export const PhoneChat: React.FC = () => {
   const [selectedChatPhoneId, setSelectedChatPhoneId] = useAppConfig<string>('mobile_chat_selected_whatsapp_phone_id', 'all')
   const [selectedHighLevelChatChannel, setSelectedHighLevelChatChannel] = useAppConfig<HighLevelChatChannel>('mobile_chat_highlevel_channel', 'whatsapp_api')
   const [aiAgentChatEnabled, setAiAgentChatEnabled] = useAppConfig<boolean>('mobile_chat_ai_agent_enabled', true)
+  const aiAvailability = useAIAgentAvailability()
   const [showArchivedChats, setShowArchivedChats] = useAppConfig<boolean>('mobile_chat_show_archived', true)
   const [conversationSortMode, setConversationSortMode] = useAppConfig<ConversationSortMode>('mobile_chat_sort_mode', 'recent')
   const [showLastMessagePreview, setShowLastMessagePreview] = useAppConfig<boolean>('mobile_chat_show_last_preview', true)
@@ -2443,6 +2789,21 @@ export const PhoneChat: React.FC = () => {
   const [chatQuery, setChatQuery] = useState('')
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
   const [archivedViewOpen, setArchivedViewOpen] = useState(false)
+  const [agentPriorityViewOpen, setAgentPriorityViewOpen] = useState(false)
+  const [aiAgentHubOpen, setAiAgentHubOpen] = useState(false)
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false)
+  const [aiAgentHubQuery, setAiAgentHubQuery] = useState('')
+  const [aiAgentHubAgentFilter, setAiAgentHubAgentFilter] = useState('all')
+  const [conversationReturnTarget, setConversationReturnTarget] = useState<'chats' | 'aiAgentHub'>('chats')
+  const [initialAgentLiveCache] = useState(() => readConversationalAgentLiveCache())
+  const [agentConfig, setAgentConfig] = useState<ConversationalAgentConfig | null>(() => initialAgentLiveCache?.config || null)
+  const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>(() => initialAgentLiveCache?.agents || [])
+  const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>(() => mapAgentStatesByContactId(initialAgentLiveCache?.states || []))
+  const [agentDataHydrated, setAgentDataHydrated] = useState(() => Boolean(initialAgentLiveCache))
+  const [agentMenuSection, setAgentMenuSection] = useState<AgentMenuSection>('menu')
+  const [selectedAgentId, setSelectedAgentId] = useState(() => initialAgentLiveCache?.agents?.[0]?.id || '')
+  const [agentConfigSaving, setAgentConfigSaving] = useState(false)
+  const [agentStatusPhraseIndex, setAgentStatusPhraseIndex] = useState(0)
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_ARCHIVED_STATE_KEY))
   const [mutedChatIds, setMutedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_MUTED_STATE_KEY))
   const [starredMessageIds, setStarredMessageIds] = useState<string[]>(() => readStoredChatIds(CHAT_STARRED_MESSAGES_KEY))
@@ -2451,6 +2812,9 @@ export const PhoneChat: React.FC = () => {
   const [closingSwipeChatId, setClosingSwipeChatId] = useState<string | null>(null)
   const [chatSwipeSuppressed, setChatSwipeSuppressed] = useState(false)
   const [chatActionContactId, setChatActionContactId] = useState<string | null>(null)
+  const [chatMoreMode, setChatMoreMode] = useState<ChatMoreMode>('default')
+  const [chatQuickActionsContact, setChatQuickActionsContact] = useState<ChatContact | null>(null)
+  const chatLongPressRef = useRef<{ contactId: string; timerId: number } | null>(null)
   const [contactQuery, setContactQuery] = useState('')
   const [contactResults, setContactResults] = useState<Contact[]>([])
   const [contactsLoading, setContactsLoading] = useState(false)
@@ -2502,6 +2866,8 @@ export const PhoneChat: React.FC = () => {
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [calendarsLoading, setCalendarsLoading] = useState(false)
   const [selectedCalendarId, setSelectedCalendarId] = useState('')
+  const [agentProducts, setAgentProducts] = useState<ProductItem[]>([])
+  const [agentProductsLoading, setAgentProductsLoading] = useState(false)
   const [sheet, setSheet] = useState<ActionSheet>(null)
   const [activeSettingsSection, setActiveSettingsSection] = useState<ChatSettingsSection>(null)
   const [contactInfoOpen, setContactInfoOpen] = useState(false)
@@ -2509,6 +2875,7 @@ export const PhoneChat: React.FC = () => {
   const [contactInfoLoading, setContactInfoLoading] = useState(false)
   const [contactInfoError, setContactInfoError] = useState('')
   const [contactInfoDetailPanel, setContactInfoDetailPanel] = useState<ContactInfoDetailPanel>(null)
+  const [contactInfoRecordDetail, setContactInfoRecordDetail] = useState<ContactInfoRecordDetail>(null)
   const [contactNameEditing, setContactNameEditing] = useState(false)
   const [contactNameDraft, setContactNameDraft] = useState('')
   const [savingContactName, setSavingContactName] = useState(false)
@@ -2558,6 +2925,7 @@ export const PhoneChat: React.FC = () => {
   const activeContactIdRef = useRef<string | null>(null)
   const conversationOpenRef = useRef(false)
   const conversationLoadGenerationRef = useRef(0)
+  const agentLoadGenerationRef = useRef(0)
   const conversationInitialBottomLockRef = useRef({
     contactId: null as string | null,
     expiresAt: 0
@@ -2590,8 +2958,16 @@ export const PhoneChat: React.FC = () => {
   const voiceAnalyserRef = useRef<AnalyserNode | null>(null)
   const voiceAnimationFrameRef = useRef<number | null>(null)
   const voiceLastWaveUpdateRef = useRef(0)
+  const chatInboxRefreshInFlightRef = useRef(false)
+  const chatPullRefreshHandlerRef = useRef<((payload: PhonePullReleasePayload) => void) | null>(null)
+  const handlePhonePullRelease = useCallback((payload: PhonePullReleasePayload) => {
+    chatPullRefreshHandlerRef.current?.(payload)
+  }, [])
 
-  usePhoneElasticScroll({ enabled: accessState === 'allowed' })
+  usePhoneElasticScroll({
+    enabled: accessState === 'allowed',
+    onPullRelease: handlePhonePullRelease
+  })
   const voiceSmoothedWaveHeightRef = useRef(VOICE_WAVE_MIN_HEIGHT)
   const voiceHoldTimerRef = useRef<number | null>(null)
   const voicePressStartedAtRef = useRef<number | null>(null)
@@ -2631,6 +3007,23 @@ export const PhoneChat: React.FC = () => {
   const chatSwipeGenerationRef = useRef(0)
   const chatSwipeCloseTimerRef = useRef<number | null>(null)
   const ignoreNextChatClickRef = useRef(false)
+  const ignoreNextChatClickTimerRef = useRef<number | null>(null)
+  const suppressNextChatClick = useCallback((duration = 320) => {
+    if (ignoreNextChatClickTimerRef.current !== null) {
+      window.clearTimeout(ignoreNextChatClickTimerRef.current)
+    }
+    ignoreNextChatClickRef.current = true
+    ignoreNextChatClickTimerRef.current = window.setTimeout(() => {
+      ignoreNextChatClickRef.current = false
+      ignoreNextChatClickTimerRef.current = null
+    }, duration)
+  }, [])
+  const clearChatClickSuppressTimer = useCallback(() => {
+    if (ignoreNextChatClickTimerRef.current === null) return
+    window.clearTimeout(ignoreNextChatClickTimerRef.current)
+    ignoreNextChatClickTimerRef.current = null
+    ignoreNextChatClickRef.current = false
+  }, [])
   const clearChatSwipeCloseTimer = useCallback(() => {
     if (chatSwipeCloseTimerRef.current === null) return
     window.clearTimeout(chatSwipeCloseTimerRef.current)
@@ -2663,6 +3056,11 @@ export const PhoneChat: React.FC = () => {
   }, [])
 
   const aiAgentConversationOpen = activeContactId === AI_AGENT_CHAT_ID
+  const openAIConfigured = aiAvailability.configured
+  const openAILoading = aiAvailability.loading
+  const openAIUnavailableMessage = aiAvailability.needsReconnect
+    ? 'Reconecta OpenAI para usar el agente de inteligencia artificial.'
+    : 'Conecta OpenAI para usar el agente de inteligencia artificial.'
 
   const startConversationBottomLock = useCallback((contactId: string | null) => {
     conversationInitialBottomLockRef.current = {
@@ -3041,9 +3439,160 @@ export const PhoneChat: React.FC = () => {
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds])
   const starredMessageIdSet = useMemo(() => new Set(starredMessageIds), [starredMessageIds])
   const archivedChatCount = archivedChatIds.length
+  const agentEnabled = Boolean(openAIConfigured && agentConfig?.enabled)
+  const agentDefById = useMemo(
+    () => new Map(agentDefs.map((agent) => [agent.id, agent])),
+    [agentDefs]
+  )
+  const agentPriorityStates = useMemo(
+    () => agentEnabled
+      ? Object.values(agentStates).filter((state) => Boolean(state.signal) && state.signal !== 'discarded')
+      : [],
+    [agentEnabled, agentStates]
+  )
+  const agentPriorityChatIdSet = useMemo(
+    () => new Set(agentPriorityStates.map((state) => state.contactId)),
+    [agentPriorityStates]
+  )
+  const agentPriorityCount = agentPriorityStates.length
+  const publishedAgentDefs = useMemo(() => agentDefs.filter((agent) => agent.enabled), [agentDefs])
+  const publishedAgentCount = publishedAgentDefs.length
+  const aiAgentHubAgentFilters = useMemo(() => {
+    if (!agentEnabled || publishedAgentDefs.length <= 1) return []
+
+    const activeCounts = new Map<string, number>()
+    Object.values(agentStates).forEach((state) => {
+      if (state.status !== 'active' || state.signal === 'discarded') return
+      if (!state.agentId || archivedChatIdSet.has(state.contactId)) return
+      activeCounts.set(state.agentId, (activeCounts.get(state.agentId) || 0) + 1)
+    })
+
+    return publishedAgentDefs.map((agent) => ({
+      id: agent.id,
+      name: agent.name || 'Agente sin nombre',
+      count: activeCounts.get(agent.id) || 0
+    }))
+  }, [agentEnabled, agentStates, archivedChatIdSet, publishedAgentDefs])
+  const activeAiAgentHubAgentFilter = aiAgentHubAgentFilters.some((agent) => agent.id === aiAgentHubAgentFilter)
+    ? aiAgentHubAgentFilter
+    : 'all'
+  const aiAgentHubAgentFilterTotal = aiAgentHubAgentFilters.reduce((total, agent) => total + agent.count, 0)
+  const agentHubChatRows = useMemo(() => {
+    if (!agentEnabled) return []
+
+    const activeContactIds = new Set(
+      Object.values(agentStates)
+        .filter((state) => state.status === 'active' && state.signal !== 'discarded')
+        .map((state) => state.contactId)
+    )
+    const normalizedQuery = aiAgentHubQuery.trim().toLowerCase()
+
+    return chats
+      .filter((contact) => {
+        if (archivedChatIdSet.has(contact.id)) return false
+        if (!activeContactIds.has(contact.id)) return false
+        if (activeAiAgentHubAgentFilter !== 'all' && agentStates[contact.id]?.agentId !== activeAiAgentHubAgentFilter) return false
+        if (!normalizedQuery) return true
+
+        return [
+          getContactName(contact),
+          getContactDetail(contact),
+          getChatPreview(contact)
+        ].join(' ').toLowerCase().includes(normalizedQuery)
+      })
+      .sort((left, right) => {
+        const leftState = agentStates[left.id]
+        const rightState = agentStates[right.id]
+        return Date.parse(rightState?.updatedAt || right.lastMessageDate || right.createdAt) -
+          Date.parse(leftState?.updatedAt || left.lastMessageDate || left.createdAt)
+      })
+  }, [activeAiAgentHubAgentFilter, agentEnabled, agentStates, aiAgentHubQuery, archivedChatIdSet, chats])
+  const agentPriorityChatRows = useMemo(() => {
+    if (archivedViewOpen || agentPriorityViewOpen || chatFilter !== 'all') return []
+    return chats
+      .filter((contact) => agentPriorityChatIdSet.has(contact.id))
+      .sort((left, right) => {
+        const leftState = agentStates[left.id]
+        const rightState = agentStates[right.id]
+        return Date.parse(rightState?.signalAt || right.lastMessageDate || right.createdAt) -
+          Date.parse(leftState?.signalAt || left.lastMessageDate || left.createdAt)
+      })
+  }, [agentPriorityChatIdSet, agentPriorityViewOpen, agentStates, archivedViewOpen, chatFilter, chats])
+  const agentActiveChatIdSet = useMemo(() => {
+    if (!agentEnabled) return new Set<string>()
+    return new Set(
+      Object.values(agentStates)
+        .filter((state) => state.status === 'active' && state.signal !== 'discarded')
+        .map((state) => state.contactId)
+    )
+  }, [agentEnabled, agentStates])
+  useEffect(() => {
+    if (!agentEnabled) {
+      setAgentStatusPhraseIndex(0)
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      setAgentStatusPhraseIndex((current) => (current + 1) % AGENT_STATUS_PHRASES.length)
+    }, AGENT_STATUS_PHRASE_ROTATION_MS)
+
+    return () => window.clearInterval(intervalId)
+  }, [agentEnabled])
+  const agentStatusPhrase = AGENT_STATUS_PHRASES[agentStatusPhraseIndex % AGENT_STATUS_PHRASES.length]
+  const activeConversationAgentState = activeContact?.id ? agentStates[activeContact.id] || null : null
+  const activeConversationAgentStatus = activeConversationAgentState?.status || 'active'
+  const activeConversationAgentActive = Boolean(agentEnabled && activeContact && activeConversationAgentStatus === 'active')
+  const activeConversationAgentLabel = ({
+    active: 'Agente leyendo este chat',
+    paused: 'Agente pausado',
+    human: 'Tomado por humano',
+    skipped: 'Chatbot omitido',
+    completed: 'Objetivo cumplido',
+    discarded: 'Chat descartado'
+  } as Record<string, string>)[activeConversationAgentStatus] || 'Agente conversacional'
+
+  useEffect(() => {
+    if (chatFilter === 'agent') {
+      setChatFilter('all')
+    }
+  }, [chatFilter])
+
+  useEffect(() => {
+    if (!agentEnabled) {
+      setAgentPriorityViewOpen(false)
+    }
+  }, [agentEnabled])
+
+  useEffect(() => {
+    if (aiAgentHubAgentFilter === 'all') return
+    if (aiAgentHubAgentFilters.some((agent) => agent.id === aiAgentHubAgentFilter)) return
+    setAiAgentHubAgentFilter('all')
+  }, [aiAgentHubAgentFilter, aiAgentHubAgentFilters])
+
+  const agentHiddenChatIdSet = useMemo(() => {
+    if (!agentEnabled) return new Set<string>()
+    return new Set(
+      Object.values(agentStates)
+        .filter((state) => {
+          if (state.status !== 'active' || state.signal) return false
+          const agent = state.agentId ? agentDefById.get(state.agentId) : null
+          return Boolean(agent?.enabled && agent.hideAttended)
+        })
+        .map((state) => state.contactId)
+    )
+  }, [agentDefById, agentEnabled, agentStates])
   const listBaseChats = useMemo(
-    () => chats.filter((contact) => archivedViewOpen ? archivedChatIdSet.has(contact.id) : !archivedChatIdSet.has(contact.id)),
-    [archivedChatIdSet, archivedViewOpen, chats]
+    () => chats.filter((contact) => {
+      if (agentPriorityViewOpen) return agentPriorityChatIdSet.has(contact.id)
+      if (archivedViewOpen) return archivedChatIdSet.has(contact.id)
+      if (archivedChatIdSet.has(contact.id)) return false
+      // Las conversaciones con señal del agente suben como filas de acción.
+      if (agentPriorityChatIdSet.has(contact.id)) return false
+      // "Ocultar atendidas por el agente": solo reaparecen con señal o humano
+      if (agentHiddenChatIdSet.has(contact.id)) return false
+      return true
+    }),
+    [agentEnabled, agentHiddenChatIdSet, agentPriorityChatIdSet, agentPriorityViewOpen, archivedChatIdSet, archivedViewOpen, chats]
   )
   const customerLabel = labels.customer?.trim() || 'Cliente'
   const leadLabel = labels.lead?.trim() || 'Interesado'
@@ -3056,14 +3605,19 @@ export const PhoneChat: React.FC = () => {
     return contact.status === 'lead'
   }, [isAppointmentContact, isCustomerContact])
   const filteredChats = useMemo(() => {
+    const sourceChats = chatFilter === 'agent'
+      ? chats.filter((contact) => !archivedChatIdSet.has(contact.id) && agentActiveChatIdSet.has(contact.id))
+      : listBaseChats
+
     const phoneFilteredChats = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
-      ? listBaseChats.filter((contact) => {
+      ? sourceChats.filter((contact) => {
           if (contact.lastBusinessPhoneNumberId && contact.lastBusinessPhoneNumberId === effectiveSelectedChatPhoneId) return true
           return phoneLooksSame(contact.lastBusinessPhone, getBusinessPhoneValue(effectiveSelectedChatPhone))
         })
-      : listBaseChats
+      : sourceChats
 
     const chipFilteredChats = phoneFilteredChats.filter((contact) => {
+      if (chatFilter === 'agent') return true
       if (chatFilter === 'unread') return Number(contact.unreadCount || 0) > 0
       if (chatFilter === 'appointments') return isAppointmentContact(contact)
       if (chatFilter === 'customers') return isCustomerContact(contact)
@@ -3079,7 +3633,10 @@ export const PhoneChat: React.FC = () => {
       return Date.parse(right.lastMessageDate || right.createdAt) - Date.parse(left.lastMessageDate || left.createdAt)
     })
   }, [
+    agentActiveChatIdSet,
+    archivedChatIdSet,
     chatFilter,
+    chats,
     conversationSortMode,
     effectiveSelectedChatPhone,
     effectiveSelectedChatPhoneId,
@@ -3148,7 +3705,7 @@ export const PhoneChat: React.FC = () => {
     ))
     setActiveContactId((current) => {
       if (requestedContact) return requestedContact.id
-      if (current === AI_AGENT_CHAT_ID && aiAgentChatEnabled) return current
+      if (current === AI_AGENT_CHAT_ID && aiAgentChatEnabled && openAIConfigured) return current
       if (current && nextChats.some((contact) => contact.id === current)) return current
       return null
     })
@@ -3160,7 +3717,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     return nextChats
-  }, [aiAgentChatEnabled, runConversationOpenBottomScrollSequence, startConversationBottomLock])
+  }, [aiAgentChatEnabled, openAIConfigured, runConversationOpenBottomScrollSequence, startConversationBottomLock])
 
   const loadChats = useCallback(async (options: { showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
     const silentRefresh = options.silent === true
@@ -3242,6 +3799,144 @@ export const PhoneChat: React.FC = () => {
     requestedContactParam,
     selectedChatPhoneFilterActive
   ])
+
+  const applyAgentLiveCache = useCallback((cache: ConversationalAgentLiveCache | null) => {
+    if (!openAIConfigured || !cache) return
+    setAgentConfig(cache.config)
+    setAgentDefs(cache.agents)
+    setAgentStates(mapAgentStatesByContactId(cache.states))
+    setAgentDataHydrated(true)
+  }, [openAIConfigured])
+
+  const loadAgentData = useCallback(async (options: { includeDefinitions?: boolean } = {}) => {
+    if (openAILoading) return
+
+    if (!openAIConfigured) {
+      setAgentConfig(null)
+      setAgentDefs([])
+      setAgentStates({})
+      setAgentDataHydrated(true)
+      return
+    }
+
+    const requestGeneration = agentLoadGenerationRef.current + 1
+    agentLoadGenerationRef.current = requestGeneration
+    const includeDefinitions = options.includeDefinitions !== false
+
+    try {
+      const [config, states, defs] = await Promise.all([
+        conversationalAgentService.getConfig(),
+        conversationalAgentService.listStates(),
+        includeDefinitions
+          ? conversationalAgentService.listAgents().catch(() => [] as ConversationalAgentDef[])
+          : Promise.resolve(null)
+      ])
+      if (agentLoadGenerationRef.current !== requestGeneration) return
+      setAgentConfig(config)
+      if (defs) setAgentDefs(defs)
+      setAgentStates(mapAgentStatesByContactId(states))
+    } catch {
+      // El agente conversacional puede no estar disponible (feature apagada);
+      // el chat sigue funcionando normal sin él.
+    } finally {
+      if (agentLoadGenerationRef.current === requestGeneration) {
+        setAgentDataHydrated(true)
+      }
+    }
+  }, [openAIConfigured, openAILoading])
+
+  useEffect(() => {
+    loadAgentData()
+  }, [loadAgentData])
+
+  useEffect(() => {
+    if (!agentDefs.length) {
+      setSelectedAgentId('')
+      return
+    }
+
+    setSelectedAgentId((current) => (
+      current && agentDefs.some((agent) => agent.id === current)
+        ? current
+        : agentDefs[0].id
+    ))
+  }, [agentDefs])
+
+  useEffect(() => {
+    const handleAgentLiveCache = (event: Event) => {
+      applyAgentLiveCache((event as CustomEvent<ConversationalAgentLiveCache>).detail || null)
+    }
+
+    window.addEventListener(CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT, handleAgentLiveCache)
+    return () => window.removeEventListener(CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT, handleAgentLiveCache)
+  }, [applyAgentLiveCache])
+
+  const updateAgentDraft = useCallback((agentId: string, patch: ConversationalAgentDefInput) => {
+    setAgentDefs((current) => current.map((agent) => (
+      agent.id === agentId
+        ? { ...agent, ...patch } as ConversationalAgentDef
+        : agent
+    )))
+  }, [])
+
+  const saveAgentPatch = useCallback(async (agentId: string, patch: ConversationalAgentDefInput) => {
+    if (!agentId) return
+    updateAgentDraft(agentId, patch)
+    setAgentConfigSaving(true)
+    try {
+      const next = await conversationalAgentService.updateAgent(agentId, patch)
+      setAgentDefs((current) => current.map((agent) => (agent.id === next.id ? next : agent)))
+    } catch (error: any) {
+      showToast('error', 'Agente conversacional', error?.message || 'No se pudo guardar el cambio')
+    } finally {
+      setAgentConfigSaving(false)
+    }
+  }, [showToast, updateAgentDraft])
+
+  const handleAgentStateAction = useCallback(async (contactId: string, action: ConversationStateAction, successMessage: string) => {
+    try {
+      const state = await conversationalAgentService.updateState(contactId, action)
+      setAgentStates((current) => ({ ...current, [contactId]: state }))
+      showToast('success', 'Agente conversacional', successMessage)
+    } catch (error: any) {
+      showToast('error', 'Agente conversacional', error?.message || 'No se pudo actualizar la conversación')
+    }
+  }, [showToast])
+
+  const acknowledgeAgentPriorityOnOpen = useCallback((contactId: string) => {
+    const state = agentStates[contactId]
+    if (!state?.signal || state.signal === 'discarded') return
+
+    const acknowledgedAt = new Date().toISOString()
+    const toAcknowledgedState = (currentState: ConversationAgentState): ConversationAgentState => ({
+      ...currentState,
+      signal: null,
+      signalReason: null,
+      signalSummary: null,
+      signalAt: null,
+      updatedBy: 'user',
+      updatedAt: acknowledgedAt
+    })
+
+    setAgentStates((current) => {
+      const currentState = current[contactId]
+      if (!currentState?.signal || currentState.signal === 'discarded') return current
+      return { ...current, [contactId]: toAcknowledgedState(currentState) }
+    })
+
+    void conversationalAgentService.updateState(contactId, 'clear_signal')
+      .then((nextState) => {
+        setAgentStates((current) => ({ ...current, [contactId]: nextState }))
+      })
+      .catch((error: any) => {
+        setAgentStates((current) => {
+          const currentState = current[contactId]
+          if (currentState?.signal) return current
+          return { ...current, [contactId]: state }
+        })
+        showToast('error', 'Agente conversacional', error?.message || 'No se pudo quitar la prioridad del chat')
+      })
+  }, [agentStates, showToast])
 
   const loadContactResults = useCallback(async (query: string) => {
     setContactsLoading(true)
@@ -3364,11 +4059,55 @@ export const PhoneChat: React.FC = () => {
     }
   }, [locationId])
 
+  const refreshChatInboxNow = useCallback(async (options: { contactId?: string; showIndicator?: boolean } = {}) => {
+    if (accessState !== 'allowed') return
+    if (chatInboxRefreshInFlightRef.current) return
+
+    chatInboxRefreshInFlightRef.current = true
+    const showIndicator = options.showIndicator === true
+    if (showIndicator) setChatsRefreshing(true)
+
+    try {
+      const notificationContactId = options.contactId || ''
+      const openContactId = activeContactIdRef.current
+      const shouldRefreshOpenConversation = Boolean(
+        conversationOpenRef.current &&
+        openContactId &&
+        (!notificationContactId || notificationContactId === openContactId)
+      )
+
+      await Promise.all([
+        loadChats({ silent: true, useCache: false }),
+        loadAgentData({ includeDefinitions: false }),
+        shouldRefreshOpenConversation && openContactId
+          ? loadConversation(openContactId, { silent: true, useCache: false })
+          : Promise.resolve()
+      ])
+    } finally {
+      chatInboxRefreshInFlightRef.current = false
+      if (showIndicator) setChatsRefreshing(false)
+    }
+  }, [accessState, loadAgentData, loadChats, loadConversation])
+
+  const handleChatPullRefreshRelease = useCallback((payload: PhonePullReleasePayload) => {
+    if (payload.edge !== 'top') return
+    if (payload.scrollable.getAttribute('data-phone-chat-list-scroll') !== 'true') return
+    if (conversationVisible || chatsLoading || chatsRefreshing) return
+
+    suppressNextChatClick(520)
+    triggerLightHapticFeedback()
+    refreshChatInboxNow({ showIndicator: true }).catch(() => undefined)
+  }, [chatsLoading, chatsRefreshing, conversationVisible, refreshChatInboxNow, suppressNextChatClick])
+
+  chatPullRefreshHandlerRef.current = handleChatPullRefreshRelease
+
   const loadSupportData = useCallback(async () => {
     const statusCacheKey = getPhoneDailyCacheKey('phone-chat', 'whatsapp-status', locationId || 'default')
     const calendarsCacheKey = getPhoneDailyCacheKey('phone-chat', 'calendars', locationId || 'default')
+    const productsCacheKey = getPhoneDailyCacheKey('phone-chat', 'agent-products', locationId || 'default')
     const cachedStatus = readPhoneDailyCache<WhatsAppApiStatus>(statusCacheKey)
     const cachedCalendars = readPhoneDailyCache<Calendar[]>(calendarsCacheKey)
+    const cachedProducts = readPhoneDailyCache<ProductItem[]>(productsCacheKey)
     const applyCalendars = (items: Calendar[]) => {
       const availableItems = items.filter((calendar) => calendar.isActive !== false)
       setCalendars(availableItems)
@@ -3380,16 +4119,31 @@ export const PhoneChat: React.FC = () => {
       ))
       return availableItems
     }
+    const applyProducts = (items: ProductItem[]) => {
+      const availableItems = items.filter((product) => getProductId(product))
+      setAgentProducts(availableItems)
+      return availableItems
+    }
 
     if (cachedStatus) setWhatsappStatus(cachedStatus.data)
     const cachedAvailableCalendars = cachedCalendars
       ? applyCalendars(Array.isArray(cachedCalendars.data) ? cachedCalendars.data : [])
       : []
+    const cachedAvailableProducts = cachedProducts
+      ? applyProducts(Array.isArray(cachedProducts.data) ? cachedProducts.data : [])
+      : []
     setCalendarsLoading(cachedAvailableCalendars.length === 0)
+    setAgentProductsLoading(cachedAvailableProducts.length === 0)
 
-    const [status, calendarItems] = await Promise.all([
+    const [status, calendarItems, productsResponse] = await Promise.all([
       whatsappApiService.getStatus().catch(() => null),
-      calendarsService.getCalendars(locationId, accessToken).catch(() => [])
+      calendarsService.getCalendars(locationId, accessToken).catch(() => []),
+      apiClient.get<{ products?: ProductItem[] }>('/products', {
+        params: {
+          limit: '100',
+          includePrices: 'true'
+        }
+      }).catch(() => null)
     ])
 
     if (status) {
@@ -3402,7 +4156,14 @@ export const PhoneChat: React.FC = () => {
     } else if (!cachedCalendars) {
       setCalendars([])
     }
+    if (productsResponse && Array.isArray(productsResponse.products)) {
+      const nextProducts = applyProducts(productsResponse.products)
+      writePhoneDailyCache(productsCacheKey, nextProducts, { maxEntryChars: 180_000 })
+    } else if (!cachedProducts) {
+      setAgentProducts([])
+    }
     setCalendarsLoading(false)
+    setAgentProductsLoading(false)
   }, [accessToken, defaultCalendarId, locationId])
 
   const loadTemplates = useCallback(async () => {
@@ -3448,10 +4209,12 @@ export const PhoneChat: React.FC = () => {
   }, [showToast])
 
   useEffect(() => {
-    document.title = aiAgentConversationOpen
+    document.title = aiAgentHubOpen
+      ? 'Inteligencia artificial | Ristak'
+      : aiAgentConversationOpen
       ? 'Agente de IA | Ristak'
       : activeContact ? `${getContactName(activeContact)} | Ristak` : 'Ristak'
-  }, [activeContact, aiAgentConversationOpen])
+  }, [activeContact, aiAgentConversationOpen, aiAgentHubOpen])
 
   useEffect(() => {
     writeAIAgentMobileMessages(aiMessages)
@@ -3470,11 +4233,12 @@ export const PhoneChat: React.FC = () => {
     setOpenSwipeChatId(null)
     setDraggingSwipe(null)
     clearClosingSwipeActions()
-  }, [archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId, clearClosingSwipeActions])
+  }, [agentPickerOpen, aiAgentHubOpen, archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId, clearClosingSwipeActions])
 
   useEffect(() => {
     if (!contactInfoOpen) {
       setContactInfoArchiveOpen(false)
+      setContactInfoRecordDetail(null)
       setEditingCustomFieldId(null)
       setCustomFieldDrafts({})
       setSavingCustomFieldId(null)
@@ -3483,6 +4247,7 @@ export const PhoneChat: React.FC = () => {
 
   useEffect(() => {
     setContactInfoArchiveOpen(false)
+    setContactInfoRecordDetail(null)
   }, [activeContactId])
 
   useLayoutEffect(() => {
@@ -3524,7 +4289,8 @@ export const PhoneChat: React.FC = () => {
 
   useEffect(() => () => {
     clearChatSwipeCloseTimer()
-  }, [clearChatSwipeCloseTimer])
+    clearChatClickSuppressTimer()
+  }, [clearChatClickSuppressTimer, clearChatSwipeCloseTimer])
 
   useEffect(() => {
     if (showArchivedChats) return
@@ -3544,9 +4310,25 @@ export const PhoneChat: React.FC = () => {
   }, [aiAgentChatEnabled, aiAgentConversationOpen])
 
   useEffect(() => {
-    if (aiAgentChatEnabled || !aiReplySuggestionsEnabled) return
+    if (openAILoading || openAIConfigured) return
+
+    setAiAgentHubOpen(false)
+    setAgentPickerOpen(false)
+    setAgentMenuSection('menu')
+    setAgentConfig(null)
+    setAgentDefs([])
+    setAgentStates({})
+
+    if (aiAgentConversationOpen) {
+      setConversationOpen(false)
+      setActiveContactId(null)
+    }
+  }, [aiAgentConversationOpen, openAIConfigured, openAILoading])
+
+  useEffect(() => {
+    if ((aiAgentChatEnabled && openAIConfigured) || !aiReplySuggestionsEnabled) return
     setAiReplySuggestionsEnabled(false).catch(() => undefined)
-  }, [aiAgentChatEnabled, aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled])
+  }, [aiAgentChatEnabled, aiReplySuggestionsEnabled, openAIConfigured, setAiReplySuggestionsEnabled])
 
   useEffect(() => {
     if (highLevelConnected || paymentMode !== 'partial') return
@@ -3734,11 +4516,13 @@ export const PhoneChat: React.FC = () => {
     const refreshVisibleChats = () => {
       if (document.visibilityState === 'visible') {
         loadChats({ silent: true, useCache: false })
+        loadAgentData({ includeDefinitions: false })
       }
     }
     const refreshInterval = window.setInterval(() => {
       if (document.visibilityState === 'visible' && !chatQuery.trim()) {
         loadChats({ silent: true, useCache: false })
+        loadAgentData({ includeDefinitions: false })
       }
     }, 20000)
 
@@ -3750,7 +4534,36 @@ export const PhoneChat: React.FC = () => {
       window.removeEventListener('focus', refreshVisibleChats)
       document.removeEventListener('visibilitychange', refreshVisibleChats)
     }
-  }, [accessState, chatQuery, loadChats])
+  }, [accessState, chatQuery, loadAgentData, loadChats])
+
+  useEffect(() => {
+    if (accessState !== 'allowed') return
+
+    const refreshFromNotification = (payload: Partial<MobileAppNotificationDetail> | Record<string, unknown> | null | undefined) => {
+      if (!isChatNotificationPayload(payload)) return
+      refreshChatInboxNow({
+        contactId: getMobileNotificationContactId(payload)
+      }).catch(() => undefined)
+    }
+
+    const handleNativeNotification = (event: Event) => {
+      refreshFromNotification((event as CustomEvent<MobileAppNotificationDetail>).detail || null)
+    }
+
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      const message = event.data || {}
+      if (message?.type !== 'ristak:push-notification') return
+      refreshFromNotification(message.payload || null)
+    }
+
+    window.addEventListener(MOBILE_APP_NOTIFICATION_EVENT, handleNativeNotification)
+    navigator.serviceWorker?.addEventListener('message', handleServiceWorkerMessage)
+
+    return () => {
+      window.removeEventListener(MOBILE_APP_NOTIFICATION_EVENT, handleNativeNotification)
+      navigator.serviceWorker?.removeEventListener('message', handleServiceWorkerMessage)
+    }
+  }, [accessState, refreshChatInboxNow])
 
   useEffect(() => {
     if (accessState !== 'allowed') return
@@ -3860,6 +4673,9 @@ export const PhoneChat: React.FC = () => {
     setContactInfoContact(null)
     setContactInfoError('')
     setContactInfoLoading(false)
+    setContactInfoArchiveOpen(false)
+    setContactInfoDetailPanel(null)
+    setContactInfoRecordDetail(null)
     setMessages([])
     setContactJourney([])
     setDraftAttachments([])
@@ -3871,7 +4687,9 @@ export const PhoneChat: React.FC = () => {
     setContactInfoContact(null)
     setContactInfoError('')
     setContactInfoLoading(false)
+    setContactInfoArchiveOpen(false)
     setContactInfoDetailPanel(null)
+    setContactInfoRecordDetail(null)
     setEditingCustomFieldId(null)
     setCustomFieldDrafts({})
     setSavingCustomFieldId(null)
@@ -3935,6 +4753,7 @@ export const PhoneChat: React.FC = () => {
     }
     if (sheet !== 'chatMore') {
       setChatActionContactId(null)
+      setChatMoreMode('default')
     }
     if (sheet !== 'clabe') {
       setClabeFormOpen(false)
@@ -4335,9 +5154,10 @@ export const PhoneChat: React.FC = () => {
     }
   }
 
-  const handleSelectContact = (contact: Contact) => {
+  const handleSelectContact = (contact: Contact, options?: { returnTarget?: 'chats' | 'aiAgentHub' }) => {
     const chatContact = (chats.find((item) => item.id === contact.id) || contact) as ChatContact
     const nextContact = ensureChatContact(contact)
+    acknowledgeAgentPriorityOnOpen(nextContact.id)
     closeSwipeActions()
     handleCancelVoiceDraft()
     clearMessageActionPress()
@@ -4348,6 +5168,7 @@ export const PhoneChat: React.FC = () => {
     setChats((current) => current.map((item) => (
       item.id === nextContact.id ? { ...item, unreadCount: 0 } : item
     )))
+    setConversationReturnTarget(options?.returnTarget || 'chats')
     setConversationOpen(true)
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
@@ -4364,12 +5185,18 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleOpenAIAgentChat = () => {
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
     closeSwipeActions()
     handleCancelVoiceDraft()
     clearMessageActionPress()
     startConversationBottomLock(AI_AGENT_CHAT_ID)
     runConversationOpenBottomScrollSequence()
     setActiveContactId(AI_AGENT_CHAT_ID)
+    setConversationReturnTarget('chats')
     setConversationOpen(true)
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
@@ -4386,6 +5213,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleBackToChats = () => {
+    const shouldReturnToAiAgentHub = conversationReturnTarget === 'aiAgentHub'
     setChatSwipeSuppressed(true)
     clearQueuedBottomScrolls()
     closeSwipeActions()
@@ -4399,6 +5227,13 @@ export const PhoneChat: React.FC = () => {
     setMessageActionMenu(null)
     setReplyingToMessageId(null)
     setScheduleEditingMessageId(null)
+    setConversationReturnTarget('chats')
+    if (shouldReturnToAiAgentHub) {
+      setAiAgentHubOpen(true)
+      setAgentPickerOpen(false)
+      setAgentMenuSection('menu')
+      loadAgentData()
+    }
     messageInfoSwipeGestureRef.current = null
     setDraggingMessageInfoSwipe(null)
     setDraftAttachments([])
@@ -4624,12 +5459,96 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const openAgentSelectorScreen = () => {
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
+    setAgentMenuSection('agents')
+    setAgentPickerOpen(true)
+    setSheet(null)
+    loadAgentData()
+  }
+
+  const toggleAgentGlobalEnabled = async () => {
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
+    const nextEnabled = !agentEnabled
+
+    if (nextEnabled && publishedAgentCount === 0) {
+      showToast('warning', 'Sin agentes publicados', 'Publica al menos un agente para encender la inteligencia artificial.')
+      openAgentSelectorScreen()
+      return
+    }
+
+    const previousConfig = agentConfig
+    setAgentConfig((current) => current ? { ...current, enabled: nextEnabled } : current)
+    setAgentConfigSaving(true)
+
+    try {
+      const nextConfig = await conversationalAgentService.saveConfig({ enabled: nextEnabled })
+      setAgentConfig(nextConfig)
+      showToast(
+        'success',
+        'Agente conversacional',
+        nextEnabled
+          ? `${publishedAgentCount === 1 ? '1 agente publicado quedó activo' : `${publishedAgentCount} agentes publicados quedaron activos`}.`
+          : 'La inteligencia artificial quedó apagada.'
+      )
+    } catch (error: any) {
+      setAgentConfig(previousConfig)
+      showToast('error', 'Agente conversacional', error?.message || 'No se pudo cambiar el estado.')
+    } finally {
+      setAgentConfigSaving(false)
+    }
+  }
+
   const handleOpenChatMore = (contact: Contact) => {
     setActiveContactId(contact.id)
     setChatActionContactId(contact.id)
+    setChatMoreMode('default')
     setSheet('chatMore')
     setContactInfoOpen(false)
     closeSwipeActions()
+  }
+
+  const openAgentGlobalMenu = () => {
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
+    setAiAgentHubOpen(true)
+    setAgentPickerOpen(false)
+    setAgentMenuSection('menu')
+    setSheet(null)
+    setContactInfoOpen(false)
+    setMessageInfoOpen(false)
+    setCameraSharePhoto(null)
+    closeSwipeActions()
+    loadAgentData()
+  }
+
+  const openConversationAgentControls = (contact?: Contact | null) => {
+    if (!contact?.id) return
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
+    setActiveContactId(contact.id)
+    setChatActionContactId(contact.id)
+    setChatMoreMode('agentControls')
+    setChatQuickActionsContact(null)
+    setAgentMenuSection('menu')
+    setSheet('chatMore')
+    setContactInfoOpen(false)
+    closeSwipeActions()
+    loadAgentData({ includeDefinitions: false })
   }
 
   const handleOpenAppointmentForm = (contact?: Contact | null) => {
@@ -4690,9 +5609,53 @@ export const PhoneChat: React.FC = () => {
     closeSwipeActions()
   }
 
+  const clearChatLongPress = () => {
+    if (chatLongPressRef.current) {
+      window.clearTimeout(chatLongPressRef.current.timerId)
+      chatLongPressRef.current = null
+    }
+  }
+
+  const openChatQuickActions = (contact: ChatContact) => {
+    if (contact.id === AI_AGENT_CHAT_ID) return
+    triggerMessageActionHapticFeedback()
+    clearChatLongPress()
+    chatSwipeGestureRef.current = null
+    setDraggingSwipe(null)
+    closeSwipeActions()
+    // Evita que al soltar el dedo se abra el chat debajo del menú
+    suppressNextChatClick(420)
+    setChatQuickActionsContact(contact)
+  }
+
+  const handleChatQuickAction = (action: 'appointment' | 'payment' | 'more') => {
+    const contact = chatQuickActionsContact
+    setChatQuickActionsContact(null)
+    if (!contact) return
+
+    if (action === 'appointment') {
+      handleOpenAppointmentForm(contact)
+    } else if (action === 'payment') {
+      handleChatMoreAction(contact, 'payment')
+    } else {
+      handleOpenChatMore(contact)
+    }
+  }
+
   const handleChatTouchStart = (contactId: string, event: React.TouchEvent<HTMLDivElement>) => {
     const touch = event.touches[0]
     if (!touch) return
+
+    // Dejar picado un chat abre el menú de acciones rápidas (con vibración)
+    clearChatLongPress()
+    if (contactId !== AI_AGENT_CHAT_ID && !conversationOpen) {
+      const timerId = window.setTimeout(() => {
+        chatLongPressRef.current = null
+        const contact = chats.find((item) => item.id === contactId)
+        if (contact) openChatQuickActions(contact)
+      }, MESSAGE_ACTION_LONG_PRESS_MS)
+      chatLongPressRef.current = { contactId, timerId }
+    }
 
     const currentOffset = draggingSwipe?.contactId === contactId
       ? draggingSwipe.offset
@@ -4710,7 +5673,8 @@ export const PhoneChat: React.FC = () => {
       startOffset: currentOffset,
       offset: currentOffset,
       lastRenderedOffset: currentOffset,
-      active: false
+      active: false,
+      verticalScroll: false
     }
   }
 
@@ -4721,15 +5685,27 @@ export const PhoneChat: React.FC = () => {
     if (gesture.generation !== chatSwipeGenerationRef.current || conversationOpen || chatSwipeSuppressed) {
       chatSwipeGestureRef.current = null
       setDraggingSwipe(null)
+      clearChatLongPress()
       return
     }
 
     const deltaX = touch.clientX - gesture.startX
     const deltaY = touch.clientY - gesture.startY
     const horizontalDistance = Math.abs(deltaX)
+    const verticalDistance = Math.abs(deltaY)
+
+    // Si el dedo se mueve (scroll o swipe), ya no es un long-press
+    if (chatLongPressRef.current && (horizontalDistance > MESSAGE_ACTION_MOVE_TOLERANCE || verticalDistance > MESSAGE_ACTION_MOVE_TOLERANCE)) {
+      clearChatLongPress()
+    }
+
+    if (!gesture.active && (gesture.verticalScroll || (verticalDistance > MESSAGE_ACTION_MOVE_TOLERANCE && verticalDistance >= horizontalDistance))) {
+      gesture.verticalScroll = true
+      return
+    }
 
     if (!gesture.active) {
-      if (horizontalDistance < CHAT_SWIPE_ACTIVATE_THRESHOLD || horizontalDistance <= Math.abs(deltaY)) return
+      if (horizontalDistance < CHAT_SWIPE_ACTIVATE_THRESHOLD || horizontalDistance <= verticalDistance) return
       gesture.active = true
     }
 
@@ -4749,11 +5725,19 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleChatTouchEnd = () => {
+    clearChatLongPress()
     const gesture = chatSwipeGestureRef.current
     if (!gesture) return
     if (gesture.generation !== chatSwipeGenerationRef.current || conversationOpen || chatSwipeSuppressed) {
       setDraggingSwipe(null)
       chatSwipeGestureRef.current = null
+      return
+    }
+
+    if (gesture.verticalScroll) {
+      setDraggingSwipe(null)
+      chatSwipeGestureRef.current = null
+      suppressNextChatClick(360)
       return
     }
 
@@ -4770,10 +5754,7 @@ export const PhoneChat: React.FC = () => {
         setOpenSwipeChatId(null)
       }
       setDraggingSwipe(null)
-      ignoreNextChatClickRef.current = true
-      window.setTimeout(() => {
-        ignoreNextChatClickRef.current = false
-      }, 240)
+      suppressNextChatClick(240)
     }
 
     chatSwipeGestureRef.current = null
@@ -4788,6 +5769,12 @@ export const PhoneChat: React.FC = () => {
 
     handleSelectContact(contact)
   }
+
+  const handleChatListClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!ignoreNextChatClickRef.current) return
+    event.preventDefault()
+    event.stopPropagation()
+  }, [])
 
   const handleChatRowKeyDown = (event: React.KeyboardEvent<HTMLElement>, action: () => void) => {
     if (event.key !== 'Enter' && event.key !== ' ') return
@@ -4818,17 +5805,31 @@ export const PhoneChat: React.FC = () => {
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
 
-    const rect = element.getBoundingClientRect()
     const viewportWidth = Math.max(320, window.innerWidth || document.documentElement.clientWidth || 390)
     const viewportHeight = Math.max(480, window.innerHeight || document.documentElement.clientHeight || 740)
-    const bubbleWidth = Math.min(Math.max(96, Math.round(rect.width)), viewportWidth - 24)
     const scheduled = message.direction === 'outbound' && isMessageScheduled(message)
+    const estimatedMenuHeight = scheduled ? 126 : 300
+
+    // El menú SIEMPRE abre debajo del globo. Si el globo está tan abajo que el
+    // menú no cabría completo, primero subimos el mensaje (scroll de la
+    // conversación) hasta más o menos media pantalla y medimos de nuevo: así
+    // el menú nunca sale recortado ni se despega del mensaje.
+    let rect = element.getBoundingClientRect()
+    if (rect.bottom + estimatedMenuHeight + 16 > viewportHeight) {
+      const scroller = element.closest('[data-phone-chat-scrollable="true"], [data-phone-scrollable="true"]')
+      if (scroller instanceof HTMLElement) {
+        const targetTop = Math.max(86, Math.round(viewportHeight * 0.32))
+        scroller.scrollTop += Math.round(rect.top - targetTop)
+        rect = element.getBoundingClientRect()
+      }
+    }
+
+    const bubbleWidth = Math.min(Math.max(96, Math.round(rect.width)), viewportWidth - 24)
     const menuWidth = Math.min(Math.max(bubbleWidth, scheduled ? 252 : 246), viewportWidth - 24)
     const align: MessageActionMenuAlign = message.direction === 'outbound' ? 'end' : 'start'
     const preferredLeft = align === 'end' ? rect.right - menuWidth : rect.left
     const left = Math.max(12, Math.min(Math.round(preferredLeft), viewportWidth - menuWidth - 12))
-    const estimatedMenuHeight = scheduled ? 126 : 300
-    const maxSafeTop = viewportHeight - estimatedMenuHeight - 12
+    const maxSafeTop = viewportHeight - (Math.round(rect.height) + estimatedMenuHeight) - 12
     const top = Math.max(12, Math.min(Math.round(rect.top), Math.max(12, Math.round(maxSafeTop))))
 
     setMessageActionMenu({
@@ -5073,8 +6074,9 @@ export const PhoneChat: React.FC = () => {
     showToast('info', label, 'Esta opción ya está en el menú. La conexión real se activa cuando los archivos del celular estén conectados.')
   }
 
-  const addDraftAttachment = (attachment: MobileChatAttachment) => {
+  const addDraftAttachment = (attachment: MobileChatAttachment, options: AddDraftAttachmentOptions = {}) => {
     setDraftAttachments((current) => [attachment, ...current].slice(0, 4))
+    if (options.showReadyToast === false) return
     showToast('success', attachment.attachmentType === 'image' ? 'Foto lista' : 'Documento listo', 'Revisa la vista previa y toca enviar.')
   }
 
@@ -5107,7 +6109,7 @@ export const PhoneChat: React.FC = () => {
       openCameraShare(attachment)
       return
     }
-    addDraftAttachment(attachment)
+    addDraftAttachment(attachment, { showReadyToast: false })
   }
 
   const readImageFile = (file: File, source: 'camera' | 'photos', destination: PhotoPickDestination) => {
@@ -5308,6 +6310,7 @@ export const PhoneChat: React.FC = () => {
       whatsappApiService.sendImage({
         to: contact.phone || '',
         from: cameraShareBusinessPhoneValue,
+        contactId: contact.id,
         imageDataUrl: photo.dataUrl,
         caption,
         externalId: `camera-share-${Date.now()}-${index}`,
@@ -5482,6 +6485,7 @@ export const PhoneChat: React.FC = () => {
       const result = await whatsappApiService.sendTemplate({
         to: activeContact.phone,
         from: selectedBusinessPhoneValue,
+        contactId: activeContact.id,
         templateId: template.id,
         templateName: template.name,
         language: template.language,
@@ -6169,6 +7173,7 @@ export const PhoneChat: React.FC = () => {
             ? whatsappApiService.sendImage({
                 to: activeContact.phone || '',
                 from: selectedBusinessPhoneValue,
+                contactId: activeContact.id,
                 imageDataUrl: attachment.dataUrl,
                 caption: index === 0 ? text : '',
                 externalId: `${optimisticId}-attachment-${index}`,
@@ -6178,6 +7183,7 @@ export const PhoneChat: React.FC = () => {
             : whatsappApiService.sendDocument({
                 to: activeContact.phone || '',
                 from: selectedBusinessPhoneValue,
+                contactId: activeContact.id,
                 documentDataUrl: attachment.dataUrl,
                 filename: attachment.name,
                 mimeType: attachment.type,
@@ -6215,6 +7221,7 @@ export const PhoneChat: React.FC = () => {
         const result = await whatsappApiService.sendText({
           to: activeContact.phone,
           from: selectedBusinessPhoneValue,
+          contactId: activeContact.id,
           text,
           externalId: optimisticId,
           transport: resolvedTransport,
@@ -6441,6 +7448,11 @@ export const PhoneChat: React.FC = () => {
     const text = aiMessageText.trim()
     if (!text || aiSending) return
 
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
     const userMessage = createAIAgentMobileMessage('user', text)
     const nextMessages = [...aiMessages, userMessage]
     setAiMessages(nextMessages)
@@ -6475,6 +7487,11 @@ export const PhoneChat: React.FC = () => {
   const handleSuggestReply = async () => {
     if (!activeContact || aiSuggestionLoading) return
 
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
     const recentConversation = messages.slice(-10).map((message) => {
       const sender = message.direction === 'outbound' ? 'Negocio' : message.direction === 'inbound' ? 'Cliente' : 'Sistema'
       const text = message.text || getMessageTypeLabel(message.attachment?.type || '')
@@ -6503,15 +7520,43 @@ export const PhoneChat: React.FC = () => {
     }
   }
 
-  const renderAvatar = (contact: Contact) => {
+  const renderChannelBadgeIcon = (kind: ContactChannelBadgeKind) => {
+    if (kind === 'whatsapp') return <Icon name="whatsapp" size={16} className={styles.avatarChannelBadgeWhatsappGlyph} />
+    if (kind === 'messenger') return <Icon name="facebook" size={12} />
+    if (kind === 'instagram') return <Icon name="instagram" size={12} />
+    if (kind === 'email') return <Mail size={12} />
+    return <MessageCircle size={12} />
+  }
+
+  const renderAvatar = (contact: Contact, options: { showChannelBadge?: boolean; showAgentBadge?: boolean } = {}) => {
     const photoUrl = getContactProfilePhoto(contact as Partial<Contact> & Record<string, unknown>)
-    const avatarChannelClass = getAvatarChannelClass(contact as ChatContact)
+    const chatContact = contact as ChatContact
+    const avatarChannelClass = getAvatarChannelClass(chatContact)
+    const channelBadge = options.showChannelBadge ? getContactChannelBadge(chatContact) : null
 
     return (
       <span className={`${styles.avatar} ${avatarChannelClass}`}>
         {photoUrl ? (
           <img src={photoUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
         ) : getContactInitials(contact)}
+        {channelBadge && (
+          <span
+            className={`${styles.avatarChannelBadge} ${getAvatarChannelBadgeClass(channelBadge.kind)}`}
+            title={`Canal: ${channelBadge.label}`}
+            aria-label={`Canal: ${channelBadge.label}`}
+          >
+            {renderChannelBadgeIcon(channelBadge.kind)}
+          </span>
+        )}
+        {options.showAgentBadge && (
+          <span
+            className={styles.avatarAgentBadge}
+            title="Necesita acción del agente"
+            aria-label="Necesita acción del agente"
+          >
+            <Bot size={11} />
+          </span>
+        )}
       </span>
     )
   }
@@ -6565,10 +7610,12 @@ export const PhoneChat: React.FC = () => {
     const hasUnread = showUnreadIndicators && source === 'chat' && unreadCount > 0
     const isArchived = archivedChatIdSet.has(contact.id)
     const isMuted = mutedChatIdSet.has(contact.id)
+    const agentState = source === 'chat' && agentEnabled ? agentStates[contact.id] || null : null
+    const isAgentActionChat = Boolean(agentState?.signal && agentState.signal !== 'discarded')
 
     const content = (
       <>
-        {renderAvatar(contact)}
+        {renderAvatar(contact, { showChannelBadge: source === 'chat', showAgentBadge: isAgentActionChat })}
         <span className={styles.chatMain}>
           <strong>{getContactName(contact)}</strong>
           <small>{subtitle}</small>
@@ -6623,6 +7670,10 @@ export const PhoneChat: React.FC = () => {
         onTouchMove={swipeLocked ? undefined : handleChatTouchMove}
         onTouchEnd={swipeLocked ? undefined : handleChatTouchEnd}
         onTouchCancel={swipeLocked ? undefined : handleChatTouchEnd}
+        onContextMenu={contact.id === AI_AGENT_CHAT_ID ? undefined : (event) => {
+          event.preventDefault()
+          openChatQuickActions(contact)
+        }}
       >
         {showSwipeActions && (
           <div className={styles.chatSwipeActions} aria-hidden={!swipeActionsInteractive}>
@@ -6657,7 +7708,7 @@ export const PhoneChat: React.FC = () => {
         <div
           role="button"
           tabIndex={0}
-          className={`${styles.chatItem} ${styles.chatSwipeContent} ${hasUnread ? styles.chatItemUnread : ''}`}
+          className={`${styles.chatItem} ${styles.chatSwipeContent} ${hasUnread ? styles.chatItemUnread : ''} ${isAgentActionChat ? styles.chatItemAgentAction : ''}`}
           style={{ transform: `translate3d(-${swipeOffset}px, 0, 0)` }}
           onTransitionEnd={(event) => handleChatSwipeContentTransitionEnd(contact.id, event)}
           onClick={() => handleChatItemPress(contact)}
@@ -6666,6 +7717,156 @@ export const PhoneChat: React.FC = () => {
           {content}
         </div>
       </div>
+    )
+  }
+
+  const renderAgentHubChatButton = (contact: ChatContact) => {
+    const subtitle = showLastMessagePreview ? getChatPreview(contact) : getContactDetail(contact)
+    const dateLabel = formatMessageDate(contact.lastMessageDate || contact.createdAt)
+    const unreadCount = Number(contact.unreadCount || 0)
+    const hasUnread = showUnreadIndicators && unreadCount > 0
+    const isMuted = mutedChatIdSet.has(contact.id)
+
+    return (
+      <button
+        key={contact.id}
+        type="button"
+        className={`${styles.chatItem} ${styles.aiAgentHubChatItem} ${hasUnread ? styles.chatItemUnread : ''}`}
+        onClick={() => {
+          setAiAgentHubOpen(false)
+          setAgentPickerOpen(false)
+          handleSelectContact(contact, { returnTarget: 'aiAgentHub' })
+        }}
+      >
+        {renderAvatar(contact, { showChannelBadge: true, showAgentBadge: true })}
+        <span className={styles.chatMain}>
+          <strong>{getContactName(contact)}</strong>
+          <small>{subtitle}</small>
+        </span>
+        <span className={`${styles.chatMeta} ${hasUnread ? styles.chatMetaUnread : ''}`}>
+          {dateLabel && <small className={hasUnread ? styles.chatUnreadTime : undefined}>{dateLabel}</small>}
+          {isMuted && (
+            <span className={styles.chatMutedIcon} aria-label="Chat silenciado">
+              <BellOff size={13} />
+            </span>
+          )}
+          {hasUnread && <i className={styles.chatUnreadBadge} aria-label={`${unreadCount} mensajes no leídos`}>{unreadCount > 9 ? '9+' : unreadCount}</i>}
+        </span>
+      </button>
+    )
+  }
+
+  const renderAIAgentHubScreen = () => {
+    if (!aiAgentHubOpen) return null
+
+    const activeLabel = agentEnabled ? 'Encendida' : 'Apagada'
+    const agentCountLabel = publishedAgentCount === 1
+      ? '1 agente publicado'
+      : `${publishedAgentCount} agentes publicados`
+
+    return (
+      <section className={`${styles.aiAgentHubScreen} ${styles.aiAgentHubScreenOpen}`} aria-label="Inteligencia artificial">
+        <div className={styles.aiAgentHubContent} data-phone-chat-scrollable="true">
+          <section className={styles.aiAgentHubHero} aria-label="Control de inteligencia artificial">
+            <button
+              type="button"
+              className={styles.aiAgentHubHeroBack}
+              onClick={() => {
+                setAiAgentHubOpen(false)
+                setAgentPickerOpen(false)
+              }}
+              aria-label="Volver a chats"
+            >
+              <ChevronLeft size={26} />
+            </button>
+            <span className={styles.aiAgentHubEyebrow}>Agente conversacional</span>
+            <span className={`${styles.aiAgentHubRobot} ${agentEnabled ? styles.aiAgentHubRobotOn : styles.aiAgentHubRobotOff}`}>
+              {renderAgentRobotGlyph(agentEnabled)}
+              <span className={styles.aiAgentHubRobotPing} aria-hidden="true" />
+              <span className={styles.aiAgentHubRobotSparkleOne} aria-hidden="true" />
+              <span className={styles.aiAgentHubRobotSparkleTwo} aria-hidden="true" />
+            </span>
+            <div className={styles.aiAgentHubCopy}>
+              <p className={`${styles.aiAgentHubStatus} ${agentEnabled ? styles.aiAgentHubStatusOn : styles.aiAgentHubStatusOff}`}>{activeLabel}</p>
+              <span>{agentEnabled ? `${agentCountLabel} atendiendo chats.` : `${agentCountLabel}; toca encender para activarlos.`}</span>
+            </div>
+            <div className={styles.aiAgentHubActions}>
+              <button
+                type="button"
+                className={`${styles.aiAgentHubPowerButton} ${agentEnabled ? styles.aiAgentHubPowerButtonOn : ''}`}
+                onClick={toggleAgentGlobalEnabled}
+                disabled={agentConfigSaving}
+              >
+                {agentConfigSaving ? <Loader2 size={19} className={styles.spinIcon} /> : <Power size={19} />}
+                <span>{agentEnabled ? 'Apagar' : 'Encender'}</span>
+              </button>
+              <button type="button" className={styles.aiAgentHubAgentsButton} onClick={openAgentSelectorScreen}>
+                <Bot size={18} />
+                <span>Agentes</span>
+              </button>
+            </div>
+          </section>
+
+          <div className={styles.aiAgentHubSearch}>
+            <Search size={20} />
+            <input
+              value={aiAgentHubQuery}
+              onChange={(event) => setAiAgentHubQuery(event.target.value)}
+              placeholder="Buscar chats tomados por IA"
+              aria-label="Buscar chats tomados por IA"
+            />
+            {aiAgentHubQuery && (
+              <button type="button" onClick={() => setAiAgentHubQuery('')} aria-label="Limpiar búsqueda">
+                <X size={16} />
+              </button>
+            )}
+          </div>
+
+          {aiAgentHubAgentFilters.length > 1 && (
+            <div className={styles.aiAgentHubFilters} aria-label="Filtrar chats por agente">
+              <button
+                type="button"
+                className={`${styles.aiAgentHubFilterChip} ${activeAiAgentHubAgentFilter === 'all' ? styles.aiAgentHubFilterChipActive : ''}`}
+                aria-pressed={activeAiAgentHubAgentFilter === 'all'}
+                onClick={() => setAiAgentHubAgentFilter('all')}
+              >
+                <span>Todos</span>
+                <small>{aiAgentHubAgentFilterTotal}</small>
+              </button>
+              {aiAgentHubAgentFilters.map((agent) => (
+                <button
+                  key={agent.id}
+                  type="button"
+                  className={`${styles.aiAgentHubFilterChip} ${activeAiAgentHubAgentFilter === agent.id ? styles.aiAgentHubFilterChipActive : ''}`}
+                  aria-pressed={activeAiAgentHubAgentFilter === agent.id}
+                  onClick={() => setAiAgentHubAgentFilter(agent.id)}
+                >
+                  <span>{agent.name}</span>
+                  <small>{agent.count}</small>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <section className={styles.aiAgentHubChatList} aria-label="Chats tomados por el agente">
+            {agentHubChatRows.length ? (
+              agentHubChatRows.map((contact) => renderAgentHubChatButton(contact))
+            ) : (
+              <div className={styles.emptyChats}>
+                <span className={styles.emptyChatsIcon}>
+                  <Bot size={30} />
+                </span>
+                <strong>Sin chats tomados</strong>
+                <small>
+                  {agentEnabled
+                    ? 'Cuando un agente publicado atienda una conversación, aparecerá aquí.'
+                    : 'Enciende la inteligencia artificial para ver los chats que tome.'}
+                </small>
+              </div>
+            )}
+          </section>
+        </div>
+      </section>
     )
   }
 
@@ -7250,7 +8451,8 @@ export const PhoneChat: React.FC = () => {
 
   const renderChats = () => {
     const normalizedChatQuery = chatQuery.trim().toLowerCase()
-    const showAIAgentListItem = aiAgentChatEnabled &&
+    const showAIAgentListItem = openAIConfigured &&
+      aiAgentChatEnabled &&
       !archivedViewOpen &&
       chatFilter === 'all' &&
       (!normalizedChatQuery || 'agente inteligencia artificial ia ristak'.includes(normalizedChatQuery))
@@ -7324,6 +8526,7 @@ export const PhoneChat: React.FC = () => {
           </div>
         )}
         {showAIAgentListItem && renderAIAgentChatButton()}
+        {agentPriorityChatRows.map((contact) => renderContactButton(contact, 'chat'))}
         {archivedViewOpen && (
           <button
             type="button"
@@ -7337,7 +8540,7 @@ export const PhoneChat: React.FC = () => {
             <span>{archivedChatCount}</span>
           </button>
         )}
-        {showArchivedChats && !archivedViewOpen && (chats.length > 0 || archivedChatCount > 0) && (
+        {showArchivedChats && !archivedViewOpen && !agentPriorityViewOpen && (chats.length > 0 || archivedChatCount > 0) && (
           <button
             type="button"
             className={styles.archiveRow}
@@ -7351,17 +8554,21 @@ export const PhoneChat: React.FC = () => {
             <span>{archivedChatCount}</span>
           </button>
         )}
-        {filteredChats.length > 0 ? (
+        {filteredChats.length + agentPriorityChatRows.length > 0 ? (
           filteredChats.map((contact) => renderContactButton(contact, 'chat'))
         ) : (
           <div className={styles.emptyChats}>
             <span className={styles.emptyChatsIcon}>
               <MessageCircle size={30} />
             </span>
-            <strong>{archivedViewOpen ? 'No hay chats archivados' : chats.length === 0 ? 'Aún no hay chats' : 'No hay chats en este filtro'}</strong>
+            <strong>{agentPriorityViewOpen ? 'Sin conversaciones prioritarias' : archivedViewOpen ? 'No hay chats archivados' : chatFilter === 'agent' ? 'Sin chats del agente' : chats.length === 0 ? 'Aún no hay chats' : 'No hay chats en este filtro'}</strong>
             <small>
-              {archivedViewOpen
+              {agentPriorityViewOpen
+                ? 'Cuando el agente marque una conversación para humano, aparecerá aquí.'
+                : archivedViewOpen
                 ? 'Cuando archives una conversación, aparecerá en esta sección.'
+                : chatFilter === 'agent'
+                ? 'Cuando el agente esté atendiendo una conversación activa, aparecerá en este filtro.'
                 : chats.length === 0 ? 'Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí.' : 'Cambia el filtro o busca un contacto para iniciar una conversación.'}
             </small>
           </div>
@@ -8027,6 +9234,32 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const renderContactInfoActionRow = (
+    key: string,
+    icon: React.ReactNode,
+    label: string,
+    value: React.ReactNode,
+    detail: React.ReactNode,
+    onClick: () => void,
+    ariaLabel: string
+  ) => (
+    <button
+      key={key}
+      type="button"
+      className={styles.contactInfoActionRow}
+      onClick={onClick}
+      aria-label={ariaLabel}
+    >
+      <span className={styles.contactInfoRowIcon}>{icon}</span>
+      <span className={styles.contactInfoRowText}>
+        <small>{label}</small>
+        <strong>{value}</strong>
+        {detail && <em>{detail}</em>}
+      </span>
+      <ChevronRight size={18} className={styles.contactInfoActionChevron} aria-hidden="true" />
+    </button>
+  )
+
   const renderCustomFieldInput = (customField: ContactInfoCustomFieldView) => {
     const draftValue = customFieldDrafts[customField.id] ?? customField.editValue
     const options = getCustomFieldOptionItems(customField.options || [])
@@ -8229,6 +9462,224 @@ export const PhoneChat: React.FC = () => {
       )
     }
 
+    if (contactInfoDetailPanel) {
+      const detailTitle = contactInfoDetailPanel === 'payments'
+        ? 'Pagos totales'
+        : contactInfoDetailPanel === 'appointments'
+          ? 'Citas'
+          : 'Viaje del cliente'
+      const selectedPayment = contactInfoDetailPanel === 'payments' && contactInfoRecordDetail?.type === 'payment'
+        ? contactInfoPayments.find((payment) => payment.id === contactInfoRecordDetail.id) || null
+        : null
+      const selectedAppointment = contactInfoDetailPanel === 'appointments' && contactInfoRecordDetail?.type === 'appointment'
+        ? contactInfoAppointments.find((appointment) => appointment.id === contactInfoRecordDetail.id) || null
+        : null
+
+      if (selectedPayment) {
+        return (
+          <section
+            className={`${styles.contactInfoScreen} ${contactInfoOpen ? styles.contactInfoScreenOpen : ''}`}
+            aria-label="Detalle de pago"
+            aria-hidden={!contactInfoOpen}
+          >
+            <header className={styles.contactInfoTopbar}>
+              <button type="button" className={styles.backButton} onClick={() => setContactInfoRecordDetail(null)} aria-label="Volver a pagos">
+                <ChevronLeft size={32} />
+              </button>
+              <strong>Detalle de pago</strong>
+              <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
+            </header>
+
+            <div className={`${styles.contactInfoContent} ${styles.contactInfoDetailContent}`} data-phone-chat-scrollable="true">
+              <section className={styles.contactInfoDetailSection}>
+                <div className={styles.contactInfoRows}>
+                  {renderContactInfoRow(
+                    'selected-payment-amount',
+                    <CircleDollarSign size={17} />,
+                    'Monto',
+                    formatCurrency(selectedPayment.amount)
+                  )}
+                  {renderContactInfoRow(
+                    'selected-payment-date',
+                    <Clock size={17} />,
+                    'Fecha',
+                    formatLocalDateTime(selectedPayment.date)
+                  )}
+                  {renderContactInfoRow(
+                    'selected-payment-status',
+                    <Check size={17} />,
+                    'Estado',
+                    formatPlainStatus(selectedPayment.status)
+                  )}
+                  {renderContactInfoRow(
+                    'selected-payment-title',
+                    <ReceiptText size={17} />,
+                    'Concepto',
+                    selectedPayment.title || ''
+                  )}
+                </div>
+              </section>
+            </div>
+          </section>
+        )
+      }
+
+      if (selectedAppointment) {
+        return (
+          <section
+            className={`${styles.contactInfoScreen} ${contactInfoOpen ? styles.contactInfoScreenOpen : ''}`}
+            aria-label="Detalle de cita"
+            aria-hidden={!contactInfoOpen}
+          >
+            <header className={styles.contactInfoTopbar}>
+              <button type="button" className={styles.backButton} onClick={() => setContactInfoRecordDetail(null)} aria-label="Volver a citas">
+                <ChevronLeft size={32} />
+              </button>
+              <strong>Detalle de cita</strong>
+              <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
+            </header>
+
+            <div className={`${styles.contactInfoContent} ${styles.contactInfoDetailContent}`} data-phone-chat-scrollable="true">
+              <section className={styles.contactInfoDetailSection}>
+                <div className={styles.contactInfoRows}>
+                  {renderContactInfoRow(
+                    'selected-appointment-title',
+                    <CalendarDays size={17} />,
+                    'Cita',
+                    selectedAppointment.title
+                  )}
+                  {renderContactInfoRow(
+                    'selected-appointment-start',
+                    <Clock size={17} />,
+                    'Inicio',
+                    formatLocalDateTime(selectedAppointment.startTime)
+                  )}
+                  {renderContactInfoRow(
+                    'selected-appointment-end',
+                    <Clock size={17} />,
+                    'Fin',
+                    selectedAppointment.endTime ? formatLocalDateTime(selectedAppointment.endTime) : ''
+                  )}
+                  {renderContactInfoRow(
+                    'selected-appointment-status',
+                    <Check size={17} />,
+                    'Estado',
+                    formatPlainStatus(selectedAppointment.status)
+                  )}
+                  {renderContactInfoRow(
+                    'selected-appointment-notes',
+                    <FileText size={17} />,
+                    'Notas',
+                    selectedAppointment.notes || ''
+                  )}
+                </div>
+              </section>
+            </div>
+          </section>
+        )
+      }
+
+      return (
+        <section
+          className={`${styles.contactInfoScreen} ${contactInfoOpen ? styles.contactInfoScreenOpen : ''}`}
+          aria-label={detailTitle}
+          aria-hidden={!contactInfoOpen}
+        >
+          <header className={styles.contactInfoTopbar}>
+            <button
+              type="button"
+              className={styles.backButton}
+              onClick={() => {
+                setContactInfoRecordDetail(null)
+                setContactInfoDetailPanel(null)
+              }}
+              aria-label="Volver a info del contacto"
+            >
+              <ChevronLeft size={32} />
+            </button>
+            <strong>{detailTitle}</strong>
+            <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
+          </header>
+
+          <div className={`${styles.contactInfoContent} ${styles.contactInfoDetailContent}`} data-phone-chat-scrollable="true">
+            {contactInfoDetailPanel === 'payments' && (
+              <section className={styles.contactInfoDetailSection}>
+                <div className={styles.contactInfoRows}>
+                  {renderContactInfoRow(
+                    'payments-total-detail',
+                    <CircleDollarSign size={17} />,
+                    'Total pagado',
+                    formatCurrency(Number(contactInfoData.ltv || 0) || revenueTotal),
+                    `${paymentsCount} pago${paymentsCount === 1 ? '' : 's'} registrado${paymentsCount === 1 ? '' : 's'}`
+                  )}
+                  {contactInfoPayments.map((payment) => renderContactInfoActionRow(
+                    `payment-detail-${payment.id}`,
+                    <CreditCard size={17} />,
+                    formatLocalDateShort(payment.date),
+                    formatCurrency(payment.amount),
+                    formatPlainStatus(payment.status),
+                    () => setContactInfoRecordDetail({ type: 'payment', id: payment.id }),
+                    `Ver detalle de pago de ${formatCurrency(payment.amount)}`
+                  ))}
+                </div>
+                {contactInfoPayments.length === 0 && (
+                  <p className={styles.contactInfoDetailEmpty}>
+                    {paymentsCount > 0
+                      ? `Hay ${paymentsCount} pago${paymentsCount === 1 ? '' : 's'} registrado${paymentsCount === 1 ? '' : 's'}, pero todavía no se cargó el detalle.`
+                      : 'Aún no hay pagos guardados para este contacto.'}
+                  </p>
+                )}
+              </section>
+            )}
+
+            {contactInfoDetailPanel === 'appointments' && (
+              <section className={styles.contactInfoDetailSection}>
+                {contactInfoAppointments.length > 0 ? (
+                  <div className={styles.contactInfoRows}>
+                    {contactInfoAppointments.map((appointment) => renderContactInfoActionRow(
+                      `appointment-detail-${appointment.id}`,
+                      <CalendarDays size={17} />,
+                      appointment.title,
+                      formatLocalDateTime(appointment.startTime),
+                      formatPlainStatus(appointment.status),
+                      () => setContactInfoRecordDetail({ type: 'appointment', id: appointment.id }),
+                      `Ver detalle de ${appointment.title}`
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.contactInfoDetailEmpty}>Aún no hay citas guardadas para este contacto.</p>
+                )}
+              </section>
+            )}
+
+            {contactInfoDetailPanel === 'journey' && (
+              <section className={styles.contactInfoDetailSection}>
+                {contactInfoJourneyEvents.length > 0 ? (
+                  <div className={styles.contactInfoTimeline}>
+                    {contactInfoJourneyEvents.map((event, index) => (
+                      <div key={`${event.type}-${event.date}-${index}`} className={styles.contactInfoTimelineItem}>
+                        <span className={`${styles.contactInfoTimelineIcon} ${getJourneyEventIconClass(event)}`}>
+                          {getJourneyEventIcon(event)}
+                          {getJourneyEventNetworkBadge(event)}
+                        </span>
+                        <div>
+                          <strong>{getJourneyEventLabel(event, leadLabel)}</strong>
+                          <small>{getJourneyEventDescription(event)}</small>
+                          <em>{formatLocalDateTime(event.date)}</em>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.contactInfoDetailEmpty}>Aún no hay actividad guardada para este contacto.</p>
+                )}
+              </section>
+            )}
+          </div>
+        </section>
+      )
+    }
+
     return (
       <section
         className={`${styles.contactInfoScreen} ${contactInfoOpen ? styles.contactInfoScreenOpen : ''}`}
@@ -8318,76 +9769,42 @@ export const PhoneChat: React.FC = () => {
             <div className={styles.contactInfoMetrics} role="group" aria-label="Resumen del contacto">
               <button
                 type="button"
-                className={`${styles.contactInfoMetricCard} ${contactInfoDetailPanel === 'payments' ? styles.contactInfoMetricCardActive : ''}`}
-                onClick={() => setContactInfoDetailPanel((current) => current === 'payments' ? null : 'payments')}
-                aria-expanded={contactInfoDetailPanel === 'payments'}
+                className={styles.contactInfoMetricCard}
+                onClick={() => {
+                  setContactInfoArchiveOpen(false)
+                  setContactInfoRecordDetail(null)
+                  setContactInfoDetailPanel('payments')
+                }}
+                aria-label="Ver pagos totales"
               >
                 <span className={styles.contactInfoMetricTitle}>Total</span>
                 <strong>{formatCurrency(Number(contactInfoData.ltv || 0) || revenueTotal)}</strong>
                 <em>{paymentsCount} pago{paymentsCount === 1 ? '' : 's'}</em>
                 <span className={styles.contactInfoMetricAction}>
-                  {contactInfoDetailPanel === 'payments' ? 'Ocultar' : 'Ver'}
+                  Ver
                   <ChevronRight size={15} />
                 </span>
               </button>
 
               <button
                 type="button"
-                className={`${styles.contactInfoMetricCard} ${contactInfoDetailPanel === 'appointments' ? styles.contactInfoMetricCardActive : ''}`}
-                onClick={() => setContactInfoDetailPanel((current) => current === 'appointments' ? null : 'appointments')}
-                aria-expanded={contactInfoDetailPanel === 'appointments'}
+                className={styles.contactInfoMetricCard}
+                onClick={() => {
+                  setContactInfoArchiveOpen(false)
+                  setContactInfoRecordDetail(null)
+                  setContactInfoDetailPanel('appointments')
+                }}
+                aria-label="Ver citas"
               >
                 <span className={styles.contactInfoMetricTitle}>Citas</span>
                 <strong>{contactInfoAppointments.length}</strong>
                 <em>{contactInfoActiveAppointments.length} activa{contactInfoActiveAppointments.length === 1 ? '' : 's'}</em>
                 <span className={styles.contactInfoMetricAction}>
-                  {contactInfoDetailPanel === 'appointments' ? 'Ocultar' : 'Ver'}
+                  Ver
                   <ChevronRight size={15} />
                 </span>
               </button>
             </div>
-
-            {contactInfoDetailPanel === 'payments' && (
-              <div className={styles.contactInfoDetailPanel}>
-                <h3>Pagos realizados</h3>
-                {contactInfoPayments.length > 0 ? (
-                  <div className={styles.contactInfoRows}>
-                    {contactInfoPayments.map((payment) => renderContactInfoRow(
-                      `payment-detail-${payment.id}`,
-                      <CreditCard size={17} />,
-                      formatLocalDateShort(payment.date),
-                      formatCurrency(payment.amount),
-                      formatPlainStatus(payment.status)
-                    ))}
-                  </div>
-                ) : (
-                  <p className={styles.contactInfoDetailEmpty}>
-                    {paymentsCount > 0
-                      ? `Hay ${paymentsCount} pago${paymentsCount === 1 ? '' : 's'} registrado${paymentsCount === 1 ? '' : 's'}, pero todavía no se cargó el detalle.`
-                      : 'Aún no hay pagos guardados para este contacto.'}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {contactInfoDetailPanel === 'appointments' && (
-              <div className={styles.contactInfoDetailPanel}>
-                <h3>Historial de citas</h3>
-                {contactInfoAppointments.length > 0 ? (
-                  <div className={styles.contactInfoRows}>
-                    {contactInfoAppointments.map((appointment) => renderContactInfoRow(
-                      `appointment-detail-${appointment.id}`,
-                      <CalendarDays size={17} />,
-                      appointment.title,
-                      formatLocalDateTime(appointment.startTime),
-                      formatPlainStatus(appointment.status)
-                    ))}
-                  </div>
-                ) : (
-                  <p className={styles.contactInfoDetailEmpty}>Aún no hay citas guardadas para este contacto.</p>
-                )}
-              </div>
-            )}
           </section>
 
           <section className={`${styles.contactInfoSection} ${styles.contactInfoArchiveSection}`}>
@@ -8498,9 +9915,35 @@ export const PhoneChat: React.FC = () => {
                       'Convirtió',
                       `${firstAppointment.title} · ${formatLocalDateTime(firstAppointment.startTime)}`,
                       contactInfoSource
-                    )
-                  : renderContactInfoRow('conversion-empty', <DollarSign size={17} />, 'Convirtió', 'Aún sin conversión registrada')}
+                  )
+                : renderContactInfoRow('conversion-empty', <DollarSign size={17} />, 'Convirtió', 'Aún sin conversión registrada')}
             </div>
+            <button
+              type="button"
+              className={styles.contactInfoJourneyButton}
+              onClick={() => {
+                setContactInfoArchiveOpen(false)
+                setContactInfoRecordDetail(null)
+                setContactInfoDetailPanel('journey')
+              }}
+              aria-label="Ver viaje del cliente"
+            >
+              <span className={styles.contactInfoArchiveSummaryIcon}>
+                <MousePointerClick size={18} />
+              </span>
+              <span className={styles.contactInfoArchiveSummaryText}>
+                <strong>Viaje del cliente</strong>
+                <small>
+                  {contactInfoJourneyEvents.length > 0
+                    ? `${contactInfoJourneyEvents.length} evento${contactInfoJourneyEvents.length === 1 ? '' : 's'} · De más viejo a más nuevo`
+                    : 'Aún sin actividad guardada'}
+                </small>
+              </span>
+              <span className={styles.contactInfoArchiveSummaryAction}>
+                Ver
+                <ChevronRight size={16} />
+              </span>
+            </button>
           </section>
 
           {(nextAppointment || contactInfoPayments.length > 0) && (
@@ -8542,26 +9985,6 @@ export const PhoneChat: React.FC = () => {
             </div>
           </section>
 
-          {contactInfoJourneyEvents.length > 0 && (
-            <section className={styles.contactInfoSection}>
-              <h3>Viaje del cliente</h3>
-              <div className={styles.contactInfoTimeline}>
-                {contactInfoJourneyEvents.map((event, index) => (
-                  <div key={`${event.type}-${event.date}-${index}`} className={styles.contactInfoTimelineItem}>
-                    <span className={`${styles.contactInfoTimelineIcon} ${getJourneyEventIconClass(event)}`}>
-                      {getJourneyEventIcon(event)}
-                      {getJourneyEventNetworkBadge(event)}
-                    </span>
-                    <div>
-                      <strong>{getJourneyEventLabel(event, leadLabel)}</strong>
-                      <small>{getJourneyEventDescription(event)}</small>
-                      <em>{formatLocalDateTime(event.date)}</em>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
         </div>
       </section>
     )
@@ -8935,18 +10358,30 @@ export const PhoneChat: React.FC = () => {
     if (activeSettingsSection === 'agent') {
       return renderSettingsDetail('Agente IA', (
         <>
-          <label className={styles.toggleRow}>
+          {!openAIConfigured && (
+            <section className={styles.settingsSection}>
+              <div className={styles.settingsSectionTitle}>
+                <KeyRound size={18} />
+                <span>
+                  <strong>OpenAI no conectado</strong>
+                  <small>Conecta el token en el sitio web para activar el chat y las sugerencias en este celular.</small>
+                </span>
+              </div>
+            </section>
+          )}
+          <label className={`${styles.toggleRow} ${!openAIConfigured ? styles.toggleRowDisabled : ''}`}>
             <span>
               <strong>Mostrar como primer chat</strong>
               <small>El agente aparece fijo arriba de tus conversaciones.</small>
             </span>
             <input
               type="checkbox"
-              checked={aiAgentChatEnabled}
+              checked={openAIConfigured && aiAgentChatEnabled}
+              disabled={!openAIConfigured}
               onChange={(event) => saveConfigPreference(setAiAgentChatEnabled, event.target.checked)}
             />
           </label>
-          <label className={`${styles.toggleRow} ${!aiAgentChatEnabled ? styles.toggleRowDisabled : ''}`}>
+          <label className={`${styles.toggleRow} ${!openAIConfigured || !aiAgentChatEnabled ? styles.toggleRowDisabled : ''}`}>
             <span>
               <strong>Sugerir respuestas</strong>
               <small>El agente puede preparar un texto para responder en chats reales.</small>
@@ -8954,7 +10389,7 @@ export const PhoneChat: React.FC = () => {
             <input
               type="checkbox"
               checked={aiReplySuggestionsEnabled}
-              disabled={!aiAgentChatEnabled}
+              disabled={!openAIConfigured || !aiAgentChatEnabled}
               onChange={(event) => saveConfigPreference(setAiReplySuggestionsEnabled, event.target.checked)}
             />
           </label>
@@ -9062,7 +10497,7 @@ export const PhoneChat: React.FC = () => {
         : []),
       { id: 'numbers', title: 'Números de WhatsApp', description: 'Cómo se muestran tus líneas.', meta: whatsappNumberMode === 'merged' ? 'Juntos' : 'Separados', Icon: Smartphone },
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: `${templates.length} guardadas`, Icon: FileText },
-      { id: 'agent', title: 'Agente IA', description: 'Chat fijo y sugerencias.', meta: aiAgentChatEnabled ? 'Activo' : 'Apagado', Icon: Bot },
+      { id: 'agent', title: 'Agente IA', description: 'Chat fijo y sugerencias.', meta: openAIConfigured ? aiAgentChatEnabled ? 'Activo' : 'Apagado' : 'Sin OpenAI', Icon: Bot },
       { id: 'chats', title: 'Lista de chats', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle },
       { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: chatThemeMeta, Icon: Sun },
       { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas y pagos.', meta: getNotificationPermissionLabel(), Icon: Bell }
@@ -9514,32 +10949,98 @@ export const PhoneChat: React.FC = () => {
     }
 
     const isMuted = mutedChatIdSet.has(chatActionContact.id)
-    const actions = [
-      {
-        label: 'Agendar cita',
-        description: 'Crear una cita para este contacto.',
-        Icon: CalendarDays,
-        className: styles.chatMoreAppointment,
-        onClick: () => handleOpenAppointmentForm(chatActionContact)
-      },
-      {
-        label: 'Registrar pagos',
-        description: highLevelConnected ? 'Guardar un pago o plan de pagos.' : 'Guardar un pago único.',
-        Icon: CircleDollarSign,
-        className: styles.chatMorePayment,
-        onClick: () => handleChatMoreAction(chatActionContact, 'payment')
-      },
-      {
-        label: isMuted ? 'Quitar silencio' : 'Silenciar',
-        description: isMuted ? 'Quitar la marca de silencio de este chat.' : 'Marcar este chat como silenciado.',
-        Icon: isMuted ? Bell : BellOff,
-        className: styles.chatMoreMute,
-        onClick: () => handleToggleMuteChat(chatActionContact)
-      }
-    ]
+    const showingAgentControls = chatMoreMode === 'agentControls'
+    const agentState = agentStates[chatActionContact.id] || null
+    const agentChatStatus = agentState?.status || 'active'
+    const agentStatusLabels: Record<string, string> = {
+      active: 'El agente atiende este chat.',
+      paused: 'Chatbot pausado en este chat.',
+      human: 'Conversación tomada por un humano.',
+      skipped: 'Chatbot omitido en este chat.',
+      completed: 'El agente ya cumplió el objetivo aquí.',
+      discarded: 'Conversación descartada por el agente.'
+    }
+
+    const runAgentAction = (action: ConversationStateAction, successMessage: string) => {
+      handleAgentStateAction(chatActionContact.id, action, successMessage)
+      actionSheetDismiss.requestClose()
+      setChatActionContactId(null)
+      setChatMoreMode('default')
+      closeSwipeActions()
+    }
+
+    const agentActions = !agentEnabled
+      ? []
+      : agentChatStatus === 'active'
+        ? [
+            {
+              label: 'Tomar conversación',
+              description: 'El agente deja de responder y tú sigues el chat.',
+              Icon: User,
+              className: styles.chatMoreAgent,
+              onClick: () => runAgentAction('take_over', `Tomaste la conversación de ${getContactName(chatActionContact)}.`)
+            },
+            {
+              label: 'Pausar chatbot',
+              description: 'Pausa el chatbot solo en esta conversación.',
+              Icon: Pause,
+              className: styles.chatMoreAgent,
+              onClick: () => runAgentAction('pause', 'El chatbot quedó pausado en este chat.')
+            },
+            {
+              label: 'Omitir chatbot',
+              description: 'El agente nunca atenderá este chat.',
+              Icon: X,
+              className: styles.chatMoreAgent,
+              onClick: () => runAgentAction('skip', 'El chatbot quedó omitido en este chat.')
+            }
+          ]
+        : [
+            {
+              label: 'Reactivar agente',
+              description: 'El agente vuelve a atender esta conversación.',
+              Icon: Play,
+              className: styles.chatMoreAgent,
+              onClick: () => runAgentAction('activate', 'El agente volvió a atender este chat.')
+            }
+          ]
+
+    const contactActions = showingAgentControls
+      ? []
+      : [
+          {
+            label: 'Agendar cita',
+            description: 'Crear una cita para este contacto.',
+            Icon: CalendarDays,
+            className: styles.chatMoreAppointment,
+            onClick: () => handleOpenAppointmentForm(chatActionContact)
+          },
+          {
+            label: 'Registrar pagos',
+            description: highLevelConnected ? 'Guardar un pago o plan de pagos.' : 'Guardar un pago único.',
+            Icon: CircleDollarSign,
+            className: styles.chatMorePayment,
+            onClick: () => handleChatMoreAction(chatActionContact, 'payment')
+          },
+          {
+            label: isMuted ? 'Quitar silencio' : 'Silenciar',
+            description: isMuted ? 'Quitar la marca de silencio de este chat.' : 'Marcar este chat como silenciado.',
+            Icon: isMuted ? Bell : BellOff,
+            className: styles.chatMoreMute,
+            onClick: () => handleToggleMuteChat(chatActionContact)
+          }
+        ]
+
+    const actions = [...contactActions, ...agentActions]
 
     return (
       <div className={styles.chatMoreList}>
+        {agentEnabled && (
+          <div className={styles.agentChatStatus}>
+            <Bot size={16} />
+            <span>{agentStatusLabels[agentChatStatus] || agentStatusLabels.active}</span>
+          </div>
+        )}
         {actions.map(({ label, description, Icon: ActionIcon, className, onClick }) => (
           <button key={label} type="button" onClick={onClick}>
             <span className={className}>
@@ -9552,6 +11053,918 @@ export const PhoneChat: React.FC = () => {
           </button>
         ))}
       </div>
+    )
+  }
+
+  const agentObjectiveOptions: Array<{ value: ConversationalObjective; label: string }> = [
+    { value: 'citas', label: 'Agendar cita' },
+    { value: 'ventas', label: 'Cerrar ventas' },
+    { value: 'datos', label: 'Pedir datos' },
+    { value: 'filtrar', label: 'Filtrar curiosos' },
+    { value: 'custom', label: 'Objetivo propio' }
+  ]
+
+  const agentSignalLabels: Record<string, string> = {
+    ready_for_human: 'Pasar a humano',
+    ready_to_schedule: 'Pasar a humano',
+    ready_to_buy: 'Link de pago enviado',
+    appointment_booked: 'Cita agendada',
+    discarded: 'Descartada'
+  }
+
+  const handleOpenChatFromAgentList = (state: ConversationAgentState) => {
+    const existing = chats.find((item) => item.id === state.contactId)
+    const fallbackContact = {
+      id: state.contactId,
+      name: state.contactName || state.contactPhone || 'Contacto',
+      full_name: state.contactName || state.contactPhone || 'Contacto',
+      phone: state.contactPhone || '',
+      createdAt: state.signalAt || new Date().toISOString(),
+      ltv: 0,
+      status: 'lead',
+      purchases: 0
+    } as Contact
+    handleSelectContact(existing || fallbackContact)
+  }
+
+  const renderAgentSignalList = (states: ConversationAgentState[], emptyText: string) => {
+    if (!states.length) {
+      return (
+        <div className={styles.emptySheetState}>
+          <Bot size={24} />
+          <strong>Nada por aquí</strong>
+          <span>{emptyText}</span>
+        </div>
+      )
+    }
+
+    return (
+      <div className={styles.chatMoreList}>
+        {states.map((state) => (
+          <button key={state.contactId} type="button" onClick={() => handleOpenChatFromAgentList(state)}>
+            <span className={styles.agentPriorityRowIcon}>
+              <Bot size={22} />
+            </span>
+            <span>
+              <strong>{state.contactName || state.contactPhone || 'Contacto'}</strong>
+              <small>
+                {[agentSignalLabels[state.signal || ''] || state.signal, state.signalReason].filter(Boolean).join(' · ')}
+              </small>
+            </span>
+          </button>
+        ))}
+      </div>
+    )
+  }
+
+  const renderAgentMenuSheet = () => {
+    if (agentMenuSection === 'ready_human') {
+      return (
+        <>
+          <button type="button" className={styles.agentMenuBack} onClick={() => setAgentMenuSection('menu')}>
+            <ChevronLeft size={18} />
+            Volver al agente
+          </button>
+          {renderAgentSignalList(
+            agentPriorityStates,
+            'Cuando el agente cumpla el objetivo, aparecerá aquí para que un humano lo tome.'
+          )}
+        </>
+      )
+    }
+
+    const readyHumanCount = agentPriorityStates.length
+    const selectedAgentDef = agentDefs.find((agent) => agent.id === selectedAgentId) || agentDefs[0] || null
+    const selectedObjectiveLabel = selectedAgentDef
+      ? agentObjectiveOptions.find((option) => option.value === selectedAgentDef.objective)?.label || 'Objetivo'
+      : 'Sin agente'
+    const selectedAgentModelValue = selectedAgentDef ? getKnownAIModel(selectedAgentDef.model || DEFAULT_AI_MODEL) : DEFAULT_AI_MODEL
+    const responseDelay = selectedAgentDef ? getPhoneAgentResponseDelay(selectedAgentDef) : DEFAULT_PHONE_AGENT_RESPONSE_DELAY
+    const replyDelivery = selectedAgentDef ? getPhoneAgentReplyDelivery(selectedAgentDef) : DEFAULT_PHONE_AGENT_REPLY_DELIVERY
+    const goalWorkflow = selectedAgentDef ? getPhoneAgentGoalWorkflow(selectedAgentDef) : DEFAULT_PHONE_AGENT_GOAL_WORKFLOW
+    const selectedSalesProduct = agentProducts.find((product) => getProductId(product) === goalWorkflow.sales.productId) || null
+    const selectedSalesPrice = selectedSalesProduct
+      ? (selectedSalesProduct.prices || []).find((price) => getPriceId(price) === goalWorkflow.sales.priceId) || getPrimaryPrice(selectedSalesProduct)
+      : null
+
+    const saveSelectedAgentPatch = (patch: ConversationalAgentDefInput) => {
+      if (!selectedAgentDef) return
+      void saveAgentPatch(selectedAgentDef.id, patch)
+    }
+
+    const updateResponseDelay = (patch: Partial<AgentResponseDelayConfig>) => {
+      saveSelectedAgentPatch({ responseDelay: { ...responseDelay, ...patch } })
+    }
+
+    const updateReplyDelivery = (patch: Partial<AgentReplyDeliveryConfig>) => {
+      saveSelectedAgentPatch({ replyDelivery: { ...replyDelivery, ...patch } })
+    }
+
+    const mergeGoalWorkflow = (patch: Partial<AgentGoalWorkflowConfig>): AgentGoalWorkflowConfig => ({
+      ...goalWorkflow,
+      ...patch,
+      appointments: {
+        ...goalWorkflow.appointments,
+        ...((patch.appointments || {}) as Partial<AgentGoalWorkflowConfig['appointments']>)
+      },
+      sales: {
+        ...goalWorkflow.sales,
+        ...((patch.sales || {}) as Partial<AgentGoalWorkflowConfig['sales']>)
+      },
+      data: {
+        ...goalWorkflow.data,
+        ...((patch.data || {}) as Partial<AgentGoalWorkflowConfig['data']>)
+      },
+      qualification: {
+        ...goalWorkflow.qualification,
+        ...((patch.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+      }
+    })
+
+    const updateGoalWorkflow = (patch: Partial<AgentGoalWorkflowConfig>) => {
+      saveSelectedAgentPatch({ goalWorkflow: mergeGoalWorkflow(patch) })
+    }
+
+    const updateGoalWorkflowDraft = (patch: Partial<AgentGoalWorkflowConfig>) => {
+      if (!selectedAgentDef) return
+      updateAgentDraft(selectedAgentDef.id, { goalWorkflow: mergeGoalWorkflow(patch) })
+    }
+
+    const updateAppointmentOwner = (owner: AgentGoalWorkflowConfig['appointments']['owner']) => {
+      const calendarId = owner === 'ai'
+        ? goalWorkflow.appointments.calendarId || selectedAgentDef?.defaultCalendarId || calendars[0]?.id || null
+        : goalWorkflow.appointments.calendarId
+      saveSelectedAgentPatch({
+        goalWorkflow: mergeGoalWorkflow({ appointments: { ...goalWorkflow.appointments, owner, calendarId } }),
+        successAction: owner === 'ai' ? 'book_appointment' : 'ready_for_human',
+        defaultCalendarId: owner === 'ai' ? calendarId : selectedAgentDef?.defaultCalendarId || null
+      })
+    }
+
+    const updateSalesOwner = (owner: AgentGoalWorkflowConfig['sales']['owner']) => {
+      saveSelectedAgentPatch({
+        goalWorkflow: mergeGoalWorkflow({ sales: { ...goalWorkflow.sales, owner } }),
+        successAction: owner === 'ai' ? 'ready_to_buy' : 'ready_for_human'
+      })
+    }
+
+    const updateSalesProduct = (productId: string) => {
+      const product = agentProducts.find((item) => getProductId(item) === productId) || null
+      const price = getPrimaryPrice(product)
+      updateGoalWorkflow({
+        sales: {
+          ...goalWorkflow.sales,
+          productId: product ? getProductId(product) : '',
+          priceId: getPriceId(price),
+          productName: product?.name || '',
+          priceName: price?.name || '',
+          amount: price ? getPriceAmount(price) : null,
+          currency: price?.currency || product?.currency || ''
+        }
+      })
+    }
+
+    const renderAgentOrderControls = (agent: ConversationalAgentDef) => (
+      <section className={styles.agentMenuSection} aria-label="Orden del chat">
+        <div className={styles.agentMenuSectionHeader}>
+          <span>Orden del chat</span>
+          <small>{agent.name || 'Agente seleccionado'}</small>
+        </div>
+        <label className={`${styles.agentCompactToggle} ${agent.hideAttended ? styles.agentCompactToggleActive : ''}`}>
+          <input
+            type="checkbox"
+            checked={Boolean(agent.hideAttended)}
+            disabled={agentConfigSaving}
+            onChange={(event) => saveAgentPatch(agent.id, { hideAttended: event.target.checked })}
+          />
+          <span>
+            <strong>Ocultar atendidas</strong>
+            <small>Oculta conversaciones que este agente esté atendiendo.</small>
+          </span>
+        </label>
+
+        <label className={`${styles.agentCompactToggle} ${agent.hideAttendedNotifications ? styles.agentCompactToggleActive : ''}`}>
+          <input
+            type="checkbox"
+            checked={Boolean(agent.hideAttendedNotifications)}
+            disabled={agentConfigSaving}
+            onChange={(event) => saveAgentPatch(agent.id, { hideAttendedNotifications: event.target.checked })}
+          />
+          <span>
+            <strong>Silenciar atendidas</strong>
+            <small>Sin avisos mientras responde; al cumplir objetivo vuelve a avisar.</small>
+          </span>
+        </label>
+      </section>
+    )
+
+    const renderGoalWorkflowControls = (agent: ConversationalAgentDef) => {
+      if (agent.objective === 'citas') {
+        return (
+          <section className={styles.agentMenuSection} aria-label="Flujo de agenda">
+            <div className={styles.agentMenuSectionHeader}>
+              <span>Agenda</span>
+              <small>{goalWorkflow.appointments.owner === 'ai' ? 'La IA agenda' : 'Pasa a humano'}</small>
+            </div>
+            <label className={styles.agentMenuField}>
+              <span>Quién quieres que lo agende</span>
+              <PhoneSelect
+                value={goalWorkflow.appointments.owner}
+                onChange={(value) => updateAppointmentOwner(value as AgentGoalWorkflowConfig['appointments']['owner'])}
+                ariaLabel="Quién agenda la cita"
+                options={PHONE_AGENT_OWNER_OPTIONS}
+                title="Agenda"
+                placeholder="Quién agenda"
+                disabled={agentConfigSaving}
+                buttonClassName={styles.agentMenuSelectButton}
+              />
+            </label>
+
+            {goalWorkflow.appointments.owner === 'ai' ? (
+              <div className={styles.agentGoalPanel}>
+                <label className={styles.agentMenuField}>
+                  <span>Calendario</span>
+                  <PhoneSelect
+                    value={goalWorkflow.appointments.calendarId || agent.defaultCalendarId || ''}
+                    onChange={(value) => {
+                      const calendarId = value || null
+                      saveSelectedAgentPatch({
+                        goalWorkflow: mergeGoalWorkflow({ appointments: { ...goalWorkflow.appointments, calendarId } }),
+                        defaultCalendarId: calendarId,
+                        successAction: 'book_appointment'
+                      })
+                    }}
+                    ariaLabel="Calendario para agendar con IA"
+                    options={[
+                      { value: '', label: calendarsLoading ? 'Cargando calendarios...' : 'Elegir calendario activo' },
+                      ...calendars.map((calendar) => ({ value: calendar.id, label: calendar.name }))
+                    ]}
+                    title="Calendario"
+                    placeholder="Calendario"
+                    disabled={agentConfigSaving || calendarsLoading || calendars.length === 0}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
+                <p className={styles.agentMenuHint}>
+                  La IA revisa horarios reales, confirma el horario con la persona y agenda en este calendario.
+                </p>
+              </div>
+            ) : (
+              <p className={styles.agentMenuHint}>
+                Cuando la persona quiera cita, el chat sube como prioridad para que un humano lo agende.
+              </p>
+            )}
+          </section>
+        )
+      }
+
+      if (agent.objective === 'ventas') {
+        const productOptions = [
+          { value: '', label: agentProductsLoading ? 'Cargando productos...' : 'Elegir producto del CRM' },
+          ...agentProducts.map((product) => ({ value: getProductId(product), label: product.name }))
+        ]
+        const priceOptions = selectedSalesProduct
+          ? [
+              { value: '', label: 'Precio base' },
+              ...(selectedSalesProduct.prices || []).map((price) => ({
+                value: getPriceId(price),
+                label: `${price.name || 'Precio'} · ${formatCurrency(getPriceAmount(price), price.currency || selectedSalesProduct.currency || 'MXN')}`
+              }))
+            ]
+          : [{ value: '', label: 'Selecciona producto primero' }]
+
+        return (
+          <section className={styles.agentMenuSection} aria-label="Flujo de ventas">
+            <div className={styles.agentMenuSectionHeader}>
+              <span>Venta</span>
+              <small>{goalWorkflow.sales.owner === 'ai' ? 'IA cobra' : 'Humano cobra'}</small>
+            </div>
+            <label className={styles.agentMenuField}>
+              <span>Quién cierra la venta</span>
+              <PhoneSelect
+                value={goalWorkflow.sales.owner}
+                onChange={(value) => updateSalesOwner(value as AgentGoalWorkflowConfig['sales']['owner'])}
+                ariaLabel="Quién cierra la venta"
+                options={PHONE_AGENT_OWNER_OPTIONS}
+                title="Venta"
+                placeholder="Quién cobra"
+                disabled={agentConfigSaving}
+                buttonClassName={styles.agentMenuSelectButton}
+              />
+            </label>
+
+            {goalWorkflow.sales.owner === 'ai' ? (
+              <div className={styles.agentGoalPanel}>
+                <label className={styles.agentMenuField}>
+                  <span>Producto del CRM</span>
+                  <PhoneSelect
+                    value={goalWorkflow.sales.productId}
+                    onChange={updateSalesProduct}
+                    ariaLabel="Producto para vender con IA"
+                    options={productOptions}
+                    title="Producto"
+                    placeholder="Producto"
+                    disabled={agentConfigSaving || agentProductsLoading || agentProducts.length === 0}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
+                {selectedSalesProduct && (
+                  <label className={styles.agentMenuField}>
+                    <span>Precio</span>
+                    <PhoneSelect
+                      value={goalWorkflow.sales.priceId}
+                      onChange={(priceId) => {
+                        const price = (selectedSalesProduct.prices || []).find((item) => getPriceId(item) === priceId) || getPrimaryPrice(selectedSalesProduct)
+                        updateGoalWorkflow({
+                          sales: {
+                            ...goalWorkflow.sales,
+                            priceId: getPriceId(price),
+                            priceName: price?.name || '',
+                            amount: price ? getPriceAmount(price) : null,
+                            currency: price?.currency || selectedSalesProduct.currency || ''
+                          }
+                        })
+                      }}
+                      ariaLabel="Precio para vender con IA"
+                      options={priceOptions}
+                      title="Precio"
+                      placeholder="Precio"
+                      disabled={agentConfigSaving}
+                      buttonClassName={styles.agentMenuSelectButton}
+                    />
+                  </label>
+                )}
+                {selectedSalesProduct && selectedSalesPrice && (
+                  <div className={styles.agentGoalSummary}>
+                    <strong>{selectedSalesProduct.name}</strong>
+                    <span>
+                      {selectedSalesPrice.name || 'Precio'} · {formatCurrency(getPriceAmount(selectedSalesPrice), selectedSalesPrice.currency || selectedSalesProduct.currency || 'MXN')}
+                    </span>
+                  </div>
+                )}
+                <p className={styles.agentMenuHint}>
+                  La IA confirma el cobro y el canal antes de mandar el link de pago.
+                </p>
+              </div>
+            ) : (
+              <p className={styles.agentMenuHint}>
+                Cuando la persona esté lista para comprar, el chat sube para que un humano cobre.
+              </p>
+            )}
+          </section>
+        )
+      }
+
+      if (agent.objective === 'datos') {
+        return (
+          <section className={styles.agentMenuSection} aria-label="Flujo de datos">
+            <div className={styles.agentMenuSectionHeader}>
+              <span>Datos a pedir</span>
+              <small>Luego pasa a humano</small>
+            </div>
+            <PhoneTextArea
+              label="Cuáles datos debe pedir"
+              value={agent.requiredData || ''}
+              onChange={(value) => updateAgentDraft(agent.id, { requiredData: value })}
+              onBlur={() => saveSelectedAgentPatch({ requiredData: agent.requiredData || '' })}
+              placeholder={'Ejemplo:\n- Nombre completo\n- Servicio que le interesa\n- Presupuesto aproximado'}
+              rows={4}
+              disabled={agentConfigSaving}
+            />
+            <div className={styles.agentGoalSummary}>
+              <strong>Después de pedirlos</strong>
+              <span>El chat se pasa a humano con el resumen.</span>
+            </div>
+          </section>
+        )
+      }
+
+      if (agent.objective === 'filtrar') {
+        return (
+          <section className={styles.agentMenuSection} aria-label="Flujo de filtro">
+            <div className={styles.agentMenuSectionHeader}>
+              <span>Filtro de curiosos</span>
+              <small>Califica o descarta</small>
+            </div>
+            <PhoneTextArea
+              label="Qué preguntas debe hacer"
+              value={goalWorkflow.qualification.questions}
+              onChange={(value) => updateGoalWorkflowDraft({ qualification: { ...goalWorkflow.qualification, questions: value } })}
+              onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
+              placeholder={'Ejemplo:\n- Qué problema quiere resolver\n- Para cuándo lo necesita\n- Qué presupuesto trae'}
+              rows={4}
+              disabled={agentConfigSaving}
+            />
+            <PhoneTextArea
+              label="Qué lo califica"
+              value={goalWorkflow.qualification.qualifies}
+              onChange={(value) => updateGoalWorkflowDraft({ qualification: { ...goalWorkflow.qualification, qualifies: value } })}
+              onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
+              placeholder="Ejemplo: tiene necesidad real, presupuesto y quiere avanzar esta semana."
+              rows={3}
+              disabled={agentConfigSaving}
+            />
+            <PhoneTextArea
+              label="Qué lo descalifica"
+              value={goalWorkflow.qualification.disqualifies}
+              onChange={(value) => updateGoalWorkflowDraft({ qualification: { ...goalWorkflow.qualification, disqualifies: value } })}
+              onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
+              placeholder="Ejemplo: sólo pide gratis, no responde datos mínimos o está fuera del servicio."
+              rows={3}
+              disabled={agentConfigSaving}
+            />
+          </section>
+        )
+      }
+
+      return (
+        <section className={styles.agentMenuSection} aria-label="Flujo de objetivo propio">
+          <div className={styles.agentMenuSectionHeader}>
+            <span>Al cumplir</span>
+            <small>Pasar a humano</small>
+          </div>
+          <p className={styles.agentMenuHint}>
+            Cuando cumpla el objetivo propio, el chat se marca como prioridad para que el equipo lo tome.
+          </p>
+        </section>
+      )
+    }
+
+    if (agentMenuSection === 'agents') {
+      return (
+        <>
+          <button
+            type="button"
+            className={styles.agentMenuBack}
+            onClick={() => {
+              if (agentPickerOpen) {
+                setAgentPickerOpen(false)
+                setAgentMenuSection('menu')
+                return
+              }
+              setAgentMenuSection('menu')
+            }}
+          >
+            <ChevronLeft size={18} />
+            {agentPickerOpen ? 'Volver a IA' : 'Volver al menú'}
+          </button>
+          <div className={styles.agentMenuBody} data-phone-chat-scrollable="true">
+            <section className={styles.agentMenuSection} aria-label="Lista de agentes">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>Lista de agentes</span>
+                <small>{agentDefs.length ? `${agentDefs.length} configurados` : 'Sin agentes'}</small>
+              </div>
+
+              {agentDefs.length ? (
+                <div className={styles.agentListStack}>
+                  {agentDefs.map((agent) => {
+                    const active = selectedAgentDef?.id === agent.id
+                    const objectiveLabel = agentObjectiveOptions.find((option) => option.value === agent.objective)?.label || 'Objetivo'
+                    const delivery = getPhoneAgentReplyDelivery(agent)
+
+                    return (
+                      <article key={agent.id} className={`${styles.agentListCard} ${active ? styles.agentListCardSelected : ''}`}>
+                        <button
+                          type="button"
+                          className={styles.agentListSelect}
+                          aria-pressed={active}
+                          onClick={() => setSelectedAgentId(agent.id)}
+                        >
+                          <span className={styles.agentPickerIcon}>
+                            {active ? <Check size={16} /> : <Bot size={16} />}
+                          </span>
+                          <span className={styles.agentPickerCopy}>
+                            <strong>{agent.name || 'Agente sin nombre'}</strong>
+                            <small>{agent.enabled ? 'Publicado' : 'En pausa'} · {objectiveLabel}</small>
+                          </span>
+                        </button>
+
+                        <div className={styles.agentListMeta}>
+                          <span>{getKnownAIModel(agent.model || DEFAULT_AI_MODEL)}</span>
+                          <span>{getPhoneReplyDeliverySummary(delivery)}</span>
+                          {agent.hideAttended && <span>Oculta atendidas</span>}
+                          {agent.hideAttendedNotifications && <span>Silencia avisos</span>}
+                        </div>
+
+                        <div className={styles.agentListActions}>
+                          <button
+                            type="button"
+                            className={styles.agentListToggle}
+                            disabled={agentConfigSaving}
+                            onClick={() => saveAgentPatch(agent.id, { enabled: !agent.enabled })}
+                          >
+                            {agent.enabled ? <Pause size={15} /> : <Play size={15} />}
+                            {agent.enabled ? 'Pausar' : 'Publicar'}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.agentListMore}
+                            onClick={() => {
+                              setSelectedAgentId(agent.id)
+                              setAgentMenuSection('agent_detail')
+                            }}
+                          >
+                            Ver más
+                            <ChevronRight size={16} />
+                          </button>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className={styles.emptySheetState}>
+                  <Bot size={24} />
+                  <strong>Aún no hay agentes</strong>
+                  <span>Crea agentes desde Agente AI → Agente conversacional.</span>
+                </div>
+              )}
+            </section>
+          </div>
+        </>
+      )
+    }
+
+    if (agentMenuSection === 'agent_detail') {
+      if (!selectedAgentDef) {
+        return (
+          <>
+            <button type="button" className={styles.agentMenuBack} onClick={() => setAgentMenuSection('agents')}>
+              <ChevronLeft size={18} />
+              Volver a agentes
+            </button>
+            <div className={styles.emptySheetState}>
+              <Bot size={24} />
+              <strong>Sin agente seleccionado</strong>
+              <span>Elige un agente de la lista para configurarlo.</span>
+            </div>
+          </>
+        )
+      }
+
+      return (
+        <>
+          <button type="button" className={styles.agentMenuBack} onClick={() => setAgentMenuSection('agents')}>
+            <ChevronLeft size={18} />
+            Lista de agentes
+          </button>
+          <div className={styles.agentMenuBody} data-phone-chat-scrollable="true">
+            <section className={`${styles.agentMenuSection} ${styles.agentDetailHero}`} aria-label="Agente seleccionado">
+              <div className={styles.agentDetailHeroTop}>
+                <span className={styles.agentPickerIcon}>
+                  <Bot size={18} />
+                </span>
+                <span className={`${styles.agentDetailStatus} ${selectedAgentDef.enabled ? styles.agentDetailStatusOn : ''}`}>
+                  {selectedAgentDef.enabled ? 'Publicado' : 'En pausa'}
+                </span>
+              </div>
+
+              <PhoneTextField
+                label="Nombre del agente"
+                value={selectedAgentDef.name || ''}
+                onChange={(value) => updateAgentDraft(selectedAgentDef.id, { name: value })}
+                onBlur={() => saveAgentPatch(selectedAgentDef.id, { name: selectedAgentDef.name || 'Agente' })}
+                placeholder="Agente principal"
+                disabled={agentConfigSaving}
+              />
+
+              <button
+                type="button"
+                className={styles.agentPublishButton}
+                disabled={agentConfigSaving}
+                onClick={() => saveSelectedAgentPatch({ enabled: !selectedAgentDef.enabled })}
+              >
+                {selectedAgentDef.enabled ? <Pause size={16} /> : <Play size={16} />}
+                {selectedAgentDef.enabled ? 'Pausar agente' : 'Publicar agente'}
+              </button>
+            </section>
+
+            <section className={styles.agentMenuSection} aria-label="Modelo y objetivo">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>Modelo y objetivo</span>
+                <small>{selectedObjectiveLabel}</small>
+              </div>
+              <label className={styles.agentMenuField}>
+                <span>Modelo de OpenAI</span>
+                <PhoneSelect
+                  value={selectedAgentModelValue}
+                  onChange={(value) => saveSelectedAgentPatch({ model: value })}
+                  ariaLabel={`Modelo de ${selectedAgentDef.name || 'agente conversacional'}`}
+                  options={aiModelOptions.map((option) => ({ value: option.value, label: option.label }))}
+                  title="Modelo de OpenAI"
+                  placeholder="Modelo"
+                  disabled={agentConfigSaving}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              <label className={styles.agentMenuField}>
+                <span>Objetivo</span>
+                <PhoneSelect
+                  value={selectedAgentDef.objective}
+                  onChange={(value) => {
+                    const objective = value as ConversationalObjective
+                    const nextSuccessAction: ConversationalSuccessAction = objective === 'citas' && goalWorkflow.appointments.owner === 'ai'
+                      ? 'book_appointment'
+                      : objective === 'ventas' && goalWorkflow.sales.owner === 'ai'
+                      ? 'ready_to_buy'
+                      : 'ready_for_human'
+                    saveSelectedAgentPatch({
+                      objective,
+                      successAction: nextSuccessAction
+                    })
+                  }}
+                  ariaLabel={`Objetivo de ${selectedAgentDef.name || 'agente conversacional'}`}
+                  options={agentObjectiveOptions}
+                  title="Objetivo"
+                  placeholder="Objetivo"
+                  disabled={agentConfigSaving}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              {selectedAgentDef.objective === 'custom' && (
+                <PhoneTextArea
+                  label="Meta propia"
+                  value={selectedAgentDef.customObjective || ''}
+                  onChange={(value) => updateAgentDraft(selectedAgentDef.id, { customObjective: value })}
+                  onBlur={() => saveSelectedAgentPatch({ customObjective: selectedAgentDef.customObjective || '' })}
+                  placeholder="Ejemplo: que pida una propuesta formal para su empresa."
+                  rows={3}
+                  disabled={agentConfigSaving}
+                />
+              )}
+            </section>
+
+            {renderGoalWorkflowControls(selectedAgentDef)}
+
+            {renderAgentOrderControls(selectedAgentDef)}
+
+            <section className={styles.agentMenuSection} aria-label="Cuándo responde">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>Cuándo responde</span>
+                <small>{getPhoneResponseDelaySummary(responseDelay)}</small>
+              </div>
+              <PhoneSelect
+                value={responseDelay.mode}
+                onChange={(value) => updateResponseDelay({ mode: value as AgentResponseDelayMode })}
+                ariaLabel="Espera antes de responder"
+                options={PHONE_AGENT_RESPONSE_DELAY_MODE_OPTIONS}
+                title="Espera"
+                placeholder="Espera"
+                disabled={agentConfigSaving}
+                buttonClassName={styles.agentMenuSelectButton}
+              />
+
+              {responseDelay.mode === 'fixed' && (
+                <div className={styles.agentNumberGrid}>
+                  <PhoneTextField
+                    label="Tiempo"
+                    type="number"
+                    inputMode="numeric"
+                    value={String(responseDelay.fixedValue)}
+                    onChange={(value) => updateResponseDelay({ fixedValue: Number(value) || 0 })}
+                    disabled={agentConfigSaving}
+                  />
+                  <PhoneSelect
+                    value={responseDelay.fixedUnit}
+                    onChange={(value) => updateResponseDelay({ fixedUnit: value as AgentResponseDelayUnit })}
+                    options={PHONE_AGENT_RESPONSE_DELAY_UNIT_OPTIONS}
+                    title="Unidad"
+                    ariaLabel="Unidad de espera"
+                    disabled={agentConfigSaving}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </div>
+              )}
+
+              {responseDelay.mode === 'random' && (
+                <div className={styles.agentNumberGrid}>
+                  <PhoneTextField
+                    label="Mínimo"
+                    type="number"
+                    inputMode="numeric"
+                    value={String(responseDelay.minValue)}
+                    onChange={(value) => updateResponseDelay({ minValue: Number(value) || 0 })}
+                    disabled={agentConfigSaving}
+                  />
+                  <PhoneTextField
+                    label="Máximo"
+                    type="number"
+                    inputMode="numeric"
+                    value={String(responseDelay.maxValue)}
+                    onChange={(value) => updateResponseDelay({ maxValue: Number(value) || 0 })}
+                    disabled={agentConfigSaving}
+                  />
+                  <PhoneSelect
+                    value={responseDelay.rangeUnit}
+                    onChange={(value) => updateResponseDelay({ rangeUnit: value as AgentResponseDelayUnit })}
+                    options={PHONE_AGENT_RESPONSE_DELAY_UNIT_OPTIONS}
+                    title="Unidad"
+                    ariaLabel="Unidad del rango"
+                    disabled={agentConfigSaving}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </div>
+              )}
+            </section>
+
+            <section className={styles.agentMenuSection} aria-label="Modo mensajes humanos">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>Mensajes humanos</span>
+                <small>{getPhoneReplyDeliverySummary(replyDelivery)}</small>
+              </div>
+              <label className={`${styles.agentCompactToggle} ${replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split' ? styles.agentCompactToggleActive : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split'}
+                  disabled={agentConfigSaving}
+                  onChange={(event) => updateReplyDelivery({
+                    mode: (event.target.checked ? 'split' : 'single') as AgentReplyDeliveryMode,
+                    splitMessagesEnabled: event.target.checked
+                  })}
+                />
+                <span>
+                  <strong>Partir respuestas largas</strong>
+                  <small>Divide textos largos en varios globos de chat.</small>
+                </span>
+              </label>
+
+              {(replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split') && (
+                <>
+                  <label className={`${styles.agentCompactToggle} ${replyDelivery.randomizeSplitting ? styles.agentCompactToggleActive : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={replyDelivery.randomizeSplitting}
+                      disabled={agentConfigSaving}
+                      onChange={(event) => updateReplyDelivery({ randomizeSplitting: event.target.checked })}
+                    />
+                    <span>
+                      <strong>Variar cortes</strong>
+                      <small>Evita que los globos se partan igual siempre.</small>
+                    </span>
+                  </label>
+                  <label className={`${styles.agentCompactToggle} ${replyDelivery.delayBetweenBubblesEnabled ? styles.agentCompactToggleActive : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={replyDelivery.delayBetweenBubblesEnabled}
+                      disabled={agentConfigSaving}
+                      onChange={(event) => updateReplyDelivery({ delayBetweenBubblesEnabled: event.target.checked })}
+                    />
+                    <span>
+                      <strong>Pausas entre globos</strong>
+                      <small>Hace pequeñas pausas antes de mandar el siguiente mensaje.</small>
+                    </span>
+                  </label>
+                  <div className={styles.agentNumberGrid}>
+                    <PhoneTextField
+                      label="Dividir desde"
+                      type="number"
+                      inputMode="numeric"
+                      value={String(replyDelivery.minMessageLengthToSplit)}
+                      onChange={(value) => updateReplyDelivery({ minMessageLengthToSplit: Number(value) || 0 })}
+                      disabled={agentConfigSaving}
+                    />
+                    <PhoneTextField
+                      label="Máx. globos"
+                      type="number"
+                      inputMode="numeric"
+                      value={String(replyDelivery.maxBubbles)}
+                      onChange={(value) => updateReplyDelivery({ maxBubbles: Number(value) || DEFAULT_PHONE_AGENT_REPLY_DELIVERY.maxBubbles })}
+                      disabled={agentConfigSaving}
+                    />
+                    <PhoneTextField
+                      label="Globo mín."
+                      type="number"
+                      inputMode="numeric"
+                      value={String(replyDelivery.minBubbleLength)}
+                      onChange={(value) => updateReplyDelivery({ minBubbleLength: Number(value) || DEFAULT_PHONE_AGENT_REPLY_DELIVERY.minBubbleLength })}
+                      disabled={agentConfigSaving}
+                    />
+                    <PhoneTextField
+                      label="Globo máx."
+                      type="number"
+                      inputMode="numeric"
+                      value={String(replyDelivery.maxBubbleLength)}
+                      onChange={(value) => {
+                        const maxBubbleLength = Number(value) || DEFAULT_PHONE_AGENT_REPLY_DELIVERY.maxBubbleLength
+                        updateReplyDelivery({ maxBubbleLength, targetChars: maxBubbleLength })
+                      }}
+                      disabled={agentConfigSaving}
+                    />
+                    <PhoneTextField
+                      label="Pausa mín."
+                      type="number"
+                      inputMode="numeric"
+                      value={String(replyDelivery.minDelaySeconds)}
+                      onChange={(value) => updateReplyDelivery({ minDelaySeconds: Number(value) || 0 })}
+                      disabled={agentConfigSaving || !replyDelivery.delayBetweenBubblesEnabled}
+                    />
+                    <PhoneTextField
+                      label="Pausa máx."
+                      type="number"
+                      inputMode="numeric"
+                      value={String(replyDelivery.maxDelaySeconds)}
+                      onChange={(value) => updateReplyDelivery({ maxDelaySeconds: Number(value) || 0 })}
+                      disabled={agentConfigSaving || !replyDelivery.delayBetweenBubblesEnabled}
+                    />
+                  </div>
+                </>
+              )}
+            </section>
+
+            <section className={styles.agentMenuSection} aria-label="Qué debe cuidar">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>Qué debe cuidar</span>
+                <small>Instrucciones</small>
+              </div>
+              <PhoneTextArea
+                label="Cuándo pasar al equipo"
+                value={selectedAgentDef.handoffRules || ''}
+                onChange={(value) => updateAgentDraft(selectedAgentDef.id, { handoffRules: value })}
+                onBlur={() => saveSelectedAgentPatch({ handoffRules: selectedAgentDef.handoffRules || '' })}
+                placeholder={'Ejemplo:\n- Se enojó\n- Pregunta por facturación'}
+                rows={3}
+                disabled={agentConfigSaving}
+              />
+              <PhoneTextArea
+                label="Tips del negocio"
+                value={selectedAgentDef.extraInstructions || ''}
+                onChange={(value) => updateAgentDraft(selectedAgentDef.id, { extraInstructions: value })}
+                onBlur={() => saveSelectedAgentPatch({ extraInstructions: selectedAgentDef.extraInstructions || '' })}
+                placeholder="Ejemplo: menciona la promo de junio sólo si preguntan por precio."
+                rows={3}
+                disabled={agentConfigSaving}
+              />
+              <label className={`${styles.agentCompactToggle} ${selectedAgentDef.allowEmojis ? styles.agentCompactToggleActive : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(selectedAgentDef.allowEmojis)}
+                  disabled={agentConfigSaving}
+                  onChange={(event) => saveSelectedAgentPatch({ allowEmojis: event.target.checked })}
+                />
+                <span>
+                  <strong>Puede usar emojis</strong>
+                  <small>Déjalo apagado si quieres un tono más serio.</small>
+                </span>
+              </label>
+            </section>
+          </div>
+        </>
+      )
+    }
+
+    return (
+      <div className={styles.agentMenuBody} data-phone-chat-scrollable="true">
+        <section className={styles.agentMenuSection} aria-label="Agentes conversacionales">
+          <div className={styles.agentMenuSectionHeader}>
+            <span>Agentes conversacionales</span>
+            <small>{agentDefs.length ? `${agentDefs.length} disponibles` : 'Sin agentes'}</small>
+          </div>
+          <button type="button" className={styles.agentMenuPrimaryRow} onClick={() => setAgentMenuSection('agents')}>
+            <span className={styles.agentPickerIcon}>
+              <Bot size={17} />
+            </span>
+            <span>
+              <strong>Ver lista de agentes</strong>
+              <small>Elige, publica, pausa o entra a configurar cada agente.</small>
+            </span>
+            <ChevronRight size={18} />
+          </button>
+          {!agentDefs.length && (
+            <p className={styles.agentMenuHint}>
+              No hay agentes todavía. Créalo en Agente AI → Agente conversacional.
+            </p>
+          )}
+        </section>
+
+        <section className={styles.agentMenuSection} aria-label="Bandejas del agente">
+          <div className={styles.agentMenuSectionHeader}>
+            <span>Bandejas</span>
+            <small>Seguimiento</small>
+          </div>
+          <div className={styles.agentInboxList}>
+            <button type="button" onClick={() => setAgentMenuSection('ready_human')}>
+              <span className={styles.agentPriorityRowIcon}>
+                <User size={19} />
+              </span>
+              <div>
+                <strong>Prioridad humana</strong>
+                <small>{readyHumanCount === 1 ? '1 conversación esperando' : `${readyHumanCount} conversaciones esperando`}</small>
+              </div>
+              <ChevronRight size={18} />
+            </button>
+          </div>
+        </section>
+      </div>
+    )
+  }
+
+  const renderAgentPickerScreen = () => {
+    if (!agentPickerOpen) return null
+
+    return (
+      <section className={`${styles.agentPickerScreen} ${styles.contactInfoScreenOpen}`} aria-label="Seleccionar y configurar agentes">
+        {renderAgentMenuSheet()}
+      </section>
     )
   }
 
@@ -9572,12 +11985,186 @@ export const PhoneChat: React.FC = () => {
     </button>
   )
 
+  const renderAgentRobotGlyph = (active: boolean) => (
+    <>
+      {active && (
+        <>
+          <span className={styles.agentBotOrbit} aria-hidden="true" />
+          <span className={styles.agentBotSparkle} aria-hidden="true" />
+        </>
+      )}
+      <span className={styles.agentRobot} data-active={active ? 'true' : 'false'} aria-hidden="true">
+        <span className={styles.rkShadow} />
+        <span className={styles.rkFloat}>
+          <span className={styles.rkTurn}>
+            <svg
+              className={styles.agentRobotSvg}
+              data-active={active ? 'true' : 'false'}
+              viewBox="0 0 200 200"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <defs>
+                <linearGradient id="rkbBody" x1="100" y1="44" x2="100" y2="158" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stopColor="#ffffff" />
+                  <stop offset="0.34" stopColor="#eef4fb" />
+                  <stop offset="0.72" stopColor="#c9d6e9" />
+                  <stop offset="1" stopColor="#9eb0cb" />
+                </linearGradient>
+                <radialGradient id="rkbBodyHi" cx="0.38" cy="0.26" r="0.5">
+                  <stop offset="0" stopColor="#ffffff" stopOpacity="0.95" />
+                  <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
+                </radialGradient>
+                <radialGradient id="rkbBodyAo" cx="0.5" cy="0.96" r="0.62">
+                  <stop offset="0" stopColor="#5d6f8f" stopOpacity="0.55" />
+                  <stop offset="1" stopColor="#5d6f8f" stopOpacity="0" />
+                </radialGradient>
+                <linearGradient id="rkbRim" x1="60" y1="60" x2="150" y2="156" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stopColor="#7fe9ff" stopOpacity="0" />
+                  <stop offset="0.6" stopColor="#7fe9ff" stopOpacity="0" />
+                  <stop offset="1" stopColor="#9bf0ff" stopOpacity="0.9" />
+                </linearGradient>
+                <radialGradient id="rkbVisor" cx="0.5" cy="0.42" r="0.7">
+                  <stop offset="0" stopColor="#1d3f86" />
+                  <stop offset="0.55" stopColor="#0e224f" />
+                  <stop offset="1" stopColor="#050d24" />
+                </radialGradient>
+                <linearGradient id="rkbVisorTop" x1="100" y1="66" x2="100" y2="96" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stopColor="#000000" stopOpacity="0.45" />
+                  <stop offset="1" stopColor="#000000" stopOpacity="0" />
+                </linearGradient>
+                <radialGradient id="rkbEye" cx="0.4" cy="0.34" r="0.75">
+                  <stop offset="0" stopColor="#ffffff" />
+                  <stop offset="0.34" stopColor="#bdf3ff" />
+                  <stop offset="0.7" stopColor="#46c9f5" />
+                  <stop offset="1" stopColor="#1187cf" />
+                </radialGradient>
+                <radialGradient id="rkbEyeGlow" cx="0.5" cy="0.5" r="0.5">
+                  <stop offset="0" stopColor="#76e6ff" stopOpacity="0.8" />
+                  <stop offset="1" stopColor="#76e6ff" stopOpacity="0" />
+                </radialGradient>
+                <linearGradient id="rkbEar" x1="0" y1="86" x2="0" y2="126" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stopColor="#f4f8fd" />
+                  <stop offset="1" stopColor="#aebdd4" />
+                </linearGradient>
+                <radialGradient id="rkbOrb" cx="0.4" cy="0.32" r="0.75">
+                  <stop offset="0" stopColor="#ffffff" />
+                  <stop offset="0.4" stopColor="#bff3ff" />
+                  <stop offset="1" stopColor="#37b6ec" />
+                </radialGradient>
+                <linearGradient id="rkbRod" x1="100" y1="36" x2="100" y2="56" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stopColor="#dfe8f4" />
+                  <stop offset="1" stopColor="#9fb0c8" />
+                </linearGradient>
+              </defs>
+
+              {/* Globitos de pensamiento */}
+              <g className={styles.rkThink}>
+                <circle className={styles.rkThinkDot} cx="150" cy="58" r="4" fill="#bcecff" />
+                <circle className={styles.rkThinkDot} cx="162" cy="44" r="5.4" fill="#d6f4ff" />
+                <circle className={styles.rkThinkDot} cx="171" cy="28" r="7" fill="#ecfbff" />
+              </g>
+
+              {/* Antena con orbe de energía */}
+              <g className={styles.rkAntenna}>
+                <rect x="96" y="34" width="8" height="22" rx="4" fill="url(#rkbRod)" />
+                <circle className={styles.rkOrbGlow} cx="100" cy="30" r="14" fill="#9bedff" opacity="0.4" />
+                <circle className={styles.rkOrb} cx="100" cy="30" r="8.5" fill="url(#rkbOrb)" />
+                <circle cx="97.5" cy="27.5" r="2.4" fill="#ffffff" opacity="0.9" />
+              </g>
+
+              {/* Orejas / pods laterales */}
+              <g className={styles.rkEarL}>
+                <rect x="26" y="88" width="22" height="40" rx="11" fill="url(#rkbEar)" />
+                <circle cx="37" cy="108" r="6.6" fill="#0e224f" />
+                <circle cx="37" cy="108" r="3.4" fill="#65d9ff" />
+                <circle cx="35.4" cy="106.2" r="1.4" fill="#eafcff" />
+              </g>
+              <g className={styles.rkEarR}>
+                <rect x="152" y="88" width="22" height="40" rx="11" fill="url(#rkbEar)" />
+                <circle cx="163" cy="108" r="6.6" fill="#0e224f" />
+                <circle cx="163" cy="108" r="3.4" fill="#65d9ff" />
+                <circle cx="161.4" cy="106.2" r="1.4" fill="#eafcff" />
+              </g>
+
+              {/* Cabeza con sombreado volumétrico */}
+              <g className={styles.rkHead}>
+                <rect x="42" y="46" width="116" height="110" rx="42" fill="url(#rkbBody)" />
+                <rect x="42" y="46" width="116" height="110" rx="42" fill="url(#rkbBodyAo)" />
+                <rect x="42" y="46" width="116" height="110" rx="42" fill="url(#rkbBodyHi)" />
+                <rect x="43.2" y="47.2" width="113.6" height="107.6" rx="40.8" fill="none" stroke="url(#rkbRim)" strokeWidth="2.6" />
+                <ellipse cx="74" cy="70" rx="15" ry="9" fill="#ffffff" opacity="0.75" transform="rotate(-28 74 70)" />
+
+                {/* Visor de vidrio */}
+                <rect x="58" y="64" width="84" height="74" rx="30" fill="url(#rkbVisor)" />
+                <rect x="58" y="64" width="84" height="74" rx="30" fill="url(#rkbVisorTop)" />
+                <rect x="59.4" y="65.4" width="81.2" height="71.2" rx="28.6" fill="none" stroke="#9fd9ff" strokeOpacity="0.18" strokeWidth="1.6" />
+                <path d="M66 84 L96 70 L106 70 L70 88 Z" fill="#ffffff" opacity="0.1" />
+                <path d="M66 95 L86 85 L92 85 L70 98 Z" fill="#ffffff" opacity="0.06" />
+
+                {/* Cachetes */}
+                <g className={styles.rkCheeks}>
+                  <ellipse cx="68" cy="118" rx="8" ry="5" fill="#ff8fb0" opacity="0.9" />
+                  <ellipse cx="132" cy="118" rx="8" ry="5" fill="#ff8fb0" opacity="0.9" />
+                </g>
+
+                {/* Rostro con parallax 3D */}
+                <g className={styles.rkFace3d}>
+                  <g className={styles.rkEyes}>
+                    <g>
+                      <circle cx="82" cy="100" r="14" fill="url(#rkbEyeGlow)" />
+                      <g className={styles.rkEye}>
+                        <circle className={styles.rkEyeCore} cx="82" cy="100" r="10" fill="url(#rkbEye)" />
+                        <ellipse cx="78.5" cy="96" rx="3.4" ry="2.4" fill="#ffffff" opacity="0.95" />
+                      </g>
+                    </g>
+                    <g>
+                      <circle cx="118" cy="100" r="14" fill="url(#rkbEyeGlow)" />
+                      <g className={styles.rkEye}>
+                        <circle className={styles.rkEyeCore} cx="118" cy="100" r="10" fill="url(#rkbEye)" />
+                        <ellipse cx="114.5" cy="96" rx="3.4" ry="2.4" fill="#ffffff" opacity="0.95" />
+                      </g>
+                    </g>
+                  </g>
+                  <g className={styles.rkEyesHappy}>
+                    <path d="M72 104 Q82 92 92 104" stroke="#bdf3ff" strokeWidth="5" strokeLinecap="round" />
+                    <path d="M108 104 Q118 92 128 104" stroke="#bdf3ff" strokeWidth="5" strokeLinecap="round" />
+                  </g>
+                  <path className={styles.rkMouth} d="M84 122 Q100 134 116 122" stroke="#7fe9ff" strokeWidth="5" strokeLinecap="round" />
+                  <rect className={styles.rkMouthTalk} x="92" y="120" width="16" height="11" rx="5.5" fill="#7fe9ff" />
+                </g>
+              </g>
+            </svg>
+          </span>
+        </span>
+      </span>
+    </>
+  )
+
+  const renderAgentRobotButton = ({
+    active,
+    className = '',
+    label,
+    onClick
+  }: {
+    active: boolean
+    className?: string
+    label: string
+    onClick: () => void
+  }) => (
+    <button
+      type="button"
+      className={`${styles.roundButton} ${active ? styles.agentBotButtonActive : styles.agentBotButtonIdle} ${className}`.trim()}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
+      {renderAgentRobotGlyph(active)}
+    </button>
+  )
+
   if (accessState === 'checking') {
-    return (
-      <main className={styles.loadingPage}>
-        <span className={styles.loadingDot} />
-      </main>
-    )
+    return <PhoneStartupLoader />
   }
 
   if (accessState === 'blocked') {
@@ -9625,7 +12212,22 @@ export const PhoneChat: React.FC = () => {
           <header className={`${styles.chatListHeader} ${chatSearchExpanded ? styles.chatListHeaderSearchExpanded : ''}`}>
             {deviceMode !== 'tablet' && (
               <div className={styles.topActionRow} aria-hidden={chatSearchExpanded}>
-                <span className={styles.topActionSpacer} aria-hidden="true" />
+                {renderAgentRobotButton({
+                  active: agentEnabled,
+                  label: 'Agente conversacional',
+                  onClick: openAgentGlobalMenu
+                })}
+                {agentEnabled && (
+                  <div className={styles.agentStatusBubble} aria-hidden="true">
+                    <span className={styles.agentStatusLabel}>
+                      <span className={styles.agentStatusDot} />
+                      Activo
+                    </span>
+                    <span key={agentStatusPhraseIndex} className={styles.agentStatusPhrase}>
+                      {agentStatusPhrase}
+                    </span>
+                  </div>
+                )}
                 {renderChatHeaderActions()}
               </div>
             )}
@@ -9684,7 +12286,11 @@ export const PhoneChat: React.FC = () => {
                   type="button"
                   className={chatFilter === key ? styles.filterChipActive : ''}
                   aria-pressed={chatFilter === key}
-                  onClick={() => setChatFilter(key)}
+                  onClick={() => {
+                    setArchivedViewOpen(false)
+                    setAgentPriorityViewOpen(false)
+                    setChatFilter(key)
+                  }}
                 >
                   {label}
                 </button>
@@ -9692,7 +12298,12 @@ export const PhoneChat: React.FC = () => {
             </div>
           </header>
 
-          <div className={styles.chatList} data-phone-chat-scrollable="true">
+          <div
+            className={styles.chatList}
+            data-phone-chat-scrollable="true"
+            data-phone-chat-list-scroll="true"
+            onClickCapture={handleChatListClickCapture}
+          >
             <div className={styles.chatListElasticContent} data-phone-elastic-target="true">
               {renderChats()}
             </div>
@@ -9731,7 +12342,7 @@ export const PhoneChat: React.FC = () => {
                   onClick={handleOpenContactInfo}
                   aria-label="Ver información del contacto"
                 >
-                  {renderAvatar(activeContact)}
+                  {renderAvatar(activeContact, { showChannelBadge: true })}
                   <span className={styles.conversationIdentity}>
                     <strong>{getContactName(activeContact)}</strong>
                     <span>{getContactDetail(activeContact)}</span>
@@ -9748,20 +12359,28 @@ export const PhoneChat: React.FC = () => {
             {aiAgentConversationOpen ? (
               <span className={styles.conversationHeaderSpacer} aria-hidden="true" />
             ) : (
-              <div className={styles.callActions}>
-                <button type="button" onClick={() => handleOpenAppointmentForm(activeContact)} aria-label="Agendar cita">
-                  <CalendarDays size={25} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPaymentMode('single')
-                    setSheet('payment')
-                  }}
-                  aria-label="Cobrar"
-                >
-                  <CircleDollarSign size={25} />
-                </button>
+              <div className={styles.conversationActionCluster}>
+                {activeContact && agentEnabled && renderAgentRobotButton({
+                  active: activeConversationAgentActive,
+                  className: styles.conversationAgentButton,
+                  label: activeConversationAgentLabel,
+                  onClick: () => openConversationAgentControls(activeContact)
+                })}
+                <div className={styles.callActions}>
+                  <button type="button" onClick={() => handleOpenAppointmentForm(activeContact)} aria-label="Agendar cita">
+                    <CalendarDays size={25} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentMode('single')
+                      setSheet('payment')
+                    }}
+                    aria-label="Cobrar"
+                  >
+                    <CircleDollarSign size={25} />
+                  </button>
+                </div>
               </div>
             )}
           </header>
@@ -9882,11 +12501,13 @@ export const PhoneChat: React.FC = () => {
         {renderMessageInfoScreen()}
         {renderContactInfoScreen()}
         {renderCameraShareScreen()}
+        {renderAIAgentHubScreen()}
+        {renderAgentPickerScreen()}
       </PhonePageTransition>
 
       {renderMessageActionMenu()}
 
-      {deviceMode !== 'tablet' && !conversationOpen && !cameraSharePhoto && <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />}
+      {deviceMode !== 'tablet' && !conversationOpen && !cameraSharePhoto && !aiAgentHubOpen && !agentPickerOpen && <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />}
 
       <input
         ref={cameraInputRef}
@@ -9925,19 +12546,25 @@ export const PhoneChat: React.FC = () => {
             {...actionSheetDismiss.sheetDragProps}
           >
             <div className={styles.sheetHandle} aria-hidden="true" />
-            {sheet !== 'attachments' && (
+            {sheet !== 'attachments' && sheet !== 'payment' && (
               <div className={styles.sheetHeader}>
                 <div>
-                  {sheet !== 'payment' && (
-                    <p>{activeContact ? getContactName(activeContact) : aiAgentConversationOpen ? 'Agente de IA' : 'Ristak'}</p>
-                  )}
+                  <p>{activeContact ? getContactName(activeContact) : aiAgentConversationOpen ? 'Agente de IA' : 'Ristak'}</p>
                   <h2>
-                    {sheet === 'payment' && 'Registrar pago'}
                     {sheet === 'templates' && 'Plantillas'}
                     {sheet === 'clabe' && 'CLABE'}
                     {sheet === 'settings' && 'Ajustes del chat'}
                     {sheet === 'newChat' && 'Nuevo chat'}
-                    {sheet === 'chatMore' && 'Más acciones'}
+                    {sheet === 'chatMore' && (chatMoreMode === 'agentControls' ? 'Acciones del chatbot' : 'Más acciones')}
+                    {sheet === 'agentMenu' && (
+                      agentMenuSection === 'ready_human'
+                        ? 'Prioridad humana'
+                        : agentMenuSection === 'agents'
+                          ? 'Lista de agentes'
+                          : agentMenuSection === 'agent_detail'
+                            ? 'Configurar agente'
+                            : 'Agente conversacional'
+                    )}
                     {sheet === 'schedule' && (scheduleEditingMessageId ? 'Editar programación' : 'Programar mensaje')}
                   </h2>
                 </div>
@@ -9950,6 +12577,7 @@ export const PhoneChat: React.FC = () => {
             {sheet === 'clabe' && renderClabeSheet()}
             {sheet === 'settings' && renderChatSettingsSheet()}
             {sheet === 'chatMore' && renderChatMoreSheet()}
+            {sheet === 'agentMenu' && renderAgentMenuSheet()}
             {sheet === 'schedule' && renderScheduleSheet()}
 
             {sheet === 'payment' && (
@@ -9980,6 +12608,7 @@ export const PhoneChat: React.FC = () => {
                     initialPaymentMode={activePhonePaymentMode}
                     initialContact={initialContact}
                     lockInitialContact={Boolean(initialContact?.id)}
+                    showEmbeddedBackButton={false}
                     onClose={actionSheetDismiss.requestClose}
                     onSuccess={() => {
                       actionSheetDismiss.requestClose()
@@ -10120,6 +12749,31 @@ export const PhoneChat: React.FC = () => {
           </p>
         </div>
       </Modal>
+
+      <PhoneSheet
+        isOpen={Boolean(chatQuickActionsContact)}
+        onClose={() => setChatQuickActionsContact(null)}
+        title={chatQuickActionsContact ? getContactName(chatQuickActionsContact) : 'Chat'}
+        subtitle="Acciones rápidas"
+      >
+        <div className={styles.chatQuickActions}>
+          <button type="button" onClick={() => handleChatQuickAction('appointment')}>
+            <span className={styles.chatQuickActionIcon}><CalendarDays size={19} /></span>
+            <span className={styles.chatQuickActionLabel}>Agendar cita</span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => handleChatQuickAction('payment')}>
+            <span className={styles.chatQuickActionIcon}><CreditCard size={19} /></span>
+            <span className={styles.chatQuickActionLabel}>Registrar pago</span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => handleChatQuickAction('more')}>
+            <span className={styles.chatQuickActionIcon}><MoreHorizontal size={19} /></span>
+            <span className={styles.chatQuickActionLabel}>Más opciones</span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+        </div>
+      </PhoneSheet>
 
       <PhoneSheet
         isOpen={ourNumberSheetOpen}

@@ -4,7 +4,7 @@ import { updateContactsStats } from '../utils/updateContactsStats.js'
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { buildContactStats } from '../services/analyticsService.js'
 import { getGHLClient } from '../services/ghlClient.js'
-import { findContactByPhoneCandidates, prepareContactPhoneUpsert } from '../services/contactIdentityService.js'
+import { findContactByPhoneCandidates, getGhlContactIdForLocalContact, prepareContactPhoneUpsert } from '../services/contactIdentityService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
@@ -26,6 +26,7 @@ import {
 } from '../utils/contactCustomFields.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizePhoneForAccount } from '../utils/accountLocale.js'
+import { resolveTagIds, tagNamesForIds, listContactTags } from '../services/contactTagsService.js'
 import fetch from 'node-fetch'
 import { randomUUID } from 'crypto'
 
@@ -34,6 +35,17 @@ const normalizePhone = (phone) => {
   const digits = String(phone).replace(/\D/g, '')
   if (digits.length < 7) return null
   return digits.slice(-10)
+}
+
+const parseContactTags = (raw) => {
+  if (Array.isArray(raw)) return raw
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
 }
 
 const dedupeAppointments = (appointments = []) => {
@@ -820,6 +832,7 @@ export const getChatContacts = async (req, res) => {
         c.attribution_ad_id,
         c.preferred_whatsapp_phone_number_id,
         c.custom_fields,
+        c.tags,
 ${CONTACT_WHATSAPP_PROFILE_SELECTS},
 ${CONTACT_META_PROFILE_SELECT},
         COALESCE(ps.total_paid, 0) AS total_paid,
@@ -1053,6 +1066,7 @@ export const getContacts = async (req, res) => {
         c.attribution_ad_id,
         c.preferred_whatsapp_phone_number_id,
         c.custom_fields,
+        c.tags,
 ${CONTACT_WHATSAPP_PROFILE_SELECTS},
 ${CONTACT_META_PROFILE_SELECT},
         COALESCE(ps.total_paid, 0) AS total_paid,
@@ -1217,6 +1231,7 @@ ${CONTACT_META_PROFILE_SELECT},
         preferred_whatsapp_phone_number_id: c.preferred_whatsapp_phone_number_id || '',
         profilePhotoUrl: getContactProfilePhotoUrl(c) || null,
         customFields: parseContactCustomFields(c.custom_fields),
+        tags: parseContactTags(c.tags),
         firstSession: firstSession ? {
           started_at: firstSession.started_at,
           page_url: firstSession.page_url,
@@ -1318,6 +1333,7 @@ export const getContactById = async (req, res) => {
         c.attribution_ad_id,
         c.preferred_whatsapp_phone_number_id,
         c.custom_fields,
+        c.tags,
 ${CONTACT_WHATSAPP_PROFILE_SELECTS},
 ${CONTACT_META_PROFILE_SELECT},
         COALESCE(ps.total_paid, 0) AS total_paid,
@@ -1624,6 +1640,7 @@ ${CONTACT_META_PROFILE_SELECT},
       preferred_whatsapp_phone_number_id: contact.preferred_whatsapp_phone_number_id || '',
       profilePhotoUrl: getContactProfilePhotoUrl(contact) || null,
       customFields: parseContactCustomFields(contact.custom_fields),
+      tags: parseContactTags(contact.tags),
       notes: '',
       payments,
       appointments: appointmentsOrdered,
@@ -1890,6 +1907,10 @@ export const createContact = async (req, res) => {
 
     logger.info(`Contacto manual creado: ${id} (${contact.full_name || contact.email || contact.phone || 'sin nombre'})`)
 
+    import('../services/automationEngine.js')
+      .then(engine => engine.handleAutomationEvent('contact-created', { contactId: id }))
+      .catch(() => {})
+
     res.status(201).json({
       success: true,
       data: mapContactRowForResponse(contact)
@@ -2021,13 +2042,19 @@ export const updateContact = async (req, res) => {
       : req.body.preferred_whatsapp_phone_number_id
 
     // Verificar que el contacto existe
-    const existing = await db.get('SELECT id, custom_fields, preferred_whatsapp_phone_number_id FROM contacts WHERE id = ?', [id])
+    const existing = await db.get('SELECT id, custom_fields, preferred_whatsapp_phone_number_id, tags, full_name, email, phone, source FROM contacts WHERE id = ?', [id])
     if (!existing) {
       return res.status(404).json({
         success: false,
         error: 'Contacto no encontrado'
       })
     }
+
+    // Etiquetas: el frontend manda IDs del catálogo; se aceptan también
+    // nombres (configs viejas) y se resuelven/crean en el catálogo.
+    const normalizedTags = Array.isArray(tags)
+      ? await resolveTagIds(tags, { createMissing: true })
+      : undefined
 
     const hasCustomFieldsUpdate = customFields !== undefined
     if (hasCustomFieldsUpdate && !Array.isArray(customFields)) {
@@ -2109,26 +2136,29 @@ export const updateContact = async (req, res) => {
       })
     }
 
-    // Actualizar en HighLevel (el id del contacto ES el id de HighLevel)
+    // Actualizar en HighLevel usando el ID ligado en ghl_contact_id
+    // (los contactos solo-locales sin vínculo no se mandan a GHL)
     let mergedCustomFields = null
     try {
-      const ghlClient = await getGHLClient()
+      const ghlContactId = await getGhlContactIdForLocalContact(id)
+      const ghlClient = ghlContactId ? await getGHLClient() : null
       const ghlUpdateData = {}
 
       if (full_name) ghlUpdateData.name = full_name
       if (email) ghlUpdateData.email = email
       if (phone) ghlUpdateData.phone = phoneUpsert?.phone || normalizedPhone
       if (source) ghlUpdateData.source = source
-      if (tags !== undefined) ghlUpdateData.tags = tags
+      // A HighLevel se le mandan los nombres legibles, no los IDs internos
+      if (normalizedTags !== undefined) ghlUpdateData.tags = await tagNamesForIds(normalizedTags)
       if (shouldSyncHighLevelCustomFields) ghlUpdateData.customFields = highLevelCustomFields
       if (dnd !== undefined) {
         ghlUpdateData.dnd = dnd
         if (dndSettings) ghlUpdateData.dndSettings = dndSettings
       }
 
-      if (Object.keys(ghlUpdateData).length > 0) {
-        await ghlClient.updateContact(id, ghlUpdateData)
-        logger.info(`Contacto actualizado en HighLevel: ${id}`)
+      if (ghlContactId && ghlClient && Object.keys(ghlUpdateData).length > 0) {
+        await ghlClient.updateContact(ghlContactId, ghlUpdateData)
+        logger.info(`Contacto actualizado en HighLevel: ${id} (GHL ${ghlContactId})`)
       }
     } catch (error) {
       if (shouldSyncHighLevelCustomFields) {
@@ -2150,6 +2180,28 @@ export const updateContact = async (req, res) => {
       )
       updates.push(`custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'}`)
       params.push(serializeContactCustomFieldsForDb(mergedCustomFields))
+    }
+
+    // Etiquetas locales: persistir IDs y detectar añadidas/eliminadas
+    let tagEvents = []
+    if (normalizedTags !== undefined) {
+      const previousTags = parseContactTags(existing.tags)
+      const prevSet = new Set(previousTags)
+      const nextSet = new Set(normalizedTags)
+      const changedIds = [
+        ...normalizedTags.filter(t => !prevSet.has(t)).map(tagId => ({ tagId, tagAction: 'added' })),
+        ...previousTags.filter(t => !nextSet.has(t)).map(tagId => ({ tagId, tagAction: 'removed' }))
+      ]
+      if (changedIds.length > 0) {
+        const allTags = await listContactTags()
+        const nameById = new Map(allTags.map(tag => [tag.id, tag.name]))
+        tagEvents = changedIds.map(event => ({
+          ...event,
+          tag: nameById.get(event.tagId) || event.tagId
+        }))
+      }
+      updates.push('tags = ?')
+      params.push(JSON.stringify(normalizedTags))
     }
 
     // Actualizar en la base de datos local
@@ -2187,6 +2239,24 @@ export const updateContact = async (req, res) => {
       }
     }
 
+    // Motor de automatizaciones: campo cambiado y etiquetas
+    {
+      const changedFields = []
+      if (full_name !== undefined && full_name !== existing.full_name) changedFields.push('name')
+      if (email !== undefined && email !== existing.email) changedFields.push('email')
+      if (phone !== undefined && phone !== existing.phone) changedFields.push('phone')
+      if (source !== undefined && source !== existing.source) changedFields.push('source')
+      if (Array.isArray(customFields)) customFields.forEach(field => { if (field?.key) changedFields.push(field.key) })
+      import('../services/automationEngine.js').then(engine => {
+        if (changedFields.length > 0) {
+          engine.handleAutomationEvent('contact-updated', { contactId: id, changedFields }).catch(() => {})
+        }
+        tagEvents.forEach(event => {
+          engine.handleAutomationEvent('tag-changed', { contactId: id, ...event }).catch(() => {})
+        })
+      }).catch(() => {})
+    }
+
     // Obtener el contacto actualizado
     const updated = await db.get(
       `SELECT * FROM contacts WHERE id = ?`,
@@ -2195,7 +2265,8 @@ export const updateContact = async (req, res) => {
     const updatedData = {
       ...updated,
       preferredWhatsAppPhoneNumberId: updated.preferred_whatsapp_phone_number_id || '',
-      customFields: parseContactCustomFields(updated.custom_fields)
+      customFields: parseContactCustomFields(updated.custom_fields),
+      tags: parseContactTags(updated.tags)
     }
 
     logger.info(`Contacto actualizado: ${id}`)
@@ -2215,6 +2286,79 @@ export const updateContact = async (req, res) => {
 }
 
 /**
+ * Aplica etiquetas en bloque a varios contactos (selección múltiple en la
+ * tabla de contactos). Body: { contactIds, addTagIds?, removeTagIds? }
+ */
+export const bulkUpdateContactTags = async (req, res) => {
+  try {
+    const contactIds = Array.isArray(req.body?.contactIds)
+      ? req.body.contactIds.map((value) => String(value || '').trim()).filter(Boolean)
+      : []
+    if (contactIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'Selecciona al menos un contacto' })
+    }
+    if (contactIds.length > 1000) {
+      return res.status(400).json({ success: false, error: 'Máximo 1000 contactos por operación' })
+    }
+
+    const addTagIds = await resolveTagIds(req.body?.addTagIds || [], { createMissing: true })
+    const removeTagIds = await resolveTagIds(req.body?.removeTagIds || [])
+    if (addTagIds.length === 0 && removeTagIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'Selecciona al menos una etiqueta' })
+    }
+
+    const allTags = await listContactTags()
+    const nameById = new Map(allTags.map(tag => [tag.id, tag.name]))
+    const removeSet = new Set(removeTagIds)
+
+    const placeholders = contactIds.map(() => '?').join(', ')
+    const rows = await db.all(
+      `SELECT id, tags FROM contacts WHERE id IN (${placeholders})`,
+      contactIds
+    )
+
+    let updated = 0
+    const tagEvents = []
+    for (const row of rows) {
+      const current = parseContactTags(row.tags)
+      const next = [...new Set([
+        ...current.filter((tagId) => !removeSet.has(tagId)),
+        ...addTagIds
+      ])]
+
+      const currentSet = new Set(current)
+      const nextSet = new Set(next)
+      const added = next.filter((tagId) => !currentSet.has(tagId))
+      const removed = current.filter((tagId) => !nextSet.has(tagId))
+      if (added.length === 0 && removed.length === 0) continue
+
+      await db.run('UPDATE contacts SET tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [
+        JSON.stringify(next),
+        row.id
+      ])
+      updated += 1
+      added.forEach((tagId) => tagEvents.push({ contactId: row.id, tagId, tag: nameById.get(tagId) || tagId, tagAction: 'added' }))
+      removed.forEach((tagId) => tagEvents.push({ contactId: row.id, tagId, tag: nameById.get(tagId) || tagId, tagAction: 'removed' }))
+    }
+
+    // Los cambios de etiqueta pueden disparar automatizaciones
+    if (tagEvents.length > 0) {
+      import('../services/automationEngine.js').then(engine => {
+        tagEvents.forEach(event => {
+          engine.handleAutomationEvent('tag-changed', event).catch(() => {})
+        })
+      }).catch(() => {})
+    }
+
+    logger.info(`Etiquetas en bloque aplicadas: ${updated} contactos actualizados`)
+    res.json({ success: true, data: { updated, total: contactIds.length } })
+  } catch (error) {
+    logger.error(`Error aplicando etiquetas en bloque: ${error.message}`)
+    res.status(500).json({ success: false, error: 'No se pudieron aplicar las etiquetas' })
+  }
+}
+
+/**
  * Elimina un contacto
  */
 export const deleteContact = async (req, res) => {
@@ -2230,11 +2374,15 @@ export const deleteContact = async (req, res) => {
       })
     }
 
-    // Eliminar en HighLevel (el id del contacto ES el id de HighLevel)
+    // Eliminar en HighLevel usando el ID ligado en ghl_contact_id
+    // (los contactos solo-locales sin vínculo no existen en GHL)
     try {
-      const ghlClient = await getGHLClient()
-      await ghlClient.deleteContact(id)
-      logger.info(`Contacto eliminado de HighLevel: ${id}`)
+      const ghlContactId = await getGhlContactIdForLocalContact(id)
+      if (ghlContactId) {
+        const ghlClient = await getGHLClient()
+        await ghlClient.deleteContact(ghlContactId)
+        logger.info(`Contacto eliminado de HighLevel: ${id} (GHL ${ghlContactId})`)
+      }
     } catch (error) {
       logger.warn(`No se pudo eliminar el contacto de HighLevel: ${error.message}`)
       // Continuar con la eliminación local aunque falle en GHL
@@ -2451,6 +2599,7 @@ export const getContactJourney = async (req, res) => {
         type: 'page_visit',
         date: session.started_at,
         data: {
+          event_name: session.event_name,
           page_url: session.page_url,
           landing_page: session.landing_page,
           referrer_url: session.referrer_url,
@@ -2467,7 +2616,18 @@ export const getContactJourney = async (req, res) => {
           browser: session.browser,
           geo_city: session.geo_city,
           geo_region: session.geo_region,
-          geo_country: session.geo_country
+          geo_country: session.geo_country,
+          tracking_source: session.tracking_source,
+          site_id: session.site_id,
+          site_slug: session.site_slug,
+          site_name: session.site_name,
+          site_type: session.site_type,
+          form_site_id: session.form_site_id,
+          form_site_name: session.form_site_name,
+          public_page_id: session.public_page_id,
+          public_page_title: session.public_page_title,
+          conversion_type: session.conversion_type,
+          submission_id: session.submission_id
         }
       })
     })

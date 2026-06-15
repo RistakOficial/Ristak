@@ -1,5 +1,10 @@
-import React from 'react'
-import { CustomSelect } from '@/components/common'
+import React, { useState } from 'react'
+import { ChevronRight } from 'lucide-react'
+import { cn } from '@/utils/cn'
+import { CustomSelect } from './configPrimitives'
+import { TriggerFiltersEditor } from './TriggerFiltersEditor'
+import type { TriggerFilter } from '../crmFields'
+import styles from '../AutomationEditor.module.css'
 import { CHANNEL_OPTIONS_WITH_ANY } from '../nodeRegistry'
 import { CatalogSelect, ConfigSection, DurationInput, Field, TextInput } from './configPrimitives'
 import { AdvancedConditionBuilder } from './AdvancedConditionBuilder'
@@ -21,12 +26,12 @@ const GOAL_TYPES = [
   { value: 'payment', label: 'Pago' },
   { value: 'appointment', label: 'Cita / agenda' },
   { value: 'form', label: 'Formulario' },
-  { value: 'link', label: 'Link / activación' },
+  { value: 'link', label: 'Clics de disparo' },
   { value: 'conversation', label: 'Conversación' },
   { value: 'contact', label: 'Contacto / CRM' },
   { value: 'ads', label: 'Ads / campañas' },
   { value: 'custom', label: 'Evento personalizado' },
-  { value: 'advanced', label: 'Condición avanzada (grupos Y/O)' }
+  { value: 'advanced', label: 'Condición avanzada por grupos' }
 ]
 
 export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Config) => void }> = ({
@@ -35,17 +40,10 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
 }) => {
   const set = (patch: Config) => onChange({ ...config, ...patch })
   const goalType = str(config.goalType)
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   return (
     <div>
-      <Field label="Nombre del objetivo">
-        <TextInput
-          value={str(config.name)}
-          placeholder="Ej. Compró el plan"
-          onChange={(event) => set({ name: event.target.value })}
-        />
-      </Field>
-
       <Field label="Tipo de objetivo">
         <CustomSelect
           options={GOAL_TYPES}
@@ -77,7 +75,7 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
             <CatalogSelect
               catalog="tags"
               value={str(config.tag)}
-              onChange={(value) => set({ tag: value })}
+              onChange={(value, label) => set({ tag: value, tagName: label })}
               placeholder="Selecciona la etiqueta"
               aria-label="Etiqueta"
             />
@@ -92,7 +90,7 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
               options={[
                 { value: 'received', label: 'Pago recibido' },
                 { value: 'failed', label: 'Pago fallido' },
-                { value: 'refund', label: 'Refund / reembolso' }
+                { value: 'refund', label: 'Reembolso' }
               ]}
               value={str(config.paymentEvent) || 'received'}
               onValueChange={(next) => set({ paymentEvent: next })}
@@ -109,7 +107,7 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
               ]}
               value={str(config.amountOperator) || 'any'}
               onValueChange={(next) => set({ amountOperator: next })}
-              aria-label="Operador de monto"
+              aria-label="Comparación de monto"
             />
           </Field>
           {str(config.amountOperator) !== 'any' && str(config.amountOperator) !== '' && (
@@ -122,27 +120,6 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
               />
             </Field>
           )}
-          <Field label="Producto / servicio (opcional)">
-            <CatalogSelect
-              catalog="products"
-              value={str(config.product)}
-              onChange={(value) => set({ product: value })}
-              placeholder="Cualquier producto"
-              aria-label="Producto"
-            />
-          </Field>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <div style={{ flex: 1 }}>
-              <Field label="Moneda (opcional)">
-                <TextInput value={str(config.currency)} placeholder="MXN" onChange={(event) => set({ currency: event.target.value })} />
-              </Field>
-            </div>
-            <div style={{ flex: 1 }}>
-              <Field label="Proveedor (opcional)">
-                <TextInput value={str(config.provider)} placeholder="Ej. Stripe" onChange={(event) => set({ provider: event.target.value })} />
-              </Field>
-            </div>
-          </div>
         </>
       )}
 
@@ -163,22 +140,6 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
               aria-label="Estado de la cita"
             />
           </Field>
-          <Field label="Calendario (opcional)">
-            <CatalogSelect
-              catalog="calendars"
-              value={str(config.calendar)}
-              onChange={(value, label) => set({ calendar: value, calendarName: label })}
-              placeholder="Cualquier calendario"
-              aria-label="Calendario"
-            />
-          </Field>
-          <Field label="Tipo de cita (opcional)">
-            <TextInput
-              value={str(config.appointmentType)}
-              placeholder="Ej. demo, consulta…"
-              onChange={(event) => set({ appointmentType: event.target.value })}
-            />
-          </Field>
         </>
       )}
 
@@ -193,22 +154,6 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
               aria-label="Formulario"
             />
           </Field>
-          <Field label="Campo del formulario (opcional)">
-            <TextInput
-              value={str(config.formFieldKey)}
-              placeholder="Ej. interés"
-              onChange={(event) => set({ formFieldKey: event.target.value })}
-            />
-          </Field>
-          {str(config.formFieldKey) && (
-            <Field label="El campo debe contener">
-              <TextInput
-                value={str(config.formFieldValue)}
-                placeholder="Valor esperado"
-                onChange={(event) => set({ formFieldValue: event.target.value })}
-              />
-            </Field>
-          )}
         </>
       )}
 
@@ -217,19 +162,21 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
           <Field label="Evento">
             <CustomSelect
               options={[
-                { value: 'clicked', label: 'Hizo clic en enlace' },
-                { value: 'activation', label: 'Hizo clic en enlace de activación' }
+                { value: 'clicked', label: 'Clic de disparo recibido' },
+                { value: 'activation', label: 'Clic de disparo de activación' }
               ]}
               value={str(config.linkEvent) || 'clicked'}
               onValueChange={(next) => set({ linkEvent: next })}
-              aria-label="Evento de link"
+              aria-label="Evento de clic de disparo"
             />
           </Field>
-          <Field label="Link específico (opcional)">
-            <TextInput
+          <Field label="Clic de disparo específico (opcional)">
+            <CatalogSelect
+              catalog="links"
               value={str(config.link)}
-              placeholder="Cualquier enlace"
-              onChange={(event) => set({ link: event.target.value })}
+              onChange={(value, label) => set({ link: value, linkName: label })}
+              placeholder="Cualquier clic de disparo"
+              aria-label="Clic de disparo"
             />
           </Field>
         </>
@@ -289,7 +236,7 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
               <CatalogSelect
                 catalog="contactFields"
                 value={str(config.contactField)}
-                onChange={(value) => set({ contactField: value })}
+                onChange={(value, label) => set({ contactField: value, contactFieldName: label })}
                 placeholder="Selecciona el campo"
                 aria-label="Campo"
               />
@@ -312,20 +259,11 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
             <CustomSelect
               options={[
                 { value: 'fb_click', label: 'Clic en anuncio de Facebook' },
-                { value: 'ctwa', label: 'Click to WhatsApp ads' }
+                { value: 'ctwa', label: 'Mensaje desde anuncio de WhatsApp' }
               ]}
               value={str(config.adsEvent) || 'fb_click'}
               onValueChange={(next) => set({ adsEvent: next })}
               aria-label="Evento de anuncio"
-            />
-          </Field>
-          <Field label="Campaña (opcional)">
-            <CatalogSelect
-              catalog="campaigns"
-              value={str(config.campaign)}
-              onChange={(value) => set({ campaign: value })}
-              placeholder="Cualquier campaña"
-              aria-label="Campaña"
             />
           </Field>
         </>
@@ -359,9 +297,34 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
         </ConfigSection>
       )}
 
+      {/* Lo específico se agrega con filtros congruentes al tipo elegido */}
+      {goalType && goalType !== 'advanced' && (
+        <TriggerFiltersEditor
+          value={config.filters}
+          onChange={(filters: TriggerFilter[]) => set({ filters })}
+          contextKey={`goal-${goalType}`}
+        />
+      )}
+
       {/* -------------------- evaluación y comportamiento -------------------- */}
 
       {goalType && (
+        <>
+          <button
+            type="button"
+            className={styles.advancedToggle}
+            onClick={() => setShowAdvanced((value) => !value)}
+          >
+            <ChevronRight
+              size={12}
+              className={cn(styles.varCategoryChevron, showAdvanced && styles.varCategoryChevronOpen)}
+            />
+            Opciones avanzadas
+          </button>
+        </>
+      )}
+
+      {goalType && showAdvanced && (
         <>
           <ConfigSection title="Cuándo evaluar el objetivo">
             <CustomSelect

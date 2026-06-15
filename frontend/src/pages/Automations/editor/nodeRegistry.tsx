@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
+import { WhatsAppIcon, MessengerIcon, InstagramIcon } from './BrandIcons'
 import {
   Banknote,
   Bot,
@@ -37,10 +38,13 @@ import {
   Zap
 } from 'lucide-react'
 import type { CatalogKind } from '@/services/automationCatalogsService'
+import { contactTagsService } from '@/services/contactTagsService'
 import {
   emptyAdvancedCondition,
   summarizeAdvancedCondition,
-  validateAdvancedCondition
+  validateAdvancedCondition,
+  triggerFiltersSentence,
+  validateTriggerFilters
 } from './crmFields'
 
 // ---------------------------------------------------------------------------
@@ -87,6 +91,7 @@ export type ConfigFieldType =
   | 'datetime'
   | 'time'
   | 'keyValue'
+  | 'customFieldValues'
   | 'percentBranches'
   | 'branches'
   | 'webhookUrl'
@@ -105,12 +110,16 @@ export interface ConfigField {
   options?: ConfigFieldOption[]
   /** Catálogo CRM para selects dinámicos (etiquetas, calendarios…) */
   catalog?: CatalogKind
+  /** Sólo para catálogos de etiquetas: incluye estados internos calculados */
+  includeSystemTags?: boolean
   /** Muestra las variables de contacto disponibles bajo el campo */
   showVariables?: boolean
   /** Texto fijo para campos tipo info */
   text?: string
   /** Visibilidad condicional según la configuración actual */
   showIf?: (config: Record<string, unknown>) => boolean
+  /** Campo no esencial: vive detrás de "Opciones avanzadas" */
+  advanced?: boolean
 }
 
 export interface NodeSummaryData {
@@ -123,7 +132,7 @@ export interface NodeSummaryData {
 }
 
 /** Configuradores con UI propia (más allá del formulario declarativo) */
-export type NodeConfigComponent = 'conditions' | 'wait' | 'goal' | 'whatsapp' | 'message'
+export type NodeConfigComponent = 'conditions' | 'wait' | 'goal' | 'whatsapp' | 'message' | 'scheduler'
 
 // ---------------------------------------------------------------------------
 // Bloques de mensaje tipo ManyChat (varios globos dentro de una cajita)
@@ -137,7 +146,7 @@ export interface MessageButton {
   url?: string
 }
 
-export type MessageBlockType = 'text' | 'delay' | 'image' | 'video' | 'audio' | 'file'
+export type MessageBlockType = 'text' | 'delay' | 'image' | 'video' | 'audio' | 'file' | 'template'
 
 export interface MessageBlock {
   id: string
@@ -156,6 +165,15 @@ export interface MessageBlock {
    *  el selector de medios real. */
   url?: string
   caption?: string
+  /** Audio: enviar como nota de voz de WhatsApp (ogg/opus). Default true */
+  voiceNote?: boolean
+  /** Bloque de plantilla de WhatsApp */
+  templateId?: string
+  templateName?: string
+  /** Valores de las variables {{n}} de la plantilla (aceptan {{contact.x}}) */
+  templateVariables?: Record<string, string>
+  /** Archivo del encabezado (imagen/video/documento) si la plantilla lo pide */
+  headerMediaUrl?: string
 }
 
 export const MEDIA_BLOCK_TYPES: MessageBlockType[] = ['image', 'video', 'audio', 'file']
@@ -250,7 +268,7 @@ export interface NodeDefinition {
   brand?: string
   category: string
   description?: string
-  icon: LucideIcon
+  icon: React.ComponentType<{ size?: number | string; color?: string }>
   accent: NodeAccent
   /** Encabezado con banda de color (lógica, IA, extras) o plano (contenido) */
   tintedHeader?: boolean
@@ -275,6 +293,8 @@ export interface NodeDefinition {
   outputs: (config: Record<string, unknown>) => NodeOutputHandle[]
   /** Sin conector de entrada (comentarios) */
   noInput?: boolean
+  /** Disponible para flujos existentes, pero no aparece al agregar pasos nuevos */
+  hiddenFromPicker?: boolean
   /** Validación específica además de los campos requeridos */
   validate?: (config: Record<string, unknown>) => string[]
   /** Datos que este bloque puede exponer como variables para pasos posteriores */
@@ -349,6 +369,12 @@ export const NODE_CATEGORIES: NodeCategory[] = [
 const SINGLE_OUTPUT: NodeOutputHandle[] = [{ id: 'out', label: 'Siguiente paso' }]
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '')
+const triggerLinkLabel = (value: unknown): string => str(value)
+const tagDisplayName = (config: Record<string, unknown>, key = 'tag'): string => {
+  const savedName = str(config[`${key}Name`]).trim()
+  if (savedName) return savedName
+  return contactTagsService.getDisplayName(str(config[key]))
+}
 const arr = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : [])
 const obj = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -366,6 +392,26 @@ const DURATION_LABELS: Record<string, [string, string]> = {
 export const durationLabel = (amount: number, unit: string): string => {
   const [singular, plural] = DURATION_LABELS[unit] || DURATION_LABELS.hours
   return `${amount} ${amount === 1 ? singular : plural}`
+}
+
+const SCHEDULE_RECURRENCE_LABELS: Record<string, string> = {
+  none: 'Una vez',
+  daily: 'Cada día',
+  weekly: 'Cada semana',
+  monthly: 'Cada mes'
+}
+
+function formatScheduleDatetime(value: string): string {
+  const [date = '', time = ''] = value.split('T')
+  if (!date) return ''
+  const parsed = new Date(`${date}T${time || '00:00'}`)
+  if (Number.isNaN(parsed.getTime())) return value.replace('T', ' a las ')
+  const dateLabel = parsed.toLocaleDateString('es-MX', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  })
+  return `${dateLabel}${time ? ` a las ${time}` : ''}`
 }
 
 const field = (
@@ -415,6 +461,20 @@ const FORM_FIELDS: VariableSchemaField[] = [
   field('Fecha de envío', 'fecha_de_envio')
 ]
 
+const TRIGGER_LINK_FIELDS: VariableSchemaField[] = [
+  field('ID del enlace', 'id_enlace'),
+  field('Nombre del enlace', 'nombre_enlace'),
+  field('URL pública', 'url_publica'),
+  field('Destino final', 'destino_final'),
+  field('Fecha del disparo', 'fecha_disparo')
+]
+
+const SCHEDULE_FIELDS: VariableSchemaField[] = [
+  field('Fecha programada', 'fecha_programada'),
+  field('Zona horaria', 'zona_horaria'),
+  field('Recurrencia', 'recurrencia')
+]
+
 const CONTACT_OUTPUT_FIELDS: VariableSchemaField[] = [
   field('ID del contacto', 'id_contacto'),
   field('Nombre', 'nombre'),
@@ -452,9 +512,27 @@ const PAYMENT_FIELDS: VariableSchemaField[] = [
   field('Monto', 'monto', 'number'),
   field('Moneda', 'moneda'),
   field('Estado', 'estado'),
+  field('Producto', 'producto'),
+  field('Proveedor', 'proveedor'),
   field('Método de pago', 'metodo_pago'),
+  field('Recibo / factura', 'recibo'),
+  field('Número de factura', 'numero_factura'),
   field('Fecha', 'fecha')
 ]
+
+const PAYMENT_ACTION_OPTIONS: ConfigFieldOption[] = [
+  { value: 'successful', label: 'Pago exitoso' },
+  { value: 'failed', label: 'Error de pago' },
+  { value: 'refunded', label: 'Reembolso' },
+  { value: 'pending', label: 'Pago pendiente o incompleto' }
+]
+
+const PAYMENT_ACTION_SUMMARIES: Record<string, string> = {
+  successful: 'un pago exitoso',
+  failed: 'un error de pago',
+  refunded: 'un reembolso',
+  pending: 'un pago pendiente o incompleto'
+}
 
 const WHATSAPP_SEND_FIELDS: VariableSchemaField[] = [
   field('ID del mensaje', 'id_mensaje'),
@@ -499,28 +577,36 @@ const TRIGGERS: NodeDefinition[] = [
     icon: Tag,
     accent: 'green',
     addButtonLabel: 'Seleccionar etiqueta',
-    defaultConfig: () => ({ tag: '', operator: 'added' }),
+    defaultConfig: () => ({ tag: '', operator: '' }),
     fields: [
       { key: 'tag', label: 'Etiqueta', type: 'catalogSelect', catalog: 'tags', required: true },
       {
         key: 'operator',
-        label: 'Operador',
+        label: 'Cuando una etiqueta es:',
         type: 'select',
         required: true,
+        showIf: (config) => Boolean(str(config.tag)),
         options: [
           { value: 'added', label: 'Añadida' },
-          { value: 'removed', label: 'Eliminada' },
-          { value: 'contains', label: 'Contiene' }
+          { value: 'removed', label: 'Eliminada' }
         ]
       }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => {
-      const operators: Record<string, string> = { added: 'añadida', removed: 'eliminada', contains: 'contiene' }
-      const tag = str(config.tag)
+      const verbs: Record<string, string> = {
+        added: 'reciba la etiqueta',
+        removed: 'pierda la etiqueta',
+        contains: 'tenga la etiqueta'
+      }
+      const tag = tagDisplayName(config)
       return {
-        text: tag ? `Etiqueta "${tag}" ${operators[str(config.operator)] || 'añadida'}` : undefined,
-        empty: 'Selecciona la etiqueta que dispara el flujo'
+        text: tag && str(config.operator)
+          ? `Cuando un contacto ${verbs[str(config.operator)] || 'reciba la etiqueta'} "${tag}"${triggerFiltersSentence(config.filters)}`
+          : tag
+            ? `Selecciona si la etiqueta "${tag}" fue añadida o eliminada`
+            : undefined,
+        empty: 'Selecciona la etiqueta'
       }
     }
   },
@@ -533,10 +619,9 @@ const TRIGGERS: NodeDefinition[] = [
     icon: ClipboardList,
     accent: 'green',
     addButtonLabel: 'Seleccionar formulario',
-    defaultConfig: () => ({ form: '', formName: '', conditions: '' }),
+    defaultConfig: () => ({ form: '', formName: '' }),
     fields: [
-      { key: 'form', label: 'Formulario', type: 'catalogSelect', catalog: 'forms', required: true },
-      { key: 'conditions', label: 'Condiciones (opcional)', type: 'textarea', placeholder: 'Ej. campo "interés" = demo' }
+      { key: 'form', label: 'Formulario', type: 'catalogSelect', catalog: 'forms', required: true }
     ],
     outputs: () => SINGLE_OUTPUT,
     variableOutput: (config) => ({
@@ -547,14 +632,16 @@ const TRIGGERS: NodeDefinition[] = [
       fields: FORM_FIELDS
     }),
     summary: (config) => ({
-      text: str(config.formName) || str(config.form) ? `Formulario: ${str(config.formName) || str(config.form)}` : undefined,
+      text: str(config.formName) || str(config.form)
+        ? `Cuando alguien envíe el formulario "${str(config.formName) || str(config.form)}"${triggerFiltersSentence(config.filters)}`
+        : undefined,
       empty: 'Selecciona el formulario'
     })
   },
   {
     type: 'trigger-customer-replied',
     kind: 'trigger',
-    label: 'El Cliente Respondió',
+    label: 'Cliente respondió',
     category: 'trigger-events',
     description: 'Se activa cuando el contacto responde un mensaje',
     icon: MessageCircleReply,
@@ -564,11 +651,12 @@ const TRIGGERS: NodeDefinition[] = [
     defaultConfig: () => ({ channel: 'any', keywords: [], match: 'contains' }),
     fields: [
       { key: 'channel', label: 'Canal', type: 'select', required: true, options: CHANNEL_OPTIONS_WITH_ANY },
-      { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter' },
+      { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', advanced: true },
       {
         key: 'match',
         label: 'Coincidencia',
         type: 'select',
+        advanced: true,
         options: [
           { value: 'contains', label: 'Contiene' },
           { value: 'exact', label: 'Coincidencia exacta' },
@@ -586,17 +674,18 @@ const TRIGGERS: NodeDefinition[] = [
     summary: (config) => {
       const keywords = arr<string>(config.keywords)
       const channel = channelLabel(str(config.channel) || 'any')
+      const via = str(config.channel) === 'any' ? '' : ` por ${channel}`
       return {
-        text: keywords.length > 0 ? `${channel} · "${keywords.join('", "')}"` : `Cualquier respuesta · ${channel}`
+        text: `Cuando el contacto responda${via}${keywords.length > 0 ? ` con "${keywords.join('" o "')}"` : ''}${triggerFiltersSentence(config.filters)}`
       }
     }
   },
   {
     type: 'trigger-incoming-webhook',
     kind: 'trigger',
-    label: 'Webhook entrante',
+    label: 'Datos recibidos de otra app',
     category: 'trigger-events',
-    description: 'Se activa al recibir una llamada HTTP externa',
+    description: 'Se activa cuando otra app manda datos a esta URL',
     icon: Rss,
     accent: 'green',
     addButtonLabel: 'Configurar webhook',
@@ -636,8 +725,8 @@ const TRIGGERS: NodeDefinition[] = [
     summary: (config) => ({
       text: str(config.endpointId)
         ? hasSampleResponse(config.sampleResponse)
-          ? `Datos recibidos correctamente · ${str(config.method) || 'POST'}`
-          : `Sin datos de prueba · ${str(config.method) || 'POST'}`
+          ? `Datos recibidos correctamente · ${str(config.method) || 'POST'}${triggerFiltersSentence(config.filters)}`
+          : `Sin datos de prueba · ${str(config.method) || 'POST'}${triggerFiltersSentence(config.filters)}`
         : undefined,
       empty: 'Genera la URL del webhook'
     })
@@ -651,11 +740,11 @@ const TRIGGERS: NodeDefinition[] = [
     icon: CalendarClock,
     accent: 'green',
     addButtonLabel: 'Configurar cita',
-    defaultConfig: () => ({ status: 'confirmed', calendar: '', calendarName: '' }),
+    defaultConfig: () => ({ status: '', calendar: '', calendarName: '' }),
     fields: [
       {
         key: 'status',
-        label: 'Estado',
+        label: 'Cuando la cita esté',
         type: 'select',
         required: true,
         options: [
@@ -667,7 +756,7 @@ const TRIGGERS: NodeDefinition[] = [
           { value: 'no_show', label: 'No asistió' }
         ]
       },
-      { key: 'calendar', label: 'Calendario (opcional)', type: 'catalogSelect', catalog: 'calendars' }
+      { key: 'calendar', label: 'Calendario (opcional)', type: 'catalogSelect', catalog: 'calendars', advanced: true }
     ],
     outputs: () => SINGLE_OUTPUT,
     variableOutput: () => ({
@@ -685,7 +774,13 @@ const TRIGGERS: NodeDefinition[] = [
         no_show: 'No asistió'
       }
       const calendar = str(config.calendarName) || str(config.calendar)
-      return { text: `Cita ${statuses[str(config.status)] || 'Confirmada'}${calendar ? ` · ${calendar}` : ''}` }
+      const status = str(config.status)
+      return {
+        text: status
+          ? `Cuando una cita sea ${(statuses[status] || status).toLowerCase()}${calendar ? ` en "${calendar}"` : ''}${triggerFiltersSentence(config.filters)}`
+          : undefined,
+        empty: 'Selecciona el estado de la cita'
+      }
     }
   },
   {
@@ -697,14 +792,15 @@ const TRIGGERS: NodeDefinition[] = [
     icon: UserCog,
     accent: 'green',
     addButtonLabel: 'Seleccionar campo',
-    defaultConfig: () => ({ field: '', fieldName: '', condition: '' }),
+    defaultConfig: () => ({ field: '', fieldName: '' }),
     fields: [
-      { key: 'field', label: 'Campo modificado', type: 'catalogSelect', catalog: 'contactFields', required: true },
-      { key: 'condition', label: 'Condición (opcional)', type: 'text', placeholder: 'Ej. etapa = cliente' }
+      { key: 'field', label: 'Campo modificado', type: 'catalogSelect', catalog: 'contactFields', required: true }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => ({
-      text: str(config.fieldName) || str(config.field) ? `Cuando cambia "${str(config.fieldName) || str(config.field)}"` : undefined,
+      text: str(config.fieldName) || str(config.field)
+        ? `Cuando cambie el campo "${str(config.fieldName) || str(config.field)}" de un contacto${triggerFiltersSentence(config.filters)}`
+        : undefined,
       empty: 'Selecciona el campo a observar'
     })
   },
@@ -719,87 +815,80 @@ const TRIGGERS: NodeDefinition[] = [
     addButtonLabel: 'Configurar disparador',
     defaultConfig: () => ({ source: '' }),
     fields: [
-      { key: 'source', label: 'Fuente (opcional)', type: 'text', placeholder: 'Cualquier fuente' }
+      { key: 'source', label: 'Fuente (opcional)', type: 'text', placeholder: 'Cualquier fuente', advanced: true }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => ({
-      text: str(config.source) ? `Fuente: ${str(config.source)}` : 'Cualquier contacto nuevo'
+      text: `Cuando se cree un contacto nuevo${str(config.source) ? ` desde "${str(config.source)}"` : ''}${triggerFiltersSentence(config.filters)}`
     })
   },
   {
     type: 'trigger-activation-link',
     kind: 'trigger',
-    label: 'Se ha hecho clic en el enlace de activación',
+    label: 'Clic de disparo',
     category: 'trigger-events',
-    description: 'Se activa cuando el contacto abre tu enlace',
+    description: 'Se activa cuando alguien abre una URL pública de disparo',
     icon: MousePointerClick,
     accent: 'green',
-    addButtonLabel: 'Seleccionar enlace',
-    defaultConfig: () => ({ link: '' }),
+    addButtonLabel: 'Seleccionar clic',
+    defaultConfig: () => ({ link: '', linkName: '' }),
     fields: [
-      { key: 'link', label: 'Enlace o identificador', type: 'text', placeholder: 'Ej. enlace-promo', required: true }
+      { key: 'link', label: 'Clic de disparo', type: 'catalogSelect', catalog: 'links', required: true }
     ],
     outputs: () => SINGLE_OUTPUT,
-    summary: (config) => ({
-      text: str(config.link) ? `Enlace: ${str(config.link)}` : undefined,
-      empty: 'Define el enlace a rastrear'
-    })
+    variableOutput: (config) => {
+      const linkName = triggerLinkLabel(config.linkName)
+      return {
+        baseId: 'enlace_disparo',
+        baseLabel: linkName ? `Clic de disparo - ${linkName}` : 'Clic de disparo',
+        fields: TRIGGER_LINK_FIELDS
+      }
+    },
+    summary: (config) => {
+      const linkName = triggerLinkLabel(config.linkName)
+      const hasSelectedLink = Boolean(linkName || str(config.link))
+      return {
+        text: hasSelectedLink
+          ? `Cuando ocurra el clic de disparo${linkName ? ` "${linkName}"` : ' seleccionado'}${triggerFiltersSentence(config.filters)}`
+          : undefined,
+        empty: 'Selecciona el clic de disparo'
+      }
+    }
   },
   {
     type: 'trigger-scheduler',
     kind: 'trigger',
-    label: 'Scheduler',
+    label: 'Fecha programada',
     category: 'trigger-events',
-    description: 'Se ejecuta en una fecha u horario programado',
+    description: 'Inicia el flujo una vez o de forma recurrente',
     icon: Clock,
     accent: 'green',
-    addButtonLabel: 'Programar horario',
-    defaultConfig: () => ({ datetime: '', recurrence: 'none', timezone: '', weekdays: [] }),
-    fields: [
-      { key: 'datetime', label: 'Fecha y hora', type: 'datetime', required: true },
-      {
-        key: 'recurrence',
-        label: 'Recurrencia',
-        type: 'select',
-        options: [
-          { value: 'none', label: 'Una sola vez' },
-          { value: 'daily', label: 'Cada día' },
-          { value: 'weekly', label: 'Cada semana' },
-          { value: 'monthly', label: 'Cada mes' }
-        ]
-      },
-      {
-        key: 'weekdays',
-        label: 'Días permitidos',
-        type: 'weekdays',
-        showIf: (config) => str(config.recurrence) === 'daily' || str(config.recurrence) === 'weekly'
-      },
-      { key: 'timezone', label: 'Zona horaria (opcional)', type: 'text', placeholder: 'Ej. America/Mexico_City' }
-    ],
+    addButtonLabel: 'Programar fecha',
+    defaultConfig: () => ({ scheduleMode: 'once', datetime: '', recurrence: 'none', weekdays: [] }),
+    configComponent: 'scheduler',
+    fields: [],
     outputs: () => SINGLE_OUTPUT,
     variableOutput: () => ({
-      baseId: 'cita',
-      baseLabel: 'Cita',
-      fields: APPOINTMENT_FIELDS
+      baseId: 'programacion',
+      baseLabel: 'Fecha programada',
+      fields: SCHEDULE_FIELDS
     }),
+    validate: (config) => (str(config.datetime) ? [] : ['Elige la fecha y la hora del disparador programado']),
     summary: (config) => {
-      const recurrences: Record<string, string> = {
-        none: 'Una sola vez',
-        daily: 'Cada día',
-        weekly: 'Cada semana',
-        monthly: 'Cada mes'
-      }
       const datetime = str(config.datetime)
+      const recurrence = str(config.recurrence) || 'none'
       return {
-        text: datetime ? `${recurrences[str(config.recurrence)] || 'Una sola vez'} · ${datetime.replace('T', ' ')}` : undefined,
-        empty: 'Programa la fecha y hora'
+        text: datetime
+          ? `${SCHEDULE_RECURRENCE_LABELS[recurrence] || 'Programado'} · ${formatScheduleDatetime(datetime)}`
+          : undefined,
+        empty: 'Elige cuándo se dispara'
       }
     }
   },
   {
     type: 'trigger-appointment-booked',
     kind: 'trigger',
-    label: 'Cita reservada por el cliente',
+    label: 'Cliente agendó una cita',
     category: 'trigger-appointments',
     description: 'Se activa cuando el contacto agenda una cita',
     icon: CalendarCheck,
@@ -807,9 +896,9 @@ const TRIGGERS: NodeDefinition[] = [
     addButtonLabel: 'Configurar cita',
     defaultConfig: () => ({ calendar: '', calendarName: '', appointmentType: '', assignedUser: '' }),
     fields: [
-      { key: 'calendar', label: 'Calendario (opcional)', type: 'catalogSelect', catalog: 'calendars' },
-      { key: 'appointmentType', label: 'Tipo de cita (opcional)', type: 'text', placeholder: 'Ej. demo, consulta…' },
-      { key: 'assignedUser', label: 'Usuario asignado (opcional)', type: 'catalogSelect', catalog: 'users' }
+      { key: 'calendar', label: 'Calendario (opcional)', type: 'catalogSelect', catalog: 'calendars', advanced: true },
+      { key: 'appointmentType', label: 'Tipo de cita (opcional)', type: 'text', placeholder: 'Ej. demo, consulta…', advanced: true },
+      { key: 'assignedUser', label: 'Usuario asignado (opcional)', type: 'catalogSelect', catalog: 'users', advanced: true }
     ],
     outputs: () => SINGLE_OUTPUT,
     variableOutput: () => ({
@@ -819,59 +908,50 @@ const TRIGGERS: NodeDefinition[] = [
     }),
     summary: (config) => {
       const calendar = str(config.calendarName) || str(config.calendar)
-      return { text: calendar ? `Calendario: ${calendar}` : 'Cualquier calendario' }
+      return {
+        text: `Cuando el cliente agende una cita${calendar ? ` en "${calendar}"` : ''}${triggerFiltersSentence(config.filters)}`
+      }
     }
   },
   {
     type: 'trigger-payment-received',
     kind: 'trigger',
-    label: 'Pago recibido',
+    label: 'Pagos',
     category: 'trigger-events',
-    description: 'Se activa cuando se registra un pago',
+    description: 'Se activa por pagos exitosos, errores, reembolsos o pagos incompletos',
     icon: Receipt,
     accent: 'green',
     addButtonLabel: 'Configurar pago',
-    defaultConfig: () => ({ provider: '', product: '', amountOperator: 'any', amount: '', currency: '', status: '' }),
+    defaultConfig: () => ({ paymentAction: '' }),
     fields: [
-      { key: 'provider', label: 'Proveedor (opcional)', type: 'text', placeholder: 'Ej. Stripe' },
-      { key: 'product', label: 'Producto (opcional)', type: 'catalogSelect', catalog: 'products' },
       {
-        key: 'amountOperator',
-        label: 'Monto',
+        key: 'paymentAction',
+        label: 'Qué pasó con el pago',
         type: 'select',
-        options: [
-          { value: 'any', label: 'Cualquier monto' },
-          { value: 'gt', label: 'Mayor que' },
-          { value: 'lt', label: 'Menor que' },
-          { value: 'eq', label: 'Igual a' }
-        ]
-      },
-      {
-        key: 'amount',
-        label: 'Cantidad',
-        type: 'number',
-        placeholder: '0',
-        showIf: (config) => str(config.amountOperator) !== 'any' && str(config.amountOperator) !== ''
-      },
-      { key: 'currency', label: 'Moneda (opcional)', type: 'text', placeholder: 'MXN' },
-      { key: 'status', label: 'Estado (opcional)', type: 'text', placeholder: 'Ej. pagado' }
+        required: true,
+        options: PAYMENT_ACTION_OPTIONS
+      }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'pago',
+      baseLabel: 'Pago',
+      fields: PAYMENT_FIELDS
+    }),
     summary: (config) => {
-      const operator = str(config.amountOperator)
-      const amount = config.amount === '' || config.amount === undefined ? '' : Number(config.amount)
-      const operatorLabels: Record<string, string> = { gt: 'mayor a', lt: 'menor a', eq: 'igual a' }
-      const parts = [
-        str(config.provider) ? `Pagos de ${str(config.provider)}` : 'Cualquier pago recibido',
-        operator !== 'any' && amount !== '' ? `${operatorLabels[operator] || ''} $${amount}` : ''
-      ].filter(Boolean)
-      return { text: parts.join(' · ') }
+      const action = str(config.paymentAction)
+      return {
+        text: action
+          ? `Cuando ocurra ${PAYMENT_ACTION_SUMMARIES[action] || 'un evento de pago'}${triggerFiltersSentence(config.filters)}`
+          : undefined,
+        empty: 'Elige qué acción del pago inicia la automatización'
+      }
     }
   },
   {
     type: 'trigger-facebook-comment',
     kind: 'trigger',
-    label: 'Facebook - Comentario(s) en una publicación',
+    label: 'Comentario en Facebook',
     brand: 'Facebook',
     category: 'trigger-fbig',
     description: 'Se activa con comentarios en tus publicaciones de Facebook',
@@ -892,11 +972,12 @@ const TRIGGERS: NodeDefinition[] = [
     }),
     fields: [
       { key: 'post', label: 'Publicación', type: 'text', placeholder: 'URL o ID de la publicación', required: true },
-      { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter' },
+      { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', advanced: true },
       {
         key: 'match',
         label: 'Regla de coincidencia',
         type: 'select',
+        showIf: (config) => Boolean(str(config.post)),
         options: [
           { value: 'contains', label: 'Contiene' },
           { value: 'exact', label: 'Coincidencia exacta' }
@@ -906,41 +987,42 @@ const TRIGGERS: NodeDefinition[] = [
         key: 'allowedComments',
         label: 'Comentarios permitidos',
         type: 'select',
+        showIf: (config) => Boolean(str(config.post)),
         options: [
           { value: 'all', label: 'Todos los comentarios' },
           { value: 'first_only', label: 'Solo el primer comentario de cada persona' }
         ]
       },
-      { key: 'avoidDuplicates', label: 'Evitar respuestas duplicadas', type: 'toggle' },
-      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle' },
+      { key: 'avoidDuplicates', label: 'Evitar respuestas duplicadas', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
+      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
       {
         key: 'publicReply',
         label: 'Respuesta pública',
         type: 'textarea',
         placeholder: '¡Gracias por comentar! Te escribimos por privado…',
         showVariables: true,
-        showIf: (config) => Boolean(config.publicReplyEnabled)
+        showIf: (config) => Boolean(str(config.post)) && Boolean(config.publicReplyEnabled)
       },
-      { key: 'dmReplyEnabled', label: 'Responder por Messenger', type: 'toggle' },
+      { key: 'dmReplyEnabled', label: 'Responder por Messenger', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
       {
         key: 'dmReply',
         label: 'Mensaje por Messenger',
         type: 'textarea',
         placeholder: 'Hola {{nombre}}, vimos tu comentario…',
         showVariables: true,
-        showIf: (config) => Boolean(config.dmReplyEnabled)
+        showIf: (config) => Boolean(str(config.post)) && Boolean(config.dmReplyEnabled)
       }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => ({
-      text: str(config.post) ? `Comentarios en ${str(config.post)}` : undefined,
+      text: str(config.post) ? `Cuando comenten tu publicación de Facebook${triggerFiltersSentence(config.filters)}` : undefined,
       empty: 'Selecciona la publicación'
     })
   },
   {
     type: 'trigger-instagram-comment',
     kind: 'trigger',
-    label: 'Instagram - Comentario(s) en una publicación',
+    label: 'Comentario en Instagram',
     brand: 'Instagram',
     category: 'trigger-fbig',
     description: 'Se activa con comentarios en tus publicaciones o reels',
@@ -960,11 +1042,12 @@ const TRIGGERS: NodeDefinition[] = [
     }),
     fields: [
       { key: 'post', label: 'Publicación o reel', type: 'text', placeholder: 'URL o ID de la publicación', required: true },
-      { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter' },
+      { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', advanced: true },
       {
         key: 'match',
         label: 'Regla de coincidencia',
         type: 'select',
+        showIf: (config) => Boolean(str(config.post)),
         options: [
           { value: 'contains', label: 'Contiene' },
           { value: 'exact', label: 'Coincidencia exacta' }
@@ -974,40 +1057,41 @@ const TRIGGERS: NodeDefinition[] = [
         key: 'allowedComments',
         label: 'Comentarios permitidos',
         type: 'select',
+        showIf: (config) => Boolean(str(config.post)),
         options: [
           { value: 'all', label: 'Todos los comentarios' },
           { value: 'first_only', label: 'Solo el primer comentario de cada persona' }
         ]
       },
-      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle' },
+      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
       {
         key: 'publicReply',
         label: 'Respuesta pública',
         type: 'textarea',
         placeholder: '¡Gracias por comentar!',
         showVariables: true,
-        showIf: (config) => Boolean(config.publicReplyEnabled)
+        showIf: (config) => Boolean(str(config.post)) && Boolean(config.publicReplyEnabled)
       },
-      { key: 'dmReplyEnabled', label: 'Responder por Instagram Direct', type: 'toggle' },
+      { key: 'dmReplyEnabled', label: 'Responder por Instagram Direct', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
       {
         key: 'dmReply',
         label: 'Mensaje por Instagram Direct',
         type: 'textarea',
         placeholder: 'Hola {{nombre}}, vimos tu comentario…',
         showVariables: true,
-        showIf: (config) => Boolean(config.dmReplyEnabled)
+        showIf: (config) => Boolean(str(config.post)) && Boolean(config.dmReplyEnabled)
       }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => ({
-      text: str(config.post) ? `Comentarios en ${str(config.post)}` : undefined,
+      text: str(config.post) ? `Cuando comenten tu publicación de Instagram${triggerFiltersSentence(config.filters)}` : undefined,
       empty: 'Selecciona la publicación'
     })
   },
   {
     type: 'trigger-click-to-whatsapp',
     kind: 'trigger',
-    label: 'Click to WhatsApp ads',
+    label: 'Mensaje desde anuncio de WhatsApp',
     brand: 'WhatsApp',
     category: 'trigger-fbig',
     description: 'Se activa cuando llega un mensaje desde un anuncio de WhatsApp',
@@ -1017,8 +1101,8 @@ const TRIGGERS: NodeDefinition[] = [
     allowedChannels: ['whatsapp'],
     defaultConfig: () => ({ campaign: '', source: '' }),
     fields: [
-      { key: 'campaign', label: 'Campaña o anuncio (opcional)', type: 'catalogSelect', catalog: 'campaigns' },
-      { key: 'source', label: 'Fuente (opcional)', type: 'text', placeholder: 'Ej. ctwa' }
+      { key: 'campaign', label: 'Campaña o anuncio (opcional)', type: 'catalogSelect', catalog: 'campaigns', advanced: true },
+      { key: 'source', label: 'Fuente (opcional)', type: 'text', placeholder: 'Ej. ctwa', advanced: true }
     ],
     outputs: () => SINGLE_OUTPUT,
     variableOutput: () => ({
@@ -1028,25 +1112,23 @@ const TRIGGERS: NodeDefinition[] = [
       fixedTokenRoot: 'respuesta_whatsapp'
     }),
     summary: (config) => ({
-      text: str(config.campaign) && str(config.campaign) !== 'any' ? `Anuncio: ${str(config.campaign)}` : 'Cualquier anuncio de WhatsApp'
+      text: `Cuando llegue un mensaje desde un anuncio de WhatsApp${triggerFiltersSentence(config.filters)}`
     })
   },
   {
     type: 'trigger-refund',
     kind: 'trigger',
-    label: 'Refund',
+    label: 'Reembolso',
     category: 'trigger-events',
     description: 'Se activa cuando se procesa un reembolso',
     icon: RotateCcw,
     accent: 'green',
     addButtonLabel: 'Configurar reembolso',
-    defaultConfig: () => ({ provider: '', product: '', amount: '', currency: '', reason: '' }),
+    hiddenFromPicker: true,
+    defaultConfig: () => ({ product: '', amount: '' }),
     fields: [
-      { key: 'provider', label: 'Proveedor (opcional)', type: 'text', placeholder: 'Ej. Stripe' },
-      { key: 'product', label: 'Producto (opcional)', type: 'catalogSelect', catalog: 'products' },
-      { key: 'amount', label: 'Monto mínimo (opcional)', type: 'number', placeholder: '0' },
-      { key: 'currency', label: 'Moneda (opcional)', type: 'text', placeholder: 'MXN' },
-      { key: 'reason', label: 'Motivo (opcional)', type: 'text', placeholder: 'Cualquier motivo' }
+      { key: 'product', label: 'Producto (opcional)', type: 'catalogSelect', catalog: 'products', advanced: true },
+      { key: 'amount', label: 'Monto mínimo (opcional)', type: 'number', placeholder: '0' }
     ],
     outputs: () => SINGLE_OUTPUT,
     variableOutput: () => ({
@@ -1055,13 +1137,13 @@ const TRIGGERS: NodeDefinition[] = [
       fields: PAYMENT_FIELDS
     }),
     summary: (config) => ({
-      text: str(config.provider) ? `Reembolsos de ${str(config.provider)}` : 'Cualquier reembolso'
+      text: `Cuando se procese un reembolso${triggerFiltersSentence(config.filters)}`
     })
   },
   {
     type: 'trigger-facebook-ad-click',
     kind: 'trigger',
-    label: 'El usuario hace clic en un anuncio de Facebook',
+    label: 'Clic en anuncio de Facebook',
     brand: 'Facebook Ads',
     category: 'trigger-fbig',
     description: 'Se activa cuando el contacto llega desde un anuncio',
@@ -1070,15 +1152,13 @@ const TRIGGERS: NodeDefinition[] = [
     addButtonLabel: 'Configurar anuncio',
     defaultConfig: () => ({ campaign: '', adsetId: '', adId: '' }),
     fields: [
-      { key: 'campaign', label: 'Campaña (opcional)', type: 'catalogSelect', catalog: 'campaigns' },
-      { key: 'adsetId', label: 'Conjunto de anuncios (opcional)', type: 'text', placeholder: 'Cualquier conjunto' },
-      { key: 'adId', label: 'Anuncio (opcional)', type: 'text', placeholder: 'Ej. Facebook Ads #1' }
+      { key: 'campaign', label: 'Campaña (opcional)', type: 'catalogSelect', catalog: 'campaigns', advanced: true },
+      { key: 'adsetId', label: 'Conjunto de anuncios (opcional)', type: 'catalogSelect', catalog: 'adsets', advanced: true },
+      { key: 'adId', label: 'Anuncio (opcional)', type: 'catalogSelect', catalog: 'adIds', advanced: true }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => ({
-      text: str(config.adId) || (str(config.campaign) && str(config.campaign) !== 'any')
-        ? `Anuncio: ${str(config.adId) || str(config.campaign)}`
-        : 'Cualquier anuncio de Facebook'
+      text: `Cuando alguien llegue desde un anuncio de Facebook${str(config.adId) ? ` ("${str(config.adId)}")` : ''}${triggerFiltersSentence(config.filters)}`
     })
   }
 ]
@@ -1091,7 +1171,7 @@ interface ChannelNodeOptions {
   type: string
   label: string
   brand: string
-  icon: LucideIcon
+  icon: React.ComponentType<{ size?: number | string; color?: string }>
   accent: NodeAccent
   description: string
   addButtonLabel: string
@@ -1163,7 +1243,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
     brand: 'WhatsApp',
     category: 'action-content',
     description: 'Envía mensajes de WhatsApp',
-    icon: MessageSquareText,
+    icon: WhatsAppIcon,
     accent: 'teal',
     addButtonLabel: 'Agregar mensaje',
     allowedChannels: ['whatsapp'],
@@ -1175,17 +1255,15 @@ const CHANNEL_NODES: NodeDefinition[] = [
     supportsVariables: true,
     supportsEmoji: true,
     defaultConfig: () => ({
-      sender: 'default',
+      // Por defecto responde por el mismo número donde escribió el contacto
+      sender: 'last-channel',
       senderNumberId: '',
       senderNumberLabel: '',
       messageType: 'text',
       messageBlocks: [],
       extraBranches: [],
       templateId: '',
-      templateName: '',
-      templateLanguage: '',
-      templateVariables: [],
-      saveAs: ''
+      templateName: ''
     }),
     fields: [],
     outputs: (config) => withBranches(SINGLE_OUTPUT, config, { includeMessageButtons: true }),
@@ -1197,7 +1275,9 @@ const CHANNEL_NODES: NodeDefinition[] = [
     validate: (config) => {
       const errors: string[] = []
       if (str(config.messageType) === 'template') {
-        if (!str(config.templateId)) errors.push('Selecciona la plantilla de WhatsApp')
+        const blocks = Array.isArray(config.messageBlocks) ? (config.messageBlocks as MessageBlock[]) : []
+        const hasTemplateBlock = blocks.some((block) => block.type === 'template' && str(block.templateId))
+        if (!str(config.templateId) && !hasTemplateBlock) errors.push('Selecciona al menos una plantilla de WhatsApp')
       } else {
         errors.push(...validateMessageBlocks(config))
       }
@@ -1208,9 +1288,9 @@ const CHANNEL_NODES: NodeDefinition[] = [
     },
     summary: (config) => {
       const senderLabels: Record<string, string> = {
-        'last-channel': 'Último número que usó el contacto',
+        'last-channel': 'Responde donde te escribió',
         default: 'Número principal',
-        specific: str(config.senderNumberLabel) || 'Número seleccionado'
+        specific: str(config.senderNumberLabel) || 'Número elegido'
       }
       const isTemplate = str(config.messageType) === 'template'
       const blocks = asMessageBlocks(config.messageBlocks).filter((block) => block.type === 'text').length
@@ -1224,8 +1304,8 @@ const CHANNEL_NODES: NodeDefinition[] = [
   channelMessageNode({
     type: 'channel-messenger',
     label: 'Messenger',
-    brand: 'Facebook',
-    icon: MessageCircle,
+    brand: 'Messenger',
+    icon: MessengerIcon,
     accent: 'blue',
     description: 'Envía mensajes por Messenger',
     addButtonLabel: 'Agregar mensaje',
@@ -1238,7 +1318,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
     type: 'channel-instagram',
     label: 'Instagram Direct',
     brand: 'Instagram',
-    icon: Instagram,
+    icon: InstagramIcon,
     accent: 'pink',
     description: 'Envía DMs por Instagram',
     addButtonLabel: 'Agregar DM',
@@ -1246,19 +1326,6 @@ const CHANNEL_NODES: NodeDefinition[] = [
     supportsQuickReplies: true,
     senderKey: 'account',
     senderLabel: 'Cuenta de Instagram (opcional)'
-  }),
-  channelMessageNode({
-    type: 'channel-facebook-message',
-    label: 'Enviar mensaje',
-    brand: 'Facebook',
-    icon: Facebook,
-    accent: 'blue',
-    description: 'Envía un mensaje por Facebook (Messenger)',
-    addButtonLabel: 'Agregar mensaje',
-    channel: 'messenger',
-    supportsQuickReplies: true,
-    senderKey: 'page',
-    senderLabel: 'Página remitente (opcional)'
   })
 ]
 
@@ -1286,20 +1353,28 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
       customFields: []
     }),
     fields: [
-      { key: 'firstName', label: 'Nombre', type: 'text', placeholder: '{{nombre}}', showVariables: true },
-      { key: 'lastName', label: 'Apellido', type: 'text', placeholder: '{{apellido}}' },
-      { key: 'phone', label: 'Teléfono', type: 'text', placeholder: '{{telefono}}', required: true },
-      { key: 'email', label: 'Email (dato de contacto, opcional)', type: 'text', placeholder: '{{email}}' },
-      { key: 'source', label: 'Fuente (opcional)', type: 'text', placeholder: 'Ej. automatización' },
+      { key: 'firstName', label: 'Nombre', type: 'text', placeholder: '{{contact.first_name}}', showVariables: true },
+      { key: 'lastName', label: 'Apellido', type: 'text', placeholder: '{{contact.last_name}}', showVariables: true },
+      { key: 'phone', label: 'Teléfono', type: 'text', placeholder: '{{contact.phone}}', required: true, showVariables: true },
+      { key: 'email', label: 'Email (dato de contacto, opcional)', type: 'text', placeholder: '{{contact.email}}', showVariables: true },
+      { key: 'source', label: 'Fuente (opcional)', type: 'text', placeholder: '{{automation.name}}', showVariables: true },
       { key: 'tags', label: 'Etiquetas iniciales', type: 'catalogTags', catalog: 'tags' },
-      { key: 'assignedUser', label: 'Usuario asignado (opcional)', type: 'catalogSelect', catalog: 'users' },
-      { key: 'customFields', label: 'Campos personalizados', type: 'keyValue' }
+      { key: 'assignedUser', label: 'Usuario asignado (opcional)', type: 'catalogSelect', catalog: 'users', advanced: true },
+      { key: 'customFields', label: 'Campos personalizados', type: 'customFieldValues' }
     ],
     outputs: () => SINGLE_OUTPUT,
+    validate: (config) => arr<Record<string, unknown>>(config.customFields).flatMap((row, index) => {
+      const fieldKey = str(row.key)
+      const value = str(row.value)
+      if (!fieldKey && !value) return []
+      if (!fieldKey) return [`Campo personalizado ${index + 1}: elige el campo`]
+      if (!value) return [`Campo personalizado ${index + 1}: captura el valor`]
+      return []
+    }),
     variableOutput: () => ({
-      baseId: 'contacto_actualizado',
+      baseId: 'contacto',
       baseLabel: 'Contacto creado',
-      fields: CONTACT_UPDATED_FIELDS
+      fields: CONTACT_OUTPUT_FIELDS
     }),
     summary: (config) => {
       const parts = [str(config.firstName), str(config.phone)].filter(Boolean)
@@ -1317,7 +1392,7 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
     icon: UserSearch,
     accent: 'blue',
     addButtonLabel: 'Configurar búsqueda',
-    defaultConfig: () => ({ searchBy: 'phone', customKey: '', notFound: 'continue' }),
+    defaultConfig: () => ({ searchBy: '', lookupValue: '', notFound: 'continue' }),
     fields: [
       {
         key: 'searchBy',
@@ -1327,21 +1402,23 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
         options: [
           { value: 'phone', label: 'Teléfono' },
           { value: 'email', label: 'Email (dato de contacto)' },
-          { value: 'id', label: 'ID del contacto' },
-          { value: 'custom', label: 'Campo personalizado' }
+          { value: 'id', label: 'ID del contacto' }
         ]
       },
       {
-        key: 'customKey',
-        label: 'Campo personalizado',
-        type: 'catalogSelect',
-        catalog: 'contactFields',
-        showIf: (config) => str(config.searchBy) === 'custom'
+        key: 'lookupValue',
+        label: 'Valor a buscar',
+        type: 'text',
+        placeholder: '{{contact.phone}}',
+        required: true,
+        showVariables: true,
+        showIf: (config) => Boolean(str(config.searchBy))
       },
       {
         key: 'notFound',
         label: 'Si no existe el contacto',
         type: 'select',
+        showIf: (config) => Boolean(str(config.searchBy)) && Boolean(str(config.lookupValue)),
         options: [
           { value: 'continue', label: 'Continuar normalmente' },
           { value: 'create', label: 'Crear el contacto' },
@@ -1363,17 +1440,21 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
       fields: CONTACT_OUTPUT_FIELDS
     }),
     validate: (config) =>
-      str(config.searchBy) === 'custom' && !str(config.customKey)
-        ? ['Selecciona el campo personalizado de búsqueda']
+      str(config.searchBy) && !str(config.lookupValue).trim()
+        ? ['Indica de dónde sale el dato para buscar el contacto']
         : [],
     summary: (config) => {
       const labels: Record<string, string> = {
         phone: 'teléfono',
         email: 'email',
-        id: 'ID',
-        custom: 'campo personalizado'
+        id: 'ID'
       }
-      return { text: `Busca el contacto por ${labels[str(config.searchBy)] || 'teléfono'}` }
+      const searchBy = str(config.searchBy)
+      const value = str(config.lookupValue)
+      return {
+        text: searchBy ? `Busca por ${labels[searchBy] || 'teléfono'}${value ? `: ${value}` : ''}` : undefined,
+        empty: 'Elige cómo encontrar el contacto'
+      }
     }
   },
   {
@@ -1384,13 +1465,15 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
     icon: PencilLine,
     accent: 'blue',
     addButtonLabel: 'Seleccionar campo',
-    defaultConfig: () => ({ field: '', fieldName: '', operation: 'replace', value: '' }),
+    defaultConfig: () => ({ field: '', fieldName: '', operation: '', value: '' }),
     fields: [
       { key: 'field', label: 'Campo', type: 'catalogSelect', catalog: 'contactFields', required: true },
       {
         key: 'operation',
-        label: 'Operación',
+        label: 'Qué hacer con ese campo',
         type: 'select',
+        required: true,
+        showIf: (config) => Boolean(str(config.field)),
         options: [
           { value: 'replace', label: 'Reemplazar valor' },
           { value: 'append', label: 'Agregar al valor actual' },
@@ -1404,7 +1487,7 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
         type: 'text',
         placeholder: 'Nuevo valor…',
         showVariables: true,
-        showIf: (config) => str(config.operation) !== 'clear'
+        showIf: (config) => Boolean(str(config.field)) && Boolean(str(config.operation)) && str(config.operation) !== 'clear'
       }
     ],
     outputs: () => SINGLE_OUTPUT,
@@ -1434,22 +1517,65 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
     }
   },
   {
+    type: 'action-contact-tag',
+    kind: 'action',
+    label: 'Añadir / eliminar etiqueta',
+    category: 'action-contacts',
+    icon: Tags,
+    accent: 'blue',
+    addButtonLabel: 'Configurar etiqueta',
+    defaultConfig: () => ({ tagAction: '', tag: '' }),
+    fields: [
+      {
+        key: 'tagAction',
+        label: 'Qué quieres hacer',
+        type: 'select',
+        required: true,
+        options: [
+          { value: 'add', label: 'Añadir etiqueta' },
+          { value: 'remove', label: 'Eliminar etiqueta' }
+        ]
+      },
+      {
+        key: 'tag',
+        label: 'Etiqueta',
+        type: 'catalogSelect',
+        catalog: 'tags',
+        required: true,
+        showIf: (config) => Boolean(str(config.tagAction))
+      }
+    ],
+    outputs: () => SINGLE_OUTPUT,
+    summary: (config) => {
+      const name = tagDisplayName(config)
+      const action = str(config.tagAction) === 'remove' ? 'Eliminar' : 'Añadir'
+      return {
+        text: name && str(config.tagAction) ? `${action} etiqueta: ${name}` : undefined,
+        empty: 'Elige si vas a añadir o eliminar una etiqueta'
+      }
+    }
+  },
+  {
     type: 'action-add-contact-tag',
     kind: 'action',
     label: 'Añadir etiqueta de contacto',
     category: 'action-contacts',
     icon: Tags,
     accent: 'blue',
+    hiddenFromPicker: true,
     addButtonLabel: 'Seleccionar etiqueta',
     defaultConfig: () => ({ tag: '' }),
     fields: [
       { key: 'tag', label: 'Etiqueta', type: 'catalogSelect', catalog: 'tags', required: true }
     ],
     outputs: () => SINGLE_OUTPUT,
-    summary: (config) => ({
-      text: str(config.tag) ? `Añade "${str(config.tag)}"` : undefined,
-      empty: 'Selecciona la etiqueta'
-    })
+    summary: (config) => {
+      const name = tagDisplayName(config)
+      return {
+        text: name ? `Añadir la etiqueta "${name}" al contacto` : undefined,
+        empty: 'Selecciona la etiqueta'
+      }
+    }
   },
   {
     type: 'action-remove-contact-tag',
@@ -1458,16 +1584,59 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
     category: 'action-contacts',
     icon: Tags,
     accent: 'blue',
+    hiddenFromPicker: true,
     addButtonLabel: 'Seleccionar etiqueta',
     defaultConfig: () => ({ tag: '' }),
     fields: [
       { key: 'tag', label: 'Etiqueta', type: 'catalogSelect', catalog: 'tags', required: true }
     ],
     outputs: () => SINGLE_OUTPUT,
-    summary: (config) => ({
-      text: str(config.tag) ? `Elimina "${str(config.tag)}"` : undefined,
-      empty: 'Selecciona la etiqueta'
-    })
+    summary: (config) => {
+      const name = tagDisplayName(config)
+      return {
+        text: name ? `Quitar la etiqueta "${name}" del contacto` : undefined,
+        empty: 'Selecciona la etiqueta'
+      }
+    }
+  },
+  {
+    type: 'action-contact-user',
+    kind: 'action',
+    label: 'Añadir / eliminar usuario asignado',
+    category: 'action-contacts',
+    icon: UserCheck,
+    accent: 'blue',
+    addButtonLabel: 'Configurar usuario',
+    defaultConfig: () => ({ userAction: '', user: '' }),
+    fields: [
+      {
+        key: 'userAction',
+        label: 'Qué quieres hacer',
+        type: 'select',
+        required: true,
+        options: [
+          { value: 'assign', label: 'Añadir usuario asignado' },
+          { value: 'unassign', label: 'Eliminar usuario asignado' }
+        ]
+      },
+      {
+        key: 'user',
+        label: 'Usuario',
+        type: 'catalogSelect',
+        catalog: 'users',
+        required: true,
+        showIf: (config) => str(config.userAction) === 'assign'
+      }
+    ],
+    outputs: () => SINGLE_OUTPUT,
+    summary: (config) => {
+      if (str(config.userAction) === 'unassign') return { text: 'Eliminar usuario asignado del contacto' }
+      const user = str(config.userName) || str(config.user)
+      return {
+        text: user && str(config.userAction) ? `Asignar a ${user}` : undefined,
+        empty: 'Elige si vas a añadir o eliminar un usuario'
+      }
+    }
   },
   {
     type: 'action-assign-user',
@@ -1476,6 +1645,7 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
     category: 'action-contacts',
     icon: UserCheck,
     accent: 'blue',
+    hiddenFromPicker: true,
     addButtonLabel: 'Seleccionar usuario',
     defaultConfig: () => ({ strategy: 'specific', user: '' }),
     fields: [
@@ -1516,6 +1686,7 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
     category: 'action-contacts',
     icon: UserMinus,
     accent: 'blue',
+    hiddenFromPicker: true,
     addButtonLabel: 'Configurar acción',
     defaultConfig: () => ({ leaveUnowned: true }),
     fields: [
@@ -1602,16 +1773,17 @@ const OTHER_ACTIONS: NodeDefinition[] = [
           { value: 'DELETE', label: 'DELETE' }
         ]
       },
-      { key: 'headers', label: 'Headers', type: 'keyValue' },
+      { key: 'headers', label: 'Headers', type: 'keyValue', advanced: true },
       { key: 'body', label: 'Body (JSON)', type: 'textarea', placeholder: '{\n  "telefono": "{{telefono}}"\n}', showVariables: true },
       {
         key: 'sampleResponseJson',
         label: 'Muestra de respuesta (opcional)',
         type: 'textarea',
         placeholder: '{\n  "status": "success",\n  "lead_id": "abc123"\n}',
-        help: 'Pega una respuesta real para que sus campos aparezcan como variables.'
+        help: 'Pega una respuesta real para que sus campos aparezcan como variables.',
+        advanced: true
       },
-      { key: 'timeout', label: 'Timeout (segundos)', type: 'number', placeholder: '15' },
+      { key: 'timeout', label: 'Timeout (segundos)', type: 'number', placeholder: '15', advanced: true },
       {
         key: 'onError',
         label: 'Si el webhook falla',
@@ -1639,7 +1811,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     kind: 'action',
     label: 'Condición',
     category: 'action-logic',
-    description: 'Divide el flujo con grupos de reglas del CRM (Y/O combinables)',
+    description: 'Divide el flujo con grupos de reglas del CRM',
     icon: Filter,
     accent: 'purple',
     tintedHeader: true,
@@ -1703,11 +1875,14 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       offsetUnit: 'hours',
       // respuesta
       replyChannel: 'any',
+      replySourceNodeId: '',
+      replySourceName: '',
       keywords: [],
       match: 'contains',
       // acción
       expectedAction: 'click_link',
       actionResource: '',
+      actionResourceName: '',
       actionChannel: 'any',
       // condiciones
       conditions: emptyAdvancedCondition(),
@@ -1780,6 +1955,12 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       if (mode === 'action' && !str(config.expectedAction)) {
         errors.push('Selecciona la acción esperada')
       }
+      if (mode === 'action' && (str(config.expectedAction) || 'click_link') === 'click_link' && !str(config.actionResource)) {
+        errors.push('Selecciona el clic de disparo')
+      }
+      if (mode === 'action' && str(config.expectedAction) === 'reply_message' && !str(config.actionResource)) {
+        errors.push('Selecciona el mensaje enviado que debe responder el contacto')
+      }
       if (mode === 'conditions') {
         errors.push(...validateAdvancedCondition(config.conditions).map((error) => `Condición: ${error}`))
       }
@@ -1805,35 +1986,50 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         ? ` hasta ${durationLabel(Number(config.timeoutAmount) || 0, str(config.timeoutUnit) || 'days')}`
         : ''
       if (mode === 'duration') {
-        return { text: `Espera ${durationLabel(Number(config.amount) || 0, str(config.unit) || 'hours')} y luego continúa` }
+        return { text: `Esperar ${durationLabel(Number(config.amount) || 0, str(config.unit) || 'hours')}` }
       }
       if (mode === 'datetime') {
         const until = str(config.untilDate)
-        return { text: until ? `Espera hasta ${until.replace('T', ' ')}` : undefined, empty: 'Configura la espera' }
+        return { text: until ? `Esperar hasta el ${until.replace('T', ' a las ')}` : undefined, empty: 'Configura la espera' }
       }
       if (mode === 'appointment') {
         const offsets: Record<string, string> = { before: 'antes de', after: 'después de', at: 'al inicio de' }
         const offset = str(config.appointmentOffset) || 'before'
         const amount = offset === 'at' ? '' : `${durationLabel(Number(config.offsetAmount) || 0, str(config.offsetUnit) || 'hours')} `
-        return { text: `Espera hasta ${amount}${offsets[offset]} la cita` }
+        return { text: `Esperar hasta ${amount}${offsets[offset]} la cita` }
       }
       if (mode === 'reply') {
-        return { text: `Espera respuesta · ${channelLabel(str(config.replyChannel) || 'any')}${timeoutText}` }
+        const channel = str(config.replyChannel) === 'any' ? '' : ` por ${channelLabel(str(config.replyChannel))}`
+        const sourceName = triggerLinkLabel(config.replySourceName)
+        return {
+          text: sourceName
+            ? `Esperar respuesta a "${sourceName}"${channel}${timeoutText}`
+            : `Esperar la respuesta del contacto${channel}${timeoutText}`
+        }
       }
       if (mode === 'action') {
         const actions: Record<string, string> = {
-          click_link: 'haga clic en un enlace',
+          click_link: 'reciba un clic de disparo',
           submit_form: 'envíe un formulario',
           purchase: 'realice un pago',
           book_appointment: 'agende una cita',
           reply_message: 'responda un mensaje',
           custom_event: 'dispare un evento personalizado'
         }
-        return { text: `Espera a que ${actions[str(config.expectedAction)] || 'realice una acción'}${timeoutText}` }
+        const expectedAction = str(config.expectedAction)
+        const actionResourceName = triggerLinkLabel(config.actionResourceName)
+        const hasActionResource = Boolean(actionResourceName || str(config.actionResource))
+        const actionText =
+          expectedAction === 'click_link'
+            ? `reciba ${actionResourceName ? `el clic de disparo "${actionResourceName}"` : hasActionResource ? 'el clic de disparo seleccionado' : 'un clic de disparo'}`
+            : expectedAction === 'reply_message'
+              ? `responda ${actionResourceName ? `el mensaje "${actionResourceName}"` : hasActionResource ? 'el mensaje seleccionado' : 'un mensaje enviado'}`
+              : actions[expectedAction] || 'realice una acción'
+        return { text: `Esperar a que ${actionText}${timeoutText}` }
       }
       if (mode === 'conditions') {
         const summary = summarizeAdvancedCondition(config.conditions)
-        return { text: `Espera hasta que ${summary || 'se cumpla una condición'}${timeoutText}` }
+        return { text: `Esperar hasta que ${summary || 'se cumpla una condición'}${timeoutText}` }
       }
       return { empty: 'Selecciona el tipo de espera' }
     }
@@ -1876,6 +2072,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       // link
       linkEvent: 'clicked',
       link: '',
+      linkName: '',
       // conversación
       conversationEvent: 'replied',
       conversationChannel: 'any',
@@ -1914,7 +2111,6 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     },
     validate: (config) => {
       const errors: string[] = []
-      if (!str(config.name).trim()) errors.push('Ponle nombre al objetivo')
       const goalType = str(config.goalType)
       if (!goalType) {
         errors.push('Selecciona el tipo de objetivo')
@@ -1959,7 +2155,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
             lost: 'Pierde etiqueta',
             not_has: 'No tiene etiqueta'
           }
-          return `${operators[str(config.tagOperator)] || 'Tiene etiqueta'} ${str(config.tag)}`
+          return `${operators[str(config.tagOperator)] || 'Tiene etiqueta'} ${tagDisplayName(config)}`
         },
         payment: () => (str(config.paymentEvent) === 'refund' ? 'Reembolso procesado' : str(config.paymentEvent) === 'failed' ? 'Pago fallido' : 'Pago recibido'),
         appointment: () => {
@@ -1975,10 +2171,14 @@ const OTHER_ACTIONS: NodeDefinition[] = [
           return `${statuses[str(config.appointmentStatus)] || 'Cita agendada'}${calendar ? ` en ${calendar}` : ''}`
         },
         form: () => `Formulario ${str(config.formName) || str(config.form) || ''} enviado`,
-        link: () => (str(config.linkEvent) === 'activation' ? 'Clic en enlace de activación' : 'Hizo clic en enlace'),
+        link: () => {
+          const linkName = triggerLinkLabel(config.linkName)
+          if (linkName) return `Clic de disparo "${linkName}"`
+          return str(config.link) ? 'Clic de disparo seleccionado' : 'Clic de disparo'
+        },
         conversation: () => `Respondió por ${channelLabel(str(config.conversationChannel) || 'any')}`,
         contact: () => 'Cambio en el contacto',
-        ads: () => (str(config.adsEvent) === 'ctwa' ? 'Click to WhatsApp ads' : 'Clic en anuncio de Facebook'),
+        ads: () => (str(config.adsEvent) === 'ctwa' ? 'Mensaje desde anuncio de WhatsApp' : 'Clic en anuncio de Facebook'),
         custom: () => `Evento "${str(config.customEventName)}"`,
         advanced: () => summarizeAdvancedCondition(config.advancedCondition) || 'Condición avanzada'
       }
@@ -2050,6 +2250,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     description: 'Permite que la IA gestione las conversaciones por ti',
     icon: Sparkles,
     accent: 'dark',
+    hiddenFromPicker: true,
     tintedHeader: true,
     addButtonLabel: 'Configurar IA',
     allowedChannels: [...ALLOWED_CHANNELS, 'any'],
@@ -2075,13 +2276,14 @@ const OTHER_ACTIONS: NodeDefinition[] = [
           { value: 'classify', label: 'Clasificar la intención' }
         ]
       },
-      { key: 'saveAs', label: 'Guardar respuesta en variable', type: 'text', placeholder: 'respuesta_ia' },
+      { key: 'saveAs', label: 'Guardar respuesta en variable', type: 'text', placeholder: 'respuesta_ia', advanced: true },
       {
         key: 'sampleResponseJson',
         label: 'Muestra JSON de respuesta (opcional)',
         type: 'textarea',
         placeholder: '{\n  "intencion": "reagendar",\n  "sentimiento": "neutral"\n}',
-        help: 'Si la IA devuelve JSON, pega una muestra para mapear subcampos.'
+        help: 'Si la IA devuelve JSON, pega una muestra para mapear subcampos.',
+        advanced: true
       }
     ],
     outputs: () => SINGLE_OUTPUT,
@@ -2113,7 +2315,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       sampleResponseJson: ''
     }),
     fields: [
-      { key: 'model', label: 'Modelo', type: 'text', placeholder: 'gpt-4o-mini' },
+      { key: 'model', label: 'Modelo', type: 'text', placeholder: 'gpt-4o-mini', advanced: true },
       { key: 'systemPrompt', label: 'Prompt del sistema', type: 'textarea', placeholder: 'Eres un asistente que…', required: true },
       { key: 'userPrompt', label: 'Prompt del usuario', type: 'textarea', placeholder: 'Genera una respuesta para…', showVariables: true },
       { key: 'channel', label: 'Canal permitido', type: 'select', options: CHANNEL_OPTIONS_WITH_ANY },
@@ -2127,13 +2329,14 @@ const OTHER_ACTIONS: NodeDefinition[] = [
           { value: 'classify', label: 'Clasificar la intención' }
         ]
       },
-      { key: 'saveAs', label: 'Guardar respuesta en variable', type: 'text', placeholder: 'respuesta_ia' },
+      { key: 'saveAs', label: 'Guardar respuesta en variable', type: 'text', placeholder: 'respuesta_ia', advanced: true },
       {
         key: 'sampleResponseJson',
         label: 'Muestra JSON de respuesta (opcional)',
         type: 'textarea',
         placeholder: '{\n  "intencion": "reagendar",\n  "datos": { "fecha_sugerida": "2026-06-20" }\n}',
-        help: 'Si el modelo devuelve JSON, pega una muestra para mapear subcampos.'
+        help: 'Si el modelo devuelve JSON, pega una muestra para mapear subcampos.',
+        advanced: true
       }
     ],
     outputs: () => SINGLE_OUTPUT,
@@ -2362,17 +2565,28 @@ const OTHER_ACTIONS: NodeDefinition[] = [
   {
     type: 'extra-comment',
     kind: 'action',
-    label: 'Comentario',
+    label: 'Post-it',
     category: 'action-extras',
     description: 'Nota interna visible en el canvas',
     icon: StickyNote,
     accent: 'yellow',
     tintedHeader: true,
-    addButtonLabel: 'Escribir comentario',
+    addButtonLabel: 'Escribir nota',
     noInput: true,
-    defaultConfig: () => ({ text: '' }),
+    defaultConfig: () => ({ text: '', color: 'yellow' }),
     fields: [
-      { key: 'text', label: 'Nota', type: 'textarea', placeholder: 'Escribe una nota para tu equipo…' }
+      { key: 'text', label: 'Nota', type: 'textarea', placeholder: 'Escribe una nota para tu equipo…' },
+      {
+        key: 'color',
+        label: 'Color',
+        type: 'select',
+        options: [
+          { value: 'yellow', label: 'Amarillo' },
+          { value: 'pink', label: 'Rosa' },
+          { value: 'blue', label: 'Azul' },
+          { value: 'green', label: 'Verde' }
+        ]
+      }
     ],
     outputs: () => [],
     summary: (config) => ({
@@ -2421,7 +2635,7 @@ export function getNodeDefinition(type: string): NodeDefinition | undefined {
 }
 
 export function getDefinitionsByKind(kind: NodeKind): NodeDefinition[] {
-  return NODE_DEFINITIONS.filter((definition) => definition.kind === kind)
+  return NODE_DEFINITIONS.filter((definition) => definition.kind === kind && !definition.hiddenFromPicker)
 }
 
 export function getCategoriesForKind(kind: NodeKind): NodeCategory[] {
@@ -2449,6 +2663,11 @@ export function validateNodeConfig(definition: NodeDefinition, config: Record<st
 
   if (definition.validate) {
     errors.push(...definition.validate(config))
+  }
+
+  // Filtros avanzados de los disparadores
+  if (definition.kind === 'trigger') {
+    errors.push(...validateTriggerFilters(obj(config).filters))
   }
 
   // Límite de ramas por nodo (salidas base + botones + ramas extra)

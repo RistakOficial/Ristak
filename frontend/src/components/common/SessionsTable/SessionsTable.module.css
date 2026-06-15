@@ -59,10 +59,6 @@
   color: var(--color-text-secondary);
 }
 
-.table tbody tr:nth-child(even) {
-  background: var(--design-table-row-even, var(--table-row-even));
-}
-
 .table tbody tr:hover {
   background: rgba(var(--color-primary-rgb), 0.08);
 }

@@ -4,6 +4,7 @@ import http2 from 'http2'
 import webPush from 'web-push'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { shouldSuppressChatNotificationForConversationalAgent } from './conversationalAgentService.js'
 
 const ENV_VAPID_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || ''
 const ENV_VAPID_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || process.env.VAPID_PRIVATE_KEY || ''
@@ -277,7 +278,8 @@ function getNotificationData(payload = {}) {
       url: payload.url || '/phone/chat',
       category: payload.category || 'ristak',
       tag: payload.tag || 'ristak',
-      messageId: payload.messageId || ''
+      messageId: payload.messageId || '',
+      contactId: payload.contactId || ''
     }).map(([key, value]) => [key, String(value || '')])
   )
 }
@@ -775,7 +777,7 @@ async function sendMobileNotificationRows(rows = [], payload = {}) {
   return sent
 }
 
-async function sendAppNotificationPayload(payload = {}, { calendarId = '' } = {}) {
+export async function sendAppNotificationPayload(payload = {}, { calendarId = '' } = {}) {
   if (!pushConfigured && !nativePushConfigured) {
     return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'not_configured' }
   }
@@ -841,6 +843,14 @@ export async function sendChatMessageNotification(message = {}) {
   const enabled = await getBooleanPushConfig('chat_push_notifications_enabled', true)
   if (!enabled) return { sent: 0, skipped: true, reason: 'disabled' }
 
+  const suppressByAgent = await shouldSuppressChatNotificationForConversationalAgent(message.contactId).catch((error) => {
+    logger.warn(`[Push] No se pudo revisar silencio del agente conversacional: ${error.message}`)
+    return false
+  })
+  if (suppressByAgent) {
+    return { sent: 0, skipped: true, reason: 'conversational_agent_attending' }
+  }
+
   const senderName = getChatSenderName(message)
   const bodyText = getChatMessageBody(message)
   const messageKey = cleanNotificationText(message.messageId || message.timestamp || `${senderName}-${bodyText}-${Date.now()}`)
@@ -849,7 +859,42 @@ export async function sendChatMessageNotification(message = {}) {
     body: bodyText,
     tag: `chat-${messageKey}`,
     messageId: messageKey,
+    contactId: message.contactId || '',
     url: `/phone/chat?contact=${encodeURIComponent(message.contactId || '')}`,
+    category: 'chat'
+  }
+
+  return sendAppNotificationPayload(payload)
+}
+
+export async function sendConversationalAgentPriorityNotification(signal = {}) {
+  if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
+
+  const enabled = await getBooleanPushConfig('chat_push_notifications_enabled', true)
+  if (!enabled) return { sent: 0, skipped: true, reason: 'disabled' }
+
+  const contactId = String(signal.contactId || '').trim()
+  if (!contactId) return { sent: 0, skipped: true, reason: 'missing_contact' }
+
+  const contact = await db.get(
+    'SELECT full_name, first_name, phone FROM contacts WHERE id = ?',
+    [contactId]
+  ).catch(() => null)
+  const senderName = getChatSenderName({
+    contactName: contact?.full_name || contact?.first_name || '',
+    phone: contact?.phone || ''
+  })
+  const reason = cleanNotificationText(signal.reason || signal.summary)
+  const body = reason
+    ? `${senderName}: ${reason}`
+    : `${senderName}: el agente lo dejó en prioridad para humano.`
+  const payload = {
+    title: 'Pasar a un humano',
+    body,
+    tag: `agent-priority-${contactId}`,
+    messageId: `agent-priority-${contactId}-${Date.now()}`,
+    contactId,
+    url: `/phone/chat?contact=${encodeURIComponent(contactId)}`,
     category: 'chat'
   }
 

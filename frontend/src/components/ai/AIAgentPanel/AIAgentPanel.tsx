@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ArrowUp, CalendarPlus, Check, Copy, CreditCard, Eraser, File as FileIcon, FileText, GitBranch, Image as ImageIcon, KeyRound, MessageCircle, Mic, Paperclip, Pause, SendHorizonal, Sparkles, TrendingUp, Video as VideoIcon, X } from 'lucide-react'
-import { RistakRobot } from '@/components/ai/RistakRobot'
-import { aiAgentService, type AIAgentAttachment, type AIAgentAttachmentKind, type AIAgentBusinessContextField, type AIAgentClarificationOption, type AIAgentConfigInput, type AIAgentConfigStatus, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
+import { ArrowUp, Bot, Calendar, Check, Copy, CreditCard, Eraser, File as FileIcon, FileText, Image as ImageIcon, KeyRound, MessageCircle, Mic, Paperclip, Pause, Percent, SendHorizonal, Sparkles, TrendingUp, Users, Video as VideoIcon, X } from 'lucide-react'
+import { aiAgentService, type AIAgentAttachment, type AIAgentAttachmentKind, type AIAgentBusinessContextField, type AIAgentCategory, type AIAgentClarificationOption, type AIAgentConfigInput, type AIAgentConfigStatus, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import { sitesService, type SitesAICreationMessage } from '@/services/sitesService'
 import { useNotification } from '@/contexts/NotificationContext'
 import { AI_AGENT_CLOSE_REQUEST_EVENT, AI_AGENT_OPEN_REQUEST_EVENT, type AIAgentOpenRequestDetail, type AIAgentSitesCreationKind } from '@/utils/aiAgentEvents'
@@ -15,7 +14,28 @@ const VOICE_WAVE_MIN_HEIGHT = 4
 const VOICE_WAVE_MAX_HEIGHT = 30
 const VOICE_WAVE_SILENCE_THRESHOLD = 4
 const VOICE_WAVE_SIGNAL_RANGE = 30
-const DEFAULT_AI_MODEL = 'gpt-5.5'
+const DEFAULT_AI_MODEL = 'gpt-5.4-nano'
+
+const FALLBACK_AGENT_CATEGORIES: AIAgentCategory[] = [
+  { id: 'citas', label: 'Citas', icon: 'calendar', description: 'Agendar, reprogramar, cancelar y consultar citas y calendarios.' },
+  { id: 'pagos', label: 'Pagos', icon: 'credit-card', description: 'Registrar, editar y consultar pagos y transacciones.' },
+  { id: 'redes', label: 'Redes sociales', icon: 'message-circle', description: 'Perfiles conectados, bandeja social y conversaciones.' },
+  { id: 'anuncios', label: 'Anuncios', icon: 'trending-up', description: 'Métricas y análisis de campañas de Meta Ads.' },
+  { id: 'contactos', label: 'Contactos', icon: 'users', description: 'Crear, editar, buscar y depurar contactos.' },
+  { id: 'costos', label: 'Costos variables', icon: 'percent', description: 'Configurar comisiones y costos variables.' },
+  { id: 'general', label: 'General', icon: 'sparkles', description: 'Asistente general con acceso a todas las áreas.' }
+]
+
+const AGENT_CATEGORY_ICONS: Record<string, typeof Sparkles> = {
+  calendar: Calendar,
+  'credit-card': CreditCard,
+  'message-circle': MessageCircle,
+  'trending-up': TrendingUp,
+  users: Users,
+  percent: Percent,
+  sparkles: Sparkles
+}
+
 const MAX_ATTACHMENTS = 8
 const MAX_DIRECT_ATTACHMENT_BYTES = 8 * 1024 * 1024
 const MAX_ATTACHMENT_TOTAL_BYTES = 18 * 1024 * 1024
@@ -64,33 +84,6 @@ type SitesCreationMode = {
   siteTitle?: string
 }
 
-const quickActions = [
-  {
-    label: 'Cobrar cliente',
-    description: 'Arranca el flujo para cobrar más rápido.',
-    prompt: 'Quiero cobrarle a un cliente. Inicia el flujo de cobro: identifica el contacto correcto, revisa si tiene tarjeta guardada o cobros previos, confirma monto, concepto y método recomendado, y dime la forma más rápida de enviar link de pago o cobrar con tarjeta guardada.',
-    Icon: CreditCard
-  },
-  {
-    label: 'Agendar cita',
-    description: 'Resuelve contacto, calendario y horario.',
-    prompt: 'Quiero agendar una cita. Inicia el flujo de agenda: identifica el contacto correcto, revisa el calendario disponible y confirma fecha, hora, duración, notas y cualquier dato faltante antes de crearla.',
-    Icon: CalendarPlus
-  },
-  {
-    label: 'Mandar a workflow',
-    description: 'Resuelve contacto y workflow antes de ejecutar.',
-    prompt: 'Quiero mandar a un contacto a un workflow. Ayúdame a encontrar el contacto correcto y seleccionar el workflow adecuado antes de ejecutarlo.',
-    Icon: GitBranch
-  },
-  {
-    label: 'Anuncios rentables',
-    description: 'Mejor y peor campaña con recomendaciones.',
-    prompt: 'Analiza mis anuncios empezando por la campaña que ahorita está siendo más rentable. Usa el rango visible actual si existe; si no, revisa el periodo reciente más útil. Primero dime la campaña más rentable y por qué con ROAS, utilidad, ingresos atribuidos y gasto. Después dime la campaña menos rentable y qué está fallando. Cierra con recomendaciones concretas para escalar, mantener, optimizar o cortar campañas, adsets y anuncios.',
-    Icon: TrendingUp
-  }
-]
-
 const routeLabels: Record<string, string> = {
   '/phone/agent-chat': 'Mobile AI agent',
   '/phone/agent-ai': 'Mobile AI agent',
@@ -110,6 +103,8 @@ const routeLabels: Record<string, string> = {
   '/contacts': 'Contactos',
   '/appointments': 'Citas',
   '/analytics': 'Analíticas',
+  '/ai-agent/conversational': 'Agente conversacional',
+  '/ai-agent': 'Agente AI',
   '/settings': 'Configuración',
   '/sites': 'Sitios'
 }
@@ -120,10 +115,10 @@ function getSitesAIIntro(siteKind: AIAgentSitesCreationKind, siteTitle = '') {
       `Vamos a editar con IA el HTML de "${siteTitle}".`,
       '',
       'Pídeme el cambio como lo dirías a un diseñador:',
-      '- Cambiar titulo, textos o CTA.',
-      '- Cambiar imagenes por otras de internet o por una URL especifica.',
+      '- Cambiar título, textos o CTA.',
+      '- Cambiar imágenes por otras de internet o por una URL especifica.',
       '- Reordenar secciones.',
-      '- Hacerlo mas premium, mas limpio o mas directo.',
+      '- Hacerlo más premium, más limpio o más directo.',
       '- Agregar, quitar o ajustar campos del formulario.',
       '',
       'Cuando lo actualice, Ristak volvera a revisar los formularios para que puedas confirmar donde se guarda cada dato.'
@@ -131,25 +126,25 @@ function getSitesAIIntro(siteKind: AIAgentSitesCreationKind, siteTitle = '') {
   }
 
   const pageLabel = siteKind === 'landing'
-    ? 'pagina embudo'
+    ? 'página embudo'
     : siteKind === 'interactive_form'
       ? 'formulario interactivo'
       : 'formulario'
   return [
     `Vamos a crear un ${pageLabel} completo desde cero en HTML con IA.`,
     '',
-    'La IA generara el HTML/CSS completo y Ristak lo importara como codigo propio para revisar formularios, campos y publicacion.',
+    'La IA generara el HTML/CSS completo y Ristak lo importara como código propio para revisar formularios, campos y publicación.',
     '',
     'Cuéntame esto en un solo mensaje si puedes:',
     '- Nicho o tipo de negocio.',
     '- Servicio, producto u oferta principal.',
-    '- Objetivo de la pagina.',
+    '- Objetivo de la página.',
     '- Cliente o prospecto ideal.',
     '- Estilo visual deseado.',
     '- Si quieres formulario y que campos debe pedir.',
     '- CTA principal.',
     '- Si quieres fotos de internet o alguna imagen por URL.',
-    '- Si prefieres una pagina corta o una pagina mas completa.'
+    '- Si prefieres una página corta o una página más completa.'
   ].join('\n')
 }
 
@@ -333,9 +328,9 @@ function removeDanglingOptionsHeading(lines: string[]) {
     'opciones',
     'opciones disponibles',
     'estas opciones',
-    'elige una opcion',
+    'elige una opción',
     'elige una',
-    'selecciona una opcion',
+    'selecciona una opción',
     'selecciona una'
   ])
 
@@ -467,7 +462,7 @@ function normalizeThinkingSource(value: string) {
 }
 
 function addRelevantThinkingActions(actions: string[], source: string) {
-  if (/(go\s*high\s*level|gohighlevel|go\s*hi\s*level|gohi\s*level|high\s*level|highlevel|ghl|custom field|campo personalizado|custom value|valor personalizado|formulario|form submissions|respuestas de formulario|survey|encuesta|funnel|embudo|trigger link|media storage|blog|workflow|task|tarea|tag|etiqueta|nota|conversation|conversacion|oportunidad|pipeline|producto|tienda|store)/.test(source)) {
+  if (/(go\s*high\s*level|gohighlevel|go\s*hi\s*level|gohi\s*level|high\s*level|highlevel|ghl|custom field|campo personalizado|custom value|valor personalizado|formulario|form submissions|respuestas de formulario|survey|encuesta|funnel|embudo|trigger link|media storage|blog|workflow|task|tarea|tag|etiqueta|nota|conversation|conversacion|conversación|oportunidad|pipeline|producto|tienda|store)/.test(source)) {
     addThinkingAction(actions, 'Consultando HighLevel')
   }
 
@@ -492,13 +487,13 @@ function addRelevantThinkingActions(actions: string[], source: string) {
     addThinkingAction(actions, 'Midiendo rendimiento')
   }
 
-  if (/(dashboard|reporte|reportes|analitica|analiticas|analytics|metrica|metricas|datos)/.test(source)) {
+  if (/(dashboard|reporte|reportes|analitica|analiticas|analítica|analíticas|analytics|metrica|metricas|métrica|métricas|datos)/.test(source)) {
     addThinkingAction(actions, 'Comprobando métricas')
   }
 }
 
 function referencesCurrentView(source: string) {
-  return /(esto|esta pantalla|este panel|esta pagina|esta vista|aqui|lo que estoy viendo|lo de aqui|esta seccion|este dashboard)/.test(source)
+  return /(esto|esta pantalla|este panel|esta pagina|esta página|esta vista|aqui|lo que estoy viendo|lo de aqui|esta seccion|este dashboard)/.test(source)
 }
 
 function getThinkingActions(messages: AIAgentMessage[], pathname: string, savingConfig: boolean) {
@@ -542,7 +537,7 @@ function statusToForm(status: AIAgentConfigStatus): AIAgentConfigInput {
     locationContext: '',
     competitorsContext: '',
     brandVoice: '',
-    actionCustomizations: status.actionCustomizations || '',
+    actionCustomizations: '',
     researchDomains: status.researchDomains || '',
     responseStyle: status.responseStyle || 'advisor',
     recommendationMode: status.recommendationMode || 'when_useful',
@@ -1269,7 +1264,7 @@ function isSectionTitle(line: string) {
     !plainTitle.includes(':') &&
     (
       /^🏆/.test(plainTitle) ||
-      /^(ranking|resumen|ganadora|ganador|métricas|metricas|detalle|comparativo|periodo|resultado)/i.test(plainTitle)
+      /^(ranking|resumen|ganadora|ganador|metricas|métricas|detalle|comparativo|periodo|resultado)/i.test(plainTitle)
     )
   )
 }
@@ -1544,6 +1539,10 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const [messages, setMessages] = useState<AIAgentMessage[]>([])
   const [input, setInput] = useState('')
   const [sitesCreationMode, setSitesCreationMode] = useState<SitesCreationMode | null>(null)
+  const [agentCategories, setAgentCategories] = useState<AIAgentCategory[]>(FALLBACK_AGENT_CATEGORIES)
+  // La especialidad vive solo en la conversación actual: el primer mensaje la
+  // define (ruteo automático del backend) o el usuario la elige con una tarjeta.
+  const [selectedAgentCategory, setSelectedAgentCategory] = useState<string>('')
   const [attachments, setAttachments] = useState<AIAgentAttachmentDraft[]>([])
   const [attachmentError, setAttachmentError] = useState('')
   const [apiKeyInput, setApiKeyInput] = useState('')
@@ -1707,6 +1706,31 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, sending, savingConfig, visible])
+
+  useEffect(() => {
+    // Versiones anteriores guardaban la especialidad en localStorage y dejaba
+    // el chat "atorado" en un agente; límpiala para todos los navegadores.
+    try {
+      localStorage.removeItem('ristak.aiAgentFloating.category')
+    } catch { /* almacenamiento no disponible */ }
+  }, [])
+
+  useEffect(() => {
+    if (!status.configured) return
+    let cancelled = false
+    aiAgentService.getAgents()
+      .then((categories) => {
+        if (!cancelled && Array.isArray(categories) && categories.length) {
+          setAgentCategories(categories)
+        }
+      })
+      .catch(() => { /* usa el fallback local */ })
+    return () => { cancelled = true }
+  }, [status.configured])
+
+  const selectAgentCategory = useCallback((categoryId: string) => {
+    setSelectedAgentCategory(categoryId)
+  }, [])
 
   useEffect(() => {
     if (!sending && !savingConfig) {
@@ -2024,7 +2048,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     }
 
     if (sitesCreationMode && messageAttachments.length) {
-      setAttachmentError('Para crear Sites con IA responde en texto. Después puedes editar la pagina generada desde la vista previa.')
+      setAttachmentError('Para crear Sites con IA responde en texto. Después puedes editar la página generada desde la vista previa.')
       return
     }
 
@@ -2078,12 +2102,22 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     setMessages(nextMessages)
     setSending(true)
 
+    // Sin especialidad elegida, el backend rutea automáticamente ('auto'):
+    // el primer mensaje dicta a qué agente va la conversación.
+    const effectiveCategory = selectedAgentCategory || 'auto'
+
     try {
       const result = await aiAgentService.sendMessage(prepareMessagesForApi(nextMessages), getViewContext(), {
-        signal: controller.signal
+        signal: controller.signal,
+        category: effectiveCategory
       })
 
       if (activeChatRequestRef.current?.id !== requestId) return
+
+      // Adopta la especialidad que terminó atendiendo (el agente puede transferir)
+      if (result.category && result.category !== selectedAgentCategory) {
+        setSelectedAgentCategory(result.category)
+      }
 
       setMessages((current) => [
         ...current,
@@ -2424,6 +2458,8 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     setChatCopied(false)
     setCopyingChat(false)
     setAttachmentError('')
+    // Conversación nueva = especialidad nueva: vuelve al ruteo automático
+    setSelectedAgentCategory('')
     setSitesCreationMode(null)
     focusComposer()
   }
@@ -2443,10 +2479,15 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     : styles.textComposer
   const panelTitle = sitesCreationMode ? 'Creador HTML con IA' : embedded ? 'Ristak AI' : 'Agente AI'
   const needsReconnect = Boolean(status.needsReconnect)
+  const activeAgentLabel = selectedAgentCategory
+    ? agentCategories.find((c) => c.id === selectedAgentCategory)?.label || null
+    : null
   const statusLabel = status.configured
     ? sitesCreationMode
       ? sitesCreationMode.editSiteId ? 'Editando HTML importado' : 'Creando HTML importable'
-      : embedded ? 'Listo para ayudarte' : 'Conectado a OpenAI'
+      : activeAgentLabel
+        ? `Agente de ${activeAgentLabel.toLowerCase()}`
+        : embedded ? 'Listo para ayudarte' : 'Conectado a OpenAI'
     : needsReconnect ? 'Reconecta OpenAI' : 'Configúralo aquí mismo'
 
   return (
@@ -2456,7 +2497,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
           <header className={styles.header}>
             <div className={styles.identity}>
               <div className={styles.avatar}>
-                <RistakRobot thinking={sending} />
+                <Bot size={19} />
               </div>
               <div className={styles.titleBlock}>
                 <h2 className={styles.title}>{panelTitle}</h2>
@@ -2535,221 +2576,229 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
             </div>
           )}
 
-          {status.configured && !businessContextLoaded && !loadingConfig && (
-            <div className={styles.contextNotice}>
-              <Sparkles size={15} />
-              Falta contexto del negocio. Respóndeme estas preguntas y yo lo redacto antes de guardarlo en Configuración.
-            </div>
-          )}
-
-          <div className={styles.body} data-ai-agent-scrollable="true">
-            {messages.length === 0 ? (
-              <div className={styles.empty}>
-                <p className={styles.emptyText}>
-                  Pregúntame por ventas, citas, campañas, contactos o por lo que estás viendo en esta pantalla.
-                </p>
-                {status.configured && (
-                  <div className={styles.suggestions}>
-                    {quickActions.map(({ label, description, prompt, Icon }) => (
-                      <button
-                        key={label}
-                        type="button"
-                        className={styles.suggestionButton}
-                        onClick={() => sendMessage(prompt, undefined, { forceChat: true })}
-                        disabled={savingConfig}
-                      >
-                        <span className={styles.suggestionIcon}>
-                          <Icon size={16} />
-                        </span>
-                        <span className={styles.suggestionCopy}>
-                          <span className={styles.suggestionLabel}>{label}</span>
-                          <span className={styles.suggestionDescription}>{description}</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className={styles.messages}>
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`${styles.message} ${message.role === 'user' ? styles.messageUser : styles.messageAssistant}`}
-                  >
-                    <span className={styles.messageLabel}>
-                      {message.role === 'user' ? 'Tú' : 'Agente'}
-                    </span>
-                    {Boolean(message.attachments?.length) && renderAttachmentList(message.attachments || [])}
-                    <div className={styles.bubble}>{renderMessageContent(getDisplayMessageContent(message))}</div>
-                    {message.role === 'assistant' && message.trace?.traceId && (
-                      <div
-                        className={`${styles.tracePill} ${message.trace.status === 'failed' ? styles.tracePillError : ''}`}
-                        title={`Rastro completo: ${message.trace.traceId}`}
-                      >
-                        <span>{formatTraceStatus(message.trace.status)}</span>
-                        <code>{message.trace.traceId.slice(-8)}</code>
-                      </div>
-                    )}
-                    {message.role === 'assistant' && Boolean(message.clarificationOptions?.length) && (
-                      <div className={styles.optionButtons} aria-label="Opciones para aclarar la pregunta">
-                        {message.clarificationOptions?.map((option, optionIndex) => (
-                          <button
-                            key={`${message.id}-${optionIndex}-${option.label}`}
-                            type="button"
-                            className={styles.optionButton}
-                            onClick={() => handleClarificationOptionClick(message, option)}
-                            disabled={savingConfig}
-                          >
-                            <span className={styles.optionLabel}>{option.label}</span>
-                            {option.description && (
-                              <span className={styles.optionDescription}>{option.description}</span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {message.role === 'assistant' && Boolean(message.sources?.length) && (
-                      <div className={styles.sources}>
-                        <span className={styles.sourcesLabel}>Fuentes</span>
-                        {message.sources?.map((source) => (
-                          <React.Fragment key={source.url}>
-                            <a
-                              href={source.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className={styles.sourceLink}
-                            >
-                              {source.title || source.url}
-                            </a>
-                            {isLikelyMediaUrl(normalizeHttpUrl(source.url)) && renderMediaUrlPreview(source.url, source.title || source.url, `${message.id}-${source.url}`)}
-                          </React.Fragment>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-
-                {(sending || savingConfig) && (
-                  <div
-                    className={styles.thinkingMessage}
-                    role="status"
-                    aria-live="polite"
-                    aria-label={thinkingAction}
-                    title={thinkingAction}
-                  >
-                    <span className={styles.thinkingText}>
-                      {thinkingAction}
-                    </span>
-                  </div>
-                )}
-                <div ref={endRef} />
-              </div>
-            )}
-          </div>
-
-          <footer className={styles.composer}>
-            {voiceIsActive ? (
-              <div className={styles.voiceComposer} aria-label="Grabación de voz en curso">
-                <div className={styles.voiceWaveArea}>
-                  <div className={styles.voiceWaveform} aria-hidden="true">
-                    {voiceBars.map((height, index) => (
-                      <span
-                        key={`voice-bar-${index}`}
-                        className={styles.voiceBar}
-                        style={{ '--voice-bar-height': `${height}px` } as React.CSSProperties}
-                      />
-                    ))}
-                  </div>
-                  <span className={styles.voiceTranscriptPreview} aria-live="polite">
-                    {voiceTranscript || (voiceState === 'finalizing' ? 'Terminando transcripción...' : 'Escuchando...')}
-                  </span>
+          {status.configured && (
+            <>
+              {!businessContextLoaded && !loadingConfig && (
+                <div className={styles.contextNotice}>
+                  <Sparkles size={15} />
+                  Falta contexto del negocio. Respóndeme estas preguntas y yo lo redacto antes de guardarlo en Configuración.
                 </div>
-                <span className={styles.voiceTimer}>{formattedVoiceElapsed}</span>
-                <button
-                  type="button"
-                  className={styles.voicePauseButton}
-                  onClick={() => finishVoiceRecording('draft')}
-                  disabled={voiceState === 'finalizing'}
-                  aria-label="Pausar y pasar texto al mensaje"
-                  title="Pausar y editar texto"
-                >
-                  <Pause size={15} />
-                </button>
-                <button
-                  type="button"
-                  className={styles.voiceSendButton}
-                  onClick={() => finishVoiceRecording('send')}
-                  disabled={voiceState === 'finalizing'}
-                  aria-label="Enviar transcripción al agente"
-                  title="Enviar transcripción"
-                >
-                  <SendHorizonal size={17} />
-                </button>
+              )}
+
+              <div className={styles.body} data-ai-agent-scrollable="true">
+                {messages.length === 0 ? (
+                  <div className={styles.empty}>
+                    {!sitesCreationMode ? (
+                  <>
+                    <p className={styles.emptyText}>
+                      {selectedAgentCategory
+                        ? `Agente de ${agentCategories.find((c) => c.id === selectedAgentCategory)?.label?.toLowerCase() || 'negocio'} listo. Escribe lo que necesitas.`
+                        : 'Escribe lo que necesitas y te dirijo al agente correcto, o entra directo a una especialidad:'}
+                    </p>
+                    {!selectedAgentCategory && (
+                      <div className={styles.agentGrid}>
+                        {agentCategories.map((agentCategory) => {
+                          const CategoryIcon = AGENT_CATEGORY_ICONS[agentCategory.icon] || Sparkles
+                          return (
+                            <button
+                              key={agentCategory.id}
+                              type="button"
+                              className={styles.suggestionButton}
+                              onClick={() => selectAgentCategory(agentCategory.id)}
+                              disabled={savingConfig}
+                            >
+                              <span className={styles.suggestionIcon}>
+                                <CategoryIcon size={16} />
+                              </span>
+                              <span className={styles.suggestionCopy}>
+                                <span className={styles.suggestionLabel}>{agentCategory.label}</span>
+                                <span className={styles.suggestionDescription}>{agentCategory.description}</span>
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className={styles.emptyText}>
+                    Pregúntame por ventas, citas, campañas, contactos o por lo que estás viendo en esta pantalla.
+                  </p>
+                )}
+                  </div>
+                ) : (
+                  <div className={styles.messages}>
+                    {messages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`${styles.message} ${message.role === 'user' ? styles.messageUser : styles.messageAssistant}`}
+                      >
+                        <span className={styles.messageLabel}>
+                          {message.role === 'user' ? 'Tú' : 'Agente'}
+                        </span>
+                        {Boolean(message.attachments?.length) && renderAttachmentList(message.attachments || [])}
+                        <div className={styles.bubble}>{renderMessageContent(getDisplayMessageContent(message))}</div>
+                        {message.role === 'assistant' && Boolean(message.clarificationOptions?.length) && (
+                          <div className={styles.optionButtons} aria-label="Opciones para aclarar la pregunta">
+                            {message.clarificationOptions?.map((option, optionIndex) => (
+                              <button
+                                key={`${message.id}-${optionIndex}-${option.label}`}
+                                type="button"
+                                className={styles.optionButton}
+                                onClick={() => handleClarificationOptionClick(message, option)}
+                                disabled={savingConfig}
+                              >
+                                <span className={styles.optionLabel}>{option.label}</span>
+                                {option.description && (
+                                  <span className={styles.optionDescription}>{option.description}</span>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {message.role === 'assistant' && Boolean(message.sources?.length) && (
+                          <div className={styles.sources}>
+                            <span className={styles.sourcesLabel}>Fuentes</span>
+                            {message.sources?.map((source) => (
+                              <React.Fragment key={source.url}>
+                                <a
+                                  href={source.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={styles.sourceLink}
+                                >
+                                  {source.title || source.url}
+                                </a>
+                                {isLikelyMediaUrl(normalizeHttpUrl(source.url)) && renderMediaUrlPreview(source.url, source.title || source.url, `${message.id}-${source.url}`)}
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    {(sending || savingConfig) && (
+                      <div
+                        className={styles.thinkingMessage}
+                        role="status"
+                        aria-live="polite"
+                        aria-label={thinkingAction}
+                        title={thinkingAction}
+                      >
+                        <span className={styles.thinkingText}>
+                          {thinkingAction}
+                        </span>
+                      </div>
+                    )}
+                    <div ref={endRef} />
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className={textComposerClassName} data-ristak-unstyled>
-                {attachments.length > 0 && renderAttachmentList(attachments, {
-                  removable: true,
-                  onRemove: removeAttachment
-                })}
-                <button
-                  type="button"
-                  className={styles.uploadButton}
-                  onClick={openFilePicker}
-                  disabled={savingConfig}
-                  aria-label="Agregar imagen, video o archivo"
-                  title="Agregar archivo"
-                >
-                  <Paperclip size={18} />
-                </button>
-                <button
-                  type="button"
-                  className={styles.micButton}
-                  onClick={startVoiceRecording}
-                  disabled={savingConfig}
-                  aria-label="Dictar mensaje por voz"
-                  title="Dictar mensaje por voz"
-                >
-                  <Mic size={17} />
-                </button>
-                <textarea
-                  ref={textareaRef}
-                  className={styles.textarea}
-                  value={input}
-                  placeholder={status.configured && nextOnboardingQuestion ? 'Responde para guardar contexto...' : status.configured ? 'Pregunta algo del negocio...' : needsReconnect ? 'Pega el token arriba para reconectar...' : 'Pega el token arriba o cuéntame del negocio...'}
-                  onChange={(event) => setInput(event.target.value)}
-                  onKeyDown={handleKeyDown}
-                  disabled={savingConfig}
-                  rows={1}
-                />
-                <button
-                  type="button"
-                  className={styles.sendButton}
-                  onClick={() => sendMessage()}
-                  disabled={(!input.trim() && !attachments.length) || savingConfig}
-                  aria-label="Enviar mensaje"
-                  title="Enviar mensaje"
-                >
-                  <ArrowUp size={20} />
-                </button>
-                <input
-                  ref={fileInputRef}
-                  className={styles.fileInput}
-                  type="file"
-                  multiple
-                  accept={FILE_INPUT_ACCEPT}
-                  onChange={handleFileSelection}
-                  tabIndex={-1}
-                />
-              </div>
-            )}
-            {(voiceError || attachmentError) && (
-              <div className={styles.voiceError} role="status">
-                {voiceError || attachmentError}
-              </div>
-            )}
-          </footer>
+
+              <footer className={styles.composer}>
+                {voiceIsActive ? (
+                  <div className={styles.voiceComposer} aria-label="Grabación de voz en curso">
+                    <div className={styles.voiceWaveArea}>
+                      <div className={styles.voiceWaveform} aria-hidden="true">
+                        {voiceBars.map((height, index) => (
+                          <span
+                            key={`voice-bar-${index}`}
+                            className={styles.voiceBar}
+                            style={{ '--voice-bar-height': `${height}px` } as React.CSSProperties}
+                          />
+                        ))}
+                      </div>
+                      <span className={styles.voiceTranscriptPreview} aria-live="polite">
+                        {voiceTranscript || (voiceState === 'finalizing' ? 'Terminando transcripción...' : 'Escuchando...')}
+                      </span>
+                    </div>
+                    <span className={styles.voiceTimer}>{formattedVoiceElapsed}</span>
+                    <button
+                      type="button"
+                      className={styles.voicePauseButton}
+                      onClick={() => finishVoiceRecording('draft')}
+                      disabled={voiceState === 'finalizing'}
+                      aria-label="Pausar y pasar texto al mensaje"
+                      title="Pausar y editar texto"
+                    >
+                      <Pause size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.voiceSendButton}
+                      onClick={() => finishVoiceRecording('send')}
+                      disabled={voiceState === 'finalizing'}
+                      aria-label="Enviar transcripción al agente"
+                      title="Enviar transcripción"
+                    >
+                      <SendHorizonal size={17} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className={textComposerClassName} data-ristak-unstyled>
+                    {attachments.length > 0 && renderAttachmentList(attachments, {
+                      removable: true,
+                      onRemove: removeAttachment
+                    })}
+                    <button
+                      type="button"
+                      className={styles.uploadButton}
+                      onClick={openFilePicker}
+                      disabled={savingConfig}
+                      aria-label="Agregar imagen, video o archivo"
+                      title="Agregar archivo"
+                    >
+                      <Paperclip size={18} />
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.micButton}
+                      onClick={startVoiceRecording}
+                      disabled={savingConfig}
+                      aria-label="Dictar mensaje por voz"
+                      title="Dictar mensaje por voz"
+                    >
+                      <Mic size={17} />
+                    </button>
+                    <textarea
+                      ref={textareaRef}
+                      className={styles.textarea}
+                      value={input}
+                      placeholder={nextOnboardingQuestion ? 'Responde para guardar contexto...' : 'Pregunta algo del negocio...'}
+                      onChange={(event) => setInput(event.target.value)}
+                      onKeyDown={handleKeyDown}
+                      disabled={savingConfig}
+                      rows={1}
+                    />
+                    <button
+                      type="button"
+                      className={styles.sendButton}
+                      onClick={() => sendMessage()}
+                      disabled={(!input.trim() && !attachments.length) || savingConfig}
+                      aria-label="Enviar mensaje"
+                      title="Enviar mensaje"
+                    >
+                      <ArrowUp size={20} />
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      className={styles.fileInput}
+                      type="file"
+                      multiple
+                      accept={FILE_INPUT_ACCEPT}
+                      onChange={handleFileSelection}
+                      tabIndex={-1}
+                    />
+                  </div>
+                )}
+                {(voiceError || attachmentError) && (
+                  <div className={styles.voiceError} role="status">
+                    {voiceError || attachmentError}
+                  </div>
+                )}
+              </footer>
+            </>
+          )}
         </section>
       )}
 

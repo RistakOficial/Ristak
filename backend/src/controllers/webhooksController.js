@@ -18,7 +18,8 @@ import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js';
 import {
   finalizePreparedPhoneUpsert,
   findContactByPhoneCandidates,
-  prepareContactPhoneUpsert
+  prepareContactPhoneUpsert,
+  resolveOrCreateContactForGhl
 } from '../services/contactIdentityService.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js';
@@ -209,6 +210,67 @@ async function getConfiguredPaymentModeFallback() {
 function normalizePaymentAmount(value) {
   const amount = Number(value || 0);
   return Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0;
+}
+
+function buildAutomationPaymentPayload(input = {}) {
+  const status = firstValue(input.paymentStatus, input.status) || '';
+  const paymentId = firstValue(input.paymentId, input.payment_id, input.id) || '';
+  const invoiceId = firstValue(input.invoiceId, input.invoice_id, input.ghl_invoice_id) || '';
+  const invoiceNumber = firstValue(input.invoiceNumber, input.invoice_number) || '';
+  const title = firstValue(input.title, input.name, input.product, input.description) || '';
+  const description = firstValue(input.description, input.product, title) || '';
+  const product = firstValue(input.product, description, title) || '';
+  const provider = firstValue(input.provider, input.paymentProvider, input.gateway, input.processor, input.paymentMethod, input.payment_method) || '';
+  const paymentMethod = firstValue(input.paymentMethod, input.payment_method, input.method, provider) || '';
+  const reference = firstValue(input.reference, input.receipt, invoiceNumber, invoiceId, paymentId) || '';
+  return {
+    contactId: input.contactId || input.contact_id || '',
+    paymentId,
+    amount: input.amount,
+    currency: input.currency || '',
+    status,
+    paymentStatus: status,
+    product,
+    provider,
+    paymentProvider: provider,
+    paymentMethod,
+    paymentMode: input.paymentMode || input.payment_mode || '',
+    reference,
+    title,
+    description,
+    invoiceId,
+    invoiceNumber,
+    receipt: firstValue(input.receipt, reference, invoiceNumber, invoiceId, title) || '',
+    paymentDate: input.paymentDate || input.date || input.createdAt || input.created_at || '',
+    date: input.paymentDate || input.date || input.createdAt || input.created_at || ''
+  };
+}
+
+function buildAutomationPaymentPayloadFromRow(row = {}, overrides = {}) {
+  return buildAutomationPaymentPayload({
+    contactId: row.contact_id,
+    paymentId: row.id,
+    amount: row.amount,
+    currency: row.currency,
+    status: row.status,
+    paymentMethod: row.payment_method,
+    paymentMode: row.payment_mode,
+    reference: row.reference,
+    title: row.title,
+    description: row.description,
+    invoiceId: row.ghl_invoice_id,
+    invoiceNumber: row.invoice_number,
+    paymentDate: row.date,
+    createdAt: row.created_at,
+    ...overrides
+  });
+}
+
+function emitAutomationPaymentEvent(eventType, payload) {
+  if (!payload?.contactId) return;
+  import('../services/automationEngine.js')
+    .then(engine => engine.handleAutomationEvent(eventType, payload))
+    .catch(() => {});
 }
 
 function resolvePaymentPlanId(data, plan) {
@@ -532,13 +594,25 @@ export const handleContactWebhook = async (req, res) => {
       : null;
 
     const usePostgres = process.env.DATABASE_URL ? true : false;
-    const phoneUpsert = await prepareContactPhoneUpsert({ contactId, phone });
+
+    // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
+    // queda ligado en ghl_contact_id, nunca como primary key.
+    const { contactId: localContactId, created: contactCreatedNow } = await resolveOrCreateContactForGhl({
+      ghlContactId: contactId,
+      phone,
+      email,
+      fullName: data.full_name || data.contactName || `${data.first_name || data.firstName || ''} ${data.last_name || data.lastName || ''}`.trim(),
+      source: data.source || 'gohighlevel',
+      createdAt: data.date_created || data.dateCreated || data.createdAt || null
+    });
+    const phoneUpsert = await prepareContactPhoneUpsert({ contactId: localContactId, phone });
 
     const query = usePostgres
-      ? `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source, created_at,
+      ? `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, first_name, last_name, source, created_at,
           attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name, visitor_id, custom_fields)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE($15::jsonb, '[]'::jsonb))
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, COALESCE($16::jsonb, '[]'::jsonb))
          ON CONFLICT (id) DO UPDATE SET
+          ghl_contact_id = COALESCE(EXCLUDED.ghl_contact_id, contacts.ghl_contact_id),
           phone = EXCLUDED.phone, email = EXCLUDED.email, full_name = EXCLUDED.full_name,
           first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name,
           source = EXCLUDED.source,
@@ -550,10 +624,11 @@ export const handleContactWebhook = async (req, res) => {
           visitor_id = COALESCE(EXCLUDED.visitor_id, contacts.visitor_id),
           custom_fields = COALESCE(EXCLUDED.custom_fields, contacts.custom_fields),
           updated_at = CURRENT_TIMESTAMP`
-      : `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source, created_at,
+      : `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, first_name, last_name, source, created_at,
           attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name, visitor_id, custom_fields)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '[]'))
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '[]'))
          ON CONFLICT (id) DO UPDATE SET
+          ghl_contact_id = COALESCE(excluded.ghl_contact_id, contacts.ghl_contact_id),
           phone = excluded.phone,
           email = excluded.email,
           full_name = excluded.full_name,
@@ -569,7 +644,10 @@ export const handleContactWebhook = async (req, res) => {
           custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
           updated_at = CURRENT_TIMESTAMP`;
 
+    const contactExistedBefore = !contactCreatedNow;
+
     await db.run(query, [
+      localContactId,
       contactId,
       phoneUpsert.phone || null,
       data.email,
@@ -586,39 +664,46 @@ export const handleContactWebhook = async (req, res) => {
       visitorId,
       customFieldsJson
     ]);
-    await finalizePreparedPhoneUpsert(phoneUpsert, contactId);
+    await finalizePreparedPhoneUpsert(phoneUpsert, localContactId);
 
     // Si viene visitor_id, vincular histórico de sesiones
-    if (visitorId && contactId) {
+    if (visitorId && localContactId) {
       const fullName = data.full_name || data.contactName || `${data.first_name || data.firstName || ''} ${data.last_name || data.lastName || ''}`.trim();
 
       if (fullName && fullName !== 'Sin nombre') {
         const { linkVisitorToContact, unifyVisitorIds } = await import('../services/trackingService.js');
 
         // Ejecutar en background sin esperar
-        linkVisitorToContact(visitorId, contactId, fullName)
+        linkVisitorToContact(visitorId, localContactId, fullName)
           .then(() => {
             // Después de vincular, unificar todos los visitor_ids al más viejo
-            return unifyVisitorIds(contactId);
+            return unifyVisitorIds(localContactId);
           })
           .catch(err => {
-            logger.error(`Error vinculando/unificando visitor para contact ${contactId}:`, err);
+            logger.error(`Error vinculando/unificando visitor para contact ${localContactId}:`, err);
           });
       }
     }
 
     // Si NO viene visitor_id en el webhook pero el contacto tiene sesiones, unificarlas
-    if (!visitorId && contactId) {
+    if (!visitorId && localContactId) {
       const { unifyVisitorIds } = await import('../services/trackingService.js');
 
       // Ejecutar en background sin esperar
-      unifyVisitorIds(contactId).catch(err => {
-        logger.error(`Error unificando visitor_ids para contact ${contactId}:`, err);
+      unifyVisitorIds(localContactId).catch(err => {
+        logger.error(`Error unificando visitor_ids para contact ${localContactId}:`, err);
       });
     }
 
-    logger.info(`✅ Contacto ${contactId} procesado exitosamente${visitorId ? ` (visitor_id: ${visitorId})` : ''}`);
+    logger.info(`✅ Contacto ${localContactId} (GHL ${contactId}) procesado exitosamente${visitorId ? ` (visitor_id: ${visitorId})` : ''}`);
     res.status(200).json({ success: true, message: 'Contacto procesado' });
+
+    import('../services/automationEngine.js')
+      .then(engine => engine.handleAutomationEvent(
+        contactExistedBefore ? 'contact-updated' : 'contact-created',
+        { contactId: localContactId, changedFields: [] }
+      ))
+      .catch(() => {});
 
   } catch (error) {
     logger.error(`Error en handleContactWebhook: ${error.message}`);
@@ -637,7 +722,7 @@ export const handlePaymentWebhook = async (req, res) => {
 
     // HighLevel manda el ID en payment.transaction_id
     const paymentId = payment.transaction_id || payment.transactionId || payment._id || payment.id || data.id;
-    const contactId = firstValue(
+    let contactId = firstValue(
       data.contact_id,
       data.contactId,
       payment.contact_id,
@@ -658,31 +743,23 @@ export const handlePaymentWebhook = async (req, res) => {
 
     const usePostgres = process.env.DATABASE_URL ? true : false;
 
-    // Verificar si el contacto existe, si no crearlo con datos básicos
-    const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId]);
-    if (!contactExists && contactId) {
-      logger.info(`Contacto ${contactId} no existe, creando con datos básicos...`);
-      const basicPhoneUpsert = await prepareContactPhoneUpsert({
-        contactId,
-        phone: payment.customer?.phone || data.phone
-      });
-
-      const contactQuery = usePostgres
-        ? `INSERT INTO contacts (id, full_name, phone, source, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`
-        : `INSERT OR IGNORE INTO contacts (id, full_name, phone, source, created_at) VALUES (?, ?, ?, ?, ?)`;
-
-      await db.run(contactQuery, [
-        contactId,
-        payment.customer?.name || data.full_name || data.contactName || 'Contacto sin nombre',
-        basicPhoneUpsert.phone || null,
-        'payment-webhook',
-        data.date_created || new Date().toISOString()
-      ]);
-      await finalizePreparedPhoneUpsert(basicPhoneUpsert, contactId);
+    // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
+    // queda ligado en ghl_contact_id. El resto del handler usa el ID local.
+    const { contactId: resolvedContactId } = await resolveOrCreateContactForGhl({
+      ghlContactId: contactId,
+      phone: payment.customer?.phone || data.phone,
+      email: payment.customer?.email || data.email,
+      fullName: payment.customer?.name || data.full_name || data.contactName || 'Contacto sin nombre',
+      source: 'payment-webhook',
+      createdAt: data.date_created || null
+    });
+    if (resolvedContactId) {
+      contactId = resolvedContactId;
     }
 
     // Extraer método de pago
     const paymentMethod = payment.method || payment.gateway || payment.payment_method || payment.paymentMethod || null;
+    const paymentProvider = payment.gateway || payment.provider || payment.processor || data.gateway || data.provider || paymentMethod || null;
 
     // Crear referencia con el número de factura
     const sourceMeta = maybeJsonObject(payment.entitySourceMeta || payment.entity_source_meta || data.entitySourceMeta || data.entity_source_meta);
@@ -872,6 +949,24 @@ export const handlePaymentWebhook = async (req, res) => {
       });
     }
 
+    emitAutomationPaymentEvent('payment-received', buildAutomationPaymentPayload({
+      contactId,
+      paymentId: effectiveInvoiceId || paymentId,
+      amount,
+      currency,
+      status,
+      paymentMethod,
+      provider: paymentProvider,
+      paymentMode,
+      reference,
+      title,
+      description,
+      invoiceId: effectiveInvoiceId || invoiceId || '',
+      invoiceNumber,
+      paymentDate,
+      createdAt
+    }));
+
     logger.info(`✅ Pago ${paymentId} procesado exitosamente para contacto ${contactId}`);
     res.status(200).json({ success: true, message: 'Pago procesado' });
 
@@ -912,7 +1007,7 @@ export const handlePaymentPlanWebhook = async (req, res) => {
       scheduleConfig.items
     );
     const firstItem = items[0] || {};
-    const contactId = firstValue(
+    let contactId = firstValue(
       data.contact_id,
       data.contactId,
       plan.contact_id,
@@ -938,20 +1033,18 @@ export const handlePaymentPlanWebhook = async (req, res) => {
     const raw = plan && typeof plan === 'object' ? plan : data;
 
     if (contactId) {
-      const existingContact = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId]);
-      if (!existingContact) {
-        const usePostgres = process.env.DATABASE_URL ? true : false;
-        const contactQuery = usePostgres
-          ? `INSERT INTO contacts (id, full_name, phone, source, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`
-          : `INSERT OR IGNORE INTO contacts (id, full_name, phone, source, created_at) VALUES (?, ?, ?, ?, ?)`;
-
-        await db.run(contactQuery, [
-          contactId,
-          contactName || 'Contacto sin nombre',
-          phone,
-          'payment-plan-webhook',
-          createdAt || new Date().toISOString()
-        ]);
+      // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
+      // queda ligado en ghl_contact_id. El plan se guarda con el ID local.
+      const { contactId: resolvedContactId } = await resolveOrCreateContactForGhl({
+        ghlContactId: contactId,
+        phone,
+        email: firstValue(contact.email, plan.email, data.email) || null,
+        fullName: contactName || 'Contacto sin nombre',
+        source: 'payment-plan-webhook',
+        createdAt: createdAt || null
+      });
+      if (resolvedContactId) {
+        contactId = resolvedContactId;
       }
     }
 
@@ -1049,31 +1142,22 @@ export const handleAppointmentWebhook = async (req, res) => {
       return res.status(200).json({ success: true, message: 'Webhook recibido' });
     }
 
-    const contactId = data.contact_id || data.contactId;
+    let contactId = data.contact_id || data.contactId;
     const usePostgres = process.env.DATABASE_URL ? true : false;
 
-    // Verificar si el contacto existe, si no crearlo con datos básicos
+    // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
+    // queda ligado en ghl_contact_id. La cita se guarda con el ID local.
     if (contactId) {
-      const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId]);
-      if (!contactExists) {
-        logger.info(`Contacto ${contactId} no existe, creando con datos básicos...`);
-        const basicPhoneUpsert = await prepareContactPhoneUpsert({
-          contactId,
-          phone: data.phone
-        });
-
-        const contactQuery = usePostgres
-          ? `INSERT INTO contacts (id, full_name, phone, source, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`
-          : `INSERT OR IGNORE INTO contacts (id, full_name, phone, source, created_at) VALUES (?, ?, ?, ?, ?)`;
-
-        await db.run(contactQuery, [
-          contactId,
-          data.full_name || data.contactName || 'Contacto sin nombre',
-          basicPhoneUpsert.phone || null,
-          'appointment-webhook',
-          data.date_created || new Date().toISOString()
-        ]);
-        await finalizePreparedPhoneUpsert(basicPhoneUpsert, contactId);
+      const { contactId: resolvedContactId } = await resolveOrCreateContactForGhl({
+        ghlContactId: contactId,
+        phone: data.phone,
+        email: data.email || null,
+        fullName: data.full_name || data.contactName || 'Contacto sin nombre',
+        source: 'appointment-webhook',
+        createdAt: data.date_created || null
+      });
+      if (resolvedContactId) {
+        contactId = resolvedContactId;
       }
     }
 
@@ -1149,6 +1233,21 @@ export const handleAppointmentWebhook = async (req, res) => {
       await triggerWhatsappAppointmentBookedEvent(contactId, { calendarId: appointmentCalendarId });
     }
 
+    if (contactId) {
+      import('../services/automationEngine.js')
+        .then(engine => {
+          const statusEvent = appointmentStatusNormalized.includes('cancel') ? 'cancelled'
+            : appointmentStatusNormalized.includes('no')
+              ? 'no_show'
+              : appointmentStatusNormalized || 'booked';
+          if (!isCancelledAppointment) {
+            engine.handleAutomationEvent('appointment-booked', { contactId, calendarId: appointmentCalendarId }).catch(() => {});
+          }
+          engine.handleAutomationEvent('appointment-status', { contactId, calendarId: appointmentCalendarId, status: statusEvent }).catch(() => {});
+        })
+        .catch(() => {});
+    }
+
     logger.info(`✅ Cita ${appointmentId} procesada exitosamente para contacto ${contactId}`);
     res.status(200).json({ success: true, message: 'Cita procesada' });
 
@@ -1176,7 +1275,7 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
       || data.event_id
       || data.id;
 
-    const contactId = data.contact_id
+    let contactId = data.contact_id
       || data.contactId
       || data.contact?.id
       || appointment.contactId
@@ -1192,24 +1291,18 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
     const usePostgres = process.env.DATABASE_URL ? true : false;
 
     if (contactId) {
-      const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId]);
-      if (!contactExists) {
-        const basicPhoneUpsert = await prepareContactPhoneUpsert({
-          contactId,
-          phone: data.phone || data.contactPhone || data.contact?.phone
-        });
-        const contactQuery = usePostgres
-          ? `INSERT INTO contacts (id, full_name, phone, source, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`
-          : `INSERT OR IGNORE INTO contacts (id, full_name, phone, source, created_at) VALUES (?, ?, ?, ?, ?)`;
-
-        await db.run(contactQuery, [
-          contactId,
-          data.full_name || data.contactName || data.contact?.name || 'Contacto sin nombre',
-          basicPhoneUpsert.phone || null,
-          'appointment-showed-webhook',
-          data.date_created || data.dateCreated || new Date().toISOString()
-        ]);
-        await finalizePreparedPhoneUpsert(basicPhoneUpsert, contactId);
+      // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
+      // queda ligado en ghl_contact_id.
+      const { contactId: resolvedContactId } = await resolveOrCreateContactForGhl({
+        ghlContactId: contactId,
+        phone: data.phone || data.contactPhone || data.contact?.phone,
+        email: data.email || data.contact?.email || null,
+        fullName: data.full_name || data.contactName || data.contact?.name || 'Contacto sin nombre',
+        source: 'appointment-showed-webhook',
+        createdAt: data.date_created || data.dateCreated || null
+      });
+      if (resolvedContactId) {
+        contactId = resolvedContactId;
       }
     }
 
@@ -1331,6 +1424,12 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
       contact_id: contactId
     });
 
+    if (contactId) {
+      import('../services/automationEngine.js')
+        .then(engine => engine.handleAutomationEvent('appointment-status', { contactId, status: 'completed' }))
+        .catch(() => {});
+    }
+
   } catch (error) {
     logger.error(`Error en handleAppointmentShowedWebhook: ${error.message}`);
     // Siempre devolver 200 para que HighLevel no reintente
@@ -1355,8 +1454,8 @@ export const handleRefundWebhook = async (req, res) => {
       return res.status(200).json({ success: true, message: 'Webhook recibido' });
     }
 
-    // Obtener el contactId del pago antes de actualizarlo
-    const payment = await db.get('SELECT contact_id FROM payments WHERE id = ?', [refundId]);
+    // Obtener el pago completo antes de actualizarlo para mandar contexto real a automatizaciones.
+    const payment = await db.get('SELECT * FROM payments WHERE id = ?', [refundId]);
 
     if (!payment) {
       logger.warn(`Pago ${refundId} no encontrado para reembolso`);
@@ -1373,6 +1472,11 @@ export const handleRefundWebhook = async (req, res) => {
     if (payment.contact_id) {
       await updateSingleContactStats(payment.contact_id);
       logger.info(`✅ Reembolso ${refundId} procesado exitosamente para contacto ${payment.contact_id}`);
+      emitAutomationPaymentEvent('refund', buildAutomationPaymentPayloadFromRow(payment, {
+        status: 'refunded',
+        paymentStatus: 'refunded',
+        paymentId: refundId
+      }));
     } else {
       logger.info(`✅ Reembolso ${refundId} procesado exitosamente`);
     }
@@ -1509,13 +1613,16 @@ export const handleInvoiceWebhook = async (req, res) => {
 
       logger.success(`Estado actualizado a '${newStatus}' para invoice: ${invoiceId}`);
 
+      const payment = await db.get(
+        `SELECT id, contact_id, amount, currency, status, payment_method, payment_mode,
+                reference, title, description, date, created_at, ghl_invoice_id, invoice_number
+         FROM payments
+         WHERE ghl_invoice_id = ?`,
+        [invoiceId]
+      );
+
       // Si fue pagado, actualizar estadísticas del contacto
       if (newStatus === 'paid') {
-        const payment = await db.get(
-          'SELECT contact_id, amount, currency, status, payment_mode FROM payments WHERE ghl_invoice_id = ?',
-          [invoiceId]
-        );
-
         if (payment && payment.contact_id) {
           await updateSingleContactStats(payment.contact_id);
           logger.success(`Estadísticas actualizadas para contacto: ${payment.contact_id}`);
@@ -1535,15 +1642,21 @@ export const handleInvoiceWebhook = async (req, res) => {
       // Si fue reembolsado o anulado, recalcular estadísticas para que el pago
       // deje de contar y el contacto no quede marcado como cliente
       if (newStatus === 'refunded' || newStatus === 'void') {
-        const payment = await db.get(
-          'SELECT contact_id FROM payments WHERE ghl_invoice_id = ?',
-          [invoiceId]
-        );
-
         if (payment && payment.contact_id) {
           await updateSingleContactStats(payment.contact_id);
           logger.success(`Estadísticas recalculadas tras ${newStatus === 'void' ? 'anulación' : 'reembolso'} para contacto: ${payment.contact_id}`);
         }
+      }
+
+      if (payment && payment.contact_id) {
+        emitAutomationPaymentEvent(
+          newStatus === 'refunded' ? 'refund' : 'payment-received',
+          buildAutomationPaymentPayloadFromRow(payment, {
+            status: newStatus,
+            paymentStatus: newStatus,
+            invoiceId
+          })
+        );
       }
     }
 
@@ -1691,6 +1804,31 @@ export const handleConversationWebhook = async (req, res) => {
   } catch (error) {
     logger.error(`Error en handleConversationWebhook: ${error.message}`);
     // Siempre devolver 200 para que HighLevel no reintente
+    res.status(200).json({ success: true, message: 'Webhook recibido' });
+  }
+};
+
+
+/**
+ * Webhook público para el disparador "Webhook entrante" de automatizaciones:
+ * POST /webhooks/automation/:endpointId — el contacto se resuelve por
+ * phone/email del cuerpo si vienen.
+ */
+export const handleAutomationIncomingWebhook = async (req, res) => {
+  try {
+    const body = req.body || {};
+    import('../services/automationEngine.js')
+      .then(engine => engine.handleAutomationEvent('webhook-received', {
+        endpointId: req.params.endpointId,
+        phone: body.phone || body.telefono || body.teléfono || '',
+        email: body.email || body.correo || '',
+        contactName: body.name || body.nombre || '',
+        payload: body
+      }))
+      .catch(() => {});
+    res.status(200).json({ success: true, message: 'Webhook recibido' });
+  } catch (error) {
+    logger.error(`Error en webhook de automatización: ${error.message}`);
     res.status(200).json({ success: true, message: 'Webhook recibido' });
   }
 };

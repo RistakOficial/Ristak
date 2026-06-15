@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { MonitorX } from 'lucide-react'
 import { AIAgentPanel } from '@/components/ai'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
+import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
+import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import styles from './PhoneAgentChat.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -14,6 +16,7 @@ type AccessState = 'checking' | 'allowed' | 'blocked'
 
 function hasPortableAccess() {
   if (typeof window === 'undefined') return false
+  if (isLocalPhonePreviewHost()) return true
 
   const portableViewport = window.matchMedia(PORTABLE_WIDTH_QUERY).matches
   const coarsePointer = window.matchMedia(COARSE_POINTER_QUERY).matches
@@ -33,7 +36,7 @@ export const PhoneAgentChat: React.FC = () => {
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
 
   useEffect(() => {
-    document.title = 'Agente AI movil y tablet | Ristak'
+    document.title = 'Agente AI móvil y tablet | Ristak'
 
     const updateAccess = () => setAccessState(getAccessState())
     const portableMedia = window.matchMedia(PORTABLE_WIDTH_QUERY)
@@ -131,11 +134,7 @@ export const PhoneAgentChat: React.FC = () => {
   }, [accessState])
 
   if (accessState === 'checking') {
-    return (
-      <main className={styles.loadingPage}>
-        <span className={styles.loadingDot} />
-      </main>
-    )
+    return <PhoneStartupLoader />
   }
 
   if (accessState === 'blocked') {
@@ -161,7 +160,7 @@ export const PhoneAgentChat: React.FC = () => {
   }
 
   return (
-    <main className={styles.mobilePage} aria-label="Chat movil y tablet del agente AI">
+    <main className={styles.mobilePage} aria-label="Chat móvil y tablet del agente AI">
       <section className={styles.agentPanelHost}>
         <AIAgentPanel variant="embedded" />
       </section>

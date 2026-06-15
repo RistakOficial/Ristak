@@ -1,0 +1,43 @@
+.logo {
+  --ristak-logo-width: 112px;
+  --ristak-logo-height: 34px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ristak-logo-width);
+  height: var(--ristak-logo-height);
+  line-height: 1;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.md {
+  --ristak-logo-width: 104px;
+  --ristak-logo-height: 32px;
+}
+
+.sm {
+  --ristak-logo-width: 74px;
+  --ristak-logo-height: 23px;
+}
+
+.lg {
+  --ristak-logo-width: 148px;
+  --ristak-logo-height: 46px;
+}
+
+.xl {
+  --ristak-logo-width: 196px;
+  --ristak-logo-height: 60px;
+}
+
+.size2xl {
+  --ristak-logo-width: 240px;
+  --ristak-logo-height: 74px;
+}

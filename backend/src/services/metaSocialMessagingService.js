@@ -559,6 +559,17 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
         results.push(result)
 
         if (result.direction === 'inbound' && result.isNew !== false) {
+          // Motor de automatizaciones (import dinámico: evita ciclo)
+          import('./automationEngine.js')
+            .then(engine => engine.handleIncomingMessage({
+              contactId: result.contactId,
+              contactName: result.contactName,
+              text: result.messageText,
+              channel: socialMessage.platform === 'instagram' ? 'instagram' : 'messenger'
+            }))
+            .catch(error => {
+              logger.warn(`[Automatizaciones] DM Meta no procesado: ${error.message}`)
+            })
           sendChatMessageNotification({
             contactId: result.contactId,
             contactName: result.contactName,

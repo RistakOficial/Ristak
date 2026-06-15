@@ -23,6 +23,7 @@ interface CachedInlineStyles {
 
 interface ElasticGestureState {
   axis: GestureAxis
+  currentOffset: number
   edge: ElasticEdge | null
   edgeStartY: number
   pullTarget: HTMLElement | null
@@ -33,6 +34,8 @@ interface ElasticGestureState {
 
 interface UsePhoneElasticScrollOptions {
   enabled?: boolean
+  onPullRelease?: (payload: { edge: ElasticEdge; offset: number; scrollable: HTMLElement }) => void
+  pullReleaseThreshold?: number
   selector?: string
 }
 
@@ -82,9 +85,15 @@ function getPullTarget(scrollable: HTMLElement) {
 }
 
 export function usePhoneElasticScroll(options: UsePhoneElasticScrollOptions = {}) {
-  const { enabled = true, selector = DEFAULT_SCROLLABLE_SELECTOR } = options
+  const {
+    enabled = true,
+    onPullRelease,
+    pullReleaseThreshold = 58,
+    selector = DEFAULT_SCROLLABLE_SELECTOR
+  } = options
   const gestureRef = useRef<ElasticGestureState>({
     axis: null,
+    currentOffset: 0,
     edge: null,
     edgeStartY: 0,
     pullTarget: null,
@@ -167,6 +176,7 @@ export function usePhoneElasticScroll(options: UsePhoneElasticScrollOptions = {}
       const firstTouch = event.touches[0]
       gestureRef.current = {
         axis: null,
+        currentOffset: 0,
         edge: null,
         edgeStartY: firstTouch?.clientY || 0,
         pullTarget: null,
@@ -228,16 +238,33 @@ export function usePhoneElasticScroll(options: UsePhoneElasticScrollOptions = {}
 
       const rawOffset = currentY - gesture.edgeStartY
       if ((nextEdge === 'top' && rawOffset < 0) || (nextEdge === 'bottom' && rawOffset > 0)) {
+        gesture.currentOffset = 0
         releasePull(true)
         return
       }
 
-      setPull(gesture.pullTarget, getDampedPull(rawOffset))
+      const dampedOffset = getDampedPull(rawOffset)
+      gesture.currentOffset = dampedOffset
+      setPull(gesture.pullTarget, dampedOffset)
     }
 
     const handleTouchEnd = () => {
+      const gesture = gestureRef.current
+      if (
+        gesture.edge &&
+        gesture.scrollable &&
+        Math.abs(gesture.currentOffset) >= pullReleaseThreshold
+      ) {
+        onPullRelease?.({
+          edge: gesture.edge,
+          offset: gesture.currentOffset,
+          scrollable: gesture.scrollable
+        })
+      }
+
       releasePull()
       gestureRef.current.axis = null
+      gestureRef.current.currentOffset = 0
       gestureRef.current.scrollable = null
     }
 
@@ -254,5 +281,5 @@ export function usePhoneElasticScroll(options: UsePhoneElasticScrollOptions = {}
       window.removeEventListener('touchend', handleTouchEnd)
       window.removeEventListener('touchcancel', handleTouchEnd)
     }
-  }, [enabled, selector])
+  }, [enabled, onPullRelease, pullReleaseThreshold, selector])
 }

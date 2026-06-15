@@ -15,9 +15,24 @@ const STANDARD_CONTACT_FIELD_KEYS = new Set([
 ])
 
 const SYSTEM_CONTACT_FIELD_CONFIG = {
+  city: {
+    label: 'Ciudad',
+    description: 'Ciudad capturada desde formularios de Ristak.',
+    fieldGroup: 'Sistema'
+  },
+  company: {
+    label: 'Empresa',
+    description: 'Empresa capturada desde formularios de Ristak.',
+    fieldGroup: 'Sistema'
+  },
+  address_1: {
+    label: 'Direccion 1',
+    description: 'Direccion principal capturada desde formularios de Ristak.',
+    fieldGroup: 'Sistema'
+  },
   whatsapp_api_provider: {
     label: 'WhatsApp API · Proveedor',
-    description: 'Dato tecnico usado por Ristak para identificar el proveedor de WhatsApp.',
+    description: 'Dato técnico usado por Ristak para identificar el proveedor de WhatsApp.',
     fieldGroup: 'Sistema'
   },
   whatsapp_api_first_message: {
@@ -348,7 +363,7 @@ async function assertFolderExists(folderId) {
 
   const folder = await getFolderById(id)
   if (!folder || folder.archived) {
-    const error = new Error('La carpeta seleccionada no existe o esta archivada')
+    const error = new Error('La carpeta seleccionada no existe o está archivada')
     error.status = 400
     throw error
   }
@@ -752,7 +767,7 @@ function assertImmutableFieldIdentity(current, input = {}) {
   if (hasTypeInput) {
     const nextDataType = normalizeDataType(input.dataType || input.type || input.data_type)
     if (nextDataType !== current.dataType) {
-      const error = new Error('El tipo del campo no se puede cambiar despues de crearlo.')
+      const error = new Error('El tipo del campo no se puede cambiar después de crearlo.')
       error.status = 400
       throw error
     }
@@ -762,7 +777,7 @@ function assertImmutableFieldIdentity(current, input = {}) {
     const nextOptionsJson = jsonString(normalizeOptionsForComparison(input.options))
     const currentOptionsJson = jsonString(normalizeOptionsForComparison(current.options))
     if (nextOptionsJson !== currentOptionsJson) {
-      const error = new Error('Las opciones del campo no se pueden cambiar despues de crearlo.')
+      const error = new Error('Las opciones del campo no se pueden cambiar después de crearlo.')
       error.status = 400
       throw error
     }
@@ -789,7 +804,7 @@ export async function updateContactCustomFieldDefinition(definitionId, input = {
   assertImmutableFieldIdentity(current, input)
 
   if (!current.fieldKey || isStandardContactFieldKey(current.fieldKey)) {
-    const error = new Error('Ese nombre interno esta reservado para campos principales del contacto')
+    const error = new Error('Ese nombre interno está reservado para campos principales del contacto')
     error.status = 400
     throw error
   }

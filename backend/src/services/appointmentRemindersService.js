@@ -27,6 +27,7 @@ const MESSAGE_TYPES = new Set(['reminder', 'confirmation'])
 const OFFSET_UNITS = new Set(['minutes', 'hours', 'days'])
 const SENDER_MODES = new Set(['contact', 'default', 'specific'])
 const SMART_OVERFLOWS = new Set(['before', 'next_day'])
+const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_push'])
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
@@ -71,6 +72,8 @@ function normalizeReminderRow(row = {}) {
     smartStart: cleanString(row.smart_start) || '09:00',
     smartEnd: cleanString(row.smart_end) || '21:00',
     smartOverflow: SMART_OVERFLOWS.has(cleanString(row.smart_overflow)) ? cleanString(row.smart_overflow) : 'before',
+    noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(row.no_confirm_action)) ? cleanString(row.no_confirm_action) : 'no_action',
+    bypassAutomations: Number(row.bypass_automations || 0) === 1,
     position: Number(row.position || 0),
     createdAt: cleanString(row.created_at),
     updatedAt: cleanString(row.updated_at)
@@ -132,7 +135,9 @@ function sanitizeReminderInput(input = {}, base = {}) {
     smartEnabled: merged.smartEnabled === false ? 0 : 1,
     smartStart,
     smartEnd,
-    smartOverflow: SMART_OVERFLOWS.has(cleanString(merged.smartOverflow)) ? cleanString(merged.smartOverflow) : 'before'
+    smartOverflow: SMART_OVERFLOWS.has(cleanString(merged.smartOverflow)) ? cleanString(merged.smartOverflow) : 'before',
+    noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(merged.noConfirmAction)) ? cleanString(merged.noConfirmAction) : 'no_action',
+    bypassAutomations: merged.bypassAutomations === true ? 1 : 0
   }
 }
 
@@ -145,13 +150,15 @@ export async function createAppointmentReminder(input = {}) {
     INSERT INTO appointment_reminders (
       id, name, enabled, message_type, ai_enabled, channel, sender_mode,
       sender_phone_number_id, offset_value, offset_unit, message_text,
-      smart_enabled, smart_start, smart_end, smart_overflow, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      smart_enabled, smart_start, smart_end, smart_overflow, no_confirm_action,
+      bypass_automations, position
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     id, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
     data.senderMode, data.senderPhoneNumberId, data.offsetValue, data.offsetUnit,
     data.messageText, data.smartEnabled, data.smartStart, data.smartEnd,
-    data.smartOverflow, Number(positionRow?.next || 0)
+    data.smartOverflow, data.noConfirmAction, data.bypassAutomations,
+    Number(positionRow?.next || 0)
   ])
 
   return normalizeReminderRow(await db.get('SELECT * FROM appointment_reminders WHERE id = ?', [id]))
@@ -176,12 +183,13 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
     SET name = ?, enabled = ?, message_type = ?, ai_enabled = ?, sender_mode = ?,
       sender_phone_number_id = ?, offset_value = ?, offset_unit = ?, message_text = ?,
       smart_enabled = ?, smart_start = ?, smart_end = ?, smart_overflow = ?,
-      updated_at = CURRENT_TIMESTAMP
+      no_confirm_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
     name, data.enabled, data.messageType, data.aiEnabled, data.senderMode,
     data.senderPhoneNumberId, data.offsetValue, data.offsetUnit, data.messageText,
-    data.smartEnabled, data.smartStart, data.smartEnd, data.smartOverflow, id
+    data.smartEnabled, data.smartStart, data.smartEnd, data.smartOverflow,
+    data.noConfirmAction, data.bypassAutomations, id
   ])
 
   // Si cambió la configuración de tiempo, los envíos pendientes se recalculan
@@ -335,6 +343,7 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
             to: appointment.phone,
             text,
             from: sender.fromPhone || undefined,
+            contactId: appointment.contact_id,
             phoneNumberId: sender.phoneNumberId || undefined,
             transport: sender.transport
           })
@@ -342,12 +351,13 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
           // Si la API oficial no está conectada, intentar por WhatsApp Web (QR).
           if (sender.transport === 'api' && /no está conectado/i.test(error.message || '')) {
             response = await sendWhatsAppApiTextMessage({
-              to: appointment.phone,
-              text,
-              from: sender.fromPhone || undefined,
-              phoneNumberId: sender.phoneNumberId || undefined,
-              transport: 'qr'
-            })
+            to: appointment.phone,
+            text,
+            from: sender.fromPhone || undefined,
+            contactId: appointment.contact_id,
+            phoneNumberId: sender.phoneNumberId || undefined,
+            transport: 'qr'
+          })
           } else {
             throw error
           }

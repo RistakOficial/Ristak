@@ -1,4 +1,5 @@
 import type { CatalogKind } from '@/services/automationCatalogsService'
+import { contactTagsService } from '@/services/contactTagsService'
 
 /**
  * Catálogo de campos reales del CRM para el constructor de condiciones.
@@ -34,7 +35,7 @@ export const CRM_FIELD_CATEGORIES: CrmFieldCategory[] = [
   { id: 'appointments', label: 'Citas / agenda' },
   { id: 'payments', label: 'Pagos' },
   { id: 'forms', label: 'Formularios' },
-  { id: 'links', label: 'Links / activación' },
+  { id: 'links', label: 'Clics de disparo' },
   { id: 'ads', label: 'Ads / campañas' },
   { id: 'automations', label: 'Automatizaciones' }
 ]
@@ -56,10 +57,25 @@ const APPOINTMENT_STATUS_OPTIONS = [
 
 const PAYMENT_STATUS_OPTIONS = [
   { value: 'paid', label: 'Pagado' },
+  { value: 'succeeded', label: 'Exitoso' },
   { value: 'pending', label: 'Pendiente' },
+  { value: 'partial', label: 'Parcial / incompleto' },
   { value: 'failed', label: 'Fallido' },
-  { value: 'refunded', label: 'Reembolsado' }
+  { value: 'overdue', label: 'Vencido' },
+  { value: 'void', label: 'Anulado' },
+  { value: 'refunded', label: 'Reembolsado' },
+  { value: 'draft', label: 'Borrador' },
+  { value: 'sent', label: 'Enviado' }
 ]
+
+const tagValueLabel = (value: unknown, savedLabel?: string): string =>
+  savedLabel || contactTagsService.getDisplayName(typeof value === 'string' ? value : '')
+
+const conditionDisplayValue = (field: CrmField | undefined, rule: Pick<ConditionRule, 'value' | 'valueLabel'>): string =>
+  field?.valueCatalog === 'tags' ? tagValueLabel(rule.value, rule.valueLabel) : rule.valueLabel || rule.value || ''
+
+const triggerFilterDisplayValue = (field: TriggerFilterField | undefined, filter: Pick<TriggerFilter, 'value' | 'valueLabel'>): string =>
+  field?.catalog === 'tags' ? tagValueLabel(filter.value, filter.valueLabel) : filter.valueLabel || filter.value || ''
 
 export const CRM_FIELDS: CrmField[] = [
   // Contacto (el email es dato del CRM, nunca canal de envío)
@@ -113,14 +129,14 @@ export const CRM_FIELDS: CrmField[] = [
   { id: 'form-field-value', label: 'Campo del formulario contiene', category: 'forms', type: 'text', needsCustomKey: true },
   { id: 'form-date', label: 'Fecha de envío', category: 'forms', type: 'date' },
 
-  // Links
-  { id: 'link-clicked', label: 'Hizo clic en enlace', category: 'links', type: 'boolean' },
-  { id: 'link-specific', label: 'Link específico', category: 'links', type: 'select', valueCatalog: 'links' },
-  { id: 'link-date', label: 'Fecha de clic', category: 'links', type: 'date' },
+  // Clics de disparo
+  { id: 'link-clicked', label: 'Recibió clic de disparo', category: 'links', type: 'boolean' },
+  { id: 'link-specific', label: 'Clic de disparo específico', category: 'links', type: 'select', valueCatalog: 'links' },
+  { id: 'link-date', label: 'Fecha del clic de disparo', category: 'links', type: 'date' },
 
   // Ads
   { id: 'ads-fb-click', label: 'Clic en anuncio de Facebook', category: 'ads', type: 'boolean' },
-  { id: 'ads-ctwa', label: 'Click to WhatsApp ads', category: 'ads', type: 'boolean' },
+  { id: 'ads-ctwa', label: 'Mensaje desde anuncio de WhatsApp', category: 'ads', type: 'boolean' },
   { id: 'ads-campaign', label: 'Campaña', category: 'ads', type: 'select', valueCatalog: 'campaigns' },
   { id: 'ads-source', label: 'Fuente de campaña', category: 'ads', type: 'text' },
 
@@ -150,8 +166,8 @@ export interface CrmOperator {
 
 export const OPERATORS_BY_TYPE: Record<CrmFieldType, CrmOperator[]> = {
   text: [
-    { value: 'is', label: 'es' },
-    { value: 'is_not', label: 'no es' },
+    { value: 'is', label: 'es igual a' },
+    { value: 'is_not', label: 'no es igual a' },
     { value: 'contains', label: 'contiene' },
     { value: 'not_contains', label: 'no contiene' },
     { value: 'starts_with', label: 'empieza con' },
@@ -187,8 +203,8 @@ export const OPERATORS_BY_TYPE: Record<CrmFieldType, CrmOperator[]> = {
     { value: 'none', label: 'no contiene ninguna' }
   ],
   select: [
-    { value: 'is', label: 'es' },
-    { value: 'is_not', label: 'no es' },
+    { value: 'is', label: 'es igual a' },
+    { value: 'is_not', label: 'no es igual a' },
     { value: 'empty', label: 'está vacío', noValue: true },
     { value: 'not_empty', label: 'no está vacío', noValue: true }
   ],
@@ -216,6 +232,7 @@ export interface ConditionRule {
   field: string
   /** Subcampo cuando el campo es personalizado (clave del campo) */
   customKey?: string
+  customLabel?: string
   operator: string
   value?: string
   /** Segundo valor para operadores "entre" */
@@ -224,6 +241,8 @@ export interface ConditionRule {
   unit?: string
   /** Valor fijo o variable dinámica ({{contact.x}}) */
   valueMode?: 'fixed' | 'variable'
+  /** Nombre legible del valor cuando viene de un catálogo (etiqueta, calendario…) */
+  valueLabel?: string
 }
 
 export interface ConditionConfig {
@@ -331,7 +350,7 @@ export function validateAdvancedCondition(config: unknown): string[] {
           errors.push(`${position}: indica el campo personalizado`)
         }
         if (!rule.operator) {
-          errors.push(`${position}: selecciona un operador`)
+          errors.push(`${position}: selecciona qué debe pasar`)
           return
         }
         if (operatorNeedsValue(rule.field, rule.operator) && !String(rule.value ?? '').trim()) {
@@ -357,9 +376,12 @@ export function summarizeAdvancedCondition(config: unknown): string {
   if (!firstRule) return ''
   const field = getCrmField(firstRule.field)
   const operator = getOperatorsForField(firstRule.field).find((op) => op.value === firstRule.operator)
-  const base = [field?.label, operator?.label, operatorNeedsValue(firstRule.field, firstRule.operator) ? firstRule.value : '']
+  const fieldLabel = field?.needsCustomKey && firstRule.customLabel
+    ? firstRule.customLabel.toLowerCase()
+    : field?.label.toLowerCase()
+  const base = `Si ${[fieldLabel, operator?.label, operatorNeedsValue(firstRule.field, firstRule.operator) ? `"${conditionDisplayValue(field, firstRule)}"` : '']
     .filter(Boolean)
-    .join(' ')
+    .join(' ')}`
 
   const totalRules = branches.reduce(
     (sum, branch) => sum + (branch.groups || []).reduce((groupSum, group) => groupSum + (group.rules || []).filter((rule) => rule.field).length, 0),
@@ -400,7 +422,7 @@ export function validateConditionRules(config: unknown): string[] {
       errors.push(`${position}: indica el campo personalizado`)
     }
     if (!rule.operator) {
-      errors.push(`${position}: selecciona un operador`)
+      errors.push(`${position}: selecciona qué debe pasar`)
       return
     }
     if (operatorNeedsValue(rule.field, rule.operator) && !String(rule.value ?? '').trim()) {
@@ -422,10 +444,220 @@ export function summarizeCondition(config: unknown): string {
   const first = rules[0]
   const field = getCrmField(first.field)
   const operator = getOperatorsForField(first.field).find((op) => op.value === first.operator)
-  const base = [field?.label, operator?.label, operatorNeedsValue(first.field, first.operator) ? first.value : '']
+  const fieldLabel = field?.needsCustomKey && first.customLabel ? first.customLabel : field?.label
+  const base = [fieldLabel, operator?.label, operatorNeedsValue(first.field, first.operator) ? conditionDisplayValue(field, first) : '']
     .filter(Boolean)
     .join(' ')
   if (rules.length === 1) return base
   const connector = conditions.match === 'any' ? 'o' : 'y'
   return `${base} ${connector} ${rules.length - 1} regla${rules.length > 2 ? 's' : ''} más`
+}
+
+
+// ---------------------------------------------------------------------------
+// Filtros avanzados de los disparadores ("+ Añadir filtro")
+// ---------------------------------------------------------------------------
+
+export type TriggerFilterMatch =
+  | 'is'
+  | 'not'
+  | 'contains'
+  | 'not_contains'
+  | 'starts_with'
+  | 'ends_with'
+  | 'empty'
+  | 'not_empty'
+  | 'is_disqualified'
+  | 'not_disqualified'
+
+export interface TriggerFilter {
+  field: string
+  /** Campo personalizado elegido cuando field === 'custom' */
+  customKey?: string
+  customLabel?: string
+  match: TriggerFilterMatch | ''
+  value: string
+  /** Nombre legible del valor cuando viene de un catálogo (etiqueta, calendario…) */
+  valueLabel?: string
+  /** Cómo se une con el filtro anterior: Y (default) u O */
+  connector?: 'and' | 'or'
+}
+
+export const TRIGGER_FILTER_OPERATORS: Array<{
+  value: TriggerFilterMatch
+  label: string
+  /** No requiere capturar valor (está vacío / no está vacío) */
+  noValue?: boolean
+}> = [
+  { value: 'is', label: 'es igual a' },
+  { value: 'not', label: 'no es igual a' },
+  { value: 'contains', label: 'contiene' },
+  { value: 'not_contains', label: 'no contiene' },
+  { value: 'starts_with', label: 'empieza con' },
+  { value: 'ends_with', label: 'termina con' },
+  { value: 'empty', label: 'está vacío', noValue: true },
+  { value: 'not_empty', label: 'no está vacío', noValue: true },
+  { value: 'is_disqualified', label: 'es descalificado', noValue: true },
+  { value: 'not_disqualified', label: 'no es descalificado', noValue: true }
+]
+
+/** ¿El operador del filtro necesita capturar un valor? */
+export function triggerOperatorNeedsValue(match: unknown): boolean {
+  if (!match) return false
+  const operator = TRIGGER_FILTER_OPERATORS.find((candidate) => candidate.value === match)
+  return operator ? !operator.noValue : true
+}
+
+export interface TriggerFilterField {
+  id: string
+  label: string
+  /** Frase con artículo para la oración ("la fuente", "el país"…) */
+  phrase: string
+  catalog?: CatalogKind
+  /** Opciones fijas (el valor se elige de una lista, no texto libre) */
+  options?: Array<{ value: string; label: string }>
+  /** Operadores permitidos solo para este campo */
+  operators?: TriggerFilterMatch[]
+  /** Categoría del drill-down (Contacto, Mensaje, Citas…) */
+  category: string
+  /** Contextos donde aplica; sin lista = siempre (datos del contacto) */
+  appliesTo?: string[]
+}
+
+export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
+  // Del evento (solo aparecen cuando el disparador los produce)
+  { id: 'message', label: 'Mensaje', phrase: 'el mensaje', category: 'Mensaje', appliesTo: ['message'] },
+  { id: 'channel', label: 'Canal del mensaje', phrase: 'el canal', options: CHANNEL_FIELD_OPTIONS, category: 'Mensaje', appliesTo: ['message'] },
+  { id: 'calendar', label: 'Calendario', phrase: 'el calendario', catalog: 'calendars', category: 'Cita', appliesTo: ['appointment'] },
+  { id: 'appointment_type', label: 'Tipo de cita', phrase: 'el tipo de cita', category: 'Cita', appliesTo: ['appointment'] },
+  { id: 'payment_status', label: 'Estado del pago', phrase: 'el estado del pago', options: PAYMENT_STATUS_OPTIONS, category: 'Pago', appliesTo: ['payment'] },
+  { id: 'amount', label: 'Monto', phrase: 'el monto', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'product', label: 'Producto / servicio', phrase: 'el producto', catalog: 'products', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'currency', label: 'Moneda', phrase: 'la moneda', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'provider', label: 'Proveedor de pago', phrase: 'el proveedor', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'payment_method', label: 'Método de pago', phrase: 'el método de pago', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'payment_id', label: 'ID del pago', phrase: 'el ID del pago', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'receipt', label: 'Recibo / factura', phrase: 'el recibo', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'invoice_number', label: 'Número de factura', phrase: 'el número de factura', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'campaign', label: 'Campaña', phrase: 'la campaña', catalog: 'campaigns', category: 'Anuncio', appliesTo: ['ads'] },
+  {
+    id: 'form_disqualified',
+    label: 'Resultado del formulario',
+    phrase: 'el formulario',
+    operators: ['is_disqualified', 'not_disqualified'],
+    category: 'Formulario',
+    appliesTo: ['form']
+  },
+  { id: 'form_field', label: 'Campo del formulario', phrase: 'el campo del formulario', category: 'Formulario', appliesTo: ['form'] },
+  // Atribución de anuncios (vive en el contacto: disponible siempre)
+  { id: 'ad', label: 'Anuncio de origen', phrase: 'el anuncio de origen', catalog: 'ads', category: 'Anuncio' },
+  { id: 'ad_id', label: 'ID del anuncio', phrase: 'el ID del anuncio', catalog: 'adIds', category: 'Anuncio' },
+  { id: 'attribution_url', label: 'URL de origen', phrase: 'la URL de origen', category: 'Anuncio' },
+  { id: 'medium', label: 'Medio de atribución', phrase: 'el medio', category: 'Anuncio' },
+  // Del contacto (siempre disponibles)
+  { id: 'first_name', label: 'Nombre', phrase: 'el nombre', category: 'Contacto' },
+  { id: 'last_name', label: 'Apellido', phrase: 'el apellido', category: 'Contacto' },
+  { id: 'source', label: 'Fuente', phrase: 'la fuente', category: 'Contacto' },
+  { id: 'tag', label: 'Etiqueta', phrase: 'la etiqueta', catalog: 'tags', category: 'Contacto' },
+  { id: 'stage', label: 'Pipeline / etapa', phrase: 'la etapa', category: 'Contacto' },
+  { id: 'country', label: 'País', phrase: 'el país', category: 'Contacto' },
+  { id: 'email', label: 'Email (dato de contacto)', phrase: 'el email', category: 'Contacto' },
+  { id: 'phone', label: 'Teléfono', phrase: 'el teléfono', category: 'Contacto' },
+  { id: 'assigned', label: 'Usuario asignado', phrase: 'el usuario asignado', catalog: 'users', category: 'Contacto' },
+  { id: 'custom', label: 'Campo personalizado…', phrase: 'el campo', category: 'Contacto' }
+]
+
+/** Contextos de evento que produce cada disparador / tipo de objetivo */
+const TRIGGER_FILTER_CONTEXTS: Record<string, string[]> = {
+  'trigger-customer-replied': ['message'],
+  'trigger-appointment-booked': ['appointment'],
+  'trigger-appointment-status': ['appointment'],
+  'trigger-payment-received': ['payment'],
+  'trigger-refund': ['payment'],
+  'trigger-form-submitted': ['form'],
+  'trigger-facebook-ad-click': ['ads'],
+  'trigger-click-to-whatsapp': ['ads', 'message'],
+  'trigger-facebook-comment': ['message'],
+  'trigger-instagram-comment': ['message'],
+  // Tipos de objetivo (reutilizan el mismo sistema de filtros)
+  'goal-payment': ['payment'],
+  'goal-appointment': ['appointment'],
+  'goal-form': ['form'],
+  'goal-conversation': ['message'],
+  'goal-ads': ['ads']
+}
+
+/** Campos de filtro congruentes con el disparador: los del evento + contacto */
+export function filterFieldsFor(contextKey?: string): TriggerFilterField[] {
+  const contexts = (contextKey && TRIGGER_FILTER_CONTEXTS[contextKey]) || []
+  return TRIGGER_FILTER_FIELDS.filter(
+    (field) => !field.appliesTo || field.appliesTo.some((context) => contexts.includes(context))
+  )
+}
+
+export function triggerOperatorsForField(field?: TriggerFilterField): typeof TRIGGER_FILTER_OPERATORS {
+  if (!field?.operators?.length) {
+    return TRIGGER_FILTER_OPERATORS.filter((operator) => operator.value !== 'is_disqualified' && operator.value !== 'not_disqualified')
+  }
+  return TRIGGER_FILTER_OPERATORS.filter((operator) => field.operators?.includes(operator.value))
+}
+
+export function asTriggerFilters(value: unknown): TriggerFilter[] {
+  return Array.isArray(value) ? (value as TriggerFilter[]) : []
+}
+
+export function validateTriggerFilters(value: unknown): string[] {
+  const errors: string[] = []
+  asTriggerFilters(value).forEach((filter, index) => {
+    const field = filter.field ? TRIGGER_FILTER_FIELDS.find((candidate) => candidate.id === filter.field) : undefined
+    const operators = triggerOperatorsForField(field)
+    if (!filter.field) errors.push(`Filtro ${index + 1}: elige el campo`)
+    else if (!field) errors.push(`Filtro ${index + 1}: el campo seleccionado ya no existe`)
+    else if (filter.field === 'custom' && !filter.customKey) errors.push(`Filtro ${index + 1}: elige el campo personalizado`)
+    else if (!filter.match) errors.push(`Filtro ${index + 1}: elige qué debe pasar`)
+    else if (!operators.some((operator) => operator.value === filter.match)) errors.push(`Filtro ${index + 1}: elige una condición válida`)
+    if (filter.match && triggerOperatorNeedsValue(filter.match) && !String(filter.value || '').trim()) {
+      errors.push(`Filtro ${index + 1}: captura el valor`)
+    }
+  })
+  return errors
+}
+
+/** ' y la fuente es igual a "Facebook" y el país NO es igual a "México"' */
+export function triggerFiltersSentence(value: unknown): string {
+  return asTriggerFilters(value)
+    .filter(
+      (filter) =>
+        filter.field &&
+        filter.match &&
+        (!triggerOperatorNeedsValue(filter.match) || String(filter.value || '').trim())
+    )
+    .map((filter) => {
+      const field = TRIGGER_FILTER_FIELDS.find((candidate) => candidate.id === filter.field)
+      const phrase = filter.field === 'custom'
+        ? `el campo "${filter.customLabel || filter.customKey}"`
+        : field?.phrase || 'el campo'
+      if (filter.field === 'form_disqualified') {
+        const joiner = filter.connector === 'or' ? ' o ' : ' y '
+        return `${joiner}${phrase} ${filter.match === 'not_disqualified' ? 'no es descalificado' : 'es descalificado'}`
+      }
+      const verbs: Record<string, string> = {
+        is: 'es igual a',
+        not: 'NO es igual a',
+        contains: 'contenga',
+        not_contains: 'NO contenga',
+        starts_with: 'empiece con',
+        ends_with: 'termine con',
+        empty: 'esté vacío',
+        not_empty: 'no esté vacío',
+        is_disqualified: 'es descalificado',
+        not_disqualified: 'no es descalificado'
+      }
+      const joiner = filter.connector === 'or' ? ' o ' : ' y '
+      const valuePart = triggerOperatorNeedsValue(filter.match)
+        ? ` "${triggerFilterDisplayValue(field, filter)}"`
+        : ''
+      return `${joiner}${phrase} ${verbs[filter.match as TriggerFilterMatch] || 'es igual a'}${valuePart}`
+    })
+    .join('')
 }

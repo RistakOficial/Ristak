@@ -1,6 +1,7 @@
 import express from 'express';
 import * as calendarsController from '../controllers/calendarsController.js';
 import { requireAuth } from '../middleware/authMiddleware.js';
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js';
 
 const router = express.Router();
 
@@ -14,6 +15,7 @@ router.get('/public/:slug/free-slots', calendarsController.getPublicFreeSlots);
 router.post('/public/:slug/appointments', calendarsController.createPublicAppointment);
 
 router.use(requireAuth);
+router.use(requireModuleAccess('appointments'));
 
 // Obtener todos los calendarios
 router.get('/', calendarsController.getCalendars);
@@ -21,8 +23,11 @@ router.get('/', calendarsController.getCalendars);
 // Crear calendario local de Ristak
 router.post('/', calendarsController.createCalendar);
 
-// Integración Google Calendar por Service Account
+// Integración Google Calendar: OAuth central para instalaciones licenciadas,
+// Service Account como fallback para instalaciones standalone.
 router.get('/google-integration', calendarsController.getGoogleCalendarIntegration);
+router.post('/google-integration/connect-url', calendarsController.getGoogleCalendarConnectUrl);
+router.get('/google-integration/calendars', calendarsController.listGoogleCalendarOptions);
 router.get('/google-integration/reveal/service-account', calendarsController.revealGoogleCalendarServiceAccount);
 router.put('/google-integration', calendarsController.saveGoogleCalendarIntegration);
 router.post('/google-integration/test', calendarsController.testGoogleCalendarIntegration);
@@ -65,6 +70,7 @@ router.delete('/block-slots/:id', calendarsController.deleteBlockedSlot);
 router.get('/:id', calendarsController.getCalendar);
 
 // Actualizar configuración de un calendario
+router.put('/:id/google-sync', calendarsController.updateCalendarGoogleSync);
 router.put('/:id', calendarsController.updateCalendar);
 
 // Eliminar un calendario local de Ristak

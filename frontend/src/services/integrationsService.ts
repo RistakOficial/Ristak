@@ -13,11 +13,32 @@ export interface MetaStatus {
   connected: boolean
   adAccountId: string | null
   pixelId: string | null
+  pageId: string | null
+  instagramAccountId: string | null
+}
+
+export interface WhatsappStatus {
+  configured: boolean
+  connected: boolean
+}
+
+export interface OpenAiStatus {
+  configured: boolean
+  connected: boolean
+  credentialStatus?: string
+}
+
+export interface GoogleCalendarStatus {
+  configured: boolean
+  connected: boolean
 }
 
 export interface IntegrationsStatus {
   highlevel: HighLevelStatus
   meta: MetaStatus
+  whatsapp: WhatsappStatus
+  openai: OpenAiStatus
+  googleCalendar: GoogleCalendarStatus
 }
 
 // El estado de integraciones se consulta desde muchos componentes al montar

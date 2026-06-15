@@ -111,6 +111,7 @@ export interface AutomationSummary {
   name: string
   description: string
   status: AutomationStatus
+  hasUnpublishedChanges?: boolean
   createdAt: string
   updatedAt: string
   publishedAt: string | null
@@ -118,6 +119,60 @@ export interface AutomationSummary {
 
 export interface Automation extends AutomationSummary {
   flow: AutomationFlow
+}
+
+export interface EnrollmentLogEntry {
+  nodeId: string
+  label?: string
+  status?: string
+  at?: string
+}
+
+export interface AutomationEnrollment {
+  id: string
+  contactId: string | null
+  contactName: string
+  status: 'active' | 'completed' | 'exited' | 'goal_met' | string
+  currentNodeId: string | null
+  log: EnrollmentLogEntry[]
+  enteredAt: string
+  updatedAt: string
+}
+
+export interface ContactAutomationActivityItem {
+  id: string
+  kind: 'enrollment' | 'scheduled'
+  automationId: string
+  automationName: string
+  status: string
+  contactId?: string | null
+  contactName?: string | null
+  currentNodeId?: string | null
+  log?: EnrollmentLogEntry[]
+  enteredAt?: string | null
+  scheduledAt?: string | null
+  enrollmentId?: string | null
+  error?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+  executedAt?: string | null
+}
+
+export interface ContactAutomationActivity {
+  active: ContactAutomationActivityItem[]
+  past: ContactAutomationActivityItem[]
+}
+
+export interface ContactAutomationEnrollmentResult {
+  mode: 'now' | 'scheduled'
+  enrollment?: ContactAutomationActivityItem
+  job?: ContactAutomationActivityItem
+}
+
+export interface EnrollmentStats {
+  active: number
+  total: number
+  byNode: Record<string, number>
 }
 
 export interface AutomationsOverview {
@@ -144,29 +199,49 @@ export const AUTOMATION_STATUS_LABELS: Record<AutomationStatus, string> = {
 // Llamadas a la API
 // ---------------------------------------------------------------------------
 
+/**
+ * Caché en memoria: la librería y el editor pintan al instante con lo último
+ * conocido (sin parpadeo de carga) mientras se revalida en segundo plano.
+ */
+export const automationsCache = {
+  overview: null as AutomationsOverview | null,
+  automations: new Map<string, Automation>()
+}
+
 export const automationsService = {
   async getOverview(): Promise<AutomationsOverview> {
-    return apiClient.get<AutomationsOverview>('/automations')
+    const overview = await apiClient.get<AutomationsOverview>('/automations')
+    automationsCache.overview = overview
+    return overview
   },
 
   async getAutomation(automationId: string): Promise<Automation> {
-    return apiClient.get<Automation>(`/automations/${automationId}`)
+    const automation = await apiClient.get<Automation>(`/automations/${automationId}`)
+    automationsCache.automations.set(automation.id, automation)
+    return automation
   },
 
   async createAutomation(input: { name: string; folderId?: string | null }): Promise<Automation> {
-    return apiClient.post<Automation>('/automations', input)
+    const automation = await apiClient.post<Automation>('/automations', input)
+    automationsCache.automations.set(automation.id, automation)
+    return automation
   },
 
   async updateAutomation(automationId: string, input: AutomationUpdateInput): Promise<Automation> {
-    return apiClient.put<Automation>(`/automations/${automationId}`, input)
+    const automation = await apiClient.put<Automation>(`/automations/${automationId}`, input)
+    automationsCache.automations.set(automation.id, automation)
+    return automation
   },
 
   async duplicateAutomation(automationId: string): Promise<Automation> {
-    return apiClient.post<Automation>(`/automations/${automationId}/duplicate`)
+    const automation = await apiClient.post<Automation>(`/automations/${automationId}/duplicate`)
+    automationsCache.automations.set(automation.id, automation)
+    return automation
   },
 
   async deleteAutomation(automationId: string): Promise<void> {
     await apiClient.delete(`/automations/${automationId}`)
+    automationsCache.automations.delete(automationId)
   },
 
   async createFolder(input: { name: string }): Promise<AutomationFolder> {
@@ -184,8 +259,35 @@ export const automationsService = {
     return apiClient.post<AutomationFolder[]>('/automations/folders/reorder', { orderedIds })
   },
 
+  async getEnrollments(automationId: string): Promise<AutomationEnrollment[]> {
+    return apiClient.get<AutomationEnrollment[]>(`/automations/${automationId}/enrollments`)
+  },
+
+  async getEnrollmentStats(automationId: string): Promise<EnrollmentStats> {
+    return apiClient.get<EnrollmentStats>(`/automations/${automationId}/stats`)
+  },
+
+  async getContactActivity(contactId: string): Promise<ContactAutomationActivity> {
+    return apiClient.get<ContactAutomationActivity>(`/automations/contacts/${contactId}/activity`)
+  },
+
+  async enrollContact(
+    automationId: string,
+    input: { contactId: string; mode: 'now' | 'scheduled'; scheduledAt?: string }
+  ): Promise<ContactAutomationEnrollmentResult> {
+    return apiClient.post<ContactAutomationEnrollmentResult>(`/automations/${automationId}/enroll-contact`, input)
+  },
+
   async deleteFolder(folderId: string): Promise<void> {
     await apiClient.delete(`/automations/folders/${folderId}`)
+  },
+
+  /** Sube un archivo (data URL base64) y devuelve su URL pública en Ristak */
+  async uploadAsset(fileBase64: string, filename: string): Promise<{ id: string; url: string; contentType: string }> {
+    return apiClient.post<{ id: string; url: string; contentType: string }>('/automations/assets', {
+      fileBase64,
+      filename
+    })
   }
 }
 

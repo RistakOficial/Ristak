@@ -5,6 +5,7 @@ import {
   type AppointmentReminder,
   type AppointmentReminderInput,
   type ReminderChannelOption,
+  type ReminderNoConfirmAction,
   type ReminderSenderOption,
   formatReminderOffsetLabel
 } from '@/services/appointmentRemindersService'
@@ -47,6 +48,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     setDraft({
       messageType: reminder.messageType,
       aiEnabled: reminder.aiEnabled,
+      bypassAutomations: reminder.bypassAutomations,
       senderMode: reminder.senderMode,
       senderPhoneNumberId: reminder.senderPhoneNumberId,
       offsetValue: reminder.offsetValue,
@@ -55,7 +57,8 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       smartEnabled: reminder.smartEnabled,
       smartStart: reminder.smartStart,
       smartEnd: reminder.smartEnd,
-      smartOverflow: reminder.smartOverflow
+      smartOverflow: reminder.smartOverflow,
+      noConfirmAction: reminder.noConfirmAction
     })
     setSaving(false)
     setDeleting(false)
@@ -153,11 +156,58 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                   <span>
                     <span className={styles.switchLabel}>Confirmación automática con IA</span>
                     <span className={styles.helpText}>
-                      Al enviarse este mensaje se activa una inteligencia artificial que queda a la espera
-                      de la respuesta del contacto y confirma la cita automáticamente cuando responde que sí.
+                      Al enviarse este mensaje se activa una inteligencia artificial que espera hasta
+                      3 minutos tras el último mensaje del contacto antes de clasificar su respuesta
+                      como confirmada, reagendada, cancelada o pendiente de atención humana.
                     </span>
                   </span>
                 </label>
+
+                {draft.aiEnabled !== false && (
+                  <label className={styles.switchRow} style={{ marginTop: '10px' }}>
+                    <span className={styles.switchControl}>
+                      <input
+                        type="checkbox"
+                        checked={draft.bypassAutomations === true}
+                        onChange={(e) => set('bypassAutomations', e.target.checked)}
+                      />
+                      <span className={styles.switchTrack} />
+                    </span>
+                    <span>
+                      <span className={styles.switchLabel}>Pausar agentes y automatizaciones durante la confirmación</span>
+                      <span className={styles.helpText}>
+                        Mientras el contacto esté respondiendo al mensaje de confirmación, otros agentes
+                        de IA y automatizaciones activas quedarán en pausa para evitar respuestas cruzadas.
+                        Se reanudan automáticamente cuando la IA termina de clasificar la respuesta.
+                      </span>
+                    </span>
+                  </label>
+                )}
+              </div>
+            )}
+
+            {isConfirmation && (
+              <div className={styles.noConfirmBox}>
+                <span className={styles.noConfirmTitle}>Si el contacto no confirma</span>
+                <div className={styles.radioGroup}>
+                  {(
+                    [
+                      { value: 'no_action', label: 'No hacer nada' },
+                      { value: 'cancel_appointment', label: 'Cancelar la cita' },
+                      { value: 'notify_push', label: 'Enviarme una notificación' }
+                    ] as { value: ReminderNoConfirmAction; label: string }[]
+                  ).map(({ value, label }) => (
+                    <label key={value} className={styles.radioRow}>
+                      <input
+                        type="radio"
+                        name="noConfirmAction"
+                        checked={(draft.noConfirmAction || 'no_action') === value}
+                        onChange={() => set('noConfirmAction', value)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             )}
           </section>

@@ -181,12 +181,30 @@ body.dark {
     cursor: pointer;
   }
 
-  input:not(:disabled):not([readonly]),
-  select:not(:disabled),
-  textarea:not(:disabled):not([readonly]) {
+  select:not(:disabled) {
     cursor: pointer;
   }
 
+  /* Solo los controles que se operan con clic llevan manita;
+     los campos de escritura libre quedan fuera de esta lista. */
+  input[type='button']:not(:disabled),
+  input[type='submit']:not(:disabled),
+  input[type='reset']:not(:disabled),
+  input[type='image']:not(:disabled),
+  input[type='checkbox']:not(:disabled),
+  input[type='radio']:not(:disabled),
+  input[type='file']:not(:disabled),
+  input[type='color']:not(:disabled),
+  input[type='range']:not(:disabled),
+  input[type='date']:not(:disabled),
+  input[type='time']:not(:disabled),
+  input[type='datetime-local']:not(:disabled),
+  input[type='month']:not(:disabled),
+  input[type='week']:not(:disabled) {
+    cursor: pointer;
+  }
+
+  input:not([type]):not(:disabled):not([readonly]),
   input[type='text']:not(:disabled):not([readonly]),
   input[type='email']:not(:disabled):not([readonly]),
   input[type='password']:not(:disabled):not([readonly]),
@@ -1684,10 +1702,6 @@ body[data-design-preset]:not([data-design-preset='classic']) table th {
 
 body[data-design-preset]:not([data-design-preset='classic']) table td {
   border-color: var(--design-table-border) !important;
-}
-
-body[data-design-preset]:not([data-design-preset='classic']) table tbody tr:nth-child(even) {
-  background: var(--design-table-row-even);
 }
 
 body[data-design-preset='atelier'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:first-child {

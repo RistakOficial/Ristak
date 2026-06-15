@@ -44,7 +44,6 @@
 :global(body[data-phone-chat-tone="dark"]) .periodPanel,
 :global(body[data-phone-chat-tone="dark"]) .content,
 :global(body[data-phone-chat-tone="dark"]) .settingsShell,
-:global(body[data-phone-chat-tone="dark"]) .loadingPage,
 :global(body[data-phone-chat-tone="dark"]) .blockedPage {
   background: var(--phone-frame-bg);
 }
@@ -800,7 +799,6 @@
   text-align: center;
 }
 
-.loadingPage,
 .blockedPage {
   display: grid;
   min-height: 100dvh;
@@ -810,15 +808,6 @@
     linear-gradient(180deg, rgba(16, 185, 129, 0.08), transparent 42%),
     var(--color-background-primary);
   place-items: center;
-}
-
-.loadingDot {
-  width: 18px;
-  height: 18px;
-  border: 2px solid var(--color-text-tertiary);
-  border-top-color: transparent;
-  border-radius: 999px;
-  animation: spin 0.8s linear infinite;
 }
 
 .blockedPanel {

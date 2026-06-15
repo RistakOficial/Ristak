@@ -6,8 +6,10 @@ import { Header } from '@/components/layout/Header'
 import { SyncProgressBar } from '@/components/common/SyncProgressBar'
 import { AIAgentPanel } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
-import { useAppConfig, useDomainFeatureSync } from '@/hooks'
+import { InitializationProvider } from '@/contexts/InitializationContext'
+import { useAIAgentAvailability, useAppConfig, useDomainFeatureSync } from '@/hooks'
 import { requestAIAgentClose } from '@/utils/aiAgentEvents'
+import { hasModuleAccess } from '@/utils/accessControl'
 import { HIGHLEVEL_SYNC_STARTED_EVENT } from '@/services/highLevelService'
 import styles from './AppShell.module.css'
 
@@ -53,7 +55,7 @@ function getInitialAIAgentWidth() {
 
 export const AppShell: React.FC = () => {
   const navigate = useNavigate()
-  const { logout } = useAuth()
+  const { logout, user } = useAuth()
   const [persistedAIAgentWidth, savePersistedAIAgentWidth] = useAppConfig<number>(
     AI_AGENT_WIDTH_CONFIG_KEY,
     getInitialAIAgentWidth()
@@ -63,6 +65,8 @@ export const AppShell: React.FC = () => {
   const [aiAgentWidth, setAIAgentWidth] = useState(getInitialAIAgentWidth)
   const [aiAgentResizing, setAIAgentResizing] = useState(false)
   const [sitesEditorActive, setSitesEditorActive] = useState(false)
+  const aiAgentAvailability = useAIAgentAvailability()
+  const canUseAIAgent = hasModuleAccess(user, 'ai_agent', 'read') && aiAgentAvailability.configured
   const resizePointerIdRef = useRef<number | null>(null)
   const aiAgentWidthRef = useRef(aiAgentWidth)
   const lastSavedAIAgentWidthRef = useRef(aiAgentWidth)
@@ -113,6 +117,13 @@ export const AppShell: React.FC = () => {
       requestAIAgentClose()
     }
   }, [aiAgentOpen, syncProgressVisible])
+
+  useEffect(() => {
+    if (!canUseAIAgent && aiAgentOpen) {
+      setAIAgentOpen(false)
+      requestAIAgentClose()
+    }
+  }, [aiAgentOpen, canUseAIAgent])
 
   useLayoutEffect(() => {
     const handleSitesEditorActive = (event: Event) => {
@@ -229,7 +240,7 @@ export const AppShell: React.FC = () => {
   } as React.CSSProperties
 
   return (
-    <>
+    <InitializationProvider>
       {syncProgressVisible && <SyncProgressBar onClose={handleProgressBarClose} />}
 
       <div
@@ -249,7 +260,7 @@ export const AppShell: React.FC = () => {
           </Layout>
         </div>
 
-        {!sitesEditorActive && (
+        {!sitesEditorActive && canUseAIAgent && (
           <div className={styles.aiAgentSlot}>
             {aiAgentOpen && (
               <button
@@ -273,6 +284,6 @@ export const AppShell: React.FC = () => {
           </div>
         )}
       </div>
-    </>
+    </InitializationProvider>
   )
 }

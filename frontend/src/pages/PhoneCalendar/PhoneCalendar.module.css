@@ -51,7 +51,6 @@
 :global(body[data-phone-chat-tone="dark"]) .dayTimeline,
 :global(body[data-phone-chat-tone="dark"]) .timelineHeader,
 :global(body[data-phone-chat-tone="dark"]) .timelineBody,
-:global(body[data-phone-chat-tone="dark"]) .loadingPage,
 :global(body[data-phone-chat-tone="dark"]) .blockedPage {
   background: var(--phone-calendar-surface);
 }
@@ -268,6 +267,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.periodChipPlaceholder {
+  flex: 0 0 1px;
+  min-height: 42px;
 }
 
 .headerCapsule {
@@ -530,7 +534,8 @@
 .miniMonthGrid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 1px;
+  row-gap: 3px;
+  column-gap: 1px;
   min-height: 46px;
   color: #050505;
 }
@@ -539,7 +544,7 @@
   position: relative;
   display: grid;
   place-items: center;
-  min-height: 8px;
+  min-height: 9px;
   color: #050505;
   font-size: 7.2px;
   font-weight: 700;
@@ -1591,7 +1596,6 @@
   width: 100%;
 }
 
-.loadingPage,
 .blockedPage {
   display: grid;
   min-height: 100dvh;
@@ -1599,15 +1603,6 @@
   color: #050505;
   background: #ffffff;
   place-items: center;
-}
-
-.loadingDot {
-  width: 18px;
-  height: 18px;
-  border: 2px solid #8e8e93;
-  border-top-color: transparent;
-  border-radius: 999px;
-  animation: spin 0.8s linear infinite;
 }
 
 .blockedPanel {
@@ -1928,7 +1923,7 @@
   }
 
   .miniMonthGrid {
-    gap: 8px 10px;
+    gap: 10px 10px;
     min-height: 172px;
   }
 

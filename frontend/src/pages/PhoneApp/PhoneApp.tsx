@@ -24,6 +24,7 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { useHighLevelConnected, usePhoneElasticScroll } from '@/hooks'
 import { AccountSettings } from '@/pages/Settings/AccountSettings'
 import { AIAgentSettings } from '@/pages/Settings/AIAgentSettings'
+import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { calendarsService, type AppointmentStats, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { campaignsService, type Campaign } from '@/services/campaignsService'
 import { contactsService, type ContactStats } from '@/services/contactsService'
@@ -32,6 +33,7 @@ import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from
 import { reportsService, type ContactListItem, type ReportMetricRow, type ReportsSummary } from '@/services/reportsService'
 import { transactionsService, type Transaction, type TransactionSummary } from '@/services/transactionsService'
 import { formatCurrency, formatDate, formatDateToISO, formatNumber, formatRoas } from '@/utils/format'
+import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import styles from './PhoneApp.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -217,6 +219,7 @@ function compactPhoneDataForCache(data: PhoneAppData): PhoneAppData {
 
 function hasPortableAccess() {
   if (typeof window === 'undefined') return false
+  if (isLocalPhonePreviewHost()) return true
 
   const portableViewport = window.matchMedia(PORTABLE_WIDTH_QUERY).matches
   const phoneViewport = window.matchMedia(PHONE_WIDTH_QUERY).matches
@@ -759,11 +762,7 @@ export const PhoneApp: React.FC = () => {
   }
 
   if (accessState === 'checking') {
-    return (
-      <main className={styles.loadingPage}>
-        <span className={styles.loadingDot} />
-      </main>
-    )
+    return <PhoneStartupLoader />
   }
 
   if (accessState === 'blocked') {

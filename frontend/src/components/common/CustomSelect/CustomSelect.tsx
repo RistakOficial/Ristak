@@ -39,6 +39,7 @@ interface CustomSelectProps {
   className?: string
   style?: React.CSSProperties
   portal?: boolean
+  size?: 'default' | 'large'
   name?: string
   id?: string
   required?: boolean
@@ -108,6 +109,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   className = '',
   style,
   portal = false,
+  size = 'default',
   name,
   id,
   required,
@@ -140,13 +142,16 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     if (!portal || !containerRef.current) return
 
     const rect = containerRef.current.getBoundingClientRect()
-    const viewportPadding = 8
-    const dropdownGap = 4
-    const estimatedHeight = Math.min(flatOptions.length * 44 + 8, 280)
+    const viewportPadding = 12
+    const dropdownGap = 6
+    const rowHeight = size === 'large' ? 42 : 40
+    const maxDropdownHeight = size === 'large' ? 420 : 280
+    const minDropdownHeight = size === 'large' ? 220 : 120
+    const estimatedHeight = Math.min(flatOptions.length * rowHeight + 8, maxDropdownHeight)
     const spaceBelow = window.innerHeight - rect.bottom - viewportPadding
     const spaceAbove = rect.top - viewportPadding
     const openAbove = spaceBelow < estimatedHeight && spaceAbove > spaceBelow
-    const availableSpace = Math.max(120, openAbove ? spaceAbove : spaceBelow)
+    const availableSpace = Math.max(minDropdownHeight, openAbove ? spaceAbove : spaceBelow)
     const dropdownHeight = Math.min(estimatedHeight, availableSpace)
 
     setPortalStyle({
@@ -154,12 +159,12 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       top: openAbove
         ? Math.max(viewportPadding, rect.top - dropdownHeight - dropdownGap)
         : Math.min(rect.bottom + dropdownGap, window.innerHeight - viewportPadding - dropdownHeight),
-      left: rect.left,
+      left: Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - rect.width - viewportPadding),
       width: rect.width,
       zIndex: 10000,
       '--custom-select-options-max-height': `${dropdownHeight}px`
     } as React.CSSProperties)
-  }, [flatOptions.length, portal])
+  }, [flatOptions.length, portal, size])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -218,7 +223,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   const dropdown = isOpen && !disabled ? (
     <div
       ref={dropdownRef}
-      className={`${styles.dropdown} ${portal ? styles.portalDropdown : ''}`}
+      className={`${styles.dropdown} ${portal ? styles.portalDropdown : ''} ${size === 'large' ? styles.dropdownLarge : ''}`}
       style={portal ? portalStyle : undefined}
       data-ristak-dropdown-panel
     >
@@ -272,7 +277,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`${styles.container} ${className} ${disabled ? styles.disabled : ''}`}
+      className={`${styles.container} ${size === 'large' ? styles.large : ''} ${className} ${disabled ? styles.disabled : ''}`}
       style={style}
     >
       <button

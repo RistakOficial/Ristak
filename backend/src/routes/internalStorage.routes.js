@@ -3,6 +3,11 @@ import {
   internalStorageDiagnosticsHandler,
   internalStorageUsageHandler
 } from '../controllers/mediaController.js'
+import {
+  deleteUser,
+  listUsers,
+  updateUser
+} from '../controllers/userAccessController.js'
 
 const router = express.Router()
 
@@ -37,6 +42,8 @@ router.use(requireInternalInstallerToken)
 
 router.get('/storage/usage', internalStorageUsageHandler)
 router.get('/storage/diagnostics', internalStorageDiagnosticsHandler)
+router.get('/users', listUsers)
+router.patch('/users/:userId', updateUser)
+router.delete('/users/:userId', deleteUser)
 
 export default router
-

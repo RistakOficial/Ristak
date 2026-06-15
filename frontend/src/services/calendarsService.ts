@@ -78,6 +78,9 @@ export interface Calendar {
   source?: 'ristak' | 'ghl' | 'google';
   googleCalendarId?: string;
   googleAccessRole?: string;
+  googleCalendarSummary?: string;
+  googleCalendarTimeZone?: string;
+  googleSyncEnabled?: boolean;
   syncStatus?: 'pending' | 'synced' | 'error';
   syncError?: string | null;
   publicBookingPath?: string;
@@ -117,6 +120,8 @@ export interface CalendarEvent {
 }
 
 export interface GoogleCalendarIntegrationStatus {
+  connectionMode?: 'service_account' | 'oauth';
+  configured?: boolean;
   connected: boolean;
   calendarId: string;
   serviceAccountEmail: string;
@@ -134,10 +139,35 @@ export interface GoogleCalendarIntegrationStatus {
   syncedEventsCount: number;
   connectedAt: string | null;
   updatedAt: string | null;
+  googleAccountEmail?: string;
+  googleAccountName?: string;
+  googleAccountPictureUrl?: string;
+  scopes?: string[];
+  canManageEvents?: boolean;
+  canListCalendars?: boolean;
 }
 
 export interface GoogleCalendarServiceAccountReveal {
   serviceAccountJson: string;
+}
+
+export interface GoogleCalendarConnectUrl {
+  url: string;
+  mode?: 'calendar';
+  redirectUri?: string;
+}
+
+export interface GoogleCalendarOption {
+  id: string;
+  summary: string;
+  name: string;
+  description?: string;
+  timeZone?: string;
+  accessRole?: string;
+  primary?: boolean;
+  selected?: boolean;
+  backgroundColor?: string;
+  foregroundColor?: string;
 }
 
 export interface GoogleCalendarMergeCalendar extends Calendar {
@@ -212,12 +242,27 @@ export const calendarsService = {
     return apiClient.get<GoogleCalendarIntegrationStatus>('/calendars/google-integration');
   },
 
+  async getGoogleConnectUrl(): Promise<GoogleCalendarConnectUrl> {
+    const returnPath = typeof window !== 'undefined'
+      ? `${window.location.pathname}${window.location.search || ''}`
+      : '/settings/calendars/google';
+
+    return apiClient.post<GoogleCalendarConnectUrl>('/calendars/google-integration/connect-url', {
+      returnPath
+    });
+  },
+
   async revealGoogleServiceAccount(): Promise<GoogleCalendarServiceAccountReveal> {
     return apiClient.get<GoogleCalendarServiceAccountReveal>('/calendars/google-integration/reveal/service-account');
   },
 
+  async getGoogleCalendarOptions(): Promise<GoogleCalendarOption[]> {
+    const data = await apiClient.get<GoogleCalendarOption[]>('/calendars/google-integration/calendars');
+    return Array.isArray(data) ? data : [];
+  },
+
   async saveGoogleIntegration(payload: {
-    calendarId: string;
+    calendarId?: string;
     serviceAccountJson: string;
   }): Promise<GoogleCalendarIntegrationStatus> {
     return apiClient.put<GoogleCalendarIntegrationStatus>('/calendars/google-integration', payload);
@@ -243,6 +288,12 @@ export const calendarsService = {
 
   async deleteGoogleIntegration(): Promise<GoogleCalendarIntegrationStatus> {
     return apiClient.delete<GoogleCalendarIntegrationStatus>('/calendars/google-integration');
+  },
+
+  async updateCalendarGoogleSync(calendarId: string, googleCalendarId: string): Promise<Calendar | null> {
+    return apiClient.put<Calendar>(`/calendars/${calendarId}/google-sync`, {
+      googleCalendarId
+    });
   },
 
   /**

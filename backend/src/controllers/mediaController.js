@@ -1,10 +1,13 @@
 import { promises as fs } from 'fs'
+import JSZip from 'jszip'
 import {
   extractMediaAssetIdFromUrl,
   getMediaAsset,
+  getMediaAssetBuffer,
   getMediaAssetFile,
   getStorageUsage,
   listMediaAssets,
+  moveMediaAssets,
   replaceMediaAsset,
   retryMediaAsset,
   runStorageDiagnostics,
@@ -13,6 +16,8 @@ import {
   uploadMediaAssetFromDataUrl
 } from '../services/mediaStorageService.js'
 import { logger } from '../utils/logger.js'
+
+const MAX_ARCHIVE_DOWNLOAD_ITEMS = Number(process.env.MEDIA_MAX_ARCHIVE_DOWNLOAD_ITEMS || 500)
 
 function parseBoolean(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback
@@ -28,6 +33,95 @@ function sendError(res, error, fallback = 'Error procesando almacenamiento multi
     error: error.message || fallback,
     ...(error.code ? { code: error.code } : {})
   })
+}
+
+function safeHeaderFilename(value = '', fallback = 'media') {
+  const filename = String(value || fallback)
+    .split(/[\\/]/)
+    .pop()
+    ?.replace(/[\r\n"]/g, '')
+    .trim()
+  return filename || fallback
+}
+
+function attachmentDisposition(filename) {
+  const safe = safeHeaderFilename(filename)
+  const ascii = safe.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_')
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(safe)}`
+}
+
+function ensureZipFilename(value = '') {
+  const filename = safeHeaderFilename(value, 'media.zip')
+  return /\.zip$/i.test(filename) ? filename : `${filename}.zip`
+}
+
+function sanitizeZipSegment(value = '') {
+  const segment = String(value || '')
+    .trim()
+    .replace(/[\u0000-\u001f<>:"|?*]+/g, '-')
+    .replace(/\.+$/g, '')
+    .slice(0, 160)
+  if (!segment || segment === '.' || segment === '..') return ''
+  return segment
+}
+
+function sanitizeZipPath(value = '', fallback = 'archivo') {
+  const parts = String(value || fallback)
+    .split(/[\\/]+/)
+    .map(sanitizeZipSegment)
+    .filter(Boolean)
+
+  if (!parts.length) {
+    parts.push(sanitizeZipSegment(fallback) || 'archivo')
+  }
+
+  return parts.join('/')
+}
+
+function uniqueZipPath(path, usedPaths) {
+  let candidate = path
+  let index = 2
+  while (usedPaths.has(candidate)) {
+    const slashIndex = path.lastIndexOf('/')
+    const directory = slashIndex >= 0 ? path.slice(0, slashIndex + 1) : ''
+    const filename = slashIndex >= 0 ? path.slice(slashIndex + 1) : path
+    const dotIndex = filename.lastIndexOf('.')
+    const base = dotIndex > 0 ? filename.slice(0, dotIndex) : filename
+    const extension = dotIndex > 0 ? filename.slice(dotIndex) : ''
+    candidate = `${directory}${base} (${index})${extension}`
+    index += 1
+  }
+  usedPaths.add(candidate)
+  return candidate
+}
+
+function archiveEntriesFromBody(body = {}) {
+  const rawEntries = Array.isArray(body.entries)
+    ? body.entries
+    : Array.isArray(body.assetIds)
+      ? body.assetIds.map((id) => ({ id }))
+      : []
+  const seen = new Set()
+  const entries = []
+
+  for (const rawEntry of rawEntries) {
+    const id = String(typeof rawEntry === 'string' ? rawEntry : rawEntry?.id || '').trim()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    entries.push({
+      id,
+      path: typeof rawEntry === 'object' && rawEntry ? String(rawEntry.path || rawEntry.filename || '') : ''
+    })
+  }
+
+  return entries
+}
+
+function downloadInputError(message, status = 400, code = 'invalid_media_download') {
+  const error = new Error(message)
+  error.status = status
+  error.code = code
+  return error
 }
 
 async function uploadInputFromRequest(req) {
@@ -147,6 +241,72 @@ export async function deleteMediaAssetHandler(req, res) {
   }
 }
 
+export async function downloadMediaAssetHandler(req, res) {
+  try {
+    const { buffer, mimeType, filename } = await getMediaAssetBuffer(req.params.assetId)
+    const downloadName = safeHeaderFilename(filename || req.params.assetId, req.params.assetId)
+    res.setHeader('Content-Type', mimeType || 'application/octet-stream')
+    res.setHeader('Content-Length', String(buffer.length))
+    res.setHeader('Cache-Control', 'private, no-store')
+    res.setHeader('Content-Disposition', attachmentDisposition(downloadName))
+    res.send(buffer)
+  } catch (error) {
+    sendError(res, error, 'Error descargando archivo multimedia')
+  }
+}
+
+export async function downloadMediaAssetsArchiveHandler(req, res) {
+  try {
+    const entries = archiveEntriesFromBody(req.body)
+    if (!entries.length) {
+      throw downloadInputError('Selecciona al menos un archivo para descargar.')
+    }
+    if (entries.length > MAX_ARCHIVE_DOWNLOAD_ITEMS) {
+      throw downloadInputError(`Selecciona máximo ${MAX_ARCHIVE_DOWNLOAD_ITEMS} archivos por descarga.`, 413, 'media_archive_too_large')
+    }
+
+    const zip = new JSZip()
+    const usedPaths = new Set()
+
+    for (const entry of entries) {
+      const { buffer, filename } = await getMediaAssetBuffer(entry.id)
+      const fallbackName = safeHeaderFilename(filename || `${entry.id}.bin`, `${entry.id}.bin`)
+      const archivePath = uniqueZipPath(sanitizeZipPath(entry.path, fallbackName), usedPaths)
+      zip.file(archivePath, buffer, { binary: true })
+    }
+
+    const archive = await zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 }
+    })
+    const archiveName = ensureZipFilename(req.body?.filename)
+
+    res.setHeader('Content-Type', 'application/zip')
+    res.setHeader('Content-Length', String(archive.length))
+    res.setHeader('Cache-Control', 'private, no-store')
+    res.setHeader('Content-Disposition', attachmentDisposition(archiveName))
+    res.send(archive)
+  } catch (error) {
+    sendError(res, error, 'Error descargando archivos multimedia')
+  }
+}
+
+export async function moveMediaAssetsHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const moved = await moveMediaAssets({
+      businessId: body.businessId || body.business_id || req.query?.businessId || 'default',
+      entries: Array.isArray(body.entries) ? body.entries : [],
+      assetIds: Array.isArray(body.assetIds) ? body.assetIds : [],
+      targetFolderPath: body.targetFolderPath || body.folderPath || ''
+    })
+    res.json({ success: true, data: moved })
+  } catch (error) {
+    sendError(res, error, 'Error moviendo archivos multimedia')
+  }
+}
+
 export async function replaceMediaAssetHandler(req, res) {
   try {
     const prepared = await uploadInputFromRequest(req)
@@ -221,4 +381,3 @@ export async function internalStorageDiagnosticsHandler(_req, res) {
     sendError(res, error, 'Error diagnosticando almacenamiento interno')
   }
 }
-

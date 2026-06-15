@@ -249,13 +249,21 @@ export async function getAgentRunTrace(traceId, { userId = null } = {}) {
   const cleanTraceId = cleanString(traceId, 120)
   if (!cleanTraceId) return null
 
-  const run = await db.get(`
-    SELECT *
-    FROM agent_runs
-    WHERE trace_id = ?
-      AND (? IS NULL OR user_id = ? OR user_id IS NULL)
-    LIMIT 1
-  `, [cleanTraceId, userId || null, userId || null])
+  const normalizedUserId = userId || null
+  const run = normalizedUserId
+    ? await db.get(`
+      SELECT *
+      FROM agent_runs
+      WHERE trace_id = ?
+        AND (user_id = ? OR user_id IS NULL)
+      LIMIT 1
+    `, [cleanTraceId, normalizedUserId])
+    : await db.get(`
+      SELECT *
+      FROM agent_runs
+      WHERE trace_id = ?
+      LIMIT 1
+    `, [cleanTraceId])
 
   if (!run) return null
 

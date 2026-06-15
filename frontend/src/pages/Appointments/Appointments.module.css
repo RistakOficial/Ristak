@@ -1803,6 +1803,7 @@
 
 .upcomingList {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
@@ -1812,6 +1813,7 @@
 
 .upcomingItem {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
@@ -1949,11 +1951,18 @@
   flex: 0 0 auto;
 }
 
-.automationSwitch input {
-  position: absolute;
+.automationSwitch input[type="checkbox"] {
+  position: absolute !important;
   inset: 0;
-  opacity: 0;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  opacity: 0 !important;
   cursor: pointer;
+  z-index: 1;
+  appearance: none !important;
+  -webkit-appearance: none !important;
 }
 
 .automationSwitchTrack {

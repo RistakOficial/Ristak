@@ -101,7 +101,7 @@ export function getHighLevelEndpointCatalogSummary() {
   return [
     `${HIGHLEVEL_ENDPOINT_SOURCE.subAccountEndpointCount} endpoints REST documentados de Sub-Account`,
     `${appCount} modulos/apps`,
-    `metodos ${methodSummary}`,
+    `métodos ${methodSummary}`,
     `fuente ${HIGHLEVEL_ENDPOINT_SOURCE.repository} @ ${HIGHLEVEL_ENDPOINT_SOURCE.commit || 'desconocido'}`
   ].join('; ')
 }

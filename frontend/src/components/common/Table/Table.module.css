@@ -294,10 +294,6 @@ body.light input.selectionCheckbox:checked:hover::after {
   transition: opacity var(--transition-fast);
 }
 
-.table tbody tr:nth-child(even) {
-  background-color: var(--design-table-row-even, var(--table-row-even));
-}
-
 .table tbody tr:hover {
   opacity: 0.85;
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   ChevronRight,
+  Copy,
   Edit3,
   Folder,
   FolderPlus,
@@ -31,7 +32,6 @@ type FolderFilter = 'all' | 'unfiled' | string
 type FieldDraft = {
   label: string
   fieldKey: string
-  description: string
   dataType: CustomFieldDataType
   folderId: string
   optionsText: string
@@ -43,16 +43,16 @@ type FolderDraft = {
 }
 
 const fieldTypes: Array<{ value: CustomFieldDataType; label: string; detail: string }> = [
-  { value: 'text', label: 'Texto corto', detail: 'Una linea de texto.' },
-  { value: 'textarea', label: 'Parrafo', detail: 'Texto largo o notas.' },
-  { value: 'radio', label: 'Radio buttons', detail: 'Una opcion visible.' },
-  { value: 'dropdown', label: 'Dropdown', detail: 'Una opcion en lista.' },
+  { value: 'text', label: 'Texto corto', detail: 'Una línea de texto.' },
+  { value: 'textarea', label: 'Párrafo', detail: 'Texto largo o notas.' },
+  { value: 'radio', label: 'Radio buttons', detail: 'Una opción visible.' },
+  { value: 'dropdown', label: 'Dropdown', detail: 'Una opción en lista.' },
   { value: 'checkboxes', label: 'Checkboxes', detail: 'Varias opciones.' },
-  { value: 'number', label: 'Numero', detail: 'Solo cantidad numerica.' },
+  { value: 'number', label: 'Número', detail: 'Solo cantidad numérica.' },
   { value: 'currency', label: 'Moneda', detail: 'Importe de dinero.' },
-  { value: 'date', label: 'Fecha', detail: 'Dia o fecha.' },
-  { value: 'email', label: 'Email', detail: 'Correo electronico.' },
-  { value: 'phone', label: 'Telefono', detail: 'Numero de contacto.' }
+  { value: 'date', label: 'Fecha', detail: 'Día o fecha.' },
+  { value: 'email', label: 'Email', detail: 'Correo electrónico.' },
+  { value: 'phone', label: 'Teléfono', detail: 'Número de contacto.' }
 ]
 
 const choiceTypes = new Set<CustomFieldDataType>(['radio', 'dropdown', 'checkboxes', 'select', 'multiselect'])
@@ -60,7 +60,6 @@ const choiceTypes = new Set<CustomFieldDataType>(['radio', 'dropdown', 'checkbox
 const emptyDraft = (folderId = ''): FieldDraft => ({
   label: '',
   fieldKey: '',
-  description: '',
   dataType: 'text',
   folderId,
   optionsText: ''
@@ -111,6 +110,8 @@ const getFolderTargetId = (folderId: FolderFilter) => (
   folderId === 'unfiled' || folderId === 'all' ? '' : folderId
 )
 
+const customFieldParameter = (field: Pick<CustomFieldDefinition, 'fieldKey' | 'key'>) => `{{custom.${field.fieldKey || field.key}}}`
+
 export const CustomFields: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [folders, setFolders] = useState<CustomFieldFolder[]>([])
@@ -126,7 +127,6 @@ export const CustomFields: React.FC = () => {
   const [editorOpen, setEditorOpen] = useState(false)
   const [editingField, setEditingField] = useState<CustomFieldDefinition | null>(null)
   const [draft, setDraft] = useState<FieldDraft>(emptyDraft())
-  const [keyTouched, setKeyTouched] = useState(false)
   const [selectedFieldIds, setSelectedFieldIds] = useState<Set<string>>(() => new Set())
   const [movingFields, setMovingFields] = useState(false)
   const [draggingFieldIds, setDraggingFieldIds] = useState<string[]>([])
@@ -179,7 +179,7 @@ export const CustomFields: React.FC = () => {
       return [
         field.label,
         field.fieldKey,
-        field.description,
+        customFieldParameter(field),
         field.folderName,
         getTypeLabel(field.dataType)
       ].some(value => String(value || '').toLowerCase().includes(query))
@@ -204,7 +204,6 @@ export const CustomFields: React.FC = () => {
     const folderId = activeFolder !== 'all' && activeFolder !== 'unfiled' ? activeFolder : ''
     setEditingField(null)
     setDraft(emptyDraft(folderId))
-    setKeyTouched(false)
     setEditorOpen(true)
   }
 
@@ -218,12 +217,10 @@ export const CustomFields: React.FC = () => {
     setDraft({
       label: field.label,
       fieldKey: field.fieldKey || field.key,
-      description: field.description || '',
       dataType: field.dataType,
       folderId: field.folderId || '',
       optionsText: optionsToText(field.options)
     })
-    setKeyTouched(true)
     setEditorOpen(true)
   }
 
@@ -231,7 +228,6 @@ export const CustomFields: React.FC = () => {
     setEditorOpen(false)
     setEditingField(null)
     setDraft(emptyDraft())
-    setKeyTouched(false)
   }
 
   const openFolderCreator = (options: { moveSelected?: boolean } = {}) => {
@@ -251,17 +247,26 @@ export const CustomFields: React.FC = () => {
     setDraft(current => ({ ...current, ...patch }))
   }
 
+  const copyText = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      showToast('success', 'Copiado', `${label} copiado.`)
+    } catch {
+      showToast('error', 'No se pudo copiar', 'Cópialo manualmente.')
+    }
+  }
+
   const handleLabelChange = (value: string) => {
     setDraft(current => ({
       ...current,
       label: value,
-      fieldKey: keyTouched ? current.fieldKey : normalizeFieldKey(value)
+      fieldKey: editingField ? current.fieldKey : normalizeFieldKey(value)
     }))
   }
 
   const buildPayload = (): SaveCustomFieldInput | null => {
     const label = draft.label.trim()
-    const fieldKey = normalizeFieldKey(draft.fieldKey || draft.label)
+    const fieldKey = editingField ? normalizeFieldKey(draft.fieldKey) : normalizeFieldKey(label)
     const options = choiceTypes.has(draft.dataType) ? optionLinesToOptions(draft.optionsText) : []
 
     if (!label) {
@@ -270,12 +275,12 @@ export const CustomFields: React.FC = () => {
     }
 
     if (!fieldKey) {
-      showToast('warning', 'Falta ID', 'El ID sirve para guardar el dato dentro del contacto.')
+      showToast('warning', 'Falta parámetro', 'El parámetro sirve para guardar y usar el dato del contacto.')
       return null
     }
 
     if (choiceTypes.has(draft.dataType) && options.length === 0) {
-      showToast('warning', 'Faltan opciones', 'Agrega al menos una opcion para este tipo de campo.')
+      showToast('warning', 'Faltan opciones', 'Agrega al menos una opción para este tipo de campo.')
       return null
     }
 
@@ -283,7 +288,6 @@ export const CustomFields: React.FC = () => {
       label,
       fieldKey,
       dataType: draft.dataType,
-      description: draft.description.trim(),
       folderId: draft.folderId || undefined,
       fieldGroup: draft.folderId ? getFolderName(folders, draft.folderId) : 'general',
       options,
@@ -494,7 +498,7 @@ export const CustomFields: React.FC = () => {
   const handleArchiveField = (field: CustomFieldDefinition) => {
     showConfirm(
       'Eliminar campo',
-      `El campo "${field.label}" se eliminara del sistema y tambien se borraran sus valores guardados en todos los contactos. Esta accion no se puede deshacer.`,
+      `El campo "${field.label}" se eliminará del sistema y también se borrarán sus valores guardados en todos los contactos. Esta acción no se puede deshacer.`,
       () => {
         const archive = async () => {
           try {
@@ -592,7 +596,7 @@ export const CustomFields: React.FC = () => {
           <div className={styles.toolbar}>
             <label className={styles.search} data-ristak-unstyled>
               <Search size={16} />
-              <input value={search} placeholder="Buscar por nombre, ID o tipo" onChange={(event) => setSearch(event.target.value)} />
+              <input value={search} placeholder="Buscar por nombre, parámetro o tipo" onChange={(event) => setSearch(event.target.value)} />
             </label>
             <span>{visibleFields.length} campos</span>
           </div>
@@ -647,7 +651,7 @@ export const CustomFields: React.FC = () => {
                       />
                     </th>
                     <th>Campo</th>
-                    <th>ID</th>
+                    <th>Parámetro</th>
                     <th>Tipo</th>
                     <th>Carpeta</th>
                     <th>Opciones</th>
@@ -680,9 +684,8 @@ export const CustomFields: React.FC = () => {
                       </td>
                       <td>
                         <strong>{field.label}</strong>
-                        {field.description && <span>{field.description}</span>}
                       </td>
-                      <td><code>{field.fieldKey || field.key}</code></td>
+                      <td><code>{customFieldParameter(field)}</code></td>
                       <td><span className={styles.typePill}>{getTypeLabel(field.dataType)}</span></td>
                       <td>{field.folderName || getFolderName(folders, field.folderId)}</td>
                       <td>{field.options?.length ? `${field.options.length} opciones` : '-'}</td>
@@ -692,6 +695,9 @@ export const CustomFields: React.FC = () => {
                           <span className={styles.lockedAction}>Protegido</span>
                         ) : (
                           <div className={styles.rowActions}>
+                            <button type="button" onClick={() => copyText(customFieldParameter(field), 'Parámetro')} aria-label={`Copiar ${field.label}`} title="Copiar parámetro">
+                              <Copy size={15} />
+                            </button>
                             <button type="button" onClick={() => openEditEditor(field)} aria-label={`Editar ${field.label}`} title="Editar">
                               <Edit3 size={15} />
                             </button>
@@ -728,26 +734,13 @@ export const CustomFields: React.FC = () => {
               <label className={styles.field}>
                 <span>Nombre visible</span>
                 <input value={draft.label} placeholder="Ej. Presupuesto mensual" onChange={(event) => handleLabelChange(event.target.value)} />
-              </label>
-
-              <label className={styles.field}>
-                <span>ID del campo</span>
-                <input
-                  value={draft.fieldKey}
-                  placeholder="presupuesto_mensual"
-                  disabled={Boolean(editingField)}
-                  onChange={(event) => {
-                    if (editingField) return
-                    setKeyTouched(true)
-                    patchDraft({ fieldKey: normalizeFieldKey(event.target.value) })
-                  }}
-                />
-                <small>{editingField ? 'Este ID ya quedo fijo. Para usar otro ID, elimina este campo y crea uno nuevo.' : 'Este ID es el nombre interno para guardar el valor.'}</small>
+                <small className={styles.parameterPreview}>Parámetro: <code>{customFieldParameter({ fieldKey: draft.fieldKey || normalizeFieldKey(draft.label), key: draft.fieldKey || normalizeFieldKey(draft.label) })}</code></small>
               </label>
 
               <label className={styles.field}>
                 <span>Tipo</span>
                 <CustomSelect
+                  portal
                   value={draft.dataType}
                   disabled={Boolean(editingField)}
                   onChange={(event) => patchDraft({ dataType: event.target.value as CustomFieldDataType })}
@@ -760,30 +753,18 @@ export const CustomFields: React.FC = () => {
 
               <div className={styles.typeHint}>
                 <ChevronRight size={15} />
-                <span>{editingField ? 'El tipo y sus opciones no se pueden cambiar despues de crear el campo.' : fieldTypes.find(type => type.value === draft.dataType)?.detail}</span>
+                <span>{editingField ? 'El tipo y sus opciones no se pueden cambiar después de crear el campo.' : fieldTypes.find(type => type.value === draft.dataType)?.detail}</span>
               </div>
 
               {!editingField && (
                 <label className={styles.field}>
                   <span>Carpeta</span>
-                  <CustomSelect value={draft.folderId} onChange={(event) => patchDraft({ folderId: event.target.value })}>
+                  <CustomSelect portal value={draft.folderId} onChange={(event) => patchDraft({ folderId: event.target.value })}>
                     <option value="">Sin carpeta</option>
                     {folders.map(folder => (
                       <option key={folder.id} value={folder.id}>{folder.name}</option>
                     ))}
                   </CustomSelect>
-                </label>
-              )}
-
-              {!editingField && (
-                <label className={styles.field}>
-                  <span>Descripcion opcional</span>
-                  <textarea
-                    rows={3}
-                    value={draft.description}
-                    placeholder="Para que el equipo sepa cuando usarlo."
-                    onChange={(event) => patchDraft({ description: event.target.value })}
-                  />
                 </label>
               )}
 
@@ -793,10 +774,10 @@ export const CustomFields: React.FC = () => {
                   <textarea
                     rows={5}
                     value={draft.optionsText}
-                    placeholder={'Opcion 1\nOpcion 2\nOpcion 3'}
+                    placeholder={'Opción 1\nOpción 2\nOpción 3'}
                     onChange={(event) => patchDraft({ optionsText: event.target.value })}
                   />
-                  <small>Una opcion por linea.</small>
+                  <small>Una opción por línea.</small>
                 </label>
               )}
             </div>
@@ -840,11 +821,11 @@ export const CustomFields: React.FC = () => {
               </label>
 
               <label className={styles.field}>
-                <span>Descripcion opcional</span>
+                <span>Descripción opcional</span>
                 <textarea
                   rows={3}
                   value={folderDraft.description}
-                  placeholder="Para que el equipo sepa que guardar aqui."
+                  placeholder="Para que el equipo sepa qué guardar aquí."
                   onChange={(event) => setFolderDraft(current => ({ ...current, description: event.target.value }))}
                 />
               </label>

@@ -4,8 +4,26 @@ import type { TrackingSession } from './trackingService'
 /**
  * Obtiene sesiones filtradas por rango de fechas
  */
-export async function getSessionsByDateRange(startDate: string, endDate: string): Promise<TrackingSession[]> {
-  return apiClient.get<TrackingSession[]>(`/tracking/sessions?start=${startDate}&end=${endDate}`)
+export async function getSessionsByDateRange(
+  startDate: string,
+  endDate: string,
+  options: { payload?: 'analytics' } = {}
+): Promise<TrackingSession[]> {
+  const params = new URLSearchParams({ start: startDate, end: endDate })
+  if (options.payload) params.set('payload', options.payload)
+  return apiClient.get<TrackingSession[]>(`/tracking/sessions?${params.toString()}`)
+}
+
+export interface SessionRangeMetrics {
+  pageViews: number
+  uniqueVisitors: number
+  uniqueSessions: number
+  returningUsers: number
+}
+
+export async function getSessionMetricsByDateRange(startDate: string, endDate: string): Promise<SessionRangeMetrics> {
+  const params = new URLSearchParams({ start: startDate, end: endDate, summary: '1' })
+  return apiClient.get<SessionRangeMetrics>(`/tracking/sessions?${params.toString()}`)
 }
 
 export interface ContactsByDate {

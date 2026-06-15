@@ -569,7 +569,55 @@ export async function getRecentSessions(limit = 50) {
  * Obtiene sesiones filtradas por rango de fechas
  * Para la página de Analytics
  */
-export async function getSessionsByDateRange(startDate, endDate) {
+export async function getSessionMetricsByDateRange(startDate, endDate) {
+  try {
+    logger.info(`🔍 getSessionMetricsByDateRange: ${startDate} to ${endDate}`)
+
+    const { resolveDateRangeWithGHLTimezone } = await import('../utils/dateUtils.js')
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+
+    const query = `
+      WITH view_sessions AS (
+        SELECT visitor_id, session_id
+        FROM sessions
+        WHERE started_at >= ?
+          AND started_at <= ?
+          AND COALESCE(event_name, 'page_view') IN ('session_start', 'page_view', 'native_site_view')
+      )
+      SELECT
+        (SELECT COUNT(*) FROM view_sessions) as page_views,
+        (SELECT COUNT(DISTINCT visitor_id) FROM view_sessions) as unique_visitors,
+        (SELECT COUNT(DISTINCT session_id) FROM view_sessions) as unique_sessions,
+        (
+          SELECT COUNT(*)
+          FROM (
+            SELECT visitor_id
+            FROM view_sessions
+            WHERE visitor_id IS NOT NULL AND visitor_id != ''
+            GROUP BY visitor_id
+            HAVING COUNT(DISTINCT session_id) > 1
+          ) returning_visitors
+        ) as returning_users
+    `
+    const params = [range.startUtc, range.endUtc]
+    const row = await db.get(query, params)
+
+    return {
+      pageViews: Number(row?.page_views || 0),
+      uniqueVisitors: Number(row?.unique_visitors || 0),
+      uniqueSessions: Number(row?.unique_sessions || 0),
+      returningUsers: Number(row?.returning_users || 0)
+    }
+  } catch (error) {
+    logger.error('❌ Error obteniendo métricas de sesiones por rango:', error)
+    throw error
+  }
+}
+
+export async function getSessionsByDateRange(startDate, endDate, options = {}) {
+  let query = ''
+  let params = []
+
   try {
     logger.info(`🔍 getSessionsByDateRange: ${startDate} to ${endDate}`)
 
@@ -579,10 +627,50 @@ export async function getSessionsByDateRange(startDate, endDate) {
 
     logger.info(`🕐 Timezone range: ${range.startUtc} → ${range.endUtc}`)
 
-    // PostgreSQL query con LEFT JOIN para traer created_at del contacto
-    // Incluye TODAS las columnas de la tabla sessions
-    const query = `
-      SELECT
+    const compactForAnalytics = options.payload === 'analytics'
+    const selectColumns = compactForAnalytics
+      ? `
+        s.id,
+        s.session_id,
+        s.visitor_id,
+        s.contact_id,
+        s.full_name,
+        s.email,
+        s.event_name,
+        s.started_at,
+        s.created_at,
+        s.page_url,
+        s.referrer_url,
+        s.utm_source,
+        s.utm_medium,
+        s.utm_campaign,
+        s.utm_term,
+        s.utm_content,
+        s.source_platform,
+        s.campaign_id,
+        s.adset_id,
+        s.ad_group_id,
+        s.ad_id,
+        s.placement,
+        s.site_source_name,
+        s.device_type,
+        s.os,
+        s.browser,
+        s.geo_country,
+        s.geo_city,
+        COALESCE(s.tracking_source, 'external_pixel') as tracking_source,
+        s.site_id,
+        s.site_slug,
+        s.site_name,
+        s.site_type,
+        s.form_site_id,
+        s.form_site_name,
+        s.submission_id,
+        c.created_at as contact_created_at,
+        c.purchases_count as contact_purchases_count,
+        c.total_paid as contact_total_paid,
+        c.appointment_date as contact_appointment_date`
+      : `
         s.id,
         s.session_id,
         s.visitor_id,
@@ -650,7 +738,11 @@ export async function getSessionsByDateRange(startDate, endDate) {
         c.created_at as contact_created_at,
         c.purchases_count as contact_purchases_count,
         c.total_paid as contact_total_paid,
-        c.appointment_date as contact_appointment_date,
+        c.appointment_date as contact_appointment_date`
+
+    query = `
+      SELECT
+        ${selectColumns},
         CASE
           WHEN c.id IS NOT NULL AND (
             c.appointment_date IS NOT NULL OR EXISTS (
@@ -676,10 +768,10 @@ export async function getSessionsByDateRange(startDate, endDate) {
         END as contact_has_attended_appointment
       FROM sessions s
       LEFT JOIN contacts c ON s.contact_id = c.id
-      WHERE s.started_at >= $1 AND s.started_at <= $2
+      WHERE s.started_at >= ? AND s.started_at <= ?
       ORDER BY s.started_at DESC
     `
-    const params = [range.startUtc, range.endUtc]
+    params = [range.startUtc, range.endUtc]
 
     logger.info(`🔄 Ejecutando query con params: ${JSON.stringify(params)}`)
     const sessions = await db.all(query, params)

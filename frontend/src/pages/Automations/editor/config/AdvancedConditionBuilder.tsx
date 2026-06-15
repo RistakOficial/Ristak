@@ -1,7 +1,7 @@
 import React from 'react'
 import { Braces, Plus, Trash2, Type } from 'lucide-react'
 import { cn } from '@/utils/cn'
-import { CustomSelect } from '@/components/common'
+import { CustomSelect } from './configPrimitives'
 import {
   CRM_FIELDS,
   CRM_FIELD_CATEGORIES,
@@ -18,6 +18,7 @@ import {
 import { MAX_BRANCHES } from '../nodeRegistry'
 import { CatalogSelect, Field, TextInput } from './configPrimitives'
 import { VariableTextInput } from '../composer/MessageComposer'
+import { DrillSelect } from './DrillSelect'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -99,7 +100,7 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
         type="button"
         className={styles.composerToolButton}
         title={variableMode ? 'Usar valor fijo' : 'Comparar contra una variable'}
-        onClick={() => set({ valueMode: variableMode ? 'fixed' : 'variable', value: '' })}
+        onClick={() => set({ valueMode: variableMode ? 'fixed' : 'variable', value: '', valueLabel: '' })}
       >
         {variableMode ? <Type size={12} /> : <Braces size={12} />}
       </button>
@@ -111,7 +112,7 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
           <div className={styles.configRowGrow}>
             <VariableTextInput
               value={rule.value || ''}
-              onChange={(compiled) => set({ value: compiled })}
+              onChange={(compiled) => set({ value: compiled, valueLabel: '' })}
               placeholder="Inserta una variable…"
               aria-label="Valor dinámico"
             />
@@ -128,7 +129,7 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
         <CatalogSelect
           catalog={field.valueCatalog}
           value={rule.value || ''}
-          onChange={(next) => set({ value: next })}
+          onChange={(next, label) => set({ value: next, valueLabel: label })}
           placeholder="Selecciona el valor"
           aria-label="Valor"
         />
@@ -138,7 +139,9 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
         <CustomSelect
           options={field.options}
           value={rule.value || ''}
-          onValueChange={(next) => set({ value: next })}
+          onValueChange={(next) =>
+            set({ value: next, valueLabel: field.options?.find((option) => option.value === next)?.label || next })
+          }
           placeholder="Selecciona el valor"
           aria-label="Valor"
         />
@@ -152,7 +155,7 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
             className={styles.configRowGrow}
             value={rule.value || ''}
             placeholder="Cantidad"
-            onChange={(event) => set({ value: event.target.value })}
+            onChange={(event) => set({ value: event.target.value, valueLabel: '' })}
           />
           {field.type === 'duration' && (
             <div className={styles.configRowGrow}>
@@ -180,7 +183,7 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
               className={styles.configRowGrow}
               value={rule.value || ''}
               placeholder="Desde"
-              onChange={(event) => set({ value: event.target.value })}
+              onChange={(event) => set({ value: event.target.value, valueLabel: '' })}
             />
             <TextInput
               type={inputType}
@@ -195,7 +198,7 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
             type={inputType}
             value={rule.value || ''}
             placeholder="Valor a comparar"
-            onChange={(event) => set({ value: event.target.value })}
+            onChange={(event) => set({ value: event.target.value, valueLabel: '' })}
           />
         )
     }
@@ -216,13 +219,17 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
     group: ConditionGroup
   ) => {
     const field = rule.field ? getCrmField(rule.field) : undefined
-    const operators = rule.field ? getOperatorsForField(rule.field) : []
+    const canSelectOperator = Boolean(rule.field) && (!field?.needsCustomKey || Boolean(rule.customKey))
+    const operators = canSelectOperator ? getOperatorsForField(rule.field) : []
+    const ruleLead = ruleIndex === 0
+      ? 'Regla principal'
+      : group.operator === 'OR'
+        ? 'O puede cumplirse'
+        : 'También debe cumplirse'
     return (
       <div key={ruleIndex} className={styles.conditionRule}>
         <div className={styles.conditionRuleHeader}>
-          <span className={styles.conditionRuleTitle}>
-            {ruleIndex === 0 ? 'Si' : group.operator === 'OR' ? 'O' : 'Y'}
-          </span>
+          <span className={styles.conditionRuleTitle}>{ruleLead}</span>
           <button
             type="button"
             className={styles.configIconButton}
@@ -240,52 +247,52 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
           </button>
         </div>
 
-        <CustomSelect
+        <DrillSelect
+          groups={CRM_FIELD_CATEGORIES.map((category) => ({
+            id: category.id,
+            label: category.label,
+            items: CRM_FIELDS.filter((candidate) => candidate.category === category.id).map((candidate) => ({
+              value: candidate.id,
+              label: candidate.label
+            }))
+          }))}
           value={rule.field}
           onValueChange={(next) =>
             updateRule(branchIndex, groupIndex, ruleIndex, {
               field: next,
               operator: '',
               value: '',
+              valueLabel: '',
               valueTo: '',
               customKey: '',
+              customLabel: '',
               valueMode: 'fixed'
             })
           }
-          placeholder="Selecciona un campo del CRM"
+          placeholder="Selecciona qué dato revisar"
           aria-label="Campo"
-        >
-          {CRM_FIELD_CATEGORIES.map((category) => (
-            <optgroup key={category.id} label={category.label}>
-              {CRM_FIELDS.filter((candidate) => candidate.category === category.id).map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.label}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </CustomSelect>
+        />
 
         {field?.needsCustomKey && (
           <div style={{ marginTop: 6 }}>
             <CatalogSelect
-              catalog="contactFields"
+              catalog="customFields"
               value={rule.customKey || ''}
-              onChange={(next) => updateRule(branchIndex, groupIndex, ruleIndex, { customKey: next })}
-              placeholder="¿Cuál campo?"
+              onChange={(next, label) => updateRule(branchIndex, groupIndex, ruleIndex, { customKey: next, customLabel: label })}
+              placeholder="Elige el campo personalizado"
               aria-label="Campo personalizado"
             />
           </div>
         )}
 
-        {rule.field && (
+        {canSelectOperator && (
           <div style={{ marginTop: 6 }}>
             <CustomSelect
               options={operators.map((operator) => ({ value: operator.value, label: operator.label }))}
               value={rule.operator}
               onValueChange={(next) => updateRule(branchIndex, groupIndex, ruleIndex, { operator: next })}
-              placeholder="Selecciona un operador"
-              aria-label="Operador"
+              placeholder="Selecciona qué debe pasar"
+              aria-label="Qué debe pasar"
             />
           </div>
         )}
@@ -303,14 +310,14 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
         <div className={styles.groupConnector}>
           <CustomSelect
             options={[
-              { value: 'AND', label: 'Y además' },
-              { value: 'OR', label: 'O bien' }
+              { value: 'AND', label: 'También debe cumplirse este grupo' },
+              { value: 'OR', label: 'Este grupo es una alternativa' }
             ]}
             value={branch.groupsOperator}
             onValueChange={(next) =>
               updateBranch(branchIndex, { groupsOperator: next === 'OR' ? 'OR' : 'AND' })
             }
-            aria-label="Combinar grupos"
+            aria-label="Cómo combinar grupos"
           />
         </div>
       )}
@@ -318,14 +325,14 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
         <div className={styles.conditionGroupHeader}>
           <CustomSelect
             options={[
-              { value: 'AND', label: 'Cumplir todas (Y)' },
-              { value: 'OR', label: 'Cumplir cualquiera (O)' }
+              { value: 'AND', label: 'Deben cumplirse todas las reglas' },
+              { value: 'OR', label: 'Puede cumplirse cualquier regla' }
             ]}
             value={group.operator}
             onValueChange={(next) =>
               updateGroup(branchIndex, groupIndex, { operator: next === 'OR' ? 'OR' : 'AND' })
             }
-            aria-label="Operador del grupo"
+            aria-label="Cómo evaluar este grupo"
           />
           <button
             type="button"

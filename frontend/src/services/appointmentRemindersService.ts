@@ -8,6 +8,7 @@ export type ReminderMessageType = 'reminder' | 'confirmation'
 export type ReminderOffsetUnit = 'minutes' | 'hours' | 'days'
 export type ReminderSenderMode = 'contact' | 'default' | 'specific'
 export type ReminderSmartOverflow = 'before' | 'next_day'
+export type ReminderNoConfirmAction = 'no_action' | 'cancel_appointment' | 'notify_push'
 
 export interface AppointmentReminder {
   id: string
@@ -25,6 +26,8 @@ export interface AppointmentReminder {
   smartStart: string
   smartEnd: string
   smartOverflow: ReminderSmartOverflow
+  noConfirmAction: ReminderNoConfirmAction
+  bypassAutomations: boolean
   position: number
   createdAt: string
   updatedAt: string

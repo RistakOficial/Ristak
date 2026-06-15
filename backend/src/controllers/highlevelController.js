@@ -10,8 +10,15 @@ import { getGHLClient } from '../services/ghlClient.js';
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js';
 import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
 import { sendPaymentNotification } from '../services/pushNotificationsService.js';
+import { markHumanTakeoverIfActive } from '../services/conversationalAgentService.js';
+import { renderTemplateVariables } from '../services/templateVariablesService.js';
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
+import {
+  getGhlContactIdForLocalContact,
+  linkContactToGhl,
+  resolveContactIdByGhlId
+} from '../services/contactIdentityService.js';
 import { buildLocalMediaUrl, saveWhatsAppAudioDataUrl } from '../services/whatsappApiService.js';
 import * as localCalendarService from '../services/localCalendarService.js';
 import {
@@ -91,7 +98,7 @@ const GHL_CHAT_CHANNEL_ALIASES = {
   instagram: 'instagram',
   ghl_instagram: 'instagram'
 };
-const LOCAL_ONLY_CONTACT_PREFIXES = ['waapi_contact_', 'manual_contact_', 'meta_social_contact_', 'rstk_'];
+const LOCAL_ONLY_CONTACT_PREFIXES = ['waapi_contact_', 'manual_contact_', 'meta_social_contact_', 'site_contact_', 'rstk_'];
 const GHL_WHATSAPP_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const GHL_REPLY_WINDOW_FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
 const GHL_LOCAL_WHATSAPP_TRANSPORTS = new Set([
@@ -1630,6 +1637,16 @@ export const createInvoice = async (req, res) => {
     // PASO 1: Crear invoice en HighLevel
     const ghlClient = await getGHLClient();
     const invoiceData = await prepareInvoiceCatalogItemsForHighLevel(formattedInvoiceData, { ghlClient });
+
+    // El frontend manda el ID local de Ristak; la API de GHL necesita el suyo.
+    const localContactIdForInvoice = cleanString(invoiceData.contactDetails?.id) || null;
+    if (localContactIdForInvoice) {
+      const ghlContactIdForInvoice = await getGhlContactIdForLocalContact(localContactIdForInvoice);
+      if (ghlContactIdForInvoice) {
+        invoiceData.contactDetails = { ...invoiceData.contactDetails, id: ghlContactIdForInvoice };
+      }
+    }
+
     const data = await ghlClient.createInvoice(invoiceData);
 
     const createdInvoice = data.invoice || data;
@@ -1642,7 +1659,10 @@ export const createInvoice = async (req, res) => {
     logger.success(`Invoice creado en HighLevel: ${ghlInvoiceId}`);
 
     // PASO 2: Guardar invoice en BD local INMEDIATAMENTE (sin validar contacto)
-    const contactId = invoiceData.contactDetails?.id || createdInvoice.contactId;
+    // Localmente siempre se guarda el ID de Ristak, no el de GHL.
+    const contactId = localContactIdForInvoice
+      || (await resolveContactIdByGhlId(createdInvoice.contactId))
+      || createdInvoice.contactId;
 
     try {
       // Calcular monto total
@@ -2003,7 +2023,7 @@ async function getLocalContactForHighLevelMessage(contactId) {
   if (!id) return null;
 
   return db.get(
-    `SELECT id, phone, email, full_name, first_name, last_name, source
+    `SELECT id, ghl_contact_id, phone, email, full_name, first_name, last_name, source
      FROM contacts
      WHERE id = ?
      LIMIT 1`,
@@ -2017,7 +2037,14 @@ async function resolveHighLevelContactIdForChat({ contact, ghlClient }) {
     throw new Error('El contacto no existe en Ristak.');
   }
 
+  // Vínculo explícito con HighLevel (ghl_contact_id) tiene prioridad.
+  const linkedGhlId = cleanString(contact?.ghl_contact_id);
+  if (linkedGhlId) {
+    return linkedGhlId;
+  }
+
   if (!isLocalOnlyContactId(localContactId)) {
+    // Legacy: la primary key era el ID de GHL.
     return localContactId;
   }
 
@@ -2029,7 +2056,10 @@ async function resolveHighLevelContactIdForChat({ contact, ghlClient }) {
     try {
       const result = await ghlClient.searchContacts({ ...search, limit: 5 });
       const match = (result.contacts || []).find(candidate => candidate.id);
-      if (match?.id) return match.id;
+      if (match?.id) {
+        await linkContactToGhl(localContactId, match.id);
+        return match.id;
+      }
     } catch (error) {
       logger.warn(`No se pudo buscar contacto en HighLevel para chat (${localContactId}): ${error.message}`);
     }
@@ -2053,6 +2083,9 @@ async function resolveHighLevelContactIdForChat({ contact, ghlClient }) {
   if (!highLevelContactId) {
     throw new Error('HighLevel no devolvió el ID del contacto.');
   }
+
+  // Persistir el vínculo para no volver a buscar/crear en HighLevel.
+  await linkContactToGhl(localContactId, highLevelContactId);
 
   return highLevelContactId;
 }
@@ -2279,7 +2312,7 @@ function createHighLevelChatError(message, statusCode = 400) {
   return error;
 }
 
-export async function sendHighLevelConversationMessageCore(payload = {}, { req } = {}) {
+export async function sendHighLevelConversationMessageCore(payload = {}, { req, markHumanTakeover = true } = {}) {
   const {
     contactId,
     channel,
@@ -2335,6 +2368,15 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req }
   const highLevelContactId = await resolveHighLevelContactIdForChat({ contact, ghlClient });
   const cleanFromNumber = normalizePhoneForStorage(fromNumber) || cleanString(fromNumber);
   const cleanToNumber = normalizePhoneForStorage(toNumber || contact.phone) || cleanString(toNumber || contact.phone);
+  const renderedText = await renderTemplateVariables(text, {
+    contactId: contact.id,
+    phone: cleanToNumber,
+    userId: req?.user?.userId,
+    publicBaseUrl: req ? getPublicBaseUrl(req) : undefined
+  });
+  if (!cleanString(renderedText) && resolvedAttachmentUrls.length === 0) {
+    throw createHighLevelChatError('El mensaje quedó vacío después de resolver parámetros.');
+  }
   const channelResolution = await resolveHighLevelChatChannelForReply({
     requestedChannel: channelConfig,
     contact,
@@ -2346,7 +2388,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req }
     type: effectiveChannel.type,
     contactId: highLevelContactId,
     status: 'pending',
-    ...(text && { message: text }),
+    ...(renderedText && { message: renderedText }),
     ...(resolvedAttachmentUrls.length > 0 && { attachments: resolvedAttachmentUrls }),
     ...(cleanFromNumber && { fromNumber: cleanFromNumber }),
     ...(cleanToNumber && { toNumber: cleanToNumber }),
@@ -2357,7 +2399,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req }
     ? await saveHighLevelMetaMirror({
         contact,
         channel: effectiveChannel,
-        text,
+        text: renderedText,
         attachments: resolvedAttachmentUrls,
         externalId,
         requestBody,
@@ -2366,7 +2408,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req }
     : await saveHighLevelWhatsAppMirror({
         contact,
         channel: effectiveChannel,
-        text,
+        text: renderedText,
         attachments: resolvedAttachmentUrls,
         fromNumber: cleanFromNumber,
         toNumber: cleanToNumber,
@@ -2374,6 +2416,12 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req }
         requestBody,
         response
       });
+
+  if (markHumanTakeover) {
+    markHumanTakeoverIfActive(contact.id, { updatedBy: 'human' }).catch(error => {
+      logger.warn(`[Agente conversacional] No se pudo marcar toma humana desde HighLevel: ${error.message}`);
+    });
+  }
 
   return {
     ...response,
@@ -2682,6 +2730,10 @@ async function persistLocalInvoiceSchedule(schedule) {
 
   const raw = schedule.raw && typeof schedule.raw === 'object' ? schedule.raw : schedule;
   const scheduleConfig = resolveScheduleObject(raw);
+  // El schedule viene de GHL con su propio contactId; localmente guardamos el ID Ristak.
+  const localContactId = schedule.contactId
+    ? (await resolveContactIdByGhlId(schedule.contactId)) || schedule.contactId
+    : null;
 
   try {
     await db.run(
@@ -2717,7 +2769,7 @@ async function persistLocalInvoiceSchedule(schedule) {
       [
         schedule.id,
         schedule.id,
-        schedule.contactId || null,
+        localContactId,
         schedule.contactName || null,
         schedule.email || null,
         normalizePhoneForStorage(schedule.phone) || schedule.phone || null,
@@ -2943,6 +2995,13 @@ export const createInvoiceSchedule = async (req, res) => {
     }
 
     const ghlClient = await getGHLClient();
+
+    // El frontend manda el ID local de Ristak; la API de GHL necesita el suyo.
+    const ghlScheduleContactId = await getGhlContactIdForLocalContact(payload.contactDetails.id);
+    if (ghlScheduleContactId) {
+      payload.contactDetails = { ...payload.contactDetails, id: ghlScheduleContactId };
+    }
+
     const createResponse = await ghlClient.createInvoiceSchedule(payload);
     let schedule = extractScheduleFromResponse(createResponse);
     let scheduleId = firstDefined(
@@ -3289,7 +3348,9 @@ export const text2Pay = async (req, res) => {
 
     const liveMode = await getGhlInvoiceLiveMode();
     const ghlClient = await getGHLClient();
-    const result = await ghlClient.text2Pay({ contactId, amount, currency, message, liveMode });
+    // El frontend manda el ID local de Ristak; la API de GHL necesita el suyo.
+    const ghlContactIdForText2Pay = await getGhlContactIdForLocalContact(contactId) || contactId;
+    const result = await ghlClient.text2Pay({ contactId: ghlContactIdForText2Pay, amount, currency, message, liveMode });
 
     logger.success(`Text2Pay enviado a contacto: ${contactId} - Monto: ${amount} ${currency}`);
 

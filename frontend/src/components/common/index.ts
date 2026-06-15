@@ -44,9 +44,11 @@ export { Icon } from './Icon'
 export { Badge } from './Badge'
 export type { BadgeVariant } from './Badge'
 export { CustomSelect } from './CustomSelect'
+export { TagPicker, useContactTags } from './TagPicker'
 export { NumberInput } from './NumberInput'
 export type { NumberInputProps } from './NumberInput'
 export { Loading } from './Loading'
+export { AppStartupLoader } from './AppStartupLoader'
 export {
   DropdownMenu,
   DropdownMenuTrigger,

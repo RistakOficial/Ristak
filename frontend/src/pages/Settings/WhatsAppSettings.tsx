@@ -40,7 +40,7 @@ type ConnectedSection = 'numbers' | 'templates' | 'alerts'
 type PhoneFilter = 'all' | 'main' | 'qr' | 'attention'
 type AlertFilter = 'all' | 'critical' | 'warning' | 'info'
 
-const YCLOUD_REGISTER_URL = 'https://www.ycloud.com/console/#/app/dashboard/createChannel/whatsapp-business-app?redirect=/app/dashboard/account'
+const YCLOUD_REGISTER_URL = 'https://www.ycloud.com/console/#/entry/register'
 const YCLOUD_CONSOLE_URL = 'https://www.ycloud.com/console/#/app/dashboard/analytics'
 const META_WHATSAPP_PAYMENT_CONFIG_URL = 'https://business.facebook.com/latest/settings/whatsapp_account'
 
@@ -78,7 +78,7 @@ function formatCurrency(amount?: number | null, currency?: string | null) {
 }
 
 function getPhoneLabel(phone: WhatsAppApiPhoneNumber) {
-  const number = phone.display_phone_number || phone.phone_number || 'Numero'
+  const number = phone.display_phone_number || phone.phone_number || 'Número'
   return phone.verified_name ? `${number} · ${phone.verified_name}` : number
 }
 
@@ -111,9 +111,9 @@ function getQrStatusLabel(status?: string | null) {
   if (normalized === 'starting') return 'Preparando QR'
   if (normalized === 'restarting') return 'Reiniciando QR'
   if (normalized === 'reconnecting') return 'Reconectando QR'
-  if (normalized === 'number_mismatch') return 'Numero incorrecto'
+  if (normalized === 'number_mismatch') return 'Número incorrecto'
   if (normalized === 'bad_session') return 'Reconectar QR'
-  if (normalized === 'connection_replaced') return 'Sesion reemplazada'
+  if (normalized === 'connection_replaced') return 'Sesión reemplazada'
   if (normalized === 'disconnected_515') return 'Reiniciar QR'
   if (normalized === 'logged_out') return 'QR cerrado'
   if (normalized.startsWith('disconnected')) return 'QR desconectado'
@@ -334,7 +334,7 @@ export const WhatsAppSettings: React.FC = () => {
       setApiKey('')
       selectSection('numbers')
 
-      showToast('success', 'WhatsApp conectado', 'Ristak sincronizo los numeros disponibles de WhatsApp API')
+      showToast('success', 'WhatsApp conectado', 'Ristak sincronizo los números disponibles de WhatsApp API')
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo conectar WhatsApp Business')
     } finally {
@@ -375,7 +375,7 @@ export const WhatsAppSettings: React.FC = () => {
   const confirmApiDisconnect = () => {
     showConfirm(
       'Desconectar WhatsApp',
-      'Se pausara la conexion con WhatsApp API. Los mensajes, contactos y plantillas guardadas se quedan intactos.',
+      'Se pausara la conexión con WhatsApp API. Los mensajes, contactos y plantillas guardadas se quedan intactos.',
       async () => {
         setApiDisconnecting(true)
         try {
@@ -414,11 +414,11 @@ export const WhatsAppSettings: React.FC = () => {
       })
       await loadApiStatus()
       if (session.status === 'connected') {
-        showToast('success', 'QR conectado', 'Este numero ya puede mandar mensajes individuales por QR')
+        showToast('success', 'QR conectado', 'Este número ya puede mandar mensajes individuales por QR')
       } else if (session.status === 'qr_pending') {
-        showToast('info', 'Escanea el QR', 'Usa WhatsApp en ese mismo numero para completar la conexion')
+        showToast('info', 'Escanea el QR', 'Usa WhatsApp en ese mismo número para completar la conexión')
       } else {
-        showToast('warning', 'QR pendiente', session.lastError || 'Revisa el estado del codigo QR')
+        showToast('warning', 'QR pendiente', session.lastError || 'Revisa el estado del código QR')
       }
     } catch (error) {
       showToast('error', 'No se pudo abrir QR', error instanceof Error ? error.message : 'Intenta nuevamente')
@@ -430,13 +430,13 @@ export const WhatsAppSettings: React.FC = () => {
   const disconnectQrForPhone = (phone: WhatsAppApiPhoneNumber) => {
     showConfirm(
       'Desconectar QR',
-      `Se apagara el envio por QR para ${getPhoneLabel(phone)}. La conexion oficial de WhatsApp API y los mensajes guardados se quedan intactos.`,
+      `Se apagara el envio por QR para ${getPhoneLabel(phone)}. La conexión oficial de WhatsApp API y los mensajes guardados se quedan intactos.`,
       async () => {
         setQrDisconnectingPhoneId(phone.id)
         try {
           await whatsappApiService.disconnectQr(phone.id)
           await loadApiStatus()
-          showToast('success', 'QR desconectado', 'Este numero ya no enviara mensajes por QR')
+          showToast('success', 'QR desconectado', 'Este número ya no enviara mensajes por QR')
         } catch (error) {
           showToast('error', 'No se pudo desconectar', error instanceof Error ? error.message : 'Intenta nuevamente')
         } finally {
@@ -650,14 +650,14 @@ export const WhatsAppSettings: React.FC = () => {
           <span>2</span>
           <div>
             <strong>Copia tu llave de conexión</strong>
-            <p>Pegala aqui y Ristak se conectara a tu cuenta.</p>
+            <p>Pégala aquí y Ristak se conectará a tu cuenta.</p>
           </div>
         </li>
         <li>
           <span>3</span>
           <div>
-            <strong>Revisa tus numeros</strong>
-            <p>Al conectar, Ristak mostrara todos los numeros disponibles en esta misma pantalla.</p>
+            <strong>Revisa tus números</strong>
+            <p>Al conectar, Ristak mostrará todos los números disponibles en esta misma pantalla.</p>
           </div>
         </li>
       </ol>
@@ -812,8 +812,8 @@ export const WhatsAppSettings: React.FC = () => {
         </div>
         {apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
         <div className={styles.connectContent}>
-          {renderApiForm()}
           {renderYCloudGuide()}
+          {renderApiForm()}
         </div>
       </section>
     )
@@ -861,14 +861,14 @@ export const WhatsAppSettings: React.FC = () => {
 
     return (
       <div className={styles.layout}>
-        <aside className={styles.sideNav} aria-label="Filtros de numeros de WhatsApp">
+        <aside className={styles.sideNav} aria-label="Filtros de números de WhatsApp">
           <div className={styles.sideHeader}>
-            <strong>Numeros</strong>
+            <strong>Números</strong>
             <span>{formatMetric(phoneRows.length)} activos</span>
           </div>
           <button type="button" className={`${styles.sideItem} ${phoneFilter === 'all' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('all')}>
             <HashIcon size={16} />
-            <span>Todos los numeros</span>
+            <span>Todos los números</span>
             <b>{phoneRows.length}</b>
           </button>
           <button type="button" className={`${styles.sideItem} ${phoneFilter === 'main' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('main')}>
@@ -892,15 +892,15 @@ export const WhatsAppSettings: React.FC = () => {
           <div className={styles.toolbar}>
             <label className={styles.search} data-ristak-unstyled>
               <Search size={16} />
-              <input value={phoneSearch} placeholder="Buscar por numero, nombre o estado" onChange={(event) => setPhoneSearch(event.target.value)} />
+              <input value={phoneSearch} placeholder="Buscar por número, nombre o estado" onChange={(event) => setPhoneSearch(event.target.value)} />
             </label>
             <div className={styles.toolbarActions}>
-              <span>{filteredPhones.length} numeros</span>
+              <span>{filteredPhones.length} números</span>
               <span className={styles.balancePill}><Wallet size={15} />{balance ? formatCurrency(balance.amount, balance.currency) : 'Saldo pendiente'}</span>
               {paymentConfigUrl && (
                 <a className={styles.externalButton} href={paymentConfigUrl} target="_blank" rel="noopener noreferrer">
                   <ExternalLink size={15} />
-                  Configuracion de pago
+                  Configuración de pago
                 </a>
               )}
               <Button variant="outline" onClick={refreshApi} loading={apiRefreshing}>
@@ -923,12 +923,12 @@ export const WhatsAppSettings: React.FC = () => {
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th>Numero</th>
+                    <th>Número</th>
                     <th>Nombre</th>
                     <th>API</th>
                     <th>QR opcional</th>
                     <th>Calidad</th>
-                    <th>Limite</th>
+                    <th>Límite</th>
                     <th aria-label="Acciones" />
                   </tr>
                 </thead>
@@ -940,7 +940,7 @@ export const WhatsAppSettings: React.FC = () => {
                       <React.Fragment key={phone.id}>
                         <tr>
                           <td>
-                            <strong>{phone.display_phone_number || phone.phone_number || 'Numero'}</strong>
+                            <strong>{phone.display_phone_number || phone.phone_number || 'Número'}</strong>
                             <span>{phone.id}</span>
                           </td>
                           <td>{displayName}</td>
@@ -999,7 +999,7 @@ export const WhatsAppSettings: React.FC = () => {
           ) : (
             <div className={styles.emptyState}>
               <HashIcon size={26} />
-              <strong>No hay numeros en esta vista</strong>
+              <strong>No hay números en esta vista</strong>
               <span>Cambia el filtro o sincroniza WhatsApp API.</span>
             </div>
           )}
@@ -1113,7 +1113,7 @@ export const WhatsAppSettings: React.FC = () => {
           <p>Cuando la conexión esté lista, aquí podrás crear plantillas, enviarlas a revisión y ver si Meta las aprobó o rechazó.</p>
           <Button onClick={() => selectSection('numbers')}>
             <Cloud size={17} />
-            Ir a numeros
+            Ir a números
           </Button>
         </section>
       )
@@ -1142,7 +1142,7 @@ export const WhatsAppSettings: React.FC = () => {
       <PageHeader
         eyebrow="Sistema"
         title="WhatsApp"
-        subtitle="Conexion oficial por API para numeros, alertas y plantillas."
+        subtitle="Conexión oficial por API para números, alertas y plantillas."
         actions={apiConnected ? (
           <div className={styles.headerActions} role="group" aria-label="Secciones de WhatsApp">
             <button
@@ -1151,7 +1151,7 @@ export const WhatsAppSettings: React.FC = () => {
               onClick={() => selectSection('numbers')}
             >
               <SiWhatsapp size={15} />
-              Numeros
+              Números
             </button>
             <button
               type="button"
@@ -1206,16 +1206,16 @@ export const WhatsAppSettings: React.FC = () => {
             {qrModalView === 'consent' ? (
               <div className={styles.qrConsentBody}>
                 <p>
-                  Este paso no es obligatorio. WhatsApp API sigue siendo la conexion principal; el QR solo funciona como respaldo para {qrConsentPhone ? getPhoneLabel(qrConsentPhone) : 'este numero'}.
+                  Este paso no es obligatorio. WhatsApp API sigue siendo la conexión principal; el QR solo funciona como respaldo para {qrConsentPhone ? getPhoneLabel(qrConsentPhone) : 'este número'}.
                 </p>
                 <ul className={styles.qrConsentList}>
                   <li>Usa WhatsApp Web por QR, no la API oficial de Meta.</li>
-                  <li>WhatsApp puede cerrar la sesion, bloquear el numero o restringir la cuenta.</li>
-                  <li>Si WhatsApp bloquea el numero, puede que no se pueda recuperar.</li>
+                  <li>WhatsApp puede cerrar la sesión, bloquear el número o restringir la cuenta.</li>
+                  <li>Si WhatsApp bloquea el número, puede que no se pueda recuperar.</li>
                   <li>Ristak lo usa para detalles extra, mensajes fuera de 24 horas o si la API queda restringida.</li>
                 </ul>
                 <p className={styles.qrConsentNote}>
-                  Escanea el QR solamente con ese mismo numero. Si conectas otro, Ristak lo rechazara.
+                  Escanea el QR solamente con ese mismo número. Si conectas otro, Ristak lo rechazara.
                 </p>
                 <div className={styles.qrModalActions}>
                   <Button variant="secondary" onClick={() => setQrConsentPhone(null)}>

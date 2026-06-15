@@ -103,7 +103,7 @@ export function renderMessageText(template, { contact = {}, appointment = {}, ti
     'cita.hora': start.isValid ? start.toFormat('h:mm a').toLowerCase() : ''
   }
 
-  return cleanString(template).replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, key) => values[key] ?? '')
+  return cleanString(template).replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, key) => values[key] ?? match)
 }
 
 // ---------------------------------------------------------------------------

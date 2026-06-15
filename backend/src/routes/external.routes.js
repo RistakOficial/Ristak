@@ -32,7 +32,9 @@ import { getExternalApiAppId } from '../utils/apiTokens.js'
 import { getGHLClient } from '../services/ghlClient.js'
 import {
   finalizePreparedPhoneUpsert,
-  prepareContactPhoneUpsert
+  isRistakContactId,
+  prepareContactPhoneUpsert,
+  resolveOrCreateContactForGhl
 } from '../services/contactIdentityService.js'
 import {
   hasContactCustomFieldsPayload,
@@ -229,12 +231,29 @@ function normalizeContactPayload(body = {}) {
 }
 
 async function upsertLocalContact(contact = {}) {
-  const id = contact.id || contact._id
-  if (!id) throw new Error('No se pudo resolver el id del contacto')
+  const externalId = contact.id || contact._id
+  if (!externalId) throw new Error('No se pudo resolver el id del contacto')
 
   const firstName = contact.firstName || contact.first_name || splitName(contact.name || contact.full_name).firstName
   const lastName = contact.lastName || contact.last_name || splitName(contact.name || contact.full_name).lastName
   const fullName = contact.full_name || contact.name || [firstName, lastName].filter(Boolean).join(' ')
+
+  // Resolver el ID local de Ristak: si el id provisto ya existe localmente se
+  // usa tal cual; si es un ID externo (típicamente HighLevel) se liga en
+  // ghl_contact_id y el contacto se crea con ID propio.
+  let id = externalId
+  const existingLocal = await db.get('SELECT id FROM contacts WHERE id = ?', [externalId])
+  if (!existingLocal?.id && !isRistakContactId(externalId)) {
+    const { contactId: resolvedId } = await resolveOrCreateContactForGhl({
+      ghlContactId: externalId,
+      phone: contact.phone,
+      email: contact.email,
+      fullName,
+      source: contact.source || 'external_api',
+      createdAt: contact.createdAt || contact.dateAdded || contact.created_at || null
+    })
+    if (resolvedId) id = resolvedId
+  }
   const customFieldsJson = hasContactCustomFieldsPayload(contact)
     ? serializeContactCustomFieldsForDb(normalizeContactCustomFields(contact))
     : contact.custom_fields !== undefined

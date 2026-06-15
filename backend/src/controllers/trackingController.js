@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger.js'
-import { createSession, getRecentSessions, linkVisitorToContact, getSessionsByDateRange } from '../services/trackingService.js'
+import { createSession, getRecentSessions, linkVisitorToContact, getSessionsByDateRange, getSessionMetricsByDateRange } from '../services/trackingService.js'
 import { getHighLevelConfig, getAppConfig, setAppConfig, db } from '../config/database.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
@@ -804,12 +804,13 @@ export async function linkVisitorToContactHandler(req, res) {
  * Obtiene sesiones con soporte para paginación infinita
  * GET /api/tracking/sessions?offset=0&limit=50
  * GET /api/tracking/sessions?start=YYYY-MM-DD&end=YYYY-MM-DD (sin paginación)
+ * GET /api/tracking/sessions?start=YYYY-MM-DD&end=YYYY-MM-DD&summary=1
  */
 export async function getSessionsHandler(req, res) {
   try {
     const limit = parseInt(req.query.limit, 10) || 50
     const offset = parseInt(req.query.offset, 10) || 0
-    const { start, end } = req.query
+    const { start, end, payload, summary } = req.query
 
     logger.info(`📊 GET /api/tracking/sessions - start: ${start}, end: ${end}, limit: ${limit}, offset: ${offset}`)
 
@@ -820,8 +821,13 @@ export async function getSessionsHandler(req, res) {
 
     // Si hay fechas, usar filtro de rango (sin paginación, para Analytics)
     if (start && end) {
+      if (summary === '1' || summary === 'true') {
+        const metrics = await getSessionMetricsByDateRange(start, end)
+        return res.json(metrics)
+      }
+
       logger.info(`🔍 Buscando sesiones entre ${start} y ${end}`)
-      const sessions = await getSessionsByDateRange(start, end)
+      const sessions = await getSessionsByDateRange(start, end, { payload })
       logger.info(`✅ Encontradas ${sessions.length} sesiones`)
       return res.json(sessions)
     }

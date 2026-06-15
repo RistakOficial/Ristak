@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { AlertCircle, Clock, Copy, FileText, GitBranch, Image, Link2, Music, Plus, Trash2, Video, X, Zap } from 'lucide-react'
+import { AlertCircle, Clock, Copy, FileText, GitBranch, Image, Link2, Music, Plus, Trash2, UserRound, Video, X, Zap } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import type { AutomationNode } from '@/services/automationsService'
 import {
@@ -30,6 +30,8 @@ interface AutomationNodeCardProps {
   /** Estado durante el arrastre de una conexión */
   dropState?: 'target' | 'forbidden' | null
   connectedOutputs: Set<string>
+  /** Contactos activos esperando o pasando por este paso */
+  activeContacts?: number
   zoom: number
   onMeasure: (nodeId: string, layout: NodeHandleLayout) => void
   /** Pointer down sobre la tarjeta (el canvas decide si inicia un arrastre) */
@@ -59,6 +61,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
   errors,
   dropState,
   connectedOutputs,
+  activeContacts = 0,
   zoom,
   onMeasure,
   onPointerDownCard,
@@ -115,16 +118,21 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
   const configErrors = !isStart && definition ? validateNodeConfig(definition, config) : []
   const configured = configErrors.length === 0
   const hasErrors = Boolean(errors && errors.length > 0)
+  const isPostIt = node.type === 'extra-comment'
+  const postItColor =
+    typeof config.color === 'string' && ['yellow', 'pink', 'blue', 'green'].includes(config.color)
+      ? config.color
+      : 'yellow'
 
   // ------------------------------------------------------------------
   // Título editable (doble clic · máx. 80 caracteres · vacío = default)
   // ------------------------------------------------------------------
   const customTitle =
     (typeof config.customTitle === 'string' && config.customTitle.trim()) ||
-    (typeof config.name === 'string' && config.name.trim()) ||
+    (typeof config.name === 'string' && config.name.trim() !== 'Esperar' && config.name.trim()) ||
     ''
-  const defaultTitle = isStart ? 'Cuando...' : definition?.label || node.label || node.type
-  const title = customTitle || defaultTitle
+  // El nombre de la acción nunca se reemplaza: el título del usuario va debajo
+  const title = isStart ? 'Cuando...' : definition?.label || node.label || node.type
 
   const [editingTitle, setEditingTitle] = useState(false)
   const [draftTitle, setDraftTitle] = useState(title)
@@ -140,14 +148,8 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
 
   const commitTitle = () => {
     setEditingTitle(false)
-    const trimmed = draftTitle.trim().slice(0, 80)
-    // Vacío → regresa al nombre por defecto
-    const patch: Record<string, unknown> = { customTitle: trimmed }
-    if (typeof config.name === 'string' && node.type === 'logic-wait') {
-      patch.name = trimmed || 'Esperar'
-      patch.customTitle = ''
-    }
-    onPatchConfig(node, patch)
+    // Vacío → solo queda el nombre de la acción
+    onPatchConfig(node, { customTitle: draftTitle.trim().slice(0, 80) })
   }
 
   // ------------------------------------------------------------------
@@ -168,8 +170,10 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
       ref={rootRef}
       data-automation-node={node.id}
       data-accent={accent}
+      data-post-it-color={isPostIt ? postItColor : undefined}
       className={cn(
         styles.node,
+        isPostIt && styles.postItNode,
         isStart && styles.startCard,
         selected && styles.nodeSelected,
         hasErrors && styles.nodeError,
@@ -188,6 +192,17 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
         if (!isStart) onOpenConfig(node)
       }}
     >
+      {/* Contactos activos en este paso */}
+      {activeContacts > 0 && (
+        <span
+          className={styles.nodeContactsBadge}
+          title={`${activeContacts} contacto${activeContacts > 1 ? 's' : ''} en este paso ahora`}
+        >
+          <UserRound size={11} />
+          {activeContacts}
+        </span>
+      )}
+
       {/* Conector de entrada */}
       {hasInput && (
         <span data-handle-in className={cn(styles.handle, styles.handleIn)} title="Entrada" />
@@ -206,7 +221,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
               className={styles.nodeTitleInput}
               value={draftTitle}
               maxLength={80}
-              placeholder={defaultTitle}
+              placeholder="Título de acción"
               onChange={(event) => setDraftTitle(event.target.value)}
               onBlur={commitTitle}
               onKeyDown={(event) => {
@@ -217,16 +232,19 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
               onPointerDown={(event) => event.stopPropagation()}
             />
           ) : (
-            <span
-              className={styles.nodeTitle}
-              title="Doble clic para renombrar"
-              onDoubleClick={(event) => {
-                event.stopPropagation()
-                if (!isStart) setEditingTitle(true)
-              }}
-            >
-              {title}
-            </span>
+            <>
+              <span
+                className={styles.nodeTitle}
+                title="Doble clic para ponerle título"
+                onDoubleClick={(event) => {
+                  event.stopPropagation()
+                  if (!isStart) setEditingTitle(true)
+                }}
+              >
+                {title}
+              </span>
+              {customTitle && <span className={styles.nodeSubtitle}>{customTitle}</span>}
+            </>
           )}
         </span>
         {!isStart && (
@@ -241,7 +259,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
                 onDuplicate(node)
               }}
             >
-              <Copy size={13} />
+              <Copy size={16} />
             </button>
             <button
               type="button"
@@ -253,7 +271,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
                 onDelete(node)
               }}
             >
-              <Trash2 size={13} />
+              <Trash2 size={16} />
             </button>
           </span>
         )}
@@ -280,7 +298,9 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
                   key={trigger.id}
                   type="button"
                   data-accent={triggerDefinition?.accent || 'green'}
-                  className={cn(styles.triggerChip, triggerErrors.length > 0 && styles.triggerChipError)}
+                  // El rojo solo aparece con errores confirmados (al publicar o al
+                  // intentar salir sin completar); mientras se configura, neutro
+                  className={cn(styles.triggerChip, hasErrors && triggerErrors.length > 0 && styles.triggerChipError)}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation()
@@ -291,12 +311,14 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
                     <TriggerIcon size={13} />
                   </span>
                   <span className={styles.triggerChipText}>
-                    <span className={styles.triggerChipTitle}>{triggerDefinition?.label || trigger.type}</span>
-                    <span className={styles.triggerChipDetail}>
-                      {triggerErrors.length > 0
-                        ? 'Falta configurar'
+                    <span className={styles.triggerChipTitle}>
+                      {triggerErrors.length > 0 || !triggerSummary(triggerDefinition, trigger.config)
+                        ? triggerDefinition?.label || trigger.type
                         : triggerSummary(triggerDefinition, trigger.config)}
                     </span>
+                    {triggerErrors.length > 0 && (
+                      <span className={styles.triggerChipDetail}>Falta configurar</span>
+                    )}
                   </span>
                   <span
                     role="button"
@@ -384,10 +406,18 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
                     onOpenConfig(node)
                   }}
                 >
-                  <span className={styles.chatBubbleText}>
-                    {block.type === 'image' ? <Image size={11} /> : block.type === 'video' ? <Video size={11} /> : block.type === 'audio' ? <Music size={11} /> : <FileText size={11} />}{' '}
-                    {block.caption || block.url || 'Adjunto sin URL'}
-                  </span>
+                  {block.type === 'template' ? (
+                    <span className={styles.chatBubbleText}>
+                      <FileText size={11} /> Plantilla{block.templateName ? `: ${block.templateName}` : ''}
+                    </span>
+                  ) : block.type === 'image' && block.url ? (
+                    <img src={block.url} alt={block.caption || 'Imagen'} className={styles.nodeMediaThumb} draggable={false} />
+                  ) : (
+                    <span className={styles.chatBubbleText}>
+                      {block.type === 'image' ? <Image size={11} /> : block.type === 'video' ? <Video size={11} /> : block.type === 'audio' ? <Music size={11} /> : <FileText size={11} />}{' '}
+                      {block.caption || block.url || 'Adjunto sin archivo'}
+                    </span>
+                  )}
                 </button>
               )
             )}
