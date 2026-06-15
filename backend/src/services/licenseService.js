@@ -123,6 +123,13 @@ function allowedWithoutEnforcement() {
   }
 }
 
+function normalizeLicenseFeatures(features = {}) {
+  return {
+    ...DEFAULT_FEATURES,
+    ...(features && typeof features === 'object' ? features : {})
+  }
+}
+
 function cacheIsValid() {
   return !!(cachedState && cachedState.allowed && cachedState.expiresAt && new Date(cachedState.expiresAt).getTime() > Date.now())
 }
@@ -165,7 +172,7 @@ export async function verifyLicenseWithServer(email) {
       allowed: true,
       enforced: true,
       plan: data.plan || null,
-      features: data.features || {},
+      features: normalizeLicenseFeatures(data.features),
       licenseToken: data.license_token || null,
       expiresAt: data.expires_at || null,
       verifiedAt: new Date().toISOString()

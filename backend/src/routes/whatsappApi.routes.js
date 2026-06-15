@@ -10,6 +10,7 @@ import {
   getWhatsAppApiConnectionStatus,
   getMetaDirectConnectUrlView,
   getMetaDirectSetupPrefillView,
+  getWhatsAppMetaBusinessAccountView,
   getWhatsAppApiTemplatesView,
   getWhatsAppQrView,
   previewWhatsAppApiPhoneNumbersView,
@@ -42,6 +43,7 @@ router.post('/meta/webhook-relay', handleMetaDirectWebhookRelayView)
 router.use(requireAuth)
 
 router.get('/status', getWhatsAppApiConnectionStatus)
+router.get('/meta/business-account', getWhatsAppMetaBusinessAccountView)
 router.get('/meta/connect-url', getMetaDirectConnectUrlView)
 router.post('/meta/provider', setWhatsAppActiveProviderView)
 router.post('/meta/test', testMetaDirectConnectionView)

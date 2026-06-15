@@ -6,7 +6,7 @@ import http from 'node:http'
 let server
 let baseUrl
 let requestCount = 0
-let serverMode = 'allow' // allow | block | down
+let serverMode = 'allow' // allow | allow_without_whatsapp | block | down
 let lastRequestBody = null
 
 let licenseService
@@ -30,12 +30,14 @@ function startMockServer() {
         if (req.url === '/api/license/verify') {
           requestCount += 1
 
-          if (serverMode === 'allow') {
+          if (serverMode === 'allow' || serverMode === 'allow_without_whatsapp') {
             res.end(JSON.stringify({
               allowed: true,
               client_id: 'cli_1',
               plan: 'pro',
-              features: { whatsapp: true, meta_ads: true, ai: false },
+              features: serverMode === 'allow_without_whatsapp'
+                ? { meta_ads: true, ai: false }
+                : { whatsapp: true, meta_ads: true, ai: false },
               license_token: 'tok_123',
               expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString()
             }))
@@ -179,6 +181,16 @@ test('hasFeature respeta los feature flags del plan', async () => {
   assert.equal(await licenseService.hasFeature('whatsapp'), true)
   assert.equal(await licenseService.hasFeature('ai'), false)
   assert.equal(await licenseService.hasFeature('feature_inexistente'), false)
+})
+
+test('features omitidos por el portal central usan defaults locales', async () => {
+  serverMode = 'allow_without_whatsapp'
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.features.whatsapp, true)
+  assert.equal(state.features.meta_ads, true)
+  assert.equal(state.features.ai, false)
 })
 
 test('modo estricto: servidor caído sin token vigente bloquea el acceso', async () => {

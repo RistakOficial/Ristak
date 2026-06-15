@@ -179,6 +179,10 @@ export interface WhatsAppMetaDirectConnectUrlResponse {
   expiresAt?: string
 }
 
+export interface WhatsAppMetaBusinessAccountResponse {
+  whatsappBusinessAccountId?: string | null
+}
+
 export interface WhatsAppMetaDirectTestResponse {
   ok?: boolean
   phone?: Record<string, unknown>
@@ -368,6 +372,7 @@ export interface WhatsAppQrConnectPayload {
 
 export const whatsappApiService = {
   getStatus: () => apiClient.get<WhatsAppApiStatus>('/whatsapp-api/status'),
+  getMetaBusinessAccount: () => apiClient.get<WhatsAppMetaBusinessAccountResponse>('/whatsapp-api/meta/business-account'),
   getMetaConnectUrl: () => apiClient.get<WhatsAppMetaDirectConnectUrlResponse>('/whatsapp-api/meta/connect-url'),
   setProvider: (provider: 'ycloud' | 'meta_direct') => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/meta/provider', { provider }),
   testMetaDirect: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/test'),

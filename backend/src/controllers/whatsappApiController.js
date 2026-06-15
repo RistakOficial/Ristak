@@ -34,6 +34,7 @@ import {
   createScheduledChatMessage,
   listScheduledChatMessages
 } from '../services/scheduledChatMessagesService.js'
+import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { markHumanTakeoverByPhone } from '../services/conversationalAgentService.js'
 
@@ -85,6 +86,24 @@ export async function getWhatsAppApiConnectionStatus(req, res) {
     res.status(500).json({
       success: false,
       error: 'Error obteniendo estado de WhatsApp_API'
+    })
+  }
+}
+
+export async function getWhatsAppMetaBusinessAccountView(req, res) {
+  try {
+    const whatsappBusinessAccountId = await getAppConfig('meta_whatsapp_business_account_id')
+    res.json({
+      success: true,
+      data: {
+        whatsappBusinessAccountId: cleanString(whatsappBusinessAccountId) || ''
+      }
+    })
+  } catch (error) {
+    logger.error(`Error leyendo WABA Meta para WhatsApp: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'No se pudo leer el WABA guardado'
     })
   }
 }

@@ -44,13 +44,6 @@ const YCLOUD_REGISTER_URL = 'https://www.ycloud.com/console/#/entry/register'
 const YCLOUD_CONSOLE_URL = 'https://www.ycloud.com/console/#/app/dashboard/analytics'
 const META_WHATSAPP_PAYMENT_CONFIG_URL = 'https://business.facebook.com/latest/settings/whatsapp_account'
 
-type MetaCustomValuePayload = {
-  success: boolean
-  data?: {
-    whatsappBusinessAccountId?: string | null
-  }
-}
-
 function parseJson<T>(value?: string | null): T | null {
   if (!value) return null
   try {
@@ -282,16 +275,11 @@ export const WhatsAppSettings: React.FC = () => {
   useEffect(() => {
     let cancelled = false
 
-    const loadMetaCustomValues = async () => {
+    const loadMetaBusinessAccount = async () => {
       try {
-        const response = await fetch('/api/meta/custom-values')
-        const data = await response.json() as MetaCustomValuePayload
+        const data = await whatsappApiService.getMetaBusinessAccount()
 
-        if (!cancelled && data.success && data.data?.whatsappBusinessAccountId) {
-          setMetaBusinessAccountId(String(data.data.whatsappBusinessAccountId).trim())
-        } else if (!cancelled && !data.success) {
-          setMetaBusinessAccountId('')
-        }
+        if (!cancelled) setMetaBusinessAccountId(String(data.whatsappBusinessAccountId || '').trim())
       } catch {
         if (!cancelled) {
           setMetaBusinessAccountId('')
@@ -299,7 +287,7 @@ export const WhatsAppSettings: React.FC = () => {
       }
     }
 
-    loadMetaCustomValues()
+    loadMetaBusinessAccount()
 
     return () => {
       cancelled = true
