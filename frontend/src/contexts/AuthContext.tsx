@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { ensureLocalDevAuth } from '@/services/authFetch'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import type { AccountLocaleDefaults } from '@/utils/accountLocale'
-import type { AccessConfig, UserRole } from '@/utils/accessControl'
+import type { AccessConfig, LicenseFeatures, UserRole } from '@/utils/accessControl'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 
@@ -18,6 +18,9 @@ export interface User {
   phone?: string
   businessName?: string
   accessConfig?: AccessConfig
+  licenseEnforced?: boolean
+  licensePlan?: string | null
+  licenseFeatures?: LicenseFeatures
 }
 
 interface AuthContextType {
@@ -52,7 +55,12 @@ function mapUserFromApi(apiUser: any): User {
     lastName: apiUser.lastName || '',
     phone: apiUser.phone || '',
     businessName: apiUser.businessName || '',
-    accessConfig: apiUser.accessConfig || undefined
+    accessConfig: apiUser.accessConfig || undefined,
+    licenseEnforced: apiUser.licenseEnforced === true,
+    licensePlan: apiUser.licensePlan || null,
+    licenseFeatures: apiUser.licenseFeatures && typeof apiUser.licenseFeatures === 'object'
+      ? apiUser.licenseFeatures
+      : {}
   }
 }
 

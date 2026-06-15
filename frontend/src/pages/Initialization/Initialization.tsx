@@ -21,7 +21,9 @@ import {
 import { Button } from '@/components/common/Button'
 import { Logo } from '@/components/common/Logo'
 import { Modal } from '@/components/common/Modal'
+import { useAuth } from '@/contexts/AuthContext'
 import { useInitialization, type InitStepId } from '@/contexts/InitializationContext'
+import { hasModuleAccess, type PermissionKey } from '@/utils/accessControl'
 import styles from './Initialization.module.css'
 
 type IconType = React.ComponentType<{ size?: number | string; className?: string }>
@@ -103,13 +105,25 @@ const STEP_META: Record<InitStepId, StepMeta> = {
 
 const HIDE_CONFIRM_WORD = 'OCULTAR'
 
+const STEP_PERMISSION_KEYS: Partial<Record<InitStepId, PermissionKey[]>> = {
+  'facebook-page': ['campaigns'],
+  instagram: ['campaigns'],
+  'ad-account': ['campaigns'],
+  pixel: ['campaigns'],
+  whatsapp: ['settings_whatsapp'],
+  'meta-app': ['campaigns', 'settings_whatsapp'],
+  'meta-connect': ['campaigns'],
+  'whatsapp-api': ['settings_whatsapp'],
+  openai: ['ai_agent'],
+  'google-calendar': ['settings_calendars']
+}
+
 export const Initialization: React.FC = () => {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const {
     loading,
     steps,
-    requiredDone,
-    requiredTotal,
     isInitialized,
     setHidden,
     setMetaAppDone,
@@ -119,10 +133,24 @@ export const Initialization: React.FC = () => {
   const [showHideModal, setShowHideModal] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
+  const visibleSteps = useMemo(() => steps.filter((step) => {
+    const permissionKeys = STEP_PERMISSION_KEYS[step.id]
+    return !permissionKeys || permissionKeys.some((key) => hasModuleAccess(user, key, 'read'))
+  }), [steps, user])
+
+  const visibleRequiredDone = useMemo(
+    () => visibleSteps.filter((step) => step.required && step.done).length,
+    [visibleSteps]
+  )
+  const visibleRequiredTotal = useMemo(
+    () => visibleSteps.filter((step) => step.required).length,
+    [visibleSteps]
+  )
+
   const pct = useMemo(() => {
-    if (requiredTotal === 0) return 0
-    return Math.round((requiredDone / requiredTotal) * 100)
-  }, [requiredDone, requiredTotal])
+    if (visibleRequiredTotal === 0) return 0
+    return Math.round((visibleRequiredDone / visibleRequiredTotal) * 100)
+  }, [visibleRequiredDone, visibleRequiredTotal])
 
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -156,7 +184,7 @@ export const Initialization: React.FC = () => {
         <div className={styles.progressWrap}>
           <div className={styles.progressMeta}>
             <span className={styles.progressLabel}>
-              {requiredDone} de {requiredTotal} pasos esenciales completados
+              {visibleRequiredDone} de {visibleRequiredTotal} pasos esenciales completados
             </span>
             <span className={styles.progressPct}>{pct}%</span>
           </div>
@@ -189,7 +217,7 @@ export const Initialization: React.FC = () => {
       </div>
 
       <div className={styles.steps}>
-        {steps.map((step, index) => {
+        {visibleSteps.map((step, index) => {
           const meta = STEP_META[step.id]
           const Icon = meta.icon
           return (

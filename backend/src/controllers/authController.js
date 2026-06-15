@@ -8,6 +8,7 @@ import {
   rotateApiTokenForUser
 } from '../utils/apiTokens.js'
 import {
+  getLicenseState,
   isLicenseEnforced,
   verifyLicenseWithServer,
   verifyOwnerCredentialsWithServer,
@@ -42,7 +43,7 @@ function buildFullName(firstName, lastName, fallback = '') {
   return [firstName, lastName].filter(Boolean).join(' ').trim() || cleanProfileText(fallback)
 }
 
-function serializeAuthUser(user) {
+function serializeAuthUser(user, licenseState = null) {
   const firstName = cleanProfileText(user.first_name)
   const lastName = cleanProfileText(user.last_name)
   const fullName = buildFullName(firstName, lastName, user.full_name || user.username)
@@ -57,7 +58,12 @@ function serializeAuthUser(user) {
     phone: cleanProfileText(user.phone, 40),
     businessName: cleanProfileText(user.business_name),
     role: user.role,
-    accessConfig: getEffectiveAccessConfig(user)
+    accessConfig: getEffectiveAccessConfig(user),
+    licenseEnforced: licenseState?.enforced === true,
+    licensePlan: licenseState?.plan || null,
+    licenseFeatures: licenseState?.features && typeof licenseState.features === 'object'
+      ? licenseState.features
+      : {}
   }
 }
 
@@ -65,6 +71,15 @@ function cleanLoginIdentifier(value) {
   return String(value || '')
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
     .trim()
+}
+
+function sendLicenseBlocked(res, licenseState, fallbackMessage = 'Tu licencia de Ristak no está activa. Contacta al administrador o actualiza tu suscripción para continuar.') {
+  return res.status(403).json({
+    success: false,
+    code: 'license_blocked',
+    reason: licenseState?.reason || 'license_blocked',
+    message: licenseState?.message || fallbackMessage
+  })
 }
 
 function getHeaderHostname(value = '') {
@@ -177,17 +192,13 @@ export async function login(req, res) {
 
     // Identidad local correcta. Antes de abrir sesión, validar el permiso
     // comercial contra el servidor central de licencias (si está configurado).
+    let licenseState = null
     if (isLicenseEnforced()) {
-      const license = await verifyLicenseWithServer(user.email || user.username)
+      licenseState = await verifyLicenseWithServer(user.email || user.username)
 
-      if (!license.allowed) {
-        logger.warn(`⚠️  Login bloqueado por licencia (${license.reason}) para "${loginIdentifier}"`)
-        return res.status(403).json({
-          success: false,
-          code: 'license_blocked',
-          reason: license.reason,
-          message: license.message || 'Tu licencia de Ristak no está activa. Contacta al administrador o actualiza tu suscripción para continuar.'
-        })
+      if (!licenseState.allowed) {
+        logger.warn(`⚠️  Login bloqueado por licencia (${licenseState.reason}) para "${loginIdentifier}"`)
+        return sendLicenseBlocked(res, licenseState)
       }
     }
 
@@ -218,7 +229,7 @@ export async function login(req, res) {
       token,
       appId,
       apiTokenMetadata,
-      user: serializeAuthUser(user)
+      user: serializeAuthUser(user, licenseState)
     })
   } catch (error) {
     logger.error('❌ Error en login:', error)
@@ -369,9 +380,18 @@ export async function verifyTokenEndpoint(req, res) {
       })
     }
 
+    let licenseState = null
+    if (isLicenseEnforced()) {
+      licenseState = await getLicenseState({ email: user.email || user.username })
+
+      if (!licenseState.allowed) {
+        return sendLicenseBlocked(res, licenseState)
+      }
+    }
+
     res.json({
       success: true,
-      user: serializeAuthUser(user)
+      user: serializeAuthUser(user, licenseState)
     })
   } catch (error) {
     logger.error('❌ Error verificando token:', error)
@@ -488,7 +508,7 @@ export async function getMe(req, res) {
 
     res.json({
       success: true,
-      user: serializeAuthUser(user)
+      user: serializeAuthUser(user, req.license || null)
     })
   } catch (error) {
     logger.error('❌ Error obteniendo usuario:', error)
@@ -627,7 +647,7 @@ export async function updateProfile(req, res) {
     res.json({
       success: true,
       message: 'Perfil actualizado',
-      user: serializeAuthUser(user)
+      user: serializeAuthUser(user, req.license || null)
     })
   } catch (error) {
     logger.error('❌ Error actualizando perfil:', error)
@@ -750,12 +770,7 @@ export async function ssoLogin(req, res) {
 
     const license = await verifyLicenseWithServer(user.email || user.username)
     if (!license.allowed) {
-      return res.status(403).json({
-        success: false,
-        code: 'license_blocked',
-        reason: license.reason,
-        message: license.message || 'Tu licencia de Ristak no está activa.'
-      })
+      return sendLicenseBlocked(res, license, 'Tu licencia de Ristak no está activa.')
     }
 
     await db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id])
@@ -779,7 +794,7 @@ export async function ssoLogin(req, res) {
       token: sessionToken,
       appId,
       apiTokenMetadata,
-      user: serializeAuthUser(user)
+      user: serializeAuthUser(user, license)
     })
   } catch (error) {
     logger.error('❌ Error en acceso directo (sso):', error)
@@ -992,16 +1007,12 @@ export async function setup(req, res) {
     ])
 
     // Validar la licencia contra el servidor central antes de abrir la sesión
+    let licenseState = null
     if (isLicenseEnforced()) {
-      const license = await verifyLicenseWithServer(ownerEmail || username)
+      licenseState = await verifyLicenseWithServer(ownerEmail || username)
 
-      if (!license.allowed) {
-        return res.status(403).json({
-          success: false,
-          code: 'license_blocked',
-          reason: license.reason,
-          message: license.message || 'Tu licencia de Ristak no está activa. Contacta al administrador o actualiza tu suscripción para continuar.'
-        })
+      if (!licenseState.allowed) {
+        return sendLicenseBlocked(res, licenseState)
       }
     }
 
@@ -1028,7 +1039,7 @@ export async function setup(req, res) {
         email: ownerEmail || '',
         full_name: username,
         role: 'admin'
-      })
+      }, licenseState)
     })
   } catch (error) {
     logger.error('❌ Error en setup:', error)

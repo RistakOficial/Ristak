@@ -22,6 +22,8 @@ const DEFAULT_FEATURES = {
   meta_ads: true,
   google_calendar: true,
   ai: true,
+  app_assistant_ai: true,
+  conversational_ai: true,
   automations: true,
   advanced_reports: true,
   premium_modules: true
@@ -124,10 +126,26 @@ function allowedWithoutEnforcement() {
 }
 
 function normalizeLicenseFeatures(features = {}) {
-  return {
+  const source = features && typeof features === 'object' ? features : {}
+  const normalized = {
     ...DEFAULT_FEATURES,
-    ...(features && typeof features === 'object' ? features : {})
+    ...source
   }
+
+  if (source.ai !== undefined) {
+    if (source.app_assistant_ai === undefined) {
+      normalized.app_assistant_ai = !!source.ai
+    }
+    if (source.conversational_ai === undefined) {
+      normalized.conversational_ai = !!source.ai
+    }
+  }
+
+  if (source.ai === undefined) {
+    normalized.ai = normalized.app_assistant_ai === true && normalized.conversational_ai === true
+  }
+
+  return normalized
 }
 
 function cacheIsValid() {

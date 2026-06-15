@@ -5,6 +5,7 @@ export const USER_ROLES = ['admin', 'employee'] as const
 export type UserRole = typeof USER_ROLES[number]
 
 export type PermissionGroup = 'CRM' | 'Operación' | 'Configuración'
+export type LicenseFeatures = Record<string, boolean | undefined>
 
 export const ACCESS_MODULES = [
   {
@@ -183,9 +184,38 @@ export type AccessConfig = Record<PermissionKey, AccessLevel>
 export interface AccessControlledUser {
   role?: UserRole | 'manager' | 'viewer' | string
   accessConfig?: Partial<Record<PermissionKey, AccessLevel>>
+  licenseEnforced?: boolean
+  licenseFeatures?: LicenseFeatures | null
 }
 
 const MODULE_KEYS = new Set<PermissionKey>(ACCESS_MODULES.map((module) => module.key))
+
+export const AI_AGENT_NAV_ITEMS = [
+  {
+    to: '/ai-agent/general',
+    label: 'General',
+    exact: true,
+    featureKeys: ['app_assistant_ai', 'ai']
+  },
+  {
+    to: '/ai-agent/conversational',
+    label: 'Agente conversacional',
+    exact: false,
+    featureKeys: ['conversational_ai', 'ai']
+  }
+] as const
+export type AIAgentNavItem = typeof AI_AGENT_NAV_ITEMS[number]
+
+const LICENSE_FEATURES_BY_MODULE: Partial<Record<PermissionKey, readonly string[]>> = {
+  appointments: ['google_calendar'],
+  settings_calendars: ['google_calendar'],
+  reports: ['advanced_reports'],
+  settings_costs: ['advanced_reports'],
+  campaigns: ['meta_ads'],
+  settings_whatsapp: ['whatsapp'],
+  automations: ['automations'],
+  ai_agent: ['app_assistant_ai', 'conversational_ai', 'ai']
+}
 
 export const DEFAULT_EMPLOYEE_ACCESS: AccessConfig = Object.fromEntries(
   ACCESS_MODULES.map((module) => [module.key, module.key === 'settings_account' ? 'write' : 'none'])
@@ -220,11 +250,29 @@ export function getEffectiveAccessConfig(user?: AccessControlledUser | null): Ac
   return normalizeAccessConfig(user?.accessConfig, role)
 }
 
+export function hasLicenseFeature(
+  user: AccessControlledUser | null | undefined,
+  featureKeys: readonly string[]
+) {
+  if (!user?.licenseEnforced) return true
+  const features = user.licenseFeatures || {}
+  return featureKeys.some((featureKey) => features[featureKey] === true)
+}
+
+export function hasLicenseFeatureAccess(
+  user: AccessControlledUser | null | undefined,
+  moduleKey: PermissionKey
+) {
+  const featureKeys = LICENSE_FEATURES_BY_MODULE[moduleKey]
+  return !featureKeys || hasLicenseFeature(user, featureKeys)
+}
+
 export function hasModuleAccess(
   user: AccessControlledUser | null | undefined,
   moduleKey: PermissionKey,
   requiredLevel: 'read' | 'write' = 'read'
 ) {
+  if (!hasLicenseFeatureAccess(user, moduleKey)) return false
   if (normalizeRole(user?.role) === 'admin') return true
   if (moduleKey === 'settings_users') return false
 
@@ -276,4 +324,9 @@ export function getRouteAccess(pathname: string): PermissionKey | null {
 export function getFirstAllowedAppPath(user?: AccessControlledUser | null) {
   const firstModule = ACCESS_MODULES.find((module) => hasModuleAccess(user, module.key, 'read'))
   return firstModule?.path || '/settings/account'
+}
+
+export function getFirstAllowedAIAgentPath(user?: AccessControlledUser | null) {
+  const firstSection = AI_AGENT_NAV_ITEMS.find((item) => hasLicenseFeature(user, item.featureKeys))
+  return firstSection?.to || getFirstAllowedAppPath(user)
 }
