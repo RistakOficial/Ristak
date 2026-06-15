@@ -145,6 +145,7 @@ const IMPORTED_ZIP_MAX_BYTES = 15 * 1024 * 1024
 const IMPORTED_ASSET_MAX_BYTES = 8 * 1024 * 1024
 const IMPORTED_ASSET_TOTAL_MAX_BYTES = 25 * 1024 * 1024
 const IMPORTED_CODE_FILE_MAX_BYTES = 8 * 1024 * 1024
+const IMPORTED_POPUP_CODE_PATH = 'ristak-popup.html'
 const IMPORTED_ZIP_MAX_FILES = 250
 const IMPORTED_HTML_EXTENSIONS = new Set(['html', 'htm'])
 const IMPORTED_ASSET_CONTENT_TYPES = new Map([
@@ -750,6 +751,14 @@ function normalizeImportedAssetPath(value = '') {
   const normalized = path.posix.normalize(withoutNulls).replace(/^\.\/+/, '')
   if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../')) return ''
   return normalized
+}
+
+function normalizeImportedCodeUpdatePath(value = '') {
+  const rawPath = cleanString(value)
+  if (!rawPath || rawPath === '__main__' || rawPath === 'main') return ''
+  const assetPath = normalizeImportedAssetPath(rawPath)
+  if (assetPath === IMPORTED_POPUP_CODE_PATH || rawPath === POPUP_SELECTED_ID) return IMPORTED_POPUP_CODE_PATH
+  return assetPath
 }
 
 function getImportedAssetExtension(assetPath = '') {
@@ -7220,6 +7229,8 @@ async function listImportedSiteCodeFiles(siteId, imported = {}) {
   const siteRow = await db.get('SELECT * FROM public_sites WHERE id = ? LIMIT 1', [siteId]).catch(() => null)
   const site = mapSite(siteRow)
   const pages = normalizeSitePages(site)
+  const theme = site?.theme || {}
+  const importedPopupHtml = cleanString(theme.importedPopupHtml ?? theme.imported_popup_html)
   const pageByAssetPath = new Map()
   const orderedPageAssetPaths = []
 
@@ -7283,6 +7294,20 @@ async function listImportedSiteCodeFiles(siteId, imported = {}) {
       sizeBytes: Buffer.byteLength(mainHtml, 'utf8'),
       updatedAt: imported.updatedAt || '',
       role: 'main_html'
+    })
+  }
+  if (importedPopupHtml) {
+    files.push({
+      path: IMPORTED_POPUP_CODE_PATH,
+      label: 'Pop up',
+      pageId: POPUP_SELECTED_ID,
+      pageTitle: 'Pop up',
+      contentType: 'text/html; charset=utf-8',
+      language: 'html',
+      content: importedPopupHtml,
+      sizeBytes: Buffer.byteLength(importedPopupHtml, 'utf8'),
+      updatedAt: siteRow?.updated_at || imported.updatedAt || '',
+      role: 'popup'
     })
   }
 
@@ -7836,9 +7861,8 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
 
   for (const file of updates) {
     const rawPath = cleanString(file?.path ?? file?.assetPath ?? file?.asset_path ?? '')
-    const isMainHtml = !rawPath || rawPath === '__main__' || rawPath === 'main'
-    const assetPath = isMainHtml ? '' : normalizeImportedAssetPath(rawPath)
-    if (!isMainHtml && !assetPath) {
+    const assetPath = normalizeImportedCodeUpdatePath(rawPath)
+    if (rawPath && assetPath === '' && rawPath !== '__main__' && rawPath !== 'main') {
       const error = new Error('Ruta de archivo inválida')
       error.status = 400
       throw error
@@ -7880,7 +7904,7 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
   }
 
   for (const assetPath of updateByPath.keys()) {
-    if (!assetPath) continue
+    if (!assetPath || assetPath === IMPORTED_POPUP_CODE_PATH) continue
     const row = assetByPath.get(assetPath)
     const contentType = row?.content_type || getImportedAssetContentType(assetPath)
     if (!row || row.media_asset_id || row.public_url || !isImportedCodeContentType(contentType, assetPath)) {
@@ -7903,9 +7927,15 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
       .filter(assetPath => assetPath && !orderedPageAssetPaths.includes(assetPath))
   ]
   const shouldProcessMainHtml = updateByPath.has('') || orderedHtmlAssetPaths.length === 0
+  const currentTheme = currentSite.theme || {}
+  const currentImportedPopupHtml = cleanString(currentTheme.importedPopupHtml ?? currentTheme.imported_popup_html)
+  const hasPopupCodeUpdate = updateByPath.has(IMPORTED_POPUP_CODE_PATH)
+  const nextRawPopupHtml = hasPopupCodeUpdate ? updateByPath.get(IMPORTED_POPUP_CODE_PATH) : currentImportedPopupHtml
+  const shouldProcessPopupHtml = Boolean(cleanString(nextRawPopupHtml))
   const htmlTargets = [
     ...(shouldProcessMainHtml ? [{ assetPath: '', row: null }] : []),
-    ...orderedHtmlAssetPaths.map(assetPath => ({ assetPath, row: htmlAssetByPath.get(assetPath) }))
+    ...orderedHtmlAssetPaths.map(assetPath => ({ assetPath, row: htmlAssetByPath.get(assetPath) })),
+    ...(shouldProcessPopupHtml ? [{ assetPath: IMPORTED_POPUP_CODE_PATH, row: null }] : [])
   ]
 
   const usedFormIds = new Set()
@@ -7919,7 +7949,9 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
     const sourceHtml = updateByPath.has(assetPath)
       ? updateByPath.get(assetPath)
       : assetPath
-        ? Buffer.from(target.row?.content_base64 || '', 'base64').toString('utf8')
+        ? assetPath === IMPORTED_POPUP_CODE_PATH
+          ? currentImportedPopupHtml
+          : Buffer.from(target.row?.content_base64 || '', 'base64').toString('utf8')
         : currentImport.htmlSanitized || currentImport.htmlOriginal || ''
     const sanitized = sanitizeImportedHtml(sourceHtml)
     const pageForms = namespaceImportedPageForms(detectImportedForms(sanitized.html), assetPath, usedFormIds)
@@ -7936,7 +7968,7 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
   }
 
   for (const [assetPath, content] of updateByPath.entries()) {
-    if (!assetPath) continue
+    if (!assetPath || assetPath === IMPORTED_POPUP_CODE_PATH) continue
     const row = assetByPath.get(assetPath)
     if (!row) continue
     const contentType = row.content_type || getImportedAssetContentType(assetPath)
@@ -7965,6 +7997,25 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
     if (firstPageAssetPath && sanitizedHtmlByPath.has(firstPageAssetPath)) {
       storedMainHtml = sanitizedHtmlByPath.get(firstPageAssetPath)
     }
+  }
+
+  if (hasPopupCodeUpdate) {
+    const nextPopupHtml = shouldProcessPopupHtml
+      ? sanitizedHtmlByPath.get(IMPORTED_POPUP_CODE_PATH) || ''
+      : ''
+    await db.run(`
+      UPDATE public_sites SET
+        theme_json = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      jsonString({
+        ...currentTheme,
+        importedPopupHtml: nextPopupHtml,
+        popupEnabled: Boolean(nextPopupHtml.trim())
+      }),
+      siteId
+    ])
   }
 
   const nextMappings = mergeImportedFormMappings(
@@ -9521,6 +9572,25 @@ function popupCloseIconText(value = '') {
   return '×'
 }
 
+function getImportedPopupHtmlFragment(html = '') {
+  const source = String(html || '').trim()
+  if (!source) return ''
+
+  const styleBlocks = (source.match(/<style\b[\s\S]*?<\/style>/gi) || []).join('\n')
+  const bodyMatch = source.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)
+  if (bodyMatch) {
+    return `${styleBlocks}\n${bodyMatch[1] || ''}`.trim()
+  }
+
+  return `${styleBlocks}\n${source
+    .replace(/<!doctype\b[^>]*>/gi, '')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
+    .replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, '')
+    .replace(/<\/?html\b[^>]*>/gi, '')
+    .replace(/<\/?body\b[^>]*>/gi, '')
+  }`.trim()
+}
+
 function siteHasPopupOpenAction(site) {
   return (Array.isArray(site?.blocks) ? site.blocks : []).some(block => {
     const settings = block?.settings || {}
@@ -9538,9 +9608,10 @@ function renderSitePopup(site, context = {}) {
   const body = cleanString(theme.popupBody ?? theme.popup_body)
   const buttonText = cleanString(theme.popupButtonText ?? theme.popup_button_text)
   const buttonUrl = safeUrl(theme.popupButtonUrl ?? theme.popup_button_url)
+  const importedPopupHtml = getImportedPopupHtmlFragment(theme.importedPopupHtml ?? theme.imported_popup_html)
   const delaySeconds = themeNumber(theme, 'popupDelaySeconds', 8, 0, 120)
   const hasLegacyContent = Boolean(title || body || buttonText || buttonUrl)
-  if (!popupBlocks.length && !hasLegacyContent && trigger === 'never' && !hasOpenAction) return ''
+  if (!importedPopupHtml && !popupBlocks.length && !hasLegacyContent && trigger === 'never' && !hasOpenAction) return ''
 
   const backdrop = normalizeCssPaint(theme.popupBackdropColor ?? theme.popup_backdrop_color, 'rgba(2, 6, 23, 0.62)')
   const boxBg = normalizeCssPaint(theme.popupBackgroundColor ?? theme.popup_background_color, '#0f172a')
@@ -9561,11 +9632,12 @@ function renderSitePopup(site, context = {}) {
     ...(context.renderContext || {}),
     insidePopup: true
   }
-  const popupBlocksHtml = popupBlocks.length
-    ? site?.siteType === 'landing_page'
-      ? renderLandingBlocks(popupBlocks, popupRenderContext)
-      : popupBlocks.map(block => renderPublicBlock(block, popupRenderContext)).join('\n')
-    : ''
+  const popupBlocksHtml = importedPopupHtml ||
+    (popupBlocks.length
+      ? site?.siteType === 'landing_page'
+        ? renderLandingBlocks(popupBlocks, popupRenderContext)
+        : popupBlocks.map(block => renderPublicBlock(block, popupRenderContext)).join('\n')
+      : '')
   const legacyHtml = !popupBlocks.length
     ? `
       ${title ? `<h2 id="rstk-site-popup-title">${escapeHtml(title)}</h2>` : ''}

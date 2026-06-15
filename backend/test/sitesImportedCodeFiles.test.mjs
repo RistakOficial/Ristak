@@ -104,6 +104,56 @@ test('AI HTML draft edit returns edited draft without saving imported code', asy
   }
 })
 
+test('imported HTML code editor saves popup code as site popup HTML', async () => {
+  const {
+    createImportedSiteFromHtml,
+    deleteSite,
+    getSitePreview,
+    renderPublicSiteHtml,
+    updateImportedSiteCodeFiles
+  } = await import('../src/services/sitesService.js')
+
+  let siteId = ''
+
+  try {
+    const html = '<!doctype html><html><head><title>Popup code test</title></head><body><main><h1>Página principal</h1><button data-rstk-button-action="open_popup">Abrir</button></main></body></html>'
+    const created = await createImportedSiteFromHtml({
+      filename: 'popup-code-test.html',
+      fileBase64: Buffer.from(html, 'utf8').toString('base64'),
+      siteType: 'landing_page',
+      name: `Popup Code Test ${Date.now()}`
+    })
+    siteId = created.site.id
+
+    const popupHtml = [
+      '<!doctype html>',
+      '<html><head><style>.popup-code-title{color:#111827}</style></head>',
+      '<body><section><h2 class="popup-code-title">Popup editado con código</h2><p>Contenido propio del pop up.</p></section></body></html>'
+    ].join('')
+    const updated = await updateImportedSiteCodeFiles(siteId, {
+      files: [{ path: 'ristak-popup.html', content: popupHtml }]
+    })
+
+    const popupCodeFile = updated.import.codeFiles.find(file => file.path === 'ristak-popup.html')
+    assert.ok(popupCodeFile)
+    assert.equal(popupCodeFile.role, 'popup')
+    assert.match(popupCodeFile.content, /Popup editado con código/)
+    assert.match(updated.site.theme.importedPopupHtml, /Popup editado con código/)
+
+    const previewSite = await getSitePreview(siteId)
+    const rendered = await renderPublicSiteHtml(previewSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(rendered, /rstk-site-popup/)
+    assert.match(rendered, /Popup editado con código/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
 test('AI HTML editor instructions stay scoped to active code only', async () => {
   const { buildSitesAIHtmlInstructions } = await import('../src/services/sitesService.js')
 

@@ -175,6 +175,7 @@ type SitesAICreationModalState = {
 } | null
 
 const IMPORTED_CODE_MAIN_FILE_KEY = '__main__'
+const IMPORTED_POPUP_CODE_PATH = 'ristak-popup.html'
 const getImportedCodeFileKey = (pathValue = '') => pathValue || IMPORTED_CODE_MAIN_FILE_KEY
 const getImportedCodeFilePathFromKey = (key = '') => key === IMPORTED_CODE_MAIN_FILE_KEY ? '' : key
 
@@ -1054,6 +1055,55 @@ ${IMPORTED_HTML_AI_GUIDE}
 <body>
 </body>
 </html>`
+
+const DEFAULT_IMPORTED_POPUP_HTML = `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pop up</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #f8fafc;
+      color: #111827;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .popup {
+      width: min(520px, calc(100vw - 32px));
+      display: grid;
+      gap: 16px;
+      padding: 32px;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      border-radius: 18px;
+      background: #ffffff;
+      box-shadow: 0 24px 80px -48px rgba(15, 23, 42, 0.5);
+    }
+    h2, p { margin: 0; }
+    h2 { font-size: 28px; line-height: 1.05; }
+    p { color: #475569; line-height: 1.55; }
+    button {
+      min-height: 46px;
+      border: 0;
+      border-radius: 12px;
+      background: #111827;
+      color: #ffffff;
+      font-weight: 800;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <section class="popup" data-rstk-editable="true" data-rstk-edit-type="section" data-rstk-label="Pop up">
+    <h2 data-rstk-editable="true" data-rstk-edit-type="heading" data-rstk-edit-id="popup_title" data-rstk-label="Título del pop up">Título del pop up</h2>
+    <p data-rstk-editable="true" data-rstk-edit-type="text" data-rstk-edit-id="popup_copy" data-rstk-label="Texto del pop up">Escribe aquí el mensaje que quieres mostrar.</p>
+    <button type="button" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="popup_cta" data-rstk-label="Botón del pop up" data-rstk-button-action="close_popup">Cerrar</button>
+  </section>
+</body>
+</html>`
 const DEFAULT_BUTTON_SETTINGS = {
   buttonAlign: 'center',
   buttonRadius: 28,
@@ -1836,7 +1886,8 @@ const hasThemePopupConfig = (theme?: SiteTheme | null) => Boolean(
   getThemeString(theme || undefined, 'popupButtonText').trim() ||
   getThemeString(theme || undefined, 'popupButtonUrl').trim() ||
   getThemeString(theme || undefined, 'popupBackgroundColor').trim() ||
-  getThemeString(theme || undefined, 'popupBackdropColor').trim()
+  getThemeString(theme || undefined, 'popupBackdropColor').trim() ||
+  getThemeString(theme || undefined, 'importedPopupHtml').trim()
 )
 
 const getThemeBackgroundVideo = (theme: SiteTheme | undefined) => {
@@ -4361,11 +4412,7 @@ export const Sites: React.FC = () => {
     () => isImportedHtmlSite(editorSite) && importedHtmlHasPopup(selectedImportData),
     [editorSite, selectedImportData]
   )
-  const canConfigurePopup = Boolean(editorSite && isLanding(editorSite) && (
-    !isImportedHtmlSite(editorSite) ||
-    importedPopupDetected ||
-    hasThemePopupConfig(editorSite.theme)
-  ))
+  const canConfigurePopup = Boolean(editorSite && isLanding(editorSite))
   const popupSurfaceSelected = canConfigurePopup && (selectedBlockId === POPUP_SELECTED_ID || popupBlocks.some(block => block.id === selectedBlockId))
   const editableCanvasBlocks = popupSurfaceSelected ? popupBlocks : canvasBlocks
   const activeDragBlock = editableCanvasBlocks.find(block => block.id === activeDragId) || null
@@ -7884,6 +7931,7 @@ export const Sites: React.FC = () => {
                   customFields={customFields}
                   codeEditorOpen={true}
                   codeDrafts={importedCodeDrafts}
+                  popupCodeActive={popupSurfaceSelected}
                   loadingImportData={loadingImportData}
                   onSelectPage={selectEditorPage}
                   onCodeDraftChange={handleImportedCodeDraftChange}
@@ -12451,6 +12499,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   customFields: CustomFieldDefinition[]
   codeEditorOpen: boolean
   codeDrafts: Record<string, string>
+  popupCodeActive: boolean
   loadingImportData: boolean
   onSelectPage: (pageId: string) => void
   onCodeDraftChange: (filePath: string, content: string, originalContent: string) => void
@@ -12474,6 +12523,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   customFields,
   codeEditorOpen,
   codeDrafts,
+  popupCodeActive,
   loadingImportData,
   onSelectPage,
   onCodeDraftChange,
@@ -12534,6 +12584,16 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [codeAssistantWorkSteps, setCodeAssistantWorkSteps] = useState<ImportedCodeAssistantWorkStep[]>([])
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
+  const popupCodeFile = useMemo<ImportedSiteCodeFile>(() => ({
+    path: IMPORTED_POPUP_CODE_PATH,
+    label: 'Pop up',
+    pageId: POPUP_SELECTED_ID,
+    pageTitle: 'Pop up',
+    contentType: 'text/html; charset=utf-8',
+    language: 'html',
+    content: getThemeString(site.theme, 'importedPopupHtml') || DEFAULT_IMPORTED_POPUP_HTML,
+    role: 'popup'
+  }), [site.theme])
   const codeFiles = useMemo<ImportedSiteCodeFile[]>(() => {
     const backendFiles = Array.isArray(importData?.codeFiles) ? importData.codeFiles : []
     if (backendFiles.length) return backendFiles
@@ -12557,11 +12617,11 @@ const ImportedHtmlEditorPanel: React.FC<{
     codeFiles[0] ||
     null
   ), [activeImportedPage?.id, activeImportedPage?.importedAssetPath, codeFiles])
-  const activeCodeFile = activePageCodeFile
+  const activeCodeFile = popupCodeActive ? popupCodeFile : activePageCodeFile
   const activeCodeKey = activeCodeFile ? getImportedCodeFileKey(activeCodeFile.path) : ''
   const activeCodeValue = activeCodeFile ? codeDrafts[activeCodeKey] ?? activeCodeFile.content : ''
   const activeCodeDirty = Boolean(activeCodeKey && Object.prototype.hasOwnProperty.call(codeDrafts, activeCodeKey))
-  const activePageDraftPreviewHtml = activeCodeFile?.language === 'html' && activeCodeDirty ? activeCodeValue : ''
+  const activePageDraftPreviewHtml = !popupCodeActive && activeCodeFile?.language === 'html' && activeCodeDirty ? activeCodeValue : ''
   const editorPreviewHtml = activePageDraftPreviewHtml || previewHtml
   const guardedEditorPreviewHtml = useMemo(
     () => buildImportedEditorPreviewHtml(editorPreviewHtml, 'visual'),
@@ -13268,9 +13328,9 @@ const ImportedHtmlEditorPanel: React.FC<{
     selection: ImportedAIRegionSelection | null,
     nextAttempt: Pick<ImportedAIRegionAttempt, 'status' | 'message' | 'prompt'> & { debug?: SitesAIEditDebug }
   ) => {
-    const activePageId = activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID
+    const activeCodePageId = popupCodeActive ? POPUP_SELECTED_ID : activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID
     const fullPageVisualContext = previewVisualContextRef.current?.siteId === site.id &&
-      previewVisualContextRef.current?.pageId === activePageId
+      previewVisualContextRef.current?.pageId === activeCodePageId
       ? previewVisualContextRef.current
       : null
     setAiRegionLastAttempt({
@@ -13413,9 +13473,9 @@ const ImportedHtmlEditorPanel: React.FC<{
       return
     }
 
-    const activePageId = activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID
+    const activeCodePageId = popupCodeActive ? POPUP_SELECTED_ID : activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID
     const fullPageVisualContext = previewVisualContextRef.current?.siteId === site.id &&
-      previewVisualContextRef.current?.pageId === activePageId
+      previewVisualContextRef.current?.pageId === activeCodePageId
       ? previewVisualContextRef.current
       : null
     const selectedRange = buttonEditor?.selection.codeRange || codeElementEditor?.range || null
@@ -13430,7 +13490,9 @@ const ImportedHtmlEditorPanel: React.FC<{
       ].join('\n')
       : codeSelectionNotice
         ? `Elemento seleccionado en vista previa: ${codeSelectionNotice}.`
-        : 'No hay elemento seleccionado; aplica el cambio a la página activa solo si la instrucción lo pide.'
+        : popupCodeActive
+          ? 'No hay elemento seleccionado; aplica el cambio al pop up solo si la instrucción lo pide.'
+          : 'No hay elemento seleccionado; aplica el cambio a la página activa solo si la instrucción lo pide.'
     const assistantInstruction = [
       'Eres el asistente de código HTML de Ristak.',
       'Edita el HTML actual que Ristak te manda como currentHtml. No reconstruyas toda la página salvo que el usuario lo pida de forma explícita.',
@@ -13439,7 +13501,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       'Si el usuario menciona "este", "ese botón", "este campo" o una sección seleccionada, usa primero el contexto del elemento seleccionado.',
       'Conserva scripts de Ristak, atributos data-rstk/data-ristak, formularios, tracking y acciones existentes salvo que el usuario pida cambiarlos.',
       `Archivo activo: ${activeCodeFile.label || activeCodeFile.path || 'HTML principal'}.`,
-      `Página activa: ${activeImportedPage?.title || 'Página actual'}.`,
+      popupCodeActive ? 'Superficie activa: Pop up.' : `Página activa: ${activeImportedPage?.title || 'Página actual'}.`,
       selectedContext,
       `Solicitud del usuario: ${prompt}`
     ].join('\n\n')
@@ -13447,7 +13509,9 @@ const ImportedHtmlEditorPanel: React.FC<{
       ? `${selectedRange.label || 'Elemento seleccionado'} cerca de la línea ${selectedRange.line || 'detectada'}.`
       : codeSelectionNotice
         ? codeSelectionNotice
-        : 'Sin elemento seleccionado: revisando la página activa completa.'
+        : popupCodeActive
+          ? 'Sin elemento seleccionado: revisando el pop up completo.'
+          : 'Sin elemento seleccionado: revisando la página activa completa.'
     const selectedModelLabel = getChatGPTSiteModelOption(codeAssistantModel, true).label
     const selectedModelDisplay = selectedModelLabel.replace(/\s*·\s*\$+.*$/, '').trim() || selectedModelLabel
     const workPlan: ImportedCodeAssistantWorkStep[] = [
@@ -13495,7 +13559,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       const result = await sitesService.editImportedHtmlWithAI(site.id, {
         siteKind: getAIAgentSiteKindForSite(site),
         model: codeAssistantModel,
-        pageId: activePageId,
+        pageId: activeCodePageId,
         visualContext: fullPageVisualContext,
         aiRegionRequest: prompt,
         draftOnly: true,
@@ -13510,7 +13574,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       })
 
       const draftPage = result.draftPages?.find(page => (
-        page.id === activePageId ||
+        page.id === activeCodePageId ||
         page.filename === activeCodeFile.path ||
         page.filename === activeCodeFile.label
       ))
@@ -15269,8 +15333,8 @@ const ImportedHtmlEditorPanel: React.FC<{
           codeSelectionNotice ? styles.importedCodePreviewPaneWithNotice : ''
         ].filter(Boolean).join(' ')}>
           <div className={styles.importedCodePaneHeader}>
-            <span>Vista de página</span>
-            <strong>{activeImportedPage?.title || 'Página'}</strong>
+            <span>{popupCodeActive ? 'Vista de pop up' : 'Vista de página'}</span>
+            <strong>{popupCodeActive ? 'Pop up' : activeImportedPage?.title || 'Página'}</strong>
           </div>
           {codeSelectionNotice && (
             <div className={styles.importedCodeSelectionNotice}>
@@ -15294,7 +15358,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 key={`${site.id}-${activeCodeKey}-${activeCodeValue.length}-${device}`}
                 ref={codePreviewIframeRef}
                 className={styles.importedCodePreviewFrame}
-                title={`Vista previa de ${activeImportedPage?.title || site.name}`}
+                title={`Vista previa de ${popupCodeActive ? 'Pop up' : activeImportedPage?.title || site.name}`}
                 srcDoc={guardedCodePreviewHtml}
                 sandbox="allow-same-origin allow-scripts"
                 referrerPolicy="no-referrer-when-downgrade"

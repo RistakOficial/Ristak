@@ -192,6 +192,7 @@ export interface SiteTheme {
   popupCloseDisplay?: 'icon' | 'text' | 'both'
   popupCloseIcon?: 'x' | 'arrow' | 'chevron' | 'none'
   popupCloseText?: string
+  importedPopupHtml?: string
   submitText?: string
   submitSubtitle?: string
   continueText?: string
@@ -389,7 +390,7 @@ export interface ImportedSiteCodeFile {
   content: string
   sizeBytes?: number
   updatedAt?: string
-  role?: 'main_html' | 'page_asset' | 'asset'
+  role?: 'main_html' | 'page_asset' | 'asset' | 'popup'
 }
 
 export interface ImportedSiteImport {
