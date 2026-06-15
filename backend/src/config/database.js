@@ -46,6 +46,20 @@ const DEFAULT_REPORT_TABLE_CONFIG_VALUE = JSON.stringify(DEFAULT_REPORT_TABLE_CO
 const DEFAULT_REPORT_TABLE_CONFIG_KEYS = ['cashflow', 'attribution', 'campaigns']
   .flatMap(reportType => ['day', 'month', 'year'].map(viewType => `table_reports_metrics_${reportType}_${viewType}`))
 
+const POSTGRES_CONNECT_RETRY_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  '08001',
+  '08006',
+  '53300',
+  '57P03'
+])
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
 const WHATSAPP_API_SYSTEM_CUSTOM_FIELD_KEYS = new Set([
   'whatsapp_api_provider',
   'whatsapp_api_first_message',
@@ -161,6 +175,26 @@ if (usePostgres) {
     }
   })
 
+  async function connectWithRetry() {
+    const maxAttempts = 6
+    let delayMs = 500
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await pool.connect()
+      } catch (error) {
+        const canRetry = POSTGRES_CONNECT_RETRY_CODES.has(error.code)
+        if (!canRetry || attempt === maxAttempts) {
+          throw error
+        }
+
+        logger.warn(`PostgreSQL no aceptó conexión (${error.code || error.message}). Reintentando ${attempt}/${maxAttempts}...`)
+        await sleep(delayMs)
+        delayMs = Math.min(Math.round(delayMs * 1.8), 5000)
+      }
+    }
+  }
+
   // Helper para convertir placeholders SQLite (?) a PostgreSQL ($1, $2, etc.)
   // No toca los ? que van dentro de literales de texto '...' (p. ej. filtros LIKE)
   const convertPlaceholders = (sql) => {
@@ -211,7 +245,7 @@ if (usePostgres) {
 
   db = {
     run: async (sql, params = []) => {
-      const client = await pool.connect()
+      const client = await connectWithRetry()
       try {
         return await createPostgresAdapter(client).run(sql, params)
       } finally {
@@ -220,7 +254,7 @@ if (usePostgres) {
     },
 
     get: async (sql, params = []) => {
-      const client = await pool.connect()
+      const client = await connectWithRetry()
       try {
         return await createPostgresAdapter(client).get(sql, params)
       } finally {
@@ -229,7 +263,7 @@ if (usePostgres) {
     },
 
     all: async (sql, params = []) => {
-      const client = await pool.connect()
+      const client = await connectWithRetry()
       try {
         return await createPostgresAdapter(client).all(sql, params)
       } finally {
@@ -238,7 +272,7 @@ if (usePostgres) {
     },
 
     exec: async (sql) => {
-      const client = await pool.connect()
+      const client = await connectWithRetry()
       try {
         await createPostgresAdapter(client).exec(sql)
       } finally {

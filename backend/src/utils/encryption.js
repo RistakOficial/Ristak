@@ -44,6 +44,7 @@ async function getMasterKey() {
     }
   } catch (error) {
     logger.warn('⚠️  No se pudo leer ENCRYPTION_MASTER_KEY de la DB:', error.message)
+    throw error
   }
 
   // 3. Generar nueva clave y guardarla en DB
@@ -61,8 +62,8 @@ async function getMasterKey() {
       ['encryption_master_key', newKeyHex]
     )
     logger.info('✅ Nueva ENCRYPTION_MASTER_KEY generada y guardada en DB')
-    logger.info('   Clave generada:', newKeyHex)
-    logger.info('   💡 IMPORTANTE: Guarda esta clave en un lugar seguro como respaldo')
+    logger.info('   La clave no se imprime en logs por seguridad.')
+    logger.info('   💡 Para respaldo controlado, configura ENCRYPTION_MASTER_KEY en Render.')
   } catch (error) {
     logger.error('❌ Error guardando ENCRYPTION_MASTER_KEY en DB:', error.message)
     logger.warn('⚠️  Usando clave temporal en memoria (se perderá al reiniciar)')
