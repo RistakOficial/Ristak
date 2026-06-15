@@ -368,6 +368,7 @@ export const NODE_CATEGORIES: NodeCategory[] = [
 const SINGLE_OUTPUT: NodeOutputHandle[] = [{ id: 'out', label: 'Siguiente paso' }]
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '')
+const triggerLinkLabel = (value: unknown): string => str(value)
 const arr = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : [])
 const obj = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -829,19 +830,24 @@ const TRIGGERS: NodeDefinition[] = [
       { key: 'link', label: 'Clic de disparo', type: 'catalogSelect', catalog: 'links', required: true }
     ],
     outputs: () => SINGLE_OUTPUT,
-    variableOutput: (config) => ({
-      baseId: 'enlace_disparo',
-      baseLabel: str(config.linkName) || str(config.link)
-        ? `Clic de disparo - ${str(config.linkName) || str(config.link)}`
-        : 'Clic de disparo',
-      fields: TRIGGER_LINK_FIELDS
-    }),
-    summary: (config) => ({
-      text: str(config.linkName) || str(config.link)
-        ? `Cuando ocurra el clic de disparo "${str(config.linkName) || str(config.link)}"${triggerFiltersSentence(config.filters)}`
-        : undefined,
-      empty: 'Selecciona el clic de disparo'
-    })
+    variableOutput: (config) => {
+      const linkName = triggerLinkLabel(config.linkName)
+      return {
+        baseId: 'enlace_disparo',
+        baseLabel: linkName ? `Clic de disparo - ${linkName}` : 'Clic de disparo',
+        fields: TRIGGER_LINK_FIELDS
+      }
+    },
+    summary: (config) => {
+      const linkName = triggerLinkLabel(config.linkName)
+      const hasSelectedLink = Boolean(linkName || str(config.link))
+      return {
+        text: hasSelectedLink
+          ? `Cuando ocurra el clic de disparo${linkName ? ` "${linkName}"` : ' seleccionado'}${triggerFiltersSentence(config.filters)}`
+          : undefined,
+        empty: 'Selecciona el clic de disparo'
+      }
+    }
   },
   {
     type: 'trigger-scheduler',
@@ -1988,9 +1994,13 @@ const OTHER_ACTIONS: NodeDefinition[] = [
           reply_message: 'responda un mensaje',
           custom_event: 'dispare un evento personalizado'
         }
-        const actionResource = str(config.actionResourceName) || str(config.actionResource)
-        const resourceText = str(config.expectedAction) === 'click_link' && actionResource ? ` "${actionResource}"` : ''
-        return { text: `Esperar a que ${actions[str(config.expectedAction)] || 'realice una acción'}${resourceText}${timeoutText}` }
+        const expectedAction = str(config.expectedAction)
+        const actionResourceName = triggerLinkLabel(config.actionResourceName)
+        const hasActionResource = Boolean(actionResourceName || str(config.actionResource))
+        const actionText = expectedAction === 'click_link'
+          ? `reciba ${actionResourceName ? `el clic de disparo "${actionResourceName}"` : hasActionResource ? 'el clic de disparo seleccionado' : 'un clic de disparo'}`
+          : actions[expectedAction] || 'realice una acción'
+        return { text: `Esperar a que ${actionText}${timeoutText}` }
       }
       if (mode === 'conditions') {
         const summary = summarizeAdvancedCondition(config.conditions)
@@ -2137,8 +2147,9 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         },
         form: () => `Formulario ${str(config.formName) || str(config.form) || ''} enviado`,
         link: () => {
-          const linkName = str(config.linkName) || str(config.link)
-          return `Clic de disparo${linkName ? ` "${linkName}"` : ''}`
+          const linkName = triggerLinkLabel(config.linkName)
+          if (linkName) return `Clic de disparo "${linkName}"`
+          return str(config.link) ? 'Clic de disparo seleccionado' : 'Clic de disparo'
         },
         conversation: () => `Respondió por ${channelLabel(str(config.conversationChannel) || 'any')}`,
         contact: () => 'Cambio en el contacto',
