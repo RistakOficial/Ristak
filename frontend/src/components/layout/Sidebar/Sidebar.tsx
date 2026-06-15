@@ -28,8 +28,11 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useInitialization } from '@/contexts/InitializationContext'
 import { settingsNavigation } from '@/pages/Settings/settingsNav'
 import {
+  AI_AGENT_NAV_ITEMS,
   hasModuleAccess,
+  hasLicenseFeature,
   type AccessControlledUser,
+  type AIAgentNavItem,
   type PermissionKey
 } from '@/utils/accessControl'
 import {
@@ -269,16 +272,13 @@ const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({ pathname, open, ite
 interface AIAgentNavGroupProps {
   pathname: string
   open: boolean
+  items: ReadonlyArray<AIAgentNavItem>
   onToggle: () => void
   onNavigate?: () => void
 }
 
-const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({ pathname, open, onToggle, onNavigate }) => {
+const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({ pathname, open, items, onToggle, onNavigate }) => {
   const isAIAgentRoute = pathname.startsWith('/ai-agent')
-  const children = [
-    { to: '/ai-agent/general', label: 'General', exact: true },
-    { to: '/ai-agent/conversational', label: 'Agente conversacional', exact: false }
-  ]
 
   return (
     <div>
@@ -302,7 +302,7 @@ const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({ pathname, open, onTog
 
       {open && (
         <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[rgba(148,163,184,0.16)] pl-2.5">
-          {children.map((child) => {
+          {items.map((child) => {
             const childActive = child.exact ? pathname === child.to : pathname.startsWith(child.to)
             return (
               <Link
@@ -513,6 +513,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
     [user]
   )
   const canUseAIAgent = hasModuleAccess(user, 'ai_agent', 'read')
+  const visibleAIAgentNavigation = useMemo(
+    () => AI_AGENT_NAV_ITEMS.filter((item) => hasLicenseFeature(user, item.featureKeys)),
+    [user]
+  )
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -855,10 +859,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
               ) : null}
             </DragOverlay>
 
-            {canUseAIAgent && (
+            {canUseAIAgent && visibleAIAgentNavigation.length > 0 && (
               <AIAgentNavGroup
                 pathname={location.pathname}
                 open={aiAgentOpen}
+                items={visibleAIAgentNavigation}
                 onToggle={() => setAiAgentOpen((current) => !current)}
                 onNavigate={handleNavigate}
               />
@@ -900,10 +905,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
               )
             })}
 
-            {canUseAIAgent && (
+            {canUseAIAgent && visibleAIAgentNavigation.length > 0 && (
               <AIAgentNavGroup
                 pathname={location.pathname}
                 open={aiAgentOpen}
+                items={visibleAIAgentNavigation}
                 onToggle={() => setAiAgentOpen((current) => !current)}
                 onNavigate={handleNavigate}
               />

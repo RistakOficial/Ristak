@@ -6,7 +6,7 @@ import http from 'node:http'
 let server
 let baseUrl
 let requestCount = 0
-let serverMode = 'allow' // allow | allow_without_whatsapp | block | down
+let serverMode = 'allow' // allow | allow_without_whatsapp | allow_split_ai | block | down
 let lastRequestBody = null
 
 let licenseService
@@ -30,14 +30,16 @@ function startMockServer() {
         if (req.url === '/api/license/verify') {
           requestCount += 1
 
-          if (serverMode === 'allow' || serverMode === 'allow_without_whatsapp') {
+          if (serverMode === 'allow' || serverMode === 'allow_without_whatsapp' || serverMode === 'allow_split_ai') {
             res.end(JSON.stringify({
               allowed: true,
               client_id: 'cli_1',
               plan: 'pro',
-              features: serverMode === 'allow_without_whatsapp'
-                ? { meta_ads: true, ai: false }
-                : { whatsapp: true, meta_ads: true, ai: false },
+              features: serverMode === 'allow_split_ai'
+                ? { app_assistant_ai: true, conversational_ai: false }
+                : serverMode === 'allow_without_whatsapp'
+                  ? { meta_ads: true, ai: false }
+                  : { whatsapp: true, meta_ads: true, ai: false },
               license_token: 'tok_123',
               expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString()
             }))
@@ -141,6 +143,8 @@ test('licencia activa permite el acceso y entrega features', async () => {
   assert.equal(state.plan, 'pro')
   assert.equal(state.features.whatsapp, true)
   assert.equal(state.features.ai, false)
+  assert.equal(state.features.app_assistant_ai, false)
+  assert.equal(state.features.conversational_ai, false)
 
   // El payload enviado al servidor central incluye todos los datos de la instalación
   assert.equal(lastRequestBody.client_id, 'cli_1')
@@ -180,6 +184,8 @@ test('hasFeature respeta los feature flags del plan', async () => {
 
   assert.equal(await licenseService.hasFeature('whatsapp'), true)
   assert.equal(await licenseService.hasFeature('ai'), false)
+  assert.equal(await licenseService.hasFeature('app_assistant_ai'), false)
+  assert.equal(await licenseService.hasFeature('conversational_ai'), false)
   assert.equal(await licenseService.hasFeature('feature_inexistente'), false)
 })
 
@@ -191,6 +197,21 @@ test('features omitidos por el portal central usan defaults locales', async () =
   assert.equal(state.features.whatsapp, true)
   assert.equal(state.features.meta_ads, true)
   assert.equal(state.features.ai, false)
+  assert.equal(state.features.app_assistant_ai, false)
+  assert.equal(state.features.conversational_ai, false)
+})
+
+test('features de IA separados reconstruyen el alias legacy ai', async () => {
+  serverMode = 'allow_split_ai'
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.features.app_assistant_ai, true)
+  assert.equal(state.features.conversational_ai, false)
+  assert.equal(state.features.ai, false)
+  assert.equal(await licenseService.hasFeature('app_assistant_ai'), true)
+  assert.equal(await licenseService.hasFeature('conversational_ai'), false)
+  assert.equal(await licenseService.hasFeature('ai'), false)
 })
 
 test('modo estricto: servidor caído sin token vigente bloquea el acceso', async () => {

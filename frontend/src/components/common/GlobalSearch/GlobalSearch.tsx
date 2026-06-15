@@ -10,8 +10,10 @@ import {
   User,
   X
 } from 'lucide-react'
+import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/utils/cn'
 import { globalSearchService, type GlobalSearchCategory, type GlobalSearchItem, type GlobalSearchItemType } from '@/services/globalSearchService'
+import { getRouteAccess, hasModuleAccess, type AccessControlledUser } from '@/utils/accessControl'
 import { buildSearchIndex, searchIndexIncludes } from '@/utils/searchText'
 import styles from './GlobalSearch.module.css'
 
@@ -93,8 +95,25 @@ const filterCategoriesByQuery = (
     .filter(category => category.items.length > 0)
 }
 
+const filterCategoriesByAccess = (
+  categories: GlobalSearchCategory[],
+  user?: AccessControlledUser | null
+): GlobalSearchCategory[] => {
+  return categories
+    .map(category => ({
+      ...category,
+      items: category.items.filter((item) => {
+        const route = buildSearchParams(item)
+        const moduleKey = getRouteAccess(route.pathname)
+        return !moduleKey || hasModuleAccess(user, moduleKey, 'read')
+      })
+    }))
+    .filter(category => category.items.length > 0)
+}
+
 export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const cacheRef = useRef(new Map<string, GlobalSearchCategory[]>())
@@ -141,7 +160,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
     const optimisticCategories = cachedCategories
       ?? filterCategoriesByQuery(latestCategoriesRef.current, trimmedQuery)
 
-    setCategories(optimisticCategories)
+    setCategories(filterCategoriesByAccess(optimisticCategories, user))
     setIsOpen(true)
     setActiveIndex(0)
     setLoading(true)
@@ -160,7 +179,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
           }
 
           latestCategoriesRef.current = response.categories
-          setCategories(response.categories)
+          setCategories(filterCategoriesByAccess(response.categories, user))
           setActiveIndex(0)
           setIsOpen(true)
         })
@@ -183,7 +202,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
       window.clearTimeout(timeoutId)
       controller.abort()
     }
-  }, [trimmedQuery])
+  }, [trimmedQuery, user])
 
   const clearSearch = () => {
     setQuery('')
