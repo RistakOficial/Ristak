@@ -12,7 +12,8 @@ import {
   verifyLicenseWithServer,
   verifyOwnerCredentialsWithServer,
   verifySetupToken,
-  consumeSetupToken
+  consumeSetupToken,
+  createCentralGoogleLoginUrl
 } from '../services/licenseService.js'
 import { saveAccountLocaleSettings } from '../utils/accountLocale.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
@@ -267,6 +268,42 @@ export async function localDevSession(req, res) {
     res.status(500).json({
       success: false,
       message: 'Error en el servidor'
+    })
+  }
+}
+
+/**
+ * POST /api/auth/google/start
+ * Abre el OAuth central del portal para que Google termine regresando a esta
+ * instalación vía SSO (/sso?token=...), sin guardar secretos de Google aquí.
+ */
+export async function startGoogleLogin(req, res) {
+  try {
+    if (!isLicenseEnforced()) {
+      return res.status(503).json({
+        success: false,
+        code: 'central_login_not_configured',
+        message: 'Google solo está disponible cuando esta instalación está conectada al portal central.'
+      })
+    }
+
+    const data = await createCentralGoogleLoginUrl()
+    if (!data.url) {
+      return res.status(502).json({
+        success: false,
+        message: 'El portal central no devolvió una URL válida para Google.'
+      })
+    }
+
+    res.json({
+      success: true,
+      ...data
+    })
+  } catch (error) {
+    logger.error('❌ Error iniciando Google Login central:', error)
+    res.status(502).json({
+      success: false,
+      message: error.message || 'No se pudo iniciar sesión con Google.'
     })
   }
 }

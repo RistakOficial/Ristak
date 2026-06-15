@@ -254,6 +254,17 @@ export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/set
   }
 }
 
+export async function createCentralGoogleLoginUrl() {
+  const data = await callLicenseServer('/api/auth/google/start', {
+    mode: 'login'
+  })
+  return {
+    url: data.url || '',
+    mode: data.mode || 'login',
+    redirectUri: data.redirect_uri || data.redirectUri || ''
+  }
+}
+
 export async function listCentralGoogleCalendars() {
   const data = await callLicenseServer('/api/license/google-calendar/calendars')
   return Array.isArray(data.calendars) ? data.calendars : []

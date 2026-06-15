@@ -11,6 +11,7 @@ import {
   setupInfo,
   ssoLogin,
   localDevSession,
+  startGoogleLogin,
   getApiToken,
   rotateApiToken,
   revokeApiToken
@@ -43,6 +44,9 @@ router.post('/login', login)
 
 // POST /api/auth/local-dev-session - Sesión automática sólo para desarrollo local
 router.post('/local-dev-session', localDevSession)
+
+// POST /api/auth/google/start - Iniciar Google Login desde el portal central
+router.post('/google/start', startGoogleLogin)
 
 // POST /api/auth/verify - Verificar token JWT
 router.post('/verify', verifyTokenEndpoint)
