@@ -68,8 +68,8 @@ body.light .phoneLoginBox {
 }
 
 .logoContainer .phoneBrandLogo {
-  --ristak-logo-width: min(280px, 78vw);
-  --ristak-logo-height: 86px;
+  --ristak-logo-width: 104px;
+  --ristak-logo-height: 32px;
 }
 
 .logo {
