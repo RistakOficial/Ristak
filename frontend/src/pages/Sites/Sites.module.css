@@ -15506,10 +15506,20 @@
 }
 
 .pageFrame .containerFocused:has(.builder) .blocksRail {
-  overflow-y: scroll;
+  overflow-y: auto;
   overflow-x: hidden;
-  scrollbar-gutter: stable both-edges;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
   padding-bottom: 24px;
+}
+
+/* Keep the block buttons from resizing when macOS/Chromium fades the rail scrollbar in. */
+@supports (overflow-y: overlay) {
+  .pageFrame .containerFocused:has(.builder) .blocksRail {
+    overflow-y: overlay;
+    scrollbar-gutter: auto;
+  }
 }
 
 .pageFrame .containerFocused .sitesShellFocused .palette {
