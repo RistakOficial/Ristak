@@ -44,11 +44,19 @@
 }
 
 .heroTitle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
   margin: 1rem 0 0.5rem;
   font-size: 1.9rem;
   line-height: 1.15;
   font-weight: 700;
   color: var(--color-text-primary);
+}
+
+.heroLogo {
+  transform: translateY(0.05em);
 }
 
 .heroSubtitle {

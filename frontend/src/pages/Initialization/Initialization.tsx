@@ -19,6 +19,7 @@ import {
   Check
 } from 'lucide-react'
 import { Button } from '@/components/common/Button'
+import { Logo } from '@/components/common/Logo'
 import { Modal } from '@/components/common/Modal'
 import { useInitialization, type InitStepId } from '@/contexts/InitializationContext'
 import styles from './Initialization.module.css'
@@ -145,7 +146,9 @@ export const Initialization: React.FC = () => {
           <Rocket size={14} />
           Inicialización
         </span>
-        <h1 className={styles.heroTitle}>Pon en marcha tu Ristak</h1>
+        <h1 className={styles.heroTitle}>
+          Pon en marcha tu <Logo size="lg" className={styles.heroLogo} />
+        </h1>
         <p className={styles.heroSubtitle}>
           Conecta tus integraciones en orden para dejar todo listo. A medida que las completes,
           esta página se actualizará sola y desaparecerá del menú cuando termines lo esencial.
