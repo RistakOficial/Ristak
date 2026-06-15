@@ -11,7 +11,7 @@ import fetch from 'node-fetch'
 import { getHighLevelConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js'
-import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { normalizePhoneForStorage, sanitizeContactName } from '../utils/phoneUtils.js'
 
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com'
 const GHL_API_VERSION = '2021-07-28'
@@ -322,20 +322,22 @@ class GHLClient {
   }
 
   async createContact({ name, email, phone }) {
-    // Separar nombre completo en firstName y lastName
-    const nameParts = name.trim().split(' ')
+    // No mandar el teléfono como nombre a HighLevel: si el "nombre" es en
+    // realidad un teléfono (o está vacío), el contacto se crea sin nombre.
+    const safeName = sanitizeContactName(name, phone)
+    const nameParts = (safeName || '').split(/\s+/).filter(Boolean)
     const firstName = nameParts[0] || ''
     const lastName = nameParts.slice(1).join(' ') || ''
 
     const body = {
       locationId: this.locationId,
-      firstName: firstName,
-      lastName: lastName,
+      ...(firstName && { firstName }),
+      ...(lastName && { lastName }),
       email: email,
       phone: normalizePhoneForStorage(phone) || phone,
     }
 
-    logger.info(`Creando contacto: ${name}`)
+    logger.info(`Creando contacto: ${safeName || phone || email || 'sin nombre'}`)
 
     const response = await this.request('/contacts/', {
       method: 'POST',
@@ -355,9 +357,10 @@ class GHLClient {
   }
 
   async upsertContact({ name, firstName, lastName, email, phone, source }) {
-    const fullName = cleanString(name || `${firstName || ''} ${lastName || ''}`.trim())
-    let resolvedFirstName = cleanString(firstName)
-    let resolvedLastName = cleanString(lastName)
+    // Evitar guardar el teléfono como nombre del contacto en HighLevel
+    const fullName = sanitizeContactName(name || `${firstName || ''} ${lastName || ''}`.trim(), phone) || ''
+    let resolvedFirstName = sanitizeContactName(firstName, phone) || ''
+    let resolvedLastName = sanitizeContactName(lastName, phone) || ''
 
     if (!resolvedFirstName && fullName) {
       const nameParts = fullName.split(/\s+/)

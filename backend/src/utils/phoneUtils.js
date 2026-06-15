@@ -86,3 +86,40 @@ export function buildPhoneMatchCandidates(value = '') {
 
   return [...candidates]
 }
+
+/**
+ * Detecta si un texto es en realidad un número telefónico
+ * (solo dígitos y caracteres de formato: +, espacios, guiones, paréntesis, puntos).
+ */
+export function looksLikePhoneNumber(value = '') {
+  const clean = String(value || '').trim()
+  if (!clean) return false
+  if (!/^[+()\s\-.\d]+$/.test(clean)) return false
+  const digits = clean.replace(/\D/g, '')
+  return digits.length >= 7
+}
+
+/**
+ * Limpia un candidato a nombre de contacto: devuelve null si está vacío,
+ * si es un número telefónico, o si coincide con alguno de los teléfonos dados.
+ * Evita que el teléfono termine guardado como nombre del contacto.
+ */
+export function sanitizeContactName(value = '', ...phones) {
+  const clean = String(value || '').trim()
+  if (!clean) return null
+  if (looksLikePhoneNumber(clean)) return null
+  // Tampoco aceptar un email como nombre
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) return null
+
+  const nameDigits = clean.replace(/\D/g, '')
+  if (nameDigits.length >= 7) {
+    for (const phone of phones) {
+      const phoneDigits = String(phone || '').replace(/\D/g, '')
+      if (phoneDigits && (nameDigits === phoneDigits || nameDigits.endsWith(phoneDigits) || phoneDigits.endsWith(nameDigits))) {
+        return null
+      }
+    }
+  }
+
+  return clean
+}

@@ -2,14 +2,20 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
+  CheckCircle2,
   Cloud,
   ExternalLink,
   FileText,
   Hash as HashIcon,
+  History,
   KeyRound,
+  Link2,
+  MessageCircle,
   QrCode,
+  RadioTower,
   RefreshCw,
   Search,
+  Send,
   ShieldCheck,
   Star,
   Unplug,
@@ -161,8 +167,19 @@ export const WhatsAppSettings: React.FC = () => {
   // el código QR en grande dentro del mismo modal.
   const [qrModalView, setQrModalView] = useState<'consent' | 'qr'>('consent')
   const [defaultingPhoneId, setDefaultingPhoneId] = useState('')
+  const [metaConnecting, setMetaConnecting] = useState(false)
+  const [metaTesting, setMetaTesting] = useState(false)
+  const [metaSwitching, setMetaSwitching] = useState(false)
+  const [metaDisconnecting, setMetaDisconnecting] = useState(false)
+  const [metaSyncing, setMetaSyncing] = useState(false)
+  const [metaSendingTest, setMetaSendingTest] = useState(false)
+  const [metaTestPhone, setMetaTestPhone] = useState('')
+  const [metaTestText, setMetaTestText] = useState('Prueba de WhatsApp directo desde Ristak')
 
   const apiConnected = Boolean(apiStatus?.connected)
+  const metaDirect = apiStatus?.metaDirect
+  const metaConnected = Boolean(metaDirect?.connected)
+  const activeProvider = apiStatus?.activeProvider || 'ycloud'
 
   useEffect(() => {
     setActiveSection(current => current === routeSection ? current : routeSection)
@@ -241,6 +258,26 @@ export const WhatsAppSettings: React.FC = () => {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const connected = params.get('meta_connected')
+    if (!connected) return
+
+    if (connected === '1') {
+      showToast('success', 'Meta conectado', 'La conexión directa quedó guardada. Actívala cuando quieras usarla para enviar.')
+      loadApiStatus().catch(() => null)
+    } else {
+      showToast('error', 'Meta no se conectó', params.get('meta_error') || 'Revisa la configuración en el portal.')
+    }
+
+    params.delete('meta_connected')
+    params.delete('meta_error')
+    navigate({
+      pathname: location.pathname,
+      search: params.toString() ? `?${params.toString()}` : ''
+    }, { replace: true })
+  }, [location.pathname, location.search, navigate, showToast])
 
   useEffect(() => {
     let cancelled = false
@@ -411,6 +448,108 @@ export const WhatsAppSettings: React.FC = () => {
     )
   }
 
+  const connectMetaDirect = async () => {
+    if (metaConnecting) return
+    setMetaConnecting(true)
+    try {
+      const response = await whatsappApiService.getMetaConnectUrl()
+      window.location.assign(response.url)
+    } catch (error) {
+      showToast('error', 'No se pudo abrir Meta', error instanceof Error ? error.message : 'Intenta nuevamente')
+      setMetaConnecting(false)
+    }
+  }
+
+  const switchWhatsAppProvider = (provider: 'ycloud' | 'meta_direct') => {
+    const title = provider === 'meta_direct' ? 'Activar Meta directo' : 'Volver a WhatsApp API'
+    const body = provider === 'meta_direct'
+      ? 'Ristak enviará los mensajes oficiales por la conexión directa con Meta. YCloud seguirá guardado para regresar cuando lo necesites.'
+      : 'Ristak volverá a enviar por WhatsApp API. La conexión directa con Meta quedará guardada.'
+
+    showConfirm(
+      title,
+      body,
+      async () => {
+        setMetaSwitching(true)
+        try {
+          const nextStatus = await whatsappApiService.setProvider(provider)
+          setApiStatus(nextStatus)
+          showToast('success', 'Proveedor actualizado', provider === 'meta_direct' ? 'Meta directo quedó activo' : 'WhatsApp API quedó activo')
+        } catch (error) {
+          showToast('error', 'No se pudo cambiar', error instanceof Error ? error.message : 'Intenta nuevamente')
+        } finally {
+          setMetaSwitching(false)
+        }
+      },
+      provider === 'meta_direct' ? 'Activar Meta' : 'Activar WhatsApp API',
+      'Cancelar'
+    )
+  }
+
+  const testMetaConnection = async () => {
+    setMetaTesting(true)
+    try {
+      await whatsappApiService.testMetaDirect()
+      await loadApiStatus()
+      showToast('success', 'Meta responde', 'La conexión directa pudo leer el número en Meta.')
+    } catch (error) {
+      showToast('error', 'Meta no respondió', error instanceof Error ? error.message : 'Revisa token, WABA y número.')
+    } finally {
+      setMetaTesting(false)
+    }
+  }
+
+  const syncMetaHistory = async () => {
+    setMetaSyncing(true)
+    try {
+      const response = await whatsappApiService.syncMetaDirectHistory()
+      showToast(response.synced ? 'success' : 'info', 'Sincronización Meta', response.message || 'Los mensajes nuevos llegan por webhook.')
+    } catch (error) {
+      showToast('error', 'No se pudo sincronizar', error instanceof Error ? error.message : 'Intenta nuevamente')
+    } finally {
+      setMetaSyncing(false)
+    }
+  }
+
+  const sendMetaTestMessage = async () => {
+    if (!metaTestPhone.trim() || metaSendingTest) return
+    setMetaSendingTest(true)
+    try {
+      await whatsappApiService.sendMetaDirectTestMessage({
+        to: metaTestPhone.trim(),
+        text: metaTestText.trim() || undefined
+      })
+      showToast('success', 'Prueba enviada', 'Meta aceptó el mensaje de prueba.')
+    } catch (error) {
+      showToast('error', 'No se pudo enviar', error instanceof Error ? error.message : 'Revisa el número destino.')
+    } finally {
+      setMetaSendingTest(false)
+    }
+  }
+
+  const disconnectMetaDirect = () => {
+    showConfirm(
+      'Desconectar Meta directo',
+      'Se eliminará el token local de Meta directo. YCloud y los mensajes guardados se quedan intactos.',
+      async () => {
+        setMetaDisconnecting(true)
+        try {
+          const nextStatus = await whatsappApiService.disconnectMetaDirect()
+          setApiStatus(nextStatus)
+          showToast('success', 'Meta desconectado', 'La conexión directa quedó apagada.')
+        } catch (error) {
+          showToast('error', 'No se pudo desconectar', error instanceof Error ? error.message : 'Intenta nuevamente')
+        } finally {
+          setMetaDisconnecting(false)
+        }
+      },
+      'Desconectar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
+    )
+  }
+
   const connectionAlerts = useMemo(() => {
     return (apiStatus?.alerts?.items || []).filter((alert) => {
       const type = String(alert.alert_type || '').toLowerCase()
@@ -524,6 +663,140 @@ export const WhatsAppSettings: React.FC = () => {
       </ol>
     </div>
   )
+
+  const renderMetaDirectPanel = () => {
+    const isMetaActive = activeProvider === 'meta_direct'
+    const isYCloudActive = activeProvider === 'ycloud'
+    const statusText = metaConnected
+      ? isMetaActive
+        ? 'Activo para envios'
+        : 'Conectado, en espera'
+      : metaDirect?.configured
+        ? 'Requiere revision'
+        : 'Sin conectar'
+
+    return (
+      <section className={styles.metaPanel}>
+        <div className={styles.metaHeader}>
+          <div className={styles.metaTitleBlock}>
+            <div className={styles.metaIcon}>
+              <RadioTower size={19} />
+            </div>
+            <div>
+              <p className={styles.eyebrow}>Meta directo</p>
+              <h3>Conectar directamente con Meta</h3>
+              <span>Abre el portal oficial de Ristak, reutiliza la configuración de Meta que ya tengas y conecta WhatsApp sin cambiar YCloud automáticamente.</span>
+            </div>
+          </div>
+          <span className={`${styles.metaStatusBadge} ${metaConnected ? styles.metaStatusConnected : styles.metaStatusMuted}`}>
+            {metaConnected ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+            {statusText}
+          </span>
+        </div>
+
+        <div className={styles.metaSummaryGrid}>
+          <div>
+            <span>Proveedor activo</span>
+            <strong>{isMetaActive ? 'Meta directo' : isYCloudActive ? 'WhatsApp API' : activeProvider}</strong>
+          </div>
+          <div>
+            <span>WABA</span>
+            <strong>{metaDirect?.wabaId || '—'}</strong>
+          </div>
+          <div>
+            <span>Phone Number ID</span>
+            <strong>{metaDirect?.phoneNumberId || '—'}</strong>
+          </div>
+          <div>
+            <span>Webhook</span>
+            <strong>{metaDirect?.lastRelayReceivedAt ? 'Recibiendo eventos' : metaConnected ? 'Esperando eventos' : '—'}</strong>
+          </div>
+        </div>
+
+        {metaDirect?.lastError && (
+          <p className={styles.metaError}>
+            <AlertTriangle size={15} />
+            {metaDirect.lastError}
+          </p>
+        )}
+
+        <p className={styles.metaHint}>
+          El asistente abre www.ristak.com para guiarte con App Domain, OAuth, webhook y Embedded Signup. Al terminar vuelves aquí para activar Meta directo cuando estés listo.
+        </p>
+
+        <div className={styles.metaActions}>
+          <Button type="button" variant="primary" loading={metaConnecting} onClick={connectMetaDirect}>
+            <Link2 size={17} />
+            {metaConnected ? 'Revisar en portal' : 'Conectar WhatsApp con Meta'}
+          </Button>
+          <Button type="button" variant="secondary" loading={metaTesting} disabled={!metaConnected} onClick={testMetaConnection}>
+            <ShieldCheck size={17} />
+            Probar conexión
+          </Button>
+          <Button type="button" variant="secondary" loading={metaSyncing} disabled={!metaConnected} onClick={syncMetaHistory}>
+            <History size={17} />
+            Sincronizar historial
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            loading={metaSwitching}
+            disabled={!metaConnected || isMetaActive}
+            onClick={() => switchWhatsAppProvider('meta_direct')}
+          >
+            <MessageCircle size={17} />
+            Usar Meta para enviar
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            loading={metaSwitching}
+            disabled={!apiConnected || isYCloudActive}
+            onClick={() => switchWhatsAppProvider('ycloud')}
+          >
+            <Cloud size={17} />
+            Usar WhatsApp API
+          </Button>
+          <Button type="button" variant="secondary" loading={metaDisconnecting} disabled={!metaConnected} onClick={disconnectMetaDirect}>
+            <Unplug size={17} />
+            Desconectar Meta
+          </Button>
+        </div>
+
+        <div className={styles.metaTestRow}>
+          <label className={styles.fieldLabel}>
+            <span>Número de prueba</span>
+            <input
+              type="tel"
+              value={metaTestPhone}
+              onChange={(event) => setMetaTestPhone(event.target.value)}
+              placeholder="+521..."
+              disabled={!metaConnected}
+            />
+          </label>
+          <label className={styles.fieldLabel}>
+            <span>Mensaje</span>
+            <input
+              type="text"
+              value={metaTestText}
+              onChange={(event) => setMetaTestText(event.target.value)}
+              disabled={!metaConnected}
+            />
+          </label>
+          <Button
+            type="button"
+            variant="secondary"
+            loading={metaSendingTest}
+            disabled={!metaConnected || !metaTestPhone.trim()}
+            onClick={sendMetaTestMessage}
+          >
+            <Send size={17} />
+            Enviar prueba
+          </Button>
+        </div>
+      </section>
+    )
+  }
 
   const renderConnectStage = () => {
     if (apiLoading) {
@@ -909,6 +1182,8 @@ export const WhatsAppSettings: React.FC = () => {
       <div className={styles.stage}>
         {!apiConnected ? renderConnectStage() : activeSection === 'templates' ? renderTemplatesStage() : activeSection === 'alerts' ? renderAlertsStage() : renderNumbersStage()}
       </div>
+
+      {renderMetaDirectPanel()}
 
       {(() => {
         const qrModalSession = qrConsentPhone ? qrSessionsByPhoneId.get(qrConsentPhone.id) : null
