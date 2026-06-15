@@ -1447,18 +1447,17 @@
   position: relative;
   display: inline-grid;
   place-items: center;
-  width: 92px;
-  height: 92px;
+  width: 96px;
+  height: 96px;
   border-radius: 999px;
   color: #ffffff;
   background:
-    radial-gradient(circle at 35% 24%, rgba(255, 255, 255, 0.5), transparent 28%),
-    linear-gradient(145deg, #143fba 0%, #2563eb 48%, #19c37d 100%);
+    radial-gradient(125% 95% at 50% 20%, #223866 0%, #111d3d 52%, #070d20 100%);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.36),
-    0 18px 42px rgba(37, 99, 235, 0.24);
+    inset 0 0 0 1px rgba(120, 170, 255, 0.18),
+    inset 0 -10px 24px rgba(2, 6, 20, 0.5),
+    0 18px 42px rgba(8, 18, 46, 0.45);
   isolation: isolate;
-  background-size: 140% 140%;
 }
 
 .aiAgentHubRobot::before,
@@ -1471,23 +1470,20 @@
 
 .aiAgentHubRobot::before {
   inset: -8px;
-  border: 1px dashed rgba(59, 130, 246, 0.24);
+  border: 1px dashed rgba(125, 211, 252, 0.28);
 }
 
 .aiAgentHubRobot::after {
   inset: -18px;
   z-index: -1;
-  background: radial-gradient(circle, rgba(16, 185, 129, 0.18), transparent 68%);
+  background: radial-gradient(circle, rgba(56, 152, 236, 0.28), transparent 68%);
   opacity: 0.72;
 }
 
 .aiAgentHubRobot .agentRobot {
-  width: 68px;
-  height: 68px;
-}
-
-.aiAgentHubRobotOn {
-  animation: aiAgentHubRobotFloat 10.8s ease-in-out infinite, aiAgentHubRobotGradient 12.4s ease-in-out infinite;
+  width: 86px;
+  height: 86px;
+  perspective: 760px;
 }
 
 .aiAgentHubRobotOn::before {
@@ -1556,12 +1552,12 @@
 .aiAgentHubRobotOff {
   color: #6b7280;
   background:
-    radial-gradient(circle at 35% 24%, rgba(255, 255, 255, 0.38), transparent 28%),
-    linear-gradient(145deg, #d1d5db 0%, #9ca3af 58%, #6b7280 100%);
+    radial-gradient(125% 95% at 50% 20%, #2b3346 0%, #1a2030 52%, #11151f 100%);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.28),
-    0 14px 30px rgba(75, 85, 99, 0.18);
-  filter: grayscale(1);
+    inset 0 0 0 1px rgba(180, 190, 210, 0.16),
+    inset 0 -10px 24px rgba(0, 0, 0, 0.45),
+    0 14px 30px rgba(20, 25, 35, 0.4);
+  filter: grayscale(0.9) brightness(0.92);
 }
 
 .aiAgentHubCopy {
@@ -7326,15 +7322,44 @@
   opacity: 0.78;
 }
 
-/* ===== Robot mascota (SVG) ===== */
+/* ===== Robot mascota 3D premium ===== */
 .agentRobot {
   position: relative;
   z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
+  perspective: 460px;
+  perspective-origin: 50% 42%;
+}
+
+/* Sombra de piso (vende el flote) */
+.rkShadow {
+  position: absolute;
+  left: 50%;
+  bottom: 4%;
+  z-index: 0;
+  width: 50%;
+  height: 9%;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(3, 8, 24, 0.5), rgba(3, 8, 24, 0));
+  filter: blur(1.4px);
+  pointer-events: none;
+}
+
+.rkFloat,
+.rkTurn {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
 }
 
 .agentRobotSvg {
@@ -7342,48 +7367,48 @@
   width: 100%;
   height: 100%;
   overflow: visible;
+  transform-style: preserve-3d;
 }
 
-/* Brillo neón de las facciones sobre la pantalla */
-.agentRobotSvg .rkEye,
-.agentRobotSvg .rkEyesHappy path,
-.agentRobotSvg .rkMouthSmile,
-.agentRobotSvg .rkMouthTalk {
-  filter: drop-shadow(0 0 2.2px rgba(120, 222, 255, 0.85));
-}
+/* Glows */
+.agentRobotSvg .rkEyeCore { filter: drop-shadow(0 0 3px rgba(110, 228, 255, 0.95)); }
+.agentRobotSvg .rkMouth,
+.agentRobotSvg .rkMouthTalk { filter: drop-shadow(0 0 2.5px rgba(110, 228, 255, 0.9)); }
+.agentRobotSvg .rkOrb { filter: drop-shadow(0 0 3px rgba(150, 235, 255, 0.9)); }
 
-.agentRobotSvg .rkBulb {
-  filter: drop-shadow(0 0 3.2px rgba(255, 210, 61, 0.9));
-}
-
-/* Orígenes de transformación por pieza */
-.agentRobotSvg .rkHead,
-.agentRobotSvg .rkFace,
-.agentRobotSvg .rkEye,
+/* Orígenes de transformación */
 .agentRobotSvg .rkAntenna,
-.agentRobotSvg .rkBulb,
-.agentRobotSvg .rkBulbGlow,
-.agentRobotSvg .rkMouthSmile,
+.agentRobotSvg .rkOrb,
+.agentRobotSvg .rkOrbGlow,
+.agentRobotSvg .rkEye,
+.agentRobotSvg .rkFace3d,
+.agentRobotSvg .rkEyes,
+.agentRobotSvg .rkEarL,
+.agentRobotSvg .rkEarR,
+.agentRobotSvg .rkMouth,
 .agentRobotSvg .rkMouthTalk,
+.agentRobotSvg .rkCheeks,
 .agentRobotSvg .rkThink,
 .agentRobotSvg .rkThinkDot,
-.agentRobotSvg .rkCheeks {
+.agentRobotSvg .rkEyesHappy {
   transform-box: fill-box;
 }
 
-.agentRobotSvg .rkHead { transform-origin: 50% 84%; }
-.agentRobotSvg .rkFace { transform-origin: 50% 50%; }
-.agentRobotSvg .rkEye { transform-origin: 50% 50%; }
 .agentRobotSvg .rkAntenna { transform-origin: 50% 100%; }
-.agentRobotSvg .rkBulb,
-.agentRobotSvg .rkBulbGlow { transform-origin: 50% 50%; }
-.agentRobotSvg .rkMouthSmile,
+.agentRobotSvg .rkOrb,
+.agentRobotSvg .rkOrbGlow { transform-origin: 50% 50%; }
+.agentRobotSvg .rkEye { transform-origin: 50% 50%; }
+.agentRobotSvg .rkFace3d { transform-origin: 50% 50%; }
+.agentRobotSvg .rkEyes { transform-origin: 50% 50%; }
+.agentRobotSvg .rkEarL { transform-origin: 100% 50%; }
+.agentRobotSvg .rkEarR { transform-origin: 0% 50%; }
+.agentRobotSvg .rkMouth,
 .agentRobotSvg .rkMouthTalk { transform-origin: 50% 50%; }
+.agentRobotSvg .rkCheeks { transform-origin: 50% 50%; }
 .agentRobotSvg .rkThink { transform-origin: 0% 100%; }
 .agentRobotSvg .rkThinkDot { transform-origin: 50% 50%; }
-.agentRobotSvg .rkCheeks { transform-origin: 50% 50%; }
 
-/* Capas de expresión ocultas por defecto (cara neutra y feliz) */
+/* Capas de expresión ocultas por defecto */
 .agentRobotSvg .rkEyesHappy,
 .agentRobotSvg .rkMouthTalk,
 .agentRobotSvg .rkThink,
@@ -7391,61 +7416,27 @@
   opacity: 0;
 }
 
-/* ===== Animaciones (sólo cuando el agente está activo) ===== */
-.agentRobotSvg[data-active="true"] .rkHead {
-  animation: rkHeadTilt 12s ease-in-out infinite;
-}
+/* ===== Movimiento (sólo cuando el agente está activo) ===== */
+.agentRobot[data-active="true"] .rkFloat { animation: rkFloat 3.4s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.agentRobot[data-active="true"] .rkTurn { animation: rkTurn 8s ease-in-out infinite; }
+.agentRobot[data-active="true"] .rkShadow { animation: rkShadow 3.4s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
 
-.agentRobotSvg[data-active="true"] .rkFace {
-  animation: rkLook 12s ease-in-out infinite;
-}
-
-.agentRobotSvg[data-active="true"] .rkEyes {
-  animation: rkEyesShow 12s ease-in-out infinite;
-}
-
-.agentRobotSvg[data-active="true"] .rkEye {
-  animation: rkBlink 4.6s ease-in-out infinite;
-}
-
-.agentRobotSvg[data-active="true"] .rkEyesHappy {
-  animation: rkEyesHappyShow 12s ease-in-out infinite;
-}
-
-.agentRobotSvg[data-active="true"] .rkMouthSmile {
-  animation: rkMouthSmileShow 12s ease-in-out infinite, rkMouthGrin 12s ease-in-out infinite;
-}
-
-.agentRobotSvg[data-active="true"] .rkMouthTalk {
-  animation: rkMouthTalkShow 12s ease-in-out infinite, rkMouthFlutter 0.42s ease-in-out infinite;
-}
-
-.agentRobotSvg[data-active="true"] .rkCheeks {
-  animation: rkCheeksGlow 12s ease-in-out infinite;
-}
-
-.agentRobotSvg[data-active="true"] .rkThink {
-  animation: rkThinkShow 12s ease-in-out infinite;
-}
-
-.agentRobotSvg[data-active="true"] .rkThinkDot {
-  animation: rkThinkPop 12s ease-in-out infinite;
-}
-
+.agentRobotSvg[data-active="true"] .rkFace3d { animation: rkFaceParallax 8s ease-in-out infinite; }
+.agentRobotSvg[data-active="true"] .rkEyes { animation: rkEyesParallax 8s ease-in-out infinite, rkEyesShow 12s ease-in-out infinite; }
+.agentRobotSvg[data-active="true"] .rkEarL { animation: rkEarL 8s ease-in-out infinite; }
+.agentRobotSvg[data-active="true"] .rkEarR { animation: rkEarR 8s ease-in-out infinite; }
+.agentRobotSvg[data-active="true"] .rkEye { animation: rkBlink 4.8s ease-in-out infinite; }
+.agentRobotSvg[data-active="true"] .rkEyesHappy { animation: rkEyesHappyShow 12s ease-in-out infinite; }
+.agentRobotSvg[data-active="true"] .rkMouth { animation: rkMouthShow 12s ease-in-out infinite, rkMouthGrin 12s ease-in-out infinite; }
+.agentRobotSvg[data-active="true"] .rkMouthTalk { animation: rkMouthTalkShow 12s ease-in-out infinite, rkMouthFlutter 0.4s ease-in-out infinite; }
+.agentRobotSvg[data-active="true"] .rkCheeks { animation: rkCheeks 12s ease-in-out infinite; }
+.agentRobotSvg[data-active="true"] .rkThink { animation: rkThinkShow 12s ease-in-out infinite; }
+.agentRobotSvg[data-active="true"] .rkThinkDot { animation: rkThinkPop 12s ease-in-out infinite; }
 .agentRobotSvg[data-active="true"] .rkThinkDot:nth-child(2) { animation-delay: 0.16s; }
 .agentRobotSvg[data-active="true"] .rkThinkDot:nth-child(3) { animation-delay: 0.32s; }
-
-.agentRobotSvg[data-active="true"] .rkAntenna {
-  animation: rkAntenna 3.8s ease-in-out infinite;
-}
-
-.agentRobotSvg[data-active="true"] .rkBulb {
-  animation: rkBulbPulse 2.4s ease-in-out infinite;
-}
-
-.agentRobotSvg[data-active="true"] .rkBulbGlow {
-  animation: rkGlowPulse 2.4s ease-in-out infinite;
-}
+.agentRobotSvg[data-active="true"] .rkAntenna { animation: rkAntenna 3.4s ease-in-out infinite; }
+.agentRobotSvg[data-active="true"] .rkOrb { animation: rkOrb 2.2s ease-in-out infinite; }
+.agentRobotSvg[data-active="true"] .rkOrbGlow { animation: rkOrbGlow 2.2s ease-in-out infinite; }
 
 .agentBotOrbit {
   position: absolute;
@@ -7593,28 +7584,63 @@
   74% { opacity: 0.65; transform: rotate(72deg) translateX(10px) scale(0.72); }
 }
 
-/* Inclinación de cabeza: mira, piensa y asiente al hablar */
-@keyframes rkHeadTilt {
-  0%, 10%, 100% { transform: rotate(0deg) translateY(0); }
-  19% { transform: rotate(-4deg) translateY(0.3px); }
-  34% { transform: rotate(3.4deg) translateY(0); }
-  46% { transform: rotate(0deg) translateY(0); }
-  54%, 62% { transform: rotate(-3.2deg) translateY(-0.8px); }
-  72% { transform: rotate(1.6deg) translateY(0.5px); }
-  80% { transform: rotate(-1.6deg) translateY(0.5px); }
-  90% { transform: rotate(0deg) translateY(0); }
+/* Flote con peso (squash & stretch) */
+@keyframes rkFloat {
+  0%, 100% { transform: translateY(3%) scaleY(0.985) scaleX(1.01); }
+  50% { transform: translateY(-5%) scaleY(1.015) scaleX(0.992); }
 }
 
-/* Mirada del rostro: escanea a los lados y mira arriba al pensar */
-@keyframes rkLook {
-  0%, 12%, 100% { transform: translate(0, 0); }
-  18%, 26% { transform: translate(-3px, 0); }
-  34%, 42% { transform: translate(3px, 0); }
-  52%, 62% { transform: translate(2px, -2.6px); }
-  70%, 86% { transform: translate(0, 0); }
+/* Sombra de piso sincronizada con el flote */
+@keyframes rkShadow {
+  0%, 100% { transform: translateX(-50%) scale(1.05); opacity: 0.55; }
+  50% { transform: translateX(-50%) scale(0.8); opacity: 0.32; }
 }
 
-/* Capa de ojos normales: visible salvo en fase feliz */
+/* Giro 3D del personaje */
+@keyframes rkTurn {
+  0%, 100% { transform: rotateY(-13deg) rotateX(5deg) rotateZ(-1.5deg); }
+  28% { transform: rotateY(11deg) rotateX(3deg) rotateZ(1.2deg); }
+  52% { transform: rotateY(14deg) rotateX(-2deg) rotateZ(1.6deg); }
+  76% { transform: rotateY(-6deg) rotateX(4deg) rotateZ(-0.8deg); }
+}
+
+/* Parallax de la cara y de los ojos durante el giro */
+@keyframes rkFaceParallax {
+  0%, 100% { transform: translateX(3px); }
+  28% { transform: translateX(-2.6px); }
+  52% { transform: translateX(-3.4px); }
+  76% { transform: translateX(1.4px); }
+}
+
+@keyframes rkEyesParallax {
+  0%, 100% { transform: translateX(4.5px); }
+  28% { transform: translateX(-4px); }
+  52% { transform: translateX(-5px); }
+  76% { transform: translateX(2px); }
+}
+
+/* Orejas que crecen/encogen con el giro (profundidad) */
+@keyframes rkEarL {
+  0%, 100% { transform: scaleX(1.12); opacity: 1; }
+  28% { transform: scaleX(0.7); opacity: 0.78; }
+  52% { transform: scaleX(0.6); opacity: 0.72; }
+  76% { transform: scaleX(1); opacity: 0.95; }
+}
+
+@keyframes rkEarR {
+  0%, 100% { transform: scaleX(0.7); opacity: 0.78; }
+  28% { transform: scaleX(1.1); opacity: 1; }
+  52% { transform: scaleX(1.16); opacity: 1; }
+  76% { transform: scaleX(0.92); opacity: 0.95; }
+}
+
+/* Parpadeo */
+@keyframes rkBlink {
+  0%, 42%, 46%, 90%, 94%, 100% { transform: scaleY(1); }
+  44%, 92% { transform: scaleY(0.08); }
+}
+
+/* Ojos normales visibles salvo en fase feliz */
 @keyframes rkEyesShow {
   0%, 22%, 47%, 100% { opacity: 1; }
   26%, 43% { opacity: 0; }
@@ -7626,23 +7652,16 @@
   27%, 42% { opacity: 1; }
 }
 
-/* Parpadeo */
-@keyframes rkBlink {
-  0%, 90%, 100% { transform: scaleY(1); }
-  94% { transform: scaleY(0.08); }
-  98% { transform: scaleY(1); }
-}
-
 /* Sonrisa visible salvo cuando habla */
-@keyframes rkMouthSmileShow {
+@keyframes rkMouthShow {
   0%, 60%, 88%, 100% { opacity: 1; }
   64%, 84% { opacity: 0; }
 }
 
 /* Sonrisota en fase feliz */
 @keyframes rkMouthGrin {
-  0%, 22%, 47%, 100% { transform: scale(1) translateY(0); }
-  28%, 42% { transform: scale(1.22) translateY(1px); }
+  0%, 22%, 47%, 100% { transform: scale(1); }
+  28%, 42% { transform: scale(1.18) translateY(1px); }
 }
 
 /* Boca abierta visible sólo al hablar */
@@ -7653,20 +7672,20 @@
 
 /* Aleteo rápido de la boca al hablar */
 @keyframes rkMouthFlutter {
-  0%, 100% { transform: scaleY(0.42); }
+  0%, 100% { transform: scaleY(0.4); }
   50% { transform: scaleY(1); }
 }
 
 /* Rubor en cachetes: feliz y hablando */
-@keyframes rkCheeksGlow {
+@keyframes rkCheeks {
   0%, 20%, 100% { opacity: 0; }
-  28%, 42% { opacity: 0.92; }
+  28%, 42% { opacity: 0.9; }
   47% { opacity: 0; }
   72%, 84% { opacity: 0.5; }
   90% { opacity: 0; }
 }
 
-/* Globitos de pensamiento aparecen al pensar */
+/* Globitos de pensamiento */
 @keyframes rkThinkShow {
   0%, 47%, 65%, 100% { opacity: 0; }
   52%, 61% { opacity: 1; }
@@ -7677,41 +7696,21 @@
   53%, 60% { transform: scale(1); }
 }
 
-/* Antena que se balancea */
+/* Antena que se balancea (follow-through) */
 @keyframes rkAntenna {
-  0%, 100% { transform: rotate(0deg); }
-  30% { transform: rotate(-8deg); }
-  65% { transform: rotate(7deg); }
+  0%, 100% { transform: rotate(-5deg); }
+  50% { transform: rotate(6deg); }
 }
 
-/* Foco que late */
-@keyframes rkBulbPulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.14); opacity: 0.88; }
+/* Orbe de energía que late */
+@keyframes rkOrb {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.14); }
 }
 
-@keyframes rkGlowPulse {
-  0%, 100% { transform: scale(1); opacity: 0.28; }
-  50% { transform: scale(1.4); opacity: 0.5; }
-}
-
-@keyframes aiAgentHubRobotFloat {
-  0%, 100% { transform: translateY(0) scale(1) rotate(0deg); }
-  8% { transform: translateY(-1px) scale(1.01) rotate(-0.6deg); }
-  17% { transform: translateY(0.5px) scale(0.998) rotate(0.4deg); }
-  29% { transform: translateY(-4px) scale(1.024) rotate(0deg); }
-  43% { transform: translateY(-1px) scale(1.008) rotate(0.7deg); }
-  57% { transform: translateY(-3px) scale(1.018) rotate(-0.4deg); }
-  71% { transform: translateY(0.6px) scale(0.997) rotate(0deg); }
-  84% { transform: translateY(-2px) scale(1.012) rotate(0.5deg); }
-  93% { transform: translateY(0) scale(1.002) rotate(0deg); }
-}
-
-@keyframes aiAgentHubRobotGradient {
-  0%, 100% { background-position: 0% 45%; filter: saturate(1); }
-  32% { background-position: 72% 30%; filter: saturate(1.18); }
-  58% { background-position: 100% 66%; filter: saturate(1.08); }
-  82% { background-position: 34% 82%; filter: saturate(1.22); }
+@keyframes rkOrbGlow {
+  0%, 100% { transform: scale(1); opacity: 0.35; }
+  50% { transform: scale(1.45); opacity: 0.6; }
 }
 
 @keyframes aiAgentHubOrbit {
@@ -7804,7 +7803,7 @@
   .agentBotButtonActive,
   .agentBotButtonActive::before,
   .agentBotButtonActive::after,
-  .agentRobotSvg [class],
+  .agentRobot [class],
   .aiAgentHubRobotOn,
   .aiAgentHubRobotOn::before,
   .aiAgentHubRobotOn::after,

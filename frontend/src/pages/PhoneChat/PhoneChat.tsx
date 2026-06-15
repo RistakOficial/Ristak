@@ -11912,82 +11912,150 @@ export const PhoneChat: React.FC = () => {
           <span className={styles.agentBotSparkle} aria-hidden="true" />
         </>
       )}
-      <span className={styles.agentRobot} aria-hidden="true">
-        <svg
-          className={styles.agentRobotSvg}
-          data-active={active ? 'true' : 'false'}
-          viewBox="0 0 120 120"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <defs>
-            <linearGradient id="rkBotPlate" x1="60" y1="26" x2="60" y2="96" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stopColor="#fdfeff" />
-              <stop offset="1" stopColor="#d7e7ff" />
-            </linearGradient>
-            <linearGradient id="rkBotScreen" x1="60" y1="40" x2="60" y2="84" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stopColor="#163b8f" />
-              <stop offset="1" stopColor="#091d52" />
-            </linearGradient>
-            <radialGradient id="rkBotBulb" cx="0.5" cy="0.38" r="0.62">
-              <stop offset="0" stopColor="#fff7cf" />
-              <stop offset="0.5" stopColor="#ffd23d" />
-              <stop offset="1" stopColor="#f59e0b" />
-            </radialGradient>
-          </defs>
+      <span className={styles.agentRobot} data-active={active ? 'true' : 'false'} aria-hidden="true">
+        <span className={styles.rkShadow} />
+        <span className={styles.rkFloat}>
+          <span className={styles.rkTurn}>
+            <svg
+              className={styles.agentRobotSvg}
+              data-active={active ? 'true' : 'false'}
+              viewBox="0 0 200 200"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <defs>
+                <linearGradient id="rkbBody" x1="100" y1="44" x2="100" y2="158" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stopColor="#ffffff" />
+                  <stop offset="0.34" stopColor="#eef4fb" />
+                  <stop offset="0.72" stopColor="#c9d6e9" />
+                  <stop offset="1" stopColor="#9eb0cb" />
+                </linearGradient>
+                <radialGradient id="rkbBodyHi" cx="0.38" cy="0.26" r="0.5">
+                  <stop offset="0" stopColor="#ffffff" stopOpacity="0.95" />
+                  <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
+                </radialGradient>
+                <radialGradient id="rkbBodyAo" cx="0.5" cy="0.96" r="0.62">
+                  <stop offset="0" stopColor="#5d6f8f" stopOpacity="0.55" />
+                  <stop offset="1" stopColor="#5d6f8f" stopOpacity="0" />
+                </radialGradient>
+                <linearGradient id="rkbRim" x1="60" y1="60" x2="150" y2="156" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stopColor="#7fe9ff" stopOpacity="0" />
+                  <stop offset="0.6" stopColor="#7fe9ff" stopOpacity="0" />
+                  <stop offset="1" stopColor="#9bf0ff" stopOpacity="0.9" />
+                </linearGradient>
+                <radialGradient id="rkbVisor" cx="0.5" cy="0.42" r="0.7">
+                  <stop offset="0" stopColor="#1d3f86" />
+                  <stop offset="0.55" stopColor="#0e224f" />
+                  <stop offset="1" stopColor="#050d24" />
+                </radialGradient>
+                <linearGradient id="rkbVisorTop" x1="100" y1="66" x2="100" y2="96" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stopColor="#000000" stopOpacity="0.45" />
+                  <stop offset="1" stopColor="#000000" stopOpacity="0" />
+                </linearGradient>
+                <radialGradient id="rkbEye" cx="0.4" cy="0.34" r="0.75">
+                  <stop offset="0" stopColor="#ffffff" />
+                  <stop offset="0.34" stopColor="#bdf3ff" />
+                  <stop offset="0.7" stopColor="#46c9f5" />
+                  <stop offset="1" stopColor="#1187cf" />
+                </radialGradient>
+                <radialGradient id="rkbEyeGlow" cx="0.5" cy="0.5" r="0.5">
+                  <stop offset="0" stopColor="#76e6ff" stopOpacity="0.8" />
+                  <stop offset="1" stopColor="#76e6ff" stopOpacity="0" />
+                </radialGradient>
+                <linearGradient id="rkbEar" x1="0" y1="86" x2="0" y2="126" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stopColor="#f4f8fd" />
+                  <stop offset="1" stopColor="#aebdd4" />
+                </linearGradient>
+                <radialGradient id="rkbOrb" cx="0.4" cy="0.32" r="0.75">
+                  <stop offset="0" stopColor="#ffffff" />
+                  <stop offset="0.4" stopColor="#bff3ff" />
+                  <stop offset="1" stopColor="#37b6ec" />
+                </radialGradient>
+                <linearGradient id="rkbRod" x1="100" y1="36" x2="100" y2="56" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stopColor="#dfe8f4" />
+                  <stop offset="1" stopColor="#9fb0c8" />
+                </linearGradient>
+              </defs>
 
-          {/* Globitos de pensamiento */}
-          <g className={styles.rkThink}>
-            <circle className={styles.rkThinkDot} cx="90" cy="36" r="2.6" fill="#bcd2ff" />
-            <circle className={styles.rkThinkDot} cx="98" cy="27" r="3.4" fill="#cfe0ff" />
-            <circle className={styles.rkThinkDot} cx="105" cy="16" r="4.4" fill="#e6f0ff" />
-          </g>
-
-          {/* Antena con foco */}
-          <g className={styles.rkAntenna}>
-            <rect x="56.5" y="14" width="7" height="18" rx="3.5" fill="#cfe0ff" />
-            <circle className={styles.rkBulbGlow} cx="60" cy="11" r="9" fill="#ffd23d" opacity="0.35" />
-            <circle className={styles.rkBulb} cx="60" cy="11" r="6" fill="url(#rkBotBulb)" />
-          </g>
-
-          {/* Cabeza */}
-          <g className={styles.rkHead}>
-            {/* Orejas / laterales */}
-            <rect x="15" y="54" width="10" height="20" rx="5" fill="#b7d0ff" />
-            <rect x="95" y="54" width="10" height="20" rx="5" fill="#b7d0ff" />
-
-            {/* Placa de la cara */}
-            <rect x="26" y="28" width="68" height="64" rx="24" fill="url(#rkBotPlate)" stroke="#ffffff" strokeWidth="2.6" />
-
-            {/* Cachetes */}
-            <g className={styles.rkCheeks}>
-              <ellipse cx="37" cy="73" rx="5.4" ry="3.8" fill="#ff9bb6" />
-              <ellipse cx="83" cy="73" rx="5.4" ry="3.8" fill="#ff9bb6" />
-            </g>
-
-            {/* Pantalla */}
-            <rect x="35" y="41" width="50" height="40" rx="16" fill="url(#rkBotScreen)" />
-            <rect x="39" y="45" width="42" height="12" rx="6" fill="#ffffff" opacity="0.07" />
-
-            {/* Rostro: ojos + boca (se mueve para mirar) */}
-            <g className={styles.rkFace}>
-              {/* Ojos normales */}
-              <g className={styles.rkEyes}>
-                <rect className={styles.rkEye} x="47.5" y="54" width="9" height="14" rx="4.5" fill="#9becff" />
-                <rect className={styles.rkEye} x="63.5" y="54" width="9" height="14" rx="4.5" fill="#9becff" />
+              {/* Globitos de pensamiento */}
+              <g className={styles.rkThink}>
+                <circle className={styles.rkThinkDot} cx="150" cy="58" r="4" fill="#bcecff" />
+                <circle className={styles.rkThinkDot} cx="162" cy="44" r="5.4" fill="#d6f4ff" />
+                <circle className={styles.rkThinkDot} cx="171" cy="28" r="7" fill="#ecfbff" />
               </g>
-              {/* Ojos felices (arcos) */}
-              <g className={styles.rkEyesHappy}>
-                <path d="M47 64 Q52 56.5 57 64" stroke="#9becff" strokeWidth="3.4" strokeLinecap="round" />
-                <path d="M63 64 Q68 56.5 73 64" stroke="#9becff" strokeWidth="3.4" strokeLinecap="round" />
+
+              {/* Antena con orbe de energía */}
+              <g className={styles.rkAntenna}>
+                <rect x="96" y="34" width="8" height="22" rx="4" fill="url(#rkbRod)" />
+                <circle className={styles.rkOrbGlow} cx="100" cy="30" r="14" fill="#9bedff" opacity="0.4" />
+                <circle className={styles.rkOrb} cx="100" cy="30" r="8.5" fill="url(#rkbOrb)" />
+                <circle cx="97.5" cy="27.5" r="2.4" fill="#ffffff" opacity="0.9" />
               </g>
-              {/* Sonrisa */}
-              <path className={styles.rkMouthSmile} d="M50 72 Q60 80.5 70 72" stroke="#9becff" strokeWidth="3.4" strokeLinecap="round" />
-              {/* Boca hablando */}
-              <ellipse className={styles.rkMouthTalk} cx="60" cy="73.5" rx="5.6" ry="5" fill="#9becff" />
-            </g>
-          </g>
-        </svg>
+
+              {/* Orejas / pods laterales */}
+              <g className={styles.rkEarL}>
+                <rect x="26" y="88" width="22" height="40" rx="11" fill="url(#rkbEar)" />
+                <circle cx="37" cy="108" r="6.6" fill="#0e224f" />
+                <circle cx="37" cy="108" r="3.4" fill="#65d9ff" />
+                <circle cx="35.4" cy="106.2" r="1.4" fill="#eafcff" />
+              </g>
+              <g className={styles.rkEarR}>
+                <rect x="152" y="88" width="22" height="40" rx="11" fill="url(#rkbEar)" />
+                <circle cx="163" cy="108" r="6.6" fill="#0e224f" />
+                <circle cx="163" cy="108" r="3.4" fill="#65d9ff" />
+                <circle cx="161.4" cy="106.2" r="1.4" fill="#eafcff" />
+              </g>
+
+              {/* Cabeza con sombreado volumétrico */}
+              <g className={styles.rkHead}>
+                <rect x="42" y="46" width="116" height="110" rx="42" fill="url(#rkbBody)" />
+                <rect x="42" y="46" width="116" height="110" rx="42" fill="url(#rkbBodyAo)" />
+                <rect x="42" y="46" width="116" height="110" rx="42" fill="url(#rkbBodyHi)" />
+                <rect x="43.2" y="47.2" width="113.6" height="107.6" rx="40.8" fill="none" stroke="url(#rkbRim)" strokeWidth="2.6" />
+                <ellipse cx="74" cy="70" rx="15" ry="9" fill="#ffffff" opacity="0.75" transform="rotate(-28 74 70)" />
+
+                {/* Visor de vidrio */}
+                <rect x="58" y="64" width="84" height="74" rx="30" fill="url(#rkbVisor)" />
+                <rect x="58" y="64" width="84" height="74" rx="30" fill="url(#rkbVisorTop)" />
+                <rect x="59.4" y="65.4" width="81.2" height="71.2" rx="28.6" fill="none" stroke="#9fd9ff" strokeOpacity="0.18" strokeWidth="1.6" />
+                <path d="M66 84 L96 70 L106 70 L70 88 Z" fill="#ffffff" opacity="0.1" />
+                <path d="M66 95 L86 85 L92 85 L70 98 Z" fill="#ffffff" opacity="0.06" />
+
+                {/* Cachetes */}
+                <g className={styles.rkCheeks}>
+                  <ellipse cx="68" cy="118" rx="8" ry="5" fill="#ff8fb0" opacity="0.9" />
+                  <ellipse cx="132" cy="118" rx="8" ry="5" fill="#ff8fb0" opacity="0.9" />
+                </g>
+
+                {/* Rostro con parallax 3D */}
+                <g className={styles.rkFace3d}>
+                  <g className={styles.rkEyes}>
+                    <g>
+                      <circle cx="82" cy="100" r="14" fill="url(#rkbEyeGlow)" />
+                      <g className={styles.rkEye}>
+                        <circle className={styles.rkEyeCore} cx="82" cy="100" r="10" fill="url(#rkbEye)" />
+                        <ellipse cx="78.5" cy="96" rx="3.4" ry="2.4" fill="#ffffff" opacity="0.95" />
+                      </g>
+                    </g>
+                    <g>
+                      <circle cx="118" cy="100" r="14" fill="url(#rkbEyeGlow)" />
+                      <g className={styles.rkEye}>
+                        <circle className={styles.rkEyeCore} cx="118" cy="100" r="10" fill="url(#rkbEye)" />
+                        <ellipse cx="114.5" cy="96" rx="3.4" ry="2.4" fill="#ffffff" opacity="0.95" />
+                      </g>
+                    </g>
+                  </g>
+                  <g className={styles.rkEyesHappy}>
+                    <path d="M72 104 Q82 92 92 104" stroke="#bdf3ff" strokeWidth="5" strokeLinecap="round" />
+                    <path d="M108 104 Q118 92 128 104" stroke="#bdf3ff" strokeWidth="5" strokeLinecap="round" />
+                  </g>
+                  <path className={styles.rkMouth} d="M84 122 Q100 134 116 122" stroke="#7fe9ff" strokeWidth="5" strokeLinecap="round" />
+                  <rect className={styles.rkMouthTalk} x="92" y="120" width="16" height="11" rx="5.5" fill="#7fe9ff" />
+                </g>
+              </g>
+            </svg>
+          </span>
+        </span>
       </span>
     </>
   )
