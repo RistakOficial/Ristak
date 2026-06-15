@@ -61,6 +61,12 @@ function serializeAuthUser(user) {
   }
 }
 
+function cleanLoginIdentifier(value) {
+  return String(value || '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+}
+
 function getHeaderHostname(value = '') {
   const rawValue = String(value || '').trim()
   if (!rawValue) return ''
@@ -108,24 +114,25 @@ function isLocalDevAuthRequest(req) {
 export async function login(req, res) {
   try {
     const { username, password } = req.body
+    const loginIdentifier = cleanLoginIdentifier(username)
 
-    if (!username || !password) {
+    if (!loginIdentifier || !password) {
       return res.status(400).json({
         success: false,
         message: 'Usuario y contraseña son requeridos'
       })
     }
 
-    const normalizedLoginPhone = normalizePhoneForStorage(username)
+    const normalizedLoginPhone = normalizePhoneForStorage(loginIdentifier)
 
     // Buscar usuario por username, email o teléfono.
     const user = await db.get(
-      'SELECT * FROM users WHERE username = ? OR email = ? OR phone = ?',
-      [username, username, normalizedLoginPhone]
+      'SELECT * FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?) OR phone = ?',
+      [loginIdentifier, loginIdentifier, normalizedLoginPhone]
     )
 
     if (!user) {
-      logger.warn(`⚠️  Intento de login fallido: usuario "${username}" no encontrado`)
+      logger.warn(`⚠️  Intento de login fallido: usuario "${loginIdentifier}" no encontrado`)
       return res.status(401).json({
         success: false,
         message: 'Usuario o contraseña incorrectos'
@@ -134,7 +141,7 @@ export async function login(req, res) {
 
     // Verificar que el usuario esté activo
     if (!user.is_active) {
-      logger.warn(`⚠️  Intento de login de usuario inactivo: ${username}`)
+      logger.warn(`⚠️  Intento de login de usuario inactivo: ${loginIdentifier}`)
       return res.status(401).json({
         success: false,
         message: 'Usuario inactivo. Contacta al administrador'
@@ -156,12 +163,12 @@ export async function login(req, res) {
           [sync.password_hash, user.id]
         )
         isValidPassword = true
-        logger.info(`🔄 Contraseña del dueño sincronizada desde el portal central para "${username}"`)
+        logger.info(`🔄 Contraseña del dueño sincronizada desde el portal central para "${loginIdentifier}"`)
       }
     }
 
     if (!isValidPassword) {
-      logger.warn(`⚠️  Intento de login fallido: contraseña incorrecta para usuario "${username}"`)
+      logger.warn(`⚠️  Intento de login fallido: contraseña incorrecta para usuario "${loginIdentifier}"`)
       return res.status(401).json({
         success: false,
         message: 'Usuario o contraseña incorrectos'
@@ -174,7 +181,7 @@ export async function login(req, res) {
       const license = await verifyLicenseWithServer(user.email || user.username)
 
       if (!license.allowed) {
-        logger.warn(`⚠️  Login bloqueado por licencia (${license.reason}) para "${username}"`)
+        logger.warn(`⚠️  Login bloqueado por licencia (${license.reason}) para "${loginIdentifier}"`)
         return res.status(403).json({
           success: false,
           code: 'license_blocked',
@@ -198,7 +205,7 @@ export async function login(req, res) {
       role: user.role
     })
 
-    logger.success(`✅ Login exitoso: ${username}`)
+    logger.success(`✅ Login exitoso: ${loginIdentifier}`)
 
     const [apiTokenMetadata, appId] = await Promise.all([
       getApiTokenMetadataForUser(user.id),

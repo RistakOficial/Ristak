@@ -12,6 +12,10 @@ type LoginLocationState = {
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 
+function cleanLoginIdentifier(value: string) {
+  return value.replace(/[\u200B-\u200D\uFEFF]/g, '').trim()
+}
+
 const LoginBrandLogo: React.FC<{ isPhoneLogin: boolean }> = ({ isPhoneLogin }) => (
   <Logo
     size="2xl"
@@ -73,7 +77,9 @@ export const Login: React.FC = () => {
     e.preventDefault()
     setError('')
 
-    if (!username || !password) {
+    const loginIdentifier = cleanLoginIdentifier(username)
+
+    if (!loginIdentifier || !password) {
       setError('Por favor ingresa usuario y contraseña')
       return
     }
@@ -81,7 +87,7 @@ export const Login: React.FC = () => {
     setIsLoading(true)
 
     try {
-      await login(username, password)
+      await login(loginIdentifier, password)
       navigate(redirectPath, { replace: true })
     } catch (err: any) {
       if (err.code === 'license_blocked') {
@@ -159,6 +165,7 @@ export const Login: React.FC = () => {
             </label>
             <input
               id="username"
+              name="username"
               data-ristak-unstyled
               type="text"
               value={username}
@@ -166,6 +173,11 @@ export const Login: React.FC = () => {
               className={styles.input}
               placeholder="tu@correo.com"
               autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              inputMode="email"
+              enterKeyHint="next"
+              spellCheck={false}
               disabled={isLoading || googleLoading}
             />
           </div>
@@ -176,6 +188,7 @@ export const Login: React.FC = () => {
             </label>
             <input
               id="password"
+              name="password"
               data-ristak-unstyled
               type="password"
               value={password}
@@ -183,6 +196,10 @@ export const Login: React.FC = () => {
               className={styles.input}
               placeholder="********"
               autoComplete="current-password"
+              autoCapitalize="none"
+              autoCorrect="off"
+              enterKeyHint="go"
+              spellCheck={false}
               disabled={isLoading || googleLoading}
             />
           </div>
