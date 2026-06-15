@@ -130,7 +130,9 @@ export function hasPath(edges: AutomationEdge[], from: string, to: string): bool
 }
 
 const SENT_MESSAGE_CHANNELS: Record<string, 'whatsapp' | 'messenger' | 'instagram'> = {
-  'channel-whatsapp': 'whatsapp'
+  'channel-whatsapp': 'whatsapp',
+  'channel-messenger': 'messenger',
+  'channel-instagram': 'instagram'
 }
 
 const CHANNEL_LABELS: Record<string, string> = {
