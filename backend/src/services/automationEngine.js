@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import { DateTime } from 'luxon'
+import fetch from 'node-fetch'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
@@ -28,6 +29,7 @@ const SCHEDULE_TRIGGER_WINDOW_MINUTES = 2
 const WAIT_KIND_REPLY = 'reply'
 const WAIT_KIND_TRIGGER_LINK_CLICK = 'trigger-link-click'
 const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+const CONDITION_VARIABLE_FIELD_PREFIX = 'var:'
 
 function makeId(prefix) {
   return `${prefix}_${crypto.randomUUID()}`
@@ -67,6 +69,15 @@ function normalizeText(value) {
 
 function boolText(value) {
   return value ? 'true' : 'false'
+}
+
+function isConditionVariableField(field) {
+  return str(field).startsWith(CONDITION_VARIABLE_FIELD_PREFIX)
+}
+
+function conditionVariableTokenFromField(field) {
+  const value = str(field)
+  return isConditionVariableField(value) ? value.slice(CONDITION_VARIABLE_FIELD_PREFIX.length) : value
 }
 
 function isPlainObject(value) {
@@ -234,6 +245,18 @@ function paymentDataFromContext(ctx = {}) {
   }
 }
 
+function replyDataFromContext(ctx = {}) {
+  return {
+    cuerpo: ctx.messageText || ctx.body || ctx.text || '',
+    numero_contacto: ctx.contact?.phone || ctx.phone || ctx.from || '',
+    nombre_contacto: ctx.contact?.fullName || ctx.contact?.firstName || ctx.name || '',
+    fecha_mensaje: ctx.messageAt || ctx.receivedAt || ctx.timestamp || ctx.createdAt || '',
+    id_mensaje: ctx.messageId || ctx.message_id || ctx.id || '',
+    canal: ctx.channel || '',
+    archivo_adjunto: ctx.attachment || ctx.media || null
+  }
+}
+
 function formDisqualifiedFromContext(ctx = {}) {
   const explicit = ctx.formDisqualified ?? ctx.form_disqualified ?? ctx.disqualified ?? ctx.importedDisqualified ?? ctx.imported_disqualified
   if (typeof explicit === 'boolean') return explicit
@@ -264,6 +287,19 @@ function formDataFromContext(ctx = {}) {
     descalificado: formDisqualifiedFromContext(ctx),
     id_envio: ctx.submissionId || ctx.submission_id || '',
     fecha_de_envio: ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || ''
+  }
+}
+
+function appointmentDataFromContext(ctx = {}) {
+  return {
+    id_cita: ctx.appointmentId || ctx.appointment_id || ctx.eventId || ctx.event_id || ctx.id || '',
+    nombre_contacto: ctx.contact?.fullName || ctx.contactName || '',
+    fecha: ctx.appointmentDate || ctx.date || ctx.startDate || ctx.start_at || ctx.startAt || '',
+    hora: ctx.appointmentTime || ctx.time || '',
+    servicio: ctx.appointmentType || ctx.service || ctx.title || '',
+    estado: ctx.appointmentStatus || ctx.status || '',
+    calendario: ctx.calendarName || ctx.calendarId || ctx.calendar_id || '',
+    notas: ctx.notes || ctx.note || ctx.description || ''
   }
 }
 
@@ -326,6 +362,11 @@ function buildVariableMap(ctx) {
     'enlace_disparo.fecha_disparo': ctx.clickedAt || '',
     'automation.name': ctx.automationName || ''
   }
+  const reply = replyDataFromContext(ctx)
+  if (reply.cuerpo || reply.numero_contacto || reply.id_mensaje || reply.canal) {
+    setDeepVariable(map, 'respuesta_whatsapp', reply)
+    setDeepVariable(map, 'respuesta_whatsapp_1', reply)
+  }
   const payment = paymentDataFromContext(ctx)
   if (Object.values(payment).some((value) => value !== '')) {
     setDeepVariable(map, 'pago', payment)
@@ -351,6 +392,17 @@ function buildVariableMap(ctx) {
     map['form.disqualified'] = boolText(Boolean(form.descalificado))
     map['form.submission_id'] = String(form.id_envio ?? '')
     map['form.submitted_at'] = String(form.fecha_de_envio ?? '')
+  }
+  const appointment = appointmentDataFromContext(ctx)
+  if (Object.values(appointment).some((value) => value !== '')) {
+    setDeepVariable(map, 'cita', appointment)
+    setDeepVariable(map, 'cita_1', appointment)
+    map['appointment.id'] = String(appointment.id_cita ?? '')
+    map['appointment.date'] = String(appointment.fecha ?? '')
+    map['appointment.time'] = String(appointment.hora ?? '')
+    map['appointment.status'] = String(appointment.estado ?? '')
+    map['appointment.calendar'] = String(appointment.calendario ?? '')
+    map['appointment.type'] = String(appointment.servicio ?? '')
   }
   if (ctx.scheduledFor || ctx.scheduleRunKey) {
     const schedule = {
@@ -622,6 +674,10 @@ const EVENT_DESCRIPTIONS = {
 // ---------------------------------------------------------------------------
 
 function ruleFieldValue(rule, ctx) {
+  if (isConditionVariableField(rule.field)) {
+    const value = conditionVariableValue(rule, ctx)
+    return value === undefined ? null : value
+  }
   const contact = ctx.contact || {}
   switch (rule.field) {
     case 'contact-first-name': return contact.firstName || ''
@@ -646,26 +702,147 @@ function ruleFieldValue(rule, ctx) {
   }
 }
 
+function comparableValue(value) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+function pathAfterTokenRoot(token) {
+  const dotIndex = token.indexOf('.')
+  const bracketIndex = token.indexOf('[')
+  const candidates = [dotIndex, bracketIndex].filter((index) => index >= 0)
+  if (candidates.length === 0) return ''
+  const index = Math.min(...candidates)
+  return token[index] === '.' ? token.slice(index + 1) : token.slice(index)
+}
+
+function conditionVariableValue(rule, ctx) {
+  const token = conditionVariableTokenFromField(rule.field)
+  const sourceId = str(rule.fieldSourceId)
+  if (sourceId && ctx.__nodeOutputs && typeof ctx.__nodeOutputs === 'object') {
+    const sourceOutput = ctx.__nodeOutputs[sourceId]
+    if (sourceOutput !== undefined) {
+      const path = str(rule.fieldPath) || pathAfterTokenRoot(token)
+      const value = readPath(sourceOutput, path)
+      if (value !== undefined) return value
+    }
+  }
+
+  const map = buildVariableMap(ctx)
+  if (Object.prototype.hasOwnProperty.call(map, token)) return map[token]
+  return resolveDynamicToken(token, ctx)
+}
+
+function dateTimeMs(value) {
+  const raw = comparableValue(value)
+  if (!raw) return null
+  const parsed = Date.parse(raw)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+function splitList(value) {
+  if (Array.isArray(value)) return value.map(normalizeText).filter(Boolean)
+  return comparableValue(value)
+    .split(',')
+    .map(normalizeText)
+    .filter(Boolean)
+}
+
+function numberBetween(actual, from, to) {
+  const actualNumber = Number(actual)
+  const fromNumber = Number(from)
+  const toNumber = Number(to)
+  if ([actualNumber, fromNumber, toNumber].every(Number.isFinite)) {
+    return actualNumber >= fromNumber && actualNumber <= toNumber
+  }
+  const actualDate = dateTimeMs(actual)
+  const fromDate = dateTimeMs(from)
+  const toDate = dateTimeMs(to)
+  if ([actualDate, fromDate, toDate].every((value) => value !== null)) {
+    return actualDate >= fromDate && actualDate <= toDate
+  }
+  const normalizedActual = normalizeText(actual)
+  return normalizedActual >= normalizeText(from) && normalizedActual <= normalizeText(to)
+}
+
 function evaluateRule(rule, ctx) {
   const actualRaw = ruleFieldValue(rule, ctx)
   if (actualRaw === null) return { ok: false, known: false }
-  const actual = normalizeText(actualRaw)
-  const expected = normalizeText(renderTemplate(String(rule.value ?? ''), ctx))
+  const actualValue = comparableValue(actualRaw)
+  const expectedValue = renderTemplate(String(rule.value ?? ''), ctx)
+  const expectedToValue = renderTemplate(String(rule.valueTo ?? ''), ctx)
+  const actual = normalizeText(actualValue)
+  const expected = normalizeText(expectedValue)
   switch (rule.operator) {
-    case 'is': return { ok: actual === expected, known: true }
-    case 'is_not': return { ok: actual !== expected, known: true }
+    case 'is':
+    case 'eq':
+      return { ok: actual === expected, known: true }
+    case 'is_not':
+    case 'neq':
+      return { ok: actual !== expected, known: true }
     case 'contains': return { ok: actual.includes(expected), known: true }
     case 'not_contains': return { ok: !actual.includes(expected), known: true }
     case 'starts_with': return { ok: actual.startsWith(expected), known: true }
     case 'ends_with': return { ok: actual.endsWith(expected), known: true }
-    case 'is_empty': return { ok: actual === '', known: true }
-    case 'is_not_empty': return { ok: actual !== '', known: true }
-    case 'is_true': return { ok: actual === 'true', known: true }
-    case 'is_false': return { ok: actual !== 'true', known: true }
-    case 'gt': return { ok: Number(actual) > Number(expected), known: true }
-    case 'gte': return { ok: Number(actual) >= Number(expected), known: true }
-    case 'lt': return { ok: Number(actual) < Number(expected), known: true }
-    case 'lte': return { ok: Number(actual) <= Number(expected), known: true }
+    case 'empty':
+    case 'is_empty':
+      return { ok: actual === '', known: true }
+    case 'not_empty':
+    case 'is_not_empty':
+      return { ok: actual !== '', known: true }
+    case 'yes':
+    case 'is_true':
+      return { ok: ['true', '1', 'yes', 'si', 'sí'].includes(actual), known: true }
+    case 'no':
+    case 'is_false':
+      return { ok: !['true', '1', 'yes', 'si', 'sí'].includes(actual), known: true }
+    case 'gt': return { ok: Number(actualValue) > Number(expectedValue), known: true }
+    case 'gte': return { ok: Number(actualValue) >= Number(expectedValue), known: true }
+    case 'lt': return { ok: Number(actualValue) < Number(expectedValue), known: true }
+    case 'lte': return { ok: Number(actualValue) <= Number(expectedValue), known: true }
+    case 'between':
+      return { ok: numberBetween(actualValue, expectedValue, expectedToValue), known: true }
+    case 'before': {
+      const actualDate = dateTimeMs(actualValue)
+      const expectedDate = dateTimeMs(expectedValue)
+      return { ok: actualDate !== null && expectedDate !== null && actualDate < expectedDate, known: true }
+    }
+    case 'after': {
+      const actualDate = dateTimeMs(actualValue)
+      const expectedDate = dateTimeMs(expectedValue)
+      return { ok: actualDate !== null && expectedDate !== null && actualDate > expectedDate, known: true }
+    }
+    case 'on': {
+      const actualDate = comparableValue(actualValue).slice(0, 10)
+      const expectedDate = comparableValue(expectedValue).slice(0, 10)
+      return { ok: Boolean(actualDate && expectedDate && actualDate === expectedDate), known: true }
+    }
+    case 'last_days': {
+      const actualDate = dateTimeMs(actualValue)
+      const days = Number(expectedValue)
+      return { ok: actualDate !== null && Number.isFinite(days) && actualDate >= Date.now() - days * 24 * 60 * 60 * 1000, known: true }
+    }
+    case 'older_days': {
+      const actualDate = dateTimeMs(actualValue)
+      const days = Number(expectedValue)
+      return { ok: actualDate !== null && Number.isFinite(days) && actualDate < Date.now() - days * 24 * 60 * 60 * 1000, known: true }
+    }
+    case 'any': {
+      const actualList = splitList(actualRaw)
+      const expectedList = splitList(expectedValue)
+      return { ok: expectedList.some((item) => actualList.includes(item)), known: true }
+    }
+    case 'all': {
+      const actualList = splitList(actualRaw)
+      const expectedList = splitList(expectedValue)
+      return { ok: expectedList.length > 0 && expectedList.every((item) => actualList.includes(item)), known: true }
+    }
+    case 'none': {
+      const actualList = splitList(actualRaw)
+      const expectedList = splitList(expectedValue)
+      return { ok: expectedList.every((item) => !actualList.includes(item)), known: true }
+    }
     default: return { ok: false, known: false }
   }
 }
@@ -848,6 +1025,132 @@ function customFieldRowsToObject(rows, ctx) {
   return values
 }
 
+function contactAutomationOutput(contact = {}) {
+  return {
+    id_contacto: contact.id || '',
+    nombre: contact.fullName || contact.firstName || '',
+    telefono: contact.phone || '',
+    email: contact.email || '',
+    etiquetas: contact.tags || contact.tagKeys || [],
+    campos_personalizados: contact.customFields || {}
+  }
+}
+
+function exposeNodeOutput(ctx, node, result) {
+  if (!result?.output || !result.outputBaseId || !node?.id) return
+  if (!ctx.__nodeOutputs || typeof ctx.__nodeOutputs !== 'object') ctx.__nodeOutputs = {}
+  if (!ctx.__outputOccurrences || typeof ctx.__outputOccurrences !== 'object') ctx.__outputOccurrences = {}
+
+  ctx.__nodeOutputs[node.id] = result.output
+
+  const baseId = str(result.outputBaseId)
+  const nextOccurrence = (Number(ctx.__outputOccurrences[baseId]) || 0) + 1
+  ctx.__outputOccurrences[baseId] = nextOccurrence
+
+  const fixedRoot = str(result.outputFixedRoot)
+  const root = fixedRoot
+    ? nextOccurrence === 1 ? fixedRoot : `${fixedRoot}_${nextOccurrence}`
+    : `${baseId}_${nextOccurrence}`
+  ctx[root] = result.output
+  if (nextOccurrence === 1 && !fixedRoot && ctx[baseId] === undefined) {
+    ctx[baseId] = result.output
+  }
+}
+
+function responseBodyFromText(text) {
+  if (!str(text).trim()) return ''
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
+}
+
+function webhookHeadersFromConfig(rawHeaders, ctx) {
+  const headers = {}
+  if (Array.isArray(rawHeaders)) {
+    rawHeaders.forEach((row) => {
+      const key = str(row?.key || row?.name).trim()
+      if (!key) return
+      headers[key] = renderTemplate(String(row?.value ?? ''), ctx, { preserveUnknown: true })
+    })
+    return headers
+  }
+  if (isPlainObject(rawHeaders)) {
+    Object.entries(rawHeaders).forEach(([key, value]) => {
+      if (str(key).trim()) headers[key] = renderTemplate(String(value ?? ''), ctx, { preserveUnknown: true })
+    })
+  }
+  return headers
+}
+
+async function executeWebhookAction(node, ctx) {
+  const config = node.config || {}
+  const method = (str(config.method) || 'POST').toUpperCase()
+  const url = renderTemplate(str(config.url), ctx, { preserveUnknown: true }).trim()
+  const onError = str(config.onError) || 'continue'
+  const timeoutMs = Math.max(1, Number(config.timeout) || 15) * 1000
+
+  const fail = (detail, output) => ({
+    handle: onError === 'branch' ? 'error' : 'out',
+    stop: onError === 'stop',
+    detail,
+    output,
+    outputBaseId: 'http_request'
+  })
+
+  if (!url) {
+    return fail('Webhook no enviado: falta URL', {
+      status: 'error',
+      status_code: 0,
+      respuesta: '',
+      error: 'Falta URL'
+    })
+  }
+
+  const headers = webhookHeadersFromConfig(config.headers, ctx)
+  const bodyText = renderTemplate(str(config.body), ctx, { preserveUnknown: true }).trim()
+  const init = { method, headers }
+  if (!['GET', 'HEAD'].includes(method) && bodyText) {
+    init.body = bodyText
+    if (!Object.keys(headers).some((key) => key.toLowerCase() === 'content-type') && /^[\[{]/.test(bodyText)) {
+      headers['Content-Type'] = 'application/json'
+    }
+  }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal })
+    const text = await response.text()
+    const respuesta = responseBodyFromText(text)
+    const output = {
+      ...(isPlainObject(respuesta) ? respuesta : {}),
+      status: response.ok ? 'ok' : 'error',
+      status_code: response.status,
+      respuesta
+    }
+    if (!response.ok) {
+      return fail(`Webhook respondió ${response.status}`, output)
+    }
+    return {
+      handle: 'out',
+      detail: `Webhook enviado (${response.status})`,
+      output,
+      outputBaseId: 'http_request'
+    }
+  } catch (error) {
+    return fail(`Webhook falló: ${error.message}`, {
+      status: 'error',
+      status_code: 0,
+      respuesta: '',
+      error: error.message
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function findContactByLookup(searchBy, lookupValue) {
   const value = str(lookupValue).trim()
   if (!value) return null
@@ -968,9 +1271,15 @@ async function upsertContactFromConfig(config, ctx, overrides = {}) {
 
 async function executeCreateContact(node, ctx) {
   const contact = await upsertContactFromConfig(node.config || {}, ctx)
-  return contact.fullName || contact.phone || contact.email
+  const detail = contact.fullName || contact.phone || contact.email
     ? `Contacto listo: ${contact.fullName || contact.phone || contact.email}`
     : 'Contacto creado'
+  return {
+    handle: 'out',
+    detail,
+    output: contactAutomationOutput(contact),
+    outputBaseId: 'contacto'
+  }
 }
 
 async function executeFindContact(node, ctx) {
@@ -980,7 +1289,12 @@ async function executeFindContact(node, ctx) {
   const found = await findContactByLookup(searchBy, lookupValue)
   if (found?.id) {
     ctx.contact = await loadContact(found.id, ctx.contact || {})
-    return { handle: 'out', detail: `Contacto encontrado: ${ctx.contact.fullName || ctx.contact.phone || ctx.contact.email || ctx.contact.id}` }
+    return {
+      handle: 'out',
+      detail: `Contacto encontrado: ${ctx.contact.fullName || ctx.contact.phone || ctx.contact.email || ctx.contact.id}`,
+      output: contactAutomationOutput(ctx.contact),
+      outputBaseId: 'contacto'
+    }
   }
 
   const notFound = str(config.notFound) || 'continue'
@@ -999,7 +1313,12 @@ async function executeFindContact(node, ctx) {
           ? { id: lookupValue }
           : {}
     const contact = await upsertContactFromConfig({}, ctx, overrides)
-    return { handle: 'out', detail: `Contacto creado: ${contact.fullName || contact.phone || contact.email || contact.id}` }
+    return {
+      handle: 'out',
+      detail: `Contacto creado: ${contact.fullName || contact.phone || contact.email || contact.id}`,
+      output: contactAutomationOutput(contact),
+      outputBaseId: 'contacto'
+    }
   }
   return { handle: 'out', detail: 'Contacto no encontrado: continúa sin cambiar contacto' }
 }
@@ -1220,8 +1539,20 @@ async function sendWhatsAppBlocks(node, ctx) {
  */
 async function executeNode(node, ctx) {
   switch (node.type) {
-    case 'channel-whatsapp':
-      return { handle: 'out', detail: await sendWhatsAppBlocks(node, ctx) }
+    case 'channel-whatsapp': {
+      const detail = await sendWhatsAppBlocks(node, ctx)
+      return {
+        handle: 'out',
+        detail,
+        output: {
+          id_mensaje: '',
+          estado: 'enviado',
+          numero_destino: ctx.contact?.phone || '',
+          fecha_envio: nowIso()
+        },
+        outputBaseId: 'enviar_whatsapp'
+      }
+    }
 
     case 'logic-wait': {
       const config = node.config || {}
@@ -1320,10 +1651,13 @@ async function executeNode(node, ctx) {
       return { handle: 'out', detail: 'Objetivo registrado' }
 
     case 'action-create-contact':
-      return { handle: 'out', detail: await executeCreateContact(node, ctx) }
+      return executeCreateContact(node, ctx)
 
     case 'action-find-contact':
       return executeFindContact(node, ctx)
+
+    case 'action-webhook':
+      return executeWebhookAction(node, ctx)
 
     case 'action-contact-tag':
       return {
@@ -1393,6 +1727,8 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
         enrollment.contactName ||
         'Contacto'
     }
+
+    exposeNodeOutput(ctx, node, result)
 
     addLog(enrollment, {
       nodeId: node.id,

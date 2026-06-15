@@ -5,19 +5,22 @@ import { CustomSelect } from './configPrimitives'
 import {
   CRM_FIELDS,
   CRM_FIELD_CATEGORIES,
+  conditionVariableFieldId,
   emptyConditionBranch,
   emptyConditionGroup,
-  getCrmField,
-  getOperatorsForField,
-  operatorNeedsValue,
+  getConditionField,
+  getOperatorsForConditionRule,
+  operatorNeedsValueForRule,
   type AdvancedConditionConfig,
   type ConditionBranch,
   type ConditionGroup,
-  type ConditionRule
+  type ConditionRule,
+  type CrmFieldType
 } from '../crmFields'
 import { MAX_BRANCHES } from '../nodeRegistry'
 import { CatalogSelect, Field, TextInput } from './configPrimitives'
 import { VariableTextInput } from '../composer/MessageComposer'
+import { FlowVariablesContext, type FlowVariable } from '../variablesCatalog'
 import { DrillSelect } from './DrillSelect'
 import styles from '../AutomationEditor.module.css'
 
@@ -35,6 +38,19 @@ interface AdvancedConditionBuilderProps {
 }
 
 const DEFAULT_RULE: ConditionRule = { field: '', operator: '', value: '' }
+
+function conditionFieldTypeFromVariable(variable: FlowVariable): CrmFieldType {
+  if (variable.type === 'number') return 'number'
+  if (variable.type === 'boolean') return 'boolean'
+  return 'text'
+}
+
+function conditionLabelFromVariable(variable: FlowVariable): string {
+  const path = Array.isArray(variable.pathLabels) && variable.pathLabels.length > 0
+    ? variable.pathLabels.join(' > ')
+    : variable.label
+  return variable.categoryLabel ? `${variable.categoryLabel} · ${path}` : path
+}
 
 function normalize(value: unknown): AdvancedConditionConfig {
   const raw = (value || {}) as Partial<AdvancedConditionConfig>
@@ -62,6 +78,49 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
 }) => {
   const config = normalize(value)
   const multiBranch = allowBranches && config.branches.length > 1
+  const flowVariables = React.useContext(FlowVariablesContext)
+
+  const previousVariableGroups = React.useMemo(() => {
+    const categoryLabels = new Map(flowVariables.categories.map((category) => [category.id, category.label]))
+    return flowVariables.categories
+      .map((category) => {
+        const variables = flowVariables.variables.filter((variable) => variable.category === category.id)
+        return {
+          id: `flow-${category.id}`,
+          label: categoryLabels.get(category.id) || category.label,
+          items: variables.map((variable) => ({
+            value: conditionVariableFieldId(variable.fieldId),
+            label: Array.isArray(variable.pathLabels) && variable.pathLabels.length > 0
+              ? variable.pathLabels.join(' > ')
+              : variable.label
+          }))
+        }
+      })
+      .filter((group) => group.items.length > 0)
+  }, [flowVariables])
+
+  const previousVariablesByField = React.useMemo(() => {
+    const map = new Map<string, FlowVariable>()
+    flowVariables.variables.forEach((variable) => {
+      map.set(conditionVariableFieldId(variable.fieldId), variable)
+    })
+    return map
+  }, [flowVariables])
+
+  const fieldGroups = React.useMemo(
+    () => [
+      ...CRM_FIELD_CATEGORIES.map((category) => ({
+        id: category.id,
+        label: category.label,
+        items: CRM_FIELDS.filter((candidate) => candidate.category === category.id).map((candidate) => ({
+          value: candidate.id,
+          label: candidate.label
+        }))
+      })),
+      ...previousVariableGroups
+    ],
+    [previousVariableGroups]
+  )
 
   const updateBranch = (branchIndex: number, patch: Partial<ConditionBranch>) => {
     onChange({
@@ -89,8 +148,8 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
   // Valor de una regla (fijo, por catálogo o variable dinámica)
   // ------------------------------------------------------------------
   const renderValueInput = (rule: ConditionRule, set: (patch: Partial<ConditionRule>) => void) => {
-    if (!rule.field || !rule.operator || !operatorNeedsValue(rule.field, rule.operator)) return null
-    const field = getCrmField(rule.field)
+    if (!rule.field || !rule.operator || !operatorNeedsValueForRule(rule, rule.operator)) return null
+    const field = getConditionField(rule)
     if (!field) return null
 
     const variableMode = rule.valueMode === 'variable'
@@ -218,9 +277,9 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
     ruleIndex: number,
     group: ConditionGroup
   ) => {
-    const field = rule.field ? getCrmField(rule.field) : undefined
+    const field = rule.field ? getConditionField(rule) : undefined
     const canSelectOperator = Boolean(rule.field) && (!field?.needsCustomKey || Boolean(rule.customKey))
-    const operators = canSelectOperator ? getOperatorsForField(rule.field) : []
+    const operators = canSelectOperator ? getOperatorsForConditionRule(rule) : []
     const ruleLead = ruleIndex === 0
       ? 'Regla principal'
       : group.operator === 'OR'
@@ -248,16 +307,10 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
         </div>
 
         <DrillSelect
-          groups={CRM_FIELD_CATEGORIES.map((category) => ({
-            id: category.id,
-            label: category.label,
-            items: CRM_FIELDS.filter((candidate) => candidate.category === category.id).map((candidate) => ({
-              value: candidate.id,
-              label: candidate.label
-            }))
-          }))}
+          groups={fieldGroups}
           value={rule.field}
-          onValueChange={(next) =>
+          onValueChange={(next) => {
+            const variable = previousVariablesByField.get(next)
             updateRule(branchIndex, groupIndex, ruleIndex, {
               field: next,
               operator: '',
@@ -266,9 +319,13 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
               valueTo: '',
               customKey: '',
               customLabel: '',
-              valueMode: 'fixed'
+              valueMode: 'fixed',
+              fieldLabel: variable ? conditionLabelFromVariable(variable) : '',
+              fieldType: variable ? conditionFieldTypeFromVariable(variable) : undefined,
+              fieldSourceId: variable?.sourceId || '',
+              fieldPath: variable?.path || ''
             })
-          }
+          }}
           placeholder="Selecciona qué dato revisar"
           aria-label="Campo"
         />

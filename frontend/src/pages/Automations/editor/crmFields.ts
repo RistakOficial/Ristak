@@ -225,6 +225,32 @@ export function operatorNeedsValue(fieldId: string, operator: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Campos dinámicos del flujo usados como lado izquierdo de una condición
+// ---------------------------------------------------------------------------
+
+export const CONDITION_VARIABLE_FIELD_PREFIX = 'var:'
+
+export function conditionVariableFieldId(fieldId: string): string {
+  return `${CONDITION_VARIABLE_FIELD_PREFIX}${fieldId}`
+}
+
+export function isConditionVariableField(fieldId: string): boolean {
+  return fieldId.startsWith(CONDITION_VARIABLE_FIELD_PREFIX)
+}
+
+export function conditionVariableTokenFromField(fieldId: string): string {
+  return isConditionVariableField(fieldId)
+    ? fieldId.slice(CONDITION_VARIABLE_FIELD_PREFIX.length)
+    : fieldId
+}
+
+function normalizeConditionFieldType(type: unknown): CrmFieldType {
+  return ['text', 'number', 'date', 'boolean', 'tags', 'select', 'duration'].includes(String(type))
+    ? (type as CrmFieldType)
+    : 'text'
+}
+
+// ---------------------------------------------------------------------------
 // Modelo de condición compartido (Condición, Esperar y Evento objetivo)
 // ---------------------------------------------------------------------------
 
@@ -243,6 +269,40 @@ export interface ConditionRule {
   valueMode?: 'fixed' | 'variable'
   /** Nombre legible del valor cuando viene de un catálogo (etiqueta, calendario…) */
   valueLabel?: string
+  /** Nombre legible cuando el campo viene de un paso anterior del flujo */
+  fieldLabel?: string
+  /** Tipo inferido cuando el campo viene de un paso anterior del flujo */
+  fieldType?: CrmFieldType
+  /** Nodo o disparador que produjo el dato dinámico */
+  fieldSourceId?: string
+  /** Ruta interna dentro de la salida del paso anterior */
+  fieldPath?: string
+}
+
+export function getConditionField(rule: Pick<ConditionRule, 'field' | 'fieldLabel' | 'fieldType'>): CrmField | undefined {
+  if (isConditionVariableField(rule.field)) {
+    const token = conditionVariableTokenFromField(rule.field)
+    return {
+      id: rule.field,
+      label: rule.fieldLabel || token,
+      category: 'flow',
+      type: normalizeConditionFieldType(rule.fieldType)
+    }
+  }
+  return getCrmField(rule.field)
+}
+
+export function getOperatorsForConditionRule(rule: Pick<ConditionRule, 'field' | 'fieldLabel' | 'fieldType'>): CrmOperator[] {
+  const field = getConditionField(rule)
+  return field ? OPERATORS_BY_TYPE[field.type] : OPERATORS_BY_TYPE.text
+}
+
+export function operatorNeedsValueForRule(
+  rule: Pick<ConditionRule, 'field' | 'fieldLabel' | 'fieldType'>,
+  operator: string
+): boolean {
+  const found = getOperatorsForConditionRule(rule).find((candidate) => candidate.value === operator)
+  return found ? !found.noValue : true
 }
 
 export interface ConditionConfig {
@@ -341,7 +401,7 @@ export function validateAdvancedCondition(config: unknown): string[] {
           errors.push(`${position}: selecciona un campo`)
           return
         }
-        const field = getCrmField(rule.field)
+        const field = getConditionField(rule)
         if (!field) {
           errors.push(`${position}: el campo seleccionado ya no existe`)
           return
@@ -353,7 +413,7 @@ export function validateAdvancedCondition(config: unknown): string[] {
           errors.push(`${position}: selecciona qué debe pasar`)
           return
         }
-        if (operatorNeedsValue(rule.field, rule.operator) && !String(rule.value ?? '').trim()) {
+        if (operatorNeedsValueForRule(rule, rule.operator) && !String(rule.value ?? '').trim()) {
           errors.push(`${position}: captura el valor a comparar`)
         }
         if (rule.operator === 'between' && !String(rule.valueTo ?? '').trim()) {
@@ -374,12 +434,12 @@ export function summarizeAdvancedCondition(config: unknown): string {
 
   const firstRule = branches[0]?.groups?.[0]?.rules?.find((rule) => rule.field)
   if (!firstRule) return ''
-  const field = getCrmField(firstRule.field)
-  const operator = getOperatorsForField(firstRule.field).find((op) => op.value === firstRule.operator)
+  const field = getConditionField(firstRule)
+  const operator = getOperatorsForConditionRule(firstRule).find((op) => op.value === firstRule.operator)
   const fieldLabel = field?.needsCustomKey && firstRule.customLabel
     ? firstRule.customLabel.toLowerCase()
     : field?.label.toLowerCase()
-  const base = `Si ${[fieldLabel, operator?.label, operatorNeedsValue(firstRule.field, firstRule.operator) ? `"${conditionDisplayValue(field, firstRule)}"` : '']
+  const base = `Si ${[fieldLabel, operator?.label, operatorNeedsValueForRule(firstRule, firstRule.operator) ? `"${conditionDisplayValue(field, firstRule)}"` : '']
     .filter(Boolean)
     .join(' ')}`
 
@@ -413,7 +473,7 @@ export function validateConditionRules(config: unknown): string[] {
       errors.push(`${position}: selecciona un campo`)
       return
     }
-    const field = getCrmField(rule.field)
+    const field = getConditionField(rule)
     if (!field) {
       errors.push(`${position}: el campo seleccionado ya no existe`)
       return
@@ -425,7 +485,7 @@ export function validateConditionRules(config: unknown): string[] {
       errors.push(`${position}: selecciona qué debe pasar`)
       return
     }
-    if (operatorNeedsValue(rule.field, rule.operator) && !String(rule.value ?? '').trim()) {
+    if (operatorNeedsValueForRule(rule, rule.operator) && !String(rule.value ?? '').trim()) {
       errors.push(`${position}: captura el valor a comparar`)
     }
     if (rule.operator === 'between' && !String(rule.valueTo ?? '').trim()) {
@@ -442,10 +502,10 @@ export function summarizeCondition(config: unknown): string {
   const rules = (Array.isArray(conditions.rules) ? conditions.rules : []).filter((rule) => rule.field)
   if (rules.length === 0) return ''
   const first = rules[0]
-  const field = getCrmField(first.field)
-  const operator = getOperatorsForField(first.field).find((op) => op.value === first.operator)
+  const field = getConditionField(first)
+  const operator = getOperatorsForConditionRule(first).find((op) => op.value === first.operator)
   const fieldLabel = field?.needsCustomKey && first.customLabel ? first.customLabel : field?.label
-  const base = [fieldLabel, operator?.label, operatorNeedsValue(first.field, first.operator) ? conditionDisplayValue(field, first) : '']
+  const base = [fieldLabel, operator?.label, operatorNeedsValueForRule(first, first.operator) ? conditionDisplayValue(field, first) : '']
     .filter(Boolean)
     .join(' ')
   if (rules.length === 1) return base

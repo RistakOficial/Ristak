@@ -127,6 +127,78 @@ test('evaluateConditionNode: una rama → Sí/No', () => {
   assert.equal(evaluateConditionNode(config, { ...ctx, messageText: 'gracias' }).handle, 'no')
 })
 
+test('evaluateConditionNode: usa la respuesta recibida de un evento anterior', () => {
+  const config = {
+    branches: [
+      {
+        name: 'Respuesta con precio',
+        groupsOperator: 'AND',
+        groups: [{
+          operator: 'AND',
+          negate: false,
+          rules: [{
+            field: 'var:respuesta_whatsapp.cuerpo',
+            fieldLabel: 'Respuesta del contacto · Cuerpo',
+            fieldType: 'text',
+            operator: 'contains',
+            value: 'precio'
+          }]
+        }]
+      }
+    ]
+  }
+
+  assert.equal(evaluateConditionNode(config, ctx).handle, 'yes')
+  assert.equal(evaluateConditionNode(config, { ...ctx, messageText: 'Solo quiero saludar' }).handle, 'no')
+})
+
+test('evaluateConditionNode: usa la salida de un webhook/post anterior', () => {
+  const config = {
+    branches: [
+      {
+        name: 'Webhook exitoso',
+        groupsOperator: 'AND',
+        groups: [{
+          operator: 'AND',
+          negate: false,
+          rules: [
+            {
+              field: 'var:http_request_1.status_code',
+              fieldLabel: 'HTTP Request #1 · Código de estado',
+              fieldType: 'number',
+              fieldSourceId: 'node-webhook',
+              fieldPath: 'status_code',
+              operator: 'gte',
+              value: '200'
+            },
+            {
+              field: 'var:http_request_1.respuesta.lead_id',
+              fieldLabel: 'HTTP Request #1 · Respuesta > Lead ID',
+              fieldType: 'text',
+              fieldSourceId: 'node-webhook',
+              fieldPath: 'respuesta.lead_id',
+              operator: 'not_empty',
+              value: ''
+            }
+          ]
+        }]
+      }
+    ]
+  }
+  const webhookCtx = {
+    __nodeOutputs: {
+      'node-webhook': {
+        status: 'ok',
+        status_code: 201,
+        respuesta: { lead_id: 'lead_123' }
+      }
+    }
+  }
+
+  assert.equal(evaluateConditionNode(config, webhookCtx).handle, 'yes')
+  assert.equal(evaluateConditionNode(config, { __nodeOutputs: { 'node-webhook': { status_code: 500, respuesta: {} } } }).handle, 'no')
+})
+
 test('evaluateConditionNode: multi-rama elige la primera que cumple, si no "none"', () => {
   const config = {
     branches: [

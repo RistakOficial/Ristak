@@ -667,7 +667,7 @@ const TRIGGERS: NodeDefinition[] = [
     outputs: () => SINGLE_OUTPUT,
     variableOutput: () => ({
       baseId: 'respuesta_whatsapp',
-      baseLabel: 'Respuesta WhatsApp',
+      baseLabel: 'Respuesta del contacto',
       fields: WHATSAPP_REPLY_FIELDS,
       fixedTokenRoot: 'respuesta_whatsapp'
     }),
@@ -1107,7 +1107,7 @@ const TRIGGERS: NodeDefinition[] = [
     outputs: () => SINGLE_OUTPUT,
     variableOutput: () => ({
       baseId: 'respuesta_whatsapp',
-      baseLabel: 'Respuesta WhatsApp',
+      baseLabel: 'Respuesta del contacto',
       fields: WHATSAPP_REPLY_FIELDS,
       fixedTokenRoot: 'respuesta_whatsapp'
     }),

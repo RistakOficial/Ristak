@@ -1,6 +1,7 @@
 import type { AutomationEdge, AutomationNode } from '@/services/automationsService'
 import { getNodeDefinition, validateNodeConfig } from './nodeRegistry'
 import { getStartTriggers, getWaitMessageSourceOptions, hasPath, isStartNode, nodeHasInput } from './flowUtils'
+import { conditionVariableTokenFromField, isConditionVariableField } from './crmFields'
 import {
   BASE_VARIABLES,
   buildFlowVariableCatalog,
@@ -46,6 +47,29 @@ function collectStrings(value: unknown, output: string[] = []): string[] {
   return output
 }
 
+interface ConditionVariableReference {
+  token: string
+  label: string
+}
+
+function collectConditionVariableFields(value: unknown, output: ConditionVariableReference[] = []): ConditionVariableReference[] {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectConditionVariableFields(item, output))
+    return output
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    if (typeof record.field === 'string' && isConditionVariableField(record.field)) {
+      output.push({
+        token: conditionVariableTokenFromField(record.field),
+        label: typeof record.fieldLabel === 'string' ? record.fieldLabel : conditionVariableTokenFromField(record.field)
+      })
+    }
+    Object.values(record).forEach((item) => collectConditionVariableFields(item, output))
+  }
+  return output
+}
+
 function unavailableDynamicTokens(
   node: AutomationNode,
   nodes: AutomationNode[],
@@ -58,6 +82,21 @@ function unavailableDynamicTokens(
   ])
   const tokens = new Set(collectStrings(node.config || {}).flatMap(extractTokens))
   return [...tokens].filter((token) => isDynamicToken(token) && !available.has(token))
+}
+
+function unavailableConditionVariableFields(
+  node: AutomationNode,
+  nodes: AutomationNode[],
+  edges: AutomationEdge[]
+): ConditionVariableReference[] {
+  const catalog = buildFlowVariableCatalog(nodes, edges, node.id)
+  const available = new Set(catalog.variables.map((variable) => variable.fieldId))
+  const seen = new Set<string>()
+  return collectConditionVariableFields(node.config || []).filter((reference) => {
+    if (seen.has(reference.token)) return false
+    seen.add(reference.token)
+    return !available.has(reference.token)
+  })
 }
 
 function validateWaitReplyMessageSource(
@@ -126,6 +165,9 @@ export function validateAutomationFlow(
     })
     unavailableDynamicTokens(node, nodes, edges).forEach((token) => {
       pushNodeError(result, node.id, `La variable {{${token}}} ya no está disponible`)
+    })
+    unavailableConditionVariableFields(node, nodes, edges).forEach((reference) => {
+      pushNodeError(result, node.id, `El dato "${reference.label}" ya no está disponible para esta condición`)
     })
     validateWaitReplyMessageSource(node, nodes, edges, result)
   })
