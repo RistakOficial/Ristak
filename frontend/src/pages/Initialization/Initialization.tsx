@@ -146,9 +146,8 @@ export const Initialization: React.FC = () => {
           <Rocket size={14} />
           Inicialización
         </span>
-        <h1 className={styles.heroTitle}>
-          Pon en marcha tu <Logo size="sm" className={styles.heroLogo} />
-        </h1>
+        <h1 className={styles.heroTitle}>Pon en marcha tu</h1>
+        <Logo size="lg" className={styles.heroLogo} />
         <p className={styles.heroSubtitle}>
           Conecta tus integraciones en orden para dejar todo listo. A medida que las completes,
           esta página se actualizará sola y desaparecerá del menú cuando termines lo esencial.
