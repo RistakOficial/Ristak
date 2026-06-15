@@ -221,9 +221,16 @@
 
 .createOption {
   composes: option;
+  width: 100%;
+  display: flex;
+  align-items: center;
   justify-content: flex-start;
+  gap: 8px;
+  min-height: 40px;
+  padding: 9px 12px;
   color: var(--color-primary);
   font-weight: 500;
+  line-height: 1.4;
 }
 
 .createPromptOption {
@@ -250,11 +257,15 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
+  line-height: 0;
 }
 
 .createLabel {
   min-width: 0;
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
