@@ -138,8 +138,7 @@ async function loadTriggerLinks(): Promise<CatalogOption[]> {
   return (links || [])
     .map((link) => ({
       value: link.id,
-      label: link.name,
-      meta: link.publicId
+      label: link.name
     }))
 }
 

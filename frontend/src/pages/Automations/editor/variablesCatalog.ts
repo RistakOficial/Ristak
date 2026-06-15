@@ -389,6 +389,11 @@ export function tokenFor(variable: Pick<FlowVariable, 'fieldId'>): string {
   return `{{${variable.fieldId}}}`
 }
 
+export function fallbackLabelForFieldId(fieldId: string): string {
+  if (fieldId.startsWith('trigger_link.')) return 'Enlace de disparo'
+  return fieldId
+}
+
 export const TOKEN_PATTERN = /\{\{\s*([^{}\s]+)\s*\}\}/g
 
 export function extractTokens(compiled: string): string[] {
@@ -416,7 +421,7 @@ export function parseCompiledText(compiled: string, variables: FlowVariable[]): 
     parts.push({
       type: 'variable',
       fieldId,
-      label: known?.label || fieldId,
+      label: known?.label || fallbackLabelForFieldId(fieldId),
       token: `{{${fieldId}}}`
     })
     lastIndex = index + match[0].length
