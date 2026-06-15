@@ -72,9 +72,15 @@ class ApiClient {
     const json = dedupeContactsPayload(rawJson)
 
     if (!response.ok) {
-      const message = json && typeof json === 'object' && 'error' in json
-        ? String((json as { error?: unknown }).error)
-        : `API Error: ${response.status} ${response.statusText}`
+      let message = `API Error: ${response.status} ${response.statusText}`
+      if (json && typeof json === 'object') {
+        const payload = json as { error?: unknown; message?: unknown }
+        if (payload.error) {
+          message = String(payload.error)
+        } else if (payload.message) {
+          message = String(payload.message)
+        }
+      }
       throw new Error(message)
     }
 
