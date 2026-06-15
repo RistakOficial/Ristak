@@ -68,6 +68,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig, useBottomSheetDismiss, useHighLevelConnected, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
+import { RistakRobot } from '@/components/ai'
 import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
@@ -6517,7 +6518,7 @@ export const PhoneChat: React.FC = () => {
 
   const renderAIAgentAvatar = () => (
     <span className={`${styles.avatar} ${styles.aiAgentAvatar}`}>
-      <Bot size={23} />
+      <RistakRobot thinking={aiSending} />
     </span>
   )
 

@@ -776,7 +776,9 @@
 
 .aiAgentAvatar {
   color: #ffffff;
-  background: linear-gradient(135deg, #111827, #0f766e);
+  background: transparent;
+  border: none;
+  overflow: visible;
 }
 
 .aiAgentChatItem {
