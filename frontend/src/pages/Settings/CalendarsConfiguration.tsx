@@ -382,6 +382,10 @@ export const CalendarsConfiguration: React.FC = () => {
     }
   }
 
+  const getGoogleLinkedCalendars = (items: CalendarType[] = calendars) => (
+    items.filter((calendar) => calendar.source !== 'google' && Boolean(calendar.googleCalendarId))
+  )
+
   const parsedServiceAccountEmail = useMemo(() => {
     if (!serviceAccountJson.trim()) return ''
     try {
@@ -557,6 +561,18 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleSyncGoogleIntegration = async () => {
+    const calendarSnapshot = calendars.length ? calendars : await loadCalendars()
+    if (googleIntegration?.connected && getGoogleLinkedCalendars(calendarSnapshot).length === 0) {
+      setActiveView('calendars')
+      navigate(buildCalendarSettingsPath('calendars'))
+      showToast(
+        'warning',
+        'Elige calendario de Google',
+        'Abre un calendario de Ristak y selecciona con qué calendario de Google se va a sincronizar.'
+      )
+      return
+    }
+
     setSyncingGoogleIntegration(true)
     try {
       const data = await calendarsService.syncGoogleIntegration()
@@ -790,6 +806,9 @@ export const CalendarsConfiguration: React.FC = () => {
 
     setSelectedCalendar(calendar)
     setExpandedCalendarId(calendar.id)
+    if (googleIntegration?.connected && !loadingGoogleCalendarOptions && !googleCalendarOptions.length) {
+      loadGoogleCalendarOptions()
+    }
     navigate(buildCalendarSettingsPath('calendars', calendar.id))
   }
 
@@ -807,6 +826,7 @@ export const CalendarsConfiguration: React.FC = () => {
     try {
       const previousGoogleCalendarId = calendars.find((item) => item.id === selectedCalendar.id)?.googleCalendarId || ''
       const nextGoogleCalendarId = selectedCalendar.googleCalendarId || ''
+      const googleSyncChanged = nextGoogleCalendarId !== previousGoogleCalendarId
 
       // Construir payload con todos los campos editables
       const updateData: any = {
@@ -845,11 +865,18 @@ export const CalendarsConfiguration: React.FC = () => {
 
       await calendarsService.updateCalendar(selectedCalendar.id, updateData, accessToken || undefined)
 
-      if (nextGoogleCalendarId !== previousGoogleCalendarId) {
+      if (googleSyncChanged) {
         await calendarsService.updateCalendarGoogleSync(selectedCalendar.id, nextGoogleCalendarId)
       }
 
-      showToast('success', 'Configuración de calendario actualizada', accessToken ? `Los cambios se guardaron en ${selectedCalendar.name}` : `Los cambios quedaron guardados en Ristak y pendientes de sync`)
+      const syncMessage = googleSyncChanged
+        ? nextGoogleCalendarId
+          ? `Este calendario ya está ligado a ${googleCalendarOptions.find(option => option.id === nextGoogleCalendarId)?.summary || nextGoogleCalendarId}.`
+          : 'Este calendario dejó de sincronizarse con Google Calendar.'
+        : accessToken
+          ? `Los cambios se guardaron en ${selectedCalendar.name}`
+          : 'Los cambios quedaron guardados en Ristak y pendientes de sync'
+      showToast('success', 'Configuración de calendario actualizada', syncMessage)
       handleCloseCalendarEditor()
       loadCalendars() // Recargar calendarios para ver cambios
     } catch (error: any) {
@@ -1306,8 +1333,8 @@ export const CalendarsConfiguration: React.FC = () => {
       ? googleIntegration?.googleAccountEmail || googleIntegration?.googleAccountName || 'Cuenta Google conectada'
       : googleIntegration?.serviceAccountEmail || 'Google Calendar conectado'
     const googleSyncBlocked = isCentralGoogleOAuth && (!googleIntegration?.canListCalendars || !googleIntegration?.canManageEvents)
+    const writableGoogleCalendarCount = googleCalendarOptions.filter(canWriteGoogleCalendarOption).length
     const googleSyncOptions = [
-      { value: '', label: 'No sincronizar con Google Calendar' },
       ...googleCalendarOptions.map((option) => ({
         value: option.id,
         label: `${option.summary || option.id}${option.primary ? ' (principal)' : ''}${canWriteGoogleCalendarOption(option) ? '' : ' (solo lectura)'}`,
@@ -1318,8 +1345,19 @@ export const CalendarsConfiguration: React.FC = () => {
     if (currentGoogleCalendarId && !currentGoogleOption) {
       googleSyncOptions.push({
         value: currentGoogleCalendarId,
-        label: selectedCalendar.googleCalendarSummary || `${currentGoogleCalendarId} (sin acceso actual)`
+        label: selectedCalendar.googleCalendarSummary || `${currentGoogleCalendarId} (sin acceso actual)`,
+        disabled: false
       })
+    }
+
+    const clearGoogleCalendarSync = () => {
+      showConfirm(
+        'Dejar de sincronizar Google Calendar',
+        'Este calendario de Ristak se quedará local. Las citas ya guardadas no se borran, pero ya no se actualizarán con Google.',
+        () => updateSelectedCalendar({ googleCalendarId: '' }),
+        'Dejar de sincronizar',
+        'Cancelar'
+      )
     }
 
     return (
@@ -1633,13 +1671,27 @@ export const CalendarsConfiguration: React.FC = () => {
                   </div>
                 </div>
 
-                <label className={`${pageStyles.editorField} ${pageStyles.editorFieldLarge}`}>
-                  <span>Calendario de Google</span>
+                <div className={`${pageStyles.editorField} ${pageStyles.editorFieldLarge}`}>
+                  <div className={pageStyles.googleSyncFieldTop}>
+                    <span>Calendario de Google</span>
+                    {currentGoogleCalendarId && (
+                      <Button
+                        variant="ghost"
+                        size="small"
+                        onClick={clearGoogleCalendarSync}
+                        disabled={savingGoogleSyncCalendarId === calendar.id}
+                      >
+                        <XCircle size={14} />
+                        Dejar de sincronizar
+                      </Button>
+                    )}
+                  </div>
                   <CustomSelect
                     value={currentGoogleCalendarId}
                     onValueChange={(value) => updateSelectedCalendar({ googleCalendarId: value })}
                     options={googleSyncOptions}
-                    disabled={loadingGoogleCalendarOptions || savingGoogleSyncCalendarId === calendar.id || googleSyncBlocked}
+                    placeholder={googleCalendarOptions.length ? 'Elige el calendario de Google' : 'Sin calendarios disponibles'}
+                    disabled={loadingGoogleCalendarOptions || savingGoogleSyncCalendarId === calendar.id || googleSyncBlocked || !googleSyncOptions.length}
                   />
                   <small>
                     {googleSyncBlocked
@@ -1648,16 +1700,18 @@ export const CalendarsConfiguration: React.FC = () => {
                         ? 'Cargando calendarios de Google...'
                         : currentGoogleCalendarId
                           ? `Se sincroniza con ${currentGoogleOption?.summary || selectedCalendar.googleCalendarSummary || currentGoogleCalendarId}.`
-                          : googleCalendarOptions.length
-                            ? 'Elige un calendario de Google para activar la sincronización bidireccional.'
-                            : 'No hay calendarios de Google disponibles para vincular.'}
+                          : googleCalendarOptions.length && !writableGoogleCalendarCount
+                            ? 'Los calendarios disponibles están en solo lectura. Elige uno con permiso para editar eventos.'
+                            : googleCalendarOptions.length
+                              ? 'Elige el calendario de Google que quieres ligar con este calendario de Ristak.'
+                              : 'No hay calendarios de Google disponibles para vincular.'}
                   </small>
-                </label>
+                </div>
 
                 <div className={pageStyles.googleSyncHint}>
                   <Link2 size={16} />
                   <span>
-                    Cuando lo guardes, Ristak traerá citas de Google y también actualizará Google cuando crees o edites citas aquí.
+                    Al guardar, Ristak traerá citas de ese calendario de Google y actualizará ese mismo calendario cuando crees o edites citas aquí.
                   </span>
                 </div>
               </div>
@@ -2049,6 +2103,19 @@ export const CalendarsConfiguration: React.FC = () => {
                 </div>
 
                 <div className={pageStyles.connectedActions}>
+                  <Button onClick={handleSyncGoogleIntegration} disabled={busyGoogleAction}>
+                    {syncingGoogleIntegration ? (
+                      <>
+                        <Loader2 size={16} className={styles.spinIcon} />
+                        Sincronizando...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={16} />
+                        Sincronizar ahora
+                      </>
+                    )}
+                  </Button>
                   <Button
                     variant="outline"
                     onClick={async () => {
