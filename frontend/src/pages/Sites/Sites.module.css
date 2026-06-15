@@ -336,7 +336,7 @@
 }
 
 .importedCodeSourcePaneWithAssistant {
-  grid-template-rows: auto auto minmax(0, 1fr) auto minmax(156px, var(--imported-code-assistant-height, 184px));
+  grid-template-rows: auto auto minmax(0, 1fr) 190px;
 }
 
 .importedCodePreviewPane {
@@ -682,38 +682,6 @@
   pointer-events: none;
 }
 
-:global(body.rstk-code-assistant-resizing) {
-  cursor: row-resize;
-  user-select: none;
-}
-
-:global(body.rstk-code-assistant-resizing) iframe {
-  pointer-events: none;
-}
-
-.importedCodeAssistantResizeHandle {
-  min-height: 12px;
-  display: grid;
-  place-items: center;
-  cursor: row-resize;
-  border-top: 1px solid var(--rstk-assistant-border);
-  background: var(--rstk-assistant-bg);
-}
-
-.importedCodeAssistantResizeHandle span {
-  width: 56px;
-  height: 3px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--rstk-assistant-muted) 42%, transparent);
-  transition: background 160ms ease, transform 160ms ease;
-}
-
-.importedCodeAssistantResizeHandle:hover span,
-.importedCodeAssistantResizeHandle:focus-visible span {
-  background: color-mix(in srgb, var(--color-primary) 72%, transparent);
-  transform: scaleY(1.35);
-}
-
 .importedCodeAssistantPanel {
   min-height: 0;
   display: grid;
@@ -838,103 +806,12 @@
   transition: width 220ms ease;
 }
 
-.importedCodeAssistantLinearTrack span::after {
+.importedCodeAssistantLinearTrackActive span::after {
   content: "";
   position: absolute;
   inset: 0;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.42), transparent);
   animation: importedAssistantLinearSweep 1.15s ease-in-out infinite;
-}
-
-.importedCodeAssistantProgress {
-  min-height: 0;
-  display: grid;
-  gap: 6px;
-  background: transparent;
-  padding: 0;
-  overflow: auto;
-  scrollbar-gutter: stable;
-}
-
-.importedCodeAssistantProgressStep {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  border-radius: 7px;
-  padding: 5px 4px;
-  color: var(--rstk-assistant-muted);
-}
-
-.importedCodeAssistantProgressIcon {
-  width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--rstk-assistant-border);
-  border-radius: 999px;
-  background: var(--rstk-assistant-bg);
-  color: var(--rstk-assistant-muted);
-}
-
-.importedCodeAssistantProgressIcon span {
-  width: 6px;
-  height: 6px;
-  display: block;
-  border-radius: 999px;
-  background: currentColor;
-}
-
-.importedCodeAssistantProgressStep span:last-child {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.importedCodeAssistantProgressStep strong {
-  overflow: hidden;
-  color: var(--rstk-assistant-secondary);
-  font-size: 12.5px;
-  font-weight: 820;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.importedCodeAssistantProgressStep small {
-  color: var(--rstk-assistant-muted);
-  font-size: 11.5px;
-  font-weight: 680;
-  line-height: 1.32;
-}
-
-.importedCodeAssistantProgressActive {
-  background: color-mix(in srgb, var(--rstk-assistant-chip) 52%, transparent);
-  color: var(--rstk-assistant-text);
-}
-
-.importedCodeAssistantProgressActive .importedCodeAssistantProgressIcon {
-  border-color: rgba(var(--color-primary-rgb), 0.34);
-  color: var(--color-primary);
-}
-
-.importedCodeAssistantProgressActive .importedCodeAssistantProgressIcon {
-  animation: importedAssistantPulse 1.1s ease-in-out infinite;
-}
-
-.importedCodeAssistantProgressDone .importedCodeAssistantProgressIcon {
-  border-color: rgba(16, 185, 129, 0.28);
-  color: var(--color-status-success);
-}
-
-.importedCodeAssistantProgressError .importedCodeAssistantProgressIcon {
-  border-color: rgba(220, 38, 38, 0.28);
-  color: var(--color-status-error);
-}
-
-.importedCodeAssistantProgressError strong,
-.importedCodeAssistantProgressError small {
-  color: var(--color-status-error);
 }
 
 .importedCodeAssistantDock {
@@ -1137,17 +1014,6 @@
 
   to {
     transform: translateX(100%);
-  }
-}
-
-@keyframes importedAssistantPulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgba(var(--color-primary-rgb), 0.18);
-  }
-
-  50% {
-    box-shadow: 0 0 0 4px rgba(var(--color-primary-rgb), 0.08);
   }
 }
 
