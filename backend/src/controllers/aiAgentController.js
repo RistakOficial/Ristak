@@ -2,8 +2,9 @@ import { logger } from '../utils/logger.js'
 import {
   deleteAIAgentConfig,
   getAIAgentStatus,
-  getOpenAIApiKey,
   isAIAgentCredentialError,
+  isAIAgentOpenAIRequiredError,
+  requireOpenAIApiKey,
   saveRefinedAIAgentBusinessContextAnswer,
   saveAIAgentConfig,
   transcribeVoiceAudio,
@@ -13,6 +14,16 @@ import { getAgentRunTrace } from '../services/agentExecutionLedgerService.js'
 import { runSpecializedAgentReply, listAgentCategories } from '../agents/index.js'
 
 function sendAIAgentError(res, error, fallback, statusCode = 500) {
+  if (isAIAgentOpenAIRequiredError(error)) {
+    return res.status(error.statusCode || 409).json({
+      success: false,
+      error: error.message,
+      code: error.code,
+      needsOpenAIConfig: true,
+      ...(error.agentTrace ? { trace: error.agentTrace } : {})
+    })
+  }
+
   if (isAIAgentCredentialError(error)) {
     return res.status(error.statusCode || 409).json({
       success: false,
@@ -144,14 +155,7 @@ export async function saveBusinessContextAnswer(req, res) {
 
 export async function chat(req, res) {
   try {
-    const apiKey = await getOpenAIApiKey()
-
-    if (!apiKey) {
-      return res.status(409).json({
-        success: false,
-        error: 'Primero configura una API Key válida de OpenAI'
-      })
-    }
+    const apiKey = req.openAIApiKey || await requireOpenAIApiKey()
 
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : []
     const lastMessage = messages[messages.length - 1]
@@ -226,14 +230,7 @@ export async function getRunTrace(req, res) {
 
 export async function transcribeVoice(req, res) {
   try {
-    const apiKey = await getOpenAIApiKey()
-
-    if (!apiKey) {
-      return res.status(409).json({
-        success: false,
-        error: 'Primero configura una API Key válida de OpenAI'
-      })
-    }
+    const apiKey = req.openAIApiKey || await requireOpenAIApiKey()
 
     const audioBuffer = Buffer.isBuffer(req.body) ? req.body : null
 

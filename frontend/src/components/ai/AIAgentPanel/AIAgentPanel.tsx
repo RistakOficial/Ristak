@@ -2576,17 +2576,19 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
             </div>
           )}
 
-          {status.configured && !businessContextLoaded && !loadingConfig && (
-            <div className={styles.contextNotice}>
-              <Sparkles size={15} />
-              Falta contexto del negocio. Respóndeme estas preguntas y yo lo redacto antes de guardarlo en Configuración.
-            </div>
-          )}
+          {status.configured && (
+            <>
+              {!businessContextLoaded && !loadingConfig && (
+                <div className={styles.contextNotice}>
+                  <Sparkles size={15} />
+                  Falta contexto del negocio. Respóndeme estas preguntas y yo lo redacto antes de guardarlo en Configuración.
+                </div>
+              )}
 
-          <div className={styles.body} data-ai-agent-scrollable="true">
-            {messages.length === 0 ? (
-              <div className={styles.empty}>
-                {status.configured && !sitesCreationMode ? (
+              <div className={styles.body} data-ai-agent-scrollable="true">
+                {messages.length === 0 ? (
+                  <div className={styles.empty}>
+                    {!sitesCreationMode ? (
                   <>
                     <p className={styles.emptyText}>
                       {selectedAgentCategory
@@ -2623,178 +2625,180 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                     Pregúntame por ventas, citas, campañas, contactos o por lo que estás viendo en esta pantalla.
                   </p>
                 )}
-              </div>
-            ) : (
-              <div className={styles.messages}>
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`${styles.message} ${message.role === 'user' ? styles.messageUser : styles.messageAssistant}`}
-                  >
-                    <span className={styles.messageLabel}>
-                      {message.role === 'user' ? 'Tú' : 'Agente'}
-                    </span>
-                    {Boolean(message.attachments?.length) && renderAttachmentList(message.attachments || [])}
-                    <div className={styles.bubble}>{renderMessageContent(getDisplayMessageContent(message))}</div>
-                    {message.role === 'assistant' && Boolean(message.clarificationOptions?.length) && (
-                      <div className={styles.optionButtons} aria-label="Opciones para aclarar la pregunta">
-                        {message.clarificationOptions?.map((option, optionIndex) => (
-                          <button
-                            key={`${message.id}-${optionIndex}-${option.label}`}
-                            type="button"
-                            className={styles.optionButton}
-                            onClick={() => handleClarificationOptionClick(message, option)}
-                            disabled={savingConfig}
-                          >
-                            <span className={styles.optionLabel}>{option.label}</span>
-                            {option.description && (
-                              <span className={styles.optionDescription}>{option.description}</span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {message.role === 'assistant' && Boolean(message.sources?.length) && (
-                      <div className={styles.sources}>
-                        <span className={styles.sourcesLabel}>Fuentes</span>
-                        {message.sources?.map((source) => (
-                          <React.Fragment key={source.url}>
-                            <a
-                              href={source.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className={styles.sourceLink}
-                            >
-                              {source.title || source.url}
-                            </a>
-                            {isLikelyMediaUrl(normalizeHttpUrl(source.url)) && renderMediaUrlPreview(source.url, source.title || source.url, `${message.id}-${source.url}`)}
-                          </React.Fragment>
-                        ))}
-                      </div>
-                    )}
                   </div>
-                ))}
+                ) : (
+                  <div className={styles.messages}>
+                    {messages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`${styles.message} ${message.role === 'user' ? styles.messageUser : styles.messageAssistant}`}
+                      >
+                        <span className={styles.messageLabel}>
+                          {message.role === 'user' ? 'Tú' : 'Agente'}
+                        </span>
+                        {Boolean(message.attachments?.length) && renderAttachmentList(message.attachments || [])}
+                        <div className={styles.bubble}>{renderMessageContent(getDisplayMessageContent(message))}</div>
+                        {message.role === 'assistant' && Boolean(message.clarificationOptions?.length) && (
+                          <div className={styles.optionButtons} aria-label="Opciones para aclarar la pregunta">
+                            {message.clarificationOptions?.map((option, optionIndex) => (
+                              <button
+                                key={`${message.id}-${optionIndex}-${option.label}`}
+                                type="button"
+                                className={styles.optionButton}
+                                onClick={() => handleClarificationOptionClick(message, option)}
+                                disabled={savingConfig}
+                              >
+                                <span className={styles.optionLabel}>{option.label}</span>
+                                {option.description && (
+                                  <span className={styles.optionDescription}>{option.description}</span>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {message.role === 'assistant' && Boolean(message.sources?.length) && (
+                          <div className={styles.sources}>
+                            <span className={styles.sourcesLabel}>Fuentes</span>
+                            {message.sources?.map((source) => (
+                              <React.Fragment key={source.url}>
+                                <a
+                                  href={source.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={styles.sourceLink}
+                                >
+                                  {source.title || source.url}
+                                </a>
+                                {isLikelyMediaUrl(normalizeHttpUrl(source.url)) && renderMediaUrlPreview(source.url, source.title || source.url, `${message.id}-${source.url}`)}
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
 
-                {(sending || savingConfig) && (
-                  <div
-                    className={styles.thinkingMessage}
-                    role="status"
-                    aria-live="polite"
-                    aria-label={thinkingAction}
-                    title={thinkingAction}
-                  >
-                    <span className={styles.thinkingText}>
-                      {thinkingAction}
-                    </span>
+                    {(sending || savingConfig) && (
+                      <div
+                        className={styles.thinkingMessage}
+                        role="status"
+                        aria-live="polite"
+                        aria-label={thinkingAction}
+                        title={thinkingAction}
+                      >
+                        <span className={styles.thinkingText}>
+                          {thinkingAction}
+                        </span>
+                      </div>
+                    )}
+                    <div ref={endRef} />
                   </div>
                 )}
-                <div ref={endRef} />
               </div>
-            )}
-          </div>
 
-          <footer className={styles.composer}>
-            {voiceIsActive ? (
-              <div className={styles.voiceComposer} aria-label="Grabación de voz en curso">
-                <div className={styles.voiceWaveArea}>
-                  <div className={styles.voiceWaveform} aria-hidden="true">
-                    {voiceBars.map((height, index) => (
-                      <span
-                        key={`voice-bar-${index}`}
-                        className={styles.voiceBar}
-                        style={{ '--voice-bar-height': `${height}px` } as React.CSSProperties}
-                      />
-                    ))}
+              <footer className={styles.composer}>
+                {voiceIsActive ? (
+                  <div className={styles.voiceComposer} aria-label="Grabación de voz en curso">
+                    <div className={styles.voiceWaveArea}>
+                      <div className={styles.voiceWaveform} aria-hidden="true">
+                        {voiceBars.map((height, index) => (
+                          <span
+                            key={`voice-bar-${index}`}
+                            className={styles.voiceBar}
+                            style={{ '--voice-bar-height': `${height}px` } as React.CSSProperties}
+                          />
+                        ))}
+                      </div>
+                      <span className={styles.voiceTranscriptPreview} aria-live="polite">
+                        {voiceTranscript || (voiceState === 'finalizing' ? 'Terminando transcripción...' : 'Escuchando...')}
+                      </span>
+                    </div>
+                    <span className={styles.voiceTimer}>{formattedVoiceElapsed}</span>
+                    <button
+                      type="button"
+                      className={styles.voicePauseButton}
+                      onClick={() => finishVoiceRecording('draft')}
+                      disabled={voiceState === 'finalizing'}
+                      aria-label="Pausar y pasar texto al mensaje"
+                      title="Pausar y editar texto"
+                    >
+                      <Pause size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.voiceSendButton}
+                      onClick={() => finishVoiceRecording('send')}
+                      disabled={voiceState === 'finalizing'}
+                      aria-label="Enviar transcripción al agente"
+                      title="Enviar transcripción"
+                    >
+                      <SendHorizonal size={17} />
+                    </button>
                   </div>
-                  <span className={styles.voiceTranscriptPreview} aria-live="polite">
-                    {voiceTranscript || (voiceState === 'finalizing' ? 'Terminando transcripción...' : 'Escuchando...')}
-                  </span>
-                </div>
-                <span className={styles.voiceTimer}>{formattedVoiceElapsed}</span>
-                <button
-                  type="button"
-                  className={styles.voicePauseButton}
-                  onClick={() => finishVoiceRecording('draft')}
-                  disabled={voiceState === 'finalizing'}
-                  aria-label="Pausar y pasar texto al mensaje"
-                  title="Pausar y editar texto"
-                >
-                  <Pause size={15} />
-                </button>
-                <button
-                  type="button"
-                  className={styles.voiceSendButton}
-                  onClick={() => finishVoiceRecording('send')}
-                  disabled={voiceState === 'finalizing'}
-                  aria-label="Enviar transcripción al agente"
-                  title="Enviar transcripción"
-                >
-                  <SendHorizonal size={17} />
-                </button>
-              </div>
-            ) : (
-              <div className={textComposerClassName} data-ristak-unstyled>
-                {attachments.length > 0 && renderAttachmentList(attachments, {
-                  removable: true,
-                  onRemove: removeAttachment
-                })}
-                <button
-                  type="button"
-                  className={styles.uploadButton}
-                  onClick={openFilePicker}
-                  disabled={savingConfig}
-                  aria-label="Agregar imagen, video o archivo"
-                  title="Agregar archivo"
-                >
-                  <Paperclip size={18} />
-                </button>
-                <button
-                  type="button"
-                  className={styles.micButton}
-                  onClick={startVoiceRecording}
-                  disabled={savingConfig}
-                  aria-label="Dictar mensaje por voz"
-                  title="Dictar mensaje por voz"
-                >
-                  <Mic size={17} />
-                </button>
-                <textarea
-                  ref={textareaRef}
-                  className={styles.textarea}
-                  value={input}
-                  placeholder={status.configured && nextOnboardingQuestion ? 'Responde para guardar contexto...' : status.configured ? 'Pregunta algo del negocio...' : needsReconnect ? 'Pega el token arriba para reconectar...' : 'Pega el token arriba o cuéntame del negocio...'}
-                  onChange={(event) => setInput(event.target.value)}
-                  onKeyDown={handleKeyDown}
-                  disabled={savingConfig}
-                  rows={1}
-                />
-                <button
-                  type="button"
-                  className={styles.sendButton}
-                  onClick={() => sendMessage()}
-                  disabled={(!input.trim() && !attachments.length) || savingConfig}
-                  aria-label="Enviar mensaje"
-                  title="Enviar mensaje"
-                >
-                  <ArrowUp size={20} />
-                </button>
-                <input
-                  ref={fileInputRef}
-                  className={styles.fileInput}
-                  type="file"
-                  multiple
-                  accept={FILE_INPUT_ACCEPT}
-                  onChange={handleFileSelection}
-                  tabIndex={-1}
-                />
-              </div>
-            )}
-            {(voiceError || attachmentError) && (
-              <div className={styles.voiceError} role="status">
-                {voiceError || attachmentError}
-              </div>
-            )}
-          </footer>
+                ) : (
+                  <div className={textComposerClassName} data-ristak-unstyled>
+                    {attachments.length > 0 && renderAttachmentList(attachments, {
+                      removable: true,
+                      onRemove: removeAttachment
+                    })}
+                    <button
+                      type="button"
+                      className={styles.uploadButton}
+                      onClick={openFilePicker}
+                      disabled={savingConfig}
+                      aria-label="Agregar imagen, video o archivo"
+                      title="Agregar archivo"
+                    >
+                      <Paperclip size={18} />
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.micButton}
+                      onClick={startVoiceRecording}
+                      disabled={savingConfig}
+                      aria-label="Dictar mensaje por voz"
+                      title="Dictar mensaje por voz"
+                    >
+                      <Mic size={17} />
+                    </button>
+                    <textarea
+                      ref={textareaRef}
+                      className={styles.textarea}
+                      value={input}
+                      placeholder={nextOnboardingQuestion ? 'Responde para guardar contexto...' : 'Pregunta algo del negocio...'}
+                      onChange={(event) => setInput(event.target.value)}
+                      onKeyDown={handleKeyDown}
+                      disabled={savingConfig}
+                      rows={1}
+                    />
+                    <button
+                      type="button"
+                      className={styles.sendButton}
+                      onClick={() => sendMessage()}
+                      disabled={(!input.trim() && !attachments.length) || savingConfig}
+                      aria-label="Enviar mensaje"
+                      title="Enviar mensaje"
+                    >
+                      <ArrowUp size={20} />
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      className={styles.fileInput}
+                      type="file"
+                      multiple
+                      accept={FILE_INPUT_ACCEPT}
+                      onChange={handleFileSelection}
+                      tabIndex={-1}
+                    />
+                  </div>
+                )}
+                {(voiceError || attachmentError) && (
+                  <div className={styles.voiceError} role="status">
+                    {voiceError || attachmentError}
+                  </div>
+                )}
+              </footer>
+            </>
+          )}
         </section>
       )}
 

@@ -84,6 +84,8 @@ const DEFAULT_AGENT_TOP_P = readBoundedNumberEnv('OPENAI_AGENT_TOP_P', 0.95, 0.0
 const ACTION_AGENT_TEMPERATURE = readBoundedNumberEnv('OPENAI_AGENT_ACTION_TEMPERATURE', 0.25, 0, 2)
 const ACTION_AGENT_TOP_P = readBoundedNumberEnv('OPENAI_AGENT_ACTION_TOP_P', 0.9, 0.01, 1)
 const DEFAULT_AGENT_REASONING_EFFORT = normalizeReasoningEffort(process.env.OPENAI_AGENT_REASONING_EFFORT)
+const OPENAI_CREDENTIAL_REQUIRED_CODE = 'OPENAI_CREDENTIAL_REQUIRED'
+const OPENAI_CREDENTIAL_REQUIRED_MESSAGE = 'Primero configura una API Key válida de OpenAI en Configuración > Agente AI.'
 const LEGACY_BUSINESS_CONTEXT_FIELDS = [
   { label: 'Mercado o nicho', camelField: 'marketContext', dbField: 'market_context' },
   { label: 'Cliente ideal', camelField: 'idealCustomer', dbField: 'ideal_customer' },
@@ -106,6 +108,20 @@ export class AIAgentCredentialError extends Error {
 
 export function isAIAgentCredentialError(error) {
   return Boolean(error?.code === OPENAI_CREDENTIAL_RECONNECT_CODE || error?.name === 'AIAgentCredentialError')
+}
+
+export class AIAgentOpenAIRequiredError extends Error {
+  constructor(message = OPENAI_CREDENTIAL_REQUIRED_MESSAGE) {
+    super(message)
+    this.name = 'AIAgentOpenAIRequiredError'
+    this.code = OPENAI_CREDENTIAL_REQUIRED_CODE
+    this.statusCode = 409
+    this.needsOpenAIConfig = true
+  }
+}
+
+export function isAIAgentOpenAIRequiredError(error) {
+  return Boolean(error?.code === OPENAI_CREDENTIAL_REQUIRED_CODE || error?.name === 'AIAgentOpenAIRequiredError')
 }
 
 const paidStatuses = "('paid','succeeded','success','completed','complete')"
@@ -16641,6 +16657,14 @@ export async function getOpenAIApiKey() {
     logger.warn(`[Agente AI] Token de OpenAI guardado no se pudo desencriptar: ${error.message}`)
     throw new AIAgentCredentialError()
   }
+}
+
+export async function requireOpenAIApiKey() {
+  const apiKey = await getOpenAIApiKey()
+  if (!apiKey) {
+    throw new AIAgentOpenAIRequiredError()
+  }
+  return apiKey
 }
 
 export async function verifyOpenAIApiKey(apiKey) {

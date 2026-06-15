@@ -15,12 +15,14 @@ import {
   getFilterOptions
 } from '../controllers/conversationalAgentController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireOpenAIConfigured } from '../middleware/openAIConfigMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
 
 router.use(requireAuth)
 router.use(requireModuleAccess('ai_agent'))
+router.use(requireOpenAIConfigured)
 
 router.get('/config', getConfig)
 router.post('/config', saveConfig)

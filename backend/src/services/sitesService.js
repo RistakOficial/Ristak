@@ -20,7 +20,7 @@ import {
   getCountryFlagEmoji,
   normalizePhoneForAccount
 } from '../utils/accountLocale.js'
-import { getAIAgentConfig, getOpenAIApiKey } from './aiAgentService.js'
+import { getAIAgentConfig, requireOpenAIApiKey } from './aiAgentService.js'
 import { prepareContactCustomFieldsForStorage } from './contactCustomFieldDefinitionsService.js'
 import {
   finalizePreparedPhoneUpsert,
@@ -8086,12 +8086,7 @@ export async function createSiteWithAIHtml(input = {}) {
     }
   }
 
-  const apiKey = await getOpenAIApiKey()
-  if (!apiKey) {
-    const error = new Error('Primero configura la API key de OpenAI en Configuración.')
-    error.status = 409
-    throw error
-  }
+  const apiKey = await requireOpenAIApiKey()
 
   const agentConfig = await getAIAgentConfig({ userId: input.userId })
   const model = normalizeSitesAIModel(input.model || input.chatgptModel || input.chatgpt_model, agentConfig?.model)
@@ -8488,12 +8483,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
     )
   }
 
-  const apiKey = await getOpenAIApiKey()
-  if (!apiKey) {
-    const error = new Error('Primero configura la API key de OpenAI en Configuración.')
-    error.status = 409
-    throw error
-  }
+  const apiKey = await requireOpenAIApiKey()
 
   let aiPayload = null
   try {

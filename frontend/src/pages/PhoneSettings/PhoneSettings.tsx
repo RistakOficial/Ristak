@@ -26,7 +26,7 @@ import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAppConfig, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
+import { useAIAgentAvailability, useAppConfig, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
 import { contactsService } from '@/services/contactsService'
 import { aiAgentService, type AIAgentConfigStatus } from '@/services/aiAgentService'
@@ -129,6 +129,7 @@ export const PhoneSettings: React.FC = () => {
   const [whatsappNumberMode, setWhatsappNumberMode] = useAppConfig<WhatsAppNumberMode>('mobile_chat_whatsapp_number_mode', 'merged')
   const [aiAgentChatEnabled, setAiAgentChatEnabled] = useAppConfig<boolean>('mobile_chat_ai_agent_enabled', true)
   const [aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled] = useAppConfig<boolean>('mobile_chat_ai_reply_suggestions_enabled', false)
+  const aiAvailability = useAIAgentAvailability()
   const [showArchivedChats, setShowArchivedChats] = useAppConfig<boolean>('mobile_chat_show_archived', true)
   const [conversationSortMode, setConversationSortMode] = useAppConfig<ConversationSortMode>('mobile_chat_sort_mode', 'recent')
   const [showLastMessagePreview, setShowLastMessagePreview] = useAppConfig<boolean>('mobile_chat_show_last_preview', true)
@@ -378,6 +379,15 @@ export const PhoneSettings: React.FC = () => {
   }
 
   const saveRefinedBusinessContext = useCallback(async (answer: string, successMessage: string) => {
+    if (!aiAvailability.configured) {
+      const message = aiAvailability.needsReconnect
+        ? 'Reconecta OpenAI para pulir la descripción.'
+        : 'Conecta OpenAI para pulir la descripción.'
+      setBusinessContextMessage(message)
+      showToast('warning', 'OpenAI no está listo', message)
+      return false
+    }
+
     const cleanAnswer = answer.trim()
 
     if (!cleanAnswer) {
@@ -405,7 +415,7 @@ export const PhoneSettings: React.FC = () => {
     } finally {
       setBusinessContextSaving(false)
     }
-  }, [showToast])
+  }, [aiAvailability.configured, aiAvailability.needsReconnect, showToast])
 
   const completeBusinessVoiceDictation = useCallback(async (audioBlob: Blob) => {
     if (!audioBlob.size) {
@@ -438,8 +448,8 @@ export const PhoneSettings: React.FC = () => {
   const startBusinessVoiceDictation = async () => {
     if (businessVoiceState !== 'idle' || businessContextSaving || aiAgentConfigLoading) return
 
-    if (!aiAgentStatus?.configured) {
-      const message = aiAgentStatus?.needsReconnect
+    if (!aiAvailability.configured) {
+      const message = aiAvailability.needsReconnect
         ? 'Reconecta OpenAI para dictar la descripción.'
         : 'Conecta OpenAI para dictar y pulir la descripción.'
       setBusinessContextMessage(message)
@@ -571,7 +581,7 @@ export const PhoneSettings: React.FC = () => {
     }> = [
       { id: 'numbers', title: 'Números de WhatsApp', description: 'Cómo se muestran tus líneas.', meta: whatsappNumberMode === 'merged' ? 'Juntos' : 'Separados', Icon: Smartphone, tone: 'green' },
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: templates.length ? `${templates.length} guardadas` : 'Revisar', Icon: FileText, tone: 'black' },
-      { id: 'agent', title: 'Agente IA', mobileTitle: 'Agente de inteligencia artificial', description: 'Chat fijo y sugerencias.', meta: aiAgentChatEnabled ? 'Activo' : 'Apagado', Icon: Bot, tone: 'blue' },
+      { id: 'agent', title: 'Agente IA', mobileTitle: 'Agente de inteligencia artificial', description: 'Chat fijo y sugerencias.', meta: aiAvailability.configured ? aiAgentChatEnabled ? 'Activo' : 'Apagado' : 'Sin OpenAI', Icon: Bot, tone: 'blue' },
       { id: 'chats', title: 'Lista de chats', mobileTitle: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
       { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: enabledCustomFieldCount ? `${enabledCustomFieldCount} activo${enabledCustomFieldCount === 1 ? '' : 's'}` : 'Elegir', Icon: ListChecks, tone: 'gold' },
       { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: themeMeta, Icon: Sun, tone: 'blue' },
@@ -670,6 +680,7 @@ export const PhoneSettings: React.FC = () => {
   )
 
   const renderAgent = () => {
+    const aiReady = aiAvailability.configured
     const descriptionChanged = businessContextDraft.trim() !== savedBusinessContext.trim()
     const busyDescription = aiAgentConfigLoading || businessContextSaving || businessVoiceState === 'processing'
     const recording = businessVoiceState === 'recording'
@@ -682,6 +693,13 @@ export const PhoneSettings: React.FC = () => {
     return (
       <>
         <section className={styles.businessDescriptionPanel}>
+          {!aiReady && (
+            <div className={styles.emptyState}>
+              {aiAvailability.needsReconnect
+                ? 'Reconecta OpenAI para activar el agente en este celular.'
+                : 'Conecta OpenAI para activar el agente en este celular.'}
+            </div>
+          )}
           <div className={styles.businessDescriptionHeader}>
             <span><Sparkles size={18} /></span>
             <div>
@@ -706,7 +724,7 @@ export const PhoneSettings: React.FC = () => {
               type="button"
               className={`${styles.businessVoiceButton} ${recording ? styles.businessVoiceButtonRecording : ''}`}
               onClick={handleBusinessVoiceButton}
-              disabled={businessContextSaving || aiAgentConfigLoading || businessVoiceState === 'processing'}
+              disabled={!aiReady || businessContextSaving || aiAgentConfigLoading || businessVoiceState === 'processing'}
               aria-label={recording ? 'Detener dictado de descripción del negocio' : 'Dictar descripción del negocio'}
             >
               {businessVoiceState === 'processing'
@@ -722,12 +740,12 @@ export const PhoneSettings: React.FC = () => {
             <small>
               {aiAgentConfigLoading
                 ? 'Cargando descripción...'
-                : businessContextMessage || (aiAgentStatus?.configured ? 'El dictado se guarda automático al terminar.' : 'OpenAI debe estar conectado para dictar y pulir.')}
+                : businessContextMessage || (aiReady ? 'El dictado se guarda automático al terminar.' : 'OpenAI debe estar conectado para dictar y pulir.')}
             </small>
             <button
               type="button"
               onClick={handleSaveBusinessContext}
-              disabled={busyDescription || recording || !descriptionChanged || !businessContextDraft.trim()}
+              disabled={!aiReady || busyDescription || recording || !descriptionChanged || !businessContextDraft.trim()}
             >
               {businessContextSaving ? <Loader2 size={16} className={styles.spinIcon} /> : <Save size={16} />}
               Guardar
@@ -735,8 +753,8 @@ export const PhoneSettings: React.FC = () => {
           </div>
         </section>
 
-        {renderToggle('Mostrar como primer chat', 'El agente aparece fijo arriba de tus conversaciones.', aiAgentChatEnabled, (checked) => saveConfigPreference(setAiAgentChatEnabled, checked))}
-        {renderToggle('Sugerir respuestas', 'El agente puede preparar un texto para responder en chats reales.', aiReplySuggestionsEnabled, (checked) => saveConfigPreference(setAiReplySuggestionsEnabled, checked), !aiAgentChatEnabled)}
+        {renderToggle('Mostrar como primer chat', 'El agente aparece fijo arriba de tus conversaciones.', aiReady && aiAgentChatEnabled, (checked) => saveConfigPreference(setAiAgentChatEnabled, checked), !aiReady)}
+        {renderToggle('Sugerir respuestas', 'El agente puede preparar un texto para responder en chats reales.', aiReady && aiReplySuggestionsEnabled, (checked) => saveConfigPreference(setAiReplySuggestionsEnabled, checked), !aiReady || !aiAgentChatEnabled)}
       </>
     )
   }

@@ -377,7 +377,7 @@ export const AIAgentSettings: React.FC = () => {
       setSaveState('saved')
       setSaveError('')
       emitConfigChange(emptyStatus)
-      showToast('success', 'Agente AI desconectado', 'El chat seguirá visible para volver a configurarlo cuando quieras.')
+      showToast('success', 'Agente AI desconectado', 'Las funciones de inteligencia artificial quedaron bloqueadas hasta conectar OpenAI otra vez.')
     } catch (error: any) {
       showToast('error', 'Error', error?.message || 'No se pudo desconectar el agente AI')
     } finally {
@@ -388,7 +388,7 @@ export const AIAgentSettings: React.FC = () => {
   const handleDisconnect = () => {
     showConfirm(
       'Desconectar Agente AI',
-      'Se eliminará el token guardado. El chat seguirá visible, pero quedará en modo configuración.',
+      'Se eliminará el token guardado. El chat, el agente conversacional y las funciones de inteligencia artificial quedarán bloqueados.',
       disconnect,
       'Desconectar',
       'Cancelar',

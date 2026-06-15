@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Bot, Clock, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Send, Trash2, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { ArrowLeft, Bot, Clock, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Send, Trash2, X } from 'lucide-react'
 import { Button, Card, CustomSelect, TagPicker } from '@/components/common'
 import { DEFAULT_AI_MODEL, aiModelOptionGroups, aiModelOptions, getKnownAIModel } from '@/constants/aiModels'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useAIAgentAvailability } from '@/hooks'
 import {
   conversationalAgentService,
   type AgentFilterOptions,
@@ -886,7 +888,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
 }
 
 export const ConversationalAgentSettings: React.FC = () => {
+  const navigate = useNavigate()
   const { showToast, showConfirm } = useNotification()
+  const openAIAvailability = useAIAgentAvailability()
   const [config, setConfig] = useState<ConversationalAgentConfig | null>(null)
   const [agents, setAgents] = useState<ConversationalAgentDef[]>([])
   const [metrics, setMetrics] = useState<ConversationalAgentMetrics | null>(null)
@@ -911,6 +915,18 @@ export const ConversationalAgentSettings: React.FC = () => {
   useEffect(() => {
     let cancelled = false
     const load = async () => {
+      if (openAIAvailability.loading) return
+      if (!openAIAvailability.configured) {
+        setConfig(null)
+        setAgents([])
+        setMetrics(null)
+        setCalendars([])
+        setFilterOptions(undefined)
+        setSelectedAgentId(null)
+        setLoading(false)
+        return
+      }
+
       setLoading(true)
       try {
         const [nextConfig, nextAgents, nextMetrics, calendarList, nextOptions] = await Promise.all([
@@ -938,7 +954,7 @@ export const ConversationalAgentSettings: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [showToast])
+  }, [openAIAvailability.configured, openAIAvailability.loading, showToast])
 
   useEffect(() => {
     const timers = saveTimersRef.current
@@ -1060,6 +1076,44 @@ export const ConversationalAgentSettings: React.FC = () => {
   const completedConversations = metrics?.completedConversations ?? 0
   const errorEvents = metrics?.errorEvents ?? 0
   const successRate = metrics?.successRate ?? 0
+
+  if (openAIAvailability.loading) {
+    return (
+      <div className={styles.container}>
+        <Card>
+          <p className={styles.helper}>Revisando OpenAI...</p>
+        </Card>
+      </div>
+    )
+  }
+
+  if (!openAIAvailability.configured) {
+    return (
+      <div className={styles.container}>
+        <Card padding="md" className={styles.conversationSettingsCard}>
+          <div className={styles.header}>
+            <div className={styles.headerLeft}>
+              <div className={styles.iconBox}>
+                <KeyRound size={22} />
+              </div>
+              <div>
+                <h2 className={styles.title}>Conecta OpenAI primero</h2>
+                <p className={styles.description}>
+                  El agente conversacional, sus pruebas y sus respuestas quedan bloqueados hasta que guardes un token válido.
+                </p>
+              </div>
+            </div>
+            <div className={styles.headerActions}>
+              <Button onClick={() => navigate('/ai-agent/general')}>
+                <KeyRound size={16} />
+                Configurar token
+              </Button>
+            </div>
+          </div>
+        </Card>
+      </div>
+    )
+  }
 
   if (selectedAgent) {
     return (

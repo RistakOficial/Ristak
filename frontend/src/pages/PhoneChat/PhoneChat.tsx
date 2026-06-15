@@ -23,6 +23,7 @@ import {
   Forward,
   Globe2,
   Image as ImageIcon,
+  KeyRound,
   Layers,
   Languages,
   Link2,
@@ -69,7 +70,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { useAppConfig, useBottomSheetDismiss, useHighLevelConnected, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
+import { useAIAgentAvailability, useAppConfig, useBottomSheetDismiss, useHighLevelConnected, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { RistakRobot } from '@/components/ai'
 import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import {
@@ -2760,6 +2761,7 @@ export const PhoneChat: React.FC = () => {
   const [selectedChatPhoneId, setSelectedChatPhoneId] = useAppConfig<string>('mobile_chat_selected_whatsapp_phone_id', 'all')
   const [selectedHighLevelChatChannel, setSelectedHighLevelChatChannel] = useAppConfig<HighLevelChatChannel>('mobile_chat_highlevel_channel', 'whatsapp_api')
   const [aiAgentChatEnabled, setAiAgentChatEnabled] = useAppConfig<boolean>('mobile_chat_ai_agent_enabled', true)
+  const aiAvailability = useAIAgentAvailability()
   const [showArchivedChats, setShowArchivedChats] = useAppConfig<boolean>('mobile_chat_show_archived', true)
   const [conversationSortMode, setConversationSortMode] = useAppConfig<ConversationSortMode>('mobile_chat_sort_mode', 'recent')
   const [showLastMessagePreview, setShowLastMessagePreview] = useAppConfig<boolean>('mobile_chat_show_last_preview', true)
@@ -3054,6 +3056,11 @@ export const PhoneChat: React.FC = () => {
   }, [])
 
   const aiAgentConversationOpen = activeContactId === AI_AGENT_CHAT_ID
+  const openAIConfigured = aiAvailability.configured
+  const openAILoading = aiAvailability.loading
+  const openAIUnavailableMessage = aiAvailability.needsReconnect
+    ? 'Reconecta OpenAI para usar el agente de inteligencia artificial.'
+    : 'Conecta OpenAI para usar el agente de inteligencia artificial.'
 
   const startConversationBottomLock = useCallback((contactId: string | null) => {
     conversationInitialBottomLockRef.current = {
@@ -3432,7 +3439,7 @@ export const PhoneChat: React.FC = () => {
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds])
   const starredMessageIdSet = useMemo(() => new Set(starredMessageIds), [starredMessageIds])
   const archivedChatCount = archivedChatIds.length
-  const agentEnabled = Boolean(agentConfig?.enabled)
+  const agentEnabled = Boolean(openAIConfigured && agentConfig?.enabled)
   const agentDefById = useMemo(
     () => new Map(agentDefs.map((agent) => [agent.id, agent])),
     [agentDefs]
@@ -3698,7 +3705,7 @@ export const PhoneChat: React.FC = () => {
     ))
     setActiveContactId((current) => {
       if (requestedContact) return requestedContact.id
-      if (current === AI_AGENT_CHAT_ID && aiAgentChatEnabled) return current
+      if (current === AI_AGENT_CHAT_ID && aiAgentChatEnabled && openAIConfigured) return current
       if (current && nextChats.some((contact) => contact.id === current)) return current
       return null
     })
@@ -3710,7 +3717,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     return nextChats
-  }, [aiAgentChatEnabled, runConversationOpenBottomScrollSequence, startConversationBottomLock])
+  }, [aiAgentChatEnabled, openAIConfigured, runConversationOpenBottomScrollSequence, startConversationBottomLock])
 
   const loadChats = useCallback(async (options: { showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
     const silentRefresh = options.silent === true
@@ -3794,14 +3801,24 @@ export const PhoneChat: React.FC = () => {
   ])
 
   const applyAgentLiveCache = useCallback((cache: ConversationalAgentLiveCache | null) => {
-    if (!cache) return
+    if (!openAIConfigured || !cache) return
     setAgentConfig(cache.config)
     setAgentDefs(cache.agents)
     setAgentStates(mapAgentStatesByContactId(cache.states))
     setAgentDataHydrated(true)
-  }, [])
+  }, [openAIConfigured])
 
   const loadAgentData = useCallback(async (options: { includeDefinitions?: boolean } = {}) => {
+    if (openAILoading) return
+
+    if (!openAIConfigured) {
+      setAgentConfig(null)
+      setAgentDefs([])
+      setAgentStates({})
+      setAgentDataHydrated(true)
+      return
+    }
+
     const requestGeneration = agentLoadGenerationRef.current + 1
     agentLoadGenerationRef.current = requestGeneration
     const includeDefinitions = options.includeDefinitions !== false
@@ -3826,7 +3843,7 @@ export const PhoneChat: React.FC = () => {
         setAgentDataHydrated(true)
       }
     }
-  }, [])
+  }, [openAIConfigured, openAILoading])
 
   useEffect(() => {
     loadAgentData()
@@ -4293,9 +4310,25 @@ export const PhoneChat: React.FC = () => {
   }, [aiAgentChatEnabled, aiAgentConversationOpen])
 
   useEffect(() => {
-    if (aiAgentChatEnabled || !aiReplySuggestionsEnabled) return
+    if (openAILoading || openAIConfigured) return
+
+    setAiAgentHubOpen(false)
+    setAgentPickerOpen(false)
+    setAgentMenuSection('menu')
+    setAgentConfig(null)
+    setAgentDefs([])
+    setAgentStates({})
+
+    if (aiAgentConversationOpen) {
+      setConversationOpen(false)
+      setActiveContactId(null)
+    }
+  }, [aiAgentConversationOpen, openAIConfigured, openAILoading])
+
+  useEffect(() => {
+    if ((aiAgentChatEnabled && openAIConfigured) || !aiReplySuggestionsEnabled) return
     setAiReplySuggestionsEnabled(false).catch(() => undefined)
-  }, [aiAgentChatEnabled, aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled])
+  }, [aiAgentChatEnabled, aiReplySuggestionsEnabled, openAIConfigured, setAiReplySuggestionsEnabled])
 
   useEffect(() => {
     if (highLevelConnected || paymentMode !== 'partial') return
@@ -5152,6 +5185,11 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleOpenAIAgentChat = () => {
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
     closeSwipeActions()
     handleCancelVoiceDraft()
     clearMessageActionPress()
@@ -5422,6 +5460,11 @@ export const PhoneChat: React.FC = () => {
   }
 
   const openAgentSelectorScreen = () => {
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
     setAgentMenuSection('agents')
     setAgentPickerOpen(true)
     setSheet(null)
@@ -5429,6 +5472,11 @@ export const PhoneChat: React.FC = () => {
   }
 
   const toggleAgentGlobalEnabled = async () => {
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
     const nextEnabled = !agentEnabled
 
     if (nextEnabled && publishedAgentCount === 0) {
@@ -5469,6 +5517,11 @@ export const PhoneChat: React.FC = () => {
   }
 
   const openAgentGlobalMenu = () => {
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
     setAiAgentHubOpen(true)
     setAgentPickerOpen(false)
     setAgentMenuSection('menu')
@@ -5482,6 +5535,11 @@ export const PhoneChat: React.FC = () => {
 
   const openConversationAgentControls = (contact?: Contact | null) => {
     if (!contact?.id) return
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
     setActiveContactId(contact.id)
     setChatActionContactId(contact.id)
     setChatMoreMode('agentControls')
@@ -7390,6 +7448,11 @@ export const PhoneChat: React.FC = () => {
     const text = aiMessageText.trim()
     if (!text || aiSending) return
 
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
     const userMessage = createAIAgentMobileMessage('user', text)
     const nextMessages = [...aiMessages, userMessage]
     setAiMessages(nextMessages)
@@ -7423,6 +7486,11 @@ export const PhoneChat: React.FC = () => {
 
   const handleSuggestReply = async () => {
     if (!activeContact || aiSuggestionLoading) return
+
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
 
     const recentConversation = messages.slice(-10).map((message) => {
       const sender = message.direction === 'outbound' ? 'Negocio' : message.direction === 'inbound' ? 'Cliente' : 'Sistema'
@@ -8383,7 +8451,8 @@ export const PhoneChat: React.FC = () => {
 
   const renderChats = () => {
     const normalizedChatQuery = chatQuery.trim().toLowerCase()
-    const showAIAgentListItem = aiAgentChatEnabled &&
+    const showAIAgentListItem = openAIConfigured &&
+      aiAgentChatEnabled &&
       !archivedViewOpen &&
       chatFilter === 'all' &&
       (!normalizedChatQuery || 'agente inteligencia artificial ia ristak'.includes(normalizedChatQuery))
@@ -10289,18 +10358,30 @@ export const PhoneChat: React.FC = () => {
     if (activeSettingsSection === 'agent') {
       return renderSettingsDetail('Agente IA', (
         <>
-          <label className={styles.toggleRow}>
+          {!openAIConfigured && (
+            <section className={styles.settingsSection}>
+              <div className={styles.settingsSectionTitle}>
+                <KeyRound size={18} />
+                <span>
+                  <strong>OpenAI no conectado</strong>
+                  <small>Conecta el token en el sitio web para activar el chat y las sugerencias en este celular.</small>
+                </span>
+              </div>
+            </section>
+          )}
+          <label className={`${styles.toggleRow} ${!openAIConfigured ? styles.toggleRowDisabled : ''}`}>
             <span>
               <strong>Mostrar como primer chat</strong>
               <small>El agente aparece fijo arriba de tus conversaciones.</small>
             </span>
             <input
               type="checkbox"
-              checked={aiAgentChatEnabled}
+              checked={openAIConfigured && aiAgentChatEnabled}
+              disabled={!openAIConfigured}
               onChange={(event) => saveConfigPreference(setAiAgentChatEnabled, event.target.checked)}
             />
           </label>
-          <label className={`${styles.toggleRow} ${!aiAgentChatEnabled ? styles.toggleRowDisabled : ''}`}>
+          <label className={`${styles.toggleRow} ${!openAIConfigured || !aiAgentChatEnabled ? styles.toggleRowDisabled : ''}`}>
             <span>
               <strong>Sugerir respuestas</strong>
               <small>El agente puede preparar un texto para responder en chats reales.</small>
@@ -10308,7 +10389,7 @@ export const PhoneChat: React.FC = () => {
             <input
               type="checkbox"
               checked={aiReplySuggestionsEnabled}
-              disabled={!aiAgentChatEnabled}
+              disabled={!openAIConfigured || !aiAgentChatEnabled}
               onChange={(event) => saveConfigPreference(setAiReplySuggestionsEnabled, event.target.checked)}
             />
           </label>
@@ -10416,7 +10497,7 @@ export const PhoneChat: React.FC = () => {
         : []),
       { id: 'numbers', title: 'Números de WhatsApp', description: 'Cómo se muestran tus líneas.', meta: whatsappNumberMode === 'merged' ? 'Juntos' : 'Separados', Icon: Smartphone },
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: `${templates.length} guardadas`, Icon: FileText },
-      { id: 'agent', title: 'Agente IA', description: 'Chat fijo y sugerencias.', meta: aiAgentChatEnabled ? 'Activo' : 'Apagado', Icon: Bot },
+      { id: 'agent', title: 'Agente IA', description: 'Chat fijo y sugerencias.', meta: openAIConfigured ? aiAgentChatEnabled ? 'Activo' : 'Apagado' : 'Sin OpenAI', Icon: Bot },
       { id: 'chats', title: 'Lista de chats', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle },
       { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: chatThemeMeta, Icon: Sun },
       { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas y pagos.', meta: getNotificationPermissionLabel(), Icon: Bell }
