@@ -11,6 +11,20 @@ const usePostgres = !!DATABASE_URL
 
 let db
 
+const POSTGRES_CONNECT_RETRY_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  '08001',
+  '08006',
+  '53300',
+  '57P03'
+])
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
 const WHATSAPP_API_SYSTEM_CUSTOM_FIELD_KEYS = new Set([
   'whatsapp_api_provider',
   'whatsapp_api_first_message',
@@ -126,6 +140,26 @@ if (usePostgres) {
     }
   })
 
+  async function connectWithRetry() {
+    const maxAttempts = 6
+    let delayMs = 500
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await pool.connect()
+      } catch (error) {
+        const canRetry = POSTGRES_CONNECT_RETRY_CODES.has(error.code)
+        if (!canRetry || attempt === maxAttempts) {
+          throw error
+        }
+
+        logger.warn(`PostgreSQL no aceptó conexión (${error.code || error.message}). Reintentando ${attempt}/${maxAttempts}...`)
+        await sleep(delayMs)
+        delayMs = Math.min(Math.round(delayMs * 1.8), 5000)
+      }
+    }
+  }
+
   // Helper para convertir placeholders SQLite (?) a PostgreSQL ($1, $2, etc.)
   // No toca los ? que van dentro de literales de texto '...' (p. ej. filtros LIKE)
   const convertPlaceholders = (sql) => {
@@ -135,7 +169,7 @@ if (usePostgres) {
 
   db = {
     run: async (sql, params = []) => {
-      const client = await pool.connect()
+      const client = await connectWithRetry()
       try {
         // Convertir sintaxis SQLite a PostgreSQL
         sql = sql.replace(/AUTOINCREMENT/g, 'GENERATED ALWAYS AS IDENTITY')
@@ -157,7 +191,7 @@ if (usePostgres) {
     },
 
     get: async (sql, params = []) => {
-      const client = await pool.connect()
+      const client = await connectWithRetry()
       try {
         sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
         sql = convertPlaceholders(sql)
@@ -170,7 +204,7 @@ if (usePostgres) {
     },
 
     all: async (sql, params = []) => {
-      const client = await pool.connect()
+      const client = await connectWithRetry()
       try {
         sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
         sql = convertPlaceholders(sql)
@@ -183,7 +217,7 @@ if (usePostgres) {
     },
 
     exec: async (sql) => {
-      const client = await pool.connect()
+      const client = await connectWithRetry()
       try {
         sql = sql.replace(/AUTOINCREMENT/g, 'GENERATED ALWAYS AS IDENTITY')
         sql = sql.replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'SERIAL PRIMARY KEY')
