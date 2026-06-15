@@ -10,6 +10,8 @@ const MAX_FLOW_BYTES = 2 * 1024 * 1024 // 2MB: límite defensivo para el JSON de
 
 export const START_NODE_TYPE = 'start'
 const TRIGGER_LINK_WAIT_ACTIONS = new Set(['click_link', 'trigger_link_click', 'trigger-link-click'])
+const REPLY_MESSAGE_WAIT_ACTIONS = new Set(['reply_message', 'reply-message'])
+const SENT_MESSAGE_NODE_TYPES = new Set(['channel-whatsapp'])
 
 // Únicos canales conversacionales soportados (sin SMS ni Email)
 export const ALLOWED_CHANNELS = ['whatsapp', 'messenger', 'instagram']
@@ -121,6 +123,50 @@ function detectCycle(nodes, edges) {
   return nodes.some((node) => visit(node.id))
 }
 
+function hasPath(edges, from, to) {
+  if (from === to) return true
+  const adjacency = new Map()
+  edges.forEach((edge) => {
+    const list = adjacency.get(edge.sourceNodeId) || []
+    list.push(edge.targetNodeId)
+    adjacency.set(edge.sourceNodeId, list)
+  })
+
+  const queue = [from]
+  const visited = new Set([from])
+  while (queue.length > 0) {
+    const current = queue.shift()
+    for (const next of adjacency.get(current) || []) {
+      if (next === to) return true
+      if (!visited.has(next)) {
+        visited.add(next)
+        queue.push(next)
+      }
+    }
+  }
+  return false
+}
+
+function validateReplyMessageWaitSource({ node, nodes, edges, errors }) {
+  const config = isPlainObject(node.config) ? node.config : {}
+  const expectedAction = String(config.expectedAction || '')
+  const sourceId = config.mode === 'reply'
+    ? String(config.replySourceNodeId || '').trim()
+    : config.mode === 'action' && REPLY_MESSAGE_WAIT_ACTIONS.has(expectedAction)
+      ? String(config.actionResource || config.messageSourceNodeId || config.replySourceNodeId || '').trim()
+      : ''
+  if (!sourceId && config.mode !== 'action') return
+  if (config.mode === 'action' && !REPLY_MESSAGE_WAIT_ACTIONS.has(expectedAction)) return
+  if (!sourceId) {
+    errors.push('El paso Esperar necesita un mensaje enviado anterior seleccionado')
+    return
+  }
+  const sourceNode = nodes.find((candidate) => candidate.id === sourceId)
+  if (!sourceNode || !SENT_MESSAGE_NODE_TYPES.has(sourceNode.type) || !hasPath(edges, sourceId, node.id)) {
+    errors.push('El mensaje enviado seleccionado en Esperar ya no está antes de esa espera')
+  }
+}
+
 /**
  * Validación estructural mínima antes de publicar una automatización.
  * La validación detallada por tipo de paso vive en el editor (frontend);
@@ -177,6 +223,10 @@ export function validateFlowForPublish(flow) {
         errors.push('El paso Esperar necesita un clic de disparo seleccionado')
       }
     })
+
+  nodes
+    .filter((node) => node.type === 'logic-wait')
+    .forEach((node) => validateReplyMessageWaitSource({ node, nodes, edges, errors }))
 
   // Canales no soportados (SMS, Email…) en cualquier configuración
   const invalidChannels = new Set()

@@ -1875,6 +1875,8 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       offsetUnit: 'hours',
       // respuesta
       replyChannel: 'any',
+      replySourceNodeId: '',
+      replySourceName: '',
       keywords: [],
       match: 'contains',
       // acción
@@ -1956,6 +1958,9 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       if (mode === 'action' && (str(config.expectedAction) || 'click_link') === 'click_link' && !str(config.actionResource)) {
         errors.push('Selecciona el clic de disparo')
       }
+      if (mode === 'action' && str(config.expectedAction) === 'reply_message' && !str(config.actionResource)) {
+        errors.push('Selecciona el mensaje enviado que debe responder el contacto')
+      }
       if (mode === 'conditions') {
         errors.push(...validateAdvancedCondition(config.conditions).map((error) => `Condición: ${error}`))
       }
@@ -1995,7 +2000,12 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       }
       if (mode === 'reply') {
         const channel = str(config.replyChannel) === 'any' ? '' : ` por ${channelLabel(str(config.replyChannel))}`
-        return { text: `Esperar la respuesta del contacto${channel}${timeoutText}` }
+        const sourceName = triggerLinkLabel(config.replySourceName)
+        return {
+          text: sourceName
+            ? `Esperar respuesta a "${sourceName}"${channel}${timeoutText}`
+            : `Esperar la respuesta del contacto${channel}${timeoutText}`
+        }
       }
       if (mode === 'action') {
         const actions: Record<string, string> = {
@@ -2009,9 +2019,12 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         const expectedAction = str(config.expectedAction)
         const actionResourceName = triggerLinkLabel(config.actionResourceName)
         const hasActionResource = Boolean(actionResourceName || str(config.actionResource))
-        const actionText = expectedAction === 'click_link'
-          ? `reciba ${actionResourceName ? `el clic de disparo "${actionResourceName}"` : hasActionResource ? 'el clic de disparo seleccionado' : 'un clic de disparo'}`
-          : actions[expectedAction] || 'realice una acción'
+        const actionText =
+          expectedAction === 'click_link'
+            ? `reciba ${actionResourceName ? `el clic de disparo "${actionResourceName}"` : hasActionResource ? 'el clic de disparo seleccionado' : 'un clic de disparo'}`
+            : expectedAction === 'reply_message'
+              ? `responda ${actionResourceName ? `el mensaje "${actionResourceName}"` : hasActionResource ? 'el mensaje seleccionado' : 'un mensaje enviado'}`
+              : actions[expectedAction] || 'realice una acción'
         return { text: `Esperar a que ${actionText}${timeoutText}` }
       }
       if (mode === 'conditions') {

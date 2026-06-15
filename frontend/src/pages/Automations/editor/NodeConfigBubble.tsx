@@ -3,7 +3,7 @@ import { Check, ChevronRight, Copy, Loader2, Pencil, Plus, RefreshCw, Trash2, X 
 import { cn } from '@/utils/cn'
 import { CustomSelect } from './config/configPrimitives'
 import { validateNodeConfig, type ConfigField, type NodeDefinition } from './nodeRegistry'
-import { genId } from './flowUtils'
+import { genId, type WaitMessageSourceOption } from './flowUtils'
 import {
   CatalogSelect,
   CatalogTags,
@@ -35,6 +35,7 @@ interface NodeConfigBubbleProps {
   anchor: { x: number; y: number }
   bounds: { width: number; height: number }
   onChange: (config: ConfigValue) => void
+  waitMessageSources?: WaitMessageSourceOption[]
   onRefreshWebhookSample?: (endpointId: string) => Promise<Record<string, unknown> | null>
   onClose: () => void
 }
@@ -55,6 +56,7 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
   anchor,
   bounds,
   onChange,
+  waitMessageSources = [],
   onRefreshWebhookSample,
   onClose
 }) => {
@@ -679,7 +681,9 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
             allowBranches
           />
         )}
-        {definition.configComponent === 'wait' && <WaitConfigEditor config={config} onChange={onChange} />}
+        {definition.configComponent === 'wait' && (
+          <WaitConfigEditor config={config} onChange={onChange} messageSources={waitMessageSources} />
+        )}
         {definition.configComponent === 'goal' && <GoalConfigEditor config={config} onChange={onChange} />}
         {definition.configComponent === 'whatsapp' && (
           <WhatsAppConfigEditor config={config} onChange={onChange} />

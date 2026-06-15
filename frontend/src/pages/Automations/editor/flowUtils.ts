@@ -129,6 +129,81 @@ export function hasPath(edges: AutomationEdge[], from: string, to: string): bool
   return false
 }
 
+const SENT_MESSAGE_CHANNELS: Record<string, 'whatsapp' | 'messenger' | 'instagram'> = {
+  'channel-whatsapp': 'whatsapp'
+}
+
+const CHANNEL_LABELS: Record<string, string> = {
+  whatsapp: 'WhatsApp',
+  messenger: 'Messenger',
+  instagram: 'Instagram'
+}
+
+export interface WaitMessageSourceOption {
+  value: string
+  label: string
+  channel: 'whatsapp' | 'messenger' | 'instagram'
+}
+
+function str(value: unknown): string {
+  return typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
+}
+
+function shortText(value: string, max = 64): string {
+  const compact = value.replace(/\s+/g, ' ').trim()
+  return compact.length > max ? `${compact.slice(0, max - 1).trim()}...` : compact
+}
+
+function distanceToTarget(edges: AutomationEdge[], from: string, target: string): number {
+  if (from === target) return 0
+  const adjacency = buildAdjacency(edges)
+  const queue: Array<{ id: string; distance: number }> = [{ id: from, distance: 0 }]
+  const visited = new Set<string>([from])
+  while (queue.length > 0) {
+    const current = queue.shift() as { id: string; distance: number }
+    for (const next of adjacency.get(current.id) || []) {
+      if (next === target) return current.distance + 1
+      if (!visited.has(next)) {
+        visited.add(next)
+        queue.push({ id: next, distance: current.distance + 1 })
+      }
+    }
+  }
+  return Number.POSITIVE_INFINITY
+}
+
+export function getWaitMessageSourceOptions(
+  nodes: AutomationNode[],
+  edges: AutomationEdge[],
+  targetNodeId: string | null
+): WaitMessageSourceOption[] {
+  if (!targetNodeId) return []
+  return nodes
+    .filter((node) => node.id !== targetNodeId && SENT_MESSAGE_CHANNELS[node.type] && hasPath(edges, node.id, targetNodeId))
+    .map((node) => {
+      const definition = getNodeDefinition(node.type)
+      const summary = definition?.summary(node.config || {})
+      const title = str(node.config?.customTitle) || node.label || definition?.label || 'Mensaje enviado'
+      const detail = shortText(str(summary?.box) || str(summary?.text))
+      const channel = SENT_MESSAGE_CHANNELS[node.type]
+      return {
+        node,
+        distance: distanceToTarget(edges, node.id, targetNodeId),
+        option: {
+          value: node.id,
+          label: detail ? `${title} · ${detail}` : `${title} · ${CHANNEL_LABELS[channel]}`,
+          channel
+        }
+      }
+    })
+    .sort((left, right) => {
+      if (left.distance !== right.distance) return left.distance - right.distance
+      if (left.node.position.x !== right.node.position.x) return right.node.position.x - left.node.position.x
+      return right.node.position.y - left.node.position.y
+    })
+    .map((entry) => entry.option)
+}
+
 export interface ConnectionCheck {
   valid: boolean
   reason?: string

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import {
   ArrowLeft,
   CalendarClock,
@@ -12,6 +12,7 @@ import {
 import { CustomSelect } from './configPrimitives'
 import { CHANNEL_OPTIONS_WITH_ANY } from '../nodeRegistry'
 import type { AdvancedConditionConfig } from '../crmFields'
+import type { WaitMessageSourceOption } from '../flowUtils'
 import {
   CatalogSelect,
   ConfigSection,
@@ -35,6 +36,7 @@ type Config = Record<string, unknown>
 interface WaitConfigEditorProps {
   config: Config
   onChange: (config: Config) => void
+  messageSources?: WaitMessageSourceOption[]
 }
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '')
@@ -65,9 +67,35 @@ const EXPECTED_ACTIONS = [
   { value: 'custom_event', label: 'Evento personalizado' }
 ]
 
-export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onChange }) => {
+export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onChange, messageSources = [] }) => {
   const set = (patch: Config) => onChange({ ...config, ...patch })
   const mode = str(config.mode)
+  const firstMessageSource = messageSources[0]
+  const messageSourceOptions = messageSources.map((source) => ({ value: source.value, label: source.label }))
+  const expectedActionOptions = firstMessageSource
+    ? EXPECTED_ACTIONS
+    : EXPECTED_ACTIONS.filter((action) => action.value !== 'reply_message')
+
+  useEffect(() => {
+    if (!firstMessageSource) return
+    if (mode === 'reply' && !str(config.replySourceNodeId)) {
+      onChange({
+        ...config,
+        replySourceNodeId: firstMessageSource.value,
+        replySourceName: firstMessageSource.label,
+        replyChannel: firstMessageSource.channel
+      })
+      return
+    }
+    if (mode === 'action' && str(config.expectedAction) === 'reply_message' && !str(config.actionResource)) {
+      onChange({
+        ...config,
+        actionResource: firstMessageSource.value,
+        actionResourceName: firstMessageSource.label,
+        actionChannel: firstMessageSource.channel
+      })
+    }
+  }, [config, firstMessageSource, mode, onChange])
 
   // ------------------------------------------------------------ sin modo aún
   if (!mode) {
@@ -195,6 +223,27 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
 
       {mode === 'reply' && (
         <>
+          {messageSources.length > 0 && (
+            <Field
+              label="Mensaje enviado que debe responder"
+              help="Se selecciona el último mensaje anterior por defecto."
+            >
+              <CustomSelect
+                options={messageSourceOptions}
+                value={str(config.replySourceNodeId) || firstMessageSource?.value || ''}
+                onValueChange={(next) => {
+                  const selected = messageSources.find((source) => source.value === next)
+                  set({
+                    replySourceNodeId: next,
+                    replySourceName: selected?.label || next,
+                    replyChannel: selected?.channel || str(config.replyChannel) || 'any'
+                  })
+                }}
+                placeholder="Selecciona el mensaje enviado"
+                aria-label="Mensaje enviado que debe responder"
+              />
+            </Field>
+          )}
           <Field label="Canal de respuesta">
             <CustomSelect
               options={CHANNEL_OPTIONS_WITH_ANY}
@@ -252,9 +301,20 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
         <>
           <Field label="Acción esperada">
             <CustomSelect
-              options={EXPECTED_ACTIONS}
+              options={expectedActionOptions}
               value={str(config.expectedAction) || 'click_link'}
-              onValueChange={(next) => set({ expectedAction: next, actionResource: '', actionResourceName: '' })}
+              onValueChange={(next) => {
+                if (next === 'reply_message' && firstMessageSource) {
+                  set({
+                    expectedAction: next,
+                    actionResource: firstMessageSource.value,
+                    actionResourceName: firstMessageSource.label,
+                    actionChannel: firstMessageSource.channel
+                  })
+                  return
+                }
+                set({ expectedAction: next, actionResource: '', actionResourceName: '', actionChannel: 'any' })
+              }}
               aria-label="Acción esperada"
             />
           </Field>
@@ -271,22 +331,38 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
                 aria-label="Clic de disparo"
               />
             </Field>
+          ) : str(config.expectedAction) === 'reply_message' ? (
+            messageSources.length > 0 ? (
+              <Field
+                label="Mensaje enviado que debe responder"
+                help="Se selecciona el último mensaje anterior por defecto."
+              >
+                <CustomSelect
+                  options={messageSourceOptions}
+                  value={str(config.actionResource) || firstMessageSource?.value || ''}
+                  onValueChange={(next) => {
+                    const selected = messageSources.find((source) => source.value === next)
+                    set({
+                      actionResource: next,
+                      actionResourceName: selected?.label || next,
+                      actionChannel: selected?.channel || str(config.actionChannel) || 'any'
+                    })
+                  }}
+                  placeholder="Selecciona el mensaje enviado"
+                  aria-label="Mensaje enviado que debe responder"
+                />
+              </Field>
+            ) : (
+              <p className={styles.configHelp} style={{ marginTop: -6, marginBottom: 12 }}>
+                Conecta un mensaje antes de esta espera para poder esperar su respuesta.
+              </p>
+            )
           ) : (
             <Field label="Recurso relacionado (opcional)" help="Formulario, producto, calendario o evento según la acción">
               <TextInput
                 value={str(config.actionResource)}
                 placeholder="Ej. formulario demo, producto, evento…"
                 onChange={(event) => set({ actionResource: event.target.value, actionResourceName: '' })}
-              />
-            </Field>
-          )}
-          {str(config.expectedAction) === 'reply_message' && (
-            <Field label="Canal relacionado">
-              <CustomSelect
-                options={CHANNEL_OPTIONS_WITH_ANY}
-                value={str(config.actionChannel) || 'any'}
-                onValueChange={(next) => set({ actionChannel: next })}
-                aria-label="Canal"
               />
             </Field>
           )}

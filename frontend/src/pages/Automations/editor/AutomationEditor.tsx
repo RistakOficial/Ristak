@@ -60,6 +60,7 @@ import {
   genId,
   getNodeOutputs,
   getStartTriggers,
+  getWaitMessageSourceOptions,
   isStartNode,
   migrateLegacyFlow,
   nextNodePosition,
@@ -1393,6 +1394,8 @@ export const AutomationEditor: React.FC = () => {
         ? getNodeDefinition(configNode.type)
         : undefined
     : undefined
+  const waitMessageSources =
+    configNode && !config?.triggerId ? getWaitMessageSourceOptions(nodes, edges, configNode.id) : []
   const configAnchor = config
     ? {
         x: config.anchorWorld.x * configViewport.zoom + configViewport.x,
@@ -1656,6 +1659,7 @@ export const AutomationEditor: React.FC = () => {
             anchor={configAnchor}
             bounds={canvasBounds}
             onChange={handleConfigChange}
+            waitMessageSources={waitMessageSources}
             onRefreshWebhookSample={refreshWebhookSample}
             onClose={closeConfig}
           />

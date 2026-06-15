@@ -1244,16 +1244,48 @@ async function executeNode(node, ctx) {
         const timeoutMs = config.timeoutEnabled
           ? (Number(config.timeoutAmount) || 0) * (DURATION_MS[str(config.timeoutUnit) || 'hours'] || DURATION_MS.hours)
           : 0
+        const sourceId = str(config.replySourceNodeId || config.actionResource)
+        const sourceName = str(config.replySourceName || config.actionResourceName)
         return {
           wait: {
             kind: WAIT_KIND_REPLY,
-            resumeAt: timeoutMs > 0 ? new Date(Date.now() + timeoutMs).toISOString() : null
+            resumeAt: timeoutMs > 0 ? new Date(Date.now() + timeoutMs).toISOString() : null,
+            context: sourceId || sourceName
+              ? {
+                  waitExpectedAction: 'reply_message',
+                  waitActionResource: sourceId,
+                  waitActionResourceName: sourceName,
+                  waitActionChannel: str(config.replyChannel)
+                }
+              : undefined
           },
-          detail: 'Esperando la respuesta del contacto'
+          detail: sourceName ? `Esperando respuesta al mensaje "${sourceName}"` : 'Esperando la respuesta del contacto'
         }
       }
       if (mode === 'action') {
         const expectedAction = str(config.expectedAction) || 'click_link'
+        if (expectedAction === 'reply_message' || expectedAction === 'reply-message') {
+          const timeoutMs = config.timeoutEnabled
+            ? (Number(config.timeoutAmount) || 0) * (DURATION_MS[str(config.timeoutUnit) || 'hours'] || DURATION_MS.hours)
+            : 0
+          const actionResource = str(config.actionResource || config.messageSourceNodeId || config.replySourceNodeId)
+          const actionResourceName = str(config.actionResourceName || config.messageSourceName || config.replySourceName)
+          return {
+            wait: {
+              kind: WAIT_KIND_REPLY,
+              resumeAt: timeoutMs > 0 ? new Date(Date.now() + timeoutMs).toISOString() : null,
+              context: {
+                waitExpectedAction: 'reply_message',
+                waitActionResource: actionResource,
+                waitActionResourceName: actionResourceName,
+                waitActionChannel: str(config.actionChannel)
+              }
+            },
+            detail: actionResourceName
+              ? `Esperando respuesta al mensaje "${actionResourceName}"`
+              : 'Esperando respuesta al mensaje enviado'
+          }
+        }
         if (expectedAction === 'click_link' || expectedAction === 'trigger_link_click' || expectedAction === 'trigger-link-click') {
           const timeoutMs = config.timeoutEnabled
             ? (Number(config.timeoutAmount) || 0) * (DURATION_MS[str(config.timeoutUnit) || 'hours'] || DURATION_MS.hours)
@@ -1621,7 +1653,13 @@ export async function handleIncomingMessage({ contactId, phone, contactName, tex
         context: parseJson(row.context, {})
       }
       const ctx = { ...baseCtx, businessPhoneNumberId: businessPhoneNumberId || enrollment.context.businessPhoneNumberId }
-      addLog(enrollment, { nodeId: row.current_node_id, label: 'Esperar', status: 'ok', detail: 'El contacto respondió' })
+      const sourceName = str(enrollment.context.waitActionResourceName)
+      addLog(enrollment, {
+        nodeId: row.current_node_id,
+        label: 'Esperar',
+        status: 'ok',
+        detail: sourceName ? `El contacto respondió a "${sourceName}"` : 'El contacto respondió'
+      })
       const edge = edgesFrom(automation.flow, row.current_node_id, 'out')[0]
       if (edge) await runFrom(automation.flow, enrollment, edge.targetNodeId, ctx)
       else {
@@ -1966,12 +2004,13 @@ export async function processDueResumes() {
       const wasReplyTimeout = row.wait_kind === WAIT_KIND_REPLY
       const wasTriggerLinkTimeout = row.wait_kind === WAIT_KIND_TRIGGER_LINK_CLICK
       const handle = wasReplyTimeout || wasTriggerLinkTimeout ? 'timeout' : 'out'
+      const sourceName = str(enrollment.context.waitActionResourceName)
       addLog(enrollment, {
         nodeId: row.current_node_id,
         label: 'Esperar',
         status: 'ok',
         detail: wasReplyTimeout
-          ? 'No respondió a tiempo'
+          ? sourceName ? `No respondió a "${sourceName}" a tiempo` : 'No respondió a tiempo'
           : wasTriggerLinkTimeout
             ? 'No hubo clic de disparo a tiempo'
             : 'Espera terminada'

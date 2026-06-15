@@ -8,6 +8,7 @@ import {
   filtersMatch,
   evaluateConditionNode,
   handleAutomationEvent,
+  handleIncomingMessage,
   processScheduledTriggers,
   processScheduledContactEnrollments,
   enrollContactManually
@@ -279,6 +280,106 @@ test('logic-wait por clic de disparo reanuda cuando llega el trigger link config
     assert.equal(enrollment.current_node_id, 'done')
     const log = JSON.parse(enrollment.log)
     assert.equal(log.some((entry) => String(entry.detail || '').includes('Clic de disparo recibido')), true)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('logic-wait por respuesta a mensaje queda esperando y reanuda con el siguiente mensaje', async () => {
+  const suffix = randomUUID()
+  const contactId = `rstk_contact_reply_wait_${suffix}`
+  const automationId = `automation_reply_wait_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-message',
+              type: 'trigger-customer-replied',
+              config: { channel: 'any' }
+            }
+          ]
+        }
+      },
+      {
+        id: 'wait-reply',
+        type: 'logic-wait',
+        label: 'Esperar',
+        config: {
+          mode: 'action',
+          expectedAction: 'reply_message',
+          actionResource: 'msg-whatsapp-1',
+          actionResourceName: 'WhatsApp de bienvenida'
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-wait', sourceNodeId: 'start', targetNodeId: 'wait-reply' },
+      { id: 'edge-wait-done', sourceNodeId: 'wait-reply', sourceHandle: 'out', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: false }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1666${Date.now().toString().slice(-8)}`,
+        `reply-${suffix}@example.com`,
+        'Contacto Reply',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test respuesta a mensaje', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('message-received', {
+      contactId,
+      messageText: 'hola',
+      channel: 'whatsapp'
+    })
+
+    let enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.wait_kind, 'reply')
+    assert.equal(enrollment.current_node_id, 'wait-reply')
+    assert.equal(JSON.parse(enrollment.context).waitActionResource, 'msg-whatsapp-1')
+
+    await handleIncomingMessage({
+      contactId,
+      text: 'sí me interesa',
+      channel: 'whatsapp'
+    })
+
+    enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(enrollment.status, 'completed')
+    assert.equal(enrollment.current_node_id, 'done')
+    const log = JSON.parse(enrollment.log)
+    assert.equal(log.some((entry) => String(entry.detail || '').includes('respondió a "WhatsApp de bienvenida"')), true)
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
