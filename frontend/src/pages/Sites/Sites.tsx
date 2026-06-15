@@ -1021,7 +1021,16 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Formularios: usa <form data-rstk-form-id="lead-form"> y campos con name, id, data-rstk-edit-type="form_field", data-rstk-label y placeholder.
 - Radio/checkbox: agrúpalos con el mismo name y usa data-rstk-choice-actions en cada input cuando una opción tenga regla.
 - Imágenes: usa <img src="..." alt="..." data-rstk-editable="true" data-rstk-edit-type="image" data-rstk-edit-id="imagen-hero">.
-- Videos: usa <video src="..." playsinline> o iframe/embed y agrega data-rstk-edit-type="video" con data-rstk-edit-id único.
+- Videos: NUNCA dejes un <video>, <iframe>, <embed> u <object> suelto. Siempre envuélvelo en un contenedor editable con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-edit-id único, data-rstk-label y data-rstk-video-url.
+- Video MP4/WebM/MOV correcto:
+  <div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-edit-id="video-principal" data-rstk-label="Video principal" data-rstk-video-url="https://cdn.ejemplo.com/video.mp4" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:18px;">
+    <video src="https://cdn.ejemplo.com/video.mp4" controls playsinline preload="metadata" style="width:100%;height:100%;display:block;object-fit:cover;background:#000;"></video>
+  </div>
+- Video iframe/embed correcto:
+  <div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-edit-id="video-principal" data-rstk-label="Video principal" data-rstk-video-url="https://www.youtube.com/embed/VIDEO_ID" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:18px;">
+    <iframe src="https://www.youtube.com/embed/VIDEO_ID" title="Video principal" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="width:100%;height:100%;display:block;border:0;background:#000;"></iframe>
+  </div>
+- Mantén el mismo valor en data-rstk-video-url y en src para que Ristak pueda reemplazar el video desde el editor.
 - Secciones: usa data-rstk-section="Hero|Formulario|Gracias" para que el editor ubique rápido cada bloque.
 - Evita scripts de navegación automática dentro del editor; Ristak bloquea clicks, submits y window.open mientras se edita.`.trim()
 

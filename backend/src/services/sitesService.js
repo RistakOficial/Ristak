@@ -4964,7 +4964,16 @@ Marcado para edición rapida:
 - Cuando puedas, agrega también aliases data-ristak-* o data-ristack-* para compatibilidad.
 - Tipos permitidos: heading, text, button, form_label, placeholder, image, background_image, video.
 - Marca titulares, subtitulares, párrafos breves, botones, labels de formularios, placeholders, imágenes, logos, elementos con fondo de imagen y espacios de video/iframe/embed.
-- Si incluyes un video, usa URL o iframe seguro y marca el contenedor con data-rstk-edit-type="video" para que el usuario pueda reemplazarlo después.
+- Si incluyes un video, NUNCA dejes un <video>, <iframe>, <embed> u <object> suelto. Siempre envuélvelo en un contenedor editable con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-edit-id único, data-rstk-label y data-rstk-video-url.
+- Formato MP4/WebM/MOV correcto:
+  <div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-edit-id="video-principal" data-rstk-label="Video principal" data-rstk-video-url="https://cdn.ejemplo.com/video.mp4" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:18px;">
+    <video src="https://cdn.ejemplo.com/video.mp4" controls playsinline preload="metadata" style="width:100%;height:100%;display:block;object-fit:cover;background:#000;"></video>
+  </div>
+- Formato iframe/embed correcto:
+  <div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-edit-id="video-principal" data-rstk-label="Video principal" data-rstk-video-url="https://www.youtube.com/embed/VIDEO_ID" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:18px;">
+    <iframe src="https://www.youtube.com/embed/VIDEO_ID" title="Video principal" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="width:100%;height:100%;display:block;border:0;background:#000;"></iframe>
+  </div>
+- Mantén el mismo valor en data-rstk-video-url y en src para que Ristak pueda reemplazar el video desde el editor.
 - En botones editables, cuando sepas la acción, agrega data-rstk-button-actions como JSON de acciones. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
 - Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
 - Mantén también data-rstk-button-action con la primera acción para compatibilidad. Si el botón abre enlace, agrega data-rstk-button-url. Si va a una página interna, agrega data-rstk-button-page-id cuando exista un id claro.
