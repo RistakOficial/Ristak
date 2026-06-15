@@ -2442,6 +2442,14 @@ async function initTables() {
     `)
 
     await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_meta_direct_nonces (
+        nonce TEXT PRIMARY KEY,
+        purpose TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_qr_auth_state (
         phone_number_id TEXT NOT NULL,
         auth_key TEXT NOT NULL,
@@ -2479,6 +2487,7 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_wamid ON whatsapp_api_messages(wamid)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_meta_message ON whatsapp_api_messages(meta_message_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_provider_origin ON whatsapp_api_messages(provider, origin)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_meta_direct_nonces_created ON whatsapp_meta_direct_nonces(created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_scheduled_chat_messages_contact ON scheduled_chat_messages(contact_id, status, scheduled_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_scheduled_chat_messages_due ON scheduled_chat_messages(status, scheduled_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_attr_contact ON whatsapp_api_attribution(contact_id)')
