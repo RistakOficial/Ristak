@@ -332,11 +332,7 @@
 }
 
 .importedCodeSourcePane {
-  grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-.importedCodeSourcePaneWithAssistant {
-  grid-template-rows: auto auto minmax(0, 1fr) 190px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
 .importedCodePreviewPane {
@@ -393,13 +389,6 @@
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-}
-
-.importedCodeAssistantButton {
-  height: 30px;
-  min-height: 30px;
-  padding-inline: 10px;
-  white-space: nowrap;
 }
 
 .importedCodeDirtyStatus,
@@ -685,12 +674,11 @@
 .importedCodeAssistantPanel {
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
-  gap: 8px;
+  gap: 7px;
   border-top: 1px solid var(--rstk-assistant-border);
   background: var(--rstk-assistant-bg);
   color: var(--rstk-assistant-text);
-  padding: 8px 10px 10px;
+  padding: 8px 10px 9px;
   overflow: hidden;
   color-scheme: normal;
 }
@@ -702,6 +690,14 @@
 :global(body.dark) .importedCodeAssistantPanel,
 :global([data-theme="dark"]) .importedCodeAssistantPanel {
   color-scheme: dark;
+}
+
+.importedCodeAssistantHeader {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .importedCodeAssistantTitle {
@@ -723,8 +719,7 @@
   gap: 7px;
 }
 
-.importedCodeAssistantTitle span,
-.importedCodeAssistantModel span {
+.importedCodeAssistantTitle span {
   color: var(--rstk-assistant-muted);
   font-size: 0.66rem;
   font-weight: 780;
@@ -742,48 +737,6 @@
   white-space: nowrap;
 }
 
-.importedCodeAssistantModel {
-  min-width: min(210px, 44%);
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 7px;
-}
-
-.importedCodeAssistantModel :global(.customSelect),
-.importedCodeAssistantModel select {
-  min-height: 32px;
-  border-color: var(--rstk-assistant-border) !important;
-  background: var(--rstk-assistant-control) !important;
-  color: var(--rstk-assistant-text) !important;
-}
-
-.importedCodeAssistantRun {
-  min-height: 0;
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  overflow: auto;
-  scrollbar-gutter: stable;
-  padding: 2px 2px 0 0;
-}
-
-.importedCodeAssistantEmptyState {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--rstk-assistant-muted);
-  padding: 4px 2px;
-  font-size: 12.5px;
-  font-weight: 680;
-  line-height: 1.35;
-}
-
-.importedCodeAssistantEmptyState svg {
-  flex: 0 0 auto;
-  color: var(--rstk-assistant-secondary);
-}
-
 .importedCodeAssistantGlassStatus {
   width: max-content;
   max-width: 100%;
@@ -799,7 +752,7 @@
     inset 0 1px 0 color-mix(in srgb, var(--color-background-primary) 58%, transparent),
     0 10px 26px -22px rgba(15, 23, 42, 0.56);
   color: var(--rstk-assistant-text);
-  padding: 8px 11px;
+  padding: 5px 9px;
 }
 
 .importedCodeAssistantGlassStatus strong {
@@ -826,30 +779,16 @@
   animation: importedAssistantGlassPulse 1.16s ease-in-out infinite;
 }
 
-.importedCodeAssistantDock {
-  min-width: 0;
-  display: grid;
-  gap: 7px;
-}
-
-.importedCodeAssistantDockMeta {
-  min-width: 0;
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 12px;
-}
-
 .importedCodeAssistantComposer {
   --rstk-assistant-composer-action: 40px;
   min-width: 0;
   display: grid;
-  grid-template-columns: var(--rstk-assistant-composer-action) minmax(0, 1fr) var(--rstk-assistant-composer-action);
-  grid-template-areas: "mic input send";
+  grid-template-columns: var(--rstk-assistant-composer-action) minmax(0, 1fr) minmax(150px, 190px) var(--rstk-assistant-composer-action);
+  grid-template-areas: "mic input model send";
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 7px;
+  padding: 6px;
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 26px;
   background: color-mix(in srgb, var(--color-background-primary) 94%, var(--color-background-tertiary) 6%);
@@ -878,6 +817,10 @@
   display: none;
 }
 
+.importedCodeAssistantComposerVoiceActive .importedCodeAssistantInlineModel {
+  display: none;
+}
+
 .importedCodeAssistantInputWrap textarea {
   width: 100%;
   min-height: 40px;
@@ -893,6 +836,22 @@
   line-height: 1.45;
   outline: none;
   overflow-y: auto;
+  box-shadow: none !important;
+}
+
+.importedCodeAssistantInlineModel {
+  grid-area: model;
+  min-width: 0;
+}
+
+.importedCodeAssistantInlineModel :global(.customSelectTrigger),
+.importedCodeAssistantInlineModel button {
+  min-height: 38px;
+  height: 38px;
+  border-color: var(--rstk-assistant-border) !important;
+  border-radius: 999px !important;
+  background: var(--rstk-assistant-control) !important;
+  color: var(--rstk-assistant-text) !important;
   box-shadow: none !important;
 }
 

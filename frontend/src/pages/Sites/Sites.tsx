@@ -12576,7 +12576,6 @@ const ImportedHtmlEditorPanel: React.FC<{
   const codeEditorWidthRef = useRef(50)
   const [codeEditorTheme, setCodeEditorTheme] = useState<ImportedCodeTheme>('dark')
   const [codeSelectionNotice, setCodeSelectionNotice] = useState('')
-  const [codeAssistantOpen, setCodeAssistantOpen] = useState(false)
   const [codeAssistantPrompt, setCodeAssistantPrompt] = useState('')
   const [codeAssistantModel, setCodeAssistantModel] = useState(getDefaultSiteChatGPTModel(true))
   const [codeAssistantSaving, setCodeAssistantSaving] = useState(false)
@@ -14975,7 +14974,6 @@ const ImportedHtmlEditorPanel: React.FC<{
       setCodeElementEditor(null)
       setElementPopoverPosition(null)
       setContentError('')
-      setCodeAssistantOpen(false)
       setCodeAssistantError('')
       codeAssistantVoiceDictation.cancelVoice()
       selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
@@ -15126,7 +15124,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         style={{ '--imported-code-source-width': `${codeEditorWidth}%` } as React.CSSProperties}
       >
         <section
-          className={`${styles.importedCodeSourcePane} ${codeAssistantOpen ? styles.importedCodeSourcePaneWithAssistant : ''} ${codeEditorTheme === 'dark' ? styles.importedCodeSourcePaneDark : styles.importedCodeSourcePaneLight} ${activeCodeDiagnostics.length ? styles.importedCodeSourcePaneInvalid : ''}`}
+          className={`${styles.importedCodeSourcePane} ${codeEditorTheme === 'dark' ? styles.importedCodeSourcePaneDark : styles.importedCodeSourcePaneLight} ${activeCodeDiagnostics.length ? styles.importedCodeSourcePaneInvalid : ''}`}
         >
           <div className={styles.importedCodePaneHeader}>
             <div className={styles.importedCodeTitleBlock}>
@@ -15140,21 +15138,6 @@ const ImportedHtmlEditorPanel: React.FC<{
                   {activeCodeDiagnostics[0]}
                 </span>
               )}
-              <Button
-                type="button"
-                variant={codeAssistantOpen ? 'primary' : 'secondary'}
-                size="sm"
-                className={styles.importedCodeAssistantButton}
-                onClick={() => {
-                  setCodeAssistantOpen(current => !current)
-                  setCodeAssistantError('')
-                }}
-                disabled={!aiAgentAvailable}
-                title={aiAgentAvailable ? 'Abrir asistente de código' : 'Configura una clave de OpenAI para usar el asistente de código'}
-              >
-                <Sparkles size={14} />
-                Asistente de código
-              </Button>
               <strong className={activeCodeDirty ? styles.importedCodeDirtyStatus : styles.importedCodeSavedStatus}>
                 {activeCodeDirty ? 'Cambios sin guardar' : 'Guardado'}
               </strong>
@@ -15218,91 +15201,79 @@ const ImportedHtmlEditorPanel: React.FC<{
               <span>No hay HTML editable para esta página.</span>
             </div>
           )}
-          {codeAssistantOpen && (
-            <div className={styles.importedCodeAssistantPanel}>
-              <div className={styles.importedCodeAssistantRun} aria-live="polite">
-                {codeAssistantActivityLabel ? (
-                  <div className={`${styles.importedCodeAssistantGlassStatus} ${codeAssistantSaving ? styles.importedCodeAssistantGlassStatusActive : ''}`}>
-                    <span className={styles.importedCodeAssistantGlassDot} aria-hidden="true" />
-                    <strong>{codeAssistantActivityLabel}</strong>
-                  </div>
-                ) : (
-                  <div className={styles.importedCodeAssistantEmptyState}>
-                    <Sparkles size={15} />
-                    <span>Escribe una instrucción abajo. Si seleccionas un elemento en la vista, el asistente usará esa zona como contexto.</span>
-                  </div>
-                )}
+          <div className={styles.importedCodeAssistantPanel}>
+            <div className={styles.importedCodeAssistantHeader}>
+              <div className={styles.importedCodeAssistantTitle}>
+                <Sparkles size={14} />
+                <div>
+                  <span>Asistente de código</span>
+                  <strong>Solo ve el HTML activo</strong>
+                </div>
               </div>
-              {codeAssistantError && (
-                <div className={styles.importedAIRegionError}>
-                  <AlertTriangle size={14} />
-                  <span>{codeAssistantError}</span>
+              {codeAssistantActivityLabel && (
+                <div className={`${styles.importedCodeAssistantGlassStatus} ${codeAssistantSaving ? styles.importedCodeAssistantGlassStatusActive : ''}`} aria-live="polite">
+                  <span className={styles.importedCodeAssistantGlassDot} aria-hidden="true" />
+                  <strong>{codeAssistantActivityLabel}</strong>
                 </div>
               )}
-              <div className={styles.importedCodeAssistantDock}>
-                <div className={styles.importedCodeAssistantDockMeta}>
-                  <div className={styles.importedCodeAssistantTitle}>
-                    <Sparkles size={15} />
-                    <div>
-                      <span>Asistente de código</span>
-                      <strong>Solo ve el HTML activo</strong>
-                    </div>
-                  </div>
-                  <label className={styles.importedCodeAssistantModel}>
-                    <span>Modelo</span>
-                    <CustomSelect
-                      value={codeAssistantModel}
-                      portal
-                      disabled={codeAssistantSaving}
-                      onChange={(event) => setCodeAssistantModel(event.target.value)}
-                    >
-                      {chatgptSiteModelOptions.map(option => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </CustomSelect>
-                  </label>
-                </div>
-                <div
-                  className={`${styles.importedCodeAssistantComposer} ${codeAssistantVoiceDictation.voiceIsActive ? styles.importedCodeAssistantComposerVoiceActive : ''}`}
-                  data-ristak-unstyled
-                >
-                  <AIVoiceDictationControl
-                    voice={codeAssistantVoiceDictation}
-                    disabled={codeAssistantSaving}
-                    className={styles.importedCodeAssistantVoice}
-                  />
-                  <label className={styles.importedCodeAssistantInputWrap}>
-                    <textarea
-                      rows={1}
-                      value={codeAssistantPrompt}
-                      disabled={codeAssistantSaving}
-                      data-ristak-unstyled="true"
-                      placeholder="Dile qué quieres cambiar..."
-                      name="rstk-imported-code-assistant-prompt"
-                      {...importedEditorNoAutocompleteAttrs}
-                      onChange={(event) => setCodeAssistantPrompt(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key !== 'Enter' || event.shiftKey) return
-                        event.preventDefault()
-                        if (!activeCodeFile || !codeAssistantPrompt.trim() || codeAssistantSaving) return
-                        void applyCodeAssistantEdit()
-                      }}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    className={styles.importedCodeAssistantSendButton}
-                    onClick={() => void applyCodeAssistantEdit()}
-                    disabled={!activeCodeFile || !codeAssistantPrompt.trim() || codeAssistantSaving}
-                    aria-label={codeAssistantSaving ? 'Analizando cambio' : 'Enviar instrucción'}
-                    title={codeAssistantSaving ? 'Analizando cambio' : 'Enviar instrucción'}
-                  >
-                    {codeAssistantSaving ? <RefreshCw size={18} /> : <ArrowUp size={20} />}
-                  </button>
-                </div>
-              </div>
             </div>
-          )}
+            {codeAssistantError && (
+              <div className={styles.importedAIRegionError}>
+                <AlertTriangle size={14} />
+                <span>{codeAssistantError}</span>
+              </div>
+            )}
+            <div
+              className={`${styles.importedCodeAssistantComposer} ${codeAssistantVoiceDictation.voiceIsActive ? styles.importedCodeAssistantComposerVoiceActive : ''}`}
+              data-ristak-unstyled
+            >
+              <AIVoiceDictationControl
+                voice={codeAssistantVoiceDictation}
+                disabled={codeAssistantSaving || !aiAgentAvailable}
+                className={styles.importedCodeAssistantVoice}
+              />
+              <label className={styles.importedCodeAssistantInputWrap}>
+                <textarea
+                  rows={1}
+                  value={codeAssistantPrompt}
+                  disabled={codeAssistantSaving || !aiAgentAvailable}
+                  data-ristak-unstyled="true"
+                  placeholder={aiAgentAvailable ? 'Dile qué quieres cambiar...' : 'Configura OpenAI para usar el asistente...'}
+                  name="rstk-imported-code-assistant-prompt"
+                  {...importedEditorNoAutocompleteAttrs}
+                  onChange={(event) => setCodeAssistantPrompt(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' || event.shiftKey) return
+                    event.preventDefault()
+                    if (!activeCodeFile || !codeAssistantPrompt.trim() || codeAssistantSaving || !aiAgentAvailable) return
+                    void applyCodeAssistantEdit()
+                  }}
+                />
+              </label>
+              <CustomSelect
+                value={codeAssistantModel}
+                portal
+                disabled={codeAssistantSaving || !aiAgentAvailable}
+                className={styles.importedCodeAssistantInlineModel}
+                aria-label="Modelo del asistente de código"
+                onChange={(event) => setCodeAssistantModel(event.target.value)}
+              >
+                {chatgptSiteModelOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+              <button
+                type="button"
+                className={styles.importedCodeAssistantSendButton}
+                onClick={() => void applyCodeAssistantEdit()}
+                disabled={!aiAgentAvailable || !activeCodeFile || !codeAssistantPrompt.trim() || codeAssistantSaving}
+                aria-label={codeAssistantSaving ? 'Analizando cambio' : 'Enviar instrucción'}
+                title={codeAssistantSaving ? 'Analizando cambio' : 'Enviar instrucción'}
+              >
+                {codeAssistantSaving ? <RefreshCw size={18} /> : <ArrowUp size={20} />}
+              </button>
+            </div>
+          </div>
         </section>
 
         <div
