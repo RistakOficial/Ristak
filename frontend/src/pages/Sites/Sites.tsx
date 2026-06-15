@@ -12460,7 +12460,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const codeSplitRef = useRef<HTMLDivElement | null>(null)
   const codeHighlightRef = useRef<HTMLPreElement | null>(null)
   const codeTextareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const codeAssistantHeightRef = useRef(286)
+  const codeAssistantHeightRef = useRef(184)
   const selectedIframeElementRef = useRef<HTMLElement | null>(null)
   const selectedCodePreviewElementRef = useRef<HTMLElement | null>(null)
   const elementPopoverRef = useRef<HTMLDivElement | null>(null)
@@ -12499,7 +12499,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [codeAssistantModel, setCodeAssistantModel] = useState(getDefaultSiteChatGPTModel(true))
   const [codeAssistantSaving, setCodeAssistantSaving] = useState(false)
   const [codeAssistantError, setCodeAssistantError] = useState('')
-  const [codeAssistantHeight, setCodeAssistantHeight] = useState(286)
+  const [codeAssistantHeight, setCodeAssistantHeight] = useState(184)
   const [codeAssistantWorkSteps, setCodeAssistantWorkSteps] = useState<ImportedCodeAssistantWorkStep[]>([])
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
@@ -12739,7 +12739,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     let latestHeight = startHeight
 
     const updateHeight = (clientY: number) => {
-      latestHeight = Math.min(540, Math.max(188, startHeight - (clientY - startY)))
+      latestHeight = Math.min(540, Math.max(156, startHeight - (clientY - startY)))
       if (frame) return
       frame = window.requestAnimationFrame(() => {
         frame = 0
@@ -15062,41 +15062,19 @@ const ImportedHtmlEditorPanel: React.FC<{
                 aria-label="Cambiar altura del asistente AI"
                 tabIndex={0}
                 onPointerDown={handleCodeAssistantResizePointerDown}
-                onDoubleClick={() => setCodeAssistantHeight(286)}
+                onDoubleClick={() => setCodeAssistantHeight(184)}
                 onKeyDown={(event) => {
                   if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
                   event.preventDefault()
                   if (event.key === 'ArrowUp') setCodeAssistantHeight(current => Math.min(540, current + 24))
-                  if (event.key === 'ArrowDown') setCodeAssistantHeight(current => Math.max(188, current - 24))
-                  if (event.key === 'Home') setCodeAssistantHeight(188)
+                  if (event.key === 'ArrowDown') setCodeAssistantHeight(current => Math.max(156, current - 24))
+                  if (event.key === 'Home') setCodeAssistantHeight(156)
                   if (event.key === 'End') setCodeAssistantHeight(540)
                 }}
               >
                 <span />
               </div>
               <div className={styles.importedCodeAssistantPanel}>
-                <div className={styles.importedCodeAssistantHeader}>
-                  <div className={styles.importedCodeAssistantTitle}>
-                    <Sparkles size={16} />
-                    <div>
-                      <span>Asistente AI</span>
-                      <strong>Edita quirúrgicamente el HTML activo</strong>
-                    </div>
-                  </div>
-                  <label className={styles.importedCodeAssistantModel}>
-                    <span>Modelo</span>
-                    <CustomSelect
-                      value={codeAssistantModel}
-                      portal
-                      disabled={codeAssistantSaving}
-                      onChange={(event) => setCodeAssistantModel(event.target.value)}
-                    >
-                      {chatgptSiteModelOptions.map(option => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </CustomSelect>
-                  </label>
-                </div>
                 <div className={styles.importedCodeAssistantRun} aria-live="polite">
                   {codeAssistantWorkSteps.length > 0 ? (
                     <>
@@ -15123,7 +15101,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                   ) : (
                     <div className={styles.importedCodeAssistantEmptyState}>
                       <Sparkles size={15} />
-                      <span>Escribe una instrucción. Si seleccionas un elemento en la vista, el asistente usará esa zona como contexto.</span>
+                      <span>Escribe una instrucción abajo. Si seleccionas un elemento en la vista, el asistente usará esa zona como contexto.</span>
                     </div>
                   )}
                 </div>
@@ -15133,41 +15111,67 @@ const ImportedHtmlEditorPanel: React.FC<{
                     <span>{codeAssistantError}</span>
                   </div>
                 )}
-                <div className={styles.importedCodeAssistantComposer}>
-                  <AIVoiceDictationControl
-                    voice={codeAssistantVoiceDictation}
-                    disabled={codeAssistantSaving}
-                    className={styles.importedCodeAssistantVoice}
-                  />
-                  <label className={styles.importedCodeAssistantInputWrap}>
-                    <textarea
-                      rows={1}
-                      value={codeAssistantPrompt}
-                      disabled={codeAssistantSaving}
-                      data-ristak-unstyled="true"
-                      placeholder="Dile qué quieres cambiar en este HTML..."
-                      name="rstk-imported-code-assistant-prompt"
-                      {...importedEditorNoAutocompleteAttrs}
-                      onChange={(event) => setCodeAssistantPrompt(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key !== 'Enter' || event.shiftKey) return
-                        event.preventDefault()
-                        if (!activeCodeFile || !codeAssistantPrompt.trim() || codeAssistantSaving) return
-                        void applyCodeAssistantEdit()
-                      }}
-                    />
-                  </label>
-                  <Button
-                    type="button"
-                    size="sm"
-                    className={styles.importedCodeAssistantSendButton}
-                    onClick={() => void applyCodeAssistantEdit()}
-                    disabled={!activeCodeFile || !codeAssistantPrompt.trim() || codeAssistantSaving}
-                    loading={codeAssistantSaving}
+                <div className={styles.importedCodeAssistantDock}>
+                  <div className={styles.importedCodeAssistantDockMeta}>
+                    <div className={styles.importedCodeAssistantTitle}>
+                      <Sparkles size={15} />
+                      <div>
+                        <span>Asistente AI</span>
+                        <strong>Edita el HTML activo</strong>
+                      </div>
+                    </div>
+                    <label className={styles.importedCodeAssistantModel}>
+                      <span>Modelo</span>
+                      <CustomSelect
+                        value={codeAssistantModel}
+                        portal
+                        disabled={codeAssistantSaving}
+                        onChange={(event) => setCodeAssistantModel(event.target.value)}
+                      >
+                        {chatgptSiteModelOptions.map(option => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </CustomSelect>
+                    </label>
+                  </div>
+                  <div
+                    className={`${styles.importedCodeAssistantComposer} ${codeAssistantVoiceDictation.voiceIsActive ? styles.importedCodeAssistantComposerVoiceActive : ''}`}
+                    data-ristak-unstyled
                   >
-                    <Send size={14} />
-                    {codeAssistantSaving ? 'Analizando...' : 'Enviar'}
-                  </Button>
+                    <AIVoiceDictationControl
+                      voice={codeAssistantVoiceDictation}
+                      disabled={codeAssistantSaving}
+                      className={styles.importedCodeAssistantVoice}
+                    />
+                    <label className={styles.importedCodeAssistantInputWrap}>
+                      <textarea
+                        rows={1}
+                        value={codeAssistantPrompt}
+                        disabled={codeAssistantSaving}
+                        data-ristak-unstyled="true"
+                        placeholder="Dile qué quieres cambiar..."
+                        name="rstk-imported-code-assistant-prompt"
+                        {...importedEditorNoAutocompleteAttrs}
+                        onChange={(event) => setCodeAssistantPrompt(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' || event.shiftKey) return
+                          event.preventDefault()
+                          if (!activeCodeFile || !codeAssistantPrompt.trim() || codeAssistantSaving) return
+                          void applyCodeAssistantEdit()
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className={styles.importedCodeAssistantSendButton}
+                      onClick={() => void applyCodeAssistantEdit()}
+                      disabled={!activeCodeFile || !codeAssistantPrompt.trim() || codeAssistantSaving}
+                      aria-label={codeAssistantSaving ? 'Analizando cambio' : 'Enviar instrucción'}
+                      title={codeAssistantSaving ? 'Analizando cambio' : 'Enviar instrucción'}
+                    >
+                      {codeAssistantSaving ? <RefreshCw size={18} /> : <ArrowUp size={20} />}
+                    </button>
+                  </div>
                 </div>
               </div>
             </>

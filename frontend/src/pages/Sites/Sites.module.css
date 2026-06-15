@@ -336,7 +336,7 @@
 }
 
 .importedCodeSourcePaneWithAssistant {
-  grid-template-rows: auto auto minmax(0, 1fr) auto minmax(188px, var(--imported-code-assistant-height, 286px));
+  grid-template-rows: auto auto minmax(0, 1fr) auto minmax(156px, var(--imported-code-assistant-height, 184px));
 }
 
 .importedCodePreviewPane {
@@ -717,12 +717,12 @@
 .importedCodeAssistantPanel {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
-  gap: 9px;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  gap: 8px;
   border-top: 1px solid var(--rstk-assistant-border);
   background: var(--rstk-assistant-bg);
   color: var(--rstk-assistant-text);
-  padding: 12px;
+  padding: 8px 10px 10px;
   overflow: hidden;
   color-scheme: normal;
 }
@@ -736,36 +736,29 @@
   color-scheme: dark;
 }
 
-.importedCodeAssistantHeader {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
 .importedCodeAssistantTitle {
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
 }
 
 .importedCodeAssistantTitle > svg {
   flex: 0 0 auto;
-  color: var(--color-primary);
+  color: var(--rstk-assistant-secondary);
 }
 
 .importedCodeAssistantTitle div {
   min-width: 0;
-  display: grid;
-  gap: 1px;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
 }
 
 .importedCodeAssistantTitle span,
 .importedCodeAssistantModel span {
   color: var(--rstk-assistant-muted);
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   font-weight: 780;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -775,21 +768,23 @@
   min-width: 0;
   overflow: hidden;
   color: var(--rstk-assistant-text);
-  font-size: 0.82rem;
-  font-weight: 780;
+  font-size: 0.74rem;
+  font-weight: 720;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .importedCodeAssistantModel {
-  min-width: 210px;
+  min-width: min(210px, 44%);
   display: grid;
-  gap: 4px;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
 }
 
 .importedCodeAssistantModel :global(.customSelect),
 .importedCodeAssistantModel select {
-  min-height: 34px;
+  min-height: 32px;
   border-color: var(--rstk-assistant-border) !important;
   background: var(--rstk-assistant-control) !important;
   color: var(--rstk-assistant-text) !important;
@@ -799,35 +794,31 @@
   min-height: 0;
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
   overflow: auto;
   scrollbar-gutter: stable;
-  padding-right: 2px;
+  padding: 2px 2px 0 0;
 }
 
 .importedCodeAssistantEmptyState {
-  min-height: 86px;
   display: flex;
   align-items: center;
-  gap: 9px;
-  border: 1px dashed var(--rstk-assistant-border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--rstk-assistant-surface) 86%, var(--color-primary) 14%);
+  gap: 7px;
   color: var(--rstk-assistant-muted);
-  padding: 12px;
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1.45;
+  padding: 4px 2px;
+  font-size: 12.5px;
+  font-weight: 680;
+  line-height: 1.35;
 }
 
 .importedCodeAssistantEmptyState svg {
   flex: 0 0 auto;
-  color: var(--color-primary);
+  color: var(--rstk-assistant-secondary);
 }
 
 .importedCodeAssistantLinearTrack {
   position: relative;
-  height: 7px;
+  height: 5px;
   overflow: hidden;
   border-radius: 999px;
   background: color-mix(in srgb, var(--rstk-assistant-border) 58%, transparent);
@@ -859,10 +850,8 @@
   min-height: 0;
   display: grid;
   gap: 6px;
-  border: 1px solid var(--rstk-assistant-border);
-  border-radius: 8px;
-  background: var(--rstk-assistant-surface);
-  padding: 7px;
+  background: transparent;
+  padding: 0;
   overflow: auto;
   scrollbar-gutter: stable;
 }
@@ -873,7 +862,7 @@
   align-items: center;
   gap: 7px;
   border-radius: 7px;
-  padding: 6px 7px;
+  padding: 5px 4px;
   color: var(--rstk-assistant-muted);
 }
 
@@ -920,7 +909,7 @@
 }
 
 .importedCodeAssistantProgressActive {
-  background: var(--rstk-assistant-chip);
+  background: color-mix(in srgb, var(--rstk-assistant-chip) 52%, transparent);
   color: var(--rstk-assistant-text);
 }
 
@@ -948,34 +937,74 @@
   color: var(--color-status-error);
 }
 
-.importedCodeAssistantComposer {
+.importedCodeAssistantDock {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.importedCodeAssistantDockMeta {
   min-width: 0;
   display: flex;
-  align-items: stretch;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.importedCodeAssistantComposer {
+  --rstk-assistant-composer-action: 40px;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: var(--rstk-assistant-composer-action) minmax(0, 1fr) var(--rstk-assistant-composer-action);
+  grid-template-areas: "mic input send";
+  align-items: center;
   gap: 8px;
+  width: 100%;
+  padding: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 26px;
+  background: color-mix(in srgb, var(--color-background-primary) 94%, var(--color-background-tertiary) 6%);
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.08);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.importedCodeAssistantComposer:focus-within {
+  border-color: rgba(100, 116, 139, 0.36);
+  background: var(--color-background-primary);
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.11);
+}
+
+.importedCodeAssistantComposerVoiceActive {
+  grid-template-columns: minmax(0, 1fr) var(--rstk-assistant-composer-action);
+  grid-template-areas: "mic send";
 }
 
 .importedCodeAssistantInputWrap {
-  flex: 1 1 auto;
+  grid-area: input;
   min-width: 0;
   display: grid;
 }
 
+.importedCodeAssistantComposerVoiceActive .importedCodeAssistantInputWrap {
+  display: none;
+}
+
 .importedCodeAssistantInputWrap textarea {
   width: 100%;
-  min-height: 42px;
-  max-height: 96px;
+  min-height: 40px;
+  max-height: 40px;
   resize: none;
-  border: 1px solid var(--rstk-assistant-border);
-  border-radius: 8px;
-  background: var(--rstk-assistant-control);
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
   color: var(--rstk-assistant-text);
-  padding: 10px 11px;
+  padding: 9px 2px;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.45;
   outline: none;
   overflow-y: auto;
+  box-shadow: none !important;
 }
 
 .importedCodeAssistantInputWrap textarea::placeholder {
@@ -983,64 +1012,122 @@
 }
 
 .importedCodeAssistantInputWrap textarea:focus {
-  border-color: rgba(var(--color-primary-rgb), 0.42);
-  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.12);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.importedCodeAssistantVoice {
+  grid-area: mic;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
 }
 
 .importedCodeAssistantVoice.aiVoiceDictationActive {
-  flex: 0 1 214px;
+  width: 100%;
+  justify-content: stretch;
 }
 
 .importedCodeAssistantVoice .aiVoiceMicButton {
-  width: 42px;
-  height: 42px;
-  min-height: 42px;
-  border-color: var(--rstk-assistant-border);
-  background: var(--rstk-assistant-control);
-  color: var(--rstk-assistant-secondary);
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-primary);
 }
 
 .importedCodeAssistantVoice .aiVoiceComposerInline {
-  min-height: 42px;
-  padding: 6px 9px;
-  border-color: rgba(34, 197, 94, 0.22);
-  background: color-mix(in srgb, var(--color-status-success) 8%, var(--rstk-assistant-surface) 92%);
+  min-height: 40px;
+  padding: 3px 2px;
+  border: 0;
+  background: transparent;
 }
 
 .importedCodeAssistantVoice .aiCreationVoiceWaveform {
-  height: 18px;
+  height: 24px;
 }
 
 .importedCodeAssistantVoice .aiCreationVoiceWaveform::before {
-  border-top-color: color-mix(in srgb, var(--color-status-success) 34%, transparent);
+  border-top-color: rgba(100, 116, 139, 0.32);
 }
 
 .importedCodeAssistantVoice .aiCreationVoiceBar {
-  flex: 0 0 2px;
-  min-width: 2px;
-  max-height: 18px;
+  flex: 1 1 0;
+  min-width: 1px;
+  max-height: 24px;
   min-height: 3px;
-  background: var(--color-status-success);
+  background: var(--color-text-primary);
+}
+
+.importedCodeAssistantVoice .aiCreationVoiceLabel {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  border: 0;
+  white-space: nowrap;
+}
+
+.importedCodeAssistantVoice .aiCreationVoiceTimer {
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  font-weight: 780;
 }
 
 .importedCodeAssistantVoice .aiVoiceMicButton:hover:not(:disabled) {
-  border-color: rgba(34, 197, 94, 0.42);
-  background: color-mix(in srgb, var(--color-status-success) 8%, var(--rstk-assistant-surface) 92%);
-  color: var(--color-status-success);
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--color-text-primary);
 }
 
 .importedCodeAssistantVoice .aiVoiceMicActive {
-  border-color: rgba(34, 197, 94, 0.42);
-  background: color-mix(in srgb, var(--color-status-success) 14%, var(--rstk-assistant-surface) 86%);
-  color: var(--color-status-success);
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.1);
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--color-text-primary);
+  box-shadow: none;
 }
 
 .importedCodeAssistantSendButton {
-  min-width: 86px;
-  min-height: 42px !important;
-  height: 42px !important;
-  align-self: stretch;
+  grid-area: send;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-text-primary);
+  color: var(--color-background-primary);
+  transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+.importedCodeAssistantSendButton:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.importedCodeAssistantSendButton:disabled {
+  cursor: not-allowed;
+  opacity: 1;
+  background: rgba(148, 163, 184, 0.22);
+  color: var(--color-text-tertiary);
+}
+
+.importedCodeAssistantSendButton:disabled svg {
+  animation: importedAssistantSpin 0.9s linear infinite;
+}
+
+.importedCodeAssistantSendButton:disabled:not([aria-label="Analizando cambio"]) svg {
+  animation: none;
+}
+
+@keyframes importedAssistantSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes importedAssistantLinearSweep {
