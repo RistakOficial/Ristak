@@ -184,6 +184,55 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.doesNotMatch(instructions, /Contexto del negocio configurado en Ristak/)
 })
 
+test('AI HTML editor sends uploaded references as multimodal input parts', async () => {
+  const {
+    buildSitesAIResponsesInput,
+    normalizeSitesAIReferenceAttachments
+  } = await import('../src/services/sitesService.js')
+
+  const attachments = normalizeSitesAIReferenceAttachments([
+    {
+      name: 'referencia.png',
+      size: 12,
+      mimeType: 'image/png',
+      kind: 'image',
+      dataUrl: 'data:image/png;base64,aGVsbG8='
+    },
+    {
+      name: 'brief.pdf',
+      size: 16,
+      mimeType: 'application/pdf',
+      kind: 'pdf',
+      dataUrl: 'data:application/pdf;base64,aGVsbG8='
+    },
+    {
+      name: 'copy.md',
+      size: 20,
+      mimeType: 'text/markdown',
+      kind: 'text',
+      text: 'Usa este tono para el hero.'
+    }
+  ])
+
+  assert.equal(attachments.length, 3)
+  assert.equal(attachments[0].kind, 'image')
+  assert.equal(attachments[1].kind, 'pdf')
+  assert.equal(attachments[2].text, 'Usa este tono para el hero.')
+
+  const input = buildSitesAIResponsesInput({
+    currentHtml: '<!doctype html><html><body><h1>Demo</h1></body></html>',
+    attachments
+  })
+
+  assert.equal(Array.isArray(input), true)
+  const content = input[0].content
+  assert.equal(content.some(part => part.type === 'input_image' && part.image_url === 'data:image/png;base64,aGVsbG8='), true)
+  assert.equal(content.some(part => part.type === 'input_file' && part.filename === 'brief.pdf'), true)
+  assert.equal(content.some(part => part.type === 'input_text' && /Contenido del archivo copy\.md/.test(part.text)), true)
+  assert.equal(/data:image\/png;base64,aGVsbG8=/.test(content[0].text), false)
+  assert.match(content[0].text, /contenido adjunto enviado como input_image\/input_file/)
+})
+
 test('AI HTML editor blocks assistant replies and prompt echoes inside page HTML', async () => {
   const { getSitesAIEditorReplyContaminationReason } = await import('../src/services/sitesService.js')
 

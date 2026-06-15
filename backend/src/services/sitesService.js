@@ -96,6 +96,9 @@ const DEFAULT_THEME = {
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
 const SITES_AI_MAX_MESSAGES = 18
 const SITES_AI_MAX_MESSAGE_CHARS = 5000
+const SITES_AI_ATTACHMENT_MAX_ITEMS = 6
+const SITES_AI_ATTACHMENT_TEXT_MAX_CHARS = 14000
+const SITES_AI_ATTACHMENT_DATA_URL_MAX_CHARS = 8_500_000
 const PUBLIC_DOMAIN_CACHE_TTL_MS = 15 * 60 * 1000
 const PUBLIC_DOMAIN_FAILED_CACHE_TTL_MS = 90 * 1000
 const PUBLIC_DOMAIN_VERIFY_TIMEOUT_MS = 6000
@@ -5102,9 +5105,116 @@ function normalizeSitesAIVisualContext(value = null) {
   }
 }
 
-function buildSitesAIResponsesInput(input = {}) {
+function getSitesAIReferenceAttachmentDataMime(dataUrl = '') {
+  const match = cleanString(dataUrl).match(/^data:([^;,]+);base64,/i)
+  return match ? match[1].toLowerCase() : ''
+}
+
+function getSitesAIReferenceAttachmentKind({ kind = '', mimeType = '', name = '' } = {}) {
+  const cleanKind = cleanString(kind).toLowerCase()
+  if (['image', 'text', 'pdf', 'file'].includes(cleanKind)) return cleanKind
+  const cleanMime = cleanString(mimeType).toLowerCase()
+  const cleanName = cleanString(name).toLowerCase()
+  if (cleanMime.startsWith('image/')) return 'image'
+  if (cleanMime === 'application/pdf' || cleanName.endsWith('.pdf')) return 'pdf'
+  if (cleanMime.startsWith('text/') || /\.(txt|md|markdown|html?|css|json|csv|xml)$/.test(cleanName)) return 'text'
+  return 'file'
+}
+
+export function normalizeSitesAIReferenceAttachments(value = []) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : Array.isArray(value?.attachments)
+      ? value.attachments
+      : []
+
+  return rawItems.slice(0, SITES_AI_ATTACHMENT_MAX_ITEMS).map((item = {}, index) => {
+    const dataUrl = cleanString(item.dataUrl || item.data_url || item.fileData || item.file_data)
+    const dataMimeType = getSitesAIReferenceAttachmentDataMime(dataUrl)
+    const mimeType = limitString(item.mimeType || item.mime_type || dataMimeType || '', 140)
+    const name = limitString(item.name || item.filename || item.fileName || `archivo-${index + 1}`, 180)
+    const safeDataUrl = dataUrl &&
+      dataUrl.length <= SITES_AI_ATTACHMENT_DATA_URL_MAX_CHARS &&
+      /^data:[^;,]+;base64,/i.test(dataUrl)
+      ? dataUrl
+      : ''
+    const kind = getSitesAIReferenceAttachmentKind({
+      kind: item.kind,
+      mimeType: mimeType || dataMimeType,
+      name
+    })
+    const size = Number.isFinite(Number(item.size || item.sizeBytes || item.size_bytes))
+      ? Math.max(0, Number(item.size || item.sizeBytes || item.size_bytes))
+      : 0
+    const text = limitString(item.text || item.extractedText || item.extracted_text || '', SITES_AI_ATTACHMENT_TEXT_MAX_CHARS)
+
+    if (!name && !text && !safeDataUrl) return null
+
+    return {
+      id: limitString(item.id || `attachment-${index + 1}`, 100),
+      name,
+      size,
+      mimeType,
+      kind,
+      text,
+      ...(safeDataUrl ? { dataUrl: safeDataUrl } : {})
+    }
+  }).filter(Boolean)
+}
+
+function buildSitesAIReferenceAttachmentSummary(attachment = {}, includeText = false) {
+  const parts = [
+    `- ${attachment.name || 'Archivo'}`,
+    `tipo=${attachment.mimeType || attachment.kind || 'desconocido'}`,
+    attachment.size ? `tamano=${attachment.size} bytes` : '',
+    attachment.dataUrl ? 'contenido_adjunto=disponible' : '',
+    attachment.text ? 'texto_extraido=disponible' : ''
+  ].filter(Boolean)
+  const summary = parts.join('; ')
+  if (!includeText || !attachment.text) return summary
+  return `${summary}\n  Texto extraido:\n${limitString(attachment.text, SITES_AI_ATTACHMENT_TEXT_MAX_CHARS)}`
+}
+
+function buildSitesAIReferenceAttachmentsText(attachments = [], includeText = false) {
+  if (!attachments.length) return ''
+  return [
+    'Archivos adjuntos de apoyo enviados por el usuario:',
+    ...attachments.map(attachment => buildSitesAIReferenceAttachmentSummary(attachment, includeText))
+  ].join('\n')
+}
+
+function attachmentToSitesAIInputParts(attachment = {}) {
+  const summary = buildSitesAIReferenceAttachmentSummary(attachment, false)
+  if (attachment.kind === 'image' && attachment.dataUrl) {
+    return [
+      { type: 'input_text', text: `${summary}\nImagen adjunta de referencia para editar el HTML activo.` },
+      { type: 'input_image', image_url: attachment.dataUrl, detail: 'auto' }
+    ]
+  }
+  if (attachment.dataUrl) {
+    return [
+      { type: 'input_text', text: `${summary}\nArchivo adjunto de referencia para editar el HTML activo.` },
+      { type: 'input_file', filename: attachment.name || 'archivo-adjunto', file_data: attachment.dataUrl }
+    ]
+  }
+  if (attachment.text) {
+    return [{
+      type: 'input_text',
+      text: `${summary}\nContenido del archivo ${attachment.name || 'adjunto'}:\n${limitString(attachment.text, SITES_AI_ATTACHMENT_TEXT_MAX_CHARS)}`
+    }]
+  }
+  return [{ type: 'input_text', text: summary }]
+}
+
+function hasSitesAIReferenceAttachmentContent(input = {}) {
+  return normalizeSitesAIReferenceAttachments(input?.attachments || input?.referenceAttachments || input?.reference_attachments)
+    .some(attachment => Boolean(attachment.dataUrl || attachment.text))
+}
+
+export function buildSitesAIResponsesInput(input = {}) {
   const visualContext = normalizeSitesAIVisualContext(input?.visualContext)
   const screenshotDataUrl = visualContext?.screenshotDataUrl || ''
+  const attachments = normalizeSitesAIReferenceAttachments(input?.attachments || input?.referenceAttachments || input?.reference_attachments)
   const safeInput = {
     ...input,
     ...(visualContext
@@ -5114,18 +5224,32 @@ function buildSitesAIResponsesInput(input = {}) {
           screenshotDataUrl: screenshotDataUrl ? '[attached as input_image]' : ''
         }
       }
+      : {}),
+    ...(attachments.length
+      ? {
+        attachments: attachments.map(attachment => ({
+          id: attachment.id,
+          name: attachment.name,
+          size: attachment.size,
+          mimeType: attachment.mimeType,
+          kind: attachment.kind,
+          text: attachment.text ? '[texto extraido incluido como input_text]' : '',
+          dataUrl: attachment.dataUrl ? '[contenido adjunto enviado como input_image/input_file]' : ''
+        }))
+      }
       : {})
   }
   const inputText = JSON.stringify(safeInput)
 
-  if (!screenshotDataUrl) return inputText
+  if (!screenshotDataUrl && !attachments.length) return inputText
 
   return [
     {
       role: 'user',
       content: [
         { type: 'input_text', text: inputText },
-        { type: 'input_image', image_url: screenshotDataUrl }
+        ...(screenshotDataUrl ? [{ type: 'input_image', image_url: screenshotDataUrl }] : []),
+        ...attachments.flatMap(attachmentToSitesAIInputParts)
       ]
     }
   ]
@@ -5176,6 +5300,7 @@ async function callSitesAIJson({ apiKey, model, instructions, input, maxOutputTo
 
 function buildSitesAIAgentInputText(input = {}) {
   const visualContext = normalizeSitesAIVisualContext(input?.visualContext)
+  const attachments = normalizeSitesAIReferenceAttachments(input?.attachments || input?.referenceAttachments || input?.reference_attachments)
   const safeInput = {
     ...input,
     ...(visualContext
@@ -5187,12 +5312,37 @@ function buildSitesAIAgentInputText(input = {}) {
             : ''
         }
       }
+      : {}),
+    ...(attachments.length
+      ? {
+        attachments: attachments.map(attachment => ({
+          id: attachment.id,
+          name: attachment.name,
+          size: attachment.size,
+          mimeType: attachment.mimeType,
+          kind: attachment.kind,
+          text: attachment.text ? limitString(attachment.text, SITES_AI_ATTACHMENT_TEXT_MAX_CHARS) : '',
+          dataUrl: attachment.dataUrl ? '[contenido adjunto disponible solo via Responses API]' : ''
+        })),
+        attachmentsSummary: buildSitesAIReferenceAttachmentsText(attachments, true)
+      }
       : {})
   }
   return JSON.stringify(safeInput)
 }
 
 async function callSitesAIJsonWithAgentSdk({ apiKey, model, instructions, input, maxOutputTokens = 7200, fallbackError = 'OpenAI no pudo generar el site', agentName = 'Editor HTML de Ristak' }) {
+  if (hasSitesAIReferenceAttachmentContent(input)) {
+    return callSitesAIJson({
+      apiKey,
+      model,
+      instructions,
+      input,
+      maxOutputTokens,
+      fallbackError
+    })
+  }
+
   try {
     const agent = new Agent({
       name: agentName,
@@ -5242,7 +5392,7 @@ async function callSitesAIHtmlGenerator({ apiKey, model, siteKind, messages, age
   })
 }
 
-async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, importedSite, importedPages = [], visualContext = null, activePageId = '', aiRegionRequest = '' }) {
+async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, importedSite, importedPages = [], visualContext = null, activePageId = '', aiRegionRequest = '', attachments = [] }) {
   const activePage = findImportedAIActivePageContext(importedPages, activePageId)
   return callSitesAIJsonWithAgentSdk({
     apiKey,
@@ -5267,6 +5417,7 @@ async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, import
       importedPages,
       visualContext: normalizeSitesAIVisualContext(visualContext),
       aiRegionRequest: limitString(cleanString(aiRegionRequest), 5000),
+      attachments: normalizeSitesAIReferenceAttachments(attachments),
       currentHtml: limitString(importedSite?.htmlSanitized || importedSite?.htmlOriginal || '', 90000),
       conversation: messages
     },
@@ -8358,6 +8509,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   const agentConfig = await getAIAgentConfig({ userId: input.userId })
   const model = normalizeSitesAIModel(input.model || input.chatgptModel || input.chatgpt_model, agentConfig?.model)
   const visualContext = normalizeSitesAIVisualContext(input.visualContext || input.visual_context)
+  const referenceAttachments = normalizeSitesAIReferenceAttachments(input.attachments || input.referenceAttachments || input.reference_attachments)
   const activePageId = getImportedAIActivePageId(input, visualContext)
   const draftOnly = shouldReturnSitesAIDraft(input)
   const draftHtml = getSitesAIDraftHtmlInput(input)
@@ -8389,7 +8541,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   addSitesAIEditProgressStep(debug, {
     id: 'context',
     label: 'Contexto preparado',
-    detail: `${importedPages.length || 1} página(s), ${debug.selectedElements} elemento(s) visuales y borrador activo listos para analizar.`,
+    detail: `${importedPages.length || 1} página(s), ${debug.selectedElements} elemento(s) visuales, ${referenceAttachments.length} adjunto(s) y borrador activo listos para analizar.`,
     status: 'done'
   })
   logSitesAIEditDebug(debug, 'request_started')
@@ -8503,7 +8655,8 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
       importedPages,
       visualContext,
       activePageId,
-      aiRegionRequest
+      aiRegionRequest,
+      attachments: referenceAttachments
     })
     debug.aiStatus = cleanString(aiPayload?.status || 'updated')
     debug.aiReply = limitString(aiPayload?.reply, 900)

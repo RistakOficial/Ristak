@@ -783,8 +783,8 @@
   --rstk-assistant-composer-action: 40px;
   min-width: 0;
   display: grid;
-  grid-template-columns: var(--rstk-assistant-composer-action) minmax(0, 1fr) minmax(150px, 190px) var(--rstk-assistant-composer-action);
-  grid-template-areas: "mic input model send";
+  grid-template-columns: var(--rstk-assistant-composer-action) var(--rstk-assistant-composer-action) minmax(0, 1fr) minmax(150px, 190px) var(--rstk-assistant-composer-action);
+  grid-template-areas: "mic attach input model send";
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -807,6 +807,88 @@
   grid-template-areas: "mic send";
 }
 
+.importedCodeAssistantFileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.importedCodeAssistantAttachments {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.importedCodeAssistantAttachmentChip {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--rstk-assistant-border) 86%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--rstk-assistant-surface) 74%, transparent);
+  color: var(--rstk-assistant-text);
+  padding: 5px 6px 5px 9px;
+}
+
+.importedCodeAssistantAttachmentChip > svg {
+  flex: 0 0 auto;
+  color: var(--rstk-assistant-secondary);
+}
+
+.importedCodeAssistantAttachmentChip span {
+  min-width: 0;
+  overflow: hidden;
+  max-width: min(220px, 42vw);
+  font-size: 12.5px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importedCodeAssistantAttachmentChip small {
+  flex: 0 0 auto;
+  color: var(--rstk-assistant-muted);
+  font-size: 11.5px;
+  font-weight: 680;
+}
+
+.importedCodeAssistantAttachmentChip button,
+.importedCodeAssistantAttachButton {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.importedCodeAssistantAttachmentChip button {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+
+.importedCodeAssistantAttachmentChip button:hover:not(:disabled),
+.importedCodeAssistantAttachButton:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--color-text-primary);
+}
+
+.importedCodeAssistantAttachmentChip button:disabled,
+.importedCodeAssistantAttachButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 .importedCodeAssistantInputWrap {
   grid-area: input;
   min-width: 0;
@@ -814,6 +896,10 @@
 }
 
 .importedCodeAssistantComposerVoiceActive .importedCodeAssistantInputWrap {
+  display: none;
+}
+
+.importedCodeAssistantComposerVoiceActive .importedCodeAssistantAttachButton {
   display: none;
 }
 
@@ -936,6 +1022,13 @@
   background: rgba(148, 163, 184, 0.12);
   color: var(--color-text-primary);
   box-shadow: none;
+}
+
+.importedCodeAssistantAttachButton {
+  grid-area: attach;
+  width: 40px;
+  height: 40px;
+  color: var(--color-text-secondary);
 }
 
 .importedCodeAssistantSendButton {
