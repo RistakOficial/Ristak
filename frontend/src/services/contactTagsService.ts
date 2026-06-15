@@ -35,6 +35,7 @@ type GetTagsOptions = boolean | {
   includeSystem?: boolean
 }
 
+const GENERATED_TAG_ID_PATTERN = /^(?:tag_sys_[a-z0-9_]+|[a-z0-9]+(?:_[a-z0-9]+)*)$/
 let cachedUserTags: ContactTag[] | null = null
 let cachedTagsWithSystem: ContactTag[] | null = null
 let pendingUserLoad: Promise<ContactTag[]> | null = null
@@ -75,6 +76,27 @@ function invalidateCaches() {
   cachedTagsWithSystem = null
   pendingUserLoad = null
   pendingSystemLoad = null
+}
+
+function cachedTagByValue(value: string, includeSystem = true): ContactTag | undefined {
+  const clean = String(value || '').trim()
+  if (!clean) return undefined
+  const lists = includeSystem
+    ? [cachedTagsWithSystem, cachedUserTags]
+    : [cachedUserTags]
+  for (const list of lists) {
+    const match = list?.find((tag) => tag.id === clean || tag.name === clean)
+    if (match) return match
+  }
+  return undefined
+}
+
+function displayNameFromCache(value: string, fallback = 'Etiqueta seleccionada', includeSystem = true): string {
+  const clean = String(value || '').trim()
+  if (!clean) return ''
+  const cached = cachedTagByValue(clean, includeSystem)
+  if (cached) return cached.name
+  return GENERATED_TAG_ID_PATTERN.test(clean) ? fallback : clean
 }
 
 async function refreshAfterMutation() {
@@ -184,5 +206,13 @@ export const contactTagsService = {
 
   getCachedTags(options: { includeSystem?: boolean } = {}): ContactTag[] | null {
     return cacheFor(Boolean(options.includeSystem))
+  },
+
+  getCachedTagByValue(value: string, options: { includeSystem?: boolean } = {}): ContactTag | undefined {
+    return cachedTagByValue(value, options.includeSystem !== false)
+  },
+
+  getDisplayName(value: string, options: { fallback?: string; includeSystem?: boolean } = {}): string {
+    return displayNameFromCache(value, options.fallback || 'Etiqueta seleccionada', options.includeSystem !== false)
   }
 }

@@ -38,6 +38,7 @@ import {
   Zap
 } from 'lucide-react'
 import type { CatalogKind } from '@/services/automationCatalogsService'
+import { contactTagsService } from '@/services/contactTagsService'
 import {
   emptyAdvancedCondition,
   summarizeAdvancedCondition,
@@ -369,6 +370,11 @@ const SINGLE_OUTPUT: NodeOutputHandle[] = [{ id: 'out', label: 'Siguiente paso' 
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '')
 const triggerLinkLabel = (value: unknown): string => str(value)
+const tagDisplayName = (config: Record<string, unknown>, key = 'tag'): string => {
+  const savedName = str(config[`${key}Name`]).trim()
+  if (savedName) return savedName
+  return contactTagsService.getDisplayName(str(config[key]))
+}
 const arr = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : [])
 const obj = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -593,7 +599,7 @@ const TRIGGERS: NodeDefinition[] = [
         removed: 'pierda la etiqueta',
         contains: 'tenga la etiqueta'
       }
-      const tag = str(config.tagName) || str(config.tag)
+      const tag = tagDisplayName(config)
       return {
         text: tag && str(config.operator)
           ? `Cuando un contacto ${verbs[str(config.operator)] || 'reciba la etiqueta'} "${tag}"${triggerFiltersSentence(config.filters)}`
@@ -1541,7 +1547,7 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => {
-      const name = str(config.tagName) || str(config.tag)
+      const name = tagDisplayName(config)
       const action = str(config.tagAction) === 'remove' ? 'Eliminar' : 'Añadir'
       return {
         text: name && str(config.tagAction) ? `${action} etiqueta: ${name}` : undefined,
@@ -1563,10 +1569,13 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
       { key: 'tag', label: 'Etiqueta', type: 'catalogSelect', catalog: 'tags', required: true }
     ],
     outputs: () => SINGLE_OUTPUT,
-    summary: (config) => ({
-      text: (str(config.tagName) || str(config.tag)) ? `Añadir la etiqueta "${str(config.tagName) || str(config.tag)}" al contacto` : undefined,
-      empty: 'Selecciona la etiqueta'
-    })
+    summary: (config) => {
+      const name = tagDisplayName(config)
+      return {
+        text: name ? `Añadir la etiqueta "${name}" al contacto` : undefined,
+        empty: 'Selecciona la etiqueta'
+      }
+    }
   },
   {
     type: 'action-remove-contact-tag',
@@ -1582,10 +1591,13 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
       { key: 'tag', label: 'Etiqueta', type: 'catalogSelect', catalog: 'tags', required: true }
     ],
     outputs: () => SINGLE_OUTPUT,
-    summary: (config) => ({
-      text: (str(config.tagName) || str(config.tag)) ? `Quitar la etiqueta "${str(config.tagName) || str(config.tag)}" del contacto` : undefined,
-      empty: 'Selecciona la etiqueta'
-    })
+    summary: (config) => {
+      const name = tagDisplayName(config)
+      return {
+        text: name ? `Quitar la etiqueta "${name}" del contacto` : undefined,
+        empty: 'Selecciona la etiqueta'
+      }
+    }
   },
   {
     type: 'action-contact-user',
@@ -2130,7 +2142,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
             lost: 'Pierde etiqueta',
             not_has: 'No tiene etiqueta'
           }
-          return `${operators[str(config.tagOperator)] || 'Tiene etiqueta'} ${str(config.tagName) || str(config.tag)}`
+          return `${operators[str(config.tagOperator)] || 'Tiene etiqueta'} ${tagDisplayName(config)}`
         },
         payment: () => (str(config.paymentEvent) === 'refund' ? 'Reembolso procesado' : str(config.paymentEvent) === 'failed' ? 'Pago fallido' : 'Pago recibido'),
         appointment: () => {

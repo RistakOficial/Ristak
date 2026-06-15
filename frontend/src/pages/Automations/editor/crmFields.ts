@@ -1,4 +1,5 @@
 import type { CatalogKind } from '@/services/automationCatalogsService'
+import { contactTagsService } from '@/services/contactTagsService'
 
 /**
  * Catálogo de campos reales del CRM para el constructor de condiciones.
@@ -66,6 +67,15 @@ const PAYMENT_STATUS_OPTIONS = [
   { value: 'draft', label: 'Borrador' },
   { value: 'sent', label: 'Enviado' }
 ]
+
+const tagValueLabel = (value: unknown, savedLabel?: string): string =>
+  savedLabel || contactTagsService.getDisplayName(typeof value === 'string' ? value : '')
+
+const conditionDisplayValue = (field: CrmField | undefined, rule: Pick<ConditionRule, 'value' | 'valueLabel'>): string =>
+  field?.valueCatalog === 'tags' ? tagValueLabel(rule.value, rule.valueLabel) : rule.valueLabel || rule.value || ''
+
+const triggerFilterDisplayValue = (field: TriggerFilterField | undefined, filter: Pick<TriggerFilter, 'value' | 'valueLabel'>): string =>
+  field?.catalog === 'tags' ? tagValueLabel(filter.value, filter.valueLabel) : filter.valueLabel || filter.value || ''
 
 export const CRM_FIELDS: CrmField[] = [
   // Contacto (el email es dato del CRM, nunca canal de envío)
@@ -369,7 +379,7 @@ export function summarizeAdvancedCondition(config: unknown): string {
   const fieldLabel = field?.needsCustomKey && firstRule.customLabel
     ? firstRule.customLabel.toLowerCase()
     : field?.label.toLowerCase()
-  const base = `Si ${[fieldLabel, operator?.label, operatorNeedsValue(firstRule.field, firstRule.operator) ? `"${firstRule.valueLabel || firstRule.value}"` : '']
+  const base = `Si ${[fieldLabel, operator?.label, operatorNeedsValue(firstRule.field, firstRule.operator) ? `"${conditionDisplayValue(field, firstRule)}"` : '']
     .filter(Boolean)
     .join(' ')}`
 
@@ -435,7 +445,7 @@ export function summarizeCondition(config: unknown): string {
   const field = getCrmField(first.field)
   const operator = getOperatorsForField(first.field).find((op) => op.value === first.operator)
   const fieldLabel = field?.needsCustomKey && first.customLabel ? first.customLabel : field?.label
-  const base = [fieldLabel, operator?.label, operatorNeedsValue(first.field, first.operator) ? (first.valueLabel || first.value) : '']
+  const base = [fieldLabel, operator?.label, operatorNeedsValue(first.field, first.operator) ? conditionDisplayValue(field, first) : '']
     .filter(Boolean)
     .join(' ')
   if (rules.length === 1) return base
@@ -645,7 +655,7 @@ export function triggerFiltersSentence(value: unknown): string {
       }
       const joiner = filter.connector === 'or' ? ' o ' : ' y '
       const valuePart = triggerOperatorNeedsValue(filter.match)
-        ? ` "${filter.valueLabel || filter.value}"`
+        ? ` "${triggerFilterDisplayValue(field, filter)}"`
         : ''
       return `${joiner}${phrase} ${verbs[filter.match as TriggerFilterMatch] || 'es igual a'}${valuePart}`
     })

@@ -189,7 +189,8 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
   const tagById = useMemo(() => new Map(tags.map((tag) => [tag.id, tag])), [tags])
   const lockedTags = isMultiple ? (props as TagPickerMultiProps).lockedTags || [] : []
   const singleSelected = !isMultiple ? tagById.get(singleValue) : undefined
-  const singleLabel = singleSelected?.name || (singleValue ? singleValue : '')
+  const singleLabel = singleSelected?.name || contactTagsService.getDisplayName(singleValue)
+  const showCreatePrompt = allowCreate && !search.trim() && !creating
 
   const dropdown = isOpen && !disabled ? (
     <div
@@ -205,7 +206,7 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
           data-ristak-unstyled
           className={styles.searchInput}
           value={search}
-          placeholder="Buscar etiqueta…"
+          placeholder="Buscar o crear etiqueta…"
           onChange={(event) => setSearch(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
@@ -220,6 +221,16 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
           }}
         />
       </div>
+      {showCreatePrompt && (
+        <button
+          type="button"
+          className={styles.createPromptOption}
+          onClick={() => searchInputRef.current?.focus()}
+        >
+          <span className={styles.createIcon}><Plus size={13} /></span>
+          <span className={styles.createLabel}>Crear nueva etiqueta</span>
+        </button>
+      )}
       <div className={styles.options}>
         {loading && tags.length === 0 ? (
           <div className={styles.empty}>Cargando etiquetas…</div>
@@ -245,10 +256,8 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
             })}
             {canCreate && (
               <button type="button" className={styles.createOption} onClick={createTag}>
-                <span>
-                  <Plus size={13} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                  Crear etiqueta “{search.trim()}”
-                </span>
+                <span className={styles.createIcon}><Plus size={13} /></span>
+                <span className={styles.createLabel}>Crear etiqueta “{search.trim()}”</span>
               </button>
             )}
             {creating && <div className={styles.empty}>Creando etiqueta…</div>}
@@ -275,15 +284,16 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
           ))}
           {selectedIds.map((id) => {
             const tag = tagById.get(id)
+            const label = tag?.name || contactTagsService.getDisplayName(id)
             return (
               <span key={id} className={styles.chip}>
-                <span className={styles.chipLabel}>{tag?.name || id}</span>
+                <span className={styles.chipLabel}>{label}</span>
                 {!disabled && (
                   <button
                     type="button"
                     className={styles.chipRemove}
                     onClick={() => removeTag(id)}
-                    aria-label={`Quitar etiqueta ${tag?.name || id}`}
+                    aria-label={`Quitar etiqueta ${label}`}
                   >
                     <X size={12} />
                   </button>
