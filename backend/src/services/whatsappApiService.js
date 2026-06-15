@@ -25,12 +25,13 @@ import { decrypt, encrypt } from '../utils/encryption.js'
 import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
 import { logger } from '../utils/logger.js'
+import { normalizeYCloudApiKeyInput } from '../utils/ycloudApiKey.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
-const YCLOUD_API_BASE_URL = 'https://api.ycloud.com/v2'
+const YCLOUD_API_BASE_URL = String(process.env.YCLOUD_API_BASE_URL || 'https://api.ycloud.com/v2').replace(/\/+$/, '')
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v22.0'
 const META_GRAPH_BASE_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`
 const SOURCE_NAME = 'WhatsApp_API'
@@ -1010,7 +1011,7 @@ async function loadConfig({ includeSecrets = false } = {}) {
   return {
     enabled: enabled !== '0',
     hasApiKey,
-    apiKey,
+    apiKey: normalizeYCloudApiKeyInput(apiKey),
     senderPhone,
     phoneNumberId,
     wabaId,
@@ -1190,8 +1191,43 @@ async function loadMetaDirectConfig({ includeSecrets = false } = {}) {
   }
 }
 
+function getYCloudResponseMessage(data, response) {
+  const message = data?.error?.error_user_msg ||
+    data?.error?.error_data ||
+    data?.message ||
+    data?.error?.message ||
+    data?.error ||
+    `WhatsApp API respondió ${response.status} ${response.statusText}`
+
+  return typeof message === 'string' ? message : safeJson(message)
+}
+
+function buildYCloudRequestErrorMessage(path, data, response) {
+  const statusCode = Number(response.status || 0)
+  const message = getYCloudResponseMessage(data, response)
+
+  if ((statusCode === 401 || statusCode === 403) && cleanString(path).startsWith('/webhookEndpoints')) {
+    return 'YCloud no permitió configurar el webhook automático. La llave puede estar bien, pero esa cuenta o llave no tiene permiso para crear webhooks desde la API.'
+  }
+
+  if (statusCode === 401 || statusCode === 403) {
+    return 'YCloud no aceptó esa llave. Copia la API Key desde YCloud en API & Integration > API Keys; no uses el token de webhook ni un token de usuario.'
+  }
+
+  return message
+}
+
+function buildWebhookSetupWarning(error) {
+  const statusCode = Number(error?.statusCode || 0)
+  if (statusCode === 401 || statusCode === 403) {
+    return 'La llave de WhatsApp API se guardó, pero YCloud no dejó configurar el webhook automático. Los números ya pueden sincronizarse; para recibir mensajes entrantes revisa permisos de webhooks en YCloud y vuelve a sincronizar.'
+  }
+
+  return `La llave de WhatsApp API se guardó, pero el webhook quedó pendiente: ${error?.message || 'YCloud no respondió correctamente'}. Ristak volverá a intentarlo al sincronizar.`
+}
+
 async function ycloudRequest(path, { apiKey, method = 'GET', body, query } = {}) {
-  const cleanApiKey = cleanString(apiKey)
+  const cleanApiKey = normalizeYCloudApiKeyInput(apiKey)
   if (!cleanApiKey) {
     throw new Error('Falta la llave de WhatsApp API')
   }
@@ -1225,14 +1261,10 @@ async function ycloudRequest(path, { apiKey, method = 'GET', body, query } = {})
   }
 
   if (!response.ok) {
-    const message = data?.error?.error_user_msg ||
-      data?.error?.error_data ||
-      data?.message ||
-      data?.error?.message ||
-      data?.error ||
-      `WhatsApp API respondió ${response.status} ${response.statusText}`
-    const error = new Error(typeof message === 'string' ? message : safeJson(message))
+    const message = buildYCloudRequestErrorMessage(path, data, response)
+    const error = new Error(message)
     error.statusCode = response.status
+    error.ycloudPath = path
     error.ycloud = data
     throw error
   }
@@ -2645,7 +2677,7 @@ export async function getWhatsAppApiStatus() {
     })
   ])
 
-  const connected = Boolean(config.enabled && config.hasApiKey && config.webhookEndpointId)
+  const connected = Boolean(config.enabled && config.hasApiKey)
   const requiresPhoneSelection = false
 
   // Disponibilidad operativa por número: API oficial sana, respaldo QR listo, o nada.
@@ -2776,13 +2808,15 @@ export async function getWhatsAppApiStatus() {
 
 export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, wabaId, webhookUrl } = {}) {
   const saved = await loadConfig({ includeSecrets: true })
-  const cleanApiKey = cleanString(apiKey) || saved.apiKey
+  const cleanApiKey = normalizeYCloudApiKeyInput(apiKey) || saved.apiKey
 
   if (!cleanApiKey) {
     throw new Error('Pega la llave de WhatsApp API para conectar WhatsApp Business')
   }
 
   try {
+    let webhookEndpoint = null
+    let webhookSetupWarning = ''
     const [phoneNumbers, balance, templates, ycloudContacts] = await Promise.all([
       listYCloudPhoneNumbers(cleanApiKey),
       retrieveYCloudBalance(cleanApiKey).catch(error => {
@@ -2809,23 +2843,28 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       await syncPhoneNumbers([selectedPhone.raw || selectedPhone])
     }
 
-    const webhookEndpoint = await ensureWebhookEndpoint({
-      apiKey: cleanApiKey,
-      webhookUrl,
-      webhookEndpointId: saved.webhookEndpointId
-    })
+    try {
+      webhookEndpoint = await ensureWebhookEndpoint({
+        apiKey: cleanApiKey,
+        webhookUrl,
+        webhookEndpointId: saved.webhookEndpointId
+      })
+    } catch (error) {
+      webhookSetupWarning = buildWebhookSetupWarning(error)
+      logger.warn(`WhatsApp API conectado con webhook pendiente: ${error.message}`)
+    }
 
     await setEncryptedConfig(CONFIG_KEYS.apiKey, cleanApiKey)
     await setAppConfig(CONFIG_KEYS.enabled, '1')
     await setAppConfig(CONFIG_KEYS.provider, PROVIDER_NAME)
-    await setAppConfig(CONFIG_KEYS.webhookEndpointId, webhookEndpoint.id || '')
-    await setAppConfig(CONFIG_KEYS.webhookUrl, webhookEndpoint.url || webhookUrl)
-    await setAppConfig(CONFIG_KEYS.webhookStatus, webhookEndpoint.status || 'active')
+    await setAppConfig(CONFIG_KEYS.webhookEndpointId, webhookEndpoint?.id || saved.webhookEndpointId || '')
+    await setAppConfig(CONFIG_KEYS.webhookUrl, webhookEndpoint?.url || webhookUrl || saved.webhookUrl || '')
+    await setAppConfig(CONFIG_KEYS.webhookStatus, webhookEndpoint ? (webhookEndpoint.status || 'active') : 'pending')
     await setAppConfig(CONFIG_KEYS.connectedAt, saved.connectedAt || nowIso())
     await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
-    await setAppConfig(CONFIG_KEYS.lastError, '')
+    await setAppConfig(CONFIG_KEYS.lastError, webhookSetupWarning)
 
-    if (webhookEndpoint.secret) {
+    if (webhookEndpoint?.secret) {
       await setEncryptedConfig(CONFIG_KEYS.webhookSecret, webhookEndpoint.secret)
     }
 
@@ -2860,6 +2899,7 @@ export async function refreshWhatsAppApi() {
   }
 
   try {
+    let webhookSetupWarning = ''
     const [phoneNumbers, balance, templates, ycloudContacts] = await Promise.all([
       listYCloudPhoneNumbers(config.apiKey),
       retrieveYCloudBalance(config.apiKey).catch(error => {
@@ -2884,21 +2924,27 @@ export async function refreshWhatsAppApi() {
     await syncTemplates(templates)
     await syncYCloudContacts(ycloudContacts)
 
-    if (config.webhookEndpointId) {
+    if (config.webhookEndpointId || config.webhookUrl) {
       try {
         const webhookEndpoint = config.webhookUrl
-          ? await updateWebhookEndpoint(config.apiKey, config.webhookEndpointId, config.webhookUrl)
+          ? await ensureWebhookEndpoint({
+              apiKey: config.apiKey,
+              webhookUrl: config.webhookUrl,
+              webhookEndpointId: config.webhookEndpointId
+            })
           : await ycloudRequest(`/webhookEndpoints/${encodeURIComponent(config.webhookEndpointId)}`, {
               apiKey: config.apiKey
             })
+        await setAppConfig(CONFIG_KEYS.webhookEndpointId, webhookEndpoint.id || config.webhookEndpointId || '')
         await setAppConfig(CONFIG_KEYS.webhookStatus, webhookEndpoint.status || config.webhookStatus || '')
         await setAppConfig(CONFIG_KEYS.webhookUrl, webhookEndpoint.url || config.webhookUrl || '')
         if (webhookEndpoint.secret) {
           await setEncryptedConfig(CONFIG_KEYS.webhookSecret, webhookEndpoint.secret)
         }
       } catch (error) {
+        webhookSetupWarning = buildWebhookSetupWarning(error)
         await setAppConfig(CONFIG_KEYS.webhookStatus, 'pending')
-        await setAppConfig(CONFIG_KEYS.lastError, error.message)
+        await setAppConfig(CONFIG_KEYS.lastError, webhookSetupWarning)
       }
     }
 
@@ -2912,7 +2958,7 @@ export async function refreshWhatsAppApi() {
     })
 
     await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
-    await setAppConfig(CONFIG_KEYS.lastError, '')
+    await setAppConfig(CONFIG_KEYS.lastError, webhookSetupWarning)
     return getWhatsAppApiStatus()
   } catch (error) {
     await setAppConfig(CONFIG_KEYS.lastError, error.message)
@@ -2922,7 +2968,7 @@ export async function refreshWhatsAppApi() {
 
 export async function previewWhatsAppApiPhoneNumbers({ apiKey } = {}) {
   const saved = await loadConfig({ includeSecrets: true })
-  const cleanApiKey = cleanString(apiKey) || saved.apiKey
+  const cleanApiKey = normalizeYCloudApiKeyInput(apiKey) || saved.apiKey
 
   if (!cleanApiKey) {
     throw new Error('Pega la llave de WhatsApp API para buscar tus números')
