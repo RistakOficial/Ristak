@@ -4,7 +4,7 @@ import { Lock, Mail, User, UserPlus } from 'lucide-react'
 import { Button } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
-import { getLoginPathForRoute, getPostAuthRedirectPath, type RedirectLocation } from '@/utils/phoneAccess'
+import { getLoginPathForRoute, getPostAuthRedirectPath, sanitizeAuthRedirectPath, type RedirectLocation } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -34,7 +34,10 @@ export const Setup: React.FC = () => {
   const [searchParams] = useSearchParams()
   const setupToken = searchParams.get('token') || ''
   const fromLocation = (location.state as SetupLocationState)?.from
-  const redirectPath = getPostAuthRedirectPath(fromLocation)
+  const redirectPath = sanitizeAuthRedirectPath(
+    searchParams.get('return_path'),
+    getPostAuthRedirectPath(fromLocation)
+  )
   const detectedAccountLocale = useMemo(getDetectedAccountLocaleDefaults, [])
 
   const [tokenState, setTokenState] = useState<TokenState>({

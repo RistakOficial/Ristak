@@ -101,7 +101,8 @@ export const Login: React.FC = () => {
     try {
       const response = await fetch(`${API_URL}/api/auth/google/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ return_path: redirectPath })
       })
       const data = await response.json().catch(() => ({}))
 

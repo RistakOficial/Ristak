@@ -54,6 +54,17 @@ async function startLicenseServer(requests) {
     assert.equal(payload.license_key, 'RSTK-GOOGLE-TEST')
     assert.equal(payload.installation_id, 'inst_google_oauth')
 
+    if (req.url === '/api/auth/google/start') {
+      requests.push({ path: req.url, body: payload })
+      assert.equal(payload.mode, 'login')
+      return json(res, 200, {
+        success: true,
+        url: 'https://accounts.google.test/oauth',
+        mode: 'login',
+        redirect_uri: 'https://portal.test/api/auth/google/callback'
+      })
+    }
+
     if (req.url === '/api/license/google-calendar/events/list') {
       requests.push({ path: req.url, body: payload })
       assert.equal(payload.google_calendar_id, 'ventas@test.com')
@@ -99,6 +110,52 @@ async function startLicenseServer(requests) {
     baseUrl: `http://127.0.0.1:${server.address().port}`
   }
 }
+
+test('Google Login central conserva return_path móvil y limpia rutas inseguras', async () => {
+  const previousEnv = snapshotEnv()
+  const requests = []
+  const { server, baseUrl } = await startLicenseServer(requests)
+
+  try {
+    process.env.LICENSE_SERVER_URL = baseUrl
+    process.env.CLIENT_ID = 'cli_google_oauth'
+    process.env.LICENSE_KEY = 'RSTK-GOOGLE-TEST'
+    process.env.INSTALLATION_ID = 'inst_google_oauth'
+    process.env.APP_URL = 'https://demo.onrender.com'
+
+    const { startGoogleLogin } = await import('../src/controllers/authController.js')
+    const callStart = async (body) => {
+      let statusCode = 200
+      let responseBody = null
+      const res = {
+        status(code) {
+          statusCode = code
+          return this
+        },
+        json(payload) {
+          responseBody = payload
+          return this
+        }
+      }
+
+      await startGoogleLogin({ body }, res)
+      return { statusCode, responseBody }
+    }
+
+    const mobile = await callStart({ return_path: '/phone/chat' })
+    assert.equal(mobile.statusCode, 200)
+    assert.equal(mobile.responseBody.url, 'https://accounts.google.test/oauth')
+    assert.equal(requests[0].path, '/api/auth/google/start')
+    assert.equal(requests[0].body.return_path, '/phone/chat')
+
+    await callStart({ return_path: 'https://evil.test/steal' })
+    assert.equal(requests[1].body.return_path, '/dashboard')
+  } finally {
+    server.closeAllConnections?.()
+    server.close()
+    restoreEnv(previousEnv)
+  }
+})
 
 test('OAuth central crea, edita y elimina eventos de Google Calendar sin guardar tokens locales', async () => {
   const previousEnv = snapshotEnv()

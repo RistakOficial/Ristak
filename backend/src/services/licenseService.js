@@ -254,9 +254,10 @@ export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/set
   }
 }
 
-export async function createCentralGoogleLoginUrl() {
+export async function createCentralGoogleLoginUrl({ returnPath = '/dashboard' } = {}) {
   const data = await callLicenseServer('/api/auth/google/start', {
-    mode: 'login'
+    mode: 'login',
+    return_path: returnPath
   })
   return {
     url: data.url || '',

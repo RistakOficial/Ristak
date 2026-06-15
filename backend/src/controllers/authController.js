@@ -19,6 +19,20 @@ import { saveAccountLocaleSettings } from '../utils/accountLocale.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { getEffectiveAccessConfig } from '../utils/userAccess.js'
 
+function sanitizeAuthReturnPath(value, fallbackPath = '/dashboard') {
+  const fallback = typeof fallbackPath === 'string'
+    && fallbackPath.startsWith('/')
+    && !fallbackPath.startsWith('//')
+    && !fallbackPath.startsWith('/api/')
+    ? fallbackPath
+    : '/dashboard'
+  const path = String(value || '').trim()
+  if (!path.startsWith('/') || path.startsWith('//') || path.startsWith('/api/')) {
+    return fallback
+  }
+  return path.slice(0, 700)
+}
+
 function cleanProfileText(value, maxLength = 160) {
   if (value === undefined || value === null) return ''
   return String(value).trim().slice(0, maxLength)
@@ -287,7 +301,8 @@ export async function startGoogleLogin(req, res) {
       })
     }
 
-    const data = await createCentralGoogleLoginUrl()
+    const returnPath = sanitizeAuthReturnPath(req.body?.return_path || req.body?.returnPath)
+    const data = await createCentralGoogleLoginUrl({ returnPath })
     if (!data.url) {
       return res.status(502).json({
         success: false,

@@ -30,18 +30,30 @@ export function getLoginPathForRoute(pathname = '') {
   return isPhoneAppPath(pathname) ? PHONE_APP_LOGIN_PATH : DESKTOP_LOGIN_PATH
 }
 
+function isSafeAuthPath(path = '') {
+  return path.startsWith('/') && !path.startsWith('//') && !path.startsWith('/api/')
+}
+
+export function sanitizeAuthRedirectPath(value?: string | null, fallbackPath = '/dashboard') {
+  const fallback = isSafeAuthPath(fallbackPath) ? fallbackPath : '/dashboard'
+  const path = String(value || '').trim()
+  if (!isSafeAuthPath(path)) return fallback
+  return path.slice(0, 700)
+}
+
 export function getPostAuthRedirectPath(from?: RedirectLocation, fallbackPath = '/dashboard') {
   const pathname = from?.pathname
+  const fallback = sanitizeAuthRedirectPath(fallbackPath, '/dashboard')
 
   if (!pathname?.startsWith('/') || pathname === DESKTOP_LOGIN_PATH || pathname === SETUP_PATH) {
-    return fallbackPath
+    return fallback
   }
 
   if (pathname === PHONE_APP_LOGIN_PATH) {
     return PHONE_APP_HOME_PATH
   }
 
-  return `${pathname}${from?.search || ''}${from?.hash || ''}`
+  return sanitizeAuthRedirectPath(`${pathname}${from?.search || ''}${from?.hash || ''}`, fallback)
 }
 
 function getScreenShortSide() {
