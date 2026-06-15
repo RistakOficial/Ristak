@@ -223,7 +223,7 @@ test('publicar exige clic de disparo seleccionado en esperas por alias interno',
 test('publicar exige mensaje enviado anterior en esperas por respuesta a mensaje', () => {
   const messageNode = {
     id: 'msg1',
-    type: 'channel-whatsapp',
+    type: 'channel-messenger',
     position: { x: 100, y: 0 },
     config: { messageBlocks: [{ id: 'b1', type: 'text', compiledText: 'Hola' }] }
   }

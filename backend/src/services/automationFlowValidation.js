@@ -11,7 +11,7 @@ const MAX_FLOW_BYTES = 2 * 1024 * 1024 // 2MB: límite defensivo para el JSON de
 export const START_NODE_TYPE = 'start'
 const TRIGGER_LINK_WAIT_ACTIONS = new Set(['click_link', 'trigger_link_click', 'trigger-link-click'])
 const REPLY_MESSAGE_WAIT_ACTIONS = new Set(['reply_message', 'reply-message'])
-const SENT_MESSAGE_NODE_TYPES = new Set(['channel-whatsapp'])
+const SENT_MESSAGE_NODE_TYPES = new Set(['channel-whatsapp', 'channel-messenger', 'channel-instagram'])
 
 // Únicos canales conversacionales soportados (sin SMS ni Email)
 export const ALLOWED_CHANNELS = ['whatsapp', 'messenger', 'instagram']
