@@ -7,6 +7,7 @@ import * as localCalendarService from './localCalendarService.js'
 import {
   deleteCentralGoogleCalendarEvent,
   isLicenseEnforced,
+  listCentralGoogleCalendarEvents,
   upsertCentralGoogleCalendarEvent
 } from './licenseService.js'
 
@@ -606,8 +607,9 @@ async function resolveGoogleSyncTargets(config, calendarId = null) {
 }
 
 export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId = null, config = null } = {}) {
-  const activeConfig = config || await getGoogleCalendarConfig({ includeCredentials: true })
-  if (!activeConfig) {
+  const centralMode = isLicenseEnforced()
+  const activeConfig = centralMode ? null : (config || await getGoogleCalendarConfig({ includeCredentials: true }))
+  if (!centralMode && !activeConfig) {
     return { enabled: false, saved: 0 }
   }
 
@@ -618,12 +620,18 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
 
   let saved = 0
   for (const target of targets) {
-    const events = await listGoogleEvents({
-      timeMin: startTime,
-      timeMax: endTime,
-      calendarId: target.googleCalendarId,
-      config: activeConfig
-    })
+    const events = centralMode
+      ? await listCentralGoogleCalendarEvents({
+        googleCalendarId: target.googleCalendarId,
+        timeMin: startTime,
+        timeMax: endTime
+      })
+      : await listGoogleEvents({
+        timeMin: startTime,
+        timeMax: endTime,
+        calendarId: target.googleCalendarId,
+        config: activeConfig
+      })
 
     for (const event of events) {
       if (!event?.id || !event.start) continue

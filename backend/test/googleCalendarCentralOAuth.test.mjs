@@ -54,6 +54,22 @@ async function startLicenseServer(requests) {
     assert.equal(payload.license_key, 'RSTK-GOOGLE-TEST')
     assert.equal(payload.installation_id, 'inst_google_oauth')
 
+    if (req.url === '/api/license/google-calendar/events/list') {
+      requests.push({ path: req.url, body: payload })
+      assert.equal(payload.google_calendar_id, 'ventas@test.com')
+      return json(res, 200, {
+        success: true,
+        events: [
+          {
+            id: 'evt_google_imported',
+            summary: 'Cita importada desde Google',
+            start: { dateTime: '2026-06-17T18:00:00.000Z', timeZone: 'America/Mexico_City' },
+            end: { dateTime: '2026-06-17T19:00:00.000Z', timeZone: 'America/Mexico_City' }
+          }
+        ]
+      })
+    }
+
     if (req.url === '/api/license/google-calendar/events/upsert') {
       requests.push({ path: req.url, body: payload })
       return json(res, 200, {
@@ -138,7 +154,22 @@ test('OAuth central crea, edita y elimina eventos de Google Calendar sin guardar
     const deleted = await googleCalendarService.deleteGoogleEventForAppointment(updated.appointment)
     assert.equal(deleted.deleted, true)
 
-    assert.equal(requests.length, 3)
+    const imported = await googleCalendarService.syncGoogleEventsToLocal({
+      startTime: '2026-06-17T00:00:00.000Z',
+      endTime: '2026-06-18T00:00:00.000Z',
+      calendarId
+    })
+    assert.equal(imported.saved, 1)
+    assert.equal(imported.linkedCalendars, 1)
+
+    const importedAppointment = await db.get(
+      'SELECT title, calendar_id, google_event_id FROM appointments WHERE google_event_id = ?',
+      ['evt_google_imported']
+    )
+    assert.equal(importedAppointment.title, 'Cita importada desde Google')
+    assert.equal(importedAppointment.calendar_id, calendarId)
+
+    assert.equal(requests.length, 4)
     assert.equal(requests[0].path, '/api/license/google-calendar/events/upsert')
     assert.equal(requests[0].body.google_calendar_id, 'ventas@test.com')
     assert.equal(requests[0].body.google_event_id, null)
@@ -147,12 +178,15 @@ test('OAuth central crea, edita y elimina eventos de Google Calendar sin guardar
     assert.equal(requests[1].body.event.start.dateTime, '2026-06-16T20:00:00.000Z')
     assert.equal(requests[2].path, '/api/license/google-calendar/events/delete')
     assert.equal(requests[2].body.google_event_id, 'evt_google_created')
+    assert.equal(requests[3].path, '/api/license/google-calendar/events/list')
+    assert.equal(requests[3].body.time_min, '2026-06-17T00:00:00.000Z')
 
     const finalAppointment = await localCalendarService.getLocalAppointment(appointmentId)
     assert.equal(finalAppointment.googleEventId, null)
 
   } finally {
     if (db) {
+      await db.run('DELETE FROM appointments WHERE google_event_id = ?', ['evt_google_imported']).catch(() => undefined)
       await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
       await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
     }

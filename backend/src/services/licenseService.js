@@ -279,6 +279,15 @@ export async function upsertCentralGoogleCalendarEvent({ googleCalendarId, googl
   return data.event || {}
 }
 
+export async function listCentralGoogleCalendarEvents({ googleCalendarId, timeMin = '', timeMax = '' } = {}) {
+  const data = await callLicenseServer('/api/license/google-calendar/events/list', {
+    google_calendar_id: googleCalendarId,
+    time_min: timeMin,
+    time_max: timeMax
+  })
+  return Array.isArray(data.events) ? data.events : []
+}
+
 export async function deleteCentralGoogleCalendarEvent({ googleCalendarId, googleEventId } = {}) {
   return callLicenseServer('/api/license/google-calendar/events/delete', {
     google_calendar_id: googleCalendarId,
