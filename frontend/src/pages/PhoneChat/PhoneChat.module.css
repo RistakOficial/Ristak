@@ -1480,100 +1480,8 @@
 }
 
 .aiAgentHubRobot .agentRobot {
-  width: 56px;
-  height: 51px;
-  transform: none;
-}
-
-.aiAgentHubRobot .agentRobotHead {
-  width: 50px;
-  height: 38px;
-  border-width: 3px;
-  border-radius: 16px;
-  background:
-    radial-gradient(circle at 31% 33%, rgba(224, 242, 254, 0.2), transparent 17%),
-    radial-gradient(circle at 69% 33%, rgba(224, 242, 254, 0.2), transparent 17%),
-    radial-gradient(circle at 50% 86%, rgba(34, 211, 238, 0.18), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 48%),
-    rgba(8, 35, 89, 0.9);
-}
-
-.aiAgentHubRobot .agentRobotHead::before,
-.aiAgentHubRobot .agentRobotHead::after {
-  top: 13px;
-  width: 6px;
-  height: 11px;
-}
-
-.aiAgentHubRobot .agentRobotHead::before {
-  left: -8px;
-}
-
-.aiAgentHubRobot .agentRobotHead::after {
-  right: -8px;
-}
-
-.aiAgentHubRobot .agentRobotAntenna {
-  width: 4px;
-  height: 16px;
-  top: 7px;
-  transform: translate(-50%, -14px);
-}
-
-.aiAgentHubRobot .agentRobotAntenna::after {
-  top: -9px;
-  width: 12px;
-  height: 12px;
-}
-
-.aiAgentHubRobot .agentRobotBrows {
-  top: 9px;
-  width: 34px;
-  gap: 14px;
-  opacity: 0.78;
-}
-
-.aiAgentHubRobot .agentRobotBrow {
-  width: 10px;
-  height: 3px;
-}
-
-.aiAgentHubRobot .agentRobotEyes {
-  top: 13px;
-  left: 50%;
-  width: 32px;
-  gap: 11px;
-  transform: translateX(-50%);
-}
-
-.aiAgentHubRobot .agentRobotEye {
-  width: 8px;
-  height: 9px;
-  background: #e8f7ff;
-  box-shadow:
-    0 0 8px rgba(224, 242, 254, 0.92),
-    inset 0 -2px 0 rgba(125, 211, 252, 0.42);
-}
-
-.aiAgentHubRobot .agentRobotCheeks {
-  right: 10px;
-  bottom: 10px;
-  left: 10px;
-  opacity: 0.64;
-}
-
-.aiAgentHubRobot .agentRobotCheek {
-  width: 5px;
-  height: 5px;
-  box-shadow: 0 0 10px rgba(94, 234, 212, 0.66);
-}
-
-.aiAgentHubRobot .agentRobotMouth {
-  right: 14px;
-  bottom: 8px;
-  left: 14px;
-  height: 3px;
-  background: rgba(186, 230, 253, 0.78);
+  width: 68px;
+  height: 68px;
 }
 
 .aiAgentHubRobotOn {
@@ -1586,38 +1494,6 @@
 
 .aiAgentHubRobotOn::after {
   animation: aiAgentHubAura 8.2s ease-in-out infinite;
-}
-
-.aiAgentHubRobotOn .agentRobot {
-  animation: aiAgentHubRobotBody 11.6s ease-in-out infinite;
-}
-
-.aiAgentHubRobotOn .agentRobotHead {
-  animation: aiAgentHubRobotFace 11.6s ease-in-out infinite;
-}
-
-.aiAgentHubRobotOn .agentRobotAntenna {
-  animation: aiAgentHubRobotAntenna 6.8s ease-in-out infinite;
-}
-
-.aiAgentHubRobotOn .agentRobotBrows {
-  animation: aiAgentHubRobotBrows 8.6s ease-in-out infinite;
-}
-
-.aiAgentHubRobotOn .agentRobotEyes {
-  animation: aiAgentHubRobotEyes 9.4s ease-in-out infinite;
-}
-
-.aiAgentHubRobotOn .agentRobotEye {
-  animation: aiAgentHubRobotBlink 6.8s ease-in-out infinite;
-}
-
-.aiAgentHubRobotOn .agentRobotCheeks {
-  animation: aiAgentHubRobotCheeks 7.8s ease-in-out infinite;
-}
-
-.aiAgentHubRobotOn .agentRobotMouth {
-  animation: aiAgentHubRobotTalk 6.8s ease-in-out infinite;
 }
 
 .aiAgentHubRobotPing,
@@ -7448,229 +7324,125 @@
   opacity: 0.78;
 }
 
-.agentBotButtonIdle .agentRobotHead {
-  border-color: rgba(107, 114, 128, 0.82);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 48%),
-    #9ca3af;
-  box-shadow: none;
-}
-
-.agentBotButtonIdle .agentRobotAntenna,
-.agentBotButtonIdle .agentRobotHead::before,
-.agentBotButtonIdle .agentRobotHead::after {
-  background: rgba(107, 114, 128, 0.82);
-}
-
-.agentBotButtonIdle .agentRobotAntenna::after,
-.agentBotButtonIdle .agentRobotEye,
-.agentBotButtonIdle .agentRobotBrow,
-.agentBotButtonIdle .agentRobotCheek,
-.agentBotButtonIdle .agentRobotMouth {
-  background: #6b7280;
-  box-shadow: none;
-}
-
-.agentBotButtonIdle .agentRobotEye::after {
-  opacity: 0;
-}
-
+/* ===== Robot mascota (SVG) ===== */
 .agentRobot {
   position: relative;
   z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 27px;
-  height: 25px;
-  transform-origin: 50% 78%;
+  width: 38px;
+  height: 38px;
 }
 
-.agentBotButtonActive .agentRobot {
-  animation: agentRobotAlive 6.2s ease-in-out infinite;
-}
-
-.agentRobotHead {
-  position: relative;
-  z-index: 2;
+.agentRobotSvg {
   display: block;
-  width: 25px;
-  height: 19px;
-  border: 2px solid rgba(255, 255, 255, 0.94);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 48%),
-    rgba(8, 35, 89, 0.9);
-  box-shadow: 0 2px 7px rgba(2, 6, 23, 0.28);
-  transform-origin: 50% 60%;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
 
-.agentBotButtonActive .agentRobotHead {
-  animation: agentRobotHeadTrack 4.8s ease-in-out infinite;
+/* Brillo neón de las facciones sobre la pantalla */
+.agentRobotSvg .rkEye,
+.agentRobotSvg .rkEyesHappy path,
+.agentRobotSvg .rkMouthSmile,
+.agentRobotSvg .rkMouthTalk {
+  filter: drop-shadow(0 0 2.2px rgba(120, 222, 255, 0.85));
 }
 
-.agentRobotHead::before,
-.agentRobotHead::after {
-  content: "";
-  position: absolute;
-  top: 7px;
-  width: 3px;
-  height: 6px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
+.agentRobotSvg .rkBulb {
+  filter: drop-shadow(0 0 3.2px rgba(255, 210, 61, 0.9));
 }
 
-.agentRobotHead::before {
-  left: -4px;
+/* Orígenes de transformación por pieza */
+.agentRobotSvg .rkHead,
+.agentRobotSvg .rkFace,
+.agentRobotSvg .rkEye,
+.agentRobotSvg .rkAntenna,
+.agentRobotSvg .rkBulb,
+.agentRobotSvg .rkBulbGlow,
+.agentRobotSvg .rkMouthSmile,
+.agentRobotSvg .rkMouthTalk,
+.agentRobotSvg .rkThink,
+.agentRobotSvg .rkThinkDot,
+.agentRobotSvg .rkCheeks {
+  transform-box: fill-box;
 }
 
-.agentRobotHead::after {
-  right: -4px;
+.agentRobotSvg .rkHead { transform-origin: 50% 84%; }
+.agentRobotSvg .rkFace { transform-origin: 50% 50%; }
+.agentRobotSvg .rkEye { transform-origin: 50% 50%; }
+.agentRobotSvg .rkAntenna { transform-origin: 50% 100%; }
+.agentRobotSvg .rkBulb,
+.agentRobotSvg .rkBulbGlow { transform-origin: 50% 50%; }
+.agentRobotSvg .rkMouthSmile,
+.agentRobotSvg .rkMouthTalk { transform-origin: 50% 50%; }
+.agentRobotSvg .rkThink { transform-origin: 0% 100%; }
+.agentRobotSvg .rkThinkDot { transform-origin: 50% 50%; }
+.agentRobotSvg .rkCheeks { transform-origin: 50% 50%; }
+
+/* Capas de expresión ocultas por defecto (cara neutra y feliz) */
+.agentRobotSvg .rkEyesHappy,
+.agentRobotSvg .rkMouthTalk,
+.agentRobotSvg .rkThink,
+.agentRobotSvg .rkCheeks {
+  opacity: 0;
 }
 
-.agentRobotAntenna {
-  position: absolute;
-  top: 3px;
-  left: 50%;
-  z-index: 1;
-  width: 2px;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.96);
-  transform: translate(-50%, -7px);
-  transform-origin: 50% 100%;
+/* ===== Animaciones (sólo cuando el agente está activo) ===== */
+.agentRobotSvg[data-active="true"] .rkHead {
+  animation: rkHeadTilt 12s ease-in-out infinite;
 }
 
-.agentBotButtonActive .agentRobotAntenna {
-  animation: agentRobotAntenna 3.8s ease-in-out infinite;
+.agentRobotSvg[data-active="true"] .rkFace {
+  animation: rkLook 12s ease-in-out infinite;
 }
 
-.agentBotButtonActive .agentRobotBrows {
-  animation: agentRobotBrows 4.8s ease-in-out infinite;
+.agentRobotSvg[data-active="true"] .rkEyes {
+  animation: rkEyesShow 12s ease-in-out infinite;
 }
 
-.agentRobotAntenna::after {
-  content: "";
-  position: absolute;
-  top: -4px;
-  left: 50%;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: #facc15;
-  box-shadow: 0 0 8px rgba(250, 204, 21, 0.86);
-  transform: translateX(-50%);
+.agentRobotSvg[data-active="true"] .rkEye {
+  animation: rkBlink 4.6s ease-in-out infinite;
 }
 
-.agentRobotEyes {
-  position: absolute;
-  top: 6px;
-  left: 50%;
-  display: inline-flex;
-  justify-content: center;
-  width: 12px;
-  gap: 4px;
-  transform: translateX(-50%);
+.agentRobotSvg[data-active="true"] .rkEyesHappy {
+  animation: rkEyesHappyShow 12s ease-in-out infinite;
 }
 
-.agentBotButtonActive .agentRobotEyes {
-  animation: agentRobotLookAround 4.8s ease-in-out infinite;
+.agentRobotSvg[data-active="true"] .rkMouthSmile {
+  animation: rkMouthSmileShow 12s ease-in-out infinite, rkMouthGrin 12s ease-in-out infinite;
 }
 
-.agentRobotEye {
-  display: block;
-  width: 4px;
-  height: 5px;
-  border-radius: 999px;
-  background: #e0f2fe;
-  box-shadow: 0 0 5px rgba(224, 242, 254, 0.92);
-  position: relative;
-  overflow: hidden;
-  transform-origin: 50% 50%;
+.agentRobotSvg[data-active="true"] .rkMouthTalk {
+  animation: rkMouthTalkShow 12s ease-in-out infinite, rkMouthFlutter 0.42s ease-in-out infinite;
 }
 
-.agentRobotEye::after {
-  content: "";
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 2px;
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  opacity: 0.82;
+.agentRobotSvg[data-active="true"] .rkCheeks {
+  animation: rkCheeksGlow 12s ease-in-out infinite;
 }
 
-.agentRobotBrows {
-  position: absolute;
-  top: 4px;
-  left: 50%;
-  display: inline-flex;
-  justify-content: center;
-  width: 14px;
-  gap: 5px;
-  opacity: 0.74;
-  transform: translateX(-50%);
-  pointer-events: none;
+.agentRobotSvg[data-active="true"] .rkThink {
+  animation: rkThinkShow 12s ease-in-out infinite;
 }
 
-.agentRobotBrow {
-  width: 5px;
-  height: 1.5px;
-  border-radius: 999px;
-  background: rgba(224, 242, 254, 0.9);
-  box-shadow: 0 0 5px rgba(125, 211, 252, 0.55);
-  transform-origin: 50% 50%;
+.agentRobotSvg[data-active="true"] .rkThinkDot {
+  animation: rkThinkPop 12s ease-in-out infinite;
 }
 
-.agentRobotBrow:first-child {
-  transform: rotate(-7deg);
+.agentRobotSvg[data-active="true"] .rkThinkDot:nth-child(2) { animation-delay: 0.16s; }
+.agentRobotSvg[data-active="true"] .rkThinkDot:nth-child(3) { animation-delay: 0.32s; }
+
+.agentRobotSvg[data-active="true"] .rkAntenna {
+  animation: rkAntenna 3.8s ease-in-out infinite;
 }
 
-.agentRobotBrow:last-child {
-  transform: rotate(7deg);
+.agentRobotSvg[data-active="true"] .rkBulb {
+  animation: rkBulbPulse 2.4s ease-in-out infinite;
 }
 
-.agentRobotCheeks {
-  position: absolute;
-  right: 5px;
-  bottom: 5px;
-  left: 5px;
-  display: flex;
-  justify-content: space-between;
-  opacity: 0.54;
-  pointer-events: none;
-}
-
-.agentRobotCheek {
-  width: 3px;
-  height: 3px;
-  border-radius: 999px;
-  background: rgba(94, 234, 212, 0.72);
-  box-shadow: 0 0 5px rgba(94, 234, 212, 0.62);
-}
-
-.agentBotButtonActive .agentRobotEye {
-  animation: agentRobotBlink 5.2s ease-in-out infinite;
-}
-
-.agentBotButtonActive .agentRobotCheeks {
-  animation: agentRobotCheeks 3.8s ease-in-out infinite;
-}
-
-.agentRobotMouth {
-  position: absolute;
-  right: 7px;
-  bottom: 4px;
-  left: 7px;
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(186, 230, 253, 0.9);
-  transform-origin: 50% 50%;
-}
-
-.agentBotButtonActive .agentRobotMouth {
-  animation: agentRobotTalk 2.7s ease-in-out infinite;
+.agentRobotSvg[data-active="true"] .rkBulbGlow {
+  animation: rkGlowPulse 2.4s ease-in-out infinite;
 }
 
 .agentBotOrbit {
@@ -7819,58 +7591,106 @@
   74% { opacity: 0.65; transform: rotate(72deg) translateX(10px) scale(0.72); }
 }
 
-@keyframes agentRobotAlive {
-  0%, 16%, 100% { transform: translateY(0) rotate(0deg) scale(1); }
-  24% { transform: translateY(-1.4px) rotate(-2deg) scale(1.04); }
-  34% { transform: translateY(0) rotate(1.6deg) scale(1); }
-  58% { transform: translateY(-1px) rotate(0deg) scale(1.045); }
-  72% { transform: translateY(0) rotate(0deg) scale(1); }
-  82% { transform: translateY(-2.4px) rotate(-5deg) scale(1.06); }
-  87% { transform: translateY(-1px) rotate(5deg) scale(1.04); }
-  92% { transform: translateY(0) rotate(0deg) scale(1); }
+/* Inclinación de cabeza: mira, piensa y asiente al hablar */
+@keyframes rkHeadTilt {
+  0%, 10%, 100% { transform: rotate(0deg) translateY(0); }
+  19% { transform: rotate(-4deg) translateY(0.3px); }
+  34% { transform: rotate(3.4deg) translateY(0); }
+  46% { transform: rotate(0deg) translateY(0); }
+  54%, 62% { transform: rotate(-3.2deg) translateY(-0.8px); }
+  72% { transform: rotate(1.6deg) translateY(0.5px); }
+  80% { transform: rotate(-1.6deg) translateY(0.5px); }
+  90% { transform: rotate(0deg) translateY(0); }
 }
 
-@keyframes agentRobotHeadTrack {
-  0%, 18%, 100% { transform: translate(0, 0) rotate(0deg); }
-  28%, 40% { transform: translate(-0.8px, 0) rotate(-2deg); }
-  52%, 66% { transform: translate(0.9px, 0) rotate(2.2deg); }
-  78%, 88% { transform: translate(-0.4px, 0.2px) rotate(-1deg); }
+/* Mirada del rostro: escanea a los lados y mira arriba al pensar */
+@keyframes rkLook {
+  0%, 12%, 100% { transform: translate(0, 0); }
+  18%, 26% { transform: translate(-3px, 0); }
+  34%, 42% { transform: translate(3px, 0); }
+  52%, 62% { transform: translate(2px, -2.6px); }
+  70%, 86% { transform: translate(0, 0); }
 }
 
-@keyframes agentRobotAntenna {
-  0%, 100% { transform: translate(-50%, -7px) rotate(0deg); }
-  42% { transform: translate(-50%, -7px) rotate(-6deg); }
-  58% { transform: translate(-50%, -7px) rotate(5deg); }
+/* Capa de ojos normales: visible salvo en fase feliz */
+@keyframes rkEyesShow {
+  0%, 22%, 47%, 100% { opacity: 1; }
+  26%, 43% { opacity: 0; }
 }
 
-@keyframes agentRobotBrows {
-  0%, 18%, 100% { transform: translateX(-50%) translateY(0); opacity: 0.72; }
-  32%, 45% { transform: translateX(-50%) translateY(-0.7px); opacity: 0.92; }
-  64%, 74% { transform: translateX(-50%) translateY(0.4px); opacity: 0.76; }
+/* Ojos felices (arcos): sólo en fase feliz */
+@keyframes rkEyesHappyShow {
+  0%, 23%, 46%, 100% { opacity: 0; }
+  27%, 42% { opacity: 1; }
 }
 
-@keyframes agentRobotLookAround {
-  0%, 18%, 100% { transform: translateX(-50%) translateX(0); }
-  28%, 40% { transform: translateX(-50%) translateX(-0.7px); }
-  52%, 66% { transform: translateX(-50%) translateX(0.8px); }
-  78%, 88% { transform: translateX(-50%) translateX(-0.35px); }
+/* Parpadeo */
+@keyframes rkBlink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  94% { transform: scaleY(0.08); }
+  98% { transform: scaleY(1); }
 }
 
-@keyframes agentRobotBlink {
-  0%, 7%, 35%, 39%, 72%, 76%, 100% { transform: scaleY(1); }
-  8%, 37%, 74% { transform: scaleY(0.14); }
+/* Sonrisa visible salvo cuando habla */
+@keyframes rkMouthSmileShow {
+  0%, 60%, 88%, 100% { opacity: 1; }
+  64%, 84% { opacity: 0; }
 }
 
-@keyframes agentRobotTalk {
-  0%, 100% { transform: scaleX(0.72); opacity: 0.85; }
-  38% { transform: scaleX(1.12); opacity: 1; }
-  62% { transform: scaleX(0.88); opacity: 0.9; }
+/* Sonrisota en fase feliz */
+@keyframes rkMouthGrin {
+  0%, 22%, 47%, 100% { transform: scale(1) translateY(0); }
+  28%, 42% { transform: scale(1.22) translateY(1px); }
 }
 
-@keyframes agentRobotCheeks {
-  0%, 100% { opacity: 0.42; transform: scale(0.92); }
-  42% { opacity: 0.76; transform: scale(1.08); }
-  68% { opacity: 0.5; transform: scale(1); }
+/* Boca abierta visible sólo al hablar */
+@keyframes rkMouthTalkShow {
+  0%, 62%, 86%, 100% { opacity: 0; }
+  65%, 84% { opacity: 1; }
+}
+
+/* Aleteo rápido de la boca al hablar */
+@keyframes rkMouthFlutter {
+  0%, 100% { transform: scaleY(0.42); }
+  50% { transform: scaleY(1); }
+}
+
+/* Rubor en cachetes: feliz y hablando */
+@keyframes rkCheeksGlow {
+  0%, 20%, 100% { opacity: 0; }
+  28%, 42% { opacity: 0.92; }
+  47% { opacity: 0; }
+  72%, 84% { opacity: 0.5; }
+  90% { opacity: 0; }
+}
+
+/* Globitos de pensamiento aparecen al pensar */
+@keyframes rkThinkShow {
+  0%, 47%, 65%, 100% { opacity: 0; }
+  52%, 61% { opacity: 1; }
+}
+
+@keyframes rkThinkPop {
+  0%, 48%, 64%, 100% { transform: scale(0); }
+  53%, 60% { transform: scale(1); }
+}
+
+/* Antena que se balancea */
+@keyframes rkAntenna {
+  0%, 100% { transform: rotate(0deg); }
+  30% { transform: rotate(-8deg); }
+  65% { transform: rotate(7deg); }
+}
+
+/* Foco que late */
+@keyframes rkBulbPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.14); opacity: 0.88; }
+}
+
+@keyframes rkGlowPulse {
+  0%, 100% { transform: scale(1); opacity: 0.28; }
+  50% { transform: scale(1.4); opacity: 0.5; }
 }
 
 @keyframes aiAgentHubRobotFloat {
@@ -7890,74 +7710,6 @@
   32% { background-position: 72% 30%; filter: saturate(1.18); }
   58% { background-position: 100% 66%; filter: saturate(1.08); }
   82% { background-position: 34% 82%; filter: saturate(1.22); }
-}
-
-@keyframes aiAgentHubRobotBody {
-  0%, 100% { transform: translateY(0) rotate(0deg) scale(1); }
-  10% { transform: translateY(-1px) rotate(-1.2deg) scale(1.015); }
-  18% { transform: translateY(0) rotate(0.8deg) scale(1); }
-  32% { transform: translateY(-2px) rotate(0deg) scale(1.035); }
-  44% { transform: translateY(-0.5px) rotate(1.4deg) scale(1.01); }
-  58% { transform: translateY(-1.5px) rotate(-1deg) scale(1.026); }
-  69% { transform: translateY(0) rotate(0deg) scale(1); }
-  79% { transform: translateY(-2.4px) rotate(-3.4deg) scale(1.04); }
-  84% { transform: translateY(-1px) rotate(3deg) scale(1.026); }
-  91% { transform: translateY(0) rotate(0deg) scale(1); }
-}
-
-@keyframes aiAgentHubRobotFace {
-  0%, 100% { transform: translate(0, 0) rotate(0deg); }
-  12%, 22% { transform: translate(-0.8px, 0) rotate(-1.4deg); }
-  35%, 48% { transform: translate(0.9px, -0.4px) rotate(1.6deg); }
-  60%, 68% { transform: translate(0, 0.45px) rotate(0deg); }
-  77%, 87% { transform: translate(-0.45px, 0) rotate(-0.9deg); }
-}
-
-@keyframes aiAgentHubRobotAntenna {
-  0%, 100% { transform: translate(-50%, -14px) rotate(0deg); }
-  14% { transform: translate(-50%, -14px) rotate(-5deg); }
-  22% { transform: translate(-50%, -14px) rotate(4deg); }
-  43% { transform: translate(-50%, -14px) rotate(0deg); }
-  70% { transform: translate(-50%, -14px) rotate(7deg); }
-  79% { transform: translate(-50%, -14px) rotate(-4deg); }
-}
-
-@keyframes aiAgentHubRobotBrows {
-  0%, 100% { transform: translateX(-50%) translateY(0); opacity: 0.76; }
-  12%, 24% { transform: translateX(-50%) translateY(-1px); opacity: 0.96; }
-  38%, 50% { transform: translateX(-50%) translateY(0.7px); opacity: 0.7; }
-  66%, 75% { transform: translateX(-50%) translateY(-0.4px); opacity: 0.88; }
-  84%, 92% { transform: translateX(-50%) translateY(-1.2px); opacity: 1; }
-}
-
-@keyframes aiAgentHubRobotEyes {
-  0%, 100% { transform: translateX(-50%) translateX(0); }
-  12%, 24% { transform: translateX(-50%) translateX(-1.2px); }
-  38%, 52% { transform: translateX(-50%) translateX(1.2px); }
-  64%, 74% { transform: translateX(-50%) translateX(0); }
-  82%, 90% { transform: translateX(-50%) translateX(-0.6px); }
-}
-
-@keyframes aiAgentHubRobotBlink {
-  0%, 8%, 34%, 38%, 54%, 59%, 81%, 87%, 100% { transform: scaleY(1); }
-  9%, 36%, 56%, 84% { transform: scaleY(0.13); }
-}
-
-@keyframes aiAgentHubRobotTalk {
-  0%, 14%, 100% { transform: scaleX(0.68) translateY(0); opacity: 0.78; }
-  17% { transform: scaleX(1.18) translateY(-0.3px); opacity: 1; }
-  22% { transform: scaleX(0.82) translateY(0); opacity: 0.9; }
-  40% { transform: scaleX(1.04) translateY(-0.2px); opacity: 1; }
-  48% { transform: scaleX(0.76) translateY(0); opacity: 0.84; }
-  68% { transform: scaleX(1.24) translateY(-0.4px); opacity: 1; }
-  76% { transform: scaleX(0.8) translateY(0); opacity: 0.86; }
-}
-
-@keyframes aiAgentHubRobotCheeks {
-  0%, 100% { opacity: 0.46; transform: scale(0.92); }
-  18%, 32% { opacity: 0.82; transform: scale(1.1); }
-  46%, 62% { opacity: 0.56; transform: scale(0.98); }
-  80%, 90% { opacity: 0.9; transform: scale(1.16); }
 }
 
 @keyframes aiAgentHubOrbit {
@@ -8050,25 +7802,10 @@
   .agentBotButtonActive,
   .agentBotButtonActive::before,
   .agentBotButtonActive::after,
-  .agentBotButtonActive .agentRobot,
-  .agentBotButtonActive .agentRobotHead,
-  .agentBotButtonActive .agentRobotAntenna,
-  .agentBotButtonActive .agentRobotBrows,
-  .agentBotButtonActive .agentRobotEyes,
-  .agentBotButtonActive .agentRobotEye,
-  .agentBotButtonActive .agentRobotCheeks,
-  .agentBotButtonActive .agentRobotMouth,
+  .agentRobotSvg [class],
   .aiAgentHubRobotOn,
   .aiAgentHubRobotOn::before,
   .aiAgentHubRobotOn::after,
-  .aiAgentHubRobotOn .agentRobot,
-  .aiAgentHubRobotOn .agentRobotHead,
-  .aiAgentHubRobotOn .agentRobotAntenna,
-  .aiAgentHubRobotOn .agentRobotBrows,
-  .aiAgentHubRobotOn .agentRobotEyes,
-  .aiAgentHubRobotOn .agentRobotEye,
-  .aiAgentHubRobotOn .agentRobotCheeks,
-  .aiAgentHubRobotOn .agentRobotMouth,
   .aiAgentHubRobotOn .aiAgentHubRobotPing,
   .aiAgentHubRobotOn .aiAgentHubRobotSparkleOne,
   .aiAgentHubRobotOn .aiAgentHubRobotSparkleTwo,
