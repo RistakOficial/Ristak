@@ -174,13 +174,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 10px;
-  background: rgba(148, 163, 184, 0.12);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  width: 46px;
+  height: 46px;
   color: var(--color-text-primary);
   flex-shrink: 0;
+  overflow: visible;
 }
 
 .titleBlock {

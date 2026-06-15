@@ -1,0 +1,341 @@
+.robot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  line-height: 0;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* ---- shared SVG transform setup ---- */
+.float,
+.antenna,
+.tip,
+.tipRing,
+.eyes,
+.eyeLeft,
+.eyeRight,
+.cheekLeft,
+.cheekRight,
+.earLeft,
+.earRight,
+.mouthHappy,
+.mouthThinking {
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform;
+}
+
+/* ---- idle float + gentle sway ---- */
+.float {
+  transform-origin: 60px 96px;
+  animation: rk-float 4.6s ease-in-out infinite;
+}
+
+@keyframes rk-float {
+  0% {
+    transform: translateY(0) rotate(-2.6deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(2.6deg);
+  }
+  100% {
+    transform: translateY(0) rotate(-2.6deg);
+  }
+}
+
+/* ---- aura breathing glow ---- */
+.aura {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: rk-aura 4.6s ease-in-out infinite;
+}
+
+@keyframes rk-aura {
+  0%,
+  100% {
+    transform: scale(0.92);
+    opacity: 0.75;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+
+/* ---- antenna sway ---- */
+.antenna {
+  transform-origin: 60px 34px;
+  animation: rk-antenna 3.1s ease-in-out infinite;
+}
+
+@keyframes rk-antenna {
+  0%,
+  100% {
+    transform: rotate(-7deg);
+  }
+  50% {
+    transform: rotate(7deg);
+  }
+}
+
+.tip {
+  animation: rk-tip 1.9s ease-in-out infinite;
+  filter: drop-shadow(0 0 4px rgba(96, 245, 222, 0.9));
+}
+
+@keyframes rk-tip {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.18);
+  }
+}
+
+.tipRing {
+  animation: rk-ring 1.9s ease-out infinite;
+}
+
+@keyframes rk-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  70%,
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+/* ---- ear pods pulse ---- */
+.earDotLeft,
+.earDotRight {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: rk-eardot 2.2s ease-in-out infinite;
+}
+
+.earDotRight {
+  animation-delay: 1.1s;
+}
+
+@keyframes rk-eardot {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ---- eyes blink + happy curiosity ---- */
+.eyeLeft,
+.eyeRight {
+  animation: rk-blink 5s ease-in-out infinite;
+}
+
+@keyframes rk-blink {
+  0%,
+  90%,
+  100% {
+    transform: scaleY(1);
+  }
+  94% {
+    transform: scaleY(0.12);
+  }
+}
+
+/* a playful wink on the left eye every other cycle */
+.eyeLeft {
+  animation: rk-wink 10s ease-in-out infinite;
+}
+
+@keyframes rk-wink {
+  0%,
+  44%,
+  52%,
+  90%,
+  100% {
+    transform: scaleY(1);
+  }
+  47%,
+  49% {
+    transform: scaleY(0.12);
+  }
+  94% {
+    transform: scaleY(0.12);
+  }
+}
+
+.eyes {
+  animation: rk-eyes-look 6.5s ease-in-out infinite;
+}
+
+@keyframes rk-eyes-look {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  30% {
+    transform: translateX(1.4px);
+  }
+  60% {
+    transform: translateX(-1.4px);
+  }
+}
+
+/* ---- cheeks gentle blush pulse ---- */
+.cheekLeft,
+.cheekRight {
+  animation: rk-cheek 4.6s ease-in-out infinite;
+}
+
+@keyframes rk-cheek {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+/* ---- mouth: happy breathing smile ---- */
+.mouthHappy {
+  animation: rk-smile 4.6s ease-in-out infinite;
+  filter: drop-shadow(0 0 2px rgba(127, 247, 227, 0.5));
+}
+
+@keyframes rk-smile {
+  0%,
+  100% {
+    transform: scaleX(1) scaleY(1);
+  }
+  50% {
+    transform: scaleX(1.05) scaleY(1.12);
+  }
+}
+
+.mouthThinking {
+  opacity: 0;
+}
+
+/* ====================================================== */
+/* THINKING STATE — focused, looking up, antenna spinning */
+/* ====================================================== */
+.thinking .float {
+  animation: rk-float-think 3s ease-in-out infinite;
+}
+
+@keyframes rk-float-think {
+  0%,
+  100% {
+    transform: translateY(-1px) rotate(-1.4deg);
+  }
+  50% {
+    transform: translateY(-3px) rotate(1.4deg);
+  }
+}
+
+.thinking .antenna {
+  animation: rk-spin 1.1s linear infinite;
+}
+
+@keyframes rk-spin {
+  0% {
+    transform: rotate(-12deg);
+  }
+  50% {
+    transform: rotate(12deg);
+  }
+  100% {
+    transform: rotate(-12deg);
+  }
+}
+
+.thinking .tip {
+  animation: rk-tip 0.7s ease-in-out infinite;
+}
+
+.thinking .tipRing {
+  animation: rk-ring 0.9s ease-out infinite;
+}
+
+.thinking .eyes {
+  animation: rk-eyes-think 1.6s ease-in-out infinite;
+}
+
+@keyframes rk-eyes-think {
+  0%,
+  100% {
+    transform: translateY(-2px) translateX(2px);
+  }
+  50% {
+    transform: translateY(-2px) translateX(-2px);
+  }
+}
+
+/* keep blinking but no wink while focused */
+.thinking .eyeLeft,
+.thinking .eyeRight {
+  animation: rk-blink 3.4s ease-in-out infinite;
+}
+
+.thinking .mouthHappy {
+  opacity: 0;
+}
+
+.thinking .mouthThinking {
+  opacity: 1;
+  animation: rk-think-mouth 1.6s ease-in-out infinite;
+}
+
+@keyframes rk-think-mouth {
+  0%,
+  100% {
+    transform: scale(0.8);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+
+/* ---- respect reduced motion ---- */
+@media (prefers-reduced-motion: reduce) {
+  .float,
+  .aura,
+  .antenna,
+  .tip,
+  .tipRing,
+  .earDotLeft,
+  .earDotRight,
+  .eyeLeft,
+  .eyeRight,
+  .eyes,
+  .cheekLeft,
+  .cheekRight,
+  .mouthHappy,
+  .thinking .float,
+  .thinking .antenna,
+  .thinking .tip,
+  .thinking .tipRing,
+  .thinking .eyes,
+  .thinking .mouthThinking {
+    animation: none !important;
+  }
+}
