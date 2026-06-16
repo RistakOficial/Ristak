@@ -1525,13 +1525,62 @@ function getAttachmentFallbackName(type: ChatAttachmentType, name = '', mediaId 
   return 'Mensaje de voz'
 }
 
+function pickMediaUrl(data: Record<string, unknown>) {
+  const keys = [
+    'media_url',
+    'mediaUrl',
+    'public_url',
+    'publicUrl',
+    'download_url',
+    'downloadUrl',
+    'file_url',
+    'fileUrl',
+    'audio_url',
+    'audioUrl',
+    'image_url',
+    'imageUrl',
+    'video_url',
+    'videoUrl',
+    'url',
+    'link',
+    'href'
+  ]
+  for (const key of keys) {
+    const value = String(data[key] || '').trim()
+    if (value) return value
+  }
+  return ''
+}
+
+function cleanAttachmentMessageText(text = '', attachment?: ChatMessage['attachment']) {
+  if (!attachment) return text
+  const placeholderByType: Record<ChatAttachmentType, string[]> = {
+    audio: ['audio', 'voice', 'voice message', 'mensaje de voz'],
+    image: ['image', 'photo', 'foto', 'imagen'],
+    video: ['video'],
+    document: ['document', 'documento'],
+    file: ['file', 'archivo']
+  }
+  const normalized = text
+    .replace(/\[[^\]]*received on[^\]]*\]/gi, '')
+    .replace(/\[[^\]]*sent from[^\]]*\]/gi, '')
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+
+  if ((placeholderByType[attachment.type] || []).includes(normalized)) return ''
+  return text
+}
+
 function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment'] | undefined {
-  const messageType = String(event.data?.message_type || '').toLowerCase()
-  const mediaUrl = String(event.data?.media_url || event.data?.mediaUrl || '').trim()
-  const mediaId = String(event.data?.media_id || event.data?.mediaId || '').trim()
-  const mimeType = String(event.data?.media_mime_type || event.data?.mediaMimeType || '').trim()
-  const name = String(event.data?.media_filename || event.data?.mediaFilename || '').trim()
-  const durationMs = Number(event.data?.media_duration_ms || event.data?.mediaDurationMs || 0) || undefined
+  const data = (event.data || {}) as Record<string, unknown>
+  const messageType = String(data.message_type || data.messageType || data.type || '').toLowerCase()
+  const mediaUrl = pickMediaUrl(data)
+  const mediaId = String(data.media_id || data.mediaId || '').trim()
+  const mimeType = String(data.media_mime_type || data.mediaMimeType || data.mimeType || data.mime_type || '').trim()
+  const name = String(data.media_filename || data.mediaFilename || data.filename || data.fileName || '').trim()
+  const durationMs = Number(data.media_duration_ms || data.mediaDurationMs || data.durationMs || data.duration_ms || 0) || undefined
   const attachmentType = getMediaAttachmentType(messageType, mimeType, name)
 
   if (attachmentType === 'audio') {
@@ -1591,11 +1640,12 @@ function getContactInfoArchiveItems(journey: JourneyEvent[] = []): ContactInfoAr
       event.data?.meta_message_id ||
       `message-${eventIndex}`
     )
-    const messageType = String(event.data?.message_type || '')
-    const mediaUrl = String(event.data?.media_url || event.data?.mediaUrl || '').trim()
-    const mediaId = String(event.data?.media_id || event.data?.mediaId || '').trim()
-    const mimeType = String(event.data?.media_mime_type || event.data?.mediaMimeType || '').trim()
-    const name = String(event.data?.media_filename || event.data?.mediaFilename || '').trim()
+    const eventData = (event.data || {}) as Record<string, unknown>
+    const messageType = String(eventData.message_type || eventData.messageType || eventData.type || '')
+    const mediaUrl = pickMediaUrl(eventData)
+    const mediaId = String(eventData.media_id || eventData.mediaId || '').trim()
+    const mimeType = String(eventData.media_mime_type || eventData.mediaMimeType || eventData.mimeType || eventData.mime_type || '').trim()
+    const name = String(eventData.media_filename || eventData.mediaFilename || eventData.filename || eventData.fileName || '').trim()
     const attachmentType = getMediaAttachmentType(messageType, mimeType, name)
 
     if (attachmentType && attachmentType !== 'audio' && (mediaUrl || mediaId)) {
@@ -1639,7 +1689,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
   if (event.type !== 'whatsapp_message' && !isMetaMessage) return null
   const eventData = (event.data || {}) as Record<string, unknown>
 
-  const text = String(
+  const rawText = String(
     event.data?.message_text ||
     event.data?.message ||
     event.data?.body ||
@@ -1647,6 +1697,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
   ).trim()
   const messageType = String(event.data?.message_type || '')
   const attachment = getJourneyMediaAttachment(event)
+  const text = cleanAttachmentMessageText(rawText, attachment)
 
   if (!text && !messageType && !attachment) return null
 

@@ -695,16 +695,28 @@ function pickMediaUrl(data: Record<string, unknown>) {
 }
 
 function cleanAttachmentMessageText(text = '', attachment?: DesktopChatMessage['attachment']) {
-  if (attachment?.type !== 'audio') return text
+  if (!attachment) return text
+  const placeholderByType: Record<ChatAttachmentType, string[]> = {
+    audio: ['audio', 'voice', 'voice message', 'mensaje de voz'],
+    image: ['image', 'photo', 'foto', 'imagen'],
+    video: ['video'],
+    document: ['document', 'documento'],
+    file: ['file', 'archivo']
+  }
   const normalized = text
     .replace(/\[[^\]]*received on[^\]]*\]/gi, '')
+    .replace(/\[[^\]]*sent from[^\]]*\]/gi, '')
     .replace(/[<>]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase()
 
-  if (['audio', 'voice', 'voice message', 'mensaje de voz'].includes(normalized)) return ''
+  if ((placeholderByType[attachment.type] || []).includes(normalized)) return ''
   return text
+}
+
+function getAttachmentSource(attachment: DesktopChatMessage['attachment']) {
+  return attachment?.url || attachment?.dataUrl || ''
 }
 
 function getJourneyMediaAttachment(event: JourneyEvent): DesktopChatMessage['attachment'] | undefined {
@@ -736,7 +748,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
   const direction = normalizeWhatsAppBusinessDirection(data.direction || data.message_direction || data.from_type)
   const date = pickMessageTimestamp(data, ['date', 'timestamp', 'created_at', 'createdAt', 'message_timestamp', 'messageTimestamp']) || event.date
   const fallbackText = attachment
-    ? (attachment.type === 'audio' ? '' : getMessageTypeLabel(attachment.type, 'Archivo'))
+    ? (['audio', 'image', 'video'].includes(attachment.type) ? '' : getMessageTypeLabel(attachment.type, 'Archivo'))
     : getMessageTypeLabel(messageType)
   return {
     id: String(
@@ -1958,24 +1970,58 @@ export const DesktopChat: React.FC = () => {
   const renderAttachment = (message: DesktopChatMessage) => {
     if (!message.attachment) return null
     const { attachment } = message
+    const attachmentSrc = getAttachmentSource(attachment)
+
     if (attachment.type === 'audio') {
-      const audioSrc = attachment.url || attachment.dataUrl || ''
       return (
         <div className={styles.audioAttachment}>
           <Mic size={15} />
           <span className={styles.audioAttachmentBody}>
             <strong>{attachment.name || 'Mensaje de voz'}</strong>
-            {audioSrc ? <audio controls src={audioSrc} preload="metadata" /> : <small>Audio no disponible</small>}
+            {attachmentSrc ? <audio controls src={attachmentSrc} preload="metadata" /> : <small>Audio no disponible</small>}
           </span>
           {attachment.durationMs ? <small>{formatVoiceDuration(attachment.durationMs)}</small> : null}
         </div>
       )
     }
 
-    const Icon = attachment.type === 'image' ? ImageIcon : attachment.type === 'video' ? Video : FileText
+    if (attachment.type === 'image') {
+      if (!attachmentSrc) {
+        return (
+          <span className={`${styles.attachment} ${styles.attachmentUnavailable}`}>
+            <ImageIcon size={15} />
+            <span>{attachment.name || 'Foto no disponible'}</span>
+          </span>
+        )
+      }
+
+      return (
+        <a className={styles.mediaAttachment} href={attachmentSrc} target="_blank" rel="noreferrer" aria-label={attachment.name || 'Abrir foto'}>
+          <img src={attachmentSrc} alt={attachment.name || 'Foto enviada'} loading="lazy" />
+        </a>
+      )
+    }
+
+    if (attachment.type === 'video') {
+      if (!attachmentSrc) {
+        return (
+          <span className={`${styles.attachment} ${styles.attachmentUnavailable}`}>
+            <Video size={15} />
+            <span>{attachment.name || 'Video no disponible'}</span>
+          </span>
+        )
+      }
+
+      return (
+        <div className={styles.mediaAttachment}>
+          <video src={attachmentSrc} controls playsInline preload="metadata" />
+        </div>
+      )
+    }
+
     return (
-      <a className={styles.attachment} href={attachment.url || attachment.dataUrl || undefined} target="_blank" rel="noreferrer">
-        <Icon size={15} />
+      <a className={styles.attachment} href={attachmentSrc || undefined} target="_blank" rel="noreferrer">
+        <FileText size={15} />
         <span>{attachment.name || getMessageTypeLabel(attachment.type, 'Archivo')}</span>
       </a>
     )

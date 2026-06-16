@@ -3313,16 +3313,48 @@ function getMessageMediaId(message = {}) {
   )
 }
 
-function buildInboundAudioFilename({ mediaId = '', mimeType = '' } = {}) {
-  const cleanMime = cleanMimeType(mimeType)
-  const extension = AUDIO_EXTENSION_BY_MIME[cleanMime] || 'ogg'
-  const suffix = cleanString(mediaId).slice(-10) || Date.now()
-  return `whatsapp-audio-${suffix}.${extension}`
+function getInboundMediaLimitBytes(messageType = '') {
+  const type = cleanString(messageType).toLowerCase()
+  if (type === 'audio' || type === 'voice') return MAX_WHATSAPP_AUDIO_BYTES
+  if (type === 'image' || type === 'sticker') return MAX_WHATSAPP_IMAGE_INPUT_BYTES
+  if (type === 'document') return MAX_WHATSAPP_DOCUMENT_BYTES
+  if (type === 'video') return Number(process.env.WHATSAPP_INBOUND_VIDEO_MAX_BYTES || 64 * 1024 * 1024)
+  return MAX_WHATSAPP_DOCUMENT_BYTES
 }
 
-async function downloadMetaDirectInboundAudio({ mediaId, token, phoneNumberId = '', mimeType = '' } = {}) {
+function getInboundMediaExtension({ messageType = '', mimeType = '', filename = '' } = {}) {
+  const cleanMime = cleanMimeType(mimeType)
+  const currentExtension = cleanString(filename).toLowerCase().split('.').pop()
+  if (/^[a-z0-9]{2,8}$/.test(currentExtension)) return currentExtension
+
+  const type = cleanString(messageType).toLowerCase()
+  if (type === 'audio' || type === 'voice') return AUDIO_EXTENSION_BY_MIME[cleanMime] || 'ogg'
+  if (type === 'image' || type === 'sticker') return IMAGE_EXTENSION_BY_MIME[cleanMime] || 'jpg'
+  if (type === 'document') return DOCUMENT_EXTENSION_BY_MIME[cleanMime] || 'bin'
+  if (type === 'video') {
+    if (cleanMime === 'video/mp4') return 'mp4'
+    if (cleanMime === 'video/quicktime') return 'mov'
+    if (cleanMime === 'video/webm') return 'webm'
+    return 'mp4'
+  }
+  return DOCUMENT_EXTENSION_BY_MIME[cleanMime] || 'bin'
+}
+
+function buildInboundMediaFilename({ mediaId = '', messageType = '', mimeType = '', filename = '' } = {}) {
+  const provided = cleanString(filename).split(/[\\/]/).pop()
+  if (provided && /\.[a-z0-9]{2,8}$/i.test(provided)) return provided.slice(0, 180)
+
+  const type = cleanString(messageType).toLowerCase() || 'media'
+  const extension = getInboundMediaExtension({ messageType: type, mimeType, filename })
+  const suffix = cleanString(mediaId).slice(-10) || Date.now()
+  return `whatsapp-${type}-${suffix}.${extension}`
+}
+
+async function downloadMetaDirectInboundMedia({ mediaId, token, phoneNumberId = '', messageType = '', mimeType = '', filename = '' } = {}) {
   const cleanMediaId = cleanString(mediaId)
   if (!cleanMediaId) return null
+  const cleanMessageType = cleanString(messageType).toLowerCase()
+  const maxBytes = getInboundMediaLimitBytes(cleanMessageType)
 
   const mediaInfo = await metaDirectGraphRequest(`/${encodeURIComponent(cleanMediaId)}`, {
     token,
@@ -3332,37 +3364,51 @@ async function downloadMetaDirectInboundAudio({ mediaId, token, phoneNumberId = 
     }
   })
   const mediaUrl = cleanString(mediaInfo.url)
-  if (!mediaUrl) throw new Error('Meta no devolvió URL para el audio recibido')
+  if (!mediaUrl) throw new Error('Meta no devolvió URL para el archivo recibido')
 
   const declaredSize = Number(mediaInfo.file_size || 0)
-  if (declaredSize > MAX_WHATSAPP_AUDIO_BYTES) {
-    throw new Error('El audio recibido excede el tamaño máximo permitido')
+  if (declaredSize > maxBytes) {
+    throw new Error('El archivo recibido excede el tamaño máximo permitido')
   }
 
   const response = await nodeFetch(mediaUrl, {
     headers: { Authorization: `Bearer ${cleanString(token)}` }
   })
   if (!response.ok) {
-    throw new Error(`Meta no permitió descargar el audio recibido (${response.status})`)
+    throw new Error(`Meta no permitió descargar el archivo recibido (${response.status})`)
   }
 
   const buffer = Buffer.from(await response.arrayBuffer())
-  if (!buffer.length) throw new Error('Meta devolvió un audio vacío')
-  if (buffer.length > MAX_WHATSAPP_AUDIO_BYTES) throw new Error('El audio recibido excede el tamaño máximo permitido')
+  if (!buffer.length) throw new Error('Meta devolvió un archivo vacío')
+  if (buffer.length > maxBytes) throw new Error('El archivo recibido excede el tamaño máximo permitido')
 
   const responseMimeType = cleanString(response.headers.get('content-type')).split(';')[0]
-  const finalMimeType = cleanMimeType(mediaInfo.mime_type || responseMimeType || mimeType || 'audio/ogg')
+  const fallbackMimeType = cleanMessageType === 'audio' || cleanMessageType === 'voice'
+    ? 'audio/ogg'
+    : cleanMessageType === 'image' || cleanMessageType === 'sticker'
+      ? 'image/jpeg'
+      : cleanMessageType === 'video'
+        ? 'video/mp4'
+        : 'application/octet-stream'
+  const finalMimeType = cleanMimeType(mediaInfo.mime_type || responseMimeType || mimeType || fallbackMimeType)
+  const finalFilename = buildInboundMediaFilename({
+    mediaId: cleanMediaId,
+    messageType: cleanMessageType,
+    mimeType: finalMimeType,
+    filename
+  })
   const { uploadMediaAsset } = await import('./mediaStorageService.js')
   const asset = await uploadMediaAsset({
     buffer,
     mimeType: finalMimeType,
-    filename: buildInboundAudioFilename({ mediaId: cleanMediaId, mimeType: finalMimeType }),
+    filename: finalFilename,
     module: 'chat',
     isPublic: true,
     skipCompression: true,
     metadata: {
-      source: 'meta_direct_inbound_audio',
+      source: 'meta_direct_inbound_media',
       whatsappMediaId: cleanMediaId,
+      whatsappMessageType: cleanMessageType,
       phoneNumberId: cleanString(phoneNumberId)
     }
   })
@@ -3370,15 +3416,15 @@ async function downloadMetaDirectInboundAudio({ mediaId, token, phoneNumberId = 
   return {
     mediaUrl: asset.publicUrl,
     mediaMimeType: asset.mimeType || finalMimeType,
-    mediaFilename: asset.originalFilename || asset.storedFilename || buildInboundAudioFilename({ mediaId: cleanMediaId, mimeType: finalMimeType }),
+    mediaFilename: asset.originalFilename || asset.storedFilename || finalFilename,
     mediaAssetId: asset.id
   }
 }
 
-async function hydrateInboundAudioMedia(normalizedMessage = {}, media = {}, { businessPhoneNumberId = '' } = {}) {
+async function hydrateInboundMessageMedia(normalizedMessage = {}, media = {}, { businessPhoneNumberId = '' } = {}) {
   if (media.mediaUrl) return media
   const messageType = cleanString(normalizedMessage.type).toLowerCase()
-  if (messageType !== 'audio') return media
+  if (!['audio', 'voice', 'image', 'video', 'document', 'sticker'].includes(messageType)) return media
   if (cleanString(normalizedMessage.provider) !== META_DIRECT_PROVIDER_NAME) return media
 
   const mediaId = getMessageMediaId(normalizedMessage)
@@ -3386,17 +3432,20 @@ async function hydrateInboundAudioMedia(normalizedMessage = {}, media = {}, { bu
 
   try {
     const config = await loadMetaDirectConfig({ includeSecrets: true })
-    const downloaded = await downloadMetaDirectInboundAudio({
+    const downloaded = await downloadMetaDirectInboundMedia({
       mediaId,
       token: config.systemUserToken,
       phoneNumberId: cleanString(normalizedMessage.phoneNumberId || businessPhoneNumberId || config.phoneNumberId),
-      mimeType: media.mediaMimeType
+      messageType,
+      mimeType: media.mediaMimeType,
+      filename: media.mediaFilename
     })
     if (!downloaded?.mediaUrl) return media
 
-    const audio = isPlainObject(normalizedMessage.audio) ? normalizedMessage.audio : {}
-    normalizedMessage.audio = {
-      ...audio,
+    const mediaKey = messageType === 'voice' ? 'audio' : messageType
+    const currentMedia = isPlainObject(normalizedMessage[mediaKey]) ? normalizedMessage[mediaKey] : {}
+    normalizedMessage[mediaKey] = {
+      ...currentMedia,
       id: mediaId,
       link: downloaded.mediaUrl,
       url: downloaded.mediaUrl,
@@ -3413,7 +3462,7 @@ async function hydrateInboundAudioMedia(normalizedMessage = {}, media = {}, { bu
       mediaFilename: media.mediaFilename || downloaded.mediaFilename
     }
   } catch (error) {
-    logger.warn(`[Meta directo] No se pudo preparar audio entrante ${mediaId}: ${error.message}`)
+    logger.warn(`[Meta directo] No se pudo preparar media entrante ${mediaId}: ${error.message}`)
     return media
   }
 }
@@ -4074,7 +4123,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const errorCode = cleanString(error?.code || normalizedMessage.errorCode)
   const errorMessage = cleanString(error?.message || error?.title || normalizedMessage.errorMessage)
   const messageType = cleanString(normalizedMessage.type) || 'unknown'
-  const media = await hydrateInboundAudioMedia(
+  const media = await hydrateInboundMessageMedia(
     normalizedMessage,
     extractMessageMedia(normalizedMessage),
     { businessPhoneNumberId }

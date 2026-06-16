@@ -268,6 +268,110 @@ test('contact journey exposes playable WhatsApp audio media from raw payload', a
   }
 })
 
+test('contact journey exposes image and video media from raw payload', async () => {
+  const id = randomUUID()
+  const contactId = `journey_visual_media_${id}`
+  const phone = `+52994${Date.now().toString().slice(-7)}`
+  const imageUrl = `https://cdn.ristak.test/images/${id}.jpg`
+  const videoUrl = `https://cdn.ristak.test/videos/${id}.mp4`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      'Cliente Multimedia',
+      'Cliente',
+      'manual',
+      '2026-06-16T10:20:00.000Z',
+      '2026-06-16T10:20:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, contact_id, phone, from_phone, to_phone, business_phone, transport,
+        direction, message_type, message_text, message_timestamp, created_at,
+        raw_payload_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `api_image_${id}`,
+      contactId,
+      phone,
+      phone,
+      '+526561000000',
+      '+526561000000',
+      'api',
+      'inbound',
+      'image',
+      '>IMAGE< [Received on Ristak]',
+      '2026-06-16T10:21:00.000Z',
+      '2026-06-16T10:21:00.000Z',
+      JSON.stringify({
+        type: 'image',
+        image: {
+          mediaId: `image_${id}`,
+          publicUrl: imageUrl,
+          contentType: 'image/jpeg',
+          name: 'foto-del-cliente.jpg'
+        }
+      })
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, contact_id, phone, from_phone, to_phone, business_phone, transport,
+        direction, message_type, message_text, message_timestamp, created_at,
+        raw_payload_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `api_video_${id}`,
+      contactId,
+      phone,
+      phone,
+      '+526561000000',
+      '+526561000000',
+      'api',
+      'inbound',
+      'video',
+      '>VIDEO< [Received on Ristak]',
+      '2026-06-16T10:22:00.000Z',
+      '2026-06-16T10:22:00.000Z',
+      JSON.stringify({
+        type: 'video',
+        video: {
+          media_id: `video_${id}`,
+          fileUrl: videoUrl,
+          mime_type: 'video/mp4',
+          filename: 'video-del-cliente.mp4'
+        }
+      })
+    ])
+
+    const journey = await readJourney(contactId)
+    const imageEvent = journey.find(event => event.type === 'whatsapp_message' && event.data.message_type === 'image')
+    const videoEvent = journey.find(event => event.type === 'whatsapp_message' && event.data.message_type === 'video')
+
+    assert.ok(imageEvent)
+    assert.equal(imageEvent.data.media_url, imageUrl)
+    assert.equal(imageEvent.data.media_id, `image_${id}`)
+    assert.equal(imageEvent.data.media_mime_type, 'image/jpeg')
+    assert.equal(imageEvent.data.media_filename, 'foto-del-cliente.jpg')
+
+    assert.ok(videoEvent)
+    assert.equal(videoEvent.data.media_url, videoUrl)
+    assert.equal(videoEvent.data.media_id, `video_${id}`)
+    assert.equal(videoEvent.data.media_mime_type, 'video/mp4')
+    assert.equal(videoEvent.data.media_filename, 'video-del-cliente.mp4')
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
 test('chat history includes WhatsApp messages matched by phone when contact_id is missing', async () => {
   const id = randomUUID()
   const contactId = `journey_phone_match_${id}`
