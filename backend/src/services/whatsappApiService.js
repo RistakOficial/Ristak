@@ -35,6 +35,7 @@ import {
 import { getMetaConfig } from './metaAdsService.js'
 import { getVerifiedAppBaseUrl } from './sitesService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
+import { triggerWhatsAppNumberChangedAutomation } from './whatsappNumberChangeEventsService.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -2689,6 +2690,13 @@ export async function rerouteWhatsAppPhoneNumberContacts({ phoneNumberId, target
       targetId,
       cleanReason
     ])
+    triggerWhatsAppNumberChangedAutomation({
+      contactId: contact.id,
+      previousPhoneNumberId: cleanString(contact.preferred_whatsapp_phone_number_id) || sourceId,
+      newPhoneNumberId: targetId,
+      reason: cleanReason,
+      source: 'contingency'
+    })
     moved += 1
   }
 
@@ -2727,6 +2735,13 @@ export async function restoreWhatsAppPhoneNumberContacts({ phoneNumberId } = {})
       sourceId,
       'El número original volvió a estar disponible'
     ])
+    triggerWhatsAppNumberChangedAutomation({
+      contactId: row.contact_id,
+      previousPhoneNumberId: cleanString(row.new_phone_number_id) || null,
+      newPhoneNumberId: sourceId,
+      reason: 'El número original volvió a estar disponible',
+      source: 'restore'
+    })
     restored += 1
   }
 

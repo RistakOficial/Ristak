@@ -67,6 +67,24 @@ test('renderTemplate expone datos del pago para acciones posteriores', () => {
   assert.equal(renderTemplate('{{payment.invoice_number}}', paymentCtx), 'INV-55')
 })
 
+test('renderTemplate expone datos del cambio de número de WhatsApp', () => {
+  const numberChangeCtx = {
+    previousPhoneNumberId: 'wa_old',
+    previousPhoneNumber: '+52 55 1111 1111',
+    previousPhoneNumberLabel: 'Ventas',
+    newPhoneNumberId: 'wa_new',
+    newPhoneNumber: '+52 55 2222 2222',
+    newPhoneNumberLabel: 'Soporte',
+    routingReason: 'Cambio manual',
+    routingSource: 'manual',
+    changedAt: '2026-06-16T12:00:00.000Z'
+  }
+
+  assert.equal(renderTemplate('{{numero_whatsapp.numero_anterior}}', numberChangeCtx), '+52 55 1111 1111')
+  assert.equal(renderTemplate('{{numero_whatsapp.nombre_numero_nuevo}}', numberChangeCtx), 'Soporte')
+  assert.equal(renderTemplate('{{numero_whatsapp_1.motivo}}', numberChangeCtx), 'Cambio manual')
+})
+
 test('filtersMatch: coincide / NO coincide / contiene / NO contiene', () => {
   assert.equal(filtersMatch([{ field: 'source', match: 'is', value: 'facebook' }], ctx), true)
   assert.equal(filtersMatch([{ field: 'source', match: 'not', value: 'Facebook' }], ctx), false)
@@ -728,6 +746,86 @@ test('trigger fecha programada inscribe una sola vez por horario', async () => {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automation_schedule_runs WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+  }
+})
+
+test('trigger cambio de número de WhatsApp inscribe y guarda contexto', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_whatsapp_number_change_${suffix}`
+  const contactId = `contact_whatsapp_number_change_${suffix}`
+  const oldPhoneId = `wa_old_${suffix}`
+  const newPhoneId = `wa_new_${suffix}`
+  const changedAt = '2026-06-16T12:00:00.000Z'
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            { id: 'trigger-whatsapp-number', type: 'trigger-whatsapp-number-changed', config: {} }
+          ]
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [contactId, `+523${Date.now().toString().slice(-10)}`, `wa-change-${suffix}@test.com`, 'Contacto WhatsApp', 'Contacto', '{}']
+    )
+    await db.run(
+      `INSERT INTO whatsapp_api_phone_numbers (id, phone_number, display_phone_number, verified_name, label)
+       VALUES (?, ?, ?, ?, ?)`,
+      [oldPhoneId, '525511111111', '+52 55 1111 1111', 'Ventas Meta', 'Ventas']
+    )
+    await db.run(
+      `INSERT INTO whatsapp_api_phone_numbers (id, phone_number, display_phone_number, verified_name, label)
+       VALUES (?, ?, ?, ?, ?)`,
+      [newPhoneId, '525522222222', '+52 55 2222 2222', 'Soporte Meta', 'Soporte']
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test cambio número WhatsApp', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('whatsapp-number-changed', {
+      contactId,
+      previousPhoneNumberId: oldPhoneId,
+      newPhoneNumberId: newPhoneId,
+      routingReason: 'Cambio manual',
+      routingSource: 'manual',
+      changedAt
+    })
+
+    const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?', [automationId, contactId])
+    assert.ok(enrollment)
+    assert.equal(enrollment.status, 'completed')
+    const context = JSON.parse(enrollment.context)
+    assert.equal(context.previousPhoneNumberLabel, 'Ventas')
+    assert.equal(context.newPhoneNumberLabel, 'Soporte')
+    assert.equal(context.changedAt, changedAt)
+    const log = JSON.parse(enrollment.log)
+    assert.equal(log.some((entry) => String(entry.detail || '').includes('cambió el número de WhatsApp')), true)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?)', [oldPhoneId, newPhoneId])
   }
 })
 

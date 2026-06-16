@@ -303,6 +303,20 @@ function appointmentDataFromContext(ctx = {}) {
   }
 }
 
+function whatsappNumberChangeDataFromContext(ctx = {}) {
+  return {
+    id_numero_anterior: ctx.previousPhoneNumberId || ctx.previous_phone_number_id || '',
+    numero_anterior: ctx.previousPhoneNumber || ctx.previous_phone_number || '',
+    nombre_numero_anterior: ctx.previousPhoneNumberLabel || ctx.previous_phone_number_label || '',
+    id_numero_nuevo: ctx.newPhoneNumberId || ctx.new_phone_number_id || '',
+    numero_nuevo: ctx.newPhoneNumber || ctx.new_phone_number || '',
+    nombre_numero_nuevo: ctx.newPhoneNumberLabel || ctx.new_phone_number_label || '',
+    motivo: ctx.routingReason || ctx.reason || '',
+    origen: ctx.routingSource || ctx.source || '',
+    fecha_cambio: ctx.changedAt || ctx.changed_at || ''
+  }
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // ---------------------------------------------------------------------------
@@ -415,6 +429,11 @@ function buildVariableMap(ctx) {
     map['schedule.timezone'] = String(schedule.zona_horaria)
     map['schedule.recurrence'] = String(schedule.recurrencia)
   }
+  const whatsappNumberChange = whatsappNumberChangeDataFromContext(ctx)
+  if (Object.values(whatsappNumberChange).some((value) => value !== '')) {
+    setDeepVariable(map, 'numero_whatsapp', whatsappNumberChange)
+    setDeepVariable(map, 'numero_whatsapp_1', whatsappNumberChange)
+  }
   Object.entries(custom).forEach(([key, value]) => {
     map[`contact.custom.${key}`] = String(value ?? '')
     map[`custom.${key}`] = String(value ?? '')
@@ -495,6 +514,9 @@ function filterFieldValue(filter, ctx) {
     case 'link': return ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ''
     case 'trigger_link': return ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ''
     case 'destination_url': return ctx.destinationUrl || ''
+    case 'previous_whatsapp_number': return ctx.previousPhoneNumber || ctx.previousPhoneNumberLabel || ctx.previousPhoneNumberId || ''
+    case 'new_whatsapp_number': return ctx.newPhoneNumber || ctx.newPhoneNumberLabel || ctx.newPhoneNumberId || ''
+    case 'whatsapp_routing_source': return ctx.routingSource || ''
     default: return null // campo sin dato local: no bloquea
   }
 }
@@ -640,6 +662,9 @@ function triggerMatches(trigger, eventType, ctx) {
       return triggerLinkMatchesValue(configured, ctx)
     }
 
+    case 'whatsapp-number-changed':
+      return trigger.type === 'trigger-whatsapp-number-changed'
+
     default:
       return false
   }
@@ -666,6 +691,11 @@ const EVENT_DESCRIPTIONS = {
   refund: () => 'se procesó un reembolso',
   'webhook-received': () => 'se recibió un webhook',
   'trigger-link-clicked': (ctx) => `recibió un clic de disparo${ctx.triggerLinkName ? ` en "${ctx.triggerLinkName}"` : ''}`,
+  'whatsapp-number-changed': (ctx) => {
+    const previous = ctx.previousPhoneNumberLabel || ctx.previousPhoneNumber || ctx.previousPhoneNumberId || 'sin número previo'
+    const next = ctx.newPhoneNumberLabel || ctx.newPhoneNumber || ctx.newPhoneNumberId || 'sin número asignado'
+    return `cambió el número de WhatsApp de ${previous} a ${next}`
+  },
   scheduler: (ctx) => `llegó la fecha programada${ctx.scheduledFor ? ` (${ctx.scheduledFor})` : ''}`
 }
 
@@ -945,6 +975,15 @@ async function createEnrollment(automation, contact, ctx) {
       scheduleRunKey: ctx.scheduleRunKey || null,
       scheduleRecurrence: ctx.scheduleRecurrence || null,
       scheduleTimezone: ctx.scheduleTimezone || null,
+      previousPhoneNumberId: ctx.previousPhoneNumberId || null,
+      previousPhoneNumber: ctx.previousPhoneNumber || null,
+      previousPhoneNumberLabel: ctx.previousPhoneNumberLabel || null,
+      newPhoneNumberId: ctx.newPhoneNumberId || null,
+      newPhoneNumber: ctx.newPhoneNumber || null,
+      newPhoneNumberLabel: ctx.newPhoneNumberLabel || null,
+      routingReason: ctx.routingReason || null,
+      routingSource: ctx.routingSource || null,
+      changedAt: ctx.changedAt || null,
       manualEnrollment: Boolean(ctx.manualEnrollment),
       manualEnrollmentSource: ctx.manualEnrollmentSource || null,
       manualScheduledFor: ctx.manualScheduledFor || null
@@ -1798,6 +1837,52 @@ async function loadContact(contactId, fallback = {}) {
   }
 }
 
+function whatsappPhoneLabel(row = {}) {
+  return cleanString(row.label) ||
+    cleanString(row.verified_name) ||
+    cleanString(row.display_phone_number) ||
+    cleanString(row.phone_number) ||
+    cleanString(row.id)
+}
+
+async function loadWhatsAppPhoneSnapshot(phoneNumberId) {
+  const id = cleanString(phoneNumberId)
+  if (!id) return null
+  return db.get(`
+    SELECT id, phone_number, display_phone_number, verified_name, label
+    FROM whatsapp_api_phone_numbers
+    WHERE id = ?
+  `, [id]).catch(() => null)
+}
+
+async function enrichWhatsAppNumberChangeData(data = {}) {
+  const previousPhoneNumberId = cleanString(data.previousPhoneNumberId || data.previous_phone_number_id)
+  const newPhoneNumberId = cleanString(data.newPhoneNumberId || data.new_phone_number_id)
+  if (!previousPhoneNumberId && !newPhoneNumberId) return data
+
+  const [previousRow, newRow] = await Promise.all([
+    loadWhatsAppPhoneSnapshot(previousPhoneNumberId),
+    loadWhatsAppPhoneSnapshot(newPhoneNumberId)
+  ])
+
+  return {
+    ...data,
+    previousPhoneNumberId: previousPhoneNumberId || null,
+    previousPhoneNumber: cleanString(data.previousPhoneNumber || data.previous_phone_number) ||
+      cleanString(previousRow?.display_phone_number || previousRow?.phone_number),
+    previousPhoneNumberLabel: cleanString(data.previousPhoneNumberLabel || data.previous_phone_number_label) ||
+      whatsappPhoneLabel(previousRow || {}),
+    newPhoneNumberId: newPhoneNumberId || null,
+    newPhoneNumber: cleanString(data.newPhoneNumber || data.new_phone_number) ||
+      cleanString(newRow?.display_phone_number || newRow?.phone_number),
+    newPhoneNumberLabel: cleanString(data.newPhoneNumberLabel || data.new_phone_number_label) ||
+      whatsappPhoneLabel(newRow || {}),
+    routingReason: cleanString(data.routingReason || data.reason),
+    routingSource: cleanString(data.routingSource || data.source),
+    changedAt: cleanString(data.changedAt || data.changed_at) || nowIso()
+  }
+}
+
 async function listPublishedAutomations() {
   const rows = await db.all(`SELECT id, name, COALESCE(published_flow, flow) AS flow FROM automations WHERE status = 'published'`)
   return rows.map((row) => ({ id: row.id, name: row.name, flow: parseJson(row.flow, { nodes: [], edges: [] }) }))
@@ -2081,16 +2166,19 @@ async function enrollMatching(automations, eventType, baseCtx) {
  */
 export async function handleAutomationEvent(eventType, data = {}) {
   try {
-    let contact = await loadContact(data.contactId, { phone: data.phone, name: data.contactName })
+    const eventData = eventType === 'whatsapp-number-changed'
+      ? await enrichWhatsAppNumberChangeData(data)
+      : data
+    let contact = await loadContact(eventData.contactId, { phone: eventData.phone, name: eventData.contactName })
     // Resolver contacto por teléfono o email cuando no llega id (webhooks)
-    if (!contact.id && (data.phone || data.email)) {
+    if (!contact.id && (eventData.phone || eventData.email)) {
       const row = await db.get(
         'SELECT id FROM contacts WHERE (phone = ? AND ? != \'\') OR (email = ? AND ? != \'\') LIMIT 1',
-        [data.phone || '', data.phone || '', data.email || '', data.email || '']
+        [eventData.phone || '', eventData.phone || '', eventData.email || '', eventData.email || '']
       )
       if (row) contact = await loadContact(row.id)
     }
-    const ctx = { ...data, contact, messageText: data.messageText || '', channel: data.channel || '' }
+    const ctx = { ...eventData, contact, messageText: eventData.messageText || '', channel: eventData.channel || '' }
     const automations = await listPublishedAutomations()
     if (eventType === 'trigger-link-clicked') {
       await resumeWaitingTriggerLinkClicks(automations, ctx)

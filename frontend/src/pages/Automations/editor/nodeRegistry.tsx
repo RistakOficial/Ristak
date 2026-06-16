@@ -469,6 +469,18 @@ const TRIGGER_LINK_FIELDS: VariableSchemaField[] = [
   field('Fecha del disparo', 'fecha_disparo')
 ]
 
+const WHATSAPP_NUMBER_CHANGE_FIELDS: VariableSchemaField[] = [
+  field('ID del número anterior', 'id_numero_anterior'),
+  field('Número anterior', 'numero_anterior'),
+  field('Nombre del número anterior', 'nombre_numero_anterior'),
+  field('ID del número nuevo', 'id_numero_nuevo'),
+  field('Número nuevo', 'numero_nuevo'),
+  field('Nombre del número nuevo', 'nombre_numero_nuevo'),
+  field('Motivo', 'motivo'),
+  field('Origen del cambio', 'origen'),
+  field('Fecha del cambio', 'fecha_cambio')
+]
+
 const SCHEDULE_FIELDS: VariableSchemaField[] = [
   field('Fecha programada', 'fecha_programada'),
   field('Zona horaria', 'zona_horaria'),
@@ -802,6 +814,28 @@ const TRIGGERS: NodeDefinition[] = [
         ? `Cuando cambie el campo "${str(config.fieldName) || str(config.field)}" de un contacto${triggerFiltersSentence(config.filters)}`
         : undefined,
       empty: 'Selecciona el campo a observar'
+    })
+  },
+  {
+    type: 'trigger-whatsapp-number-changed',
+    kind: 'trigger',
+    label: 'Número de WhatsApp cambiado',
+    category: 'trigger-contacts',
+    description: 'Se activa cuando cambia el número de WhatsApp asignado al contacto',
+    icon: Shuffle,
+    accent: 'green',
+    addButtonLabel: 'Usar cambio de número',
+    defaultConfig: () => ({}),
+    fields: [],
+    outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'numero_whatsapp',
+      baseLabel: 'Cambio de número de WhatsApp',
+      fields: WHATSAPP_NUMBER_CHANGE_FIELDS,
+      fixedTokenRoot: 'numero_whatsapp'
+    }),
+    summary: (config) => ({
+      text: `Cuando cambie el número de WhatsApp asignado al contacto${triggerFiltersSentence(config.filters)}`
     })
   },
   {
