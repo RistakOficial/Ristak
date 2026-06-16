@@ -12,6 +12,6 @@
 
 ## Git publishing
 
-- When pushing changes to `main`, also push the same completed change to `test`.
-- If the same patch already exists on `test`, still run `git push origin test` and report that it was already up to date.
+- `main` is the only base and publish target for this repo.
+- Do not switch, cherry-pick, or push any other branch as part of publishing.
 - Do not include unrelated local changes when syncing branches.
