@@ -26,7 +26,6 @@ import {
 } from '../utils/contactCustomFields.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizePhoneForAccount } from '../utils/accountLocale.js'
-import { triggerWhatsAppNumberChangedAutomation } from '../services/whatsappNumberChangeEventsService.js'
 import {
   extractWhatsAppProfileName,
   normalizeWhatsAppProfileName,
@@ -2279,7 +2278,6 @@ export const updateContact = async (req, res) => {
     }
 
     // Dejar rastro cuando la conversación se mueve manualmente a otro número
-    let whatsappNumberChangeEvent = null
     if (hasPreferredWhatsAppPhoneNumberUpdate) {
       const previousPreferredId = cleanString(existing.preferred_whatsapp_phone_number_id)
       const newPreferredId = cleanString(preferredWhatsAppPhoneNumberInput)
@@ -2301,17 +2299,7 @@ export const updateContact = async (req, res) => {
         ]).catch(error => {
           logger.warn(`No se pudo registrar el cambio de número de ${id}: ${error.message}`)
         })
-        whatsappNumberChangeEvent = {
-          contactId: id,
-          previousPhoneNumberId: previousPreferredId || null,
-          newPhoneNumberId: newPreferredId || null,
-          reason: routingReason || 'Cambio manual de número preferido',
-          source: routingSource
-        }
       }
-    }
-    if (whatsappNumberChangeEvent) {
-      triggerWhatsAppNumberChangedAutomation(whatsappNumberChangeEvent)
     }
 
     // Motor de automatizaciones: campo cambiado y etiquetas

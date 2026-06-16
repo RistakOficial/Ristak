@@ -164,7 +164,6 @@ const BLOCK_OUTPUT_ROOTS = [
   'cita',
   'crear_cita',
   'pago',
-  'numero_whatsapp',
   'enviar_whatsapp'
 ]
 

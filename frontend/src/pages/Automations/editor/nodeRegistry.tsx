@@ -469,18 +469,6 @@ const TRIGGER_LINK_FIELDS: VariableSchemaField[] = [
   field('Fecha del disparo', 'fecha_disparo')
 ]
 
-const WHATSAPP_NUMBER_CHANGE_FIELDS: VariableSchemaField[] = [
-  field('ID del número anterior', 'id_numero_anterior'),
-  field('Número anterior', 'numero_anterior'),
-  field('Nombre del número anterior', 'nombre_numero_anterior'),
-  field('ID del número nuevo', 'id_numero_nuevo'),
-  field('Número nuevo', 'numero_nuevo'),
-  field('Nombre del número nuevo', 'nombre_numero_nuevo'),
-  field('Motivo', 'motivo'),
-  field('Origen del cambio', 'origen'),
-  field('Fecha del cambio', 'fecha_cambio')
-]
-
 const SCHEDULE_FIELDS: VariableSchemaField[] = [
   field('Fecha programada', 'fecha_programada'),
   field('Zona horaria', 'zona_horaria'),
@@ -505,6 +493,7 @@ const CONTACT_UPDATED_FIELDS: VariableSchemaField[] = [
   field('Nombre', 'nombre'),
   field('Teléfono', 'telefono'),
   field('Email', 'email'),
+  field('ID del número de WhatsApp preferido', 'id_numero_whatsapp_preferido'),
   field('Estado de actualización', 'estado_actualizacion')
 ]
 
@@ -814,28 +803,6 @@ const TRIGGERS: NodeDefinition[] = [
         ? `Cuando cambie el campo "${str(config.fieldName) || str(config.field)}" de un contacto${triggerFiltersSentence(config.filters)}`
         : undefined,
       empty: 'Selecciona el campo a observar'
-    })
-  },
-  {
-    type: 'trigger-whatsapp-number-changed',
-    kind: 'trigger',
-    label: 'Número de WhatsApp cambiado',
-    category: 'trigger-contacts',
-    description: 'Se activa cuando cambia el número de WhatsApp asignado al contacto',
-    icon: Shuffle,
-    accent: 'green',
-    addButtonLabel: 'Usar cambio de número',
-    defaultConfig: () => ({}),
-    fields: [],
-    outputs: () => SINGLE_OUTPUT,
-    variableOutput: () => ({
-      baseId: 'numero_whatsapp',
-      baseLabel: 'Cambio de número de WhatsApp',
-      fields: WHATSAPP_NUMBER_CHANGE_FIELDS,
-      fixedTokenRoot: 'numero_whatsapp'
-    }),
-    summary: (config) => ({
-      text: `Cuando cambie el número de WhatsApp asignado al contacto${triggerFiltersSentence(config.filters)}`
     })
   },
   {
@@ -1547,6 +1514,47 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
           ? `${field} ${operations[str(config.operation)] || '→'} ${str(config.operation) === 'clear' ? '' : str(config.value) || '(vacío)'}`
           : undefined,
         empty: 'Elige el campo a actualizar'
+      }
+    }
+  },
+  {
+    type: 'action-change-whatsapp-number',
+    kind: 'action',
+    label: 'Cambiar número de WhatsApp',
+    category: 'action-contacts',
+    icon: Shuffle,
+    accent: 'blue',
+    addButtonLabel: 'Seleccionar número',
+    defaultConfig: () => ({ phoneNumberId: '', phoneNumberIdName: '', reason: '' }),
+    fields: [
+      {
+        key: 'phoneNumberId',
+        label: 'Nuevo número de WhatsApp',
+        type: 'catalogSelect',
+        catalog: 'whatsappNumbers',
+        required: true
+      },
+      {
+        key: 'reason',
+        label: 'Motivo interno (opcional)',
+        type: 'text',
+        placeholder: 'Cambio desde automatización',
+        showVariables: true,
+        advanced: true
+      }
+    ],
+    outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'contacto_actualizado',
+      baseLabel: 'Contacto actualizado',
+      fields: CONTACT_UPDATED_FIELDS
+    }),
+    validate: (config) => !str(config.phoneNumberId) ? ['Selecciona el número de WhatsApp'] : [],
+    summary: (config) => {
+      const name = str(config.phoneNumberIdName) || str(config.phoneNumberId)
+      return {
+        text: name ? `Cambiar WhatsApp del contacto a ${name}` : undefined,
+        empty: 'Selecciona el número de WhatsApp'
       }
     }
   },

@@ -67,24 +67,6 @@ test('renderTemplate expone datos del pago para acciones posteriores', () => {
   assert.equal(renderTemplate('{{payment.invoice_number}}', paymentCtx), 'INV-55')
 })
 
-test('renderTemplate expone datos del cambio de número de WhatsApp', () => {
-  const numberChangeCtx = {
-    previousPhoneNumberId: 'wa_old',
-    previousPhoneNumber: '+52 55 1111 1111',
-    previousPhoneNumberLabel: 'Ventas',
-    newPhoneNumberId: 'wa_new',
-    newPhoneNumber: '+52 55 2222 2222',
-    newPhoneNumberLabel: 'Soporte',
-    routingReason: 'Cambio manual',
-    routingSource: 'manual',
-    changedAt: '2026-06-16T12:00:00.000Z'
-  }
-
-  assert.equal(renderTemplate('{{numero_whatsapp.numero_anterior}}', numberChangeCtx), '+52 55 1111 1111')
-  assert.equal(renderTemplate('{{numero_whatsapp.nombre_numero_nuevo}}', numberChangeCtx), 'Soporte')
-  assert.equal(renderTemplate('{{numero_whatsapp_1.motivo}}', numberChangeCtx), 'Cambio manual')
-})
-
 test('filtersMatch: coincide / NO coincide / contiene / NO contiene', () => {
   assert.equal(filtersMatch([{ field: 'source', match: 'is', value: 'facebook' }], ctx), true)
   assert.equal(filtersMatch([{ field: 'source', match: 'not', value: 'Facebook' }], ctx), false)
@@ -749,13 +731,12 @@ test('trigger fecha programada inscribe una sola vez por horario', async () => {
   }
 })
 
-test('trigger cambio de número de WhatsApp inscribe y guarda contexto', async () => {
+test('acción cambia el número de WhatsApp preferido del contacto', async () => {
   const suffix = randomUUID()
-  const automationId = `automation_whatsapp_number_change_${suffix}`
-  const contactId = `contact_whatsapp_number_change_${suffix}`
+  const automationId = `automation_whatsapp_number_action_${suffix}`
+  const contactId = `contact_whatsapp_number_action_${suffix}`
   const oldPhoneId = `wa_old_${suffix}`
   const newPhoneId = `wa_new_${suffix}`
-  const changedAt = '2026-06-16T12:00:00.000Z'
   const flow = {
     nodes: [
       {
@@ -764,8 +745,18 @@ test('trigger cambio de número de WhatsApp inscribe y guarda contexto', async (
         label: 'Cuando...',
         config: {
           triggers: [
-            { id: 'trigger-whatsapp-number', type: 'trigger-whatsapp-number-changed', config: {} }
+            { id: 'trigger-contact-created', type: 'trigger-contact-created', config: { source: '' } }
           ]
+        }
+      },
+      {
+        id: 'change-number',
+        type: 'action-change-whatsapp-number',
+        label: 'Cambiar número de WhatsApp',
+        config: {
+          phoneNumberId: newPhoneId,
+          phoneNumberIdName: 'Soporte',
+          reason: 'Asignado desde {{automation.name}}'
         }
       },
       {
@@ -776,16 +767,17 @@ test('trigger cambio de número de WhatsApp inscribe y guarda contexto', async (
       }
     ],
     edges: [
-      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+      { id: 'edge-start-change', sourceNodeId: 'start', targetNodeId: 'change-number' },
+      { id: 'edge-change-done', sourceNodeId: 'change-number', sourceHandle: 'out', targetNodeId: 'done' }
     ],
     settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
   }
 
   try {
     await db.run(
-      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [contactId, `+523${Date.now().toString().slice(-10)}`, `wa-change-${suffix}@test.com`, 'Contacto WhatsApp', 'Contacto', '{}']
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, preferred_whatsapp_phone_number_id, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [contactId, `+523${Date.now().toString().slice(-10)}`, `wa-action-${suffix}@test.com`, 'Contacto WhatsApp', 'Contacto', oldPhoneId, '{}']
     )
     await db.run(
       `INSERT INTO whatsapp_api_phone_numbers (id, phone_number, display_phone_number, verified_name, label)
@@ -803,25 +795,22 @@ test('trigger cambio de número de WhatsApp inscribe y guarda contexto', async (
       [automationId, 'Test cambio número WhatsApp', JSON.stringify(flow), JSON.stringify(flow)]
     )
 
-    await handleAutomationEvent('whatsapp-number-changed', {
-      contactId,
-      previousPhoneNumberId: oldPhoneId,
-      newPhoneNumberId: newPhoneId,
-      routingReason: 'Cambio manual',
-      routingSource: 'manual',
-      changedAt
-    })
+    await handleAutomationEvent('contact-created', { contactId })
 
     const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?', [automationId, contactId])
     assert.ok(enrollment)
     assert.equal(enrollment.status, 'completed')
-    const context = JSON.parse(enrollment.context)
-    assert.equal(context.previousPhoneNumberLabel, 'Ventas')
-    assert.equal(context.newPhoneNumberLabel, 'Soporte')
-    assert.equal(context.changedAt, changedAt)
+    const updated = await db.get('SELECT preferred_whatsapp_phone_number_id FROM contacts WHERE id = ?', [contactId])
+    assert.equal(updated.preferred_whatsapp_phone_number_id, newPhoneId)
+    const routingEvent = await db.get('SELECT * FROM whatsapp_routing_events WHERE contact_id = ? ORDER BY created_at DESC LIMIT 1', [contactId])
+    assert.equal(routingEvent.previous_phone_number_id, oldPhoneId)
+    assert.equal(routingEvent.new_phone_number_id, newPhoneId)
+    assert.equal(routingEvent.reason, 'Asignado desde Test cambio número WhatsApp')
+    assert.equal(routingEvent.source, 'automation')
     const log = JSON.parse(enrollment.log)
-    assert.equal(log.some((entry) => String(entry.detail || '').includes('cambió el número de WhatsApp')), true)
+    assert.equal(log.some((entry) => String(entry.detail || '').includes('Número de WhatsApp cambiado a Soporte')), true)
   } finally {
+    await db.run('DELETE FROM whatsapp_routing_events WHERE contact_id = ?', [contactId])
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])

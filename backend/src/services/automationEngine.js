@@ -303,20 +303,6 @@ function appointmentDataFromContext(ctx = {}) {
   }
 }
 
-function whatsappNumberChangeDataFromContext(ctx = {}) {
-  return {
-    id_numero_anterior: ctx.previousPhoneNumberId || ctx.previous_phone_number_id || '',
-    numero_anterior: ctx.previousPhoneNumber || ctx.previous_phone_number || '',
-    nombre_numero_anterior: ctx.previousPhoneNumberLabel || ctx.previous_phone_number_label || '',
-    id_numero_nuevo: ctx.newPhoneNumberId || ctx.new_phone_number_id || '',
-    numero_nuevo: ctx.newPhoneNumber || ctx.new_phone_number || '',
-    nombre_numero_nuevo: ctx.newPhoneNumberLabel || ctx.new_phone_number_label || '',
-    motivo: ctx.routingReason || ctx.reason || '',
-    origen: ctx.routingSource || ctx.source || '',
-    fecha_cambio: ctx.changedAt || ctx.changed_at || ''
-  }
-}
-
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // ---------------------------------------------------------------------------
@@ -428,11 +414,6 @@ function buildVariableMap(ctx) {
     map['schedule.scheduled_for'] = String(schedule.fecha_programada)
     map['schedule.timezone'] = String(schedule.zona_horaria)
     map['schedule.recurrence'] = String(schedule.recurrencia)
-  }
-  const whatsappNumberChange = whatsappNumberChangeDataFromContext(ctx)
-  if (Object.values(whatsappNumberChange).some((value) => value !== '')) {
-    setDeepVariable(map, 'numero_whatsapp', whatsappNumberChange)
-    setDeepVariable(map, 'numero_whatsapp_1', whatsappNumberChange)
   }
   Object.entries(custom).forEach(([key, value]) => {
     map[`contact.custom.${key}`] = String(value ?? '')
@@ -662,9 +643,6 @@ function triggerMatches(trigger, eventType, ctx) {
       return triggerLinkMatchesValue(configured, ctx)
     }
 
-    case 'whatsapp-number-changed':
-      return trigger.type === 'trigger-whatsapp-number-changed'
-
     default:
       return false
   }
@@ -691,11 +669,6 @@ const EVENT_DESCRIPTIONS = {
   refund: () => 'se procesó un reembolso',
   'webhook-received': () => 'se recibió un webhook',
   'trigger-link-clicked': (ctx) => `recibió un clic de disparo${ctx.triggerLinkName ? ` en "${ctx.triggerLinkName}"` : ''}`,
-  'whatsapp-number-changed': (ctx) => {
-    const previous = ctx.previousPhoneNumberLabel || ctx.previousPhoneNumber || ctx.previousPhoneNumberId || 'sin número previo'
-    const next = ctx.newPhoneNumberLabel || ctx.newPhoneNumber || ctx.newPhoneNumberId || 'sin número asignado'
-    return `cambió el número de WhatsApp de ${previous} a ${next}`
-  },
   scheduler: (ctx) => `llegó la fecha programada${ctx.scheduledFor ? ` (${ctx.scheduledFor})` : ''}`
 }
 
@@ -975,15 +948,6 @@ async function createEnrollment(automation, contact, ctx) {
       scheduleRunKey: ctx.scheduleRunKey || null,
       scheduleRecurrence: ctx.scheduleRecurrence || null,
       scheduleTimezone: ctx.scheduleTimezone || null,
-      previousPhoneNumberId: ctx.previousPhoneNumberId || null,
-      previousPhoneNumber: ctx.previousPhoneNumber || null,
-      previousPhoneNumberLabel: ctx.previousPhoneNumberLabel || null,
-      newPhoneNumberId: ctx.newPhoneNumberId || null,
-      newPhoneNumber: ctx.newPhoneNumber || null,
-      newPhoneNumberLabel: ctx.newPhoneNumberLabel || null,
-      routingReason: ctx.routingReason || null,
-      routingSource: ctx.routingSource || null,
-      changedAt: ctx.changedAt || null,
       manualEnrollment: Boolean(ctx.manualEnrollment),
       manualEnrollmentSource: ctx.manualEnrollmentSource || null,
       manualScheduledFor: ctx.manualScheduledFor || null
@@ -1070,6 +1034,7 @@ function contactAutomationOutput(contact = {}) {
     nombre: contact.fullName || contact.firstName || '',
     telefono: contact.phone || '',
     email: contact.email || '',
+    id_numero_whatsapp_preferido: contact.preferredWhatsAppPhoneNumberId || contact.preferred_whatsapp_phone_number_id || '',
     etiquetas: contact.tags || contact.tagKeys || [],
     campos_personalizados: contact.customFields || {}
   }
@@ -1360,6 +1325,75 @@ async function executeFindContact(node, ctx) {
     }
   }
   return { handle: 'out', detail: 'Contacto no encontrado: continúa sin cambiar contacto' }
+}
+
+async function applyContactWhatsAppNumberAction(node, ctx) {
+  const config = node.config || {}
+  const contactId = cleanString(ctx.contact?.id)
+  if (!contactId) {
+    return {
+      handle: 'out',
+      detail: 'Número de WhatsApp no cambiado (sin contacto)',
+      output: { estado_actualizacion: 'sin_contacto' },
+      outputBaseId: 'contacto_actualizado'
+    }
+  }
+
+  const targetPhoneNumberId = cleanString(config.phoneNumberId || config.whatsappPhoneNumberId || config.targetPhoneNumberId)
+  if (!targetPhoneNumberId) {
+    return {
+      handle: 'out',
+      detail: 'Número de WhatsApp no cambiado (falta seleccionar número)',
+      output: { ...contactAutomationOutput(ctx.contact), estado_actualizacion: 'sin_numero' },
+      outputBaseId: 'contacto_actualizado'
+    }
+  }
+
+  const targetPhone = await loadWhatsAppPhoneSnapshot(targetPhoneNumberId)
+  if (!targetPhone?.id) throw new Error('Ese número de WhatsApp no está conectado')
+
+  const contactRow = await db.get(
+    'SELECT id, preferred_whatsapp_phone_number_id FROM contacts WHERE id = ?',
+    [contactId]
+  )
+  if (!contactRow?.id) throw new Error('Contacto no encontrado')
+
+  const previousPhoneNumberId = cleanString(contactRow.preferred_whatsapp_phone_number_id)
+  const targetLabel = whatsappPhoneLabel(targetPhone)
+  if (previousPhoneNumberId === targetPhoneNumberId) {
+    ctx.contact = await loadContact(contactId, ctx.contact)
+    return {
+      handle: 'out',
+      detail: `El contacto ya usa ${targetLabel || targetPhoneNumberId}`,
+      output: { ...contactAutomationOutput(ctx.contact), estado_actualizacion: 'sin_cambios' },
+      outputBaseId: 'contacto_actualizado'
+    }
+  }
+
+  await db.run(
+    'UPDATE contacts SET preferred_whatsapp_phone_number_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [targetPhoneNumberId, contactId]
+  )
+  await db.run(`
+    INSERT INTO whatsapp_routing_events (id, contact_id, previous_phone_number_id, new_phone_number_id, reason, source)
+    VALUES (?, ?, ?, ?, ?, 'automation')
+  `, [
+    crypto.randomUUID(),
+    contactId,
+    previousPhoneNumberId || null,
+    targetPhoneNumberId,
+    renderedConfigValue(config.reason || config.routingReason || 'Cambio desde automatización', ctx)
+  ]).catch((error) => {
+    logger.warn(`[Automatizaciones] No se pudo registrar cambio de número de ${contactId}: ${error.message}`)
+  })
+
+  ctx.contact = await loadContact(contactId, ctx.contact)
+  return {
+    handle: 'out',
+    detail: `Número de WhatsApp cambiado a ${targetLabel || targetPhoneNumberId}`,
+    output: { ...contactAutomationOutput(ctx.contact), estado_actualizacion: 'actualizado' },
+    outputBaseId: 'contacto_actualizado'
+  }
 }
 
 async function applyContactUserAction(node, ctx) {
@@ -1695,6 +1729,9 @@ async function executeNode(node, ctx) {
     case 'action-find-contact':
       return executeFindContact(node, ctx)
 
+    case 'action-change-whatsapp-number':
+      return applyContactWhatsAppNumberAction(node, ctx)
+
     case 'action-webhook':
       return executeWebhookAction(node, ctx)
 
@@ -1822,6 +1859,8 @@ async function loadContact(contactId, fallback = {}) {
     fullName: row?.full_name || fallback.name || '',
     phone: row?.phone || fallback.phone || '',
     email: row?.email || '',
+    preferredWhatsAppPhoneNumberId: row?.preferred_whatsapp_phone_number_id || '',
+    preferred_whatsapp_phone_number_id: row?.preferred_whatsapp_phone_number_id || '',
     source: row?.source || bag.source || '',
     country: row?.country || bag.country || '',
     stage: row?.stage || bag.stage || '',
@@ -1853,34 +1892,6 @@ async function loadWhatsAppPhoneSnapshot(phoneNumberId) {
     FROM whatsapp_api_phone_numbers
     WHERE id = ?
   `, [id]).catch(() => null)
-}
-
-async function enrichWhatsAppNumberChangeData(data = {}) {
-  const previousPhoneNumberId = cleanString(data.previousPhoneNumberId || data.previous_phone_number_id)
-  const newPhoneNumberId = cleanString(data.newPhoneNumberId || data.new_phone_number_id)
-  if (!previousPhoneNumberId && !newPhoneNumberId) return data
-
-  const [previousRow, newRow] = await Promise.all([
-    loadWhatsAppPhoneSnapshot(previousPhoneNumberId),
-    loadWhatsAppPhoneSnapshot(newPhoneNumberId)
-  ])
-
-  return {
-    ...data,
-    previousPhoneNumberId: previousPhoneNumberId || null,
-    previousPhoneNumber: cleanString(data.previousPhoneNumber || data.previous_phone_number) ||
-      cleanString(previousRow?.display_phone_number || previousRow?.phone_number),
-    previousPhoneNumberLabel: cleanString(data.previousPhoneNumberLabel || data.previous_phone_number_label) ||
-      whatsappPhoneLabel(previousRow || {}),
-    newPhoneNumberId: newPhoneNumberId || null,
-    newPhoneNumber: cleanString(data.newPhoneNumber || data.new_phone_number) ||
-      cleanString(newRow?.display_phone_number || newRow?.phone_number),
-    newPhoneNumberLabel: cleanString(data.newPhoneNumberLabel || data.new_phone_number_label) ||
-      whatsappPhoneLabel(newRow || {}),
-    routingReason: cleanString(data.routingReason || data.reason),
-    routingSource: cleanString(data.routingSource || data.source),
-    changedAt: cleanString(data.changedAt || data.changed_at) || nowIso()
-  }
 }
 
 async function listPublishedAutomations() {
@@ -2166,9 +2177,7 @@ async function enrollMatching(automations, eventType, baseCtx) {
  */
 export async function handleAutomationEvent(eventType, data = {}) {
   try {
-    const eventData = eventType === 'whatsapp-number-changed'
-      ? await enrichWhatsAppNumberChangeData(data)
-      : data
+    const eventData = data
     let contact = await loadContact(eventData.contactId, { phone: eventData.phone, name: eventData.contactName })
     // Resolver contacto por teléfono o email cuando no llega id (webhooks)
     if (!contact.id && (eventData.phone || eventData.email)) {
