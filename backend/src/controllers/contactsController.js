@@ -26,6 +26,11 @@ import {
 } from '../utils/contactCustomFields.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizePhoneForAccount } from '../utils/accountLocale.js'
+import {
+  extractWhatsAppProfileName,
+  normalizeWhatsAppProfileName,
+  shouldReplaceWhatsAppApiContactName
+} from '../utils/whatsappContactProfile.js'
 import { resolveTagIds, tagNamesForIds, listContactTags } from '../services/contactTagsService.js'
 import fetch from 'node-fetch'
 import { randomUUID } from 'crypto'
@@ -77,6 +82,13 @@ const sqlList = values => [...values].map(value => `'${value}'`).join(', ')
 const ACTIVE_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status, '')) NOT IN (${sqlList(APPOINTMENT_CANCELED_STATUSES)})`
 const ATTENDED_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status, '')) IN (${sqlList(APPOINTMENT_ATTENDED_STATUSES)})`
 const CONTACT_WHATSAPP_PROFILE_SELECTS = `
+        (
+          SELECT profile_name
+          FROM whatsapp_api_contacts
+          WHERE contact_id = c.id OR phone = c.phone
+          ORDER BY updated_at DESC
+          LIMIT 1
+        ) AS whatsapp_profile_name,
         (
           SELECT raw_profile_json
           FROM whatsapp_api_contacts
@@ -374,6 +386,19 @@ const getContactProfilePhotoUrl = (contact = {}) =>
   cleanString(contact.picture_url) ||
   getProfilePhotoFromRawProfile(contact.whatsapp_raw_profile_json)
 
+const getContactDisplayName = (contact = {}) => {
+  const phone = normalizePhoneForStorage(contact.phone) || cleanString(contact.phone)
+  const storedName = cleanString(contact.full_name)
+  if (storedName && !shouldReplaceWhatsAppApiContactName(storedName, phone)) {
+    return storedName
+  }
+
+  return normalizeWhatsAppProfileName(contact.whatsapp_profile_name, phone) ||
+    extractWhatsAppProfileName(contact.whatsapp_raw_profile_json, phone) ||
+    normalizeWhatsAppProfileName(contact.first_name, phone) ||
+    ''
+}
+
 const mapContactRowForResponse = (contact = {}) => {
   let status = 'lead'
   if (Number(contact.purchases_count || 0) > 0) {
@@ -385,7 +410,7 @@ const mapContactRowForResponse = (contact = {}) => {
   return {
     id: contact.id,
     createdAt: contact.created_at,
-    name: contact.full_name || '',
+    name: getContactDisplayName(contact),
     email: contact.email || '',
     phone: contact.phone || '',
     ltv: parseFloat(contact.total_paid || 0),
@@ -1209,7 +1234,7 @@ ${CONTACT_META_PROFILE_SELECT},
       return {
         id: c.id,
         createdAt: c.created_at,
-        name: c.full_name || '',
+        name: getContactDisplayName(c),
         email: c.email || '',
         phone: c.phone || '',
         ltv: parseFloat(c.total_paid || 0),
@@ -1622,7 +1647,7 @@ ${CONTACT_META_PROFILE_SELECT},
     const mappedContact = {
       id: contact.id,
       createdAt: contact.created_at,
-      name: contact.full_name || '',
+      name: getContactDisplayName(contact),
       email: contact.email || '',
       phone: contact.phone || '',
       ltv: parseFloat(contact.total_paid || 0),
@@ -1791,7 +1816,7 @@ ${CONTACT_META_PROFILE_SELECT},
       return {
         id: c.id,
         createdAt: c.created_at,
-        name: c.full_name || '',
+        name: getContactDisplayName(c),
         email: c.email || '',
         phone: c.phone || '',
         ltv: parseFloat(c.total_paid || 0),

@@ -9,10 +9,12 @@ import {
   extractWhatsAppProfileName,
   normalizeWhatsAppProfileName
 } from '../src/utils/whatsappContactProfile.js'
+import { processYCloudWhatsAppWebhook } from '../src/services/whatsappApiService.js'
 
-async function cleanup({ contactId, apiContactId, messageId, phone }) {
+async function cleanup({ contactId, apiContactId, messageId, phone, eventId }) {
   await db.run('DELETE FROM whatsapp_api_messages WHERE id = ? OR contact_id = ? OR phone = ?', [messageId, contactId, phone]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_contacts WHERE id = ? OR contact_id = ? OR phone = ?', [apiContactId, contactId, phone]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_webhook_events WHERE event_id = ? OR id = ?', [eventId, eventId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
 }
 
@@ -26,6 +28,133 @@ test('normaliza nombres reales de YCloud y descarta los genéricos', () => {
       username: '@ana'
     }
   }, '+524433948272'), 'Ana López')
+  assert.equal(extractWhatsAppProfileName({ displayName: 'Ana López' }, '+524433948272'), 'Ana López')
+})
+
+test('webhook entrante de YCloud reemplaza WhatsApp_API por customerProfile.name', async () => {
+  const id = randomUUID()
+  const phone = `+52997${Date.now().toString().slice(-7)}`
+  const contactId = `rstk_contact_test_${id}`
+  const messageId = `ycloud_live_profile_${id}`
+  const eventId = `evt_live_profile_${id}`
+  const messageAt = '2024-04-05T06:07:08.000Z'
+
+  await cleanup({ contactId, messageId, phone, eventId })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      'WhatsApp_API',
+      'WhatsApp_API',
+      'WhatsApp_API',
+      '2026-06-15T23:31:29.000Z',
+      '2026-06-15T23:31:29.000Z'
+    ])
+
+    const payload = {
+      id: eventId,
+      type: 'whatsapp.inbound_message.received',
+      apiVersion: 'v2',
+      createTime: messageAt,
+      whatsappInboundMessage: {
+        id: messageId,
+        wamid: `wamid.${id}`,
+        wabaId: 'WABA-ID',
+        from: phone,
+        customerProfile: {
+          name: 'Ana López',
+          username: '@ana'
+        },
+        to: '+526561000000',
+        sendTime: messageAt,
+        type: 'text',
+        text: { body: 'Hola' }
+      }
+    }
+
+    await processYCloudWhatsAppWebhook({
+      payload,
+      rawBody: JSON.stringify(payload),
+      signatureHeader: '',
+      endpointId: ''
+    })
+
+    const contact = await db.get('SELECT full_name, first_name FROM contacts WHERE id = ?', [contactId])
+    assert.equal(contact.full_name, 'Ana López')
+    assert.equal(contact.first_name, 'Ana López')
+
+    const apiContact = await db.get('SELECT profile_name FROM whatsapp_api_contacts WHERE contact_id = ?', [contactId])
+    assert.equal(apiContact.profile_name, 'Ana López')
+  } finally {
+    await cleanup({ contactId, messageId, phone, eventId })
+  }
+})
+
+test('webhook saliente respeta contactId existente aunque el teléfono todavía no esté guardado', async () => {
+  const id = randomUUID()
+  const phone = `+52996${Date.now().toString().slice(-7)}`
+  const contactId = `rstk_contact_test_${id}`
+  const messageId = `ycloud_outbound_contact_${id}`
+  const eventId = `evt_outbound_contact_${id}`
+  const messageAt = '2024-05-06T07:08:09.000Z'
+
+  await cleanup({ contactId, messageId, phone, eventId })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source, created_at, updated_at
+      ) VALUES (?, NULL, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      'Ana López',
+      'Ana',
+      'manual',
+      '2024-05-01T00:00:00.000Z',
+      '2024-05-01T00:00:00.000Z'
+    ])
+
+    const payload = {
+      id: eventId,
+      type: 'whatsapp.message.updated',
+      apiVersion: 'v2',
+      createTime: messageAt,
+      contactId,
+      whatsappMessage: {
+        id: messageId,
+        from: '+526561000000',
+        to: phone,
+        sendTime: messageAt,
+        status: 'sent',
+        type: 'text',
+        text: { body: 'Hola Ana' }
+      }
+    }
+
+    await processYCloudWhatsAppWebhook({
+      payload,
+      rawBody: JSON.stringify(payload),
+      signatureHeader: '',
+      endpointId: ''
+    })
+
+    const message = await db.get('SELECT contact_id, phone FROM whatsapp_api_messages WHERE ycloud_message_id = ?', [messageId])
+    assert.equal(message.contact_id, contactId)
+    assert.equal(message.phone, phone)
+
+    const contacts = await db.all('SELECT id, full_name, phone FROM contacts WHERE id = ? OR phone = ?', [contactId, phone])
+    assert.equal(contacts.length, 1)
+    assert.equal(contacts[0].id, contactId)
+    assert.equal(contacts[0].full_name, 'Ana López')
+    assert.equal(contacts[0].phone, phone)
+  } finally {
+    await cleanup({ contactId, messageId, phone, eventId })
+  }
 })
 
 test('repara contactos importados de WhatsApp API con nombre y primera fecha del historial', async () => {

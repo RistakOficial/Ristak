@@ -3280,11 +3280,22 @@ function getStoredContactDisplayName(existing = {}, fallbackName = '', phone = '
   return phone
 }
 
-async function upsertLocalContact({ phone, profileName, messageTimestamp, attribution }) {
+async function upsertLocalContact({ contactId, phone, profileName, messageTimestamp, attribution }) {
   const canonicalPhone = normalizePhoneForStorage(phone) || cleanString(phone)
   if (!canonicalPhone) return { id: null, created: false }
 
-  const existing = await findContactByPhoneCandidates(canonicalPhone)
+  const cleanContactId = cleanString(contactId)
+  const existingById = cleanContactId
+    ? await db.get(`
+        SELECT id, phone, full_name, source, total_paid, purchases_count,
+               attribution_ctwa_clid, attribution_ad_name, attribution_ad_id,
+               created_at
+        FROM contacts
+        WHERE id = ?
+        LIMIT 1
+      `, [cleanContactId]).catch(() => null)
+    : null
+  const existing = existingById || await findContactByPhoneCandidates(canonicalPhone)
   const contactName = normalizeWhatsAppProfileName(profileName, canonicalPhone)
   const fullName = contactName || GENERIC_CONTACT_NAME
   const cleanMessageTimestamp = toDateTime(messageTimestamp) || null
@@ -3350,6 +3361,14 @@ async function upsertLocalContact({ phone, profileName, messageTimestamp, attrib
   if (attribution.sourceType) {
     updates.push('attribution_medium = COALESCE(NULLIF(attribution_medium, \'\'), ?)')
     params.push(attribution.sourceType)
+  }
+
+  if (existingById && canonicalPhone && !cleanString(existing.phone)) {
+    const phoneOwner = await findContactByPhoneCandidates(canonicalPhone, { excludeId: existing.id })
+    if (!phoneOwner) {
+      updates.push('phone = ?')
+      params.push(canonicalPhone)
+    }
   }
 
   if (attribution.ctwaClid) {
@@ -3706,9 +3725,16 @@ function normalizeWebhookMessage(rawMessage = {}) {
   return normalized
 }
 
-async function upsertMessage({ payload, message, direction, businessPhoneHints = [], transport = 'api' }) {
+async function upsertMessage({ payload, message, direction, businessPhoneHints = [], transport = 'api', contactId = null }) {
   const normalizedMessage = normalizeWebhookMessage(message)
   const identity = getMessageIdentity({ payload, direction, message: normalizedMessage, businessPhoneHints })
+  const contactIdHint = cleanString(
+    contactId ||
+    normalizedMessage.contactId ||
+    normalizedMessage.contact_id ||
+    payload.contactId ||
+    payload.contact_id
+  )
   const cleanTransport = cleanString(normalizedMessage.transport || payload.transport || transport || 'api').toLowerCase() || 'api'
   const routingReason = cleanString(
     normalizedMessage.fallbackReason ||
@@ -3723,6 +3749,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const profilePictureUrl = findProfilePictureUrlInValue(rawProfile)
   const attribution = extractAttribution(payload, normalizedMessage, messageText)
   const localContact = await upsertLocalContact({
+    contactId: contactIdHint,
     phone: identity.phone,
     profileName,
     messageTimestamp,
@@ -5439,6 +5466,7 @@ export async function sendWhatsAppApiTemplateMessage({
       toPhone,
       body: text,
       externalId,
+      contactId,
       fallbackReason,
       originalError
     })
@@ -5522,7 +5550,8 @@ export async function sendWhatsAppApiTemplateMessage({
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',
-    transport: 'api'
+    transport: 'api',
+    contactId
   })
 
   return response
@@ -5549,7 +5578,7 @@ function decorateQrFallbackResponse(response = {}, fallbackReason = '') {
   }
 }
 
-async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, phoneNumberId, fallbackReason, originalError } = {}) {
+async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, phoneNumberId, contactId, fallbackReason, originalError } = {}) {
   try {
     const response = await sendWhatsAppQrTextMessage({
       phoneNumberId,
@@ -5578,7 +5607,8 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
         createTime: response.createTime || nowIso()
       },
       direction: 'outbound',
-      transport: 'qr'
+      transport: 'qr',
+      contactId
     })
 
     return decorateQrFallbackResponse(response, fallbackReason)
@@ -5588,7 +5618,7 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
   }
 }
 
-async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageDataUrl, externalId, phoneNumberId, localMedia, publicBaseUrl, fallbackReason, originalError } = {}) {
+async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, fallbackReason, originalError } = {}) {
   try {
     const localMediaUrl = buildLocalMediaUrl(localMedia, publicBaseUrl)
     const response = await sendWhatsAppQrImageMessage({
@@ -5627,7 +5657,8 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
         createTime: response.createTime || nowIso()
       },
       direction: 'outbound',
-      transport: 'qr'
+      transport: 'qr',
+      contactId
     })
 
     return {
@@ -5643,7 +5674,7 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
   }
 }
 
-async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, documentDataUrl, externalId, phoneNumberId, localMedia, publicBaseUrl, fallbackReason, originalError } = {}) {
+async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, documentDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, fallbackReason, originalError } = {}) {
   try {
     const localMediaUrl = buildLocalMediaUrl(localMedia, publicBaseUrl)
     const response = await sendWhatsAppQrDocumentMessage({
@@ -5686,7 +5717,8 @@ async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, 
         createTime: response.createTime || nowIso()
       },
       direction: 'outbound',
-      transport: 'qr'
+      transport: 'qr',
+      contactId
     })
 
     return {
@@ -5702,7 +5734,7 @@ async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, 
   }
 }
 
-async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioDataUrl, externalId, phoneNumberId, localMedia, publicBaseUrl, durationMs, fallbackReason, originalError } = {}) {
+async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, durationMs, fallbackReason, originalError } = {}) {
   try {
     const localMediaUrl = buildLocalMediaUrl(localMedia, publicBaseUrl)
     const publicAudioUrl = cleanString(requestAudio?.link || requestAudio?.url || localMediaUrl)
@@ -5746,7 +5778,8 @@ async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioD
         createTime: response.createTime || nowIso()
       },
       direction: 'outbound',
-      transport: 'qr'
+      transport: 'qr',
+      contactId
     })
 
     return {
@@ -5806,7 +5839,8 @@ export async function sendWhatsAppApiTextMessage({
       fromPhone,
       toPhone,
       body,
-      externalId
+      externalId,
+      contactId
     })
   }
 
@@ -5822,6 +5856,7 @@ export async function sendWhatsAppApiTextMessage({
       toPhone,
       body,
       externalId,
+      contactId,
       fallbackReason: fallbackDecision.reason
     })
   }
@@ -5854,6 +5889,7 @@ export async function sendWhatsAppApiTextMessage({
         toPhone,
         body,
         externalId,
+        contactId,
         fallbackReason: retryDecision.reason,
         originalError: error
       })
@@ -5878,7 +5914,8 @@ export async function sendWhatsAppApiTextMessage({
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',
-    transport: 'api'
+    transport: 'api',
+    contactId
   })
 
   return response
@@ -5959,6 +5996,7 @@ export async function sendWhatsAppApiImageMessage({
       },
       imageDataUrl,
       externalId,
+      contactId,
       localMedia: savedImage,
       publicBaseUrl
     })
@@ -5977,6 +6015,7 @@ export async function sendWhatsAppApiImageMessage({
       requestImage: requestBody.image,
       imageDataUrl,
       externalId,
+      contactId,
       localMedia: savedImage,
       publicBaseUrl,
       fallbackReason: fallbackDecision.reason
@@ -6006,6 +6045,7 @@ export async function sendWhatsAppApiImageMessage({
         requestImage: requestBody.image,
         imageDataUrl,
         externalId,
+        contactId,
         localMedia: savedImage,
         publicBaseUrl,
         fallbackReason: retryDecision.reason,
@@ -6032,7 +6072,8 @@ export async function sendWhatsAppApiImageMessage({
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',
-    transport: 'api'
+    transport: 'api',
+    contactId
   })
 
   return {
@@ -6120,6 +6161,7 @@ export async function sendWhatsAppApiDocumentMessage({
       },
       documentDataUrl,
       externalId,
+      contactId,
       localMedia: savedDocument,
       publicBaseUrl
     })
@@ -6141,6 +6183,7 @@ export async function sendWhatsAppApiDocumentMessage({
       },
       documentDataUrl,
       externalId,
+      contactId,
       localMedia: savedDocument,
       publicBaseUrl,
       fallbackReason: fallbackDecision.reason
@@ -6173,6 +6216,7 @@ export async function sendWhatsAppApiDocumentMessage({
         },
         documentDataUrl,
         externalId,
+        contactId,
         localMedia: savedDocument,
         publicBaseUrl,
         fallbackReason: retryDecision.reason,
@@ -6199,7 +6243,8 @@ export async function sendWhatsAppApiDocumentMessage({
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',
-    transport: 'api'
+    transport: 'api',
+    contactId
   })
 
   return {
@@ -6222,6 +6267,7 @@ export async function sendWhatsAppApiAudioMessage({
   durationMs,
   voice,
   transport = 'api',
+  contactId,
   phoneNumberId
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
@@ -6279,6 +6325,7 @@ export async function sendWhatsAppApiAudioMessage({
       },
       audioDataUrl,
       externalId,
+      contactId,
       localMedia: savedAudio,
       publicBaseUrl,
       durationMs
@@ -6301,6 +6348,7 @@ export async function sendWhatsAppApiAudioMessage({
       },
       audioDataUrl,
       externalId,
+      contactId,
       localMedia: savedAudio,
       publicBaseUrl,
       durationMs,
@@ -6335,6 +6383,7 @@ export async function sendWhatsAppApiAudioMessage({
         },
         audioDataUrl,
         externalId,
+        contactId,
         localMedia: savedAudio,
         publicBaseUrl,
         durationMs,
@@ -6366,7 +6415,8 @@ export async function sendWhatsAppApiAudioMessage({
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',
-    transport: 'api'
+    transport: 'api',
+    contactId
   })
 
   return {
