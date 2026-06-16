@@ -564,8 +564,12 @@ export const Appointments: React.FC = () => {
   }, [locationId, accessToken, selectedCalendar, currentDate, getDateRange]);
 
   useEffect(() => {
-    setViewMode(current => current === routeState.viewMode ? current : routeState.viewMode);
-    setCurrentDate(current => formatDateKey(current) === formatDateKey(routeState.currentDate) ? current : routeState.currentDate);
+    const isOverlayRoute = routeState.create || Boolean(routeState.appointmentId);
+
+    if (!isOverlayRoute) {
+      setViewMode(current => current === routeState.viewMode ? current : routeState.viewMode);
+      setCurrentDate(current => formatDateKey(current) === formatDateKey(routeState.currentDate) ? current : routeState.currentDate);
+    }
 
     if (routeState.calendarId && calendars.length) {
       const routeCalendar = calendars.find(calendar => calendar.id === routeState.calendarId);
@@ -573,7 +577,7 @@ export const Appointments: React.FC = () => {
         selectCalendar(routeCalendar);
       }
     }
-  }, [calendars, routeState.calendarId, routeState.currentDate, routeState.viewMode, selectCalendar, selectedCalendar?.id]);
+  }, [calendars, routeState.appointmentId, routeState.calendarId, routeState.create, routeState.currentDate, routeState.viewMode, selectCalendar, selectedCalendar?.id]);
 
   // Cargar eventos próximos desde HOY (independiente del calendario visible)
   const loadUpcomingEvents = useCallback(async () => {
@@ -938,6 +942,7 @@ export const Appointments: React.FC = () => {
 
   // Manejar apertura del modal de cita
   const handleEventClick = (event: CalendarEvent) => {
+    handledOpenAppointmentRef.current = event.id;
     setSelectedEvent(event);
     setIsModalOpen(true);
     navigate(`/appointments/appointments/${encodeURIComponent(event.id)}`);
