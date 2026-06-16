@@ -539,9 +539,8 @@ export const TagsSettings: React.FC = () => {
           )}
 
           {loading ? (
-            <div className={styles.loadingState}>
-              <Loader2 className={styles.spin} size={22} />
-              <span>Cargando etiquetas...</span>
+            <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando etiquetas">
+              <Loader2 className={styles.spin} size={22} aria-hidden="true" />
             </div>
           ) : visibleTags.length === 0 ? (
             <div className={styles.emptyState}>

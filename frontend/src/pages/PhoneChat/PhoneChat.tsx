@@ -7941,9 +7941,8 @@ export const PhoneChat: React.FC = () => {
 
         <div className={styles.cameraShareList} data-phone-chat-scrollable="true">
           {contactsLoading && cameraShareContactOptions.length === 0 ? (
-            <div className={styles.centerState}>
-              <Loader2 size={20} className={styles.spinIcon} />
-              <span>Cargando contactos...</span>
+            <div className={styles.centerState} role="status" aria-live="polite" aria-label="Cargando contactos">
+              <Loader2 size={20} className={styles.spinIcon} aria-hidden="true" />
             </div>
           ) : cameraShareContactOptions.length > 0 ? (
             cameraShareContactOptions.map(renderCameraShareContactButton)
@@ -8459,9 +8458,8 @@ export const PhoneChat: React.FC = () => {
 
     if (chatsLoading) {
       return (
-        <div className={styles.centerState}>
-          <Loader2 size={20} className={styles.spinIcon} />
-          <span>Cargando chats...</span>
+        <div className={styles.centerState} role="status" aria-live="polite" aria-label="Cargando chats">
+          <Loader2 size={20} className={styles.spinIcon} aria-hidden="true" />
         </div>
       )
     }
@@ -8898,9 +8896,8 @@ export const PhoneChat: React.FC = () => {
 
     if (messagesLoading) {
       return (
-        <div className={styles.emptyConversation}>
-          <Loader2 size={22} className={styles.spinIcon} />
-          <span>Cargando conversación...</span>
+        <div className={styles.emptyConversation} role="status" aria-live="polite" aria-label="Cargando conversación">
+          <Loader2 size={22} className={styles.spinIcon} aria-hidden="true" />
         </div>
       )
     }
@@ -10043,9 +10040,8 @@ export const PhoneChat: React.FC = () => {
     const renderTemplateStatusList = () => {
       if (templatesLoading && templates.length === 0) {
         return (
-          <div className={styles.centerState}>
-            <Loader2 size={20} className={styles.spinIcon} />
-            <span>Cargando plantillas...</span>
+          <div className={styles.centerState} role="status" aria-live="polite" aria-label="Cargando plantillas">
+            <Loader2 size={20} className={styles.spinIcon} aria-hidden="true" />
           </div>
         )
       }
@@ -10663,9 +10659,8 @@ export const PhoneChat: React.FC = () => {
         {renderTemplateAlerts()}
 
         {templatesLoading && templates.length === 0 ? (
-          <div className={styles.centerState}>
-            <Loader2 size={20} className={styles.spinIcon} />
-            <span>Cargando plantillas...</span>
+          <div className={styles.centerState} role="status" aria-live="polite" aria-label="Cargando plantillas">
+            <Loader2 size={20} className={styles.spinIcon} aria-hidden="true" />
           </div>
         ) : templatesError ? (
           <div className={styles.emptySheetState}>
@@ -11296,7 +11291,7 @@ export const PhoneChat: React.FC = () => {
                     }}
                     ariaLabel="Calendario para agendar con IA"
                     options={[
-                      { value: '', label: calendarsLoading ? 'Cargando calendarios...' : 'Elegir calendario activo' },
+                      { value: '', label: calendarsLoading ? '...' : 'Elegir calendario activo' },
                       ...calendars.map((calendar) => ({ value: calendar.id, label: calendar.name }))
                     ]}
                     title="Calendario"
@@ -11320,7 +11315,7 @@ export const PhoneChat: React.FC = () => {
 
       if (agent.objective === 'ventas') {
         const productOptions = [
-          { value: '', label: agentProductsLoading ? 'Cargando productos...' : 'Elegir producto del CRM' },
+          { value: '', label: agentProductsLoading ? '...' : 'Elegir producto del CRM' },
           ...agentProducts.map((product) => ({ value: getProductId(product), label: product.name }))
         ]
         const priceOptions = selectedSalesProduct

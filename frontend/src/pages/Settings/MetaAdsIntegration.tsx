@@ -565,7 +565,9 @@ export const MetaAdsIntegration: React.FC = () => {
   const renderMaskedSecretValue = (value: string, isRevealing: boolean) => (
     <span className={styles.secretTokenText}>
       {isRevealing ? (
-        <span className={styles.secretRevealStatus}>Cargando token...</span>
+        <span className={styles.secretRevealStatus} role="status" aria-live="polite" aria-label="Cargando token">
+          <RefreshCw size={13} className={styles.spinning} aria-hidden="true" />
+        </span>
       ) : (
         <>
           <span className={styles.secretMaskFill} aria-hidden="true">
@@ -606,7 +608,7 @@ export const MetaAdsIntegration: React.FC = () => {
     setIsSavingToken(true)
 
     try {
-      showToast('info', 'Validando token...', 'Cargando tus cuentas de anuncios')
+      showToast('info', 'Validando token...', 'Revisando tus cuentas de anuncios')
       setRealAccessToken(credentials.accessToken)
       const accountsResult = await fetchAdAccounts(credentials.accessToken)
 
@@ -1233,9 +1235,8 @@ export const MetaAdsIntegration: React.FC = () => {
           </div>
 
           {isLoadingAccounts && (
-            <div className={styles.inlineStatus}>
-              <RefreshCw size={14} className={styles.spinning} />
-              Cargando cuentas de anuncios...
+            <div className={styles.inlineStatus} role="status" aria-live="polite" aria-label="Cargando cuentas de anuncios">
+              <RefreshCw size={14} className={styles.spinning} aria-hidden="true" />
             </div>
           )}
         </>
@@ -1333,9 +1334,8 @@ export const MetaAdsIntegration: React.FC = () => {
                     </button>
                   </div>
                 ) : isLoadingPixels ? (
-                  <div className={styles.inlineStatus}>
-                    <RefreshCw size={14} className={styles.spinning} />
-                    Cargando pixeles...
+                  <div className={styles.inlineStatus} role="status" aria-live="polite" aria-label="Cargando pixeles">
+                    <RefreshCw size={14} className={styles.spinning} aria-hidden="true" />
                   </div>
                 ) : pixels.length > 0 ? (
                   <CustomSelect
@@ -1411,9 +1411,8 @@ export const MetaAdsIntegration: React.FC = () => {
                     </button>
                   </div>
                 ) : isLoadingPages ? (
-                  <div className={styles.inlineStatus}>
-                    <RefreshCw size={14} className={styles.spinning} />
-                    Cargando páginas...
+                  <div className={styles.inlineStatus} role="status" aria-live="polite" aria-label="Cargando páginas">
+                    <RefreshCw size={14} className={styles.spinning} aria-hidden="true" />
                   </div>
                 ) : pages.length > 0 ? (
                   <CustomSelect
@@ -1470,9 +1469,8 @@ export const MetaAdsIntegration: React.FC = () => {
                     </button>
                   </div>
                 ) : isLoadingInstagramAccounts ? (
-                  <div className={styles.inlineStatus}>
-                    <RefreshCw size={14} className={styles.spinning} />
-                    Cargando Instagram...
+                  <div className={styles.inlineStatus} role="status" aria-live="polite" aria-label="Cargando Instagram">
+                    <RefreshCw size={14} className={styles.spinning} aria-hidden="true" />
                   </div>
                 ) : instagramAccounts.length > 0 ? (
                   <CustomSelect
@@ -1697,7 +1695,9 @@ export const MetaAdsIntegration: React.FC = () => {
 
                 <div className={styles.stepPanel}>
                   {isLoading ? (
-                    <div className={styles.loadingState}>Cargando credenciales...</div>
+                    <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando credenciales">
+                      <RefreshCw size={18} className={styles.spinning} aria-hidden="true" />
+                    </div>
                   ) : (
                     <>
                       {renderStepContent()}

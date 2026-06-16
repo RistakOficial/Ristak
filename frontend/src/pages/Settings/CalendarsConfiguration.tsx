@@ -1697,7 +1697,7 @@ export const CalendarsConfiguration: React.FC = () => {
                     {googleSyncBlocked
                       ? 'Vuelve a conectar Google Calendar aceptando permisos para leer calendarios y editar citas.'
                       : loadingGoogleCalendarOptions
-                        ? 'Cargando calendarios de Google...'
+                        ? ''
                         : currentGoogleCalendarId
                           ? `Se sincroniza con ${currentGoogleOption?.summary || selectedCalendar.googleCalendarSummary || currentGoogleCalendarId}.`
                           : googleCalendarOptions.length && !writableGoogleCalendarCount
@@ -2351,11 +2351,10 @@ export const CalendarsConfiguration: React.FC = () => {
             <div className={pageStyles.connectionHeader}>
               <div>
                 <h2>Google Calendar</h2>
-                <p>Revisando conexión...</p>
+                <p />
               </div>
-              <span className={`${pageStyles.statusPill} ${pageStyles.statusWarn}`}>
-                <Loader2 size={15} className={styles.spinIcon} />
-                Cargando
+              <span className={`${pageStyles.statusPill} ${pageStyles.statusWarn}`} role="status" aria-live="polite" aria-label="Cargando Google Calendar">
+                <Loader2 size={15} className={styles.spinIcon} aria-hidden="true" />
               </span>
             </div>
           </section>

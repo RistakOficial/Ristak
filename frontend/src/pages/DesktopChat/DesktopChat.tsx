@@ -1101,7 +1101,9 @@ export const DesktopChat: React.FC = () => {
 
           <div className={styles.chatList} data-chat-list>
             {chatsLoading ? (
-              <div className={styles.stateBlock}><Loader2 size={18} className={styles.spin} /> Cargando chats...</div>
+              <div className={styles.stateBlock} role="status" aria-live="polite" aria-label="Cargando chats">
+                <Loader2 size={18} className={styles.spin} aria-hidden="true" />
+              </div>
             ) : chatsError ? (
               <div className={styles.stateBlock}>
                 <CircleAlert size={18} />
@@ -1175,7 +1177,9 @@ export const DesktopChat: React.FC = () => {
 
               <div className={styles.messagePane}>
                 {messagesLoading ? (
-                  <div className={styles.stateBlock}><Loader2 size={18} className={styles.spin} /> Cargando conversación...</div>
+                  <div className={styles.stateBlock} role="status" aria-live="polite" aria-label="Cargando conversación">
+                    <Loader2 size={18} className={styles.spin} aria-hidden="true" />
+                  </div>
                 ) : messagesError ? (
                   <div className={styles.stateBlock}>
                     <CircleAlert size={18} />

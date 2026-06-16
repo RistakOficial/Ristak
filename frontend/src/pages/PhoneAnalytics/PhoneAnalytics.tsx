@@ -578,7 +578,7 @@ export const PhoneAnalytics: React.FC = () => {
                 </span>
                 <span className={styles.metricTitle}>{title}</span>
                 <strong>{loading || !metric ? '...' : formatter(metric.value)}</strong>
-                <small className={deltaClass}>{loading || !metric ? 'Cargando' : `${getVariationLabel(metric.variation)} vs antes`}</small>
+                <small className={deltaClass}>{loading || !metric ? '' : `${getVariationLabel(metric.variation)} vs antes`}</small>
               </article>
             )
           })}
@@ -626,9 +626,8 @@ export const PhoneAnalytics: React.FC = () => {
           </div>
 
           {chartLoading ? (
-            <div className={styles.loadingState}>
-              <Loader2 size={17} className={styles.spinIcon} />
-              Cargando gráfica...
+            <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando gráfica">
+              <Loader2 size={17} className={styles.spinIcon} aria-hidden="true" />
             </div>
           ) : hasChartData ? (
             <MobileDualLineChart data={chartData} meta={chartMeta} />
@@ -660,9 +659,8 @@ export const PhoneAnalytics: React.FC = () => {
           </div>
 
           {funnelLoading ? (
-            <div className={styles.loadingState}>
-              <Loader2 size={17} className={styles.spinIcon} />
-              Cargando embudo...
+            <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando embudo">
+              <Loader2 size={17} className={styles.spinIcon} aria-hidden="true" />
             </div>
           ) : (
             <div className={styles.funnelList}>
@@ -716,9 +714,8 @@ export const PhoneAnalytics: React.FC = () => {
           </div>
 
           {originLoading ? (
-            <div className={styles.loadingState}>
-              <Loader2 size={17} className={styles.spinIcon} />
-              Cargando origen...
+            <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando origen">
+              <Loader2 size={17} className={styles.spinIcon} aria-hidden="true" />
             </div>
           ) : originRows.length > 0 ? (
             <div className={styles.sourceList}>

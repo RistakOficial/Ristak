@@ -842,10 +842,6 @@ const PREVIEW_LOADING_HTML = `<!doctype html>
   <body>
     <main aria-live="polite" aria-busy="true">
       <div class="preview-wheel" role="img" aria-label="Cargando"></div>
-      <section>
-        <h1>Cargando previsualización</h1>
-        <p>Estamos preparando tu página para verla completa.</p>
-      </section>
     </main>
   </body>
 </html>`
@@ -7681,7 +7677,7 @@ export const Sites: React.FC = () => {
   ) : null
 
   if (loading) {
-    return <Loading page="dashboard" />
+    return <Loading page="sites" />
   }
 
   return (
@@ -15481,9 +15477,8 @@ const ImportedHtmlEditorPanel: React.FC<{
           )}
           <div className={`${styles.importedCodePreviewStage} ${device === 'mobile' ? styles.importedCodePreviewStageMobile : ''}`}>
             {previewLoading && !activeCodePreviewHtml ? (
-              <div className={styles.importedPreviewState}>
-                <RefreshCw size={18} />
-                <span>Cargando vista previa...</span>
+              <div className={styles.importedPreviewState} role="status" aria-live="polite" aria-label="Cargando vista previa">
+                <RefreshCw size={18} className={styles.previewSpin} aria-hidden="true" />
               </div>
             ) : previewError && !activeCodePreviewHtml ? (
               <div className={styles.importedPreviewState}>
@@ -15518,9 +15513,8 @@ const ImportedHtmlEditorPanel: React.FC<{
       <section className={styles.importedPreviewPane}>
         <div className={`${styles.importedPreviewStage} ${device === 'mobile' ? styles.importedPreviewStageMobile : ''}`}>
           {previewLoading && (
-            <div className={styles.importedPreviewState}>
-              <RefreshCw size={18} />
-              <span>Cargando vista previa...</span>
+            <div className={styles.importedPreviewState} role="status" aria-live="polite" aria-label="Cargando vista previa">
+              <RefreshCw size={18} className={styles.previewSpin} aria-hidden="true" />
             </div>
           )}
           {!previewLoading && previewError && (
@@ -18026,9 +18020,8 @@ const SitesMediaPickerModal: React.FC<{
         </div>
         <div className={styles.mediaPickerBody} aria-busy={loading || uploading}>
           {loading ? (
-            <div className={styles.mediaPickerEmpty}>
-              <RefreshCw size={18} />
-              <span>Cargando biblioteca...</span>
+            <div className={styles.mediaPickerEmpty} role="status" aria-live="polite" aria-label="Cargando biblioteca">
+              <RefreshCw size={18} className={styles.previewSpin} aria-hidden="true" />
             </div>
           ) : filteredAssets.length ? (
             <div className={styles.mediaPickerGrid}>

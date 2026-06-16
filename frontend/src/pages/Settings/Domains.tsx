@@ -166,7 +166,7 @@ export const Domains: React.FC = () => {
   }
 
   if (loading) {
-    return <Loading page="settings" />
+    return <Loading page="settings-list" />
   }
 
   const publicStatus = getDomainStatus(domainConfig.domain, domainConfig.renderDomainVerified)

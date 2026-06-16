@@ -500,9 +500,8 @@ export function Table<T extends Record<string, any>>({
 
   if (loading && loadingVariant === 'spinner') {
     return (
-      <div className={styles.loadingContainer}>
+      <div className={styles.loadingContainer} role="status" aria-live="polite" aria-label="Cargando tabla">
         <div className={styles.spinner}></div>
-        <div className={styles.loadingText}>Cargando...</div>
       </div>
     )
   }

@@ -25,7 +25,8 @@ import {
   PauseCircle,
   PlayCircle,
   Ban,
-  X
+  X,
+  Loader2
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -2436,7 +2437,9 @@ export const Transactions: React.FC = () => {
             </div>
 
             {paymentPlanModal.loading ? (
-              <div className={styles.modalLoading}>Cargando detalle del plan...</div>
+              <div className={styles.modalLoading} role="status" aria-live="polite" aria-label="Cargando detalle del plan">
+                <Loader2 size={22} className={styles.spinning} aria-hidden="true" />
+              </div>
             ) : (
               <form className={styles.form} onSubmit={(e) => {
                 e.preventDefault()

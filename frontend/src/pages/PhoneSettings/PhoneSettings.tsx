@@ -652,9 +652,8 @@ export const PhoneSettings: React.FC = () => {
       )}
       <div className={styles.templateList}>
         {templatesLoading ? (
-          <div className={styles.loadingInline}>
-            <Loader2 size={17} className={styles.spinIcon} />
-            Cargando plantillas...
+          <div className={styles.loadingInline} role="status" aria-live="polite" aria-label="Cargando plantillas">
+            <Loader2 size={17} className={styles.spinIcon} aria-hidden="true" />
           </div>
         ) : templates.length ? templates.map((template) => {
           const status = getTemplateStatus(template)
@@ -739,7 +738,7 @@ export const PhoneSettings: React.FC = () => {
           <div className={styles.businessDescriptionActions}>
             <small>
               {aiAgentConfigLoading
-                ? 'Cargando descripción...'
+                ? ''
                 : businessContextMessage || (aiReady ? 'El dictado se guarda automático al terminar.' : 'OpenAI debe estar conectado para dictar y pulir.')}
             </small>
             <button
@@ -788,9 +787,8 @@ export const PhoneSettings: React.FC = () => {
       )}
 
       {customFieldsLoading ? (
-        <div className={styles.loadingInline}>
-          <Loader2 size={17} className={styles.spinIcon} />
-          Cargando campos...
+        <div className={styles.loadingInline} role="status" aria-live="polite" aria-label="Cargando campos">
+          <Loader2 size={17} className={styles.spinIcon} aria-hidden="true" />
         </div>
       ) : customFieldDefinitions.length ? (
         <div className={styles.customFieldsList}>
@@ -880,9 +878,8 @@ export const PhoneSettings: React.FC = () => {
             Todos los calendarios
           </button>
           {calendarsLoading ? (
-            <div className={styles.loadingInline}>
-              <Loader2 size={17} className={styles.spinIcon} />
-              Cargando calendarios...
+            <div className={styles.loadingInline} role="status" aria-live="polite" aria-label="Cargando calendarios">
+              <Loader2 size={17} className={styles.spinIcon} aria-hidden="true" />
             </div>
           ) : calendars.length ? (
             <div className={styles.calendarGrid}>

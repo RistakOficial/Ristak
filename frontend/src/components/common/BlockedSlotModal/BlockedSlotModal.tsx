@@ -624,9 +624,8 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
                 Usuario asignado <span className={styles.required}>*</span>
               </label>
               {loadingUsers ? (
-                <div className={styles.loadingUsers}>
-                  <Loader2 size={16} className={styles.spinner} />
-                  <span>Cargando usuarios...</span>
+                <div className={styles.loadingUsers} role="status" aria-live="polite" aria-label="Cargando usuarios">
+                  <Loader2 size={16} className={styles.spinner} aria-hidden="true" />
                 </div>
               ) : users.length > 0 ? (
                 <CustomSelect

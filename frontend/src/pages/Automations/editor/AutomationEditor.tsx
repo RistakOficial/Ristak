@@ -1374,9 +1374,8 @@ export const AutomationEditor: React.FC = () => {
   if (!automation) {
     return (
       <div className={styles.editorShell}>
-        <div className={styles.editorLoading}>
-          <Loader2 size={16} className="animate-spin" style={{ marginRight: 8 }} />
-          Cargando automatización…
+        <div className={styles.editorLoading} role="status" aria-live="polite" aria-label="Cargando automatización">
+          <Loader2 size={16} className="animate-spin" aria-hidden="true" />
         </div>
       </div>
     )

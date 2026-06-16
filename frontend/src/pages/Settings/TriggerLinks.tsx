@@ -225,9 +225,8 @@ export const TriggerLinks: React.FC = () => {
           </div>
 
           {loading ? (
-            <div className={styles.loadingState}>
-              <Loader2 className={styles.spin} size={22} />
-              <span>Cargando enlaces...</span>
+            <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando enlaces">
+              <Loader2 className={styles.spin} size={22} aria-hidden="true" />
             </div>
           ) : visibleLinks.length === 0 ? (
             <div className={styles.emptyState}>

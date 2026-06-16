@@ -490,9 +490,10 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                 size="small"
                 onClick={loadInitialSessions}
                 disabled={loadingSessions}
+                aria-label={loadingSessions ? 'Cargando sesiones' : 'Actualizar sesiones'}
               >
                 <RefreshCw size={16} className={loadingSessions ? styles.spinIcon : ''} />
-                {loadingSessions ? 'Cargando...' : 'Actualizar'}
+                {!loadingSessions && 'Actualizar'}
               </Button>
             )}
           </div>
@@ -842,10 +843,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                   }}
                 >
                   {loadingMore ? (
-                    <>
-                      <RefreshCw size={16} className={styles.spinIcon} style={{ marginRight: '8px' }} />
-                      Cargando más sesiones...
-                    </>
+                    <RefreshCw size={16} className={styles.spinIcon} aria-hidden="true" />
                   ) : (
                     'Desplázate hacia abajo para cargar más'
                   )}

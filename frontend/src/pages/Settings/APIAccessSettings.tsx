@@ -303,8 +303,8 @@ export const APIAccessSettings: React.FC = () => {
                 />
 
                 <div className={styles.developerInfoGrid}>
-                  <InfoField label="App ID" value={isLoadingApiToken ? 'Cargando...' : appId || 'Sin ID'} onCopy={() => copyText(appId, 'App ID')} />
-                  <InfoField label="Token activo" value={isLoadingApiToken ? 'Cargando...' : apiTokenMetadata?.preview || 'Sin token'} />
+                  <InfoField label="App ID" value={isLoadingApiToken ? '' : appId || 'Sin ID'} onCopy={() => copyText(appId, 'App ID')} />
+                  <InfoField label="Token activo" value={isLoadingApiToken ? '' : apiTokenMetadata?.preview || 'Sin token'} />
                   <InfoField label="Creado" value={formatDate(apiTokenMetadata?.createdAt || null)} />
                   <InfoField label="Último uso" value={formatDate(apiTokenMetadata?.lastUsedAt || null)} />
                 </div>
@@ -452,7 +452,7 @@ const InfoField: React.FC<FieldProps> = ({ label, value, onCopy }) => (
     <p>{label}</p>
     <div>
       <strong>{value}</strong>
-      {onCopy && value && !value.startsWith('Cargando') && (
+      {onCopy && value && (
         <button
           type="button"
           onClick={onCopy}

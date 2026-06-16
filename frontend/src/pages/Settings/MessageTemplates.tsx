@@ -1706,7 +1706,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   )
 
   if (loading) {
-    return <Loading page="settings" />
+    return <Loading page="settings-list" />
   }
 
   return (

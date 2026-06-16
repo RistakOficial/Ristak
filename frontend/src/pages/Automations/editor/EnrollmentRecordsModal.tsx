@@ -101,7 +101,7 @@ export const EnrollmentRecordsModal: React.FC<EnrollmentRecordsModalProps> = ({
 
       <div className={styles.recordsBody} data-automation-interactive="true">
         {enrollments === null ? (
-          <Loading variant="spinner" message="Cargando registros" />
+          <Loading variant="spinner" />
         ) : tab === 'enrollments' ? (
           enrollments.length === 0 ? (
             <p className={styles.recordsEmpty}>

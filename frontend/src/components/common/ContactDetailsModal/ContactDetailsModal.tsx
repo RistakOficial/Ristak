@@ -681,9 +681,8 @@ export function ContactDetailsModal({
   const renderAutomationActivityList = (items: ContactAutomationActivityItem[], emptyText: string) => {
     if (automationActivityLoading) {
       return (
-        <div className={styles.automationListState}>
+        <div className={styles.automationListState} role="status" aria-live="polite" aria-label="Cargando automatizaciones">
           <Icon name="refresh" size={16} className={styles.spinIcon} />
-          <span>Cargando...</span>
         </div>
       )
     }
@@ -778,9 +777,8 @@ export function ContactDetailsModal({
             {/* Contact list */}
             <div className={styles.contactList}>
               {loading ? (
-                <div className={styles.emptyState}>
+                <div className={styles.emptyState} role="status" aria-live="polite" aria-label="Cargando elementos">
                   <Icon name="refresh" size={24} className={styles.spinIcon} />
-                  <p>Cargando elementos...</p>
                 </div>
               ) : filteredData.length === 0 ? (
                 <div className={styles.emptyState}>
@@ -1093,9 +1091,8 @@ export function ContactDetailsModal({
                         {(automationQuery.trim() || automationCatalogLoading) && (
                           <div className={styles.automationSearchResults}>
                             {automationCatalogLoading ? (
-                              <div className={styles.automationResultState}>
+                              <div className={styles.automationResultState} role="status" aria-live="polite" aria-label="Cargando automatizaciones">
                                 <Icon name="refresh" size={15} className={styles.spinIcon} />
-                                <span>Cargando automatizaciones...</span>
                               </div>
                             ) : automationSearchResults.length === 0 ? (
                               <div className={styles.automationResultState}>

@@ -1453,8 +1453,16 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({
   return (
     <div className={styles.metricsContainer}>
       {loading ? (
-        <Card className={styles.metricsTableCard}>
-          <p className={styles.metricsLoading}>Cargando métricas...</p>
+        <Card className={styles.metricsTableCard} aria-label="Cargando métricas">
+          <div className={styles.metricsSkeleton} role="status" aria-live="polite">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div className={styles.metricsSkeletonRow} key={`metrics-skeleton-${index}`}>
+                <span />
+                <span />
+                <span />
+              </div>
+            ))}
+          </div>
         </Card>
       ) : (
         metricGroups.map((group) => (
@@ -2906,7 +2914,7 @@ export const Reports: React.FC = () => {
             searchable
             searchPlaceholder="Buscar períodos..."
             tableId={reportsTableId}
-            emptyMessage={loadingMetrics ? 'Cargando métricas...' : 'No hay datos para el rango seleccionado'}
+            emptyMessage="No hay datos para el rango seleccionado"
           />
         </Card>
       ) : (
