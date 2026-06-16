@@ -869,6 +869,37 @@ export const getChatContacts = async (req, res) => {
         FROM message_rows
         GROUP BY contact_id
       ),
+      latest_messages AS (
+        SELECT
+          *,
+          ROW_NUMBER() OVER (
+            PARTITION BY contact_id
+            ORDER BY message_date DESC, created_at DESC
+          ) AS row_rank
+        FROM message_rows
+      ),
+      latest_inbound_messages AS (
+        SELECT
+          *,
+          ROW_NUMBER() OVER (
+            PARTITION BY contact_id
+            ORDER BY message_date DESC, created_at DESC
+          ) AS row_rank
+        FROM message_rows
+        WHERE direction = 'inbound'
+          AND (business_phone_number_id IS NOT NULL OR business_phone IS NOT NULL)
+      ),
+      first_inbound_messages AS (
+        SELECT
+          *,
+          ROW_NUMBER() OVER (
+            PARTITION BY contact_id
+            ORDER BY message_date ASC, created_at ASC
+          ) AS row_rank
+        FROM message_rows
+        WHERE direction = 'inbound'
+          AND (business_phone_number_id IS NOT NULL OR business_phone IS NOT NULL)
+      ),
       payment_stats AS (
         SELECT
           contact_id,
@@ -944,31 +975,9 @@ ${CONTACT_META_PROFILE_SELECT},
       FROM chat_stats
       JOIN contacts c ON c.id = chat_stats.contact_id
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
-      LEFT JOIN message_rows lm ON lm.message_row_id = (
-        SELECT message_row_id
-        FROM message_rows
-        WHERE contact_id = c.id
-        ORDER BY message_date DESC, created_at DESC
-        LIMIT 1
-      )
-      LEFT JOIN message_rows lim ON lim.message_row_id = (
-        SELECT message_row_id
-        FROM message_rows
-        WHERE contact_id = c.id
-          AND direction = 'inbound'
-          AND (business_phone_number_id IS NOT NULL OR business_phone IS NOT NULL)
-        ORDER BY message_date DESC, created_at DESC
-        LIMIT 1
-      )
-      LEFT JOIN message_rows fim ON fim.message_row_id = (
-        SELECT message_row_id
-        FROM message_rows
-        WHERE contact_id = c.id
-          AND direction = 'inbound'
-          AND (business_phone_number_id IS NOT NULL OR business_phone IS NOT NULL)
-        ORDER BY message_date ASC, created_at ASC
-        LIMIT 1
-      )
+      LEFT JOIN latest_messages lm ON lm.contact_id = c.id AND lm.row_rank = 1
+      LEFT JOIN latest_inbound_messages lim ON lim.contact_id = c.id AND lim.row_rank = 1
+      LEFT JOIN first_inbound_messages fim ON fim.contact_id = c.id AND fim.row_rank = 1
       ${whereClause}
       ORDER BY chat_stats.last_message_date DESC
       LIMIT ?

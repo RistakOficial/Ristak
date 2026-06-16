@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Banknote,
   Bot,
   CalendarDays,
+  Camera,
   CheckCheck,
   CircleAlert,
   Clock,
@@ -10,19 +12,22 @@ import {
   Image as ImageIcon,
   Loader2,
   Mail,
+  MapPin,
   MessageCircle,
   MousePointerClick,
   Phone,
+  Plus,
   Search,
   Send,
   ListFilter,
   Sparkles,
   Tag,
+  Trash2,
   User,
   Video,
   X
 } from 'lucide-react'
-import { AppointmentModal, Button, CustomSelect, PageContainer, RecordPaymentModal } from '@/components/common'
+import { AppointmentModal, Button, CustomSelect, RecordPaymentModal } from '@/components/common'
 import { AgentRobot } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -47,6 +52,7 @@ type AdvancedStageFilter = 'all' | 'lead' | 'appointment' | 'customer'
 type AdvancedActivityFilter = 'all' | 'payments' | 'appointments' | 'with_source' | 'no_phone'
 type ComposerStatus = 'idle' | 'sending'
 type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
+type DraftAttachmentKind = 'image' | 'document'
 
 interface AdvancedChatFilters {
   channel: AdvancedChannelFilter
@@ -91,10 +97,20 @@ interface DesktopChatMessage {
   attachment?: {
     type: ChatAttachmentType
     url?: string
+    dataUrl?: string
     name?: string
     mimeType?: string
     durationMs?: number
   }
+}
+
+interface DesktopDraftAttachment {
+  id: string
+  kind: DraftAttachmentKind
+  name: string
+  mimeType: string
+  dataUrl: string
+  size: number
 }
 
 interface ContactInfoPayment {
@@ -120,6 +136,41 @@ const CHAT_FILTERS: Array<{ id: ChatFilter; label: string }> = [
   { id: 'appointments', label: 'Con cita' },
   { id: 'customers', label: 'Clientes' }
 ]
+
+const CHAT_REQUEST_TIMEOUT_MS = 20000
+const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024
+const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024
+const DOCUMENT_ATTACHMENT_ACCEPT = [
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx',
+  '.txt',
+  '.csv',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'text/csv'
+].join(',')
+const DOCUMENT_MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  txt: 'text/plain',
+  csv: 'text/csv'
+}
 
 const DEFAULT_ADVANCED_FILTERS: AdvancedChatFilters = {
   channel: 'all',
@@ -222,6 +273,48 @@ function contactMatchesQuery(contact: Partial<Contact>, query: string) {
   const normalizedQuery = query.trim().toLowerCase()
   if (!normalizedQuery) return true
   return [contact.name, contact.phone, contact.email].filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery)
+}
+
+function getFileExtension(name = '') {
+  const cleanName = String(name || '').trim().toLowerCase()
+  const extension = cleanName.split('.').pop() || ''
+  return extension === cleanName ? '' : extension
+}
+
+function getDocumentMimeType(file: File) {
+  const fileType = String(file.type || '').trim().toLowerCase()
+  const extension = getFileExtension(file.name)
+  return DOCUMENT_MIME_BY_EXTENSION[extension] || fileType || 'application/octet-stream'
+}
+
+function isSupportedDocumentFile(file: File) {
+  const extension = getFileExtension(file.name)
+  const mimeType = getDocumentMimeType(file)
+  return Boolean(DOCUMENT_MIME_BY_EXTENSION[extension] || Object.values(DOCUMENT_MIME_BY_EXTENSION).includes(mimeType))
+}
+
+function normalizeDataUrlMimeType(dataUrl: string, mimeType: string) {
+  if (!mimeType || !dataUrl.startsWith('data:')) return dataUrl
+  return dataUrl.replace(/^data:[^;,]*(;[^,]*)?,/i, (_match, params = '') => `data:${mimeType}${params || ';base64'},`)
+}
+
+function getDraftAttachmentMessageType(attachment: DesktopDraftAttachment): ChatAttachmentType {
+  return attachment.kind === 'image' ? 'image' : 'document'
+}
+
+function getAttachmentPreviewText(attachments: DesktopDraftAttachment[], fallbackText = '') {
+  if (!attachments.length) return fallbackText
+  const hasDocument = attachments.some((attachment) => attachment.kind === 'document')
+  if (attachments.length > 1) return hasDocument ? 'Archivos' : 'Fotos'
+  return hasDocument ? 'Documento' : 'Foto'
+}
+
+function formatAttachmentSize(size?: number) {
+  const value = Number(size || 0)
+  if (!Number.isFinite(value) || value <= 0) return 'Archivo'
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(value >= 10 * 1024 * 1024 ? 0 : 1)} MB`
+  if (value >= 1024) return `${Math.round(value / 1024)} KB`
+  return `${value} B`
 }
 
 function normalizeFilterProbe(values: unknown[]) {
@@ -640,6 +733,10 @@ export const DesktopChat: React.FC = () => {
   const { timezone, formatLocalDateTime } = useTimezone()
   const aiAvailability = useAIAgentAvailability()
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const chatsRequestRef = useRef<AbortController | null>(null)
+  const photoInputRef = useRef<HTMLInputElement | null>(null)
+  const cameraInputRef = useRef<HTMLInputElement | null>(null)
+  const documentInputRef = useRef<HTMLInputElement | null>(null)
 
   const [chats, setChats] = useState<DesktopChatContact[]>([])
   const [chatsLoading, setChatsLoading] = useState(true)
@@ -659,6 +756,8 @@ export const DesktopChat: React.FC = () => {
 
   const [composerText, setComposerText] = useState('')
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false)
+  const [draftAttachments, setDraftAttachments] = useState<DesktopDraftAttachment[]>([])
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [highLevelConnected, setHighLevelConnected] = useState(false)
   const [calendars, setCalendars] = useState<Calendar[]>([])
@@ -726,7 +825,8 @@ export const DesktopChat: React.FC = () => {
     return groups
   }, [messages, timezone])
   const activeConversationChannel = normalizeHighLevelChannel(activeContact?.lastMessageChannel || messages[messages.length - 1]?.transport || '')
-  const canSend = Boolean(activeContact && composerText.trim() && composerStatus === 'idle')
+  const hasComposerContent = Boolean(composerText.trim()) || draftAttachments.length > 0
+  const canSend = Boolean(activeContact && hasComposerContent && composerStatus === 'idle')
 
   const loadChats = useCallback(async (options: { silent?: boolean } = {}) => {
     const silent = options.silent === true
@@ -735,12 +835,18 @@ export const DesktopChat: React.FC = () => {
       setChatsError('')
     }
 
+    chatsRequestRef.current?.abort()
+    const controller = new AbortController()
+    chatsRequestRef.current = controller
+    const timeoutId = window.setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS)
+
     try {
       const data = await apiClient.get<DesktopChatContact[]>('/contacts/chats', {
         params: {
           limit: '80',
           ...(chatQuery.trim() ? { q: chatQuery.trim() } : {})
-        }
+        },
+        signal: controller.signal
       })
       const nextChats = Array.isArray(data) ? data : []
       setChats(nextChats)
@@ -748,13 +854,19 @@ export const DesktopChat: React.FC = () => {
         if (current && nextChats.some((contact) => contact.id === current)) return current
         return nextChats[0]?.id || ''
       })
-    } catch {
+    } catch (error: any) {
+      if (controller.signal.aborted && chatsRequestRef.current !== controller) return
       if (!silent) {
-        setChatsError('No se pudieron cargar los chats.')
+        const timedOut = controller.signal.aborted || error?.name === 'AbortError'
+        setChatsError(timedOut ? 'Los chats tardaron demasiado en cargar. Intenta otra vez.' : 'No se pudieron cargar los chats.')
         setChats([])
       }
     } finally {
-      setChatsLoading(false)
+      window.clearTimeout(timeoutId)
+      if (chatsRequestRef.current === controller) {
+        chatsRequestRef.current = null
+        setChatsLoading(false)
+      }
     }
   }, [chatQuery])
 
@@ -807,6 +919,10 @@ export const DesktopChat: React.FC = () => {
     loadChats()
   }, [loadChats])
 
+  useEffect(() => () => {
+    chatsRequestRef.current?.abort()
+  }, [])
+
   useEffect(() => {
     loadSupportData()
   }, [loadSupportData])
@@ -838,6 +954,118 @@ export const DesktopChat: React.FC = () => {
     if (results[0]) ensureContactInList(results[0])
   }, [chatQuery, ensureContactInList])
 
+  const addDraftAttachment = useCallback((attachment: DesktopDraftAttachment) => {
+    setDraftAttachments((current) => [attachment, ...current].slice(0, 4))
+    showToast('success', attachment.kind === 'image' ? 'Foto lista' : 'Documento listo', 'Revisa la vista previa y manda el mensaje.')
+  }, [showToast])
+
+  const readImageFile = useCallback((file: File, source: 'camera' | 'photos') => {
+    if (!file.type.startsWith('image/')) {
+      showToast('error', 'Archivo no válido', 'Elige una foto JPG, PNG o WebP.')
+      return
+    }
+
+    if (file.size > MAX_IMAGE_ATTACHMENT_BYTES) {
+      showToast('error', 'La foto pesa demasiado', 'Elige una foto de menos de 8 MB.')
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : ''
+      if (!dataUrl) {
+        showToast('error', 'No se pudo leer', 'Intenta elegir la foto otra vez.')
+        return
+      }
+
+      addDraftAttachment({
+        id: `${source}-${Date.now()}`,
+        kind: 'image',
+        name: file.name || `foto-${Date.now()}`,
+        mimeType: file.type || 'image/jpeg',
+        dataUrl,
+        size: file.size
+      })
+    }
+    reader.onerror = () => showToast('error', 'No se pudo leer', 'Intenta elegir la foto otra vez.')
+    reader.readAsDataURL(file)
+  }, [addDraftAttachment, showToast])
+
+  const readDocumentFile = useCallback((file: File) => {
+    if (!isSupportedDocumentFile(file)) {
+      showToast('error', 'Archivo no válido', 'Elige un PDF, Word, Excel, PowerPoint, TXT o CSV.')
+      return
+    }
+
+    if (file.size > MAX_DOCUMENT_ATTACHMENT_BYTES) {
+      showToast('error', 'Archivo muy pesado', 'Elige un documento de menos de 20 MB.')
+      return
+    }
+
+    const mimeType = getDocumentMimeType(file)
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? normalizeDataUrlMimeType(reader.result, mimeType) : ''
+      if (!dataUrl) {
+        showToast('error', 'No se pudo leer', 'Intenta elegir el documento otra vez.')
+        return
+      }
+
+      addDraftAttachment({
+        id: `document-${Date.now()}`,
+        kind: 'document',
+        name: file.name || `documento-${Date.now()}`,
+        mimeType,
+        dataUrl,
+        size: file.size
+      })
+    }
+    reader.onerror = () => showToast('error', 'No se pudo leer', 'Intenta elegir el documento otra vez.')
+    reader.readAsDataURL(file)
+  }, [addDraftAttachment, showToast])
+
+  const handleImageSelected = useCallback((source: 'camera' | 'photos', event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    readImageFile(file, source)
+    setComposerMenuOpen(false)
+  }, [readImageFile])
+
+  const handleDocumentSelected = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    readDocumentFile(file)
+    setComposerMenuOpen(false)
+  }, [readDocumentFile])
+
+  const removeDraftAttachment = useCallback((attachmentId: string) => {
+    setDraftAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))
+  }, [])
+
+  const handleComposerMenuAction = useCallback((action: 'templates' | 'photos' | 'camera' | 'documents' | 'location' | 'clabe') => {
+    if (action === 'photos') {
+      photoInputRef.current?.click()
+      return
+    }
+    if (action === 'camera') {
+      cameraInputRef.current?.click()
+      return
+    }
+    if (action === 'documents') {
+      documentInputRef.current?.click()
+      return
+    }
+    if (action === 'templates') {
+      setComposerText('Hola, te comparto la información en un momento.')
+      setComposerMenuOpen(false)
+      return
+    }
+    showToast('info', action === 'location' ? 'Ubicación' : 'CLABE', 'Esta opción ya está en el menú. La conexión completa queda lista para el siguiente paso.')
+    setComposerMenuOpen(false)
+  }, [showToast])
+
   const resetAdvancedFilters = useCallback(() => {
     setAdvancedFilters(DEFAULT_ADVANCED_FILTERS)
   }, [])
@@ -850,43 +1078,122 @@ export const DesktopChat: React.FC = () => {
 
   const handleSendMessage = async (textOverride?: string) => {
     const text = (textOverride || composerText).trim()
-    if (!activeContact || !text) return
+    const attachmentsToSend = textOverride ? [] : draftAttachments
+    if (!activeContact || (!text && attachmentsToSend.length === 0)) return
 
-    if (!activeContact.phone && activeConversationChannel !== 'instagram' && activeConversationChannel !== 'messenger') {
+    if (attachmentsToSend.length > 0) {
+      if (!activeContact.phone) {
+        showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar archivos por WhatsApp.')
+        return
+      }
+      if (!whatsappConnected) {
+        showToast('warning', 'Conecta WhatsApp para adjuntos', 'Las fotos y documentos se mandan desde WhatsApp API.')
+        return
+      }
+    } else if (!activeContact.phone && activeConversationChannel !== 'instagram' && activeConversationChannel !== 'messenger') {
       showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de escribirle por WhatsApp o SMS.')
       return
     }
 
     const optimisticId = `desktop-chat-${Date.now()}`
     const sentAt = new Date().toISOString()
-    const optimisticMessage: DesktopChatMessage = {
-      id: optimisticId,
-      text,
-      date: sentAt,
-      direction: 'outbound',
-      status: 'enviando',
-      businessPhone: selectedBusinessPhoneValue,
-      businessPhoneNumberId: selectedBusinessPhone?.id || '',
-      transport: whatsappConnected ? 'api' : activeConversationChannel
-    }
+    const optimisticMessages: DesktopChatMessage[] = attachmentsToSend.length > 0
+      ? attachmentsToSend.map((attachment, index) => ({
+          id: `${optimisticId}-attachment-${index}`,
+          text: index === 0 ? text : '',
+          date: sentAt,
+          direction: 'outbound',
+          status: 'enviando',
+          businessPhone: selectedBusinessPhoneValue,
+          businessPhoneNumberId: selectedBusinessPhone?.id || '',
+          transport: 'api',
+          attachment: {
+            type: getDraftAttachmentMessageType(attachment),
+            dataUrl: attachment.dataUrl,
+            name: attachment.name,
+            mimeType: attachment.mimeType
+          }
+        }))
+      : [{
+          id: optimisticId,
+          text,
+          date: sentAt,
+          direction: 'outbound',
+          status: 'enviando',
+          businessPhone: selectedBusinessPhoneValue,
+          businessPhoneNumberId: selectedBusinessPhone?.id || '',
+          transport: whatsappConnected ? 'api' : activeConversationChannel
+        }]
 
     setComposerStatus('sending')
     if (!textOverride) setComposerText('')
-    setMessages((current) => [...current, optimisticMessage])
+    setDraftAttachments([])
+    setComposerMenuOpen(false)
+    setMessages((current) => [...current, ...optimisticMessages])
     setChats((current) => current.map((contact) => (
       contact.id === activeContact.id
         ? {
             ...contact,
-            lastMessageText: text,
+            lastMessageText: attachmentsToSend.length > 0 ? (text || getAttachmentPreviewText(attachmentsToSend)) : text,
             lastMessageDate: sentAt,
             lastMessageDirection: 'outbound',
-            messageCount: Number(contact.messageCount || 0) + 1
+            messageCount: Number(contact.messageCount || 0) + Math.max(1, attachmentsToSend.length)
           }
         : contact
     )))
 
     try {
-      if (whatsappConnected && activeContact.phone) {
+      if (attachmentsToSend.length > 0) {
+        const results = await Promise.all(attachmentsToSend.map((attachment, index) => (
+          attachment.kind === 'image'
+            ? whatsappApiService.sendImage({
+                to: activeContact.phone || '',
+                from: selectedBusinessPhoneValue,
+                contactId: activeContact.id,
+                imageDataUrl: attachment.dataUrl,
+                caption: index === 0 ? text : '',
+                externalId: `${optimisticId}-attachment-${index}`,
+                transport: 'api',
+                phoneNumberId: selectedBusinessPhone?.id || undefined
+              })
+            : whatsappApiService.sendDocument({
+                to: activeContact.phone || '',
+                from: selectedBusinessPhoneValue,
+                contactId: activeContact.id,
+                documentDataUrl: attachment.dataUrl,
+                filename: attachment.name,
+                mimeType: attachment.mimeType,
+                caption: index === 0 ? text : '',
+                externalId: `${optimisticId}-attachment-${index}`,
+                transport: 'api',
+                phoneNumberId: selectedBusinessPhone?.id || undefined
+              })
+        )))
+        setMessages((current) => current.map((message) => (
+          message.id.startsWith(`${optimisticId}-attachment-`)
+            ? (() => {
+                const result = results[Number(message.id.replace(`${optimisticId}-attachment-`, ''))]
+                const resultMedia = result?.document || result?.image || null
+                const mediaUrl = resultMedia?.link || resultMedia?.url || result?.localMedia?.publicUrl || ''
+                const mediaMimeType = resultMedia?.mimeType || resultMedia?.mimetype || result?.localMedia?.mimeType || ''
+                const mediaFilename = result?.document?.filename || result?.document?.fileName || result?.localMedia?.filename || ''
+                return {
+                  ...message,
+                  status: result?.status || 'sent',
+                  transport: result?.transport || message.transport,
+                  attachment: message.attachment
+                    ? {
+                        ...message.attachment,
+                        ...(mediaUrl ? { url: mediaUrl } : {}),
+                        ...(mediaMimeType ? { mimeType: mediaMimeType } : {}),
+                        ...(mediaFilename ? { name: mediaFilename } : {})
+                      }
+                    : message.attachment
+                }
+              })()
+            : message
+        )))
+      } else if (whatsappConnected && activeContact.phone) {
         const result = await whatsappApiService.sendText({
           to: activeContact.phone,
           from: selectedBusinessPhoneValue,
@@ -921,8 +1228,13 @@ export const DesktopChat: React.FC = () => {
       ])
     } catch (error: any) {
       const message = error?.message || 'Intenta enviar el mensaje otra vez.'
-      setMessages((current) => current.map((item) => item.id === optimisticId ? { ...item, status: 'error', errorReason: message } : item))
+      setMessages((current) => current.map((item) => (
+        item.id === optimisticId || item.id.startsWith(`${optimisticId}-attachment-`)
+          ? { ...item, status: 'error', errorReason: message }
+          : item
+      )))
       if (!textOverride) setComposerText(text)
+      if (!textOverride) setDraftAttachments(attachmentsToSend)
       showToast('error', 'No se envió el mensaje', message)
     } finally {
       setComposerStatus('idle')
@@ -951,7 +1263,7 @@ export const DesktopChat: React.FC = () => {
     const { attachment } = message
     const Icon = attachment.type === 'image' ? ImageIcon : attachment.type === 'video' ? Video : FileText
     return (
-      <a className={styles.attachment} href={attachment.url || undefined} target="_blank" rel="noreferrer">
+      <a className={styles.attachment} href={attachment.url || attachment.dataUrl || undefined} target="_blank" rel="noreferrer">
         <Icon size={15} />
         <span>{attachment.name || getMessageTypeLabel(attachment.type, 'Archivo')}</span>
       </a>
@@ -973,7 +1285,7 @@ export const DesktopChat: React.FC = () => {
   }
 
   return (
-    <PageContainer size="wide" className={styles.page}>
+    <div className={styles.page} data-ristak-page>
       <section className={styles.chatShell} data-desktop-chat-page>
         <aside className={styles.inboxPanel} aria-label="Lista de chats">
           <div className={styles.inboxHeader}>
@@ -1216,15 +1528,99 @@ export const DesktopChat: React.FC = () => {
                   void handleSendMessage()
                 }}
               >
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  className={styles.hiddenFileInput}
+                  onChange={(event) => handleImageSelected('photos', event)}
+                  tabIndex={-1}
+                />
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className={styles.hiddenFileInput}
+                  onChange={(event) => handleImageSelected('camera', event)}
+                  tabIndex={-1}
+                />
+                <input
+                  ref={documentInputRef}
+                  type="file"
+                  accept={DOCUMENT_ATTACHMENT_ACCEPT}
+                  className={styles.hiddenFileInput}
+                  onChange={handleDocumentSelected}
+                  tabIndex={-1}
+                />
+                {draftAttachments.length > 0 ? (
+                  <div className={styles.draftAttachmentList}>
+                    {draftAttachments.map((attachment) => (
+                      <div key={attachment.id} className={styles.draftAttachment}>
+                        <span className={styles.draftAttachmentIcon}>
+                          {attachment.kind === 'image' ? <ImageIcon size={16} /> : <FileText size={16} />}
+                        </span>
+                        <span className={styles.draftAttachmentText}>
+                          <strong>{attachment.name}</strong>
+                          <small>{formatAttachmentSize(attachment.size)}</small>
+                        </span>
+                        <button type="button" onClick={() => removeDraftAttachment(attachment.id)} aria-label={`Quitar ${attachment.name}`}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <div className={styles.composerActionWrap}>
+                  <button
+                    type="button"
+                    className={styles.composerPlusButton}
+                    onClick={() => setComposerMenuOpen((current) => !current)}
+                    aria-label="Abrir opciones de adjuntos"
+                    aria-expanded={composerMenuOpen}
+                  >
+                    <Plus size={20} />
+                  </button>
+                  {composerMenuOpen ? (
+                    <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
+                      <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
+                        <FileText size={16} />
+                        <span>Plantillas</span>
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('photos')}>
+                        <ImageIcon size={16} />
+                        <span>Fotos</span>
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('camera')}>
+                        <Camera size={16} />
+                        <span>Cámara</span>
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
+                        <FileText size={16} />
+                        <span>Documentos</span>
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('location')}>
+                        <MapPin size={16} />
+                        <span>Ubicación</span>
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('clabe')}>
+                        <Banknote size={16} />
+                        <span>CLABE</span>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
                 <textarea
+                  data-ristak-unstyled
                   value={composerText}
                   onChange={(event) => setComposerText(event.target.value)}
                   placeholder="Escribe una respuesta..."
-                  rows={2}
+                  rows={1}
+                  onFocus={() => setComposerMenuOpen(false)}
                 />
-                <Button type="submit" disabled={!canSend} loading={composerStatus === 'sending'} leftIcon={<Send size={16} />}>
-                  Enviar
-                </Button>
+                <button type="submit" className={styles.sendButton} disabled={!canSend} aria-label="Enviar mensaje">
+                  {composerStatus === 'sending' ? <Loader2 size={18} className={styles.spin} /> : <Send size={17} />}
+                </button>
               </form>
             </>
           ) : (
@@ -1377,6 +1773,6 @@ export const DesktopChat: React.FC = () => {
         onCalendarChange={setSelectedCalendarId}
         onSave={handleCreateAppointment}
       />
-    </PageContainer>
+    </div>
   )
 }
