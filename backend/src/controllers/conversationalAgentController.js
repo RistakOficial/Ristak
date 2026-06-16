@@ -22,6 +22,7 @@ import {
   buildBusinessProfilePromptParameters,
   getBusinessProfileSnapshot
 } from '../services/aiAgentService.js'
+import { getAccountLocaleSettings } from '../utils/accountLocale.js'
 import { runConversationalAgentPreview } from '../agents/conversational/runner.js'
 import {
   DEFAULT_CLOSING_STRATEGY,
@@ -30,7 +31,7 @@ import {
   renderClosingStrategyTemplate
 } from '../agents/conversational/prompt.js'
 
-function buildBusinessPromptStateFromProfile(businessProfile, agentConfig = {}) {
+function buildBusinessPromptStateFromProfile(businessProfile, agentConfig = {}, accountLocale = {}) {
   const promptParameters = businessProfile?.configured
     ? buildBusinessProfilePromptParameters(businessProfile.profile, businessProfile.promptParameters)
     : {}
@@ -56,7 +57,8 @@ function buildBusinessPromptStateFromProfile(businessProfile, agentConfig = {}) 
     value: businessProfile?.pricingSummary || promptParameters.VALOR,
     location: businessProfile?.locationSummary || promptParameters.UBICACION_O_MODALIDAD,
     availability: promptParameters.DISPONIBILIDAD,
-    conditions: businessProfile?.importantConditions || conditions || promptParameters.CONDICIONES_IMPORTANTES
+    conditions: businessProfile?.importantConditions || conditions || promptParameters.CONDICIONES_IMPORTANTES,
+    accountLocale
   })
   const ready = Boolean(
     businessProfile?.configured &&
@@ -87,12 +89,15 @@ function buildBusinessPromptStateFromProfile(businessProfile, agentConfig = {}) 
 }
 
 async function getBusinessPromptState(agentConfig = {}) {
-  const businessProfile = await getBusinessProfileSnapshot().catch(() => null)
-  return buildBusinessPromptStateFromProfile(businessProfile, agentConfig)
+  const [businessProfile, accountLocale] = await Promise.all([
+    getBusinessProfileSnapshot().catch(() => null),
+    getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
+  ])
+  return buildBusinessPromptStateFromProfile(businessProfile, agentConfig, accountLocale)
 }
 
-function withVisibleStrategy(agent, businessProfile) {
-  const promptState = buildBusinessPromptStateFromProfile(businessProfile, agent)
+function withVisibleStrategy(agent, businessProfile, accountLocale = {}) {
+  const promptState = buildBusinessPromptStateFromProfile(businessProfile, agent, accountLocale)
   return {
     ...agent,
     systemClosingStrategy: promptState.systemClosingStrategy
@@ -135,7 +140,7 @@ export async function saveConfig(req, res) {
       await assertBusinessPromptReady()
     }
     const config = await saveConversationalAgentConfig(req.body || {})
-    const promptState = await getBusinessPromptState()
+    const promptState = await getBusinessPromptState(config)
     res.json({
       success: true,
       message: 'Agente conversacional guardado',
@@ -264,9 +269,12 @@ export async function getFilterOptions(req, res) {
 
 export async function listAgents(req, res) {
   try {
-    const businessProfile = await getBusinessProfileSnapshot().catch(() => null)
+    const [businessProfile, accountLocale] = await Promise.all([
+      getBusinessProfileSnapshot().catch(() => null),
+      getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
+    ])
     const agents = await listConversationalAgents()
-    res.json({ success: true, data: agents.map((agent) => withVisibleStrategy(agent, businessProfile)) })
+    res.json({ success: true, data: agents.map((agent) => withVisibleStrategy(agent, businessProfile, accountLocale)) })
   } catch (error) {
     logger.error('Error listando agentes conversacionales:', error)
     res.status(500).json({ success: false, error: 'Error al listar los agentes conversacionales' })
@@ -288,9 +296,12 @@ export async function createAgent(req, res) {
     if (req.body?.enabled !== false) {
       await assertBusinessPromptReady()
     }
-    const businessProfile = await getBusinessProfileSnapshot().catch(() => null)
+    const [businessProfile, accountLocale] = await Promise.all([
+      getBusinessProfileSnapshot().catch(() => null),
+      getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
+    ])
     const agent = await createConversationalAgent(req.body || {})
-    res.status(201).json({ success: true, data: withVisibleStrategy(agent, businessProfile) })
+    res.status(201).json({ success: true, data: withVisibleStrategy(agent, businessProfile, accountLocale) })
   } catch (error) {
     logger.error('Error creando agente conversacional:', error)
     res.status(error.statusCode || 500).json({
@@ -307,9 +318,12 @@ export async function updateAgent(req, res) {
     if (req.body?.enabled === true) {
       await assertBusinessPromptReady()
     }
-    const businessProfile = await getBusinessProfileSnapshot().catch(() => null)
+    const [businessProfile, accountLocale] = await Promise.all([
+      getBusinessProfileSnapshot().catch(() => null),
+      getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
+    ])
     const agent = await updateConversationalAgent(req.params?.agentId, req.body || {})
-    res.json({ success: true, data: withVisibleStrategy(agent, businessProfile) })
+    res.json({ success: true, data: withVisibleStrategy(agent, businessProfile, accountLocale) })
   } catch (error) {
     logger.error('Error actualizando agente conversacional:', error)
     res.status(error.statusCode || 500).json({

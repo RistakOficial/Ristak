@@ -2,6 +2,7 @@ import { Agent, Runner, OpenAIProvider } from '@openai/agents'
 import { db } from '../../config/database.js'
 import { logger } from '../../utils/logger.js'
 import { getAccountTimezone } from '../../utils/dateUtils.js'
+import { getAccountLocaleSettings } from '../../utils/accountLocale.js'
 import {
   buildBusinessProfilePromptParameters,
   getAIAgentConfig,
@@ -35,6 +36,7 @@ import { tagNamesForIds } from '../../services/contactTagsService.js'
 import {
   buildClosingStrategyTemplateParameters,
   buildConversationalInstructions,
+  getAccountRegionalLocaleTag,
   getClosingChannelLabel
 } from './prompt.js'
 import { createConversationalTools } from './tools.js'
@@ -214,6 +216,7 @@ async function loadAdvancedClosingRuntimeContext({
   businessProfile = null,
   timezone,
   nowIso,
+  accountLocale = {},
   channel = 'whatsapp',
   ruleContext = null
 } = {}) {
@@ -328,7 +331,8 @@ async function loadAdvancedClosingRuntimeContext({
     learned,
     contact,
     tagNames,
-    arrivalSource
+    arrivalSource,
+    accountLocale
   })
 
   const systemFacts = [
@@ -346,6 +350,7 @@ async function loadAdvancedClosingRuntimeContext({
     productSummary ? `Productos/servicios activos: ${productSummary}` : '',
     businessProfile?.summary ? `Perfil estructurado del negocio: ${businessProfile.summary}` : '',
     locationSummary ? `Ubicación registrada: ${locationSummary}` : '',
+    parameters.PAIS_CUENTA ? `País/región textual de la cuenta: ${parameters.PAIS_CUENTA}` : '',
     `Zona horaria: ${timezone}`,
     `Fecha/hora para interpretar relativos: ${nowIso}`
   ].map((item) => compactText(item, 700)).filter(Boolean)
@@ -456,14 +461,15 @@ async function loadLatestInboundMessage(contactId) {
 }
 
 async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null }) {
-  const [aiConfig, timezone, businessProfile] = await Promise.all([
+  const [aiConfig, timezone, businessProfile, accountLocale] = await Promise.all([
     getAIAgentConfig({}),
     getAccountTimezone().catch(() => 'America/Mexico_City'),
-    getBusinessProfileSnapshot().catch(() => null)
+    getBusinessProfileSnapshot().catch(() => null),
+    getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
   ])
 
   const model = normalizeConversationalAgentModel(conversationModel || config?.model || DEFAULT_MODEL)
-  const nowIso = new Date().toLocaleString('es-MX', { timeZone: timezone, dateStyle: 'full', timeStyle: 'short' })
+  const nowIso = new Date().toLocaleString(getAccountRegionalLocaleTag(accountLocale), { timeZone: timezone, dateStyle: 'full', timeStyle: 'short' })
 
   let businessName = null
   try {
@@ -486,6 +492,7 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     businessProfile,
     timezone,
     nowIso,
+    accountLocale,
     channel,
     ruleContext
   })
@@ -498,7 +505,8 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     timezone,
     nowIso,
     contactName,
-    advancedClosingContext
+    advancedClosingContext,
+    accountLocale
   })
 
   const agent = new Agent({

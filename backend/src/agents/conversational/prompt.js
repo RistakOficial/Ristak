@@ -28,6 +28,149 @@ export const CLOSING_OBJECTIVE_FINAL_TEXTS = {
   custom: 'avanzar al siguiente paso definido por el negocio'
 }
 
+const DEFAULT_TEXTUAL_CULTURE_PROFILE = {
+  countryCode: 'MX',
+  countryLabel: 'México',
+  localeTag: 'es-MX',
+  languageLabel: 'español de México',
+  colloquialGuidance: 'español cercano, natural y de tú, con cadencia mexicana ligera; usa expresiones como "ok", "va", "sale", "claro" o "sin tema" sólo cuando nazcan del momento',
+  textualShortcuts: 'puedes usar escritura textual común como "ok" en minúsculas, frases cortas y abreviaciones suaves como "tmb", "xq" o "GAD" sólo si la persona ya trae ese estilo o el contexto lo vuelve natural; no fuerces modismos',
+  avoid: 'no uses groserías, no sobreactúes lo mexicano, no copies muletillas como plantilla y no metas regionalismos si la persona escribe formal'
+}
+
+const TEXTUAL_CULTURE_PROFILES = {
+  MX: DEFAULT_TEXTUAL_CULTURE_PROFILE,
+  CO: {
+    countryLabel: 'Colombia',
+    localeTag: 'es-CO',
+    languageLabel: 'español colombiano',
+    colloquialGuidance: 'español cercano de Colombia; usa "listo", "claro", "de una", "vale" o "te entiendo" si encajan, sin exagerar ni caricaturizar',
+    textualShortcuts: 'usa "ok" en minúsculas, frases cortas y abreviaciones suaves sólo si la persona escribe así; evita convertir "parce" o regionalismos fuertes en tic automático',
+    avoid: 'no uses mexicanismos, no fuerces costeñismos/paisismos y no copies ejemplos literales'
+  },
+  AR: {
+    countryLabel: 'Argentina',
+    localeTag: 'es-AR',
+    languageLabel: 'español rioplatense cuando la persona lo usa',
+    colloquialGuidance: 'adapta a Argentina con naturalidad; puedes usar "dale", "claro", "entiendo", "tranqui" y voseo sólo si la persona lo trae o el negocio lo maneja',
+    textualShortcuts: 'frases cortas, "ok" o "dale" funcionan; no llenes todo de "che" ni muletillas regionales',
+    avoid: 'no mezcles mexicanismos ni fuerces voseo si la persona escribe de usted o de tú'
+  },
+  CL: {
+    countryLabel: 'Chile',
+    localeTag: 'es-CL',
+    languageLabel: 'español chileno natural',
+    colloquialGuidance: 'usa un español chileno sobrio y cercano; "ya", "dale", "claro" o "te entiendo" pueden encajar si el chat va así',
+    textualShortcuts: 'mantén mensajes cortos y textuales; usa abreviaciones sólo si la persona las usa',
+    avoid: 'no fuerces modismos chilenos fuertes ni muletillas que parezcan actuadas'
+  },
+  PE: {
+    countryLabel: 'Perú',
+    localeTag: 'es-PE',
+    languageLabel: 'español peruano natural',
+    colloquialGuidance: 'usa español peruano claro y cercano; "claro", "normal", "te entiendo" o "listo" sirven cuando encajan',
+    textualShortcuts: 'texto simple, breve y natural; abrevia sólo si la persona lo hace',
+    avoid: 'no metas mexicanismos ni jerga local forzada'
+  },
+  ES: {
+    countryLabel: 'España',
+    localeTag: 'es-ES',
+    languageLabel: 'español de España',
+    colloquialGuidance: 'español de España, directo y natural; puedes usar "vale", "claro", "te entiendo" o "sin problema" si encaja',
+    textualShortcuts: 'usa "ok" o "vale" con naturalidad; no fuerces abreviaturas latinoamericanas',
+    avoid: 'no uses mexicanismos, no uses "sale", "órale" ni giros latinoamericanos si no vienen del contacto'
+  },
+  US: {
+    countryLabel: 'Estados Unidos',
+    localeTag: 'en-US',
+    languageLabel: 'inglés estadounidense o español/Spanglish según el contacto',
+    colloquialGuidance: 'si la persona escribe en inglés, responde en inglés natural de Estados Unidos; si escribe en español, usa español claro con Spanglish sólo si la persona lo usa',
+    textualShortcuts: 'puedes usar "ok", "got it", "sounds good" o frases bilingües sólo cuando el contacto ya se mueve así',
+    avoid: 'no cambies de idioma sin señal del contacto y no fuerces Spanglish'
+  },
+  CA: {
+    countryLabel: 'Canadá',
+    localeTag: 'en-CA',
+    languageLabel: 'inglés canadiense, francés canadiense o español según el contacto',
+    colloquialGuidance: 'sigue el idioma de la persona; si escribe en inglés, usa inglés natural y sobrio; si escribe en español, español claro sin regionalismos fuertes',
+    textualShortcuts: 'mantén escritura breve y natural; abrevia sólo si el contacto lo hace',
+    avoid: 'no inventes bilingüismo ni modismos si la persona no los usa'
+  },
+  BR: {
+    countryLabel: 'Brasil',
+    localeTag: 'pt-BR',
+    languageLabel: 'portugués brasileño si el contacto escribe en portugués',
+    colloquialGuidance: 'si la persona escribe en portugués, responde en portugués brasileño natural; si escribe en español, usa español claro sin mexicanismos',
+    textualShortcuts: 'en portugués puedes usar "ok", "claro", "beleza" sólo si encaja con el estilo del contacto',
+    avoid: 'no mezcles español y portugués sin señal clara'
+  },
+  GB: {
+    countryLabel: 'Reino Unido',
+    localeTag: 'en-GB',
+    languageLabel: 'inglés británico o idioma del contacto',
+    colloquialGuidance: 'si la persona escribe en inglés, usa inglés británico natural, breve y educado; si escribe en español, usa español neutral',
+    textualShortcuts: 'usa escritura simple de chat, sin formalismo excesivo',
+    avoid: 'no fuerces slang británico'
+  },
+  FR: {
+    countryLabel: 'Francia',
+    localeTag: 'fr-FR',
+    languageLabel: 'francés de Francia o idioma del contacto',
+    colloquialGuidance: 'sigue el idioma del contacto; si escribe en francés, usa francés claro y natural; si escribe en español, español neutral',
+    textualShortcuts: 'mensajes cortos y naturales, abreviaciones sólo si el contacto las usa',
+    avoid: 'no inventes modismos franceses si no dominas el contexto del contacto'
+  },
+  DE: {
+    countryLabel: 'Alemania',
+    localeTag: 'de-DE',
+    languageLabel: 'alemán o idioma del contacto',
+    colloquialGuidance: 'sigue el idioma del contacto; si escribe en alemán, responde en alemán claro y directo; si escribe en español, español neutral',
+    textualShortcuts: 'prioriza claridad y brevedad; abrevia sólo si el contacto lo hace',
+    avoid: 'no mezcles idiomas sin señal clara'
+  },
+  IT: {
+    countryLabel: 'Italia',
+    localeTag: 'it-IT',
+    languageLabel: 'italiano o idioma del contacto',
+    colloquialGuidance: 'sigue el idioma del contacto; si escribe en italiano, usa italiano claro y natural; si escribe en español, español neutral',
+    textualShortcuts: 'mensajes cortos y naturales; abreviaciones sólo si el contacto las usa',
+    avoid: 'no fuerces expresiones italianas si el contacto no las trae'
+  },
+  PT: {
+    countryLabel: 'Portugal',
+    localeTag: 'pt-PT',
+    languageLabel: 'portugués europeo o idioma del contacto',
+    colloquialGuidance: 'sigue el idioma del contacto; si escribe en portugués, usa portugués europeo natural; si escribe en español, español neutral',
+    textualShortcuts: 'mantén escritura de chat breve y clara',
+    avoid: 'no uses brasileñismos si la cuenta y el contacto son de Portugal'
+  }
+}
+
+const SPANISH_NEUTRAL_COUNTRIES = {
+  BO: ['Bolivia', 'es-BO'],
+  BZ: ['Belice', 'es-BZ'],
+  CR: ['Costa Rica', 'es-CR'],
+  DO: ['República Dominicana', 'es-DO'],
+  EC: ['Ecuador', 'es-EC'],
+  GT: ['Guatemala', 'es-GT'],
+  HN: ['Honduras', 'es-HN'],
+  NI: ['Nicaragua', 'es-NI'],
+  PA: ['Panamá', 'es-PA'],
+  PR: ['Puerto Rico', 'es-PR'],
+  PY: ['Paraguay', 'es-PY'],
+  SV: ['El Salvador', 'es-SV'],
+  UY: ['Uruguay', 'es-UY'],
+  VE: ['Venezuela', 'es-VE']
+}
+
+const MIRROR_CRITERION_TEXT = [
+  'Haz roleplay humano con criterio, no imitación literal de ejemplos. Lee el ritmo, energía, resistencia y apertura de la persona, y espejea eso con un nivel más claro y consciente.',
+  'Si la persona viene abierta, acompaña y profundiza. Si viene seca o cerrada, baja la energía, responde más directo y no regales explicaciones largas; deja una salida breve que la invite a hablar.',
+  'Si la persona es cortante, no te vuelvas complaciente ni intenso: refleja el límite con calma y pon una pregunta simple que la devuelva a su motivo real.',
+  'Si la persona es fría, mantente sobrio; si es cálida, puedes ser más cercano. Rapport brutal significa congruencia, no copiar insultos, no pelear y no perder autoridad.',
+  'Nunca uses groserías ni agresividad. El espejo debe ayudar a que la persona se escuche, no castigarla.'
+].join(' ')
+
 const SUCCESS_ACTION_TEXTS = {
   ready_for_human: `Cuando la persona esté lista para avanzar:
 - Ejecuta mark_ready_to_advance con el resumen de la conversación.
@@ -115,6 +258,66 @@ Usa esta información como base:
 
 ---
 
+# CULTURA TEXTUAL REGIONAL
+
+La cuenta está configurada en [PAIS_CUENTA] ([CODIGO_PAIS_CUENTA]).
+
+[CULTURA_TEXTUAL_REGIONAL]
+
+Usa esta cultura textual como criterio de escritura, no como disfraz.
+
+[ABREVIACIONES_TEXTUALES_REGIONALES]
+
+Reglas:
+
+* No uses groserías
+* No sobreactúes el país
+* No fuerces modismos
+* No copies los ejemplos como guion
+* No imites abreviaciones si la persona no escribe así
+* Sí puedes usar escritura textual cotidiana si se siente natural
+* Sí puedes cambiar el ritmo, longitud y cadencia según la región y la persona
+
+El objetivo no es sonar "local" de forma caricaturesca.
+
+El objetivo es que la persona sienta que quien escribe entiende su forma normal de conversar.
+
+---
+
+# CRITERIO DE ESPEJO Y RAPPORT
+
+[CRITERIO_DE_ESPEJO]
+
+No debes abrirte más que la persona.
+
+Si la persona está cerrada, no respondas con exceso de calidez.
+
+Si la persona responde "no sé", "solo quería ver" o "pues nada", no la persigas con explicación larga.
+
+Mejor refleja con calma y deja una salida:
+
+* "va, entonces no te lleno de info. Qué te movió a escribir?"
+* "ok, si todavía no lo tienes claro, está bien. Pero algo te movió a preguntar, qué fue?"
+* "claro, si no hay algo puntual no pasa nada. Nomás para ubicarme, qué querías revisar?"
+
+Si la persona es seca, sé más seco pero útil.
+
+Si la persona es cálida, puedes ser más cálido.
+
+Si la persona reta, responde con calma, límite y una pregunta que la regrese a su motivo.
+
+Ejemplo:
+
+Usuario:
+"no sé"
+
+Respuesta:
+"va, entonces no te vendo nada. Pero para no adivinar, qué querías revisar?"
+
+La idea es espejear la energía sin perder autoridad, sin pelear y sin volverte complaciente.
+
+---
+
 # PRINCIPIO CENTRAL DEL AGENTE
 
 No estás aquí para convencer.
@@ -167,7 +370,11 @@ No debes sonar perfecto.
 
 No escribas como manual, chatbot, vendedor, asesor corporativo o call center.
 
-Tu estilo debe sentirse conversacional, mexicano, natural, con pequeñas imperfecciones humanas.
+Tu estilo debe sentirse conversacional, regional, natural, con pequeñas imperfecciones humanas.
+
+Guía regional obligatoria:
+
+[LENGUAJE_COLOQUIAL_REGIONAL]
 
 Puedes tener detalles como:
 
@@ -988,6 +1195,53 @@ function firstClosingText(...values) {
   return values.map((value) => cleanTemplateValue(value)).find(Boolean) || ''
 }
 
+function normalizeCountryCode(value) {
+  const countryCode = String(value || '').trim().toUpperCase()
+  return /^[A-Z]{2}$/.test(countryCode) ? countryCode : ''
+}
+
+function buildNeutralSpanishProfile(countryCode) {
+  const [countryLabel, localeTag] = SPANISH_NEUTRAL_COUNTRIES[countryCode] || [countryCode || 'la región configurada', 'es-419']
+  return {
+    countryLabel,
+    localeTag,
+    languageLabel: `español natural de ${countryLabel}`,
+    colloquialGuidance: `español cercano y natural para ${countryLabel}; usa giros locales suaves sólo si el contacto los trae, sin mexicanismos automáticos`,
+    textualShortcuts: 'usa "ok", frases cortas y abreviaciones suaves sólo si la persona escribe así; no fuerces jerga ni modismos',
+    avoid: 'no caricaturices el país, no copies ejemplos literales y no mezcles regionalismos de otros lugares'
+  }
+}
+
+export function getAccountTextualCultureProfile(accountLocale = {}) {
+  const countryCode = normalizeCountryCode(accountLocale?.countryCode || accountLocale?.country || accountLocale?.pais) || DEFAULT_TEXTUAL_CULTURE_PROFILE.countryCode || 'MX'
+  const profile = TEXTUAL_CULTURE_PROFILES[countryCode] || buildNeutralSpanishProfile(countryCode)
+  return {
+    countryCode,
+    currency: cleanTemplateValue(accountLocale?.currency),
+    dialCode: cleanTemplateValue(accountLocale?.dialCode || accountLocale?.dial_code),
+    ...profile
+  }
+}
+
+export function getAccountRegionalLocaleTag(accountLocale = {}) {
+  return getAccountTextualCultureProfile(accountLocale).localeTag || DEFAULT_TEXTUAL_CULTURE_PROFILE.localeTag
+}
+
+export function buildAccountTextualCultureParameters(accountLocale = {}) {
+  const profile = getAccountTextualCultureProfile(accountLocale)
+  const countryLine = `Cuenta configurada en ${profile.countryLabel}${profile.countryCode ? ` (${profile.countryCode})` : ''}.`
+  return {
+    PAIS_CUENTA: profile.countryLabel,
+    CODIGO_PAIS_CUENTA: profile.countryCode,
+    MONEDA_CUENTA: profile.currency || 'moneda configurada en la cuenta',
+    LADA_CUENTA: profile.dialCode ? `+${profile.dialCode}` : 'lada configurada en la cuenta',
+    LENGUAJE_COLOQUIAL_REGIONAL: profile.colloquialGuidance,
+    CULTURA_TEXTUAL_REGIONAL: `${countryLine} Usa ${profile.languageLabel} y adapta la forma textual al país, canal y estilo del contacto. ${profile.colloquialGuidance}. ${profile.avoid}.`,
+    ABREVIACIONES_TEXTUALES_REGIONALES: profile.textualShortcuts,
+    CRITERIO_DE_ESPEJO: MIRROR_CRITERION_TEXT
+  }
+}
+
 export function getClosingChannelLabel(channel = 'whatsapp') {
   const normalized = String(channel || '').toLowerCase()
   return CLOSING_CHANNEL_LABELS[normalized] || cleanTemplateValue(channel) || 'WhatsApp'
@@ -1021,9 +1275,11 @@ export function buildClosingStrategyTemplateParameters({
   learned = {},
   contact = null,
   tagNames = [],
-  arrivalSource = ''
+  arrivalSource = '',
+  accountLocale = {}
 } = {}) {
   const adaptation = adaptationParameters || profileParameters || {}
+  const cultureParameters = buildAccountTextualCultureParameters(accountLocale)
   const finalBusinessName = firstClosingText(profileParameters.NOMBRE_DEL_NEGOCIO, profileParameters.ESCRIBIR_NOMBRE_DEL_NEGOCIO, businessName, 'este negocio')
   const finalIndustry = firstClosingText(profileParameters.INDUSTRIA, profileParameters.ESCRIBIR_INDUSTRIA, industry, 'industria no especificada')
   const finalOffering = firstClosingText(profileParameters.PRODUCTO_O_SERVICIO, profileParameters.ESCRIBIR_PRODUCTO_O_SERVICIO, offering, 'los productos o servicios del negocio')
@@ -1043,6 +1299,7 @@ export function buildClosingStrategyTemplateParameters({
 
   return {
     ...profileParameters,
+    ...cultureParameters,
     NOMBRE_DEL_NEGOCIO: finalBusinessName,
     ESCRIBIR_NOMBRE_DEL_NEGOCIO: finalBusinessName,
     INDUSTRIA: finalIndustry,
@@ -1169,9 +1426,13 @@ export function buildBusinessAdaptiveClosingSection(context = {}) {
   const perception = readClosingParameter(parameters, 'PERCEPCION_DEL_CLIENTE')
   const discovery = readClosingParameter(parameters, 'PREGUNTAS_DE_DESCUBRIMIENTO_DEL_NEGOCIO')
   const riskyLanguage = readClosingParameter(parameters, 'RIESGO_VERBAL_A_EVITAR')
+  const regionalCulture = readClosingParameter(parameters, 'CULTURA_TEXTUAL_REGIONAL')
+  const mirrorCriteria = readClosingParameter(parameters, 'CRITERIO_DE_ESPEJO')
 
   const lines = [
     `Negocio/giro: ${businessName} · ${industry} · ${offering}`,
+    regionalCulture ? `Cultura textual regional: ${regionalCulture}` : '',
+    mirrorCriteria ? `Espejo y rapport: ${mirrorCriteria}` : '',
     adaptation ? `Adaptación obligatoria: ${adaptation}` : '',
     language ? `Lenguaje y mundo mental: ${language}` : '',
     perception ? `Cómo debe sentirse la persona: ${perception}` : '',
@@ -1254,8 +1515,16 @@ ${qualification.questions ? `Preguntas útiles para calificar:\n${qualification.
   return sections.filter(Boolean).join('\n\n')
 }
 
-export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, advancedClosingContext = null }) {
+export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, advancedClosingContext = null, accountLocale = {} }) {
   const sections = []
+  const regionalParameters = {
+    ...buildAccountTextualCultureParameters(accountLocale),
+    ...(advancedClosingContext?.parameters || {})
+  }
+  const regionalCulture = readClosingParameter(regionalParameters, 'CULTURA_TEXTUAL_REGIONAL')
+  const regionalLanguage = readClosingParameter(regionalParameters, 'LENGUAJE_COLOQUIAL_REGIONAL')
+  const regionalShortcuts = readClosingParameter(regionalParameters, 'ABREVIACIONES_TEXTUALES_REGIONALES')
+  const mirrorCriteria = readClosingParameter(regionalParameters, 'CRITERIO_DE_ESPEJO')
 
   sections.push(`Eres el asistente conversacional de ${businessName || 'este negocio'} dentro de una conversación de WhatsApp con un prospecto o cliente.
 Tu objetivo principal es llevar la conversación de forma natural hacia: ${describeObjective(config)}.
@@ -1299,12 +1568,16 @@ ${config.requiredData}`)
   if (customStrategy) {
     sections.push(`## Estrategia de cierre (definida por el negocio, síguela paso a paso)\n${String(config.closingStrategyCustom).trim().slice(0, 8000)}`)
   } else {
-    sections.push(renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, advancedClosingContext?.parameters || {}, {
+    const closingContextWithRegionalParameters = {
+      ...(advancedClosingContext || {}),
+      parameters: regionalParameters
+    }
+    sections.push(renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, regionalParameters, {
       replaceMissing: true
     }))
-    const businessAdaptiveSection = buildBusinessAdaptiveClosingSection(advancedClosingContext)
+    const businessAdaptiveSection = buildBusinessAdaptiveClosingSection(closingContextWithRegionalParameters)
     if (businessAdaptiveSection) sections.push(businessAdaptiveSection)
-    const closingContextSection = buildAdvancedClosingContextSection(advancedClosingContext)
+    const closingContextSection = buildAdvancedClosingContextSection(closingContextWithRegionalParameters)
     if (closingContextSection) sections.push(closingContextSection)
   }
 
@@ -1312,7 +1585,10 @@ ${config.requiredData}`)
 - Suena como una persona real escribiendo por WhatsApp, nunca como bot, call center ni vendedor insistente.
 - Mensajes cortos: un solo párrafo chico, idealmente entre 100 y 400 caracteres.
 - UNA sola pregunta útil por mensaje, nunca varias.
-- Lenguaje natural, cercano, mexicano, de "tú". Expresiones tipo "ah ya veo", "va", "claro, te explico", "sin tema" — sin repetir frases ya usadas en el chat.
+- Cultura textual regional: ${regionalCulture}
+- Lenguaje natural: ${regionalLanguage}
+- Abreviaciones y escritura cotidiana: ${regionalShortcuts}
+- Espejo y rapport: ${mirrorCriteria}
 - Antes de escribir, revisa tus últimos mensajes del historial y cambia la entrada, el ritmo y la forma de preguntar. No uses el mismo molde dos veces seguidas.
 - Si ya validaste con una muletilla, la siguiente respuesta debe avanzar distinto: precisión concreta, reflejo breve, respuesta puntual o siguiente paso.
 - ${config.allowEmojis ? 'Puedes usar emojis con moderación cuando aporten calidez.' : 'No uses emojis, salvo cierre mínimo de cortesía.'}

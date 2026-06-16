@@ -494,13 +494,18 @@ test('los parametros del perfil no acortan ni cambian la estrategia de fabrica',
     businessName: 'Academia Sol',
     industry: 'escuela de idiomas',
     offering: 'clases de inglés para adultos',
-    personType: 'prospecto'
+    personType: 'prospecto',
+    accountLocale: { countryCode: 'CO', currency: 'COP', dialCode: '57' }
   })
   const rendered = renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, parameters, { replaceMissing: true })
 
   assert.match(rendered, /Academia Sol/)
   assert.match(rendered, /escuela de idiomas/)
   assert.match(rendered, /clases de inglés para adultos/)
+  assert.match(rendered, /Cuenta configurada en Colombia \(CO\)/)
+  assert.match(rendered, /español colombiano/)
+  assert.match(rendered, /listo/)
+  assert.match(rendered, /ESPEJO Y RAPPORT/)
   assert.match(rendered, /dentro de una conversación por WhatsApp/)
   assert.match(rendered, /agendar una cita/)
   assert.match(rendered, /mark_ready_to_advance/)
@@ -520,6 +525,8 @@ test('estrategia de fabrica evita moldes repetitivos de venta', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /No repitas:/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /no son guiones para copiar literal/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /sin parecer que estás llenando un formulario/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /CULTURA TEXTUAL REGIONAL/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /CRITERIO DE ESPEJO Y RAPPORT/)
 })
 
 test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', () => {
@@ -561,7 +568,8 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
     timezone: 'America/Mexico_City',
     nowIso: 'sábado, 13 de junio de 2026, 10:00',
     contactName: 'Juan',
-    advancedClosingContext
+    advancedClosingContext,
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
   })
 
   assert.match(instructions, /Eres un agente conversacional de Ristak/)
@@ -572,6 +580,10 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
   assert.match(instructions, /update_closing_context/)
   assert.match(instructions, /Adaptación conversacional al negocio/)
   assert.match(instructions, /No pongas a la persona en modo comprador/)
+  assert.match(instructions, /Cultura textual regional/)
+  assert.match(instructions, /Cuenta configurada en México/)
+  assert.match(instructions, /GAD/)
+  assert.match(instructions, /Espejo y rapport/)
   assert.doesNotMatch(instructions, /\[NOMBRE_DEL_NEGOCIO\]/)
   assert.doesNotMatch(instructions, /\[[^\]]+\]/)
   assert.match(instructions, /No uses el mismo molde dos veces seguidas/)
@@ -589,10 +601,14 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
     timezone: 'America/Mexico_City',
     nowIso: 'sábado, 13 de junio de 2026, 10:00',
     contactName: null,
-    advancedClosingContext
+    advancedClosingContext,
+    accountLocale: { countryCode: 'ES', currency: 'EUR', dialCode: '34' }
   })
 
   assert.match(customInstructions, /Mi estrategia custom con \[NOMBRE_DEL_NEGOCIO\]/)
+  assert.match(customInstructions, /Cuenta configurada en España/)
+  assert.match(customInstructions, /vale/)
+  assert.doesNotMatch(customInstructions, /Lenguaje natural, cercano, mexicano/)
   assert.doesNotMatch(customInstructions, /Adaptación conversacional al negocio/)
   assert.doesNotMatch(customInstructions, /Parametros internos de cierre avanzado/)
 })
