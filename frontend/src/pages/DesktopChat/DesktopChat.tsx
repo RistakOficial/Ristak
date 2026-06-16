@@ -1,41 +1,46 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ArrowUp,
   Banknote,
   Bot,
   CalendarDays,
-  Camera,
   CheckCheck,
   CircleAlert,
   Clock,
   CreditCard,
+  Facebook,
   FileText,
+  Globe2,
   Image as ImageIcon,
+  Instagram,
   Loader2,
   Mail,
   MapPin,
   MessageCircle,
+  Mic,
   MousePointerClick,
   Phone,
   Plus,
   Search,
-  Send,
   ListFilter,
-  Sparkles,
+  Square,
   Tag,
   Trash2,
   User,
   Video,
+  Workflow,
   X
 } from 'lucide-react'
-import { AppointmentModal, Button, CustomSelect, RecordPaymentModal } from '@/components/common'
+import { AppointmentModal, Button, CustomSelect, Modal, RecordPaymentModal, TagPicker } from '@/components/common'
 import { AgentRobot } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { useAIAgentAvailability } from '@/hooks'
 import apiClient from '@/services/apiClient'
+import automationsService, { type AutomationSummary } from '@/services/automationsService'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
+import { conversationalAgentService, type ConversationAgentState } from '@/services/conversationalAgentService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import { whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus } from '@/services/whatsappApiService'
@@ -53,6 +58,7 @@ type AdvancedActivityFilter = 'all' | 'payments' | 'appointments' | 'with_source
 type ComposerStatus = 'idle' | 'sending'
 type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
 type DraftAttachmentKind = 'image' | 'document'
+type InfoPanelView = 'summary' | 'journey'
 
 interface AdvancedChatFilters {
   channel: AdvancedChannelFilter
@@ -113,6 +119,15 @@ interface DesktopDraftAttachment {
   size: number
 }
 
+interface VoiceDraftAttachment {
+  id: string
+  name: string
+  type: string
+  dataUrl: string
+  size: number
+  durationMs: number
+}
+
 interface ContactInfoPayment {
   id: string
   amount: number
@@ -128,6 +143,10 @@ interface ContactInfoAppointment {
   startTime: string
   endTime?: string | null
   notes?: string | null
+  calendarId?: string | null
+  locationId?: string | null
+  address?: string | null
+  assignedUserId?: string | null
 }
 
 const CHAT_FILTERS: Array<{ id: ChatFilter; label: string }> = [
@@ -224,13 +243,16 @@ const ACTIVITY_FILTER_OPTIONS = [
   { value: 'no_phone', label: 'Sin teléfono' }
 ]
 
-const QUICK_REPLIES = [
-  'Claro, te ayudo con eso.',
-  '¿Qué día y hora te funciona para agendar?',
-  'Te comparto la información en un momento.',
-  'Perfecto, quedo al pendiente.'
+const VOICE_MIME_CANDIDATES = [
+  'audio/ogg;codecs=opus',
+  'audio/mp4',
+  'audio/webm;codecs=opus',
+  'audio/webm'
 ]
-
+const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
+const MIN_VOICE_RECORDING_MS = 700
+const VOICE_WAVE_BAR_COUNT = 84
+const VOICE_WAVE_PATTERN = [8, 18, 30, 42, 24, 13, 36, 48, 31, 16, 10, 22, 40, 52, 34, 20, 45, 28]
 const FAILED_MESSAGE_STATUSES = new Set(['failed', 'error', 'undelivered', 'rejected', 'cancelled'])
 const PENDING_MESSAGE_STATUSES = new Set(['pending', 'queued', 'sending', 'enviando', 'enviando por qr', 'scheduled'])
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
@@ -317,6 +339,44 @@ function formatAttachmentSize(size?: number) {
   return `${value} B`
 }
 
+function formatCurrencyNoDecimals(value: number, currency = 'MXN') {
+  return new Intl.NumberFormat('es-MX', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(value)
+}
+
+function getSupportedVoiceMimeType() {
+  if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') return ''
+  return VOICE_MIME_CANDIDATES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || ''
+}
+
+function getVoiceFileExtension(mimeType = '') {
+  const normalized = mimeType.split(';')[0].toLowerCase()
+  if (normalized === 'audio/ogg') return 'ogg'
+  if (normalized === 'audio/mp4') return 'm4a'
+  if (normalized === 'audio/webm') return 'webm'
+  return 'webm'
+}
+
+function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(reader.error || new Error('No se pudo leer el audio.'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+function formatVoiceDuration(durationMs = 0) {
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
 function normalizeFilterProbe(values: unknown[]) {
   return values
     .filter((value) => value !== null && value !== undefined)
@@ -349,6 +409,24 @@ function getContactChannelKind(contact: DesktopChatContact): AdvancedChannelFilt
   if (fallbackProbe.includes('sms')) return 'sms'
   if (fallbackProbe.includes('email') || fallbackProbe.includes('mail')) return 'email'
   return ''
+}
+
+function getContactChannelMeta(contact?: DesktopChatContact | Contact | null) {
+  if (!contact) {
+    return { label: 'Origen', Icon: MessageCircle }
+  }
+  const channel = getContactChannelKind(contact as DesktopChatContact)
+  const social = getContactSocialKind(contact as DesktopChatContact)
+  const origin = getContactOriginKind(contact as DesktopChatContact)
+
+  if (channel === 'whatsapp' || social === 'whatsapp') return { label: 'WhatsApp', Icon: MessageCircle }
+  if (channel === 'instagram' || social === 'instagram') return { label: 'Instagram', Icon: Instagram }
+  if (channel === 'messenger' || social === 'messenger' || social === 'facebook') return { label: social === 'facebook' ? 'Facebook' : 'Messenger', Icon: Facebook }
+  if (channel === 'webchat' || origin === 'site') return { label: 'Web', Icon: Globe2 }
+  if (channel === 'sms') return { label: 'SMS', Icon: Phone }
+  if (channel === 'email') return { label: 'Email', Icon: Mail }
+  if (origin === 'meta') return { label: 'Meta', Icon: Facebook }
+  return { label: 'Origen', Icon: MessageCircle }
 }
 
 function getContactSocialKind(contact: DesktopChatContact): AdvancedSocialFilter | '' {
@@ -695,7 +773,11 @@ function getContactInfoAppointments(contact?: Contact | null, journey: JourneyEv
     status: appointment.appointment_status || appointment.status || null,
     startTime: appointment.start_time || appointment.end_time || contact?.createdAt || new Date().toISOString(),
     endTime: appointment.end_time || null,
-    notes: appointment.notes || null
+    notes: appointment.notes || null,
+    calendarId: (appointment as Record<string, any>).calendarId || (appointment as Record<string, any>).calendar_id || null,
+    locationId: (appointment as Record<string, any>).locationId || (appointment as Record<string, any>).location_id || null,
+    address: (appointment as Record<string, any>).address || (appointment as Record<string, any>).location || null,
+    assignedUserId: (appointment as Record<string, any>).assignedUserId || (appointment as Record<string, any>).assigned_user_id || null
   }))
   if (contactAppointments.length > 0) return contactAppointments.sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime))
   return journey
@@ -706,7 +788,11 @@ function getContactInfoAppointments(contact?: Contact | null, journey: JourneyEv
       status: event.data?.status || null,
       startTime: String(event.data?.start_time || event.date),
       endTime: event.data?.end_time ? String(event.data.end_time) : null,
-      notes: event.data?.notes ? String(event.data.notes) : null
+      notes: event.data?.notes ? String(event.data.notes) : null,
+      calendarId: event.data?.calendar_id || event.data?.calendarId || null,
+      locationId: event.data?.location_id || event.data?.locationId || null,
+      address: event.data?.address || event.data?.location || null,
+      assignedUserId: event.data?.assigned_user_id || event.data?.assignedUserId || null
     }))
     .sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime))
 }
@@ -719,6 +805,76 @@ function isSuccessfulPayment(payment: ContactInfoPayment) {
 function isActiveAppointment(appointment: ContactInfoAppointment) {
   const status = String(appointment.status || '').trim().toLowerCase()
   return !status || !CANCELED_APPOINTMENT_STATUSES.has(status)
+}
+
+function normalizeCalendarAppointmentStatus(status?: string | null): CalendarEvent['appointmentStatus'] {
+  const normalized = String(status || '').trim().toLowerCase()
+  if (normalized === 'pending') return 'pending'
+  if (normalized === 'cancelled' || normalized === 'canceled') return 'cancelled'
+  if (normalized === 'showed' || normalized === 'attended') return 'showed'
+  if (normalized === 'noshow' || normalized === 'no_show') return 'noshow'
+  if (normalized === 'rescheduled') return 'rescheduled'
+  return 'confirmed'
+}
+
+function toCalendarEvent(
+  appointment: ContactInfoAppointment,
+  contact: Contact | DesktopChatContact | null,
+  fallbackCalendar: Calendar | null,
+  fallbackLocationId: string | null | undefined,
+  fallbackTimeZone: string
+): CalendarEvent {
+  const parsedStart = new Date(appointment.startTime)
+  const startTime = Number.isNaN(parsedStart.getTime()) ? new Date().toISOString() : parsedStart.toISOString()
+  const parsedEnd = appointment.endTime ? new Date(appointment.endTime) : new Date(Date.parse(startTime) + 60 * 60 * 1000)
+  const endTime = Number.isNaN(parsedEnd.getTime()) ? new Date(Date.parse(startTime) + 60 * 60 * 1000).toISOString() : parsedEnd.toISOString()
+
+  return {
+    id: appointment.id,
+    title: appointment.title || getContactName(contact),
+    calendarId: appointment.calendarId || fallbackCalendar?.id || '',
+    locationId: appointment.locationId || fallbackLocationId || '',
+    contactId: contact?.id,
+    appointmentStatus: normalizeCalendarAppointmentStatus(appointment.status),
+    assignedUserId: appointment.assignedUserId || undefined,
+    address: appointment.address || undefined,
+    notes: appointment.notes || undefined,
+    startTime,
+    endTime,
+    dateAdded: startTime,
+    timeZone: fallbackCalendar?.timeZone || fallbackTimeZone
+  }
+}
+
+function getJourneyEventTitle(event: JourneyEvent) {
+  if (event.type === 'whatsapp_message' || event.type === 'meta_message') return 'Mensaje'
+  if (event.type === 'page_visit') return 'Visita web'
+  if (event.type === 'contact_created') return 'Contacto creado'
+  if (event.type === 'appointment') return 'Cita'
+  if (event.type === 'payment') return 'Compra'
+  return 'Movimiento'
+}
+
+function getJourneyEventDescription(event: JourneyEvent) {
+  const data = event.data || {}
+  if (event.type === 'whatsapp_message' || event.type === 'meta_message') {
+    return pickMessageText(data) || getMessageTypeLabel(String(data.message_type || data.type || ''), 'Mensaje recibido')
+  }
+  if (event.type === 'page_visit') {
+    return formatUrlParameter(String(data.landing_page || data.page_url || data.url || data.utm_source || 'Sitio web')) || 'Sitio web'
+  }
+  if (event.type === 'appointment') return String(data.title || data.status || 'Cita agendada')
+  if (event.type === 'payment') return data.amount ? formatCurrencyNoDecimals(Number(data.amount || 0)) : 'Pago registrado'
+  if (event.type === 'contact_created') return formatUrlParameter(String(data.source || data.conversion_source || 'Nuevo contacto')) || 'Nuevo contacto'
+  return 'Actividad del contacto'
+}
+
+function getJourneyEventIcon(event: JourneyEvent) {
+  if (event.type === 'whatsapp_message' || event.type === 'meta_message') return MessageCircle
+  if (event.type === 'appointment') return CalendarDays
+  if (event.type === 'payment') return CreditCard
+  if (event.type === 'contact_created') return User
+  return MousePointerClick
 }
 
 function getTrackingData(contact?: Contact | null, journey: JourneyEvent[] = []) {
@@ -769,12 +925,15 @@ export const DesktopChat: React.FC = () => {
   const { labels } = useLabels()
   const { showToast } = useNotification()
   const { timezone, formatLocalDateTime } = useTimezone()
-  const aiAvailability = useAIAgentAvailability()
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const chatsRequestRef = useRef<AbortController | null>(null)
   const photoInputRef = useRef<HTMLInputElement | null>(null)
-  const cameraInputRef = useRef<HTMLInputElement | null>(null)
   const documentInputRef = useRef<HTMLInputElement | null>(null)
+  const voiceRecorderRef = useRef<MediaRecorder | null>(null)
+  const voiceStreamRef = useRef<MediaStream | null>(null)
+  const voiceChunksRef = useRef<Blob[]>([])
+  const voiceStartedAtRef = useRef(0)
+  const voiceTimerRef = useRef<number | null>(null)
 
   const [chats, setChats] = useState<DesktopChatContact[]>([])
   const [chatsLoading, setChatsLoading] = useState(true)
@@ -791,18 +950,33 @@ export const DesktopChat: React.FC = () => {
   const [contactJourney, setContactJourney] = useState<JourneyEvent[]>([])
   const [contactInfoData, setContactInfoData] = useState<Contact | null>(null)
   const [contactInfoLoading, setContactInfoLoading] = useState(false)
+  const [infoPanelView, setInfoPanelView] = useState<InfoPanelView>('summary')
 
   const [composerText, setComposerText] = useState('')
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
   const [composerMenuOpen, setComposerMenuOpen] = useState(false)
   const [draftAttachments, setDraftAttachments] = useState<DesktopDraftAttachment[]>([])
+  const [voiceDraft, setVoiceDraft] = useState<VoiceDraftAttachment | null>(null)
+  const [voiceRecording, setVoiceRecording] = useState(false)
+  const [voiceProcessing, setVoiceProcessing] = useState(false)
+  const [voiceElapsedMs, setVoiceElapsedMs] = useState(0)
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [highLevelConnected, setHighLevelConnected] = useState(false)
+  const [conversationAgentEnabled, setConversationAgentEnabled] = useState(false)
+  const [conversationAgentState, setConversationAgentState] = useState<ConversationAgentState | null>(null)
+  const [conversationAgentBusy, setConversationAgentBusy] = useState(false)
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [calendarsLoading, setCalendarsLoading] = useState(false)
   const [selectedCalendarId, setSelectedCalendarId] = useState('')
   const [appointmentOpen, setAppointmentOpen] = useState(false)
+  const [editingAppointmentEvent, setEditingAppointmentEvent] = useState<CalendarEvent | null>(null)
   const [paymentOpen, setPaymentOpen] = useState(false)
+  const [savingTags, setSavingTags] = useState(false)
+  const [automationModalOpen, setAutomationModalOpen] = useState(false)
+  const [automations, setAutomations] = useState<AutomationSummary[]>([])
+  const [automationsLoading, setAutomationsLoading] = useState(false)
+  const [selectedAutomationId, setSelectedAutomationId] = useState('')
+  const [automationSubmitting, setAutomationSubmitting] = useState(false)
 
   const activeContact = useMemo(
     () => chats.find((contact) => contact.id === activeContactId) || null,
@@ -863,8 +1037,50 @@ export const DesktopChat: React.FC = () => {
     return groups
   }, [messages, timezone])
   const activeConversationChannel = normalizeHighLevelChannel(activeContact?.lastMessageChannel || messages[messages.length - 1]?.transport || '')
-  const hasComposerContent = Boolean(composerText.trim()) || draftAttachments.length > 0
-  const canSend = Boolean(activeContact && hasComposerContent && composerStatus === 'idle')
+  const hasComposerContent = Boolean(composerText.trim()) || draftAttachments.length > 0 || Boolean(voiceDraft)
+  const canSend = Boolean(activeContact && hasComposerContent && composerStatus === 'idle' && !voiceRecording && !voiceProcessing)
+  const conversationAgentActive = conversationAgentEnabled && conversationAgentState?.status === 'active'
+  const journeyEventsDescending = useMemo(
+    () => [...contactJourney].sort((left, right) => Date.parse(right.date) - Date.parse(left.date)),
+    [contactJourney]
+  )
+  const advancedFilterGroups = useMemo(() => ([
+    {
+      id: 'channel',
+      label: 'Canal',
+      value: advancedFilters.channel,
+      options: CHANNEL_FILTER_OPTIONS,
+      onSelect: (value: string) => setAdvancedFilters((current) => ({ ...current, channel: value as AdvancedChannelFilter }))
+    },
+    {
+      id: 'origin',
+      label: 'Origen',
+      value: advancedFilters.origin,
+      options: ORIGIN_FILTER_OPTIONS,
+      onSelect: (value: string) => setAdvancedFilters((current) => ({ ...current, origin: value as AdvancedOriginFilter }))
+    },
+    {
+      id: 'social',
+      label: 'Red social',
+      value: advancedFilters.social,
+      options: SOCIAL_FILTER_OPTIONS,
+      onSelect: (value: string) => setAdvancedFilters((current) => ({ ...current, social: value as AdvancedSocialFilter }))
+    },
+    {
+      id: 'stage',
+      label: 'Etapa',
+      value: advancedFilters.stage,
+      options: STAGE_FILTER_OPTIONS,
+      onSelect: (value: string) => setAdvancedFilters((current) => ({ ...current, stage: value as AdvancedStageFilter }))
+    },
+    {
+      id: 'activity',
+      label: 'Actividad',
+      value: advancedFilters.activity,
+      options: ACTIVITY_FILTER_OPTIONS,
+      onSelect: (value: string) => setAdvancedFilters((current) => ({ ...current, activity: value as AdvancedActivityFilter }))
+    }
+  ]), [advancedFilters])
 
   const loadChats = useCallback(async (options: { silent?: boolean } = {}) => {
     const silent = options.silent === true
@@ -912,23 +1128,27 @@ export const DesktopChat: React.FC = () => {
     if (!contactId) return
     setMessagesLoading(true)
     setContactInfoLoading(true)
+    setConversationAgentState(null)
     setMessagesError('')
     try {
-      const [journey, scheduledMessages, details] = await Promise.all([
+      const [journey, scheduledMessages, details, agentState] = await Promise.all([
         contactsService.getContactJourney(contactId, { includeBusinessMessages: true }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => []),
-        contactsService.getContactDetails(contactId).catch(() => null)
+        contactsService.getContactDetails(contactId).catch(() => null),
+        conversationalAgentService.getState(contactId).catch(() => null)
       ])
       const journeyMessages = journey.map(getJourneyMessage).filter((message): message is DesktopChatMessage => Boolean(message))
       const scheduledBubbles = scheduledMessages.map(getScheduledChatMessageBubble).filter((message): message is DesktopChatMessage => Boolean(message))
       setContactJourney(journey)
       setContactInfoData(details)
+      setConversationAgentState(agentState)
       setMessages([...journeyMessages, ...scheduledBubbles].sort((left, right) => Date.parse(left.date) - Date.parse(right.date)))
       setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, unreadCount: 0 } : contact))
     } catch {
       setMessages([])
       setContactJourney([])
       setContactInfoData(null)
+      setConversationAgentState(null)
       setMessagesError('No se pudo cargar la conversación.')
     } finally {
       setMessagesLoading(false)
@@ -939,13 +1159,15 @@ export const DesktopChat: React.FC = () => {
   const loadSupportData = useCallback(async () => {
     setCalendarsLoading(true)
     try {
-      const [status, highLevelConfig, calendarList] = await Promise.all([
+      const [status, highLevelConfig, calendarList, conversationalConfig] = await Promise.all([
         whatsappApiService.getStatus().catch(() => null),
         highLevelService.getConfig().catch(() => ({ configured: false })),
-        calendarsService.getCalendars(locationId, accessToken).catch(() => [])
+        calendarsService.getCalendars(locationId, accessToken).catch(() => []),
+        conversationalAgentService.getConfig().catch(() => null)
       ])
       setWhatsappStatus(status)
       setHighLevelConnected(Boolean(highLevelConfig?.configured))
+      setConversationAgentEnabled(Boolean(conversationalConfig?.enabled))
       setCalendars(calendarList)
       setSelectedCalendarId((current) => current || calendarList[0]?.id || '')
     } finally {
@@ -970,14 +1192,178 @@ export const DesktopChat: React.FC = () => {
       setMessages([])
       setContactJourney([])
       setContactInfoData(null)
+      setConversationAgentState(null)
       return
     }
+    setInfoPanelView('summary')
     loadConversation(activeContactId)
   }, [activeContactId, loadConversation])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: 'end' })
   }, [messages, messagesLoading])
+
+  const clearVoiceTimer = useCallback(() => {
+    if (voiceTimerRef.current) {
+      window.clearInterval(voiceTimerRef.current)
+      voiceTimerRef.current = null
+    }
+  }, [])
+
+  const stopVoiceStream = useCallback(() => {
+    voiceStreamRef.current?.getTracks().forEach((track) => track.stop())
+    voiceStreamRef.current = null
+  }, [])
+
+  useEffect(() => () => {
+    clearVoiceTimer()
+    stopVoiceStream()
+    const recorder = voiceRecorderRef.current
+    if (recorder && recorder.state === 'recording') {
+      recorder.stop()
+    }
+  }, [clearVoiceTimer, stopVoiceStream])
+
+  const startVoiceRecording = useCallback(async () => {
+    if (voiceRecording || voiceProcessing || voiceDraft) return
+
+    if (!activeContact?.phone) {
+      showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar audio por WhatsApp.')
+      return
+    }
+
+    if (!whatsappConnected) {
+      showToast('warning', 'Conecta WhatsApp para audio', 'Los mensajes de voz salen por WhatsApp API.')
+      return
+    }
+
+    if (composerText.trim() || draftAttachments.length > 0) {
+      showToast('info', 'Manda primero lo pendiente', 'Envía o borra el texto/foto antes de grabar audio.')
+      return
+    }
+
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      showToast('error', 'No se pudo grabar aquí', 'Este navegador necesita permiso de micrófono para mandar audio.')
+      return
+    }
+
+    try {
+      const mimeType = getSupportedVoiceMimeType()
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+
+      voiceChunksRef.current = []
+      voiceStreamRef.current = stream
+      voiceRecorderRef.current = recorder
+      voiceStartedAtRef.current = Date.now()
+      setVoiceElapsedMs(0)
+      setVoiceRecording(true)
+      setVoiceProcessing(false)
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) {
+          voiceChunksRef.current.push(event.data)
+        }
+      }
+
+      recorder.onerror = () => {
+        showToast('error', 'No se pudo grabar', 'Revisa el permiso del micrófono e intenta otra vez.')
+        clearVoiceTimer()
+        stopVoiceStream()
+        setVoiceRecording(false)
+        setVoiceProcessing(false)
+      }
+
+      recorder.onstop = async () => {
+        const chunks = [...voiceChunksRef.current]
+        const durationMs = Date.now() - voiceStartedAtRef.current
+        const recordedType = recorder.mimeType || mimeType || chunks[0]?.type || 'audio/webm'
+
+        clearVoiceTimer()
+        stopVoiceStream()
+        setVoiceRecording(false)
+        voiceRecorderRef.current = null
+        voiceChunksRef.current = []
+
+        setVoiceProcessing(true)
+        try {
+          const blob = new Blob(chunks, { type: recordedType })
+          if (durationMs < MIN_VOICE_RECORDING_MS || blob.size === 0) {
+            showToast('info', 'Audio muy corto', 'Graba un poquito más para poder enviarlo.')
+            setVoiceElapsedMs(0)
+            setVoiceProcessing(false)
+            return
+          }
+          if (blob.size > MAX_VOICE_MESSAGE_BYTES) {
+            showToast('error', 'Audio muy pesado', 'Graba un audio más corto para enviarlo por WhatsApp.')
+            setVoiceElapsedMs(0)
+            setVoiceProcessing(false)
+            return
+          }
+
+          const dataUrl = await readBlobAsDataUrl(blob)
+          const timestamp = Date.now()
+          setVoiceDraft({
+            id: `voice-${timestamp}`,
+            name: `nota-voz-${timestamp}.${getVoiceFileExtension(blob.type || recordedType)}`,
+            type: blob.type || recordedType,
+            dataUrl,
+            size: blob.size,
+            durationMs
+          })
+          setVoiceElapsedMs(durationMs)
+          setVoiceProcessing(false)
+        } catch (error: any) {
+          showToast('error', 'No se pudo preparar el audio', error?.message || 'Intenta grabarlo otra vez.')
+          setVoiceElapsedMs(0)
+          setVoiceProcessing(false)
+        }
+      }
+
+      recorder.start()
+      clearVoiceTimer()
+      voiceTimerRef.current = window.setInterval(() => {
+        setVoiceElapsedMs(Date.now() - voiceStartedAtRef.current)
+      }, 250)
+    } catch (error: any) {
+      clearVoiceTimer()
+      stopVoiceStream()
+      setVoiceRecording(false)
+      setVoiceProcessing(false)
+      showToast('error', 'No se abrió el micrófono', error?.message || 'Revisa permisos del navegador.')
+    }
+  }, [activeContact?.phone, clearVoiceTimer, composerText, draftAttachments.length, showToast, stopVoiceStream, voiceDraft, voiceProcessing, voiceRecording, whatsappConnected])
+
+  const stopVoiceRecording = useCallback(() => {
+    const recorder = voiceRecorderRef.current
+    if (recorder && recorder.state === 'recording') {
+      recorder.stop()
+      return
+    }
+    clearVoiceTimer()
+    stopVoiceStream()
+    setVoiceRecording(false)
+  }, [clearVoiceTimer, stopVoiceStream])
+
+  const cancelVoiceDraft = useCallback(() => {
+    stopVoiceRecording()
+    setVoiceDraft(null)
+    setVoiceElapsedMs(0)
+    setVoiceProcessing(false)
+  }, [stopVoiceRecording])
+
+  const handleVoiceButtonClick = useCallback(() => {
+    if (voiceProcessing || composerStatus === 'sending') return
+    if (voiceRecording) {
+      stopVoiceRecording()
+      return
+    }
+    if (voiceDraft) {
+      cancelVoiceDraft()
+      return
+    }
+    void startVoiceRecording()
+  }, [cancelVoiceDraft, composerStatus, startVoiceRecording, stopVoiceRecording, voiceDraft, voiceProcessing, voiceRecording])
 
   const ensureContactInList = useCallback((contact: Contact) => {
     const nextContact = toChatContact(contact)
@@ -997,7 +1383,7 @@ export const DesktopChat: React.FC = () => {
     showToast('success', attachment.kind === 'image' ? 'Foto lista' : 'Documento listo', 'Revisa la vista previa y manda el mensaje.')
   }, [showToast])
 
-  const readImageFile = useCallback((file: File, source: 'camera' | 'photos') => {
+  const readImageFile = useCallback((file: File, source: 'photos') => {
     if (!file.type.startsWith('image/')) {
       showToast('error', 'Archivo no válido', 'Elige una foto JPG, PNG o WebP.')
       return
@@ -1062,7 +1448,7 @@ export const DesktopChat: React.FC = () => {
     reader.readAsDataURL(file)
   }, [addDraftAttachment, showToast])
 
-  const handleImageSelected = useCallback((source: 'camera' | 'photos', event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageSelected = useCallback((source: 'photos', event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
@@ -1082,13 +1468,9 @@ export const DesktopChat: React.FC = () => {
     setDraftAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))
   }, [])
 
-  const handleComposerMenuAction = useCallback((action: 'templates' | 'photos' | 'camera' | 'documents' | 'location' | 'clabe') => {
+  const handleComposerMenuAction = useCallback((action: 'templates' | 'photos' | 'documents' | 'location' | 'clabe') => {
     if (action === 'photos') {
       photoInputRef.current?.click()
-      return
-    }
-    if (action === 'camera') {
-      cameraInputRef.current?.click()
       return
     }
     if (action === 'documents') {
@@ -1104,6 +1486,139 @@ export const DesktopChat: React.FC = () => {
     setComposerMenuOpen(false)
   }, [showToast])
 
+  const handleUpdateContactTags = useCallback(async (tagIds: string[]) => {
+    if (!activeContact?.id) return
+    const previousTags = (contactInfoData || activeContact).tags || []
+    setSavingTags(true)
+    setContactInfoData((current) => current?.id === activeContact.id ? { ...current, tags: tagIds } : current)
+    setChats((current) => current.map((contact) => contact.id === activeContact.id ? { ...contact, tags: tagIds } : contact))
+    try {
+      const updated = await contactsService.updateContact(activeContact.id, { tags: tagIds } as Partial<Contact>)
+      const nextTags = Array.isArray(updated.tags) ? updated.tags : tagIds
+      setContactInfoData((current) => current?.id === activeContact.id ? { ...current, ...updated, tags: nextTags } : current)
+      setChats((current) => current.map((contact) => contact.id === activeContact.id ? { ...contact, tags: nextTags } : contact))
+    } catch (error: any) {
+      setContactInfoData((current) => current?.id === activeContact.id ? { ...current, tags: previousTags } : current)
+      setChats((current) => current.map((contact) => contact.id === activeContact.id ? { ...contact, tags: previousTags } : contact))
+      showToast('error', 'No se guardaron las etiquetas', error?.message || 'Intenta otra vez.')
+    } finally {
+      setSavingTags(false)
+    }
+  }, [activeContact, contactInfoData, showToast])
+
+  const openNewAppointment = useCallback(() => {
+    setEditingAppointmentEvent(null)
+    setAppointmentOpen(true)
+  }, [])
+
+  const openAppointmentForEdit = useCallback((appointment: ContactInfoAppointment) => {
+    if (!activeContact || !isActiveAppointment(appointment)) return
+    setEditingAppointmentEvent(toCalendarEvent(
+      appointment,
+      contactInfoData || activeContact,
+      selectedCalendar,
+      locationId,
+      selectedCalendar?.timeZone || timezone
+    ))
+    setAppointmentOpen(true)
+  }, [activeContact, contactInfoData, locationId, selectedCalendar, timezone])
+
+  const handleSaveAppointment = async (eventIdOrPayload: string | Partial<CalendarEvent>, updates?: Partial<CalendarEvent>) => {
+    if (typeof eventIdOrPayload === 'string') {
+      if (!updates) return
+      await calendarsService.updateAppointment(eventIdOrPayload, updates, accessToken || undefined)
+      setAppointmentOpen(false)
+      setEditingAppointmentEvent(null)
+      showToast('success', 'Cita actualizada', 'Los cambios quedaron guardados.')
+      if (activeContactId) await loadConversation(activeContactId)
+      return
+    }
+
+    await calendarsService.createAppointment(eventIdOrPayload, accessToken || undefined)
+    setAppointmentOpen(false)
+    setEditingAppointmentEvent(null)
+    showToast('success', 'Cita agendada', 'La cita quedó guardada para este contacto.')
+    if (activeContactId) await loadConversation(activeContactId)
+  }
+
+  const handleDeleteAppointment = async (eventId: string) => {
+    await calendarsService.deleteEvent(eventId, accessToken || undefined)
+    setAppointmentOpen(false)
+    setEditingAppointmentEvent(null)
+    showToast('success', 'Cita eliminada', 'La cita se eliminó correctamente.')
+    if (activeContactId) await loadConversation(activeContactId)
+  }
+
+  const handleToggleConversationAgent = useCallback(async () => {
+    if (!activeContact?.id || conversationAgentBusy) return
+    if (!conversationAgentEnabled) {
+      showToast('warning', 'Agente conversacional apagado', 'Actívalo en la sección del agente conversacional para usarlo aquí.')
+      return
+    }
+
+    setConversationAgentBusy(true)
+    try {
+      const nextAction = conversationAgentState?.status === 'active' ? 'pause' : 'activate'
+      const nextState = await conversationalAgentService.updateState(activeContact.id, nextAction)
+      setConversationAgentState(nextState)
+      showToast(
+        'success',
+        nextState.status === 'active' ? 'Agente activo' : 'Agente pausado',
+        nextState.status === 'active' ? 'El agente conversacional queda trabajando en este chat.' : 'El agente queda en gris para este contacto.'
+      )
+    } catch (error: any) {
+      showToast('error', 'No se pudo cambiar el agente', error?.message || 'Intenta otra vez.')
+    } finally {
+      setConversationAgentBusy(false)
+    }
+  }, [activeContact?.id, conversationAgentBusy, conversationAgentEnabled, conversationAgentState?.status, showToast])
+
+  const openAutomationModal = useCallback(() => {
+    setAutomationModalOpen(true)
+  }, [])
+
+  useEffect(() => {
+    if (!automationModalOpen) return
+    let cancelled = false
+    setAutomationsLoading(true)
+    automationsService.getOverview()
+      .then((overview) => {
+        if (cancelled) return
+        const published = overview.automations.filter((automation) => automation.status === 'published')
+        setAutomations(published)
+        setSelectedAutomationId((current) => current || published[0]?.id || '')
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAutomations([])
+          setSelectedAutomationId('')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAutomationsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [automationModalOpen])
+
+  const handleEnrollAutomation = async () => {
+    if (!activeContact?.id || !selectedAutomationId) return
+    setAutomationSubmitting(true)
+    try {
+      await automationsService.enrollContact(selectedAutomationId, {
+        contactId: activeContact.id,
+        mode: 'now'
+      })
+      setAutomationModalOpen(false)
+      showToast('success', 'Automatización iniciada', 'El contacto ya entró a la automatización.')
+    } catch (error: any) {
+      showToast('error', 'No se pudo iniciar', error?.message || 'Intenta otra vez.')
+    } finally {
+      setAutomationSubmitting(false)
+    }
+  }
+
   const resetAdvancedFilters = useCallback(() => {
     setAdvancedFilters(DEFAULT_ADVANCED_FILTERS)
   }, [])
@@ -1117,9 +1632,19 @@ export const DesktopChat: React.FC = () => {
   const handleSendMessage = async (textOverride?: string) => {
     const text = (textOverride || composerText).trim()
     const attachmentsToSend = textOverride ? [] : draftAttachments
-    if (!activeContact || (!text && attachmentsToSend.length === 0)) return
+    const voiceToSend = textOverride ? null : voiceDraft
+    if (!activeContact || (!text && attachmentsToSend.length === 0 && !voiceToSend)) return
 
-    if (attachmentsToSend.length > 0) {
+    if (voiceToSend) {
+      if (!activeContact.phone) {
+        showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar audio por WhatsApp.')
+        return
+      }
+      if (!whatsappConnected) {
+        showToast('warning', 'Conecta WhatsApp para audio', 'Los mensajes de voz salen por WhatsApp API.')
+        return
+      }
+    } else if (attachmentsToSend.length > 0) {
       if (!activeContact.phone) {
         showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar archivos por WhatsApp.')
         return
@@ -1135,7 +1660,25 @@ export const DesktopChat: React.FC = () => {
 
     const optimisticId = `desktop-chat-${Date.now()}`
     const sentAt = new Date().toISOString()
-    const optimisticMessages: DesktopChatMessage[] = attachmentsToSend.length > 0
+    const optimisticMessages: DesktopChatMessage[] = voiceToSend
+      ? [{
+          id: `${optimisticId}-audio`,
+          text: '',
+          date: sentAt,
+          direction: 'outbound',
+          status: 'enviando',
+          businessPhone: selectedBusinessPhoneValue,
+          businessPhoneNumberId: selectedBusinessPhone?.id || '',
+          transport: 'api',
+          attachment: {
+            type: 'audio',
+            dataUrl: voiceToSend.dataUrl,
+            name: voiceToSend.name,
+            mimeType: voiceToSend.type,
+            durationMs: voiceToSend.durationMs
+          }
+        }]
+      : attachmentsToSend.length > 0
       ? attachmentsToSend.map((attachment, index) => ({
           id: `${optimisticId}-attachment-${index}`,
           text: index === 0 ? text : '',
@@ -1166,22 +1709,54 @@ export const DesktopChat: React.FC = () => {
     setComposerStatus('sending')
     if (!textOverride) setComposerText('')
     setDraftAttachments([])
+    setVoiceDraft(null)
+    setVoiceElapsedMs(0)
     setComposerMenuOpen(false)
     setMessages((current) => [...current, ...optimisticMessages])
     setChats((current) => current.map((contact) => (
       contact.id === activeContact.id
         ? {
             ...contact,
-            lastMessageText: attachmentsToSend.length > 0 ? (text || getAttachmentPreviewText(attachmentsToSend)) : text,
+            lastMessageText: voiceToSend ? 'Mensaje de voz' : attachmentsToSend.length > 0 ? (text || getAttachmentPreviewText(attachmentsToSend)) : text,
             lastMessageDate: sentAt,
             lastMessageDirection: 'outbound',
-            messageCount: Number(contact.messageCount || 0) + Math.max(1, attachmentsToSend.length)
+            messageCount: Number(contact.messageCount || 0) + Math.max(1, voiceToSend ? 1 : attachmentsToSend.length)
           }
         : contact
     )))
 
     try {
-      if (attachmentsToSend.length > 0) {
+      if (voiceToSend) {
+        const result = await whatsappApiService.sendAudio({
+          to: activeContact.phone || '',
+          from: selectedBusinessPhoneValue,
+          audioDataUrl: voiceToSend.dataUrl,
+          durationMs: voiceToSend.durationMs,
+          voice: true,
+          externalId: `${optimisticId}-audio`,
+          transport: 'api',
+          phoneNumberId: selectedBusinessPhone?.id || undefined
+        })
+        const responseAudioUrl = result.audio?.link || result.audio?.url || result.localMedia?.publicUrl || ''
+        const responseAudioMimeType = result.audio?.mimeType || result.audio?.mimetype || result.localMedia?.mimeType || ''
+        const responseAudioDurationMs = Number(result.audio?.durationMs || 0) || voiceToSend.durationMs
+        setMessages((current) => current.map((message) => message.id === `${optimisticId}-audio`
+          ? {
+              ...message,
+              status: result.status || 'sent',
+              transport: result.transport || message.transport,
+              attachment: message.attachment
+                ? {
+                    ...message.attachment,
+                    ...(responseAudioUrl ? { url: responseAudioUrl } : {}),
+                    ...(responseAudioMimeType ? { mimeType: responseAudioMimeType } : {}),
+                    durationMs: responseAudioDurationMs
+                  }
+                : message.attachment
+            }
+          : message
+        ))
+      } else if (attachmentsToSend.length > 0) {
         const results = await Promise.all(attachmentsToSend.map((attachment, index) => (
           attachment.kind === 'image'
             ? whatsappApiService.sendImage({
@@ -1267,23 +1842,18 @@ export const DesktopChat: React.FC = () => {
     } catch (error: any) {
       const message = error?.message || 'Intenta enviar el mensaje otra vez.'
       setMessages((current) => current.map((item) => (
-        item.id === optimisticId || item.id.startsWith(`${optimisticId}-attachment-`)
+        item.id === optimisticId || item.id === `${optimisticId}-audio` || item.id.startsWith(`${optimisticId}-attachment-`)
           ? { ...item, status: 'error', errorReason: message }
           : item
       )))
       if (!textOverride) setComposerText(text)
       if (!textOverride) setDraftAttachments(attachmentsToSend)
+      if (!textOverride) setVoiceDraft(voiceToSend)
+      if (!textOverride) setVoiceElapsedMs(voiceToSend?.durationMs || 0)
       showToast('error', 'No se envió el mensaje', message)
     } finally {
       setComposerStatus('idle')
     }
-  }
-
-  const handleCreateAppointment = async (eventPayload: Partial<CalendarEvent>) => {
-    await calendarsService.createAppointment(eventPayload, accessToken || undefined)
-    setAppointmentOpen(false)
-    showToast('success', 'Cita agendada', 'La cita quedó guardada para este contacto.')
-    if (activeContactId) await loadConversation(activeContactId)
   }
 
   const renderAvatar = (contact: DesktopChatContact | Contact | null, size: 'sm' | 'md' = 'md') => {
@@ -1296,9 +1866,65 @@ export const DesktopChat: React.FC = () => {
     )
   }
 
+  const renderChannelBadge = (contact: DesktopChatContact | Contact | null, size: 'sm' | 'md' = 'sm') => {
+    const meta = getContactChannelMeta(contact)
+    const Icon = meta.Icon
+    return (
+      <span className={`${styles.channelBadge} ${size === 'md' ? styles.channelBadgeMd : ''}`} title={`Canal: ${meta.label}`}>
+        <Icon size={size === 'md' ? 14 : 12} />
+        <span>{meta.label}</span>
+      </span>
+    )
+  }
+
+  const renderVoiceWave = () => {
+    if (!voiceRecording && !voiceProcessing) return null
+    return (
+      <div className={styles.voiceWave} aria-label={voiceRecording ? 'Grabando audio' : 'Procesando audio'}>
+        {Array.from({ length: VOICE_WAVE_BAR_COUNT }).map((_, index) => {
+          const pattern = VOICE_WAVE_PATTERN[index % VOICE_WAVE_PATTERN.length]
+          const drift = ((index * 7) % 19)
+          return (
+            <span
+              key={index}
+              style={{
+                '--voice-wave-height': `${Math.max(6, Math.min(54, pattern + drift))}px`,
+                '--voice-wave-delay': `${(index % 14) * 42}ms`
+              } as React.CSSProperties}
+            />
+          )
+        })}
+      </div>
+    )
+  }
+
+  const renderVoiceDraft = () => {
+    if (!voiceDraft) return null
+    return (
+      <div className={styles.voiceDraft}>
+        <Mic size={15} />
+        <span>Audio listo · {formatVoiceDuration(voiceDraft.durationMs)}</span>
+        <button type="button" onClick={cancelVoiceDraft} aria-label="Eliminar audio">
+          <Trash2 size={14} />
+        </button>
+      </div>
+    )
+  }
+
   const renderAttachment = (message: DesktopChatMessage) => {
     if (!message.attachment) return null
     const { attachment } = message
+    if (attachment.type === 'audio') {
+      const audioSrc = attachment.url || attachment.dataUrl || ''
+      return (
+        <div className={styles.audioAttachment}>
+          <Mic size={15} />
+          {audioSrc ? <audio controls src={audioSrc} preload="metadata" /> : <span>{attachment.name || 'Mensaje de voz'}</span>}
+          {attachment.durationMs ? <small>{formatVoiceDuration(attachment.durationMs)}</small> : null}
+        </div>
+      )
+    }
+
     const Icon = attachment.type === 'image' ? ImageIcon : attachment.type === 'video' ? Video : FileText
     return (
       <a className={styles.attachment} href={attachment.url || attachment.dataUrl || undefined} target="_blank" rel="noreferrer">
@@ -1321,6 +1947,28 @@ export const DesktopChat: React.FC = () => {
       </span>
     )
   }
+
+  const renderJourneyPanel = () => (
+    <div className={styles.journeyList}>
+      {journeyEventsDescending.length === 0 ? (
+        <p className={styles.mutedLine}>Todavía no hay viaje registrado para este contacto.</p>
+      ) : journeyEventsDescending.map((event, index) => {
+        const Icon = getJourneyEventIcon(event)
+        return (
+          <div key={`${event.type}-${event.date}-${index}`} className={styles.journeyItem}>
+            <span className={styles.journeyIcon}>
+              <Icon size={15} />
+            </span>
+            <span>
+              <strong>{getJourneyEventTitle(event)}</strong>
+              <small>{getJourneyEventDescription(event)}</small>
+              <em>{formatLocalDateTime(event.date)}</em>
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
 
   return (
     <div className={styles.page} data-ristak-page>
@@ -1384,56 +2032,23 @@ export const DesktopChat: React.FC = () => {
                 </button>
               </div>
               <div className={styles.filterGrid}>
-                <label>
-                  <span>Canal</span>
-                  <CustomSelect
-                    value={advancedFilters.channel}
-                    options={CHANNEL_FILTER_OPTIONS}
-                    portal
-                    onValueChange={(value) => setAdvancedFilters((current) => ({ ...current, channel: value as AdvancedChannelFilter }))}
-                    aria-label="Filtrar por canal"
-                  />
-                </label>
-                <label>
-                  <span>Origen</span>
-                  <CustomSelect
-                    value={advancedFilters.origin}
-                    options={ORIGIN_FILTER_OPTIONS}
-                    portal
-                    onValueChange={(value) => setAdvancedFilters((current) => ({ ...current, origin: value as AdvancedOriginFilter }))}
-                    aria-label="Filtrar por origen"
-                  />
-                </label>
-                <label>
-                  <span>Red social</span>
-                  <CustomSelect
-                    value={advancedFilters.social}
-                    options={SOCIAL_FILTER_OPTIONS}
-                    portal
-                    onValueChange={(value) => setAdvancedFilters((current) => ({ ...current, social: value as AdvancedSocialFilter }))}
-                    aria-label="Filtrar por red social"
-                  />
-                </label>
-                <label>
-                  <span>Etapa</span>
-                  <CustomSelect
-                    value={advancedFilters.stage}
-                    options={STAGE_FILTER_OPTIONS}
-                    portal
-                    onValueChange={(value) => setAdvancedFilters((current) => ({ ...current, stage: value as AdvancedStageFilter }))}
-                    aria-label="Filtrar por etapa"
-                  />
-                </label>
-                <label>
-                  <span>Actividad</span>
-                  <CustomSelect
-                    value={advancedFilters.activity}
-                    options={ACTIVITY_FILTER_OPTIONS}
-                    portal
-                    onValueChange={(value) => setAdvancedFilters((current) => ({ ...current, activity: value as AdvancedActivityFilter }))}
-                    aria-label="Filtrar por actividad"
-                  />
-                </label>
+                {advancedFilterGroups.map((group) => (
+                  <div key={group.id} className={styles.filterGroup}>
+                    <span>{group.label}</span>
+                    <div className={styles.filterChipWrap}>
+                      {group.options.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={option.value === group.value ? styles.filterActive : ''}
+                          onClick={() => group.onSelect(option.value)}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ) : null}
@@ -1472,7 +2087,10 @@ export const DesktopChat: React.FC = () => {
                       <strong>{getContactName(contact)}</strong>
                       <small>{contact.lastMessageDate ? formatMessageTime(contact.lastMessageDate) : ''}</small>
                     </span>
-                    <span className={styles.chatPreview}>{getChatPreview(contact)}</span>
+                    <span className={styles.chatPreviewLine}>
+                      {renderChannelBadge(contact)}
+                      <span className={styles.chatPreview}>{getChatPreview(contact)}</span>
+                    </span>
                   </span>
                   {unread > 0 ? <span className={styles.unread}>{unread}</span> : null}
                 </button>
@@ -1488,12 +2106,27 @@ export const DesktopChat: React.FC = () => {
                 <div className={styles.contactTitle}>
                   {renderAvatar(activeContact)}
                   <div>
-                    <h2>{getContactName(activeContact)}</h2>
+                    <span className={styles.contactHeadingRow}>
+                      <h2>{getContactName(activeContact)}</h2>
+                      {renderChannelBadge(activeContact, 'md')}
+                      <button
+                        type="button"
+                        className={styles.agentToggle}
+                        data-active={conversationAgentActive ? 'true' : undefined}
+                        data-enabled={conversationAgentEnabled ? 'true' : undefined}
+                        onClick={handleToggleConversationAgent}
+                        disabled={conversationAgentBusy}
+                        aria-label={conversationAgentActive ? 'Pausar agente conversacional' : 'Activar agente conversacional'}
+                        title={conversationAgentActive ? 'Agente conversacional activo' : 'Agente conversacional pausado'}
+                      >
+                        {conversationAgentBusy ? <Loader2 size={17} className={styles.spin} /> : <AgentRobot size={30} active={conversationAgentActive} />}
+                      </button>
+                    </span>
                     <p>{getContactDetail(activeContact)}</p>
                   </div>
                 </div>
                 <div className={styles.quickActions}>
-                  <Button variant="secondary" size="sm" leftIcon={<CalendarDays size={15} />} onClick={() => setAppointmentOpen(true)}>
+                  <Button variant="secondary" size="sm" leftIcon={<CalendarDays size={15} />} onClick={openNewAppointment}>
                     Agendar
                   </Button>
                   <Button variant="secondary" size="sm" leftIcon={<CreditCard size={15} />} onClick={() => setPaymentOpen(true)}>
@@ -1501,18 +2134,6 @@ export const DesktopChat: React.FC = () => {
                   </Button>
                 </div>
               </header>
-
-              <div className={styles.aiStrip}>
-                <AgentRobot size={54} active={composerStatus === 'sending' || aiAvailability.configured} />
-                <div>
-                  <strong>Agente AI</strong>
-                  <span>{aiAvailability.configured ? 'Listo para ayudarte con contexto del cliente.' : 'Conecta OpenAI para sugerencias inteligentes.'}</span>
-                </div>
-                <button type="button" onClick={() => setComposerText(`Sugiere una respuesta breve para ${getContactName(activeContact)}.`)}>
-                  <Sparkles size={15} />
-                  Preparar respuesta
-                </button>
-              </div>
 
               <div className={styles.messagePane}>
                 {messagesLoading ? (
@@ -1551,14 +2172,6 @@ export const DesktopChat: React.FC = () => {
                 <div ref={messagesEndRef} />
               </div>
 
-              <div className={styles.quickReplyRow}>
-                {QUICK_REPLIES.map((reply) => (
-                  <button key={reply} type="button" onClick={() => setComposerText(reply)}>
-                    {reply}
-                  </button>
-                ))}
-              </div>
-
               <form
                 className={styles.composer}
                 onSubmit={(event) => {
@@ -1572,15 +2185,6 @@ export const DesktopChat: React.FC = () => {
                   accept="image/*"
                   className={styles.hiddenFileInput}
                   onChange={(event) => handleImageSelected('photos', event)}
-                  tabIndex={-1}
-                />
-                <input
-                  ref={cameraInputRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className={styles.hiddenFileInput}
-                  onChange={(event) => handleImageSelected('camera', event)}
                   tabIndex={-1}
                 />
                 <input
@@ -1609,6 +2213,8 @@ export const DesktopChat: React.FC = () => {
                     ))}
                   </div>
                 ) : null}
+                {renderVoiceWave()}
+                {renderVoiceDraft()}
                 <div className={styles.composerActionWrap}>
                   <button
                     type="button"
@@ -1629,10 +2235,6 @@ export const DesktopChat: React.FC = () => {
                         <ImageIcon size={16} />
                         <span>Fotos</span>
                       </button>
-                      <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('camera')}>
-                        <Camera size={16} />
-                        <span>Cámara</span>
-                      </button>
                       <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
                         <FileText size={16} />
                         <span>Documentos</span>
@@ -1652,12 +2254,23 @@ export const DesktopChat: React.FC = () => {
                   data-ristak-unstyled
                   value={composerText}
                   onChange={(event) => setComposerText(event.target.value)}
-                  placeholder="Escribe una respuesta..."
+                  placeholder={voiceRecording ? 'Grabando audio...' : voiceDraft ? 'Audio listo para enviar' : 'Escribe una respuesta...'}
                   rows={1}
                   onFocus={() => setComposerMenuOpen(false)}
+                  disabled={voiceRecording || voiceProcessing || Boolean(voiceDraft)}
                 />
+                <button
+                  type="button"
+                  className={styles.micButton}
+                  onClick={handleVoiceButtonClick}
+                  disabled={composerStatus === 'sending' || voiceProcessing || Boolean(voiceDraft)}
+                  aria-label={voiceRecording ? 'Terminar grabación' : voiceDraft ? 'Audio listo' : 'Grabar audio'}
+                  data-recording={voiceRecording ? 'true' : undefined}
+                >
+                  {voiceProcessing ? <Loader2 size={18} className={styles.spin} /> : voiceRecording ? <Square size={16} /> : <Mic size={18} />}
+                </button>
                 <button type="submit" className={styles.sendButton} disabled={!canSend} aria-label="Enviar mensaje">
-                  {composerStatus === 'sending' ? <Loader2 size={18} className={styles.spin} /> : <Send size={17} />}
+                  {composerStatus === 'sending' ? <Loader2 size={18} className={styles.spin} /> : <ArrowUp size={18} />}
                 </button>
               </form>
             </>
@@ -1669,7 +2282,7 @@ export const DesktopChat: React.FC = () => {
               <div className={styles.emptyActionPreview}>
                 <div><MessageCircle size={16} /><span>Historial completo de mensajes</span></div>
                 <div><CalendarDays size={16} /><span>Acceso rápido para agendar</span></div>
-                <div><Sparkles size={16} /><span>Ayuda del agente AI al responder</span></div>
+                <div><Mic size={16} /><span>Notas de voz desde escritorio</span></div>
               </div>
             </div>
           )}
@@ -1695,63 +2308,121 @@ export const DesktopChat: React.FC = () => {
                   <div><dt><Mail size={14} /> Correo</dt><dd>{activeContact.email || 'Sin correo'}</dd></div>
                   <div><dt><Tag size={14} /> Estado</dt><dd>{stageLabel}</dd></div>
                 </dl>
-              </div>
-
-              <div className={styles.infoSection}>
-                <h3>Resumen</h3>
-                <div className={styles.metricsGrid}>
-                  <span><strong>{formatCurrency(contactPayments.filter(isSuccessfulPayment).reduce((sum, payment) => sum + payment.amount, 0))}</strong><small>Comprado</small></span>
-                  <span><strong>{contactAppointments.filter(isActiveAppointment).length}</strong><small>Citas activas</small></span>
-                  <span><strong>{Number(activeContact.messageCount || messages.length)}</strong><small>Mensajes</small></span>
+                <div className={styles.contactTools}>
+                  <label>
+                    <span>Etiquetas</span>
+                    <TagPicker
+                      multiple
+                      selectedIds={(contactInfoData || activeContact).tags || []}
+                      onChange={handleUpdateContactTags}
+                      allowCreate
+                      disabled={savingTags}
+                      portal
+                      placeholder="Agregar etiqueta"
+                      aria-label="Etiquetas del contacto"
+                    />
+                    {savingTags ? <small>Guardando etiquetas...</small> : null}
+                  </label>
+                  <button type="button" className={styles.automationButton} onClick={openAutomationModal}>
+                    <Workflow size={15} />
+                    <span>Mandar a automatización</span>
+                  </button>
                 </div>
               </div>
 
-              <div className={styles.infoSection}>
-                <div className={styles.sectionTitleRow}>
-                  <h3>Próximas citas</h3>
-                  <button type="button" onClick={() => setAppointmentOpen(true)}>Nueva</button>
-                </div>
-                <div className={styles.compactList}>
-                  {contactAppointments.slice(0, 3).map((appointment) => (
-                    <div key={appointment.id}>
-                      <CalendarDays size={15} />
-                      <span>
-                        <strong>{appointment.title}</strong>
-                        <small>{formatLocalDateTime(appointment.startTime)} · {formatPlainStatus(appointment.status)}</small>
-                      </span>
+              <div className={styles.infoModeTabs} role="tablist" aria-label="Panel del contacto">
+                <button
+                  type="button"
+                  className={infoPanelView === 'summary' ? styles.infoModeTabActive : ''}
+                  onClick={() => setInfoPanelView('summary')}
+                >
+                  Resumen
+                </button>
+                <button
+                  type="button"
+                  className={infoPanelView === 'journey' ? styles.infoModeTabActive : ''}
+                  onClick={() => setInfoPanelView('journey')}
+                >
+                  Viaje del héroe
+                </button>
+              </div>
+
+              {infoPanelView === 'summary' ? (
+                <>
+                  <div className={styles.infoSection}>
+                    <h3>Resumen</h3>
+                    <div className={styles.metricsGrid}>
+                      <span><strong>{formatCurrencyNoDecimals(contactPayments.filter(isSuccessfulPayment).reduce((sum, payment) => sum + payment.amount, 0))}</strong><small>Comprado</small></span>
+                      <span><strong>{contactAppointments.filter(isActiveAppointment).length}</strong><small>Citas activas</small></span>
+                      <span><strong>{Number(activeContact.messageCount || messages.length)}</strong><small>Mensajes</small></span>
                     </div>
-                  ))}
-                  {contactAppointments.length === 0 ? <p className={styles.mutedLine}>Sin citas registradas.</p> : null}
-                </div>
-              </div>
+                  </div>
 
-              <div className={styles.infoSection}>
-                <div className={styles.sectionTitleRow}>
-                  <h3>Pagos</h3>
-                  <button type="button" onClick={() => setPaymentOpen(true)}>Registrar</button>
-                </div>
-                <div className={styles.compactList}>
-                  {contactPayments.slice(0, 3).map((payment) => (
-                    <div key={payment.id}>
-                      <CreditCard size={15} />
-                      <span>
-                        <strong>{formatCurrency(payment.amount)}</strong>
-                        <small>{formatLocalDateTime(payment.date)} · {formatPlainStatus(payment.status)}</small>
-                      </span>
+                  <div className={styles.infoSection}>
+                    <div className={styles.sectionTitleRow}>
+                      <h3>Próximas citas</h3>
+                      <button type="button" onClick={openNewAppointment}>Nueva</button>
                     </div>
-                  ))}
-                  {contactPayments.length === 0 ? <p className={styles.mutedLine}>Sin pagos registrados.</p> : null}
-                </div>
-              </div>
+                    <div className={styles.compactList}>
+                      {contactAppointments.slice(0, 3).map((appointment) => {
+                        const appointmentActive = isActiveAppointment(appointment)
+                        const content = (
+                          <>
+                            <CalendarDays size={15} />
+                            <span>
+                              <strong>{appointment.title}</strong>
+                              <small>{formatLocalDateTime(appointment.startTime)} · {formatPlainStatus(appointment.status)}</small>
+                            </span>
+                          </>
+                        )
+                        return appointmentActive ? (
+                          <button key={appointment.id} type="button" onClick={() => openAppointmentForEdit(appointment)}>
+                            {content}
+                          </button>
+                        ) : (
+                          <div key={appointment.id}>
+                            {content}
+                          </div>
+                        )
+                      })}
+                      {contactAppointments.length === 0 ? <p className={styles.mutedLine}>Sin citas registradas.</p> : null}
+                    </div>
+                  </div>
 
-              <div className={styles.infoSection}>
-                <h3>Origen</h3>
-                <dl className={styles.detailList}>
-                  <div><dt><MousePointerClick size={14} /> Fuente</dt><dd>{formatUrlParameter(String(trackingData.source_platform || trackingData.utm_source || '')) || 'Sin dato'}</dd></div>
-                  <div><dt><Bot size={14} /> Campaña</dt><dd>{formatUrlParameter(String(trackingData.utm_campaign || trackingData.ad_name || '')) || 'Sin campaña'}</dd></div>
-                  <div><dt><Clock size={14} /> Primer contacto</dt><dd>{trackingData.started_at ? formatLocalDateTime(trackingData.started_at) : 'Sin dato'}</dd></div>
-                </dl>
-              </div>
+                  <div className={styles.infoSection}>
+                    <div className={styles.sectionTitleRow}>
+                      <h3>Pagos</h3>
+                      <button type="button" onClick={() => setPaymentOpen(true)}>Registrar</button>
+                    </div>
+                    <div className={styles.compactList}>
+                      {contactPayments.slice(0, 3).map((payment) => (
+                        <div key={payment.id}>
+                          <CreditCard size={15} />
+                          <span>
+                            <strong>{formatCurrency(payment.amount)}</strong>
+                            <small>{formatLocalDateTime(payment.date)} · {formatPlainStatus(payment.status)}</small>
+                          </span>
+                        </div>
+                      ))}
+                      {contactPayments.length === 0 ? <p className={styles.mutedLine}>Sin pagos registrados.</p> : null}
+                    </div>
+                  </div>
+
+                  <div className={styles.infoSection}>
+                    <h3>Origen</h3>
+                    <dl className={styles.detailList}>
+                      <div><dt><MousePointerClick size={14} /> Fuente</dt><dd>{formatUrlParameter(String(trackingData.source_platform || trackingData.utm_source || '')) || 'Sin dato'}</dd></div>
+                      <div><dt><Bot size={14} /> Campaña</dt><dd>{formatUrlParameter(String(trackingData.utm_campaign || trackingData.ad_name || '')) || 'Sin campaña'}</dd></div>
+                      <div><dt><Clock size={14} /> Primer contacto</dt><dd>{trackingData.started_at ? formatLocalDateTime(trackingData.started_at) : 'Sin dato'}</dd></div>
+                    </dl>
+                  </div>
+                </>
+              ) : (
+                <div className={styles.infoSection}>
+                  <h3>Viaje del héroe</h3>
+                  {renderJourneyPanel()}
+                </div>
+              )}
             </>
           ) : (
             <div className={styles.emptyInfoState}>
@@ -1792,8 +2463,12 @@ export const DesktopChat: React.FC = () => {
 
       <AppointmentModal
         isOpen={appointmentOpen}
-        onClose={() => setAppointmentOpen(false)}
-        mode="create"
+        onClose={() => {
+          setAppointmentOpen(false)
+          setEditingAppointmentEvent(null)
+        }}
+        event={editingAppointmentEvent}
+        mode={editingAppointmentEvent ? 'view' : 'create'}
         calendar={selectedCalendar}
         defaultStart={defaultAppointmentRange.start}
         defaultEnd={defaultAppointmentRange.end}
@@ -1809,8 +2484,49 @@ export const DesktopChat: React.FC = () => {
         calendarsLoading={calendarsLoading}
         selectedCalendarId={selectedCalendar?.id || ''}
         onCalendarChange={setSelectedCalendarId}
-        onSave={handleCreateAppointment}
+        onSave={handleSaveAppointment}
+        onDelete={editingAppointmentEvent ? handleDeleteAppointment : undefined}
       />
+
+      <Modal
+        isOpen={automationModalOpen}
+        onClose={() => setAutomationModalOpen(false)}
+        title="Mandar a automatización"
+        size="md"
+      >
+        <form
+          className={styles.automationModalBody}
+          onSubmit={(event) => {
+            event.preventDefault()
+            void handleEnrollAutomation()
+          }}
+        >
+          <p>
+            {activeContact ? getContactName(activeContact) : 'Este contacto'} entrará a la automatización seleccionada.
+          </p>
+          <label>
+            <span>Automatización</span>
+            <CustomSelect
+              value={selectedAutomationId}
+              options={automations.map((automation) => ({ value: automation.id, label: automation.name }))}
+              portal
+              disabled={automationsLoading || automationSubmitting || automations.length === 0}
+              placeholder={automationsLoading ? 'Cargando automatizaciones...' : 'Selecciona una automatización'}
+              onValueChange={setSelectedAutomationId}
+              aria-label="Automatización"
+            />
+          </label>
+          {automations.length === 0 && !automationsLoading ? <p className={styles.mutedLine}>No hay automatizaciones publicadas.</p> : null}
+          <div className={styles.automationModalActions}>
+            <Button type="button" variant="secondary" onClick={() => setAutomationModalOpen(false)} disabled={automationSubmitting}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={!selectedAutomationId || automationSubmitting}>
+              {automationSubmitting ? 'Mandando...' : 'Mandar ahora'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   )
 }
