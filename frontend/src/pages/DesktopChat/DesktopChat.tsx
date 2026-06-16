@@ -166,6 +166,8 @@ const CHAT_FILTERS: Array<{ id: ChatFilter; label: string }> = [
 
 const CHAT_REQUEST_TIMEOUT_MS = 20000
 const CHAT_ARCHIVED_STATE_KEY = 'ristak_phone_chat_archived_state_v1'
+const CHAT_CACHE_KEY = 'ristak_desktop_chat_list_cache_v1'
+const CHAT_CACHE_MAX_AGE_MS = 30 * 60 * 1000
 const CHAT_REFRESH_INTERVAL_MS = 20000
 const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -491,6 +493,41 @@ function readStoredChatIds(key: string) {
 function writeStoredChatIds(key: string, ids: string[]) {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(key, JSON.stringify(Array.from(new Set(ids))))
+}
+
+function readCachedChatList(): DesktopChatContact[] {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(CHAT_CACHE_KEY) || 'null')
+    if (!parsed || typeof parsed !== 'object') return []
+    if (Date.now() - Number(parsed.storedAt || 0) > CHAT_CACHE_MAX_AGE_MS) return []
+    if (!Array.isArray(parsed.chats)) return []
+
+    return parsed.chats
+      .filter((contact: unknown): contact is DesktopChatContact => Boolean(
+        contact &&
+        typeof contact === 'object' &&
+        typeof (contact as DesktopChatContact).id === 'string' &&
+        (contact as DesktopChatContact).id.trim()
+      ))
+      .slice(0, 100)
+  } catch {
+    return []
+  }
+}
+
+function writeCachedChatList(chats: DesktopChatContact[]) {
+  if (typeof window === 'undefined') return
+
+  try {
+    window.localStorage.setItem(CHAT_CACHE_KEY, JSON.stringify({
+      storedAt: Date.now(),
+      chats: chats.slice(0, 100)
+    }))
+  } catch {
+    // Cache best-effort: si el navegador no deja guardar, la red sigue siendo la fuente.
+  }
 }
 
 function getContactSocialKind(contact: DesktopChatContact): AdvancedSocialFilter | '' {
@@ -1054,9 +1091,12 @@ export const DesktopChat: React.FC = () => {
   const voiceChunksRef = useRef<Blob[]>([])
   const voiceStartedAtRef = useRef(0)
   const voiceTimerRef = useRef<number | null>(null)
+  const chatsRef = useRef<DesktopChatContact[]>([])
+  const archivedChatIdSetRef = useRef<Set<string>>(new Set())
+  const agentPriorityChatIdSetRef = useRef<Set<string>>(new Set())
 
-  const [chats, setChats] = useState<DesktopChatContact[]>([])
-  const [chatsLoading, setChatsLoading] = useState(true)
+  const [chats, setChats] = useState<DesktopChatContact[]>(() => readCachedChatList())
+  const [chatsLoading, setChatsLoading] = useState(() => readCachedChatList().length === 0)
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
@@ -1181,6 +1221,21 @@ export const DesktopChat: React.FC = () => {
           Date.parse(leftState?.signalAt || left.lastMessageDate || left.createdAt)
       })
   }, [activeAdvancedFilterCount, agentPriorityChatIdSet, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, chatQuery, chats])
+  useEffect(() => {
+    chatsRef.current = chats
+  }, [chats])
+  useEffect(() => {
+    archivedChatIdSetRef.current = archivedChatIdSet
+  }, [archivedChatIdSet])
+  useEffect(() => {
+    agentPriorityChatIdSetRef.current = agentPriorityChatIdSet
+  }, [agentPriorityChatIdSet])
+  useEffect(() => {
+    if (activeContactId || chats.length === 0) return
+    const archivedSet = archivedChatIdSetRef.current
+    const agentSet = agentPriorityChatIdSetRef.current
+    setActiveContactId(chats.find((contact) => !archivedSet.has(contact.id) && !agentSet.has(contact.id))?.id || chats[0]?.id || '')
+  }, [activeContactId, chats])
   const visibleChatCount = filteredChats.length + agentPriorityChatRows.length
   const inboxSubtitle = archivedViewOpen
     ? `${filteredChats.length} de ${archivedChatCount} archivados`
@@ -1258,8 +1313,10 @@ export const DesktopChat: React.FC = () => {
   const loadChats = useCallback(async (options: { silent?: boolean } = {}) => {
     const silent = options.silent === true
     if (!silent) {
-      setChatsLoading(true)
       setChatsError('')
+      if (chatsRef.current.length === 0) {
+        setChatsLoading(true)
+      }
     }
 
     chatsRequestRef.current?.abort()
@@ -1270,16 +1327,18 @@ export const DesktopChat: React.FC = () => {
     try {
       const data = await apiClient.get<DesktopChatContact[]>('/contacts/chats', {
         params: {
-          limit: '80',
-          ...(chatQuery.trim() ? { q: chatQuery.trim() } : {})
+          limit: '80'
         },
         signal: controller.signal
       })
       const nextChats = Array.isArray(data) ? data : []
+      writeCachedChatList(nextChats)
       setChats(nextChats)
       setActiveContactId((current) => {
         if (current && nextChats.some((contact) => contact.id === current)) return current
-        return nextChats.find((contact) => !archivedChatIdSet.has(contact.id) && !agentPriorityChatIdSet.has(contact.id))?.id || nextChats[0]?.id || ''
+        const archivedSet = archivedChatIdSetRef.current
+        const agentSet = agentPriorityChatIdSetRef.current
+        return nextChats.find((contact) => !archivedSet.has(contact.id) && !agentSet.has(contact.id))?.id || nextChats[0]?.id || ''
       })
     } catch (error: any) {
       if (controller.signal.aborted && chatsRequestRef.current !== controller) return
@@ -1295,7 +1354,7 @@ export const DesktopChat: React.FC = () => {
         setChatsLoading(false)
       }
     }
-  }, [agentPriorityChatIdSet, archivedChatIdSet, chatQuery])
+  }, [])
 
   const loadConversation = useCallback(async (contactId: string) => {
     if (!contactId) return

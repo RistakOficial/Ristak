@@ -1136,8 +1136,29 @@ export const getChatContacts = async (req, res) => {
     const searchTerm = cleanString(q)
     const phoneNumberIdFilter = cleanString(businessPhoneNumberId)
     const businessPhoneFilter = normalizePhoneForStorage(businessPhone)
-    const resolvedWhatsAppContactIdSql = 'COALESCE(msg.contact_id, api_profile.contact_id, phone_contact.id)'
-    const whatsappMessageConditions = [`${resolvedWhatsAppContactIdSql} IS NOT NULL`]
+    const resolvedWhatsAppContactIdSql = `
+      COALESCE(
+        msg.contact_id,
+        api_profile.contact_id,
+        CASE
+          WHEN msg.contact_id IS NULL AND api_profile.contact_id IS NULL THEN (
+            SELECT c_lookup.id
+            FROM contacts c_lookup
+            WHERE c_lookup.phone IS NOT NULL
+              AND c_lookup.phone != ''
+              AND (
+                c_lookup.phone = msg.phone
+                OR c_lookup.phone = msg.from_phone
+                OR c_lookup.phone = msg.to_phone
+                OR c_lookup.phone = api_profile.phone
+              )
+            LIMIT 1
+          )
+          ELSE NULL
+        END
+      )
+    `
+    const whatsappMessageConditions = []
     const whatsappMessageParams = []
     const conditions = []
     const params = []
@@ -1169,26 +1190,27 @@ export const getChatContacts = async (req, res) => {
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+    const whatsappBaseWhereClause = whatsappMessageConditions.length ? `WHERE ${whatsappMessageConditions.join(' AND ')}` : ''
     const messageRowsSql = `
-        SELECT
-          ${resolvedWhatsAppContactIdSql} AS contact_id,
-          'whatsapp:' || msg.id AS message_row_id,
-          msg.message_text,
-          msg.message_type,
-          msg.direction,
-          msg.business_phone,
-          msg.business_phone_number_id,
-          msg.transport,
-          COALESCE(msg.message_timestamp, msg.created_at) AS message_date,
-          msg.created_at,
-          'whatsapp' AS message_channel
-        FROM whatsapp_api_messages msg
-        LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
-        LEFT JOIN contacts phone_contact
-          ON phone_contact.phone IS NOT NULL
-         AND phone_contact.phone != ''
-         AND phone_contact.phone IN (msg.phone, msg.from_phone, msg.to_phone, api_profile.phone)
-        WHERE ${whatsappMessageConditions.join(' AND ')}
+        SELECT *
+        FROM (
+          SELECT
+            ${resolvedWhatsAppContactIdSql} AS contact_id,
+            'whatsapp:' || msg.id AS message_row_id,
+            msg.message_text,
+            msg.message_type,
+            msg.direction,
+            msg.business_phone,
+            msg.business_phone_number_id,
+            msg.transport,
+            COALESCE(msg.message_timestamp, msg.created_at) AS message_date,
+            msg.created_at,
+            'whatsapp' AS message_channel
+          FROM whatsapp_api_messages msg
+          LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
+          ${whatsappBaseWhereClause}
+        ) whatsapp_rows
+        WHERE contact_id IS NOT NULL
         ${includeMetaSocialMessages ? `
         UNION ALL
         SELECT
@@ -1220,6 +1242,22 @@ export const getChatContacts = async (req, res) => {
         FROM message_rows
         GROUP BY contact_id
       ),
+      ranked_chats AS (
+        SELECT
+          chat_stats.contact_id,
+          chat_stats.message_count,
+          chat_stats.last_message_date
+        FROM chat_stats
+        JOIN contacts c ON c.id = chat_stats.contact_id
+        ${whereClause}
+        ORDER BY chat_stats.last_message_date DESC
+        LIMIT ?
+      ),
+      selected_message_rows AS (
+        SELECT message_rows.*
+        FROM message_rows
+        JOIN ranked_chats ON ranked_chats.contact_id = message_rows.contact_id
+      ),
       latest_messages AS (
         SELECT
           *,
@@ -1227,7 +1265,7 @@ export const getChatContacts = async (req, res) => {
             PARTITION BY contact_id
             ORDER BY message_date DESC, created_at DESC
           ) AS row_rank
-        FROM message_rows
+        FROM selected_message_rows
       ),
       latest_inbound_messages AS (
         SELECT
@@ -1236,7 +1274,7 @@ export const getChatContacts = async (req, res) => {
             PARTITION BY contact_id
             ORDER BY message_date DESC, created_at DESC
           ) AS row_rank
-        FROM message_rows
+        FROM selected_message_rows
         WHERE direction = 'inbound'
           AND (business_phone_number_id IS NOT NULL OR business_phone IS NOT NULL)
       ),
@@ -1247,13 +1285,13 @@ export const getChatContacts = async (req, res) => {
             PARTITION BY contact_id
             ORDER BY message_date ASC, created_at ASC
           ) AS row_rank
-        FROM message_rows
+        FROM selected_message_rows
         WHERE direction = 'inbound'
           AND (business_phone_number_id IS NOT NULL OR business_phone IS NOT NULL)
       ),
       payment_stats AS (
         SELECT
-          contact_id,
+          payments.contact_id,
           SUM(CASE
                 WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
                 AND ${nonTestPaymentCondition()}
@@ -1267,7 +1305,8 @@ export const getChatContacts = async (req, res) => {
                 AND ${nonTestPaymentCondition()}
                 THEN date ELSE NULL END) AS last_purchase_date
         FROM payments
-        GROUP BY contact_id
+        JOIN ranked_chats ON ranked_chats.contact_id = payments.contact_id
+        GROUP BY payments.contact_id
       )
       SELECT
         c.id,
@@ -1309,8 +1348,8 @@ ${CONTACT_META_PROFILE_SELECT},
               AND ${ATTENDED_APPOINTMENT_CONDITION}
           )
         ) AS has_showed_appointment,
-        chat_stats.message_count,
-        chat_stats.last_message_date,
+        ranked_chats.message_count,
+        ranked_chats.last_message_date,
         lm.message_text AS last_message_text,
         lm.message_type AS last_message_type,
         lm.message_channel AS last_message_channel,
@@ -1323,15 +1362,13 @@ ${CONTACT_META_PROFILE_SELECT},
         fim.business_phone AS first_inbound_business_phone,
         fim.business_phone_number_id AS first_inbound_business_phone_number_id,
         0 AS unread_count
-      FROM chat_stats
-      JOIN contacts c ON c.id = chat_stats.contact_id
+      FROM ranked_chats
+      JOIN contacts c ON c.id = ranked_chats.contact_id
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
       LEFT JOIN latest_messages lm ON lm.contact_id = c.id AND lm.row_rank = 1
       LEFT JOIN latest_inbound_messages lim ON lim.contact_id = c.id AND lim.row_rank = 1
       LEFT JOIN first_inbound_messages fim ON fim.contact_id = c.id AND fim.row_rank = 1
-      ${whereClause}
-      ORDER BY chat_stats.last_message_date DESC
-      LIMIT ?
+      ORDER BY ranked_chats.last_message_date DESC
     `, [...whatsappMessageParams, ...params, limitNumber])
 
     const responseRows = shouldWarmProfilePictures
