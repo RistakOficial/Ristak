@@ -1,6 +1,5 @@
 import apiClient from './apiClient'
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || ''
+import { getApiBaseUrl } from './apiBaseUrl'
 
 export interface MediaAsset {
   id: string
@@ -82,7 +81,7 @@ function getAuthHeaders() {
 
 function buildApiUrl(endpoint: string) {
   const apiEndpoint = endpoint.startsWith('/api') ? endpoint : `/api${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
-  return `${API_BASE_URL}${apiEndpoint}`
+  return `${getApiBaseUrl()}${apiEndpoint}`
 }
 
 function filenameFromContentDisposition(value: string | null) {

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { apiUrl } from '@/services/apiBaseUrl'
 
 interface Labels {
   customer: string
@@ -29,7 +30,7 @@ export const LabelsProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   const fetchLabels = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/highlevel/custom-labels`)
+      const response = await fetch(apiUrl('/api/highlevel/custom-labels'))
       const json = await response.json()
 
       if (json.success && json.data) {
@@ -46,7 +47,7 @@ export const LabelsProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     try {
       const updatedLabels = { ...labels, ...newLabels }
 
-      const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/highlevel/custom-labels`, {
+      const response = await fetch(apiUrl('/api/highlevel/custom-labels'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

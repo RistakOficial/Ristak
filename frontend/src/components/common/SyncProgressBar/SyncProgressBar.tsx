@@ -11,6 +11,7 @@ import {
   Users
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
+import { apiUrl } from '@/services/apiBaseUrl'
 
 type SyncStatus = 'idle' | 'syncing' | 'running' | 'completed' | 'error'
 
@@ -142,7 +143,7 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
 
     const fetchProgress = async () => {
       try {
-        const response = await fetch('/api/highlevel/sync/progress')
+        const response = await fetch(apiUrl('/api/highlevel/sync/progress'))
         const data = await response.json()
 
         setProgress((previous) => {

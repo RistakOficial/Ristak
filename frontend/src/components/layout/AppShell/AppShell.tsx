@@ -10,6 +10,7 @@ import { InitializationProvider } from '@/contexts/InitializationContext'
 import { useAIAgentAvailability, useAppConfig, useDomainFeatureSync } from '@/hooks'
 import { requestAIAgentClose } from '@/utils/aiAgentEvents'
 import { hasModuleAccess } from '@/utils/accessControl'
+import { apiUrl } from '@/services/apiBaseUrl'
 import { HIGHLEVEL_SYNC_STARTED_EVENT } from '@/services/highLevelService'
 import styles from './AppShell.module.css'
 
@@ -83,7 +84,7 @@ export const AppShell: React.FC = () => {
 
     const checkSyncProgress = async () => {
       try {
-        const response = await fetch('/api/highlevel/sync/progress')
+        const response = await fetch(apiUrl('/api/highlevel/sync/progress'))
         const data = await response.json()
         if (cancelled) return
         // Solo mostrar si está sincronizando Y el origen es 'manual' (no cron)

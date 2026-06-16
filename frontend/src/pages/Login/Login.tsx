@@ -3,14 +3,13 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Terminal, Copy, Check } from 'lucide-react'
 import { Button, Logo } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
+import { apiUrl, clearRuntimeApiBaseUrl, getRuntimeTenant, isNativeAppRuntime } from '@/services/apiBaseUrl'
 import { PHONE_APP_HOME_PATH, getPostAuthRedirectPath, type RedirectLocation } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
 
 type LoginLocationState = {
   from?: RedirectLocation
 } | null
-
-const API_URL = import.meta.env.VITE_API_URL || ''
 
 function cleanLoginIdentifier(value: string) {
   return value.replace(/[\u200B-\u200D\uFEFF]/g, '').trim()
@@ -48,6 +47,7 @@ export const Login: React.FC = () => {
   const fromLocation = (location.state as LoginLocationState)?.from
   const isPhoneLogin = location.pathname.startsWith('/phone')
   const redirectPath = getPostAuthRedirectPath(fromLocation, isPhoneLogin ? PHONE_APP_HOME_PATH : '/dashboard')
+  const tenant = isPhoneLogin && isNativeAppRuntime() ? getRuntimeTenant() : null
 
   if (isAuthLoading) {
     return (
@@ -105,7 +105,7 @@ export const Login: React.FC = () => {
     setGoogleLoading(true)
 
     try {
-      const response = await fetch(`${API_URL}/api/auth/google/start`, {
+      const response = await fetch(apiUrl('/api/auth/google/start'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ return_path: redirectPath })
@@ -131,6 +131,11 @@ export const Login: React.FC = () => {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const handleChangeTenant = () => {
+    clearRuntimeApiBaseUrl()
+    navigate('/phone/tenant', { replace: true })
+  }
+
   return (
     <div className={`${styles.container} ${isPhoneLogin ? styles.phoneContainer : ''}`}>
       <div className={`${styles.loginBox} ${isPhoneLogin ? styles.phoneLoginBox : ''}`}>
@@ -140,7 +145,11 @@ export const Login: React.FC = () => {
           </div>
           <h1 className={`${styles.title} ${styles.visuallyHidden}`}>Ristak</h1>
           <p className={styles.subtitle}>
-            {isPhoneLogin ? 'Entra para ver tus chats, pagos y citas desde el celular.' : 'Ingresa a tu cuenta'}
+            {isPhoneLogin
+              ? tenant?.name
+                ? `Entra a ${tenant.name}`
+                : 'Entra para ver tus chats, pagos y citas desde el celular.'
+              : 'Ingresa a tu cuenta'}
           </p>
         </div>
 
@@ -228,6 +237,16 @@ export const Login: React.FC = () => {
           >
             ¿Olvidé mi usuario o contraseña?
           </button>
+
+          {isPhoneLogin && isNativeAppRuntime() && (
+            <button
+              type="button"
+              onClick={handleChangeTenant}
+              className={styles.forgotLink}
+            >
+              Cambiar empresa
+            </button>
+          )}
         </form>
 
         {showRecovery && (

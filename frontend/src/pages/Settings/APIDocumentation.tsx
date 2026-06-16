@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Copy, Database, ExternalLink, KeyRound, Network, RefreshCw, Server } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { PageHeader } from '@/components/common'
+import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import styles from './APIDocumentation.module.css'
 
-const API_URL = import.meta.env.VITE_API_URL || ''
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const
 
 interface OpenApiParameter {
@@ -42,7 +42,7 @@ export const APIDocumentation: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
 
-  const origin = API_URL || window.location.origin
+  const origin = getApiBaseUrl() || window.location.origin
   const externalApiBaseUrl = `${origin}/api/external`
   const openApiUrl = `${externalApiBaseUrl}/openapi.json`
   const mcpServerUrl = `${origin}/api/mcp`

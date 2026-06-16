@@ -27,6 +27,7 @@ import {
 import styles from './RecordPaymentModal.module.css'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig } from '@/hooks'
+import { apiUrl } from '@/services/apiBaseUrl'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import { formatCurrency as formatMxCurrency } from '@/utils/format'
 import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
@@ -637,7 +638,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const loadConfig = async () => {
     try {
-      const response = await fetch('/api/highlevel/config')
+      const response = await fetch(apiUrl('/api/highlevel/config'))
       if (!response.ok) return
 
       const config = await response.json()
@@ -737,7 +738,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             sortBy: 'created_at',
             sortOrder: 'DESC'
           })
-          const response = await fetch(`/api/contacts?${params.toString()}`, {
+          const response = await fetch(apiUrl(`/api/contacts?${params.toString()}`), {
             signal: controller.signal
           })
           if (!response.ok) {
@@ -761,7 +762,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             lastName: contact.lastName || contact.last_name || ''
           }))
         } else if (highLevelConnected) {
-          const response = await fetch('/api/highlevel/contacts/search', {
+          const response = await fetch(apiUrl('/api/highlevel/contacts/search'), {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
@@ -788,7 +789,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         } else {
           // Modo local: buscar en los contactos almacenados en Ristak.
           const params = new URLSearchParams({ q: query })
-          const response = await fetch(`/api/contacts/search?${params.toString()}`, {
+          const response = await fetch(apiUrl(`/api/contacts/search?${params.toString()}`), {
             signal: controller.signal
           })
           if (!response.ok) {
@@ -893,7 +894,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const loadProducts = async () => {
     setLoadingProducts(true)
     try {
-      const response = await fetch('/api/products?limit=100')
+      const response = await fetch(apiUrl('/api/products?limit=100'))
       if (!response.ok) throw new Error('Error al obtener productos')
       const data = await response.json()
       setProducts(data.products || [])
@@ -906,7 +907,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const loadPrices = async (productId: string) => {
     try {
-      const response = await fetch(`/api/products/${productId}/prices`)
+      const response = await fetch(apiUrl(`/api/products/${productId}/prices`))
       if (!response.ok) throw new Error('Error al obtener precios')
       const data = await response.json()
       setPrices(data.prices || [])
@@ -939,7 +940,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     setCreatingProduct(true)
     try {
-      const response = await fetch('/api/products', {
+      const response = await fetch(apiUrl('/api/products'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1141,7 +1142,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     summary: InvoiceSummary,
     channels: Record<string, boolean>
   ) => {
-    const response = await fetch('/api/highlevel/payment-flows/installments', {
+    const response = await fetch(apiUrl('/api/highlevel/payment-flows/installments'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildPartialFlowPayload(payload, summary, channels))
@@ -1491,7 +1492,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           ...(invoicePayload.termsNotes && { termsNotes: invoicePayload.termsNotes })
         }
 
-        const response = await fetch('/api/highlevel/invoices', {
+        const response = await fetch(apiUrl('/api/highlevel/invoices'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(cleanPayload)
@@ -1531,7 +1532,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           break
         }
         case 'manual': {
-          const response = await fetch(`/api/highlevel/invoices/${invoiceId}/record-payment`, {
+          const response = await fetch(apiUrl(`/api/highlevel/invoices/${invoiceId}/record-payment`), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1560,7 +1561,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       // tiene el estado actualizado. Silencioso: si falla, los datos locales
       // ya están correctos gracias a createInvoice + recordPayment.
       try {
-        await fetch(`/api/highlevel/invoices/${invoiceId}/sync`, { method: 'POST' })
+        await fetch(apiUrl(`/api/highlevel/invoices/${invoiceId}/sync`), { method: 'POST' })
       } catch {
         // continuar aunque falle el sync — datos locales ya son correctos
       }

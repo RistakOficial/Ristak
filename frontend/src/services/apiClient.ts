@@ -1,9 +1,9 @@
 import { dedupeContactsPayload } from '@/utils/contactDedup'
+import { getApiBaseUrl } from './apiBaseUrl'
 
 // IMPORTANTE: VITE_API_URL NO debe terminar con /api
 // Este cliente SIEMPRE agrega /api/ a las rutas
 // Si no hay VITE_API_URL, usa rutas relativas (producción) o localhost (desarrollo)
-const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
 interface ApiRequestOptions extends RequestInit {
   params?: Record<string, string>
@@ -33,7 +33,7 @@ class ApiClient {
 
     // SIEMPRE agregamos /api si no está presente
     const apiEndpoint = endpoint.startsWith('/api') ? endpoint : `/api${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
-    let url = `${this.baseURL}${apiEndpoint}`
+    let url = `${getApiBaseUrl() || this.baseURL}${apiEndpoint}`
 
     if (params) {
       const searchParams = new URLSearchParams(params)
@@ -141,6 +141,6 @@ class ApiClient {
   }
 }
 
-const apiClient = new ApiClient(API_BASE_URL)
+const apiClient = new ApiClient('')
 
 export default apiClient

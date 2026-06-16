@@ -1,8 +1,6 @@
 // Servicio para el Dashboard principal
+import { apiUrl } from './apiBaseUrl'
 import { formatDateToISO, formatEndDateToISO } from '@/utils/format'
-
-// Si no hay VITE_API_URL, usa rutas relativas
-const API_URL = import.meta.env.VITE_API_URL || '';
 
 export interface DashboardKPI {
   value: number;
@@ -111,7 +109,7 @@ class DashboardService {
         endDate: formatEndDateToISO(params.end)
       });
 
-      const response = await fetch(`${API_URL}/api/dashboard/metrics?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/dashboard/metrics?${queryParams}`));
 
       if (!response.ok) {
         // Si el endpoint no existe, devolver valores por defecto
@@ -138,7 +136,7 @@ class DashboardService {
       });
 
       // Usar el nuevo endpoint de dashboard que muestra TODOS los ingresos y gastos
-      const response = await fetch(`${API_URL}/api/dashboard/financial-overview?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/dashboard/financial-overview?${queryParams}`));
 
       if (!response.ok) {
         return [];
@@ -171,7 +169,7 @@ class DashboardService {
         endDate: formatEndDateToISO(params.end)
       });
 
-      const response = await fetch(`${API_URL}/api/dashboard/roas?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/dashboard/roas?${queryParams}`));
 
       if (!response.ok) {
         return [];
@@ -196,7 +194,7 @@ class DashboardService {
         groupBy: params.groupBy || 'day'
       });
 
-      const response = await fetch(`${API_URL}/api/dashboard/new-customers?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/dashboard/new-customers?${queryParams}`));
 
       if (!response.ok) {
         return [];
@@ -221,7 +219,7 @@ class DashboardService {
         groupBy: params.groupBy || 'day'
       });
 
-      const response = await fetch(`${API_URL}/api/dashboard/visitors?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/dashboard/visitors?${queryParams}`));
 
       if (!response.ok) {
         return [];
@@ -246,7 +244,7 @@ class DashboardService {
         scope: params.scope || 'all'
       });
 
-      const response = await fetch(`${API_URL}/api/tracking/visitors?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/tracking/visitors?${queryParams}`));
 
       if (!response.ok) {
         return [];
@@ -271,7 +269,7 @@ class DashboardService {
         groupBy: params.groupBy || 'day'
       });
 
-      const response = await fetch(`${API_URL}/api/dashboard/leads?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/dashboard/leads?${queryParams}`));
 
       if (!response.ok) {
         return [];
@@ -296,7 +294,7 @@ class DashboardService {
         groupBy: params.groupBy || 'day'
       });
 
-      const response = await fetch(`${API_URL}/api/dashboard/appointments?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/dashboard/appointments?${queryParams}`));
 
       if (!response.ok) {
         return [];
@@ -321,7 +319,7 @@ class DashboardService {
         groupBy: params.groupBy || 'day'
       });
 
-      const response = await fetch(`${API_URL}/api/dashboard/attendances?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/dashboard/attendances?${queryParams}`));
 
       if (!response.ok) {
         return [];
@@ -346,7 +344,7 @@ class DashboardService {
         groupBy: params.groupBy || 'day'
       });
 
-      const response = await fetch(`${API_URL}/api/dashboard/sales?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/dashboard/sales?${queryParams}`));
 
       if (!response.ok) {
         return [];
@@ -373,7 +371,7 @@ class DashboardService {
         includeWhatsapp: params.includeWhatsapp === false ? '0' : '1'
       });
 
-      const response = await fetch(`${API_URL}/api/dashboard/traffic-sources?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/dashboard/traffic-sources?${queryParams}`));
 
       if (!response.ok) {
         return [];
@@ -397,7 +395,7 @@ class DashboardService {
         endDate: formatEndDateToISO(params.end)
       });
 
-      const response = await fetch(`${API_URL}/api/dashboard/origin-distribution?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/dashboard/origin-distribution?${queryParams}`));
 
       if (!response.ok) {
         return EMPTY_ORIGIN_DISTRIBUTION;
@@ -423,7 +421,7 @@ class DashboardService {
         scope: params.scope || 'all'
       });
 
-      const response = await fetch(`${API_URL}/api/dashboard/funnel?${queryParams}`);
+      const response = await fetch(apiUrl(`/api/dashboard/funnel?${queryParams}`));
 
       if (!response.ok) {
         return [];

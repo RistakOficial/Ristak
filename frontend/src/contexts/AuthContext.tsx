@@ -1,10 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { ensureLocalDevAuth } from '@/services/authFetch'
+import { apiUrl, requiresRuntimeApiBaseUrl } from '@/services/apiBaseUrl'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import type { AccountLocaleDefaults } from '@/utils/accountLocale'
 import type { AccessConfig, LicenseFeatures, UserRole } from '@/utils/accessControl'
-
-const API_URL = import.meta.env.VITE_API_URL || ''
 
 export interface User {
   id: string
@@ -74,9 +73,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Verificar si hay un token guardado al cargar la app
   useEffect(() => {
     const verifyToken = async () => {
+      if (requiresRuntimeApiBaseUrl()) {
+        localStorage.removeItem('auth_token')
+        setUser(null)
+        setNeedsSetup(false)
+        setIsLoading(false)
+        return
+      }
+
       const checkSetupState = async () => {
         try {
-          const response = await fetch(`${API_URL}/api/auth/setup`)
+          const response = await fetch(apiUrl('/api/auth/setup'))
           const data = await response.json()
           setNeedsSetup(data.needsSetup || false)
         } catch {
@@ -86,7 +93,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       const verifyStoredToken = async (token: string) => {
         try {
-          const response = await fetch(`${API_URL}/api/auth/verify`, {
+          const response = await fetch(apiUrl('/api/auth/verify'), {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
@@ -169,7 +176,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const login = async (username: string, password: string) => {
     try {
-      const response = await fetch(`${API_URL}/api/auth/login`, {
+      const response = await fetch(apiUrl('/api/auth/login'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -201,7 +208,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const setupAccount = async (username: string, password: string, setupToken?: string, accountLocale?: AccountLocaleDefaults) => {
     try {
-      const response = await fetch(`${API_URL}/api/auth/setup`, {
+      const response = await fetch(apiUrl('/api/auth/setup'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -237,7 +244,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       throw new Error('Vuelve a iniciar sesión para guardar tus datos.')
     }
 
-    const response = await fetch(`${API_URL}/api/auth/profile`, {
+    const response = await fetch(apiUrl('/api/auth/profile'), {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',

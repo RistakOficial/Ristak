@@ -1,4 +1,4 @@
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
+import { getApiBaseUrl } from './apiBaseUrl'
 
 const API_AUTH_HEADER = 'Authorization'
 const LOCAL_DEV_LOGIN_TIMEOUT_MS = 2500
@@ -23,6 +23,7 @@ function resolveRequestUrl(input: RequestInfo | URL) {
 
 function isRistakApiRequest(url: URL) {
   if (!url.pathname.startsWith('/api/')) return false
+  const API_BASE_URL = getApiBaseUrl()
   if (!API_BASE_URL) return url.origin === window.location.origin
 
   try {
@@ -111,7 +112,7 @@ export async function ensureLocalDevAuth() {
   const timeoutId = window.setTimeout(() => controller.abort(), LOCAL_DEV_LOGIN_TIMEOUT_MS)
 
   try {
-    const response = await window.fetch(`${API_BASE_URL}/api/auth/local-dev-session`, {
+    const response = await window.fetch(`${getApiBaseUrl()}/api/auth/local-dev-session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal

@@ -4,6 +4,7 @@ import { Modal } from '../Modal';
 import { Button } from '../Button';
 import { DateTimePicker } from '../DateTimePicker';
 import { CustomSelect } from '../CustomSelect';
+import { apiUrl } from '@/services/apiBaseUrl';
 import { Calendar, BlockedSlot } from '@/services/calendarsService';
 import { useNotification } from '@/contexts/NotificationContext';
 import styles from './BlockedSlotModal.module.css';
@@ -261,7 +262,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         if (teamMemberIds.length === 0) {
           // Si no hay team members, obtener usuarios del location
           try {
-            const url = new URL(`${import.meta.env.VITE_API_URL}/api/highlevel/users`);
+            const url = new URL(apiUrl('/api/highlevel/users'), window.location.origin);
             url.searchParams.append('accessToken', accessToken || '');
             url.searchParams.append('locationId', locationId || '');
 
@@ -293,7 +294,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
             locationId
           };
 
-          const response = await fetch(`${import.meta.env.VITE_API_URL}/api/highlevel/users/by-ids`, {
+          const response = await fetch(apiUrl('/api/highlevel/users/by-ids'), {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'

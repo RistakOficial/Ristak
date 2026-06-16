@@ -1,6 +1,5 @@
 import apiClient from './apiClient'
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || ''
+import { apiUrl, getApiBaseUrl } from './apiBaseUrl'
 
 function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem('auth_token')
@@ -721,7 +720,7 @@ export const sitesService = {
     if (pageId) searchParams.set('page', pageId)
     if (options.test) searchParams.set('test', '1')
     const params = searchParams.toString() ? `?${searchParams.toString()}` : ''
-    const response = await fetch(`${API_BASE_URL}/api/sites/${siteId}/preview${params}`, {
+    const response = await fetch(apiUrl(`/api/sites/${siteId}/preview${params}`), {
       headers: getAuthHeaders(),
       cache: 'no-store'
     })
@@ -751,7 +750,7 @@ export const sitesService = {
   },
 
   getCalendarPreviewUrl(calendarSlug: string) {
-    return `${API_BASE_URL}/api/sites/public/calendar-preview/${encodeURIComponent(calendarSlug)}?test=1`
+    return `${getApiBaseUrl()}/api/sites/public/calendar-preview/${encodeURIComponent(calendarSlug)}?test=1`
   },
 
   updateSite(siteId: string, payload: Partial<PublicSite>) {

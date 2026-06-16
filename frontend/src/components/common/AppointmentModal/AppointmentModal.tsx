@@ -11,6 +11,7 @@ import { formatTimeLabel } from '@/components/phone/ui/PhoneTimeField';
 import { PhoneDurationField, formatDurationLabel } from '@/components/phone/ui/PhoneDurationField';
 import { PhoneSegmentedTabs } from '@/components/phone/ui';
 import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot } from '@/services/calendarsService';
+import { apiUrl } from '@/services/apiBaseUrl';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
 import styles from './AppointmentModal.module.css';
@@ -406,7 +407,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
 
         try {
-          const response = await fetch('/api/highlevel/users/by-ids', {
+          const response = await fetch(apiUrl('/api/highlevel/users/by-ids'), {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
@@ -448,7 +449,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       } else {
         // Para calendarios normales: cargar todos los usuarios del location
 
-        const response = await fetch('/api/highlevel/users');
+        const response = await fetch(apiUrl('/api/highlevel/users'));
         if (!response.ok) throw new Error('Error al cargar usuarios');
         const data = await response.json();
 
@@ -465,7 +466,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   const loadContactById = async (contactId: string) => {
     try {
-      const response = await fetch(`/api/highlevel/contacts/${contactId}`);
+      const response = await fetch(apiUrl(`/api/highlevel/contacts/${contactId}`));
       if (!response.ok) throw new Error('Error al cargar contacto');
       const data = await response.json();
       const contact = data.contact;
@@ -668,7 +669,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     const timer = window.setTimeout(async () => {
       setSearchingContact(true);
       try {
-        const response = await fetch('/api/highlevel/contacts/search', {
+        const response = await fetch(apiUrl('/api/highlevel/contacts/search'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -737,7 +738,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
     const timer = window.setTimeout(async () => {
       try {
-        const response = await fetch('/api/highlevel/contacts/search', {
+        const response = await fetch(apiUrl('/api/highlevel/contacts/search'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'

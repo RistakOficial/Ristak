@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { apiUrl } from '@/services/apiBaseUrl'
 
 /**
  * Sistema HÍBRIDO de configuración:
@@ -9,7 +10,6 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 
 const CONFIG_PREFIX = 'rstk_config_'
 const SYNC_EVENT = 'config-sync'
-const API_URL = import.meta.env.VITE_API_URL || ''
 
 const serializeConfigValue = (value: unknown) => (
   value === null || value === undefined
@@ -64,7 +64,7 @@ const getConfigHeaders = () => {
 }
 
 const buildConfigUrl = (params?: URLSearchParams) => (
-  `${API_URL}/api/config${params ? `?${params.toString()}` : ''}`
+  apiUrl(`/api/config${params ? `?${params.toString()}` : ''}`)
 )
 
 interface ConfigOptions {

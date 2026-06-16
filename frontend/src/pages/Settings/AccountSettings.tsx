@@ -7,6 +7,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig } from '@/hooks'
+import { apiUrl } from '@/services/apiBaseUrl'
 import apiClient from '@/services/apiClient'
 import mediaService from '@/services/mediaService'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
@@ -21,7 +22,6 @@ import {
 } from '@/utils/accountLocale'
 import styles from './Settings.module.css'
 
-const API_URL = import.meta.env.VITE_API_URL || ''
 const PROFILE_PHOTO_KEY = 'admin_profile_photo'
 const MAX_PROFILE_PHOTO_SIZE = 1.5 * 1024 * 1024
 const CUSTOMER_LABEL_OPTIONS = ['Cliente', 'Paciente', 'Proyecto', 'Miembro', 'Alumno']
@@ -550,7 +550,7 @@ export const AccountSettings: React.FC = () => {
 
     try {
       const token = localStorage.getItem('auth_token')
-      const response = await fetch(`${API_URL}/api/auth/change-username`, {
+      const response = await fetch(apiUrl('/api/auth/change-username'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -616,7 +616,7 @@ export const AccountSettings: React.FC = () => {
 
     try {
       const token = localStorage.getItem('auth_token')
-      const response = await fetch(`${API_URL}/api/auth/change-password`, {
+      const response = await fetch(apiUrl('/api/auth/change-password'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

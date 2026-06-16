@@ -273,7 +273,6 @@ export interface ConversationalAgentLiveCache {
 export const CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT = 'ristak-conversational-agent-live-cache'
 
 const LIVE_CACHE_KEY = 'ristak_conversational_agent_live_cache_v1'
-const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 const VALID_CONVERSATIONAL_SUCCESS_ACTIONS = new Set<ConversationalSuccessAction>([
   'book_appointment',
   'ready_for_human',
@@ -423,7 +422,7 @@ function getAuthHeaders(): HeadersInit {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}/api/conversational-agent${endpoint}`, {
+  const response = await fetch(apiUrl(`/api/conversational-agent${endpoint}`), {
     ...options,
     headers: {
       ...getAuthHeaders(),
@@ -556,3 +555,4 @@ export const conversationalAgentService = {
     return request<ConversationalAgentEvent[]>(`/events${query ? `?${query}` : ''}`)
   }
 }
+import { apiUrl } from './apiBaseUrl'

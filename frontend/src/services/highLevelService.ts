@@ -1,4 +1,5 @@
 // Servicio de GoHighLevel para manejar configuración
+import { apiUrl } from './apiBaseUrl'
 
 // Evento que avisa al AppShell que se inició una sincronización manual,
 // para mostrar la barra de progreso sin sondear continuamente el backend.
@@ -99,7 +100,7 @@ class HighLevelService {
   // Obtener configuración actual
   async getConfig(): Promise<HighLevelConfig> {
     try {
-      const response = await fetch('/api/highlevel/config')
+      const response = await fetch(apiUrl('/api/highlevel/config'))
       const data = await response.json()
       return data
     } catch (error) {
@@ -120,7 +121,7 @@ class HighLevelService {
         apiToken: config.apiToken.trim().replace(/[\r\n\t]/g, '')
       }
 
-      const response = await fetch('/api/highlevel/config', {
+      const response = await fetch(apiUrl('/api/highlevel/config'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -171,7 +172,7 @@ class HighLevelService {
         apiToken: configToTest.apiToken.trim().replace(/[\r\n\t]/g, '')
       }
 
-      const response = await fetch('/api/highlevel/test', {
+      const response = await fetch(apiUrl('/api/highlevel/test'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -188,7 +189,7 @@ class HighLevelService {
   // Obtener valor real de API token
   async revealToken(): Promise<string> {
     try {
-      const response = await fetch('/api/highlevel/config/reveal/api_token')
+      const response = await fetch(apiUrl('/api/highlevel/config/reveal/api_token'))
       const data = await response.json()
 
       if (data.success) {
@@ -204,7 +205,7 @@ class HighLevelService {
   // Desconectar cuenta (limpiar configuración)
   async disconnect(): Promise<any> {
     try {
-      const response = await fetch('/api/highlevel/config', {
+      const response = await fetch(apiUrl('/api/highlevel/config'), {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json'
@@ -220,7 +221,7 @@ class HighLevelService {
   // Sincronizar custom values con webhooks
   async syncCustomValues(subaccountId: string): Promise<any> {
     try {
-      const response = await fetch('/api/highlevel/sync-custom-values', {
+      const response = await fetch(apiUrl('/api/highlevel/sync-custom-values'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -237,7 +238,7 @@ class HighLevelService {
   // Sincronizar contactos de GHL a DB
   async syncContacts(): Promise<any> {
     try {
-      const response = await fetch('/api/highlevel/sync-contacts', {
+      const response = await fetch(apiUrl('/api/highlevel/sync-contacts'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -253,7 +254,7 @@ class HighLevelService {
   // Refrescar datos del location desde HighLevel
   async refreshLocationData(): Promise<any> {
     try {
-      const response = await fetch('/api/highlevel/refresh-location', {
+      const response = await fetch(apiUrl('/api/highlevel/refresh-location'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -269,7 +270,7 @@ class HighLevelService {
   // Sincronizar datos completos desde HighLevel (contactos, pagos, citas)
   async syncAllData(): Promise<any> {
     try {
-      const response = await fetch('/api/highlevel/sync', {
+      const response = await fetch(apiUrl('/api/highlevel/sync'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -289,7 +290,7 @@ class HighLevelService {
   // Obtener progreso de sincronización
   async getSyncProgress(): Promise<any> {
     try {
-      const response = await fetch('/api/highlevel/sync/progress')
+      const response = await fetch(apiUrl('/api/highlevel/sync/progress'))
       return await response.json()
     } catch (error) {
       // TODO: Implement proper logging service
@@ -300,7 +301,7 @@ class HighLevelService {
   // Enviar invoice por email, SMS/WhatsApp, o ambos
   async sendInvoice(invoiceId: string, sendMethod: 'email' | 'sms' | 'both' | 'none' = 'email'): Promise<any> {
     try {
-      const response = await fetch(`/api/highlevel/invoices/${invoiceId}/send`, {
+      const response = await fetch(apiUrl(`/api/highlevel/invoices/${invoiceId}/send`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -322,7 +323,7 @@ class HighLevelService {
   // Enviar link de pago rápido por SMS/WhatsApp (Text2Pay)
   async text2Pay(contactId: string, amount: number, currency: string, message?: string): Promise<any> {
     try {
-      const response = await fetch('/api/highlevel/text2pay', {
+      const response = await fetch(apiUrl('/api/highlevel/text2pay'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -347,7 +348,7 @@ class HighLevelService {
   }
 
   async sendConversationMessage(payload: HighLevelConversationMessagePayload): Promise<HighLevelConversationMessageResponse> {
-    const response = await fetch('/api/highlevel/conversations/messages', {
+    const response = await fetch(apiUrl('/api/highlevel/conversations/messages'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

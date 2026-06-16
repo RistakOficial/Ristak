@@ -138,6 +138,7 @@ import { aiAgentService } from '@/services/aiAgentService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
 import mediaService, { type MediaAsset } from '@/services/mediaService'
+import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import {
   customFieldsService,
   isSystemCustomFieldDefinition,
@@ -17858,8 +17859,7 @@ function getMediaPickerAssetUrl(asset: MediaAsset, variant: 'file' | 'thumbnail'
   if (asset.publicUrl) return asset.publicUrl
 
   const path = `/api/media/assets/${encodeURIComponent(asset.id)}/${variant}`
-  const baseUrl = import.meta.env.VITE_API_URL || ''
-  return `${baseUrl}${path}`
+  return `${getApiBaseUrl()}${path}`
 }
 
 const SitesMediaPickerModal: React.FC<{

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiUrl } from '@/services/apiBaseUrl'
 
 // La versión la hornea el workflow de GitHub en la imagen Docker (APP_VERSION)
 // y el backend la expone en /api/health. Se cachea a nivel de módulo: solo se
@@ -6,11 +7,9 @@ import { useEffect, useState } from 'react'
 let cachedVersion: string | null = null
 let pending: Promise<string | null> | null = null
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || ''
-
 async function fetchVersion(): Promise<string | null> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/health`)
+    const response = await fetch(apiUrl('/api/health'))
     if (!response.ok) return null
     const data = await response.json()
     const version = typeof data?.version === 'string' ? data.version : null

@@ -3,9 +3,8 @@ import { BookOpen, CheckCircle, Copy, ExternalLink, FileText, KeyRound, RefreshC
 import { Button, Card } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
+import { apiUrl, getApiBaseUrl } from '@/services/apiBaseUrl'
 import styles from './Settings.module.css'
-
-const API_URL = import.meta.env.VITE_API_URL || ''
 
 interface ApiTokenMetadata {
   hasToken: boolean
@@ -34,7 +33,7 @@ export const APIAccessSettings: React.FC = () => {
   const [isRevokingApiToken, setIsRevokingApiToken] = useState(false)
   const [activeSection, setActiveSection] = useState<DeveloperSection>('credentials')
 
-  const origin = (API_URL || window.location.origin).replace(/\/+$/, '')
+  const origin = (getApiBaseUrl() || window.location.origin).replace(/\/+$/, '')
   const externalApiBaseUrl = `${origin}/api/external`
   const mcpServerUrl = `${origin}/api/mcp`
   const webhookEndpoints: WebhookEndpoint[] = [
@@ -131,7 +130,7 @@ export const APIAccessSettings: React.FC = () => {
   const loadApiToken = async () => {
     setIsLoadingApiToken(true)
     try {
-      const response = await fetch(`${API_URL}/api/api-access`, {
+      const response = await fetch(apiUrl('/api/api-access'), {
         headers: authHeaders()
       })
       const data = await response.json()
@@ -156,7 +155,7 @@ export const APIAccessSettings: React.FC = () => {
     setIsRotatingApiToken(true)
 
     try {
-      const response = await fetch(`${API_URL}/api/api-access/token/rotate`, {
+      const response = await fetch(apiUrl('/api/api-access/token/rotate'), {
         method: 'POST',
         headers: authHeaders()
       })
@@ -213,7 +212,7 @@ export const APIAccessSettings: React.FC = () => {
     setIsRevokingApiToken(true)
 
     try {
-      const response = await fetch(`${API_URL}/api/api-access/token`, {
+      const response = await fetch(apiUrl('/api/api-access/token'), {
         method: 'DELETE',
         headers: authHeaders()
       })

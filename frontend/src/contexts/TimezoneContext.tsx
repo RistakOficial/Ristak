@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { apiUrl } from '@/services/apiBaseUrl'
 import { convertUTCToLocal, convertLocalToUTC, formatInTimezone, ensureUTC } from '@/utils/timezone'
 
 // Nombres de meses en español (formato corto)
@@ -25,8 +26,6 @@ export const useTimezone = () => {
   return context
 }
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
-
 export const TimezoneProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Default to México City timezone
   const [timezone, setTimezone] = useState<string>(() => {
@@ -38,8 +37,7 @@ export const TimezoneProvider: React.FC<{ children: ReactNode }> = ({ children }
   useEffect(() => {
     const fetchTimezoneFromGHL = async () => {
       try {
-        const endpoint = API_BASE_URL ? `${API_BASE_URL}/api/settings/timezone` : '/api/settings/timezone'
-        const response = await fetch(endpoint)
+        const response = await fetch(apiUrl('/api/settings/timezone'))
         const data = await response.json()
 
         if (data.success && data.timezone) {
@@ -61,8 +59,7 @@ export const TimezoneProvider: React.FC<{ children: ReactNode }> = ({ children }
   // Persiste la zona horaria elegida en Ristak (fuente de verdad sobre HighLevel).
   // Pasar null limpia el override y vuelve a usar HighLevel/default.
   const updateTimezone = async (tz: string | null): Promise<string> => {
-    const endpoint = API_BASE_URL ? `${API_BASE_URL}/api/settings/timezone` : '/api/settings/timezone'
-    const response = await fetch(endpoint, {
+    const response = await fetch(apiUrl('/api/settings/timezone'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ timezone: tz })

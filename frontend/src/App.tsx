@@ -39,6 +39,7 @@ import { Modal } from '@/components/common/Modal'
 import { StorageAlert } from '@/components/common/StorageAlert'
 import { AppStartupLoader } from '@/components/common/AppStartupLoader'
 import { MobileNotificationOnboarding } from '@/components/phone/MobileNotificationOnboarding'
+import { MobileTenantSetup } from '@/components/phone/MobileTenantSetup'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { mobileAppService } from '@/services/mobileAppService'
 import {
@@ -603,6 +604,7 @@ const AppWithNotifications: React.FC = () => {
           <Route path="/license-blocked" element={<LicenseBlocked />} />
           <Route path="/sso" element={<Sso />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/phone/tenant" element={<MobileTenantSetup />} />
           <Route path="/phone/login" element={<Login />} />
           <Route
             path="/phone"

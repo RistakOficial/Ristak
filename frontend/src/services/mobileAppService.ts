@@ -8,6 +8,7 @@ import { Keyboard, KeyboardResize } from '@capacitor/keyboard'
 import { PushNotifications, type ActionPerformed, type Token } from '@capacitor/push-notifications'
 import { SplashScreen } from '@capacitor/splash-screen'
 import { StatusBar, Style } from '@capacitor/status-bar'
+import { hasRuntimeApiBaseUrl } from './apiBaseUrl'
 import apiClient from './apiClient'
 import type { PushSubscriptionResult } from './pushNotificationsService'
 
@@ -19,9 +20,11 @@ type MobileShellTheme = 'light' | 'dark'
 export const MOBILE_APP_NOTIFICATION_EVENT = 'ristak:mobile-notification'
 const IOS_PHONE_CHAT_HOME_PATH = '/phone/chat'
 const IOS_PHONE_CHAT_LOGIN_PATH = '/phone/login'
+const IOS_PHONE_TENANT_PATH = '/phone/tenant'
 const IOS_PHONE_CHAT_ALLOWED_PATHS = new Set([
   IOS_PHONE_CHAT_HOME_PATH,
   IOS_PHONE_CHAT_LOGIN_PATH,
+  IOS_PHONE_TENANT_PATH,
   '/setup',
   '/sso',
   '/license-blocked'
@@ -78,6 +81,9 @@ function getPathname(value: string) {
 
 function getIosPhoneChatRedirectPath(pathname = typeof window !== 'undefined' ? window.location.pathname : '') {
   if (!isIosPhoneChatShell()) return ''
+  if (!hasRuntimeApiBaseUrl()) {
+    return pathname === IOS_PHONE_TENANT_PATH ? '' : IOS_PHONE_TENANT_PATH
+  }
   if (IOS_PHONE_CHAT_ALLOWED_PATHS.has(pathname)) return ''
   if (pathname === '/login') return IOS_PHONE_CHAT_LOGIN_PATH
   return IOS_PHONE_CHAT_HOME_PATH

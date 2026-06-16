@@ -1,6 +1,7 @@
 import type { Contact as ContactType, ContactCustomFieldDefinition } from '@/types'
 import { dedupeContacts } from '@/utils/contactDedup'
 import { formatName } from '@/utils/format'
+import { apiUrl } from './apiBaseUrl'
 import apiClient from './apiClient'
 
 export type Contact = ContactType
@@ -111,7 +112,7 @@ const requestContactsPage = async ({
   if (startDate) params.append('startDate', startDate)
   if (endDate) params.append('endDate', endDate)
 
-  const url = `${import.meta.env.VITE_API_URL || ''}/api/contacts?${params.toString()}`
+  const url = apiUrl(`/api/contacts?${params.toString()}`)
   const response = await fetch(url, {
     headers: getAuthHeaders(),
     signal

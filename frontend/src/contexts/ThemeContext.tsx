@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
+import { apiUrl } from '@/services/apiBaseUrl'
 import { themes, sharedTokens } from '@/theme/tokens'
 
 type ThemeMode = 'light' | 'dark'
@@ -158,7 +159,7 @@ const clearLegacyThemeStorage = () => {
 }
 
 const saveAppConfig = async (key: string, value: string) => {
-  const response = await fetch('/api/config', {
+  const response = await fetch(apiUrl('/api/config'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key, value })
@@ -170,7 +171,7 @@ const saveAppConfig = async (key: string, value: string) => {
 }
 
 const deleteAppConfig = async (key: string) => {
-  const response = await fetch(`/api/config?keys=${encodeURIComponent(key)}`, {
+  const response = await fetch(apiUrl(`/api/config?keys=${encodeURIComponent(key)}`), {
     method: 'DELETE'
   })
 
@@ -222,7 +223,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const syncThemeConfig = async () => {
       try {
-        const response = await fetch(`/api/config?keys=${THEME_COLOR_CONFIG_KEY},${THEME_STYLE_CONFIG_KEY}`)
+        const response = await fetch(apiUrl(`/api/config?keys=${THEME_COLOR_CONFIG_KEY},${THEME_STYLE_CONFIG_KEY}`))
 
         if (!response.ok) {
           throw new Error('Failed to fetch theme config')

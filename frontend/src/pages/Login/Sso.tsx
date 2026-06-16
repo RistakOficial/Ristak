@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { apiUrl } from '@/services/apiBaseUrl'
 import { getLoginPathForRoute, isPhoneAppPath, sanitizeAuthRedirectPath } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
-
-const API_URL = import.meta.env.VITE_API_URL || ''
 
 /**
  * Entrada directa desde el portal central: /sso?token=...
@@ -30,7 +29,7 @@ export const Sso: React.FC = () => {
       }
 
       try {
-        const response = await fetch(`${API_URL}/api/auth/sso`, {
+        const response = await fetch(apiUrl('/api/auth/sso'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token })

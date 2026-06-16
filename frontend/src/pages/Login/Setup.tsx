@@ -3,11 +3,10 @@ import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-route
 import { Lock, Mail, User, UserPlus } from 'lucide-react'
 import { Button } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
+import { apiUrl } from '@/services/apiBaseUrl'
 import { getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { getLoginPathForRoute, getPostAuthRedirectPath, sanitizeAuthRedirectPath, type RedirectLocation } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
-
-const API_URL = import.meta.env.VITE_API_URL || ''
 
 type SetupLocationState = {
   from?: RedirectLocation
@@ -57,7 +56,7 @@ export const Setup: React.FC = () => {
   useEffect(() => {
     const checkToken = async () => {
       try {
-        const setupRes = await fetch(`${API_URL}/api/auth/setup`)
+        const setupRes = await fetch(apiUrl('/api/auth/setup'))
         const setupData = await setupRes.json()
         const requiresToken = !!setupData.requiresToken
 
@@ -77,7 +76,7 @@ export const Setup: React.FC = () => {
           return
         }
 
-        const infoRes = await fetch(`${API_URL}/api/auth/setup-info?token=${encodeURIComponent(setupToken)}`)
+        const infoRes = await fetch(apiUrl(`/api/auth/setup-info?token=${encodeURIComponent(setupToken)}`))
         const infoData = await infoRes.json()
 
         if (infoRes.ok && infoData.success) {

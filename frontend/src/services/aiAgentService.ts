@@ -1,3 +1,5 @@
+import { apiUrl } from './apiBaseUrl'
+
 export type AIAgentRole = 'user' | 'assistant'
 export type AIAgentResponseStyle = 'direct' | 'balanced' | 'advisor'
 export type AIAgentRecommendationMode = 'on_request' | 'when_useful' | 'proactive'
@@ -214,8 +216,6 @@ type AIAgentRequestOptions = {
 
 export const AI_AGENT_RECONNECT_REQUIRED_CODE = 'OPENAI_CREDENTIAL_RECONNECT_REQUIRED'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || ''
-
 function getAuthHeaders(includeContentType = true): HeadersInit {
   const token = localStorage.getItem('auth_token')
 
@@ -226,7 +226,7 @@ function getAuthHeaders(includeContentType = true): HeadersInit {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}/api/ai-agent${endpoint}`, {
+  const response = await fetch(apiUrl(`/api/ai-agent${endpoint}`), {
     ...options,
     headers: {
       ...getAuthHeaders(),
@@ -302,7 +302,7 @@ export const aiAgentService = {
   },
 
   async transcribeVoice(audioBlob: Blob): Promise<AIAgentTranscriptionResult> {
-    const response = await fetch(`${API_BASE_URL}/api/ai-agent/transcribe`, {
+    const response = await fetch(apiUrl('/api/ai-agent/transcribe'), {
       method: 'POST',
       headers: {
         ...getAuthHeaders(false),

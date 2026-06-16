@@ -36,6 +36,7 @@ import {
   TabList
 } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
+import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import mediaService, { type MediaAsset, type MediaDownloadEntry, type MediaMoveEntry, type StorageUsage } from '@/services/mediaService'
 import styles from './MediaSettings.module.css'
 
@@ -75,7 +76,6 @@ interface MarqueeSelectionState {
   currentY: number
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 const STORAGE_GB = 1024 * 1024 * 1024
 const FILE_SELECTION_PREFIX = 'file:'
 const FOLDER_SELECTION_PREFIX = 'folder:'
@@ -292,7 +292,8 @@ function buildAllFolderSummaries(files: ExplorerFile[]): FolderSummary[] {
 
 function buildFileUrl(asset: MediaAsset, variant: 'file' | 'thumbnail' = 'file') {
   const path = `/api/media/assets/${encodeURIComponent(asset.id)}/${variant}`
-  if (API_BASE_URL) return `${API_BASE_URL}${path}`
+  const apiBaseUrl = getApiBaseUrl()
+  if (apiBaseUrl) return `${apiBaseUrl}${path}`
   return path
 }
 

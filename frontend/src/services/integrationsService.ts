@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || ''
+import { apiUrl } from './apiBaseUrl'
 
 export interface HighLevelStatus {
   configured: boolean
@@ -54,7 +54,7 @@ export function getIntegrationsStatus(options: { forceRefresh?: boolean } = {}):
     return statusCache.promise
   }
 
-  const promise = fetch(`${API_URL}/api/integrations/status`)
+  const promise = fetch(apiUrl('/api/integrations/status'))
     .then(async response => {
       if (!response.ok) {
         throw new Error('No se pudo obtener el estado de integraciones')
