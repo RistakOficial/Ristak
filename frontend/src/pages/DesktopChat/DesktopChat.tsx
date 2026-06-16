@@ -22,7 +22,7 @@ import {
   Video,
   X
 } from 'lucide-react'
-import { AppointmentModal, Badge, Button, CustomSelect, PageContainer, PageHeader, RecordPaymentModal } from '@/components/common'
+import { AppointmentModal, Button, CustomSelect, PageContainer, PageHeader, RecordPaymentModal } from '@/components/common'
 import { RistakRobot } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -978,6 +978,11 @@ export const DesktopChat: React.FC = () => {
         eyebrow="Bandeja"
         title="Chat"
         subtitle="Responde conversaciones, agenda citas y revisa la información del contacto sin salir de la pantalla."
+        actions={
+          <div className={styles.headerAiRobot} aria-label="Agente AI">
+            <RistakRobot size={58} thinking />
+          </div>
+        }
       />
 
       <section className={styles.chatShell} data-desktop-chat-page>
@@ -987,12 +992,12 @@ export const DesktopChat: React.FC = () => {
               <h2>Conversaciones</h2>
               <p>{filteredChats.length} de {chats.length} visibles</p>
             </div>
-            {activeAdvancedFilterCount > 0 ? <Badge variant="info">{activeAdvancedFilterCount} filtros</Badge> : <Badge variant="default">Bandeja</Badge>}
           </div>
 
           <label className={styles.searchBox}>
             <Search size={16} />
             <input
+              data-ristak-unstyled
               value={chatQuery}
               onChange={(event) => setChatQuery(event.target.value)}
               onKeyDown={(event) => {
