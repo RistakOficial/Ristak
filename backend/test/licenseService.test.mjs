@@ -65,6 +65,24 @@ function startMockServer() {
           return
         }
 
+        if (req.url === '/api/auth/google/start') {
+          res.end(JSON.stringify({
+            url: 'https://central.ristak.test/oauth/google',
+            mode: lastRequestBody?.mode || 'login',
+            redirect_uri: 'https://central.ristak.test/auth/google/callback'
+          }))
+          return
+        }
+
+        if (req.url === '/api/license/google-calendar/connect-url') {
+          res.end(JSON.stringify({
+            url: 'https://central.ristak.test/oauth/google-calendar',
+            mode: 'calendar',
+            redirect_uri: 'https://central.ristak.test/google-calendar/callback'
+          }))
+          return
+        }
+
         if (req.url === '/api/setup-token/verify' || req.url === '/api/setup-token/consume') {
           const { token } = lastRequestBody || {}
           if (token === 'good-token') {
@@ -111,6 +129,7 @@ before(async () => {
 })
 
 after(() => {
+  licenseService?.setVerifiedAppBaseUrlResolverForTests()
   // Cierra también las conexiones keep-alive abiertas por fetch (undici),
   // si no el proceso del test runner queda vivo hasta su timeout.
   server?.closeAllConnections?.()
@@ -123,6 +142,7 @@ beforeEach(() => {
   lastRequestBody = null
   configureManagedInstall()
   licenseService.resetLicenseCache()
+  licenseService.setVerifiedAppBaseUrlResolverForTests(async () => '')
 })
 
 test('sin LICENSE_SERVER_URL la licencia no se exige (modo standalone/desarrollo)', async () => {
@@ -153,6 +173,32 @@ test('licencia activa permite el acceso y entrega features', async () => {
   assert.equal(lastRequestBody.email, 'dueno@clinica.com')
   assert.equal(lastRequestBody.app_url, 'https://demo.onrender.com')
   assert.equal(lastRequestBody.version, '1.2.3')
+})
+
+test('dominio de app verificado reemplaza app_url enviado al portal central', async () => {
+  licenseService.setVerifiedAppBaseUrlResolverForTests(async () => 'https://app.ristak.test')
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.allowed, true)
+  assert.equal(lastRequestBody.app_url, 'https://app.ristak.test')
+})
+
+test('dominio de app verificado se usa al crear links centrales de Google', async () => {
+  licenseService.setVerifiedAppBaseUrlResolverForTests(async () => 'https://app.ristak.test')
+
+  const login = await licenseService.createCentralGoogleLoginUrl({ returnPath: '/dashboard' })
+
+  assert.equal(login.url, 'https://central.ristak.test/oauth/google')
+  assert.equal(lastRequestBody.mode, 'login')
+  assert.equal(lastRequestBody.return_path, '/dashboard')
+  assert.equal(lastRequestBody.app_url, 'https://app.ristak.test')
+
+  const calendar = await licenseService.createCentralGoogleCalendarConnectUrl({ returnPath: '/settings/calendars/google' })
+
+  assert.equal(calendar.url, 'https://central.ristak.test/oauth/google-calendar')
+  assert.equal(lastRequestBody.return_path, '/settings/calendars/google')
+  assert.equal(lastRequestBody.app_url, 'https://app.ristak.test')
 })
 
 test('licencia suspendida bloquea aunque el password local sea correcto', async () => {

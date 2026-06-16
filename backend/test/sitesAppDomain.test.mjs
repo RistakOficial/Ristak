@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import { getAppConfig, setAppConfig } from '../src/config/database.js'
 import {
+  getVerifiedAppBaseUrl,
   getSitesDomainSettings,
   isAppSubdomainHost,
   refreshSitesAppDomain,
@@ -50,6 +51,7 @@ test('verified app subdomain resolves as CRM domain', async () => {
     const settings = await getSitesDomainSettings()
     assert.equal(settings.appDomain, 'app.ristak.test')
     assert.equal(settings.appDomainVerified, true)
+    assert.equal(await getVerifiedAppBaseUrl(), 'https://app.ristak.test')
 
     const resolution = await resolveConnectedAppDomainForHost('app.ristak.test')
     assert.equal(resolution.ok, true)
@@ -58,6 +60,9 @@ test('verified app subdomain resolves as CRM domain', async () => {
     const unrelatedResolution = await resolveConnectedAppDomainForHost('crm.ristak.test')
     assert.equal(unrelatedResolution.ok, false)
     assert.equal(unrelatedResolution.reason, 'domain_not_configured')
+
+    await setAppConfig(APP_DOMAIN_KEYS.verified, '0')
+    assert.equal(await getVerifiedAppBaseUrl(), '')
   } finally {
     await restoreAppDomainConfig(previousConfig)
   }

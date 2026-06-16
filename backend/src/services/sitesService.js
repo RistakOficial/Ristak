@@ -9362,6 +9362,15 @@ export async function getSitesDomainSettings({
   }
 }
 
+export async function getVerifiedAppBaseUrl() {
+  const config = await getSitesAppDomainConfig()
+  if (!config.domain || !config.renderDomainVerified || !isAppSubdomainHost(config.domain)) {
+    return ''
+  }
+
+  return `https://${config.domain}`
+}
+
 /**
  * Quita el dominio público de la cuenta. Las páginas siguen existiendo y
  * vuelven a servirse solo desde el host por defecto de la app.
