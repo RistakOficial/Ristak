@@ -193,6 +193,7 @@ export interface ConversationalAgentDef {
   defaultCalendarId: string | null
   closingStrategyMode: ClosingStrategyMode
   closingStrategyCustom: string
+  systemClosingStrategy?: string
   responseDelay: AgentResponseDelayConfig
   replyDelivery: AgentReplyDeliveryConfig
   goalWorkflow: AgentGoalWorkflowConfig
@@ -201,7 +202,7 @@ export interface ConversationalAgentDef {
   updatedAt: string | null
 }
 
-export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, 'id' | 'createdAt' | 'updatedAt'>>
+export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, 'id' | 'createdAt' | 'updatedAt' | 'systemClosingStrategy'>>
 
 export interface ConversationAgentState {
   contactId: string

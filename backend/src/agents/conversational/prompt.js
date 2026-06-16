@@ -11,6 +11,23 @@ const OBJECTIVE_TEXTS = {
   filtrar: 'filtrar curiosos y detectar prospectos con intención real',
 }
 
+export const CLOSING_CHANNEL_LABELS = {
+  whatsapp: 'WhatsApp',
+  instagram: 'Instagram',
+  messenger: 'Messenger',
+  webchat: 'Chat web',
+  sms: 'SMS',
+  email: 'Email'
+}
+
+export const CLOSING_OBJECTIVE_FINAL_TEXTS = {
+  citas: 'agendar una cita',
+  ventas: 'comprar',
+  datos: 'compartir los datos clave',
+  filtrar: 'confirmar si tiene intencion real',
+  custom: 'avanzar al siguiente paso definido por el negocio'
+}
+
 const SUCCESS_ACTION_TEXTS = {
   ready_for_human: `Cuando la persona esté lista para avanzar:
 - Ejecuta mark_ready_to_advance con el resumen de la conversación.
@@ -967,7 +984,116 @@ function cleanTemplateValue(value, fallback = '') {
   return clean || fallback
 }
 
-export function renderClosingStrategyTemplate(template, parameters = {}) {
+function firstClosingText(...values) {
+  return values.map((value) => cleanTemplateValue(value)).find(Boolean) || ''
+}
+
+export function getClosingChannelLabel(channel = 'whatsapp') {
+  const normalized = String(channel || '').toLowerCase()
+  return CLOSING_CHANNEL_LABELS[normalized] || cleanTemplateValue(channel) || 'WhatsApp'
+}
+
+export function describeClosingObjectiveFinal(config = {}) {
+  if (config.objective === 'custom' && config.customObjective) return cleanTemplateValue(config.customObjective)
+  return CLOSING_OBJECTIVE_FINAL_TEXTS[config.objective] || CLOSING_OBJECTIVE_FINAL_TEXTS.citas
+}
+
+export function resolveClosingAdvanceToolName(config = {}) {
+  return 'mark_ready_to_advance'
+}
+
+export function buildClosingStrategyTemplateParameters({
+  profileParameters = {},
+  adaptationParameters = null,
+  config = {},
+  businessName = '',
+  industry = '',
+  offering = '',
+  personType = 'prospecto',
+  channelLabel = 'WhatsApp',
+  businessInfo = '',
+  value = '',
+  location = '',
+  availability = '',
+  conditions = '',
+  advanceToolName = '',
+  discardToolName = 'discard_conversation',
+  learned = {},
+  contact = null,
+  tagNames = [],
+  arrivalSource = ''
+} = {}) {
+  const adaptation = adaptationParameters || profileParameters || {}
+  const finalBusinessName = firstClosingText(profileParameters.NOMBRE_DEL_NEGOCIO, profileParameters.ESCRIBIR_NOMBRE_DEL_NEGOCIO, businessName, 'este negocio')
+  const finalIndustry = firstClosingText(profileParameters.INDUSTRIA, profileParameters.ESCRIBIR_INDUSTRIA, industry, 'industria no especificada')
+  const finalOffering = firstClosingText(profileParameters.PRODUCTO_O_SERVICIO, profileParameters.ESCRIBIR_PRODUCTO_O_SERVICIO, offering, 'los productos o servicios del negocio')
+  const finalBusinessInfo = firstClosingText(profileParameters.INFO_GENERAL_DEL_NEGOCIO, profileParameters.PEGAR_INFO_DEL_NEGOCIO, businessInfo, finalOffering)
+  const finalValue = firstClosingText(profileParameters.VALOR, profileParameters.VALOR_DEL_PRODUCTO_O_SERVICIO, value, 'consulta datos reales antes de hablar de valor')
+  const finalLocation = firstClosingText(profileParameters.UBICACION_O_MODALIDAD, profileParameters.PRESENCIAL_ONLINE_AMBAS_UBICACION, profileParameters.MODALIDAD, profileParameters.UBICACION, location, 'modalidad no especificada; consulta datos reales si hace falta')
+  const finalAvailability = firstClosingText(profileParameters.DISPONIBILIDAD, availability, 'consulta disponibilidad real antes de prometer horarios')
+  const finalConditions = firstClosingText(profileParameters.CONDICIONES_IMPORTANTES, profileParameters.CONDICIONES_DEL_NEGOCIO, conditions, 'sin condiciones adicionales configuradas')
+  const finalChannel = firstClosingText(channelLabel, 'WhatsApp')
+  const finalPersonType = firstClosingText(personType, 'prospecto')
+  const objectiveFinal = describeClosingObjectiveFinal(config)
+  const finalAdvanceTool = firstClosingText(advanceToolName, resolveClosingAdvanceToolName(config))
+  const finalDiscardTool = firstClosingText(discardToolName, 'discard_conversation')
+  const learnedContext = learned && typeof learned === 'object' ? learned : {}
+  const contactContext = contact && typeof contact === 'object' ? contact : {}
+  const tags = Array.isArray(tagNames) ? tagNames.map((tag) => cleanTemplateValue(tag)).filter(Boolean) : []
+
+  return {
+    ...profileParameters,
+    NOMBRE_DEL_NEGOCIO: finalBusinessName,
+    ESCRIBIR_NOMBRE_DEL_NEGOCIO: finalBusinessName,
+    INDUSTRIA: finalIndustry,
+    ESCRIBIR_INDUSTRIA: finalIndustry,
+    PRODUCTO_O_SERVICIO: finalOffering,
+    ESCRIBIR_PRODUCTO_O_SERVICIO: finalOffering,
+    TIPO_DE_PERSONA: finalPersonType,
+    ESCRIBIR_TIPO_DE_CLIENTE: finalPersonType,
+    OBJETIVO_FINAL: objectiveFinal,
+    ESCRIBIR_OBJETIVO_FINAL: objectiveFinal,
+    CANAL_DE_CONVERSACION: finalChannel,
+    WHATSAPP_INSTAGRAM_MESSENGER_CHAT_WEB_SMS: finalChannel,
+    HERRAMIENTA_INTERNA_DE_AVANCE: finalAdvanceTool,
+    ESCRIBIR_TOOL_DE_AVANCE: finalAdvanceTool,
+    HERRAMIENTA_INTERNA_DE_DESCARTE: finalDiscardTool,
+    ESCRIBIR_TOOL_DE_DESCARTE: finalDiscardTool,
+    INFO_GENERAL_DEL_NEGOCIO: finalBusinessInfo,
+    PEGAR_INFO_DEL_NEGOCIO: finalBusinessInfo,
+    VALOR: finalValue,
+    VALOR_DEL_PRODUCTO_O_SERVICIO: finalValue,
+    UBICACION_O_MODALIDAD: finalLocation,
+    PRESENCIAL_ONLINE_AMBAS_UBICACION: finalLocation,
+    MODALIDAD: finalLocation,
+    UBICACION: finalLocation,
+    DISPONIBILIDAD: finalAvailability,
+    CONDICIONES_IMPORTANTES: finalConditions,
+    CONDICIONES_DEL_NEGOCIO: finalConditions,
+    ORIGEN_CONTACTO: firstClosingText(arrivalSource, learnedContext.arrivalSource, contactContext.source, finalChannel),
+    ETIQUETAS_CONTACTO: tags.length ? tags.join(', ') : 'sin etiquetas registradas',
+    FECHA_REGISTRO_CONTACTO: firstClosingText(contactContext.created_at, 'no disponible'),
+    MOTIVO_DE_CONTACTO: firstClosingText(learnedContext.contactReason, 'pendiente de descubrir con una pregunta natural'),
+    POR_QUE_AHORA: firstClosingText(learnedContext.whyNow, 'pendiente de descubrir con una pregunta natural'),
+    PROBLEMA_SUPERFICIAL: firstClosingText(learnedContext.surfaceProblem, 'lo primero que la persona menciono'),
+    PROBLEMA_REAL: firstClosingText(learnedContext.realProblem, learnedContext.surfaceProblem, 'el problema real que se confirme en la conversación'),
+    CONSECUENCIA: firstClosingText(learnedContext.consequenceIfNoAction, 'la consecuencia logica segun lo que la persona ya dijo'),
+    CONSECUENCIA_LOGICA: firstClosingText(learnedContext.consequenceIfNoAction, 'la consecuencia logica segun lo que la persona ya dijo'),
+    RESULTADO_DESEADO: firstClosingText(learnedContext.desiredOutcome, 'el resultado que la persona diga que busca'),
+    OBJECION_PRINCIPAL: firstClosingText(learnedContext.objection, 'ninguna objecion clara todavia'),
+    URGENCIA_DETECTADA: firstClosingText(learnedContext.urgencyLevel, 'desconocida'),
+    CAMINO_1_CONSECUENCIA: firstClosingText(learnedContext.consequenceIfNoAction, 'seguir igual con el problema que ya conto'),
+    CAMINO_2_RESULTADO_DESEADO: firstClosingText(learnedContext.desiredOutcome, 'tomar accion hacia el resultado que busca'),
+    ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO: firstClosingText(adaptation.ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO, 'adapta la estrategia al contexto real del negocio sin sonar vendedor ni presionar'),
+    LENGUAJE_DEL_NEGOCIO: firstClosingText(adaptation.LENGUAJE_DEL_NEGOCIO, 'usa el lenguaje natural del giro del negocio y del problema que la persona describa'),
+    NARRATIVA_DE_CONTRASTE_DEL_NEGOCIO: firstClosingText(adaptation.NARRATIVA_DE_CONTRASTE_DEL_NEGOCIO, 'contrasta seguir igual contra revisar un siguiente paso claro, sin miedo inventado'),
+    PERCEPCION_DEL_CLIENTE: firstClosingText(adaptation.PERCEPCION_DEL_CLIENTE, 'la persona debe sentirse guiada, no vendida'),
+    PREGUNTAS_DE_DESCUBRIMIENTO_DEL_NEGOCIO: firstClosingText(adaptation.PREGUNTAS_DE_DESCUBRIMIENTO_DEL_NEGOCIO, 'descubre origen, motivo, urgencia, problema real y resultado deseado con preguntas naturales'),
+    RIESGO_VERBAL_A_EVITAR: firstClosingText(adaptation.RIESGO_VERBAL_A_EVITAR, 'evita lenguaje de compra, pago, oferta o presion antes de que la persona pida avanzar')
+  }
+}
+
+export function renderClosingStrategyTemplate(template, parameters = {}, options = {}) {
   const normalized = {}
   for (const [key, value] of Object.entries(parameters || {})) {
     const clean = cleanTemplateValue(value)
@@ -978,7 +1104,10 @@ export function renderClosingStrategyTemplate(template, parameters = {}) {
 
   return String(template || '').replace(/\[([^\]]+)\]/g, (match, rawKey) => {
     const key = normalizePlaceholderKey(rawKey)
-    return normalized[rawKey] || normalized[key] || match
+    const fallback = options.replaceMissing
+      ? cleanTemplateValue(options.missingFallback, 'dato pendiente de configurar')
+      : match
+    return normalized[rawKey] || normalized[key] || fallback
   })
 }
 
@@ -1170,7 +1299,9 @@ ${config.requiredData}`)
   if (customStrategy) {
     sections.push(`## Estrategia de cierre (definida por el negocio, síguela paso a paso)\n${String(config.closingStrategyCustom).trim().slice(0, 8000)}`)
   } else {
-    sections.push(renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, advancedClosingContext?.parameters || {}))
+    sections.push(renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, advancedClosingContext?.parameters || {}, {
+      replaceMissing: true
+    }))
     const businessAdaptiveSection = buildBusinessAdaptiveClosingSection(advancedClosingContext)
     if (businessAdaptiveSection) sections.push(businessAdaptiveSection)
     const closingContextSection = buildAdvancedClosingContextSection(advancedClosingContext)

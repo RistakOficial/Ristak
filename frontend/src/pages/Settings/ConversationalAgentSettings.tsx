@@ -124,7 +124,7 @@ function waitForTestReplyDelay(delayMs: number) {
 }
 
 function agentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInput {
-  const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = agent
+  const { id: _id, createdAt: _c, updatedAt: _u, systemClosingStrategy: _s, ...rest } = agent
   return rest
 }
 
@@ -248,7 +248,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
   const selectedAgentModelValue = getKnownAIModel(agent.model || DEFAULT_AI_MODEL)
   const selectedAgentModel = aiModelOptions.find((option) => option.value === selectedAgentModelValue) || aiModelOptions[0]
   const strategyIsCustom = agent.closingStrategyMode === 'custom'
-  const strategyText = strategyIsCustom ? agent.closingStrategyCustom : systemStrategy
+  const strategyText = strategyIsCustom ? agent.closingStrategyCustom : agent.systemClosingStrategy || systemStrategy
   const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
   const promptStatusText = getBusinessPromptStatusText(businessPromptStatus)
   const promptBlockerText = getBusinessPromptBlockerText(businessPromptStatus)

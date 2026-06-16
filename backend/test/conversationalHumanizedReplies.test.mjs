@@ -22,6 +22,7 @@ import {
 import {
   DEFAULT_CLOSING_STRATEGY,
   buildBusinessAdaptiveClosingSection,
+  buildClosingStrategyTemplateParameters,
   buildConversationalInstructions,
   renderClosingStrategyTemplate
 } from '../src/agents/conversational/prompt.js'
@@ -480,19 +481,32 @@ test('adapta el cierre de fabrica al lenguaje del negocio descrito', () => {
 })
 
 test('los parametros del perfil no acortan ni cambian la estrategia de fabrica', () => {
-  const parameters = buildBusinessProfilePromptParameters({
+  const profileParameters = buildBusinessProfilePromptParameters({
     businessName: 'Academia Sol',
     industry: 'escuela de idiomas',
     offerings: [{ name: 'clases de inglés para adultos', price: '$1,500 MXN mensuales' }],
     locations: [{ modality: 'online y presencial en Chihuahua' }]
   })
-  const rendered = renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, parameters)
+  const parameters = buildClosingStrategyTemplateParameters({
+    profileParameters,
+    config: { objective: 'citas', successAction: 'ready_for_human' },
+    channelLabel: 'WhatsApp',
+    businessName: 'Academia Sol',
+    industry: 'escuela de idiomas',
+    offering: 'clases de inglés para adultos',
+    personType: 'prospecto'
+  })
+  const rendered = renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, parameters, { replaceMissing: true })
 
   assert.match(rendered, /Academia Sol/)
   assert.match(rendered, /escuela de idiomas/)
   assert.match(rendered, /clases de inglés para adultos/)
+  assert.match(rendered, /dentro de una conversación por WhatsApp/)
+  assert.match(rendered, /agendar una cita/)
+  assert.match(rendered, /mark_ready_to_advance/)
   assert.match(rendered, /PRINCIPIO CENTRAL DEL AGENTE/)
   assert.match(rendered, /VARIACIÓN HUMANA OBLIGATORIA/)
+  assert.doesNotMatch(rendered, /\[[^\]]+\]/)
   assert.ok(rendered.length > 15000)
 })
 
@@ -559,6 +573,7 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
   assert.match(instructions, /Adaptación conversacional al negocio/)
   assert.match(instructions, /No pongas a la persona en modo comprador/)
   assert.doesNotMatch(instructions, /\[NOMBRE_DEL_NEGOCIO\]/)
+  assert.doesNotMatch(instructions, /\[[^\]]+\]/)
   assert.match(instructions, /No uses el mismo molde dos veces seguidas/)
   assert.match(instructions, /precisión concreta, reflejo breve, respuesta puntual o siguiente paso/)
 

@@ -25,27 +25,51 @@ import {
 import { runConversationalAgentPreview } from '../agents/conversational/runner.js'
 import {
   DEFAULT_CLOSING_STRATEGY,
+  buildClosingStrategyTemplateParameters,
   buildBusinessAdaptiveClosingSection,
   renderClosingStrategyTemplate
 } from '../agents/conversational/prompt.js'
 
-async function getBusinessPromptState() {
-  const businessProfile = await getBusinessProfileSnapshot().catch(() => null)
+function buildBusinessPromptStateFromProfile(businessProfile, agentConfig = {}) {
   const promptParameters = businessProfile?.configured
     ? buildBusinessProfilePromptParameters(businessProfile.profile, businessProfile.promptParameters)
     : {}
   const extractionStatus = businessProfile?.extractionStatus || businessProfile?.status || 'empty'
+  const statusBusinessName = businessProfile?.businessName || businessProfile?.profile?.businessName || promptParameters.NOMBRE_DEL_NEGOCIO || null
+  const statusIndustry = businessProfile?.industry || businessProfile?.profile?.industry || promptParameters.INDUSTRIA || null
+  const businessName = statusBusinessName || 'este negocio'
+  const industry = statusIndustry || 'industria no especificada'
+  const conditions = [
+    businessProfile?.paymentSummary,
+    businessProfile?.contactSummary
+  ].filter(Boolean).join(' · ')
+  const visibleParameters = buildClosingStrategyTemplateParameters({
+    profileParameters: promptParameters,
+    adaptationParameters: promptParameters,
+    config: agentConfig,
+    businessName,
+    industry,
+    offering: businessProfile?.offeringsSummary || promptParameters.PRODUCTO_O_SERVICIO,
+    personType: 'prospecto',
+    channelLabel: 'WhatsApp',
+    businessInfo: businessProfile?.summary || businessProfile?.sourceContext || promptParameters.INFO_GENERAL_DEL_NEGOCIO,
+    value: businessProfile?.pricingSummary || promptParameters.VALOR,
+    location: businessProfile?.locationSummary || promptParameters.UBICACION_O_MODALIDAD,
+    availability: promptParameters.DISPONIBILIDAD,
+    conditions: businessProfile?.importantConditions || conditions || promptParameters.CONDICIONES_IMPORTANTES
+  })
   const ready = Boolean(
     businessProfile?.configured &&
     extractionStatus === 'ready' &&
-    promptParameters.ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO
+    visibleParameters.ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO
   )
-  const adaptedStrategy = ready
-    ? [
-        renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, promptParameters),
-        buildBusinessAdaptiveClosingSection({ enabled: true, parameters: promptParameters })
-      ].filter(Boolean).join('\n\n')
-    : DEFAULT_CLOSING_STRATEGY
+  const renderedStrategy = renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, visibleParameters, {
+    replaceMissing: true
+  })
+  const adaptedStrategy = [
+    renderedStrategy,
+    ready ? buildBusinessAdaptiveClosingSection({ enabled: true, parameters: visibleParameters }) : ''
+  ].filter(Boolean).join('\n\n')
 
   return {
     systemClosingStrategy: adaptedStrategy,
@@ -54,11 +78,24 @@ async function getBusinessPromptState() {
       status: extractionStatus,
       extractionStatus,
       extractionError: businessProfile?.extractionError || null,
-      businessName: businessProfile?.businessName || businessProfile?.profile?.businessName || null,
-      industry: businessProfile?.industry || businessProfile?.profile?.industry || null,
+      businessName: statusBusinessName,
+      industry: statusIndustry,
       updatedAt: businessProfile?.updatedAt || businessProfile?.extractedAt || null,
       summary: businessProfile?.summary || null
     }
+  }
+}
+
+async function getBusinessPromptState(agentConfig = {}) {
+  const businessProfile = await getBusinessProfileSnapshot().catch(() => null)
+  return buildBusinessPromptStateFromProfile(businessProfile, agentConfig)
+}
+
+function withVisibleStrategy(agent, businessProfile) {
+  const promptState = buildBusinessPromptStateFromProfile(businessProfile, agent)
+  return {
+    ...agent,
+    systemClosingStrategy: promptState.systemClosingStrategy
   }
 }
 
@@ -76,7 +113,7 @@ async function assertBusinessPromptReady() {
 export async function getConfig(req, res) {
   try {
     const config = await getConversationalAgentConfig()
-    const promptState = await getBusinessPromptState()
+    const promptState = await getBusinessPromptState(config)
     res.json({
       success: true,
       data: {
@@ -227,8 +264,9 @@ export async function getFilterOptions(req, res) {
 
 export async function listAgents(req, res) {
   try {
+    const businessProfile = await getBusinessProfileSnapshot().catch(() => null)
     const agents = await listConversationalAgents()
-    res.json({ success: true, data: agents })
+    res.json({ success: true, data: agents.map((agent) => withVisibleStrategy(agent, businessProfile)) })
   } catch (error) {
     logger.error('Error listando agentes conversacionales:', error)
     res.status(500).json({ success: false, error: 'Error al listar los agentes conversacionales' })
@@ -250,8 +288,9 @@ export async function createAgent(req, res) {
     if (req.body?.enabled !== false) {
       await assertBusinessPromptReady()
     }
+    const businessProfile = await getBusinessProfileSnapshot().catch(() => null)
     const agent = await createConversationalAgent(req.body || {})
-    res.status(201).json({ success: true, data: agent })
+    res.status(201).json({ success: true, data: withVisibleStrategy(agent, businessProfile) })
   } catch (error) {
     logger.error('Error creando agente conversacional:', error)
     res.status(error.statusCode || 500).json({
@@ -268,8 +307,9 @@ export async function updateAgent(req, res) {
     if (req.body?.enabled === true) {
       await assertBusinessPromptReady()
     }
+    const businessProfile = await getBusinessProfileSnapshot().catch(() => null)
     const agent = await updateConversationalAgent(req.params?.agentId, req.body || {})
-    res.json({ success: true, data: agent })
+    res.json({ success: true, data: withVisibleStrategy(agent, businessProfile) })
   } catch (error) {
     logger.error('Error actualizando agente conversacional:', error)
     res.status(error.statusCode || 500).json({
