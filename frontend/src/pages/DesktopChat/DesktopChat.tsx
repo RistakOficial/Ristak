@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowUp,
+  Archive,
   Banknote,
   Bot,
   CalendarDays,
   CheckCheck,
+  ChevronLeft,
   CircleAlert,
   Clock,
   CreditCard,
@@ -157,6 +159,8 @@ const CHAT_FILTERS: Array<{ id: ChatFilter; label: string }> = [
 ]
 
 const CHAT_REQUEST_TIMEOUT_MS = 20000
+const CHAT_ARCHIVED_STATE_KEY = 'ristak_phone_chat_archived_state_v1'
+const CHAT_REFRESH_INTERVAL_MS = 20000
 const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024
 const DOCUMENT_ATTACHMENT_ACCEPT = [
@@ -262,6 +266,14 @@ const HIGHLEVEL_CHANNEL_LABELS: Record<HighLevelChatChannel, string> = {
   sms_qr: 'SMS',
   messenger: 'Messenger',
   instagram: 'Instagram'
+}
+
+const AGENT_SIGNAL_LABELS: Record<string, string> = {
+  ready_for_human: 'Listo para humano',
+  ready_to_schedule: 'Listo para agendar',
+  ready_to_buy: 'Listo para cobrar',
+  appointment_booked: 'Cita agendada',
+  discarded: 'Descartado'
 }
 
 function getContactName(contact?: Partial<Contact> | null) {
@@ -427,6 +439,31 @@ function getContactChannelMeta(contact?: DesktopChatContact | Contact | null) {
   if (channel === 'email') return { label: 'Email', Icon: Mail }
   if (origin === 'meta') return { label: 'Meta', Icon: Facebook }
   return { label: 'Origen', Icon: MessageCircle }
+}
+
+function mapAgentStatesByContactId(states: ConversationAgentState[] = []) {
+  const next: Record<string, ConversationAgentState> = {}
+  states.forEach((state) => {
+    if (state?.contactId) next[state.contactId] = state
+  })
+  return next
+}
+
+function readStoredChatIds(key: string) {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(key) || '[]')
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  } catch {
+    return []
+  }
+}
+
+function writeStoredChatIds(key: string, ids: string[]) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(key, JSON.stringify(Array.from(new Set(ids))))
 }
 
 function getContactSocialKind(contact: DesktopChatContact): AdvancedSocialFilter | '' {
@@ -998,6 +1035,8 @@ export const DesktopChat: React.FC = () => {
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedChatFilters>(DEFAULT_ADVANCED_FILTERS)
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false)
+  const [archivedViewOpen, setArchivedViewOpen] = useState(false)
+  const [archivedChatIds, setArchivedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_ARCHIVED_STATE_KEY))
   const [activeContactId, setActiveContactId] = useState<string>('')
 
   const [messages, setMessages] = useState<DesktopChatMessage[]>([])
@@ -1020,6 +1059,7 @@ export const DesktopChat: React.FC = () => {
   const [highLevelConnected, setHighLevelConnected] = useState(false)
   const [conversationAgentEnabled, setConversationAgentEnabled] = useState(false)
   const [conversationAgentState, setConversationAgentState] = useState<ConversationAgentState | null>(null)
+  const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>({})
   const [conversationAgentBusy, setConversationAgentBusy] = useState(false)
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [calendarsLoading, setCalendarsLoading] = useState(false)
@@ -1067,9 +1107,30 @@ export const DesktopChat: React.FC = () => {
   )
   const stageLabel = stageBadge?.text || labels.lead
   const activeAdvancedFilterCount = useMemo(() => countAdvancedFilters(advancedFilters), [advancedFilters])
+  const archivedChatIdSet = useMemo(() => new Set(archivedChatIds), [archivedChatIds])
+  const archivedChatCount = archivedChatIds.length
+  const agentPriorityStates = useMemo(
+    () => conversationAgentEnabled
+      ? Object.values(agentStates).filter((state) => Boolean(state.signal) && state.signal !== 'discarded')
+      : [],
+    [agentStates, conversationAgentEnabled]
+  )
+  const agentPriorityChatIdSet = useMemo(
+    () => new Set(agentPriorityStates.map((state) => state.contactId)),
+    [agentPriorityStates]
+  )
+  const listBaseChats = useMemo(
+    () => chats.filter((contact) => {
+      if (archivedViewOpen) return archivedChatIdSet.has(contact.id)
+      if (archivedChatIdSet.has(contact.id)) return false
+      if (agentPriorityChatIdSet.has(contact.id)) return false
+      return true
+    }),
+    [agentPriorityChatIdSet, archivedChatIdSet, archivedViewOpen, chats]
+  )
   const hasActiveChatFilters = Boolean(chatQuery.trim()) || chatFilter !== 'all' || activeAdvancedFilterCount > 0
   const filteredChats = useMemo(() => {
-    return chats
+    return listBaseChats
       .filter((contact) => contactMatchesQuery(contact, chatQuery))
       .filter((contact) => contactMatchesAdvancedFilters(contact, advancedFilters))
       .filter((contact) => {
@@ -1078,7 +1139,22 @@ export const DesktopChat: React.FC = () => {
         if (chatFilter === 'customers') return contact.status === 'customer'
         return true
       })
-  }, [advancedFilters, chatFilter, chatQuery, chats])
+  }, [advancedFilters, chatFilter, chatQuery, listBaseChats])
+  const agentPriorityChatRows = useMemo(() => {
+    if (archivedViewOpen || chatFilter !== 'all' || chatQuery.trim() || activeAdvancedFilterCount > 0) return []
+    return chats
+      .filter((contact) => agentPriorityChatIdSet.has(contact.id) && !archivedChatIdSet.has(contact.id))
+      .sort((left, right) => {
+        const leftState = agentStates[left.id]
+        const rightState = agentStates[right.id]
+        return Date.parse(rightState?.signalAt || right.lastMessageDate || right.createdAt) -
+          Date.parse(leftState?.signalAt || left.lastMessageDate || left.createdAt)
+      })
+  }, [activeAdvancedFilterCount, agentPriorityChatIdSet, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, chatQuery, chats])
+  const visibleChatCount = filteredChats.length + agentPriorityChatRows.length
+  const inboxSubtitle = archivedViewOpen
+    ? `${filteredChats.length} de ${archivedChatCount} archivados`
+    : `${visibleChatCount} de ${Math.max(0, chats.length - archivedChatCount)} visibles`
   const messageGroups = useMemo(() => {
     const groups: Array<{ key: string; label: string; messages: DesktopChatMessage[] }> = []
     messages.forEach((message) => {
@@ -1162,7 +1238,7 @@ export const DesktopChat: React.FC = () => {
       setChats(nextChats)
       setActiveContactId((current) => {
         if (current && nextChats.some((contact) => contact.id === current)) return current
-        return nextChats[0]?.id || ''
+        return nextChats.find((contact) => !archivedChatIdSet.has(contact.id) && !agentPriorityChatIdSet.has(contact.id))?.id || nextChats[0]?.id || ''
       })
     } catch (error: any) {
       if (controller.signal.aborted && chatsRequestRef.current !== controller) return
@@ -1178,7 +1254,7 @@ export const DesktopChat: React.FC = () => {
         setChatsLoading(false)
       }
     }
-  }, [chatQuery])
+  }, [agentPriorityChatIdSet, archivedChatIdSet, chatQuery])
 
   const loadConversation = useCallback(async (contactId: string) => {
     if (!contactId) return
@@ -1198,6 +1274,7 @@ export const DesktopChat: React.FC = () => {
       setContactJourney(journey)
       setContactInfoData(details)
       setConversationAgentState(agentState)
+      setAgentStates((current) => (agentState ? { ...current, [contactId]: agentState } : current))
       setMessages([...journeyMessages, ...scheduledBubbles].sort((left, right) => Date.parse(left.date) - Date.parse(right.date)))
       setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, unreadCount: 0 } : contact))
     } catch {
@@ -1221,9 +1298,11 @@ export const DesktopChat: React.FC = () => {
         calendarsService.getCalendars(locationId, accessToken).catch(() => []),
         conversationalAgentService.getConfig().catch(() => null)
       ])
+      const stateList = await conversationalAgentService.listStates().catch(() => [] as ConversationAgentState[])
       setWhatsappStatus(status)
       setHighLevelConnected(Boolean(highLevelConfig?.configured))
       setConversationAgentEnabled(Boolean(conversationalConfig?.enabled))
+      setAgentStates(mapAgentStatesByContactId(stateList))
       setCalendars(calendarList)
       setSelectedCalendarId((current) => current || calendarList[0]?.id || '')
     } finally {
@@ -1234,6 +1313,21 @@ export const DesktopChat: React.FC = () => {
   useEffect(() => {
     loadChats()
   }, [loadChats])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void loadChats({ silent: true })
+      void conversationalAgentService.listStates()
+        .then((states) => setAgentStates(mapAgentStatesByContactId(states)))
+        .catch(() => null)
+    }, CHAT_REFRESH_INTERVAL_MS)
+
+    return () => window.clearInterval(intervalId)
+  }, [loadChats])
+
+  useEffect(() => {
+    writeStoredChatIds(CHAT_ARCHIVED_STATE_KEY, archivedChatIds)
+  }, [archivedChatIds])
 
   useEffect(() => () => {
     chatsRequestRef.current?.abort()
@@ -1617,6 +1711,7 @@ export const DesktopChat: React.FC = () => {
       const nextAction = conversationAgentState?.status === 'active' ? 'pause' : 'activate'
       const nextState = await conversationalAgentService.updateState(activeContact.id, nextAction)
       setConversationAgentState(nextState)
+      setAgentStates((current) => ({ ...current, [activeContact.id]: nextState }))
       showToast(
         'success',
         nextState.status === 'active' ? 'Agente activo' : 'Agente pausado',
@@ -1628,6 +1723,65 @@ export const DesktopChat: React.FC = () => {
       setConversationAgentBusy(false)
     }
   }, [activeContact?.id, conversationAgentBusy, conversationAgentEnabled, conversationAgentState?.status, showToast])
+
+  const acknowledgeAgentPriorityOnOpen = useCallback((contactId: string) => {
+    const state = agentStates[contactId]
+    if (!state?.signal || state.signal === 'discarded') return
+
+    const acknowledgedAt = new Date().toISOString()
+    setAgentStates((current) => {
+      const currentState = current[contactId]
+      if (!currentState?.signal || currentState.signal === 'discarded') return current
+      return {
+        ...current,
+        [contactId]: {
+          ...currentState,
+          signal: null,
+          signalReason: null,
+          signalSummary: null,
+          signalAt: null,
+          updatedBy: 'user',
+          updatedAt: acknowledgedAt
+        }
+      }
+    })
+
+    void conversationalAgentService.updateState(contactId, 'clear_signal')
+      .then((nextState) => {
+        setAgentStates((current) => ({ ...current, [contactId]: nextState }))
+        if (contactId === activeContactId) setConversationAgentState(nextState)
+      })
+      .catch((error: any) => {
+        setAgentStates((current) => ({ ...current, [contactId]: state }))
+        showToast('error', 'Agente conversacional', error?.message || 'No se pudo quitar la prioridad del chat')
+      })
+  }, [activeContactId, agentStates, showToast])
+
+  const handleSelectChat = useCallback((contact: DesktopChatContact) => {
+    setActiveContactId(contact.id)
+    acknowledgeAgentPriorityOnOpen(contact.id)
+  }, [acknowledgeAgentPriorityOnOpen])
+
+  const handleArchiveChat = useCallback((contact: DesktopChatContact | Contact) => {
+    const alreadyArchived = archivedChatIdSet.has(contact.id)
+
+    setArchivedChatIds((current) => {
+      if (alreadyArchived) return current.filter((id) => id !== contact.id)
+      return [contact.id, ...current.filter((id) => id !== contact.id)]
+    })
+
+    if (!alreadyArchived && activeContactId === contact.id) {
+      setActiveContactId('')
+    }
+
+    showToast(
+      'success',
+      alreadyArchived ? 'Chat de vuelta' : 'Chat archivado',
+      alreadyArchived
+        ? `${getContactName(contact)} volvió a la bandeja.`
+        : `${getContactName(contact)} se movió a Archivados.`
+    )
+  }, [activeContactId, archivedChatIdSet, showToast])
 
   const openAutomationModal = useCallback(() => {
     setAutomationModalOpen(true)
@@ -1683,6 +1837,7 @@ export const DesktopChat: React.FC = () => {
     setChatQuery('')
     setChatFilter('all')
     setAdvancedFilters(DEFAULT_ADVANCED_FILTERS)
+    setArchivedViewOpen(false)
   }, [])
 
   const handleSendMessage = async (textOverride?: string) => {
@@ -1912,23 +2067,33 @@ export const DesktopChat: React.FC = () => {
     }
   }
 
-  const renderAvatar = (contact: DesktopChatContact | Contact | null, size: 'sm' | 'md' = 'md') => {
+  const renderAvatar = (
+    contact: DesktopChatContact | Contact | null,
+    size: 'sm' | 'md' = 'md',
+    options: { showChannelBadge?: boolean; showAgentBadge?: boolean } = {}
+  ) => {
     const photo = getContactProfilePhoto(contact)
     const initials = getContactInitials(contact)
+    const channelMeta = options.showChannelBadge ? getContactChannelMeta(contact) : null
+    const ChannelIcon = channelMeta?.Icon
     return (
       <span className={`${styles.avatar} ${size === 'sm' ? styles.avatarSm : ''}`}>
         {photo ? <img src={photo} alt={`Foto de ${getContactName(contact)}`} /> : initials}
-      </span>
-    )
-  }
-
-  const renderChannelBadge = (contact: DesktopChatContact | Contact | null, size: 'sm' | 'md' = 'sm') => {
-    const meta = getContactChannelMeta(contact)
-    const Icon = meta.Icon
-    return (
-      <span className={`${styles.channelBadge} ${size === 'md' ? styles.channelBadgeMd : ''}`} title={`Canal: ${meta.label}`}>
-        <Icon size={size === 'md' ? 14 : 12} />
-        <span>{meta.label}</span>
+        {channelMeta && ChannelIcon ? (
+          <span
+            className={styles.avatarChannelBadge}
+            data-chat-avatar-channel
+            title={`Canal: ${channelMeta.label}`}
+            aria-label={`Canal: ${channelMeta.label}`}
+          >
+            <ChannelIcon size={size === 'sm' ? 11 : 12} />
+          </span>
+        ) : null}
+        {options.showAgentBadge ? (
+          <span className={styles.avatarAgentBadge} title="Prioridad del agente" aria-label="Prioridad del agente">
+            <Bot size={10} />
+          </span>
+        ) : null}
       </span>
     )
   }
@@ -2069,8 +2234,8 @@ export const DesktopChat: React.FC = () => {
         <aside className={styles.inboxPanel} aria-label="Lista de chats">
           <div className={styles.inboxHeader}>
             <div>
-              <h2>Conversaciones</h2>
-              <p>{filteredChats.length} de {chats.length} visibles</p>
+              <h2>{archivedViewOpen ? 'Archivados' : 'Conversaciones'}</h2>
+              <p>{inboxSubtitle}</p>
             </div>
           </div>
 
@@ -2109,7 +2274,10 @@ export const DesktopChat: React.FC = () => {
                 key={filter.id}
                 type="button"
                 className={filter.id === chatFilter ? styles.filterActive : ''}
-                onClick={() => setChatFilter(filter.id)}
+                onClick={() => {
+                  setArchivedViewOpen(false)
+                  setChatFilter(filter.id)
+                }}
               >
                 {filter.label}
               </button>
@@ -2157,38 +2325,142 @@ export const DesktopChat: React.FC = () => {
                 <span>{chatsError}</span>
                 <Button variant="secondary" size="sm" onClick={() => { void loadChats() }}>Reintentar</Button>
               </div>
-            ) : filteredChats.length === 0 ? (
+            ) : filteredChats.length === 0 && agentPriorityChatRows.length === 0 && !archivedViewOpen && archivedChatCount === 0 ? (
               <div className={styles.emptyChatList}>
                 <MessageCircle size={22} />
-                <strong>{hasActiveChatFilters ? 'No encontré chats' : 'Todavía no hay conversaciones'}</strong>
-                <span>{hasActiveChatFilters ? 'Prueba con menos filtros o busca otro contacto.' : 'Cuando lleguen mensajes, aparecerán aquí con su canal, estado y último movimiento.'}</span>
+                <strong>{archivedViewOpen ? 'No hay chats archivados' : hasActiveChatFilters ? 'No encontré chats' : 'Todavía no hay conversaciones'}</strong>
+                <span>{archivedViewOpen ? 'Cuando archives una conversación, aparecerá en esta sección.' : hasActiveChatFilters ? 'Prueba con menos filtros o busca otro contacto.' : 'Cuando lleguen mensajes, aparecerán aquí con su canal, estado y último movimiento.'}</span>
                 {hasActiveChatFilters ? <button type="button" onClick={resetChatFilters}>Limpiar filtros</button> : null}
               </div>
-            ) : filteredChats.map((contact) => {
-              const active = contact.id === activeContactId
-              const unread = Number(contact.unreadCount || 0)
-              return (
-                <button
-                  key={contact.id}
-                  type="button"
-                  className={`${styles.chatRow} ${active ? styles.chatRowActive : ''}`}
-                  onClick={() => setActiveContactId(contact.id)}
-                >
-                  {renderAvatar(contact, 'sm')}
-                  <span className={styles.chatRowBody}>
-                    <span className={styles.chatRowTop}>
-                      <strong>{getContactName(contact)}</strong>
-                      <small>{contact.lastMessageDate ? formatMessageTime(contact.lastMessageDate) : ''}</small>
+            ) : (
+              <>
+                {!archivedViewOpen && agentPriorityChatRows.map((contact) => {
+                  const active = contact.id === activeContactId
+                  const unread = Number(contact.unreadCount || 0)
+                  const agentState = agentStates[contact.id]
+                  return (
+                    <div
+                      key={`agent-${contact.id}`}
+                      role="button"
+                      tabIndex={0}
+                      data-chat-row="agent-priority"
+                      className={`${styles.chatRow} ${styles.chatRowAgentAction} ${unread > 0 ? styles.chatRowUnread : ''} ${active ? styles.chatRowActive : ''}`}
+                      onClick={() => handleSelectChat(contact)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          handleSelectChat(contact)
+                        }
+                      }}
+                    >
+                      {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge: true })}
+                      <span className={styles.chatRowBody}>
+                        <span className={styles.chatRowTop}>
+                          <strong>{getContactName(contact)}</strong>
+                          <small>{contact.lastMessageDate ? formatMessageTime(contact.lastMessageDate) : ''}</small>
+                        </span>
+                        <span className={styles.chatPreviewLine}>
+                          <span className={styles.agentPriorityText}>
+                            {[AGENT_SIGNAL_LABELS[agentState?.signal || ''] || 'Prioridad del agente', agentState?.signalReason || agentState?.signalSummary].filter(Boolean).join(' · ')}
+                          </span>
+                        </span>
+                      </span>
+                      <span className={styles.chatRowAside}>
+                        {unread > 0 ? <span className={styles.unreadDot} data-chat-unread-dot aria-label="Mensaje nuevo" /> : null}
+                        {unread > 1 ? <span className={styles.unread}>{unread > 99 ? '99+' : unread}</span> : null}
+                      </span>
+                    </div>
+                  )
+                })}
+                {archivedViewOpen ? (
+                  <button
+                    type="button"
+                    data-chat-archive-row
+                    className={`${styles.archiveRow} ${styles.archiveRowActive}`}
+                    onClick={() => setArchivedViewOpen(false)}
+                  >
+                    <span className={styles.archiveRowIcon}>
+                      <ChevronLeft size={18} />
                     </span>
-                    <span className={styles.chatPreviewLine}>
-                      {renderChannelBadge(contact)}
-                      <span className={styles.chatPreview}>{getChatPreview(contact)}</span>
-                    </span>
-                  </span>
-                  {unread > 0 ? <span className={styles.unread}>{unread}</span> : null}
-                </button>
-              )
-            })}
+                    <strong>Volver a conversaciones</strong>
+                    <span>{archivedChatCount}</span>
+                  </button>
+                ) : (
+                  (chats.length > 0 || archivedChatCount > 0) ? (
+                    <button
+                      type="button"
+                      data-chat-archive-row
+                      className={styles.archiveRow}
+                      onClick={() => setArchivedViewOpen(true)}
+                      aria-label={`Ver ${archivedChatCount} chats archivados`}
+                    >
+                      <span className={styles.archiveRowIcon}>
+                        <Archive size={17} />
+                      </span>
+                      <strong>Archivados</strong>
+                      <span>{archivedChatCount}</span>
+                    </button>
+                  ) : null
+                )}
+                {filteredChats.map((contact) => {
+                  const active = contact.id === activeContactId
+                  const unread = Number(contact.unreadCount || 0)
+                  const isAgentActionChat = Boolean(agentStates[contact.id]?.signal && agentStates[contact.id]?.signal !== 'discarded')
+                  const isArchived = archivedChatIdSet.has(contact.id)
+                  return (
+                    <div
+                      key={contact.id}
+                      role="button"
+                      tabIndex={0}
+                      data-chat-row={unread > 0 ? 'unread' : 'chat'}
+                      className={`${styles.chatRow} ${unread > 0 ? styles.chatRowUnread : ''} ${active ? styles.chatRowActive : ''}`}
+                      onClick={() => handleSelectChat(contact)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          handleSelectChat(contact)
+                        }
+                      }}
+                    >
+                      {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge: isAgentActionChat })}
+                      <span className={styles.chatRowBody}>
+                        <span className={styles.chatRowTop}>
+                          <strong>{getContactName(contact)}</strong>
+                          <small>{contact.lastMessageDate ? formatMessageTime(contact.lastMessageDate) : ''}</small>
+                        </span>
+                        <span className={styles.chatPreviewLine}>
+                          <span className={styles.chatPreview}>{getChatPreview(contact)}</span>
+                        </span>
+                      </span>
+                      <span className={styles.chatRowAside}>
+                        {unread > 0 ? <span className={styles.unreadDot} data-chat-unread-dot aria-label="Mensaje nuevo" /> : null}
+                        {unread > 1 ? <span className={styles.unread}>{unread > 99 ? '99+' : unread}</span> : null}
+                        <button
+                          type="button"
+                          className={styles.chatRowArchiveButton}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            handleArchiveChat(contact)
+                          }}
+                          aria-label={isArchived ? 'Restaurar chat' : 'Archivar chat'}
+                          title={isArchived ? 'Restaurar' : 'Archivar'}
+                        >
+                          <Archive size={15} />
+                        </button>
+                      </span>
+                    </div>
+                  )
+                })}
+                {filteredChats.length === 0 && agentPriorityChatRows.length === 0 ? (
+                  <div className={styles.emptyChatList}>
+                    <MessageCircle size={22} />
+                    <strong>{archivedViewOpen ? 'No hay chats archivados' : hasActiveChatFilters ? 'No encontré chats' : 'No hay chats en esta vista'}</strong>
+                    <span>{archivedViewOpen ? 'Cuando archives una conversación, aparecerá en esta sección.' : hasActiveChatFilters ? 'Prueba con menos filtros o busca otro contacto.' : 'Cuando llegue un mensaje nuevo, aparecerá aquí.'}</span>
+                    {hasActiveChatFilters ? <button type="button" onClick={resetChatFilters}>Limpiar filtros</button> : null}
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         </aside>
 
@@ -2197,11 +2469,10 @@ export const DesktopChat: React.FC = () => {
             <>
               <header className={styles.conversationHeader}>
                 <div className={styles.contactTitle}>
-                  {renderAvatar(activeContact)}
+                  {renderAvatar(activeContact, 'md', { showChannelBadge: true })}
                   <div>
                     <span className={styles.contactHeadingRow}>
                       <h2>{getContactName(activeContact)}</h2>
-                      {renderChannelBadge(activeContact, 'md')}
                       <button
                         type="button"
                         className={styles.agentToggle}

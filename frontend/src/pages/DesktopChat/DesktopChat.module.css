@@ -263,6 +263,7 @@
   padding: 0 8px 12px;
 }
 
+.archiveRow,
 .chatRow {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) auto;
@@ -280,13 +281,50 @@
   cursor: pointer;
 }
 
+.archiveRow {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  min-height: 50px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 720;
+}
+
 .chatRow:hover,
-.chatRowActive {
+.chatRowActive,
+.archiveRow:hover,
+.archiveRowActive {
   background: var(--chat-soft);
 }
 
-.chatRowActive {
+.chatRowActive,
+.archiveRowActive {
   border-radius: 8px;
+}
+
+.chatRowUnread {
+  background: color-mix(in srgb, var(--chat-soft-strong) 64%, transparent);
+}
+
+.chatRowAgentAction {
+  background: color-mix(in srgb, var(--chat-soft-strong) 74%, transparent);
+}
+
+.archiveRowIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--chat-border);
+  border-radius: 999px;
+  background: var(--chat-soft);
+  color: var(--color-text-secondary);
+}
+
+.archiveRow > span:last-child {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: 740;
 }
 
 .chatRowBody {
@@ -321,6 +359,11 @@
   font-size: var(--font-size-xs);
 }
 
+.chatRowUnread .chatRowTop small {
+  color: var(--color-text-primary);
+  font-weight: 740;
+}
+
 .chatPreview {
   display: block;
   overflow: hidden;
@@ -337,33 +380,14 @@
   margin-top: 3px;
 }
 
-.channelBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 88px;
-  min-width: 0;
-  height: 20px;
-  flex: 0 0 auto;
-  padding: 0 6px;
-  border: 1px solid var(--chat-border);
-  border-radius: 999px;
-  background: var(--chat-soft);
-  color: var(--color-text-tertiary);
-  font-size: 10px;
-  font-weight: 720;
-}
-
-.channelBadge span {
+.agentPriorityText {
   overflow: hidden;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.channelBadgeMd {
-  max-width: 118px;
-  height: 24px;
-  font-size: 11px;
 }
 
 .unread {
@@ -380,14 +404,58 @@
   font-weight: 750;
 }
 
+.chatRowAside {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 28px;
+}
+
+.unreadDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-text-primary);
+  box-shadow: 0 0 0 3px var(--chat-soft);
+}
+
+.chatRowArchiveButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), border-color var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.chatRow:hover .chatRowArchiveButton,
+.chatRow:focus-within .chatRowArchiveButton,
+.chatRowArchiveButton:focus-visible {
+  opacity: 1;
+}
+
+.chatRowArchiveButton:hover,
+.chatRowArchiveButton:focus-visible {
+  border-color: var(--chat-border);
+  background: var(--chat-soft);
+  color: var(--color-text-primary);
+}
+
 .avatar {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 44px;
   height: 44px;
   flex: 0 0 auto;
-  overflow: hidden;
   border: 1px solid var(--chat-border);
   border-radius: 50%;
   background: var(--chat-soft);
@@ -405,7 +473,38 @@
 .avatar img {
   width: 100%;
   height: 100%;
+  border-radius: inherit;
   object-fit: cover;
+}
+
+.avatarChannelBadge,
+.avatarAgentBadge {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-background-primary);
+  border-radius: 999px;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+}
+
+.avatarChannelBadge {
+  right: -2px;
+  bottom: -2px;
+  width: 18px;
+  height: 18px;
+  box-shadow: 0 0 0 1px var(--chat-border);
+}
+
+.avatarAgentBadge {
+  top: -2px;
+  right: -2px;
+  width: 17px;
+  height: 17px;
+  background: var(--chat-soft-strong);
+  color: var(--color-text-primary);
+  box-shadow: 0 0 0 1px var(--chat-border);
 }
 
 .conversationPanel {
@@ -484,6 +583,7 @@
   min-height: 0;
   overflow: auto;
   padding: 18px 18px 12px;
+  background: var(--color-background-secondary);
 }
 
 .messageGroup {
