@@ -1,0 +1,190 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { db } from '../src/config/database.js'
+import { getContactJourney } from '../src/controllers/contactsController.js'
+
+function createMockResponse() {
+  return {
+    statusCode: 200,
+    body: null,
+    status(code) {
+      this.statusCode = code
+      return this
+    },
+    json(payload) {
+      this.body = payload
+      return this
+    }
+  }
+}
+
+async function readJourney(contactId, query = {}) {
+  const res = createMockResponse()
+  await getContactJourney({ params: { id: contactId }, query }, res)
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(res.body?.success, true)
+  assert.ok(Array.isArray(res.body.data))
+
+  return res.body.data
+}
+
+async function cleanup(contactId, phone) {
+  await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
+  await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
+}
+
+test('contact journey defaults to contact-authored messages only', async () => {
+  const id = randomUUID()
+  const contactId = `journey_msg_${id}`
+  const phone = `+52991${Date.now().toString().slice(-7)}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      'Cliente Journey',
+      'Cliente',
+      'manual',
+      '2026-06-16T10:00:00.000Z',
+      '2026-06-16T10:00:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, contact_id, phone, from_phone, to_phone, business_phone, transport,
+        direction, message_type, message_text, message_timestamp, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `api_inbound_${id}`,
+      contactId,
+      phone,
+      phone,
+      '+526561000000',
+      '+526561000000',
+      'api',
+      'inbound',
+      'text',
+      'Mensaje del contacto',
+      '2026-06-16T10:01:00.000Z',
+      '2026-06-16T10:01:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, contact_id, phone, from_phone, to_phone, business_phone, transport,
+        direction, message_type, message_text, message_timestamp, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `api_outbound_${id}`,
+      contactId,
+      phone,
+      '+526561000000',
+      phone,
+      '+526561000000',
+      'api',
+      'outbound',
+      'text',
+      'Mensaje del negocio',
+      '2026-06-16T10:02:00.000Z',
+      '2026-06-16T10:02:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, contact_id, phone, from_phone, to_phone, business_phone, transport,
+        direction, message_type, message_text, message_timestamp, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `api_echo_${id}`,
+      contactId,
+      phone,
+      '+526561000000',
+      phone,
+      '+526561000000',
+      'api',
+      'business_echo',
+      'text',
+      'Eco del negocio',
+      '2026-06-16T10:03:00.000Z',
+      '2026-06-16T10:03:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO meta_social_messages (
+        id, platform, meta_message_id, contact_id, sender_id, recipient_id,
+        direction, status, message_type, message_text, message_timestamp, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `meta_inbound_${id}`,
+      'instagram',
+      `meta_inbound_message_${id}`,
+      contactId,
+      'ig_customer',
+      'ig_business',
+      'inbound',
+      'received',
+      'text',
+      'DM del contacto',
+      '2026-06-16T10:04:00.000Z',
+      '2026-06-16T10:04:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO meta_social_messages (
+        id, platform, meta_message_id, contact_id, sender_id, recipient_id,
+        direction, status, message_type, message_text, message_timestamp, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `meta_outbound_${id}`,
+      'instagram',
+      `meta_outbound_message_${id}`,
+      contactId,
+      'ig_business',
+      'ig_customer',
+      'outbound',
+      'sent',
+      'text',
+      'DM del negocio',
+      '2026-06-16T10:05:00.000Z',
+      '2026-06-16T10:05:00.000Z'
+    ])
+
+    const journey = await readJourney(contactId)
+    const messageEvents = journey.filter(event => event.type === 'whatsapp_message' || event.type === 'meta_message')
+
+    assert.deepEqual(
+      messageEvents.map(event => `${event.type}:${event.data.direction}:${event.data.message_text}`),
+      [
+        'whatsapp_message:inbound:Mensaje del contacto',
+        'meta_message:inbound:DM del contacto'
+      ]
+    )
+
+    const fullConversationJourney = await readJourney(contactId, { includeBusinessMessages: 'true' })
+    const fullConversationMessages = fullConversationJourney
+      .filter(event => event.type === 'whatsapp_message' || event.type === 'meta_message')
+
+    assert.deepEqual(
+      fullConversationMessages.map(event => `${event.type}:${event.data.direction}:${event.data.message_text}`),
+      [
+        'whatsapp_message:inbound:Mensaje del contacto',
+        'whatsapp_message:outbound:Mensaje del negocio',
+        'whatsapp_message:business_echo:Eco del negocio',
+        'meta_message:inbound:DM del contacto',
+        'meta_message:outbound:DM del negocio'
+      ]
+    )
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})

@@ -340,8 +340,21 @@ const resolveWebConversionEvidence = (contact = {}, sessions = []) => {
   return candidates.sort((left, right) => right.score - left.score)[0] || { score: 0, data: null, source: null }
 }
 
+const OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS = [
+  'outbound',
+  'outgoing',
+  'sent',
+  'business',
+  'api',
+  'app',
+  'business_echo',
+  'smb_echo',
+  'echo',
+  'message_echo'
+]
+const OUTBOUND_JOURNEY_MESSAGE_DIRECTION_SET = new Set(OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS)
 const isOutboundWhatsAppDirection = (direction) =>
-  ['outbound', 'business_echo', 'sent'].includes(cleanString(direction).toLowerCase())
+  OUTBOUND_JOURNEY_MESSAGE_DIRECTION_SET.has(cleanString(direction).toLowerCase())
 
 const getWhatsAppEventScore = (event = {}, contactCreatedAt = null) => {
   const data = event.data || {}
@@ -2922,6 +2935,8 @@ export const getContactsChart = async (req, res) => {
 export const getContactJourney = async (req, res) => {
   try {
     const { id } = req.params
+    const includeBusinessMessages = String(req.query?.includeBusinessMessages || '').toLowerCase() === 'true'
+    const outboundMessageDirectionPlaceholders = OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS.map(() => '?').join(', ')
 
     // Verificar que el contacto existe y obtener info de atribución completa
     const contact = await db.get(`
@@ -2971,11 +2986,9 @@ export const getContactJourney = async (req, res) => {
 
     const detectWhatsAppAdPlatform = (data = {}) => normalizeWhatsAppAttributionPlatform(data)
 
-    // El backend emite los eventos de WhatsApp tal cual (uno por mensaje). El frontend
-    // los agrupa a uno por día —usando la MISMA zona horaria con la que muestra las
-    // fechas— y fusiona la info dando prioridad a la atribución de anuncio. Los mensajes
-    // reales del chat se entregan completos para no romper conversación ni archivos; la
-    // regla temporal de conversión se aplica sólo al timeline de Info del contacto.
+    // El journey default sólo representa acciones del contacto. Las pantallas de chat
+    // pueden pedir includeBusinessMessages=true para reconstruir conversación completa,
+    // pero los timelines de atribución no deben contar mensajes salientes del negocio.
     const isStoredChatMessageEvent = (event) => Boolean(
       event?.data?.whatsapp_api_message_id ||
       event?.data?.whatsapp_message_id ||
@@ -2987,6 +3000,7 @@ export const getContactJourney = async (req, res) => {
     const addWhatsAppJourneyEvents = (events) => {
       events
         .filter(event => event?.date)
+        .filter(event => includeBusinessMessages || !isOutboundWhatsAppDirection(event?.data?.direction))
         .sort((a, b) => getDateTime(a.date) - getDateTime(b.date))
         .forEach(event => {
           const eventTime = getDateTime(event.date)
@@ -3151,11 +3165,17 @@ export const getContactJourney = async (req, res) => {
        FROM whatsapp_api_messages msg
        LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
        WHERE msg.contact_id = ?
+         AND (
+           ? = 1
+           OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
+         )
        ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC`,
-      [id]
+      [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS]
     )
 
     whatsappApiMessages.forEach(msg => {
+      if (!includeBusinessMessages && isOutboundWhatsAppDirection(msg.direction)) return
+
       const payloadMedia = getWhatsAppMediaFromPayload(msg.raw_payload_json, msg.message_type)
       const media = {
         media_url: cleanString(msg.media_url) || payloadMedia.media_url,
@@ -3235,11 +3255,17 @@ export const getContactJourney = async (req, res) => {
        FROM meta_social_messages msg
        LEFT JOIN meta_social_contacts profile ON profile.id = msg.meta_social_contact_id
        WHERE msg.contact_id = ?
+         AND (
+           ? = 1
+           OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
+         )
        ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC`,
-      [id]
+      [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS]
     )
 
     metaSocialMessages.forEach(msg => {
+      if (!includeBusinessMessages && isOutboundWhatsAppDirection(msg.direction)) return
+
       const platform = cleanString(msg.platform)
       const source = platform === 'instagram' ? 'Instagram DM' : 'Messenger'
 

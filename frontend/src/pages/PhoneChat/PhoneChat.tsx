@@ -836,7 +836,18 @@ function getContactMessageCount(contact: ChatContact) {
 
 function normalizeWhatsAppBusinessDirection(value?: unknown): 'inbound' | 'outbound' {
   const direction = String(value || '').toLowerCase()
-  return ['outbound', 'business_echo', 'smb_echo', 'echo', 'message_echo'].includes(direction) ? 'outbound' : 'inbound'
+  return [
+    'outbound',
+    'outgoing',
+    'sent',
+    'business',
+    'api',
+    'app',
+    'business_echo',
+    'smb_echo',
+    'echo',
+    'message_echo'
+  ].includes(direction) ? 'outbound' : 'inbound'
 }
 
 function applyLocalUnreadState(contact: ChatContact, readState: ChatReadState): ChatContact {
@@ -2157,6 +2168,7 @@ function getJourneyEventLabel(event: JourneyEvent, leadLabel: string) {
 }
 
 const GENERIC_JOURNEY_SOURCES = new Set(['directo', 'desconocido', 'otro'])
+const MESSAGE_JOURNEY_EVENT_TYPES = new Set(['whatsapp_message', 'meta_message'])
 const WEB_JOURNEY_SOURCE_PATTERN = /(ristak_site|native_site|site|website|web|form|landing|pagina|página)/i
 const WHATSAPP_JOURNEY_SOURCE_PATTERN = /(whatsapp|waapi|ycloud|click_to_whatsapp|ctwa)/i
 
@@ -2169,8 +2181,13 @@ function journeySourceLooksWhatsApp(source?: string | null) {
 }
 
 function isOutboundJourneyMessage(event?: JourneyEvent | null) {
-  const direction = String(event?.data?.direction || '').trim().toLowerCase()
-  return ['outbound', 'business_echo', 'sent'].includes(direction)
+  return normalizeWhatsAppBusinessDirection(
+    event?.data?.direction || event?.data?.message_direction || event?.data?.from_type
+  ) === 'outbound'
+}
+
+function isBusinessAuthoredJourneyMessage(event?: JourneyEvent | null) {
+  return Boolean(event && MESSAGE_JOURNEY_EVENT_TYPES.has(event.type) && isOutboundJourneyMessage(event))
 }
 
 function getJourneySourceLabelFromData(data: Record<string, any> = {}) {
@@ -2218,7 +2235,7 @@ function isWhatsAppJourneyEvent(event?: JourneyEvent | null) {
   const data = event.data || {}
   const conversionChannel = String(data.conversion_channel || '').trim().toLowerCase()
 
-  if (event.type === 'whatsapp_message') return true
+  if (event.type === 'whatsapp_message') return !isOutboundJourneyMessage(event)
   if (event.type !== 'contact_created') return false
   if (hasWebJourneySignal(event)) return false
   if (conversionChannel === 'whatsapp') return true
@@ -2409,6 +2426,7 @@ function buildContactInfoJourney(
 
   events.forEach((event) => {
     if (!event?.date) return
+    if (isBusinessAuthoredJourneyMessage(event)) return
     if (isWhatsAppJourneyEvent(event)) {
       if (!shouldShowWhatsAppInContactInfoJourney(event, firstPaymentTime)) return
       whatsappEvents.push(event)
@@ -4101,7 +4119,7 @@ export const PhoneChat: React.FC = () => {
 
     try {
       const [journey, scheduledMessages] = await Promise.all([
-        contactsService.getContactJourney(contactId),
+        contactsService.getContactJourney(contactId, { includeBusinessMessages: true }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => [])
       ])
       if (!isCurrentConversationLoad()) return

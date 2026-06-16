@@ -504,7 +504,18 @@ function formatPlainStatus(value?: string | null) {
 
 function normalizeWhatsAppBusinessDirection(value?: unknown): 'inbound' | 'outbound' {
   const direction = String(value || '').toLowerCase()
-  return ['outbound', 'business_echo', 'smb_echo', 'echo', 'message_echo'].includes(direction) ? 'outbound' : 'inbound'
+  return [
+    'outbound',
+    'outgoing',
+    'sent',
+    'business',
+    'api',
+    'app',
+    'business_echo',
+    'smb_echo',
+    'echo',
+    'message_echo'
+  ].includes(direction) ? 'outbound' : 'inbound'
 }
 
 function pickMessageTimestamp(data: Record<string, unknown>, keys: string[]) {
@@ -904,7 +915,7 @@ export const DesktopChat: React.FC = () => {
     setMessagesError('')
     try {
       const [journey, scheduledMessages, details] = await Promise.all([
-        contactsService.getContactJourney(contactId),
+        contactsService.getContactJourney(contactId, { includeBusinessMessages: true }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => []),
         contactsService.getContactDetails(contactId).catch(() => null)
       ])

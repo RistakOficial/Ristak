@@ -25,6 +25,10 @@ export interface JourneyEvent {
   data: Record<string, any>
 }
 
+interface ContactJourneyOptions {
+  includeBusinessMessages?: boolean
+}
+
 interface ContactChartData {
   date: string
   count: number
@@ -244,9 +248,11 @@ export const contactsService = {
     return normalizeContact(data)
   },
 
-  async getContactJourney(id: string): Promise<JourneyEvent[]> {
+  async getContactJourney(id: string, options: ContactJourneyOptions = {}): Promise<JourneyEvent[]> {
     try {
-      const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/journey`)
+      const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/journey`, {
+        params: options.includeBusinessMessages ? { includeBusinessMessages: 'true' } : undefined
+      })
 
       if (!Array.isArray(data)) {
         return []

@@ -12,6 +12,19 @@ interface ContactJourneyProps {
 }
 
 const GENERIC_TRAFFIC_SOURCES = new Set(['directo', 'desconocido', 'otro'])
+const OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS = new Set([
+  'outbound',
+  'outgoing',
+  'sent',
+  'business',
+  'api',
+  'app',
+  'business_echo',
+  'smb_echo',
+  'echo',
+  'message_echo'
+])
+const MESSAGE_JOURNEY_EVENT_TYPES = new Set(['whatsapp_message', 'meta_message'])
 const WEB_JOURNEY_SOURCE_PATTERN = /(ristak_site|native_site|site|website|web|form|landing|pagina|página)/i
 const WHATSAPP_JOURNEY_SOURCE_PATTERN = /(whatsapp|waapi|ycloud|click_to_whatsapp|ctwa)/i
 
@@ -23,15 +36,18 @@ const sourceLooksWhatsApp = (source?: string | null) =>
 
 const isOutboundJourneyMessage = (event?: JourneyEvent | null) => {
   const direction = String(getEventData(event).direction || '').trim().toLowerCase()
-  return ['outbound', 'business_echo', 'sent'].includes(direction)
+  return OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS.has(direction)
 }
+
+const isBusinessAuthoredJourneyMessage = (event?: JourneyEvent | null) =>
+  Boolean(event && MESSAGE_JOURNEY_EVENT_TYPES.has(event.type) && isOutboundJourneyMessage(event))
 
 const isWhatsAppJourneyEvent = (event?: JourneyEvent | null) => {
   if (!event) return false
   const data = getEventData(event)
   const conversionChannel = String(data.conversion_channel || '').toLowerCase()
 
-  if (event.type === 'whatsapp_message') return true
+  if (event.type === 'whatsapp_message') return !isOutboundJourneyMessage(event)
   if (event.type !== 'contact_created') return false
   if (isWebContactJourneyEvent(event)) return false
   if (conversionChannel === 'web') return false
@@ -472,9 +488,13 @@ const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyE
   const otherEvents: JourneyEvent[] = []
 
   events.forEach(event => {
-    if (event && isDailyContactJourneyEvent(event)) {
+    if (!event || isBusinessAuthoredJourneyMessage(event)) {
+      return
+    }
+
+    if (isDailyContactJourneyEvent(event)) {
       dailyContactEvents.push(event)
-    } else if (event) {
+    } else {
       otherEvents.push(event)
     }
   })
