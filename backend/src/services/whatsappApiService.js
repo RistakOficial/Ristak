@@ -1343,11 +1343,12 @@ async function listYCloudTemplates(apiKey, { wabaId, status } = {}) {
       : []
 }
 
-async function listYCloudContacts(apiKey, { maxPages = 10 } = {}) {
+async function listYCloudContacts(apiKey, { maxPages = 100 } = {}) {
   const contacts = []
   const limit = 100
+  const pageLimit = Math.max(1, Math.min(Number(maxPages) || 100, 100))
 
-  for (let page = 1; page <= maxPages; page += 1) {
+  for (let page = 1; page <= pageLimit; page += 1) {
     const data = await ycloudRequest('/contact/contacts', {
       apiKey,
       query: { page, limit, includeTotal: true }
@@ -1362,7 +1363,24 @@ async function listYCloudContacts(apiKey, { maxPages = 10 } = {}) {
     if (items.length < limit || (data.total && contacts.length >= Number(data.total))) break
   }
 
+  if (contacts.length >= pageLimit * limit) {
+    logger.warn(`WhatsApp API: YCloud devolvio ${contacts.length} contactos y puede haber mas; la API limita page a ${pageLimit}.`)
+  }
+
   return contacts
+}
+
+function extractYCloudPageItems(data = {}) {
+  return Array.isArray(data.items)
+    ? data.items
+    : Array.isArray(data.data)
+      ? data.data
+      : []
+}
+
+function getYCloudPageTotal(data = {}) {
+  const total = Number(data.total)
+  return Number.isFinite(total) ? total : null
 }
 
 async function retrieveYCloudContact(apiKey, identifier) {
@@ -2918,12 +2936,27 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       await setDefaultSenderPhoneNumber(selectedPhone.id)
     }
 
+    const businessPhoneHints = [
+      selectedPhone?.phoneNumber,
+      selectedPhone?.displayPhoneNumber,
+      senderPhone,
+      ...enrichedPhoneNumbers.flatMap(item => [item.phoneNumber, item.displayPhoneNumber])
+    ].filter(Boolean)
+    const wabaIds = [
+      selectedPhone?.wabaId,
+      wabaId,
+      ...enrichedPhoneNumbers.map(item => item.wabaId)
+    ].filter(Boolean)
+
+    await syncYCloudMessagesFromApi(cleanApiKey, {
+      businessPhoneHints,
+      wabaIds
+    }).catch(error => {
+      logger.warn(`No se pudo sincronizar historial saliente desde YCloud: ${error.message}`)
+    })
+
     await backfillStoredWhatsAppApiMessageEvents({
-      businessPhoneHints: [
-        selectedPhone?.phoneNumber,
-        senderPhone,
-        ...enrichedPhoneNumbers.flatMap(item => [item.phoneNumber, item.displayPhoneNumber])
-      ].filter(Boolean)
+      businessPhoneHints
     }).catch(error => {
       logger.warn(`No se pudo recuperar historial guardado WhatsApp Business: ${error.message}`)
     })
@@ -2974,6 +3007,15 @@ export async function refreshWhatsAppApi() {
     await syncTemplates(templates)
     await syncYCloudContacts(ycloudContacts)
 
+    const businessPhoneHints = [
+      config.senderPhone,
+      ...enrichedPhoneNumbers.flatMap(item => [item.phoneNumber, item.displayPhoneNumber])
+    ].filter(Boolean)
+    const wabaIds = [
+      config.wabaId,
+      ...enrichedPhoneNumbers.map(item => item.wabaId)
+    ].filter(Boolean)
+
     if (config.webhookEndpointId || config.webhookUrl) {
       try {
         const webhookEndpoint = config.webhookUrl
@@ -2998,11 +3040,15 @@ export async function refreshWhatsAppApi() {
       }
     }
 
+    await syncYCloudMessagesFromApi(config.apiKey, {
+      businessPhoneHints,
+      wabaIds
+    }).catch(error => {
+      logger.warn(`No se pudo sincronizar historial saliente desde YCloud: ${error.message}`)
+    })
+
     await backfillStoredWhatsAppApiMessageEvents({
-      businessPhoneHints: [
-        config.senderPhone,
-        ...enrichedPhoneNumbers.flatMap(item => [item.phoneNumber, item.displayPhoneNumber])
-      ].filter(Boolean)
+      businessPhoneHints
     }).catch(error => {
       logger.warn(`No se pudo recuperar historial guardado WhatsApp Business: ${error.message}`)
     })
@@ -4314,16 +4360,212 @@ async function processWhatsAppMessageEventPayload({ payload = {}, businessPhoneH
   return results
 }
 
-async function backfillStoredWhatsAppApiMessageEvents({ businessPhoneHints = [], limit = 1000 } = {}) {
+function getYCloudMessageRecordKey(record = {}) {
+  return [
+    cleanString(record.id || record.messageId || record.message_id || record.ycloudMessageId),
+    cleanString(record.wamid || record.waMessageId || record.whatsappMessageId),
+    cleanString(record.from || record.fromPhone || record.senderPhone),
+    cleanString(record.to || record.toPhone || record.recipientPhone),
+    cleanString(record.sendTime || record.createTime || record.updateTime || record.timestamp)
+  ].join('|')
+}
+
+export async function syncYCloudMessageRecords(records = [], {
+  businessPhoneHints = [],
+  direction = '',
+  eventType = 'whatsapp.smb.history',
+  source = 'ycloud_history',
+  seenKeys = null
+} = {}) {
+  const stats = {
+    records: 0,
+    messages: 0,
+    created: 0,
+    updated: 0,
+    attributed: 0,
+    skipped: 0,
+    failed: 0
+  }
+
+  for (const record of Array.isArray(records) ? records : []) {
+    if (!isPlainObject(record)) {
+      stats.skipped += 1
+      continue
+    }
+
+    const recordKey = getYCloudMessageRecordKey(record)
+    if (seenKeys && recordKey && seenKeys.has(recordKey)) {
+      stats.skipped += 1
+      continue
+    }
+    if (seenKeys && recordKey) seenKeys.add(recordKey)
+
+    const recordId = cleanString(record.id || record.messageId || record.message_id || record.ycloudMessageId)
+    const messageAt = toDateTime(record.sendTime || record.createTime || record.updateTime || record.timestamp) || nowIso()
+    const payload = {
+      id: recordId ? `${source}_${recordId}` : hashId('ycloud_history_evt', safeJson(record)),
+      type: eventType,
+      apiVersion: 'v2',
+      createTime: messageAt,
+      origin: source,
+      ...(eventType === 'whatsapp.inbound_message.received' || direction === 'inbound'
+        ? { whatsappInboundMessage: record }
+        : { whatsappMessage: record })
+    }
+
+    try {
+      const result = await upsertMessage({
+        payload,
+        message: {
+          ...record,
+          origin: cleanString(record.origin) || source
+        },
+        direction,
+        businessPhoneHints
+      })
+      stats.records += 1
+      stats.messages += 1
+      if (result?.isNew) stats.created += 1
+      else stats.updated += 1
+      if (result?.attribution?.hasAttribution) stats.attributed += 1
+    } catch (error) {
+      stats.failed += 1
+      logger.warn(`No se pudo importar mensaje historico WhatsApp API ${recordId || recordKey || ''}: ${error.message}`)
+    }
+  }
+
+  return stats
+}
+
+async function syncYCloudMessagesScope(apiKey, {
+  query = {},
+  businessPhoneHints = [],
+  seenKeys,
+  scopeName = 'all',
+  maxPages = 100
+} = {}) {
+  const limit = 100
+  const pageLimit = Math.max(1, Math.min(Number(maxPages) || 100, 100))
+  const stats = {
+    scope: scopeName,
+    total: null,
+    pages: 0,
+    records: 0,
+    messages: 0,
+    created: 0,
+    updated: 0,
+    attributed: 0,
+    skipped: 0,
+    failed: 0,
+    truncated: false
+  }
+
+  for (let page = 1; page <= pageLimit; page += 1) {
+    const data = await ycloudRequest('/whatsapp/messages', {
+      apiKey,
+      query: {
+        page,
+        limit,
+        includeTotal: true,
+        ...query
+      }
+    })
+    const items = extractYCloudPageItems(data)
+    const total = getYCloudPageTotal(data)
+    if (total !== null && stats.total === null) stats.total = total
+
+    stats.pages += 1
+    stats.records += items.length
+
+    const pageStats = await syncYCloudMessageRecords(items, {
+      businessPhoneHints,
+      // YCloud's /whatsapp/messages list is the outbound message list.
+      direction: 'outbound',
+      eventType: 'whatsapp.message.updated',
+      source: `ycloud_message_list_${scopeName}`,
+      seenKeys
+    })
+    stats.messages += pageStats.messages
+    stats.created += pageStats.created
+    stats.updated += pageStats.updated
+    stats.attributed += pageStats.attributed
+    stats.skipped += pageStats.skipped
+    stats.failed += pageStats.failed
+
+    if (items.length < limit || (total !== null && stats.records >= total)) break
+  }
+
+  if (stats.total !== null && stats.records < stats.total && stats.pages >= pageLimit) {
+    stats.truncated = true
+  }
+
+  return stats
+}
+
+async function syncYCloudMessagesFromApi(apiKey, { businessPhoneHints = [], wabaIds = [] } = {}) {
+  const cleanWabaIds = [...new Set(wabaIds.map(cleanString).filter(Boolean))]
+  const scopes = cleanWabaIds.length > 1
+    ? cleanWabaIds.map(wabaId => ({
+        name: `waba_${wabaId}`,
+        query: { 'filter.wabaId': wabaId }
+      }))
+    : [{ name: 'all', query: cleanWabaIds[0] ? { 'filter.wabaId': cleanWabaIds[0] } : {} }]
+  const seenKeys = new Set()
+  const summary = {
+    scopes: [],
+    total: 0,
+    pages: 0,
+    records: 0,
+    messages: 0,
+    created: 0,
+    updated: 0,
+    attributed: 0,
+    skipped: 0,
+    failed: 0,
+    truncated: false
+  }
+
+  for (const scope of scopes) {
+    const stats = await syncYCloudMessagesScope(apiKey, {
+      query: scope.query,
+      businessPhoneHints,
+      seenKeys,
+      scopeName: scope.name
+    })
+    summary.scopes.push(stats)
+    summary.total += Number(stats.total || 0)
+    summary.pages += stats.pages
+    summary.records += stats.records
+    summary.messages += stats.messages
+    summary.created += stats.created
+    summary.updated += stats.updated
+    summary.attributed += stats.attributed
+    summary.skipped += stats.skipped
+    summary.failed += stats.failed
+    summary.truncated = summary.truncated || stats.truncated
+  }
+
+  if (summary.messages) {
+    logger.info(`WhatsApp API sincronizo ${summary.messages} mensajes salientes desde YCloud (${summary.created} nuevos, ${summary.updated} actualizados).`)
+  }
+  if (summary.truncated) {
+    logger.warn('WhatsApp API: YCloud limito el listado de /whatsapp/messages a 100 paginas. Los mensajes entrantes historicos dependen del webhook whatsapp.smb.history.')
+  }
+
+  return summary
+}
+
+async function backfillStoredWhatsAppApiMessageEvents({ businessPhoneHints = [], limit = 0 } = {}) {
   const eventTypes = [...MESSAGE_EVENT_TYPES]
   const placeholders = eventTypes.map(() => '?').join(', ')
+  const cleanLimit = Math.max(Number(limit) || 0, 0)
   const rows = await db.all(`
     SELECT id, event_type, raw_payload_json
     FROM whatsapp_api_webhook_events
     WHERE event_type IN (${placeholders})
     ORDER BY COALESCE(ycloud_create_time, created_at) ASC, id ASC
-    LIMIT ?
-  `, [...eventTypes, limit])
+    ${cleanLimit ? 'LIMIT ?' : ''}
+  `, cleanLimit ? [...eventTypes, cleanLimit] : eventTypes)
 
   let savedMessages = 0
   for (const row of rows) {

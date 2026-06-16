@@ -9,9 +9,13 @@ import {
   extractWhatsAppProfileName,
   normalizeWhatsAppProfileName
 } from '../src/utils/whatsappContactProfile.js'
-import { processYCloudWhatsAppWebhook } from '../src/services/whatsappApiService.js'
+import {
+  processYCloudWhatsAppWebhook,
+  syncYCloudMessageRecords
+} from '../src/services/whatsappApiService.js'
 
 async function cleanup({ contactId, apiContactId, messageId, phone, eventId }) {
+  await db.run('DELETE FROM whatsapp_api_attribution WHERE whatsapp_api_message_id = ? OR contact_id = ? OR phone = ?', [messageId, contactId, phone]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_messages WHERE id = ? OR contact_id = ? OR phone = ?', [messageId, contactId, phone]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_contacts WHERE id = ? OR contact_id = ? OR phone = ?', [apiContactId, contactId, phone]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_webhook_events WHERE event_id = ? OR id = ?', [eventId, eventId]).catch(() => undefined)
@@ -154,6 +158,91 @@ test('webhook saliente respeta contactId existente aunque el teléfono todavía 
     assert.equal(contacts[0].phone, phone)
   } finally {
     await cleanup({ contactId, messageId, phone, eventId })
+  }
+})
+
+test('sync historico de YCloud conserva nombre real y source_id de anuncios', async () => {
+  const id = randomUUID()
+  const phone = `+52995${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000000'
+  const contactId = `rstk_contact_test_${id}`
+  const messageId = `ycloud_history_ad_${id}`
+  const messageAt = '2024-04-11T12:13:14.000Z'
+
+  await cleanup({ contactId, messageId, phone })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      'WhatsApp_API',
+      'WhatsApp_API',
+      'WhatsApp_API',
+      '2026-06-15T23:31:29.000Z',
+      '2026-06-15T23:31:29.000Z'
+    ])
+
+    const result = await syncYCloudMessageRecords([{
+      id: messageId,
+      wamid: `wamid.${id}`,
+      from: phone,
+      to: businessPhone,
+      sendTime: messageAt,
+      type: 'text',
+      text: { body: 'Quiero informes de la promo' },
+      customerProfile: { name: 'Ana López' },
+      referral: {
+        source_url: 'https://fb.me/ad-test',
+        source_type: 'ad',
+        source_id: '238555000333444',
+        headline: 'Promo junio',
+        body: 'Agenda por WhatsApp',
+        ctwa_clid: 'ctwa_history_123'
+      }
+    }], {
+      businessPhoneHints: [businessPhone],
+      direction: 'inbound',
+      eventType: 'whatsapp.smb.history',
+      source: 'ycloud_history_test'
+    })
+
+    assert.equal(result.messages, 1)
+    assert.equal(result.attributed, 1)
+
+    await repairWhatsAppApiContactIdentityFromMessages({ limit: 100 })
+
+    const contact = await db.get(`
+      SELECT full_name, first_name, attribution_ad_id, attribution_ad_name,
+             attribution_ctwa_clid, attribution_url, attribution_medium, created_at
+      FROM contacts
+      WHERE id = ?
+    `, [contactId])
+
+    assert.equal(contact.full_name, 'Ana López')
+    assert.equal(contact.first_name, 'Ana López')
+    assert.equal(contact.attribution_ad_id, '238555000333444')
+    assert.equal(contact.attribution_ad_name, 'Promo junio')
+    assert.equal(contact.attribution_ctwa_clid, 'ctwa_history_123')
+    assert.equal(contact.attribution_url, 'https://fb.me/ad-test')
+    assert.equal(contact.attribution_medium, 'ad')
+    assert.equal(new Date(contact.created_at).toISOString(), messageAt)
+
+    const message = await db.get(`
+      SELECT detected_source_id, detected_ctwa_clid, direction, origin
+      FROM whatsapp_api_messages
+      WHERE ycloud_message_id = ?
+    `, [messageId])
+
+    assert.equal(message.detected_source_id, '238555000333444')
+    assert.equal(message.detected_ctwa_clid, 'ctwa_history_123')
+    assert.equal(message.direction, 'inbound')
+    assert.equal(message.origin, 'ycloud_history_test')
+  } finally {
+    await cleanup({ contactId, messageId, phone })
   }
 })
 
