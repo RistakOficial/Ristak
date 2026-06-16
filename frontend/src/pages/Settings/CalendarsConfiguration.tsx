@@ -865,13 +865,21 @@ export const CalendarsConfiguration: React.FC = () => {
 
       await calendarsService.updateCalendar(selectedCalendar.id, updateData, accessToken || undefined)
 
-      if (googleSyncChanged) {
-        await calendarsService.updateCalendarGoogleSync(selectedCalendar.id, nextGoogleCalendarId)
+      const googleSyncResult = googleSyncChanged
+        ? await calendarsService.updateCalendarGoogleSync(selectedCalendar.id, nextGoogleCalendarId)
+        : null
+      const importedGoogleEvents = Number(googleSyncResult?.initialGoogleSync?.saved || 0)
+
+      if (googleSyncChanged && nextGoogleCalendarId) {
+        await setDefaultCalendarId(selectedCalendar.id)
+        if (!attributionCalendarIds.includes(selectedCalendar.id)) {
+          await setAttributionCalendarIds([...attributionCalendarIds, selectedCalendar.id])
+        }
       }
 
       const syncMessage = googleSyncChanged
         ? nextGoogleCalendarId
-          ? `Este calendario ya está ligado a ${googleCalendarOptions.find(option => option.id === nextGoogleCalendarId)?.summary || nextGoogleCalendarId}.`
+          ? `Este calendario ya está ligado a ${googleCalendarOptions.find(option => option.id === nextGoogleCalendarId)?.summary || nextGoogleCalendarId}. ${importedGoogleEvents} cita${importedGoogleEvents === 1 ? '' : 's'} importada${importedGoogleEvents === 1 ? '' : 's'} desde Google.`
           : 'Este calendario dejó de sincronizarse con Google Calendar.'
         : accessToken
           ? `Los cambios se guardaron en ${selectedCalendar.name}`

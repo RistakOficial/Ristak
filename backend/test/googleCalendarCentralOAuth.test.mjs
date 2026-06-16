@@ -81,6 +81,22 @@ async function startLicenseServer(requests) {
       })
     }
 
+    if (req.url === '/api/license/google-calendar/calendars') {
+      requests.push({ path: req.url, body: payload })
+      return json(res, 200, {
+        success: true,
+        calendars: [
+          {
+            id: 'ventas@test.com',
+            name: 'Ventas',
+            access_role: 'owner',
+            time_zone: 'America/Mexico_City',
+            primary: true
+          }
+        ]
+      })
+    }
+
     if (req.url === '/api/license/google-calendar/events/upsert') {
       requests.push({ path: req.url, body: payload })
       return json(res, 200, {
@@ -259,6 +275,8 @@ test('OAuth central importa eventos despues de ligar un calendario Ristak a Goog
   const { server, baseUrl } = await startLicenseServer(requests)
   const suffix = randomUUID()
   const calendarId = `rstk_cal_linked_google_${suffix}`
+  const configKeys = ['default_calendar_id', 'attribution_calendar_ids']
+  const previousConfigRows = new Map()
   let db = null
 
   try {
@@ -272,7 +290,10 @@ test('OAuth central importa eventos despues de ligar un calendario Ristak a Goog
 
     ;({ db } = await import('../src/config/database.js'))
     const localCalendarService = await import('../src/services/localCalendarService.js')
-    const googleCalendarService = await import('../src/services/googleCalendarService.js')
+    const { updateCalendarGoogleSync } = await import('../src/controllers/calendarsController.js')
+    for (const key of configKeys) {
+      previousConfigRows.set(key, await db.get('SELECT config_value FROM app_config WHERE config_key = ?', [key]))
+    }
 
     const calendar = await localCalendarService.createLocalCalendar({
       id: calendarId,
@@ -280,25 +301,29 @@ test('OAuth central importa eventos despues de ligar un calendario Ristak a Goog
     })
     assert.equal(calendar.googleCalendarId, '')
 
-    const linkedCalendar = await localCalendarService.updateLocalCalendar(calendar.id, {
-      googleCalendarId: 'ventas@test.com',
-      googleAccessRole: 'owner',
-      googleCalendarSummary: 'Ventas',
-      googleCalendarTimeZone: 'America/Mexico_City'
+    let statusCode = 200
+    let responseBody = null
+    await updateCalendarGoogleSync({
+      params: { id: calendar.id },
+      body: { googleCalendarId: 'ventas@test.com' }
+    }, {
+      status(code) {
+        statusCode = code
+        return this
+      },
+      json(payload) {
+        responseBody = payload
+        return this
+      }
     })
-    assert.equal(linkedCalendar.googleCalendarId, 'ventas@test.com')
-    assert.equal(linkedCalendar.googleAccessRole, 'owner')
+    assert.equal(statusCode, 200)
+    assert.equal(responseBody.success, true)
+    assert.equal(responseBody.data.googleCalendarId, 'ventas@test.com')
+    assert.equal(responseBody.data.googleAccessRole, 'owner')
+    assert.equal(responseBody.data.initialGoogleSync.saved, 1)
 
     const linkedCalendars = await localCalendarService.listGoogleLinkedLocalCalendars()
     assert.ok(linkedCalendars.some(item => item.id === calendarId && item.googleCalendarId === 'ventas@test.com'))
-
-    const imported = await googleCalendarService.syncGoogleEventsToLocal({
-      startTime: String(Date.parse('2026-06-17T00:00:00.000Z')),
-      endTime: String(Date.parse('2026-06-18T00:00:00.000Z')),
-      calendarId
-    })
-    assert.equal(imported.saved, 1)
-    assert.equal(imported.linkedCalendars, 1)
 
     const importedAppointment = await db.get(
       'SELECT title, calendar_id, google_event_id FROM appointments WHERE google_event_id = ?',
@@ -307,15 +332,33 @@ test('OAuth central importa eventos despues de ligar un calendario Ristak a Goog
     assert.equal(importedAppointment.title, 'Cita importada desde Google')
     assert.equal(importedAppointment.calendar_id, calendarId)
 
-    assert.equal(requests.length, 1)
-    assert.equal(requests[0].path, '/api/license/google-calendar/events/list')
-    assert.equal(requests[0].body.google_calendar_id, 'ventas@test.com')
-    assert.equal(requests[0].body.time_min, '2026-06-17T00:00:00.000Z')
-    assert.equal(requests[0].body.time_max, '2026-06-18T00:00:00.000Z')
+    const defaultConfig = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', ['default_calendar_id'])
+    const attributionConfig = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', ['attribution_calendar_ids'])
+    assert.equal(defaultConfig.config_value, calendarId)
+    assert.ok(JSON.parse(attributionConfig.config_value).includes(calendarId))
+
+    assert.equal(requests.length, 2)
+    assert.equal(requests[0].path, '/api/license/google-calendar/calendars')
+    assert.equal(requests[1].path, '/api/license/google-calendar/events/list')
+    assert.equal(requests[1].body.google_calendar_id, 'ventas@test.com')
   } finally {
     if (db) {
       await db.run('DELETE FROM appointments WHERE google_event_id = ?', ['evt_google_imported']).catch(() => undefined)
       await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+      for (const key of configKeys) {
+        const previous = previousConfigRows.get(key)
+        if (previous) {
+          await db.run(`
+            INSERT INTO app_config (config_key, config_value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(config_key) DO UPDATE SET
+              config_value = excluded.config_value,
+              updated_at = CURRENT_TIMESTAMP
+          `, [key, previous.config_value]).catch(() => undefined)
+        } else {
+          await db.run('DELETE FROM app_config WHERE config_key = ?', [key]).catch(() => undefined)
+        }
+      }
     }
     server.closeAllConnections?.()
     server.close()

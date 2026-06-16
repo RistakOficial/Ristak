@@ -217,7 +217,9 @@ export async function findContactByPhoneCandidates(phone, { excludeId = null } =
   if (excludeId) params.push(excludeId)
 
   const rows = await db.all(
-    `SELECT id, phone, full_name, source, total_paid, purchases_count, created_at
+    `SELECT id, phone, full_name, source, total_paid, purchases_count,
+            attribution_ctwa_clid, attribution_ad_name, attribution_ad_id,
+            created_at
      FROM contacts
      WHERE phone IN (${placeholders})${excludeClause}`,
     params

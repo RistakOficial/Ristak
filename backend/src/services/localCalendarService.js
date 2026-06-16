@@ -1145,6 +1145,28 @@ export async function listGoogleLinkedLocalCalendars({ includeInactive = false }
     .filter(calendar => cleanString(calendar.googleCalendarId))
 }
 
+export async function setAppointmentDefaultCalendar(calendarId) {
+  const normalizedCalendarId = cleanString(calendarId)
+  if (!normalizedCalendarId) return null
+
+  const calendar = await getLocalCalendar(normalizedCalendarId)
+  if (!calendar?.id) return null
+
+  await setAppConfigValue(DEFAULT_CALENDAR_CONFIG_KEY, calendar.id)
+
+  const currentAttributionIds = parseConfigArray(await getAppConfigValue(ATTRIBUTION_CALENDAR_IDS_CONFIG_KEY))
+  if (!currentAttributionIds.includes(calendar.id)) {
+    await setAppConfigValue(ATTRIBUTION_CALENDAR_IDS_CONFIG_KEY, [...currentAttributionIds, calendar.id])
+  }
+
+  return {
+    defaultCalendarId: calendar.id,
+    attributionCalendarIds: currentAttributionIds.includes(calendar.id)
+      ? currentAttributionIds
+      : [...currentAttributionIds, calendar.id]
+  }
+}
+
 export async function updateLocalCalendar(calendarId, updateData = {}, { syncStatus = 'pending' } = {}) {
   const existing = await getLocalCalendar(calendarId)
   if (!existing) return null
