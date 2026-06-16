@@ -140,6 +140,12 @@ const SITES_PUBLIC_DOMAIN_CONFIG_KEYS = {
   checkedAt: 'sites_public_domain_checked_at',
   error: 'sites_public_domain_error'
 }
+const SITES_APP_DOMAIN_CONFIG_KEYS = {
+  domain: 'sites_app_domain',
+  verified: 'sites_app_domain_verified',
+  checkedAt: 'sites_app_domain_checked_at',
+  error: 'sites_app_domain_error'
+}
 const SOCIAL_TEMPLATE_IDS = new Set(['facebook', 'instagram', 'tiktok'])
 const SOCIAL_PROFILE_BLOCK_READY_KEY = 'socialProfileBlockReady'
 const IMPORTED_SITE_TEMPLATE = 'imported_html'
@@ -2870,6 +2876,14 @@ function parseDomainList(value) {
     .split(',')
     .map(normalizeDomain)
     .filter(Boolean)
+}
+
+export function isAppSubdomainHost(hostValue) {
+  const host = normalizeDomain(hostValue)
+  if (!host) return false
+
+  const labels = host.split('.').filter(Boolean)
+  return labels.length >= 3 && labels[0].startsWith('app')
 }
 
 function getRenderDefaultHosts() {
@@ -9262,6 +9276,23 @@ async function getSitesPublicDomainConfig() {
   }
 }
 
+async function getSitesAppDomainConfig() {
+  const [rawDomain, verified, checkedAt, error] = await Promise.all([
+    getAppConfig(SITES_APP_DOMAIN_CONFIG_KEYS.domain),
+    getAppConfig(SITES_APP_DOMAIN_CONFIG_KEYS.verified),
+    getAppConfig(SITES_APP_DOMAIN_CONFIG_KEYS.checkedAt),
+    getAppConfig(SITES_APP_DOMAIN_CONFIG_KEYS.error)
+  ])
+  const domain = normalizeDomain(rawDomain)
+
+  return {
+    domain,
+    renderDomainVerified: Boolean(domain && cleanString(verified) === '1'),
+    renderDomainCheckedAt: cleanString(checkedAt) || null,
+    renderDomainError: cleanString(error) || null
+  }
+}
+
 async function saveSitesPublicDomainVerification(domain, result) {
   const checkedAt = new Date().toISOString()
   const config = {
@@ -9281,8 +9312,54 @@ async function saveSitesPublicDomainVerification(domain, result) {
   return config
 }
 
+async function saveSitesAppDomainVerification(domain, result) {
+  const checkedAt = new Date().toISOString()
+  const config = {
+    domain,
+    renderDomainVerified: Boolean(result.verified),
+    renderDomainCheckedAt: checkedAt,
+    renderDomainError: result.verified ? null : result.error || 'Dominio de app no conectado a esta app'
+  }
+
+  await Promise.all([
+    setAppConfig(SITES_APP_DOMAIN_CONFIG_KEYS.domain, domain),
+    setAppConfig(SITES_APP_DOMAIN_CONFIG_KEYS.verified, result.verified ? '1' : '0'),
+    setAppConfig(SITES_APP_DOMAIN_CONFIG_KEYS.checkedAt, checkedAt),
+    setAppConfig(SITES_APP_DOMAIN_CONFIG_KEYS.error, config.renderDomainError)
+  ])
+
+  return config
+}
+
 export async function getSitesPublicDomain() {
   return getSitesPublicDomainConfig()
+}
+
+export async function getSitesDomainSettings({
+  publicConfig = null,
+  appConfig = null,
+  verification = undefined,
+  appVerification = undefined
+} = {}) {
+  const [publicDomainConfig, appDomainConfig] = await Promise.all([
+    publicConfig || getSitesPublicDomainConfig(),
+    appConfig || getSitesAppDomainConfig()
+  ])
+  const nextVerification = verification ?? publicDomainConfig.verification
+  const nextAppVerification = appVerification ?? appDomainConfig.verification
+
+  return {
+    domain: publicDomainConfig.domain,
+    renderDomainVerified: publicDomainConfig.renderDomainVerified,
+    renderDomainCheckedAt: publicDomainConfig.renderDomainCheckedAt,
+    renderDomainError: publicDomainConfig.renderDomainError,
+    ...(nextVerification ? { verification: nextVerification } : {}),
+    appDomain: appDomainConfig.domain,
+    appDomainVerified: appDomainConfig.renderDomainVerified,
+    appDomainCheckedAt: appDomainConfig.renderDomainCheckedAt,
+    appDomainError: appDomainConfig.renderDomainError,
+    ...(nextAppVerification ? { appVerification: nextAppVerification } : {})
+  }
 }
 
 /**
@@ -9297,6 +9374,16 @@ export async function removeSitesPublicDomain() {
     setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.error, null)
   ])
   return getSitesPublicDomainConfig()
+}
+
+export async function removeSitesAppDomain() {
+  await Promise.all([
+    setAppConfig(SITES_APP_DOMAIN_CONFIG_KEYS.domain, null),
+    setAppConfig(SITES_APP_DOMAIN_CONFIG_KEYS.verified, null),
+    setAppConfig(SITES_APP_DOMAIN_CONFIG_KEYS.checkedAt, null),
+    setAppConfig(SITES_APP_DOMAIN_CONFIG_KEYS.error, null)
+  ])
+  return getSitesAppDomainConfig()
 }
 
 export async function refreshSitesPublicDomain(input = {}) {
@@ -9333,6 +9420,54 @@ export async function refreshSitesPublicDomain(input = {}) {
   const shouldPersist = result.verified || domain === current.domain || !hasDomainCandidate
   const nextConfig = shouldPersist
     ? await saveSitesPublicDomainVerification(domain, result)
+    : {
+        ...current,
+        domain,
+        renderDomainVerified: false,
+        renderDomainCheckedAt: new Date().toISOString(),
+        renderDomainError: result.error
+      }
+
+  return {
+    ...nextConfig,
+    verification: result
+  }
+}
+
+export async function refreshSitesAppDomain(input = {}) {
+  const current = await getSitesAppDomainConfig()
+  const hasDomainCandidate = Object.prototype.hasOwnProperty.call(input, 'domain')
+  const rawDomain = hasDomainCandidate ? input.domain : current.domain
+  const domain = normalizeDomain(rawDomain)
+
+  if (hasDomainCandidate && cleanString(rawDomain) && !domain) {
+    const result = { verified: false, error: 'Dominio inválido' }
+    return {
+      ...current,
+      domain: cleanString(rawDomain),
+      renderDomainVerified: false,
+      renderDomainCheckedAt: new Date().toISOString(),
+      renderDomainError: result.error,
+      verification: result
+    }
+  }
+
+  if (!domain) {
+    const result = { verified: false, error: 'Configura un dominio de app primero' }
+    return {
+      ...current,
+      domain: '',
+      renderDomainVerified: false,
+      renderDomainCheckedAt: new Date().toISOString(),
+      renderDomainError: result.error,
+      verification: result
+    }
+  }
+
+  const result = await verifyAppDomainConnection(domain)
+  const shouldPersist = result.verified || domain === current.domain || !hasDomainCandidate
+  const nextConfig = shouldPersist
+    ? await saveSitesAppDomainVerification(domain, result)
     : {
         ...current,
         domain,
@@ -9465,6 +9600,22 @@ export async function verifyPublicDomainConnection(domainValue) {
   }
 }
 
+export async function verifyAppDomainConnection(domainValue) {
+  const domain = normalizeDomain(domainValue)
+  if (!domain) {
+    return { verified: false, error: 'Dominio inválido' }
+  }
+
+  if (!isAppSubdomainHost(domain)) {
+    return {
+      verified: false,
+      error: 'Usa un subdominio que empiece con app, por ejemplo app.tudominio.com'
+    }
+  }
+
+  return verifyPublicDomainConnection(domain)
+}
+
 function normalizePublicRouteSlug(pathValue) {
   const path = cleanString(pathValue || '/')
   const firstSegment = path
@@ -9555,6 +9706,38 @@ export async function resolveConnectedPublicDomainForHost(hostValue, { forceRefr
       status: 404,
       reason: 'domain_unverified',
       message: config.renderDomainError || 'Dominio no conectado a esta app',
+      domainConfig: config
+    }
+  }
+
+  return { ok: true, domain: config.domain, domainConfig: config, host }
+}
+
+export async function resolveConnectedAppDomainForHost(hostValue, { forceRefresh = false } = {}) {
+  const host = normalizeDomain(hostValue)
+  if (!host) {
+    return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio inválido' }
+  }
+
+  const config = await getSitesAppDomainConfig()
+  if (!config.domain || !isAppSubdomainHost(config.domain) || !matchesPublicDomain(host, config.domain)) {
+    return { ok: false, status: 404, reason: 'domain_not_configured', message: 'Dominio de app no configurado' }
+  }
+
+  if (shouldRefreshDomainCheck(config, forceRefresh)) {
+    const verification = await verifyAppDomainConnection(config.domain)
+    const nextConfig = await saveSitesAppDomainVerification(config.domain, verification)
+    config.renderDomainVerified = nextConfig.renderDomainVerified
+    config.renderDomainCheckedAt = nextConfig.renderDomainCheckedAt
+    config.renderDomainError = nextConfig.renderDomainError
+  }
+
+  if (!config.renderDomainVerified) {
+    return {
+      ok: false,
+      status: 404,
+      reason: 'domain_unverified',
+      message: config.renderDomainError || 'Dominio de app no conectado a esta app',
       domainConfig: config
     }
   }

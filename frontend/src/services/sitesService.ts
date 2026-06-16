@@ -350,6 +350,14 @@ export interface SitesDomainConfig {
     verified: boolean
     error: string | null
   }
+  appDomain: string
+  appDomainVerified: boolean
+  appDomainCheckedAt: string | null
+  appDomainError: string | null
+  appVerification?: {
+    verified: boolean
+    error: string | null
+  }
 }
 
 export type ImportedFieldDestinationType = 'standard' | 'custom' | 'new_custom' | 'ignored'
@@ -764,6 +772,14 @@ export const sitesService = {
 
   removeDomain() {
     return apiClient.delete<SitesDomainConfig>('/sites/domain')
+  },
+
+  verifyAppDomain(domain: string) {
+    return apiClient.post<SitesDomainConfig>('/sites/domain/app/verify', { domain })
+  },
+
+  removeAppDomain() {
+    return apiClient.delete<SitesDomainConfig>('/sites/domain/app')
   },
 
   verifySiteDomain(siteId: string, domain?: string) {

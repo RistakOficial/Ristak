@@ -12,15 +12,18 @@ import {
   getImportedSiteBySiteId,
   getImportedSiteAssetResponse,
   getSite,
+  getSitesDomainSettings,
   getSitePreview,
-  getSitesPublicDomain,
   isDashboardHost,
   listSites,
+  refreshSitesAppDomain,
   refreshSitesPublicDomain,
+  removeSitesAppDomain,
   removeSitesPublicDomain,
   renderDomainErrorHtml,
   renderPublicSiteHtml,
   reorderBlocks,
+  resolveConnectedAppDomainForHost,
   resolveConnectedPublicDomainForHost,
   resolvePublicSiteForHost,
   restoreBlocks,
@@ -457,7 +460,7 @@ export async function reorderBlocksHandler(req, res) {
 export async function verifySiteDomainHandler(req, res) {
   try {
     const result = await refreshSitesPublicDomain(req.body || {})
-    res.json({ success: true, data: result })
+    res.json({ success: true, data: await getSitesDomainSettings({ publicConfig: result }) })
   } catch (error) {
     logger.error(`Error verificando dominio de site: ${error.message}`)
     sendError(res, error, 'Error verificando dominio')
@@ -466,7 +469,7 @@ export async function verifySiteDomainHandler(req, res) {
 
 export async function getSitesDomainHandler(req, res) {
   try {
-    res.json({ success: true, data: await getSitesPublicDomain() })
+    res.json({ success: true, data: await getSitesDomainSettings() })
   } catch (error) {
     logger.error(`Error obteniendo dominio público de Sites: ${error.message}`)
     sendError(res, error, 'Error obteniendo dominio')
@@ -476,7 +479,7 @@ export async function getSitesDomainHandler(req, res) {
 export async function verifySitesDomainHandler(req, res) {
   try {
     const result = await refreshSitesPublicDomain(req.body || {})
-    res.json({ success: true, data: result })
+    res.json({ success: true, data: await getSitesDomainSettings({ publicConfig: result }) })
   } catch (error) {
     logger.error(`Error verificando dominio público de Sites: ${error.message}`)
     sendError(res, error, 'Error verificando dominio')
@@ -485,10 +488,31 @@ export async function verifySitesDomainHandler(req, res) {
 
 export async function removeSitesDomainHandler(req, res) {
   try {
-    res.json({ success: true, data: await removeSitesPublicDomain() })
+    const result = await removeSitesPublicDomain()
+    res.json({ success: true, data: await getSitesDomainSettings({ publicConfig: result }) })
   } catch (error) {
     logger.error(`Error eliminando dominio público de Sites: ${error.message}`)
     sendError(res, error, 'Error eliminando dominio')
+  }
+}
+
+export async function verifySitesAppDomainHandler(req, res) {
+  try {
+    const result = await refreshSitesAppDomain(req.body || {})
+    res.json({ success: true, data: await getSitesDomainSettings({ appConfig: result }) })
+  } catch (error) {
+    logger.error(`Error verificando dominio de app de Sites: ${error.message}`)
+    sendError(res, error, 'Error verificando dominio de app')
+  }
+}
+
+export async function removeSitesAppDomainHandler(req, res) {
+  try {
+    const result = await removeSitesAppDomain()
+    res.json({ success: true, data: await getSitesDomainSettings({ appConfig: result }) })
+  } catch (error) {
+    logger.error(`Error eliminando dominio de app de Sites: ${error.message}`)
+    sendError(res, error, 'Error eliminando dominio de app')
   }
 }
 
@@ -569,6 +593,15 @@ export async function publicSiteHostMiddleware(req, res, next) {
 
     const host = getRequestHost(req)
     if (!host) return next()
+
+    const appDomainResolution = await resolveConnectedAppDomainForHost(host)
+    if (appDomainResolution.ok) {
+      return next()
+    }
+
+    if (appDomainResolution.reason !== 'domain_not_configured') {
+      return sendDomainError(req, res, appDomainResolution.status || 404, appDomainResolution.message)
+    }
 
     const calendarMatch = req.path.match(/^\/calendars?\/([^/?#]+)/i)
     if (calendarMatch) {

@@ -17,6 +17,7 @@ import {
   metaPageEventPublicHandler,
   previewCalendarHandler,
   previewSiteHandler,
+  removeSitesAppDomainHandler,
   removeSitesDomainHandler,
   previewSiteSessionHandler,
   reorderBlocksHandler,
@@ -28,6 +29,7 @@ import {
   updateImportedSiteHtmlWithAIHandler,
   updateImportedSiteMappingHandler,
   updateSiteHandler,
+  verifySitesAppDomainHandler,
   verifySitesDomainHandler,
   verifySiteDomainHandler
 } from '../controllers/sitesController.js'
@@ -50,6 +52,8 @@ router.post('/import-html', importSiteHtmlHandler)
 router.get('/domain', getSitesDomainHandler)
 router.post('/domain/verify', verifySitesDomainHandler)
 router.delete('/domain', removeSitesDomainHandler)
+router.post('/domain/app/verify', verifySitesAppDomainHandler)
+router.delete('/domain/app', removeSitesAppDomainHandler)
 router.get('/:siteId/import-mapping', getImportedSiteMappingHandler)
 router.get('/:siteId', getSiteHandler)
 router.put('/:siteId', updateSiteHandler)
