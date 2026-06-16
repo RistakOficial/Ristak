@@ -12046,11 +12046,10 @@ export const PhoneChat: React.FC = () => {
                   <stop offset="0" stopColor="#2bbbf0" stopOpacity="0.55" />
                   <stop offset="1" stopColor="#2bbbf0" stopOpacity="0" />
                 </radialGradient>
-                <radialGradient id="rkbLens" cx="0.4" cy="0.3" r="0.85">
+                <radialGradient id="rkbEye" cx="0.42" cy="0.3" r="0.85">
                   <stop offset="0" stopColor="#ffffff" />
-                  <stop offset="0.26" stopColor="#d4f7ff" />
-                  <stop offset="0.58" stopColor="#57d2f6" />
-                  <stop offset="1" stopColor="#0f7bbf" />
+                  <stop offset="0.4" stopColor="#bdf0ff" />
+                  <stop offset="1" stopColor="#5bd3f4" />
                 </radialGradient>
                 <radialGradient id="rkbHand" cx="0.4" cy="0.3" r="0.8">
                   <stop offset="0" stopColor="#ffffff" />
@@ -12062,16 +12061,12 @@ export const PhoneChat: React.FC = () => {
                   <stop offset="0.5" stopColor="#ffd23d" />
                   <stop offset="1" stopColor="#f59e0b" />
                 </radialGradient>
-                <clipPath id="rkClipL"><circle cx="102" cy="150" r="14" /></clipPath>
-                <clipPath id="rkClipR"><circle cx="138" cy="150" r="14" /></clipPath>
               </defs>
 
-              {/* Dos aros tech con destello que viaja */}
+              {/* Dos aros tech estáticos */}
               <g className={styles.rkRings}>
-                <ellipse cx="120" cy="50" rx="44" ry="12" fill="none" stroke="#2f6da6" strokeOpacity="0.5" strokeWidth="3.2" />
-                <ellipse className={styles.rkGlintA} cx="120" cy="50" rx="44" ry="12" fill="none" stroke="#bff3ff" strokeWidth="3.4" strokeLinecap="round" strokeDasharray="22 210" pathLength="232" />
-                <ellipse cx="120" cy="59" rx="29" ry="8" fill="none" stroke="#2f6da6" strokeOpacity="0.45" strokeWidth="2.6" />
-                <ellipse className={styles.rkGlintB} cx="120" cy="59" rx="29" ry="8" fill="none" stroke="#cdf2ff" strokeWidth="2.8" strokeLinecap="round" strokeDasharray="14 150" pathLength="162" />
+                <ellipse className={styles.rkRing} cx="120" cy="50" rx="44" ry="12" fill="none" stroke="#7fdcff" strokeOpacity="0.85" strokeWidth="3.4" />
+                <ellipse className={styles.rkRing} cx="120" cy="60" rx="30" ry="8" fill="none" stroke="#7fdcff" strokeOpacity="0.7" strokeWidth="2.8" />
               </g>
 
               {/* Globo de ideas (sólo hub) */}
@@ -12108,39 +12103,25 @@ export const PhoneChat: React.FC = () => {
                 {/* Rostro */}
                 <g className={styles.rkFace3d}>
                   <g className={styles.rkEyes}>
-                    <g className={styles.rkEyesMood}>
-                      {/* Ojo izquierdo */}
-                      <circle cx="102" cy="150" r="18" fill="url(#rkbEyeGlow)" />
-                      <g clipPath="url(#rkClipL)">
-                        <circle className={styles.rkLensG} cx="102" cy="150" r="14" fill="url(#rkbLens)" />
-                        <circle cx="102" cy="150" r="14" fill="none" stroke="#bff3ff" strokeOpacity="0.45" strokeWidth="1.4" />
-                        <g className={`${styles.rkPupils} ${styles.rkIrisG}`}>
-                          <circle cx="102" cy="150" r="6.6" fill="#0e6fb0" />
-                          <circle cx="101" cy="149" r="3.2" fill="#dffbff" />
-                          <circle cx="98.8" cy="146.4" r="1.8" fill="#ffffff" />
-                        </g>
-                        <rect className={styles.rkLidTL} x="86" y="118" width="32" height="18" rx="4" fill="#0a1c3a" />
-                        <rect className={styles.rkLidBL} x="86" y="164" width="32" height="18" rx="4" fill="#0a1c3a" />
+                    {/* Ojos tiernos simples */}
+                    <g className={styles.rkEyesWrap}>
+                      <g className={styles.rkEye}>
+                        <ellipse cx="101" cy="151" rx="11" ry="13" fill="url(#rkbEye)" />
+                        <circle cx="97.5" cy="146" r="3.2" fill="#ffffff" opacity="0.95" />
                       </g>
-                      {/* Ojo derecho */}
-                      <circle cx="138" cy="150" r="18" fill="url(#rkbEyeGlow)" />
-                      <g clipPath="url(#rkClipR)">
-                        <circle className={styles.rkLensG} cx="138" cy="150" r="14" fill="url(#rkbLens)" />
-                        <circle cx="138" cy="150" r="14" fill="none" stroke="#bff3ff" strokeOpacity="0.45" strokeWidth="1.4" />
-                        <g className={`${styles.rkPupils} ${styles.rkIrisG}`}>
-                          <circle cx="138" cy="150" r="6.6" fill="#0e6fb0" />
-                          <circle cx="137" cy="149" r="3.2" fill="#dffbff" />
-                          <circle cx="134.8" cy="146.4" r="1.8" fill="#ffffff" />
-                        </g>
-                        <rect className={styles.rkLidTR} x="122" y="118" width="32" height="18" rx="4" fill="#0a1c3a" />
-                        <rect className={styles.rkLidBR} x="122" y="164" width="32" height="18" rx="4" fill="#0a1c3a" />
+                      <g className={styles.rkEye}>
+                        <ellipse cx="139" cy="151" rx="11" ry="13" fill="url(#rkbEye)" />
+                        <circle cx="135.5" cy="146" r="3.2" fill="#ffffff" opacity="0.95" />
                       </g>
                     </g>
+                    {/* Ojos felices ^^ */}
+                    <g className={styles.rkHappy}>
+                      <path d="M90 154 Q101 142 112 154" stroke="#bdf0ff" strokeWidth="5" strokeLinecap="round" />
+                      <path d="M128 154 Q139 142 150 154" stroke="#bdf0ff" strokeWidth="5" strokeLinecap="round" />
+                    </g>
                   </g>
-                  {/* Boca robo: ranura + arco luminoso + ecualizador */}
-                  <rect x="98" y="172" width="44" height="16" rx="8" fill="#06122b" />
-                  <rect x="98" y="172" width="44" height="16" rx="8" fill="none" stroke="#1f3a66" strokeWidth="1" />
-                  <path className={styles.rkMouthArc} d="M107,178 Q120,186 133,178" fill="none" stroke="#9bf0ff" strokeWidth="3.4" strokeLinecap="round" strokeDasharray="2.5 3.2" />
+                  {/* Boca amigable */}
+                  <path className={styles.rkMouthArc} d="M106,176 Q120,185 134,176" fill="none" stroke="#9bf0ff" strokeWidth="4" strokeLinecap="round" />
                   <g className={styles.rkEq}>
                     <rect className={styles.rkEqBar} x="105" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
                     <rect className={styles.rkEqBar} x="112" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
