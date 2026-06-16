@@ -34,9 +34,11 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 
 # Temp files
 tmp/
 temp/
+_harness/
