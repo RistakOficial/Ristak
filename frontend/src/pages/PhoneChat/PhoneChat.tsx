@@ -2398,7 +2398,7 @@ function buildContactInfoJourney(
   })
 
   return [...otherEvents, ...mergedWhatsAppEvents].sort(
-    (left, right) => Date.parse(left.date) - Date.parse(right.date)
+    (left, right) => Date.parse(right.date) - Date.parse(left.date)
   )
 }
 
@@ -9935,7 +9935,7 @@ export const PhoneChat: React.FC = () => {
                 <strong>Viaje del cliente</strong>
                 <small>
                   {contactInfoJourneyEvents.length > 0
-                    ? `${contactInfoJourneyEvents.length} evento${contactInfoJourneyEvents.length === 1 ? '' : 's'} · De más viejo a más nuevo`
+                    ? `${contactInfoJourneyEvents.length} evento${contactInfoJourneyEvents.length === 1 ? '' : 's'} · De más nuevo a más viejo`
                     : 'Aún sin actividad guardada'}
                 </small>
               </span>
