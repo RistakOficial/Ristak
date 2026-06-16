@@ -828,6 +828,20 @@ export function normalizeAgentReplyDelivery(input) {
   }
 }
 
+function normalizeAgentReplyDeliveryForConfig(input) {
+  const delivery = normalizeAgentReplyDelivery(input)
+  return {
+    ...delivery,
+    minMessageLengthToSplit: DEFAULT_REPLY_DELIVERY_CONFIG.minMessageLengthToSplit,
+    maxBubbles: DEFAULT_REPLY_DELIVERY_CONFIG.maxBubbles,
+    minBubbleLength: DEFAULT_REPLY_DELIVERY_CONFIG.minBubbleLength,
+    maxBubbleLength: DEFAULT_REPLY_DELIVERY_CONFIG.maxBubbleLength,
+    targetChars: DEFAULT_REPLY_DELIVERY_CONFIG.targetChars,
+    randomizeSplitting: true,
+    delayBetweenBubblesEnabled: true
+  }
+}
+
 export function getAgentReplyDeliveryPartDelayMs(agentConfig = {}) {
   const delivery = normalizeAgentReplyDelivery(agentConfig.replyDelivery)
   if (delivery.mode !== 'split' || !delivery.delayBetweenBubblesEnabled) return 0
@@ -861,7 +875,7 @@ function mapAgentRow(row) {
     closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     closingStrategyCustom: row.closing_strategy_custom || '',
     responseDelay: normalizeAgentResponseDelay(parseJsonField(row.response_delay_config, null)),
-    replyDelivery: normalizeAgentReplyDelivery(parseJsonField(row.reply_delivery_config, null)),
+    replyDelivery: normalizeAgentReplyDeliveryForConfig(parseJsonField(row.reply_delivery_config, null)),
     goalWorkflow: normalizeAgentGoalWorkflow(parseJsonField(row.goal_workflow_config, null)),
     filters: normalizeAgentFilters(parseJsonField(row.entry_filters, null)),
     createdAt: row.created_at || null,
@@ -1127,8 +1141,8 @@ function agentInputToRowValues(input, base) {
       ? normalizeAgentResponseDelay(base.responseDelay)
       : normalizeAgentResponseDelay(input.responseDelay),
     replyDelivery: input.replyDelivery === undefined
-      ? normalizeAgentReplyDelivery(base.replyDelivery)
-      : normalizeAgentReplyDelivery(input.replyDelivery),
+      ? normalizeAgentReplyDeliveryForConfig(base.replyDelivery)
+      : normalizeAgentReplyDeliveryForConfig(input.replyDelivery),
     goalWorkflow: input.goalWorkflow === undefined
       ? normalizeAgentGoalWorkflow(base.goalWorkflow)
       : normalizeAgentGoalWorkflow(input.goalWorkflow),

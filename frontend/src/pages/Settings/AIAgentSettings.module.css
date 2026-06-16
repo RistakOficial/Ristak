@@ -1231,6 +1231,53 @@
   border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
+.promptReadinessBanner,
+.promptReadinessNotice,
+.strategyPromptState {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.07);
+}
+
+.promptReadinessBanner {
+  margin-top: 16px;
+}
+
+.promptReadinessNotice {
+  margin-top: 10px;
+}
+
+.promptReadinessBanner strong,
+.promptReadinessNotice strong,
+.strategyPromptState strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.promptReadinessBanner span,
+.promptReadinessNotice span,
+.strategyPromptState span {
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.promptReadinessBannerReady,
+.strategyPromptStateReady {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+.promptReadinessBannerLocked,
+.strategyPromptStateLocked {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.24);
+}
+
 .agentOpsGrid {
   display: grid;
   grid-template-columns: minmax(220px, 360px) minmax(280px, 1fr);
@@ -1694,6 +1741,16 @@
 .strategyBadgeCustom {
   background: rgba(37, 99, 235, 0.12);
   color: #3b82f6;
+}
+
+.strategyBadgeReady {
+  color: var(--color-status-success);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.strategyBadgeLocked {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
 }
 
 .resetStrategyButton {

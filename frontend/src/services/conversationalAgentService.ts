@@ -7,6 +7,17 @@ export type AgentResponseDelayMode = 'none' | 'fixed' | 'random'
 export type AgentResponseDelayUnit = 'seconds' | 'minutes'
 export type AgentReplyDeliveryMode = 'single' | 'split'
 
+export interface ConversationalBusinessPromptStatus {
+  ready: boolean
+  status: string
+  extractionStatus: string
+  extractionError: string | null
+  businessName: string | null
+  industry: string | null
+  updatedAt: string | null
+  summary: string | null
+}
+
 export interface AgentResponseDelayConfig {
   mode: AgentResponseDelayMode
   fixedValue: number
@@ -75,6 +86,7 @@ export interface ConversationalAgentConfig {
   objectives?: Array<{ id: string; label: string }>
   successActions?: Array<{ id: string; label: string }>
   systemClosingStrategy?: string
+  businessPromptStatus?: ConversationalBusinessPromptStatus
 }
 
 export interface ConversationalAgentConfigInput {

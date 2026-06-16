@@ -15,6 +15,7 @@ import {
   type AgentResponseDelayUnit,
   type AgentSuccessExtra,
   type ClosingStrategyMode,
+  type ConversationalBusinessPromptStatus,
   type ConversationalAgentConfig,
   type ConversationalAgentDef,
   type ConversationalAgentDefInput,
@@ -95,6 +96,19 @@ const defaultReplyDelivery: AgentReplyDeliveryConfig = {
   maxDelaySeconds: 7
 }
 
+const systemReplyDeliveryDefaults: Pick<
+  AgentReplyDeliveryConfig,
+  'minMessageLengthToSplit' | 'maxBubbles' | 'minBubbleLength' | 'maxBubbleLength' | 'targetChars' | 'randomizeSplitting' | 'delayBetweenBubblesEnabled'
+> = {
+  minMessageLengthToSplit: defaultReplyDelivery.minMessageLengthToSplit,
+  maxBubbles: defaultReplyDelivery.maxBubbles,
+  minBubbleLength: defaultReplyDelivery.minBubbleLength,
+  maxBubbleLength: defaultReplyDelivery.maxBubbleLength,
+  targetChars: defaultReplyDelivery.targetChars,
+  randomizeSplitting: true,
+  delayBetweenBubblesEnabled: true
+}
+
 type TestMessage = { role: 'user' | 'assistant'; content: string; internal?: boolean }
 
 const MAX_TEST_REPLY_DELAY_MS = 60_000
@@ -149,12 +163,43 @@ function getResponseDelayHelp(delay: AgentResponseDelayConfig) {
 
 function getReplyDeliveryHelp(delivery: AgentReplyDeliveryConfig) {
   if (delivery.splitMessagesEnabled || delivery.mode === 'split') {
-    const delayText = delivery.delayBetweenBubblesEnabled
-      ? `con pausas de ${delivery.minDelaySeconds} a ${delivery.maxDelaySeconds} segundos`
-      : 'sin pausa entre globos'
-    return `Usa IA para partir respuestas desde ${delivery.minMessageLengthToSplit} letras en máximo ${delivery.maxBubbles} globos, ${delayText}.`
+    return `El sistema decide cortes y cantidad de globos. Sólo ajusta la pausa entre globos: ${delivery.minDelaySeconds} a ${delivery.maxDelaySeconds} segundos.`
   }
   return 'Envía cada respuesta completa en un solo WhatsApp.'
+}
+
+function isBusinessPromptReady(status?: ConversationalBusinessPromptStatus | null) {
+  return Boolean(status?.ready)
+}
+
+function getBusinessPromptStatusText(status?: ConversationalBusinessPromptStatus | null) {
+  if (status?.ready) {
+    const business = [status.businessName, status.industry].filter(Boolean).join(' · ')
+    return business ? `Adaptada a ${business}` : 'Prompt interno listo'
+  }
+  if (!status || status.status === 'empty') return 'Falta describir el negocio'
+  if (status.status === 'needs_more_context') return 'Falta más contexto del negocio'
+  if (status.status === 'needs_openai') return 'Falta preparar el prompt con OpenAI'
+  if (status.status === 'failed') return 'No se pudo preparar el prompt'
+  return 'Preparando prompt interno'
+}
+
+function getBusinessPromptBlockerText(status?: ConversationalBusinessPromptStatus | null) {
+  if (status?.ready) return ''
+  if (status?.extractionError) return status.extractionError
+  if (!status || status.status === 'empty') {
+    return 'Antes de publicar agentes, describe el negocio en Agente AI para que Ristak adapte la conversación.'
+  }
+  if (status.status === 'needs_more_context') {
+    return 'Agrega más detalle del negocio: qué vende, a quién atiende, cómo opera y qué debe evitar.'
+  }
+  if (status.status === 'needs_openai') {
+    return 'Conecta OpenAI y guarda la descripción del negocio para generar el prompt interno.'
+  }
+  if (status.status === 'failed') {
+    return 'Vuelve a guardar la descripción del negocio para regenerar la estrategia interna.'
+  }
+  return 'Ristak está preparando el prompt interno. Espera a que quede listo antes de publicar.'
 }
 
 interface SelectionToggleProps {
@@ -185,12 +230,13 @@ interface AgentCardProps {
   calendars: Calendar[]
   filterOptions?: AgentFilterOptions
   systemStrategy: string
+  businessPromptStatus?: ConversationalBusinessPromptStatus | null
   onBack: () => void
   onChange: (patch: ConversationalAgentDefInput) => void
   onDelete: () => void
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, systemStrategy, onBack, onChange, onDelete }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, systemStrategy, businessPromptStatus, onBack, onChange, onDelete }) => {
   const { showToast } = useNotification()
   const [testMessages, setTestMessages] = useState<TestMessage[]>([])
   const [testInput, setTestInput] = useState('')
@@ -203,6 +249,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
   const selectedAgentModel = aiModelOptions.find((option) => option.value === selectedAgentModelValue) || aiModelOptions[0]
   const strategyIsCustom = agent.closingStrategyMode === 'custom'
   const strategyText = strategyIsCustom ? agent.closingStrategyCustom : systemStrategy
+  const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
+  const promptStatusText = getBusinessPromptStatusText(businessPromptStatus)
+  const promptBlockerText = getBusinessPromptBlockerText(businessPromptStatus)
   const entryCount = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
   const exitCount = agent.filters.exit.groups.reduce((total, group) => total + group.conditions.length, 0)
   const customFieldOptions = filterOptions?.customFields || []
@@ -283,6 +332,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
           <Button
             variant={agent.enabled ? 'secondary' : 'primary'}
             onClick={() => onChange({ enabled: !agent.enabled })}
+            disabled={!agent.enabled && !businessPromptReady}
+            title={!agent.enabled && !businessPromptReady ? promptBlockerText : undefined}
           >
             {agent.enabled ? <Pause size={16} /> : <Play size={16} />}
             {agent.enabled ? 'Pausar' : 'Publicar'}
@@ -319,6 +370,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
             {responseDelaySummary ? ` · espera ${responseDelaySummary}` : ''}
             {replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split' ? ' · responde en partes' : ''}
           </p>
+          {!businessPromptReady && (
+            <div className={styles.promptReadinessNotice}>
+              <strong>{promptStatusText}</strong>
+              <span>{promptBlockerText}</span>
+            </div>
+          )}
 
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>Modelo y orden del chat</h3>
@@ -538,13 +595,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
           <details className={styles.advancedDetails} open={strategyIsCustom || undefined}>
             <summary>
               <span>Estrategia avanzada</span>
-              <small>Cómo insiste, pregunta y cierra.</small>
+              <small>{strategyIsCustom ? 'Editada a mano' : promptStatusText}</small>
             </summary>
             <div className={styles.advancedContent}>
               <div className={styles.strategyHeaderRow}>
                 <label className={styles.label}>Estrategia de cierre</label>
-                <span className={`${styles.strategyBadge} ${strategyIsCustom ? styles.strategyBadgeCustom : ''}`}>
-                  {strategyIsCustom ? 'Editada' : 'De fábrica'}
+                <span className={`${styles.strategyBadge} ${strategyIsCustom ? styles.strategyBadgeCustom : businessPromptReady ? styles.strategyBadgeReady : styles.strategyBadgeLocked}`}>
+                  {strategyIsCustom ? 'Editada' : businessPromptReady ? 'Adaptada' : 'Pendiente'}
                 </span>
                 {strategyIsCustom && (
                   <button
@@ -557,6 +614,16 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
                   </button>
                 )}
               </div>
+              {!strategyIsCustom && (
+                <div className={`${styles.strategyPromptState} ${businessPromptReady ? styles.strategyPromptStateReady : styles.strategyPromptStateLocked}`}>
+                  <strong>{promptStatusText}</strong>
+                  <span>
+                    {businessPromptReady
+                      ? 'La estrategia de fábrica ya cambió con los datos actuales del negocio.'
+                      : promptBlockerText}
+                  </span>
+                </div>
+              )}
               <textarea
                 className={`${styles.textarea} ${styles.actionTextarea}`}
                 value={strategyText}
@@ -566,7 +633,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
               <p className={styles.helper}>
                 {strategyIsCustom
                   ? 'Este agente usa tu versión editada.'
-                  : 'Toca aquí sólo si quieres cambiar cómo conversa para cerrar.'}
+                  : businessPromptReady
+                    ? 'Esta vista ya incluye el lenguaje, giro y encuadre actual del negocio. Si cambias la descripción en Agente AI, se vuelve a preparar.'
+                    : 'Primero completa la descripción del negocio para ver la versión adaptada.'}
               </p>
             </div>
           </details>
@@ -670,75 +739,15 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
                 onChange={(enabled) => {
                   updateReplyDelivery({
                     mode: (enabled ? 'split' : 'single') as AgentReplyDeliveryMode,
-                    splitMessagesEnabled: enabled
+                    splitMessagesEnabled: enabled,
+                    ...systemReplyDeliveryDefaults
                   })
                 }}
               />
 
               {(replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split') && (
                 <div className={styles.replyDeliveryControls}>
-                  <SelectionToggle
-                    checked={replyDelivery.randomizeSplitting}
-                    title="Variar cortes"
-                    onChange={(checked) => updateReplyDelivery({ randomizeSplitting: checked })}
-                  />
-                  <SelectionToggle
-                    checked={replyDelivery.delayBetweenBubblesEnabled}
-                    title="Pausas entre globos"
-                    onChange={(checked) => updateReplyDelivery({ delayBetweenBubblesEnabled: checked })}
-                  />
-                  <div className={`${styles.field} ${styles.replyPartSizeField}`}>
-                    <label className={styles.label}>Dividir desde</label>
-                    <input
-                      className={`${styles.input} ${styles.delayNumberInput}`}
-                      type="number"
-                      min={0}
-                      max={2000}
-                      step={10}
-                      value={replyDelivery.minMessageLengthToSplit}
-                      onChange={(event) => updateReplyDelivery({ minMessageLengthToSplit: Number(event.target.value) || 0 })}
-                    />
-                  </div>
                   <div className={`${styles.field} ${styles.delayNumberField}`}>
-                    <label className={styles.label}>Máx. globos</label>
-                    <input
-                      className={`${styles.input} ${styles.delayNumberInput}`}
-                      type="number"
-                      min={1}
-                      max={10}
-                      step={1}
-                      value={replyDelivery.maxBubbles}
-                      onChange={(event) => updateReplyDelivery({ maxBubbles: Number(event.target.value) || defaultReplyDelivery.maxBubbles })}
-                    />
-                  </div>
-                  <div className={`${styles.field} ${styles.replyPartSizeField}`}>
-                    <label className={styles.label}>Globo mín.</label>
-                    <input
-                      className={`${styles.input} ${styles.delayNumberInput}`}
-                      type="number"
-                      min={1}
-                      max={200}
-                      step={10}
-                      value={replyDelivery.minBubbleLength}
-                      onChange={(event) => updateReplyDelivery({ minBubbleLength: Number(event.target.value) || defaultReplyDelivery.minBubbleLength })}
-                    />
-                  </div>
-                  <div className={`${styles.field} ${styles.replyPartSizeField}`}>
-                    <label className={styles.label}>Globo máx.</label>
-                    <input
-                      className={`${styles.input} ${styles.delayNumberInput}`}
-                      type="number"
-                      min={80}
-                      max={1000}
-                      step={10}
-                      value={replyDelivery.maxBubbleLength}
-                      onChange={(event) => {
-                        const maxBubbleLength = Number(event.target.value) || defaultReplyDelivery.maxBubbleLength
-                        updateReplyDelivery({ maxBubbleLength, targetChars: maxBubbleLength })
-                      }}
-                    />
-                  </div>
-                  <div className={`${styles.field} ${styles.delayNumberField} ${replyDelivery.delayBetweenBubblesEnabled ? '' : styles.mutedField}`}>
                     <label className={styles.label}>Pausa mín.</label>
                     <input
                       className={`${styles.input} ${styles.delayNumberInput}`}
@@ -747,11 +756,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
                       max={60}
                       step={1}
                       value={replyDelivery.minDelaySeconds}
-                      disabled={!replyDelivery.delayBetweenBubblesEnabled}
                       onChange={(event) => updateReplyDelivery({ minDelaySeconds: Number(event.target.value) || 0 })}
                     />
                   </div>
-                  <div className={`${styles.field} ${styles.delayNumberField} ${replyDelivery.delayBetweenBubblesEnabled ? '' : styles.mutedField}`}>
+                  <div className={`${styles.field} ${styles.delayNumberField}`}>
                     <label className={styles.label}>Pausa máx.</label>
                     <input
                       className={`${styles.input} ${styles.delayNumberInput}`}
@@ -760,7 +768,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
                       max={60}
                       step={1}
                       value={replyDelivery.maxDelaySeconds}
-                      disabled={!replyDelivery.delayBetweenBubblesEnabled}
                       onChange={(event) => updateReplyDelivery({ maxDelaySeconds: Number(event.target.value) || 0 })}
                     />
                   </div>
@@ -901,6 +908,12 @@ export const ConversationalAgentSettings: React.FC = () => {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const saveTimersRef = useRef<Map<string, number>>(new Map())
   const agentsRef = useRef<ConversationalAgentDef[]>([])
+  const businessProfileVersion = [
+    openAIAvailability.businessProfile?.updatedAt || '',
+    openAIAvailability.businessProfile?.extractionStatus || openAIAvailability.businessProfile?.status || '',
+    openAIAvailability.businessProfile?.businessName || '',
+    openAIAvailability.businessProfile?.industry || ''
+  ].join('|')
   agentsRef.current = agents
 
   const refreshMetrics = useCallback(async () => {
@@ -954,7 +967,7 @@ export const ConversationalAgentSettings: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [openAIAvailability.configured, openAIAvailability.loading, showToast])
+  }, [businessProfileVersion, openAIAvailability.configured, openAIAvailability.loading, showToast])
 
   useEffect(() => {
     const timers = saveTimersRef.current
@@ -980,7 +993,16 @@ export const ConversationalAgentSettings: React.FC = () => {
     }, AUTOSAVE_DELAY_MS))
   }, [showToast])
 
+  const businessPromptStatus = config?.businessPromptStatus || null
+  const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
+  const promptStatusText = getBusinessPromptStatusText(businessPromptStatus)
+  const promptBlockerText = getBusinessPromptBlockerText(businessPromptStatus)
+
   const handleAgentChange = (agentId: string, patch: ConversationalAgentDefInput) => {
+    if (patch.enabled === true && !businessPromptReady) {
+      showToast('warning', 'Prompt interno pendiente', promptBlockerText)
+      return
+    }
     setAgents((current) => current.map((agent) => (agent.id === agentId ? { ...agent, ...patch } as ConversationalAgentDef : agent)))
     scheduleAgentSave(agentId)
     if (patch.enabled === true && config && !config.enabled) {
@@ -989,6 +1011,10 @@ export const ConversationalAgentSettings: React.FC = () => {
   }
 
   const handleGlobalChange = async (patch: { enabled?: boolean }) => {
+    if (patch.enabled === true && !businessPromptReady) {
+      showToast('warning', 'Prompt interno pendiente', promptBlockerText)
+      return
+    }
     try {
       const next = await conversationalAgentService.saveConfig(patch)
       setConfig(next)
@@ -998,6 +1024,10 @@ export const ConversationalAgentSettings: React.FC = () => {
   }
 
   const handleCreateAgent = async () => {
+    if (!businessPromptReady) {
+      showToast('warning', 'Prompt interno pendiente', promptBlockerText)
+      return
+    }
     setCreating(true)
     try {
       const agent = await conversationalAgentService.createAgent({
@@ -1123,6 +1153,7 @@ export const ConversationalAgentSettings: React.FC = () => {
           calendars={calendars}
           filterOptions={filterOptions}
           systemStrategy={systemStrategy}
+          businessPromptStatus={businessPromptStatus}
           onBack={() => setSelectedAgentId(null)}
           onChange={(patch) => handleAgentChange(selectedAgent.id, patch)}
           onDelete={() => handleDeleteAgent(selectedAgent)}
@@ -1148,7 +1179,12 @@ export const ConversationalAgentSettings: React.FC = () => {
           </div>
           <div className={styles.headerActions}>
             {!config?.enabled && (
-              <Button variant="secondary" onClick={() => handleGlobalChange({ enabled: true })} disabled={loading || !config}>
+              <Button
+                variant="secondary"
+                onClick={() => handleGlobalChange({ enabled: true })}
+                disabled={loading || !config || !businessPromptReady}
+                title={!businessPromptReady ? promptBlockerText : undefined}
+              >
                 <Bot size={16} />
                 Reactivar
               </Button>
@@ -1157,11 +1193,25 @@ export const ConversationalAgentSettings: React.FC = () => {
               <Power size={16} />
               Omitir todo
             </Button>
-            <Button onClick={handleCreateAgent} loading={creating} disabled={loading || creating}>
+            <Button
+              onClick={handleCreateAgent}
+              loading={creating}
+              disabled={loading || creating || !businessPromptReady}
+              title={!businessPromptReady ? promptBlockerText : undefined}
+            >
               <Plus size={16} />
               Nuevo agente
             </Button>
           </div>
+        </div>
+
+        <div className={`${styles.promptReadinessBanner} ${businessPromptReady ? styles.promptReadinessBannerReady : styles.promptReadinessBannerLocked}`}>
+          <strong>{promptStatusText}</strong>
+          <span>
+            {businessPromptReady
+              ? 'La estrategia avanzada de fábrica ya está adaptada con la descripción actual del negocio.'
+              : promptBlockerText}
+          </span>
         </div>
 
         <div className={styles.agentDirectoryStats}>
@@ -1266,6 +1316,8 @@ export const ConversationalAgentSettings: React.FC = () => {
                   <Button
                     variant={agent.enabled ? 'secondary' : 'primary'}
                     onClick={() => handleAgentChange(agent.id, { enabled: !agent.enabled })}
+                    disabled={!agent.enabled && !businessPromptReady}
+                    title={!agent.enabled && !businessPromptReady ? promptBlockerText : undefined}
                   >
                     {agent.enabled ? <Pause size={15} /> : <Play size={15} />}
                     {agent.enabled ? 'Pausar' : 'Publicar'}

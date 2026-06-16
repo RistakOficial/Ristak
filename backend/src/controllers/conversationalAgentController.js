@@ -18,19 +18,72 @@ import {
   deleteConversationalAgent,
   listAgentFilterOptions
 } from '../services/conversationalAgentService.js'
+import {
+  buildBusinessProfilePromptParameters,
+  getBusinessProfileSnapshot
+} from '../services/aiAgentService.js'
 import { runConversationalAgentPreview } from '../agents/conversational/runner.js'
-import { DEFAULT_CLOSING_STRATEGY } from '../agents/conversational/prompt.js'
+import {
+  DEFAULT_CLOSING_STRATEGY,
+  buildBusinessAdaptiveClosingSection,
+  renderClosingStrategyTemplate
+} from '../agents/conversational/prompt.js'
+
+async function getBusinessPromptState() {
+  const businessProfile = await getBusinessProfileSnapshot().catch(() => null)
+  const promptParameters = businessProfile?.configured
+    ? buildBusinessProfilePromptParameters(businessProfile.profile, businessProfile.promptParameters)
+    : {}
+  const extractionStatus = businessProfile?.extractionStatus || businessProfile?.status || 'empty'
+  const ready = Boolean(
+    businessProfile?.configured &&
+    extractionStatus === 'ready' &&
+    promptParameters.ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO
+  )
+  const adaptedStrategy = ready
+    ? [
+        renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, promptParameters),
+        buildBusinessAdaptiveClosingSection({ enabled: true, parameters: promptParameters })
+      ].filter(Boolean).join('\n\n')
+    : DEFAULT_CLOSING_STRATEGY
+
+  return {
+    systemClosingStrategy: adaptedStrategy,
+    businessPromptStatus: {
+      ready,
+      status: extractionStatus,
+      extractionStatus,
+      extractionError: businessProfile?.extractionError || null,
+      businessName: businessProfile?.businessName || businessProfile?.profile?.businessName || null,
+      industry: businessProfile?.industry || businessProfile?.profile?.industry || null,
+      updatedAt: businessProfile?.updatedAt || businessProfile?.extractedAt || null,
+      summary: businessProfile?.summary || null
+    }
+  }
+}
+
+async function assertBusinessPromptReady() {
+  const promptState = await getBusinessPromptState()
+  if (promptState.businessPromptStatus.ready) return promptState
+
+  const error = new Error('Primero termina la descripción del negocio para preparar el prompt interno del agente conversacional.')
+  error.statusCode = 409
+  error.code = 'CONVERSATIONAL_BUSINESS_PROMPT_NOT_READY'
+  error.businessPromptStatus = promptState.businessPromptStatus
+  throw error
+}
 
 export async function getConfig(req, res) {
   try {
     const config = await getConversationalAgentConfig()
+    const promptState = await getBusinessPromptState()
     res.json({
       success: true,
       data: {
         ...config,
         objectives: CONVERSATIONAL_OBJECTIVES,
         successActions: SUCCESS_ACTIONS,
-        systemClosingStrategy: DEFAULT_CLOSING_STRATEGY
+        ...promptState
       }
     })
   } catch (error) {
@@ -41,15 +94,24 @@ export async function getConfig(req, res) {
 
 export async function saveConfig(req, res) {
   try {
+    if (req.body?.enabled === true) {
+      await assertBusinessPromptReady()
+    }
     const config = await saveConversationalAgentConfig(req.body || {})
+    const promptState = await getBusinessPromptState()
     res.json({
       success: true,
       message: 'Agente conversacional guardado',
-      data: { ...config, systemClosingStrategy: DEFAULT_CLOSING_STRATEGY }
+      data: { ...config, ...promptState }
     })
   } catch (error) {
     logger.error('Error guardando configuración del agente conversacional:', error)
-    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al guardar la configuración' })
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || 'Error al guardar la configuración',
+      code: error.code,
+      businessPromptStatus: error.businessPromptStatus
+    })
   }
 }
 
@@ -114,6 +176,7 @@ export async function updateState(req, res) {
       if (!agent.enabled) {
         return res.status(400).json({ success: false, error: 'Este agente está pausado' })
       }
+      await assertBusinessPromptReady()
     }
 
     let state = await setConversationStatus(contactId, mapped.status, {
@@ -129,7 +192,12 @@ export async function updateState(req, res) {
     res.json({ success: true, data: state })
   } catch (error) {
     logger.error('Error actualizando estado de conversación:', error)
-    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al actualizar el estado' })
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || 'Error al actualizar el estado',
+      code: error.code,
+      businessPromptStatus: error.businessPromptStatus
+    })
   }
 }
 
@@ -179,21 +247,37 @@ export async function getMetrics(req, res) {
 
 export async function createAgent(req, res) {
   try {
+    if (req.body?.enabled !== false) {
+      await assertBusinessPromptReady()
+    }
     const agent = await createConversationalAgent(req.body || {})
     res.status(201).json({ success: true, data: agent })
   } catch (error) {
     logger.error('Error creando agente conversacional:', error)
-    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al crear el agente' })
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || 'Error al crear el agente',
+      code: error.code,
+      businessPromptStatus: error.businessPromptStatus
+    })
   }
 }
 
 export async function updateAgent(req, res) {
   try {
+    if (req.body?.enabled === true) {
+      await assertBusinessPromptReady()
+    }
     const agent = await updateConversationalAgent(req.params?.agentId, req.body || {})
     res.json({ success: true, data: agent })
   } catch (error) {
     logger.error('Error actualizando agente conversacional:', error)
-    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al actualizar el agente' })
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || 'Error al actualizar el agente',
+      code: error.code,
+      businessPromptStatus: error.businessPromptStatus
+    })
   }
 }
 
