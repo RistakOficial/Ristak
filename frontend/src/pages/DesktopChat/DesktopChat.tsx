@@ -13,16 +13,16 @@ import {
   MessageCircle,
   MousePointerClick,
   Phone,
-  RefreshCw,
   Search,
   Send,
+  ListFilter,
   Sparkles,
   Tag,
   User,
   Video,
   X
 } from 'lucide-react'
-import { AppointmentModal, Badge, Button, PageContainer, PageHeader, RecordPaymentModal } from '@/components/common'
+import { AppointmentModal, Badge, Button, CustomSelect, PageContainer, PageHeader, RecordPaymentModal } from '@/components/common'
 import { RistakRobot } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -40,8 +40,21 @@ import { formatCurrency, formatUrlParameter } from '@/utils/format'
 import styles from './DesktopChat.module.css'
 
 type ChatFilter = 'all' | 'unread' | 'appointments' | 'customers'
+type AdvancedChannelFilter = 'all' | 'whatsapp' | 'messenger' | 'instagram' | 'webchat' | 'sms' | 'email'
+type AdvancedSocialFilter = 'all' | 'facebook' | 'instagram' | 'messenger' | 'whatsapp' | 'google' | 'unknown'
+type AdvancedOriginFilter = 'all' | 'meta' | 'site' | 'organic' | 'trigger' | 'unknown'
+type AdvancedStageFilter = 'all' | 'lead' | 'appointment' | 'customer'
+type AdvancedActivityFilter = 'all' | 'payments' | 'appointments' | 'with_source' | 'no_phone'
 type ComposerStatus = 'idle' | 'sending'
 type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
+
+interface AdvancedChatFilters {
+  channel: AdvancedChannelFilter
+  social: AdvancedSocialFilter
+  origin: AdvancedOriginFilter
+  stage: AdvancedStageFilter
+  activity: AdvancedActivityFilter
+}
 
 interface DesktopChatContact extends Contact {
   lastMessageText?: string
@@ -108,6 +121,58 @@ const CHAT_FILTERS: Array<{ id: ChatFilter; label: string }> = [
   { id: 'customers', label: 'Clientes' }
 ]
 
+const DEFAULT_ADVANCED_FILTERS: AdvancedChatFilters = {
+  channel: 'all',
+  social: 'all',
+  origin: 'all',
+  stage: 'all',
+  activity: 'all'
+}
+
+const CHANNEL_FILTER_OPTIONS = [
+  { value: 'all', label: 'Todos los canales' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'messenger', label: 'Messenger' },
+  { value: 'instagram', label: 'Instagram Direct' },
+  { value: 'webchat', label: 'Webchat / sitio' },
+  { value: 'sms', label: 'SMS' },
+  { value: 'email', label: 'Email' }
+]
+
+const ORIGIN_FILTER_OPTIONS = [
+  { value: 'all', label: 'Todos los orígenes' },
+  { value: 'meta', label: 'Meta / red social' },
+  { value: 'site', label: 'Sitio o formulario' },
+  { value: 'organic', label: 'Orgánico / directo' },
+  { value: 'trigger', label: 'Enlace de disparo' },
+  { value: 'unknown', label: 'Sin origen' }
+]
+
+const SOCIAL_FILTER_OPTIONS = [
+  { value: 'all', label: 'Todas las redes' },
+  { value: 'facebook', label: 'Facebook' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'messenger', label: 'Messenger' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'google', label: 'Google' },
+  { value: 'unknown', label: 'Sin red detectada' }
+]
+
+const STAGE_FILTER_OPTIONS = [
+  { value: 'all', label: 'Todas las etapas' },
+  { value: 'lead', label: 'Interesados' },
+  { value: 'appointment', label: 'Con cita' },
+  { value: 'customer', label: 'Clientes' }
+]
+
+const ACTIVITY_FILTER_OPTIONS = [
+  { value: 'all', label: 'Toda la actividad' },
+  { value: 'payments', label: 'Con pagos' },
+  { value: 'appointments', label: 'Con citas' },
+  { value: 'with_source', label: 'Con origen detectado' },
+  { value: 'no_phone', label: 'Sin teléfono' }
+]
+
 const QUICK_REPLIES = [
   'Claro, te ayudo con eso.',
   '¿Qué día y hora te funciona para agendar?',
@@ -157,6 +222,116 @@ function contactMatchesQuery(contact: Partial<Contact>, query: string) {
   const normalizedQuery = query.trim().toLowerCase()
   if (!normalizedQuery) return true
   return [contact.name, contact.phone, contact.email].filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery)
+}
+
+function normalizeFilterProbe(values: unknown[]) {
+  return values
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) => String(value).trim().toLowerCase())
+    .filter(Boolean)
+    .join(' ')
+}
+
+function getRecordValue(record: Record<string, unknown>, key: string) {
+  const value = record[key]
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+}
+
+function getContactChannelKind(contact: DesktopChatContact): AdvancedChannelFilter | '' {
+  const record = contact as unknown as Record<string, unknown>
+  const directProbe = normalizeFilterProbe([
+    contact.lastMessageChannel,
+    getRecordValue(record, 'lastMessageTransport'),
+    getRecordValue(record, 'lastMessageProvider'),
+    getRecordValue(record, 'conversationChannel'),
+    getRecordValue(record, 'lastChannel'),
+    getRecordValue(record, 'channel')
+  ])
+  const fallbackProbe = directProbe || normalizeFilterProbe([contact.source, contact.attribution_session_source])
+
+  if (fallbackProbe.includes('instagram')) return 'instagram'
+  if (fallbackProbe.includes('messenger')) return 'messenger'
+  if (fallbackProbe.includes('whatsapp') || fallbackProbe.includes('wa_') || fallbackProbe.includes('ctwa')) return 'whatsapp'
+  if (fallbackProbe.includes('webchat') || fallbackProbe.includes('website_chat') || fallbackProbe.includes('site_chat')) return 'webchat'
+  if (fallbackProbe.includes('sms')) return 'sms'
+  if (fallbackProbe.includes('email') || fallbackProbe.includes('mail')) return 'email'
+  return ''
+}
+
+function getContactSocialKind(contact: DesktopChatContact): AdvancedSocialFilter | '' {
+  const firstSession = contact.firstSession || null
+  const probe = normalizeFilterProbe([
+    contact.source,
+    contact.attribution_session_source,
+    contact.whatsappAttributionPlatform,
+    contact.ad_name,
+    contact.ad_id,
+    contact.attribution_url,
+    firstSession?.utm_source,
+    firstSession?.utm_medium,
+    firstSession?.utm_campaign,
+    firstSession?.source_platform,
+    firstSession?.site_source_name,
+    firstSession?.placement
+  ])
+
+  if (!probe) return 'unknown'
+  if (probe.includes('instagram') || probe.includes('ig_')) return 'instagram'
+  if (probe.includes('messenger')) return 'messenger'
+  if (probe.includes('facebook') || probe.includes('fb_')) return 'facebook'
+  if (probe.includes('whatsapp') || probe.includes('ctwa')) return 'whatsapp'
+  if (probe.includes('google') || probe.includes('gclid')) return 'google'
+  return ''
+}
+
+function getContactOriginKind(contact: DesktopChatContact): AdvancedOriginFilter | '' {
+  const firstSession = contact.firstSession || null
+  const probe = normalizeFilterProbe([
+    contact.source,
+    contact.attribution_session_source,
+    contact.whatsappAttributionPlatform,
+    contact.ad_name,
+    contact.ad_id,
+    contact.attribution_url,
+    firstSession?.utm_source,
+    firstSession?.utm_medium,
+    firstSession?.utm_campaign,
+    firstSession?.source_platform,
+    firstSession?.page_url,
+    firstSession?.landing_page
+  ])
+
+  if (!probe) return 'unknown'
+  if (probe.includes('trigger') || probe.includes('disparo') || probe.includes('public_id')) return 'trigger'
+  if (probe.includes('facebook') || probe.includes('instagram') || probe.includes('meta') || probe.includes('ctwa') || probe.includes('ad_') || probe.includes('campaign')) return 'meta'
+  if (probe.includes('web') || probe.includes('site') || probe.includes('landing') || probe.includes('form') || probe.includes('page')) return 'site'
+  if (probe.includes('organic') || probe.includes('direct') || probe.includes('google') || probe.includes('referral')) return 'organic'
+  return ''
+}
+
+function contactHasSource(contact: DesktopChatContact) {
+  return Boolean(contact.source || contact.attribution_session_source || contact.whatsappAttributionPlatform || contact.ad_name || contact.firstSession)
+}
+
+function contactMatchesAdvancedFilters(contact: DesktopChatContact, filters: AdvancedChatFilters) {
+  if (filters.channel !== 'all' && getContactChannelKind(contact) !== filters.channel) return false
+  if (filters.social !== 'all' && getContactSocialKind(contact) !== filters.social) return false
+  if (filters.origin !== 'all' && getContactOriginKind(contact) !== filters.origin) return false
+  if (filters.stage !== 'all' && contact.status !== filters.stage) return false
+
+  if (filters.activity === 'payments') {
+    const hasPayments = Number(contact.ltv || 0) > 0 || Number(contact.purchases || 0) > 0 || Boolean(contact.payments?.some(isSuccessfulPayment))
+    if (!hasPayments) return false
+  }
+  if (filters.activity === 'appointments' && !contact.hasAppointments && !contact.nextAppointmentDate) return false
+  if (filters.activity === 'with_source' && !contactHasSource(contact)) return false
+  if (filters.activity === 'no_phone' && contact.phone) return false
+
+  return true
+}
+
+function countAdvancedFilters(filters: AdvancedChatFilters) {
+  return Object.values(filters).filter((value) => value !== 'all').length
 }
 
 function formatMessageTime(value?: string | null) {
@@ -468,10 +643,11 @@ export const DesktopChat: React.FC = () => {
 
   const [chats, setChats] = useState<DesktopChatContact[]>([])
   const [chatsLoading, setChatsLoading] = useState(true)
-  const [chatsRefreshing, setChatsRefreshing] = useState(false)
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedChatFilters>(DEFAULT_ADVANCED_FILTERS)
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false)
   const [activeContactId, setActiveContactId] = useState<string>('')
 
   const [messages, setMessages] = useState<DesktopChatMessage[]>([])
@@ -523,16 +699,19 @@ export const DesktopChat: React.FC = () => {
     [activeContact, contactInfoData, labels]
   )
   const stageLabel = stageBadge?.text || labels.lead
+  const activeAdvancedFilterCount = useMemo(() => countAdvancedFilters(advancedFilters), [advancedFilters])
+  const hasActiveChatFilters = Boolean(chatQuery.trim()) || chatFilter !== 'all' || activeAdvancedFilterCount > 0
   const filteredChats = useMemo(() => {
     return chats
       .filter((contact) => contactMatchesQuery(contact, chatQuery))
+      .filter((contact) => contactMatchesAdvancedFilters(contact, advancedFilters))
       .filter((contact) => {
         if (chatFilter === 'unread') return Number(contact.unreadCount || 0) > 0
         if (chatFilter === 'appointments') return Boolean(contact.hasAppointments || contact.nextAppointmentDate)
         if (chatFilter === 'customers') return contact.status === 'customer'
         return true
       })
-  }, [chatFilter, chatQuery, chats])
+  }, [advancedFilters, chatFilter, chatQuery, chats])
   const messageGroups = useMemo(() => {
     const groups: Array<{ key: string; label: string; messages: DesktopChatMessage[] }> = []
     messages.forEach((message) => {
@@ -554,8 +733,6 @@ export const DesktopChat: React.FC = () => {
     if (!silent) {
       setChatsLoading(true)
       setChatsError('')
-    } else {
-      setChatsRefreshing(true)
     }
 
     try {
@@ -578,7 +755,6 @@ export const DesktopChat: React.FC = () => {
       }
     } finally {
       setChatsLoading(false)
-      setChatsRefreshing(false)
     }
   }, [chatQuery])
 
@@ -662,13 +838,15 @@ export const DesktopChat: React.FC = () => {
     if (results[0]) ensureContactInList(results[0])
   }, [chatQuery, ensureContactInList])
 
-  const handleRefresh = useCallback(async () => {
-    await Promise.all([
-      loadChats({ silent: true }),
-      activeContactId ? loadConversation(activeContactId) : Promise.resolve(),
-      loadSupportData()
-    ])
-  }, [activeContactId, loadChats, loadConversation, loadSupportData])
+  const resetAdvancedFilters = useCallback(() => {
+    setAdvancedFilters(DEFAULT_ADVANCED_FILTERS)
+  }, [])
+
+  const resetChatFilters = useCallback(() => {
+    setChatQuery('')
+    setChatFilter('all')
+    setAdvancedFilters(DEFAULT_ADVANCED_FILTERS)
+  }, [])
 
   const handleSendMessage = async (textOverride?: string) => {
     const text = (textOverride || composerText).trim()
@@ -800,57 +978,130 @@ export const DesktopChat: React.FC = () => {
         eyebrow="Bandeja"
         title="Chat"
         subtitle="Responde conversaciones, agenda citas y revisa la información del contacto sin salir de la pantalla."
-        actions={
-          <Button
-            variant="secondary"
-            onClick={() => { void handleRefresh() }}
-            loading={chatsRefreshing}
-            leftIcon={<RefreshCw size={16} />}
-          >
-            Actualizar
-          </Button>
-        }
       />
+
+      <div className={styles.chatToolbar}>
+        <label className={styles.searchBox}>
+          <Search size={16} />
+          <input
+            value={chatQuery}
+            onChange={(event) => setChatQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void handleSearchContacts()
+            }}
+            placeholder="Buscar chat, contacto, teléfono o correo"
+          />
+          {chatQuery ? (
+            <button type="button" onClick={() => setChatQuery('')} aria-label="Limpiar búsqueda">
+              <X size={14} />
+            </button>
+          ) : null}
+        </label>
+        <div className={styles.toolbarStatus}>
+          <span>{filteredChats.length} de {chats.length} conversaciones</span>
+          {whatsappConnected ? <Badge variant="success">WhatsApp activo</Badge> : highLevelConnected ? <Badge variant="info">HighLevel</Badge> : <Badge variant="warning">Sin envío</Badge>}
+        </div>
+      </div>
 
       <section className={styles.chatShell} data-desktop-chat-page>
         <aside className={styles.inboxPanel} aria-label="Lista de chats">
           <div className={styles.inboxHeader}>
             <div>
               <h2>Conversaciones</h2>
-              <p>{filteredChats.length} visibles</p>
+              <p>{hasActiveChatFilters ? 'Vista filtrada' : 'Todas las conversaciones'}</p>
             </div>
-            {whatsappConnected ? <Badge variant="success">WhatsApp activo</Badge> : highLevelConnected ? <Badge variant="info">HighLevel</Badge> : <Badge variant="warning">Sin envío</Badge>}
+            {activeAdvancedFilterCount > 0 ? <Badge variant="info">{activeAdvancedFilterCount} filtros</Badge> : <Badge variant="default">Bandeja</Badge>}
           </div>
-
-          <label className={styles.searchBox}>
-            <Search size={16} />
-            <input
-              value={chatQuery}
-              onChange={(event) => setChatQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void handleSearchContacts()
-              }}
-              placeholder="Buscar chat o contacto"
-            />
-            {chatQuery ? (
-              <button type="button" onClick={() => setChatQuery('')} aria-label="Limpiar búsqueda">
-                <X size={14} />
-              </button>
-            ) : null}
-          </label>
 
           <div className={styles.filterRow} role="tablist" aria-label="Filtros de chat">
             {CHAT_FILTERS.map((filter) => (
-              <button
-                key={filter.id}
-                type="button"
-                className={filter.id === chatFilter ? styles.filterActive : ''}
-                onClick={() => setChatFilter(filter.id)}
-              >
-                {filter.label}
-              </button>
+              <React.Fragment key={filter.id}>
+                <button
+                  type="button"
+                  className={filter.id === chatFilter ? styles.filterActive : ''}
+                  onClick={() => setChatFilter(filter.id)}
+                >
+                  {filter.label}
+                </button>
+                {filter.id === 'all' ? (
+                  <button
+                    type="button"
+                    className={`${styles.filterToolButton} ${advancedFiltersOpen || activeAdvancedFilterCount > 0 ? styles.filterActive : ''}`}
+                    onClick={() => setAdvancedFiltersOpen((current) => !current)}
+                    aria-expanded={advancedFiltersOpen}
+                    aria-label="Modificar filtros"
+                  >
+                    <ListFilter size={14} />
+                    <span>Filtros</span>
+                    {activeAdvancedFilterCount > 0 ? <strong>{activeAdvancedFilterCount}</strong> : null}
+                  </button>
+                ) : null}
+              </React.Fragment>
             ))}
           </div>
+
+          {advancedFiltersOpen ? (
+            <div className={styles.filterPanel}>
+              <div className={styles.filterPanelHeader}>
+                <strong>Filtrar conversaciones</strong>
+                <button type="button" onClick={resetAdvancedFilters} disabled={activeAdvancedFilterCount === 0}>
+                  Limpiar
+                </button>
+              </div>
+              <div className={styles.filterGrid}>
+                <label>
+                  <span>Canal</span>
+                  <CustomSelect
+                    value={advancedFilters.channel}
+                    options={CHANNEL_FILTER_OPTIONS}
+                    portal
+                    onValueChange={(value) => setAdvancedFilters((current) => ({ ...current, channel: value as AdvancedChannelFilter }))}
+                    aria-label="Filtrar por canal"
+                  />
+                </label>
+                <label>
+                  <span>Origen</span>
+                  <CustomSelect
+                    value={advancedFilters.origin}
+                    options={ORIGIN_FILTER_OPTIONS}
+                    portal
+                    onValueChange={(value) => setAdvancedFilters((current) => ({ ...current, origin: value as AdvancedOriginFilter }))}
+                    aria-label="Filtrar por origen"
+                  />
+                </label>
+                <label>
+                  <span>Red social</span>
+                  <CustomSelect
+                    value={advancedFilters.social}
+                    options={SOCIAL_FILTER_OPTIONS}
+                    portal
+                    onValueChange={(value) => setAdvancedFilters((current) => ({ ...current, social: value as AdvancedSocialFilter }))}
+                    aria-label="Filtrar por red social"
+                  />
+                </label>
+                <label>
+                  <span>Etapa</span>
+                  <CustomSelect
+                    value={advancedFilters.stage}
+                    options={STAGE_FILTER_OPTIONS}
+                    portal
+                    onValueChange={(value) => setAdvancedFilters((current) => ({ ...current, stage: value as AdvancedStageFilter }))}
+                    aria-label="Filtrar por etapa"
+                  />
+                </label>
+                <label>
+                  <span>Actividad</span>
+                  <CustomSelect
+                    value={advancedFilters.activity}
+                    options={ACTIVITY_FILTER_OPTIONS}
+                    portal
+                    onValueChange={(value) => setAdvancedFilters((current) => ({ ...current, activity: value as AdvancedActivityFilter }))}
+                    aria-label="Filtrar por actividad"
+                  />
+                </label>
+              </div>
+            </div>
+          ) : null}
 
           <div className={styles.chatList} data-chat-list>
             {chatsLoading ? (
@@ -862,9 +1113,11 @@ export const DesktopChat: React.FC = () => {
                 <Button variant="secondary" size="sm" onClick={() => { void loadChats() }}>Reintentar</Button>
               </div>
             ) : filteredChats.length === 0 ? (
-              <div className={styles.stateBlock}>
-                <MessageCircle size={20} />
-                <span>No hay chats con este filtro.</span>
+              <div className={styles.emptyChatList}>
+                <MessageCircle size={22} />
+                <strong>{hasActiveChatFilters ? 'No encontré chats' : 'Todavía no hay conversaciones'}</strong>
+                <span>{hasActiveChatFilters ? 'Prueba con menos filtros o busca otro contacto.' : 'Cuando lleguen mensajes, aparecerán aquí con su canal, estado y último movimiento.'}</span>
+                {hasActiveChatFilters ? <button type="button" onClick={resetChatFilters}>Limpiar filtros</button> : null}
               </div>
             ) : filteredChats.map((contact) => {
               const active = contact.id === activeContactId
@@ -987,9 +1240,14 @@ export const DesktopChat: React.FC = () => {
             </>
           ) : (
             <div className={styles.noSelection}>
-              <MessageCircle size={24} />
-              <strong>Elige un chat</strong>
-              <span>Selecciona una conversación para ver mensajes y datos del contacto.</span>
+              <RistakRobot size={86} thinking />
+              <strong>Selecciona un chat para trabajar</strong>
+              <span>Abre una conversación y aquí tendrás mensajes, respuesta rápida, agenda y cobro en el mismo lugar.</span>
+              <div className={styles.emptyActionPreview}>
+                <div><MessageCircle size={16} /><span>Historial completo de mensajes</span></div>
+                <div><CalendarDays size={16} /><span>Acceso rápido para agendar</span></div>
+                <div><Sparkles size={16} /><span>Ayuda del agente AI al responder</span></div>
+              </div>
             </div>
           )}
         </main>
@@ -1073,10 +1331,25 @@ export const DesktopChat: React.FC = () => {
               </div>
             </>
           ) : (
-            <div className={styles.noSelection}>
-              <User size={22} />
-              <strong>Datos del contacto</strong>
-              <span>Aquí aparece la información cuando abras un chat.</span>
+            <div className={styles.emptyInfoState}>
+              <div className={styles.emptyInfoIntro}>
+                <User size={22} />
+                <div>
+                  <strong>Datos del contacto</strong>
+                  <span>Este panel se llena al abrir una conversación.</span>
+                </div>
+              </div>
+              <div className={styles.emptyInfoPreview}>
+                <div><span>Teléfono</span><strong>Listo para contactar</strong></div>
+                <div><span>Etapa</span><strong>Interesado, cita o cliente</strong></div>
+                <div><span>Resumen</span><strong>Compras, citas y mensajes</strong></div>
+                <div><span>Origen</span><strong>Canal, campaña y primer contacto</strong></div>
+              </div>
+              <div className={styles.emptyInfoMetrics}>
+                <span><strong>$0</strong><small>comprado</small></span>
+                <span><strong>0</strong><small>citas</small></span>
+                <span><strong>0</strong><small>mensajes</small></span>
+              </div>
             </div>
           )}
         </aside>
