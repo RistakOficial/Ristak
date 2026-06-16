@@ -52,7 +52,7 @@ export const EmailSettings: React.FC = () => {
     setFromName(nextStatus.sender.fromName)
     setFromEmail(nextStatus.sender.fromEmail)
     setReplyTo(nextStatus.sender.replyTo)
-    // Usuario y password se quedan vacíos: el backend conserva los guardados.
+    // Usuario y password se quedan vacíos mientras la conexión sigue activa.
     setUsername('')
     setPassword('')
   }
@@ -141,14 +141,15 @@ export const EmailSettings: React.FC = () => {
   const confirmDisconnect = () => {
     showConfirm(
       'Desconectar correo',
-      'Se pausará el envío de correos desde Ristak. Los datos SMTP guardados se quedan intactos para reconectar después.',
+      'Se eliminarán las credenciales SMTP locales. Para reconectar tendrás que pegar usuario y app password otra vez.',
       async () => {
         setDisconnecting(true)
         try {
           const nextStatus = await emailService.disconnect()
           setStatus(nextStatus)
           setEditing(false)
-          showToast('success', 'Desconectado', 'El correo quedó pausado')
+          applyStatusToForm(nextStatus)
+          showToast('success', 'Desconectado', 'El correo quedó sin credenciales locales')
         } catch (error) {
           showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar el correo')
         } finally {

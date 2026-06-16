@@ -979,6 +979,29 @@ async function deleteAppConfig(keys = []) {
   }
 }
 
+const YCLOUD_CONNECTION_CONFIG_KEYS = [
+  CONFIG_KEYS.apiKey,
+  CONFIG_KEYS.webhookSecret,
+  CONFIG_KEYS.senderPhone,
+  CONFIG_KEYS.phoneNumberId,
+  CONFIG_KEYS.wabaId,
+  CONFIG_KEYS.webhookEndpointId,
+  CONFIG_KEYS.webhookUrl,
+  CONFIG_KEYS.webhookStatus,
+  CONFIG_KEYS.connectedAt,
+  CONFIG_KEYS.lastSyncedAt
+]
+
+async function clearYCloudConnectionConfig() {
+  await deleteAppConfig(YCLOUD_CONNECTION_CONFIG_KEYS)
+}
+
+async function clearStaleDisconnectedYCloudCredentials(config) {
+  if (!config || config.enabled || !config.hasApiKey) return config
+  await clearYCloudConnectionConfig()
+  return loadConfig()
+}
+
 async function loadConfig({ includeSecrets = false } = {}) {
   const [
     enabled,
@@ -2671,7 +2694,7 @@ export async function restoreWhatsAppPhoneNumberContacts({ phoneNumberId } = {})
 }
 
 export async function getWhatsAppApiStatus() {
-  const config = await loadConfig()
+  const config = await clearStaleDisconnectedYCloudCredentials(await loadConfig())
   const metaDirect = await loadMetaDirectConfig()
   const [stats, phoneNumbers, balance, templates, alerts, qrSessions] = await Promise.all([
     getStats(),
@@ -2816,7 +2839,13 @@ export async function getWhatsAppApiStatus() {
 
 export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, wabaId, webhookUrl } = {}) {
   const saved = await loadConfig({ includeSecrets: true })
-  const cleanApiKey = normalizeYCloudApiKeyInput(apiKey) || saved.apiKey
+  const submittedApiKey = normalizeYCloudApiKeyInput(apiKey)
+  const canReuseSavedConnection = Boolean(saved.enabled && saved.hasApiKey)
+  const cleanApiKey = submittedApiKey || (canReuseSavedConnection ? saved.apiKey : '')
+
+  if (!submittedApiKey && saved.hasApiKey && !saved.enabled) {
+    await clearYCloudConnectionConfig()
+  }
 
   if (!cleanApiKey) {
     throw new Error('Pega la llave de WhatsApp API para conectar WhatsApp Business')
@@ -2855,7 +2884,7 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       webhookEndpoint = await ensureWebhookEndpoint({
         apiKey: cleanApiKey,
         webhookUrl,
-        webhookEndpointId: saved.webhookEndpointId
+        webhookEndpointId: canReuseSavedConnection ? saved.webhookEndpointId : ''
       })
     } catch (error) {
       webhookSetupWarning = buildWebhookSetupWarning(error)
@@ -2865,10 +2894,10 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
     await setEncryptedConfig(CONFIG_KEYS.apiKey, cleanApiKey)
     await setAppConfig(CONFIG_KEYS.enabled, '1')
     await setAppConfig(CONFIG_KEYS.provider, PROVIDER_NAME)
-    await setAppConfig(CONFIG_KEYS.webhookEndpointId, webhookEndpoint?.id || saved.webhookEndpointId || '')
-    await setAppConfig(CONFIG_KEYS.webhookUrl, webhookEndpoint?.url || webhookUrl || saved.webhookUrl || '')
+    await setAppConfig(CONFIG_KEYS.webhookEndpointId, webhookEndpoint?.id || (canReuseSavedConnection ? saved.webhookEndpointId : '') || '')
+    await setAppConfig(CONFIG_KEYS.webhookUrl, webhookEndpoint?.url || webhookUrl || (canReuseSavedConnection ? saved.webhookUrl : '') || '')
     await setAppConfig(CONFIG_KEYS.webhookStatus, webhookEndpoint ? (webhookEndpoint.status || 'active') : 'pending')
-    await setAppConfig(CONFIG_KEYS.connectedAt, saved.connectedAt || nowIso())
+    await setAppConfig(CONFIG_KEYS.connectedAt, canReuseSavedConnection ? (saved.connectedAt || nowIso()) : nowIso())
     await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
     await setAppConfig(CONFIG_KEYS.lastError, webhookSetupWarning)
 
@@ -2906,8 +2935,11 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
 
 export async function refreshWhatsAppApi() {
   const config = await loadConfig({ includeSecrets: true })
-  if (!config.apiKey) {
-    throw new Error('WhatsApp_API no tiene API key guardada')
+  if (!config.enabled && config.hasApiKey) {
+    await clearYCloudConnectionConfig()
+  }
+  if (!config.enabled || !config.apiKey) {
+    throw new Error('WhatsApp_API no está conectado')
   }
 
   try {
@@ -2984,7 +3016,12 @@ export async function refreshWhatsAppApi() {
 
 export async function previewWhatsAppApiPhoneNumbers({ apiKey } = {}) {
   const saved = await loadConfig({ includeSecrets: true })
-  const cleanApiKey = normalizeYCloudApiKeyInput(apiKey) || saved.apiKey
+  const submittedApiKey = normalizeYCloudApiKeyInput(apiKey)
+  const cleanApiKey = submittedApiKey || (saved.enabled ? saved.apiKey : '')
+
+  if (!submittedApiKey && saved.hasApiKey && !saved.enabled) {
+    await clearYCloudConnectionConfig()
+  }
 
   if (!cleanApiKey) {
     throw new Error('Pega la llave de WhatsApp API para buscar tus números')
@@ -3017,19 +3054,13 @@ export async function disconnectWhatsAppApi() {
 
   await setAppConfig(CONFIG_KEYS.enabled, '0')
   await setAppConfig(CONFIG_KEYS.disconnectedAt, nowIso())
+  await setAppConfig(CONFIG_KEYS.lastError, '')
+  await clearYCloudConnectionConfig()
   return getWhatsAppApiStatus()
 }
 
 export async function resetWhatsAppApiCredentials() {
-  await disconnectWhatsAppApi().catch(() => null)
-  await deleteAppConfig([
-    CONFIG_KEYS.apiKey,
-    CONFIG_KEYS.webhookSecret,
-    CONFIG_KEYS.senderPhone,
-    CONFIG_KEYS.phoneNumberId,
-    CONFIG_KEYS.wabaId
-  ])
-  return getWhatsAppApiStatus()
+  return disconnectWhatsAppApi()
 }
 
 function normalizeDisplayText(value) {

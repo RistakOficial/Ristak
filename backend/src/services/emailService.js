@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer'
-import { getAppConfig, setAppConfig } from '../config/database.js'
+import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 
@@ -49,6 +49,13 @@ async function readStoredPassword() {
     logger.error(`No se pudo desencriptar el password SMTP: ${error.message}`)
     return ''
   }
+}
+
+async function clearEmailCredentials() {
+  await db.run(
+    `DELETE FROM app_config WHERE config_key IN (?, ?)`,
+    [EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY]
+  )
 }
 
 /**
@@ -104,8 +111,16 @@ function invalidateTransporter() {
 }
 
 export async function getEmailStatus() {
-  const config = await readStoredConfig()
-  const hasPassword = Boolean(await getAppConfig(EMAIL_PASSWORD_KEY))
+  let config = await readStoredConfig()
+  let hasPassword = Boolean(await getAppConfig(EMAIL_PASSWORD_KEY))
+
+  if (config?.connected === false) {
+    await clearEmailCredentials()
+    config = null
+    hasPassword = false
+    invalidateTransporter()
+  }
+
   const configured = Boolean(config?.host && config?.username && hasPassword)
   const connected = Boolean(configured && config?.connected)
 
@@ -140,13 +155,21 @@ export async function getEmailStatus() {
  * signifique que se puede enviar de verdad.
  */
 export async function connectEmail(payload = {}) {
-  const previous = await readStoredConfig()
+  let previous = await readStoredConfig()
+  if (previous?.connected === false) {
+    await clearEmailCredentials()
+    previous = null
+    invalidateTransporter()
+  }
+  const canReuseStoredCredentials = previous?.connected === true
 
-  const host = cleanString(payload.host) || previous?.host || ''
-  const port = Number(payload.port) || Number(previous?.port) || 587
-  const username = cleanString(payload.username) || previous?.username || ''
-  const fromEmail = cleanString(payload.fromEmail).toLowerCase() || previous?.fromEmail || username.toLowerCase()
-  const fromName = cleanString(payload.fromName) || previous?.fromName || ''
+  const host = cleanString(payload.host) || (canReuseStoredCredentials ? previous?.host : '') || ''
+  const port = Number(payload.port) || (canReuseStoredCredentials ? Number(previous?.port) : 0) || 587
+  const username = cleanString(payload.username) || (canReuseStoredCredentials ? previous?.username : '') || ''
+  const fromEmail = cleanString(payload.fromEmail).toLowerCase() ||
+    (canReuseStoredCredentials ? previous?.fromEmail : '') ||
+    username.toLowerCase()
+  const fromName = cleanString(payload.fromName) || (canReuseStoredCredentials ? previous?.fromName : '') || ''
   const replyTo = cleanString(payload.replyTo).toLowerCase()
 
   if (!host) throw httpError(400, 'Escribe el servidor SMTP (por ejemplo smtp.gmail.com)')
@@ -156,7 +179,7 @@ export async function connectEmail(payload = {}) {
   if (replyTo && !EMAIL_PATTERN.test(replyTo)) throw httpError(400, 'El correo de respuestas no es válido')
 
   const newPassword = cleanString(payload.password)
-  const password = newPassword || await readStoredPassword()
+  const password = newPassword || (canReuseStoredCredentials ? await readStoredPassword() : '')
   if (!password) throw httpError(400, 'Escribe el password o app password SMTP')
 
   const candidate = { host, port, username, fromEmail, fromName, replyTo }
@@ -262,18 +285,8 @@ export async function sendTestEmail(to) {
   return result
 }
 
-/**
- * Pausa la conexión sin borrar credenciales (mismo criterio que WhatsApp).
- */
 export async function disconnectEmail() {
-  const config = await readStoredConfig()
-  if (config) {
-    await setAppConfig(EMAIL_CONFIG_KEY, {
-      ...config,
-      connected: false,
-      disconnectedAt: new Date().toISOString()
-    })
-  }
+  await clearEmailCredentials()
   invalidateTransporter()
   return getEmailStatus()
 }

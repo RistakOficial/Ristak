@@ -363,13 +363,13 @@ export const WhatsAppSettings: React.FC = () => {
   const confirmApiDisconnect = () => {
     showConfirm(
       'Desconectar WhatsApp',
-      'Se pausara la conexión con WhatsApp API. Los mensajes, contactos y plantillas guardadas se quedan intactos.',
+      'Se eliminará la llave local de WhatsApp API. Los mensajes, contactos y plantillas guardadas se quedan intactos, pero para reconectar tendrás que pegar la API Key otra vez.',
       async () => {
         setApiDisconnecting(true)
         try {
           const nextStatus = await whatsappApiService.disconnect()
           setApiStatus(nextStatus)
-          showToast('success', 'Desconectado', 'WhatsApp Business quedo pausado')
+          showToast('success', 'Desconectado', 'WhatsApp Business quedó sin credenciales locales')
         } catch (error) {
           showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar WhatsApp')
         } finally {
