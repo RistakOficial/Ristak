@@ -8,7 +8,7 @@ import { findContactByPhoneCandidates, getGhlContactIdForLocalContact, prepareCo
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
-import { normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
+import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '../services/contactSourceService.js'
 import { findWhatsAppProfilePictureUrl, warmWhatsAppApiProfilePictures } from '../services/whatsappApiService.js'
 import { warmWhatsAppQrProfilePictures } from '../services/whatsappQrService.js'
@@ -166,6 +166,230 @@ const hasRealWhatsAppAdAttribution = (data = {}) => {
     data.referral_entry_point,
     data.entry_point
   ].some(sourceTypeLooksLikeAd)
+}
+
+const GENERIC_TRAFFIC_SOURCES = new Set(['Directo', 'Desconocido', 'Otro'])
+const WEB_CONVERSION_EVENT_PATTERN = /(conversion|submit|form|lead|contact|registro|captura)/i
+const WEB_SOURCE_PATTERN = /(ristak_site|native_site|site|website|web|form|landing|pagina|página)/i
+const WHATSAPP_SOURCE_PATTERN = /(whatsapp|waapi|ycloud|click_to_whatsapp|ctwa)/i
+
+const isGenericTrafficSource = (source) => GENERIC_TRAFFIC_SOURCES.has(cleanString(source))
+const sourceLooksWhatsApp = (source) => WHATSAPP_SOURCE_PATTERN.test(cleanString(source))
+
+const getSessionSourceLabel = (session = {}) => normalizeTrafficSource({
+  referrer_url: session.referrer_url,
+  site_source_name: session.site_source_name,
+  utm_source: session.utm_source,
+  source_platform: session.source_platform
+})
+
+const hasNativeSiteSignal = (session = {}) => Boolean(
+  cleanString(session.tracking_source).toLowerCase() === 'native_site' ||
+  cleanString(session.site_id) ||
+  cleanString(session.site_slug) ||
+  cleanString(session.site_name) ||
+  cleanString(session.form_site_id) ||
+  cleanString(session.form_site_name) ||
+  cleanString(session.public_page_id) ||
+  cleanString(session.public_page_title)
+)
+
+const hasWebConversionSignal = (session = {}) => Boolean(
+  cleanString(session.submission_id) ||
+  cleanString(session.form_site_id) ||
+  cleanString(session.form_site_name) ||
+  WEB_CONVERSION_EVENT_PATTERN.test(cleanString(session.conversion_type)) ||
+  WEB_CONVERSION_EVENT_PATTERN.test(cleanString(session.event_name))
+)
+
+const getWebSessionScore = (session = {}) => {
+  let score = 0
+  const source = getSessionSourceLabel(session)
+  const nativeSite = hasNativeSiteSignal(session)
+  const webConversion = hasWebConversionSignal(session)
+
+  if (nativeSite && webConversion) score += 100
+  else if (webConversion) score += 70
+  else if (nativeSite) score += 45
+
+  if (cleanString(session.submission_id)) score += 35
+  if (cleanString(session.form_site_id) || cleanString(session.form_site_name)) score += 30
+  if (WEB_CONVERSION_EVENT_PATTERN.test(cleanString(session.conversion_type))) score += 20
+  if (WEB_CONVERSION_EVENT_PATTERN.test(cleanString(session.event_name))) score += 15
+  if (cleanString(session.page_url) || cleanString(session.landing_page)) score += 10
+  if (source && !isGenericTrafficSource(source)) score += sourceLooksWhatsApp(source) ? 5 : 25
+
+  return score
+}
+
+const pickPrimaryWebConversionSession = (sessions = []) => {
+  const scored = [...sessions]
+    .map(session => ({ session, score: getWebSessionScore(session) }))
+    .filter(item => item.score > 0)
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score
+      const leftTime = new Date(left.session.started_at || left.session.created_at || 0).getTime()
+      const rightTime = new Date(right.session.started_at || right.session.created_at || 0).getTime()
+      return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0)
+    })
+
+  return scored[0] || null
+}
+
+function getContactWebScore(contact = {}) {
+  let score = 0
+  const source = cleanString(contact.source)
+  const attributionSource = normalizeTrafficSource({
+    referrer_url: contact.attribution_url,
+    site_source_name: contact.attribution_session_source,
+    utm_source: contact.attribution_medium,
+    source
+  })
+
+  if (WEB_SOURCE_PATTERN.test(source)) score += 65
+  if (cleanString(contact.attribution_url) && !sourceLooksWhatsApp(contact.attribution_url)) score += 25
+  if (cleanString(contact.attribution_session_source) && !sourceLooksWhatsApp(contact.attribution_session_source)) score += 20
+  if (cleanString(contact.attribution_medium) && !sourceLooksWhatsApp(contact.attribution_medium)) score += 15
+  if ((cleanString(contact.attribution_ad_id) || cleanString(contact.attribution_ad_name)) && !sourceLooksWhatsApp(source)) score += 10
+  if (attributionSource && !isGenericTrafficSource(attributionSource)) score += sourceLooksWhatsApp(attributionSource) ? 5 : 20
+
+  return score
+}
+
+const buildWebConversionJourneyDataFromSession = (session = null) => {
+  if (!session) return null
+
+  return {
+    conversion_channel: 'web',
+    conversion_source: getSessionSourceLabel(session),
+    event_name: session.event_name,
+    page_url: session.page_url,
+    landing_page: session.landing_page || session.page_url,
+    referrer_url: session.referrer_url,
+    utm_source: session.utm_source,
+    utm_medium: session.utm_medium,
+    utm_campaign: session.utm_campaign,
+    utm_content: session.utm_content,
+    source_platform: session.source_platform,
+    site_source_name: session.site_source_name,
+    campaign_id: session.campaign_id,
+    campaign_name: session.campaign_name || session.utm_campaign,
+    adset_id: session.adset_id,
+    adset_name: session.adset_name,
+    ad_name: session.ad_name || session.utm_content,
+    ad_id: session.ad_id,
+    attribution_ad_name: session.ad_name || session.utm_content,
+    attribution_ad_id: session.ad_id,
+    tracking_source: session.tracking_source,
+    site_id: session.site_id,
+    site_slug: session.site_slug,
+    site_name: session.site_name,
+    site_type: session.site_type,
+    form_site_id: session.form_site_id,
+    form_site_name: session.form_site_name,
+    public_page_id: session.public_page_id,
+    public_page_title: session.public_page_title,
+    conversion_type: session.conversion_type,
+    submission_id: session.submission_id,
+    origin_confidence_score: getWebSessionScore(session)
+  }
+}
+
+const buildWebConversionJourneyDataFromContact = (contact = {}) => {
+  const source = normalizeTrafficSource({
+    referrer_url: contact.attribution_url,
+    site_source_name: contact.attribution_session_source,
+    utm_source: contact.attribution_medium,
+    source: contact.source
+  })
+  const sourceLabel = source && !isGenericTrafficSource(source) ? source : ''
+
+  return {
+    conversion_channel: 'web',
+    conversion_source: sourceLabel || 'Sitio web',
+    page_url: contact.attribution_url,
+    referrer_url: contact.attribution_url,
+    utm_source: contact.attribution_session_source,
+    utm_medium: contact.attribution_medium,
+    source_platform: contact.attribution_session_source,
+    site_source_name: contact.attribution_session_source,
+    ad_name: contact.attribution_ad_name,
+    ad_id: contact.attribution_ad_id,
+    attribution_ad_name: contact.attribution_ad_name,
+    attribution_ad_id: contact.attribution_ad_id,
+    origin_confidence_score: getContactWebScore(contact)
+  }
+}
+
+const resolveWebConversionEvidence = (contact = {}, sessions = []) => {
+  const sessionEvidence = pickPrimaryWebConversionSession(sessions)
+  const contactScore = getContactWebScore(contact)
+  const candidates = [
+    sessionEvidence ? {
+      score: sessionEvidence.score,
+      data: buildWebConversionJourneyDataFromSession(sessionEvidence.session),
+      source: 'session'
+    } : null,
+    contactScore > 0 ? {
+      score: contactScore,
+      data: buildWebConversionJourneyDataFromContact(contact),
+      source: 'contact'
+    } : null
+  ].filter(Boolean)
+
+  return candidates.sort((left, right) => right.score - left.score)[0] || { score: 0, data: null, source: null }
+}
+
+const isOutboundWhatsAppDirection = (direction) =>
+  ['outbound', 'business_echo', 'sent'].includes(cleanString(direction).toLowerCase())
+
+const getWhatsAppEventScore = (event = {}, contactCreatedAt = null) => {
+  const data = event.data || {}
+  if (event.type !== 'whatsapp_message') return 0
+  if (isOutboundWhatsAppDirection(data.direction)) return 0
+
+  let score = 35
+  if (hasRealWhatsAppAdAttribution(data) || data.is_ad_attributed) score += 45
+  if (cleanString(data.referral_ctwa_clid)) score += 25
+  if (cleanString(data.referral_source_id) || cleanString(data.attribution_ad_id)) score += 20
+  if (cleanString(data.referral_source_app) || cleanString(data.referral_entry_point)) score += 10
+
+  const contactTime = contactCreatedAt ? new Date(contactCreatedAt).getTime() : null
+  const eventTime = event.date ? new Date(event.date).getTime() : null
+  if (Number.isFinite(contactTime) && Number.isFinite(eventTime)) {
+    score += eventTime <= contactTime + 5 * 60 * 1000 ? 25 : -20
+  }
+
+  return Math.max(score, 0)
+}
+
+const resolveWhatsAppConversionEvidence = (contact = {}, whatsappEvents = []) => {
+  const contactSourceScore = sourceLooksWhatsApp(contact.source) ? 45 : 0
+  const eventEvidence = whatsappEvents
+    .map(event => ({ event, score: getWhatsAppEventScore(event, contact.created_at) }))
+    .filter(item => item.score > 0)
+    .sort((left, right) => right.score - left.score)[0]
+
+  if (eventEvidence && eventEvidence.score >= contactSourceScore) {
+    return { score: eventEvidence.score, event: eventEvidence.event, source: 'whatsapp_event' }
+  }
+
+  return { score: contactSourceScore, event: null, source: contactSourceScore ? 'contact_source' : null }
+}
+
+const resolveContactJourneyOrigin = ({ contact = {}, sessions = [], whatsappEvents = [] } = {}) => {
+  const web = resolveWebConversionEvidence(contact, sessions)
+  const whatsapp = resolveWhatsAppConversionEvidence(contact, whatsappEvents)
+
+  if (web.score > 0 && web.score >= whatsapp.score) {
+    return { channel: 'web', webData: web.data, whatsappEvent: null, scores: { web: web.score, whatsapp: whatsapp.score } }
+  }
+
+  if (whatsapp.score > 0) {
+    return { channel: 'whatsapp', webData: null, whatsappEvent: whatsapp.event, scores: { web: web.score, whatsapp: whatsapp.score } }
+  }
+
+  return { channel: null, webData: null, whatsappEvent: null, scores: { web: web.score, whatsapp: whatsapp.score } }
 }
 const HIGHLEVEL_MESSAGE_REFRESH_LIMIT = 12
 const HIGHLEVEL_REFRESHABLE_STATUS = new Set(['', 'pending', 'queued', 'processing', 'scheduled', 'sent', 'accepted'])
@@ -2971,7 +3195,7 @@ export const getContactJourney = async (req, res) => {
         error_code: msg.error_code || null,
         error_message: msg.error_message || null
       }
-      const isAdAttributed = hasRealWhatsAppAdAttribution(data)
+      const isAdAttributed = !isOutboundWhatsAppDirection(data.direction) && hasRealWhatsAppAdAttribution(data)
 
       whatsappJourneyEvents.push({
         type: 'whatsapp_message',
@@ -3048,8 +3272,11 @@ export const getContactJourney = async (req, res) => {
     })
 
     // 3. Contacto creado
-    const adAttributedWhatsAppEvent = enrichedWhatsAppJourneyEvents.find(event => event?.data?.is_ad_attributed)
+    const originEvidence = resolveContactJourneyOrigin({ contact, sessions, whatsappEvents: enrichedWhatsAppJourneyEvents })
+    const webConversionData = originEvidence.webData
+    const adAttributedWhatsAppEvent = originEvidence.whatsappEvent || enrichedWhatsAppJourneyEvents.find(event => event?.data?.is_ad_attributed)
     const resolvedContactAdFields = buildResolvedMetaAdFields(contact, null)
+    const conversionChannel = originEvidence.channel
 
     journey.push({
       type: 'contact_created',
@@ -3058,13 +3285,16 @@ export const getContactJourney = async (req, res) => {
         name: contact.full_name,
         email: contact.email,
         phone: contact.phone,
-        source: contact.source,
-        attribution_ad_name: adAttributedWhatsAppEvent?.data?.attribution_ad_name || resolvedContactAdFields.ad_name,
-        attribution_ad_id: adAttributedWhatsAppEvent?.data?.attribution_ad_id || resolvedContactAdFields.ad_id,
-        campaign_id: adAttributedWhatsAppEvent?.data?.campaign_id || resolvedContactAdFields.campaign_id,
-        campaign_name: adAttributedWhatsAppEvent?.data?.campaign_name || resolvedContactAdFields.campaign_name,
-        adset_id: adAttributedWhatsAppEvent?.data?.adset_id || resolvedContactAdFields.adset_id,
-        adset_name: adAttributedWhatsAppEvent?.data?.adset_name || resolvedContactAdFields.adset_name
+        source: webConversionData?.conversion_source || contact.source,
+        conversion_channel: conversionChannel,
+        origin_confidence: originEvidence.scores,
+        ...webConversionData,
+        attribution_ad_name: webConversionData?.attribution_ad_name || (conversionChannel === 'whatsapp' ? adAttributedWhatsAppEvent?.data?.attribution_ad_name : null) || resolvedContactAdFields.ad_name,
+        attribution_ad_id: webConversionData?.attribution_ad_id || (conversionChannel === 'whatsapp' ? adAttributedWhatsAppEvent?.data?.attribution_ad_id : null) || resolvedContactAdFields.ad_id,
+        campaign_id: webConversionData?.campaign_id || (conversionChannel === 'whatsapp' ? adAttributedWhatsAppEvent?.data?.campaign_id : null) || resolvedContactAdFields.campaign_id,
+        campaign_name: webConversionData?.campaign_name || (conversionChannel === 'whatsapp' ? adAttributedWhatsAppEvent?.data?.campaign_name : null) || resolvedContactAdFields.campaign_name,
+        adset_id: webConversionData?.adset_id || (conversionChannel === 'whatsapp' ? adAttributedWhatsAppEvent?.data?.adset_id : null) || resolvedContactAdFields.adset_id,
+        adset_name: webConversionData?.adset_name || (conversionChannel === 'whatsapp' ? adAttributedWhatsAppEvent?.data?.adset_name : null) || resolvedContactAdFields.adset_name
       }
     })
 

@@ -11,25 +11,118 @@ interface ContactJourneyProps {
   contactId: string
 }
 
+const GENERIC_TRAFFIC_SOURCES = new Set(['directo', 'desconocido', 'otro'])
+const WEB_JOURNEY_SOURCE_PATTERN = /(ristak_site|native_site|site|website|web|form|landing|pagina|página)/i
+const WHATSAPP_JOURNEY_SOURCE_PATTERN = /(whatsapp|waapi|ycloud|click_to_whatsapp|ctwa)/i
+
+const getEventData = (event?: JourneyEvent | null): Record<string, any> =>
+  event && event.data && typeof event.data === 'object' ? event.data : {}
+
+const sourceLooksWhatsApp = (source?: string | null) =>
+  WHATSAPP_JOURNEY_SOURCE_PATTERN.test(String(source || '').trim().toLowerCase())
+
+const isOutboundJourneyMessage = (event?: JourneyEvent | null) => {
+  const direction = String(getEventData(event).direction || '').trim().toLowerCase()
+  return ['outbound', 'business_echo', 'sent'].includes(direction)
+}
+
 const isWhatsAppJourneyEvent = (event?: JourneyEvent | null) => {
   if (!event) return false
-  const data = (event.data && typeof event.data === 'object') ? event.data : {}
+  const data = getEventData(event)
+  const conversionChannel = String(data.conversion_channel || '').toLowerCase()
+
+  if (event.type === 'whatsapp_message') return true
+  if (event.type !== 'contact_created') return false
+  if (isWebContactJourneyEvent(event)) return false
+  if (conversionChannel === 'web') return false
+  if (conversionChannel === 'whatsapp') return true
+
   const source = String(data.source || data.referral_source_app || data.referral_entry_point || '').toLowerCase()
 
-  return event.type === 'whatsapp_message' || source.includes('whatsapp')
+  return source.includes('whatsapp')
+}
+
+const isWebContactJourneyEvent = (event?: JourneyEvent | null) => {
+  if (event?.type !== 'contact_created') return false
+  const data = getEventData(event)
+  const conversionChannel = String(data.conversion_channel || '').trim().toLowerCase()
+  const eventName = String(data.event_name || '').toLowerCase()
+  const conversionType = String(data.conversion_type || '').toLowerCase()
+  const source = String(data.source || '').toLowerCase()
+  const sourceLabel = getEventSourceLabel(event)
+
+  if (conversionChannel === 'web') return true
+  if (data.submission_id || data.form_site_id || data.form_site_name) return true
+  if (String(data.tracking_source || '').toLowerCase() === 'native_site' || data.site_id || data.public_page_id) return true
+  if (eventName.includes('form') || eventName.includes('conversion')) return true
+  if (conversionType.includes('form') || conversionType.includes('conversion')) return true
+  if (WEB_JOURNEY_SOURCE_PATTERN.test(source)) return true
+
+  return Boolean(sourceLabel && !sourceLooksWhatsApp(sourceLabel))
 }
 
 const isDailyContactJourneyEvent = (event?: JourneyEvent | null) =>
   Boolean(event && (event.type === 'contact_created' || isWhatsAppJourneyEvent(event)))
 
+const getKnownPlatformIcon = (platform?: string | null) => {
+  const normalized = String(platform || '').toLowerCase()
+
+  if (GENERIC_TRAFFIC_SOURCES.has(normalized)) return null
+  if (normalized.includes('instagram')) return 'instagram'
+  if (normalized.includes('facebook')) return 'facebook'
+  if (normalized.includes('tiktok')) return 'tiktok'
+  if (normalized.includes('google')) return 'google'
+  if (normalized.includes('youtube')) return 'youtube'
+  if (normalized.includes('linkedin')) return 'linkedin'
+  if (normalized.includes('twitter') || normalized === 'x') return 'twitter'
+  if (normalized.includes('bing')) return 'bing'
+  if (normalized.includes('whatsapp')) return 'whatsapp'
+  if (normalized.includes('meta')) return 'meta-ads'
+
+  return null
+}
+
+const getEventSourceLabel = (event?: JourneyEvent | null) => {
+  const data = getEventData(event)
+  const explicitSource = String(data.conversion_source || '').trim()
+  if (explicitSource && !GENERIC_TRAFFIC_SOURCES.has(explicitSource.toLowerCase())) {
+    return explicitSource
+  }
+
+  const normalized = normalizeTrafficSource({
+    referrer_url: data.referrer_url || data.referral_source_url || data.source_url,
+    referral_source_url: data.referral_source_url,
+    site_source_name: data.site_source_name || data.referral_source_app,
+    utm_source: data.utm_source || data.referral_source_type,
+    source_platform: data.source_platform || data.ad_platform,
+    referral_source_app: data.referral_source_app,
+    referral_entry_point: data.referral_entry_point,
+    source: data.source
+  })
+
+  return normalized && !GENERIC_TRAFFIC_SOURCES.has(normalized.toLowerCase()) ? normalized : ''
+}
+
+const getEventSourceIcon = (event: JourneyEvent) => getKnownPlatformIcon(getEventSourceLabel(event))
+
+const getPlatformColor = (platform?: string | null) => {
+  const icon = getKnownPlatformIcon(platform)
+  if (icon && ['facebook', 'instagram', 'tiktok', 'google', 'youtube', 'linkedin', 'twitter', 'bing', 'whatsapp', 'meta-ads'].includes(icon)) {
+    return icon
+  }
+  return ''
+}
+
 const getEventIcon = (event: JourneyEvent) => {
+  if (event.type === 'page_visit' || isWebContactJourneyEvent(event)) {
+    return getEventSourceIcon(event) || 'mouse-pointer-click'
+  }
+
   if (isWhatsAppJourneyEvent(event)) {
     return 'whatsapp'
   }
 
   switch (event.type) {
-    case 'page_visit':
-      return 'mouse-pointer-click'
     case 'contact_created':
       return 'user-plus'
     case 'appointment':
@@ -61,13 +154,15 @@ const getEventTitle = (event: JourneyEvent) => {
 }
 
 const getEventColor = (event: JourneyEvent) => {
+  if (event.type === 'page_visit' || isWebContactJourneyEvent(event)) {
+    return getPlatformColor(getEventSourceLabel(event)) || 'blue'
+  }
+
   if (isWhatsAppJourneyEvent(event)) {
     return 'green'
   }
 
   switch (event.type) {
-    case 'page_visit':
-      return 'blue'
     case 'contact_created':
       return 'purple'
     case 'appointment':
@@ -80,41 +175,7 @@ const getEventColor = (event: JourneyEvent) => {
 }
 
 const getAdPlatformIcon = (platform?: string | null) => {
-  const normalized = String(platform || '').toLowerCase()
-
-  if (normalized.includes('instagram')) {
-    return 'instagram'
-  }
-
-  if (normalized.includes('facebook')) {
-    return 'facebook'
-  }
-
-  if (normalized.includes('tiktok')) {
-    return 'tiktok'
-  }
-
-  if (normalized.includes('google')) {
-    return 'google'
-  }
-
-  if (normalized.includes('youtube')) {
-    return 'youtube'
-  }
-
-  if (normalized.includes('linkedin')) {
-    return 'linkedin'
-  }
-
-  if (normalized.includes('twitter') || normalized === 'x') {
-    return 'twitter'
-  }
-
-  if (normalized.includes('bing')) {
-    return 'bing'
-  }
-
-  return 'meta-ads'
+  return getKnownPlatformIcon(platform) || 'meta-ads'
 }
 
 const getAdPlatformBadgeClass = (platform?: string | null) => {
@@ -140,16 +201,16 @@ const getEventDescription = (event?: JourneyEvent | null): string => {
   }
 
   const { type } = event
-  const data = (event.data && typeof event.data === 'object') ? event.data : {}
+  const data = getEventData(event)
 
   if (type === 'page_visit') {
-    // Usar normalizador con prioridad: referrer_url → site_source_name → utm_source → source_platform
-    return normalizeTrafficSource(data)
+    return getEventSourceLabel(event) || 'Sitio web'
   }
 
   if (type === 'whatsapp_message') {
     if (data.is_ad_attributed) {
-      return data.ad_platform ? `Anuncio ${data.ad_platform}` : 'Anuncio'
+      const platform = data.ad_platform || getEventSourceLabel(event)
+      return platform ? `Anuncio ${platform}` : 'Anuncio'
     }
     return 'WhatsApp'
   }
@@ -157,6 +218,9 @@ const getEventDescription = (event?: JourneyEvent | null): string => {
   if (type === 'contact_created') {
     if (isWhatsAppJourneyEvent(event)) {
       return 'Contacto creado'
+    }
+    if (isWebContactJourneyEvent(event)) {
+      return getEventSourceLabel(event) || 'Sitio web'
     }
     // Solo mostrar la fuente si es corta
     const source = data.source || 'Registro'
@@ -182,7 +246,7 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string) => {
   }
 
   const { type } = event
-  const data = (event.data && typeof event.data === 'object') ? event.data : {}
+  const data = getEventData(event)
 
   const items: { label: string; value: string }[] = []
 
@@ -190,9 +254,8 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string) => {
     if (data.landing_page) {
       items.push({ label: 'Página', value: data.landing_page })
     }
-    // Usar normalizador para mostrar fuente consistente
-    const source = normalizeTrafficSource(data)
-    if (source && source !== 'Desconocido') {
+    const source = getEventSourceLabel(event)
+    if (source) {
       items.push({ label: 'Fuente', value: source })
     }
     if (data.campaign_name || data.utm_campaign) {
@@ -221,7 +284,7 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string) => {
 
   if (type === 'whatsapp_message') {
     if (data.is_ad_attributed) {
-      items.push({ label: 'Origen', value: data.ad_platform || 'Anuncio' })
+      items.push({ label: 'Origen', value: data.ad_platform || getEventSourceLabel(event) || 'Anuncio' })
     }
     if (data.campaign_name) {
       items.push({ label: 'Campaña', value: formatUrlParameter(data.campaign_name) })
@@ -277,8 +340,12 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string) => {
   }
 
   if (type === 'contact_created') {
-    if (data.source) {
-      items.push({ label: 'Fuente', value: data.source })
+    const source = getEventSourceLabel(event) || data.source
+    if (source) {
+      items.push({ label: 'Fuente', value: source })
+    }
+    if (data.conversion_channel === 'web') {
+      items.push({ label: 'Canal', value: 'Sitio web' })
     }
     if (data.campaign_name) {
       items.push({ label: 'Campaña', value: data.campaign_name })
@@ -343,14 +410,13 @@ const hasMeaningfulValue = (value: unknown): boolean => {
 }
 
 const isAdAttributedEvent = (event: JourneyEvent): boolean => {
-  const data = (event.data && typeof event.data === 'object') ? event.data : {}
+  const data = getEventData(event)
+  if (event.type === 'whatsapp_message' && isOutboundJourneyMessage(event)) return false
   return Boolean(
     data.is_ad_attributed ||
     data.attribution_ad_id ||
     data.referral_source_id ||
-    data.referral_ctwa_clid ||
-    data.campaign_name ||
-    data.adset_name
+    data.referral_ctwa_clid
   )
 }
 
@@ -359,7 +425,7 @@ const isAdAttributedEvent = (event: JourneyEvent): boolean => {
 // el marcador final se renderice como mensaje de WhatsApp (con tooltip enriquecido) y no
 // como "Contacto creado".
 const whatsAppEventScore = (event: JourneyEvent): number => {
-  const data = (event.data && typeof event.data === 'object') ? event.data : {}
+  const data = getEventData(event)
   const completenessFields = [
     'referral_source_url', 'referral_source_type', 'referral_source_id', 'referral_ctwa_clid',
     'referral_headline', 'referral_body', 'campaign_name', 'adset_name',
@@ -390,7 +456,14 @@ const getLocalDayKey = (date: string, timezone: string): string => {
 }
 
 const getDailyContactJourneyGroupKey = (event: JourneyEvent, timezone: string): string =>
-  getLocalDayKey(event.date, timezone)
+  [
+    getLocalDayKey(event.date, timezone),
+    isWhatsAppJourneyEvent(event)
+      ? `whatsapp:${isAdAttributedEvent(event) ? 'ad' : 'direct'}`
+      : isWebContactJourneyEvent(event)
+        ? 'contact:web'
+        : 'contact'
+  ].join(':')
 
 // Colapsa los eventos de contacto/WhatsApp por día local. Si el mismo día hay varios,
 // gana el que trae metadata de anuncio (source_id, CTWA, campaña o anuncio resuelto).
@@ -422,17 +495,20 @@ const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyE
     const sorted = [...dayEvents].sort((a, b) => whatsAppEventScore(b) - whatsAppEventScore(a))
     const primary = sorted[0]
     const hasWhatsAppEvent = dayEvents.some(isWhatsAppJourneyEvent)
+    const isWhatsAppAdAttributed = dayEvents.some(event => isWhatsAppJourneyEvent(event) && isAdAttributedEvent(event))
 
     const mergedData: Record<string, any> = {}
     sorted.forEach(event => {
-      const data = (event.data && typeof event.data === 'object') ? event.data : {}
+      const data = getEventData(event)
       Object.entries(data).forEach(([key, value]) => {
         if (!hasMeaningfulValue(mergedData[key]) && hasMeaningfulValue(value)) {
           mergedData[key] = value
         }
       })
     })
-    mergedData.is_ad_attributed = dayEvents.some(isAdAttributedEvent)
+    if (hasWhatsAppEvent) {
+      mergedData.is_ad_attributed = isWhatsAppAdAttributed
+    }
 
     mergedDailyContactEvents.push({
       ...primary,

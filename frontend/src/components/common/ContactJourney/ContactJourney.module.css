@@ -157,6 +157,98 @@
   color: #34d399;
 }
 
+.eventDot.facebook,
+.eventDot.meta-ads {
+  background-color: rgba(24, 119, 242, 0.12);
+  color: #1877f2;
+}
+
+:global(body.dark) .eventDot.facebook,
+:global(body.dark) .eventDot.meta-ads {
+  background-color: rgba(24, 119, 242, 0.16);
+  color: #60a5fa;
+}
+
+.eventDot.instagram {
+  background-color: rgba(225, 48, 108, 0.12);
+  color: #e1306c;
+}
+
+:global(body.dark) .eventDot.instagram {
+  background-color: rgba(225, 48, 108, 0.16);
+  color: #fb7185;
+}
+
+.eventDot.tiktok {
+  background-color: rgba(17, 24, 39, 0.1);
+  color: #111827;
+}
+
+:global(body.dark) .eventDot.tiktok {
+  background-color: rgba(248, 250, 252, 0.13);
+  color: #f8fafc;
+}
+
+.eventDot.google {
+  background-color: rgba(66, 133, 244, 0.12);
+  color: #4285f4;
+}
+
+:global(body.dark) .eventDot.google {
+  background-color: rgba(66, 133, 244, 0.16);
+  color: #93c5fd;
+}
+
+.eventDot.youtube {
+  background-color: rgba(255, 0, 0, 0.1);
+  color: #dc2626;
+}
+
+:global(body.dark) .eventDot.youtube {
+  background-color: rgba(255, 0, 0, 0.15);
+  color: #f87171;
+}
+
+.eventDot.linkedin {
+  background-color: rgba(10, 102, 194, 0.12);
+  color: #0a66c2;
+}
+
+:global(body.dark) .eventDot.linkedin {
+  background-color: rgba(10, 102, 194, 0.16);
+  color: #60a5fa;
+}
+
+.eventDot.twitter {
+  background-color: rgba(29, 155, 240, 0.12);
+  color: #1d9bf0;
+}
+
+:global(body.dark) .eventDot.twitter {
+  background-color: rgba(29, 155, 240, 0.16);
+  color: #7dd3fc;
+}
+
+.eventDot.bing {
+  background-color: rgba(0, 131, 115, 0.12);
+  color: #008373;
+}
+
+:global(body.dark) .eventDot.bing {
+  background-color: rgba(0, 131, 115, 0.16);
+  color: #2dd4bf;
+}
+
+.eventDot.whatsapp {
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #059669;
+}
+
+:global(body.dark) .eventDot.whatsapp {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+
 .eventDot.purple {
   background-color: rgba(139, 92, 246, 0.12);
   color: #7c3aed;

@@ -2156,35 +2156,88 @@ function getJourneyEventLabel(event: JourneyEvent, leadLabel: string) {
   return 'Actividad'
 }
 
-function isWhatsAppJourneyEvent(event?: JourneyEvent | null) {
-  if (!event) return false
-  const data = event.data || {}
-  const source = String(data.source || data.referral_source_app || data.referral_entry_point || '').toLowerCase()
+const GENERIC_JOURNEY_SOURCES = new Set(['directo', 'desconocido', 'otro'])
+const WEB_JOURNEY_SOURCE_PATTERN = /(ristak_site|native_site|site|website|web|form|landing|pagina|página)/i
+const WHATSAPP_JOURNEY_SOURCE_PATTERN = /(whatsapp|waapi|ycloud|click_to_whatsapp|ctwa)/i
 
-  return event.type === 'whatsapp_message' || source.includes('whatsapp')
+function isGenericJourneySource(source?: string | null) {
+  return GENERIC_JOURNEY_SOURCES.has(String(source || '').trim().toLowerCase())
 }
 
-function getJourneyPlatformLabel(event?: JourneyEvent | null) {
-  if (!event) return ''
-  const data = event.data || {}
-  if (event.type === 'meta_message') return getReadableValue(data.source) || 'Meta'
-  const platform = getReadableValue(data.ad_platform)
-  if (platform) return platform
+function journeySourceLooksWhatsApp(source?: string | null) {
+  return WHATSAPP_JOURNEY_SOURCE_PATTERN.test(String(source || '').trim().toLowerCase())
+}
+
+function isOutboundJourneyMessage(event?: JourneyEvent | null) {
+  const direction = String(event?.data?.direction || '').trim().toLowerCase()
+  return ['outbound', 'business_echo', 'sent'].includes(direction)
+}
+
+function getJourneySourceLabelFromData(data: Record<string, any> = {}) {
+  const explicitSource = getReadableValue(data.conversion_source)
+  if (explicitSource && !isGenericJourneySource(explicitSource)) return explicitSource
 
   const normalizedSource = normalizeTrafficSource({
     referrer_url: data.referrer_url || data.referral_source_url || data.source_url,
     referral_source_url: data.referral_source_url,
     site_source_name: data.site_source_name || data.referral_source_app,
     utm_source: data.utm_source || data.referral_source_type,
-    source_platform: data.source_platform,
+    source_platform: data.source_platform || data.ad_platform,
     referral_source_app: data.referral_source_app,
     referral_entry_point: data.referral_entry_point,
     source: data.source
   })
 
-  return normalizedSource && !['Directo', 'Desconocido', 'Otro'].includes(normalizedSource)
-    ? normalizedSource
-    : ''
+  return normalizedSource && !isGenericJourneySource(normalizedSource) ? normalizedSource : ''
+}
+
+function hasWebJourneySignal(event?: JourneyEvent | null) {
+  if (!event) return false
+  if (event.type === 'page_visit') return true
+  if (event.type !== 'contact_created') return false
+
+  const data = event.data || {}
+  const conversionChannel = String(data.conversion_channel || '').trim().toLowerCase()
+  const eventName = String(data.event_name || '').toLowerCase()
+  const conversionType = String(data.conversion_type || '').toLowerCase()
+  const source = String(data.source || '').toLowerCase()
+  const sourceLabel = getJourneySourceLabelFromData(data)
+
+  if (conversionChannel === 'web') return true
+  if (data.submission_id || data.form_site_id || data.form_site_name) return true
+  if (String(data.tracking_source || '').toLowerCase() === 'native_site' || data.site_id || data.public_page_id) return true
+  if (eventName.includes('form') || eventName.includes('conversion')) return true
+  if (conversionType.includes('form') || conversionType.includes('conversion')) return true
+  if (WEB_JOURNEY_SOURCE_PATTERN.test(source)) return true
+
+  return Boolean(sourceLabel && !journeySourceLooksWhatsApp(sourceLabel))
+}
+
+function isWhatsAppJourneyEvent(event?: JourneyEvent | null) {
+  if (!event) return false
+  const data = event.data || {}
+  const conversionChannel = String(data.conversion_channel || '').trim().toLowerCase()
+
+  if (event.type === 'whatsapp_message') return true
+  if (event.type !== 'contact_created') return false
+  if (hasWebJourneySignal(event)) return false
+  if (conversionChannel === 'whatsapp') return true
+
+  const source = String(data.source || data.referral_source_app || data.referral_entry_point || '').toLowerCase()
+
+  return source.includes('whatsapp')
+}
+
+function getJourneyPlatformLabel(event?: JourneyEvent | null) {
+  if (!event) return ''
+  const data = event.data || {}
+  const webSource = hasWebJourneySignal(event) ? getJourneySourceLabelFromData(data) : ''
+  if (webSource) return webSource
+  if (event.type === 'meta_message') return getReadableValue(data.source) || 'Meta'
+  const platform = getReadableValue(data.ad_platform)
+  if (platform) return platform
+
+  return getJourneySourceLabelFromData(data)
 }
 
 function getJourneyPlatformIconName(platform?: string | null) {
@@ -2198,6 +2251,7 @@ function getJourneyPlatformIconName(platform?: string | null) {
   if (normalized.includes('linkedin')) return 'linkedin'
   if (normalized.includes('twitter') || normalized === 'x') return 'twitter'
   if (normalized.includes('bing')) return 'bing'
+  if (normalized.includes('whatsapp')) return 'whatsapp'
   if (normalized.includes('meta')) return 'meta-ads'
   return ''
 }
@@ -2213,6 +2267,7 @@ function getJourneyPlatformClass(platform?: string | null) {
     linkedin: styles.contactInfoTimelineIconLinkedIn,
     twitter: styles.contactInfoTimelineIconTwitter,
     bing: styles.contactInfoTimelineIconBing,
+    whatsapp: styles.contactInfoTimelineIconWhatsapp,
     'meta-ads': styles.contactInfoTimelineIconMeta
   }
 
@@ -2230,6 +2285,7 @@ function hasMeaningfulJourneyValue(value: unknown) {
 
 function isAdAttributedJourneyEvent(event: JourneyEvent) {
   const data = event.data || {}
+  if (event.type === 'whatsapp_message' && isOutboundJourneyMessage(event)) return false
   return Boolean(
     data.is_ad_attributed ||
     data.attribution_ad_id ||
@@ -2326,7 +2382,9 @@ function enrichJourneyDataWithMeta(
   const eventAdId = String(data.attribution_ad_id || data.referral_source_id || data.ad_id || '').trim()
   const metaAdId = String(metaAttribution.adId || '').trim()
   const sameAd = eventAdId && metaAdId ? eventAdId === metaAdId : true
-  const shouldEnrich = sameAd && (data.is_ad_attributed || eventAdId || data.referral_ctwa_clid)
+  const shouldEnrich = !isOutboundJourneyMessage({ type: 'whatsapp_message', date: '', data }) &&
+    sameAd &&
+    (data.is_ad_attributed || eventAdId || data.referral_ctwa_clid)
   if (!shouldEnrich) return data
 
   return {
@@ -2425,6 +2483,10 @@ function getJourneyEventIcon(event: JourneyEvent) {
     const platformIcon = getJourneyPlatformIconName(getJourneyPlatformLabel(event))
     return platformIcon ? <Icon name={platformIcon} size={15} /> : <MousePointerClick size={15} />
   }
+  if (event.type === 'contact_created' && hasWebJourneySignal(event)) {
+    const platformIcon = getJourneyPlatformIconName(getJourneyPlatformLabel(event))
+    return platformIcon ? <Icon name={platformIcon} size={15} /> : <MousePointerClick size={15} />
+  }
   if (event.type === 'contact_created') return <User size={15} />
   if (event.type === 'appointment') return <CalendarDays size={15} />
   if (event.type === 'payment') return <DollarSign size={15} />
@@ -2437,6 +2499,7 @@ function getJourneyEventIconClass(event: JourneyEvent) {
   if (event.type === 'meta_message') return getJourneyPlatformClass(getJourneyPlatformLabel(event)) || styles.contactInfoTimelineIconMeta
 
   if (event.type === 'page_visit') return getJourneyPlatformClass(getJourneyPlatformLabel(event)) || styles.contactInfoTimelineIconVisit
+  if (event.type === 'contact_created' && hasWebJourneySignal(event)) return getJourneyPlatformClass(getJourneyPlatformLabel(event)) || styles.contactInfoTimelineIconVisit
   if (event.type === 'contact_created') return styles.contactInfoTimelineIconContact
   if (event.type === 'appointment') return styles.contactInfoTimelineIconAppointment
   if (event.type === 'payment') return styles.contactInfoTimelineIconPayment
@@ -2460,6 +2523,18 @@ function getJourneyEventDescription(event: JourneyEvent) {
   }
 
   if (event.type === 'contact_created') {
+    if (hasWebJourneySignal(event)) {
+      const source = getJourneyPlatformLabel(event) || 'Sitio web'
+      const pageName = getReadableValue(data.form_site_name || data.public_page_title) || getPageName(data.page_url || data.landing_page)
+      const campaign = getReadableValue(data.campaign_name || data.utm_campaign)
+
+      return [
+        source,
+        pageName,
+        campaign ? `Campaña ${campaign}` : ''
+      ].filter(Boolean).join(' · ') || 'Sitio web'
+    }
+
     const source = getReadableValue(data.source) || 'Contacto guardado en Ristak'
     const campaign = getReadableValue(data.campaign_name)
     const adName = getReadableValue(data.attribution_ad_name || data.meta_ad_name)
