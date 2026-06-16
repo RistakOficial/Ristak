@@ -523,6 +523,30 @@ function pickMessageTimestamp(data: Record<string, unknown>, keys: string[]) {
   return ''
 }
 
+function pickMessageText(data: Record<string, unknown>) {
+  const textKeys = [
+    'message_text',
+    'messageText',
+    'message',
+    'body',
+    'text',
+    'message_body',
+    'messageBody',
+    'content',
+    'caption'
+  ]
+
+  for (const key of textKeys) {
+    const value = data[key]
+    if (value === null || value === undefined) continue
+    if (typeof value === 'object') continue
+    const text = String(value).trim()
+    if (text) return text
+  }
+
+  return ''
+}
+
 function getMessageTypeLabel(type = '', fallback = 'Mensaje') {
   const normalized = type.toLowerCase()
   if (normalized.includes('image')) return 'Foto'
@@ -555,7 +579,7 @@ function getMediaAttachmentType(messageType = '', mimeType = '', name = ''): Cha
 }
 
 function getJourneyMediaAttachment(event: JourneyEvent): DesktopChatMessage['attachment'] | undefined {
-  const messageType = String(event.data?.message_type || '').toLowerCase()
+  const messageType = String(event.data?.message_type || event.data?.messageType || event.data?.type || '').toLowerCase()
   const mediaUrl = String(event.data?.media_url || event.data?.mediaUrl || '').trim()
   const mediaId = String(event.data?.media_id || event.data?.mediaId || '').trim()
   const mimeType = String(event.data?.media_mime_type || event.data?.mediaMimeType || '').trim()
@@ -575,21 +599,24 @@ function getJourneyMediaAttachment(event: JourneyEvent): DesktopChatMessage['att
 function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessage | null {
   if (event.type !== 'whatsapp_message' && event.type !== 'meta_message') return null
   const data = event.data || {}
-  const text = String(
-    data.message ||
-    data.body ||
-    data.text ||
-    data.message_body ||
-    data.content ||
-    ''
-  ).trim()
+  const text = pickMessageText(data)
   const attachment = getJourneyMediaAttachment(event)
-  const messageType = String(data.message_type || data.type || '').trim()
+  const messageType = String(data.message_type || data.messageType || data.type || '').trim()
   if (!text && !attachment && !messageType) return null
   const direction = normalizeWhatsAppBusinessDirection(data.direction || data.message_direction || data.from_type)
-  const date = pickMessageTimestamp(data, ['date', 'timestamp', 'created_at', 'createdAt', 'message_timestamp']) || event.date
+  const date = pickMessageTimestamp(data, ['date', 'timestamp', 'created_at', 'createdAt', 'message_timestamp', 'messageTimestamp']) || event.date
   return {
-    id: String(data.message_id || data.messageId || data.id || `${event.type}-${event.date}-${index}`),
+    id: String(
+      data.whatsapp_api_message_id ||
+      data.whatsapp_message_id ||
+      data.meta_social_message_id ||
+      data.meta_message_id ||
+      data.message_id ||
+      data.messageId ||
+      data.attribution_record_id ||
+      data.id ||
+      `${event.type}-${event.date}-${index}`
+    ),
     text: text || (attachment ? getMessageTypeLabel(attachment.type, 'Archivo') : getMessageTypeLabel(messageType)),
     date,
     direction,
