@@ -251,8 +251,9 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                 fill={`url(#${gradientIdPrefix}-gradient-${serie.key}-${isDarkMode ? 'dark' : 'light'})`}
                 dot={
                   showPoints
-                    ? (props: any) => {
+                      ? (props: any) => {
                         const isActive = props.index === activeIndex
+                        const pointPayload = props.payload ?? data[props.index]
 
                         // Capturar la posición real del punto cuando está activo
                         if (isActive && props.cx != null && props.cy != null) {
@@ -291,17 +292,18 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                               data-chart-interactive="true"
                               role={onPointClick ? 'button' : undefined}
                               tabIndex={onPointClick ? 0 : undefined}
-                              aria-label={onPointClick ? `Ver detalles de ${serie.label} en ${props.payload?.label ?? 'este punto'}` : undefined}
-                              onClick={(event) => {
-                                if (!onPointClick || !props.payload) return
+                              aria-label={onPointClick ? `Ver detalles de ${serie.label} en ${pointPayload?.label ?? 'este punto'}` : undefined}
+                              onPointerDown={(event) => {
+                                if (!onPointClick || !pointPayload) return
+                                event.preventDefault()
                                 event.stopPropagation()
-                                onPointClick(props.payload, props.index, serie.key)
+                                onPointClick(pointPayload, props.index, serie.key)
                               }}
                               onKeyDown={(event) => {
-                                if (!onPointClick || !props.payload) return
+                                if (!onPointClick || !pointPayload) return
                                 if (event.key !== 'Enter' && event.key !== ' ') return
                                 event.preventDefault()
-                                onPointClick(props.payload, props.index, serie.key)
+                                onPointClick(pointPayload, props.index, serie.key)
                               }}
                               style={{
                                 pointerEvents: 'all',
