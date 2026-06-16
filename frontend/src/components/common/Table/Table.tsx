@@ -551,49 +551,50 @@ export function Table<T extends Record<string, any>>({
 
   return (
     <div className={styles.container} data-ristak-table>
-      <div className={styles.tableHeader}>
-        <div className={styles.leftControls}>
-          {toolbarStart}
+      <div className={`${styles.tableHeader} ${hasSelectionActions ? styles.tableHeaderSelection : ''}`}>
+        {hasSelectionActions ? (
+          <div className={styles.selectionActions}>
+            {selectionActions}
+          </div>
+        ) : (
+          <>
+            <div className={styles.leftControls}>
+              {toolbarStart}
 
-          {searchPosition === 'left' && searchControl}
+              {searchPosition === 'left' && searchControl}
 
-          {filters && onFilterChange && (
-            <TabList
-              tabs={filters}
-              activeTab={activeFilter}
-              onTabChange={onFilterChange}
-            />
-          )}
-        </div>
-
-        <div className={styles.tableActions}>
-          {searchPosition === 'right' && searchControl}
-
-          {hasSelectionActions ? (
-            <div className={styles.selectionActions}>
-              {selectionActions}
-            </div>
-          ) : (
-            <button
-              className={`${styles.actionButton} ${columnEditMode ? styles.active : ''}`}
-              onClick={() => setEditMode(!editMode)}
-              title={columnEditMode ? "Finalizar edición" : "Editar columnas"}
-            >
-              {columnEditMode ? (
-                <>
-                  <Check size={18} />
-                  <span className={styles.buttonText}>Listo</span>
-                </>
-              ) : (
-                <>
-                  <Settings size={18} />
-                  <span className={styles.buttonText}>Editar</span>
-                </>
+              {filters && onFilterChange && (
+                <TabList
+                  tabs={filters}
+                  activeTab={activeFilter}
+                  onTabChange={onFilterChange}
+                />
               )}
-            </button>
-          )}
+            </div>
 
-        </div>
+            <div className={styles.tableActions}>
+              {searchPosition === 'right' && searchControl}
+
+              <button
+                className={`${styles.actionButton} ${columnEditMode ? styles.active : ''}`}
+                onClick={() => setEditMode(!editMode)}
+                title={columnEditMode ? "Finalizar edición" : "Editar columnas"}
+              >
+                {columnEditMode ? (
+                  <>
+                    <Check size={18} />
+                    <span className={styles.buttonText}>Listo</span>
+                  </>
+                ) : (
+                  <>
+                    <Settings size={18} />
+                    <span className={styles.buttonText}>Editar</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       <div className={styles.tableWrapper}>

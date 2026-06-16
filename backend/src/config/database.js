@@ -3988,6 +3988,54 @@ async function initTables() {
     `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_automation_contact_jobs_contact ON automation_contact_enrollment_jobs(contact_id, status, scheduled_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_automation_contact_jobs_due ON automation_contact_enrollment_jobs(status, scheduled_at)')
+
+    // Acciones masivas disparadas desde la tabla de contactos. Guardan el lote
+    // y cada contacto para poder consultar avance, detener, reprogramar o borrar
+    // el trabajo sin perder visibilidad.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS contact_bulk_actions (
+        id TEXT PRIMARY KEY,
+        action_type TEXT NOT NULL,
+        title TEXT,
+        status TEXT DEFAULT 'scheduled',
+        total_count INTEGER DEFAULT 0,
+        processed_count INTEGER DEFAULT 0,
+        success_count INTEGER DEFAULT 0,
+        error_count INTEGER DEFAULT 0,
+        scheduled_at DATETIME,
+        drip_enabled INTEGER DEFAULT 0,
+        drip_interval_minutes INTEGER DEFAULT 0,
+        config_json TEXT DEFAULT '{}',
+        created_by TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        started_at DATETIME,
+        completed_at DATETIME,
+        paused_at DATETIME,
+        cancelled_at DATETIME
+      )
+    `)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS contact_bulk_action_items (
+        id TEXT PRIMARY KEY,
+        bulk_action_id TEXT NOT NULL,
+        contact_id TEXT NOT NULL,
+        contact_name TEXT,
+        scheduled_at DATETIME NOT NULL,
+        status TEXT DEFAULT 'scheduled',
+        result_json TEXT,
+        error TEXT,
+        external_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        processed_at DATETIME,
+        FOREIGN KEY (bulk_action_id) REFERENCES contact_bulk_actions(id) ON DELETE CASCADE
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contact_bulk_actions_status ON contact_bulk_actions(status, scheduled_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contact_bulk_items_action ON contact_bulk_action_items(bulk_action_id, status, scheduled_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contact_bulk_items_due ON contact_bulk_action_items(status, scheduled_at)')
+
     // Etiquetas locales de contactos (array JSON), usadas por automatizaciones
     await db.run(`ALTER TABLE contacts ADD COLUMN tags TEXT DEFAULT '[]'`).catch(() => {})
 

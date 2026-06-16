@@ -12,6 +12,15 @@ import {
   syncContactsStats,
   updateContact,
   bulkUpdateContactTags,
+  cancelBulkContactAction,
+  createBulkAutomationAction,
+  createBulkWhatsAppTemplateAction,
+  deleteBulkContactAction,
+  getBulkContactAction,
+  listBulkContactActions,
+  pauseBulkContactAction,
+  rescheduleBulkContactAction,
+  resumeBulkContactAction,
   updateContactCustomFieldDefinitionHandler,
   deleteContact,
   getContactJourney,
@@ -37,6 +46,15 @@ router.put('/custom-fields/:definitionId', updateContactCustomFieldDefinitionHan
 router.post('/', createContact)
 router.post('/sync-stats', syncContactsStats)
 router.post('/bulk/tags', bulkUpdateContactTags)
+router.get('/bulk-actions', listBulkContactActions)
+router.post('/bulk-actions/whatsapp-template', createBulkWhatsAppTemplateAction)
+router.post('/bulk-actions/automation', createBulkAutomationAction)
+router.get('/bulk-actions/:actionId', getBulkContactAction)
+router.post('/bulk-actions/:actionId/pause', pauseBulkContactAction)
+router.post('/bulk-actions/:actionId/resume', resumeBulkContactAction)
+router.post('/bulk-actions/:actionId/reschedule', rescheduleBulkContactAction)
+router.post('/bulk-actions/:actionId/cancel', cancelBulkContactAction)
+router.delete('/bulk-actions/:actionId', deleteBulkContactAction)
 router.get('/:id', getContactById)
 router.get('/:id/journey', getContactJourney)
 router.get('/:id/whatsapp-routing-events', getContactWhatsAppRoutingEvents)

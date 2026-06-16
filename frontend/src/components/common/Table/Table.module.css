@@ -20,6 +20,10 @@
   flex-wrap: wrap;
 }
 
+.tableHeaderSelection {
+  justify-content: flex-start;
+}
+
 .leftControls {
   display: flex;
   align-items: center;
@@ -81,8 +85,9 @@
 .selectionActions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: var(--spacing-sm);
+  width: 100%;
 }
 
 .actionGroup {
@@ -452,7 +457,7 @@ body.light input.selectionCheckbox:checked:hover::after {
   }
 
   .selectionActions {
-    margin-left: auto;
+    margin-left: 0;
   }
 }
 

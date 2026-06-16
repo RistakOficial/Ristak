@@ -1,0 +1,42 @@
+import { processDueContactBulkActions } from '../services/contactBulkActionsService.js'
+import { logger } from '../utils/logger.js'
+
+const CONTACT_BULK_ACTIONS_INTERVAL_MS = 20 * 1000
+
+let started = false
+let running = false
+
+async function runContactBulkActions(source = 'interval') {
+  if (running) return
+  running = true
+
+  try {
+    const results = await processDueContactBulkActions()
+    const completed = results.filter((result) => result.completed).length
+    const failed = results.filter((result) => result.error).length
+
+    if (completed || failed) {
+      logger.info(`[Acciones masivas] ${source}: ${completed} completadas, ${failed} con error`)
+    }
+  } catch (error) {
+    logger.error(`[Acciones masivas] Error revisando cola: ${error.message}`)
+  } finally {
+    running = false
+  }
+}
+
+export function startContactBulkActionsCron() {
+  if (started) return
+  started = true
+
+  logger.info('Iniciando cola de acciones masivas de contactos')
+  setInterval(() => {
+    runContactBulkActions().catch((error) => {
+      logger.error(`[Acciones masivas] Error no manejado: ${error.message}`)
+    })
+  }, CONTACT_BULK_ACTIONS_INTERVAL_MS)
+
+  runContactBulkActions('startup').catch((error) => {
+    logger.error(`[Acciones masivas] Error inicial: ${error.message}`)
+  })
+}

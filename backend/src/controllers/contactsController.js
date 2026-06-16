@@ -27,6 +27,17 @@ import {
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizePhoneForAccount } from '../utils/accountLocale.js'
 import {
+  cancelContactBulkAction,
+  createAutomationBulkAction,
+  createWhatsAppTemplateBulkAction,
+  deleteContactBulkAction,
+  getContactBulkAction,
+  listContactBulkActions,
+  pauseContactBulkAction,
+  rescheduleContactBulkAction,
+  resumeContactBulkAction
+} from '../services/contactBulkActionsService.js'
+import {
   extractWhatsAppProfileName,
   normalizeWhatsAppProfileName,
   shouldReplaceWhatsAppApiContactName
@@ -2466,6 +2477,129 @@ export const deleteContact = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error eliminando contacto'
+    })
+  }
+}
+
+export const createBulkWhatsAppTemplateAction = async (req, res) => {
+  try {
+    const data = await createWhatsAppTemplateBulkAction({
+      ...(req.body || {}),
+      userId: req.user?.userId || req.user?.id || null
+    })
+    res.status(201).json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error creando lote WhatsApp de contactos: ${error.message}`)
+    res.status(error.status || error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo crear el lote de WhatsApp'
+    })
+  }
+}
+
+export const createBulkAutomationAction = async (req, res) => {
+  try {
+    const data = await createAutomationBulkAction({
+      ...(req.body || {}),
+      userId: req.user?.userId || req.user?.id || null
+    })
+    res.status(201).json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error creando lote de automatización de contactos: ${error.message}`)
+    res.status(error.status || error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo crear el lote de automatización'
+    })
+  }
+}
+
+export const listBulkContactActions = async (req, res) => {
+  try {
+    const data = await listContactBulkActions({ limit: req.query?.limit })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error listando acciones masivas de contactos: ${error.message}`)
+    res.status(error.status || error.statusCode || 500).json({
+      success: false,
+      error: error.message || 'No se pudieron cargar las acciones masivas'
+    })
+  }
+}
+
+export const getBulkContactAction = async (req, res) => {
+  try {
+    const data = await getContactBulkAction(req.params.actionId)
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error cargando acción masiva de contactos: ${error.message}`)
+    res.status(error.status || error.statusCode || 404).json({
+      success: false,
+      error: error.message || 'Acción masiva no encontrada'
+    })
+  }
+}
+
+export const pauseBulkContactAction = async (req, res) => {
+  try {
+    const data = await pauseContactBulkAction(req.params.actionId)
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error deteniendo acción masiva de contactos: ${error.message}`)
+    res.status(error.status || error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo detener la acción masiva'
+    })
+  }
+}
+
+export const resumeBulkContactAction = async (req, res) => {
+  try {
+    const data = await resumeContactBulkAction(req.params.actionId)
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error reanudando acción masiva de contactos: ${error.message}`)
+    res.status(error.status || error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo reanudar la acción masiva'
+    })
+  }
+}
+
+export const rescheduleBulkContactAction = async (req, res) => {
+  try {
+    const data = await rescheduleContactBulkAction(req.params.actionId, req.body || {})
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error reprogramando acción masiva de contactos: ${error.message}`)
+    res.status(error.status || error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo reprogramar la acción masiva'
+    })
+  }
+}
+
+export const cancelBulkContactAction = async (req, res) => {
+  try {
+    const data = await cancelContactBulkAction(req.params.actionId)
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error cancelando acción masiva de contactos: ${error.message}`)
+    res.status(error.status || error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo cancelar la acción masiva'
+    })
+  }
+}
+
+export const deleteBulkContactAction = async (req, res) => {
+  try {
+    const data = await deleteContactBulkAction(req.params.actionId)
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error eliminando acción masiva de contactos: ${error.message}`)
+    res.status(error.status || error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo eliminar la acción masiva'
     })
   }
 }

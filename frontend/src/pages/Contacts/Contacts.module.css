@@ -35,13 +35,16 @@
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  background-color: var(--color-surface);
+  width: 100%;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+  flex-wrap: wrap;
+}
+
+.selectionToolbar > span {
+  margin-right: auto;
+  color: var(--color-text-primary);
 }
 
 .kpiRow {
@@ -281,6 +284,126 @@
   margin-top: var(--spacing-md);
 }
 
+.bulkModalBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.bulkModalLead {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.bulkFormGrid,
+.bulkOptionsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-md);
+}
+
+.bulkVariablePanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.bulkVariablePanel h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+}
+
+.bulkOptionToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-height: 40px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.bulkInlineField {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.bulkInlineField input {
+  max-width: 96px;
+}
+
+.bulkInlineField span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.bulkSuccessBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  color: var(--color-text-secondary);
+}
+
+.bulkSuccessBody svg {
+  color: var(--color-text-primary);
+}
+
+.bulkSuccessBody p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.bulkProgressHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-lg);
+}
+
+.bulkProgressHeader h2 {
+  margin: var(--spacing-sm) 0 var(--spacing-xs);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+}
+
+.bulkProgressHeader p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.bulkProgressActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.bulkProgressTrack {
+  height: 8px;
+  margin-top: var(--spacing-lg);
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+}
+
+.bulkProgressTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-text-primary);
+  transition: width var(--transition-normal);
+}
+
 /* Responsive */
 @media (max-width: 1200px) {
   .kpiRow {
@@ -302,6 +425,20 @@
   .headerActions {
     width: 100%;
     margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  .bulkFormGrid,
+  .bulkOptionsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .bulkProgressHeader {
+    flex-direction: column;
+  }
+
+  .bulkProgressActions {
+    width: 100%;
     justify-content: flex-start;
   }
 

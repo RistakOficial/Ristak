@@ -11,6 +11,7 @@ import { startMetaSyncCron } from './jobs/metaSync.cron.js'
 import { startHighLevelSyncCron } from './jobs/highlevelSync.cron.js'
 import { startMetaVersionCron, updateMetaVersion } from './jobs/metaVersionCron.js'
 import { startScheduledChatMessagesCron } from './jobs/scheduledChatMessages.cron.js'
+import { startContactBulkActionsCron } from './jobs/contactBulkActions.cron.js'
 import { startAppointmentRemindersCron } from './jobs/appointmentReminders.cron.js'
 import { startWhatsAppQrWatchdogCron } from './jobs/whatsappQrWatchdog.cron.js'
 import { initializeVersion } from './services/metaVersionService.js'
@@ -219,6 +220,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   startHighLevelSyncCron()         // Sincroniza contactos, citas y pagos de HighLevel cada hora (silencioso)
   startMetaVersionCron()           // Revisa versión Meta API una vez al mes
   startScheduledChatMessagesCron() // Envía mensajes de chat cuando llegue su hora programada
+  startContactBulkActionsCron()    // Ejecuta lotes masivos de contactos programados o en goteo
   startAppointmentRemindersCron()  // Envía recordatorios y confirmaciones de citas
   startWhatsAppQrWatchdogCron()    // Reabre sesiones de WhatsApp Web al arrancar y las mantiene vivas
 })

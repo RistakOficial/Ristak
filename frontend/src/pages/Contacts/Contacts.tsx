@@ -15,7 +15,8 @@ import {
   Eye,
   Mail,
   Plus,
-  Tag
+  MessageSquare,
+  Workflow
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -40,6 +41,8 @@ import {
   getDetectedAccountLocaleDefaults,
   getPhoneInputParts
 } from '@/utils/accountLocale'
+import { ContactBulkActionModals } from './ContactBulkActionModals'
+import { ContactBulkActionProgress } from './ContactBulkActionProgress'
 
 const APPOINTMENT_CANCELED_STATUSES = new Set([
   'cancelled',
@@ -438,7 +441,7 @@ const mergeContactDetailRecords = (
   return merged
 }
 
-export const Contacts: React.FC = () => {
+const ContactsTable: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const navigate = useNavigate()
   const location = useLocation()
@@ -463,6 +466,8 @@ export const Contacts: React.FC = () => {
   const [whatsappPhoneNumbers, setWhatsappPhoneNumbers] = useState<WhatsAppApiPhoneNumber[]>([])
   const [contactDeleteConfirmation, setContactDeleteConfirmation] = useState('')
   const [showBulkTagsModal, setShowBulkTagsModal] = useState(false)
+  const [showBulkWhatsAppModal, setShowBulkWhatsAppModal] = useState(false)
+  const [showBulkAutomationModal, setShowBulkAutomationModal] = useState(false)
   const [bulkAddTagIds, setBulkAddTagIds] = useState<string[]>([])
   const [bulkRemoveTagIds, setBulkRemoveTagIds] = useState<string[]>([])
   const [applyingBulkTags, setApplyingBulkTags] = useState(false)
@@ -1615,10 +1620,19 @@ export const Contacts: React.FC = () => {
         type="button"
         variant="secondary"
         size="sm"
-        onClick={() => setShowBulkTagsModal(true)}
+        onClick={() => setShowBulkWhatsAppModal(true)}
       >
-        <Tag size={16} />
-        Etiquetas
+        <MessageSquare size={16} />
+        Mandar WhatsApp
+      </Button>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={() => setShowBulkAutomationModal(true)}
+      >
+        <Workflow size={16} />
+        Añadir a automatización
       </Button>
       <Button
         type="button"
@@ -1628,6 +1642,15 @@ export const Contacts: React.FC = () => {
       >
         <Trash2 size={16} />
         Eliminar
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={() => setSelectedContactIds([])}
+        aria-label="Limpiar selección"
+      >
+        <X size={16} />
       </Button>
     </div>
   ) : null
@@ -1765,6 +1788,18 @@ export const Contacts: React.FC = () => {
           }}
         />
       </Card>
+
+      {isClient && (
+        <ContactBulkActionModals
+          selectedContacts={selectedContacts}
+          whatsappPhoneNumbers={whatsappPhoneNumbers}
+          whatsappOpen={showBulkWhatsAppModal}
+          automationOpen={showBulkAutomationModal}
+          onCloseWhatsApp={() => setShowBulkWhatsAppModal(false)}
+          onCloseAutomation={() => setShowBulkAutomationModal(false)}
+          onCreated={() => setSelectedContactIds([])}
+        />
+      )}
 
       {isClient && (
         <ContactDetailsModal
@@ -2045,4 +2080,20 @@ export const Contacts: React.FC = () => {
       </div>
     </PageContainer>
   )
+}
+
+const getBulkActionIdFromPath = (pathname: string) => {
+  const match = pathname.match(/^\/contacts\/bulk-actions\/([^/]+)/)
+  return match?.[1] ? decodeURIComponent(match[1]) : ''
+}
+
+export const Contacts: React.FC = () => {
+  const location = useLocation()
+  const bulkActionId = getBulkActionIdFromPath(location.pathname)
+
+  if (bulkActionId) {
+    return <ContactBulkActionProgress actionId={bulkActionId} />
+  }
+
+  return <ContactsTable />
 }
