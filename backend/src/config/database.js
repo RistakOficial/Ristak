@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
 import {
   extractWhatsAppProfileName,
   shouldReplaceWhatsAppApiContactName
@@ -712,6 +713,73 @@ function isWhatsAppApiSource(value = '') {
   return String(value || '').trim().toLowerCase() === 'whatsapp_api'
 }
 
+function cleanRepairText(value) {
+  if (value === null || value === undefined) return ''
+  return String(value).trim()
+}
+
+function sourceTypeLooksLikeAd(value = '') {
+  const normalized = cleanRepairText(value).toLowerCase().replace(/[\s-]+/g, '_')
+  return ['ad', 'ads', 'advertisement', 'click_to_whatsapp', 'ctwa'].includes(normalized)
+}
+
+function pickWhatsAppApiAdAttribution(messages = []) {
+  for (const message of messages) {
+    const rawPayload = parseJsonMaybe(message.raw_payload_json, null)
+    const referral = parseJsonMaybe(message.referral_json, null)
+    const detected = detectWhatsAppAttributionFields({
+      message: rawPayload,
+      referral,
+      row: message
+    }, [message.message_text || ''])
+
+    const sourceId = cleanRepairText(message.detected_source_id || detected.sourceId)
+    if (!sourceId) continue
+
+    const ctwaClid = cleanRepairText(message.detected_ctwa_clid || detected.ctwaClid)
+    const sourceType = cleanRepairText(message.detected_source_type || detected.sourceType)
+    const sourceUrl = cleanRepairText(message.detected_source_url || detected.sourceUrl)
+    const headline = cleanRepairText(message.detected_headline || detected.headline)
+
+    if (!ctwaClid && !sourceTypeLooksLikeAd(sourceType) && !sourceUrl && !headline) continue
+
+    return {
+      sourceId,
+      ctwaClid,
+      sourceUrl,
+      sourceType,
+      sourceApp: cleanRepairText(message.detected_source_app || detected.sourceApp),
+      entryPoint: cleanRepairText(message.detected_entry_point || detected.entryPoint),
+      headline,
+      body: cleanRepairText(message.detected_body || detected.body)
+    }
+  }
+
+  return null
+}
+
+async function isKnownMetaAdId(adId = '') {
+  const cleanAdId = cleanRepairText(adId)
+  if (!cleanAdId) return false
+  const row = await db.get('SELECT 1 AS found FROM meta_ads WHERE ad_id = ? LIMIT 1', [cleanAdId]).catch(() => null)
+  return Boolean(row?.found)
+}
+
+async function shouldReplaceWhatsAppApiAdAttribution(row = {}, candidate = null) {
+  if (!candidate?.sourceId) return false
+
+  const currentAdId = cleanRepairText(row.attribution_ad_id)
+  if (!currentAdId) return true
+  if (currentAdId === candidate.sourceId) return false
+
+  const rawProfile = parseJsonMaybe(row.raw_profile_json, null)
+  const ycloudContactSourceId = cleanRepairText(rawProfile?.sourceId || rawProfile?.source_id)
+  if (ycloudContactSourceId && currentAdId === ycloudContactSourceId) return true
+
+  if (!isWhatsAppApiSource(row.source)) return false
+  return !(await isKnownMetaAdId(currentAdId))
+}
+
 export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 5000 } = {}) {
   const rows = await db.all(`
     SELECT
@@ -720,6 +788,12 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
       c.full_name,
       c.first_name,
       c.source,
+      c.attribution_ad_id,
+      c.attribution_ad_name,
+      c.attribution_ctwa_clid,
+      c.attribution_url,
+      c.attribution_session_source,
+      c.attribution_medium,
       c.created_at,
       wac.id AS api_contact_id,
       wac.profile_name,
@@ -744,11 +818,25 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
   for (const row of rows) {
     const phone = normalizePhoneForStorage(row.phone) || String(row.phone || '').trim()
     const messages = await db.all(`
-      SELECT message_timestamp, created_at, raw_payload_json
-      FROM whatsapp_api_messages
-      WHERE contact_id = ?
-        OR (? != '' AND phone = ?)
-      ORDER BY COALESCE(message_timestamp, created_at) ASC, created_at ASC
+      SELECT
+        msg.message_timestamp,
+        msg.created_at,
+        msg.message_text,
+        msg.raw_payload_json,
+        msg.referral_json,
+        COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) AS detected_ctwa_clid,
+        COALESCE(attr.detected_source_id, msg.detected_source_id) AS detected_source_id,
+        COALESCE(attr.detected_source_url, msg.detected_source_url) AS detected_source_url,
+        COALESCE(attr.detected_source_type, msg.detected_source_type) AS detected_source_type,
+        COALESCE(attr.detected_source_app, msg.detected_source_app) AS detected_source_app,
+        COALESCE(attr.detected_entry_point, msg.detected_entry_point) AS detected_entry_point,
+        COALESCE(attr.detected_headline, msg.detected_headline) AS detected_headline,
+        COALESCE(attr.detected_body, msg.detected_body) AS detected_body
+      FROM whatsapp_api_messages msg
+      LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
+      WHERE msg.contact_id = ?
+        OR (? != '' AND msg.phone = ?)
+      ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC, msg.created_at ASC
       LIMIT 80
     `, [row.id, phone || '', phone || '']).catch(() => [])
     const firstMessage = messages.find(message => message.message_timestamp || message.created_at)
@@ -768,6 +856,7 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
 
     const contactUpdates = []
     const contactParams = []
+    const adAttribution = pickWhatsAppApiAdAttribution(messages)
 
     if (profileName && shouldReplaceWhatsAppApiContactName(row.full_name, phone)) {
       contactUpdates.push('full_name = ?')
@@ -779,6 +868,31 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
     if (isWhatsAppApiSource(row.source) && firstMessageAt && isDateEarlier(firstMessageAt, row.created_at)) {
       contactUpdates.push('created_at = ?')
       contactParams.push(firstMessageAt)
+    }
+
+    if (await shouldReplaceWhatsAppApiAdAttribution(row, adAttribution)) {
+      contactUpdates.push('attribution_ad_id = ?')
+      contactParams.push(adAttribution.sourceId)
+      if (adAttribution.ctwaClid) {
+        contactUpdates.push('attribution_ctwa_clid = ?')
+        contactParams.push(adAttribution.ctwaClid)
+      }
+      if (adAttribution.headline) {
+        contactUpdates.push('attribution_ad_name = ?')
+        contactParams.push(adAttribution.headline)
+      }
+      if (adAttribution.sourceUrl) {
+        contactUpdates.push('attribution_url = COALESCE(NULLIF(attribution_url, \'\'), ?)')
+        contactParams.push(adAttribution.sourceUrl)
+      }
+      if (adAttribution.sourceApp || adAttribution.entryPoint) {
+        contactUpdates.push('attribution_session_source = COALESCE(NULLIF(attribution_session_source, \'\'), ?)')
+        contactParams.push(adAttribution.sourceApp || adAttribution.entryPoint)
+      }
+      if (adAttribution.sourceType) {
+        contactUpdates.push('attribution_medium = COALESCE(NULLIF(attribution_medium, \'\'), ?)')
+        contactParams.push(adAttribution.sourceType)
+      }
     }
 
     if (contactUpdates.length) {

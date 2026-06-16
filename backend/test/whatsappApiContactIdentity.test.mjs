@@ -121,3 +121,128 @@ test('repara contactos importados de WhatsApp API con nombre y primera fecha del
     await cleanup({ contactId, apiContactId, messageId, phone })
   }
 })
+
+test('repara attribution_ad_id cuando YCloud importó un sourceId genérico antes del referral real', async () => {
+  const id = randomUUID()
+  const phone = `+52998${Date.now().toString().slice(-7)}`
+  const contactId = `rstk_contact_test_${id}`
+  const apiContactId = `waapi_profile_test_${id}`
+  const messageId = `waapi_msg_test_${id}`
+  const realMessageAt = '2024-03-04T05:06:07.000Z'
+
+  await cleanup({ contactId, apiContactId, messageId, phone })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source,
+        attribution_ad_id, attribution_ad_name, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      'Contacto WhatsApp API',
+      'Contacto WhatsApp API',
+      'WhatsApp_API',
+      'batch_import_123',
+      'batch_import_123',
+      '2026-06-15T23:31:29.000Z',
+      '2026-06-15T23:31:29.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_contacts (
+        id, contact_id, phone, profile_name, raw_profile_json,
+        first_seen_at, last_seen_at, message_count, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      apiContactId,
+      contactId,
+      phone,
+      'Contacto WhatsApp_API',
+      JSON.stringify({ sourceId: 'batch_import_123', sourceType: 'import' }),
+      '2026-06-15T23:31:29.000Z',
+      '2026-06-15T23:31:29.000Z',
+      1,
+      '2026-06-15T23:31:29.000Z',
+      '2026-06-15T23:31:29.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, origin, ycloud_message_id, whatsapp_api_contact_id,
+        contact_id, phone, from_phone, to_phone, direction, message_type,
+        message_text, status, message_timestamp, raw_payload_json, referral_json,
+        detected_ctwa_clid, detected_source_id, detected_source_url,
+        detected_source_type, detected_headline, detected_body,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      messageId,
+      'ycloud',
+      'whatsapp.inbound_message.received',
+      'ycloud_ad_1',
+      apiContactId,
+      contactId,
+      phone,
+      phone,
+      '+526561000000',
+      'inbound',
+      'text',
+      'Quiero informes',
+      'received',
+      realMessageAt,
+      JSON.stringify({
+        id: 'ycloud_ad_1',
+        customerProfile: { name: 'Ana López' },
+        from: phone,
+        to: '+526561000000',
+        sendTime: realMessageAt,
+        type: 'text',
+        text: { body: 'Quiero informes' },
+        referral: {
+          source_url: 'https://fb.me/xxx',
+          source_type: 'ad',
+          source_id: '238555000111222',
+          headline: 'Promo junio',
+          body: 'Agenda por WhatsApp',
+          ctwa_clid: 'ctwa_real_123'
+        }
+      }),
+      JSON.stringify({
+        source_url: 'https://fb.me/xxx',
+        source_type: 'ad',
+        source_id: '238555000111222',
+        headline: 'Promo junio',
+        body: 'Agenda por WhatsApp',
+        ctwa_clid: 'ctwa_real_123'
+      }),
+      'ctwa_real_123',
+      '238555000111222',
+      'https://fb.me/xxx',
+      'ad',
+      'Promo junio',
+      'Agenda por WhatsApp',
+      '2026-06-15T23:31:29.000Z',
+      '2026-06-15T23:31:29.000Z'
+    ])
+
+    const repaired = await repairWhatsAppApiContactIdentityFromMessages({ limit: 100 })
+    assert.ok(repaired.contacts >= 1)
+
+    const contact = await db.get(`
+      SELECT attribution_ad_id, attribution_ad_name, attribution_ctwa_clid,
+             attribution_url, attribution_medium
+      FROM contacts
+      WHERE id = ?
+    `, [contactId])
+
+    assert.equal(contact.attribution_ad_id, '238555000111222')
+    assert.equal(contact.attribution_ad_name, 'Promo junio')
+    assert.equal(contact.attribution_ctwa_clid, 'ctwa_real_123')
+    assert.equal(contact.attribution_url, 'https://fb.me/xxx')
+    assert.equal(contact.attribution_medium, 'ad')
+  } finally {
+    await cleanup({ contactId, apiContactId, messageId, phone })
+  }
+})

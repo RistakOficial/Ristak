@@ -2282,13 +2282,15 @@ async function syncYCloudContacts(contacts = []) {
       profileName: contact.profileName,
       messageTimestamp: contact.seenAt,
       attribution: {
-        sourceId: contact.sourceId,
+        // YCloud contact.sourceId describes how the contact record was created
+        // (for example a batch import), not the Click-to-WhatsApp ad id.
+        sourceId: '',
         sourceUrl: contact.sourceUrl,
         sourceType: contact.sourceType || 'ycloud_contact',
         sourceApp: SOURCE_NAME,
         entryPoint: 'ycloud_contacts',
         ctwaClid: '',
-        headline: contact.profileName || contact.sourceId || '',
+        headline: contact.profileName || '',
         body: ''
       }
     })
@@ -3148,6 +3150,23 @@ function extractAttribution(payload = {}, message = {}, messageText = '') {
   }
 }
 
+function sourceTypeLooksLikeAd(value = '') {
+  const normalized = cleanString(value).toLowerCase().replace(/[\s-]+/g, '_')
+  return ['ad', 'ads', 'advertisement', 'click_to_whatsapp', 'ctwa'].includes(normalized)
+}
+
+function hasWhatsAppAdAttributionSignal(attribution = {}) {
+  return Boolean(
+    attribution.sourceId &&
+    (
+      attribution.ctwaClid ||
+      sourceTypeLooksLikeAd(attribution.sourceType) ||
+      attribution.sourceUrl ||
+      attribution.headline
+    )
+  )
+}
+
 function normalizeDirectionValue(value) {
   const text = cleanString(value).toLowerCase()
   if (!text) return ''
@@ -3267,6 +3286,7 @@ async function upsertLocalContact({ phone, profileName, messageTimestamp, attrib
 
   const updates = []
   const params = []
+  const sourceLooksWhatsAppApi = cleanString(existing.source).toLowerCase() === SOURCE_NAME.toLowerCase()
 
   if (contactName && shouldReplaceContactName(existing.full_name, canonicalPhone)) {
     updates.push('full_name = ?')
@@ -3301,14 +3321,20 @@ async function upsertLocalContact({ phone, profileName, messageTimestamp, attrib
   }
 
   if (attribution.sourceId) {
-    updates.push('attribution_ad_id = COALESCE(NULLIF(attribution_ad_id, \'\'), ?)')
+    const currentAdId = cleanString(existing.attribution_ad_id)
+    const shouldOverwriteAdId = !currentAdId ||
+      (sourceLooksWhatsAppApi && currentAdId !== attribution.sourceId && hasWhatsAppAdAttributionSignal(attribution))
+    updates.push(shouldOverwriteAdId
+      ? 'attribution_ad_id = ?'
+      : 'attribution_ad_id = COALESCE(NULLIF(attribution_ad_id, \'\'), ?)')
     params.push(attribution.sourceId)
-    updates.push('attribution_ad_name = COALESCE(NULLIF(attribution_ad_name, \'\'), ?)')
+    updates.push(shouldOverwriteAdId
+      ? 'attribution_ad_name = ?'
+      : 'attribution_ad_name = COALESCE(NULLIF(attribution_ad_name, \'\'), ?)')
     params.push(attribution.headline || attribution.sourceId)
   }
 
   const existingCreatedAt = toDateTime(existing.created_at)
-  const sourceLooksWhatsAppApi = cleanString(existing.source).toLowerCase() === SOURCE_NAME.toLowerCase()
   if (
     cleanMessageTimestamp &&
     sourceLooksWhatsAppApi &&
