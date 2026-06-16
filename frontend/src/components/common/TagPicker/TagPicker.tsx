@@ -190,7 +190,6 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
   const lockedTags = isMultiple ? (props as TagPickerMultiProps).lockedTags || [] : []
   const singleSelected = !isMultiple ? tagById.get(singleValue) : undefined
   const singleLabel = singleSelected?.name || contactTagsService.getDisplayName(singleValue)
-  const showCreatePrompt = allowCreate && !search.trim() && !creating
 
   const dropdown = isOpen && !disabled ? (
     <div
@@ -221,16 +220,6 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
           }}
         />
       </div>
-      {showCreatePrompt && (
-        <button
-          type="button"
-          className={styles.createPromptOption}
-          onClick={() => searchInputRef.current?.focus()}
-        >
-          <span className={styles.createIcon}><Plus size={13} /></span>
-          <span className={styles.createLabel}>Crear nueva etiqueta</span>
-        </button>
-      )}
       <div className={styles.options}>
         {loading && tags.length === 0 ? (
           <div className={styles.empty} role="status" aria-live="polite" aria-label="Cargando etiquetas" />
