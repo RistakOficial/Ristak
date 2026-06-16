@@ -2800,6 +2800,96 @@ export const bulkUpdateContactTags = async (req, res) => {
 }
 
 /**
+ * Actualiza campos personalizados en bloque para contactos seleccionados.
+ * Body: { contactIds, customFields }
+ */
+export const bulkUpdateContactCustomFields = async (req, res) => {
+  try {
+    const contactIds = Array.isArray(req.body?.contactIds)
+      ? req.body.contactIds.map((value) => cleanString(value)).filter(Boolean)
+      : []
+    if (contactIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'Selecciona al menos un contacto' })
+    }
+    if (contactIds.length > 1000) {
+      return res.status(400).json({ success: false, error: 'Máximo 1000 contactos por operación' })
+    }
+
+    const customFields = Array.isArray(req.body?.customFields) ? req.body.customFields : []
+    if (customFields.length === 0) {
+      return res.status(400).json({ success: false, error: 'Selecciona al menos un campo personalizado' })
+    }
+
+    const preparedCustomFields = await prepareContactCustomFieldsForStorage(customFields, {
+      sourceType: 'manual',
+      ownerUserId: req.user?.userId
+    })
+    if (!preparedCustomFields.length) {
+      return res.status(400).json({ success: false, error: 'No se pudo preparar el campo personalizado' })
+    }
+
+    const placeholders = contactIds.map(() => '?').join(', ')
+    const rows = await db.all(
+      `SELECT id, custom_fields FROM contacts WHERE id IN (${placeholders})`,
+      contactIds
+    )
+
+    const changedFields = [
+      ...new Set(preparedCustomFields.flatMap((field) => [
+        cleanString(field.key || field.fieldKey),
+        cleanString(field.fieldKey),
+        cleanString(field.id),
+        cleanString(field.definitionId),
+        cleanString(field.key || field.fieldKey) ? `custom:${cleanString(field.key || field.fieldKey)}` : ''
+      ]).filter(Boolean))
+    ]
+
+    let updated = 0
+    for (const row of rows) {
+      const mergedCustomFields = mergeContactCustomFields(
+        parseContactCustomFields(row.custom_fields),
+        preparedCustomFields
+      )
+
+      await db.run(
+        `UPDATE contacts SET custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [serializeContactCustomFieldsForDb(mergedCustomFields), row.id]
+      )
+      updated += 1
+    }
+
+    if (updated > 0 && changedFields.length > 0) {
+      import('../services/automationEngine.js').then(engine => {
+        rows.forEach(row => {
+          engine.handleAutomationEvent('contact-updated', {
+            contactId: row.id,
+            changedFields,
+            contactChangeSource: 'manual'
+          }).catch(() => {})
+        })
+      }).catch(() => {})
+    }
+
+    logger.info(`Campos personalizados en bloque aplicados: ${updated} contactos actualizados`)
+    res.json({
+      success: true,
+      data: {
+        updated,
+        total: contactIds.length,
+        customFields: preparedCustomFields
+      }
+    })
+  } catch (error) {
+    logger.error(`Error aplicando campos personalizados en bloque: ${error.message}`)
+    const status = error.status || error.statusCode || 500
+    res.status(status).json({
+      success: false,
+      error: status === 500 ? 'No se pudieron aplicar los campos personalizados' : error.message
+    })
+  }
+}
+
+/**
  * Elimina un contacto
  */
 export const deleteContact = async (req, res) => {

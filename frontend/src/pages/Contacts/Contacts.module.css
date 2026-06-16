@@ -308,6 +308,13 @@
   line-height: 1.5;
 }
 
+.bulkModalHint {
+  margin: calc(var(--spacing-xs) * -1) 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
 .bulkFormStack,
 .bulkOptionsStack {
   display: flex;

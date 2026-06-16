@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, Loading, TreeFilter, CustomSelect, TagPicker } from '@/components/common'
+import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, Loading, TreeFilter, CustomSelect } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
   Users,
@@ -16,14 +16,15 @@ import {
   Mail,
   Plus,
   MessageSquare,
-  Workflow
+  Workflow,
+  Tags,
+  ListPlus
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, formatUrlParameter, parseLocalDateString } from '@/utils/format'
 import { contactsService, type Contact, type ContactStats } from '@/services/contactsService'
-import { contactTagsService } from '@/services/contactTagsService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
 import type { ContactAppointment, ContactCustomField, ContactPayment } from '@/types'
@@ -43,6 +44,7 @@ import {
 } from '@/utils/accountLocale'
 import { ContactBulkActionModals } from './ContactBulkActionModals'
 import { ContactBulkActionProgress } from './ContactBulkActionProgress'
+import { ContactBulkPropertyModals } from './ContactBulkPropertyModals'
 
 const APPOINTMENT_CANCELED_STATUSES = new Set([
   'cancelled',
@@ -466,11 +468,9 @@ const ContactsTable: React.FC = () => {
   const [whatsappPhoneNumbers, setWhatsappPhoneNumbers] = useState<WhatsAppApiPhoneNumber[]>([])
   const [contactDeleteConfirmation, setContactDeleteConfirmation] = useState('')
   const [showBulkTagsModal, setShowBulkTagsModal] = useState(false)
+  const [showBulkCustomFieldsModal, setShowBulkCustomFieldsModal] = useState(false)
   const [showBulkWhatsAppModal, setShowBulkWhatsAppModal] = useState(false)
   const [showBulkAutomationModal, setShowBulkAutomationModal] = useState(false)
-  const [bulkAddTagIds, setBulkAddTagIds] = useState<string[]>([])
-  const [bulkRemoveTagIds, setBulkRemoveTagIds] = useState<string[]>([])
-  const [applyingBulkTags, setApplyingBulkTags] = useState(false)
   const [deletingContacts, setDeletingContacts] = useState(false)
   const [loading, setLoading] = useState(false)
   const [loadingEvents, setLoadingEvents] = useState(false) // Loading específico para eventos de calendarios
@@ -857,32 +857,30 @@ const ContactsTable: React.FC = () => {
     return nextTags
   }
 
-  const closeBulkTagsModal = () => {
-    setShowBulkTagsModal(false)
-    setBulkAddTagIds([])
-    setBulkRemoveTagIds([])
+  const handleBulkTagsApplied = ({ mode, tagIds }: { mode: 'add' | 'remove'; tagIds: string[] }) => {
+    const targetIds = new Set(selectedContactIds)
+    const tagSet = new Set(tagIds)
+
+    setContacts(prev => prev.map(contact => {
+      if (!targetIds.has(contact.id)) return contact
+      const current = contact.tags || []
+      const next = mode === 'add'
+        ? [...new Set([...current, ...tagIds])]
+        : current.filter(tagId => !tagSet.has(tagId))
+      return { ...contact, tags: next }
+    }))
   }
 
-  const handleApplyBulkTags = async () => {
-    if (selectedContactIds.length === 0 || (bulkAddTagIds.length === 0 && bulkRemoveTagIds.length === 0)) return
-    setApplyingBulkTags(true)
-    try {
-      const result = await contactTagsService.bulkUpdateTags(selectedContactIds, bulkAddTagIds, bulkRemoveTagIds)
-      const addSet = new Set(bulkAddTagIds)
-      const removeSet = new Set(bulkRemoveTagIds)
-      setContacts(prev => prev.map(contact => {
-        if (!selectedContactIds.includes(contact.id)) return contact
-        const current = contact.tags || []
-        const next = [...new Set([...current.filter(tagId => !removeSet.has(tagId)), ...addSet])]
-        return { ...contact, tags: next }
-      }))
-      closeBulkTagsModal()
-      showToast('success', 'Etiquetas aplicadas', `Se actualizaron ${result.updated} de ${selectedContactIds.length} contactos.`)
-    } catch (error) {
-      showToast('error', 'No se pudieron aplicar las etiquetas', error instanceof Error ? error.message : 'Intenta de nuevo.')
-    } finally {
-      setApplyingBulkTags(false)
-    }
+  const handleBulkCustomFieldsApplied = ({ customFields }: { customFields: ContactCustomField[] }) => {
+    const targetIds = new Set(selectedContactIds)
+
+    setContacts(prev => prev.map(contact => {
+      if (!targetIds.has(contact.id)) return contact
+      return {
+        ...contact,
+        customFields: mergeCustomFields(contact.customFields || [], customFields)
+      }
+    }))
   }
 
   const handleUpdatePreferredWhatsAppPhoneNumber = async (contactId: string, phoneNumberId: string) => {
@@ -1620,6 +1618,24 @@ const ContactsTable: React.FC = () => {
         type="button"
         variant="secondary"
         size="sm"
+        onClick={() => setShowBulkTagsModal(true)}
+      >
+        <Tags size={16} />
+        Etiquetas
+      </Button>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={() => setShowBulkCustomFieldsModal(true)}
+      >
+        <ListPlus size={16} />
+        Campos personalizados
+      </Button>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
         onClick={() => setShowBulkWhatsAppModal(true)}
       >
         <MessageSquare size={16} />
@@ -1788,6 +1804,18 @@ const ContactsTable: React.FC = () => {
           }}
         />
       </Card>
+
+      {isClient && (
+        <ContactBulkPropertyModals
+          selectedContacts={selectedContacts}
+          tagsOpen={showBulkTagsModal}
+          customFieldsOpen={showBulkCustomFieldsModal}
+          onCloseTags={() => setShowBulkTagsModal(false)}
+          onCloseCustomFields={() => setShowBulkCustomFieldsModal(false)}
+          onTagsApplied={handleBulkTagsApplied}
+          onCustomFieldsApplied={handleBulkCustomFieldsApplied}
+        />
+      )}
 
       {isClient && (
         <ContactBulkActionModals
@@ -1963,67 +1991,6 @@ const ContactsTable: React.FC = () => {
                 </Button>
               </div>
             </form>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {isClient && showBulkTagsModal && createPortal(
-        <div className={styles.modalOverlay} onClick={closeBulkTagsModal}>
-          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div className={styles.modalHeader}>
-              <div>
-                <h2>Etiquetas en bloque</h2>
-                <p className={styles.modalSubtitle}>
-                  Se aplicará a {selectedContactIds.length} contacto{selectedContactIds.length === 1 ? '' : 's'} seleccionado{selectedContactIds.length === 1 ? '' : 's'}.
-                </p>
-              </div>
-              <button
-                className={styles.closeButton}
-                onClick={closeBulkTagsModal}
-                disabled={applyingBulkTags}
-                type="button"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className={styles.formGroup}>
-              <label>Agregar etiquetas</label>
-              <TagPicker
-                multiple
-                selectedIds={bulkAddTagIds}
-                onChange={setBulkAddTagIds}
-                allowCreate
-                disabled={applyingBulkTags}
-                placeholder="Buscar o crear etiqueta…"
-                aria-label="Etiquetas a agregar"
-              />
-            </div>
-            <div className={styles.formGroup}>
-              <label>Quitar etiquetas</label>
-              <TagPicker
-                multiple
-                selectedIds={bulkRemoveTagIds}
-                onChange={setBulkRemoveTagIds}
-                allowCreate={false}
-                disabled={applyingBulkTags}
-                placeholder="Buscar etiqueta a quitar…"
-                aria-label="Etiquetas a quitar"
-              />
-            </div>
-            <div className={styles.formActions}>
-              <Button type="button" variant="ghost" onClick={closeBulkTagsModal} disabled={applyingBulkTags}>
-                Cancelar
-              </Button>
-              <Button
-                variant="primary"
-                onClick={handleApplyBulkTags}
-                loading={applyingBulkTags}
-                disabled={applyingBulkTags || (bulkAddTagIds.length === 0 && bulkRemoveTagIds.length === 0)}
-              >
-                Aplicar etiquetas
-              </Button>
-            </div>
           </div>
         </div>,
         document.body

@@ -1,4 +1,4 @@
-import type { Contact as ContactType, ContactCustomFieldDefinition } from '@/types'
+import type { Contact as ContactType, ContactCustomField, ContactCustomFieldDefinition } from '@/types'
 import { dedupeContacts } from '@/utils/contactDedup'
 import { formatName } from '@/utils/format'
 import { apiUrl } from './apiBaseUrl'
@@ -290,6 +290,13 @@ export const contactsService = {
 
   updateCustomFieldDefinition(definitionId: string, payload: Partial<ContactCustomFieldDefinition>) {
     return apiClient.put<ContactCustomFieldDefinition>(`/contacts/custom-fields/${definitionId}`, payload)
+  },
+
+  bulkUpdateCustomFields(contactIds: string[], customFields: ContactCustomField[]) {
+    return apiClient.post<{ updated: number; total: number; customFields: ContactCustomField[] }>('/contacts/bulk/custom-fields', {
+      contactIds,
+      customFields
+    })
   },
 
   async getContactsChart(startDate?: string, endDate?: string): Promise<ContactChartData[]> {
