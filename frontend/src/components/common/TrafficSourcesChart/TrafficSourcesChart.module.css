@@ -73,11 +73,26 @@
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+.loadingSpinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid color-mix(in srgb, var(--color-text-tertiary) 24%, transparent);
+  border-top-color: var(--color-text-secondary);
+  border-radius: 999px;
+  animation: spin 0.8s linear infinite;
+}
+
 .emptyIcon {
   width: 3rem;
   height: 3rem;
   color: var(--design-chart-muted, var(--color-text-tertiary));
   margin-bottom: 0.5rem;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .emptyText {

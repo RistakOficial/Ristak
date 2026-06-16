@@ -76,8 +76,8 @@ export const WhatsAppTemplatePreview: React.FC<{ templateId: string }> = ({ temp
   if (!templateId) return null
   if (template === undefined) {
     return (
-      <div className={styles.templatePreviewLoading}>
-        <Loader2 size={12} className="animate-spin" /> Cargando vista previa…
+      <div className={styles.templatePreviewLoading} role="status" aria-live="polite" aria-label="Cargando vista previa">
+        <Loader2 size={12} className="animate-spin" aria-hidden="true" />
       </div>
     )
   }

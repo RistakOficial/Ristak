@@ -2882,6 +2882,13 @@
   cursor: text;
 }
 
+.composerEditor:focus,
+.composerEditor:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
 .composerSingleLine {
   box-sizing: border-box;
   min-height: 44px;

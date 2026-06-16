@@ -140,7 +140,7 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
   }
 
   if (loading) {
-    return <span className={styles.configHelp}>Cargando opciones…</span>
+    return <span className={styles.configHelp} role="status" aria-live="polite" aria-label="Cargando opciones" />
   }
 
   if (catalog === 'customFields') {
@@ -258,7 +258,7 @@ export const CatalogTags: React.FC<{
         </div>
       )}
       {loading ? (
-        <span className={styles.configHelp}>Cargando opciones…</span>
+        <span className={styles.configHelp} role="status" aria-live="polite" aria-label="Cargando opciones" />
       ) : remaining.length > 0 ? (
         <CustomSelect
           options={remaining.map((option) => ({ value: option.value, label: option.label }))}

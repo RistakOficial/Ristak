@@ -11,7 +11,15 @@ type LoadingPage =
   | 'campaigns'
   | 'transactions'
   | 'settings'
+  | 'settings-form'
+  | 'settings-list'
   | 'calendar-settings'
+  | 'sites'
+  | 'automations'
+  | 'chat'
+  | 'ai-agent'
+  | 'initialization'
+  | 'api-docs'
 
 interface LoadingProps {
   message?: string
@@ -340,6 +348,80 @@ const renderSettingsCalendarSkeleton = () => (
   </div>
 )
 
+const renderSettingsFormSkeleton = () => (
+  <>
+    {renderHeader({ subtitle: true, actions: 1 })}
+    <div className={styles.skeletonSettingsLayout}>
+      <div className={styles.skeletonSettingsNav} aria-hidden="true">
+        {Array.from({ length: 9 }).map((_, index) => (
+          <div className={styles.skeletonSettingsNavItem} key={`settings-nav-${index}`}>
+            {icon(styles.skeletonSettingsNavIcon)}
+            {block(styles.skeletonSettingsNavLabel)}
+          </div>
+        ))}
+      </div>
+      <div className={cx(styles.skeletonPanel, styles.skeletonSettingsCard)}>
+        <div className={styles.skeletonSettingsHeader}>
+          <div className={styles.skeletonSettingsTitleRow}>
+            <div className={styles.skeletonSettingsIcon}>{icon()}</div>
+            <div className={styles.skeletonTitleGroup}>
+              {block(styles.skeletonPanelTitle)}
+              {block(styles.skeletonPanelSubtitle)}
+            </div>
+          </div>
+          {block(styles.skeletonStatusPill)}
+        </div>
+        {Array.from({ length: 3 }).map((_, sectionIndex) => (
+          <div className={styles.skeletonSettingsSection} key={`settings-form-section-${sectionIndex}`}>
+            {block(styles.skeletonSectionTitle)}
+            {block(styles.skeletonSectionText)}
+            <div className={styles.skeletonFieldGrid}>
+              {Array.from({ length: sectionIndex === 0 ? 4 : 3 }).map((__, fieldIndex) => (
+                <div className={styles.skeletonField} key={`settings-field-${sectionIndex}-${fieldIndex}`}>
+                  {block(styles.skeletonFieldLabel)}
+                  {block(styles.skeletonSelect)}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </>
+)
+
+const renderSettingsListSkeleton = () => (
+  <>
+    {renderHeader({ subtitle: true, actions: 1 })}
+    <div className={cx(styles.skeletonPanel, styles.skeletonSettingsCard)}>
+      <div className={styles.skeletonSettingsHeader}>
+        <div className={styles.skeletonSettingsTitleRow}>
+          <div className={styles.skeletonSettingsIcon}>{icon()}</div>
+          <div className={styles.skeletonTitleGroup}>
+            {block(styles.skeletonPanelTitle)}
+            {block(styles.skeletonPanelSubtitle)}
+          </div>
+        </div>
+        {block(styles.skeletonSettingsButton)}
+      </div>
+      <div className={styles.skeletonSettingsSection}>
+        {block(styles.skeletonSearch)}
+      </div>
+      <div className={styles.skeletonSettingsListFlush}>
+        {Array.from({ length: 7 }).map((_, index) => (
+          <div className={styles.skeletonSettingsRow} key={`settings-list-${index}`}>
+            <div className={styles.skeletonTitleGroup}>
+              {block(styles.skeletonSettingsRowTitle)}
+              {block(styles.skeletonSettingsRowMeta)}
+            </div>
+            {block(index % 2 === 0 ? styles.skeletonStatusPill : styles.skeletonSettingsButton)}
+          </div>
+        ))}
+      </div>
+    </div>
+  </>
+)
+
 const renderDashboardSkeleton = (kpiCount: number, kpiLayout: 'cards' | 'joined') => (
   <>
     {renderHeader({ actions: 1 })}
@@ -411,8 +493,213 @@ const renderAppointmentsSkeleton = () => (
   </>
 )
 
+const renderSitesSkeleton = () => (
+  <>
+    {renderHeader({ subtitle: true, actions: 2 })}
+    {renderToolbar({ left: 2, tabs: 2, right: 1 })}
+    <div className={styles.skeletonSitesGrid}>
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div className={styles.skeletonPanel} key={`site-card-${index}`}>
+          <div className={styles.skeletonSitePreview}>
+            {block(styles.skeletonSiteHero)}
+            {block(styles.skeletonSiteLine)}
+            {block(styles.skeletonSiteLineShort)}
+          </div>
+          {block(styles.skeletonPanelTitle)}
+          {block(styles.skeletonPanelSubtitle)}
+        </div>
+      ))}
+    </div>
+    <div className={styles.skeletonEditorLayout}>
+      <div className={styles.skeletonPanel}>
+        {block(styles.skeletonPanelTitle)}
+        <div className={styles.skeletonCanvasPreview}>
+          {block(styles.skeletonCanvasHero)}
+          <div className={styles.skeletonCanvasColumns}>
+            {block(styles.skeletonCanvasColumn)}
+            {block(styles.skeletonCanvasColumn)}
+          </div>
+        </div>
+      </div>
+      <div className={cx(styles.skeletonPanel, styles.skeletonInspectorPanel)}>
+        {block(styles.skeletonPanelTitle)}
+        {Array.from({ length: 5 }).map((_, index) => (
+          <div className={styles.skeletonField} key={`site-inspector-${index}`}>
+            {block(styles.skeletonFieldLabel)}
+            {block(styles.skeletonSelect)}
+          </div>
+        ))}
+      </div>
+    </div>
+  </>
+)
+
+const renderAutomationsSkeleton = () => (
+  <>
+    {renderHeader({ subtitle: true, actions: 1 })}
+    {renderToolbar({ left: 1, tabs: 3, right: 1 })}
+    <div className={styles.skeletonAutomationLayout}>
+      <div className={styles.skeletonPanel}>
+        {block(styles.skeletonPanelTitle)}
+        <div className={styles.skeletonAutomationCanvas}>
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div className={styles.skeletonAutomationNode} key={`automation-node-${index}`}>
+              {icon()}
+              <div className={styles.skeletonTitleGroup}>
+                {block(styles.skeletonSettingsRowTitle)}
+                {block(styles.skeletonSettingsRowMeta)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className={cx(styles.skeletonPanel, styles.skeletonInspectorPanel)}>
+        {block(styles.skeletonPanelTitle)}
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div className={styles.skeletonField} key={`automation-field-${index}`}>
+            {block(styles.skeletonFieldLabel)}
+            {block(styles.skeletonSelect)}
+          </div>
+        ))}
+      </div>
+    </div>
+    {renderTableSkeleton({ columns: 5, rows: 5, filters: 1, actions: 1 })}
+  </>
+)
+
+const renderChatSkeleton = () => (
+  <>
+    {renderHeader({ subtitle: true, actions: 1 })}
+    <div className={styles.skeletonChatLayout}>
+      <aside className={styles.skeletonChatSidebar}>
+        {block(styles.skeletonSearch)}
+        {Array.from({ length: 8 }).map((_, index) => (
+          <div className={styles.skeletonChatRow} key={`chat-row-${index}`}>
+            {icon(styles.skeletonChatAvatar)}
+            <div className={styles.skeletonTitleGroup}>
+              {block(styles.skeletonSettingsRowTitle)}
+              {block(styles.skeletonSettingsRowMeta)}
+            </div>
+          </div>
+        ))}
+      </aside>
+      <section className={styles.skeletonChatThread}>
+        {Array.from({ length: 6 }).map((_, index) => (
+          <div
+            className={cx(styles.skeletonMessageBubble, index % 2 === 1 && styles.skeletonMessageBubbleRight)}
+            key={`chat-message-${index}`}
+          >
+            {block(index % 3 === 0 ? styles.skeletonMessageLineShort : styles.skeletonMessageLine)}
+            {index % 2 === 0 && block(styles.skeletonMessageLineTiny)}
+          </div>
+        ))}
+        <div className={styles.skeletonComposer}>
+          {block(styles.skeletonComposerInput)}
+          {block(styles.skeletonNavIcon)}
+        </div>
+      </section>
+    </div>
+  </>
+)
+
+const renderAIAgentSkeleton = () => (
+  <>
+    {renderHeader({ subtitle: true, actions: 1 })}
+    <div className={styles.skeletonTwoColumnGrid}>
+      <div className={cx(styles.skeletonPanel, styles.skeletonSettingsCard)}>
+        <div className={styles.skeletonSettingsSection}>
+          {block(styles.skeletonSectionTitle)}
+          {block(styles.skeletonSectionText)}
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div className={styles.skeletonField} key={`ai-field-${index}`}>
+              {block(styles.skeletonFieldLabel)}
+              {block(styles.skeletonSelect)}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className={styles.skeletonPanel}>
+        {block(styles.skeletonPanelTitle)}
+        <div className={styles.skeletonChatThreadCompact}>
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div
+              className={cx(styles.skeletonMessageBubble, index % 2 === 1 && styles.skeletonMessageBubbleRight)}
+              key={`ai-message-${index}`}
+            >
+              {block(styles.skeletonMessageLine)}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </>
+)
+
+const renderInitializationSkeleton = () => (
+  <>
+    {renderHeader({ subtitle: true, actions: 0 })}
+    <div className={styles.skeletonInitializationLayout}>
+      <div className={styles.skeletonPanel}>
+        {block(styles.skeletonPanelTitle)}
+        {block(styles.skeletonPanelSubtitle)}
+        <div className={styles.skeletonSettingsList}>
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div className={styles.skeletonCheckboxRow} key={`initialization-step-${index}`}>
+              <div className={styles.skeletonCheckbox} />
+              <div className={styles.skeletonTitleGroup}>
+                {block(styles.skeletonSettingsRowTitle)}
+                {block(styles.skeletonSettingsRowMeta)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className={cx(styles.skeletonPanel, styles.skeletonSettingsCard)}>
+        <div className={styles.skeletonSettingsSection}>
+          {block(styles.skeletonSectionTitle)}
+          {block(styles.skeletonSectionText)}
+          <div className={styles.skeletonFieldGrid}>
+            {Array.from({ length: 5 }).map((_, index) => (
+              <div className={styles.skeletonField} key={`initialization-field-${index}`}>
+                {block(styles.skeletonFieldLabel)}
+                {block(styles.skeletonSelect)}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  </>
+)
+
+const renderApiDocsSkeleton = () => (
+  <>
+    {renderHeader({ subtitle: true, actions: 1 })}
+    <div className={styles.skeletonApiDocsLayout}>
+      <div className={styles.skeletonPanel}>
+        {Array.from({ length: 9 }).map((_, index) => (
+          <div className={styles.skeletonSettingsNavItem} key={`api-nav-${index}`}>
+            {block(styles.skeletonMethodBadge)}
+            {block(styles.skeletonSettingsNavLabel)}
+          </div>
+        ))}
+      </div>
+      <div className={styles.skeletonPanel}>
+        {block(styles.skeletonPanelTitle)}
+        {block(styles.skeletonSectionText)}
+        {Array.from({ length: 5 }).map((_, index) => (
+          <div className={styles.skeletonApiEndpoint} key={`api-endpoint-${index}`}>
+            {block(styles.skeletonMethodBadge)}
+            {block(styles.skeletonApiPath)}
+          </div>
+        ))}
+      </div>
+    </div>
+  </>
+)
+
 const renderPageSkeleton = (page: LoadingPage, kpiCount: number, kpiLayout: 'cards' | 'joined', message: string) => {
-  const isWide = page === 'reports'
+  const isWide = page === 'reports' || page === 'sites' || page === 'automations' || page === 'chat'
   const content = {
     dashboard: renderDashboardSkeleton(kpiCount, kpiLayout),
     contacts: renderContactsSkeleton(),
@@ -421,8 +708,16 @@ const renderPageSkeleton = (page: LoadingPage, kpiCount: number, kpiLayout: 'car
     analytics: renderAnalyticsSkeleton(),
     campaigns: renderCampaignsSkeleton(),
     transactions: renderTransactionsSkeleton(),
-    settings: renderSettingsCalendarSkeleton(),
-    'calendar-settings': renderSettingsCalendarSkeleton()
+    settings: renderSettingsFormSkeleton(),
+    'settings-form': renderSettingsFormSkeleton(),
+    'settings-list': renderSettingsListSkeleton(),
+    'calendar-settings': renderSettingsCalendarSkeleton(),
+    sites: renderSitesSkeleton(),
+    automations: renderAutomationsSkeleton(),
+    chat: renderChatSkeleton(),
+    'ai-agent': renderAIAgentSkeleton(),
+    initialization: renderInitializationSkeleton(),
+    'api-docs': renderApiDocsSkeleton()
   }[page]
 
   return (
@@ -457,10 +752,9 @@ export const Loading: React.FC<LoadingProps> = ({
   }
 
   return (
-    <div className={containerClass} role="status" aria-live="polite">
+    <div className={containerClass} role="status" aria-live="polite" aria-label={message}>
       <div className={styles.loadingWrapper}>
-        <Loader2 className={`${sizeClasses[size]} ${styles.spinner}`} />
-        <p className={styles.message}>{message}</p>
+        <Loader2 className={`${sizeClasses[size]} ${styles.spinner}`} aria-hidden="true" />
       </div>
     </div>
   )

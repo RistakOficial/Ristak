@@ -1705,8 +1705,15 @@ export const Dashboard: React.FC = () => {
           </div>
           <div className="relative w-full" style={{ minHeight: chartHeight, height: chartHeight }}>
             {isChartLoading ? (
-              <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
-                Cargando datos del gráfico...
+              <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando datos del gráfico">
+                {[44, 68, 52, 82, 60, 74, 58].map((height, index) => (
+                  <span
+                    key={`dashboard-chart-skeleton-${index}`}
+                    className="min-w-0 flex-1 animate-pulse rounded-t-lg bg-[var(--app-skeleton-base)]"
+                    style={{ height: `${height}%` }}
+                    aria-hidden="true"
+                  />
+                ))}
               </div>
             ) : hasChartData ? (
               <AreaChart

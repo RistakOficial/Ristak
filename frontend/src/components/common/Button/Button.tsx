@@ -56,13 +56,17 @@ export const Button: React.FC<ButtonProps> = ({
         className
       )}
       disabled={disabled || loading}
+      aria-busy={loading || undefined}
       {...props}
     >
       {loading ? (
-        <span className="flex items-center gap-2">
-          <span className="inline-block h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
-          Cargando…
-        </span>
+        <>
+          <span className="invisible inline-flex items-center gap-2">
+            {leftIcon}
+            {children}
+          </span>
+          <span className="absolute inline-block h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true" />
+        </>
       ) : (
         <>
           {leftIcon}

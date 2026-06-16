@@ -626,9 +626,8 @@ export const CustomFields: React.FC = () => {
           )}
 
           {loading ? (
-            <div className={styles.loadingState}>
-              <Loader2 className={styles.spin} size={22} />
-              <span>Cargando campos...</span>
+            <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando campos">
+              <Loader2 className={styles.spin} size={22} aria-hidden="true" />
             </div>
           ) : visibleFields.length === 0 ? (
             <div className={styles.emptyState}>

@@ -1343,11 +1343,12 @@ async function listYCloudTemplates(apiKey, { wabaId, status } = {}) {
       : []
 }
 
-async function listYCloudContacts(apiKey, { maxPages = 10 } = {}) {
+async function listYCloudContacts(apiKey, { maxPages = 100 } = {}) {
   const contacts = []
   const limit = 100
+  const pageLimit = Math.max(1, Math.min(Number(maxPages) || 100, 100))
 
-  for (let page = 1; page <= maxPages; page += 1) {
+  for (let page = 1; page <= pageLimit; page += 1) {
     const data = await ycloudRequest('/contact/contacts', {
       apiKey,
       query: { page, limit, includeTotal: true }
@@ -1362,7 +1363,24 @@ async function listYCloudContacts(apiKey, { maxPages = 10 } = {}) {
     if (items.length < limit || (data.total && contacts.length >= Number(data.total))) break
   }
 
+  if (contacts.length >= pageLimit * limit) {
+    logger.warn(`WhatsApp API: YCloud devolvio ${contacts.length} contactos y puede haber mas; la API limita page a ${pageLimit}.`)
+  }
+
   return contacts
+}
+
+function extractYCloudPageItems(data = {}) {
+  return Array.isArray(data.items)
+    ? data.items
+    : Array.isArray(data.data)
+      ? data.data
+      : []
+}
+
+function getYCloudPageTotal(data = {}) {
+  const total = Number(data.total)
+  return Number.isFinite(total) ? total : null
 }
 
 async function retrieveYCloudContact(apiKey, identifier) {
@@ -2918,12 +2936,27 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       await setDefaultSenderPhoneNumber(selectedPhone.id)
     }
 
+    const businessPhoneHints = [
+      selectedPhone?.phoneNumber,
+      selectedPhone?.displayPhoneNumber,
+      senderPhone,
+      ...enrichedPhoneNumbers.flatMap(item => [item.phoneNumber, item.displayPhoneNumber])
+    ].filter(Boolean)
+    const wabaIds = [
+      selectedPhone?.wabaId,
+      wabaId,
+      ...enrichedPhoneNumbers.map(item => item.wabaId)
+    ].filter(Boolean)
+
+    await syncYCloudMessagesFromApi(cleanApiKey, {
+      businessPhoneHints,
+      wabaIds
+    }).catch(error => {
+      logger.warn(`No se pudo sincronizar historial saliente desde YCloud: ${error.message}`)
+    })
+
     await backfillStoredWhatsAppApiMessageEvents({
-      businessPhoneHints: [
-        selectedPhone?.phoneNumber,
-        senderPhone,
-        ...enrichedPhoneNumbers.flatMap(item => [item.phoneNumber, item.displayPhoneNumber])
-      ].filter(Boolean)
+      businessPhoneHints
     }).catch(error => {
       logger.warn(`No se pudo recuperar historial guardado WhatsApp Business: ${error.message}`)
     })
@@ -2974,6 +3007,15 @@ export async function refreshWhatsAppApi() {
     await syncTemplates(templates)
     await syncYCloudContacts(ycloudContacts)
 
+    const businessPhoneHints = [
+      config.senderPhone,
+      ...enrichedPhoneNumbers.flatMap(item => [item.phoneNumber, item.displayPhoneNumber])
+    ].filter(Boolean)
+    const wabaIds = [
+      config.wabaId,
+      ...enrichedPhoneNumbers.map(item => item.wabaId)
+    ].filter(Boolean)
+
     if (config.webhookEndpointId || config.webhookUrl) {
       try {
         const webhookEndpoint = config.webhookUrl
@@ -2998,11 +3040,15 @@ export async function refreshWhatsAppApi() {
       }
     }
 
+    await syncYCloudMessagesFromApi(config.apiKey, {
+      businessPhoneHints,
+      wabaIds
+    }).catch(error => {
+      logger.warn(`No se pudo sincronizar historial saliente desde YCloud: ${error.message}`)
+    })
+
     await backfillStoredWhatsAppApiMessageEvents({
-      businessPhoneHints: [
-        config.senderPhone,
-        ...enrichedPhoneNumbers.flatMap(item => [item.phoneNumber, item.displayPhoneNumber])
-      ].filter(Boolean)
+      businessPhoneHints
     }).catch(error => {
       logger.warn(`No se pudo recuperar historial guardado WhatsApp Business: ${error.message}`)
     })
@@ -3280,11 +3326,22 @@ function getStoredContactDisplayName(existing = {}, fallbackName = '', phone = '
   return phone
 }
 
-async function upsertLocalContact({ phone, profileName, messageTimestamp, attribution }) {
+async function upsertLocalContact({ contactId, phone, profileName, messageTimestamp, attribution }) {
   const canonicalPhone = normalizePhoneForStorage(phone) || cleanString(phone)
   if (!canonicalPhone) return { id: null, created: false }
 
-  const existing = await findContactByPhoneCandidates(canonicalPhone)
+  const cleanContactId = cleanString(contactId)
+  const existingById = cleanContactId
+    ? await db.get(`
+        SELECT id, phone, full_name, source, total_paid, purchases_count,
+               attribution_ctwa_clid, attribution_ad_name, attribution_ad_id,
+               created_at
+        FROM contacts
+        WHERE id = ?
+        LIMIT 1
+      `, [cleanContactId]).catch(() => null)
+    : null
+  const existing = existingById || await findContactByPhoneCandidates(canonicalPhone)
   const contactName = normalizeWhatsAppProfileName(profileName, canonicalPhone)
   const fullName = contactName || GENERIC_CONTACT_NAME
   const cleanMessageTimestamp = toDateTime(messageTimestamp) || null
@@ -3350,6 +3407,14 @@ async function upsertLocalContact({ phone, profileName, messageTimestamp, attrib
   if (attribution.sourceType) {
     updates.push('attribution_medium = COALESCE(NULLIF(attribution_medium, \'\'), ?)')
     params.push(attribution.sourceType)
+  }
+
+  if (existingById && canonicalPhone && !cleanString(existing.phone)) {
+    const phoneOwner = await findContactByPhoneCandidates(canonicalPhone, { excludeId: existing.id })
+    if (!phoneOwner) {
+      updates.push('phone = ?')
+      params.push(canonicalPhone)
+    }
   }
 
   if (attribution.ctwaClid) {
@@ -3706,9 +3771,16 @@ function normalizeWebhookMessage(rawMessage = {}) {
   return normalized
 }
 
-async function upsertMessage({ payload, message, direction, businessPhoneHints = [], transport = 'api' }) {
+async function upsertMessage({ payload, message, direction, businessPhoneHints = [], transport = 'api', contactId = null }) {
   const normalizedMessage = normalizeWebhookMessage(message)
   const identity = getMessageIdentity({ payload, direction, message: normalizedMessage, businessPhoneHints })
+  const contactIdHint = cleanString(
+    contactId ||
+    normalizedMessage.contactId ||
+    normalizedMessage.contact_id ||
+    payload.contactId ||
+    payload.contact_id
+  )
   const cleanTransport = cleanString(normalizedMessage.transport || payload.transport || transport || 'api').toLowerCase() || 'api'
   const routingReason = cleanString(
     normalizedMessage.fallbackReason ||
@@ -3723,6 +3795,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const profilePictureUrl = findProfilePictureUrlInValue(rawProfile)
   const attribution = extractAttribution(payload, normalizedMessage, messageText)
   const localContact = await upsertLocalContact({
+    contactId: contactIdHint,
     phone: identity.phone,
     profileName,
     messageTimestamp,
@@ -4287,16 +4360,212 @@ async function processWhatsAppMessageEventPayload({ payload = {}, businessPhoneH
   return results
 }
 
-async function backfillStoredWhatsAppApiMessageEvents({ businessPhoneHints = [], limit = 1000 } = {}) {
+function getYCloudMessageRecordKey(record = {}) {
+  return [
+    cleanString(record.id || record.messageId || record.message_id || record.ycloudMessageId),
+    cleanString(record.wamid || record.waMessageId || record.whatsappMessageId),
+    cleanString(record.from || record.fromPhone || record.senderPhone),
+    cleanString(record.to || record.toPhone || record.recipientPhone),
+    cleanString(record.sendTime || record.createTime || record.updateTime || record.timestamp)
+  ].join('|')
+}
+
+export async function syncYCloudMessageRecords(records = [], {
+  businessPhoneHints = [],
+  direction = '',
+  eventType = 'whatsapp.smb.history',
+  source = 'ycloud_history',
+  seenKeys = null
+} = {}) {
+  const stats = {
+    records: 0,
+    messages: 0,
+    created: 0,
+    updated: 0,
+    attributed: 0,
+    skipped: 0,
+    failed: 0
+  }
+
+  for (const record of Array.isArray(records) ? records : []) {
+    if (!isPlainObject(record)) {
+      stats.skipped += 1
+      continue
+    }
+
+    const recordKey = getYCloudMessageRecordKey(record)
+    if (seenKeys && recordKey && seenKeys.has(recordKey)) {
+      stats.skipped += 1
+      continue
+    }
+    if (seenKeys && recordKey) seenKeys.add(recordKey)
+
+    const recordId = cleanString(record.id || record.messageId || record.message_id || record.ycloudMessageId)
+    const messageAt = toDateTime(record.sendTime || record.createTime || record.updateTime || record.timestamp) || nowIso()
+    const payload = {
+      id: recordId ? `${source}_${recordId}` : hashId('ycloud_history_evt', safeJson(record)),
+      type: eventType,
+      apiVersion: 'v2',
+      createTime: messageAt,
+      origin: source,
+      ...(eventType === 'whatsapp.inbound_message.received' || direction === 'inbound'
+        ? { whatsappInboundMessage: record }
+        : { whatsappMessage: record })
+    }
+
+    try {
+      const result = await upsertMessage({
+        payload,
+        message: {
+          ...record,
+          origin: cleanString(record.origin) || source
+        },
+        direction,
+        businessPhoneHints
+      })
+      stats.records += 1
+      stats.messages += 1
+      if (result?.isNew) stats.created += 1
+      else stats.updated += 1
+      if (result?.attribution?.hasAttribution) stats.attributed += 1
+    } catch (error) {
+      stats.failed += 1
+      logger.warn(`No se pudo importar mensaje historico WhatsApp API ${recordId || recordKey || ''}: ${error.message}`)
+    }
+  }
+
+  return stats
+}
+
+async function syncYCloudMessagesScope(apiKey, {
+  query = {},
+  businessPhoneHints = [],
+  seenKeys,
+  scopeName = 'all',
+  maxPages = 100
+} = {}) {
+  const limit = 100
+  const pageLimit = Math.max(1, Math.min(Number(maxPages) || 100, 100))
+  const stats = {
+    scope: scopeName,
+    total: null,
+    pages: 0,
+    records: 0,
+    messages: 0,
+    created: 0,
+    updated: 0,
+    attributed: 0,
+    skipped: 0,
+    failed: 0,
+    truncated: false
+  }
+
+  for (let page = 1; page <= pageLimit; page += 1) {
+    const data = await ycloudRequest('/whatsapp/messages', {
+      apiKey,
+      query: {
+        page,
+        limit,
+        includeTotal: true,
+        ...query
+      }
+    })
+    const items = extractYCloudPageItems(data)
+    const total = getYCloudPageTotal(data)
+    if (total !== null && stats.total === null) stats.total = total
+
+    stats.pages += 1
+    stats.records += items.length
+
+    const pageStats = await syncYCloudMessageRecords(items, {
+      businessPhoneHints,
+      // YCloud's /whatsapp/messages list is the outbound message list.
+      direction: 'outbound',
+      eventType: 'whatsapp.message.updated',
+      source: `ycloud_message_list_${scopeName}`,
+      seenKeys
+    })
+    stats.messages += pageStats.messages
+    stats.created += pageStats.created
+    stats.updated += pageStats.updated
+    stats.attributed += pageStats.attributed
+    stats.skipped += pageStats.skipped
+    stats.failed += pageStats.failed
+
+    if (items.length < limit || (total !== null && stats.records >= total)) break
+  }
+
+  if (stats.total !== null && stats.records < stats.total && stats.pages >= pageLimit) {
+    stats.truncated = true
+  }
+
+  return stats
+}
+
+async function syncYCloudMessagesFromApi(apiKey, { businessPhoneHints = [], wabaIds = [] } = {}) {
+  const cleanWabaIds = [...new Set(wabaIds.map(cleanString).filter(Boolean))]
+  const scopes = cleanWabaIds.length > 1
+    ? cleanWabaIds.map(wabaId => ({
+        name: `waba_${wabaId}`,
+        query: { 'filter.wabaId': wabaId }
+      }))
+    : [{ name: 'all', query: cleanWabaIds[0] ? { 'filter.wabaId': cleanWabaIds[0] } : {} }]
+  const seenKeys = new Set()
+  const summary = {
+    scopes: [],
+    total: 0,
+    pages: 0,
+    records: 0,
+    messages: 0,
+    created: 0,
+    updated: 0,
+    attributed: 0,
+    skipped: 0,
+    failed: 0,
+    truncated: false
+  }
+
+  for (const scope of scopes) {
+    const stats = await syncYCloudMessagesScope(apiKey, {
+      query: scope.query,
+      businessPhoneHints,
+      seenKeys,
+      scopeName: scope.name
+    })
+    summary.scopes.push(stats)
+    summary.total += Number(stats.total || 0)
+    summary.pages += stats.pages
+    summary.records += stats.records
+    summary.messages += stats.messages
+    summary.created += stats.created
+    summary.updated += stats.updated
+    summary.attributed += stats.attributed
+    summary.skipped += stats.skipped
+    summary.failed += stats.failed
+    summary.truncated = summary.truncated || stats.truncated
+  }
+
+  if (summary.messages) {
+    logger.info(`WhatsApp API sincronizo ${summary.messages} mensajes salientes desde YCloud (${summary.created} nuevos, ${summary.updated} actualizados).`)
+  }
+  if (summary.truncated) {
+    logger.warn('WhatsApp API: YCloud limito el listado de /whatsapp/messages a 100 paginas. Los mensajes entrantes historicos dependen del webhook whatsapp.smb.history.')
+  }
+
+  return summary
+}
+
+async function backfillStoredWhatsAppApiMessageEvents({ businessPhoneHints = [], limit = 0 } = {}) {
   const eventTypes = [...MESSAGE_EVENT_TYPES]
   const placeholders = eventTypes.map(() => '?').join(', ')
+  const cleanLimit = Math.max(Number(limit) || 0, 0)
   const rows = await db.all(`
     SELECT id, event_type, raw_payload_json
     FROM whatsapp_api_webhook_events
     WHERE event_type IN (${placeholders})
     ORDER BY COALESCE(ycloud_create_time, created_at) ASC, id ASC
-    LIMIT ?
-  `, [...eventTypes, limit])
+    ${cleanLimit ? 'LIMIT ?' : ''}
+  `, cleanLimit ? [...eventTypes, cleanLimit] : eventTypes)
 
   let savedMessages = 0
   for (const row of rows) {
@@ -5439,6 +5708,7 @@ export async function sendWhatsAppApiTemplateMessage({
       toPhone,
       body: text,
       externalId,
+      contactId,
       fallbackReason,
       originalError
     })
@@ -5522,7 +5792,8 @@ export async function sendWhatsAppApiTemplateMessage({
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',
-    transport: 'api'
+    transport: 'api',
+    contactId
   })
 
   return response
@@ -5549,7 +5820,7 @@ function decorateQrFallbackResponse(response = {}, fallbackReason = '') {
   }
 }
 
-async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, phoneNumberId, fallbackReason, originalError } = {}) {
+async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, phoneNumberId, contactId, fallbackReason, originalError } = {}) {
   try {
     const response = await sendWhatsAppQrTextMessage({
       phoneNumberId,
@@ -5578,7 +5849,8 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
         createTime: response.createTime || nowIso()
       },
       direction: 'outbound',
-      transport: 'qr'
+      transport: 'qr',
+      contactId
     })
 
     return decorateQrFallbackResponse(response, fallbackReason)
@@ -5588,7 +5860,7 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
   }
 }
 
-async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageDataUrl, externalId, phoneNumberId, localMedia, publicBaseUrl, fallbackReason, originalError } = {}) {
+async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, fallbackReason, originalError } = {}) {
   try {
     const localMediaUrl = buildLocalMediaUrl(localMedia, publicBaseUrl)
     const response = await sendWhatsAppQrImageMessage({
@@ -5627,7 +5899,8 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
         createTime: response.createTime || nowIso()
       },
       direction: 'outbound',
-      transport: 'qr'
+      transport: 'qr',
+      contactId
     })
 
     return {
@@ -5643,7 +5916,7 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
   }
 }
 
-async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, documentDataUrl, externalId, phoneNumberId, localMedia, publicBaseUrl, fallbackReason, originalError } = {}) {
+async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, documentDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, fallbackReason, originalError } = {}) {
   try {
     const localMediaUrl = buildLocalMediaUrl(localMedia, publicBaseUrl)
     const response = await sendWhatsAppQrDocumentMessage({
@@ -5686,7 +5959,8 @@ async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, 
         createTime: response.createTime || nowIso()
       },
       direction: 'outbound',
-      transport: 'qr'
+      transport: 'qr',
+      contactId
     })
 
     return {
@@ -5702,7 +5976,7 @@ async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, 
   }
 }
 
-async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioDataUrl, externalId, phoneNumberId, localMedia, publicBaseUrl, durationMs, fallbackReason, originalError } = {}) {
+async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, durationMs, fallbackReason, originalError } = {}) {
   try {
     const localMediaUrl = buildLocalMediaUrl(localMedia, publicBaseUrl)
     const publicAudioUrl = cleanString(requestAudio?.link || requestAudio?.url || localMediaUrl)
@@ -5746,7 +6020,8 @@ async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioD
         createTime: response.createTime || nowIso()
       },
       direction: 'outbound',
-      transport: 'qr'
+      transport: 'qr',
+      contactId
     })
 
     return {
@@ -5806,7 +6081,8 @@ export async function sendWhatsAppApiTextMessage({
       fromPhone,
       toPhone,
       body,
-      externalId
+      externalId,
+      contactId
     })
   }
 
@@ -5822,6 +6098,7 @@ export async function sendWhatsAppApiTextMessage({
       toPhone,
       body,
       externalId,
+      contactId,
       fallbackReason: fallbackDecision.reason
     })
   }
@@ -5854,6 +6131,7 @@ export async function sendWhatsAppApiTextMessage({
         toPhone,
         body,
         externalId,
+        contactId,
         fallbackReason: retryDecision.reason,
         originalError: error
       })
@@ -5878,7 +6156,8 @@ export async function sendWhatsAppApiTextMessage({
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',
-    transport: 'api'
+    transport: 'api',
+    contactId
   })
 
   return response
@@ -5959,6 +6238,7 @@ export async function sendWhatsAppApiImageMessage({
       },
       imageDataUrl,
       externalId,
+      contactId,
       localMedia: savedImage,
       publicBaseUrl
     })
@@ -5977,6 +6257,7 @@ export async function sendWhatsAppApiImageMessage({
       requestImage: requestBody.image,
       imageDataUrl,
       externalId,
+      contactId,
       localMedia: savedImage,
       publicBaseUrl,
       fallbackReason: fallbackDecision.reason
@@ -6006,6 +6287,7 @@ export async function sendWhatsAppApiImageMessage({
         requestImage: requestBody.image,
         imageDataUrl,
         externalId,
+        contactId,
         localMedia: savedImage,
         publicBaseUrl,
         fallbackReason: retryDecision.reason,
@@ -6032,7 +6314,8 @@ export async function sendWhatsAppApiImageMessage({
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',
-    transport: 'api'
+    transport: 'api',
+    contactId
   })
 
   return {
@@ -6120,6 +6403,7 @@ export async function sendWhatsAppApiDocumentMessage({
       },
       documentDataUrl,
       externalId,
+      contactId,
       localMedia: savedDocument,
       publicBaseUrl
     })
@@ -6141,6 +6425,7 @@ export async function sendWhatsAppApiDocumentMessage({
       },
       documentDataUrl,
       externalId,
+      contactId,
       localMedia: savedDocument,
       publicBaseUrl,
       fallbackReason: fallbackDecision.reason
@@ -6173,6 +6458,7 @@ export async function sendWhatsAppApiDocumentMessage({
         },
         documentDataUrl,
         externalId,
+        contactId,
         localMedia: savedDocument,
         publicBaseUrl,
         fallbackReason: retryDecision.reason,
@@ -6199,7 +6485,8 @@ export async function sendWhatsAppApiDocumentMessage({
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',
-    transport: 'api'
+    transport: 'api',
+    contactId
   })
 
   return {
@@ -6222,6 +6509,7 @@ export async function sendWhatsAppApiAudioMessage({
   durationMs,
   voice,
   transport = 'api',
+  contactId,
   phoneNumberId
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
@@ -6279,6 +6567,7 @@ export async function sendWhatsAppApiAudioMessage({
       },
       audioDataUrl,
       externalId,
+      contactId,
       localMedia: savedAudio,
       publicBaseUrl,
       durationMs
@@ -6301,6 +6590,7 @@ export async function sendWhatsAppApiAudioMessage({
       },
       audioDataUrl,
       externalId,
+      contactId,
       localMedia: savedAudio,
       publicBaseUrl,
       durationMs,
@@ -6335,6 +6625,7 @@ export async function sendWhatsAppApiAudioMessage({
         },
         audioDataUrl,
         externalId,
+        contactId,
         localMedia: savedAudio,
         publicBaseUrl,
         durationMs,
@@ -6366,7 +6657,8 @@ export async function sendWhatsAppApiAudioMessage({
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',
-    transport: 'api'
+    transport: 'api',
+    contactId
   })
 
   return {

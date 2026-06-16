@@ -17,8 +17,7 @@
   background: color-mix(in srgb, var(--color-background-secondary) 94%, var(--color-primary) 6%);
 }
 
-.brandMark,
-.brandPulse {
+.brandMark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -33,17 +32,6 @@
   width: 42px;
   height: 42px;
   font-size: 18px;
-}
-
-.brandPulse {
-  width: 32px;
-  height: 32px;
-  animation: pulseMark 1.3s ease-in-out infinite;
-}
-
-.brandPulse::before {
-  content: 'R';
-  font-size: 14px;
 }
 
 .navStack {
@@ -94,22 +82,6 @@
   min-width: 0;
   margin: 0 auto;
   padding: 30px 28px 46px;
-}
-
-.statusLine {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.statusLine p,
-.compactInner p {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 720;
-  letter-spacing: 0;
 }
 
 .kpiGrid {
@@ -275,28 +247,13 @@
   color: var(--color-text-primary);
 }
 
-.compactInner {
-  display: grid;
-  justify-items: center;
-  gap: 12px;
-  min-width: min(260px, 100%);
-}
-
-.compactTrack {
-  width: min(220px, 58vw);
-  height: 4px;
-  overflow: hidden;
+.compactSpinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid color-mix(in srgb, var(--color-text-secondary) 22%, transparent);
+  border-top-color: var(--color-text-primary);
   border-radius: 999px;
-  background: var(--app-skeleton-base);
-}
-
-.compactTrack span {
-  display: block;
-  width: 42%;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--color-text-primary);
-  animation: trackSlide 1.2s ease-in-out infinite;
+  animation: spin 0.8s linear infinite;
 }
 
 @media (max-width: 840px) {
@@ -370,21 +327,8 @@
   }
 }
 
-@keyframes pulseMark {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(0.94);
-  }
-}
-
-@keyframes trackSlide {
-  0% {
-    transform: translateX(-110%);
-  }
-  100% {
-    transform: translateX(250%);
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }

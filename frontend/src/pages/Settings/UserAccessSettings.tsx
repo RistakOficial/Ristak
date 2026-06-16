@@ -756,9 +756,8 @@ export const UserAccessSettings: React.FC = () => {
           </div>
 
           {loading ? (
-            <div className={styles.emptyState}>
-              <Loader2 size={20} className="animate-spin" />
-              Cargando accesos...
+            <div className={styles.emptyState} role="status" aria-live="polite" aria-label="Cargando accesos">
+              <Loader2 size={20} className="animate-spin" aria-hidden="true" />
             </div>
           ) : (
             <div className={styles.workspace}>

@@ -2586,7 +2586,9 @@ export const Campaigns: React.FC = () => {
                   playsInline
                 />
               ) : creativePreviewLoading ? (
-                <div className={styles.creativeModalStatus}>Cargando preview de Meta...</div>
+                <div className={styles.creativeModalStatus} role="status" aria-live="polite" aria-label="Cargando preview de Meta">
+                  <RefreshCw size={18} className={styles.spinning} aria-hidden="true" />
+                </div>
               ) : creativePreviewHtml ? (
                 <iframe
                   className={styles.creativeModalFrame}

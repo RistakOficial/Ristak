@@ -871,7 +871,7 @@ export const MediaSettings: React.FC = () => {
       setDownloadingId(file.asset.id)
       try {
         await mediaService.downloadAsset(file.asset.id, file.fileName)
-        showToast('success', 'Descarga iniciada', `${file.fileName} se está descargando.`)
+        showToast('success', 'Descarga iniciada', `${file.fileName} está en proceso.`)
       } catch (downloadError) {
         showToast('error', 'No se pudo descargar', downloadError instanceof Error ? downloadError.message : 'Intenta otra vez.')
       } finally {
