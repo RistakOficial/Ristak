@@ -16,7 +16,8 @@ import {
   TreeFilter,
   OriginDistributionCard,
   SessionsTable,
-  Loading
+  Loading,
+  ContactDetailsModal
 } from '../../components/common'
 import { Eye, Users, UserCheck, Target, Smartphone, Monitor, Tablet, Globe, Minus, Plus, MessageCircle } from 'lucide-react'
 import { FaFacebook, FaGoogle, FaInstagram, FaTiktok, FaTwitter, FaLinkedin, FaMicrosoft, FaChrome, FaFirefox, FaSafari, FaEdge, FaOpera, FaWindows, FaAndroid, FaLinux } from 'react-icons/fa'
@@ -26,10 +27,13 @@ import {
   getSessionMetricsByDateRange,
   getContactsByDate,
   getContactConversionsByDate,
+  getContactConversionContacts,
   type ContactsByDate,
+  type ContactConversionListType,
   type ContactConversionsByDate
 } from '../../services/analyticsService'
 import { trackingService, type TrackingSession } from '../../services/trackingService'
+import type { ContactListItem } from '../../services/reportsService'
 import { formatDateToISO, parseLocalDateString, formatUrlParameter, formatChartNumber } from '../../utils/format'
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 
@@ -260,10 +264,16 @@ type TrafficPoint = {
   label: string
   value: number
   value2: number
+  periodKey?: string
+  periodStart?: string
+  periodEnd?: string
 }
 
 type SessionTrendPoint = {
   label: string
+  periodKey: string
+  periodStart: string
+  periodEnd: string
   pageViews: number
   uniqueVisitors: number
   uniqueSessions: number
@@ -273,12 +283,17 @@ type SessionTrendPoint = {
 
 type ConversionTrendPoint = {
   label: string
+  periodKey: string
+  periodStart: string
+  periodEnd: string
   prospects: number
   registrations: number
   appointments: number
   attendances: number
   customers: number
 }
+
+type ConversionTrendBucket = Pick<ConversionTrendPoint, 'prospects' | 'registrations' | 'appointments' | 'attendances' | 'customers'>
 
 type ChartMetricConfig = {
   title: string
@@ -289,6 +304,28 @@ type ChartMetricConfig = {
   color2: string
   data: TrafficPoint[]
   emptyMessage: string
+}
+
+type ChartSeriesKey = 'value' | 'value2'
+type AnalyticsChartClickPoint = Omit<TrafficPoint, 'value2'> & { value2?: number }
+type ContactModalType = 'interesados' | 'sales' | 'appointments' | 'attendances'
+
+type AnalyticsContactModalState = {
+  open: boolean
+  title: string
+  subtitle: string
+  type: ContactModalType
+  contacts: ContactListItem[]
+  loading: boolean
+}
+
+const emptyContactModalState: AnalyticsContactModalState = {
+  open: false,
+  title: '',
+  subtitle: '',
+  type: 'interesados',
+  contacts: [],
+  loading: false
 }
 
 const ANALYTICS_CHART_COLORS = {
@@ -453,6 +490,37 @@ const getPeriodKeyFromDate = (date: Date, viewType: ViewType): string => {
   return `${year}-${month}-${day}`
 }
 
+const getPeriodRange = (period: string, viewType: ViewType) => {
+  if (viewType === 'year') {
+    return { from: `${period}-01-01`, to: `${period}-12-31` }
+  }
+
+  if (viewType === 'month') {
+    const [yearRaw, monthRaw] = period.split('-')
+    const year = Number(yearRaw)
+    const month = Number(monthRaw)
+    const start = new Date(year, month - 1, 1)
+    const end = new Date(year, month, 0)
+    return { from: formatDateToISO(start), to: formatDateToISO(end) }
+  }
+
+  return { from: period, to: period }
+}
+
+const getPeriodPointMeta = (period: string, viewType: ViewType) => {
+  const range = getPeriodRange(period, viewType)
+  return {
+    periodKey: period,
+    periodStart: range.from,
+    periodEnd: range.to
+  }
+}
+
+const formatRangeLabel = (from: string, to: string) => {
+  if (from === to) return formatPeriodLabel(from, 'day')
+  return `${formatPeriodLabel(from, 'day')} – ${formatPeriodLabel(to, 'day')}`
+}
+
 const getPeriodKeyFromTimestamp = (
   timestamp: string | null | undefined,
   viewType: ViewType,
@@ -494,7 +562,8 @@ const buildTrafficChartData = (
     .map(([period, item]) => ({
       label: formatPeriodLabel(period, viewType),
       value: item.totalVisits,
-      value2: item.uniqueVisitors.size
+      value2: item.uniqueVisitors.size,
+      ...getPeriodPointMeta(period, viewType)
     }))
 }
 
@@ -514,14 +583,14 @@ const aggregateContactsByPeriod = (
 
   return Array.from(totals.entries())
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([period, count]) => ({ period, count }))
+    .map(([period, count]) => ({ period, count, ...getPeriodPointMeta(period, viewType) }))
 }
 
 const aggregateContactConversionsByPeriod = (
   rows: ContactConversionsByDate[],
   viewType: ViewType
 ): ConversionTrendPoint[] => {
-  const totals = new Map<string, Omit<ConversionTrendPoint, 'label'>>()
+  const totals = new Map<string, ConversionTrendBucket>()
 
   rows.forEach((item) => {
     const date = parseLocalDateString(item.date)
@@ -549,6 +618,7 @@ const aggregateContactConversionsByPeriod = (
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([period, bucket]) => ({
       label: formatPeriodLabel(period, viewType),
+      ...getPeriodPointMeta(period, viewType),
       prospects: bucket.prospects,
       registrations: bucket.registrations,
       appointments: bucket.appointments,
@@ -605,6 +675,7 @@ const buildSessionTrendData = (
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([period, bucket]) => ({
       label: formatPeriodLabel(period, viewType),
+      ...getPeriodPointMeta(period, viewType),
       pageViews: bucket.pageViews,
       uniqueVisitors: bucket.visitors.size,
       uniqueSessions: bucket.sessionIds.size,
@@ -682,6 +753,7 @@ const buildConversionTrendData = (
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([period, bucket]) => ({
       label: formatPeriodLabel(period, viewType),
+      ...getPeriodPointMeta(period, viewType),
       prospects: bucket.prospects.size,
       registrations: bucket.registrations.size,
       appointments: bucket.appointments.size,
@@ -692,48 +764,155 @@ const buildConversionTrendData = (
 
 const mergeVisitorRegistrationData = (
   trafficData: TrafficPoint[],
-  conversionData: Array<{ label: string; value: number }>
+  conversionData: Array<{ label: string; value: number; periodKey?: string; periodStart?: string; periodEnd?: string }>
 ): TrafficPoint[] => {
-  const visitorsByLabel = new Map(trafficData.map(item => [item.label, item.value2]))
-  const registrationsByLabel = new Map(conversionData.map(item => [item.label, Number(item.value || 0)]))
+  const trafficByLabel = new Map(trafficData.map(item => [item.label, item]))
+  const conversionByLabel = new Map(conversionData.map(item => [item.label, item]))
   const labels = [
     ...trafficData.map(item => item.label),
-    ...conversionData.map(item => item.label).filter(label => !visitorsByLabel.has(label))
+    ...conversionData.map(item => item.label).filter(label => !trafficByLabel.has(label))
   ]
 
-  return labels.map(label => ({
-    label,
-    value: visitorsByLabel.get(label) || 0,
-    value2: registrationsByLabel.get(label) || 0
-  }))
+  return labels.map(label => {
+    const traffic = trafficByLabel.get(label)
+    const conversion = conversionByLabel.get(label)
+    return {
+      label,
+      value: traffic?.value2 || 0,
+      value2: Number(conversion?.value || 0),
+      periodKey: traffic?.periodKey || conversion?.periodKey,
+      periodStart: traffic?.periodStart || conversion?.periodStart,
+      periodEnd: traffic?.periodEnd || conversion?.periodEnd
+    }
+  })
 }
 
 const mergeWhatsAppWithAppointments = (
   waData: TrafficPoint[],
   convData: ConversionTrendPoint[]
 ): TrafficPoint[] => {
-  const waByLabel = new Map(waData.map(item => [item.label, item.value]))
-  const apptByLabel = new Map(convData.map(item => [item.label, item.appointments]))
+  const waByLabel = new Map(waData.map(item => [item.label, item]))
+  const convByLabel = new Map(convData.map(item => [item.label, item]))
   const labels = [
     ...waData.map(item => item.label),
     ...convData.map(item => item.label).filter(label => !waByLabel.has(label))
   ]
-  return labels.map(label => ({
-    label,
-    value: waByLabel.get(label) || 0,
-    value2: apptByLabel.get(label) || 0
-  }))
+  return labels.map(label => {
+    const wa = waByLabel.get(label)
+    const conversion = convByLabel.get(label)
+    return {
+      label,
+      value: wa?.value || 0,
+      value2: conversion?.appointments || 0,
+      periodKey: conversion?.periodKey || wa?.periodKey,
+      periodStart: conversion?.periodStart || wa?.periodStart,
+      periodEnd: conversion?.periodEnd || wa?.periodEnd
+    }
+  })
 }
 
 const mapTrendToChartData = <T extends { label: string }>(
   trendData: T[],
   valueKey: keyof T,
   value2Key: keyof T
-): TrafficPoint[] => trendData.map(item => ({
-  label: item.label,
-  value: Number(item[valueKey] || 0),
-  value2: Number(item[value2Key] || 0)
-}))
+): TrafficPoint[] => trendData.map(item => {
+  const point = item as T & Partial<Pick<TrafficPoint, 'periodKey' | 'periodStart' | 'periodEnd'>>
+  return {
+    label: item.label,
+    value: Number(item[valueKey] || 0),
+    value2: Number(item[value2Key] || 0),
+    periodKey: point.periodKey,
+    periodStart: point.periodStart,
+    periodEnd: point.periodEnd
+  }
+})
+
+const sessionMatchesContactConversionType = (session: Session, type: ContactConversionListType) => {
+  if (type === 'registrations') return true
+  if (type === 'customers') return hasCustomerConversion(session)
+  if (type === 'appointments') return hasAppointmentConversion(session)
+  if (type === 'attendances') return hasAttendedConversion(session)
+  return !hasCustomerConversion(session) && !hasAppointmentConversion(session) && !hasAttendedConversion(session)
+}
+
+const optionalString = (value?: string | null) => value || undefined
+
+const buildFilteredContactListFromSessions = (
+  sessions: Session[],
+  viewType: ViewType,
+  convertToLocalTime: (utcDate: string | Date) => Date,
+  periodKey: string,
+  type: ContactConversionListType
+): ContactListItem[] => {
+  const contacts = new Map<string, ContactListItem>()
+
+  sessions.forEach((session) => {
+    if (!session.contact_created_at) return
+
+    const contactPeriodKey = getPeriodKeyFromTimestamp(session.contact_created_at, viewType, convertToLocalTime)
+    if (contactPeriodKey !== periodKey) return
+    if (!sessionMatchesContactConversionType(session, type)) return
+
+    const contactId = session.contact_id || `${session.visitor_id}:${session.email || session.full_name || session.contact_created_at}`
+    if (contacts.has(contactId)) return
+
+    const ltv = toNumber(session.contact_total_paid)
+    const purchases = toNumber(session.contact_purchases_count)
+    const source = optionalString(session.site_source_name || session.source_platform || session.utm_source)
+
+    contacts.set(contactId, {
+      id: contactId,
+      name: session.full_name || '',
+      email: session.email || '',
+      phone: '',
+      created_at: session.contact_created_at,
+      ltv,
+      purchases,
+      attributed: Boolean(session.ad_id || session.campaign_id || session.utm_campaign),
+      payments: [],
+      appointments: [],
+      source,
+      ad_name: optionalString(session.ad_name),
+      ad_id: optionalString(session.ad_id),
+      campaign_id: optionalString(session.campaign_id),
+      campaign_name: optionalString(session.campaign_name),
+      adset_id: optionalString(session.adset_id),
+      adset_name: optionalString(session.adset_name),
+      lifetimeLtv: ltv,
+      lifetimePurchases: purchases,
+      isCustomer: hasCustomerConversion(session),
+      hasAppointments: hasAppointmentConversion(session),
+      hasShowedAppointment: hasAttendedConversion(session),
+      hasAttendedAppointment: hasAttendedConversion(session),
+      firstSession: {
+        started_at: session.started_at,
+        page_url: optionalString(session.page_url),
+        referrer_url: optionalString(session.referrer_url),
+        utm_source: optionalString(session.utm_source),
+        utm_medium: optionalString(session.utm_medium),
+        utm_campaign: optionalString(session.utm_campaign),
+        utm_content: optionalString(session.utm_content),
+        utm_term: optionalString(session.utm_term),
+        source_platform: optionalString(session.source_platform),
+        site_source_name: optionalString(session.site_source_name),
+        campaign_name: optionalString(session.campaign_name),
+        ad_name: optionalString(session.ad_name),
+        ad_id: optionalString(session.ad_id),
+        device_type: optionalString(session.device_type),
+        browser: optionalString(session.browser),
+        geo_city: optionalString(session.geo_city),
+        geo_region: optionalString(session.geo_region),
+        geo_country: optionalString(session.geo_country)
+      }
+    })
+  })
+
+  return Array.from(contacts.values()).sort((a, b) => {
+    const dateA = parseTimestamp(a.created_at)?.getTime() ?? 0
+    const dateB = parseTimestamp(b.created_at)?.getTime() ?? 0
+    return dateB - dateA
+  })
+}
 
 const Analytics: React.FC = () => {
   const navigate = useNavigate()
@@ -771,6 +950,7 @@ const Analytics: React.FC = () => {
   const [dailyTraffic, setDailyTraffic] = useState<TrafficPoint[]>([])
   const [dailyConversions, setDailyConversions] = useState<any[]>([])
   const [contactConversionsByDate, setContactConversionsByDate] = useState<ContactConversionsByDate[]>([])
+  const [contactModalState, setContactModalState] = useState<AnalyticsContactModalState>(emptyContactModalState)
   const [platformsData, setPlatformsData] = useState<any[]>([])
   const [placementsData, setPlacementsData] = useState<any[]>([])
   const [devicesData, setDevicesData] = useState<any[]>([])
@@ -957,7 +1137,10 @@ const Analytics: React.FC = () => {
           const conversionChartData = aggregateContactsByPeriod(contactsData || [], viewType)
             .map(item => ({
               label: formatPeriodLabel(item.period, viewType),
-              value: item.count
+              value: item.count,
+              periodKey: item.periodKey,
+              periodStart: item.periodStart,
+              periodEnd: item.periodEnd
             }))
 
           setDailyConversions(conversionChartData)
@@ -1670,7 +1853,8 @@ const Analytics: React.FC = () => {
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([period, contactSet]) => ({
           label: formatPeriodLabel(period, viewType),
-          value: contactSet.size
+          value: contactSet.size,
+          ...getPeriodPointMeta(period, viewType)
         }))
 
       setDailyConversions(filteredConversionsData)
@@ -2085,6 +2269,84 @@ const Analytics: React.FC = () => {
   const mainChartHasData = mainChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
   const conversionChartHasData = conversionChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
 
+  const getConversionClickConfig = useCallback((seriesKey: ChartSeriesKey): {
+    listType: ContactConversionListType
+    modalType: ContactModalType
+    title: string
+  } | null => {
+    switch (selectedConversionChartView) {
+      case 'prospects-customers':
+        return seriesKey === 'value'
+          ? { listType: 'prospects', modalType: 'interesados', title: leadsLabel }
+          : { listType: 'customers', modalType: 'sales', title: customersLabel }
+      case 'appointments-attendances':
+        return seriesKey === 'value'
+          ? { listType: 'appointments', modalType: 'appointments', title: 'Citas' }
+          : { listType: 'attendances', modalType: 'attendances', title: 'Asistencias' }
+      case 'messages-appointments':
+        return seriesKey === 'value2'
+          ? { listType: 'appointments', modalType: 'appointments', title: 'Citas' }
+          : null
+      case 'appointments-patients':
+        return seriesKey === 'value'
+          ? { listType: 'appointments', modalType: 'appointments', title: 'Citas' }
+          : { listType: 'customers', modalType: 'sales', title: customersLabel }
+      case 'registrations-customers':
+      default:
+        return seriesKey === 'value'
+          ? { listType: 'registrations', modalType: 'interesados', title: 'Registros' }
+          : { listType: 'customers', modalType: 'sales', title: customersLabel }
+    }
+  }, [customersLabel, leadsLabel, selectedConversionChartView])
+
+  const handleConversionPointClick = useCallback(async (
+    point: AnalyticsChartClickPoint,
+    _index: number,
+    seriesKey: ChartSeriesKey
+  ) => {
+    const clickConfig = getConversionClickConfig(seriesKey)
+    const from = point.periodStart
+    const to = point.periodEnd
+
+    if (!clickConfig || !from || !to) return
+
+    setContactModalState({
+      open: true,
+      title: `${clickConfig.title} · ${point.label}`,
+      subtitle: formatRangeLabel(from, to),
+      type: clickConfig.modalType,
+      contacts: [],
+      loading: true
+    })
+
+    try {
+      const contacts = hasActiveFiltersForCharts
+        ? buildFilteredContactListFromSessions(
+            sessionsForCharts,
+            viewType,
+            convertToLocalTime,
+            point.periodKey || '',
+            clickConfig.listType
+          )
+        : (await getContactConversionContacts(from, to, clickConfig.listType)).contacts
+
+      setContactModalState(prev => ({
+        ...prev,
+        contacts: contacts.map(contact => ({
+          ...contact,
+          created_at: contact.created_at || (contact as any).createdAt || ''
+        })),
+        loading: false
+      }))
+    } catch {
+      setContactModalState(prev => ({
+        ...prev,
+        contacts: [],
+        loading: false
+      }))
+    }
+  }, [convertToLocalTime, getConversionClickConfig, hasActiveFiltersForCharts, sessionsForCharts, viewType])
+
   const analyticsRefreshing = loading && hasLoadedAnalytics
 
   if (loading && !hasLoadedAnalytics) {
@@ -2345,6 +2607,7 @@ const Analytics: React.FC = () => {
                   legendLabels={{ label1: conversionChartConfig.label1, label2: conversionChartConfig.label2 }}
                   formatValue={formatTrafficAxis}
                   formatTooltipValue={formatTrafficTooltip}
+                  onPointClick={handleConversionPointClick}
                 />
               ) : (
                 <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
@@ -2532,6 +2795,16 @@ const Analytics: React.FC = () => {
           />
         )}
       </div>
+
+      <ContactDetailsModal
+        isOpen={contactModalState.open}
+        onClose={() => setContactModalState(emptyContactModalState)}
+        title={contactModalState.title}
+        subtitle={contactModalState.subtitle}
+        data={contactModalState.contacts}
+        loading={contactModalState.loading}
+        type={contactModalState.type}
+      />
     </PageContainer>
   )
 }

@@ -1330,7 +1330,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   }
 }
 
-async function fetchPaymentsForContacts(contactIds, range = {}) {
+export async function fetchPaymentsForContacts(contactIds, range = {}) {
   if (!contactIds.length) {
     return new Map()
   }
@@ -1375,7 +1375,7 @@ async function fetchPaymentsForContacts(contactIds, range = {}) {
   }, new Map())
 }
 
-async function fetchAppointmentsForContacts(contactIds, range = {}) {
+export async function fetchAppointmentsForContacts(contactIds, range = {}) {
   if (!contactIds.length) {
     return new Map()
   }

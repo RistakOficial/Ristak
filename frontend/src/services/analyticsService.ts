@@ -1,4 +1,5 @@
 import apiClient from './apiClient'
+import type { ContactListItem } from './reportsService'
 import type { TrackingSession } from './trackingService'
 
 /**
@@ -40,6 +41,8 @@ export interface ContactConversionsByDate {
   customers: number
 }
 
+export type ContactConversionListType = 'registrations' | 'prospects' | 'appointments' | 'attendances' | 'customers'
+
 /**
  * Obtiene conteo de contactos con visitor_id por fecha de creación
  */
@@ -56,5 +59,19 @@ export async function getContactsByDate(startDate: string, endDate: string): Pro
 export async function getContactConversionsByDate(startDate: string, endDate: string): Promise<ContactConversionsByDate[]> {
   return apiClient.get<ContactConversionsByDate[]>(
     `/tracking/contact-conversions-by-date?start=${startDate}&end=${endDate}`
+  )
+}
+
+/**
+ * Obtiene los contactos que componen un punto del gráfico de conversiones.
+ */
+export async function getContactConversionContacts(
+  startDate: string,
+  endDate: string,
+  type: ContactConversionListType
+): Promise<{ contacts: ContactListItem[]; range: { start: string; end: string } }> {
+  const params = new URLSearchParams({ start: startDate, end: endDate, type })
+  return apiClient.get<{ contacts: ContactListItem[]; range: { start: string; end: string } }>(
+    `/tracking/contact-conversions-list?${params.toString()}`
   )
 }

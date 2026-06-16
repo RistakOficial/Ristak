@@ -4,11 +4,112 @@ import { getHighLevelConfig, getAppConfig, setAppConfig, db } from '../config/da
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js'
-import { getGroupExpression } from '../services/analyticsService.js'
+import { fetchAppointmentsForContacts, fetchPaymentsForContacts, getGroupExpression } from '../services/analyticsService.js'
+import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 import fetch from 'node-fetch'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
 const TRACKING_SNIPPET_VERSION = '9' // Incrementar cuando cambies el código del snippet
+const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
+  .map(status => `'${String(status).replace(/'/g, "''")}'`)
+  .join(', ')
+const INACTIVE_APPOINTMENT_STATUSES = [
+  'cancelled',
+  'canceled',
+  'no_show',
+  'no-show',
+  'noshow',
+  'invalid',
+  'failed',
+  'missed',
+  'deleted',
+  'void',
+  'voided'
+]
+const INACTIVE_APPOINTMENT_STATUS_SQL = INACTIVE_APPOINTMENT_STATUSES
+  .map(status => `'${status}'`)
+  .join(', ')
+const ATTENDED_APPOINTMENT_STATUS_SQL = [
+  'show',
+  'showed',
+  'completed',
+  'complete',
+  'attended'
+].map(status => `'${status}'`).join(', ')
+const CONTACT_CONVERSION_LIST_TYPES = new Set([
+  'registrations',
+  'prospects',
+  'appointments',
+  'attendances',
+  'customers'
+])
+
+function validPaymentPredicate(alias = 'p') {
+  const prefix = alias ? `${alias}.` : ''
+  return `
+    COALESCE(${prefix}amount, 0) > 0
+    AND LOWER(COALESCE(${prefix}status, '')) IN (${SUCCESS_PAYMENT_STATUS_SQL})
+    AND ${nonTestPaymentCondition(alias)}
+  `
+}
+
+function validPaymentExistsCondition(contactAlias = 'c') {
+  const prefix = contactAlias ? `${contactAlias}.` : ''
+  return `EXISTS (
+    SELECT 1
+    FROM payments p
+    WHERE p.contact_id = ${prefix}id
+      AND ${validPaymentPredicate('p')}
+  )`
+}
+
+function activeAppointmentCondition(contactAlias = 'c') {
+  const prefix = contactAlias ? `${contactAlias}.` : ''
+  return `(
+    ${prefix}appointment_date IS NOT NULL OR EXISTS (
+      SELECT 1
+      FROM appointments a
+      WHERE a.contact_id = ${prefix}id
+        AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (${INACTIVE_APPOINTMENT_STATUS_SQL})
+    )
+  )`
+}
+
+function attendedAppointmentCondition(contactAlias = 'c') {
+  const prefix = contactAlias ? `${contactAlias}.` : ''
+  return `(
+    EXISTS (
+      SELECT 1
+      FROM appointment_attendance_signals aas
+      WHERE aas.contact_id = ${prefix}id
+    ) OR EXISTS (
+      SELECT 1
+      FROM appointments aa
+      WHERE aa.contact_id = ${prefix}id
+        AND LOWER(COALESCE(aa.appointment_status, aa.status, '')) IN (${ATTENDED_APPOINTMENT_STATUS_SQL})
+    )
+  )`
+}
+
+function getContactConversionListCondition(type) {
+  const customerCondition = validPaymentExistsCondition('c')
+  const appointmentCondition = activeAppointmentCondition('c')
+  const attendanceCondition = attendedAppointmentCondition('c')
+
+  switch (type) {
+    case 'customers':
+      return customerCondition
+    case 'prospects':
+      return `NOT ${customerCondition} AND NOT ${appointmentCondition} AND NOT ${attendanceCondition}`
+    case 'appointments':
+      return appointmentCondition
+    case 'attendances':
+      return attendanceCondition
+    case 'registrations':
+    default:
+      return ''
+  }
+}
 
 function timestampLocalExpression(column, timezone = 'UTC') {
   if (!isPostgres) {
@@ -1819,26 +1920,9 @@ export async function getContactConversionsByDate(req, res) {
       ? `${contactCreatedDate} >= ?::date AND ${contactCreatedDate} <= ?::date`
       : `${contactCreatedDate} >= DATE(?) AND ${contactCreatedDate} <= DATE(?)`
 
-    const customerCondition = '(COALESCE(c.purchases_count, 0) > 0 OR COALESCE(c.total_paid, 0) > 0)'
-    const appointmentCondition = `(
-      c.appointment_date IS NOT NULL OR EXISTS (
-        SELECT 1
-        FROM appointments a
-        WHERE a.contact_id = c.id
-      )
-    )`
-    const attendanceCondition = `(
-      EXISTS (
-        SELECT 1
-        FROM appointment_attendance_signals aas
-        WHERE aas.contact_id = c.id
-      ) OR EXISTS (
-        SELECT 1
-        FROM appointments aa
-        WHERE aa.contact_id = c.id
-          AND LOWER(COALESCE(aa.appointment_status, aa.status, '')) IN ('showed', 'completed', 'attended')
-      )
-    )`
+    const customerCondition = validPaymentExistsCondition('c')
+    const appointmentCondition = activeAppointmentCondition('c')
+    const attendanceCondition = attendedAppointmentCondition('c')
 
     const query = `
       WITH contact_flags AS (
@@ -1901,6 +1985,160 @@ export async function getContactConversionsByDate(req, res) {
     res.json({ success: true, data: result })
   } catch (error) {
     logger.error('Error obteniendo conversiones por fecha de creación:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+}
+
+/**
+ * Obtiene contactos que componen una bolita del gráfico de conversiones.
+ * GET /api/tracking/contact-conversions-list
+ * Query params: start (YYYY-MM-DD), end (YYYY-MM-DD), type
+ */
+export async function getContactConversionsList(req, res) {
+  try {
+    const { start, end, type = 'registrations' } = req.query
+    const normalizedType = String(type || 'registrations')
+
+    if (!start || !end) {
+      return res.status(400).json({ error: 'Se requieren parámetros start y end' })
+    }
+
+    if (!CONTACT_CONVERSION_LIST_TYPES.has(normalizedType)) {
+      return res.status(400).json({ error: 'type inválido' })
+    }
+
+    const startDate = parseIsoDateToUtc(start)
+    const endDate = parseIsoDateToUtc(end)
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'Formato de fecha inválido' })
+    }
+
+    logger.info(`Obteniendo lista de conversiones (${normalizedType}): ${start} a ${end}`)
+
+    const range = await resolveDateRangeWithGHLTimezone({ startDate: start, endDate: end })
+    const contactCreatedDate = timestampDateExpression('c.created_at', range.appliedTimezone)
+    const dateFilter = isPostgres
+      ? `${contactCreatedDate} >= ?::date AND ${contactCreatedDate} <= ?::date`
+      : `${contactCreatedDate} >= DATE(?) AND ${contactCreatedDate} <= DATE(?)`
+    const customerCondition = validPaymentExistsCondition('c')
+    const appointmentCondition = activeAppointmentCondition('c')
+    const attendanceCondition = attendedAppointmentCondition('c')
+    const typeCondition = getContactConversionListCondition(normalizedType)
+
+    const conditions = [
+      dateFilter,
+      contactAnalyticsSourceCondition('c')
+    ]
+
+    if (typeCondition) {
+      conditions.push(typeCondition)
+    }
+
+    const query = `
+      SELECT
+        c.id,
+        c.full_name,
+        c.email,
+        c.phone,
+        c.created_at,
+        c.attribution_ad_id,
+        c.attribution_ad_name,
+        c.source,
+        CASE WHEN ${customerCondition} THEN 1 ELSE 0 END as is_customer,
+        CASE WHEN ${appointmentCondition} THEN 1 ELSE 0 END as has_appointment,
+        CASE WHEN ${attendanceCondition} THEN 1 ELSE 0 END as has_attendance,
+        COALESCE((
+          SELECT SUM(p.amount)
+          FROM payments p
+          WHERE p.contact_id = c.id
+            AND ${validPaymentPredicate('p')}
+        ), 0) as valid_ltv,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM payments p
+          WHERE p.contact_id = c.id
+            AND ${validPaymentPredicate('p')}
+        ), 0) as valid_purchases,
+        MAX(meta_ads.campaign_id) as campaign_id,
+        MAX(meta_ads.campaign_name) as campaign_name,
+        MAX(meta_ads.adset_id) as adset_id,
+        MAX(meta_ads.adset_name) as adset_name,
+        MAX(meta_ads.ad_name) as meta_ad_name
+      FROM contacts c
+      LEFT JOIN meta_ads ON meta_ads.ad_id = c.attribution_ad_id
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY
+        c.id,
+        c.full_name,
+        c.email,
+        c.phone,
+        c.created_at,
+        c.attribution_ad_id,
+        c.attribution_ad_name,
+        c.source
+      ORDER BY c.created_at DESC
+    `
+
+    const rows = await db.all(query, [start, end])
+    const contactIds = rows.map(row => row.id).filter(Boolean)
+    const [paymentsMap, appointmentsMap] = await Promise.all([
+      fetchPaymentsForContacts(contactIds),
+      fetchAppointmentsForContacts(contactIds)
+    ])
+
+    const contacts = rows.map(row => {
+      const ltv = Number(row.valid_ltv || 0)
+      const purchases = Number(row.valid_purchases || 0)
+
+      return {
+        id: row.id,
+        name: row.full_name || '',
+        email: row.email || '',
+        phone: row.phone || '',
+        created_at: row.created_at,
+        ltv,
+        purchases,
+        attributed: Boolean(row.attribution_ad_id),
+        payments: paymentsMap.get(row.id) || [],
+        appointments: appointmentsMap.get(row.id) || [],
+        source: row.source || null,
+        ad_name: row.meta_ad_name || row.attribution_ad_name || null,
+        ad_id: row.attribution_ad_id || null,
+        campaign_id: row.campaign_id || null,
+        campaign_name: row.campaign_name || null,
+        adset_id: row.adset_id || null,
+        adset_name: row.adset_name || null,
+        metaAttribution: row.attribution_ad_id && (row.meta_ad_name || row.campaign_name || row.adset_name)
+          ? {
+              source: 'meta_ads',
+              matchType: 'ad_id',
+              campaignId: row.campaign_id || null,
+              campaignName: row.campaign_name || null,
+              adsetId: row.adset_id || null,
+              adsetName: row.adset_name || null,
+              adId: row.attribution_ad_id || null,
+              adName: row.meta_ad_name || row.attribution_ad_name || null
+            }
+          : null,
+        lifetimeLtv: ltv,
+        lifetimePurchases: purchases,
+        isCustomer: Boolean(Number(row.is_customer || 0)),
+        hasAppointments: Boolean(Number(row.has_appointment || 0)),
+        hasShowedAppointment: Boolean(Number(row.has_attendance || 0)),
+        hasAttendedAppointment: Boolean(Number(row.has_attendance || 0))
+      }
+    })
+
+    res.json({
+      success: true,
+      data: {
+        contacts,
+        range: { start, end }
+      }
+    })
+  } catch (error) {
+    logger.error('Error obteniendo lista de conversiones por contacto:', error)
     res.status(500).json({ error: 'Internal server error' })
   }
 }

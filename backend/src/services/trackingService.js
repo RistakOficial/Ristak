@@ -1,6 +1,40 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 import fetch from 'node-fetch'
+
+const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
+  .map(status => `'${String(status).replace(/'/g, "''")}'`)
+  .join(', ')
+const INACTIVE_APPOINTMENT_STATUS_SQL = [
+  'cancelled',
+  'canceled',
+  'no_show',
+  'no-show',
+  'noshow',
+  'invalid',
+  'failed',
+  'missed',
+  'deleted',
+  'void',
+  'voided'
+].map(status => `'${status}'`).join(', ')
+const ATTENDED_APPOINTMENT_STATUS_SQL = [
+  'show',
+  'showed',
+  'completed',
+  'complete',
+  'attended'
+].map(status => `'${status}'`).join(', ')
+
+function validPaymentPredicate(alias = 'p') {
+  const prefix = alias ? `${alias}.` : ''
+  return `
+    COALESCE(${prefix}amount, 0) > 0
+    AND LOWER(COALESCE(${prefix}status, '')) IN (${SUCCESS_PAYMENT_STATUS_SQL})
+    AND ${nonTestPaymentCondition(alias)}
+  `
+}
 
 /**
  * Decodifica un valor UTM (convierte + a espacios y decodifica URL encoding)
@@ -667,8 +701,18 @@ export async function getSessionsByDateRange(startDate, endDate, options = {}) {
         s.form_site_name,
         s.submission_id,
         c.created_at as contact_created_at,
-        c.purchases_count as contact_purchases_count,
-        c.total_paid as contact_total_paid,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM payments p
+          WHERE p.contact_id = c.id
+            AND ${validPaymentPredicate('p')}
+        ), 0) as contact_purchases_count,
+        COALESCE((
+          SELECT SUM(p.amount)
+          FROM payments p
+          WHERE p.contact_id = c.id
+            AND ${validPaymentPredicate('p')}
+        ), 0) as contact_total_paid,
         c.appointment_date as contact_appointment_date`
       : `
         s.id,
@@ -736,8 +780,18 @@ export async function getSessionsByDateRange(startDate, endDate, options = {}) {
         s.conversion_type,
         s.submission_id,
         c.created_at as contact_created_at,
-        c.purchases_count as contact_purchases_count,
-        c.total_paid as contact_total_paid,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM payments p
+          WHERE p.contact_id = c.id
+            AND ${validPaymentPredicate('p')}
+        ), 0) as contact_purchases_count,
+        COALESCE((
+          SELECT SUM(p.amount)
+          FROM payments p
+          WHERE p.contact_id = c.id
+            AND ${validPaymentPredicate('p')}
+        ), 0) as contact_total_paid,
         c.appointment_date as contact_appointment_date`
 
     query = `
@@ -749,6 +803,7 @@ export async function getSessionsByDateRange(startDate, endDate, options = {}) {
               SELECT 1
               FROM appointments a
               WHERE a.contact_id = c.id
+                AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (${INACTIVE_APPOINTMENT_STATUS_SQL})
             )
           ) THEN 1 ELSE 0
         END as contact_has_appointment,
@@ -762,7 +817,7 @@ export async function getSessionsByDateRange(startDate, endDate, options = {}) {
               SELECT 1
               FROM appointments aa
               WHERE aa.contact_id = c.id
-                AND LOWER(COALESCE(aa.appointment_status, aa.status, '')) IN ('showed', 'completed', 'attended')
+                AND LOWER(COALESCE(aa.appointment_status, aa.status, '')) IN (${ATTENDED_APPOINTMENT_STATUS_SQL})
             )
           ) THEN 1 ELSE 0
         END as contact_has_attended_appointment
