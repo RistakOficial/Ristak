@@ -22,8 +22,8 @@ import {
   Video,
   X
 } from 'lucide-react'
-import { AppointmentModal, Button, CustomSelect, PageContainer, PageHeader, RecordPaymentModal } from '@/components/common'
-import { RistakRobot } from '@/components/ai'
+import { AppointmentModal, Button, CustomSelect, PageContainer, RecordPaymentModal } from '@/components/common'
+import { AgentRobot } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -974,17 +974,6 @@ export const DesktopChat: React.FC = () => {
 
   return (
     <PageContainer size="wide" className={styles.page}>
-      <PageHeader
-        eyebrow="Bandeja"
-        title="Chat"
-        subtitle="Responde conversaciones, agenda citas y revisa la información del contacto sin salir de la pantalla."
-        actions={
-          <div className={styles.headerAiRobot} aria-label="Agente AI">
-            <RistakRobot size={58} thinking />
-          </div>
-        }
-      />
-
       <section className={styles.chatShell} data-desktop-chat-page>
         <aside className={styles.inboxPanel} aria-label="Lista de chats">
           <div className={styles.inboxHeader}>
@@ -1164,7 +1153,7 @@ export const DesktopChat: React.FC = () => {
               </header>
 
               <div className={styles.aiStrip}>
-                <RistakRobot size={54} thinking={composerStatus === 'sending'} />
+                <AgentRobot size={54} active={composerStatus === 'sending' || aiAvailability.configured} />
                 <div>
                   <strong>Agente AI</strong>
                   <span>{aiAvailability.configured ? 'Listo para ayudarte con contexto del cliente.' : 'Conecta OpenAI para sugerencias inteligentes.'}</span>
@@ -1240,7 +1229,7 @@ export const DesktopChat: React.FC = () => {
             </>
           ) : (
             <div className={styles.noSelection}>
-              <RistakRobot size={86} thinking />
+              <AgentRobot size={112} active />
               <strong>Selecciona un chat para trabajar</strong>
               <span>Abre una conversación y aquí tendrás mensajes, respuesta rápida, agenda y cobro en el mismo lugar.</span>
               <div className={styles.emptyActionPreview}>
