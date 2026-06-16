@@ -6,7 +6,7 @@ import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import fetch from 'node-fetch'
 import sharp from 'sharp'
-import { db, getAppConfig, setAppConfig } from '../config/database.js'
+import { db, getAppConfig, repairWhatsAppApiContactIdentityFromMessages, setAppConfig } from '../config/database.js'
 import { findContactByPhoneCandidates, generateContactId } from './contactIdentityService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
@@ -22,10 +22,16 @@ import {
   startWhatsAppQrConnection
 } from './whatsappQrService.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
-import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
 import { logger } from '../utils/logger.js'
 import { normalizeYCloudApiKeyInput } from '../utils/ycloudApiKey.js'
+import {
+  GENERIC_WHATSAPP_API_CONTACT_NAME,
+  extractWhatsAppProfileName,
+  normalizeWhatsAppProfileName,
+  shouldReplaceWhatsAppApiContactName
+} from '../utils/whatsappContactProfile.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
 
@@ -39,7 +45,7 @@ const PROVIDER_NAME = 'ycloud'
 const META_DIRECT_PROVIDER_NAME = 'meta_direct'
 const DEFAULT_INSTALLER_PUBLIC_URL = 'https://www.ristak.com'
 const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
-const GENERIC_CONTACT_NAME = 'Contacto WhatsApp_API'
+const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
 const WHATSAPP_IMAGE_PUBLIC_PATH = '/uploads/whatsapp-images'
 const MAX_WHATSAPP_IMAGE_INPUT_BYTES = 25 * 1024 * 1024
@@ -2254,7 +2260,7 @@ async function retryFailedOfficialApiMessageViaQr({
 
 function normalizeYCloudContactRecord(record = {}) {
   const phone = normalizePhoneForStorage(record.phoneNumber) || cleanString(record.phoneNumber)
-  const profileName = normalizeDisplayText(record.nickname || record.name || record.fullName || record.email)
+  const profileName = extractWhatsAppProfileName(record, phone) || normalizeWhatsAppProfileName(record.email, phone)
   return {
     id: cleanString(record.id) || hashId('ycloud_contact', phone || record.email),
     phone,
@@ -2885,6 +2891,10 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       logger.warn(`No se pudo recuperar historial guardado WhatsApp Business: ${error.message}`)
     })
 
+    await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
+      logger.warn(`No se pudo reparar nombres/fechas de contactos WhatsApp API: ${error.message}`)
+    })
+
     return getWhatsAppApiStatus()
   } catch (error) {
     await setAppConfig(CONFIG_KEYS.lastError, error.message)
@@ -2957,6 +2967,10 @@ export async function refreshWhatsAppApi() {
       logger.warn(`No se pudo recuperar historial guardado WhatsApp Business: ${error.message}`)
     })
 
+    await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
+      logger.warn(`No se pudo reparar nombres/fechas de contactos WhatsApp API: ${error.message}`)
+    })
+
     await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
     await setAppConfig(CONFIG_KEYS.lastError, webhookSetupWarning)
     return getWhatsAppApiStatus()
@@ -3022,18 +3036,8 @@ function normalizeDisplayText(value) {
   return text
 }
 
-function isPhoneLikeName(value, phone = '') {
-  const text = normalizeDisplayText(value)
-  if (!text) return false
-  const hasLetters = /\p{L}/u.test(text)
-  const digits = normalizePhoneDigits(text)
-  const phoneDigits = normalizePhoneDigits(phone)
-  return !hasLetters && digits.length >= 7 && (!phoneDigits || digits.endsWith(phoneDigits) || phoneDigits.endsWith(digits))
-}
-
 function shouldReplaceContactName(currentName, phone = '') {
-  const text = normalizeDisplayText(currentName)
-  return !text || text === GENERIC_CONTACT_NAME || text === 'Contacto WhatsApp' || isPhoneLikeName(text, phone)
+  return shouldReplaceWhatsAppApiContactName(currentName, phone)
 }
 
 function isPlainObject(value) {
@@ -3207,13 +3211,13 @@ function getMessageIdentity({ payload = {}, direction = '', message = {}, busine
 
 function getStoredContactDisplayName(existing = {}, fallbackName = '', phone = '') {
   const storedName = normalizeDisplayText(existing.full_name)
-  const cleanFallback = normalizeDisplayText(fallbackName)
+  const cleanFallback = normalizeWhatsAppProfileName(fallbackName, phone)
 
-  if (storedName && storedName !== GENERIC_CONTACT_NAME && !isPhoneLikeName(storedName, phone)) {
+  if (storedName && !shouldReplaceContactName(storedName, phone)) {
     return storedName
   }
 
-  if (cleanFallback && !isPhoneLikeName(cleanFallback, phone)) {
+  if (cleanFallback) {
     return cleanFallback
   }
 
@@ -3225,8 +3229,9 @@ async function upsertLocalContact({ phone, profileName, messageTimestamp, attrib
   if (!canonicalPhone) return { id: null, created: false }
 
   const existing = await findContactByPhoneCandidates(canonicalPhone)
-  const contactName = isPhoneLikeName(profileName, canonicalPhone) ? '' : normalizeDisplayText(profileName)
+  const contactName = normalizeWhatsAppProfileName(profileName, canonicalPhone)
   const fullName = contactName || GENERIC_CONTACT_NAME
+  const cleanMessageTimestamp = toDateTime(messageTimestamp) || null
 
   if (!existing) {
     // ID propio de Ristak: el teléfono/perfil de WhatsApp queda como referencia
@@ -3250,7 +3255,7 @@ async function upsertLocalContact({ phone, profileName, messageTimestamp, attrib
       attribution.ctwaClid || null,
       attribution.headline || attribution.sourceId || null,
       attribution.sourceId || null,
-      messageTimestamp || nowIso()
+      cleanMessageTimestamp || nowIso()
     ])
 
     return {
@@ -3302,6 +3307,17 @@ async function upsertLocalContact({ phone, profileName, messageTimestamp, attrib
     params.push(attribution.headline || attribution.sourceId)
   }
 
+  const existingCreatedAt = toDateTime(existing.created_at)
+  const sourceLooksWhatsAppApi = cleanString(existing.source).toLowerCase() === SOURCE_NAME.toLowerCase()
+  if (
+    cleanMessageTimestamp &&
+    sourceLooksWhatsAppApi &&
+    (!existingCreatedAt || new Date(cleanMessageTimestamp).getTime() < new Date(existingCreatedAt).getTime())
+  ) {
+    updates.push('created_at = ?')
+    params.push(cleanMessageTimestamp)
+  }
+
   if (updates.length) {
     updates.push('updated_at = CURRENT_TIMESTAMP')
     params.push(existing.id)
@@ -3329,6 +3345,16 @@ async function upsertWhatsAppApiContact({
   if (!canonicalPhone) return null
 
   const apiContactId = hashId('waapi_profile', canonicalPhone)
+  const existingApiContact = await db.get(
+    'SELECT profile_name FROM whatsapp_api_contacts WHERE phone = ? LIMIT 1',
+    [canonicalPhone]
+  ).catch(() => null)
+  const cleanProfileName = normalizeWhatsAppProfileName(profileName, canonicalPhone)
+  const profileNameForStorage = cleanProfileName && (
+    !existingApiContact || shouldReplaceWhatsAppApiContactName(existingApiContact.profile_name, canonicalPhone)
+  )
+    ? cleanProfileName
+    : ''
   const cleanProfilePictureUrl = cleanString(profilePictureUrl) || findProfilePictureUrlInValue(rawProfile)
   const cleanProfilePictureSource = cleanProfilePictureUrl
     ? cleanString(profilePictureSource) || 'whatsapp_api'
@@ -3377,7 +3403,7 @@ async function upsertWhatsAppApiContact({
     apiContactId,
     contactId || null,
     canonicalPhone,
-    normalizeDisplayText(profileName) || null,
+    profileNameForStorage || null,
     cleanProfilePictureUrl || null,
     cleanProfilePictureSource,
     profilePictureUpdatedAt,
@@ -3430,17 +3456,10 @@ function buildYCloudContactLookupIdentifiers(contact = {}) {
 }
 
 function getContactProfileName(contact = {}, rawProfile = null) {
-  return normalizeDisplayText(
-    contact.full_name ||
-    contact.name ||
-    contact.profile_name ||
-    rawProfile?.nickname ||
-    rawProfile?.name ||
-    rawProfile?.fullName ||
-    rawProfile?.customerProfile?.name ||
-    rawProfile?.profile?.name ||
-    ''
-  )
+  const phone = normalizePhoneForStorage(contact.phone) || cleanString(contact.phone)
+  return normalizeWhatsAppProfileName(contact.full_name, phone) ||
+    extractWhatsAppProfileName(contact, phone) ||
+    extractWhatsAppProfileName(rawProfile, phone)
 }
 
 async function retrieveYCloudContactProfilePicture(apiKey, contact = {}) {
@@ -3564,6 +3583,16 @@ function normalizeWebhookMessage(rawMessage = {}) {
   normalized.sendTime = normalized.sendTime || normalized.send_time || normalized.timestamp || normalized.messageTimestamp || normalized.createdAt
   normalized.createTime = normalized.createTime || normalized.create_time || normalized.createdAt
   normalized.updateTime = normalized.updateTime || normalized.update_time || normalized.updatedAt
+  normalized.customerProfile = normalized.customerProfile ||
+    normalized.customer_profile ||
+    normalized.contactProfile ||
+    normalized.contact_profile ||
+    normalized.contact?.customerProfile ||
+    normalized.contact?.profile
+  normalized.profile = normalized.profile ||
+    normalized.whatsAppProfile ||
+    normalized.whatsappProfile ||
+    normalized.whatsapp_profile
 
   const customerPhone = cleanString(normalized.customer || normalized.customerPhone || normalized.customer_phone || normalized.phone)
   const businessPhone = cleanString(normalized.businessPhone || normalized.business_phone || normalized.business || normalized.senderPhoneNumber)
@@ -3626,7 +3655,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   )
   const messageText = extractMessageText(normalizedMessage)
   const messageTimestamp = toDateTime(normalizedMessage.sendTime || normalizedMessage.createTime || normalizedMessage.updateTime || payload.createTime) || nowIso()
-  const profileName = normalizedMessage.customerProfile?.name || normalizedMessage.profile?.name || ''
+  const profileName = extractWhatsAppProfileName(normalizedMessage, identity.phone)
   const rawProfile = normalizedMessage.customerProfile || normalizedMessage.profile || null
   const profilePictureUrl = findProfilePictureUrlInValue(rawProfile)
   const attribution = extractAttribution(payload, normalizedMessage, messageText)

@@ -8254,11 +8254,19 @@ type SitesAICreationAttachment = {
   id: string
   name: string
   size: number
+  mimeType: string
+  kind: 'image' | 'text' | 'pdf' | 'file'
   text: string
+  dataUrl?: string
 }
 
 const AI_CREATION_TEXT_ATTACHMENT_MAX_CHARS = 8000
+const AI_CODE_ASSISTANT_ATTACHMENT_MAX_FILES = 6
+const AI_CODE_ASSISTANT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024
+const AI_CODE_ASSISTANT_ATTACHMENT_DATA_URL_MAX_BYTES = 6 * 1024 * 1024
 const aiCreationTextFilePattern = /\.(txt|md|markdown|html?|css|json|csv|xml)$/i
+const aiCreationPdfFilePattern = /\.pdf$/i
+const aiCreationBinaryReferencePattern = /\.(pdf|docx?|pptx?|xlsx?)$/i
 const aiCreationAudioMimeTypes = [
   'audio/webm;codecs=opus',
   'audio/webm',
@@ -8479,17 +8487,54 @@ const makeAICreationId = () => {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-const readAICreationAttachment = async (file: File): Promise<SitesAICreationAttachment> => {
+const getAICreationAttachmentKind = (file: File): SitesAICreationAttachment['kind'] => {
+  if (file.type.startsWith('image/')) return 'image'
+  if (file.type === 'application/pdf' || aiCreationPdfFilePattern.test(file.name)) return 'pdf'
+  if (file.type.startsWith('text/') || aiCreationTextFilePattern.test(file.name)) return 'text'
+  return 'file'
+}
+
+const readAICreationFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+  reader.onerror = () => reject(new Error('No se pudo leer el archivo.'))
+  reader.readAsDataURL(file)
+})
+
+const readAICreationAttachment = async (
+  file: File,
+  options: { includeDataUrl?: boolean; maxBytes?: number; maxDataUrlBytes?: number } = {}
+): Promise<SitesAICreationAttachment> => {
+  const kind = getAICreationAttachmentKind(file)
+  const maxBytes = options.maxBytes ?? Number.POSITIVE_INFINITY
+  const maxDataUrlBytes = options.maxDataUrlBytes ?? AI_CODE_ASSISTANT_ATTACHMENT_DATA_URL_MAX_BYTES
+
+  if (file.size > maxBytes) {
+    throw new Error(`${file.name} pesa más de ${formatAICreationFileSize(maxBytes)}.`)
+  }
+
   let text = ''
   if (file.type.startsWith('text/') || aiCreationTextFilePattern.test(file.name)) {
     text = (await file.text()).slice(0, AI_CREATION_TEXT_ATTACHMENT_MAX_CHARS)
   }
 
+  const shouldReadDataUrl = Boolean(options.includeDataUrl) && (
+    kind === 'image' ||
+    kind === 'pdf' ||
+    aiCreationBinaryReferencePattern.test(file.name)
+  )
+  const dataUrl = shouldReadDataUrl && file.size <= maxDataUrlBytes
+    ? await readAICreationFileAsDataUrl(file)
+    : ''
+
   return {
     id: makeAICreationId(),
     name: file.name,
     size: file.size,
-    text
+    mimeType: file.type || 'application/octet-stream',
+    kind,
+    text,
+    ...(dataUrl ? { dataUrl } : {})
   }
 }
 
@@ -8934,7 +8979,7 @@ const SitesAICreationModal: React.FC<{
 
     setAttachmentError('')
     try {
-      const nextAttachments = await Promise.all(files.slice(0, 5).map(readAICreationAttachment))
+      const nextAttachments = await Promise.all(files.slice(0, 5).map(file => readAICreationAttachment(file)))
       setAttachments(current => [...current, ...nextAttachments].slice(0, 5))
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : 'No se pudo leer el archivo.')
@@ -12556,6 +12601,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const elementPopoverRef = useRef<HTMLDivElement | null>(null)
   const previewVisualContextRef = useRef<SitesAIPreviewVisualContext | null>(null)
   const inlineImageFileInputRef = useRef<HTMLInputElement | null>(null)
+  const codeAssistantAttachmentInputRef = useRef<HTMLInputElement | null>(null)
   const [routeEditing, setRouteEditing] = useState(false)
   const [routeDraft, setRouteDraft] = useState(getRouteEditorValue(site))
   const [routeSaving, setRouteSaving] = useState(false)
@@ -12590,6 +12636,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [codeAssistantSaving, setCodeAssistantSaving] = useState(false)
   const [codeAssistantError, setCodeAssistantError] = useState('')
   const [codeAssistantWorkSteps, setCodeAssistantWorkSteps] = useState<ImportedCodeAssistantWorkStep[]>([])
+  const [codeAssistantAttachments, setCodeAssistantAttachments] = useState<SitesAICreationAttachment[]>([])
+  const [codeAssistantAttachmentError, setCodeAssistantAttachmentError] = useState('')
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
   const popupCodeFile = useMemo<ImportedSiteCodeFile>(() => ({
@@ -13332,6 +13380,53 @@ const ImportedHtmlEditorPanel: React.FC<{
     setAiRegionError('')
   }, [aiRegionVoiceDictation.cancelVoice])
 
+  const handleCodeAssistantPickFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || [])
+    event.target.value = ''
+    if (!files.length) return
+
+    setCodeAssistantAttachmentError('')
+    try {
+      const availableSlots = Math.max(0, AI_CODE_ASSISTANT_ATTACHMENT_MAX_FILES - codeAssistantAttachments.length)
+      if (availableSlots <= 0) {
+        setCodeAssistantAttachmentError(`Máximo ${AI_CODE_ASSISTANT_ATTACHMENT_MAX_FILES} archivos por petición.`)
+        return
+      }
+      const selectedFiles = files.slice(0, availableSlots)
+      const nextAttachments = await Promise.all(selectedFiles.map(file => readAICreationAttachment(file, {
+        includeDataUrl: true,
+        maxBytes: AI_CODE_ASSISTANT_ATTACHMENT_MAX_BYTES,
+        maxDataUrlBytes: AI_CODE_ASSISTANT_ATTACHMENT_DATA_URL_MAX_BYTES
+      })))
+      setCodeAssistantAttachments(current => [...current, ...nextAttachments].slice(0, AI_CODE_ASSISTANT_ATTACHMENT_MAX_FILES))
+      if (files.length > selectedFiles.length) {
+        setCodeAssistantAttachmentError(`Solo se agregaron ${selectedFiles.length}; máximo ${AI_CODE_ASSISTANT_ATTACHMENT_MAX_FILES} archivos por petición.`)
+      }
+    } catch (error) {
+      setCodeAssistantAttachmentError(error instanceof Error ? error.message : 'No se pudo leer el archivo.')
+    }
+  }
+
+  const removeCodeAssistantAttachment = (id: string) => {
+    setCodeAssistantAttachments(current => current.filter(attachment => attachment.id !== id))
+    setCodeAssistantAttachmentError('')
+  }
+
+  const buildCodeAssistantAttachmentNotes = (attachments: SitesAICreationAttachment[]) => {
+    if (!attachments.length) return 'Sin archivos adjuntos de apoyo.'
+    return [
+      'Archivos adjuntos de apoyo para esta edición:',
+      ...attachments.map((attachment, index) => [
+        `${index + 1}. ${attachment.name} (${attachment.kind}, ${attachment.mimeType || 'sin tipo'}, ${formatAICreationFileSize(attachment.size)})`,
+        attachment.text
+          ? `Texto extraído:\n${attachment.text.slice(0, AI_CREATION_TEXT_ATTACHMENT_MAX_CHARS)}`
+          : attachment.dataUrl
+            ? 'Contenido adjunto disponible para el modelo.'
+            : 'Sin contenido legible; úsalo solo como referencia de nombre/tipo.'
+      ].join('\n'))
+    ].join('\n\n')
+  }
+
   const setAIRegionAttemptStatus = (
     selection: ImportedAIRegionSelection | null,
     nextAttempt: Pick<ImportedAIRegionAttempt, 'status' | 'message' | 'prompt'> & { debug?: SitesAIEditDebug }
@@ -13511,6 +13606,8 @@ const ImportedHtmlEditorPanel: React.FC<{
       `Archivo activo: ${activeCodeFile.label || activeCodeFile.path || 'HTML principal'}.`,
       popupCodeActive ? 'Superficie activa: Pop up.' : `Página activa: ${activeImportedPage?.title || 'Página actual'}.`,
       selectedContext,
+      buildCodeAssistantAttachmentNotes(codeAssistantAttachments),
+      'Usa los archivos adjuntos solo como referencia para modificar el HTML activo. No insertes respuestas, resúmenes ni explicaciones del asistente dentro de la página salvo que el usuario lo pida explícitamente.',
       `Solicitud del usuario: ${prompt}`
     ].join('\n\n')
     const selectedStepDetail = selectedRange
@@ -13526,7 +13623,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       {
         id: 'context',
         label: 'Contexto preparado',
-        detail: `${activeCodeFile.label || activeCodeFile.path || 'HTML principal'} · ${(activeCodeValue.length / 1000).toFixed(1)}k caracteres.`,
+        detail: `${activeCodeFile.label || activeCodeFile.path || 'HTML principal'} · ${(activeCodeValue.length / 1000).toFixed(1)}k caracteres · ${codeAssistantAttachments.length} adjunto(s).`,
         status: 'pending'
       },
       {
@@ -13573,6 +13670,15 @@ const ImportedHtmlEditorPanel: React.FC<{
         draftOnly: true,
         currentHtml: activeCodeValue,
         currentFilePath: activeCodeFile.path || activeCodeFile.label || '',
+        attachments: codeAssistantAttachments.map(attachment => ({
+          id: attachment.id,
+          name: attachment.name,
+          size: attachment.size,
+          mimeType: attachment.mimeType,
+          kind: attachment.kind,
+          text: attachment.text,
+          dataUrl: attachment.dataUrl
+        })),
         messages: [
           {
             role: 'user',
@@ -13608,6 +13714,8 @@ const ImportedHtmlEditorPanel: React.FC<{
       setCodeAssistantProgressStep(3, 'active')
       onCodeDraftChange(activeCodeFile.path, nextHtml, activeCodeFile.content)
       setCodeAssistantPrompt('')
+      setCodeAssistantAttachments([])
+      setCodeAssistantAttachmentError('')
       const assistantReply = result.reply || 'Listo, apliqué el cambio en el borrador del HTML. Revisa la vista previa y guarda cuando esté correcto.'
       completeCodeAssistantProgress(result.debug, assistantReply)
       showToast('success', 'Cambio preparado', 'El asistente editó el HTML como borrador. Guarda el sitio para aplicarlo.')
@@ -15232,6 +15340,41 @@ const ImportedHtmlEditorPanel: React.FC<{
                 <span>{codeAssistantError}</span>
               </div>
             )}
+            {codeAssistantAttachmentError && (
+              <div className={styles.importedAIRegionError}>
+                <AlertTriangle size={14} />
+                <span>{codeAssistantAttachmentError}</span>
+              </div>
+            )}
+            {codeAssistantAttachments.length > 0 && (
+              <div className={styles.importedCodeAssistantAttachments} aria-label="Archivos adjuntos para el asistente">
+                {codeAssistantAttachments.map(attachment => (
+                  <span key={attachment.id} className={styles.importedCodeAssistantAttachmentChip}>
+                    {attachment.kind === 'image' ? <Image size={13} /> : <FileText size={13} />}
+                    <span>{attachment.name}</span>
+                    <small>{formatAICreationFileSize(attachment.size)}</small>
+                    <button
+                      type="button"
+                      onClick={() => removeCodeAssistantAttachment(attachment.id)}
+                      disabled={codeAssistantSaving}
+                      aria-label={`Quitar ${attachment.name}`}
+                      title="Quitar archivo"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <input
+              ref={codeAssistantAttachmentInputRef}
+              type="file"
+              multiple
+              className={styles.importedCodeAssistantFileInput}
+              accept="image/*,.txt,.md,.markdown,.html,.htm,.css,.json,.csv,.xml,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
+              onChange={handleCodeAssistantPickFiles}
+              disabled={codeAssistantSaving || !aiAgentAvailable}
+            />
             <div
               className={`${styles.importedCodeAssistantComposer} ${codeAssistantVoiceDictation.voiceIsActive ? styles.importedCodeAssistantComposerVoiceActive : ''}`}
               data-ristak-unstyled
@@ -15241,6 +15384,16 @@ const ImportedHtmlEditorPanel: React.FC<{
                 disabled={codeAssistantSaving || !aiAgentAvailable}
                 className={styles.importedCodeAssistantVoice}
               />
+              <button
+                type="button"
+                className={styles.importedCodeAssistantAttachButton}
+                onClick={() => codeAssistantAttachmentInputRef.current?.click()}
+                disabled={codeAssistantSaving || !aiAgentAvailable || codeAssistantAttachments.length >= AI_CODE_ASSISTANT_ATTACHMENT_MAX_FILES}
+                aria-label="Adjuntar archivos para que la IA los analice"
+                title="Adjuntar imagen o archivo"
+              >
+                <Paperclip size={17} />
+              </button>
               <label className={styles.importedCodeAssistantInputWrap}>
                 <textarea
                   rows={1}

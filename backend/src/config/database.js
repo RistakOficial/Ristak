@@ -3,6 +3,10 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import {
+  extractWhatsAppProfileName,
+  shouldReplaceWhatsAppApiContactName
+} from '../utils/whatsappContactProfile.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -678,6 +682,140 @@ async function migrateWhatsAppContactIdsToRistak() {
   if (migrated > 0) {
     logger.success(`✅ Migración: ${migrated} contactos WhatsApp ahora usan ID propio rstk_contact_*`)
   }
+}
+
+function parseStoredDate(value) {
+  if (!value) return ''
+  const parsed = Date.parse(String(value))
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : ''
+}
+
+function isDateEarlier(candidate, current) {
+  const candidateDate = parseStoredDate(candidate)
+  if (!candidateDate) return false
+  const currentDate = parseStoredDate(current)
+  if (!currentDate) return true
+  return new Date(candidateDate).getTime() < new Date(currentDate).getTime()
+}
+
+function parseJsonMaybe(value, fallback = null) {
+  if (value === null || value === undefined || value === '') return fallback
+  if (typeof value !== 'string') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function isWhatsAppApiSource(value = '') {
+  return String(value || '').trim().toLowerCase() === 'whatsapp_api'
+}
+
+export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 5000 } = {}) {
+  const rows = await db.all(`
+    SELECT
+      c.id,
+      c.phone,
+      c.full_name,
+      c.first_name,
+      c.source,
+      c.created_at,
+      wac.id AS api_contact_id,
+      wac.profile_name,
+      wac.raw_profile_json,
+      wac.first_seen_at
+    FROM contacts c
+    LEFT JOIN whatsapp_api_contacts wac
+      ON wac.contact_id = c.id
+      OR (
+        c.phone IS NOT NULL AND c.phone != ''
+        AND wac.phone IS NOT NULL AND wac.phone != ''
+        AND wac.phone = c.phone
+      )
+    WHERE LOWER(COALESCE(c.source, '')) = 'whatsapp_api'
+      OR wac.id IS NOT NULL
+    LIMIT ?
+  `, [Math.max(Number(limit) || 5000, 1)]).catch(() => [])
+
+  let repairedContacts = 0
+  let repairedApiContacts = 0
+
+  for (const row of rows) {
+    const phone = normalizePhoneForStorage(row.phone) || String(row.phone || '').trim()
+    const messages = await db.all(`
+      SELECT message_timestamp, created_at, raw_payload_json
+      FROM whatsapp_api_messages
+      WHERE contact_id = ?
+        OR (? != '' AND phone = ?)
+      ORDER BY COALESCE(message_timestamp, created_at) ASC, created_at ASC
+      LIMIT 80
+    `, [row.id, phone || '', phone || '']).catch(() => [])
+    const firstMessage = messages.find(message => message.message_timestamp || message.created_at)
+    const firstMessageAt = parseStoredDate(
+      firstMessage?.message_timestamp ||
+      firstMessage?.created_at ||
+      row.first_seen_at
+    )
+
+    let profileName = extractWhatsAppProfileName(row.raw_profile_json, phone)
+    if (!profileName) {
+      for (const message of messages) {
+        profileName = extractWhatsAppProfileName(parseJsonMaybe(message.raw_payload_json), phone)
+        if (profileName) break
+      }
+    }
+
+    const contactUpdates = []
+    const contactParams = []
+
+    if (profileName && shouldReplaceWhatsAppApiContactName(row.full_name, phone)) {
+      contactUpdates.push('full_name = ?')
+      contactParams.push(profileName)
+      contactUpdates.push('first_name = ?')
+      contactParams.push(profileName)
+    }
+
+    if (isWhatsAppApiSource(row.source) && firstMessageAt && isDateEarlier(firstMessageAt, row.created_at)) {
+      contactUpdates.push('created_at = ?')
+      contactParams.push(firstMessageAt)
+    }
+
+    if (contactUpdates.length) {
+      contactUpdates.push('updated_at = CURRENT_TIMESTAMP')
+      contactParams.push(row.id)
+      await db.run(`UPDATE contacts SET ${contactUpdates.join(', ')} WHERE id = ?`, contactParams)
+      repairedContacts += 1
+    }
+
+    if (row.api_contact_id) {
+      const apiUpdates = []
+      const apiParams = []
+
+      if (profileName && shouldReplaceWhatsAppApiContactName(row.profile_name, phone)) {
+        apiUpdates.push('profile_name = ?')
+        apiParams.push(profileName)
+      }
+
+      if (firstMessageAt && isDateEarlier(firstMessageAt, row.first_seen_at)) {
+        apiUpdates.push('first_seen_at = ?')
+        apiParams.push(firstMessageAt)
+      }
+
+      if (apiUpdates.length) {
+        apiUpdates.push('updated_at = CURRENT_TIMESTAMP')
+        apiParams.push(row.api_contact_id)
+        await db.run(`UPDATE whatsapp_api_contacts SET ${apiUpdates.join(', ')} WHERE id = ?`, apiParams)
+        repairedApiContacts += 1
+      }
+    }
+  }
+
+  if (repairedContacts > 0 || repairedApiContacts > 0) {
+    logger.success(`✅ Reparación WhatsApp API: ${repairedContacts} contactos y ${repairedApiContacts} perfiles ajustados con historial real`)
+  }
+
+  return { contacts: repairedContacts, apiContacts: repairedApiContacts }
 }
 
 // Inicializar tablas
@@ -3813,6 +3951,12 @@ async function initTables() {
       await migrateWhatsAppContactIdsToRistak()
     } catch (err) {
       logger.warn('Advertencia al migrar IDs de contactos WhatsApp a Ristak:', err.message)
+    }
+
+    try {
+      await repairWhatsAppApiContactIdentityFromMessages()
+    } catch (err) {
+      logger.warn('Advertencia al reparar nombres/fechas de WhatsApp API:', err.message)
     }
 
     try {

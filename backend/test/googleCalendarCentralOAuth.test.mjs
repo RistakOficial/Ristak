@@ -252,3 +252,73 @@ test('OAuth central crea, edita y elimina eventos de Google Calendar sin guardar
     restoreEnv(previousEnv)
   }
 })
+
+test('OAuth central importa eventos despues de ligar un calendario Ristak a Google', async () => {
+  const previousEnv = snapshotEnv()
+  const requests = []
+  const { server, baseUrl } = await startLicenseServer(requests)
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_linked_google_${suffix}`
+  let db = null
+
+  try {
+    process.env.LICENSE_SERVER_URL = baseUrl
+    process.env.CLIENT_ID = 'cli_google_oauth'
+    process.env.LICENSE_KEY = 'RSTK-GOOGLE-TEST'
+    process.env.INSTALLATION_ID = 'inst_google_oauth'
+    process.env.APP_URL = 'https://demo.onrender.com'
+    process.env.APP_VERSION = '1.0.0'
+    process.env.OWNER_EMAIL = 'dueno@clinica.test'
+
+    ;({ db } = await import('../src/config/database.js'))
+    const localCalendarService = await import('../src/services/localCalendarService.js')
+    const googleCalendarService = await import('../src/services/googleCalendarService.js')
+
+    const calendar = await localCalendarService.createLocalCalendar({
+      id: calendarId,
+      name: 'Valoraciones Ristak'
+    })
+    assert.equal(calendar.googleCalendarId, '')
+
+    const linkedCalendar = await localCalendarService.updateLocalCalendar(calendar.id, {
+      googleCalendarId: 'ventas@test.com',
+      googleAccessRole: 'owner',
+      googleCalendarSummary: 'Ventas',
+      googleCalendarTimeZone: 'America/Mexico_City'
+    })
+    assert.equal(linkedCalendar.googleCalendarId, 'ventas@test.com')
+    assert.equal(linkedCalendar.googleAccessRole, 'owner')
+
+    const linkedCalendars = await localCalendarService.listGoogleLinkedLocalCalendars()
+    assert.ok(linkedCalendars.some(item => item.id === calendarId && item.googleCalendarId === 'ventas@test.com'))
+
+    const imported = await googleCalendarService.syncGoogleEventsToLocal({
+      startTime: String(Date.parse('2026-06-17T00:00:00.000Z')),
+      endTime: String(Date.parse('2026-06-18T00:00:00.000Z')),
+      calendarId
+    })
+    assert.equal(imported.saved, 1)
+    assert.equal(imported.linkedCalendars, 1)
+
+    const importedAppointment = await db.get(
+      'SELECT title, calendar_id, google_event_id FROM appointments WHERE google_event_id = ?',
+      ['evt_google_imported']
+    )
+    assert.equal(importedAppointment.title, 'Cita importada desde Google')
+    assert.equal(importedAppointment.calendar_id, calendarId)
+
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].path, '/api/license/google-calendar/events/list')
+    assert.equal(requests[0].body.google_calendar_id, 'ventas@test.com')
+    assert.equal(requests[0].body.time_min, '2026-06-17T00:00:00.000Z')
+    assert.equal(requests[0].body.time_max, '2026-06-18T00:00:00.000Z')
+  } finally {
+    if (db) {
+      await db.run('DELETE FROM appointments WHERE google_event_id = ?', ['evt_google_imported']).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    }
+    server.closeAllConnections?.()
+    server.close()
+    restoreEnv(previousEnv)
+  }
+})

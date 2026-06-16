@@ -455,7 +455,7 @@ function calendarRowToApi(row = {}) {
     id: row.id,
     ghlCalendarId: row.ghl_calendar_id || null,
     googleCalendarId: rawJson?.googleCalendarId || rawJson?.google_calendar_id || '',
-    googleAccessRole: rawJson?.accessRole || rawJson?.access_role || '',
+    googleAccessRole: rawJson?.googleAccessRole || rawJson?.google_access_role || rawJson?.accessRole || rawJson?.access_role || '',
     googleCalendarSummary: rawJson?.googleCalendarSummary || rawJson?.google_calendar_summary || rawJson?.summary || '',
     googleCalendarTimeZone: rawJson?.googleCalendarTimeZone || rawJson?.google_calendar_time_zone || rawJson?.timeZone || rawJson?.time_zone || '',
     googleSyncEnabled: Boolean(rawJson?.googleCalendarId || rawJson?.google_calendar_id),

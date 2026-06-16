@@ -480,6 +480,16 @@ export interface ImportedEditableContentUpdate {
 
 export type SitesAICreationKind = 'landing' | 'form' | 'interactive_form'
 
+export interface SitesAIAttachmentInput {
+  id?: string
+  name: string
+  size?: number
+  mimeType?: string
+  kind?: 'image' | 'text' | 'pdf' | 'file'
+  text?: string
+  dataUrl?: string
+}
+
 export interface SitesAICreationMessage {
   role: 'user' | 'assistant'
   content: string
@@ -665,7 +675,7 @@ export const sitesService = {
     return apiClient.post<SitesAICreationResult>('/sites/ai-create-html', payload)
   },
 
-  editImportedHtmlWithAI(siteId: string, payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[]; model?: string; visualContext?: SitesAIPreviewVisualContext | null; pageId?: string; aiRegionRequest?: string; draftOnly?: boolean; currentHtml?: string; currentFilePath?: string }) {
+  editImportedHtmlWithAI(siteId: string, payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[]; model?: string; visualContext?: SitesAIPreviewVisualContext | null; pageId?: string; aiRegionRequest?: string; draftOnly?: boolean; currentHtml?: string; currentFilePath?: string; attachments?: SitesAIAttachmentInput[] }) {
     return apiClient.post<SitesAICreationResult>(`/sites/${siteId}/ai-edit-html`, payload)
   },
 

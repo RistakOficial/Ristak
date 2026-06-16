@@ -43,6 +43,36 @@ function parseJson(value, fallback = null) {
   }
 }
 
+function normalizeGoogleEventTimeBound(value, label) {
+  const raw = cleanString(value)
+  if (!raw) return ''
+
+  const numericValue = typeof value === 'number' || /^-?\d+(\.\d+)?$/.test(raw)
+    ? Number(value)
+    : Number.NaN
+  const millis = Number.isFinite(numericValue) && Math.abs(numericValue) < 100000000000
+    ? numericValue * 1000
+    : numericValue
+  const date = Number.isFinite(millis) ? new Date(millis) : new Date(raw)
+
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`El rango de fechas de Google Calendar no es válido (${label}).`)
+  }
+
+  return date.toISOString()
+}
+
+function normalizeGoogleEventTimeRange({ startTime = '', endTime = '' } = {}) {
+  const timeMin = normalizeGoogleEventTimeBound(startTime, 'startTime')
+  const timeMax = normalizeGoogleEventTimeBound(endTime, 'endTime')
+
+  if (timeMin && timeMax && new Date(timeMin).getTime() > new Date(timeMax).getTime()) {
+    throw new Error('El rango de fechas de Google Calendar no es válido: la fecha inicial es posterior a la final.')
+  }
+
+  return { timeMin, timeMax }
+}
+
 function normalizePrivateKey(privateKey) {
   return cleanString(privateKey).replace(/\\n/g, '\n')
 }
@@ -477,6 +507,7 @@ export async function listGoogleEvents({ timeMin, timeMax, calendarId = null, co
   if (!activeConfig) return []
 
   const targetCalendarId = calendarId || activeConfig.calendarId
+  const range = normalizeGoogleEventTimeRange({ startTime: timeMin, endTime: timeMax })
   const params = new URLSearchParams({
     singleEvents: 'true',
     orderBy: 'startTime',
@@ -484,8 +515,8 @@ export async function listGoogleEvents({ timeMin, timeMax, calendarId = null, co
     maxResults: '2500'
   })
 
-  if (timeMin) params.set('timeMin', new Date(Number(timeMin) || timeMin).toISOString())
-  if (timeMax) params.set('timeMax', new Date(Number(timeMax) || timeMax).toISOString())
+  if (range.timeMin) params.set('timeMin', range.timeMin)
+  if (range.timeMax) params.set('timeMax', range.timeMax)
 
   const events = []
   let pageToken = ''
@@ -618,17 +649,18 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
     return { enabled: true, saved: 0, linkedCalendars: 0 }
   }
 
+  const range = normalizeGoogleEventTimeRange({ startTime, endTime })
   let saved = 0
   for (const target of targets) {
     const events = centralMode
       ? await listCentralGoogleCalendarEvents({
         googleCalendarId: target.googleCalendarId,
-        timeMin: startTime,
-        timeMax: endTime
+        timeMin: range.timeMin,
+        timeMax: range.timeMax
       })
       : await listGoogleEvents({
-        timeMin: startTime,
-        timeMax: endTime,
+        timeMin: range.timeMin,
+        timeMax: range.timeMax,
         calendarId: target.googleCalendarId,
         config: activeConfig
       })
