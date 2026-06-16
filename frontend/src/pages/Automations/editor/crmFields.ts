@@ -521,12 +521,20 @@ export function summarizeCondition(config: unknown): string {
 export type TriggerFilterMatch =
   | 'is'
   | 'not'
+  | 'eq'
+  | 'neq'
+  | 'gt'
+  | 'gte'
+  | 'lt'
+  | 'lte'
   | 'contains'
   | 'not_contains'
   | 'starts_with'
   | 'ends_with'
   | 'empty'
   | 'not_empty'
+  | 'yes'
+  | 'no'
   | 'is_disqualified'
   | 'not_disqualified'
 
@@ -551,12 +559,20 @@ export const TRIGGER_FILTER_OPERATORS: Array<{
 }> = [
   { value: 'is', label: 'es igual a' },
   { value: 'not', label: 'no es igual a' },
+  { value: 'eq', label: 'igual a' },
+  { value: 'neq', label: 'diferente de' },
+  { value: 'gt', label: 'mayor que' },
+  { value: 'gte', label: 'mayor o igual que' },
+  { value: 'lt', label: 'menor que' },
+  { value: 'lte', label: 'menor o igual que' },
   { value: 'contains', label: 'contiene' },
   { value: 'not_contains', label: 'no contiene' },
   { value: 'starts_with', label: 'empieza con' },
   { value: 'ends_with', label: 'termina con' },
   { value: 'empty', label: 'está vacío', noValue: true },
   { value: 'not_empty', label: 'no está vacío', noValue: true },
+  { value: 'yes', label: 'sí', noValue: true },
+  { value: 'no', label: 'no', noValue: true },
   { value: 'is_disqualified', label: 'es descalificado', noValue: true },
   { value: 'not_disqualified', label: 'no es descalificado', noValue: true }
 ]
@@ -571,6 +587,7 @@ export function triggerOperatorNeedsValue(match: unknown): boolean {
 export interface TriggerFilterField {
   id: string
   label: string
+  type?: 'text' | 'number' | 'boolean'
   /** Frase con artículo para la oración ("la fuente", "el país"…) */
   phrase: string
   catalog?: CatalogKind
@@ -586,6 +603,30 @@ export interface TriggerFilterField {
 
 export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   // Del evento (solo aparecen cuando el disparador los produce)
+  {
+    id: 'changed_detail',
+    label: 'Detalle que cambió',
+    phrase: 'el detalle que cambió',
+    catalog: 'contactChangeFields',
+    category: 'Cambio',
+    appliesTo: ['contact_change'],
+    operators: ['is', 'not', 'contains', 'not_contains']
+  },
+  {
+    id: 'change_source',
+    label: 'Origen del cambio',
+    phrase: 'el origen del cambio',
+    options: [
+      { value: 'manual', label: 'Manual' },
+      { value: 'automation', label: 'Automatización' },
+      { value: 'webhook', label: 'Webhook / integración' },
+      { value: 'tag', label: 'Etiqueta' },
+      { value: 'payment', label: 'Pago' },
+      { value: 'appointment', label: 'Cita' }
+    ],
+    category: 'Cambio',
+    appliesTo: ['contact_change']
+  },
   { id: 'message', label: 'Mensaje', phrase: 'el mensaje', category: 'Mensaje', appliesTo: ['message'] },
   { id: 'channel', label: 'Canal del mensaje', phrase: 'el canal', options: CHANNEL_FIELD_OPTIONS, category: 'Mensaje', appliesTo: ['message'] },
   { id: 'calendar', label: 'Calendario', phrase: 'el calendario', catalog: 'calendars', category: 'Cita', appliesTo: ['appointment'] },
@@ -624,12 +665,28 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'email', label: 'Email (dato de contacto)', phrase: 'el email', category: 'Contacto' },
   { id: 'phone', label: 'Teléfono', phrase: 'el teléfono', category: 'Contacto' },
   { id: 'assigned', label: 'Usuario asignado', phrase: 'el usuario asignado', catalog: 'users', category: 'Contacto' },
-  { id: 'custom', label: 'Campo personalizado…', phrase: 'el campo', category: 'Contacto' }
+  { id: 'preferred_whatsapp_number', label: 'Número de WhatsApp asignado', phrase: 'el número de WhatsApp asignado', catalog: 'whatsappNumbers', category: 'Contacto' },
+  { id: 'custom', label: 'Campo personalizado…', phrase: 'el campo', category: 'Contacto' },
+  { id: 'created_at', label: 'Fecha de creación', phrase: 'la fecha de creación', category: 'Sistema' },
+  { id: 'updated_at', label: 'Fecha de actualización', phrase: 'la fecha de actualización', category: 'Sistema' },
+  { id: 'visitor_id', label: 'Visitor ID', phrase: 'el visitor ID', category: 'Sistema' },
+  { id: 'total_paid', label: 'Total pagado', phrase: 'el total pagado', type: 'number', category: 'Pagos del contacto', appliesTo: ['contact_change'] },
+  { id: 'payments_count', label: 'Cantidad de pagos', phrase: 'la cantidad de pagos', type: 'number', category: 'Pagos del contacto', appliesTo: ['contact_change'] },
+  { id: 'successful_payments_count', label: 'Cantidad de pagos exitosos', phrase: 'la cantidad de pagos exitosos', type: 'number', category: 'Pagos del contacto', appliesTo: ['contact_change'] },
+  { id: 'last_purchase_date', label: 'Último pago', phrase: 'la fecha del último pago', category: 'Pagos del contacto', appliesTo: ['contact_change'] },
+  { id: 'appointments_count', label: 'Cantidad de citas', phrase: 'la cantidad de citas', type: 'number', category: 'Citas del contacto', appliesTo: ['contact_change'] },
+  { id: 'active_appointments_count', label: 'Cantidad de citas activas', phrase: 'la cantidad de citas activas', type: 'number', category: 'Citas del contacto', appliesTo: ['contact_change'] },
+  { id: 'has_active_appointment', label: 'Tiene cita activa', phrase: 'tiene cita activa', type: 'boolean', category: 'Citas del contacto', appliesTo: ['contact_change'] },
+  { id: 'active_appointment_status', label: 'Estado de cita activa', phrase: 'el estado de la cita activa', options: APPOINTMENT_STATUS_OPTIONS, category: 'Citas del contacto', appliesTo: ['contact_change'] },
+  { id: 'active_appointment_calendar', label: 'Calendario de cita activa', phrase: 'el calendario de la cita activa', catalog: 'calendars', category: 'Citas del contacto', appliesTo: ['contact_change'] },
+  { id: 'active_appointment_assigned', label: 'Usuario de cita activa', phrase: 'el usuario de la cita activa', catalog: 'users', category: 'Citas del contacto', appliesTo: ['contact_change'] },
+  { id: 'active_appointment_date', label: 'Fecha de cita activa', phrase: 'la fecha de la cita activa', category: 'Citas del contacto', appliesTo: ['contact_change'] }
 ]
 
 /** Contextos de evento que produce cada disparador / tipo de objetivo */
 const TRIGGER_FILTER_CONTEXTS: Record<string, string[]> = {
   'trigger-customer-replied': ['message'],
+  'trigger-contact-updated': ['contact_change'],
   'trigger-appointment-booked': ['appointment'],
   'trigger-appointment-status': ['appointment'],
   'trigger-payment-received': ['payment'],
@@ -657,7 +714,17 @@ export function filterFieldsFor(contextKey?: string): TriggerFilterField[] {
 
 export function triggerOperatorsForField(field?: TriggerFilterField): typeof TRIGGER_FILTER_OPERATORS {
   if (!field?.operators?.length) {
-    return TRIGGER_FILTER_OPERATORS.filter((operator) => operator.value !== 'is_disqualified' && operator.value !== 'not_disqualified')
+    if (field?.type === 'number') {
+      return TRIGGER_FILTER_OPERATORS.filter((operator) =>
+        ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'empty', 'not_empty'].includes(operator.value)
+      )
+    }
+    if (field?.type === 'boolean') {
+      return TRIGGER_FILTER_OPERATORS.filter((operator) => ['yes', 'no'].includes(operator.value))
+    }
+    return TRIGGER_FILTER_OPERATORS.filter((operator) =>
+      !['is_disqualified', 'not_disqualified', 'eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'yes', 'no'].includes(operator.value)
+    )
   }
   return TRIGGER_FILTER_OPERATORS.filter((operator) => field.operators?.includes(operator.value))
 }
@@ -704,12 +771,20 @@ export function triggerFiltersSentence(value: unknown): string {
       const verbs: Record<string, string> = {
         is: 'es igual a',
         not: 'NO es igual a',
+        eq: 'es igual a',
+        neq: 'NO es igual a',
+        gt: 'es mayor que',
+        gte: 'es mayor o igual que',
+        lt: 'es menor que',
+        lte: 'es menor o igual que',
         contains: 'contenga',
         not_contains: 'NO contenga',
         starts_with: 'empiece con',
         ends_with: 'termine con',
         empty: 'esté vacío',
         not_empty: 'no esté vacío',
+        yes: 'sea sí',
+        no: 'sea no',
         is_disqualified: 'es descalificado',
         not_disqualified: 'no es descalificado'
       }

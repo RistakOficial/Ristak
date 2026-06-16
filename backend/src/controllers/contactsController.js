@@ -2325,14 +2325,21 @@ export const updateContact = async (req, res) => {
     // Motor de automatizaciones: campo cambiado y etiquetas
     {
       const changedFields = []
-      if (full_name !== undefined && full_name !== existing.full_name) changedFields.push('name')
+      if (full_name !== undefined && full_name !== existing.full_name) changedFields.push('name', 'fullName')
       if (email !== undefined && email !== existing.email) changedFields.push('email')
       if (phone !== undefined && phone !== existing.phone) changedFields.push('phone')
       if (source !== undefined && source !== existing.source) changedFields.push('source')
-      if (Array.isArray(customFields)) customFields.forEach(field => { if (field?.key) changedFields.push(field.key) })
+      if (attribution_ad_name !== undefined) changedFields.push('attributionAd')
+      if (attribution_ad_id !== undefined) changedFields.push('attributionAd')
+      if (hasPreferredWhatsAppPhoneNumberUpdate && cleanString(existing.preferred_whatsapp_phone_number_id) !== cleanString(preferredWhatsAppPhoneNumberInput)) {
+        changedFields.push('preferredWhatsAppPhoneNumberId', 'preferred_whatsapp_phone_number_id')
+      }
+      if (Array.isArray(customFields)) customFields.forEach(field => {
+        if (field?.key) changedFields.push(field.key, `custom:${field.key}`)
+      })
       import('../services/automationEngine.js').then(engine => {
         if (changedFields.length > 0) {
-          engine.handleAutomationEvent('contact-updated', { contactId: id, changedFields }).catch(() => {})
+          engine.handleAutomationEvent('contact-updated', { contactId: id, changedFields, contactChangeSource: 'manual' }).catch(() => {})
         }
         tagEvents.forEach(event => {
           engine.handleAutomationEvent('tag-changed', { contactId: id, ...event }).catch(() => {})

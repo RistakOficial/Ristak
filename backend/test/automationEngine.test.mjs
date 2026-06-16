@@ -818,6 +818,302 @@ test('acción cambia el número de WhatsApp preferido del contacto', async () =>
   }
 })
 
+test('trigger contacto modificado filtra número de WhatsApp asignado', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_contact_change_whatsapp_${suffix}`
+  const contactId = `contact_change_whatsapp_${suffix}`
+  const phoneId = `wa_contact_change_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-contact-updated',
+              type: 'trigger-contact-updated',
+              config: {
+                filters: [
+                  {
+                    field: 'changed_detail',
+                    match: 'is',
+                    value: 'preferredWhatsAppPhoneNumberId',
+                    valueLabel: 'Número de WhatsApp asignado'
+                  },
+                  {
+                    field: 'preferred_whatsapp_number',
+                    match: 'is',
+                    value: phoneId,
+                    valueLabel: 'Soporte'
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, preferred_whatsapp_phone_number_id, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [contactId, `+523${Date.now().toString().slice(-10)}`, `wa-change-${suffix}@test.com`, 'Contacto Cambio WhatsApp', 'Contacto', phoneId, '{}']
+    )
+    await db.run(
+      `INSERT INTO whatsapp_api_phone_numbers (id, phone_number, display_phone_number, verified_name, label)
+       VALUES (?, ?, ?, ?, ?)`,
+      [phoneId, '525533333333', '+52 55 3333 3333', 'Soporte Meta', 'Soporte']
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test contacto modificado WhatsApp', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('contact-updated', {
+      contactId,
+      changedFields: ['preferredWhatsAppPhoneNumberId']
+    })
+
+    const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?', [automationId, contactId])
+    assert.ok(enrollment)
+    assert.equal(enrollment.status, 'completed')
+    assert.equal(enrollment.current_node_id, 'done')
+    const log = JSON.parse(enrollment.log)
+    assert.equal(log.some((entry) => {
+      const detail = String(entry.detail || '')
+      return detail.includes('cambió') && detail.includes('preferredWhatsAppPhoneNumberId')
+    }), true)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneId])
+  }
+})
+
+test('trigger contacto modificado filtra totales de pago del contacto', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_contact_change_payment_${suffix}`
+  const contactId = `contact_change_payment_${suffix}`
+  const paymentId = `payment_contact_change_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-contact-updated',
+              type: 'trigger-contact-updated',
+              config: {
+                filters: [
+                  {
+                    field: 'changed_detail',
+                    match: 'is',
+                    value: 'totalPaid',
+                    valueLabel: 'Total pagado'
+                  },
+                  {
+                    field: 'total_paid',
+                    match: 'gte',
+                    value: '100'
+                  },
+                  {
+                    field: 'payments_count',
+                    match: 'gte',
+                    value: '1'
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [contactId, `+523${Date.now().toString().slice(-10)}`, `payment-change-${suffix}@test.com`, 'Contacto Cambio Pago', 'Contacto', '{}']
+    )
+    await db.run(
+      `INSERT INTO payments (id, contact_id, amount, currency, status, payment_method, payment_mode, reference, title, date)
+       VALUES (?, ?, ?, 'MXN', 'paid', 'card', 'live', ?, ?, ?)`,
+      [paymentId, contactId, 150, `INV-${suffix}`, 'Compra prueba', '2026-06-16T12:00:00.000Z']
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test contacto modificado pagos', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('payment-received', {
+      contactId,
+      paymentId,
+      amount: 150,
+      paymentStatus: 'paid',
+      product: 'Compra prueba'
+    })
+
+    const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?', [automationId, contactId])
+    assert.ok(enrollment)
+    assert.equal(enrollment.status, 'completed')
+    assert.equal(enrollment.current_node_id, 'done')
+    const log = JSON.parse(enrollment.log)
+    assert.equal(log.some((entry) => String(entry.detail || '').includes('pago exitoso')), true)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('trigger contacto modificado filtra cita activa y cantidad de citas', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_contact_change_appointment_${suffix}`
+  const contactId = `contact_change_appointment_${suffix}`
+  const appointmentId = `appointment_contact_change_${suffix}`
+  const calendarId = `calendar_contact_change_${suffix}`
+  const assignedUserId = `user_contact_change_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-contact-updated',
+              type: 'trigger-contact-updated',
+              config: {
+                filters: [
+                  {
+                    field: 'changed_detail',
+                    match: 'is',
+                    value: 'activeAppointment',
+                    valueLabel: 'Cita activa'
+                  },
+                  {
+                    field: 'has_active_appointment',
+                    match: 'yes',
+                    value: ''
+                  },
+                  {
+                    field: 'appointments_count',
+                    match: 'gte',
+                    value: '1'
+                  },
+                  {
+                    field: 'active_appointment_status',
+                    match: 'is',
+                    value: 'confirmed'
+                  },
+                  {
+                    field: 'active_appointment_calendar',
+                    match: 'is',
+                    value: calendarId
+                  },
+                  {
+                    field: 'active_appointment_assigned',
+                    match: 'is',
+                    value: assignedUserId
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [contactId, `+523${Date.now().toString().slice(-10)}`, `appointment-change-${suffix}@test.com`, 'Contacto Cambio Cita', 'Contacto', '{}']
+    )
+    await db.run(
+      `INSERT INTO appointments (id, calendar_id, contact_id, title, status, appointment_status, assigned_user_id, start_time, end_time)
+       VALUES (?, ?, ?, ?, 'confirmed', 'confirmed', ?, ?, ?)`,
+      [
+        appointmentId,
+        calendarId,
+        contactId,
+        'Cita prueba',
+        assignedUserId,
+        '2026-06-18T16:00:00.000Z',
+        '2026-06-18T17:00:00.000Z'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test contacto modificado citas', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('appointment-booked', {
+      contactId,
+      appointmentId,
+      calendarId,
+      status: 'confirmed'
+    })
+
+    const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?', [automationId, contactId])
+    assert.ok(enrollment)
+    assert.equal(enrollment.status, 'completed')
+    assert.equal(enrollment.current_node_id, 'done')
+    const log = JSON.parse(enrollment.log)
+    assert.equal(log.some((entry) => String(entry.detail || '').includes('agendó una cita')), true)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
 test('inscripción manual mete un contacto publicado al flujo seleccionado', async () => {
   const suffix = randomUUID()
   const automationId = `automation_manual_${suffix}`

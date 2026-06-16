@@ -187,6 +187,7 @@ function triggerLinkDisplayName(ctx = {}) {
 }
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'successful'])
+const SUCCESS_PAYMENT_STATUS_SQL = [...SUCCESS_PAYMENT_STATUSES].map((status) => `'${status}'`).join(', ')
 const FAILED_PAYMENT_STATUSES = new Set(['failed', 'failure', 'error', 'declined', 'canceled', 'cancelled', 'void', 'voided', 'overdue'])
 const REFUNDED_PAYMENT_STATUSES = new Set(['refunded', 'refund', 'partially_refunded'])
 const PENDING_PAYMENT_STATUSES = new Set([
@@ -221,6 +222,84 @@ function paymentActionFromContext(ctx = {}, eventType = '') {
     ctx.status ||
     ''
   )
+}
+
+const CONTACT_CHANGE_EVENT_TYPES = new Set([
+  'contact-updated',
+  'tag-changed',
+  'payment-received',
+  'refund',
+  'appointment-booked',
+  'appointment-status'
+])
+
+const CHANGE_SOURCE_BY_EVENT = {
+  'contact-updated': 'webhook',
+  'tag-changed': 'tag',
+  'payment-received': 'payment',
+  refund: 'payment',
+  'appointment-booked': 'appointment',
+  'appointment-status': 'appointment'
+}
+
+function changeFieldCandidates(value) {
+  const raw = cleanString(value)
+  if (!raw) return []
+  const withoutPrefix = raw.replace(/^custom:/i, '')
+  const snake = withoutPrefix.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
+  return [...new Set([
+    raw,
+    withoutPrefix,
+    snake,
+    snake.replace(/_/g, ''),
+    raw === 'preferred_whatsapp_phone_number_id' ? 'preferredWhatsAppPhoneNumberId' : '',
+    raw === 'preferredWhatsAppPhoneNumberId' ? 'preferred_whatsapp_phone_number_id' : '',
+    raw === 'assignedUser' ? 'assigned_user' : '',
+    raw === 'totalPaid' ? 'total_paid' : '',
+    raw === 'purchasesCount' ? 'purchases_count' : '',
+    raw === 'paymentsCount' ? 'payments_count' : '',
+    raw === 'appointmentsCount' ? 'appointments_count' : '',
+    raw === 'activeAppointment' ? 'active_appointment' : '',
+    raw === 'appointmentStatus' ? 'appointment_status' : '',
+    raw === 'appointmentCalendar' ? 'appointment_calendar' : '',
+    raw === 'appointmentAssignedUser' ? 'appointment_assigned_user' : '',
+    raw === 'appointmentDate' ? 'appointment_date' : ''
+  ].filter(Boolean).map(normalizeText))]
+}
+
+function changedFieldMatches(changedFields = [], expectedValue = '') {
+  const expected = changeFieldCandidates(expectedValue)
+  if (expected.length === 0) return false
+  return (Array.isArray(changedFields) ? changedFields : [])
+    .flatMap(changeFieldCandidates)
+    .some((candidate) => expected.includes(candidate))
+}
+
+function contactChangeFieldsForEvent(eventType, ctx = {}) {
+  const explicit = Array.isArray(ctx.changedFields) ? ctx.changedFields : []
+  const fields = [...explicit]
+  if (CONTACT_CHANGE_EVENT_TYPES.has(eventType)) fields.push('updatedAt')
+  if (eventType === 'tag-changed') fields.push('tags')
+  if (eventType === 'payment-received' || eventType === 'refund') {
+    fields.push('payments', 'paymentsCount', 'totalPaid', 'purchasesCount', 'lastPurchaseDate')
+  }
+  if (eventType === 'appointment-booked') {
+    fields.push('appointments', 'appointmentsCount', 'activeAppointmentsCount', 'activeAppointment', 'appointmentStatus', 'appointmentCalendar', 'appointmentDate')
+  }
+  if (eventType === 'appointment-status') {
+    fields.push('appointments', 'activeAppointment', 'appointmentStatus')
+  }
+  return [...new Set(fields.map(cleanString).filter(Boolean))]
+}
+
+function withContactChangeContext(eventType, ctx = {}) {
+  if (!CONTACT_CHANGE_EVENT_TYPES.has(eventType)) return ctx
+  return {
+    ...ctx,
+    changedFields: contactChangeFieldsForEvent(eventType, ctx),
+    contactChangeEventType: eventType,
+    contactChangeSource: ctx.contactChangeSource || ctx.changeSource || CHANGE_SOURCE_BY_EVENT[eventType] || 'webhook'
+  }
 }
 
 function paymentActionMatches(configAction, ctx = {}, eventType = '') {
@@ -460,6 +539,8 @@ function filterFieldValue(filter, ctx) {
   const contact = ctx.contact || {}
   const custom = contact.customFields || {}
   switch (filter.field) {
+    case 'changed_detail': return ctx.changedFields || []
+    case 'change_source': return ctx.contactChangeSource || ctx.changeSource || ''
     case 'message': return ctx.messageText || ''
     case 'channel': return ctx.channel || ''
     case 'first_name': return contact.firstName || ''
@@ -467,11 +548,26 @@ function filterFieldValue(filter, ctx) {
     case 'source': return contact.source || ''
     case 'email': return contact.email || ''
     case 'phone': return contact.phone || ''
+    case 'preferred_whatsapp_number': return contact.preferredWhatsAppPhoneNumberId || contact.preferred_whatsapp_phone_number_id || ''
     case 'country': return contact.country || ''
     case 'stage': return contact.stage || custom.stage || ''
     case 'assigned': return contact.assignedUser || custom.assignedUser || ''
     case 'tag': return (contact.tagKeys || contact.tags || []).join(' , ')
     case 'custom': return String(custom[filter.customKey] ?? '')
+    case 'created_at': return contact.createdAt || ''
+    case 'updated_at': return contact.updatedAt || ''
+    case 'visitor_id': return contact.visitorId || ''
+    case 'total_paid': return contact.totalPaid ?? contact.total_paid ?? 0
+    case 'payments_count': return contact.paymentsCount ?? 0
+    case 'successful_payments_count': return contact.purchasesCount ?? contact.purchases_count ?? 0
+    case 'last_purchase_date': return contact.lastPurchaseDate || ''
+    case 'appointments_count': return contact.appointmentsCount ?? 0
+    case 'active_appointments_count': return contact.activeAppointmentsCount ?? 0
+    case 'has_active_appointment': return boolText(Boolean(contact.hasActiveAppointment))
+    case 'active_appointment_status': return contact.activeAppointmentStatus || ''
+    case 'active_appointment_calendar': return contact.activeAppointmentCalendarId || ''
+    case 'active_appointment_assigned': return contact.activeAppointmentAssignedUserId || ''
+    case 'active_appointment_date': return contact.activeAppointmentDate || ''
     // Atribución de anuncios (vive en el contacto)
     case 'ad': return contact.adName || contact.adId || ''
     case 'ad_id': return contact.adId || ''
@@ -503,21 +599,63 @@ function filterFieldValue(filter, ctx) {
 }
 
 /** Operadores de filtro que no comparan contra un valor capturado */
-const NO_VALUE_FILTER_OPERATORS = new Set(['empty', 'not_empty', 'is_disqualified', 'not_disqualified'])
+const NO_VALUE_FILTER_OPERATORS = new Set(['empty', 'not_empty', 'yes', 'no', 'is_disqualified', 'not_disqualified'])
+
+function truthyFilterValue(value) {
+  return ['true', '1', 'yes', 'si', 'sí'].includes(normalizeText(value))
+}
+
+function numericCompare(actualRaw, expectedRaw, operator) {
+  const actual = Number(actualRaw)
+  const expected = Number(expectedRaw)
+  if (!Number.isFinite(actual) || !Number.isFinite(expected)) return false
+  switch (operator) {
+    case 'neq': return actual !== expected
+    case 'gt': return actual > expected
+    case 'gte': return actual >= expected
+    case 'lt': return actual < expected
+    case 'lte': return actual <= expected
+    default: return actual === expected
+  }
+}
+
+function evaluateChangedDetailFilter(filter, ctx) {
+  const matched = changedFieldMatches(ctx.changedFields, filter.value)
+  switch (filter.match) {
+    case 'not':
+    case 'not_contains':
+      return !matched
+    case 'empty':
+      return !(Array.isArray(ctx.changedFields) && ctx.changedFields.length > 0)
+    case 'not_empty':
+      return Array.isArray(ctx.changedFields) && ctx.changedFields.length > 0
+    default:
+      return matched
+  }
+}
 
 function evaluateFilter(filter, ctx) {
+  if (filter.field === 'changed_detail') return evaluateChangedDetailFilter(filter, ctx)
   const actualRaw = filterFieldValue(filter, ctx)
   if (actualRaw === null) return true
   const actual = normalizeText(actualRaw)
   const expected = normalizeText(filter.value)
   switch (filter.match) {
     case 'not': return actual !== expected
+    case 'eq': return numericCompare(actualRaw, filter.value, 'eq')
+    case 'neq': return numericCompare(actualRaw, filter.value, 'neq')
+    case 'gt': return numericCompare(actualRaw, filter.value, 'gt')
+    case 'gte': return numericCompare(actualRaw, filter.value, 'gte')
+    case 'lt': return numericCompare(actualRaw, filter.value, 'lt')
+    case 'lte': return numericCompare(actualRaw, filter.value, 'lte')
     case 'contains': return actual.includes(expected)
     case 'not_contains': return !actual.includes(expected)
     case 'starts_with': return actual.startsWith(expected)
     case 'ends_with': return actual.endsWith(expected)
     case 'empty': return actual === ''
     case 'not_empty': return actual !== ''
+    case 'yes': return truthyFilterValue(actualRaw)
+    case 'no': return !truthyFilterValue(actualRaw)
     case 'is_disqualified': return actual === 'true' || actual === 'disqualified' || actual === 'descalificado'
     case 'not_disqualified': return actual !== 'true' && actual !== 'disqualified' && actual !== 'descalificado'
     default: return actual === expected
@@ -546,7 +684,8 @@ const APPOINTMENT_STATUS_ALIASES = {
 
 function triggerMatches(trigger, eventType, ctx) {
   const config = trigger.config || {}
-  if (!filtersMatch(config.filters, ctx)) return false
+  const matchCtx = trigger.type === 'trigger-contact-updated' ? withContactChangeContext(eventType, ctx) : ctx
+  if (!filtersMatch(config.filters, matchCtx)) return false
 
   switch (eventType) {
     case 'message-received': {
@@ -566,11 +705,11 @@ function triggerMatches(trigger, eventType, ctx) {
       if (trigger.type !== 'trigger-contact-updated') return false
       const field = str(config.field)
       if (!field) return true
-      const changed = (ctx.changedFields || []).map(normalizeText)
-      return changed.includes(normalizeText(field)) || changed.includes(normalizeText(field.replace(/^custom:/, '')))
+      return changedFieldMatches(matchCtx.changedFields, field)
     }
 
     case 'tag-changed': {
+      if (trigger.type === 'trigger-contact-updated') return true
       if (trigger.type !== 'trigger-contact-tag') return false
       const operator = str(config.operator) || 'added'
       const tag = normalizeText(config.tag)
@@ -594,12 +733,14 @@ function triggerMatches(trigger, eventType, ctx) {
     }
 
     case 'appointment-booked': {
+      if (trigger.type === 'trigger-contact-updated') return true
       if (trigger.type !== 'trigger-appointment-booked') return false
       const calendar = str(config.calendar)
       return !calendar || calendar === str(ctx.calendarId)
     }
 
     case 'appointment-status': {
+      if (trigger.type === 'trigger-contact-updated') return true
       if (trigger.type !== 'trigger-appointment-status') return false
       const wanted = str(config.status) || 'confirmed'
       const actualRaw = normalizeText(ctx.status)
@@ -610,6 +751,7 @@ function triggerMatches(trigger, eventType, ctx) {
     }
 
     case 'payment-received': {
+      if (trigger.type === 'trigger-contact-updated') return true
       if (trigger.type !== 'trigger-payment-received') return false
       if (!paymentActionMatches(config.paymentAction, ctx, eventType)) return false
       const operator = str(config.amountOperator) || 'any'
@@ -626,6 +768,7 @@ function triggerMatches(trigger, eventType, ctx) {
     }
 
     case 'refund':
+      if (trigger.type === 'trigger-contact-updated') return true
       if (trigger.type === 'trigger-refund') return true
       if (trigger.type !== 'trigger-payment-received') return false
       if (!str(config.paymentAction)) return false
@@ -1388,6 +1531,15 @@ async function applyContactWhatsAppNumberAction(node, ctx) {
   })
 
   ctx.contact = await loadContact(contactId, ctx.contact)
+  setImmediate(() => {
+    handleAutomationEvent('contact-updated', {
+      contactId,
+      changedFields: ['preferredWhatsAppPhoneNumberId', 'preferred_whatsapp_phone_number_id'],
+      previousPhoneNumberId: previousPhoneNumberId || null,
+      newPhoneNumberId: targetPhoneNumberId,
+      contactChangeSource: 'automation'
+    }).catch(() => undefined)
+  })
   return {
     handle: 'out',
     detail: `Número de WhatsApp cambiado a ${targetLabel || targetPhoneNumberId}`,
@@ -1417,6 +1569,13 @@ async function applyContactUserAction(node, ctx) {
     ctx.contact.id
   ])
   ctx.contact = await loadContact(ctx.contact.id, ctx.contact)
+  setImmediate(() => {
+    handleAutomationEvent('contact-updated', {
+      contactId: ctx.contact.id,
+      changedFields: ['assignedUser', 'assigned_user'],
+      contactChangeSource: 'automation'
+    }).catch(() => undefined)
+  })
   return remove
     ? 'Usuario asignado eliminado'
     : `Usuario asignado: ${str(config.userName) || userId}`
@@ -1839,9 +1998,75 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
 // Entradas del motor
 // ---------------------------------------------------------------------------
 
+async function loadContactMetrics(contactId, row = {}) {
+  if (!contactId) {
+    return {
+      totalPaid: 0,
+      purchasesCount: 0,
+      paymentsCount: 0,
+      appointmentsCount: 0,
+      activeAppointmentsCount: 0,
+      attendedAppointmentsCount: 0,
+      hasActiveAppointment: false
+    }
+  }
+
+  const [paymentAgg, appointmentAgg, activeAppointment] = await Promise.all([
+    db.get(`
+      SELECT
+        COUNT(*) AS payments_count,
+        COALESCE(SUM(CASE WHEN amount > 0 AND LOWER(COALESCE(status, '')) IN (${SUCCESS_PAYMENT_STATUS_SQL}) THEN amount ELSE 0 END), 0) AS successful_total,
+        COALESCE(SUM(CASE WHEN amount > 0 AND LOWER(COALESCE(status, '')) IN (${SUCCESS_PAYMENT_STATUS_SQL}) THEN 1 ELSE 0 END), 0) AS successful_count,
+        MAX(CASE WHEN amount > 0 AND LOWER(COALESCE(status, '')) IN (${SUCCESS_PAYMENT_STATUS_SQL}) THEN COALESCE(date, created_at) ELSE NULL END) AS last_purchase_date
+      FROM payments
+      WHERE contact_id = ?
+    `, [contactId]).catch(() => ({})),
+    db.get(`
+      SELECT
+        COUNT(*) AS appointments_count,
+        COALESCE(SUM(CASE WHEN LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled', 'no_show', 'no-show', 'noshow', 'deleted') THEN 1 ELSE 0 END), 0) AS active_appointments_count,
+        COALESCE(SUM(CASE WHEN LOWER(COALESCE(appointment_status, status, '')) IN ('showed', 'show', 'attended', 'completed', 'complete') THEN 1 ELSE 0 END), 0) AS attended_appointments_count
+      FROM appointments
+      WHERE contact_id = ?
+    `, [contactId]).catch(() => ({})),
+    db.get(`
+      SELECT id, calendar_id, assigned_user_id, start_time, end_time, appointment_status, status, title
+      FROM appointments
+      WHERE contact_id = ?
+        AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled', 'no_show', 'no-show', 'noshow', 'deleted')
+      ORDER BY CASE WHEN start_time >= CURRENT_TIMESTAMP THEN 0 ELSE 1 END, start_time ASC
+      LIMIT 1
+    `, [contactId]).catch(() => null)
+  ])
+
+  const totalPaid = Number(paymentAgg?.successful_total ?? row?.total_paid ?? 0) || 0
+  const purchasesCount = Number(paymentAgg?.successful_count ?? row?.purchases_count ?? 0) || 0
+  const activeAppointmentsCount = Number(appointmentAgg?.active_appointments_count || 0)
+
+  return {
+    totalPaid,
+    total_paid: totalPaid,
+    purchasesCount,
+    purchases_count: purchasesCount,
+    paymentsCount: Number(paymentAgg?.payments_count || 0),
+    appointmentsCount: Number(appointmentAgg?.appointments_count || 0),
+    activeAppointmentsCount,
+    attendedAppointmentsCount: Number(appointmentAgg?.attended_appointments_count || 0),
+    hasActiveAppointment: activeAppointmentsCount > 0,
+    lastPurchaseDate: paymentAgg?.last_purchase_date || row?.last_purchase_date || '',
+    activeAppointmentId: activeAppointment?.id || '',
+    activeAppointmentTitle: activeAppointment?.title || '',
+    activeAppointmentStatus: activeAppointment?.appointment_status || activeAppointment?.status || '',
+    activeAppointmentCalendarId: activeAppointment?.calendar_id || '',
+    activeAppointmentAssignedUserId: activeAppointment?.assigned_user_id || '',
+    activeAppointmentDate: activeAppointment?.start_time || ''
+  }
+}
+
 async function loadContact(contactId, fallback = {}) {
   const row = contactId ? await db.get('SELECT * FROM contacts WHERE id = ?', [contactId]) : null
   const bag = customFieldsBag(row?.custom_fields)
+  const metrics = await loadContactMetrics(row?.id || contactId || null, row || {})
   const storedTags = (() => {
     const parsed = parseJson(row?.tags, [])
     return Array.isArray(parsed) ? parsed : []
@@ -1859,6 +2084,7 @@ async function loadContact(contactId, fallback = {}) {
     fullName: row?.full_name || fallback.name || '',
     phone: row?.phone || fallback.phone || '',
     email: row?.email || '',
+    visitorId: row?.visitor_id || '',
     preferredWhatsAppPhoneNumberId: row?.preferred_whatsapp_phone_number_id || '',
     preferred_whatsapp_phone_number_id: row?.preferred_whatsapp_phone_number_id || '',
     source: row?.source || bag.source || '',
@@ -1870,6 +2096,9 @@ async function loadContact(contactId, fallback = {}) {
     adId: row?.attribution_ad_id || '',
     attributionUrl: row?.attribution_url || '',
     attributionMedium: row?.attribution_medium || '',
+    createdAt: row?.created_at || '',
+    updatedAt: row?.updated_at || '',
+    ...metrics,
     customFields: bag,
     tags: storedTags,
     tagKeys
@@ -2187,7 +2416,12 @@ export async function handleAutomationEvent(eventType, data = {}) {
       )
       if (row) contact = await loadContact(row.id)
     }
-    const ctx = { ...eventData, contact, messageText: eventData.messageText || '', channel: eventData.channel || '' }
+    const ctx = withContactChangeContext(eventType, {
+      ...eventData,
+      contact,
+      messageText: eventData.messageText || '',
+      channel: eventData.channel || ''
+    })
     const automations = await listPublishedAutomations()
     if (eventType === 'trigger-link-clicked') {
       await resumeWaitingTriggerLinkClicks(automations, ctx)

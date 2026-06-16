@@ -2673,8 +2673,12 @@ export async function rerouteWhatsAppPhoneNumberContacts({ phoneNumberId, target
   `, [sourceId, sourceId]).catch(() => [])
 
   const cleanReason = cleanString(reason) || 'Cambio temporal: el número original no está disponible'
+  const automationEngine = contacts.length > 0
+    ? await import('./automationEngine.js').catch(() => null)
+    : null
   let moved = 0
   for (const contact of contacts) {
+    const previousPhoneNumberId = cleanString(contact.preferred_whatsapp_phone_number_id) || sourceId
     await db.run(
       'UPDATE contacts SET preferred_whatsapp_phone_number_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
       [targetId, contact.id]
@@ -2685,10 +2689,17 @@ export async function rerouteWhatsAppPhoneNumberContacts({ phoneNumberId, target
     `, [
       crypto.randomUUID(),
       contact.id,
-      cleanString(contact.preferred_whatsapp_phone_number_id) || sourceId,
+      previousPhoneNumberId,
       targetId,
       cleanReason
     ])
+    automationEngine?.handleAutomationEvent?.('contact-updated', {
+      contactId: contact.id,
+      changedFields: ['preferredWhatsAppPhoneNumberId', 'preferred_whatsapp_phone_number_id'],
+      previousPhoneNumberId,
+      newPhoneNumberId: targetId,
+      contactChangeSource: 'automation'
+    }).catch(() => undefined)
     moved += 1
   }
 
@@ -2712,7 +2723,11 @@ export async function restoreWhatsAppPhoneNumberContacts({ phoneNumberId } = {})
   `, [sourceId]).catch(() => [])
 
   let restored = 0
+  const automationEngine = rows.length > 0
+    ? await import('./automationEngine.js').catch(() => null)
+    : null
   for (const row of rows) {
+    const previousPhoneNumberId = cleanString(row.new_phone_number_id) || null
     await db.run(
       'UPDATE contacts SET preferred_whatsapp_phone_number_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
       [sourceId, row.contact_id]
@@ -2723,10 +2738,17 @@ export async function restoreWhatsAppPhoneNumberContacts({ phoneNumberId } = {})
     `, [
       crypto.randomUUID(),
       row.contact_id,
-      cleanString(row.new_phone_number_id) || null,
+      previousPhoneNumberId,
       sourceId,
       'El número original volvió a estar disponible'
     ])
+    automationEngine?.handleAutomationEvent?.('contact-updated', {
+      contactId: row.contact_id,
+      changedFields: ['preferredWhatsAppPhoneNumberId', 'preferred_whatsapp_phone_number_id'],
+      previousPhoneNumberId,
+      newPhoneNumberId: sourceId,
+      contactChangeSource: 'automation'
+    }).catch(() => undefined)
     restored += 1
   }
 

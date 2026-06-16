@@ -32,6 +32,7 @@ export type CatalogKind =
   | 'tags'
   | 'users'
   | 'contactFields'
+  | 'contactChangeFields'
   | 'customFields'
   | 'calendars'
   | 'forms'
@@ -74,6 +75,31 @@ export const STANDARD_CONTACT_FIELDS: CatalogOption[] = [
   { value: 'lastChannel', label: 'Último canal de contacto', meta: 'texto' }
 ]
 
+const STANDARD_CONTACT_CHANGE_FIELDS: CatalogOption[] = [
+  { value: 'name', label: 'Nombre del contacto', meta: 'sistema' },
+  { value: 'firstName', label: 'Nombre', meta: 'sistema' },
+  { value: 'lastName', label: 'Apellido', meta: 'sistema' },
+  { value: 'phone', label: 'Teléfono', meta: 'sistema' },
+  { value: 'email', label: 'Email', meta: 'sistema' },
+  { value: 'source', label: 'Fuente', meta: 'sistema' },
+  { value: 'assignedUser', label: 'Usuario asignado', meta: 'crm' },
+  { value: 'preferredWhatsAppPhoneNumberId', label: 'Número de WhatsApp asignado', meta: 'whatsapp' },
+  { value: 'tags', label: 'Etiquetas', meta: 'crm' },
+  { value: 'totalPaid', label: 'Total pagado', meta: 'pagos' },
+  { value: 'purchasesCount', label: 'Cantidad de pagos exitosos', meta: 'pagos' },
+  { value: 'paymentsCount', label: 'Cantidad de pagos', meta: 'pagos' },
+  { value: 'appointmentsCount', label: 'Cantidad de citas', meta: 'citas' },
+  { value: 'activeAppointmentsCount', label: 'Cantidad de citas activas', meta: 'citas' },
+  { value: 'activeAppointment', label: 'Cita activa', meta: 'citas' },
+  { value: 'appointmentStatus', label: 'Estado de cita activa', meta: 'citas' },
+  { value: 'appointmentCalendar', label: 'Calendario de cita activa', meta: 'citas' },
+  { value: 'appointmentAssignedUser', label: 'Usuario de cita activa', meta: 'citas' },
+  { value: 'appointmentDate', label: 'Fecha de cita activa', meta: 'citas' },
+  { value: 'attributionAd', label: 'Anuncio de origen', meta: 'atribución' },
+  { value: 'attributionUrl', label: 'URL de origen', meta: 'atribución' },
+  { value: 'updatedAt', label: 'Fecha de actualización', meta: 'sistema' }
+]
+
 /** Etiquetas editables del usuario; los estados internos se piden aparte cuando un filtro los necesita. */
 async function loadTags(): Promise<CatalogOption[]> {
   const tags = await contactTagsService.getTags(true)
@@ -104,6 +130,15 @@ async function loadContactFields(): Promise<CatalogOption[]> {
     value: `custom:${field.value}`
   }))
   return [...STANDARD_CONTACT_FIELDS, ...custom]
+}
+
+async function loadContactChangeFields(): Promise<CatalogOption[]> {
+  const custom = (await loadCustomFields()).map((field) => ({
+    ...field,
+    value: `custom:${field.value}`,
+    meta: field.meta ? `campo personalizado · ${field.meta}` : 'campo personalizado'
+  }))
+  return [...STANDARD_CONTACT_CHANGE_FIELDS, ...custom]
 }
 
 async function loadUsers(): Promise<CatalogOption[]> {
@@ -288,6 +323,7 @@ const loaders: Record<CatalogKind, () => Promise<CatalogOption[]>> = {
   tags: loadTags,
   users: loadUsers,
   contactFields: loadContactFields,
+  contactChangeFields: loadContactChangeFields,
   customFields: loadCustomFields,
   calendars: loadCalendars,
   forms: loadForms,
@@ -307,6 +343,7 @@ const fallbacks: Partial<Record<CatalogKind, CatalogOption[]>> = {
   tags: [],
   users: [],
   contactFields: STANDARD_CONTACT_FIELDS,
+  contactChangeFields: STANDARD_CONTACT_CHANGE_FIELDS,
   customFields: [],
   calendars: [],
   forms: [],

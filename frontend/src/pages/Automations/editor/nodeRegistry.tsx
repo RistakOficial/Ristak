@@ -789,21 +789,21 @@ const TRIGGERS: NodeDefinition[] = [
     kind: 'trigger',
     label: 'Contacto modificado',
     category: 'trigger-contacts',
-    description: 'Se activa cuando cambia un campo del contacto',
+    description: 'Se activa cuando cambie cualquier detalle del contacto en el CRM',
     icon: UserCog,
     accent: 'green',
-    addButtonLabel: 'Seleccionar campo',
-    defaultConfig: () => ({ field: '', fieldName: '' }),
-    fields: [
-      { key: 'field', label: 'Campo modificado', type: 'catalogSelect', catalog: 'contactFields', required: true }
-    ],
+    addButtonLabel: 'Configurar filtros',
+    defaultConfig: () => ({ filters: [] }),
+    fields: [],
     outputs: () => SINGLE_OUTPUT,
-    summary: (config) => ({
-      text: str(config.fieldName) || str(config.field)
-        ? `Cuando cambie el campo "${str(config.fieldName) || str(config.field)}" de un contacto${triggerFiltersSentence(config.filters)}`
-        : undefined,
-      empty: 'Selecciona el campo a observar'
-    })
+    summary: (config) => {
+      const legacyField = str(config.fieldName) || str(config.field)
+      return {
+        text: legacyField
+          ? `Cuando cambie "${legacyField}" del contacto${triggerFiltersSentence(config.filters)}`
+          : `Cuando cambie cualquier detalle del contacto${triggerFiltersSentence(config.filters)}`
+      }
+    }
   },
   {
     type: 'trigger-contact-created',

@@ -146,6 +146,7 @@ export const TriggerFiltersEditor: React.FC<{
                       />
                     ) : (
                       <TextInput
+                        type={field?.type === 'number' ? 'number' : 'text'}
                         value={filter.value}
                         placeholder="Valor"
                         onChange={(event) => update(index, { value: event.target.value, valueLabel: '' })}
