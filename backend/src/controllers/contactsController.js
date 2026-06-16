@@ -396,7 +396,37 @@ const getContactDisplayName = (contact = {}) => {
   return normalizeWhatsAppProfileName(contact.whatsapp_profile_name, phone) ||
     extractWhatsAppProfileName(contact.whatsapp_raw_profile_json, phone) ||
     normalizeWhatsAppProfileName(contact.first_name, phone) ||
+    phone ||
     ''
+}
+
+const comparableContactLabel = (value = '') =>
+  cleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+
+const getSafeContactAdFields = (contact = {}) => {
+  const adId = cleanString(contact.attribution_ad_id)
+  const adName = cleanString(contact.attribution_ad_name)
+  const hasAdSignal = hasRealWhatsAppAdAttribution(contact)
+  if (!hasAdSignal) {
+    return { ad_name: '', ad_id: '' }
+  }
+
+  const adNameKey = comparableContactLabel(adName)
+  const displayNameKey = comparableContactLabel(getContactDisplayName(contact))
+  const apiProfileNameKey = comparableContactLabel(contact.whatsapp_profile_name)
+  const adNameLooksLikeContactName = !adId && adNameKey && (
+    adNameKey === displayNameKey ||
+    adNameKey === apiProfileNameKey
+  )
+
+  return {
+    ad_name: adNameLooksLikeContactName ? '' : adName,
+    ad_id: adId
+  }
 }
 
 const mapContactRowForResponse = (contact = {}) => {
@@ -406,6 +436,7 @@ const mapContactRowForResponse = (contact = {}) => {
   } else if (contact.has_appointments || contact.appointment_date) {
     status = 'appointment'
   }
+  const adFields = getSafeContactAdFields(contact)
 
   return {
     id: contact.id,
@@ -422,8 +453,8 @@ const mapContactRowForResponse = (contact = {}) => {
     hasAttendedAppointment: Boolean(contact.has_showed_appointment),
     source: contact.source,
     profilePhotoUrl: getContactProfilePhotoUrl(contact) || null,
-    ad_name: contact.attribution_ad_name,
-    ad_id: contact.attribution_ad_id,
+    ad_name: adFields.ad_name,
+    ad_id: adFields.ad_id,
     preferredWhatsAppPhoneNumberId: contact.preferred_whatsapp_phone_number_id || '',
     preferred_whatsapp_phone_number_id: contact.preferred_whatsapp_phone_number_id || '',
     customFields: parseContactCustomFields(contact.custom_fields),
@@ -1222,6 +1253,13 @@ ${CONTACT_META_PROFILE_SELECT},
     const mappedContacts = hydratedContacts.map(c => {
       const firstSession = getFirstSessionForContact(c)
       const attributionFields = buildContactAttributionFields(c, whatsappAttributionsByContact.get(c.id))
+      const adFields = getSafeContactAdFields({
+        ...c,
+        attribution_url: attributionFields.attribution_url,
+        attribution_medium: attributionFields.attribution_medium,
+        attribution_ctwa_clid: attributionFields.attribution_ctwa_clid,
+        attribution_session_source: attributionFields.attribution_session_source
+      })
 
       // Determinar status basado en la actividad del contacto
       let status = 'lead'
@@ -1250,8 +1288,8 @@ ${CONTACT_META_PROFILE_SELECT},
         attribution_medium: attributionFields.attribution_medium,
         attribution_ctwa_clid: attributionFields.attribution_ctwa_clid,
         whatsappAttributionPlatform: attributionFields.whatsappAttributionPlatform,
-        ad_name: c.attribution_ad_name,
-        ad_id: c.attribution_ad_id,
+        ad_name: adFields.ad_name,
+        ad_id: adFields.ad_id,
         preferredWhatsAppPhoneNumberId: c.preferred_whatsapp_phone_number_id || '',
         preferred_whatsapp_phone_number_id: c.preferred_whatsapp_phone_number_id || '',
         profilePhotoUrl: getContactProfilePhotoUrl(c) || null,

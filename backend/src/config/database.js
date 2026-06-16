@@ -780,6 +780,33 @@ async function shouldReplaceWhatsAppApiAdAttribution(row = {}, candidate = null)
   return !(await isKnownMetaAdId(currentAdId))
 }
 
+function comparableRepairName(value = '') {
+  return cleanRepairText(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+}
+
+function shouldClearNameOnlyWhatsAppApiAdAttribution(row = {}, profileName = '') {
+  const adId = cleanRepairText(row.attribution_ad_id)
+  const adName = cleanRepairText(row.attribution_ad_name)
+  if (adId || !adName) return false
+
+  const rawProfile = parseJsonMaybe(row.raw_profile_json, null)
+  const rawProfileName = extractWhatsAppProfileName(rawProfile, row.phone)
+  const adNameKey = comparableRepairName(adName)
+  if (!adNameKey) return false
+
+  return [
+    row.full_name,
+    row.first_name,
+    row.profile_name,
+    profileName,
+    rawProfileName
+  ].some(value => comparableRepairName(value) === adNameKey)
+}
+
 export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 5000 } = {}) {
   const rows = await db.all(`
     SELECT
@@ -857,6 +884,11 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
     const contactUpdates = []
     const contactParams = []
     const adAttribution = pickWhatsAppApiAdAttribution(messages)
+    const shouldReplaceAdAttribution = await shouldReplaceWhatsAppApiAdAttribution(row, adAttribution)
+
+    if (!shouldReplaceAdAttribution && shouldClearNameOnlyWhatsAppApiAdAttribution(row, profileName)) {
+      contactUpdates.push('attribution_ad_name = NULL')
+    }
 
     if (profileName && shouldReplaceWhatsAppApiContactName(row.full_name, phone)) {
       contactUpdates.push('full_name = ?')
@@ -870,7 +902,7 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
       contactParams.push(firstMessageAt)
     }
 
-    if (await shouldReplaceWhatsAppApiAdAttribution(row, adAttribution)) {
+    if (shouldReplaceAdAttribution) {
       contactUpdates.push('attribution_ad_id = ?')
       contactParams.push(adAttribution.sourceId)
       if (adAttribution.ctwaClid) {

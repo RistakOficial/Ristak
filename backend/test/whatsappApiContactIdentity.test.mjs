@@ -11,6 +11,7 @@ import {
 } from '../src/utils/whatsappContactProfile.js'
 import {
   processYCloudWhatsAppWebhook,
+  syncYCloudContacts,
   syncYCloudMessageRecords
 } from '../src/services/whatsappApiService.js'
 
@@ -243,6 +244,107 @@ test('sync historico de YCloud conserva nombre real y source_id de anuncios', as
     assert.equal(message.origin, 'ycloud_history_test')
   } finally {
     await cleanup({ contactId, messageId, phone })
+  }
+})
+
+test('sync de contactos YCloud no convierte el nombre en anuncio y respeta createTime', async () => {
+  const id = randomUUID()
+  const phone = `+52994${Date.now().toString().slice(-7)}`
+  const contactName = 'Mier Drogueria'
+  const createTime = '2024-01-02T03:04:05.000Z'
+  const lastSeen = '2026-06-16T05:06:07.000Z'
+
+  await cleanup({ phone })
+
+  try {
+    await syncYCloudContacts([{
+      id: `ycloud_contact_${id}`,
+      phoneNumber: phone,
+      nickname: contactName,
+      sourceId: 'batch_import_123',
+      sourceType: 'import',
+      createTime,
+      lastSeen
+    }])
+
+    const contact = await db.get(`
+      SELECT id, full_name, first_name, attribution_ad_id, attribution_ad_name, created_at
+      FROM contacts
+      WHERE phone = ?
+    `, [phone])
+
+    assert.equal(contact.full_name, contactName)
+    assert.equal(contact.first_name, contactName)
+    assert.equal(contact.attribution_ad_id, null)
+    assert.equal(contact.attribution_ad_name, null)
+    assert.equal(new Date(contact.created_at).toISOString(), createTime)
+
+    const apiContact = await db.get(`
+      SELECT profile_name, first_seen_at, last_seen_at
+      FROM whatsapp_api_contacts
+      WHERE contact_id = ?
+    `, [contact.id])
+
+    assert.equal(apiContact.profile_name, contactName)
+    assert.equal(new Date(apiContact.first_seen_at).toISOString(), createTime)
+    assert.equal(new Date(apiContact.last_seen_at).toISOString(), lastSeen)
+  } finally {
+    await cleanup({ phone })
+  }
+})
+
+test('reparacion limpia anuncios falsos que son solo el nombre del contacto', async () => {
+  const id = randomUUID()
+  const phone = `+52993${Date.now().toString().slice(-7)}`
+  const contactId = `rstk_contact_test_${id}`
+  const apiContactId = `waapi_profile_test_${id}`
+
+  await cleanup({ contactId, apiContactId, phone })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source,
+        attribution_ad_name, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      'Mier Drogueria',
+      'Mier Drogueria',
+      'WhatsApp_API',
+      'Mier Drogueria',
+      '2026-06-15T23:31:29.000Z',
+      '2026-06-15T23:31:29.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_contacts (
+        id, contact_id, phone, profile_name, raw_profile_json,
+        first_seen_at, last_seen_at, message_count, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      apiContactId,
+      contactId,
+      phone,
+      'Mier Drogueria',
+      JSON.stringify({ nickname: 'Mier Drogueria' }),
+      '2024-01-02T03:04:05.000Z',
+      '2026-06-16T05:06:07.000Z',
+      0,
+      '2026-06-15T23:31:29.000Z',
+      '2026-06-15T23:31:29.000Z'
+    ])
+
+    const repaired = await repairWhatsAppApiContactIdentityFromMessages({ limit: 100 })
+    assert.ok(repaired.contacts >= 1)
+
+    const contact = await db.get('SELECT attribution_ad_id, attribution_ad_name, created_at FROM contacts WHERE id = ?', [contactId])
+    assert.equal(contact.attribution_ad_id, null)
+    assert.equal(contact.attribution_ad_name, null)
+    assert.equal(new Date(contact.created_at).toISOString(), '2024-01-02T03:04:05.000Z')
+  } finally {
+    await cleanup({ contactId, apiContactId, phone })
   }
 })
 

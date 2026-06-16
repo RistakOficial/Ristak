@@ -2308,13 +2308,28 @@ async function retryFailedOfficialApiMessageViaQr({
 function normalizeYCloudContactRecord(record = {}) {
   const phone = normalizePhoneForStorage(record.phoneNumber) || cleanString(record.phoneNumber)
   const profileName = extractWhatsAppProfileName(record, phone) || normalizeWhatsAppProfileName(record.email, phone)
+  const firstSeenAt = toDateTime(
+    record.createTime ||
+    record.createdAt ||
+    record.created_at ||
+    record.firstSeen ||
+    record.first_seen ||
+    record.lastSeen
+  ) || nowIso()
+  const lastSeenAt = toDateTime(
+    record.lastSeen ||
+    record.updateTime ||
+    record.updatedAt ||
+    record.updated_at
+  ) || firstSeenAt
   return {
     id: cleanString(record.id) || hashId('ycloud_contact', phone || record.email),
     phone,
     email: cleanString(record.email),
     profileName,
     profilePictureUrl: findProfilePictureUrlInValue(record),
-    seenAt: toDateTime(record.lastSeen || record.createTime) || nowIso(),
+    firstSeenAt,
+    lastSeenAt,
     sourceId: cleanString(record.sourceId),
     sourceUrl: cleanString(record.sourceUrl),
     sourceType: cleanString(record.sourceType),
@@ -2322,12 +2337,12 @@ function normalizeYCloudContactRecord(record = {}) {
   }
 }
 
-async function syncYCloudContacts(contacts = []) {
+export async function syncYCloudContacts(contacts = []) {
   for (const contact of contacts.map(normalizeYCloudContactRecord).filter(item => item.phone)) {
     const localContact = await upsertLocalContact({
       phone: contact.phone,
       profileName: contact.profileName,
-      messageTimestamp: contact.seenAt,
+      messageTimestamp: contact.firstSeenAt,
       attribution: {
         // YCloud contact.sourceId describes how the contact record was created
         // (for example a batch import), not the Click-to-WhatsApp ad id.
@@ -2337,7 +2352,7 @@ async function syncYCloudContacts(contacts = []) {
         sourceApp: SOURCE_NAME,
         entryPoint: 'ycloud_contacts',
         ctwaClid: '',
-        headline: contact.profileName || '',
+        headline: '',
         body: ''
       }
     })
@@ -2347,7 +2362,8 @@ async function syncYCloudContacts(contacts = []) {
       phone: contact.phone,
       profileName: contact.profileName,
       rawProfile: contact.raw,
-      seenAt: contact.seenAt,
+      seenAt: contact.firstSeenAt,
+      lastSeenAt: contact.lastSeenAt,
       profilePictureUrl: contact.profilePictureUrl,
       messageCountDelta: 0
     })
@@ -3345,6 +3361,9 @@ async function upsertLocalContact({ contactId, phone, profileName, messageTimest
   const contactName = normalizeWhatsAppProfileName(profileName, canonicalPhone)
   const fullName = contactName || GENERIC_CONTACT_NAME
   const cleanMessageTimestamp = toDateTime(messageTimestamp) || null
+  const hasAdAttribution = hasWhatsAppAdAttributionSignal(attribution)
+  const attributionAdId = hasAdAttribution ? attribution.sourceId : ''
+  const attributionAdName = hasAdAttribution ? (attribution.headline || attribution.sourceId) : ''
 
   if (!existing) {
     // ID propio de Ristak: el teléfono/perfil de WhatsApp queda como referencia
@@ -3366,8 +3385,8 @@ async function upsertLocalContact({ contactId, phone, profileName, messageTimest
       attribution.sourceApp || attribution.entryPoint || SOURCE_NAME,
       attribution.sourceType || 'whatsapp_api',
       attribution.ctwaClid || null,
-      attribution.headline || attribution.sourceId || null,
-      attribution.sourceId || null,
+      attributionAdName || null,
+      attributionAdId || null,
       cleanMessageTimestamp || nowIso()
     ])
 
@@ -3465,6 +3484,7 @@ async function upsertWhatsAppApiContact({
   profileName,
   rawProfile,
   seenAt,
+  lastSeenAt,
   profilePictureUrl,
   profilePictureSource = 'whatsapp_api',
   messageCountDelta = 1
@@ -3489,6 +3509,8 @@ async function upsertWhatsAppApiContact({
     : null
   const profilePictureUpdatedAt = cleanProfilePictureUrl ? nowIso() : null
   const safeMessageCountDelta = Math.max(Number(messageCountDelta) || 0, 0)
+  const firstSeenAt = toDateTime(seenAt) || nowIso()
+  const cleanLastSeenAt = toDateTime(lastSeenAt) || firstSeenAt
 
   await db.run(`
     INSERT INTO whatsapp_api_contacts (
@@ -3536,8 +3558,8 @@ async function upsertWhatsAppApiContact({
     cleanProfilePictureSource,
     profilePictureUpdatedAt,
     safeJson(rawProfile),
-    seenAt || nowIso(),
-    seenAt || nowIso(),
+    firstSeenAt,
+    cleanLastSeenAt,
     safeMessageCountDelta
   ])
 
