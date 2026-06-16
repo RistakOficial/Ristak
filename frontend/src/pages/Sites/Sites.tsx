@@ -220,7 +220,11 @@ const emptySitesDomainConfig: SitesDomainConfig = {
   domain: '',
   renderDomainVerified: false,
   renderDomainCheckedAt: null,
-  renderDomainError: null
+  renderDomainError: null,
+  appDomain: '',
+  appDomainVerified: false,
+  appDomainCheckedAt: null,
+  appDomainError: null
 }
 
 const metaEventOptions = [

@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger.js'
+import { getVerifiedAppBaseUrl } from './sitesService.js'
 
 /**
  * Cliente del license server central (ristak-installer).
@@ -32,6 +33,7 @@ const DEFAULT_FEATURES = {
 // Estado cacheado de la última validación (token temporal de licencia)
 let cachedState = null
 let lastVerifiedEmail = null
+let verifiedAppBaseUrlResolver = getVerifiedAppBaseUrl
 
 function getConfig() {
   return {
@@ -49,13 +51,28 @@ function getConfig() {
   }
 }
 
-function buildInstalledAppPayload(extra = {}) {
+function normalizeBaseUrl(value = '') {
+  return String(value || '').trim().replace(/\/+$/, '')
+}
+
+async function resolveManagedAppUrl(fallbackUrl = '') {
+  try {
+    const appBaseUrl = await verifiedAppBaseUrlResolver()
+    if (appBaseUrl) return appBaseUrl
+  } catch (error) {
+    logger.warn(`No se pudo resolver dominio de app verificado: ${error.message}`)
+  }
+
+  return normalizeBaseUrl(fallbackUrl)
+}
+
+async function buildInstalledAppPayload(extra = {}) {
   const config = getConfig()
   return {
     client_id: config.clientId,
     license_key: config.licenseKey,
     installation_id: config.installationId,
-    app_url: config.appUrl,
+    app_url: await resolveManagedAppUrl(config.appUrl),
     ...extra
   }
 }
@@ -82,7 +99,7 @@ async function callLicenseServer(path, body = {}) {
     response = await fetch(`${config.licenseServerUrl}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildInstalledAppPayload(body))
+      body: JSON.stringify(await buildInstalledAppPayload(body))
     })
     data = await response.json().catch(() => ({}))
   } catch (error) {
@@ -113,6 +130,10 @@ export function getHealthInfo() {
 export function resetLicenseCache() {
   cachedState = null
   lastVerifiedEmail = null
+}
+
+export function setVerifiedAppBaseUrlResolverForTests(resolver = getVerifiedAppBaseUrl) {
+  verifiedAppBaseUrlResolver = typeof resolver === 'function' ? resolver : getVerifiedAppBaseUrl
 }
 
 function allowedWithoutEnforcement() {
@@ -175,7 +196,7 @@ export async function verifyLicenseWithServer(email) {
         license_key: config.licenseKey,
         installation_id: config.installationId,
         email: targetEmail,
-        app_url: config.appUrl,
+        app_url: await resolveManagedAppUrl(config.appUrl),
         version: config.appVersion
       })
     })

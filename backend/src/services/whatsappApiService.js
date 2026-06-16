@@ -33,6 +33,7 @@ import {
   shouldReplaceWhatsAppApiContactName
 } from '../utils/whatsappContactProfile.js'
 import { getMetaConfig } from './metaAdsService.js'
+import { getVerifiedAppBaseUrl } from './sitesService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -1069,19 +1070,24 @@ async function getLicenseRuntimeConfig({ appUrl } = {}) {
     licenseKey,
     clientId,
     installationId,
-    savedAppUrl
+    savedAppUrl,
+    verifiedAppBaseUrl
   ] = await Promise.all([
     getAppConfig('license_key'),
     getAppConfig('license_client_id'),
     getAppConfig('installation_id'),
-    getAppConfig('public_app_url')
+    getAppConfig('public_app_url'),
+    getVerifiedAppBaseUrl().catch(error => {
+      logger.warn(`No se pudo resolver dominio de app verificado para Meta directo: ${error.message}`)
+      return ''
+    })
   ])
 
   return {
     licenseKey: cleanString(licenseKey || process.env.RISTAK_LICENSE_KEY || process.env.LICENSE_KEY),
     clientId: cleanString(clientId || process.env.RISTAK_CLIENT_ID || process.env.CLIENT_ID || process.env.RENDER_SERVICE_ID || 'local'),
     installationId: cleanString(installationId || process.env.RISTAK_INSTALLATION_ID || process.env.INSTALLATION_ID || process.env.RENDER_SERVICE_ID || 'local'),
-    appUrl: normalizePublicBaseUrl(appUrl || savedAppUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || process.env.APP_URL || 'http://localhost:5173')
+    appUrl: normalizePublicBaseUrl(verifiedAppBaseUrl || appUrl || savedAppUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || process.env.APP_URL || 'http://localhost:5173')
   }
 }
 

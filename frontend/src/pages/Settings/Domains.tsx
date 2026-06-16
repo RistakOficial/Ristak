@@ -9,12 +9,16 @@ const emptyDomainConfig: SitesDomainConfig = {
   domain: '',
   renderDomainVerified: false,
   renderDomainCheckedAt: null,
-  renderDomainError: null
+  renderDomainError: null,
+  appDomain: '',
+  appDomainVerified: false,
+  appDomainCheckedAt: null,
+  appDomainError: null
 }
 
-const getDomainStatus = (config: SitesDomainConfig) => {
-  if (!config.domain) return { label: 'Sin dominio', className: styles.statusMuted }
-  if (config.renderDomainVerified) return { label: 'Verificado', className: styles.statusSuccess }
+const getDomainStatus = (domain: string, verified: boolean) => {
+  if (!domain) return { label: 'Sin dominio', className: styles.statusMuted }
+  if (verified) return { label: 'Verificado', className: styles.statusSuccess }
   return { label: 'Pendiente', className: styles.statusWarning }
 }
 
@@ -22,10 +26,14 @@ export const Domains: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [domainConfig, setDomainConfig] = useState<SitesDomainConfig>(emptyDomainConfig)
   const [domain, setDomain] = useState('')
+  const [appDomain, setAppDomain] = useState('')
   const [savedDomain, setSavedDomain] = useState('')
+  const [savedAppDomain, setSavedAppDomain] = useState('')
   const [loading, setLoading] = useState(true)
   const [verifying, setVerifying] = useState(false)
+  const [verifyingApp, setVerifyingApp] = useState(false)
   const [removing, setRemoving] = useState(false)
+  const [removingApp, setRemovingApp] = useState(false)
 
   useEffect(() => {
     loadDomain()
@@ -37,7 +45,9 @@ export const Domains: React.FC = () => {
       const config = await sitesService.getDomain()
       setDomainConfig(config)
       setDomain(config.domain)
+      setAppDomain(config.appDomain)
       setSavedDomain(config.domain)
+      setSavedAppDomain(config.appDomain)
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo cargar el dominio')
     } finally {
@@ -55,12 +65,23 @@ export const Domains: React.FC = () => {
     }))
   }
 
+  const handleAppDomainChange = (value: string) => {
+    setAppDomain(value)
+    setDomainConfig(current => ({
+      ...current,
+      appDomain: value,
+      appDomainVerified: false,
+      appDomainError: null
+    }))
+  }
+
   const verifyDomain = async () => {
     setVerifying(true)
     try {
       const result = await sitesService.verifyDomain(domain)
       setDomainConfig(result)
       setDomain(result.domain)
+      setAppDomain(result.appDomain)
       if (result.verification?.verified) {
         setSavedDomain(result.domain)
         showToast('success', 'Dominio verificado y guardado', 'El dominio ya responde con esta app.')
@@ -74,6 +95,26 @@ export const Domains: React.FC = () => {
     }
   }
 
+  const verifyAppDomain = async () => {
+    setVerifyingApp(true)
+    try {
+      const result = await sitesService.verifyAppDomain(appDomain)
+      setDomainConfig(result)
+      setDomain(result.domain)
+      setAppDomain(result.appDomain)
+      if (result.appVerification?.verified) {
+        setSavedAppDomain(result.appDomain)
+        showToast('success', 'Dominio de app verificado', 'Ese dominio ya abre el CRM.')
+      } else {
+        showToast('warning', 'Dominio de app pendiente', result.appVerification?.error || result.appDomainError || 'El dominio de app todavía no responde con esta app')
+      }
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo verificar el dominio de app')
+    } finally {
+      setVerifyingApp(false)
+    }
+  }
+
   const confirmRemoveDomain = () => {
     showConfirm(
       'Eliminar dominio',
@@ -84,7 +125,9 @@ export const Domains: React.FC = () => {
           const config = await sitesService.removeDomain()
           setDomainConfig(config)
           setDomain('')
+          setAppDomain(config.appDomain)
           setSavedDomain('')
+          setSavedAppDomain(config.appDomain)
           showToast('success', 'Dominio eliminado', 'Tu cuenta ya no usa ese dominio')
         } catch (error) {
           showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo eliminar el dominio')
@@ -97,11 +140,37 @@ export const Domains: React.FC = () => {
     )
   }
 
+  const confirmRemoveAppDomain = () => {
+    showConfirm(
+      'Eliminar dominio de app',
+      `Se quitará ${savedAppDomain} del CRM. Puedes volver a conectarlo cuando quieras.`,
+      async () => {
+        setRemovingApp(true)
+        try {
+          const config = await sitesService.removeAppDomain()
+          setDomainConfig(config)
+          setDomain(config.domain)
+          setAppDomain('')
+          setSavedDomain(config.domain)
+          setSavedAppDomain('')
+          showToast('success', 'Dominio de app eliminado', 'El CRM ya no usa ese dominio')
+        } catch (error) {
+          showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo eliminar el dominio de app')
+        } finally {
+          setRemovingApp(false)
+        }
+      },
+      'Eliminar',
+      'Cancelar'
+    )
+  }
+
   if (loading) {
     return <Loading page="settings" />
   }
 
-  const status = getDomainStatus(domainConfig)
+  const publicStatus = getDomainStatus(domainConfig.domain, domainConfig.renderDomainVerified)
+  const appStatus = getDomainStatus(domainConfig.appDomain, domainConfig.appDomainVerified)
 
   return (
     <div className={styles.container}>
@@ -112,8 +181,8 @@ export const Domains: React.FC = () => {
         <div>
           <h2>Dominios</h2>
           <p>
-            Dominio público general para formularios, sitios y landing pages: las páginas creadas
-            se abren con este dominio y su ruta, por ejemplo /form-01 o /site-01.
+            Separa el dominio público de formularios y sitios del dominio que abre el CRM.
+            Así un dominio tipo app.ristak.com entra a la app, no a una página pública.
           </p>
         </div>
         <Button variant="secondary" onClick={loadDomain}>
@@ -122,43 +191,83 @@ export const Domains: React.FC = () => {
         </Button>
       </div>
 
-      <article className={styles.domainCard}>
-        <div className={styles.domainMeta}>
-          <div>
-            <h3>Dominio público</h3>
-            <p>Se guarda cuando el dominio responde al health público de esta app.</p>
+      <div className={styles.domainList}>
+        <article className={styles.domainCard}>
+          <div className={styles.domainMeta}>
+            <div>
+              <h3>Dominio público</h3>
+              <p>Para formularios, sitios y landing pages. Sus rutas se abren como /form-01 o /site-01.</p>
+            </div>
+            <span className={`${styles.statusPill} ${publicStatus.className}`}>{publicStatus.label}</span>
           </div>
-          <span className={`${styles.statusPill} ${status.className}`}>{status.label}</span>
-        </div>
 
-        <div className={styles.domainControls}>
-          <label className={styles.field}>
-            <span>Dominio</span>
-            <input
-              value={domain}
-              placeholder="www.doctorramirez.com"
-              onChange={(event) => handleDomainChange(event.target.value)}
-            />
-          </label>
-          <Button onClick={verifyDomain} loading={verifying} disabled={!domain.trim()}>
-            <CheckCircle2 size={16} />
-            Verificar dominio
-          </Button>
-        </div>
-
-        {domainConfig.renderDomainError && (
-          <p className={styles.errorText}>{domainConfig.renderDomainError}</p>
-        )}
-
-        {savedDomain && (
-          <div className={styles.actions}>
-            <Button variant="danger" onClick={confirmRemoveDomain} loading={removing}>
-              <Trash2 size={16} />
-              Eliminar dominio
+          <div className={styles.domainControls}>
+            <label className={styles.field}>
+              <span>Dominio público</span>
+              <input
+                value={domain}
+                placeholder="www.doctorramirez.com"
+                onChange={(event) => handleDomainChange(event.target.value)}
+              />
+            </label>
+            <Button onClick={verifyDomain} loading={verifying} disabled={!domain.trim()}>
+              <CheckCircle2 size={16} />
+              Verificar dominio
             </Button>
           </div>
-        )}
-      </article>
+
+          {domainConfig.renderDomainError && (
+            <p className={styles.errorText}>{domainConfig.renderDomainError}</p>
+          )}
+
+          {savedDomain && (
+            <div className={styles.actions}>
+              <Button variant="danger" onClick={confirmRemoveDomain} loading={removing}>
+                <Trash2 size={16} />
+                Eliminar dominio
+              </Button>
+            </div>
+          )}
+        </article>
+
+        <article className={styles.domainCard}>
+          <div className={styles.domainMeta}>
+            <div>
+              <h3>Dominio de la app</h3>
+              <p>Para abrir el CRM con un subdominio que empiece en app, como app.ristak.com.</p>
+            </div>
+            <span className={`${styles.statusPill} ${appStatus.className}`}>{appStatus.label}</span>
+          </div>
+
+          <div className={styles.domainControls}>
+            <label className={styles.field}>
+              <span>Dominio de la app</span>
+              <input
+                value={appDomain}
+                placeholder="app.ristak.com"
+                onChange={(event) => handleAppDomainChange(event.target.value)}
+              />
+            </label>
+            <Button onClick={verifyAppDomain} loading={verifyingApp} disabled={!appDomain.trim()}>
+              <CheckCircle2 size={16} />
+              Verificar app
+            </Button>
+          </div>
+
+          {domainConfig.appDomainError && (
+            <p className={styles.errorText}>{domainConfig.appDomainError}</p>
+          )}
+
+          {savedAppDomain && (
+            <div className={styles.actions}>
+              <Button variant="danger" onClick={confirmRemoveAppDomain} loading={removingApp}>
+                <Trash2 size={16} />
+                Eliminar dominio
+              </Button>
+            </div>
+          )}
+        </article>
+      </div>
     </div>
   )
 }
