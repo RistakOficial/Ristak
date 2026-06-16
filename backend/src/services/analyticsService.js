@@ -1337,17 +1337,29 @@ async function fetchPaymentsForContacts(contactIds, range = {}) {
 
   const placeholders = contactIds.map(() => '?').join(',')
 
-  // IMPORTANTE: NO filtrar pagos por rango de fechas
-  // El modal debe mostrar TODOS los pagos del cliente, independientemente del rango seleccionado
-  // El filtro de fechas solo aplica para determinar QUÉ contactos mostrar, no sus pagos completos
+  const params = [...contactIds]
+  const conditions = [`contact_id IN (${placeholders})`]
+
+  // Cuando se pide un rango explícito, la lista debe reflejar sólo los pagos
+  // de ese periodo. Si no se pasa rango, se conserva el historial completo.
+  if (range?.startUtc) {
+    conditions.push('date >= ?')
+    params.push(range.startUtc)
+  }
+
+  if (range?.endUtc) {
+    conditions.push('date <= ?')
+    params.push(range.endUtc)
+  }
+
   const paymentsQuery = `
     SELECT id, contact_id, amount, status, payment_mode, date
     FROM payments
-    WHERE contact_id IN (${placeholders})
+    WHERE ${conditions.join(' AND ')}
     ORDER BY date DESC
   `
 
-  const rows = await db.all(paymentsQuery, contactIds)
+  const rows = await db.all(paymentsQuery, params)
 
   return rows.reduce((map, row) => {
     const list = map.get(row.contact_id) || []
@@ -1691,7 +1703,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
   }
 
   // ========================================
-  // PASO 3: SIEMPRE cargar TODA la información (payments, appointments, firstSession)
+  // PASO 3: Cargar información de soporte (payments, appointments, firstSession)
   // ========================================
   let paymentsMap = new Map()
   let appointmentsMap = new Map()
@@ -1699,8 +1711,10 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
   let contactsWithAttendances = new Set()
 
   if (contactIds.length > 0) {
-    // Cargar payments para todos
-    paymentsMap = await fetchPaymentsForContacts(contactIds, useContactAttribution ? undefined : range)
+    // En ventas/Todos el detalle del modal debe mostrar los pagos del periodo.
+    // En el resto de vistas se conserva el historial completo del contacto.
+    const paymentsRange = type === 'sales' && !useContactAttribution ? range : undefined
+    paymentsMap = await fetchPaymentsForContacts(contactIds, paymentsRange)
 
     // Cargar appointments para todos
     appointmentsMap = await fetchAppointmentsForContacts(contactIds)
