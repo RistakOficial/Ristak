@@ -277,6 +277,8 @@ test('OAuth central importa eventos despues de ligar un calendario Ristak a Goog
   const calendarId = `rstk_cal_linked_google_${suffix}`
   const configKeys = ['default_calendar_id', 'attribution_calendar_ids']
   const previousConfigRows = new Map()
+  const existingDefaultCalendarId = `rstk_cal_default_${suffix}`
+  const previousAttributionIds = [`rstk_cal_attr_${suffix}`]
   let db = null
 
   try {
@@ -299,6 +301,24 @@ test('OAuth central importa eventos despues de ligar un calendario Ristak a Goog
       id: calendarId,
       name: 'Valoraciones Ristak'
     })
+    await localCalendarService.createLocalCalendar({
+      id: existingDefaultCalendarId,
+      name: 'Calendario Principal Existente'
+    })
+    await db.run(`
+      INSERT INTO app_config (config_key, config_value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(config_key) DO UPDATE SET
+        config_value = excluded.config_value,
+        updated_at = CURRENT_TIMESTAMP
+    `, ['default_calendar_id', existingDefaultCalendarId])
+    await db.run(`
+      INSERT INTO app_config (config_key, config_value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(config_key) DO UPDATE SET
+        config_value = excluded.config_value,
+        updated_at = CURRENT_TIMESTAMP
+    `, ['attribution_calendar_ids', JSON.stringify(previousAttributionIds)])
     assert.equal(calendar.googleCalendarId, '')
 
     let statusCode = 200
@@ -334,8 +354,8 @@ test('OAuth central importa eventos despues de ligar un calendario Ristak a Goog
 
     const defaultConfig = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', ['default_calendar_id'])
     const attributionConfig = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', ['attribution_calendar_ids'])
-    assert.equal(defaultConfig.config_value, calendarId)
-    assert.ok(JSON.parse(attributionConfig.config_value).includes(calendarId))
+    assert.equal(defaultConfig.config_value, existingDefaultCalendarId)
+    assert.deepEqual(JSON.parse(attributionConfig.config_value), previousAttributionIds)
 
     assert.equal(requests.length, 2)
     assert.equal(requests[0].path, '/api/license/google-calendar/calendars')
@@ -345,6 +365,7 @@ test('OAuth central importa eventos despues de ligar un calendario Ristak a Goog
     if (db) {
       await db.run('DELETE FROM appointments WHERE google_event_id = ?', ['evt_google_imported']).catch(() => undefined)
       await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id = ?', [existingDefaultCalendarId]).catch(() => undefined)
       for (const key of configKeys) {
         const previous = previousConfigRows.get(key)
         if (previous) {
