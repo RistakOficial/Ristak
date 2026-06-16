@@ -36,5 +36,5 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/variable-fields', label: 'Campos variables', permissionKey: 'settings_custom_fields' },
   { to: '/settings/trigger-links', label: 'Enlaces de disparo', permissionKey: 'settings_custom_fields' },
   { to: '/settings/tags', label: 'Etiquetas', permissionKey: 'settings_custom_fields' },
-  { to: '/settings/api-access', label: 'Acceso API', permissionKey: 'settings_api_access' }
+  { to: '/settings/developers', label: 'Developers', permissionKey: 'settings_api_access' }
 ]

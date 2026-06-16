@@ -670,6 +670,289 @@ body.dark .select:focus {
   color: var(--color-text-tertiary);
 }
 
+.developerMenuGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.developerMenuButton {
+  display: flex;
+  min-height: 142px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.045);
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.developerMenuButton:hover,
+.developerMenuButtonActive {
+  border-color: rgba(var(--color-primary-rgb), 0.34);
+  background: rgba(var(--color-primary-rgb), 0.08);
+}
+
+.developerMenuTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.developerMenuIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--color-text-primary);
+}
+
+.developerMenuMeta {
+  overflow: hidden;
+  max-width: 112px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.developerMenuTitle {
+  display: block;
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
+.developerMenuDescription {
+  display: block;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.developerPanel {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.developerSectionHeading {
+  margin-bottom: 16px;
+}
+
+.developerInfoGrid,
+.developerDocsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.developerFieldStack {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.developerTokenBox {
+  margin-top: 14px;
+}
+
+.developerActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.developerInfoField {
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.developerInfoField p {
+  margin: 0 0 5px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.developerInfoField div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.developerInfoField strong {
+  min-width: 0;
+  flex: 1;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.developerInfoField button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.developerInfoField button:hover {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--color-text-primary);
+}
+
+.developerReadonlyField {
+  min-width: 0;
+}
+
+.developerReadonlyField label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.developerReadonlyField div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.developerReadonlyField input {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.06);
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.developerCopyButton {
+  flex-shrink: 0;
+}
+
+.webhookEndpointList {
+  display: grid;
+  gap: 0;
+}
+
+.webhookEndpointRow {
+  display: grid;
+  grid-template-columns: minmax(0, 0.78fr) minmax(18rem, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.webhookEndpointRow:last-child {
+  border-bottom: 0;
+}
+
+.webhookEndpointTitle {
+  margin: 0 0 5px;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.webhookEndpointDescription {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.developerDocLink {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.06);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.developerDocLink span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.developerDocLink:hover {
+  border-color: rgba(var(--color-primary-rgb), 0.28);
+  background: rgba(var(--color-primary-rgb), 0.08);
+}
+
+.developerLogsBox {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.055);
+}
+
+.developerLogsIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--color-text-primary);
+}
+
+.developerLogsBox h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.developerLogsBox p {
+  max-width: 620px;
+  margin: 6px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .profileSummary {
   display: flex;
   align-items: center;
@@ -1307,9 +1590,15 @@ body.dark .select:focus {
   .profileDetailsGrid,
   .labelsGrid,
   .accountLocaleGrid,
+  .developerInfoGrid,
+  .developerDocsGrid,
   .notificationSettingsGrid,
   .mobileGuideGrid,
   .mobileStepList {
+    grid-template-columns: 1fr;
+  }
+
+  .webhookEndpointRow {
     grid-template-columns: 1fr;
   }
 
