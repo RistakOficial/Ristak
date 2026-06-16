@@ -284,12 +284,20 @@
   margin-top: var(--spacing-md);
 }
 
+.bulkActionModal.bulkActionModal.bulkActionModal {
+  max-width: 520px;
+}
+
+.bulkActionModalContent.bulkActionModalContent {
+  padding: var(--spacing-lg) var(--spacing-xl);
+}
+
 .bulkModalBody {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-lg);
+  gap: var(--spacing-md);
   width: 100%;
-  max-width: 560px;
+  max-width: 456px;
   margin: 0 auto;
 }
 
@@ -335,7 +343,7 @@
 .bulkOptionBlock {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-xs);
 }
 
 .bulkOptionToggle {
@@ -350,7 +358,7 @@
 }
 
 .bulkOptionField {
-  padding-left: calc(18px + var(--spacing-sm));
+  padding-left: calc(16px + var(--spacing-sm));
 }
 
 .bulkOptionField > input {
@@ -360,13 +368,16 @@
 .bulkInlineField {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  flex-wrap: wrap;
+  gap: 10px;
+  min-height: var(--design-control-height);
 }
 
 .bulkInlineField input {
-  flex: 0 0 96px;
-  max-width: 96px;
+  flex: 0 0 88px;
+  width: 88px;
+  min-width: 88px;
+  padding: 0 10px;
+  text-align: left;
 }
 
 .bulkInlineField span {

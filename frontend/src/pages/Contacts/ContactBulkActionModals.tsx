@@ -227,7 +227,14 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
 
   return (
     <>
-      <Modal isOpen={whatsappOpen} onClose={closeWhatsApp} title="Mandar WhatsApp" size="md">
+      <Modal
+        isOpen={whatsappOpen}
+        onClose={closeWhatsApp}
+        title="Mandar WhatsApp"
+        size="sm"
+        className={styles.bulkActionModal}
+        contentClassName={styles.bulkActionModalContent}
+      >
         <div className={styles.bulkModalBody}>
           <p className={styles.bulkModalLead}>
             Se creará un envío para {selectedCount} contacto{selectedCount === 1 ? '' : 's'} seleccionado{selectedCount === 1 ? '' : 's'}.
@@ -237,10 +244,11 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
             <div className={styles.formGroup}>
               <label>Número que manda</label>
               <CustomSelect
+                portal
                 value={phoneNumberId}
                 onValueChange={setPhoneNumberId}
                 disabled={sendingWhatsApp || whatsappPhoneNumbers.length === 0}
-                placeholder="Selecciona un número"
+                placeholder={whatsappPhoneNumbers.length === 0 ? 'No hay números conectados' : 'Selecciona un número'}
                 options={whatsappPhoneNumbers.map((phone) => ({
                   value: phone.id,
                   label: phoneLabel(phone)
@@ -251,10 +259,17 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
             <div className={styles.formGroup}>
               <label>Plantilla aprobada</label>
               <CustomSelect
+                portal
                 value={templateId}
                 onValueChange={setTemplateId}
                 disabled={sendingWhatsApp || templatesLoading || templates.length === 0}
-                placeholder={templatesLoading ? 'Cargando plantillas...' : 'Selecciona una plantilla'}
+                placeholder={
+                  templatesLoading
+                    ? 'Cargando plantillas...'
+                    : templates.length === 0
+                      ? 'No hay plantillas aprobadas'
+                      : 'Selecciona una plantilla'
+                }
                 options={templates.map((template) => ({
                   value: template.id,
                   label: templateLabel(template)
@@ -333,6 +348,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
                       value={whatsappDripMinutes}
                       onChange={(event) => setWhatsappDripMinutes(Number(event.target.value) || 1)}
                       disabled={sendingWhatsApp}
+                      aria-label="Minutos entre contactos"
                     />
                     <span>min entre contactos</span>
                   </div>
@@ -358,7 +374,14 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
         </div>
       </Modal>
 
-      <Modal isOpen={automationOpen} onClose={closeAutomation} title="Añadir a automatización" size="md">
+      <Modal
+        isOpen={automationOpen}
+        onClose={closeAutomation}
+        title="Añadir a automatización"
+        size="sm"
+        className={styles.bulkActionModal}
+        contentClassName={styles.bulkActionModalContent}
+      >
         <div className={styles.bulkModalBody}>
           <p className={styles.bulkModalLead}>
             Se agregará a {selectedCount} contacto{selectedCount === 1 ? '' : 's'} seleccionado{selectedCount === 1 ? '' : 's'}.
@@ -367,10 +390,17 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
           <div className={styles.formGroup}>
             <label>Automatización publicada</label>
             <CustomSelect
+              portal
               value={automationId}
               onValueChange={setAutomationId}
               disabled={sendingAutomation || automationsLoading || automations.length === 0}
-              placeholder={automationsLoading ? 'Cargando automatizaciones...' : 'Selecciona una automatización'}
+              placeholder={
+                automationsLoading
+                  ? 'Cargando automatizaciones...'
+                  : automations.length === 0
+                    ? 'No hay automatizaciones publicadas'
+                    : 'Selecciona una automatización'
+              }
               options={automations.map((automation) => ({
                 value: automation.id,
                 label: automation.name
@@ -421,6 +451,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
                       value={automationDripMinutes}
                       onChange={(event) => setAutomationDripMinutes(Number(event.target.value) || 1)}
                       disabled={sendingAutomation}
+                      aria-label="Minutos entre contactos"
                     />
                     <span>min entre contactos</span>
                   </div>
