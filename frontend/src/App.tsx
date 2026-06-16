@@ -40,6 +40,7 @@ import { StorageAlert } from '@/components/common/StorageAlert'
 import { AppStartupLoader } from '@/components/common/AppStartupLoader'
 import { MobileNotificationOnboarding } from '@/components/phone/MobileNotificationOnboarding'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
+import { mobileAppService } from '@/services/mobileAppService'
 import {
   DESKTOP_LOGIN_PATH,
   PHONE_APP_HOME_PATH,
@@ -572,6 +573,21 @@ const TabletViewPreferenceGate: React.FC = () => {
   )
 }
 
+const NativeIosPhoneChatRouteGate: React.FC = () => {
+  const location = useLocation()
+
+  if (!mobileAppService.isIosPhoneChatShell()) return null
+
+  const redirectPath = mobileAppService.getIosPhoneChatRedirectPath(location.pathname)
+  if (!redirectPath) return null
+
+  const state = redirectPath === PHONE_APP_LOGIN_PATH
+    ? { from: { pathname: PHONE_APP_HOME_PATH, search: '', hash: '' } }
+    : undefined
+
+  return <Navigate to={redirectPath} replace state={state} />
+}
+
 const AppWithNotifications: React.FC = () => {
   const { toasts, removeToast, modal, closeModal } = useNotification()
 
@@ -579,6 +595,7 @@ const AppWithNotifications: React.FC = () => {
     <>
       <BrowserRouter>
         <PhoneRouteEffects />
+        <NativeIosPhoneChatRouteGate />
         <CellphoneRouteGate />
         <TabletViewPreferenceGate />
         <Routes>

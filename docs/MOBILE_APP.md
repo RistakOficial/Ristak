@@ -2,6 +2,8 @@
 
 Ristak ya puede compilarse como app nativa iOS/Android con Capacitor. La app usa las mismas pantallas `/phone/*`, pero dentro de un contenedor nativo con cámara, fotos y notificaciones push del celular.
 
+En iOS el contenedor nativo está configurado como app de iPhone enfocada en `/phone/chat`: al abrir desde Xcode o desde el icono del celular arranca en el chat, permite el login móvil, y cualquier navegación nativa fuera de esa experiencia vuelve a `/phone/chat`.
+
 ## Requisitos
 
 - Node 22 o superior para usar Capacitor 8.

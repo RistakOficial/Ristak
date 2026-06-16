@@ -17,6 +17,15 @@ type DocumentSource = 'documents'
 type MobileShellTheme = 'light' | 'dark'
 
 export const MOBILE_APP_NOTIFICATION_EVENT = 'ristak:mobile-notification'
+const IOS_PHONE_CHAT_HOME_PATH = '/phone/chat'
+const IOS_PHONE_CHAT_LOGIN_PATH = '/phone/login'
+const IOS_PHONE_CHAT_ALLOWED_PATHS = new Set([
+  IOS_PHONE_CHAT_HOME_PATH,
+  IOS_PHONE_CHAT_LOGIN_PATH,
+  '/setup',
+  '/sso',
+  '/license-blocked'
+])
 
 export interface MobileAppNotificationDetail {
   category: string
@@ -55,6 +64,39 @@ function getPlatform(): NativePlatform {
   return Capacitor.getPlatform() as NativePlatform
 }
 
+function isIosPhoneChatShell() {
+  return Capacitor.isNativePlatform() && getPlatform() === 'ios'
+}
+
+function getPathname(value: string) {
+  try {
+    return new URL(value, window.location.origin).pathname
+  } catch {
+    return value.split(/[?#]/)[0] || '/'
+  }
+}
+
+function getIosPhoneChatRedirectPath(pathname = typeof window !== 'undefined' ? window.location.pathname : '') {
+  if (!isIosPhoneChatShell()) return ''
+  if (IOS_PHONE_CHAT_ALLOWED_PATHS.has(pathname)) return ''
+  if (pathname === '/login') return IOS_PHONE_CHAT_LOGIN_PATH
+  return IOS_PHONE_CHAT_HOME_PATH
+}
+
+function replaceInternalPath(value: string) {
+  if (typeof window === 'undefined') return
+
+  window.history.replaceState({}, '', value)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+function ensureIosPhoneChatRoute() {
+  if (typeof window === 'undefined') return
+
+  const redirectPath = getIosPhoneChatRedirectPath(window.location.pathname)
+  if (redirectPath) replaceInternalPath(redirectPath)
+}
+
 async function applyShellTheme(theme: MobileShellTheme) {
   if (!Capacitor.isNativePlatform()) return
 
@@ -74,9 +116,10 @@ function openInternalPath(value?: string | null) {
     }
     nextPath = `${parsed.pathname}${parsed.search}${parsed.hash}`
   } catch {
-    nextPath = value.startsWith('/') ? value : '/phone/chat'
+    nextPath = value.startsWith('/') ? value : IOS_PHONE_CHAT_HOME_PATH
   }
 
+  nextPath = getIosPhoneChatRedirectPath(getPathname(nextPath)) || nextPath
   window.history.pushState({}, '', nextPath)
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
@@ -85,7 +128,7 @@ function getNotificationPath(notification: ActionPerformed['notification'] | { d
   const data = notification?.data || {}
   const directUrl = typeof data.url === 'string' ? data.url : ''
   const route = typeof data.route === 'string' ? data.route : ''
-  return directUrl || route || '/phone/chat'
+  return directUrl || route || IOS_PHONE_CHAT_HOME_PATH
 }
 
 function getNotificationContactId(data: Record<string, unknown>, url: string) {
@@ -292,10 +335,15 @@ export const mobileAppService = {
 
   getPlatform,
 
+  isIosPhoneChatShell,
+
+  getIosPhoneChatRedirectPath,
+
   async configureShell() {
     if (shellConfigured || !Capacitor.isNativePlatform()) return
     shellConfigured = true
 
+    ensureIosPhoneChatRoute()
     await applyShellTheme('light')
     await StatusBar.setOverlaysWebView({ overlay: false }).catch(() => undefined)
     await SplashScreen.hide().catch(() => undefined)
