@@ -2887,7 +2887,7 @@ export const DesktopChat: React.FC = () => {
                   className={infoPanelView === 'journey' ? styles.infoModeTabActive : ''}
                   onClick={() => setInfoPanelView('journey')}
                 >
-                  Viaje del héroe
+                  Viaje del cliente
                 </button>
               </div>
 
@@ -2963,7 +2963,7 @@ export const DesktopChat: React.FC = () => {
                 </>
               ) : (
                 <div className={styles.infoSection}>
-                  <h3>Viaje del héroe</h3>
+                  <h3>Viaje del cliente</h3>
                   {renderJourneyPanel()}
                 </div>
               )}
