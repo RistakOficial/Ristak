@@ -137,10 +137,43 @@ function getMessageBody(message = {}) {
   return cleanString(message.body || message.message || message.text || message.messageBody)
 }
 
+function pickAttachmentUrl(item = {}) {
+  if (typeof item === 'string') return cleanString(item)
+  if (!item || typeof item !== 'object') return ''
+  return cleanString(
+    item.url ||
+    item.fileUrl ||
+    item.file_url ||
+    item.mediaUrl ||
+    item.media_url ||
+    item.publicUrl ||
+    item.public_url ||
+    item.downloadUrl ||
+    item.download_url ||
+    item.link ||
+    item.href ||
+    item.audioUrl ||
+    item.audio_url ||
+    item.imageUrl ||
+    item.image_url ||
+    item.videoUrl ||
+    item.video_url
+  )
+}
+
 function getMessageAttachments(message = {}) {
-  const attachments = Array.isArray(message.attachments) ? message.attachments : []
+  const attachments = [
+    ...(Array.isArray(message.attachments) ? message.attachments : []),
+    message.attachment,
+    message.media,
+    message.file,
+    message.audio,
+    message.image,
+    message.video,
+    message.document
+  ].filter(Boolean)
   return attachments
-    .map(item => cleanString(typeof item === 'string' ? item : item?.url || item?.fileUrl || item?.link))
+    .map(pickAttachmentUrl)
     .filter(Boolean)
 }
 

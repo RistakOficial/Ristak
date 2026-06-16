@@ -667,19 +667,60 @@ function getMediaAttachmentType(messageType = '', mimeType = '', name = ''): Cha
   return null
 }
 
+function pickMediaUrl(data: Record<string, unknown>) {
+  const keys = [
+    'media_url',
+    'mediaUrl',
+    'public_url',
+    'publicUrl',
+    'download_url',
+    'downloadUrl',
+    'file_url',
+    'fileUrl',
+    'audio_url',
+    'audioUrl',
+    'image_url',
+    'imageUrl',
+    'video_url',
+    'videoUrl',
+    'url',
+    'link',
+    'href'
+  ]
+  for (const key of keys) {
+    const value = String(data[key] || '').trim()
+    if (value) return value
+  }
+  return ''
+}
+
+function cleanAttachmentMessageText(text = '', attachment?: DesktopChatMessage['attachment']) {
+  if (attachment?.type !== 'audio') return text
+  const normalized = text
+    .replace(/\[[^\]]*received on[^\]]*\]/gi, '')
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+
+  if (['audio', 'voice', 'voice message', 'mensaje de voz'].includes(normalized)) return ''
+  return text
+}
+
 function getJourneyMediaAttachment(event: JourneyEvent): DesktopChatMessage['attachment'] | undefined {
-  const messageType = String(event.data?.message_type || event.data?.messageType || event.data?.type || '').toLowerCase()
-  const mediaUrl = String(event.data?.media_url || event.data?.mediaUrl || '').trim()
-  const mediaId = String(event.data?.media_id || event.data?.mediaId || '').trim()
-  const mimeType = String(event.data?.media_mime_type || event.data?.mediaMimeType || '').trim()
-  const name = String(event.data?.media_filename || event.data?.mediaFilename || '').trim()
-  const durationMs = Number(event.data?.media_duration_ms || event.data?.mediaDurationMs || 0) || undefined
+  const data = event.data || {}
+  const messageType = String(data.message_type || data.messageType || data.type || '').toLowerCase()
+  const mediaUrl = pickMediaUrl(data)
+  const mediaId = String(data.media_id || data.mediaId || '').trim()
+  const mimeType = String(data.media_mime_type || data.mediaMimeType || data.mimeType || data.mime_type || '').trim()
+  const name = String(data.media_filename || data.mediaFilename || data.filename || data.fileName || '').trim()
+  const durationMs = Number(data.media_duration_ms || data.mediaDurationMs || data.durationMs || data.duration_ms || 0) || undefined
   const type = getMediaAttachmentType(messageType, mimeType, name)
   if (!type) return undefined
   return {
     type,
     url: mediaUrl,
-    name: name || mediaId || getMessageTypeLabel(type, 'Archivo'),
+    name: type === 'audio' ? 'Mensaje de voz' : (name || mediaId || getMessageTypeLabel(type, 'Archivo')),
     mimeType,
     durationMs
   }
@@ -688,12 +729,15 @@ function getJourneyMediaAttachment(event: JourneyEvent): DesktopChatMessage['att
 function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessage | null {
   if (event.type !== 'whatsapp_message' && event.type !== 'meta_message') return null
   const data = event.data || {}
-  const text = pickMessageText(data)
   const attachment = getJourneyMediaAttachment(event)
+  const text = cleanAttachmentMessageText(pickMessageText(data), attachment)
   const messageType = String(data.message_type || data.messageType || data.type || '').trim()
   if (!text && !attachment && !messageType) return null
   const direction = normalizeWhatsAppBusinessDirection(data.direction || data.message_direction || data.from_type)
   const date = pickMessageTimestamp(data, ['date', 'timestamp', 'created_at', 'createdAt', 'message_timestamp', 'messageTimestamp']) || event.date
+  const fallbackText = attachment
+    ? (attachment.type === 'audio' ? '' : getMessageTypeLabel(attachment.type, 'Archivo'))
+    : getMessageTypeLabel(messageType)
   return {
     id: String(
       data.whatsapp_api_message_id ||
@@ -706,7 +750,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
       data.id ||
       `${event.type}-${event.date}-${index}`
     ),
-    text: text || (attachment ? getMessageTypeLabel(attachment.type, 'Archivo') : getMessageTypeLabel(messageType)),
+    text: text || fallbackText,
     date,
     direction,
     status: String(data.status || data.message_status || '').trim(),
@@ -1919,7 +1963,10 @@ export const DesktopChat: React.FC = () => {
       return (
         <div className={styles.audioAttachment}>
           <Mic size={15} />
-          {audioSrc ? <audio controls src={audioSrc} preload="metadata" /> : <span>{attachment.name || 'Mensaje de voz'}</span>}
+          <span className={styles.audioAttachmentBody}>
+            <strong>{attachment.name || 'Mensaje de voz'}</strong>
+            {audioSrc ? <audio controls src={audioSrc} preload="metadata" /> : <small>Audio no disponible</small>}
+          </span>
           {attachment.durationMs ? <small>{formatVoiceDuration(attachment.durationMs)}</small> : null}
         </div>
       )

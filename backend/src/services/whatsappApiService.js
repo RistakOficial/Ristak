@@ -3260,10 +3260,161 @@ function extractMessageMedia(message = {}) {
   }
 
   return {
-    mediaUrl: cleanString(media.link || media.url || media.href || media.publicUrl || media.downloadUrl),
-    mediaMimeType: cleanString(media.mimeType || media.mime_type || media.mimetype || media.contentType),
-    mediaFilename: cleanString(media.filename || media.fileName || media.name),
+    mediaUrl: cleanString(
+      media.mediaUrl ||
+      media.media_url ||
+      media.publicUrl ||
+      media.public_url ||
+      media.downloadUrl ||
+      media.download_url ||
+      media.fileUrl ||
+      media.file_url ||
+      media.audioUrl ||
+      media.audio_url ||
+      media.imageUrl ||
+      media.image_url ||
+      media.videoUrl ||
+      media.video_url ||
+      media.link ||
+      media.url ||
+      media.href
+    ),
+    mediaMimeType: cleanString(media.mimeType || media.mime_type || media.mimetype || media.contentType || media.content_type),
+    mediaFilename: cleanString(media.filename || media.fileName || media.file_name || media.originalFilename || media.original_filename || media.name),
     mediaDurationMs: Number(media.durationMs || media.duration_ms || 0) || null
+  }
+}
+
+function getMessageMediaObject(message = {}) {
+  const messageType = cleanString(message.type).toLowerCase()
+  const candidates = [
+    messageType ? message[messageType] : null,
+    message.audio,
+    message.image,
+    message.video,
+    message.document,
+    message.sticker,
+    message.media,
+    message.file
+  ].filter(isPlainObject)
+  return candidates[0] || null
+}
+
+function getMessageMediaId(message = {}) {
+  const media = getMessageMediaObject(message)
+  return cleanString(
+    media?.id ||
+    media?.mediaId ||
+    media?.media_id ||
+    media?.assetId ||
+    media?.asset_id ||
+    media?.fileId ||
+    media?.file_id
+  )
+}
+
+function buildInboundAudioFilename({ mediaId = '', mimeType = '' } = {}) {
+  const cleanMime = cleanMimeType(mimeType)
+  const extension = AUDIO_EXTENSION_BY_MIME[cleanMime] || 'ogg'
+  const suffix = cleanString(mediaId).slice(-10) || Date.now()
+  return `whatsapp-audio-${suffix}.${extension}`
+}
+
+async function downloadMetaDirectInboundAudio({ mediaId, token, phoneNumberId = '', mimeType = '' } = {}) {
+  const cleanMediaId = cleanString(mediaId)
+  if (!cleanMediaId) return null
+
+  const mediaInfo = await metaDirectGraphRequest(`/${encodeURIComponent(cleanMediaId)}`, {
+    token,
+    query: {
+      fields: 'url,mime_type,file_size',
+      ...(phoneNumberId ? { phone_number_id: phoneNumberId } : {})
+    }
+  })
+  const mediaUrl = cleanString(mediaInfo.url)
+  if (!mediaUrl) throw new Error('Meta no devolvió URL para el audio recibido')
+
+  const declaredSize = Number(mediaInfo.file_size || 0)
+  if (declaredSize > MAX_WHATSAPP_AUDIO_BYTES) {
+    throw new Error('El audio recibido excede el tamaño máximo permitido')
+  }
+
+  const response = await nodeFetch(mediaUrl, {
+    headers: { Authorization: `Bearer ${cleanString(token)}` }
+  })
+  if (!response.ok) {
+    throw new Error(`Meta no permitió descargar el audio recibido (${response.status})`)
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer())
+  if (!buffer.length) throw new Error('Meta devolvió un audio vacío')
+  if (buffer.length > MAX_WHATSAPP_AUDIO_BYTES) throw new Error('El audio recibido excede el tamaño máximo permitido')
+
+  const responseMimeType = cleanString(response.headers.get('content-type')).split(';')[0]
+  const finalMimeType = cleanMimeType(mediaInfo.mime_type || responseMimeType || mimeType || 'audio/ogg')
+  const { uploadMediaAsset } = await import('./mediaStorageService.js')
+  const asset = await uploadMediaAsset({
+    buffer,
+    mimeType: finalMimeType,
+    filename: buildInboundAudioFilename({ mediaId: cleanMediaId, mimeType: finalMimeType }),
+    module: 'chat',
+    isPublic: true,
+    skipCompression: true,
+    metadata: {
+      source: 'meta_direct_inbound_audio',
+      whatsappMediaId: cleanMediaId,
+      phoneNumberId: cleanString(phoneNumberId)
+    }
+  })
+
+  return {
+    mediaUrl: asset.publicUrl,
+    mediaMimeType: asset.mimeType || finalMimeType,
+    mediaFilename: asset.originalFilename || asset.storedFilename || buildInboundAudioFilename({ mediaId: cleanMediaId, mimeType: finalMimeType }),
+    mediaAssetId: asset.id
+  }
+}
+
+async function hydrateInboundAudioMedia(normalizedMessage = {}, media = {}, { businessPhoneNumberId = '' } = {}) {
+  if (media.mediaUrl) return media
+  const messageType = cleanString(normalizedMessage.type).toLowerCase()
+  if (messageType !== 'audio') return media
+  if (cleanString(normalizedMessage.provider) !== META_DIRECT_PROVIDER_NAME) return media
+
+  const mediaId = getMessageMediaId(normalizedMessage)
+  if (!mediaId) return media
+
+  try {
+    const config = await loadMetaDirectConfig({ includeSecrets: true })
+    const downloaded = await downloadMetaDirectInboundAudio({
+      mediaId,
+      token: config.systemUserToken,
+      phoneNumberId: cleanString(normalizedMessage.phoneNumberId || businessPhoneNumberId || config.phoneNumberId),
+      mimeType: media.mediaMimeType
+    })
+    if (!downloaded?.mediaUrl) return media
+
+    const audio = isPlainObject(normalizedMessage.audio) ? normalizedMessage.audio : {}
+    normalizedMessage.audio = {
+      ...audio,
+      id: mediaId,
+      link: downloaded.mediaUrl,
+      url: downloaded.mediaUrl,
+      publicUrl: downloaded.mediaUrl,
+      mimeType: downloaded.mediaMimeType,
+      filename: downloaded.mediaFilename,
+      mediaAssetId: downloaded.mediaAssetId
+    }
+
+    return {
+      ...media,
+      mediaUrl: downloaded.mediaUrl,
+      mediaMimeType: media.mediaMimeType || downloaded.mediaMimeType,
+      mediaFilename: media.mediaFilename || downloaded.mediaFilename
+    }
+  } catch (error) {
+    logger.warn(`[Meta directo] No se pudo preparar audio entrante ${mediaId}: ${error.message}`)
+    return media
   }
 }
 
@@ -3923,7 +4074,11 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const errorCode = cleanString(error?.code || normalizedMessage.errorCode)
   const errorMessage = cleanString(error?.message || error?.title || normalizedMessage.errorMessage)
   const messageType = cleanString(normalizedMessage.type) || 'unknown'
-  const media = extractMessageMedia(normalizedMessage)
+  const media = await hydrateInboundAudioMedia(
+    normalizedMessage,
+    extractMessageMedia(normalizedMessage),
+    { businessPhoneNumberId }
+  )
   const businessEcho = identity.direction === 'business_echo' || normalizedMessage.businessEcho === true || normalizedMessage.business_echo === true
   const relayEventId = cleanString(payload.relayEventId || payload.relay_event_id)
 

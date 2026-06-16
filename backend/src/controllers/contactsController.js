@@ -620,6 +620,77 @@ const getWhatsAppMediaFromPayload = (rawPayload, messageType = '') => {
   const payload = parseJsonObject(rawPayload)
   if (!payload) return {}
 
+  const pickMediaUrl = (media = {}) => cleanString(
+    media.mediaUrl ||
+    media.media_url ||
+    media.publicUrl ||
+    media.public_url ||
+    media.downloadUrl ||
+    media.download_url ||
+    media.fileUrl ||
+    media.file_url ||
+    media.audioUrl ||
+    media.audio_url ||
+    media.imageUrl ||
+    media.image_url ||
+    media.videoUrl ||
+    media.video_url ||
+    media.link ||
+    media.url ||
+    media.href
+  )
+  const pickMediaId = (media = {}) => cleanString(
+    media.id ||
+    media.mediaId ||
+    media.media_id ||
+    media.assetId ||
+    media.asset_id ||
+    media.fileId ||
+    media.file_id
+  )
+  const pickMediaMimeType = (media = {}) => cleanString(
+    media.mimeType ||
+    media.mime_type ||
+    media.mimetype ||
+    media.contentType ||
+    media.content_type
+  )
+  const pickMediaFilename = (media = {}) => cleanString(
+    media.filename ||
+    media.fileName ||
+    media.file_name ||
+    media.originalFilename ||
+    media.original_filename ||
+    media.name ||
+    media.title
+  )
+  const pickMediaDurationMs = (media = {}) => (
+    Number(media.durationMs || media.duration_ms || media.duration || 0) || null
+  )
+  const normalizeMediaCandidate = (media) => {
+    if (!media) return null
+    if (typeof media === 'string') {
+      const mediaUrl = cleanString(media)
+      return mediaUrl ? { media_url: mediaUrl } : null
+    }
+    if (typeof media !== 'object') return null
+
+    const mediaUrl = pickMediaUrl(media)
+    const mediaId = pickMediaId(media)
+    const mimeType = pickMediaMimeType(media)
+    const filename = pickMediaFilename(media)
+    const durationMs = pickMediaDurationMs(media)
+    if (!mediaUrl && !mediaId && !mimeType && !filename && !durationMs) return null
+
+    return {
+      media_url: mediaUrl,
+      media_id: mediaId,
+      media_mime_type: mimeType,
+      media_filename: filename,
+      media_duration_ms: durationMs
+    }
+  }
+
   const normalizedType = cleanString(messageType).toLowerCase()
   const mediaObjects = [
     payload[normalizedType],
@@ -630,19 +701,22 @@ const getWhatsAppMediaFromPayload = (rawPayload, messageType = '') => {
     payload.sticker,
     payload.whatsappMessage?.[normalizedType],
     payload.whatsappInboundMessage?.[normalizedType],
-    payload.message?.[normalizedType]
-  ].filter(item => item && typeof item === 'object')
+    payload.message?.[normalizedType],
+    payload.localMedia,
+    payload.response?.[normalizedType],
+    payload.request?.[normalizedType],
+    ...(Array.isArray(payload.attachments) ? payload.attachments : []),
+    ...(Array.isArray(payload.message?.attachments) ? payload.message.attachments : []),
+    payload.message?.attachment,
+    payload.attachment,
+    payload.media,
+    payload.file
+  ].map(normalizeMediaCandidate).filter(Boolean)
 
   const media = mediaObjects[0] || null
   if (!media) return {}
 
-  return {
-    media_url: cleanString(media.link || media.url || media.href),
-    media_id: cleanString(media.id || media.mediaId || media.media_id),
-    media_mime_type: cleanString(media.mimeType || media.mime_type),
-    media_filename: cleanString(media.filename || media.fileName || media.name),
-    media_duration_ms: Number(media.durationMs || media.duration_ms || 0) || null
-  }
+  return media
 }
 
 const splitName = (name = '') => {

@@ -200,6 +200,74 @@ test('contact journey defaults to contact-authored messages only', async () => {
   }
 })
 
+test('contact journey exposes playable WhatsApp audio media from raw payload', async () => {
+  const id = randomUUID()
+  const contactId = `journey_audio_${id}`
+  const phone = `+52993${Date.now().toString().slice(-7)}`
+  const audioUrl = `https://cdn.ristak.test/audio/${id}.ogg`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      'Cliente Audio',
+      'Cliente',
+      'manual',
+      '2026-06-16T10:10:00.000Z',
+      '2026-06-16T10:10:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, contact_id, phone, from_phone, to_phone, business_phone, transport,
+        direction, message_type, message_text, message_timestamp, created_at,
+        raw_payload_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `api_audio_${id}`,
+      contactId,
+      phone,
+      phone,
+      '+526561000000',
+      '+526561000000',
+      'api',
+      'inbound',
+      'audio',
+      '>AUDIO< [Received on Ristak]',
+      '2026-06-16T10:11:00.000Z',
+      '2026-06-16T10:11:00.000Z',
+      JSON.stringify({
+        type: 'audio',
+        audio: {
+          id: `media_${id}`,
+          downloadUrl: audioUrl,
+          mimeType: 'audio/ogg',
+          fileName: 'nota-de-voz.ogg',
+          durationMs: 12400
+        }
+      })
+    ])
+
+    const journey = await readJourney(contactId)
+    const audioEvent = journey.find(event => event.type === 'whatsapp_message' && event.data.message_type === 'audio')
+
+    assert.ok(audioEvent)
+    assert.equal(audioEvent.data.media_url, audioUrl)
+    assert.equal(audioEvent.data.media_id, `media_${id}`)
+    assert.equal(audioEvent.data.media_mime_type, 'audio/ogg')
+    assert.equal(audioEvent.data.media_filename, 'nota-de-voz.ogg')
+    assert.equal(audioEvent.data.media_duration_ms, 12400)
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
 test('chat history includes WhatsApp messages matched by phone when contact_id is missing', async () => {
   const id = randomUUID()
   const contactId = `journey_phone_match_${id}`
