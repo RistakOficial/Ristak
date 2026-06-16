@@ -32,7 +32,9 @@ import {
   Workflow,
   X
 } from 'lucide-react'
+import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
 import { AppointmentModal, Button, CustomSelect, Icon, Modal, RecordPaymentModal, TagPicker } from '@/components/common'
+import { ContactJourney } from '@/components/common/ContactJourney'
 import { AgentRobot } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -265,6 +267,8 @@ const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
 const MIN_VOICE_RECORDING_MS = 700
 const VOICE_WAVE_BAR_COUNT = 84
 const VOICE_WAVE_PATTERN = [8, 18, 30, 42, 24, 13, 36, 48, 31, 16, 10, 22, 40, 52, 34, 20, 45, 28]
+const MESSAGE_AUDIO_WAVE_PATTERN = [13, 24, 36, 19, 30, 46, 22, 15, 40, 52, 34, 20, 28, 44, 18, 26, 38, 23]
+const MESSAGE_AUDIO_WAVE_BAR_COUNT = 30
 const FAILED_MESSAGE_STATUSES = new Set(['failed', 'error', 'undelivered', 'rejected', 'cancelled'])
 const PENDING_MESSAGE_STATUSES = new Set(['pending', 'queued', 'sending', 'enviando', 'enviando por qr', 'scheduled'])
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
@@ -820,6 +824,54 @@ function getAttachmentSource(attachment: DesktopChatMessage['attachment']) {
   return attachment?.url || attachment?.dataUrl || ''
 }
 
+function getAttachmentExtension(name = '', mimeType = '') {
+  const normalizedMime = mimeType.toLowerCase()
+  const nameExtension = name.split('?')[0].split('#')[0].split('.').pop()?.toLowerCase() || ''
+  if (nameExtension && nameExtension.length <= 6 && /^[a-z0-9]+$/.test(nameExtension)) return nameExtension
+  if (normalizedMime.includes('pdf')) return 'pdf'
+  if (normalizedMime.includes('word') || normalizedMime.includes('msword')) return 'doc'
+  if (normalizedMime.includes('spreadsheet') || normalizedMime.includes('excel')) return 'xls'
+  if (normalizedMime.includes('presentation') || normalizedMime.includes('powerpoint')) return 'ppt'
+  if (normalizedMime.includes('zip')) return 'zip'
+  if (normalizedMime.startsWith('text/')) return 'txt'
+  return 'file'
+}
+
+function getAttachmentFileMeta(attachment: NonNullable<DesktopChatMessage['attachment']>) {
+  const extension = getAttachmentExtension(attachment.name || '', attachment.mimeType || '')
+  const normalizedMime = String(attachment.mimeType || '').toLowerCase()
+  const upperExtension = extension === 'file' ? 'FILE' : extension.toUpperCase()
+  let label = 'Archivo'
+  let tone: 'pdf' | 'word' | 'sheet' | 'slide' | 'zip' | 'text' | 'file' = 'file'
+
+  if (extension === 'pdf' || normalizedMime.includes('pdf')) {
+    label = 'PDF'
+    tone = 'pdf'
+  } else if (['doc', 'docx'].includes(extension) || normalizedMime.includes('word') || normalizedMime.includes('msword')) {
+    label = 'Word'
+    tone = 'word'
+  } else if (['xls', 'xlsx', 'csv'].includes(extension) || normalizedMime.includes('spreadsheet') || normalizedMime.includes('excel')) {
+    label = extension === 'csv' ? 'CSV' : 'Excel'
+    tone = 'sheet'
+  } else if (['ppt', 'pptx'].includes(extension) || normalizedMime.includes('presentation') || normalizedMime.includes('powerpoint')) {
+    label = 'Presentación'
+    tone = 'slide'
+  } else if (['zip', 'rar', '7z'].includes(extension) || normalizedMime.includes('zip') || normalizedMime.includes('compressed')) {
+    label = 'Comprimido'
+    tone = 'zip'
+  } else if (['txt', 'md'].includes(extension) || normalizedMime.startsWith('text/')) {
+    label = 'Texto'
+    tone = 'text'
+  }
+
+  return {
+    extension: upperExtension,
+    label,
+    tone,
+    name: attachment.name || getMessageTypeLabel(attachment.type, 'Archivo')
+  }
+}
+
 function getJourneyMediaAttachment(event: JourneyEvent): DesktopChatMessage['attachment'] | undefined {
   const data = event.data || {}
   const messageType = String(data.message_type || data.messageType || data.type || '').toLowerCase()
@@ -1003,37 +1055,6 @@ function toCalendarEvent(
   }
 }
 
-function getJourneyEventTitle(event: JourneyEvent) {
-  if (event.type === 'whatsapp_message' || event.type === 'meta_message') return 'Mensaje'
-  if (event.type === 'page_visit') return 'Visita web'
-  if (event.type === 'contact_created') return 'Contacto creado'
-  if (event.type === 'appointment') return 'Cita'
-  if (event.type === 'payment') return 'Compra'
-  return 'Movimiento'
-}
-
-function getJourneyEventDescription(event: JourneyEvent) {
-  const data = event.data || {}
-  if (event.type === 'whatsapp_message' || event.type === 'meta_message') {
-    return pickMessageText(data) || getMessageTypeLabel(String(data.message_type || data.type || ''), 'Mensaje recibido')
-  }
-  if (event.type === 'page_visit') {
-    return formatUrlParameter(String(data.landing_page || data.page_url || data.url || data.utm_source || 'Sitio web')) || 'Sitio web'
-  }
-  if (event.type === 'appointment') return String(data.title || data.status || 'Cita agendada')
-  if (event.type === 'payment') return data.amount ? formatCurrencyNoDecimals(Number(data.amount || 0)) : 'Pago registrado'
-  if (event.type === 'contact_created') return formatUrlParameter(String(data.source || data.conversion_source || 'Nuevo contacto')) || 'Nuevo contacto'
-  return 'Actividad del contacto'
-}
-
-function getJourneyEventIcon(event: JourneyEvent) {
-  if (event.type === 'whatsapp_message' || event.type === 'meta_message') return MessageCircle
-  if (event.type === 'appointment') return CalendarDays
-  if (event.type === 'payment') return CreditCard
-  if (event.type === 'contact_created') return User
-  return MousePointerClick
-}
-
 function getTrackingData(contact?: Contact | null, journey: JourneyEvent[] = []) {
   const firstSession = contact?.firstSession || null
   const firstPageVisit = journey.find((event) => event.type === 'page_visit')
@@ -1091,6 +1112,7 @@ export const DesktopChat: React.FC = () => {
   const voiceChunksRef = useRef<Blob[]>([])
   const voiceStartedAtRef = useRef(0)
   const voiceTimerRef = useRef<number | null>(null)
+  const messageAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
   const chatsRef = useRef<DesktopChatContact[]>([])
   const archivedChatIdSetRef = useRef<Set<string>>(new Set())
   const agentPriorityChatIdSetRef = useRef<Set<string>>(new Set())
@@ -1122,6 +1144,8 @@ export const DesktopChat: React.FC = () => {
   const [voiceRecording, setVoiceRecording] = useState(false)
   const [voiceProcessing, setVoiceProcessing] = useState(false)
   const [voiceElapsedMs, setVoiceElapsedMs] = useState(0)
+  const [playingAudioId, setPlayingAudioId] = useState('')
+  const [messageAudioProgress, setMessageAudioProgress] = useState<Record<string, { currentTime: number; duration: number }>>({})
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [highLevelConnected, setHighLevelConnected] = useState(false)
   const [conversationAgentEnabled, setConversationAgentEnabled] = useState(false)
@@ -1268,10 +1292,6 @@ export const DesktopChat: React.FC = () => {
   const conversationAgentStatusLabel = conversationAgentState
     ? CONVERSATION_AGENT_STATUS_LABELS[conversationAgentState.status] || 'Agente conversacional'
     : 'Sin agente asignado'
-  const journeyEventsDescending = useMemo(
-    () => [...contactJourney].sort((left, right) => Date.parse(right.date) - Date.parse(left.date)),
-    [contactJourney]
-  )
   const advancedFilterGroups = useMemo(() => ([
     {
       id: 'channel',
@@ -2314,9 +2334,9 @@ export const DesktopChat: React.FC = () => {
 
   const renderChannelBadgeIcon = (kind: ContactChannelBadgeKind, size: 'sm' | 'md') => {
     const iconSize = size === 'sm' ? 13 : 14
-    if (kind === 'whatsapp') return <Icon name="whatsapp" size={size === 'sm' ? 16 : 17} className={styles.avatarChannelBadgeWhatsappGlyph} />
-    if (kind === 'messenger') return <Icon name="facebook" size={iconSize} />
-    if (kind === 'instagram') return <Icon name="instagram" size={iconSize} />
+    if (kind === 'whatsapp') return <FaWhatsapp className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
+    if (kind === 'messenger') return <FaFacebookMessenger className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
+    if (kind === 'instagram') return <FaInstagram className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
     if (kind === 'email') return <Mail size={iconSize} />
     if (kind === 'sms') return <Phone size={iconSize} />
     if (kind === 'webchat') return <Icon name="globe" size={iconSize} />
@@ -2388,20 +2408,110 @@ export const DesktopChat: React.FC = () => {
     )
   }
 
+  const setMessageAudioRef = (messageId: string, node: HTMLAudioElement | null) => {
+    if (node) {
+      messageAudioRefs.current[messageId] = node
+      return
+    }
+    delete messageAudioRefs.current[messageId]
+  }
+
+  const updateMessageAudioProgress = useCallback((messageId: string) => {
+    const audio = messageAudioRefs.current[messageId]
+    if (!audio) return
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0
+    const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0
+    setMessageAudioProgress((current) => ({
+      ...current,
+      [messageId]: { currentTime, duration }
+    }))
+  }, [])
+
+  const handleToggleMessageAudio = useCallback(async (messageId: string) => {
+    const audio = messageAudioRefs.current[messageId]
+    if (!audio) return
+
+    Object.entries(messageAudioRefs.current).forEach(([id, element]) => {
+      if (id !== messageId && element && !element.paused) element.pause()
+    })
+
+    if (!audio.paused) {
+      audio.pause()
+      setPlayingAudioId((current) => (current === messageId ? '' : current))
+      return
+    }
+
+    try {
+      await audio.play()
+      setPlayingAudioId(messageId)
+    } catch {
+      showToast('error', 'No se pudo reproducir el audio', 'Intenta abrirlo otra vez.')
+    }
+  }, [showToast])
+
   const renderAttachment = (message: DesktopChatMessage) => {
     if (!message.attachment) return null
     const { attachment } = message
     const attachmentSrc = getAttachmentSource(attachment)
 
     if (attachment.type === 'audio') {
+      const progress = messageAudioProgress[message.id]
+      const durationSeconds = progress?.duration || (attachment.durationMs ? attachment.durationMs / 1000 : 0)
+      const currentSeconds = progress?.currentTime || 0
+      const progressPercent = durationSeconds > 0 ? Math.max(0, Math.min(100, (currentSeconds / durationSeconds) * 100)) : 0
+      const isPlaying = playingAudioId === message.id
+      const audioTitle = attachment.name && attachment.name !== 'Mensaje de voz' ? attachment.name : 'Mensaje de voz'
+
       return (
-        <div className={styles.audioAttachment}>
-          <Mic size={15} />
-          <span className={styles.audioAttachmentBody}>
-            <strong>{attachment.name || 'Mensaje de voz'}</strong>
-            {attachmentSrc ? <audio controls src={attachmentSrc} preload="metadata" /> : <small>Audio no disponible</small>}
+        <div
+          className={`${styles.audioAttachment} ${message.direction === 'outbound' ? styles.audioAttachmentOutbound : styles.audioAttachmentInbound} ${!attachmentSrc ? styles.audioAttachmentUnavailable : ''}`}
+          style={{ '--audio-progress': `${progressPercent}%` } as React.CSSProperties}
+        >
+          {attachmentSrc ? (
+            <audio
+              ref={(node) => setMessageAudioRef(message.id, node)}
+              className={styles.audioNative}
+              src={attachmentSrc}
+              preload="metadata"
+              onLoadedMetadata={() => updateMessageAudioProgress(message.id)}
+              onTimeUpdate={() => updateMessageAudioProgress(message.id)}
+              onPlay={() => setPlayingAudioId(message.id)}
+              onPause={() => setPlayingAudioId((current) => (current === message.id ? '' : current))}
+              onEnded={() => {
+                updateMessageAudioProgress(message.id)
+                setPlayingAudioId('')
+              }}
+            />
+          ) : null}
+          <button
+            type="button"
+            className={styles.audioPlayButton}
+            onClick={() => { void handleToggleMessageAudio(message.id) }}
+            disabled={!attachmentSrc}
+            aria-label={isPlaying ? 'Pausar mensaje de voz' : 'Reproducir mensaje de voz'}
+          >
+            {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+          </button>
+          <span className={styles.audioWaveform} aria-hidden="true">
+            {Array.from({ length: MESSAGE_AUDIO_WAVE_BAR_COUNT }).map((_, index) => {
+              const pattern = MESSAGE_AUDIO_WAVE_PATTERN[index % MESSAGE_AUDIO_WAVE_PATTERN.length]
+              return (
+                <span
+                  key={index}
+                  className={styles.audioWaveBar}
+                  style={{ '--bar-height': `${pattern}px` } as React.CSSProperties}
+                />
+              )
+            })}
+            <span className={styles.audioProgressDot} />
           </span>
-          {attachment.durationMs ? <small>{formatVoiceDuration(attachment.durationMs)}</small> : null}
+          <span className={styles.audioAvatar} aria-hidden="true">
+            <Mic size={17} />
+          </span>
+          <span className={styles.audioAttachmentBody}>
+            <strong>{audioTitle}</strong>
+            <small>{attachmentSrc ? (durationSeconds > 0 ? formatVoiceDuration(durationSeconds * 1000) : 'Audio') : 'Audio no disponible'}</small>
+          </span>
         </div>
       )
     }
@@ -2440,11 +2550,28 @@ export const DesktopChat: React.FC = () => {
       )
     }
 
-    return (
-      <a className={styles.attachment} href={attachmentSrc || undefined} target="_blank" rel="noreferrer">
-        <FileText size={15} />
-        <span>{attachment.name || getMessageTypeLabel(attachment.type, 'Archivo')}</span>
+    const fileMeta = getAttachmentFileMeta(attachment)
+    const fileContent = (
+      <>
+        <span className={styles.fileAttachmentPreview} data-file-tone={fileMeta.tone}>
+          <FileText size={20} />
+          <em>{fileMeta.extension}</em>
+        </span>
+        <span className={styles.fileAttachmentBody}>
+          <strong>{fileMeta.name}</strong>
+          <small>{fileMeta.label}{attachmentSrc ? ' · Abrir archivo' : ' no disponible'}</small>
+        </span>
+      </>
+    )
+
+    return attachmentSrc ? (
+      <a className={styles.fileAttachment} href={attachmentSrc} target="_blank" rel="noreferrer" aria-label={`Abrir ${fileMeta.name}`}>
+        {fileContent}
       </a>
+    ) : (
+      <span className={`${styles.fileAttachment} ${styles.attachmentUnavailable}`}>
+        {fileContent}
+      </span>
     )
   }
 
@@ -2461,28 +2588,6 @@ export const DesktopChat: React.FC = () => {
       </span>
     )
   }
-
-  const renderJourneyPanel = () => (
-    <div className={styles.journeyList}>
-      {journeyEventsDescending.length === 0 ? (
-        <p className={styles.mutedLine}>Todavía no hay viaje registrado para este contacto.</p>
-      ) : journeyEventsDescending.map((event, index) => {
-        const Icon = getJourneyEventIcon(event)
-        return (
-          <div key={`${event.type}-${event.date}-${index}`} className={styles.journeyItem}>
-            <span className={styles.journeyIcon}>
-              <Icon size={15} />
-            </span>
-            <span>
-              <strong>{getJourneyEventTitle(event)}</strong>
-              <small>{getJourneyEventDescription(event)}</small>
-              <em>{formatLocalDateTime(event.date)}</em>
-            </span>
-          </div>
-        )
-      })}
-    </div>
-  )
 
   return (
     <div className={styles.page} data-ristak-page>
@@ -3048,9 +3153,8 @@ export const DesktopChat: React.FC = () => {
                   </div>
                 </>
               ) : (
-                <div className={styles.infoSection}>
-                  <h3>Viaje del cliente</h3>
-                  {renderJourneyPanel()}
+                <div className={`${styles.infoSection} ${styles.contactJourneySection}`} data-desktop-chat-contact-journey>
+                  <ContactJourney contactId={activeContact.id} />
                 </div>
               )}
             </>
