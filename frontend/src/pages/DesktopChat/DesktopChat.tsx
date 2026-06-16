@@ -980,63 +980,54 @@ export const DesktopChat: React.FC = () => {
         subtitle="Responde conversaciones, agenda citas y revisa la información del contacto sin salir de la pantalla."
       />
 
-      <div className={styles.chatToolbar}>
-        <label className={styles.searchBox}>
-          <Search size={16} />
-          <input
-            value={chatQuery}
-            onChange={(event) => setChatQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void handleSearchContacts()
-            }}
-            placeholder="Buscar chat, contacto, teléfono o correo"
-          />
-          {chatQuery ? (
-            <button type="button" onClick={() => setChatQuery('')} aria-label="Limpiar búsqueda">
-              <X size={14} />
-            </button>
-          ) : null}
-        </label>
-        <div className={styles.toolbarStatus}>
-          <span>{filteredChats.length} de {chats.length} conversaciones</span>
-          {whatsappConnected ? <Badge variant="success">WhatsApp activo</Badge> : highLevelConnected ? <Badge variant="info">HighLevel</Badge> : <Badge variant="warning">Sin envío</Badge>}
-        </div>
-      </div>
-
       <section className={styles.chatShell} data-desktop-chat-page>
         <aside className={styles.inboxPanel} aria-label="Lista de chats">
           <div className={styles.inboxHeader}>
             <div>
               <h2>Conversaciones</h2>
-              <p>{hasActiveChatFilters ? 'Vista filtrada' : 'Todas las conversaciones'}</p>
+              <p>{filteredChats.length} de {chats.length} visibles</p>
             </div>
             {activeAdvancedFilterCount > 0 ? <Badge variant="info">{activeAdvancedFilterCount} filtros</Badge> : <Badge variant="default">Bandeja</Badge>}
           </div>
 
+          <label className={styles.searchBox}>
+            <Search size={16} />
+            <input
+              value={chatQuery}
+              onChange={(event) => setChatQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void handleSearchContacts()
+              }}
+              placeholder="Buscar chat, contacto, teléfono o correo"
+            />
+            {chatQuery ? (
+              <button type="button" onClick={() => setChatQuery('')} aria-label="Limpiar búsqueda">
+                <X size={14} />
+              </button>
+            ) : null}
+          </label>
+
           <div className={styles.filterRow} role="tablist" aria-label="Filtros de chat">
+            <button
+              type="button"
+              className={`${styles.filterToolButton} ${advancedFiltersOpen || activeAdvancedFilterCount > 0 ? styles.filterActive : ''}`}
+              onClick={() => setAdvancedFiltersOpen((current) => !current)}
+              aria-expanded={advancedFiltersOpen}
+              aria-label="Modificar filtros"
+            >
+              <ListFilter size={14} />
+              <span>Filtros</span>
+              {activeAdvancedFilterCount > 0 ? <strong>{activeAdvancedFilterCount}</strong> : null}
+            </button>
             {CHAT_FILTERS.map((filter) => (
-              <React.Fragment key={filter.id}>
-                <button
-                  type="button"
-                  className={filter.id === chatFilter ? styles.filterActive : ''}
-                  onClick={() => setChatFilter(filter.id)}
-                >
-                  {filter.label}
-                </button>
-                {filter.id === 'all' ? (
-                  <button
-                    type="button"
-                    className={`${styles.filterToolButton} ${advancedFiltersOpen || activeAdvancedFilterCount > 0 ? styles.filterActive : ''}`}
-                    onClick={() => setAdvancedFiltersOpen((current) => !current)}
-                    aria-expanded={advancedFiltersOpen}
-                    aria-label="Modificar filtros"
-                  >
-                    <ListFilter size={14} />
-                    <span>Filtros</span>
-                    {activeAdvancedFilterCount > 0 ? <strong>{activeAdvancedFilterCount}</strong> : null}
-                  </button>
-                ) : null}
-              </React.Fragment>
+              <button
+                key={filter.id}
+                type="button"
+                className={filter.id === chatFilter ? styles.filterActive : ''}
+                onClick={() => setChatFilter(filter.id)}
+              >
+                {filter.label}
+              </button>
             ))}
           </div>
 
