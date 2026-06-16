@@ -545,6 +545,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
         role="textbox"
         aria-multiline={multiline}
         aria-label={rest['aria-label']}
+        data-ristak-unstyled
         data-placeholder={placeholder || ''}
         className={cn(
           styles.composerEditor,

@@ -72,9 +72,8 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
     >
       <div className={styles.container}>
         {loading ? (
-          <div className={styles.loading}>
-            <div className={styles.spinner}></div>
-            <p>Cargando transacciones...</p>
+          <div className={styles.loading} role="status" aria-live="polite" aria-label="Cargando transacciones">
+            <div className={styles.spinner} aria-hidden="true"></div>
           </div>
         ) : transactions.length === 0 ? (
           <div className={styles.empty}>

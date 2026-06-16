@@ -263,9 +263,8 @@ export function VisitorDetailsModal({
             {/* Visitor list */}
             <div className={styles.visitorList}>
               {loading ? (
-                <div className={styles.emptyState}>
+                <div className={styles.emptyState} role="status" aria-live="polite" aria-label="Cargando visitantes">
                   <Icon name="refresh" size={24} className={styles.spinIcon} />
-                  <p>Cargando visitantes...</p>
                 </div>
               ) : filteredData.length === 0 ? (
                 <div className={styles.emptyState}>

@@ -1644,9 +1644,8 @@ export const PhoneCalendar: React.FC = () => {
 
                 <div className={styles.contactList} data-phone-scrollable="true">
                   {appointmentContactsLoading ? (
-                    <div className={styles.contactListState}>
-                      <Loader2 size={19} className={styles.spinIcon} />
-                      <span>Cargando contactos...</span>
+                    <div className={styles.contactListState} role="status" aria-live="polite" aria-label="Cargando contactos">
+                      <Loader2 size={19} className={styles.spinIcon} aria-hidden="true" />
                     </div>
                   ) : appointmentContactsError ? (
                     <div className={styles.contactListState}>

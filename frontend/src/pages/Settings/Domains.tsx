@@ -166,7 +166,7 @@ export const Domains: React.FC = () => {
   }
 
   if (loading) {
-    return <Loading page="settings" />
+    return <Loading page="settings-list" />
   }
 
   const publicStatus = getDomainStatus(domainConfig.domain, domainConfig.renderDomainVerified)
@@ -181,8 +181,8 @@ export const Domains: React.FC = () => {
         <div>
           <h2>Dominios</h2>
           <p>
-            Separa el dominio público de formularios y sitios del dominio que abre el CRM.
-            Así un dominio tipo app.ristak.com entra a la app, no a una página pública.
+            Configura dos categorías distintas: una para páginas públicas y otra para entrar al CRM.
+            Así tus clientes ven tus formularios en un dominio público y tu equipo entra a la app desde un dominio tipo app.
           </p>
         </div>
         <Button variant="secondary" onClick={loadDomain}>
@@ -195,24 +195,35 @@ export const Domains: React.FC = () => {
         <article className={styles.domainCard}>
           <div className={styles.domainMeta}>
             <div>
-              <h3>Dominio público</h3>
-              <p>Para formularios, sitios y landing pages. Sus rutas se abren como /form-01 o /site-01.</p>
+              <span className={styles.categoryLabel}>Categoría 1 · Sitios públicos</span>
+              <h3>Dominio para páginas, formularios y campañas</h3>
+              <p>
+                Es la dirección que ven tus clientes cuando abren una landing, un formulario,
+                una página de campaña o un link público creado en Ristak.
+              </p>
             </div>
             <span className={`${styles.statusPill} ${publicStatus.className}`}>{publicStatus.label}</span>
           </div>
 
+          <div className={styles.copyExamples}>
+            <strong>Ejemplos para no confundirse</strong>
+            <p><span>www.clinicaramirez.com</span> abre tus páginas públicas.</p>
+            <p><span>agenda.clinicaramirez.com</span> puede usarse para campañas o formularios.</p>
+            <p><span>app.clinicaramirez.com</span> no va aquí; ese va en la categoría de app.</p>
+          </div>
+
           <div className={styles.domainControls}>
             <label className={styles.field}>
-              <span>Dominio público</span>
+              <span>Dominio público del negocio</span>
               <input
                 value={domain}
-                placeholder="www.doctorramirez.com"
+                placeholder="www.tuclinica.com"
                 onChange={(event) => handleDomainChange(event.target.value)}
               />
             </label>
             <Button onClick={verifyDomain} loading={verifying} disabled={!domain.trim()}>
               <CheckCircle2 size={16} />
-              Verificar dominio
+              Verificar público
             </Button>
           </div>
 
@@ -233,18 +244,29 @@ export const Domains: React.FC = () => {
         <article className={styles.domainCard}>
           <div className={styles.domainMeta}>
             <div>
-              <h3>Dominio de la app</h3>
-              <p>Para abrir el CRM con un subdominio que empiece en app, como app.ristak.com.</p>
+              <span className={styles.categoryLabel}>Categoría 2 · App / CRM</span>
+              <h3>Dominio para entrar a Ristak</h3>
+              <p>
+                Es la dirección privada de la app. Aquí entra tu equipo al CRM y aquí deben regresar
+                conexiones como Google o Meta después de autorizar.
+              </p>
             </div>
             <span className={`${styles.statusPill} ${appStatus.className}`}>{appStatus.label}</span>
           </div>
 
+          <div className={styles.copyExamples}>
+            <strong>Ejemplos para no confundirse</strong>
+            <p><span>app.clinicaramirez.com</span> abre el CRM y recibe regresos de Google o Meta.</p>
+            <p><span>app.ristak.com</span> es un ejemplo válido porque empieza con app.</p>
+            <p><span>crm.clinicaramirez.com</span> no va aquí; el subdominio debe empezar con app.</p>
+          </div>
+
           <div className={styles.domainControls}>
             <label className={styles.field}>
-              <span>Dominio de la app</span>
+              <span>Dominio privado de la app</span>
               <input
                 value={appDomain}
-                placeholder="app.ristak.com"
+                placeholder="app.tuclinica.com"
                 onChange={(event) => handleAppDomainChange(event.target.value)}
               />
             </label>

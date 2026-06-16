@@ -837,7 +837,7 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
       WHERE msg.contact_id = ?
         OR (? != '' AND msg.phone = ?)
       ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC, msg.created_at ASC
-      LIMIT 80
+      LIMIT 500
     `, [row.id, phone || '', phone || '']).catch(() => [])
     const firstMessage = messages.find(message => message.message_timestamp || message.created_at)
     const firstMessageAt = parseStoredDate(

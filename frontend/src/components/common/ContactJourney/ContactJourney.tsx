@@ -469,9 +469,8 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
 
   if (loading) {
     return (
-      <div className={styles.loading}>
-        <div className={styles.spinner} />
-        <span>Cargando viaje...</span>
+      <div className={styles.loading} role="status" aria-live="polite" aria-label="Cargando viaje">
+        <div className={styles.spinner} aria-hidden="true" />
       </div>
     )
   }

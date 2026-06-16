@@ -1202,7 +1202,9 @@ export const ConversationalAgentSettings: React.FC = () => {
 
       {loading && (
         <Card>
-          <p className={styles.helper}>Cargando agentes...</p>
+          <p className={styles.helper} role="status" aria-live="polite" aria-label="Cargando agentes">
+            <RotateCcw size={16} className="animate-spin" aria-hidden="true" />
+          </p>
         </Card>
       )}
 

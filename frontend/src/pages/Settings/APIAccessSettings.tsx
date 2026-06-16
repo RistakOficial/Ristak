@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react'
-import { ArrowRight, BookOpen, CheckCircle, ChevronDown, Copy, KeyRound, RefreshCw, Trash2, XCircle } from 'lucide-react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { BookOpen, CheckCircle, Copy, ExternalLink, FileText, KeyRound, RefreshCw, ServerCog, Trash2, Webhook, XCircle } from 'lucide-react'
 import { Button, Card } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -21,6 +21,8 @@ interface WebhookEndpoint {
   path: string
 }
 
+type DeveloperSection = 'credentials' | 'webhooks' | 'docs' | 'logs'
+
 export const APIAccessSettings: React.FC = () => {
   const { user } = useAuth()
   const { showToast, showConfirm } = useNotification()
@@ -30,7 +32,7 @@ export const APIAccessSettings: React.FC = () => {
   const [isLoadingApiToken, setIsLoadingApiToken] = useState(false)
   const [isRotatingApiToken, setIsRotatingApiToken] = useState(false)
   const [isRevokingApiToken, setIsRevokingApiToken] = useState(false)
-  const [areWebhooksOpen, setAreWebhooksOpen] = useState(false)
+  const [activeSection, setActiveSection] = useState<DeveloperSection>('credentials')
 
   const origin = (API_URL || window.location.origin).replace(/\/+$/, '')
   const externalApiBaseUrl = `${origin}/api/external`
@@ -67,6 +69,37 @@ export const APIAccessSettings: React.FC = () => {
       path: '/webhook/refund'
     }
   ]
+
+  const developerSections = useMemo(() => [
+    {
+      key: 'credentials' as const,
+      icon: <KeyRound size={18} />,
+      title: 'Credenciales API',
+      description: 'Llaves para conectar sistemas externos.',
+      meta: apiTokenMetadata?.hasToken ? 'Token activo' : 'Sin token'
+    },
+    {
+      key: 'webhooks' as const,
+      icon: <Webhook size={18} />,
+      title: 'Webhooks',
+      description: 'URLs POST para recibir eventos.',
+      meta: `${webhookEndpoints.length} URLs`
+    },
+    {
+      key: 'docs' as const,
+      icon: <BookOpen size={18} />,
+      title: 'Documentación',
+      description: 'Guías, endpoints y conexión MCP.',
+      meta: 'Abrir guía'
+    },
+    {
+      key: 'logs' as const,
+      icon: <ServerCog size={18} />,
+      title: 'Logs de la app',
+      description: 'Registros para revisar fallas con soporte.',
+      meta: 'Soporte'
+    }
+  ], [apiTokenMetadata?.hasToken, webhookEndpoints.length])
 
   const authHeaders = () => {
     const token = localStorage.getItem('auth_token')
@@ -224,12 +257,12 @@ export const APIAccessSettings: React.FC = () => {
         <div className={styles.panelHeader}>
           <div className={styles.panelHeaderLeft}>
             <div className={styles.iconBox}>
-              <KeyRound size={22} />
+              <FileText size={22} />
             </div>
             <div>
-              <h2 className={styles.panelTitle}>Acceso API</h2>
+              <h2 className={styles.panelTitle}>Developers</h2>
               <p className={styles.panelDescription}>
-                Configura credenciales para sistemas externos
+                Webhooks, documentación, logs y credenciales para conectar Ristak con otros sistemas.
               </p>
             </div>
           </div>
@@ -242,162 +275,91 @@ export const APIAccessSettings: React.FC = () => {
         </div>
 
         <div className={styles.panelSection}>
-          <div style={{ marginBottom: '1.25rem' }}>
-            <h3 className={styles.accountSectionTitle}>
-              <KeyRound size={16} />
-              Credenciales externas
-            </h3>
-            <p className={styles.accountSectionDescription}>
-              ID público de la app y token secreto revocable
-            </p>
-          </div>
-
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-            gap: '0.75rem',
-            marginBottom: '1rem'
-          }}>
-            <InfoField label="App ID" value={isLoadingApiToken ? 'Cargando...' : appId || 'Sin ID'} onCopy={() => copyText(appId, 'App ID')} />
-            <InfoField label="Token activo" value={isLoadingApiToken ? 'Cargando...' : apiTokenMetadata?.preview || 'Sin token'} />
-            <InfoField label="Creado" value={formatDate(apiTokenMetadata?.createdAt || null)} />
-            <InfoField label="Último uso" value={formatDate(apiTokenMetadata?.lastUsedAt || null)} />
-          </div>
-
-          <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
-            <ReadonlyField label="Endpoint base" value={externalApiBaseUrl} onCopy={() => copyText(externalApiBaseUrl, 'endpoint base')} />
-            <ReadonlyField label="MCP server" value={mcpServerUrl} onCopy={() => copyText(mcpServerUrl, 'MCP server')} />
-          </div>
-
-          {newApiToken && (
-            <div style={{ marginBottom: '1rem' }}>
-              <ReadonlyField label="Nuevo API token" value={newApiToken} onCopy={handleCopyApiToken} />
-            </div>
-          )}
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
-            <Button
-              variant="primary"
-              onClick={handleRotateApiToken}
-              loading={isRotatingApiToken}
-              disabled={isRotatingApiToken || isRevokingApiToken}
-            >
-              <RefreshCw size={18} />
-              {apiTokenMetadata?.hasToken ? 'Rotar token' : 'Generar token'}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={handleRevokeApiToken}
-              loading={isRevokingApiToken}
-              disabled={!apiTokenMetadata?.hasToken || isRotatingApiToken || isRevokingApiToken}
-            >
-              <Trash2 size={18} />
-              Revocar
-            </Button>
-          </div>
-
-          <div style={{
-            marginTop: '1.5rem',
-            paddingTop: '1.5rem',
-            borderTop: '1px solid rgba(148, 163, 184, 0.16)'
-          }}>
-            <button
-              type="button"
-              onClick={() => setAreWebhooksOpen((current) => !current)}
-              aria-expanded={areWebhooksOpen}
-              aria-controls="api-webhooks-panel"
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '1rem',
-                padding: '0.875rem 0',
-                border: 0,
-                background: 'transparent',
-                cursor: 'pointer',
-                textAlign: 'left'
-              }}>
-              <span style={{ display: 'grid', gap: '0.25rem', minWidth: 0 }}>
-                <span style={{
-                  color: 'var(--color-text-primary)',
-                  fontSize: '1rem',
-                  fontWeight: 600
-                }}>
-                  Webhooks
+          <div className={styles.developerMenuGrid}>
+            {developerSections.map((section) => (
+              <button
+                key={section.key}
+                type="button"
+                className={`${styles.developerMenuButton} ${activeSection === section.key ? styles.developerMenuButtonActive : ''}`}
+                onClick={() => setActiveSection(section.key)}
+              >
+                <span className={styles.developerMenuTop}>
+                  <span className={styles.developerMenuIcon}>{section.icon}</span>
+                  <span className={styles.developerMenuMeta}>{section.meta}</span>
                 </span>
-                <span style={{
-                  color: 'var(--color-text-tertiary)',
-                  fontSize: '0.875rem',
-                  lineHeight: 1.45
-                }}>
-                  URLs POST listas para recibir eventos externos.
-                </span>
-              </span>
-              <span style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                color: 'var(--color-text-secondary)',
-                fontSize: '0.8125rem',
-                fontWeight: 600,
-                whiteSpace: 'nowrap'
-              }}>
-                {webhookEndpoints.length} URLs
-                <ChevronDown
-                  size={18}
-                  style={{
-                    transition: 'transform 160ms ease',
-                    transform: areWebhooksOpen ? 'rotate(180deg)' : 'rotate(0deg)'
-                  }}
+                <span className={styles.developerMenuTitle}>{section.title}</span>
+                <span className={styles.developerMenuDescription}>{section.description}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className={styles.developerPanel}>
+            {activeSection === 'credentials' && (
+              <>
+                <SectionHeading
+                  icon={<KeyRound size={16} />}
+                  title="Credenciales externas"
+                  description="ID público de la app y token secreto revocable."
                 />
-              </span>
-            </button>
 
-            {areWebhooksOpen && (
-              <div id="api-webhooks-panel" style={{ paddingTop: '0.25rem' }}>
-                <p style={{
-                  fontSize: '0.875rem',
-                  color: 'var(--color-text-tertiary)',
-                  margin: '0 0 1rem 0',
-                  maxWidth: '48rem'
-                }}>
-                  Copia la URL del evento y pégala en el sistema que lo va a mandar. Cuando ese sistema haga POST, Ristak recibirá la información.
-                </p>
+                <div className={styles.developerInfoGrid}>
+                  <InfoField label="App ID" value={isLoadingApiToken ? '' : appId || 'Sin ID'} onCopy={() => copyText(appId, 'App ID')} />
+                  <InfoField label="Token activo" value={isLoadingApiToken ? '' : apiTokenMetadata?.preview || 'Sin token'} />
+                  <InfoField label="Creado" value={formatDate(apiTokenMetadata?.createdAt || null)} />
+                  <InfoField label="Último uso" value={formatDate(apiTokenMetadata?.lastUsedAt || null)} />
+                </div>
 
-                <div style={{ display: 'grid', gap: '0.875rem' }}>
+                <div className={styles.developerFieldStack}>
+                  <ReadonlyField label="Endpoint base" value={externalApiBaseUrl} onCopy={() => copyText(externalApiBaseUrl, 'endpoint base')} />
+                  <ReadonlyField label="MCP server" value={mcpServerUrl} onCopy={() => copyText(mcpServerUrl, 'MCP server')} />
+                </div>
+
+                {newApiToken && (
+                  <div className={styles.developerTokenBox}>
+                    <ReadonlyField label="Nuevo API token" value={newApiToken} onCopy={handleCopyApiToken} />
+                  </div>
+                )}
+
+                <div className={styles.developerActions}>
+                  <Button
+                    variant="primary"
+                    onClick={handleRotateApiToken}
+                    loading={isRotatingApiToken}
+                    disabled={isRotatingApiToken || isRevokingApiToken}
+                  >
+                    <RefreshCw size={18} />
+                    {apiTokenMetadata?.hasToken ? 'Rotar token' : 'Generar token'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={handleRevokeApiToken}
+                    loading={isRevokingApiToken}
+                    disabled={!apiTokenMetadata?.hasToken || isRotatingApiToken || isRevokingApiToken}
+                  >
+                    <Trash2 size={18} />
+                    Revocar
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {activeSection === 'webhooks' && (
+              <>
+                <SectionHeading
+                  icon={<Webhook size={16} />}
+                  title="Webhooks"
+                  description="URLs POST listas para recibir eventos externos."
+                />
+
+                <div className={styles.webhookEndpointList}>
                   {webhookEndpoints.map((endpoint) => {
                     const url = `${origin}${endpoint.path}`
 
                     return (
-                      <div
-                        key={endpoint.path}
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 18rem), 1fr))',
-                          gap: '1rem',
-                          alignItems: 'center',
-                          padding: '0.875rem 0',
-                          borderBottom: '1px solid rgba(148, 163, 184, 0.12)'
-                        }}
-                      >
+                      <div key={endpoint.path} className={styles.webhookEndpointRow}>
                         <div>
-                          <p style={{
-                            margin: '0 0 0.25rem 0',
-                            color: 'var(--color-text-primary)',
-                            fontSize: '0.925rem',
-                            fontWeight: 600
-                          }}>
-                            {endpoint.label}
-                          </p>
-                          <p style={{
-                            margin: 0,
-                            color: 'var(--color-text-tertiary)',
-                            fontSize: '0.78rem',
-                            lineHeight: 1.45
-                          }}>
-                            {endpoint.description}
-                          </p>
+                          <p className={styles.webhookEndpointTitle}>{endpoint.label}</p>
+                          <p className={styles.webhookEndpointDescription}>{endpoint.description}</p>
                         </div>
 
                         <ReadonlyField
@@ -409,41 +371,54 @@ export const APIAccessSettings: React.FC = () => {
                     )
                   })}
                 </div>
-              </div>
+              </>
+            )}
+
+            {activeSection === 'docs' && (
+              <>
+                <SectionHeading
+                  icon={<BookOpen size={16} />}
+                  title="Documentación"
+                  description="Referencia de endpoints, autenticación y conexión MCP."
+                />
+
+                <div className={styles.developerDocsGrid}>
+                  <ReadonlyField label="Endpoint base" value={externalApiBaseUrl} onCopy={() => copyText(externalApiBaseUrl, 'endpoint base')} />
+                  <ReadonlyField label="MCP server" value={mcpServerUrl} onCopy={() => copyText(mcpServerUrl, 'MCP server')} />
+                </div>
+
+                <a className={styles.developerDocLink} href="/api-docs" target="_blank" rel="noreferrer">
+                  <span>
+                    <BookOpen size={18} />
+                    Abrir documentación API
+                  </span>
+                  <ExternalLink size={16} />
+                </a>
+              </>
+            )}
+
+            {activeSection === 'logs' && (
+              <>
+                <SectionHeading
+                  icon={<ServerCog size={16} />}
+                  title="Logs de la app"
+                  description="Registros de sistema para revisar errores, caídas o comportamientos raros."
+                />
+
+                <div className={styles.developerLogsBox}>
+                  <div className={styles.developerLogsIcon}>
+                    <ServerCog size={22} />
+                  </div>
+                  <div>
+                    <h3>Revisión desde soporte</h3>
+                    <p>
+                      Cuando algo falle, el equipo de Ristak puede abrir el cliente en Ristak Installer y ver sus logs del sistema sin pedirle acceso a Render.
+                    </p>
+                  </div>
+                </div>
+              </>
             )}
           </div>
-
-          <a
-            href="/api-docs"
-            target="_blank"
-            rel="noreferrer"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '1rem',
-              marginTop: '1.25rem',
-              padding: '0.875rem 1rem',
-              borderRadius: '0.75rem',
-              border: '1px solid rgba(148, 163, 184, 0.18)',
-              background: 'rgba(148, 163, 184, 0.06)',
-              color: 'var(--color-text-primary)',
-              textDecoration: 'none'
-            }}
-          >
-            <span style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
-              <BookOpen size={18} style={{ flexShrink: 0, color: 'var(--color-primary)' }} />
-              <span style={{ minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600 }}>
-                  Documentación API
-                </span>
-                <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--color-text-tertiary)', marginTop: '0.125rem' }}>
-                  Endpoints, autenticación y conexión MCP
-                </span>
-              </span>
-            </span>
-            <ArrowRight size={18} style={{ flexShrink: 0 }} />
-          </a>
         </div>
       </Card>
     </div>
@@ -456,33 +431,32 @@ interface FieldProps {
   onCopy?: () => void
 }
 
+interface SectionHeadingProps {
+  icon: React.ReactNode
+  title: string
+  description: string
+}
+
+const SectionHeading: React.FC<SectionHeadingProps> = ({ icon, title, description }) => (
+  <div className={styles.developerSectionHeading}>
+    <h3 className={styles.accountSectionTitle}>
+      {icon}
+      {title}
+    </h3>
+    <p className={styles.accountSectionDescription}>{description}</p>
+  </div>
+)
+
 const InfoField: React.FC<FieldProps> = ({ label, value, onCopy }) => (
-  <div style={{
-    padding: '0.75rem 1rem',
-    background: 'rgba(148, 163, 184, 0.08)',
-    borderRadius: '0.75rem',
-    border: '1px solid rgba(148, 163, 184, 0.15)'
-  }}>
-    <p style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)', margin: '0 0 0.25rem 0' }}>
-      {label}
-    </p>
-    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-      <p style={{ fontSize: '0.875rem', color: 'var(--color-text-primary)', margin: 0, wordBreak: 'break-all', flex: 1 }}>
-        {value}
-      </p>
-      {onCopy && value && !value.startsWith('Cargando') && (
+  <div className={styles.developerInfoField}>
+    <p>{label}</p>
+    <div>
+      <strong>{value}</strong>
+      {onCopy && value && (
         <button
           type="button"
           onClick={onCopy}
           aria-label={`Copiar ${label}`}
-          style={{
-            border: 0,
-            background: 'transparent',
-            color: 'var(--color-text-secondary)',
-            cursor: 'pointer',
-            padding: '0.25rem',
-            lineHeight: 0
-          }}
         >
           <Copy size={16} />
         </button>
@@ -492,35 +466,16 @@ const InfoField: React.FC<FieldProps> = ({ label, value, onCopy }) => (
 )
 
 const ReadonlyField: React.FC<FieldProps> = ({ label, value, onCopy }) => (
-  <div>
-    <label style={{
-      display: 'block',
-      fontSize: '0.875rem',
-      fontWeight: 500,
-      color: 'var(--color-text-secondary)',
-      marginBottom: '0.5rem'
-    }}>
-      {label}
-    </label>
-    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', minWidth: 0 }}>
+  <div className={styles.developerReadonlyField}>
+    <label>{label}</label>
+    <div>
       <input
         type="text"
         value={value}
         readOnly
-        style={{
-          width: '100%',
-          minWidth: 0,
-          height: '2.75rem',
-          padding: '0 1rem',
-          background: 'rgba(148, 163, 184, 0.06)',
-          border: '1px solid rgba(148, 163, 184, 0.18)',
-          borderRadius: '0.75rem',
-          color: 'var(--color-text-primary)',
-          fontSize: '0.875rem'
-        }}
       />
       {onCopy && (
-        <Button variant="secondary" onClick={onCopy} style={{ flexShrink: 0 }}>
+        <Button variant="secondary" onClick={onCopy} className={styles.developerCopyButton}>
           <Copy size={18} />
           Copiar
         </Button>

@@ -19,13 +19,7 @@ export const AppStartupLoader: React.FC<AppStartupLoaderProps> = ({
   if (compact) {
     return (
       <div className={styles.compactShell} role="status" aria-live="polite" aria-label={message}>
-        <div className={styles.compactInner}>
-          <div className={styles.brandMark} aria-hidden="true">R</div>
-          <p>{message}</p>
-          <div className={styles.compactTrack} aria-hidden="true">
-            <span />
-          </div>
-        </div>
+        <span className={styles.compactSpinner} aria-hidden="true" />
       </div>
     )
   }
@@ -51,11 +45,6 @@ export const AppStartupLoader: React.FC<AppStartupLoaderProps> = ({
         </header>
 
         <div className={styles.content}>
-          <div className={styles.statusLine}>
-            <div className={styles.brandPulse} aria-hidden="true" />
-            <p>{message}</p>
-          </div>
-
           <div className={styles.kpiGrid} aria-hidden="true">
             {Array.from({ length: 4 }).map((_, index) => (
               <div className={styles.kpiItem} key={index}>

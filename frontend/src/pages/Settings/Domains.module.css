@@ -41,6 +41,7 @@
 
 .header p,
 .domainMeta p,
+.copyExamples p,
 .emptyState p {
   margin: 4px 0 0;
   color: var(--color-text-secondary);
@@ -74,6 +75,39 @@
   grid-template-columns: minmax(0, 1fr) 180px;
   gap: 12px;
   align-items: end;
+}
+
+.categoryLabel {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.copyExamples {
+  display: grid;
+  gap: 4px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.copyExamples strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.copyExamples p {
+  margin: 0;
+  color: var(--color-text-tertiary);
+}
+
+.copyExamples span {
+  color: var(--color-text-primary);
+  font-weight: 760;
 }
 
 .domainControls > button {

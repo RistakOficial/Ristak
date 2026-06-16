@@ -240,8 +240,8 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({
 
       <div className={styles.chartContainer}>
         {loading ? (
-          <div className={styles.loadingContainer}>
-            <div className={styles.loadingText}>Cargando datos...</div>
+          <div className={styles.loadingContainer} role="status" aria-live="polite" aria-label="Cargando datos">
+            <div className={styles.loadingSpinner} aria-hidden="true" />
           </div>
         ) : chartData.length > 0 ? (
           <div className={styles.donutFrame} onMouseLeave={handleMouseLeave}>

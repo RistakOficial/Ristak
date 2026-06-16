@@ -620,9 +620,8 @@ export const HighLevelIntegration: React.FC = () => {
                 <h3 className={styles.filtersSectionTitle}>Filtros activos ({hiddenFilters.length})</h3>
 
                 {loadingFilters ? (
-                  <div className={styles.loadingFilters}>
-                    <Loader2 size={20} className={styles.spinIcon} />
-                    <span>Cargando filtros...</span>
+                  <div className={styles.loadingFilters} role="status" aria-live="polite" aria-label="Cargando filtros">
+                    <Loader2 size={20} className={styles.spinIcon} aria-hidden="true" />
                   </div>
                 ) : hiddenFilters.length === 0 ? (
                   <div className={styles.emptyFilters}>

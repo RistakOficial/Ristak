@@ -233,7 +233,7 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
       )}
       <div className={styles.options}>
         {loading && tags.length === 0 ? (
-          <div className={styles.empty}>Cargando etiquetas…</div>
+          <div className={styles.empty} role="status" aria-live="polite" aria-label="Cargando etiquetas" />
         ) : (
           <>
             {filteredTags.map((tag) => {

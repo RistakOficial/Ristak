@@ -217,7 +217,7 @@ export const AIAgentSettings: React.FC = () => {
   const needsReconnect = Boolean(status.needsReconnect)
   const apiKeyNeedsMore = isEditingApiKey && Boolean(apiKey.trim() && !isApiKeyReady(apiKey))
   const saveStatusText = loading
-    ? 'Cargando...'
+    ? ''
     : savingApiKey
       ? 'Guardando token...'
       : saveState === 'saving'

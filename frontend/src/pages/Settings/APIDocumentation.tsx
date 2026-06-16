@@ -215,7 +215,11 @@ Content-Type: application/json
           </Section>
 
           <Section id="endpoints" icon={<Server size={18} />} title="Referencia de endpoints">
-            {isLoading && <p>Cargando schema OpenAPI...</p>}
+            {isLoading && (
+              <p role="status" aria-live="polite" aria-label="Cargando schema OpenAPI">
+                <RefreshCw size={16} className="animate-spin" aria-hidden="true" />
+              </p>
+            )}
             {!isLoading && loadError && <p className={styles.error}>{loadError}</p>}
             {!isLoading && !loadError && (
               <div className={styles.endpointList}>

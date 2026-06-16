@@ -1203,6 +1203,10 @@
   color: var(--color-text-tertiary);
 }
 
+.previewSpin {
+  animation: imported-preview-spin 0.9s linear infinite;
+}
+
 .importedSidePanel {
   position: sticky;
   top: calc(var(--header-height) + 16px);

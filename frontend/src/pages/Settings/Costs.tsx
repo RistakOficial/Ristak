@@ -349,9 +349,8 @@ export const Costs: React.FC = () => {
         </div>
 
         {loading ? (
-          <div className={styles.loadingContainer}>
-            <Loader2 size={32} className={styles.spinner} />
-            <p>Cargando costos...</p>
+          <div className={styles.loadingContainer} role="status" aria-live="polite" aria-label="Cargando costos">
+            <Loader2 size={32} className={styles.spinner} aria-hidden="true" />
           </div>
         ) : costs.length === 0 ? (
           <div className={styles.emptyState}>

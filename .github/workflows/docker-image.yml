@@ -1,6 +1,6 @@
 # Publica la imagen Docker de Ristak en GitHub Container Registry.
-# main → ghcr.io/ristakoficial/ristak:stable (+ :sha)
-# test → ghcr.io/ristakoficial/ristak:beta (+ :sha)
+# push a main → ghcr.io/ristakoficial/ristak:beta (+ :sha)
+# accion manual → ghcr.io/ristakoficial/ristak:stable (+ :sha)
 #
 # Cada push genera una versión (v1.0.<número de build>) que:
 #  - se hornea en la imagen como APP_VERSION (visible en /health y en el menú de la app)
@@ -13,8 +13,16 @@ name: docker-image
 
 on:
   push:
-    branches: [main, test]
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      release_channel:
+        description: Canal que se publicara manualmente
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
 
 jobs:
   build-and-push:
@@ -37,9 +45,12 @@ jobs:
         id: tags
         run: |
           REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          CHANNEL=stable
-          BRANCH=main
-          if [ "${{ github.ref_name }}" = "test" ]; then CHANNEL=beta; BRANCH=test; fi
+          CHANNEL=beta
+          BRANCH=test
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.release_channel }}" = "stable" ]; then
+            CHANNEL=stable
+            BRANCH=main
+          fi
           VERSION="v1.0.${{ github.run_number }}"
           echo "tags=ghcr.io/${REPO_LC}:${CHANNEL},ghcr.io/${REPO_LC}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/${REPO_LC}:${CHANNEL}" >> "$GITHUB_OUTPUT"
@@ -68,6 +79,9 @@ jobs:
           if [ -z "$WEBHOOK_URL" ] || [ -z "$WEBHOOK_SECRET" ]; then
             echo "INSTALLER_WEBHOOK_URL / INSTALLER_WEBHOOK_SECRET no configurados: se omite el aviso al portal."
             exit 0
+          fi
+          if [ -z "$COMMIT_MESSAGE" ]; then
+            COMMIT_MESSAGE="Actualizacion estable manual"
           fi
           PAYLOAD=$(jq -n \
             --arg channel "${{ steps.tags.outputs.branch }}" \

@@ -1178,7 +1178,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const addressLabel = formData.address.trim() || 'Sin ubicación';
   const notesLabel = formData.notes.trim() || 'Sin notas';
   const calendarOptions: SelectOption[] = calendarsLoading
-    ? [{ value: '', label: 'Cargando calendarios...' }]
+    ? [{ value: '', label: '...' }]
     : !calendars?.length
       ? [{ value: '', label: 'No hay calendarios disponibles' }]
       : calendars.map((item) => ({ value: item.id, label: item.name }));
@@ -1563,7 +1563,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           <div className={styles.selectedContact}>
             <div className={styles.contactInfo}>
               <p className={styles.contactName}>
-                {loadingUsers ? 'Cargando...' : assignedUserLabel}
+                {loadingUsers ? '' : assignedUserLabel}
               </p>
               {assignedUser?.email && <p className={styles.contactDetail}>{assignedUser.email}</p>}
             </div>
@@ -1576,8 +1576,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
     if (loadingUsers) {
       return (
-        <div className={styles.sectionBlock}>
-          <p className={styles.helpText}>Cargando equipo disponible...</p>
+        <div className={styles.sectionBlock} role="status" aria-live="polite" aria-label="Cargando equipo disponible">
+          <Loader2 size={18} className={styles.spinner} aria-hidden="true" />
         </div>
       );
     }
@@ -1720,7 +1720,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
               <article className={styles.detailSummaryItem}>
                 <span>Asignación</span>
-                <strong>{loadingUsers ? 'Cargando...' : assignedUserLabel}</strong>
+                <strong>{loadingUsers ? '' : assignedUserLabel}</strong>
               </article>
             </div>
 
@@ -1813,9 +1813,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   {scheduleMode === 'default' ? (
                     <div className={styles.slotsContent}>
                       {loadingSlots ? (
-                        <div className={styles.loadingSlots}>
-                          <Loader2 size={20} className={styles.spinner} />
-                          <span>Cargando horarios disponibles...</span>
+                        <div className={styles.loadingSlots} role="status" aria-live="polite" aria-label="Cargando horarios disponibles">
+                          <Loader2 size={20} className={styles.spinner} aria-hidden="true" />
                         </div>
                       ) : freeSlots.length === 0 ? (
                         <div className={styles.noSlots}>

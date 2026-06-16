@@ -557,6 +557,7 @@ export async function sendWhatsAppApiAudioMessageView(req, res) {
       durationMs: req.body?.durationMs,
       voice: req.body?.voice,
       transport: req.body?.transport,
+      contactId: req.body?.contactId,
       phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req)
     })

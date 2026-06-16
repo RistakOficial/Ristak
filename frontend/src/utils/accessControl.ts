@@ -164,10 +164,10 @@ export const ACCESS_MODULES = [
   },
   {
     key: 'settings_api_access',
-    label: 'Acceso API',
-    description: 'Tokens y documentación de API.',
+    label: 'Developers',
+    description: 'Webhooks, documentación, logs y credenciales API.',
     group: 'Configuración',
-    path: '/settings/api-access'
+    path: '/settings/developers'
   },
   {
     key: 'settings_users',
@@ -299,6 +299,7 @@ export const ROUTE_ACCESS: Array<{ prefix: string; moduleKey: PermissionKey }> =
   { prefix: '/settings/variable-fields', moduleKey: 'settings_custom_fields' },
   { prefix: '/settings/trigger-links', moduleKey: 'settings_custom_fields' },
   { prefix: '/settings/tags', moduleKey: 'settings_custom_fields' },
+  { prefix: '/settings/developers', moduleKey: 'settings_api_access' },
   { prefix: '/settings/api-access', moduleKey: 'settings_api_access' },
   { prefix: '/api-docs', moduleKey: 'settings_api_access' },
   { prefix: '/dashboard', moduleKey: 'dashboard' },

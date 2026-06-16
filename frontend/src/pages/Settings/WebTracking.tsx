@@ -264,7 +264,7 @@ export const WebTracking: React.FC = () => {
                       Copiar código
                     </Button>
                   </div>
-                  <pre className={styles.manualSnippetCode}><code>{trackingSnippet || 'Cargando código del pixel...'}</code></pre>
+                  <pre className={styles.manualSnippetCode}><code>{trackingSnippet || ''}</code></pre>
                 </div>
               </>
             )}

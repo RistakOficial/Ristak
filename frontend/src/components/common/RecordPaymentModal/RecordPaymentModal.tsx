@@ -1884,7 +1884,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 disabled={loadingProducts}
                 placeholder="Selecciona un producto"
               />
-              {loadingProducts && <p className={styles.hint}>Cargando productos...</p>}
+              {loadingProducts && <p className={styles.hint} role="status" aria-live="polite" aria-label="Cargando productos" />}
             </div>
 
             {showCreateProduct && (

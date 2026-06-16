@@ -7941,9 +7941,8 @@ export const PhoneChat: React.FC = () => {
 
         <div className={styles.cameraShareList} data-phone-chat-scrollable="true">
           {contactsLoading && cameraShareContactOptions.length === 0 ? (
-            <div className={styles.centerState}>
-              <Loader2 size={20} className={styles.spinIcon} />
-              <span>Cargando contactos...</span>
+            <div className={styles.centerState} role="status" aria-live="polite" aria-label="Cargando contactos">
+              <Loader2 size={20} className={styles.spinIcon} aria-hidden="true" />
             </div>
           ) : cameraShareContactOptions.length > 0 ? (
             cameraShareContactOptions.map(renderCameraShareContactButton)
@@ -8459,9 +8458,8 @@ export const PhoneChat: React.FC = () => {
 
     if (chatsLoading) {
       return (
-        <div className={styles.centerState}>
-          <Loader2 size={20} className={styles.spinIcon} />
-          <span>Cargando chats...</span>
+        <div className={styles.centerState} role="status" aria-live="polite" aria-label="Cargando chats">
+          <Loader2 size={20} className={styles.spinIcon} aria-hidden="true" />
         </div>
       )
     }
@@ -8898,9 +8896,8 @@ export const PhoneChat: React.FC = () => {
 
     if (messagesLoading) {
       return (
-        <div className={styles.emptyConversation}>
-          <Loader2 size={22} className={styles.spinIcon} />
-          <span>Cargando conversación...</span>
+        <div className={styles.emptyConversation} role="status" aria-live="polite" aria-label="Cargando conversación">
+          <Loader2 size={22} className={styles.spinIcon} aria-hidden="true" />
         </div>
       )
     }
@@ -10043,9 +10040,8 @@ export const PhoneChat: React.FC = () => {
     const renderTemplateStatusList = () => {
       if (templatesLoading && templates.length === 0) {
         return (
-          <div className={styles.centerState}>
-            <Loader2 size={20} className={styles.spinIcon} />
-            <span>Cargando plantillas...</span>
+          <div className={styles.centerState} role="status" aria-live="polite" aria-label="Cargando plantillas">
+            <Loader2 size={20} className={styles.spinIcon} aria-hidden="true" />
           </div>
         )
       }
@@ -10663,9 +10659,8 @@ export const PhoneChat: React.FC = () => {
         {renderTemplateAlerts()}
 
         {templatesLoading && templates.length === 0 ? (
-          <div className={styles.centerState}>
-            <Loader2 size={20} className={styles.spinIcon} />
-            <span>Cargando plantillas...</span>
+          <div className={styles.centerState} role="status" aria-live="polite" aria-label="Cargando plantillas">
+            <Loader2 size={20} className={styles.spinIcon} aria-hidden="true" />
           </div>
         ) : templatesError ? (
           <div className={styles.emptySheetState}>
@@ -11296,7 +11291,7 @@ export const PhoneChat: React.FC = () => {
                     }}
                     ariaLabel="Calendario para agendar con IA"
                     options={[
-                      { value: '', label: calendarsLoading ? 'Cargando calendarios...' : 'Elegir calendario activo' },
+                      { value: '', label: calendarsLoading ? '...' : 'Elegir calendario activo' },
                       ...calendars.map((calendar) => ({ value: calendar.id, label: calendar.name }))
                     ]}
                     title="Calendario"
@@ -11320,7 +11315,7 @@ export const PhoneChat: React.FC = () => {
 
       if (agent.objective === 'ventas') {
         const productOptions = [
-          { value: '', label: agentProductsLoading ? 'Cargando productos...' : 'Elegir producto del CRM' },
+          { value: '', label: agentProductsLoading ? '...' : 'Elegir producto del CRM' },
           ...agentProducts.map((product) => ({ value: getProductId(product), label: product.name }))
         ]
         const priceOptions = selectedSalesProduct
@@ -11996,7 +11991,8 @@ export const PhoneChat: React.FC = () => {
       <span className={styles.agentRobot} data-active={active ? 'true' : 'false'} aria-hidden="true">
         <span className={styles.rkShadow} />
         <span className={styles.rkFloat}>
-          <span className={styles.rkTurn}>
+          <span className={styles.rkZoom}>
+            <span className={styles.rkTurn}>
             <svg
               className={styles.agentRobotSvg}
               data-active={active ? 'true' : 'false'}
@@ -12005,7 +12001,7 @@ export const PhoneChat: React.FC = () => {
               xmlns="http://www.w3.org/2000/svg"
             >
               <defs>
-                <linearGradient id="rkbBody" x1="120" y1="84" x2="120" y2="246" gradientUnits="userSpaceOnUse">
+                <linearGradient id="rkbBody" x1="120" y1="86" x2="120" y2="248" gradientUnits="userSpaceOnUse">
                   <stop offset="0" stopColor="#ffffff" />
                   <stop offset="0.42" stopColor="#eef3fa" />
                   <stop offset="0.78" stopColor="#d2dceb" />
@@ -12023,12 +12019,12 @@ export const PhoneChat: React.FC = () => {
                   <stop offset="0" stopColor="#7fb4ee" stopOpacity="0.5" />
                   <stop offset="1" stopColor="#7fb4ee" stopOpacity="0" />
                 </radialGradient>
-                <linearGradient id="rkbRim" x1="64" y1="104" x2="186" y2="240" gradientUnits="userSpaceOnUse">
+                <linearGradient id="rkbRim" x1="64" y1="106" x2="186" y2="242" gradientUnits="userSpaceOnUse">
                   <stop offset="0" stopColor="#d6fbff" stopOpacity="0" />
                   <stop offset="0.58" stopColor="#d6fbff" stopOpacity="0" />
                   <stop offset="1" stopColor="#d8fbff" stopOpacity="0.95" />
                 </linearGradient>
-                <linearGradient id="rkbTopEdge" x1="120" y1="84" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+                <linearGradient id="rkbTopEdge" x1="120" y1="86" x2="120" y2="122" gradientUnits="userSpaceOnUse">
                   <stop offset="0" stopColor="#ffffff" stopOpacity="0.9" />
                   <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
                 </linearGradient>
@@ -12041,75 +12037,114 @@ export const PhoneChat: React.FC = () => {
                   <stop offset="0" stopColor="#000000" stopOpacity="0.55" />
                   <stop offset="1" stopColor="#000000" stopOpacity="0" />
                 </linearGradient>
-                <radialGradient id="rkbEyeGlow" cx="0.5" cy="0.62" r="0.55">
-                  <stop offset="0" stopColor="#2bbbf0" stopOpacity="0.5" />
+                <radialGradient id="rkbEyeGlow" cx="0.5" cy="0.5" r="0.5">
+                  <stop offset="0" stopColor="#2bbbf0" stopOpacity="0.55" />
                   <stop offset="1" stopColor="#2bbbf0" stopOpacity="0" />
                 </radialGradient>
-                <radialGradient id="rkbEye" cx="0.42" cy="0.32" r="0.8">
+                <radialGradient id="rkbEye" cx="0.42" cy="0.3" r="0.85">
                   <stop offset="0" stopColor="#ffffff" />
-                  <stop offset="0.3" stopColor="#c9f6ff" />
-                  <stop offset="0.66" stopColor="#5fd6f7" />
-                  <stop offset="1" stopColor="#1c9fe0" />
+                  <stop offset="0.4" stopColor="#bdf0ff" />
+                  <stop offset="1" stopColor="#5bd3f4" />
                 </radialGradient>
-                <linearGradient id="rkbHaloG" x1="74" y1="58" x2="166" y2="58" gradientUnits="userSpaceOnUse">
-                  <stop offset="0" stopColor="#3ec9ff" stopOpacity="0.25" />
-                  <stop offset="0.5" stopColor="#bfeeff" />
-                  <stop offset="1" stopColor="#3ec9ff" stopOpacity="0.25" />
-                </linearGradient>
+                <radialGradient id="rkbHand" cx="0.4" cy="0.3" r="0.8">
+                  <stop offset="0" stopColor="#ffffff" />
+                  <stop offset="0.7" stopColor="#dce6f3" />
+                  <stop offset="1" stopColor="#b3c2d8" />
+                </radialGradient>
+                <radialGradient id="rkbBulbG" cx="0.5" cy="0.4" r="0.6">
+                  <stop offset="0" stopColor="#fff7cf" />
+                  <stop offset="0.5" stopColor="#ffd23d" />
+                  <stop offset="1" stopColor="#f59e0b" />
+                </radialGradient>
               </defs>
 
-              {/* Halo holográfico */}
-              <g className={styles.rkHalo}>
-                <ellipse cx="120" cy="60" rx="48" ry="13" fill="none" stroke="url(#rkbHaloG)" strokeWidth="4" />
-                <ellipse cx="120" cy="60" rx="48" ry="13" fill="none" stroke="#eafcff" strokeWidth="1.4" strokeOpacity="0.5" />
+              {/* Dos aros tech estáticos */}
+              <g className={styles.rkRings}>
+                <ellipse className={styles.rkRing} cx="120" cy="50" rx="44" ry="12" fill="none" stroke="#7fdcff" strokeOpacity="0.85" strokeWidth="3.4" />
+                <ellipse className={styles.rkRing} cx="120" cy="60" rx="30" ry="8" fill="none" stroke="#7fdcff" strokeOpacity="0.7" strokeWidth="2.8" />
+              </g>
+
+              {/* Globo de ideas (sólo hub) */}
+              <g className={styles.rkProps}>
+                <g className={styles.rkIdea}>
+                  <circle className={styles.rkIdeaDot} cx="176" cy="100" r="3.2" fill="#dbeeff" />
+                  <circle className={styles.rkIdeaDot} cx="186" cy="88" r="4.2" fill="#e8f6ff" />
+                  <rect x="176" y="42" width="56" height="40" rx="14" fill="#0e1f3e" stroke="#3f6ea8" strokeWidth="1.6" />
+                  <circle className={styles.rkBulb} cx="200" cy="58" r="9" fill="url(#rkbBulbG)" />
+                  <rect x="196" y="66" width="8" height="4" rx="1.5" fill="#cfa83a" />
+                  <path d="M196 54 L200 48 L204 54" fill="none" stroke="#fff7cf" strokeWidth="1.4" strokeLinecap="round" />
+                </g>
               </g>
 
               <g className={styles.rkBody}>
                 {/* Cuerpo cerámica */}
-                <path d="M120,84 C168,84 196,128 196,172 C196,214 166,246 120,246 C74,246 44,214 44,172 C44,128 72,84 120,84 Z" fill="url(#rkbBody)" />
-                <ellipse cx="120" cy="224" rx="74" ry="46" fill="url(#rkbAo)" />
-                <ellipse cx="120" cy="236" rx="60" ry="30" fill="url(#rkbBounce)" />
+                <path d="M120,86 C168,86 196,130 196,174 C196,216 166,248 120,248 C74,248 44,216 44,174 C44,130 72,86 120,86 Z" fill="url(#rkbBody)" />
+                <ellipse cx="120" cy="226" rx="74" ry="46" fill="url(#rkbAo)" />
+                <ellipse cx="120" cy="238" rx="60" ry="30" fill="url(#rkbBounce)" />
                 <g className={styles.rkGloss}>
-                  <ellipse cx="96" cy="120" rx="46" ry="40" fill="url(#rkbHot)" />
-                  <ellipse cx="92" cy="112" rx="11" ry="6" fill="#ffffff" opacity="0.9" transform="rotate(-26 92 112)" />
+                  <ellipse cx="96" cy="122" rx="46" ry="40" fill="url(#rkbHot)" />
+                  <ellipse cx="92" cy="114" rx="11" ry="6" fill="#ffffff" opacity="0.9" transform="rotate(-26 92 114)" />
                 </g>
-                <path d="M120,84 C168,84 196,128 196,172 C196,214 166,246 120,246 C74,246 44,214 44,172 C44,128 72,84 120,84 Z" fill="none" stroke="url(#rkbRim)" strokeWidth="3.5" />
-                <path d="M86,90 C100,84 140,84 154,90" fill="none" stroke="url(#rkbTopEdge)" strokeWidth="3" strokeLinecap="round" />
+                <path d="M120,86 C168,86 196,130 196,174 C196,216 166,248 120,248 C74,248 44,216 44,174 C44,130 72,86 120,86 Z" fill="none" stroke="url(#rkbRim)" strokeWidth="3.5" />
+                <path d="M86,92 C100,86 140,86 154,92" fill="none" stroke="url(#rkbTopEdge)" strokeWidth="3" strokeLinecap="round" />
 
                 {/* Visor de vidrio */}
-                <rect x="56" y="120" width="128" height="70" rx="35" fill="url(#rkbVisor)" />
-                <rect x="56" y="120" width="128" height="70" rx="35" fill="url(#rkbVisorTop)" />
-                <rect x="57.4" y="121.4" width="125.2" height="67.2" rx="33.6" fill="none" stroke="#a8dcff" strokeOpacity="0.16" strokeWidth="1.5" />
-                <ellipse cx="120" cy="166" rx="42" ry="24" fill="url(#rkbEyeGlow)" />
-                <ellipse className={styles.rkChin} cx="120" cy="200" rx="36" ry="12" fill="url(#rkbEyeGlow)" opacity="0.55" />
-                <path d="M70,140 C92,126 150,124 168,132 C150,146 96,150 74,156 Z" fill="#ffffff" opacity="0.09" />
-                <ellipse cx="84" cy="136" rx="10" ry="5" fill="#ffffff" opacity="0.16" transform="rotate(-20 84 136)" />
+                <rect x="54" y="118" width="132" height="76" rx="38" fill="url(#rkbVisor)" />
+                <rect x="54" y="118" width="132" height="76" rx="38" fill="url(#rkbVisorTop)" />
+                <rect x="55.4" y="119.4" width="129.2" height="73.2" rx="36.6" fill="none" stroke="#a8dcff" strokeOpacity="0.16" strokeWidth="1.5" />
+                <ellipse className={styles.rkChin} cx="120" cy="204" rx="36" ry="12" fill="url(#rkbEyeGlow)" opacity="0.5" />
+                <path d="M68,142 C92,128 152,126 170,134 C152,148 96,152 72,158 Z" fill="#ffffff" opacity="0.09" />
 
                 {/* Rostro */}
                 <g className={styles.rkFace3d}>
                   <g className={styles.rkEyes}>
-                    <g className={styles.rkEyesMood}>
-                      <g className={styles.rkEyeL}>
-                        <rect x="95" y="136" width="15" height="27" rx="7.5" fill="url(#rkbEye)" transform="rotate(8 102.5 149.5)" />
+                    {/* Ojos tiernos simples */}
+                    <g className={styles.rkEyesWrap}>
+                      <g className={styles.rkEye}>
+                        <ellipse cx="101" cy="151" rx="11" ry="13" fill="url(#rkbEye)" />
+                        <circle cx="97.5" cy="146" r="3.2" fill="#ffffff" opacity="0.95" />
                       </g>
-                      <g className={styles.rkEyeR}>
-                        <rect x="130" y="136" width="15" height="27" rx="7.5" fill="url(#rkbEye)" transform="rotate(-8 137.5 149.5)" />
+                      <g className={styles.rkEye}>
+                        <ellipse cx="139" cy="151" rx="11" ry="13" fill="url(#rkbEye)" />
+                        <circle cx="135.5" cy="146" r="3.2" fill="#ffffff" opacity="0.95" />
                       </g>
                     </g>
+                    {/* Ojos felices ^^ */}
+                    <g className={styles.rkHappy}>
+                      <path d="M90 154 Q101 142 112 154" stroke="#bdf0ff" strokeWidth="5" strokeLinecap="round" />
+                      <path d="M128 154 Q139 142 150 154" stroke="#bdf0ff" strokeWidth="5" strokeLinecap="round" />
+                    </g>
                   </g>
-                  {/* Boca luminosa */}
-                  <path className={styles.rkMouth} d="M106,176 Q120,184 134,176" fill="none" stroke="#9bf0ff" strokeWidth="4" strokeLinecap="round" />
-                  {/* Ecualizador de voz (habla) */}
+                  {/* Boca amigable */}
+                  <path className={styles.rkMouthArc} d="M106,176 Q120,185 134,176" fill="none" stroke="#9bf0ff" strokeWidth="4" strokeLinecap="round" />
                   <g className={styles.rkEq}>
-                    <rect className={styles.rkEqBar} x="105" y="172" width="4" height="11" rx="2" fill="#9bf0ff" />
-                    <rect className={styles.rkEqBar} x="112" y="172" width="4" height="11" rx="2" fill="#9bf0ff" />
-                    <rect className={styles.rkEqBar} x="119" y="172" width="4" height="11" rx="2" fill="#9bf0ff" />
-                    <rect className={styles.rkEqBar} x="126" y="172" width="4" height="11" rx="2" fill="#9bf0ff" />
-                    <rect className={styles.rkEqBar} x="133" y="172" width="4" height="11" rx="2" fill="#9bf0ff" />
+                    <rect className={styles.rkEqBar} x="105" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
+                    <rect className={styles.rkEqBar} x="112" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
+                    <rect className={styles.rkEqBar} x="119" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
+                    <rect className={styles.rkEqBar} x="126" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
+                    <rect className={styles.rkEqBar} x="133" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
+                  </g>
+                </g>
+              </g>
+
+              {/* Props al frente (sólo hub): celular y mano que saluda */}
+              <g className={styles.rkProps}>
+                <g className={styles.rkPhone}>
+                  <ellipse cx="150" cy="250" rx="15" ry="11" fill="url(#rkbHand)" />
+                  <rect x="134" y="190" width="42" height="64" rx="9" fill="#0b1730" stroke="#37528a" strokeWidth="2" transform="rotate(-7 155 222)" />
+                  <rect className={styles.rkPhoneScr} x="139" y="196" width="32" height="48" rx="4" fill="#123a6b" transform="rotate(-7 155 222)" />
+                  <rect className={styles.rkPhoneScr} x="144" y="204" width="22" height="3.4" rx="1.7" fill="#7fe0ff" transform="rotate(-7 155 222)" />
+                  <rect className={styles.rkPhoneScr} x="144" y="212" width="16" height="3.4" rx="1.7" fill="#5fc7ef" transform="rotate(-7 155 222)" />
+                </g>
+                <g className={styles.rkWave}>
+                  <g className={styles.rkHandWave} transform="translate(206 150)">
+                    <ellipse cx="0" cy="0" rx="15" ry="18" fill="url(#rkbHand)" />
+                    <ellipse cx="-12" cy="7" rx="5" ry="8" fill="url(#rkbHand)" transform="rotate(30)" />
                   </g>
                 </g>
               </g>
             </svg>
+            </span>
           </span>
         </span>
       </span>

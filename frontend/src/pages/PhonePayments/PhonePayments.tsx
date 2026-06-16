@@ -643,9 +643,8 @@ export const PhonePayments: React.FC = () => {
       )}
 
       {productsLoading && products.length === 0 ? (
-        <div className={styles.productsState}>
-          <Loader2 size={18} className={styles.spinIcon} />
-          Cargando productos...
+        <div className={styles.productsState} role="status" aria-live="polite" aria-label="Cargando productos">
+          <Loader2 size={18} className={styles.spinIcon} aria-hidden="true" />
         </div>
       ) : productsError && products.length === 0 ? (
         <div className={styles.productsState}>
@@ -848,9 +847,8 @@ export const PhonePayments: React.FC = () => {
                   </div>
 
                   {recentPaymentsLoading && recentPayments.length === 0 ? (
-                    <div className={styles.recentPaymentsState}>
-                      <Loader2 size={18} className={styles.spinIcon} />
-                      Cargando pagos...
+                    <div className={styles.recentPaymentsState} role="status" aria-live="polite" aria-label="Cargando pagos">
+                      <Loader2 size={18} className={styles.spinIcon} aria-hidden="true" />
                     </div>
                   ) : recentPayments.length === 0 ? (
                     <div className={styles.recentPaymentsState}>

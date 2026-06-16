@@ -1348,7 +1348,7 @@ export const AccountSettings: React.FC = () => {
                     ? `${storageStatus.percentUsed}%`
                     : storageStatusError
                       ? 'No disponible'
-                      : 'Cargando...'}
+                      : ''}
                 </strong>
               </div>
 
