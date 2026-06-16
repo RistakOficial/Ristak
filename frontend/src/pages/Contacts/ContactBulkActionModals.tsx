@@ -227,13 +227,13 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
 
   return (
     <>
-      <Modal isOpen={whatsappOpen} onClose={closeWhatsApp} title="Mandar WhatsApp" size="lg">
+      <Modal isOpen={whatsappOpen} onClose={closeWhatsApp} title="Mandar WhatsApp" size="md">
         <div className={styles.bulkModalBody}>
           <p className={styles.bulkModalLead}>
             Se creará un envío para {selectedCount} contacto{selectedCount === 1 ? '' : 's'} seleccionado{selectedCount === 1 ? '' : 's'}.
           </p>
 
-          <div className={styles.bulkFormGrid}>
+          <div className={styles.bulkFormStack}>
             <div className={styles.formGroup}>
               <label>Número que manda</label>
               <CustomSelect
@@ -260,18 +260,18 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
                   label: templateLabel(template)
                 }))}
               />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={styles.bulkTemplateAction}
+                onClick={() => navigate('/settings/whatsapp/templates')}
+              >
+                <ExternalLink size={15} />
+                Crear plantilla
+              </Button>
             </div>
           </div>
-
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate('/settings/whatsapp/templates')}
-          >
-            <ExternalLink size={15} />
-            Crear plantilla
-          </Button>
 
           {variableNumbers.length > 0 && (
             <div className={styles.bulkVariablePanel}>
@@ -290,47 +290,55 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
             </div>
           )}
 
-          <div className={styles.bulkOptionsGrid}>
-            <label className={styles.bulkOptionToggle}>
-              <input
-                type="checkbox"
-                checked={whatsappScheduled}
-                onChange={(event) => setWhatsappScheduled(event.target.checked)}
-                disabled={sendingWhatsApp}
-              />
-              Programar envío
-            </label>
-            {whatsappScheduled && (
-              <input
-                type="datetime-local"
-                value={whatsappScheduledAt}
-                onChange={(event) => setWhatsappScheduledAt(event.target.value)}
-                disabled={sendingWhatsApp}
-              />
-            )}
-
-            <label className={styles.bulkOptionToggle}>
-              <input
-                type="checkbox"
-                checked={whatsappDrip}
-                onChange={(event) => setWhatsappDrip(event.target.checked)}
-                disabled={sendingWhatsApp}
-              />
-              Modo goteo
-            </label>
-            {whatsappDrip && (
-              <div className={styles.bulkInlineField}>
+          <div className={styles.bulkOptionsStack}>
+            <div className={styles.bulkOptionBlock}>
+              <label className={styles.bulkOptionToggle}>
                 <input
-                  type="number"
-                  min={1}
-                  max={1440}
-                  value={whatsappDripMinutes}
-                  onChange={(event) => setWhatsappDripMinutes(Number(event.target.value) || 1)}
+                  type="checkbox"
+                  checked={whatsappScheduled}
+                  onChange={(event) => setWhatsappScheduled(event.target.checked)}
                   disabled={sendingWhatsApp}
                 />
-                <span>min entre contactos</span>
-              </div>
-            )}
+                Programar envío
+              </label>
+              {whatsappScheduled && (
+                <div className={styles.bulkOptionField}>
+                  <input
+                    type="datetime-local"
+                    value={whatsappScheduledAt}
+                    onChange={(event) => setWhatsappScheduledAt(event.target.value)}
+                    disabled={sendingWhatsApp}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className={styles.bulkOptionBlock}>
+              <label className={styles.bulkOptionToggle}>
+                <input
+                  type="checkbox"
+                  checked={whatsappDrip}
+                  onChange={(event) => setWhatsappDrip(event.target.checked)}
+                  disabled={sendingWhatsApp}
+                />
+                Modo goteo
+              </label>
+              {whatsappDrip && (
+                <div className={styles.bulkOptionField}>
+                  <div className={styles.bulkInlineField}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={1440}
+                      value={whatsappDripMinutes}
+                      onChange={(event) => setWhatsappDripMinutes(Number(event.target.value) || 1)}
+                      disabled={sendingWhatsApp}
+                    />
+                    <span>min entre contactos</span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className={styles.formActions}>
@@ -350,7 +358,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
         </div>
       </Modal>
 
-      <Modal isOpen={automationOpen} onClose={closeAutomation} title="Añadir a automatización" size="lg">
+      <Modal isOpen={automationOpen} onClose={closeAutomation} title="Añadir a automatización" size="md">
         <div className={styles.bulkModalBody}>
           <p className={styles.bulkModalLead}>
             Se agregará a {selectedCount} contacto{selectedCount === 1 ? '' : 's'} seleccionado{selectedCount === 1 ? '' : 's'}.
@@ -370,47 +378,55 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
             />
           </div>
 
-          <div className={styles.bulkOptionsGrid}>
-            <label className={styles.bulkOptionToggle}>
-              <input
-                type="checkbox"
-                checked={automationScheduled}
-                onChange={(event) => setAutomationScheduled(event.target.checked)}
-                disabled={sendingAutomation}
-              />
-              Programar
-            </label>
-            {automationScheduled && (
-              <input
-                type="datetime-local"
-                value={automationScheduledAt}
-                onChange={(event) => setAutomationScheduledAt(event.target.value)}
-                disabled={sendingAutomation}
-              />
-            )}
-
-            <label className={styles.bulkOptionToggle}>
-              <input
-                type="checkbox"
-                checked={automationDrip}
-                onChange={(event) => setAutomationDrip(event.target.checked)}
-                disabled={sendingAutomation}
-              />
-              Modo goteo
-            </label>
-            {automationDrip && (
-              <div className={styles.bulkInlineField}>
+          <div className={styles.bulkOptionsStack}>
+            <div className={styles.bulkOptionBlock}>
+              <label className={styles.bulkOptionToggle}>
                 <input
-                  type="number"
-                  min={1}
-                  max={1440}
-                  value={automationDripMinutes}
-                  onChange={(event) => setAutomationDripMinutes(Number(event.target.value) || 1)}
+                  type="checkbox"
+                  checked={automationScheduled}
+                  onChange={(event) => setAutomationScheduled(event.target.checked)}
                   disabled={sendingAutomation}
                 />
-                <span>min entre contactos</span>
-              </div>
-            )}
+                Programar
+              </label>
+              {automationScheduled && (
+                <div className={styles.bulkOptionField}>
+                  <input
+                    type="datetime-local"
+                    value={automationScheduledAt}
+                    onChange={(event) => setAutomationScheduledAt(event.target.value)}
+                    disabled={sendingAutomation}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className={styles.bulkOptionBlock}>
+              <label className={styles.bulkOptionToggle}>
+                <input
+                  type="checkbox"
+                  checked={automationDrip}
+                  onChange={(event) => setAutomationDrip(event.target.checked)}
+                  disabled={sendingAutomation}
+                />
+                Modo goteo
+              </label>
+              {automationDrip && (
+                <div className={styles.bulkOptionField}>
+                  <div className={styles.bulkInlineField}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={1440}
+                      value={automationDripMinutes}
+                      onChange={(event) => setAutomationDripMinutes(Number(event.target.value) || 1)}
+                      disabled={sendingAutomation}
+                    />
+                    <span>min entre contactos</span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className={styles.formActions}>
