@@ -229,8 +229,13 @@ export const AutomationEditor: React.FC = () => {
   const viewportRef = useRef<AutomationViewport>({ x: 0, y: 0, zoom: 1 })
   const [configViewport, setConfigViewport] = useState<AutomationViewport>(viewportRef.current)
   const viewportDirtyRef = useRef(false)
+  const viewportRevisionRef = useRef(0)
+  const savedViewportRevisionRef = useRef(0)
   const savedRevisionRef = useRef(0)
   const savedSettingsRevisionRef = useRef(0)
+  const savedNameRef = useRef('')
+  const nameRef = useRef(name)
+  nameRef.current = name
   const settingsRevisionRef = useRef(settingsRevision)
   settingsRevisionRef.current = settingsRevision
   const stateRef = useRef(state)
@@ -322,18 +327,27 @@ export const AutomationEditor: React.FC = () => {
     [config?.nodeId, config?.triggerId, edges, nodes]
   )
 
-  const markDraftAsUnpublished = useCallback(() => {
-    setAutomation((value) => {
-      if (!value || !['published', 'paused'].includes(value.status) || value.hasUnpublishedChanges) {
-        return value
-      }
-      return { ...value, hasUnpublishedChanges: true }
-    })
-  }, [])
-
   const hasUnpublishedChanges = Boolean(automation?.hasUnpublishedChanges)
+  const getHasUnsavedChanges = useCallback(() => {
+    if (!automationRef.current) return false
+    return (
+      stateRef.current.revision !== savedRevisionRef.current ||
+      settingsRevisionRef.current !== savedSettingsRevisionRef.current ||
+      viewportRevisionRef.current !== savedViewportRevisionRef.current ||
+      nameRef.current.trim() !== savedNameRef.current
+    )
+  }, [])
+  const hasUnsavedChanges = Boolean(
+    automation &&
+      (state.revision !== savedRevisionRef.current ||
+        settingsRevision !== savedSettingsRevisionRef.current ||
+        viewportRevisionRef.current !== savedViewportRevisionRef.current ||
+        name.trim() !== savedNameRef.current)
+  )
   const shouldWarnBeforeLeaving = Boolean(
-    automation && ['published', 'paused'].includes(automation.status) && hasUnpublishedChanges
+    automation &&
+      (hasUnsavedChanges ||
+        (['published', 'paused'].includes(automation.status) && hasUnpublishedChanges))
   )
 
   useEffect(() => {
@@ -348,19 +362,30 @@ export const AutomationEditor: React.FC = () => {
 
   const confirmLeavingIfNeeded = useCallback(
     (onContinue: () => void) => {
-      if (!shouldWarnBeforeLeaving) {
+      const pendingUnsavedChanges = getHasUnsavedChanges()
+      if (!pendingUnsavedChanges && !shouldWarnBeforeLeaving) {
         onContinue()
+        return
+      }
+      if (pendingUnsavedChanges) {
+        showConfirm(
+          'Cambios sin guardar',
+          'Si sales ahora, los cambios que no guardaste se perderán.',
+          onContinue,
+          'Salir sin guardar',
+          'Seguir editando'
+        )
         return
       }
       showConfirm(
         'Cambios sin publicar',
-        'Esta automatización ya tenía una versión en vivo, pero hiciste cambios nuevos que todavía no has publicado. Si sales ahora, se guardan como borrador y la versión activa seguirá igual.',
+        'Esta automatización ya tiene cambios guardados como borrador. La versión activa seguirá igual hasta que publiques.',
         onContinue,
         'Salir sin publicar',
         'Seguir editando'
       )
     },
-    [shouldWarnBeforeLeaving, showConfirm]
+    [getHasUnsavedChanges, shouldWarnBeforeLeaving, showConfirm]
   )
 
   const navigateFromEditor = useCallback(
@@ -422,7 +447,10 @@ export const AutomationEditor: React.FC = () => {
       const safeFlow = normalizeEditorFlow(data.flow)
       setAutomation({ ...data, flow: safeFlow })
       setName(data.name)
+      savedNameRef.current = data.name
       viewportRef.current = safeFlow.viewport
+      viewportRevisionRef.current = 0
+      savedViewportRevisionRef.current = 0
       viewportDirtyRef.current = false
       setFlowSettings({ ...defaultFlowSettings(), ...(safeFlow.settings || {}) })
       setSettingsRevision(0)
@@ -459,16 +487,26 @@ export const AutomationEditor: React.FC = () => {
   }, [automationId])
 
   // ------------------------------------------------------------------
-  // Guardado (autosave con debounce + manual + al salir)
+  // Guardado manual del editor
   // ------------------------------------------------------------------
-  const persistFlow = useCallback(async () => {
+  const persistAutomation = useCallback(async (options: { notify?: boolean } = {}) => {
     const current = automationRef.current
     if (!current) return false
+    const trimmedName = nameRef.current.trim()
+    if (!trimmedName) {
+      setSaveState('error')
+      if (options.notify) {
+        showToast('error', 'No se pudo guardar', 'Ponle un nombre a la automatización')
+      }
+      return false
+    }
     const revision = stateRef.current.revision
     const settingsRevision = settingsRevisionRef.current
+    const viewportRevision = viewportRevisionRef.current
     setSaveState('saving')
     try {
       const updated = await automationsService.updateAutomation(current.id, {
+        name: trimmedName,
         flow: {
           nodes: stateRef.current.present.nodes,
           edges: stateRef.current.present.edges,
@@ -480,63 +518,41 @@ export const AutomationEditor: React.FC = () => {
         value
           ? {
               ...value,
+              name: updated.name,
               updatedAt: updated.updatedAt,
               hasUnpublishedChanges: updated.hasUnpublishedChanges ?? value.hasUnpublishedChanges
             }
           : value
       )
+      savedNameRef.current = updated.name
+      if (nameRef.current !== updated.name) {
+        nameRef.current = updated.name
+        setName(updated.name)
+      }
       savedRevisionRef.current = revision
       savedSettingsRevisionRef.current = settingsRevision
-      viewportDirtyRef.current = false
-      setSaveState(
-        stateRef.current.revision === revision && settingsRevisionRef.current === settingsRevision
-          ? 'saved'
-          : 'dirty'
-      )
+      savedViewportRevisionRef.current = viewportRevision
+      viewportDirtyRef.current = viewportRevisionRef.current !== savedViewportRevisionRef.current
+      const stillDirty = getHasUnsavedChanges()
+      setSaveState(stillDirty ? 'dirty' : 'saved')
+      if (options.notify && !stillDirty) {
+        showToast('success', 'Automatización guardada', 'Los cambios quedaron guardados')
+      }
       return true
     } catch {
       setSaveState('error')
+      if (options.notify) {
+        showToast('error', 'No se pudo guardar', 'Revisa tu conexión e intenta de nuevo')
+      }
       return false
     }
-  }, [])
+  }, [getHasUnsavedChanges, showToast])
 
   useEffect(() => {
     if (!automation) return
-    const hasDraftChanges =
-      state.revision !== savedRevisionRef.current ||
-      settingsRevision !== savedSettingsRevisionRef.current
-    if (!hasDraftChanges) return
-    setSaveState('dirty')
-    markDraftAsUnpublished()
-    const timer = window.setTimeout(() => {
-      void persistFlow()
-    }, 1200)
-    return () => window.clearTimeout(timer)
-  }, [automation, markDraftAsUnpublished, persistFlow, state.revision, settingsRevision])
-
-  // Al desmontar: guardar lo pendiente sin bloquear la navegación
-  useEffect(() => {
-    return () => {
-      const current = automationRef.current
-      if (!current) return
-      if (
-        stateRef.current.revision !== savedRevisionRef.current ||
-        settingsRevisionRef.current !== savedSettingsRevisionRef.current ||
-        viewportDirtyRef.current
-      ) {
-        void automationsService
-          .updateAutomation(current.id, {
-            flow: {
-              nodes: stateRef.current.present.nodes,
-              edges: stateRef.current.present.edges,
-              viewport: viewportRef.current,
-              settings: flowSettingsRef.current
-            }
-          })
-          .catch(() => undefined)
-      }
-    }
-  }, [])
+    const dirty = getHasUnsavedChanges()
+    setSaveState((current) => (current === 'saving' ? current : dirty ? 'dirty' : 'saved'))
+  }, [automation, getHasUnsavedChanges, name, state.revision, settingsRevision])
 
   // ------------------------------------------------------------------
   // Helpers de mutación del flujo
@@ -955,7 +971,9 @@ export const AutomationEditor: React.FC = () => {
       },
       onViewportChange: (viewport: AutomationViewport) => {
         viewportRef.current = viewport
-        viewportDirtyRef.current = true
+        viewportRevisionRef.current += 1
+        viewportDirtyRef.current = viewportRevisionRef.current !== savedViewportRevisionRef.current
+        setSaveState((current) => (current === 'saving' ? current : 'dirty'))
         if (configRef.current) setConfigViewport(viewport)
       },
       // ----------------- selección múltiple -----------------
@@ -1123,7 +1141,7 @@ export const AutomationEditor: React.FC = () => {
   }
 
   // ------------------------------------------------------------------
-  // Teclado global (eliminar, deshacer/rehacer, escape)
+  // Teclado global (guardar, eliminar, deshacer/rehacer, escape)
   // ------------------------------------------------------------------
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1134,6 +1152,12 @@ export const AutomationEditor: React.FC = () => {
           target.tagName === 'TEXTAREA' ||
           target.tagName === 'SELECT' ||
           target.isContentEditable)
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        void persistAutomation({ notify: true })
+        return
+      }
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
         if (typing) return
@@ -1183,27 +1207,11 @@ export const AutomationEditor: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [canvasActions, closeConfig, config, picker, selectedEdgeId, selectedNodeId, multiSelectedIds])
+  }, [canvasActions, closeConfig, config, persistAutomation, picker, selectedEdgeId, selectedNodeId, multiSelectedIds])
 
   // ------------------------------------------------------------------
   // Nombre, estado, publicar, vista previa
   // ------------------------------------------------------------------
-  const saveName = async () => {
-    const current = automationRef.current
-    const trimmed = name.trim()
-    if (!current || !trimmed || trimmed === current.name) {
-      setName(current?.name || trimmed)
-      return
-    }
-    try {
-      const updated = await automationsService.updateAutomation(current.id, { name: trimmed })
-      setAutomation((value) => (value ? { ...value, name: updated.name } : value))
-    } catch {
-      showToast('error', 'No se pudo renombrar', 'Intenta de nuevo')
-      setName(current.name)
-    }
-  }
-
   const changeStatus = async (status: AutomationStatus) => {
     const current = automationRef.current
     if (!current || statusBusy) return
@@ -1221,12 +1229,12 @@ export const AutomationEditor: React.FC = () => {
 
     setStatusBusy(true)
     try {
-      const saved = await persistFlow()
+      const hadPendingChanges = Boolean(current.hasUnpublishedChanges || getHasUnsavedChanges())
+      const saved = await persistAutomation()
       if (!saved) {
-        showToast('error', 'No se pudo guardar', 'Revisa tu conexión e intenta de nuevo')
+        showToast('error', 'No se pudo guardar', 'Revisa el nombre o tu conexión e intenta de nuevo')
         return
       }
-      const hadPendingChanges = Boolean(current.hasUnpublishedChanges)
       const updated = await automationsService.updateAutomation(current.id, { status })
       setAutomation((value) =>
         value
@@ -1265,7 +1273,8 @@ export const AutomationEditor: React.FC = () => {
     const current = automationRef.current
     if (!current) return
     try {
-      await persistFlow()
+      const saved = await persistAutomation()
+      if (!saved) return
       const copy = await automationsService.duplicateAutomation(current.id)
       showToast('success', 'Automatización duplicada', copy.name)
       navigate(`/automations/${copy.id}`)
@@ -1456,7 +1465,6 @@ export const AutomationEditor: React.FC = () => {
           className={styles.toolbarName}
           value={name}
           onChange={(event) => setName(event.target.value)}
-          onBlur={() => void saveName()}
           onKeyDown={(event) => {
             if (event.key === 'Enter') (event.target as HTMLInputElement).blur()
           }}
@@ -1527,7 +1535,8 @@ export const AutomationEditor: React.FC = () => {
             variant="secondary"
             size="sm"
             leftIcon={<Save size={13} />}
-            onClick={() => void persistFlow()}
+            loading={saveState === 'saving'}
+            onClick={() => void persistAutomation({ notify: true })}
           >
             Guardar
           </Button>
@@ -1680,7 +1689,6 @@ export const AutomationEditor: React.FC = () => {
         open={settingsOpen}
         onClose={() => {
           setSettingsOpen(false)
-          void saveName()
         }}
         name={name}
         onRename={setName}
