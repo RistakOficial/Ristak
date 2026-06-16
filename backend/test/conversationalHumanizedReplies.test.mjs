@@ -21,6 +21,7 @@ import {
 } from '../src/agents/conversational/messageSplitter.js'
 import {
   DEFAULT_CLOSING_STRATEGY,
+  buildBusinessAdaptiveClosingSection,
   buildConversationalInstructions,
   renderClosingStrategyTemplate
 } from '../src/agents/conversational/prompt.js'
@@ -432,6 +433,8 @@ test('convierte el perfil estructurado del negocio en parametros del prompt', ()
   assert.match(extraction.promptParameters.UBICACION_O_MODALIDAD, /Ciudad Juárez/)
   assert.match(extraction.promptParameters.DISPONIBILIDAD, /Lunes a viernes/)
   assert.match(extraction.promptParameters.CONDICIONES_IMPORTANTES, /factura/)
+  assert.match(extraction.promptParameters.ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO, /clínica dental/)
+  assert.match(extraction.promptParameters.RIESGO_VERBAL_A_EVITAR, /compra ya/)
 
   const rendered = renderClosingStrategyTemplate(
     '[NOMBRE_DEL_NEGOCIO] · [INDUSTRIA] · [PRODUCTO_O_SERVICIO] · [UBICACION_O_MODALIDAD]',
@@ -439,6 +442,41 @@ test('convierte el perfil estructurado del negocio en parametros del prompt', ()
   )
   assert.match(rendered, /Clínica Norte · clínica dental/)
   assert.doesNotMatch(rendered, /\[INDUSTRIA\]/)
+})
+
+test('adapta el cierre de fabrica al lenguaje del negocio descrito', () => {
+  const parameters = buildBusinessProfilePromptParameters({
+    businessName: 'Growth Médico',
+    industry: 'marketing para médicos especialistas',
+    businessType: 'service',
+    description: 'Ayuda a médicos a convertir conversaciones de redes en pacientes agendados sin sonar invasivos.',
+    offerings: [
+      { name: 'sistema de captación de pacientes', description: 'anuncios, WhatsApp y seguimiento para clínicas', price: 'desde $12,000 MXN mensuales' }
+    ],
+    targetCustomers: 'médicos con agenda irregular que reciben mensajes pero no suficientes citas reales',
+    differentiators: 'acompaña al médico con estrategia, anuncios y seguimiento conversacional',
+    conversationAdaptation: {
+      narrativeFrame: 'No vendas marketing; guía al médico a revisar si depender de recomendaciones y mensajes sueltos está frenando su agenda.',
+      customerPerception: 'Debe sentirse como una revisión profesional de su captación de pacientes, no como una compra impulsiva.',
+      languageGuidance: 'Habla de pacientes, agenda, consultas, seguimiento y claridad del sistema.',
+      contrastFrame: 'Contrasta seguir con conversaciones que no llegan a cita contra ordenar el sistema para que los interesados correctos avancen.',
+      discoveryAngles: ['qué pasa con los mensajes que llegan', 'cuántas consultas reales se pierden', 'qué cambió para revisar esto ahora'],
+      safeValueLanguage: 'Habla de revisar si tiene sentido y de ver una ruta clara.',
+      forbiddenSalesLanguage: 'Evita compra, oferta, invierte hoy y pago hasta que el médico pida avanzar.'
+    }
+  })
+
+  const section = buildBusinessAdaptiveClosingSection({
+    enabled: true,
+    parameters
+  })
+
+  assert.match(section, /Adaptación conversacional al negocio/)
+  assert.match(section, /Growth Médico/)
+  assert.match(section, /marketing para médicos especialistas/)
+  assert.match(section, /No vendas marketing/)
+  assert.match(section, /pacientes, agenda, consultas/)
+  assert.match(section, /No pongas a la persona en modo comprador/)
 })
 
 test('los parametros del perfil no acortan ni cambian la estrategia de fabrica', () => {
@@ -518,6 +556,8 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
   assert.match(instructions, /Puntos aprendidos de esta conversación/)
   assert.match(instructions, /Problema real: sus conversaciones se enfrían/)
   assert.match(instructions, /update_closing_context/)
+  assert.match(instructions, /Adaptación conversacional al negocio/)
+  assert.match(instructions, /No pongas a la persona en modo comprador/)
   assert.doesNotMatch(instructions, /\[NOMBRE_DEL_NEGOCIO\]/)
   assert.match(instructions, /No uses el mismo molde dos veces seguidas/)
   assert.match(instructions, /precisión concreta, reflejo breve, respuesta puntual o siguiente paso/)
@@ -538,6 +578,7 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
   })
 
   assert.match(customInstructions, /Mi estrategia custom con \[NOMBRE_DEL_NEGOCIO\]/)
+  assert.doesNotMatch(customInstructions, /Adaptación conversacional al negocio/)
   assert.doesNotMatch(customInstructions, /Parametros internos de cierre avanzado/)
 })
 

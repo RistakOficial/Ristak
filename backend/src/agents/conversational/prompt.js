@@ -1017,6 +1017,52 @@ export function buildAdvancedClosingContextSection(context = {}) {
   ].filter(Boolean).join('\n')
 }
 
+function readClosingParameter(parameters = {}, ...keys) {
+  for (const key of keys) {
+    const direct = cleanTemplateValue(parameters?.[key])
+    if (direct) return direct
+    const normalized = cleanTemplateValue(parameters?.[normalizePlaceholderKey(key)])
+    if (normalized) return normalized
+  }
+  return ''
+}
+
+export function buildBusinessAdaptiveClosingSection(context = {}) {
+  if (!context?.enabled) return ''
+
+  const parameters = context.parameters || {}
+  const businessName = readClosingParameter(parameters, 'NOMBRE_DEL_NEGOCIO', 'ESCRIBIR_NOMBRE_DEL_NEGOCIO') || 'este negocio'
+  const industry = readClosingParameter(parameters, 'INDUSTRIA', 'ESCRIBIR_INDUSTRIA') || 'el giro del negocio'
+  const offering = readClosingParameter(parameters, 'PRODUCTO_O_SERVICIO', 'ESCRIBIR_PRODUCTO_O_SERVICIO') || 'lo que el negocio ofrece'
+  const adaptation = readClosingParameter(parameters, 'ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO')
+  const language = readClosingParameter(parameters, 'LENGUAJE_DEL_NEGOCIO')
+  const contrast = readClosingParameter(parameters, 'NARRATIVA_DE_CONTRASTE_DEL_NEGOCIO')
+  const perception = readClosingParameter(parameters, 'PERCEPCION_DEL_CLIENTE')
+  const discovery = readClosingParameter(parameters, 'PREGUNTAS_DE_DESCUBRIMIENTO_DEL_NEGOCIO')
+  const riskyLanguage = readClosingParameter(parameters, 'RIESGO_VERBAL_A_EVITAR')
+
+  const lines = [
+    `Negocio/giro: ${businessName} · ${industry} · ${offering}`,
+    adaptation ? `Adaptación obligatoria: ${adaptation}` : '',
+    language ? `Lenguaje y mundo mental: ${language}` : '',
+    perception ? `Cómo debe sentirse la persona: ${perception}` : '',
+    contrast ? `Contraste correcto para este negocio: ${contrast}` : '',
+    discovery ? `Preguntas que encajan con este negocio: ${discovery}` : '',
+    riskyLanguage ? `Lenguaje que debes evitar: ${riskyLanguage}` : ''
+  ].filter(Boolean).map((line) => `- ${line}`)
+
+  if (!lines.length) return ''
+
+  return [
+    '## Adaptación conversacional al negocio',
+    'Este bloque sale de la descripción actual del negocio y manda sobre los ejemplos genéricos de la estrategia. Si la descripción cambia, este encuadre cambia con ella.',
+    'Adapta todo el diálogo a este giro sin cambiar la cadencia de conciencia y contraste: origen, motivo, urgencia, problema real, consecuencia lógica, resultado deseado y siguiente paso.',
+    ...lines,
+    'No pongas a la persona en modo comprador. No hables desde vender, ofrecer, empujar, cobrar o cerrar por presión. Habla desde claridad, criterio, amistad y autoridad tranquila.',
+    'Si toca hablar de valor, hazlo sólo con datos reales y como una referencia para decidir, no como presión.'
+  ].join('\n')
+}
+
 function describeObjective(config) {
   if (config.objective === 'custom' && config.customObjective) {
     return config.customObjective
@@ -1125,6 +1171,8 @@ ${config.requiredData}`)
     sections.push(`## Estrategia de cierre (definida por el negocio, síguela paso a paso)\n${String(config.closingStrategyCustom).trim().slice(0, 8000)}`)
   } else {
     sections.push(renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, advancedClosingContext?.parameters || {}))
+    const businessAdaptiveSection = buildBusinessAdaptiveClosingSection(advancedClosingContext)
+    if (businessAdaptiveSection) sections.push(businessAdaptiveSection)
     const closingContextSection = buildAdvancedClosingContextSection(advancedClosingContext)
     if (closingContextSection) sections.push(closingContextSection)
   }

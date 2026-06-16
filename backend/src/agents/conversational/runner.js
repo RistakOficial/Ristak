@@ -311,6 +311,18 @@ async function loadAdvancedClosingRuntimeContext({
     productSummary: firstText(profileOffering, productSummary),
     businessProfile
   })
+  const adaptationPromptParameters = businessProfile?.configured
+    ? profileParameters
+    : buildBusinessProfilePromptParameters({
+      businessName: firstText(profileBusinessName, businessName),
+      industry: profileIndustry,
+      description: businessInfoSummary || businessContext,
+      offerings: firstText(profileOffering, productSummary) ? [{ name: firstText(profileOffering, productSummary) }] : [],
+      locations: firstText(profileLocation, locationSummary) ? [{ modality: firstText(profileLocation, locationSummary) }] : [],
+      hours: profileAvailability ? { summary: profileAvailability } : {},
+      payments: profileConditions ? { summary: profileConditions } : {},
+      importantConditions: profileConditions
+    })
   const businessConditions = [
     profileConditions,
     conditions
@@ -362,7 +374,13 @@ async function loadAdvancedClosingRuntimeContext({
     OBJECION_PRINCIPAL: firstText(learned.objection, 'ninguna objecion clara todavia'),
     URGENCIA_DETECTADA: firstText(learned.urgencyLevel, 'desconocida'),
     CAMINO_1_CONSECUENCIA: firstText(learned.consequenceIfNoAction, 'seguir igual con el problema que ya conto'),
-    CAMINO_2_RESULTADO_DESEADO: firstText(learned.desiredOutcome, 'tomar acción hacia el resultado que busca')
+    CAMINO_2_RESULTADO_DESEADO: firstText(learned.desiredOutcome, 'tomar acción hacia el resultado que busca'),
+    ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO: firstText(adaptationPromptParameters.ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO, 'adapta la estrategia al contexto real del negocio sin sonar vendedor ni presionar'),
+    LENGUAJE_DEL_NEGOCIO: firstText(adaptationPromptParameters.LENGUAJE_DEL_NEGOCIO, 'usa el lenguaje natural del giro del negocio y del problema que la persona describa'),
+    NARRATIVA_DE_CONTRASTE_DEL_NEGOCIO: firstText(adaptationPromptParameters.NARRATIVA_DE_CONTRASTE_DEL_NEGOCIO, 'contrasta seguir igual contra revisar un siguiente paso claro, sin miedo inventado'),
+    PERCEPCION_DEL_CLIENTE: firstText(adaptationPromptParameters.PERCEPCION_DEL_CLIENTE, 'la persona debe sentirse guiada, no vendida'),
+    PREGUNTAS_DE_DESCUBRIMIENTO_DEL_NEGOCIO: firstText(adaptationPromptParameters.PREGUNTAS_DE_DESCUBRIMIENTO_DEL_NEGOCIO, 'descubre origen, motivo, urgencia, problema real y resultado deseado con preguntas naturales'),
+    RIESGO_VERBAL_A_EVITAR: firstText(adaptationPromptParameters.RIESGO_VERBAL_A_EVITAR, 'evita lenguaje de compra, pago, oferta o presión antes de que la persona pida avanzar')
   }
 
   const systemFacts = [

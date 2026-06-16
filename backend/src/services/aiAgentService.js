@@ -15893,6 +15893,7 @@ function buildBusinessProfileFallback(businessContext = '') {
     differentiators: '',
     importantConditions: '',
     languageTone: '',
+    conversationAdaptation: {},
     missingData: []
   }
 }
@@ -15905,6 +15906,14 @@ function normalizeBusinessProfile(profile = {}, { businessContext = '' } = {}) {
   const hours = normalizeBusinessProfileObject(raw.hours || raw.horarios || raw.businessHours || {})
   const contacts = normalizeBusinessProfileObject(raw.contacts || raw.contact || raw.contacto || raw.telefonos || {})
   const payments = normalizeBusinessProfileObject(raw.payments || raw.paymentMethods || raw.pagos || raw.metodosPago || {})
+  const conversationAdaptation = normalizeBusinessProfileObject(
+    raw.conversationAdaptation ||
+    raw.conversationalAdaptation ||
+    raw.adaptacionConversacional ||
+    raw.adaptacionDeCierre ||
+    raw.closingAdaptation ||
+    {}
+  )
 
   return {
     businessName: firstBusinessProfileValue(raw.businessName, raw.name, raw.nombreNegocio, raw.nombre),
@@ -15922,6 +15931,7 @@ function normalizeBusinessProfile(profile = {}, { businessContext = '' } = {}) {
     differentiators: firstBusinessProfileValue(raw.differentiators, raw.diferenciadores, raw.ventajas, raw.valueProposition),
     importantConditions: firstBusinessProfileValue(raw.importantConditions, raw.conditions, raw.condiciones, raw.restricciones),
     languageTone: firstBusinessProfileValue(raw.languageTone, raw.tono, raw.brandVoice),
+    conversationAdaptation,
     missingData: Array.isArray(raw.missingData || raw.datosFaltantes)
       ? (raw.missingData || raw.datosFaltantes).map((item) => cleanBusinessProfileText(item, 180)).filter(Boolean).slice(0, 12)
       : []
@@ -15935,6 +15945,7 @@ function buildProfileDerivedSummaries(profile = {}, businessContext = '') {
   const paymentSummary = summarizeObjectValues(profile.payments, 500)
   const contactSummary = summarizeObjectValues(profile.contacts, 500)
   const pricingSummary = firstBusinessProfileValue(profile.pricingSummary, offeringsSummary)
+  const conversationAdaptationSummary = summarizeObjectValues(profile.conversationAdaptation, 900)
   const profileSummary = [
     profile.businessName ? `Negocio: ${profile.businessName}` : '',
     profile.industry ? `Industria: ${profile.industry}` : '',
@@ -15948,7 +15959,8 @@ function buildProfileDerivedSummaries(profile = {}, businessContext = '') {
     contactSummary ? `Contacto: ${contactSummary}` : '',
     profile.targetCustomers ? `Cliente ideal: ${profile.targetCustomers}` : '',
     profile.differentiators ? `Diferenciadores: ${profile.differentiators}` : '',
-    profile.importantConditions ? `Condiciones: ${profile.importantConditions}` : ''
+    profile.importantConditions ? `Condiciones: ${profile.importantConditions}` : '',
+    conversationAdaptationSummary ? `Adaptación conversacional: ${conversationAdaptationSummary}` : ''
   ].filter(Boolean).join('\n')
 
   return {
@@ -15958,7 +15970,88 @@ function buildProfileDerivedSummaries(profile = {}, businessContext = '') {
     locationSummary: cleanBusinessProfileText(locationSummary, 1200),
     hoursSummary,
     paymentSummary: cleanBusinessProfileText(paymentSummary, 1200),
-    contactSummary: cleanBusinessProfileText(contactSummary, 1200)
+    contactSummary: cleanBusinessProfileText(contactSummary, 1200),
+    conversationAdaptationSummary: cleanBusinessProfileText(conversationAdaptationSummary, 1200)
+  }
+}
+
+function cleanBusinessProfileListText(value, maxLength = 900) {
+  if (Array.isArray(value)) {
+    return cleanBusinessProfileText(
+      value.map((item) => cleanBusinessProfileText(item, 220)).filter(Boolean).join('; '),
+      maxLength
+    )
+  }
+  if (value && typeof value === 'object') {
+    return summarizeObjectValues(value, maxLength)
+  }
+  return cleanBusinessProfileText(value, maxLength)
+}
+
+function readConversationAdaptationValue(adaptation = {}, keys = [], maxLength = 1000) {
+  for (const key of keys) {
+    const clean = cleanBusinessProfileListText(adaptation?.[key], maxLength)
+    if (clean) return clean
+  }
+  return ''
+}
+
+function buildBusinessConversationPromptParameters(profile = {}, summaries = {}) {
+  const adaptation = profile.conversationAdaptation || {}
+  const businessName = firstBusinessProfileValue(profile.businessName, 'este negocio')
+  const industry = firstBusinessProfileValue(profile.industry, profile.businessNature, 'este giro')
+  const offering = firstBusinessProfileValue(summaries.offeringsSummary, profile.description, 'la solución del negocio')
+  const targetCustomers = firstBusinessProfileValue(profile.targetCustomers, 'la persona que escribió')
+  const differentiators = firstBusinessProfileValue(profile.differentiators, '')
+  const conditions = firstBusinessProfileValue(profile.importantConditions, summaries.paymentSummary, '')
+
+  const narrativeFrame = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['narrativeFrame', 'marcoNarrativo', 'enfoqueNarrativo', 'narrativa'], 1000),
+    `No presentes ${offering} como algo que se empuja. Guía a ${targetCustomers} a revisar con calma si seguir igual en el contexto de ${industry} le pesa más que tomar un siguiente paso claro.`
+  )
+  const customerPerception = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['customerPerception', 'percepcionDelCliente', 'percepciónDelCliente', 'perception'], 900),
+    `La persona debe sentirse escuchada y con criterio para decidir, no como comprador presionado de ${businessName}.`
+  )
+  const languageGuidance = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['languageGuidance', 'lenguaje', 'lenguajeDelNegocio', 'languageTone'], 900),
+    `Usa vocabulario natural del giro ${industry}; aterriza los ejemplos en ${offering}${differentiators ? ` y en lo que diferencia al negocio: ${differentiators}` : ''}.`
+  )
+  const contrastFrame = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['contrastFrame', 'marcoDeContraste', 'contraste', 'consequenceFrame'], 900),
+    `El contraste debe ser entre dejar igual la situación que la persona ya contó y revisar una ruta más clara hacia el resultado que busca. No uses miedo inventado ni promesas.`
+  )
+  const discoveryAngles = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['discoveryAngles', 'preguntasDescubrimiento', 'angulosDeDescubrimiento', 'preguntas'], 900),
+    `Pregunta qué detonó la búsqueda, qué ha intentado, qué le incomoda de seguir igual y qué resultado necesita ver para que ${offering} tenga sentido.`
+  )
+  const safeValueLanguage = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['safeValueLanguage', 'lenguajeSeguroDeValor', 'valueLanguage', 'lenguajeDeValor'], 900),
+    'Habla de "valor", "opción", "siguiente paso", "revisarlo", "ver si te conviene" y "tener claridad"; evita sonar a transacción antes de que la persona pida avanzar.'
+  )
+  const forbiddenSalesLanguage = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['forbiddenSalesLanguage', 'lenguajeProhibido', 'salesLanguageToAvoid', 'evitar'], 900),
+    'Evita "te vendo", "compra ya", "aprovecha", "oferta", "invierte", "dinero" o "paga" salvo que la persona ya esté preguntando cómo completar el pago o el flujo necesite confirmar un dato real.'
+  )
+
+  const businessAdaptation = [
+    `Marco narrativo: ${narrativeFrame}`,
+    `Percepción buscada: ${customerPerception}`,
+    `Lenguaje del negocio: ${languageGuidance}`,
+    `Contraste útil: ${contrastFrame}`,
+    `Ángulos de descubrimiento: ${discoveryAngles}`,
+    `Lenguaje seguro de valor: ${safeValueLanguage}`,
+    `Lenguaje de venta a evitar: ${forbiddenSalesLanguage}`,
+    conditions ? `Condiciones que cambian el encuadre: ${conditions}` : ''
+  ].filter(Boolean).join(' ')
+
+  return {
+    ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO: cleanBusinessProfileText(businessAdaptation, 1400),
+    LENGUAJE_DEL_NEGOCIO: cleanBusinessProfileText(languageGuidance, 1000),
+    NARRATIVA_DE_CONTRASTE_DEL_NEGOCIO: cleanBusinessProfileText(contrastFrame, 1000),
+    PERCEPCION_DEL_CLIENTE: cleanBusinessProfileText(customerPerception, 1000),
+    PREGUNTAS_DE_DESCUBRIMIENTO_DEL_NEGOCIO: cleanBusinessProfileText(discoveryAngles, 1000),
+    RIESGO_VERBAL_A_EVITAR: cleanBusinessProfileText(forbiddenSalesLanguage, 1000)
   }
 }
 
@@ -15994,7 +16087,8 @@ export function buildBusinessProfilePromptParameters(profile = {}, extraParamete
     UBICACION: location,
     DISPONIBILIDAD: availability,
     CONDICIONES_IMPORTANTES: conditions,
-    CONDICIONES_DEL_NEGOCIO: conditions
+    CONDICIONES_DEL_NEGOCIO: conditions,
+    ...buildBusinessConversationPromptParameters(normalizedProfile, summaries)
   }
 
   return {
@@ -16175,6 +16269,8 @@ function buildBusinessProfileExtractionInstructions() {
     'Si es el mismo negocio, mezcla datos: conserva lo anterior cuando siga vigente y agrega o corrige con lo nuevo.',
     'Si claramente es otro negocio, reemplaza el perfil anterior y usa sólo el contexto nuevo.',
     'Detecta nombre del negocio, industria, giro/naturaleza, si vende productos, servicios o ambos, ubicaciones, horarios, teléfonos, extensiones, persona encargada, precios, métodos de pago, facturación, productos/servicios, frecuencia/cadencia, condiciones, cliente ideal y tono útil.',
+    'Además, adapta la estrategia conversacional de cierre al giro del negocio. No escribas como vendedor: define cómo guiar a la persona desde autoridad tranquila, amistad y claridad, sin ponerla en posición de comprador ni empujarla con palabras de riesgo como dinero, compra, pago, oferta o inversión antes de que ella pida avanzar.',
+    'La adaptación debe conservar la misma cadencia de conciencia y contraste: descubrir origen, motivo, urgencia, problema real, consecuencia lógica y resultado deseado, pero usando el lenguaje, narrativa, miedos reales, aspiraciones y contexto del cliente de ese negocio.',
     'Devuelve solamente JSON válido, sin markdown, sin explicación y sin texto fuera del JSON.',
     'Schema esperado:',
     JSON.stringify({
@@ -16211,6 +16307,15 @@ function buildBusinessProfileExtractionInstructions() {
         differentiators: '',
         importantConditions: '',
         languageTone: '',
+        conversationAdaptation: {
+          narrativeFrame: '',
+          customerPerception: '',
+          languageGuidance: '',
+          contrastFrame: '',
+          discoveryAngles: [],
+          safeValueLanguage: '',
+          forbiddenSalesLanguage: ''
+        },
         missingData: []
       },
       promptParameters: {
@@ -16221,7 +16326,13 @@ function buildBusinessProfileExtractionInstructions() {
         VALOR: '',
         UBICACION_O_MODALIDAD: '',
         DISPONIBILIDAD: '',
-        CONDICIONES_IMPORTANTES: ''
+        CONDICIONES_IMPORTANTES: '',
+        ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO: '',
+        LENGUAJE_DEL_NEGOCIO: '',
+        NARRATIVA_DE_CONTRASTE_DEL_NEGOCIO: '',
+        PERCEPCION_DEL_CLIENTE: '',
+        PREGUNTAS_DE_DESCUBRIMIENTO_DEL_NEGOCIO: '',
+        RIESGO_VERBAL_A_EVITAR: ''
       }
     }, null, 2)
   ].join('\n')
