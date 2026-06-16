@@ -81,11 +81,6 @@ export interface Calendar {
   googleCalendarSummary?: string;
   googleCalendarTimeZone?: string;
   googleSyncEnabled?: boolean;
-  initialGoogleSync?: {
-    enabled?: boolean;
-    saved?: number;
-    linkedCalendars?: number;
-  } | null;
   syncStatus?: 'pending' | 'synced' | 'error';
   syncError?: string | null;
   publicBookingPath?: string;

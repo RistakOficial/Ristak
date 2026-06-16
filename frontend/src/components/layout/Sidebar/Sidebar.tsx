@@ -15,6 +15,7 @@ import {
   Check,
   ChevronDown,
   LogOut,
+  MessageCircle,
   Moon,
   Palette,
   Rocket,
@@ -75,6 +76,7 @@ interface NavItem {
 
 const baseNavigation: NavItem[] = [
   { id: 'dashboard', name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { id: 'chat', name: 'Chat', href: '/chat', icon: MessageCircle },
   { id: 'appointments', name: 'Citas', href: '/appointments', icon: Calendar },
   { id: 'transactions', name: 'Pagos', href: '/transactions', icon: Banknote },
   { id: 'contacts', name: 'Contactos', href: '/contacts', icon: Users },
@@ -89,6 +91,7 @@ const baseNavigation: NavItem[] = [
 
 const navPermissionById: Partial<Record<string, PermissionKey>> = {
   dashboard: 'dashboard',
+  chat: 'contacts',
   appointments: 'appointments',
   transactions: 'payments',
   contacts: 'contacts',
@@ -577,6 +580,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
 
     const itemsById = new Map(items.map(item => [item.id, item]))
     const orderedItems: NavItem[] = []
+    const orderIncludesChat = order.includes('chat')
 
     order.forEach(id => {
       const item = itemsById.get(id)
@@ -590,6 +594,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
     itemsById.forEach(item => {
       orderedItems.push(item)
     })
+
+    if (!orderIncludesChat) {
+      const chatIndex = orderedItems.findIndex(item => item.id === 'chat')
+      const dashboardIndex = orderedItems.findIndex(item => item.id === 'dashboard')
+      if (chatIndex >= 0 && dashboardIndex >= 0 && chatIndex !== dashboardIndex + 1) {
+        const [chatItem] = orderedItems.splice(chatIndex, 1)
+        const nextDashboardIndex = orderedItems.findIndex(item => item.id === 'dashboard')
+        orderedItems.splice(nextDashboardIndex + 1, 0, chatItem)
+      }
+    }
 
     return orderedItems
   }

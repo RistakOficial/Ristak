@@ -302,6 +302,7 @@ export const ROUTE_ACCESS: Array<{ prefix: string; moduleKey: PermissionKey }> =
   { prefix: '/settings/api-access', moduleKey: 'settings_api_access' },
   { prefix: '/api-docs', moduleKey: 'settings_api_access' },
   { prefix: '/dashboard', moduleKey: 'dashboard' },
+  { prefix: '/chat', moduleKey: 'contacts' },
   { prefix: '/appointments', moduleKey: 'appointments' },
   { prefix: '/transactions', moduleKey: 'payments' },
   { prefix: '/contacts', moduleKey: 'contacts' },

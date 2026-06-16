@@ -9,6 +9,7 @@ import { LabelsProvider } from '@/contexts/LabelsContext'
 import { usePhoneTheme, usePhoneWakeLock } from '@/hooks'
 import { AppShell } from '@/components/layout/AppShell'
 import { Dashboard } from '@/pages/Dashboard'
+import { DesktopChat } from '@/pages/DesktopChat'
 import { Initialization } from '@/pages/Initialization'
 import { useInitialization } from '@/contexts/InitializationContext'
 import { Reports } from '@/pages/Reports'
@@ -703,6 +704,7 @@ const AppWithNotifications: React.FC = () => {
             <Route index element={<HomeRedirect />} />
             <Route path="initialization/*" element={<AccessRoute moduleKey="settings_integrations"><Initialization /></AccessRoute>} />
             <Route path="dashboard/*" element={<AccessRoute moduleKey="dashboard"><Dashboard /></AccessRoute>} />
+            <Route path="chat/*" element={<AccessRoute moduleKey="contacts"><DesktopChat /></AccessRoute>} />
             <Route path="reports/*" element={<AccessRoute moduleKey="reports"><Reports /></AccessRoute>} />
             <Route path="campaigns/*" element={<AccessRoute moduleKey="campaigns"><Campaigns /></AccessRoute>} />
             <Route path="transactions/*" element={<AccessRoute moduleKey="payments"><Transactions /></AccessRoute>} />

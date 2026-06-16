@@ -525,10 +525,6 @@ export async function updateCalendarGoogleSync(req, res) {
 
     let initialGoogleSync = null;
     if (calendar?.googleCalendarId) {
-      await localCalendarService.setAppointmentDefaultCalendar(calendar.id).catch(error => {
-        logger.warn(`[Calendars Controller] Vinculo Google guardado, pero no se pudo marcar como calendario principal: ${error.message}`);
-      });
-
       const now = new Date();
       const startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
       const endTime = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString();
