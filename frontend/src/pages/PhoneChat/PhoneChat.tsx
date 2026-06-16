@@ -12080,26 +12080,32 @@ export const PhoneChat: React.FC = () => {
                 <rect x="56" y="120" width="128" height="70" rx="35" fill="url(#rkbVisor)" />
                 <rect x="56" y="120" width="128" height="70" rx="35" fill="url(#rkbVisorTop)" />
                 <rect x="57.4" y="121.4" width="125.2" height="67.2" rx="33.6" fill="none" stroke="#a8dcff" strokeOpacity="0.16" strokeWidth="1.5" />
-                <ellipse cx="120" cy="168" rx="40" ry="22" fill="url(#rkbEyeGlow)" />
+                <ellipse cx="120" cy="166" rx="42" ry="24" fill="url(#rkbEyeGlow)" />
                 <ellipse className={styles.rkChin} cx="120" cy="200" rx="36" ry="12" fill="url(#rkbEyeGlow)" opacity="0.55" />
                 <path d="M70,140 C92,126 150,124 168,132 C150,146 96,150 74,156 Z" fill="#ffffff" opacity="0.09" />
-                <ellipse cx="84" cy="138" rx="10" ry="5" fill="#ffffff" opacity="0.16" transform="rotate(-20 84 138)" />
+                <ellipse cx="84" cy="136" rx="10" ry="5" fill="#ffffff" opacity="0.16" transform="rotate(-20 84 136)" />
 
                 {/* Rostro */}
                 <g className={styles.rkFace3d}>
-                  <g className={styles.rkEyeL}>
-                    <rect x="93" y="138" width="15" height="30" rx="7.5" fill="url(#rkbEye)" transform="rotate(8 100.5 153)" />
+                  <g className={styles.rkEyes}>
+                    <g className={styles.rkEyesMood}>
+                      <g className={styles.rkEyeL}>
+                        <rect x="95" y="136" width="15" height="27" rx="7.5" fill="url(#rkbEye)" transform="rotate(8 102.5 149.5)" />
+                      </g>
+                      <g className={styles.rkEyeR}>
+                        <rect x="130" y="136" width="15" height="27" rx="7.5" fill="url(#rkbEye)" transform="rotate(-8 137.5 149.5)" />
+                      </g>
+                    </g>
                   </g>
-                  <g className={styles.rkEyeR}>
-                    <rect x="132" y="138" width="15" height="30" rx="7.5" fill="url(#rkbEye)" transform="rotate(-8 139.5 153)" />
-                  </g>
+                  {/* Boca luminosa */}
+                  <path className={styles.rkMouth} d="M106,176 Q120,184 134,176" fill="none" stroke="#9bf0ff" strokeWidth="4" strokeLinecap="round" />
                   {/* Ecualizador de voz (habla) */}
                   <g className={styles.rkEq}>
-                    <rect className={styles.rkEqBar} x="104" y="176" width="4" height="10" rx="2" fill="#9bf0ff" />
-                    <rect className={styles.rkEqBar} x="111" y="176" width="4" height="10" rx="2" fill="#9bf0ff" />
-                    <rect className={styles.rkEqBar} x="118" y="176" width="4" height="10" rx="2" fill="#9bf0ff" />
-                    <rect className={styles.rkEqBar} x="125" y="176" width="4" height="10" rx="2" fill="#9bf0ff" />
-                    <rect className={styles.rkEqBar} x="132" y="176" width="4" height="10" rx="2" fill="#9bf0ff" />
+                    <rect className={styles.rkEqBar} x="105" y="172" width="4" height="11" rx="2" fill="#9bf0ff" />
+                    <rect className={styles.rkEqBar} x="112" y="172" width="4" height="11" rx="2" fill="#9bf0ff" />
+                    <rect className={styles.rkEqBar} x="119" y="172" width="4" height="11" rx="2" fill="#9bf0ff" />
+                    <rect className={styles.rkEqBar} x="126" y="172" width="4" height="11" rx="2" fill="#9bf0ff" />
+                    <rect className={styles.rkEqBar} x="133" y="172" width="4" height="11" rx="2" fill="#9bf0ff" />
                   </g>
                 </g>
               </g>
