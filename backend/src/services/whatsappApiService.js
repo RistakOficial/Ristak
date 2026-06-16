@@ -4287,6 +4287,7 @@ function directionFromCandidatePath(path = [], payload = {}) {
 
   if (pathText.includes('inbound')) return 'inbound'
   if (pathText.includes('outbound')) return 'outbound'
+  if (HISTORY_MESSAGE_EVENT_TYPES.has(type)) return ''
   if (pathText.includes('whatsappmessage') || pathText.includes('whatsapp_message')) return 'outbound'
   if (INBOUND_MESSAGE_EVENT_TYPES.has(type)) return 'inbound'
   if (OUTBOUND_MESSAGE_EVENT_TYPES.has(type)) return 'outbound'

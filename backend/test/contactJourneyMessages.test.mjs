@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { db } from '../src/config/database.js'
-import { getContactJourney } from '../src/controllers/contactsController.js'
+import { getChatContacts, getContactJourney } from '../src/controllers/contactsController.js'
 
 function createMockResponse() {
   return {
@@ -22,6 +22,17 @@ function createMockResponse() {
 async function readJourney(contactId, query = {}) {
   const res = createMockResponse()
   await getContactJourney({ params: { id: contactId }, query }, res)
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(res.body?.success, true)
+  assert.ok(Array.isArray(res.body.data))
+
+  return res.body.data
+}
+
+async function readChatContacts(query = {}) {
+  const res = createMockResponse()
+  await getChatContacts({ query }, res)
 
   assert.equal(res.statusCode, 200)
   assert.equal(res.body?.success, true)
@@ -184,6 +195,68 @@ test('contact journey defaults to contact-authored messages only', async () => {
         'meta_message:outbound:DM del negocio'
       ]
     )
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
+test('chat history includes WhatsApp messages matched by phone when contact_id is missing', async () => {
+  const id = randomUUID()
+  const contactId = `journey_phone_match_${id}`
+  const phone = `+52992${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000000'
+
+  await cleanup(contactId, phone)
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      'Cliente Phone Match',
+      'Cliente',
+      'manual',
+      '2026-06-16T11:00:00.000Z',
+      '2026-06-16T11:00:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, contact_id, phone, from_phone, to_phone, business_phone, transport,
+        direction, message_type, message_text, message_timestamp, created_at
+      ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `api_phone_only_${id}`,
+      phone,
+      phone,
+      businessPhone,
+      businessPhone,
+      'api',
+      'inbound',
+      'text',
+      'Mensaje entrante sin contacto enlazado',
+      '2026-06-16T11:01:00.000Z',
+      '2026-06-16T11:01:00.000Z'
+    ])
+
+    const journey = await readJourney(contactId, { includeBusinessMessages: 'true' })
+    const whatsappMessages = journey.filter(event => event.type === 'whatsapp_message')
+
+    assert.deepEqual(
+      whatsappMessages.map(event => `${event.data.direction}:${event.data.message_text}`),
+      ['inbound:Mensaje entrante sin contacto enlazado']
+    )
+
+    const chats = await readChatContacts({ limit: '100' })
+    const chat = chats.find(item => item.id === contactId)
+
+    assert.ok(chat)
+    assert.equal(chat.messageCount, 1)
+    assert.equal(chat.lastMessageText, 'Mensaje entrante sin contacto enlazado')
+    assert.equal(chat.lastMessageDirection, 'inbound')
   } finally {
     await cleanup(contactId, phone)
   }

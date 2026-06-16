@@ -76,6 +76,40 @@ const dedupeAppointments = (appointments = []) => {
   return Array.from(map.values())
 }
 
+const buildContactPhoneCandidates = (phone) => {
+  return [...new Set([
+    normalizePhoneForStorage(phone),
+    cleanString(phone)
+  ].filter(Boolean))]
+}
+
+const buildWhatsAppApiMessageContactMatch = (contactId, phoneCandidates = [], alias = 'msg', profileAlias = 'api_profile') => {
+  const cleanContactId = cleanString(contactId)
+  const cleanPhoneCandidates = [...new Set(phoneCandidates.map(cleanString).filter(Boolean))]
+  if (!cleanPhoneCandidates.length) {
+    return {
+      condition: `${alias}.contact_id = ?`,
+      params: [cleanContactId]
+    }
+  }
+
+  const placeholders = cleanPhoneCandidates.map(() => '?').join(', ')
+  const phoneColumns = [
+    `${alias}.phone`,
+    `${alias}.from_phone`,
+    `${alias}.to_phone`,
+    `${profileAlias}.phone`
+  ]
+
+  return {
+    condition: `(${alias}.contact_id = ? OR ${phoneColumns.map(column => `${column} IN (${placeholders})`).join(' OR ')})`,
+    params: [
+      cleanContactId,
+      ...phoneColumns.flatMap(() => cleanPhoneCandidates)
+    ]
+  }
+}
+
 const APPOINTMENT_CANCELED_STATUSES = new Set([
   'cancelled',
   'canceled',
@@ -1028,7 +1062,8 @@ export const getChatContacts = async (req, res) => {
     const searchTerm = cleanString(q)
     const phoneNumberIdFilter = cleanString(businessPhoneNumberId)
     const businessPhoneFilter = normalizePhoneForStorage(businessPhone)
-    const whatsappMessageConditions = ['contact_id IS NOT NULL']
+    const resolvedWhatsAppContactIdSql = 'COALESCE(msg.contact_id, api_profile.contact_id, phone_contact.id)'
+    const whatsappMessageConditions = [`${resolvedWhatsAppContactIdSql} IS NOT NULL`]
     const whatsappMessageParams = []
     const conditions = []
     const params = []
@@ -1037,11 +1072,11 @@ export const getChatContacts = async (req, res) => {
     if (phoneNumberIdFilter || businessPhoneFilter) {
       const phoneClauses = []
       if (phoneNumberIdFilter) {
-        phoneClauses.push('business_phone_number_id = ?')
+        phoneClauses.push('msg.business_phone_number_id = ?')
         whatsappMessageParams.push(phoneNumberIdFilter)
       }
       if (businessPhoneFilter) {
-        phoneClauses.push('business_phone = ?')
+        phoneClauses.push('msg.business_phone = ?')
         whatsappMessageParams.push(businessPhoneFilter)
       }
       whatsappMessageConditions.push(`(${phoneClauses.join(' OR ')})`)
@@ -1062,18 +1097,23 @@ export const getChatContacts = async (req, res) => {
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
     const messageRowsSql = `
         SELECT
-          contact_id,
-          'whatsapp:' || id AS message_row_id,
-          message_text,
-          message_type,
-          direction,
-          business_phone,
-          business_phone_number_id,
-          transport,
-          COALESCE(message_timestamp, created_at) AS message_date,
-          created_at,
+          ${resolvedWhatsAppContactIdSql} AS contact_id,
+          'whatsapp:' || msg.id AS message_row_id,
+          msg.message_text,
+          msg.message_type,
+          msg.direction,
+          msg.business_phone,
+          msg.business_phone_number_id,
+          msg.transport,
+          COALESCE(msg.message_timestamp, msg.created_at) AS message_date,
+          msg.created_at,
           'whatsapp' AS message_channel
-        FROM whatsapp_api_messages
+        FROM whatsapp_api_messages msg
+        LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
+        LEFT JOIN contacts phone_contact
+          ON phone_contact.phone IS NOT NULL
+         AND phone_contact.phone != ''
+         AND phone_contact.phone IN (msg.phone, msg.from_phone, msg.to_phone, api_profile.phone)
         WHERE ${whatsappMessageConditions.join(' AND ')}
         ${includeMetaSocialMessages ? `
         UNION ALL
@@ -2959,6 +2999,8 @@ export const getContactJourney = async (req, res) => {
         error: 'Contacto no encontrado'
       })
     }
+    const contactPhoneCandidates = buildContactPhoneCandidates(contact.phone)
+    const whatsappApiMessageContactMatch = buildWhatsAppApiMessageContactMatch(id, contactPhoneCandidates)
 
     const journey = []
     await refreshHighLevelConversationMessageStatuses(id)
@@ -3163,14 +3205,15 @@ export const getContactJourney = async (req, res) => {
           COALESCE(attr.detected_conversion_data, msg.detected_conversion_data) as detected_conversion_data,
           COALESCE(attr.detected_ctwa_payload, msg.detected_ctwa_payload) as detected_ctwa_payload
        FROM whatsapp_api_messages msg
+       LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
        LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
-       WHERE msg.contact_id = ?
+       WHERE ${whatsappApiMessageContactMatch.condition}
          AND (
            ? = 1
            OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
          )
        ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC`,
-      [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS]
+      [...whatsappApiMessageContactMatch.params, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS]
     )
 
     whatsappApiMessages.forEach(msg => {

@@ -162,6 +162,88 @@ test('webhook saliente respeta contactId existente aunque el teléfono todavía 
   }
 })
 
+test('historial smb de YCloud infiere entrantes y salientes por teléfonos conocidos', async () => {
+  const id = randomUUID()
+  const phone = `+52990${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000000'
+  const phoneNumberId = `phone_history_direction_${id}`
+  const eventId = `evt_history_direction_${id}`
+  const inboundMessageId = `ycloud_history_inbound_${id}`
+  const outboundMessageId = `ycloud_history_outbound_${id}`
+  const messageAt = '2024-06-07T08:09:10.000Z'
+
+  await cleanup({ phone, eventId })
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+
+  try {
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, phone_number, display_phone_number, verified_name, status, created_at, updated_at
+      ) VALUES (?, 'ycloud', ?, ?, ?, 'CONNECTED', ?, ?)
+    `, [
+      phoneNumberId,
+      businessPhone,
+      businessPhone,
+      'Ristak Test',
+      messageAt,
+      messageAt
+    ])
+
+    const payload = {
+      id: eventId,
+      type: 'whatsapp.smb.history',
+      apiVersion: 'v2',
+      createTime: messageAt,
+      whatsappMessages: [
+        {
+          id: inboundMessageId,
+          from: phone,
+          to: businessPhone,
+          sendTime: messageAt,
+          type: 'text',
+          text: { body: 'Hola, soy cliente' },
+          customerProfile: { name: 'Cliente Historial' }
+        },
+        {
+          id: outboundMessageId,
+          from: businessPhone,
+          to: phone,
+          sendTime: '2024-06-07T08:10:10.000Z',
+          type: 'text',
+          text: { body: 'Hola, soy negocio' }
+        }
+      ]
+    }
+
+    await processYCloudWhatsAppWebhook({
+      payload,
+      rawBody: JSON.stringify(payload),
+      signatureHeader: '',
+      endpointId: ''
+    })
+
+    const rows = await db.all(`
+      SELECT ycloud_message_id, direction, contact_id, phone
+      FROM whatsapp_api_messages
+      WHERE ycloud_message_id IN (?, ?)
+      ORDER BY message_timestamp ASC
+    `, [inboundMessageId, outboundMessageId])
+
+    assert.equal(rows.length, 2)
+    assert.equal(rows[0].ycloud_message_id, inboundMessageId)
+    assert.equal(rows[0].direction, 'inbound')
+    assert.ok(rows[0].contact_id)
+    assert.equal(rows[0].phone, phone)
+    assert.equal(rows[1].ycloud_message_id, outboundMessageId)
+    assert.equal(rows[1].direction, 'outbound')
+    assert.equal(rows[1].contact_id, rows[0].contact_id)
+    assert.equal(rows[1].phone, phone)
+  } finally {
+    await cleanup({ phone, eventId })
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+  }
+})
+
 test('sync historico de YCloud conserva nombre real y source_id de anuncios', async () => {
   const id = randomUUID()
   const phone = `+52995${Date.now().toString().slice(-7)}`
