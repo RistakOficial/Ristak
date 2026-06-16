@@ -4,7 +4,7 @@ import fs from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import fetch from 'node-fetch'
+import nodeFetch from 'node-fetch'
 import sharp from 'sharp'
 import { db, getAppConfig, repairWhatsAppApiContactIdentityFromMessages, setAppConfig } from '../config/database.js'
 import { findContactByPhoneCandidates, generateContactId } from './contactIdentityService.js'
@@ -48,6 +48,11 @@ const DEFAULT_INSTALLER_PUBLIC_URL = 'https://www.ristak.com'
 const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
+let ycloudFetch = nodeFetch
+
+export function setYCloudFetchForTest(fetchImpl) {
+  ycloudFetch = typeof fetchImpl === 'function' ? fetchImpl : nodeFetch
+}
 const WHATSAPP_IMAGE_PUBLIC_PATH = '/uploads/whatsapp-images'
 const MAX_WHATSAPP_IMAGE_INPUT_BYTES = 25 * 1024 * 1024
 const MAX_WHATSAPP_IMAGE_OUTPUT_BYTES = 5 * 1024 * 1024
@@ -1274,7 +1279,7 @@ async function ycloudRequest(path, { apiKey, method = 'GET', body, query } = {})
     }
   }
 
-  const response = await fetch(url.toString(), {
+  const response = await ycloudFetch(url.toString(), {
     method,
     headers: {
       accept: 'application/json',
@@ -2899,6 +2904,76 @@ export async function getWhatsAppApiStatus() {
   }
 }
 
+async function isCurrentYCloudConnection(apiKey) {
+  const cleanApiKey = normalizeYCloudApiKeyInput(apiKey)
+  if (!cleanApiKey) return false
+
+  try {
+    const config = await loadConfig({ includeSecrets: true })
+    return Boolean(
+      config.enabled &&
+      config.provider === PROVIDER_NAME &&
+      normalizeYCloudApiKeyInput(config.apiKey) === cleanApiKey
+    )
+  } catch (error) {
+    logger.warn(`No se pudo verificar la conexión YCloud activa: ${error.message}`)
+    return false
+  }
+}
+
+async function runYCloudPostConnectionSync({ apiKey, businessPhoneHints = [], wabaIds = [], source = 'conexion' } = {}) {
+  const cleanApiKey = normalizeYCloudApiKeyInput(apiKey)
+  if (!cleanApiKey) return
+
+  const cleanBusinessPhoneHints = [...new Set(businessPhoneHints.map(cleanString).filter(Boolean))]
+  const cleanWabaIds = [...new Set(wabaIds.map(cleanString).filter(Boolean))]
+  const stillConnected = () => isCurrentYCloudConnection(cleanApiKey)
+
+  if (!await stillConnected()) return
+
+  const ycloudContacts = await listYCloudContacts(cleanApiKey).catch(error => {
+    logger.warn(`No se pudieron leer contactos de WhatsApp API en segundo plano (${source}): ${error.message}`)
+    return []
+  })
+
+  if (ycloudContacts.length && await stillConnected()) {
+    await syncYCloudContacts(ycloudContacts).catch(error => {
+      logger.warn(`No se pudieron sincronizar contactos de WhatsApp API en segundo plano (${source}): ${error.message}`)
+    })
+  }
+
+  if (!await stillConnected()) return
+
+  await syncYCloudMessagesFromApi(cleanApiKey, {
+    businessPhoneHints: cleanBusinessPhoneHints,
+    wabaIds: cleanWabaIds
+  }).catch(error => {
+    logger.warn(`No se pudo sincronizar historial saliente desde YCloud en segundo plano (${source}): ${error.message}`)
+  })
+
+  if (!await stillConnected()) return
+
+  await backfillStoredWhatsAppApiMessageEvents({
+    businessPhoneHints: cleanBusinessPhoneHints
+  }).catch(error => {
+    logger.warn(`No se pudo recuperar historial guardado WhatsApp Business en segundo plano (${source}): ${error.message}`)
+  })
+
+  if (!await stillConnected()) return
+
+  await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
+    logger.warn(`No se pudo reparar nombres/fechas de contactos WhatsApp API en segundo plano (${source}): ${error.message}`)
+  })
+}
+
+function scheduleYCloudPostConnectionSync(options = {}) {
+  setTimeout(() => {
+    runYCloudPostConnectionSync(options).catch(error => {
+      logger.warn(`No se pudo completar la sincronización de WhatsApp API en segundo plano: ${error.message}`)
+    })
+  }, 0)
+}
+
 export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, wabaId, webhookUrl } = {}) {
   const saved = await loadConfig({ includeSecrets: true })
   const submittedApiKey = normalizeYCloudApiKeyInput(apiKey)
@@ -2916,7 +2991,7 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
   try {
     let webhookEndpoint = null
     let webhookSetupWarning = ''
-    const [phoneNumbers, balance, templates, ycloudContacts] = await Promise.all([
+    const [phoneNumbers, balance, templates] = await Promise.all([
       listYCloudPhoneNumbers(cleanApiKey),
       retrieveYCloudBalance(cleanApiKey).catch(error => {
         logger.warn(`No se pudo leer balance de WhatsApp API: ${error.message}`)
@@ -2925,17 +3000,12 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       listYCloudTemplates(cleanApiKey, { wabaId }).catch(error => {
         logger.warn(`No se pudieron leer plantillas de WhatsApp API: ${error.message}`)
         return []
-      }),
-      listYCloudContacts(cleanApiKey).catch(error => {
-        logger.warn(`No se pudieron leer contactos de WhatsApp API: ${error.message}`)
-        return []
       })
     ])
     const enrichedPhoneNumbers = await enrichPhoneNumbersWithProfiles(cleanApiKey, phoneNumbers)
     await syncPhoneNumbers(enrichedPhoneNumbers, { pruneMissing: true })
     if (balance) await syncBalance(balance)
     await syncTemplates(templates)
-    await syncYCloudContacts(ycloudContacts)
 
     const selectedPhone = pickPhoneNumber(enrichedPhoneNumbers, { senderPhone, phoneNumberId, wabaId })
     if (selectedPhone) {
@@ -2986,21 +3056,11 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       ...enrichedPhoneNumbers.map(item => item.wabaId)
     ].filter(Boolean)
 
-    await syncYCloudMessagesFromApi(cleanApiKey, {
+    scheduleYCloudPostConnectionSync({
+      apiKey: cleanApiKey,
       businessPhoneHints,
-      wabaIds
-    }).catch(error => {
-      logger.warn(`No se pudo sincronizar historial saliente desde YCloud: ${error.message}`)
-    })
-
-    await backfillStoredWhatsAppApiMessageEvents({
-      businessPhoneHints
-    }).catch(error => {
-      logger.warn(`No se pudo recuperar historial guardado WhatsApp Business: ${error.message}`)
-    })
-
-    await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
-      logger.warn(`No se pudo reparar nombres/fechas de contactos WhatsApp API: ${error.message}`)
+      wabaIds,
+      source: 'conexion'
     })
 
     return getWhatsAppApiStatus()
@@ -3021,7 +3081,7 @@ export async function refreshWhatsAppApi() {
 
   try {
     let webhookSetupWarning = ''
-    const [phoneNumbers, balance, templates, ycloudContacts] = await Promise.all([
+    const [phoneNumbers, balance, templates] = await Promise.all([
       listYCloudPhoneNumbers(config.apiKey),
       retrieveYCloudBalance(config.apiKey).catch(error => {
         logger.warn(`No se pudo actualizar balance de WhatsApp API: ${error.message}`)
@@ -3029,10 +3089,6 @@ export async function refreshWhatsAppApi() {
       }),
       listYCloudTemplates(config.apiKey, { wabaId: config.wabaId }).catch(error => {
         logger.warn(`No se pudieron actualizar plantillas de WhatsApp API: ${error.message}`)
-        return []
-      }),
-      listYCloudContacts(config.apiKey).catch(error => {
-        logger.warn(`No se pudieron actualizar contactos de WhatsApp API: ${error.message}`)
         return []
       })
     ])
@@ -3043,7 +3099,6 @@ export async function refreshWhatsAppApi() {
     }
     if (balance) await syncBalance(balance)
     await syncTemplates(templates)
-    await syncYCloudContacts(ycloudContacts)
 
     const businessPhoneHints = [
       config.senderPhone,
@@ -3078,25 +3133,14 @@ export async function refreshWhatsAppApi() {
       }
     }
 
-    await syncYCloudMessagesFromApi(config.apiKey, {
-      businessPhoneHints,
-      wabaIds
-    }).catch(error => {
-      logger.warn(`No se pudo sincronizar historial saliente desde YCloud: ${error.message}`)
-    })
-
-    await backfillStoredWhatsAppApiMessageEvents({
-      businessPhoneHints
-    }).catch(error => {
-      logger.warn(`No se pudo recuperar historial guardado WhatsApp Business: ${error.message}`)
-    })
-
-    await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
-      logger.warn(`No se pudo reparar nombres/fechas de contactos WhatsApp API: ${error.message}`)
-    })
-
     await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
     await setAppConfig(CONFIG_KEYS.lastError, webhookSetupWarning)
+    scheduleYCloudPostConnectionSync({
+      apiKey: config.apiKey,
+      businessPhoneHints,
+      wabaIds,
+      source: 'actualizacion'
+    })
     return getWhatsAppApiStatus()
   } catch (error) {
     await setAppConfig(CONFIG_KEYS.lastError, error.message)
@@ -5037,7 +5081,7 @@ async function metaDirectGraphRequest(path, { method = 'GET', token, query, body
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value))
   }
 
-  const response = await fetch(url.toString(), {
+  const response = await nodeFetch(url.toString(), {
     method,
     headers: {
       Authorization: `Bearer ${cleanToken}`,
