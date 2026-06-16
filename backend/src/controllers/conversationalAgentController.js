@@ -6,10 +6,12 @@ import {
   saveConversationalAgentConfig,
   getConversationState,
   setConversationStatus,
+  assignAgentToConversation,
   clearConversationSignal,
   listConversationStates,
   listConversationalAgentEvents,
   listConversationalAgents,
+  getConversationalAgent,
   getConversationalAgentMetrics,
   createConversationalAgent,
   updateConversationalAgent,
@@ -103,10 +105,27 @@ export async function updateState(req, res) {
       return res.status(400).json({ success: false, error: `Acción inválida: ${action}` })
     }
 
-    const state = await setConversationStatus(contactId, mapped.status, {
+    const agentId = String(req.body?.agentId || '').trim()
+    if (action === 'activate' && agentId) {
+      const agent = await getConversationalAgent(agentId)
+      if (!agent) {
+        return res.status(404).json({ success: false, error: 'Agente no encontrado' })
+      }
+      if (!agent.enabled) {
+        return res.status(400).json({ success: false, error: 'Este agente está pausado' })
+      }
+    }
+
+    let state = await setConversationStatus(contactId, mapped.status, {
       updatedBy: 'user',
       clearSignal: mapped.clearSignal
     })
+
+    if (action === 'activate' && agentId) {
+      await assignAgentToConversation(contactId, agentId)
+      state = await getConversationState(contactId)
+    }
+
     res.json({ success: true, data: state })
   } catch (error) {
     logger.error('Error actualizando estado de conversación:', error)

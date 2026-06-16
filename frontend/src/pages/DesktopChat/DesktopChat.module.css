@@ -535,38 +535,6 @@
   min-width: 0;
 }
 
-.agentToggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  filter: grayscale(1);
-  opacity: 0.58;
-  transition: opacity var(--transition-fast), filter var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast);
-}
-
-.agentToggle:hover {
-  border-color: var(--chat-border);
-  background: var(--chat-soft);
-  opacity: 0.78;
-}
-
-.agentToggle[data-active='true'] {
-  filter: none;
-  opacity: 1;
-}
-
-.agentToggle:disabled {
-  cursor: wait;
-}
-
 .quickActions {
   display: flex;
   align-items: center;
@@ -756,7 +724,7 @@
 .composer {
   position: relative;
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 28px 40px;
+  grid-template-columns: 34px 40px minmax(0, 1fr) 28px 40px;
   gap: 8px;
   align-items: end;
   padding: 8px 12px 10px;
@@ -851,9 +819,11 @@
 }
 
 .draftAttachment button,
+.agentComposerButton,
 .composerPlusButton,
 .micButton,
 .sendButton,
+.agentComposerMenu button,
 .composerMenu button {
   display: inline-flex;
   align-items: center;
@@ -881,6 +851,42 @@
   align-items: center;
   justify-content: center;
   min-width: 0;
+}
+
+.agentComposerWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.agentComposerButton {
+  width: 34px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  filter: grayscale(1);
+  opacity: 0.55;
+  transition: opacity var(--transition-fast), filter var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.agentComposerButton:hover,
+.agentComposerButton[aria-expanded='true'] {
+  border-color: var(--chat-border);
+  background: var(--chat-soft);
+  opacity: 0.82;
+}
+
+.agentComposerButton[data-active='true'] {
+  filter: none;
+  opacity: 1;
+}
+
+.agentComposerButton:disabled {
+  cursor: wait;
+  opacity: 0.5;
 }
 
 .composerPlusButton,
@@ -964,6 +970,109 @@
 .composerMenu button:hover {
   background: var(--chat-soft);
   color: var(--color-text-primary);
+}
+
+.agentComposerMenu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 24;
+  display: grid;
+  gap: 6px;
+  width: min(300px, calc(100vw - 32px));
+  padding: 8px;
+  border: 1px solid var(--chat-border);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  box-shadow: 0 10px 24px -20px rgba(15, 23, 42, 0.45);
+}
+
+.agentComposerMenuHeader {
+  display: grid;
+  gap: 2px;
+  padding: 4px 6px 7px;
+  border-bottom: 1px solid var(--chat-border);
+}
+
+.agentComposerMenuHeader strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 760;
+}
+
+.agentComposerMenuHeader span,
+.agentComposerHint {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
+.agentMenuAction,
+.agentPickerList button {
+  justify-content: flex-start;
+  gap: 9px;
+  width: 100%;
+  min-height: 44px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+}
+
+.agentMenuAction:hover,
+.agentPickerList button:hover {
+  background: var(--chat-soft);
+  color: var(--color-text-primary);
+}
+
+.agentMenuAction:disabled,
+.agentPickerList button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.agentMenuAction > span,
+.agentPickerList button > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.agentMenuAction strong,
+.agentPickerList strong {
+  overflow: hidden;
+  color: currentColor;
+  font-size: var(--font-size-sm);
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentMenuAction small,
+.agentPickerList small {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.agentPickerList {
+  display: grid;
+  gap: 4px;
+}
+
+.agentPickerIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: 1px solid var(--chat-border);
+  border-radius: 999px;
+  background: var(--chat-soft);
+  color: var(--color-text-secondary);
 }
 
 .voiceWave {
@@ -1508,7 +1617,7 @@
   }
 
   .composer {
-    grid-template-columns: 40px minmax(0, 1fr) 28px 40px;
+    grid-template-columns: 34px 40px minmax(0, 1fr) 28px 40px;
   }
 
   .messageBubble {

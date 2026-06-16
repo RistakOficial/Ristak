@@ -21,7 +21,9 @@ import {
   MessageCircle,
   Mic,
   MousePointerClick,
+  Pause,
   Phone,
+  Play,
   Plus,
   Search,
   ListFilter,
@@ -42,7 +44,7 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import apiClient from '@/services/apiClient'
 import automationsService, { type AutomationSummary } from '@/services/automationsService'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
-import { conversationalAgentService, type ConversationAgentState } from '@/services/conversationalAgentService'
+import { conversationalAgentService, type ConversationAgentState, type ConversationStateAction, type ConversationalAgentDef } from '@/services/conversationalAgentService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import { whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus } from '@/services/whatsappApiService'
@@ -274,6 +276,15 @@ const AGENT_SIGNAL_LABELS: Record<string, string> = {
   ready_to_buy: 'Listo para cobrar',
   appointment_booked: 'Cita agendada',
   discarded: 'Descartado'
+}
+
+const CONVERSATION_AGENT_STATUS_LABELS: Record<string, string> = {
+  active: 'Agente atendiendo este chat',
+  paused: 'Agente pausado en este chat',
+  human: 'Conversación tomada por humano',
+  skipped: 'Agente omitido en este chat',
+  completed: 'Objetivo completado por el agente',
+  discarded: 'Conversación descartada'
 }
 
 function getContactName(contact?: Partial<Contact> | null) {
@@ -1060,6 +1071,9 @@ export const DesktopChat: React.FC = () => {
   const [conversationAgentEnabled, setConversationAgentEnabled] = useState(false)
   const [conversationAgentState, setConversationAgentState] = useState<ConversationAgentState | null>(null)
   const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>({})
+  const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>([])
+  const [agentComposerMenuOpen, setAgentComposerMenuOpen] = useState(false)
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [conversationAgentBusy, setConversationAgentBusy] = useState(false)
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [calendarsLoading, setCalendarsLoading] = useState(false)
@@ -1172,6 +1186,17 @@ export const DesktopChat: React.FC = () => {
   const hasComposerContent = Boolean(composerText.trim()) || draftAttachments.length > 0 || Boolean(voiceDraft)
   const canSend = Boolean(activeContact && hasComposerContent && composerStatus === 'idle' && !voiceRecording && !voiceProcessing)
   const conversationAgentActive = conversationAgentEnabled && conversationAgentState?.status === 'active'
+  const activeAgentDef = useMemo(
+    () => agentDefs.find((agent) => agent.id === conversationAgentState?.agentId) || null,
+    [agentDefs, conversationAgentState?.agentId]
+  )
+  const availableAgentDefs = useMemo(
+    () => agentDefs.filter((agent) => agent.enabled),
+    [agentDefs]
+  )
+  const conversationAgentStatusLabel = conversationAgentState
+    ? CONVERSATION_AGENT_STATUS_LABELS[conversationAgentState.status] || 'Agente conversacional'
+    : 'Sin agente asignado'
   const journeyEventsDescending = useMemo(
     () => [...contactJourney].sort((left, right) => Date.parse(right.date) - Date.parse(left.date)),
     [contactJourney]
@@ -1292,17 +1317,19 @@ export const DesktopChat: React.FC = () => {
   const loadSupportData = useCallback(async () => {
     setCalendarsLoading(true)
     try {
-      const [status, highLevelConfig, calendarList, conversationalConfig] = await Promise.all([
+      const [status, highLevelConfig, calendarList, conversationalConfig, agentList] = await Promise.all([
         whatsappApiService.getStatus().catch(() => null),
         highLevelService.getConfig().catch(() => ({ configured: false })),
         calendarsService.getCalendars(locationId, accessToken).catch(() => []),
-        conversationalAgentService.getConfig().catch(() => null)
+        conversationalAgentService.getConfig().catch(() => null),
+        conversationalAgentService.listAgents().catch(() => [] as ConversationalAgentDef[])
       ])
       const stateList = await conversationalAgentService.listStates().catch(() => [] as ConversationAgentState[])
       setWhatsappStatus(status)
       setHighLevelConnected(Boolean(highLevelConfig?.configured))
       setConversationAgentEnabled(Boolean(conversationalConfig?.enabled))
       setAgentStates(mapAgentStatesByContactId(stateList))
+      setAgentDefs(agentList)
       setCalendars(calendarList)
       setSelectedCalendarId((current) => current || calendarList[0]?.id || '')
     } finally {
@@ -1328,6 +1355,11 @@ export const DesktopChat: React.FC = () => {
   useEffect(() => {
     writeStoredChatIds(CHAT_ARCHIVED_STATE_KEY, archivedChatIds)
   }, [archivedChatIds])
+
+  useEffect(() => {
+    setAgentComposerMenuOpen(false)
+    setAgentPickerOpen(false)
+  }, [activeContactId])
 
   useEffect(() => () => {
     chatsRequestRef.current?.abort()
@@ -1699,30 +1731,63 @@ export const DesktopChat: React.FC = () => {
     if (activeContactId) await loadConversation(activeContactId)
   }
 
-  const handleToggleConversationAgent = useCallback(async () => {
+  const updateActiveConversationAgentState = useCallback((nextState: ConversationAgentState) => {
+    setConversationAgentState(nextState)
+    setAgentStates((current) => ({ ...current, [nextState.contactId]: nextState }))
+  }, [])
+
+  const closeComposerAgentMenu = useCallback(() => {
+    setAgentComposerMenuOpen(false)
+    setAgentPickerOpen(false)
+  }, [])
+
+  const handleOpenComposerAgentMenu = useCallback(() => {
+    if (!activeContact?.id || conversationAgentBusy) return
+    setComposerMenuOpen(false)
+    setAgentComposerMenuOpen((current) => {
+      const nextOpen = !current
+      setAgentPickerOpen(nextOpen && (!conversationAgentActive || !conversationAgentState?.agentId))
+      return nextOpen
+    })
+  }, [activeContact?.id, conversationAgentActive, conversationAgentBusy, conversationAgentState?.agentId])
+
+  const handleRunConversationAgentAction = useCallback(async (
+    action: ConversationStateAction,
+    successMessage: string,
+    options: { agentId?: string } = {}
+  ) => {
     if (!activeContact?.id || conversationAgentBusy) return
     if (!conversationAgentEnabled) {
-      showToast('warning', 'Agente conversacional apagado', 'Actívalo en la sección del agente conversacional para usarlo aquí.')
+      showToast('warning', 'Agente conversacional apagado', 'Actívalo en Agente AI para usarlo en los chats.')
       return
     }
 
     setConversationAgentBusy(true)
     try {
-      const nextAction = conversationAgentState?.status === 'active' ? 'pause' : 'activate'
-      const nextState = await conversationalAgentService.updateState(activeContact.id, nextAction)
-      setConversationAgentState(nextState)
-      setAgentStates((current) => ({ ...current, [activeContact.id]: nextState }))
-      showToast(
-        'success',
-        nextState.status === 'active' ? 'Agente activo' : 'Agente pausado',
-        nextState.status === 'active' ? 'El agente conversacional queda trabajando en este chat.' : 'El agente queda en gris para este contacto.'
-      )
+      const nextState = await conversationalAgentService.updateState(activeContact.id, action, options)
+      updateActiveConversationAgentState(nextState)
+      showToast('success', 'Agente conversacional', successMessage)
+      closeComposerAgentMenu()
     } catch (error: any) {
       showToast('error', 'No se pudo cambiar el agente', error?.message || 'Intenta otra vez.')
     } finally {
       setConversationAgentBusy(false)
     }
-  }, [activeContact?.id, conversationAgentBusy, conversationAgentEnabled, conversationAgentState?.status, showToast])
+  }, [activeContact?.id, closeComposerAgentMenu, conversationAgentBusy, conversationAgentEnabled, showToast, updateActiveConversationAgentState])
+
+  const handleAssignConversationAgent = useCallback((agentId: string) => {
+    const agent = availableAgentDefs.find((item) => item.id === agentId)
+    if (!agent) {
+      showToast('warning', 'Agente no disponible', 'Elige un agente publicado para atender este chat.')
+      return
+    }
+
+    void handleRunConversationAgentAction(
+      'activate',
+      `${agent.name || 'El agente'} atenderá este chat.`,
+      { agentId }
+    )
+  }, [availableAgentDefs, handleRunConversationAgentAction, showToast])
 
   const acknowledgeAgentPriorityOnOpen = useCallback((contactId: string) => {
     const state = agentStates[contactId]
@@ -2065,6 +2130,111 @@ export const DesktopChat: React.FC = () => {
     } finally {
       setComposerStatus('idle')
     }
+  }
+
+  const renderComposerAgentMenu = () => {
+    if (!agentComposerMenuOpen || !activeContact) return null
+
+    const showPicker = agentPickerOpen || !conversationAgentActive || !conversationAgentState?.agentId
+    const disabledByGlobalConfig = !conversationAgentEnabled
+
+    if (showPicker) {
+      return (
+        <div className={styles.agentComposerMenu} role="menu" aria-label="Seleccionar agente conversacional">
+          <div className={styles.agentComposerMenuHeader}>
+            <strong>Asignar agente</strong>
+            <span>{disabledByGlobalConfig ? 'El agente está apagado en configuración.' : 'Elige quién atenderá este chat.'}</span>
+          </div>
+          {availableAgentDefs.length > 0 ? (
+            <div className={styles.agentPickerList}>
+              {availableAgentDefs.map((agent) => (
+                <button
+                  key={agent.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleAssignConversationAgent(agent.id)}
+                  disabled={conversationAgentBusy || disabledByGlobalConfig}
+                >
+                  <span className={styles.agentPickerIcon}>
+                    <Bot size={15} />
+                  </span>
+                  <span>
+                    <strong>{agent.name || 'Agente sin nombre'}</strong>
+                    <small>{agent.objective === 'ventas' ? 'Ventas' : agent.objective === 'datos' ? 'Datos' : agent.objective === 'filtrar' ? 'Filtrar' : 'Citas y seguimiento'}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className={styles.agentComposerHint}>No hay agentes publicados. Créalo en Agente AI → Agente conversacional.</p>
+          )}
+          {disabledByGlobalConfig ? (
+            <p className={styles.agentComposerHint}>Activa la configuración general del agente antes de asignarlo a un chat.</p>
+          ) : null}
+        </div>
+      )
+    }
+
+    return (
+      <div className={styles.agentComposerMenu} role="menu" aria-label="Acciones del agente conversacional">
+        <div className={styles.agentComposerMenuHeader}>
+          <strong>{activeAgentDef?.name || 'Agente conversacional'}</strong>
+          <span>{conversationAgentStatusLabel}</span>
+        </div>
+        <button
+          type="button"
+          role="menuitem"
+          className={styles.agentMenuAction}
+          disabled={conversationAgentBusy}
+          onClick={() => handleRunConversationAgentAction('take_over', `Tomaste la conversación de ${getContactName(activeContact)}.`)}
+        >
+          <User size={15} />
+          <span>
+            <strong>Tomar conversación</strong>
+            <small>El agente deja de responder aquí.</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className={styles.agentMenuAction}
+          disabled={conversationAgentBusy}
+          onClick={() => handleRunConversationAgentAction('pause', 'El chatbot quedó pausado en este chat.')}
+        >
+          <Pause size={15} />
+          <span>
+            <strong>Pausar chatbot</strong>
+            <small>Pausa el agente sólo en esta conversación.</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className={styles.agentMenuAction}
+          disabled={conversationAgentBusy}
+          onClick={() => handleRunConversationAgentAction('skip', 'El chatbot quedó omitido en este chat.')}
+        >
+          <X size={15} />
+          <span>
+            <strong>Omitir chatbot</strong>
+            <small>El agente no vuelve a tomar este chat.</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className={styles.agentMenuAction}
+          disabled={conversationAgentBusy}
+          onClick={() => setAgentPickerOpen(true)}
+        >
+          <Play size={15} />
+          <span>
+            <strong>Cambiar agente</strong>
+            <small>Activa este chat con otro agente.</small>
+          </span>
+        </button>
+      </div>
+    )
   }
 
   const renderAvatar = (
@@ -2473,18 +2643,6 @@ export const DesktopChat: React.FC = () => {
                   <div>
                     <span className={styles.contactHeadingRow}>
                       <h2>{getContactName(activeContact)}</h2>
-                      <button
-                        type="button"
-                        className={styles.agentToggle}
-                        data-active={conversationAgentActive ? 'true' : undefined}
-                        data-enabled={conversationAgentEnabled ? 'true' : undefined}
-                        onClick={handleToggleConversationAgent}
-                        disabled={conversationAgentBusy}
-                        aria-label={conversationAgentActive ? 'Pausar agente conversacional' : 'Activar agente conversacional'}
-                        title={conversationAgentActive ? 'Agente conversacional activo' : 'Agente conversacional pausado'}
-                      >
-                        {conversationAgentBusy ? <Loader2 size={17} className={styles.spin} /> : <AgentRobot size={30} active={conversationAgentActive} />}
-                      </button>
                     </span>
                     <p>{getContactDetail(activeContact)}</p>
                   </div>
@@ -2579,11 +2737,30 @@ export const DesktopChat: React.FC = () => {
                 ) : null}
                 {renderVoiceWave()}
                 {renderVoiceDraft()}
+                <div className={styles.agentComposerWrap}>
+                  <button
+                    type="button"
+                    className={styles.agentComposerButton}
+                    data-active={conversationAgentActive ? 'true' : undefined}
+                    data-enabled={conversationAgentEnabled ? 'true' : undefined}
+                    onClick={handleOpenComposerAgentMenu}
+                    disabled={!activeContact || conversationAgentBusy}
+                    aria-label={conversationAgentActive ? 'Abrir acciones del agente conversacional' : 'Asignar agente conversacional'}
+                    aria-expanded={agentComposerMenuOpen}
+                    title={conversationAgentActive ? 'Agente conversacional activo' : 'Asignar agente conversacional'}
+                  >
+                    {conversationAgentBusy ? <Loader2 size={17} className={styles.spin} /> : <AgentRobot size={30} active={conversationAgentActive} />}
+                  </button>
+                  {renderComposerAgentMenu()}
+                </div>
                 <div className={styles.composerActionWrap}>
                   <button
                     type="button"
                     className={styles.composerPlusButton}
-                    onClick={() => setComposerMenuOpen((current) => !current)}
+                    onClick={() => {
+                      closeComposerAgentMenu()
+                      setComposerMenuOpen((current) => !current)
+                    }}
                     aria-label="Abrir opciones de adjuntos"
                     aria-expanded={composerMenuOpen}
                   >
@@ -2620,7 +2797,10 @@ export const DesktopChat: React.FC = () => {
                   onChange={(event) => setComposerText(event.target.value)}
                   placeholder={voiceRecording ? 'Grabando audio...' : voiceDraft ? 'Audio listo para enviar' : 'Escribe una respuesta...'}
                   rows={1}
-                  onFocus={() => setComposerMenuOpen(false)}
+                  onFocus={() => {
+                    setComposerMenuOpen(false)
+                    closeComposerAgentMenu()
+                  }}
                   disabled={voiceRecording || voiceProcessing || Boolean(voiceDraft)}
                 />
                 <button

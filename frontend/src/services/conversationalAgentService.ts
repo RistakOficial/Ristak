@@ -524,10 +524,17 @@ export const conversationalAgentService = {
     return request<ConversationAgentState | null>(`/states/${encodeURIComponent(contactId)}`)
   },
 
-  async updateState(contactId: string, action: ConversationStateAction): Promise<ConversationAgentState> {
+  async updateState(
+    contactId: string,
+    action: ConversationStateAction,
+    options: { agentId?: string } = {}
+  ): Promise<ConversationAgentState> {
     const state = await request<ConversationAgentState>(`/states/${encodeURIComponent(contactId)}`, {
       method: 'POST',
-      body: JSON.stringify({ action })
+      body: JSON.stringify({
+        action,
+        ...(options.agentId ? { agentId: options.agentId } : {})
+      })
     })
     updateCachedAgentState(state)
     return state
