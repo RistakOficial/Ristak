@@ -462,6 +462,7 @@
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   font-weight: 760;
+  overflow: visible;
 }
 
 .avatarSm {
@@ -492,9 +493,74 @@
 .avatarChannelBadge {
   right: -2px;
   bottom: -2px;
-  width: 18px;
-  height: 18px;
-  box-shadow: 0 0 0 1px var(--chat-border);
+  width: 20px;
+  height: 20px;
+  color: #ffffff;
+  box-shadow:
+    0 0 0 1px var(--chat-border),
+    0 4px 9px rgba(15, 23, 42, 0.18);
+  pointer-events: none;
+}
+
+.avatarChannelBadge svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.45;
+}
+
+.avatarSm .avatarChannelBadge {
+  width: 19px;
+  height: 19px;
+}
+
+.avatarSm .avatarChannelBadge svg {
+  width: 12px;
+  height: 12px;
+}
+
+.avatarChannelBadgeWhatsapp {
+  background: #25d366;
+}
+
+.avatarChannelBadgeWhatsapp svg,
+.avatarSm .avatarChannelBadgeWhatsapp svg {
+  width: 15px;
+  height: 15px;
+}
+
+.avatarChannelBadgeWhatsappGlyph {
+  color: #ffffff;
+  fill: currentColor;
+  transform: translateY(-0.2px);
+}
+
+.avatarChannelBadgeWhatsappGlyph path {
+  stroke: none;
+}
+
+.avatarChannelBadgeMessenger {
+  background: #0084ff;
+}
+
+.avatarChannelBadgeInstagram {
+  background: #c13584;
+}
+
+.avatarChannelBadgeEmail {
+  background: #ea4335;
+}
+
+.avatarChannelBadgeSms {
+  background: #475569;
+}
+
+.avatarChannelBadgeWebchat {
+  background: var(--color-primary);
+}
+
+.avatarChannelBadgeMeta {
+  background: #1877f2;
 }
 
 .avatarAgentBadge {

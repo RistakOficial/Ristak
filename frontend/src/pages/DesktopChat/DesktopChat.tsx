@@ -10,11 +10,8 @@ import {
   CircleAlert,
   Clock,
   CreditCard,
-  Facebook,
   FileText,
-  Globe2,
   Image as ImageIcon,
-  Instagram,
   Loader2,
   Mail,
   MapPin,
@@ -35,7 +32,7 @@ import {
   Workflow,
   X
 } from 'lucide-react'
-import { AppointmentModal, Button, CustomSelect, Modal, RecordPaymentModal, TagPicker } from '@/components/common'
+import { AppointmentModal, Button, CustomSelect, Icon, Modal, RecordPaymentModal, TagPicker } from '@/components/common'
 import { AgentRobot } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -63,6 +60,12 @@ type ComposerStatus = 'idle' | 'sending'
 type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
 type DraftAttachmentKind = 'image' | 'document'
 type InfoPanelView = 'summary' | 'journey'
+type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'webchat' | 'meta'
+
+interface ContactChannelBadge {
+  kind: ContactChannelBadgeKind
+  label: string
+}
 
 interface AdvancedChatFilters {
   channel: AdvancedChannelFilter
@@ -76,6 +79,7 @@ interface DesktopChatContact extends Contact {
   lastMessageText?: string
   lastMessageType?: string
   lastMessageChannel?: string
+  lastMessageTransport?: string
   lastMessageDate?: string
   lastMessageDirection?: string
   lastBusinessPhone?: string
@@ -434,22 +438,34 @@ function getContactChannelKind(contact: DesktopChatContact): AdvancedChannelFilt
   return ''
 }
 
-function getContactChannelMeta(contact?: DesktopChatContact | Contact | null) {
-  if (!contact) {
-    return { label: 'Origen', Icon: MessageCircle }
-  }
+function getContactChannelBadge(contact?: DesktopChatContact | Contact | null): ContactChannelBadge | null {
+  if (!contact) return null
+
   const channel = getContactChannelKind(contact as DesktopChatContact)
   const social = getContactSocialKind(contact as DesktopChatContact)
   const origin = getContactOriginKind(contact as DesktopChatContact)
 
-  if (channel === 'whatsapp' || social === 'whatsapp') return { label: 'WhatsApp', Icon: MessageCircle }
-  if (channel === 'instagram' || social === 'instagram') return { label: 'Instagram', Icon: Instagram }
-  if (channel === 'messenger' || social === 'messenger' || social === 'facebook') return { label: social === 'facebook' ? 'Facebook' : 'Messenger', Icon: Facebook }
-  if (channel === 'webchat' || origin === 'site') return { label: 'Web', Icon: Globe2 }
-  if (channel === 'sms') return { label: 'SMS', Icon: Phone }
-  if (channel === 'email') return { label: 'Email', Icon: Mail }
-  if (origin === 'meta') return { label: 'Meta', Icon: Facebook }
-  return { label: 'Origen', Icon: MessageCircle }
+  if (channel === 'whatsapp') return { kind: 'whatsapp', label: 'WhatsApp' }
+  if (channel === 'instagram') return { kind: 'instagram', label: 'Instagram' }
+  if (channel === 'messenger') return { kind: 'messenger', label: 'Messenger' }
+  if (channel === 'webchat' || origin === 'site') return { kind: 'webchat', label: 'Web' }
+  if (channel === 'sms') return { kind: 'sms', label: 'SMS' }
+  if (channel === 'email') return { kind: 'email', label: 'Email' }
+  if (social === 'whatsapp') return { kind: 'whatsapp', label: 'WhatsApp' }
+  if (social === 'instagram') return { kind: 'instagram', label: 'Instagram' }
+  if (social === 'messenger' || social === 'facebook') return { kind: 'messenger', label: social === 'facebook' ? 'Facebook' : 'Messenger' }
+  if (origin === 'meta') return { kind: 'meta', label: 'Meta' }
+  return null
+}
+
+function getAvatarChannelBadgeClass(kind: ContactChannelBadgeKind) {
+  if (kind === 'instagram') return styles.avatarChannelBadgeInstagram
+  if (kind === 'messenger') return styles.avatarChannelBadgeMessenger
+  if (kind === 'email') return styles.avatarChannelBadgeEmail
+  if (kind === 'sms') return styles.avatarChannelBadgeSms
+  if (kind === 'webchat') return styles.avatarChannelBadgeWebchat
+  if (kind === 'meta') return styles.avatarChannelBadgeMeta
+  return styles.avatarChannelBadgeWhatsapp
 }
 
 function mapAgentStatesByContactId(states: ConversationAgentState[] = []) {
@@ -2237,6 +2253,17 @@ export const DesktopChat: React.FC = () => {
     )
   }
 
+  const renderChannelBadgeIcon = (kind: ContactChannelBadgeKind, size: 'sm' | 'md') => {
+    const iconSize = size === 'sm' ? 13 : 14
+    if (kind === 'whatsapp') return <Icon name="whatsapp" size={size === 'sm' ? 16 : 17} className={styles.avatarChannelBadgeWhatsappGlyph} />
+    if (kind === 'messenger') return <Icon name="facebook" size={iconSize} />
+    if (kind === 'instagram') return <Icon name="instagram" size={iconSize} />
+    if (kind === 'email') return <Mail size={iconSize} />
+    if (kind === 'sms') return <Phone size={iconSize} />
+    if (kind === 'webchat') return <Icon name="globe" size={iconSize} />
+    return <Icon name="meta" size={iconSize} />
+  }
+
   const renderAvatar = (
     contact: DesktopChatContact | Contact | null,
     size: 'sm' | 'md' = 'md',
@@ -2244,19 +2271,19 @@ export const DesktopChat: React.FC = () => {
   ) => {
     const photo = getContactProfilePhoto(contact)
     const initials = getContactInitials(contact)
-    const channelMeta = options.showChannelBadge ? getContactChannelMeta(contact) : null
-    const ChannelIcon = channelMeta?.Icon
+    const channelBadge = options.showChannelBadge ? getContactChannelBadge(contact) : null
     return (
       <span className={`${styles.avatar} ${size === 'sm' ? styles.avatarSm : ''}`}>
         {photo ? <img src={photo} alt={`Foto de ${getContactName(contact)}`} /> : initials}
-        {channelMeta && ChannelIcon ? (
+        {channelBadge ? (
           <span
-            className={styles.avatarChannelBadge}
+            className={`${styles.avatarChannelBadge} ${getAvatarChannelBadgeClass(channelBadge.kind)}`}
             data-chat-avatar-channel
-            title={`Canal: ${channelMeta.label}`}
-            aria-label={`Canal: ${channelMeta.label}`}
+            data-chat-avatar-channel-kind={channelBadge.kind}
+            title={`Canal: ${channelBadge.label}`}
+            aria-label={`Canal: ${channelBadge.label}`}
           >
-            <ChannelIcon size={size === 'sm' ? 11 : 12} />
+            {renderChannelBadgeIcon(channelBadge.kind, size)}
           </span>
         ) : null}
         {options.showAgentBadge ? (
