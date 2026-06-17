@@ -57,6 +57,7 @@ import automationsRoutes from './routes/automations.routes.js'
 import appointmentRemindersRoutes from './routes/appointmentReminders.routes.js'
 import pushRoutes from './routes/push.routes.js'
 import licenseRoutes from './routes/license.routes.js'
+import chatEventsRoutes from './routes/chatEvents.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
 import { getHealthInfo } from './services/licenseService.js'
 import { requireFeature } from './middleware/licenseMiddleware.js'
@@ -135,6 +136,7 @@ app.use('/api/settings', settingsRoutes)
 app.use('/api/calendars', requireFeature('google_calendar'), calendarsRoutes)
 app.use('/api/push', pushRoutes)
 app.use('/api/license', licenseRoutes)
+app.use('/api/chat-events', chatEventsRoutes)
 app.use('/api/config', configRoutes)
 app.use('/api', costsRoutes)
 app.use('/api/hidden-contacts', hiddenContactsRoutes)

@@ -18,6 +18,7 @@ import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import GHLClient from './ghlClient.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
+import { publishChatMessageEvent } from './chatLiveEventsService.js'
 
 const LAST_SYNC_CONFIG_KEY = 'highlevel_conversations_last_synced_at'
 const INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1000 // re-leer 24h hacia atrás por seguridad
@@ -288,6 +289,20 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
     })
   }
 
+  if (saved > 0) {
+    publishChatMessageEvent({
+      contactId: contact.id,
+      messageId: remoteMessageId,
+      channel: transport === 'ghl_sms' ? 'sms' : 'whatsapp',
+      provider: 'highlevel',
+      transport,
+      direction,
+      messageType: attachments.length ? inferAttachmentMessageType(attachments[0]) : 'text',
+      messageTimestamp,
+      isNew
+    })
+  }
+
   return { saved, isNew }
 }
 
@@ -367,6 +382,20 @@ async function upsertMetaRow({ message, contact, platform, direction, notifyNewI
       timestamp: messageTimestamp
     }).catch(error => {
       logger.warn(`[GHL Conversations] No se pudo notificar mensaje ${remoteMessageId}: ${error.message}`)
+    })
+  }
+
+  if (saved > 0) {
+    publishChatMessageEvent({
+      contactId: contact.id,
+      messageId: remoteMessageId,
+      channel: platform,
+      provider: 'highlevel',
+      transport: `ghl_${platform}`,
+      direction,
+      messageType: attachments.length ? inferAttachmentMessageType(attachments[0]) : 'message',
+      messageTimestamp,
+      isNew
     })
   }
 

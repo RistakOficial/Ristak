@@ -46,6 +46,7 @@ import automationsService, { type AutomationSummary } from '@/services/automatio
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { conversationalAgentService, type ConversationAgentState, type ConversationStateAction, type ConversationalAgentDef } from '@/services/conversationalAgentService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
+import { subscribeToChatLiveEvents, type ChatLiveMessageEvent } from '@/services/chatLiveEventsService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import { whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus } from '@/services/whatsappApiService'
 import type { Contact, ContactAppointment, ContactPayment } from '@/types'
@@ -1257,6 +1258,10 @@ export const DesktopChat: React.FC = () => {
   const voiceTimerRef = useRef<number | null>(null)
   const messageAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
   const chatsRef = useRef<DesktopChatContact[]>([])
+  const activeContactIdRef = useRef('')
+  const chatLiveRefreshTimeoutRef = useRef<number | null>(null)
+  const chatLiveRefreshInFlightRef = useRef(false)
+  const chatLiveRefreshQueuedRef = useRef(false)
   const archivedChatIdSetRef = useRef<Set<string>>(new Set())
   const agentPriorityChatIdSetRef = useRef<Set<string>>(new Set())
 
@@ -1415,6 +1420,9 @@ export const DesktopChat: React.FC = () => {
   useEffect(() => {
     chatsRef.current = chats
   }, [chats])
+  useEffect(() => {
+    activeContactIdRef.current = activeContactId
+  }, [activeContactId])
   useEffect(() => {
     archivedChatIdSetRef.current = archivedChatIdSet
   }, [archivedChatIdSet])
@@ -1584,11 +1592,14 @@ export const DesktopChat: React.FC = () => {
     }
   }, [])
 
-  const loadConversation = useCallback(async (contactId: string) => {
+  const loadConversation = useCallback(async (contactId: string, options: { silent?: boolean } = {}) => {
     if (!contactId) return
-    setMessagesLoading(true)
-    setContactInfoLoading(true)
-    setConversationAgentState(null)
+    const silent = options.silent === true
+    if (!silent) {
+      setMessagesLoading(true)
+      setContactInfoLoading(true)
+      setConversationAgentState(null)
+    }
     setMessagesError('')
     try {
       const [journey, scheduledMessages, details, agentState] = await Promise.all([
@@ -1606,14 +1617,18 @@ export const DesktopChat: React.FC = () => {
       setMessages([...journeyMessages, ...scheduledBubbles].sort((left, right) => Date.parse(left.date) - Date.parse(right.date)))
       setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, unreadCount: 0 } : contact))
     } catch {
-      setMessages([])
-      setContactJourney([])
-      setContactInfoData(null)
-      setConversationAgentState(null)
-      setMessagesError('No se pudo cargar la conversación.')
+      if (!silent) {
+        setMessages([])
+        setContactJourney([])
+        setContactInfoData(null)
+        setConversationAgentState(null)
+        setMessagesError('No se pudo cargar la conversación.')
+      }
     } finally {
-      setMessagesLoading(false)
-      setContactInfoLoading(false)
+      if (!silent) {
+        setMessagesLoading(false)
+        setContactInfoLoading(false)
+      }
     }
   }, [])
 
@@ -1655,6 +1670,48 @@ export const DesktopChat: React.FC = () => {
     return () => window.clearInterval(intervalId)
   }, [loadChats])
 
+  const refreshFromLiveChatEvent = useCallback((event?: ChatLiveMessageEvent) => {
+    if (chatLiveRefreshTimeoutRef.current !== null) {
+      window.clearTimeout(chatLiveRefreshTimeoutRef.current)
+    }
+
+    chatLiveRefreshTimeoutRef.current = window.setTimeout(() => {
+      chatLiveRefreshTimeoutRef.current = null
+      if (chatLiveRefreshInFlightRef.current) {
+        chatLiveRefreshQueuedRef.current = true
+        return
+      }
+
+      chatLiveRefreshInFlightRef.current = true
+      const eventContactId = event?.contactId || ''
+      const openContactId = activeContactIdRef.current
+      const shouldRefreshOpenConversation = Boolean(
+        openContactId &&
+        (!eventContactId || eventContactId === openContactId)
+      )
+
+      Promise.all([
+        loadChats({ silent: true }),
+        shouldRefreshOpenConversation
+          ? loadConversation(openContactId, { silent: true })
+          : Promise.resolve()
+      ])
+        .finally(() => {
+          chatLiveRefreshInFlightRef.current = false
+          if (chatLiveRefreshQueuedRef.current) {
+            chatLiveRefreshQueuedRef.current = false
+            refreshFromLiveChatEvent()
+          }
+        })
+    }, 250)
+  }, [loadChats, loadConversation])
+
+  useEffect(() => {
+    return subscribeToChatLiveEvents({
+      onMessage: refreshFromLiveChatEvent
+    })
+  }, [refreshFromLiveChatEvent])
+
   useEffect(() => {
     writeStoredChatIds(CHAT_ARCHIVED_STATE_KEY, archivedChatIds)
   }, [archivedChatIds])
@@ -1666,6 +1723,10 @@ export const DesktopChat: React.FC = () => {
 
   useEffect(() => () => {
     chatsRequestRef.current?.abort()
+    if (chatLiveRefreshTimeoutRef.current !== null) {
+      window.clearTimeout(chatLiveRefreshTimeoutRef.current)
+      chatLiveRefreshTimeoutRef.current = null
+    }
   }, [])
 
   useEffect(() => {

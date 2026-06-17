@@ -95,6 +95,7 @@ import {
 import { DEFAULT_AI_MODEL, aiModelOptions, getKnownAIModel } from '@/constants/aiModels'
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
+import { subscribeToChatLiveEvents } from '@/services/chatLiveEventsService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import {
@@ -4738,6 +4739,16 @@ export const PhoneChat: React.FC = () => {
       window.removeEventListener(MOBILE_APP_NOTIFICATION_EVENT, handleNativeNotification)
       navigator.serviceWorker?.removeEventListener('message', handleServiceWorkerMessage)
     }
+  }, [accessState, refreshChatInboxNow])
+
+  useEffect(() => {
+    if (accessState !== 'allowed') return
+
+    return subscribeToChatLiveEvents({
+      onMessage: (event) => {
+        refreshChatInboxNow({ contactId: event.contactId }).catch(() => undefined)
+      }
+    })
   }, [accessState, refreshChatInboxNow])
 
   useEffect(() => {

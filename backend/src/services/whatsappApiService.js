@@ -35,6 +35,7 @@ import {
 import { getMetaConfig } from './metaAdsService.js'
 import { getVerifiedAppBaseUrl } from './sitesService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
+import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import {
   clearWhatsAppApiIntegrationCredentials,
   clearWhatsAppMetaDirectIntegrationCredentials
@@ -4368,6 +4369,18 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       messageTimestamp
     ])
   }
+
+  publishChatMessageEvent({
+    contactId: localContact.id,
+    messageId,
+    channel: 'whatsapp',
+    provider,
+    transport: cleanTransport,
+    direction: identity.direction,
+    messageType,
+    messageTimestamp,
+    isNew: !existingMessage
+  })
 
   return {
     messageId,
