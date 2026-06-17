@@ -32,6 +32,7 @@ import {
   X
 } from 'lucide-react'
 import { Button, Loading, CustomSelect, PageHeader } from '@/components/common'
+import { PhoneChatPreview, type PhoneChatPreviewMessage } from '@/components/phone/PhoneChatPreview'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   messageTemplatesService,
@@ -1100,32 +1101,37 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     )
   }
 
-  const renderPreview = () => (
-    <aside className={styles.previewPanel}>
-      <div className={styles.previewTitle}>
-        <Eye size={17} />
-        <span>Preview</span>
-      </div>
-      <div className={styles.phonePreview}>
-        <div className={styles.chatBubble}>
-          {renderPreviewHeader()}
-          <p className={styles.previewBody}>{preview.bodyText || 'El mensaje aparecerá aquí'}</p>
-          {preview.footerText && <small className={styles.previewFooter}>{preview.footerText}</small>}
-          <span className={styles.previewTime}>11:48</span>
+  const renderPreview = () => {
+    const templatePreviewMessage: PhoneChatPreviewMessage = {
+      id: 'template-preview',
+      direction: 'outbound',
+      header: renderPreviewHeader(),
+      body: preview.bodyText || 'El mensaje aparecerá aquí',
+      footer: preview.footerText || undefined,
+      time: '11:48',
+      buttons: preview.buttons.map((button, index) => ({
+        id: button.id || `button-${index}`,
+        label: button.label || 'Botón',
+        icon: button.type === 'website' ? <Globe2 size={14} /> : button.type === 'phone' ? <Phone size={14} /> : <MousePointerClick size={14} />
+      }))
+    }
+
+    return (
+      <aside className={styles.previewPanel}>
+        <div className={styles.previewTitle}>
+          <Eye size={17} />
+          <span>Vista previa</span>
         </div>
-        {preview.buttons.length > 0 && (
-          <div className={styles.previewButtons}>
-            {preview.buttons.map((button, index) => (
-              <span key={`${button.id || index}-${button.label}`}>
-                {button.type === 'website' ? <Globe2 size={14} /> : button.type === 'phone' ? <Phone size={14} /> : <MousePointerClick size={14} />}
-                {button.label}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-    </aside>
-  )
+        <PhoneChatPreview
+          className={styles.templatePhonePreview}
+          title={draft.name || 'Nueva plantilla'}
+          subtitle="Plantilla de WhatsApp"
+          avatarLabel={draft.name || 'WhatsApp'}
+          messages={[templatePreviewMessage]}
+        />
+      </aside>
+    )
+  }
 
   const renderList = () => {
     const activeFolderName = activeFolderId === 'all'
