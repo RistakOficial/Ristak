@@ -847,12 +847,34 @@ function resolveImportedRelativeReference(referencePath = '', currentAssetPath =
   return normalizeImportedAssetPath(combined)
 }
 
+function decodeImportedPathSegment(segment = '') {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
 function getImportedAssetPublicUrl(siteId, assetPath) {
   const encodedPath = normalizeImportedAssetPath(assetPath)
     .split('/')
     .map(segment => encodeURIComponent(segment))
     .join('/')
   return `/api/sites/public/imported-assets/${encodeURIComponent(siteId)}/${encodedPath}`
+}
+
+function getImportedAssetPathFromPublicUrl(pathname = '', siteId = '') {
+  const prefix = `/api/sites/public/imported-assets/${encodeURIComponent(siteId)}/`
+  const rawPathname = String(pathname || '')
+  if (!rawPathname.startsWith(prefix)) return ''
+
+  return normalizeImportedAssetPath(
+    rawPathname
+      .slice(prefix.length)
+      .split('/')
+      .map(decodeImportedPathSegment)
+      .join('/')
+  )
 }
 
 function buildImportedPageIdByAssetPath(pages = []) {
@@ -886,10 +908,11 @@ function rewriteImportedReferenceValue(value, currentAssetPath, siteId, availabl
 
   const { pathname, search, hash } = splitImportedUrlReference(raw)
   const resolvedPath = resolveImportedRelativeReference(pathname, currentAssetPath)
-  if (!resolvedPath) return raw
+  const publicAssetPath = getImportedAssetPathFromPublicUrl(pathname, siteId)
+  if (!resolvedPath && !publicAssetPath) return raw
 
-  let assetPath = resolvedPath
-  if (!availablePaths.has(assetPath) && String(pathname || '').startsWith('/')) {
+  let assetPath = publicAssetPath || resolvedPath
+  if (!publicAssetPath && !availablePaths.has(assetPath) && String(pathname || '').startsWith('/')) {
     const currentPath = normalizeImportedAssetPath(currentAssetPath)
     const rootFolder = currentPath.includes('/') ? currentPath.split('/')[0] : ''
     const prefixedPath = rootFolder ? normalizeImportedAssetPath(`${rootFolder}/${assetPath}`) : ''
@@ -963,6 +986,23 @@ function rewriteImportedHtmlReferences(html = '', currentAssetPath = '', siteId 
   ))
 
   return rewritten
+}
+
+async function getImportedSiteAvailableAssetPaths(siteId) {
+  const rows = await db.all(`
+    SELECT asset_path
+    FROM public_site_import_assets
+    WHERE site_id = ?
+  `, [siteId]).catch(() => [])
+
+  return new Set(rows.map(row => normalizeImportedAssetPath(row.asset_path)).filter(Boolean))
+}
+
+function rewriteImportedHtmlForRender(site, html = '', currentAssetPath = '', availablePaths = new Set()) {
+  const pages = normalizeSitePages(site)
+  return rewriteImportedHtmlReferences(html, currentAssetPath, site.id, availablePaths, {
+    pageIdByAssetPath: buildImportedPageIdByAssetPath(pages)
+  })
 }
 
 function hasImportedAlias(haystack = '', aliases = []) {
@@ -13984,6 +14024,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
 
   const activePage = getImportedRenderPage(site, pageId)
   const importedAssetPath = normalizeImportedAssetPath(activePage?.importedAssetPath || activePage?.imported_asset_path)
+  const availablePaths = await getImportedSiteAvailableAssetPaths(site.id)
   let html = imported.htmlSanitized || imported.htmlOriginal || '<!doctype html><html><body></body></html>'
 
   if (importedAssetPath) {
@@ -13992,6 +14033,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
       html = asset.content.toString('utf8')
     }
   }
+  html = rewriteImportedHtmlForRender(site, html, importedAssetPath, availablePaths)
 
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
     trackingEnabled,
@@ -14027,6 +14069,13 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     if (!imported) return null
 
     const page = getImportedRenderPageByAssetPath(site, asset.assetPath)
+    const availablePaths = await getImportedSiteAvailableAssetPaths(site.id)
+    const html = rewriteImportedHtmlForRender(
+      site,
+      asset.content.toString('utf8'),
+      asset.assetPath,
+      availablePaths
+    )
     const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
       trackingEnabled,
       pageId: page?.id || DEFAULT_FUNNEL_PAGE_ID,
@@ -14034,7 +14083,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     })
 
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
-      annotateImportedEditableHtml(asset.content.toString('utf8')),
+      annotateImportedEditableHtml(html),
       buildHeaderTrackingCode(site, page)
     )
 

@@ -162,6 +162,7 @@ test('imported HTML internal page links stay inside the site preview flow', asyn
     renderPublicSiteHtml,
     updateImportedSiteCodeFiles
   } = await import('../src/services/sitesService.js')
+  const { db } = await import('../src/config/database.js')
 
   let siteId = ''
 
@@ -195,6 +196,28 @@ test('imported HTML internal page links stay inside the site preview flow', asyn
     })
 
     assert.match(rendered, /href="\?page=page-2#detalle"/)
+    assert.doesNotMatch(rendered, /href="\/api\/sites\/public\/imported-assets\/[^"]*gracias\.html/)
+
+    const legacyHtml = `<!doctype html><html><head><title>Inicio</title></head><body><main><a id="next" href="/api/sites/public/imported-assets/${encodeURIComponent(siteId)}/gracias.html?legacy=1#detalle">Ir a gracias</a></main></body></html>`
+    await db.run(`
+      UPDATE public_site_import_assets
+      SET content_base64 = ?, size_bytes = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE site_id = ? AND asset_path = ?
+    `, [
+      Buffer.from(legacyHtml, 'utf8').toString('base64'),
+      Buffer.byteLength(legacyHtml, 'utf8'),
+      siteId,
+      'inicio.html'
+    ])
+
+    previewSite = await getSitePreview(siteId)
+    rendered = await renderPublicSiteHtml(previewSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(rendered, /href="\?page=page-2&amp;legacy=1#detalle"|href="\?page=page-2&legacy=1#detalle"/)
     assert.doesNotMatch(rendered, /href="\/api\/sites\/public\/imported-assets\/[^"]*gracias\.html/)
 
     await updateImportedSiteCodeFiles(siteId, {
