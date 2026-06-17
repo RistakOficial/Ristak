@@ -3,15 +3,19 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import {
   db,
-  repairWhatsAppApiContactIdentityFromMessages
+  repairWhatsAppApiContactIdentityFromMessages,
+  setAppConfig
 } from '../src/config/database.js'
+import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   extractWhatsAppProfileName,
   normalizeWhatsAppProfileName
 } from '../src/utils/whatsappContactProfile.js'
 import {
+  getWhatsAppApiConfigKeys,
   processYCloudWhatsAppWebhook,
   repairStoredYCloudHistoryMessageDirections,
+  setYCloudFetchForTest,
   syncYCloudContacts,
   syncYCloudMessageRecords
 } from '../src/services/whatsappApiService.js'
@@ -22,6 +26,46 @@ async function cleanup({ contactId, apiContactId, messageId, phone, eventId }) {
   await db.run('DELETE FROM whatsapp_api_contacts WHERE id = ? OR contact_id = ? OR phone = ?', [apiContactId, contactId, phone]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_webhook_events WHERE event_id = ? OR id = ?', [eventId, eventId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
+}
+
+function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText,
+    text: async () => JSON.stringify(body)
+  }
+}
+
+async function snapshotAppConfig(keys = [], callback) {
+  const uniqueKeys = [...new Set(keys)]
+  const placeholders = uniqueKeys.map(() => '?').join(', ')
+  const previousRows = placeholders
+    ? await db.all(
+        `SELECT config_key, config_value FROM app_config WHERE config_key IN (${placeholders})`,
+        uniqueKeys
+      )
+    : []
+
+  try {
+    if (placeholders) {
+      await db.run(`DELETE FROM app_config WHERE config_key IN (${placeholders})`, uniqueKeys)
+    }
+    return await callback()
+  } finally {
+    if (placeholders) {
+      await db.run(`DELETE FROM app_config WHERE config_key IN (${placeholders})`, uniqueKeys)
+    }
+    for (const row of previousRows) {
+      await db.run(`
+        INSERT INTO app_config (config_key, config_value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(config_key) DO UPDATE SET
+          config_value = excluded.config_value,
+          updated_at = CURRENT_TIMESTAMP
+      `, [row.config_key, row.config_value])
+    }
+  }
 }
 
 test('normaliza nombres reales de YCloud y descarta los genéricos', () => {
@@ -449,6 +493,102 @@ test('reparacion retroactiva recalcula mensajes historicos ya guardados con dire
     await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id IN (?, ?) OR phone = ?', [outboundMessageId, inboundMessageId, phone]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [phone]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_webhook_events WHERE event_id = ? OR id = ?', [eventId, eventId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE phone = ?', [phone]).catch(() => undefined)
+  }
+})
+
+test('reparacion retroactiva corrige salientes guardados mal usando lista de YCloud', async () => {
+  const id = randomUUID()
+  const phone = `+52987${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000000'
+  const messageId = `ycloud_outbound_list_repair_${id}`
+  const messageAt = '2024-06-10T08:09:10.000Z'
+  const repairConfigKey = 'whatsapp_api_history_direction_repair_version'
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [
+    keys.enabled,
+    keys.apiKey,
+    keys.senderPhone,
+    keys.phoneNumberId,
+    keys.wabaId,
+    keys.provider,
+    repairConfigKey
+  ]
+
+  await cleanup({ phone, messageId })
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_repair_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, 'phone_ycloud_repair_test')
+      await setAppConfig(keys.wabaId, 'waba_ycloud_repair_test')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, origin, ycloud_message_id, phone, from_phone, to_phone,
+          business_phone, direction, message_type, message_text, message_timestamp,
+          raw_payload_json, created_at, updated_at
+        ) VALUES (?, 'ycloud', 'whatsapp.smb.history', ?, ?, ?, NULL, NULL, 'inbound', 'text', ?, ?, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        `wrong_${messageId}`,
+        messageId,
+        businessPhone,
+        businessPhone,
+        'Mensaje saliente viejo guardado mal',
+        messageAt
+      ])
+
+      setYCloudFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(String(url))
+        const path = parsed.pathname.replace(/^\/v2/, '')
+        const method = String(options.method || 'GET').toUpperCase()
+        if (path === '/whatsapp/messages' && method === 'GET') {
+          return ycloudJsonResponse({
+            total: 1,
+            items: [
+              {
+                id: messageId,
+                from: businessPhone,
+                to: phone,
+                wabaId: 'waba_ycloud_repair_test',
+                status: 'read',
+                type: 'text',
+                text: { body: 'Mensaje saliente viejo guardado mal' },
+                createTime: messageAt,
+                sendTime: messageAt
+              }
+            ]
+          })
+        }
+        return ycloudJsonResponse({ items: [], total: 0 })
+      })
+
+      const result = await repairStoredYCloudHistoryMessageDirections({ force: true })
+      assert.equal(result.outboundMessages, 1)
+
+      const row = await db.get(`
+        SELECT ycloud_message_id, direction, phone, from_phone, to_phone, business_phone
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [messageId])
+
+      assert.equal(row.ycloud_message_id, messageId)
+      assert.equal(row.direction, 'outbound')
+      assert.equal(row.phone, phone)
+      assert.equal(row.from_phone, businessPhone)
+      assert.equal(row.to_phone, phone)
+      assert.equal(row.business_phone, businessPhone)
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [repairConfigKey]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_attribution WHERE ycloud_message_id = ? OR phone = ?', [messageId, phone]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR phone = ?', [messageId, phone]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [phone]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE phone = ?', [phone]).catch(() => undefined)
   }
 })

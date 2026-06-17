@@ -292,7 +292,7 @@ const CONFIG_KEYS = {
 }
 
 const HISTORY_DIRECTION_REPAIR_CONFIG_KEY = 'whatsapp_api_history_direction_repair_version'
-const HISTORY_DIRECTION_REPAIR_VERSION = '2026-06-17-nested-history-context'
+const HISTORY_DIRECTION_REPAIR_VERSION = '2026-06-17-history-context-and-outbound-list'
 
 function nowIso() {
   return new Date().toISOString()
@@ -5073,11 +5073,11 @@ export async function repairStoredYCloudHistoryMessageDirections({ force = false
   if (!force) {
     const currentVersion = await getAppConfig(HISTORY_DIRECTION_REPAIR_CONFIG_KEY).catch(() => '')
     if (currentVersion === HISTORY_DIRECTION_REPAIR_VERSION) {
-      return { skipped: true, reason: 'already_repaired', events: 0, messages: 0 }
+      return { skipped: true, reason: 'already_repaired', events: 0, messages: 0, outboundMessages: 0 }
     }
   }
 
-  const config = await loadConfig({ includeSecrets: false }).catch(error => {
+  const config = await loadConfig({ includeSecrets: true }).catch(error => {
     logger.warn(`No se pudo cargar configuración WhatsApp API para reparación de historial: ${error.message}`)
     return {}
   })
@@ -5092,6 +5092,18 @@ export async function repairStoredYCloudHistoryMessageDirections({ force = false
     eventTypes: [...HISTORY_MESSAGE_EVENT_TYPES]
   })
 
+  let outboundSync = null
+  if (config.apiKey) {
+    const wabaIds = [config.wabaId].filter(Boolean)
+    outboundSync = await syncYCloudMessagesFromApi(config.apiKey, {
+      businessPhoneHints,
+      wabaIds
+    }).catch(error => {
+      logger.warn(`No se pudo corregir historial saliente desde YCloud durante reparación: ${error.message}`)
+      return { messages: 0, created: 0, updated: 0, failed: 0 }
+    })
+  }
+
   await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
     logger.warn(`No se pudo reparar identidad tras recalcular historial WhatsApp API: ${error.message}`)
   })
@@ -5100,10 +5112,17 @@ export async function repairStoredYCloudHistoryMessageDirections({ force = false
   if (result.events) {
     logger.info(`WhatsApp API recalculo dirección de historial guardado: ${result.messages} mensajes en ${result.events} eventos.`)
   }
+  if (outboundSync?.messages) {
+    logger.info(`WhatsApp API recalculo historial saliente desde YCloud: ${outboundSync.messages} mensajes (${outboundSync.updated} actualizados, ${outboundSync.created} nuevos).`)
+  }
 
   return {
     skipped: false,
-    ...result
+    ...result,
+    outboundMessages: outboundSync?.messages || 0,
+    outboundCreated: outboundSync?.created || 0,
+    outboundUpdated: outboundSync?.updated || 0,
+    outboundFailed: outboundSync?.failed || 0
   }
 }
 
