@@ -1,8 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Bot, Clock, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Send, Trash2, X } from 'lucide-react'
-import { Badge, Button, Card, CustomSelect, TagPicker } from '@/components/common'
-import { DEFAULT_AI_MODEL, aiModelOptionGroups, aiModelOptions, getKnownAIModel } from '@/constants/aiModels'
+import { ArrowLeft, Bot, Brain, Clock, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Send, Trash2, X } from 'lucide-react'
+import { Badge, Button, Card, CustomSelect, Modal, TagPicker } from '@/components/common'
+import {
+  conversationalAIProviderOptions,
+  getConversationalAIProviderOption,
+  getConversationalModelLabel,
+  getDefaultConversationalModel,
+  getKnownConversationalAIProvider,
+  getKnownConversationalModel,
+  type ConversationalAIProviderId
+} from '@/constants/conversationalAIProviders'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAgentAvailability } from '@/hooks'
 import {
@@ -15,6 +23,7 @@ import {
   type AgentResponseDelayUnit,
   type AgentSuccessExtra,
   type ClosingStrategyMode,
+  type ConversationalAIProviderStatus,
   type ConversationalBusinessPromptStatus,
   type ConversationalAgentConfig,
   type ConversationalAgentDef,
@@ -227,16 +236,22 @@ const SelectionToggle: React.FC<SelectionToggleProps> = ({ checked, title, descr
 
 interface AgentCardProps {
   agent: ConversationalAgentDef
+  aiProviders: ConversationalAIProviderStatus[]
   calendars: Calendar[]
   filterOptions?: AgentFilterOptions
   systemStrategy: string
   businessPromptStatus?: ConversationalBusinessPromptStatus | null
+  onConnectProvider: (providerId: ConversationalAIProviderId) => void
   onBack: () => void
   onChange: (patch: ConversationalAgentDefInput) => void
   onDelete: () => void
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, systemStrategy, businessPromptStatus, onBack, onChange, onDelete }) => {
+function getProviderStatus(aiProviders: ConversationalAIProviderStatus[], providerId: ConversationalAIProviderId) {
+  return aiProviders.find((provider) => provider.id === providerId) || null
+}
+
+const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, filterOptions, systemStrategy, businessPromptStatus, onConnectProvider, onBack, onChange, onDelete }) => {
   const { showToast } = useNotification()
   const [testMessages, setTestMessages] = useState<TestMessage[]>([])
   const [testInput, setTestInput] = useState('')
@@ -245,8 +260,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
   const allowedActions = actionsByObjective[agent.objective] || actionsByObjective.custom
   const selectedObjective = objectiveOptions.find((option) => option.value === agent.objective) || objectiveOptions[0]
   const selectedActionInfo = successActionLabels[agent.successAction] || successActionLabels.ready_for_human
-  const selectedAgentModelValue = getKnownAIModel(agent.model || DEFAULT_AI_MODEL)
-  const selectedAgentModel = aiModelOptions.find((option) => option.value === selectedAgentModelValue) || aiModelOptions[0]
+  const selectedProviderId = getKnownConversationalAIProvider(agent.aiProvider)
+  const selectedProvider = getConversationalAIProviderOption(selectedProviderId)
+  const selectedProviderStatus = getProviderStatus(aiProviders, selectedProviderId)
+  const selectedAgentModelValue = getKnownConversationalModel(selectedProviderId, agent.model)
+  const selectedAgentModel = selectedProvider.modelGroups
+    .flatMap((group) => group.options)
+    .find((option) => option.value === selectedAgentModelValue)
   const strategyIsCustom = agent.closingStrategyMode === 'custom'
   const strategyText = strategyIsCustom ? agent.closingStrategyCustom : agent.systemClosingStrategy || systemStrategy
   const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
@@ -269,6 +289,23 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
 
   const updateReplyDelivery = (patch: Partial<AgentReplyDeliveryConfig>) => {
     onChange({ replyDelivery: { ...replyDelivery, ...patch } })
+  }
+
+  const handleProviderSelect = (providerId: ConversationalAIProviderId) => {
+    const status = getProviderStatus(aiProviders, providerId)
+    if (!status?.connected) {
+      onConnectProvider(providerId)
+      return
+    }
+
+    const currentProvider = getKnownConversationalAIProvider(agent.aiProvider)
+    onChange({
+      aiProvider: providerId,
+      model: getKnownConversationalModel(
+        providerId,
+        currentProvider === providerId ? agent.model : getDefaultConversationalModel(providerId)
+      )
+    })
   }
 
   const handleObjectiveChange = (objective: ConversationalObjective) => {
@@ -380,26 +417,59 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>Modelo y orden del chat</h3>
             <div className={styles.agentOpsGrid}>
-              <div className={styles.field}>
-                <label className={styles.label}>Modelo de OpenAI</label>
-                <CustomSelect
-                  value={selectedAgentModelValue}
-                  onChange={(event) => onChange({ model: event.target.value })}
-                  portal
-                >
-                  {aiModelOptionGroups.map((group) => (
-                    <optgroup key={group.label} label={group.label}>
-                      {group.options.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </CustomSelect>
-                <p className={styles.helper}>
-                  {selectedAgentModel.label} responde sólo para este agente.
-                </p>
+              <div className={styles.aiProviderSettings}>
+                <div className={styles.field}>
+                  <label className={styles.label}>IA que responde</label>
+                  <div className={styles.aiProviderChoices} role="radiogroup" aria-label="IA del agente">
+                    {conversationalAIProviderOptions.map((provider) => {
+                      const status = getProviderStatus(aiProviders, provider.id)
+                      const connected = Boolean(status?.connected)
+                      const selected = provider.id === selectedProviderId
+                      return (
+                        <button
+                          key={provider.id}
+                          type="button"
+                          className={`${styles.aiProviderChoice} ${selected ? styles.aiProviderChoiceSelected : ''}`}
+                          onClick={() => handleProviderSelect(provider.id)}
+                          aria-pressed={selected}
+                        >
+                          <span className={styles.aiProviderChoiceTop}>
+                            <strong>{provider.label}</strong>
+                            <Badge variant={connected ? 'success' : 'neutral'}>
+                              {connected ? 'Conectado' : 'Toca para conectar'}
+                            </Badge>
+                          </span>
+                          <small>{provider.description}</small>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {selectedProviderStatus?.needsReconnect && (
+                    <p className={styles.helperWarning}>{selectedProviderStatus.connectionIssue || `${selectedProvider.label} necesita reconectarse.`}</p>
+                  )}
+                </div>
+
+                <div className={styles.field}>
+                  <label className={styles.label}>Modelo de {selectedProvider.label}</label>
+                  <CustomSelect
+                    value={selectedAgentModelValue}
+                    onChange={(event) => onChange({ model: event.target.value })}
+                    portal
+                  >
+                    {selectedProvider.modelGroups.map((group) => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.options.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </CustomSelect>
+                  <p className={styles.helper}>
+                    {(selectedAgentModel?.label || selectedAgentModelValue)} responde sólo para este agente.
+                  </p>
+                </div>
               </div>
 
               <div className={styles.agentOpsToggles}>
@@ -900,12 +970,16 @@ export const ConversationalAgentSettings: React.FC = () => {
   const openAIAvailability = useAIAgentAvailability()
   const [config, setConfig] = useState<ConversationalAgentConfig | null>(null)
   const [agents, setAgents] = useState<ConversationalAgentDef[]>([])
+  const [aiProviders, setAIProviders] = useState<ConversationalAIProviderStatus[]>([])
   const [metrics, setMetrics] = useState<ConversationalAgentMetrics | null>(null)
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [filterOptions, setFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+  const [providerModalId, setProviderModalId] = useState<ConversationalAIProviderId | null>(null)
+  const [providerApiKey, setProviderApiKey] = useState('')
+  const [providerSaving, setProviderSaving] = useState(false)
   const saveTimersRef = useRef<Map<string, number>>(new Map())
   const agentsRef = useRef<ConversationalAgentDef[]>([])
   const businessProfileVersion = [
@@ -925,6 +999,17 @@ export const ConversationalAgentSettings: React.FC = () => {
     }
   }, [])
 
+  const refreshAgentData = useCallback(async () => {
+    const [nextConfig, nextAgents, nextProviders] = await Promise.all([
+      conversationalAgentService.getConfig(),
+      conversationalAgentService.listAgents(),
+      conversationalAgentService.listAIProviders()
+    ])
+    setConfig(nextConfig)
+    setAgents(nextAgents)
+    setAIProviders(nextConfig.aiProviders || nextProviders)
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     const load = async () => {
@@ -932,6 +1017,7 @@ export const ConversationalAgentSettings: React.FC = () => {
       if (!openAIAvailability.configured) {
         setConfig(null)
         setAgents([])
+        setAIProviders([])
         setMetrics(null)
         setCalendars([])
         setFilterOptions(undefined)
@@ -942,9 +1028,10 @@ export const ConversationalAgentSettings: React.FC = () => {
 
       setLoading(true)
       try {
-        const [nextConfig, nextAgents, nextMetrics, calendarList, nextOptions] = await Promise.all([
+        const [nextConfig, nextAgents, nextProviders, nextMetrics, calendarList, nextOptions] = await Promise.all([
           conversationalAgentService.getConfig(),
           conversationalAgentService.listAgents(),
+          conversationalAgentService.listAIProviders(),
           conversationalAgentService.getMetrics().catch(() => null),
           calendarsService.getCalendars(),
           conversationalAgentService.getFilterOptions().catch(() => undefined)
@@ -952,6 +1039,7 @@ export const ConversationalAgentSettings: React.FC = () => {
         if (cancelled) return
         setConfig(nextConfig)
         setAgents(nextAgents)
+        setAIProviders(nextConfig.aiProviders || nextProviders)
         setMetrics(nextMetrics)
         setCalendars(calendarList.filter((cal) => cal.isActive !== false))
         setFilterOptions(nextOptions)
@@ -1023,6 +1111,66 @@ export const ConversationalAgentSettings: React.FC = () => {
     }
   }
 
+  const openProviderModal = (providerId: ConversationalAIProviderId) => {
+    if (providerId === 'openai') {
+      navigate('/ai-agent/general')
+      return
+    }
+    setProviderModalId(providerId)
+    setProviderApiKey('')
+  }
+
+  const closeProviderModal = () => {
+    if (providerSaving) return
+    setProviderModalId(null)
+    setProviderApiKey('')
+  }
+
+  const handleSaveProviderKey = async () => {
+    if (!providerModalId) return
+    const cleanKey = providerApiKey.trim()
+    if (!cleanKey) {
+      showToast('warning', 'Falta la API key', 'Pega la llave para conectar esta IA.')
+      return
+    }
+    setProviderSaving(true)
+    try {
+      const providers = await conversationalAgentService.connectAIProvider(providerModalId, cleanKey)
+      setAIProviders(providers)
+      const provider = getConversationalAIProviderOption(providerModalId)
+      setProviderModalId(null)
+      setProviderApiKey('')
+      showToast('success', `${provider.label} conectado`, 'Ya puedes elegirlo en tus agentes conversacionales.')
+    } catch (error: any) {
+      showToast('error', 'No se pudo conectar', error?.message || 'Revisa la API key.')
+    } finally {
+      setProviderSaving(false)
+    }
+  }
+
+  const handleDeleteProvider = (providerId: ConversationalAIProviderId) => {
+    const provider = getConversationalAIProviderOption(providerId)
+    showConfirm(
+      `Eliminar ${provider.label}`,
+      `Los agentes que usen ${provider.label} volverán a OpenAI para que no se queden sin responder.`,
+      async () => {
+        try {
+          const providers = await conversationalAgentService.deleteAIProvider(providerId)
+          setAIProviders(providers)
+          await refreshAgentData()
+          void refreshMetrics()
+          showToast('success', `${provider.label} eliminado`, 'La conexión quedó borrada.')
+        } catch (error: any) {
+          showToast('error', 'No se pudo eliminar', error?.message || 'Inténtalo otra vez.')
+        }
+      },
+      'Eliminar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
+    )
+  }
+
   const handleCreateAgent = async () => {
     if (!businessPromptReady) {
       showToast('warning', 'Prompt interno pendiente', promptBlockerText)
@@ -1030,9 +1178,11 @@ export const ConversationalAgentSettings: React.FC = () => {
     }
     setCreating(true)
     try {
+      const defaultProvider = getKnownConversationalAIProvider(config?.aiProvider)
       const agent = await conversationalAgentService.createAgent({
         name: `Agente ${agents.length + 1}`,
-        model: getKnownAIModel(config?.model || DEFAULT_AI_MODEL)
+        aiProvider: defaultProvider,
+        model: getKnownConversationalModel(defaultProvider, config?.model || getDefaultConversationalModel(defaultProvider))
       })
       if (config && !config.enabled) {
         const nextConfig = await conversationalAgentService.saveConfig({ enabled: true })
@@ -1106,6 +1256,51 @@ export const ConversationalAgentSettings: React.FC = () => {
   const completedConversations = metrics?.completedConversations ?? 0
   const errorEvents = metrics?.errorEvents ?? 0
   const successRate = metrics?.successRate ?? 0
+  const providerModalOption = providerModalId ? getConversationalAIProviderOption(providerModalId) : null
+  const renderProviderModal = () => (
+    <Modal
+      isOpen={Boolean(providerModalOption)}
+      onClose={closeProviderModal}
+      title={providerModalOption ? `Conectar ${providerModalOption.label}` : 'Conectar IA'}
+      size="md"
+    >
+      {providerModalOption && (
+        <div className={styles.aiProviderModalBody}>
+          <p className={styles.helper}>
+            Pega la API key de {providerModalOption.label}. Se guarda cifrada y sólo se usa para el agente conversacional.
+          </p>
+          <div className={styles.field}>
+            <label className={styles.label}>API key</label>
+            <input
+              className={styles.input}
+              type="password"
+              value={providerApiKey}
+              placeholder={`API key de ${providerModalOption.label}`}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => setProviderApiKey(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  void handleSaveProviderKey()
+                }
+              }}
+              disabled={providerSaving}
+            />
+          </div>
+          <div className={styles.aiProviderModalActions}>
+            <Button variant="secondary" onClick={closeProviderModal} disabled={providerSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveProviderKey} loading={providerSaving} disabled={providerSaving || !providerApiKey.trim()}>
+              <KeyRound size={16} />
+              Conectar
+            </Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
 
   if (openAIAvailability.loading) {
     return (
@@ -1150,14 +1345,17 @@ export const ConversationalAgentSettings: React.FC = () => {
       <div className={styles.container}>
         <AgentCard
           agent={selectedAgent}
+          aiProviders={aiProviders}
           calendars={calendars}
           filterOptions={filterOptions}
           systemStrategy={systemStrategy}
           businessPromptStatus={businessPromptStatus}
+          onConnectProvider={openProviderModal}
           onBack={() => setSelectedAgentId(null)}
           onChange={(patch) => handleAgentChange(selectedAgent.id, patch)}
           onDelete={() => handleDeleteAgent(selectedAgent)}
         />
+        {renderProviderModal()}
       </div>
     )
   }
@@ -1212,6 +1410,45 @@ export const ConversationalAgentSettings: React.FC = () => {
               ? 'La estrategia avanzada de fábrica ya está parametrizada con la descripción actual del negocio.'
               : promptBlockerText}
           </span>
+        </div>
+
+        <div className={styles.aiProviderManager}>
+          <div className={styles.aiProviderManagerHeader}>
+            <div className={styles.sectionHeading}>
+              <Brain size={17} />
+              <h3 className={styles.sectionTitle}>IAs conectadas</h3>
+            </div>
+            <span>OpenAI es el default; Gemini y DeepSeek son opcionales para ahorrar.</span>
+          </div>
+          <div className={styles.aiProviderManagerList}>
+            {conversationalAIProviderOptions.map((provider) => {
+              const status = getProviderStatus(aiProviders, provider.id)
+              const connected = Boolean(status?.connected)
+              const canDelete = Boolean(status?.canDelete && connected)
+              return (
+                <div key={provider.id} className={styles.aiProviderManagerRow}>
+                  <div className={styles.aiProviderManagerCopy}>
+                    <strong>{provider.label}</strong>
+                    <span>{connected ? (status?.tokenPreview || 'Conectado') : provider.description}</span>
+                  </div>
+                  <Badge variant={connected ? 'success' : 'neutral'}>
+                    {connected ? 'Conectado' : 'Toca para conectar'}
+                  </Badge>
+                  {canDelete ? (
+                    <Button variant="ghost" onClick={() => handleDeleteProvider(provider.id)}>
+                      <Trash2 size={15} />
+                      Eliminar
+                    </Button>
+                  ) : (
+                    <Button variant={connected ? 'secondary' : 'primary'} onClick={() => openProviderModal(provider.id)}>
+                      <KeyRound size={15} />
+                      {connected ? 'Administrar' : 'Conectar'}
+                    </Button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         </div>
 
         <div className={styles.agentDirectoryStats}>
@@ -1277,7 +1514,8 @@ export const ConversationalAgentSettings: React.FC = () => {
           {agents.map((agent) => {
             const objectiveLabel = objectiveOptions.find((option) => option.value === agent.objective)?.label || 'Objetivo'
             const actionLabel = successActionLabels[agent.successAction]?.label || 'Acción'
-            const modelLabel = aiModelOptions.find((option) => option.value === getKnownAIModel(agent.model || DEFAULT_AI_MODEL))?.label || agent.model
+            const provider = getConversationalAIProviderOption(agent.aiProvider)
+            const modelLabel = getConversationalModelLabel(agent.aiProvider, agent.model)
             const entryRules = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
             const agentMetrics = metricsByAgentId.get(agent.id)
 
@@ -1304,7 +1542,7 @@ export const ConversationalAgentSettings: React.FC = () => {
                     <p>{objectiveLabel} · {actionLabel}</p>
                   </div>
                   <div className={styles.agentDirectoryMeta}>
-                    <span>{modelLabel}</span>
+                    <span>{provider.label} · {modelLabel}</span>
                     <span>{entryRules > 0 ? `${entryRules} ${entryRules === 1 ? 'regla' : 'reglas'}` : 'Cualquier chat'}</span>
                     <span>{agentMetrics?.assignedConversations ?? 0} atendiendo</span>
                     <span>{agentMetrics?.completedConversations ?? 0} cumplidos</span>
@@ -1332,6 +1570,7 @@ export const ConversationalAgentSettings: React.FC = () => {
           })}
         </div>
       )}
+      {renderProviderModal()}
     </div>
   )
 }

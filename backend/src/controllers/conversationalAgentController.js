@@ -19,6 +19,11 @@ import {
   listAgentFilterOptions
 } from '../services/conversationalAgentService.js'
 import {
+  connectConversationalAIProvider,
+  deleteConversationalAIProvider,
+  listConversationalAIProviders
+} from '../services/conversationalAIProviderService.js'
+import {
   buildBusinessProfilePromptParameters,
   getBusinessProfileSnapshot
 } from '../services/aiAgentService.js'
@@ -117,12 +122,16 @@ async function assertBusinessPromptReady() {
 
 export async function getConfig(req, res) {
   try {
-    const config = await getConversationalAgentConfig()
+    const [config, aiProviders] = await Promise.all([
+      getConversationalAgentConfig(),
+      listConversationalAIProviders()
+    ])
     const promptState = await getBusinessPromptState(config)
     res.json({
       success: true,
       data: {
         ...config,
+        aiProviders,
         objectives: CONVERSATIONAL_OBJECTIVES,
         successActions: SUCCESS_ACTIONS,
         ...promptState
@@ -131,6 +140,42 @@ export async function getConfig(req, res) {
   } catch (error) {
     logger.error('Error obteniendo configuración del agente conversacional:', error)
     res.status(500).json({ success: false, error: 'Error al obtener la configuración del agente conversacional' })
+  }
+}
+
+export async function listAIProviders(req, res) {
+  try {
+    const providers = await listConversationalAIProviders()
+    res.json({ success: true, data: providers })
+  } catch (error) {
+    logger.error('Error listando IAs del agente conversacional:', error)
+    res.status(500).json({ success: false, error: 'Error al cargar las IAs del agente conversacional' })
+  }
+}
+
+export async function connectAIProvider(req, res) {
+  try {
+    const providers = await connectConversationalAIProvider(req.params?.providerId, req.body?.apiKey)
+    res.json({ success: true, data: providers })
+  } catch (error) {
+    logger.error('Error conectando IA del agente conversacional:', error)
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || 'Error al conectar la IA del agente conversacional'
+    })
+  }
+}
+
+export async function deleteAIProvider(req, res) {
+  try {
+    const providers = await deleteConversationalAIProvider(req.params?.providerId)
+    res.json({ success: true, data: providers })
+  } catch (error) {
+    logger.error('Error eliminando IA del agente conversacional:', error)
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || 'Error al eliminar la IA del agente conversacional'
+    })
   }
 }
 

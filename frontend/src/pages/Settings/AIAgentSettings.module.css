@@ -1284,6 +1284,148 @@
   gap: 14px;
 }
 
+.aiProviderSettings {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.aiProviderChoices {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.aiProviderChoice {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--design-control-bg);
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.aiProviderChoice:hover,
+.aiProviderChoice:focus-visible {
+  border-color: var(--color-primary);
+  background: var(--design-control-bg-hover);
+  outline: none;
+}
+
+.aiProviderChoiceSelected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.aiProviderChoiceTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.aiProviderChoiceTop strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiProviderChoice small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.aiProviderManager {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.aiProviderManagerHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.aiProviderManagerHeader > span {
+  max-width: 420px;
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.aiProviderManagerList {
+  display: grid;
+  min-width: 0;
+}
+
+.aiProviderManagerRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.aiProviderManagerRow:first-child {
+  border-top: 0;
+}
+
+.aiProviderManagerCopy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.aiProviderManagerCopy strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13.5px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiProviderManagerCopy span {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiProviderModalBody {
+  display: grid;
+  gap: 14px;
+}
+
+.aiProviderModalActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .agentOpsToggles {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -1319,6 +1461,20 @@
   .agentOpsGrid,
   .agentDetailLayout {
     grid-template-columns: 1fr;
+  }
+
+  .aiProviderManagerHeader,
+  .aiProviderManagerRow {
+    grid-template-columns: 1fr;
+  }
+
+  .aiProviderManagerHeader {
+    display: grid;
+  }
+
+  .aiProviderManagerHeader > span {
+    max-width: none;
+    text-align: left;
   }
 
   .agentTestPanel {
