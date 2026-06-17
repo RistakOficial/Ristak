@@ -650,6 +650,11 @@ test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /Varía el justificante/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /Manejo del precio/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /NUNCA suenes evasivo/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Humor y buena experiencia/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Cuidado quirúrgico con el lenguaje/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 8 — Lenguaje tieso/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /DESCARTE Y SILENCIO/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Cuándo NO te quedes callado/)
 })
 
 test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', () => {
