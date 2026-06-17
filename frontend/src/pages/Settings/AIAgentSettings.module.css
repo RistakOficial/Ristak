@@ -1290,61 +1290,21 @@
   min-width: 0;
 }
 
-.aiProviderChoices {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.aiProviderChoice {
-  display: grid;
-  gap: 6px;
-  width: 100%;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--design-control-bg);
-  color: var(--color-text-primary);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-
-.aiProviderChoice:hover,
-.aiProviderChoice:focus-visible {
-  border-color: var(--color-primary);
-  background: var(--design-control-bg-hover);
-  outline: none;
-}
-
-.aiProviderChoiceSelected {
-  border-color: var(--color-primary);
-  background: var(--color-primary-light);
-}
-
-.aiProviderChoiceTop {
+.aiProviderSelectMeta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   min-width: 0;
-}
-
-.aiProviderChoiceTop strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-primary);
-  font-size: 13px;
-  font-weight: 750;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.aiProviderChoice small {
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   font-size: 12px;
   line-height: 1.35;
+}
+
+.aiProviderSelectMeta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .aiProviderManager {

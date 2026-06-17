@@ -263,6 +263,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
   const selectedProviderId = getKnownConversationalAIProvider(agent.aiProvider)
   const selectedProvider = getConversationalAIProviderOption(selectedProviderId)
   const selectedProviderStatus = getProviderStatus(aiProviders, selectedProviderId)
+  const selectedProviderConnected = Boolean(selectedProviderStatus?.connected)
   const selectedAgentModelValue = getKnownConversationalModel(selectedProviderId, agent.model)
   const selectedAgentModel = selectedProvider.modelGroups
     .flatMap((group) => group.options)
@@ -420,29 +421,27 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
               <div className={styles.aiProviderSettings}>
                 <div className={styles.field}>
                   <label className={styles.label}>IA que responde</label>
-                  <div className={styles.aiProviderChoices} role="radiogroup" aria-label="IA del agente">
+                  <CustomSelect
+                    value={selectedProviderId}
+                    onChange={(event) => handleProviderSelect(getKnownConversationalAIProvider(event.target.value))}
+                    portal
+                    aria-label="IA del agente"
+                  >
                     {conversationalAIProviderOptions.map((provider) => {
                       const status = getProviderStatus(aiProviders, provider.id)
                       const connected = Boolean(status?.connected)
-                      const selected = provider.id === selectedProviderId
                       return (
-                        <button
-                          key={provider.id}
-                          type="button"
-                          className={`${styles.aiProviderChoice} ${selected ? styles.aiProviderChoiceSelected : ''}`}
-                          onClick={() => handleProviderSelect(provider.id)}
-                          aria-pressed={selected}
-                        >
-                          <span className={styles.aiProviderChoiceTop}>
-                            <strong>{provider.label}</strong>
-                            <Badge variant={connected ? 'success' : 'neutral'}>
-                              {connected ? 'Conectado' : 'Toca para conectar'}
-                            </Badge>
-                          </span>
-                          <small>{provider.description}</small>
-                        </button>
+                        <option key={provider.id} value={provider.id}>
+                          {provider.label} · {connected ? 'Conectado' : 'Toca para conectar'}
+                        </option>
                       )
                     })}
+                  </CustomSelect>
+                  <div className={styles.aiProviderSelectMeta}>
+                    <Badge variant={selectedProviderConnected ? 'success' : 'neutral'}>
+                      {selectedProviderConnected ? 'Conectado' : 'Toca para conectar'}
+                    </Badge>
+                    <span>{selectedProvider.description}</span>
                   </div>
                   {selectedProviderStatus?.needsReconnect && (
                     <p className={styles.helperWarning}>{selectedProviderStatus.connectionIssue || `${selectedProvider.label} necesita reconectarse.`}</p>
