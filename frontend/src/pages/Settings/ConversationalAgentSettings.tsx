@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Bot, Clock, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Send, Trash2, X } from 'lucide-react'
-import { Button, Card, CustomSelect, TagPicker } from '@/components/common'
+import { Badge, Button, Card, CustomSelect, TagPicker } from '@/components/common'
 import { DEFAULT_AI_MODEL, aiModelOptionGroups, aiModelOptions, getKnownAIModel } from '@/constants/aiModels'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAgentAvailability } from '@/hooks'
@@ -326,9 +326,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
           Volver
         </Button>
         <div className={styles.agentStickyActions}>
-          <span className={`${styles.agentStatusPill} ${agent.enabled ? styles.agentStatusPillActive : styles.agentStatusPillMuted}`}>
+          <Badge variant={agent.enabled ? 'success' : 'neutral'}>
             {agent.enabled ? 'Publicado' : 'En pausa'}
-          </span>
+          </Badge>
           <Button
             variant={agent.enabled ? 'secondary' : 'primary'}
             onClick={() => onChange({ enabled: !agent.enabled })}
@@ -1295,9 +1295,9 @@ export const ConversationalAgentSettings: React.FC = () => {
                     <span className={`${styles.iconBox} ${agent.enabled ? '' : styles.iconBoxMuted}`}>
                       <Bot size={20} />
                     </span>
-                    <span className={`${styles.agentStatusPill} ${agent.enabled ? styles.agentStatusPillActive : styles.agentStatusPillMuted}`}>
+                    <Badge variant={agent.enabled ? 'success' : 'neutral'}>
                       {agent.enabled ? 'Publicado' : 'En pausa'}
-                    </span>
+                    </Badge>
                   </div>
                   <div className={styles.agentDirectoryCardCopy}>
                     <h3>{agent.name || 'Agente sin nombre'}</h3>

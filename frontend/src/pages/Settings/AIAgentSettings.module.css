@@ -71,8 +71,8 @@
 
 .statusConnected {
   color: var(--color-status-success);
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.22);
+  background: var(--pos-soft);
+  border: 1px solid var(--pos);
 }
 
 .statusDisconnected {
@@ -479,8 +479,8 @@
 }
 
 .optionButtonActive {
-  border-color: rgba(16, 185, 129, 0.38);
-  background: rgba(16, 185, 129, 0.1);
+  border-color: var(--pos);
+  background: var(--pos-soft);
   color: var(--color-text-primary);
 }
 
@@ -572,7 +572,7 @@
 
 .inlineToggle input[type="checkbox"]:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18);
+  box-shadow: 0 0 0 4px var(--pos);
 }
 
 .inlineToggle input[type="checkbox"]:disabled {
@@ -646,8 +646,8 @@
 }
 
 .selectionToggleChecked {
-  border-color: rgba(16, 185, 129, 0.34);
-  background: rgba(16, 185, 129, 0.09);
+  border-color: var(--pos);
+  background: var(--pos-soft);
   color: var(--color-text-primary);
 }
 
@@ -976,8 +976,8 @@
 }
 
 .agentDirectoryStatError {
-  border-color: rgba(239, 68, 68, 0.24) !important;
-  background: rgba(239, 68, 68, 0.07) !important;
+  border-color: var(--neg) !important;
+  background: var(--neg-soft) !important;
 }
 
 .agentDirectoryStatError span {
@@ -1019,7 +1019,7 @@
 }
 
 .agentDirectoryCard:hover {
-  border-color: rgba(16, 185, 129, 0.38);
+  border-color: var(--pos);
   transform: translateY(-1px);
 }
 
@@ -1038,7 +1038,7 @@
 
 .agentDirectoryOpenButton:hover,
 .agentDirectoryOpenButton:focus-visible {
-  background: rgba(16, 185, 129, 0.05);
+  background: var(--pos-soft);
   outline: none;
 }
 
@@ -1152,7 +1152,7 @@
   min-height: 44px;
   margin-bottom: 14px;
   padding: 0 0 12px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  border-bottom: 1px solid var(--border);
 }
 
 .agentStickyActions {
@@ -1161,10 +1161,9 @@
   justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 4px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  background: rgba(248, 250, 252, 0.72);
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 
 .agentStickyActions button {
@@ -1221,8 +1220,8 @@
 
 .agentStatusPillActive {
   color: var(--color-status-success);
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.22);
+  background: var(--pos-soft);
+  border: 1px solid var(--pos);
 }
 
 .agentStatusPillMuted {
@@ -1268,8 +1267,8 @@
 
 .promptReadinessBannerReady,
 .strategyPromptStateReady {
-  background: rgba(16, 185, 129, 0.08);
-  border-color: rgba(16, 185, 129, 0.2);
+  background: var(--pos-soft);
+  border-color: var(--pos);
 }
 
 .promptReadinessBannerLocked,
@@ -1745,7 +1744,7 @@
 
 .strategyBadgeReady {
   color: var(--color-status-success);
-  background: rgba(16, 185, 129, 0.1);
+  background: var(--pos-soft);
 }
 
 .strategyBadgeLocked {
