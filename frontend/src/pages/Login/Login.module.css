@@ -261,14 +261,14 @@ body.light .input:focus {
 body.light .error {
   background: rgba(239, 68, 68, 0.08);
   border-color: rgba(239, 68, 68, 0.2);
-  color: #dc2626;
+  color: var(--neg);
 }
 
 .submitButton {
   margin-top: 0;
   height: 2.5rem;
   border-radius: 8px !important;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .phoneLoginBox .header {
@@ -278,7 +278,7 @@ body.light .error {
 .phoneLoginBox .title {
   color: #111111;
   font-size: clamp(2.35rem, 12vw, 3.3rem);
-  font-weight: 860;
+  font-weight: 760;
   letter-spacing: 0;
   line-height: 0.98;
 }
@@ -310,7 +310,7 @@ body.light .error {
 .phoneLoginBox .label {
   color: #4b5563;
   font-size: 0.95rem;
-  font-weight: 760;
+  font-weight: 500;
 }
 
 .phoneLoginBox .input {
@@ -333,7 +333,7 @@ body.light .error {
   margin-top: 0.75rem;
   border-radius: 999px !important;
   font-size: 1rem;
-  font-weight: 820;
+  font-weight: 720;
 }
 
 .phoneLoginBox .forgotLink {
@@ -415,7 +415,7 @@ body.light .error {
 
 .recoverySteps strong {
   color: var(--color-text-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .externalLink {
@@ -490,7 +490,7 @@ body.light .codeBlock {
 
 body.light .successMessage {
   background: rgba(16, 185, 129, 0.08);
-  color: #059669;
+  color: var(--pos);
 }
 
 .credentialsBox {
@@ -528,7 +528,7 @@ body.light .warningBox {
 }
 
 .warningBox strong {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* Animación de entrada suave */

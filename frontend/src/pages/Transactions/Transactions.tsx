@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect } from '@/components/common'
-import type { Column, BadgeVariant } from '@/components/common'
+import type { Column } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { Contact } from '@/types'
 import {
@@ -35,6 +35,12 @@ import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, pars
 import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { transactionsService, type Transaction, type TransactionSummary, type PaymentPlan } from '@/services/transactionsService'
 import { highLevelService } from '@/services/highLevelService'
+import {
+  getTransactionStatusBadge,
+  getPaymentPlanStatusBadge,
+  TRANSACTION_STATUS_BADGES,
+  PAYMENT_PLAN_STATUS_BADGES
+} from '@/utils/statusBadges'
 import styles from './Transactions.module.css'
 
 
@@ -1215,21 +1221,8 @@ export const Transactions: React.FC = () => {
     }
   }
 
-  const STATUS_BADGES: Record<string, { label: string; variant: BadgeVariant }> = {
-    draft: { label: 'Borrador', variant: 'neutral' },
-    sent: { label: 'Enviado', variant: 'info' },
-    paid: { label: 'Pagado', variant: 'success' },
-    pending: { label: 'Pendiente', variant: 'warning' },
-    overdue: { label: 'Vencido', variant: 'error' },
-    partial: { label: 'Pago parcial', variant: 'warning' },
-    void: { label: 'Anulado', variant: 'error' },
-    refunded: { label: 'Reembolsado', variant: 'error' },
-    failed: { label: 'Fallido', variant: 'error' },
-    deleted: { label: 'Eliminado', variant: 'neutral' }
-  }
-
   const getStatusBadge = (status: string) => {
-    const config = STATUS_BADGES[status] ?? { label: status, variant: 'neutral' as BadgeVariant }
+    const config = getTransactionStatusBadge(status)
     return <Badge variant={config.variant}>{config.label}</Badge>
   }
 
@@ -1459,24 +1452,8 @@ export const Transactions: React.FC = () => {
     }
   ]
 
-  const planStatusBadges: Record<string, { label: string; variant: BadgeVariant }> = {
-    active: { label: 'Activo', variant: 'info' },
-    scheduled: { label: 'Programado', variant: 'warning' },
-    pending: { label: 'Pendiente', variant: 'warning' },
-    sent: { label: 'Enviado', variant: 'info' },
-    draft: { label: 'Borrador', variant: 'neutral' },
-    paused: { label: 'Pausado', variant: 'warning' },
-    cancelled: { label: 'Cancelado', variant: 'error' },
-    canceled: { label: 'Cancelado', variant: 'error' },
-    completed: { label: 'Completado', variant: 'success' },
-    failed: { label: 'Fallido', variant: 'error' },
-    inactive: { label: 'Inactivo', variant: 'neutral' },
-    deleted: { label: 'Eliminado', variant: 'neutral' }
-  }
-
   const getPlanStatusBadge = (status?: string) => {
-    const normalized = String(status || 'active').toLowerCase()
-    const config = planStatusBadges[normalized] ?? { label: normalized, variant: 'neutral' as BadgeVariant }
+    const config = getPaymentPlanStatusBadge(status)
     return <Badge variant={config.variant}>{config.label}</Badge>
   }
 
@@ -1508,7 +1485,7 @@ export const Transactions: React.FC = () => {
 
     return {
       statuses: orderedStatuses.map(status => ({
-        name: STATUS_BADGES[status]?.label || status,
+        name: TRANSACTION_STATUS_BADGES[status]?.label || status,
         value: status,
         count: counts[status]
       }))
@@ -1530,7 +1507,7 @@ export const Transactions: React.FC = () => {
 
     return {
       statuses: orderedStatuses.map(status => ({
-        name: planStatusBadges[status]?.label || status,
+        name: PAYMENT_PLAN_STATUS_BADGES[status]?.label || status,
         value: status,
         count: counts[status]
       }))

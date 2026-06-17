@@ -46,8 +46,8 @@ interface SeriesDefinition {
   color: string
 }
 
-const DEFAULT_COLOR_PRIMARY = 'var(--design-chart-primary, #10b981)'
-const DEFAULT_COLOR_SECONDARY = 'var(--design-chart-secondary, #64748b)'
+const DEFAULT_COLOR_PRIMARY = 'var(--accent)'
+const DEFAULT_COLOR_SECONDARY = 'var(--text-mute)'
 
 const defaultFormatAxis = (value: number): string => formatChartCurrency(value)
 

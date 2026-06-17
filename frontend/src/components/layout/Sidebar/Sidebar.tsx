@@ -480,9 +480,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
     themeSource,
     resetToSystem,
     isSystemTheme,
-    designPreset,
-    setDesignPreset,
-    designPresets
+    themeDir,
+    setThemeDir,
+    themeFamilies
   } = useTheme()
   const { user } = useAuth()
   const { isInitialized } = useInitialization()
@@ -691,7 +691,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
             aria-expanded={showUserMenu}
             aria-haspopup="menu"
           >
-            <span className="ml-1.5 mr-3 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[rgba(255,238,219,0.92)] text-xs font-semibold text-[#2f251b]">
+            <span className="ml-1.5 mr-3 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-xs font-semibold text-[var(--accent)]">
               {initials}
             </span>
             <span className="min-w-0 flex-1">
@@ -715,7 +715,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
             >
               <div className="border-b border-[rgba(148,163,184,0.1)] p-4">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[rgba(255,238,219,0.92)] text-sm font-semibold text-[#2f251b]">
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-sm font-semibold text-[var(--accent)]">
                     {initials}
                   </div>
                   <div className="min-w-0 flex-1">
@@ -730,32 +730,36 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
                     <Palette className="h-3.5 w-3.5" />
                     Diseño de app
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {designPresets.map((preset) => {
-                      const isActive = preset.id === designPreset
-
-                      return (
-                        <button
-                          key={preset.id}
-                          type="button"
-                          title={preset.description}
-                          onClick={() => setDesignPreset(preset.id)}
-                          className={cn(
-                            'flex min-h-[58px] items-center gap-2 rounded-lg border border-[rgba(148,163,184,0.14)] px-2.5 py-2 text-left text-sm text-[var(--color-text-primary)] transition-colors hover:glass-hover',
-                            isActive && 'border-[rgba(var(--color-primary-rgb),0.28)] bg-[rgba(var(--color-primary-rgb),0.12)]'
-                          )}
-                          aria-pressed={isActive}
-                        >
-                          <span
-                            className="design-preset-preview"
-                            data-preset={preset.id}
-                            aria-hidden="true"
-                          />
-                          <span className="min-w-0 flex-1 truncate font-medium">{preset.label}</span>
-                          {isActive && <Check className="h-4 w-4 flex-shrink-0 text-[var(--color-status-success)]" />}
-                        </button>
-                      )
-                    })}
+                  <div className="space-y-2.5">
+                    {themeFamilies.map((family) => (
+                      <div key={family.id}>
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">
+                          {family.label}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {family.variants.map((variant) => {
+                            const isActive = variant.dir === themeDir
+                            return (
+                              <button
+                                key={variant.dir}
+                                type="button"
+                                title={`${family.label} · ${variant.label}`}
+                                onClick={() => setThemeDir(variant.dir)}
+                                aria-pressed={isActive}
+                                className={cn(
+                                  'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                                  isActive
+                                    ? 'border-[var(--color-primary)] bg-[rgba(var(--color-primary-rgb),0.14)] text-[var(--color-text-primary)]'
+                                    : 'border-[rgba(148,163,184,0.18)] text-[var(--color-text-secondary)] hover:bg-[rgba(148,163,184,0.12)]'
+                                )}
+                              >
+                                {variant.label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button

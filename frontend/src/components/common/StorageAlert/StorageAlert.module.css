@@ -3,10 +3,10 @@
   top: 16px;
   right: 16px;
   max-width: 500px;
-  background: var(--color-warning-light, #fff3cd);
-  border: 1px solid var(--color-warning, #ffc107);
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-pop);
   z-index: 9999;
   animation: slideIn 0.3s ease-out;
 }
@@ -30,7 +30,7 @@
 }
 
 .icon {
-  color: var(--color-warning, #ff9800);
+  color: var(--warn);
   flex-shrink: 0;
   margin-top: 2px;
 }
@@ -39,23 +39,23 @@
   flex: 1;
   font-size: 14px;
   line-height: 1.5;
-  color: var(--color-text-primary, #1a1a1a);
+  color: var(--text);
 }
 
 .text strong {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .link {
   display: inline-block;
   margin-left: 8px;
-  color: var(--color-primary, #2563eb);
+  color: var(--accent);
   text-decoration: underline;
   font-weight: 500;
 }
 
 .link:hover {
-  color: var(--color-primary-hover, #1d4ed8);
+  color: var(--accent-2);
 }
 
 .closeButton {
@@ -63,29 +63,15 @@
   border: none;
   padding: 4px;
   cursor: pointer;
-  color: var(--color-text-tertiary, #6b7280);
+  color: var(--text-mute);
   flex-shrink: 0;
   border-radius: 4px;
   transition: all 0.2s;
 }
 
 .closeButton:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: var(--color-text-primary, #1a1a1a);
-}
-
-/* Dark mode */
-[data-theme='dark'] .alert {
-  background: rgba(255, 193, 7, 0.1);
-  border-color: rgba(255, 193, 7, 0.3);
-}
-
-[data-theme='dark'] .text {
-  color: var(--color-text-primary);
-}
-
-[data-theme='dark'] .closeButton:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-2);
+  color: var(--text);
 }
 
 /* Responsive */

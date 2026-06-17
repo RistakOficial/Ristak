@@ -76,7 +76,7 @@
 
 .header {
   padding: 0.875rem 1.25rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  border-bottom: 1px solid var(--border);
   background: var(--color-background-secondary);
 }
 
@@ -125,7 +125,7 @@
   height: 1.875rem;
   border-radius: var(--radius-md);
   background-color: transparent;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -174,7 +174,7 @@
   display: flex;
   flex-direction: column;
   width: 340px;
-  border-right: 1px solid rgba(148, 163, 184, 0.18);
+  border-right: 1px solid var(--border);
 }
 
 .leftPanelFull {
@@ -185,7 +185,7 @@
 
 .searchContainer {
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  border-bottom: 1px solid var(--border);
   background-color: var(--color-background-secondary);
 }
 
@@ -213,7 +213,7 @@
   width: 100%;
   padding: 0.5625rem 2.5rem 0.5625rem 2.5rem;
   background: color-mix(in srgb, var(--color-background-glass) 70%, transparent);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 0.8125rem;
   color: var(--color-text-primary);
@@ -227,7 +227,7 @@
 .searchInput:focus {
   outline: none;
   border-color: var(--color-border);
-  background: color-mix(in srgb, var(--color-background-glass) 85%, rgba(255, 255, 255, 0.06));
+  background: color-mix(in srgb, var(--color-background-glass) 85%, var(--surface-2));
 }
 
 .searchInput:focus + .searchIcon {
@@ -305,7 +305,7 @@
   align-items: center;
   gap: 0.75rem;
   padding: 0.625rem 0.875rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid var(--border);
   cursor: pointer;
   transition: all 0.15s ease;
   position: relative;
@@ -402,7 +402,7 @@
 
 .footer {
   padding: 0.5rem 0.875rem;
-  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  border-top: 1px solid var(--border);
   font-size: 0.75rem;
   color: var(--color-text-tertiary);
   background-color: var(--color-background-secondary);
@@ -421,7 +421,7 @@
   align-items: center;
   gap: 0.75rem;
   padding: 0.875rem 1.25rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--color-background-glass) 50%, transparent);
 }
 
@@ -538,7 +538,7 @@
 }
 
 .detailItemLabel {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
 }
 
@@ -557,7 +557,7 @@
 }
 
 .whatsappPreferenceHeader svg {
-  color: #16a34a;
+  color: var(--pos);
   margin-top: 0.125rem;
 }
 
@@ -571,7 +571,7 @@
 .whatsappPreferenceHeader strong {
   color: var(--color-text-primary);
   font-size: 0.8125rem;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .whatsappPreferenceHeader span {
@@ -591,7 +591,7 @@
   color: var(--color-text-primary);
   font-family: inherit;
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 500;
   padding: 0 0.75rem;
 }
 
@@ -763,10 +763,10 @@
   padding: 0 0.625rem;
   border: 1px solid rgba(var(--color-primary-rgb), 0.28);
   border-radius: 5px;
-  background: color-mix(in srgb, var(--color-background, #fff) 86%, rgba(var(--color-primary-rgb), 0.12));
+  background: color-mix(in srgb, var(--color-background, var(--surface)) 86%, rgba(var(--color-primary-rgb), 0.12));
   color: var(--color-primary);
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 500;
   font-family: inherit;
   white-space: nowrap;
   cursor: pointer;
@@ -780,7 +780,7 @@
 
 .customFieldSaveButton:hover:not(:disabled) {
   border-color: rgba(var(--color-primary-rgb), 0.5);
-  background: color-mix(in srgb, var(--color-background, #fff) 78%, rgba(var(--color-primary-rgb), 0.2));
+  background: color-mix(in srgb, var(--color-background, var(--surface)) 78%, rgba(var(--color-primary-rgb), 0.2));
 }
 
 .customFieldSaveButton:disabled {
@@ -807,7 +807,7 @@
 
 .automationEnrollLabel {
   font-size: 0.75rem;
-  font-weight: 650;
+  font-weight: 550;
   color: var(--color-text-secondary);
 }
 
@@ -868,7 +868,7 @@
   color: var(--color-text-primary);
   font-family: inherit;
   font-size: 0.8125rem;
-  font-weight: 600;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
 }
@@ -904,7 +904,7 @@
   margin: 0;
   color: var(--color-success);
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .automationColumns {
@@ -926,7 +926,7 @@
   justify-content: space-between;
   gap: 0.5rem;
   padding-bottom: 0.375rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  border-bottom: 1px solid var(--border);
   color: var(--color-text-tertiary);
   font-size: 0.6875rem;
   font-weight: 700;
@@ -962,7 +962,7 @@
   align-items: start;
   gap: 0.625rem;
   padding: 0.625rem 0;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid var(--border);
 }
 
 .automationActivityItem:last-child {
@@ -977,7 +977,7 @@
   margin: 0;
   color: var(--color-text-primary);
   font-size: 0.8125rem;
-  font-weight: 650;
+  font-weight: 550;
   overflow-wrap: anywhere;
 }
 
@@ -1015,7 +1015,7 @@
 
 .enrollModalIntro strong {
   color: var(--color-text-primary);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .enrollModeGrid {
@@ -1036,7 +1036,7 @@
   color: var(--color-text-secondary);
   font-family: inherit;
   font-size: 0.875rem;
-  font-weight: 650;
+  font-weight: 550;
   cursor: pointer;
 }
 
@@ -1057,7 +1057,7 @@
   gap: 0.375rem;
   color: var(--color-text-secondary);
   font-size: 0.75rem;
-  font-weight: 650;
+  font-weight: 550;
 }
 
 .enrollField input {
@@ -1095,7 +1095,7 @@
   background: color-mix(in srgb, var(--color-background-glass) 70%, transparent);
   border-radius: var(--radius-lg);
   padding: 0.875rem;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--border);
   transition: all 0.15s ease;
 }
 
@@ -1108,7 +1108,7 @@
   font-size: 0.6875rem;
   color: var(--color-text-tertiary);
   margin: 0 0 0.25rem 0;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .metricValue {
@@ -1125,7 +1125,7 @@
   justify-content: space-between;
   padding: 0.625rem 0.875rem;
   background: color-mix(in srgb, var(--color-background-glass) 60%, transparent);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.8125rem;
@@ -1142,11 +1142,11 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .toggleValue {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-primary);
 }
 
@@ -1170,7 +1170,7 @@
 
 .summaryCard {
   background: color-mix(in srgb, var(--color-background-glass) 50%, transparent);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0.75rem;
   margin-bottom: 0.5rem;
@@ -1183,7 +1183,7 @@
 .summaryCardButton {
   width: 100%;
   background: color-mix(in srgb, var(--color-background-glass) 50%, transparent);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--border);
   border-radius: min(var(--design-control-radius, var(--radius-sm)), 1.35rem);
   padding: 0.875rem 1rem;
   margin-bottom: 0.5rem;
@@ -1323,7 +1323,7 @@
   padding: 0.5rem;
   margin-top: 0.5rem;
   background: transparent;
-  border: 1px dashed rgba(148, 163, 184, 0.3);
+  border: 1px dashed var(--border-strong);
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.75rem;

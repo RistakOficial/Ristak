@@ -83,16 +83,16 @@
   min-height: 42px;
   margin: 14px 14px 10px;
   flex: 0 0 auto;
-  border: 1px solid var(--design-control-border);
-  border-radius: var(--design-control-radius);
-  background: var(--design-control-bg);
-  color: var(--color-text-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-mute);
   transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .searchBox:focus-within {
-  border-color: var(--ristak-focus-border);
-  box-shadow: var(--ristak-focus-ring);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .searchBox > svg {
@@ -101,6 +101,7 @@
   left: 12px;
   z-index: 1;
   transform: translateY(-50%);
+  color: var(--text-mute);
   pointer-events: none;
 }
 
@@ -112,9 +113,13 @@
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--color-text-primary);
+  color: var(--text);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+}
+
+.searchBox input::placeholder {
+  color: var(--text-mute);
 }
 
 .searchBox button,
@@ -157,7 +162,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  font-weight: 650;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
@@ -217,7 +222,7 @@
 .filterPanelHeader button {
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .filterPanelHeader button:disabled {
@@ -286,7 +291,7 @@
   min-height: 50px;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
-  font-weight: 720;
+  font-weight: 600;
 }
 
 .chatRow:hover,
@@ -324,7 +329,7 @@
 .archiveRow > span:last-child {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
-  font-weight: 740;
+  font-weight: 500;
 }
 
 .chatRowBody {
@@ -361,7 +366,7 @@
 
 .chatRowUnread .chatRowTop small {
   color: var(--color-text-primary);
-  font-weight: 740;
+  font-weight: 600;
 }
 
 .chatPreview {
@@ -385,7 +390,7 @@
   min-width: 0;
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -647,7 +652,7 @@
   background: var(--color-background-primary);
   color: var(--color-text-tertiary);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .messageBubble {
@@ -723,7 +728,7 @@
   margin-bottom: 7px;
   color: inherit;
   font-size: var(--font-size-xs);
-  font-weight: 650;
+  font-weight: 500;
   text-decoration: none;
 }
 
@@ -947,7 +952,7 @@
   color: currentColor;
   font-size: 9px;
   font-style: normal;
-  font-weight: 820;
+  font-weight: 720;
   letter-spacing: 0;
   line-height: 1;
   text-align: center;
@@ -989,7 +994,7 @@
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
-  font-weight: 730;
+  font-weight: 600;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1090,7 +1095,7 @@
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1246,7 +1251,7 @@
   border-radius: 7px;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .composerMenu button:hover {
@@ -1327,7 +1332,7 @@
   overflow: hidden;
   color: currentColor;
   font-size: var(--font-size-sm);
-  font-weight: 720;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1387,7 +1392,7 @@
   min-height: 28px;
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .voiceDraft button {
@@ -1440,7 +1445,7 @@
 .sectionTitleRow button {
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .detailList {
@@ -1460,7 +1465,7 @@
   gap: 6px;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .detailList dd {
@@ -1506,7 +1511,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  font-weight: 740;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -1530,7 +1535,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  font-weight: 740;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -1614,7 +1619,7 @@
   overflow: hidden;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
-  font-weight: 700;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1665,7 +1670,7 @@
 .journeyItem strong {
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
-  font-weight: 740;
+  font-weight: 600;
 }
 
 .journeyItem small {
@@ -1761,7 +1766,7 @@
   border-radius: 999px;
   color: var(--color-text-primary);
   font-size: var(--font-size-xs);
-  font-weight: 740;
+  font-weight: 600;
 }
 
 .emptyActionPreview {
@@ -1826,7 +1831,7 @@
 .emptyInfoPreview strong {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .emptyInfoMetrics {

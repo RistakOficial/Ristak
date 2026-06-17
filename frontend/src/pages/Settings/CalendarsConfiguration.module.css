@@ -84,7 +84,7 @@
   background: var(--color-background-primary);
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 550;
   white-space: nowrap;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
@@ -143,7 +143,7 @@
   background: var(--color-background-primary);
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 550;
   white-space: nowrap;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
@@ -181,14 +181,14 @@
 .notificationsButtonText strong {
   color: currentColor;
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 650;
   line-height: 1.1;
 }
 
 .notificationsButtonText small {
   color: var(--color-text-tertiary);
   font-size: 10.5px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.1;
 }
 
@@ -231,7 +231,7 @@
   min-width: min(260px, 100%);
   color: var(--color-text-secondary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 550;
 }
 
 .sourceControl > svg,
@@ -246,7 +246,7 @@
 .sourceValue {
   min-width: 0;
   color: var(--color-text-primary);
-  font-weight: 750;
+  font-weight: 650;
   white-space: nowrap;
 }
 
@@ -276,7 +276,7 @@
   gap: 9px;
   color: var(--color-text-secondary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 550;
   cursor: pointer;
   list-style: none;
 }
@@ -370,7 +370,7 @@
   color: var(--color-text-secondary);
   background: rgba(var(--color-primary-rgb), 0.07);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 550;
 }
 
 .phoneInstallHint svg {
@@ -399,7 +399,7 @@
 .notificationPickerHeader span {
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 550;
 }
 
 .notificationAllButton,
@@ -413,7 +413,7 @@
   color: var(--color-text-primary);
   background: transparent;
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 650;
   cursor: pointer;
 }
 
@@ -1013,7 +1013,7 @@
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 650;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1090,7 +1090,7 @@
   color: var(--color-text-primary);
   font: inherit;
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 650;
   letter-spacing: 0;
   outline: none;
   text-transform: uppercase;
@@ -1136,7 +1136,7 @@
   background: rgba(148, 163, 184, 0.045);
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 550;
   cursor: pointer;
 }
 
@@ -1165,7 +1165,7 @@
   gap: 8px;
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 550;
 }
 
 .lookBusyPercent {
@@ -1280,7 +1280,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 550;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
@@ -1797,7 +1797,7 @@
 
 .stepBody a {
   color: var(--color-text-primary);
-  font-weight: 700;
+  font-weight: 600;
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
@@ -1849,7 +1849,7 @@
   border-radius: 8px;
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 550;
   text-decoration: none;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }

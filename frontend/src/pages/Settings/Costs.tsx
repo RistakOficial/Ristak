@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { Card, Button, NumberInput, CustomSelect } from '@/components/common'
+import { Card, Button, NumberInput, CustomSelect, Switch, Badge } from '@/components/common'
 import { Plus, X, Pencil, DollarSign, Loader2, TrendingDown, Info } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { costsService, type Cost, type CreateCostDto } from '@/services/costsService'
@@ -441,19 +441,15 @@ export const Costs: React.FC = () => {
         <div className={styles.manualReportToggle}>
           <div className={styles.manualReportToggleText}>
             <span className={styles.manualReportToggleTitle}>Costos manuales en reporte</span>
-            <span className={styles.manualReportToggleState}>
+            <Badge variant={manualReportCostsActive ? 'success' : 'neutral'}>
               {manualReportCostsActive ? 'Activo' : 'Inactivo'}
-            </span>
+            </Badge>
           </div>
-          <label className={styles.switchControl}>
-            <input
-              type="checkbox"
-              checked={manualReportCostsActive}
-              disabled={manualReportCostsBusy}
-              onChange={(event) => handleManualBusinessExpensesToggle(event.target.checked)}
-            />
-            <span className={styles.switchTrack} />
-          </label>
+          <Switch
+            checked={manualReportCostsActive}
+            disabled={manualReportCostsBusy}
+            onChange={(checked) => handleManualBusinessExpensesToggle(checked)}
+          />
         </div>
       </Card>
 

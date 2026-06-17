@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Bot, CheckCircle, Eye, EyeOff, Globe2, Trash2, XCircle } from 'lucide-react'
 import { Button, Card, CustomSelect } from '@/components/common'
+import { Badge } from '@/components/common/Badge'
 import { DEFAULT_AI_MODEL, aiModelOptionGroups, aiModelOptions, getKnownAIModel } from '@/constants/aiModels'
 import { useNotification } from '@/contexts/NotificationContext'
 import { aiAgentService, type AIAgentConfigStatus, type AIAgentRecommendationMode, type AIAgentResponseStyle } from '@/services/aiAgentService'
@@ -415,20 +416,20 @@ export const AIAgentSettings: React.FC = () => {
 
           <div className={styles.headerActions}>
             {needsReconnect ? (
-              <div className={styles.statusWarning}>
+              <Badge variant="warning">
                 <AlertTriangle size={15} />
                 Reconectar
-              </div>
+              </Badge>
             ) : status.configured ? (
-              <div className={styles.statusConnected}>
+              <Badge variant="success">
                 <CheckCircle size={15} />
                 Conectado
-              </div>
+              </Badge>
             ) : (
-              <div className={styles.statusDisconnected}>
+              <Badge variant="error">
                 <XCircle size={15} />
                 No configurado
-              </div>
+              </Badge>
             )}
 
             {(status.configured || needsReconnect) && (

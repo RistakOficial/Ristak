@@ -4488,7 +4488,8 @@
 
 .siteDomain {
   color: var(--color-text-tertiary);
-  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
 }
 
 .siteStats {
@@ -4620,42 +4621,49 @@
 
 .createLibraryCard,
 .libraryCard {
-  min-height: 292px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.16);
+  min-height: 236px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
   color: var(--color-text-primary);
   text-align: left;
-  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+  box-shadow: var(--shadow-card);
+  transition: background 160ms ease, border-color 160ms ease, transform 180ms ease, box-shadow 180ms ease;
 }
 
 .createLibraryCard {
   display: grid;
   align-content: center;
   justify-items: center;
-  gap: 9px;
+  gap: 10px;
   padding: 18px;
   color: var(--color-text-secondary);
   text-align: center;
+  border: 1.5px dashed var(--border-strong);
+  background: transparent;
+  box-shadow: none;
 }
 
 .createLibraryCard:hover,
 .libraryCard:hover,
 .libraryCardActive {
-  border-color: rgba(148, 163, 184, 0.34);
-  background: rgba(148, 163, 184, 0.12);
-  transform: translateY(-1px);
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.libraryCard:hover {
+  box-shadow: var(--shadow-pop);
 }
 
 .createLibraryIcon {
-  width: 44px;
-  height: 44px;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--color-text-primary);
+  border: none;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .createLibraryCard strong {
@@ -4674,7 +4682,7 @@
   min-width: 0;
   position: relative;
   display: grid;
-  grid-template-rows: 178px 1fr;
+  grid-template-rows: 128px 1fr;
   overflow: hidden;
   cursor: default;
 }
@@ -4686,23 +4694,33 @@
   box-sizing: border-box;
   position: relative;
   overflow: hidden;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0)),
-    rgba(148, 163, 184, 0.08);
-  padding: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--border);
+  /* franja diagonal (como el ZIP) */
+  background: repeating-linear-gradient(135deg, var(--surface-2) 0 12px, var(--bg-soft) 12px 24px);
+  padding: 0;
+}
+
+.libraryThumbLabel {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--color-text-tertiary);
+  pointer-events: none;
 }
 
 .libraryPreviewViewport {
   position: absolute;
-  inset: 28px 10px 10px;
+  inset: 0;
   display: grid;
   place-items: start center;
   overflow: hidden;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  border-radius: 6px;
+  border: 0;
+  border-radius: 0;
   background: var(--color-background-primary);
-  padding: 8px;
+  padding: 0;
   pointer-events: none;
 }
 
@@ -4763,8 +4781,8 @@
   box-sizing: border-box;
   display: grid;
   align-content: start;
-  gap: 8px;
-  padding: 13px;
+  gap: 3px;
+  padding: 13px 15px;
 }
 
 .libraryCardTitleRow {
@@ -4778,9 +4796,25 @@
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-primary);
-  font-size: 0.98rem;
+  font-size: 0.875rem;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Pie de la tarjeta (estilo ZIP): dominio mono + fecha de edición */
+.libraryCardMeta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 9px;
+}
+
+.libraryCardMeta time {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: var(--color-text-tertiary);
 }
 
 .libraryCardMenuButton {

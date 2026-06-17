@@ -86,11 +86,14 @@ import {
   X
 } from 'lucide-react'
 import {
+  Badge,
+  type BadgeVariant,
   Button,
   Loading,
   NumberInput,
   CustomSelect,
   TabList,
+  SegmentTabs,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -1317,10 +1320,24 @@ const getStatusLabel = (site: PublicSite, domainConfig: SitesDomainConfig) => {
   return domainConfig.renderDomainVerified ? 'Publicado' : 'Dominio pendiente'
 }
 
-const getStatusClass = (site: PublicSite, domainConfig: SitesDomainConfig) => {
-  if (site.status !== 'published') return styles.statusMuted
-  if (!domainConfig.domain || !domainConfig.renderDomainVerified) return styles.statusWarning
-  return styles.statusSuccess
+// Fecha de edición relativa, compacta (estilo "hace 2 días" del ZIP)
+const formatSiteEdited = (value?: string | null): string | null => {
+  if (!value) return null
+  const then = new Date(value).getTime()
+  if (!Number.isFinite(then)) return null
+  const days = Math.floor((Date.now() - then) / 86400000)
+  if (days <= 0) return 'hoy'
+  if (days === 1) return 'ayer'
+  if (days < 7) return `hace ${days} días`
+  if (days < 30) return `hace ${Math.floor(days / 7)} sem`
+  if (days < 365) return `hace ${Math.floor(days / 30)} mes`
+  return `hace ${Math.floor(days / 365)} año`
+}
+
+const getStatusVariant = (site: PublicSite, domainConfig: SitesDomainConfig): BadgeVariant => {
+  if (site.status !== 'published') return 'neutral'
+  if (!domainConfig.domain || !domainConfig.renderDomainVerified) return 'warning'
+  return 'success'
 }
 
 const isPublicSiteLive = (site: PublicSite, domainConfig: SitesDomainConfig) =>
@@ -7713,7 +7730,7 @@ export const Sites: React.FC = () => {
                       </label>
                     )}
                     {editorSite.status !== 'draft' && !formEditMode && (
-                      <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
+                      <Badge variant={getStatusVariant(editorSite, domainConfig)}>{getStatusLabel(editorSite, domainConfig)}</Badge>
                     )}
                     {formEditMode && editorPageSelector && (
                       <div className={styles.editorPageSelectorSlot}>
@@ -7853,25 +7870,17 @@ export const Sites: React.FC = () => {
 
         <div className={`${styles.sitesShell} ${isFocusedSitesMode ? styles.sitesShellFocused : ''}`}>
           {!isFocusedSitesMode && (
-            <nav className={styles.sectionTabs} role="tablist" aria-label="Secciones de sitios">
-              {sectionItems.map(item => {
-                const isActive = section === item.id
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={isActive}
-                    className={`${styles.sectionTab} ${isActive ? styles.sectionTabActive : ''}`}
-                    onClick={() => handleSectionChange(item.id)}
-                  >
-                    {item.icon}
-                    <span>{item.label}</span>
-                    {item.id === 'domains' && <ExternalLink size={14} aria-hidden="true" />}
-                  </button>
-                )
-              })}
-            </nav>
+            <SegmentTabs
+              aria-label="Secciones de sitios"
+              value={section}
+              onChange={(id) => handleSectionChange(id as typeof section)}
+              tabs={sectionItems.map(item => ({
+                id: item.id,
+                label: item.label,
+                icon: item.icon,
+                trailingIcon: item.id === 'domains' ? <ExternalLink size={14} aria-hidden="true" /> : undefined
+              }))}
+            />
           )}
 
           <main className={styles.mainSurface}>
@@ -16728,8 +16737,10 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
               className={`${styles.libraryCard} ${selectedSiteId === site.id ? styles.libraryCardActive : ''}`}
             >
               <div className={styles.libraryCardPreview}>
-                <LibrarySitePreview site={site} forms={forms} calendars={calendars} />
-                <span className={styles.libraryPreviewType}>{getSiteTypeLabel(site)}</span>
+                <span className={styles.libraryThumbLabel}>{getSiteTypeLabel(site)}</span>
+                <span style={{ position: 'absolute', top: 10, left: 10, zIndex: 2 }}>
+                  <Badge variant={getStatusVariant(site, domainConfig)}>{getStatusLabel(site, domainConfig)}</Badge>
+                </span>
                 <div className={styles.libraryCardHoverActions} data-library-card-action="true">
                   <button type="button" onClick={() => onEdit(site.id)}>
                     <Pencil size={16} />
@@ -16782,9 +16793,13 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
               <div className={styles.libraryCardBody}>
                 <div className={styles.libraryCardTitleRow}>
                   <strong>{site.name}</strong>
-                  <span className={`${styles.statusPill} ${getStatusClass(site, domainConfig)}`}>{getStatusLabel(site, domainConfig)}</span>
                 </div>
                 <span className={styles.siteDomain}>{getPublicRouteLabel(site, domainConfig)}</span>
+                {formatSiteEdited(site.updatedAt) && (
+                  <div className={styles.libraryCardMeta}>
+                    <time dateTime={site.updatedAt || undefined}>Editado {formatSiteEdited(site.updatedAt)}</time>
+                  </div>
+                )}
               </div>
             </article>
           )
@@ -24328,9 +24343,9 @@ const LeadsPanel: React.FC<{ rows: LeadRow[]; loading: boolean; onRefresh: () =>
           <article key={row.id} className={styles.leadRow}>
             <span>{row.contactName || row.contactEmail || row.contactPhone || 'Lead sin nombre'}</span>
             <span>{row.siteName}</span>
-            <span className={`${styles.statusPill} ${row.status === 'disqualified' ? styles.statusWarning : styles.statusSuccess}`}>
+            <Badge variant={row.status === 'disqualified' ? 'warning' : 'success'}>
               {row.status === 'disqualified' ? 'Descalificado' : 'Recibido'}
-            </span>
+            </Badge>
             <span>{[tags, categories].filter(Boolean).join(' / ') || 'Sin reglas'}</span>
             <span>{formatDate(row.createdAt)}</span>
           </article>
@@ -24355,11 +24370,11 @@ const DomainsPanel: React.FC<DomainsPanelProps> = ({
   onDomainChange,
   onVerifyDomain
 }) => {
-  const domainStatus = !domainConfig.domain
-    ? { label: 'Sin dominio', className: styles.statusMuted }
+  const domainStatus: { label: string; variant: BadgeVariant } = !domainConfig.domain
+    ? { label: 'Sin dominio', variant: 'neutral' }
     : domainConfig.renderDomainVerified
-      ? { label: 'Verificado', className: styles.statusSuccess }
-      : { label: 'Pendiente', className: styles.statusWarning }
+      ? { label: 'Verificado', variant: 'success' }
+      : { label: 'Pendiente', variant: 'warning' }
 
   return (
     <section className={styles.dataPanel}>
@@ -24368,7 +24383,7 @@ const DomainsPanel: React.FC<DomainsPanelProps> = ({
           <h2>Dominios</h2>
           <p>Conecta un solo dominio general para enrutar todos los formularios y sitios web.</p>
         </div>
-        <span className={`${styles.statusPill} ${domainStatus.className}`}>{domainStatus.label}</span>
+        <Badge variant={domainStatus.variant}>{domainStatus.label}</Badge>
       </div>
 
       <div className={styles.domainEditor}>

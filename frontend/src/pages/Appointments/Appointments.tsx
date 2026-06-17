@@ -8,6 +8,8 @@ import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAppConfig } from '@/hooks';
 import { calendarsService, type Calendar, type CalendarEvent, type AppointmentStats, type BlockedSlot } from '@/services/calendarsService';
+import { Badge } from '@/components/common/Badge';
+import { getAppointmentStatusBadge } from '@/utils/statusBadges';
 import { formatTime12h } from '@/utils/format'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { useTimezone } from '@/contexts/TimezoneContext';
@@ -44,18 +46,6 @@ const viewTabs = [
 ];
 
 type ViewMode = 'month' | 'week' | 'day';
-
-const STATUS_LABELS: Record<CalendarEvent['appointmentStatus'], string> = {
-  confirmed: 'Confirmada',
-  pending: 'Pendiente',
-  cancelled: 'Cancelada',
-  showed: 'Asistió',
-  noshow: 'No asistió',
-  rescheduled: 'Reprogramada'
-};
-
-const getStatusLabel = (status: CalendarEvent['appointmentStatus']): string =>
-  STATUS_LABELS[status] ?? status;
 
 const MIN_DAY_EVENT_MINUTES = 45;
 
@@ -806,7 +796,7 @@ export const Appointments: React.FC = () => {
         searchIndex: buildSearchIndex([
           event.title,
           event.appointmentStatus,
-          getStatusLabel(event.appointmentStatus),
+          getAppointmentStatusBadge(event.appointmentStatus).label,
           dateStr,
           monthName,
           dayMonth,
@@ -1518,7 +1508,14 @@ export const Appointments: React.FC = () => {
                             {event.title || '(Sin título)'}
                           </div>
                           <div className={styles.searchResultMeta}>
-                            {formatLocalDateShort(eventDate)} · {formatEventTime(event.startTime)} · {getStatusLabel(event.appointmentStatus)}
+                            {(() => {
+                              const desc = getAppointmentStatusBadge(event.appointmentStatus);
+                              return (
+                                <>
+                                  {formatLocalDateShort(eventDate)} · {formatEventTime(event.startTime)} · <Badge variant={desc.variant}>{desc.label}</Badge>
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
                       </button>
@@ -1802,7 +1799,10 @@ export const Appointments: React.FC = () => {
                                     {formatEventTime(event.startTime)} - {formatEventTime(event.endTime)}
                                   </div>
                                   <div className={styles.tooltipStatus}>
-                                    Estado: {getStatusLabel(event.appointmentStatus)}
+                                    {(() => {
+                                      const desc = getAppointmentStatusBadge(event.appointmentStatus);
+                                      return <>Estado: <Badge variant={desc.variant}>{desc.label}</Badge></>;
+                                    })()}
                                   </div>
                                   {event.address && (
                                     <div className={styles.tooltipAddress}>
@@ -1985,7 +1985,10 @@ export const Appointments: React.FC = () => {
                                     {formatEventTime(event.startTime)} - {formatEventTime(event.endTime)}
                                   </div>
                                   <div className={styles.tooltipStatus}>
-                                    Estado: {getStatusLabel(event.appointmentStatus)}
+                                    {(() => {
+                                      const desc = getAppointmentStatusBadge(event.appointmentStatus);
+                                      return <>Estado: <Badge variant={desc.variant}>{desc.label}</Badge></>;
+                                    })()}
                                   </div>
                                   {event.address && (
                                     <div className={styles.tooltipAddress}>
@@ -2144,7 +2147,8 @@ export const Appointments: React.FC = () => {
                       const displayTitle = rawTitle || rawDescription || '(Sin título)';
                       const displayDescription =
                         rawDescription && rawDescription !== displayTitle ? rawDescription : '';
-                      const statusLabel = getStatusLabel(event.appointmentStatus);
+                      const statusBadge = getAppointmentStatusBadge(event.appointmentStatus);
+                      const statusLabel = statusBadge.label;
                       const tooltipText = [
                         displayTitle,
                         `${formatEventTime(event.startTime)} - ${formatEventTime(event.endTime)}`,
@@ -2166,7 +2170,7 @@ export const Appointments: React.FC = () => {
                             <span className={styles.dayEventTime}>
                               {formatEventTime(event.startTime)} - {formatEventTime(event.endTime)}
                             </span>
-                            <span className={styles.dayEventStatus}>{statusLabel}</span>
+                            <span className={styles.dayEventStatus}><Badge variant={statusBadge.variant}>{statusBadge.label}</Badge></span>
                           </div>
                           <div className={styles.dayEventTitle}>{displayTitle}</div>
                           {displayDescription && (
@@ -2264,7 +2268,14 @@ export const Appointments: React.FC = () => {
                   <div className={styles.upcomingInfo}>
                     <div className={styles.upcomingTitle}>{event.title}</div>
                     <div className={styles.upcomingDetails}>
-                      {formatLocalDateShort(new Date(event.startTime))} · {getStatusLabel(event.appointmentStatus)}
+                      {(() => {
+                        const desc = getAppointmentStatusBadge(event.appointmentStatus);
+                        return (
+                          <>
+                            {formatLocalDateShort(new Date(event.startTime))} · <Badge variant={desc.variant}>{desc.label}</Badge>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                   <div

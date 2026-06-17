@@ -200,7 +200,7 @@
   margin-top: 5px;
   color: var(--color-text-primary);
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -487,7 +487,7 @@
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: 12px;
-  font-weight: 720;
+  font-weight: 520;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -573,7 +573,7 @@
   color: var(--color-text-primary);
   background: rgba(148, 163, 184, 0.055);
   font-size: 13px;
-  font-weight: 720;
+  font-weight: 620;
   text-decoration: none;
 }
 
@@ -642,7 +642,7 @@
 .guideCopy strong {
   color: var(--color-text-primary);
   font-size: 13px;
-  font-weight: 780;
+  font-weight: 680;
   line-height: 1.25;
 }
 
@@ -665,7 +665,7 @@
   flex-shrink: 0;
   color: var(--color-text-primary);
   font-size: 12px;
-  font-weight: 780;
+  font-weight: 520;
 }
 
 .scopeList {
@@ -687,7 +687,7 @@
   background: rgba(148, 163, 184, 0.065);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
-  font-weight: 760;
+  font-weight: 660;
 }
 
 .formGroup {
@@ -704,7 +704,7 @@
 .formLabel {
   color: var(--color-text-primary);
   font-size: 13px;
-  font-weight: 720;
+  font-weight: 520;
 }
 
 .formInput {
@@ -809,7 +809,7 @@
 .chipText {
   overflow: hidden;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -822,7 +822,7 @@
   overflow: hidden;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 14px;
-  font-weight: 760;
+  font-weight: 500;
   line-height: 1;
   white-space: nowrap;
 }
@@ -845,7 +845,7 @@
   color: var(--color-text-secondary);
   font-family: inherit;
   font-size: 13px;
-  font-weight: 720;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -952,7 +952,7 @@
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: 11px;
-  font-weight: 760;
+  font-weight: 500;
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -969,7 +969,7 @@
   display: block;
   color: var(--color-text-primary);
   font-size: 12px;
-  font-weight: 780;
+  font-weight: 500;
   line-height: 1.35;
 }
 

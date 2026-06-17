@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Button, Icon, Modal, CustomSelect, PageHeader } from '@/components/common'
+import { Button, Icon, Modal, CustomSelect, PageHeader, Switch } from '@/components/common'
+import { Badge, type BadgeVariant } from '@/components/common/Badge'
 import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, Pencil, Power, RefreshCw, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTheme } from '@/contexts/ThemeContext'
@@ -1087,6 +1088,11 @@ export const MetaAdsIntegration: React.FC = () => {
     return enabled ? 'Activo' : 'Apagado'
   }
 
+  const getMetaMessagingStatusVariant = (enabled: boolean, available: boolean): BadgeVariant => {
+    if (!available) return 'warning'
+    return enabled ? 'success' : 'neutral'
+  }
+
   const getStepBlockMessage = (stepIndex = activeStep) => {
     if (stepIndex === 1 && !hasAccessToken) {
       return 'Primero valida el Access Token para cargar tus cuentas de anuncios'
@@ -1527,15 +1533,15 @@ export const MetaAdsIntegration: React.FC = () => {
         title="Meta"
         subtitle="Conecta anuncios, Página, Messenger e Instagram DM desde un solo lugar."
         actions={isMetaConfigured ? (
-          <span className={styles.statusConnected}>
+          <Badge variant="success">
             <CheckCircle size={16} />
             <span>Configurado</span>
-          </span>
+          </Badge>
         ) : (
-          <span className={styles.statusDisconnected}>
+          <Badge variant="error">
             <XCircle size={16} />
             <span>No configurado</span>
-          </span>
+          </Badge>
         )}
       />
 
@@ -1603,22 +1609,15 @@ export const MetaAdsIntegration: React.FC = () => {
                         <span>{hasPageId ? getSelectedPageLabel() : 'Selecciona una Facebook Page'}</span>
                       </div>
                       <div className={styles.connectedPageControl}>
-                        <span className={[
-                          styles.connectedPageStatus,
-                          messengerMessagingEnabled && hasPageId ? styles.connectedPageStatusActive : ''
-                        ].filter(Boolean).join(' ')}>
+                        <Badge variant={getMetaMessagingStatusVariant(messengerMessagingEnabled, hasPageId)}>
                           {getMetaMessagingStatus(messengerMessagingEnabled, hasPageId)}
-                        </span>
-                        <label className={styles.switchContainer} aria-label="Activar mensajes de Messenger">
-                          <input
-                            type="checkbox"
-                            checked={messengerMessagingEnabled === true}
-                            onChange={(event) => handleToggleMetaMessaging('messenger', event.target.checked)}
-                            disabled={!hasPageId || savingMessengerMessaging}
-                            className={styles.switchInput}
-                          />
-                          <span className={styles.switchSlider}></span>
-                        </label>
+                        </Badge>
+                        <Switch
+                          aria-label="Activar mensajes de Messenger"
+                          checked={messengerMessagingEnabled === true}
+                          onChange={(next) => handleToggleMetaMessaging('messenger', next)}
+                          disabled={!hasPageId || savingMessengerMessaging}
+                        />
                       </div>
                     </div>
 
@@ -1634,22 +1633,15 @@ export const MetaAdsIntegration: React.FC = () => {
                         <span>{hasInstagramAccount ? getSelectedInstagramLabel() : 'Selecciona una cuenta de Instagram'}</span>
                       </div>
                       <div className={styles.connectedPageControl}>
-                        <span className={[
-                          styles.connectedPageStatus,
-                          instagramMessagingEnabled && hasInstagramAccount ? styles.connectedPageStatusActive : ''
-                        ].filter(Boolean).join(' ')}>
+                        <Badge variant={getMetaMessagingStatusVariant(instagramMessagingEnabled, hasInstagramAccount)}>
                           {getMetaMessagingStatus(instagramMessagingEnabled, hasInstagramAccount)}
-                        </span>
-                        <label className={styles.switchContainer} aria-label="Activar mensajes de Instagram DM">
-                          <input
-                            type="checkbox"
-                            checked={instagramMessagingEnabled === true}
-                            onChange={(event) => handleToggleMetaMessaging('instagram', event.target.checked)}
-                            disabled={!hasInstagramAccount || savingInstagramMessaging}
-                            className={styles.switchInput}
-                          />
-                          <span className={styles.switchSlider}></span>
-                        </label>
+                        </Badge>
+                        <Switch
+                          aria-label="Activar mensajes de Instagram DM"
+                          checked={instagramMessagingEnabled === true}
+                          onChange={(next) => handleToggleMetaMessaging('instagram', next)}
+                          disabled={!hasInstagramAccount || savingInstagramMessaging}
+                        />
                       </div>
                     </div>
                   </div>
@@ -1766,16 +1758,11 @@ export const MetaAdsIntegration: React.FC = () => {
                         <span className={styles.railSwitchLabel}>Incluir Meta Pixel en snippet</span>
                         <span className={styles.railSecondaryValue}>Agrega el pixel al Web Tracking.</span>
                       </div>
-                      <label className={styles.switchContainer}>
-                        <input
-                          type="checkbox"
-                          checked={includeMetaPixel === true}
-                          onChange={(event) => handleToggleMetaPixel(event.target.checked)}
-                          disabled={isSyncingSnippet || savingPixelPref}
-                          className={styles.switchInput}
-                        />
-                        <span className={styles.switchSlider}></span>
-                      </label>
+                      <Switch
+                        checked={includeMetaPixel === true}
+                        onChange={(next) => handleToggleMetaPixel(next)}
+                        disabled={isSyncingSnippet || savingPixelPref}
+                      />
                     </div>
                   ) : (
                     <div className={styles.connectedExtraRow}>
@@ -1823,16 +1810,11 @@ export const MetaAdsIntegration: React.FC = () => {
                       <span className={styles.requirementPill}>Requiere Page</span>
                     )}
                   </div>
-                  <label className={styles.switchContainer}>
-                    <input
-                      type="checkbox"
-                      checked={whatsappScheduleEventEnabled === true}
-                      onChange={(event) => handleToggleWhatsappScheduleEvent(event.target.checked)}
-                      disabled={savingWhatsappScheduleEvent}
-                      className={styles.switchInput}
-                    />
-                    <span className={styles.switchSlider}></span>
-                  </label>
+                  <Switch
+                    checked={whatsappScheduleEventEnabled === true}
+                    onChange={(next) => handleToggleWhatsappScheduleEvent(next)}
+                    disabled={savingWhatsappScheduleEvent}
+                  />
                 </div>
 
                 <div className={[
@@ -1846,16 +1828,11 @@ export const MetaAdsIntegration: React.FC = () => {
                       <span className={styles.requirementPill}>Requiere Page</span>
                     )}
                   </div>
-                  <label className={styles.switchContainer}>
-                    <input
-                      type="checkbox"
-                      checked={whatsappPurchaseEventEnabled === true}
-                      onChange={(event) => handleToggleWhatsappPurchaseEvent(event.target.checked)}
-                      disabled={savingWhatsappPurchaseEvent}
-                      className={styles.switchInput}
-                    />
-                    <span className={styles.switchSlider}></span>
-                  </label>
+                  <Switch
+                    checked={whatsappPurchaseEventEnabled === true}
+                    onChange={(next) => handleToggleWhatsappPurchaseEvent(next)}
+                    disabled={savingWhatsappPurchaseEvent}
+                  />
                 </div>
               </div>
             </section>

@@ -106,28 +106,28 @@ const STEP_CONFIGS: StepConfig[] = [
 
 const STEP_STYLE_MAP: Record<StepState, { container: string; progress: string; icon: string; status: string }> = {
   completed: {
-    container: 'border-[#10b98133] bg-[#10b98114] text-[var(--color-text-primary)]',
-    progress: 'bg-[#10b981]',
-    icon: 'bg-[#10b9811f] text-[#10b981]',
-    status: 'text-[#10b981]'
+    container: 'border-[color-mix(in_srgb,var(--pos)_33%,transparent)] bg-[color-mix(in_srgb,var(--pos)_8%,transparent)] text-[var(--text)]',
+    progress: 'bg-[var(--pos)]',
+    icon: 'bg-[color-mix(in_srgb,var(--pos)_12%,transparent)] text-[var(--pos)]',
+    status: 'text-[var(--pos)]'
   },
   active: {
-    container: 'border-[#64748b33] bg-[#64748b14] text-[var(--color-text-primary)]',
-    progress: 'bg-[#64748b]',
-    icon: 'bg-[#64748b12] text-[#64748b]',
-    status: 'text-[#64748b]'
+    container: 'border-[color-mix(in_srgb,var(--text-mute)_33%,transparent)] bg-[color-mix(in_srgb,var(--text-mute)_8%,transparent)] text-[var(--text)]',
+    progress: 'bg-[var(--text-mute)]',
+    icon: 'bg-[color-mix(in_srgb,var(--text-mute)_10%,transparent)] text-[var(--text-mute)]',
+    status: 'text-[var(--text-mute)]'
   },
   error: {
-    container: 'border-[#dc262633] bg-[#dc262614] text-[var(--color-text-primary)]',
-    progress: 'bg-[#dc2626]',
-    icon: 'bg-[#dc262612] text-[#dc2626]',
-    status: 'text-[#dc2626]'
+    container: 'border-[color-mix(in_srgb,var(--neg)_33%,transparent)] bg-[color-mix(in_srgb,var(--neg)_8%,transparent)] text-[var(--text)]',
+    progress: 'bg-[var(--neg)]',
+    icon: 'bg-[color-mix(in_srgb,var(--neg)_10%,transparent)] text-[var(--neg)]',
+    status: 'text-[var(--neg)]'
   },
   pending: {
-    container: 'border-[rgba(148,163,184,0.24)] bg-[rgba(148,163,184,0.08)] text-[var(--color-text-secondary)]',
-    progress: 'bg-[rgba(148,163,184,0.35)]',
-    icon: 'bg-[rgba(148,163,184,0.15)] text-[var(--color-text-tertiary)]',
-    status: 'text-[var(--color-text-tertiary)]'
+    container: 'border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-dim)]',
+    progress: 'bg-[var(--surface-2)]',
+    icon: 'bg-[var(--surface-2)] text-[var(--text-mute)]',
+    status: 'text-[var(--text-mute)]'
   }
 }
 
@@ -209,7 +209,7 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
       return {
         label: 'Sincronización completada',
         tone: 'success',
-        accentColor: '#10b981',
+        accentColor: 'var(--pos)',
         icon: CheckCircle2
       }
     }
@@ -218,7 +218,7 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
       return {
         label: 'Sincronización con errores',
         tone: 'error',
-        accentColor: '#dc2626',
+        accentColor: 'var(--neg)',
         icon: AlertCircle
       }
     }
@@ -227,7 +227,7 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
       return {
         label: 'Sincronizando con HighLevel',
         tone: 'running',
-        accentColor: '#64748b',
+        accentColor: 'var(--text-mute)',
         icon: Loader2,
         iconClass: 'animate-spin'
       }
@@ -236,7 +236,7 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
     return {
       label: 'Sincronización en espera',
       tone: 'pending',
-      accentColor: '#64748b',
+      accentColor: 'var(--accent)',
       icon: Clock
     }
   }, [progress?.status])
@@ -353,7 +353,7 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
   return (
     <div className={containerClasses}>
       <div className="h-full flex flex-col">
-        <div className="relative overflow-y-auto flex-1 glass border-l border-[rgba(148,163,184,0.18)] dark:shadow-[-20px_0_60px_-15px_rgba(15,23,42,0.45)] backdrop-blur-xl">
+        <div className="relative overflow-y-auto flex-1 glass border-l border-[var(--border)] dark:shadow-[-20px_0_60px_-15px_rgba(15,23,42,0.45)] backdrop-blur-xl">
           <span
             className="absolute inset-y-0 left-0 w-1"
             style={{ background: statusInfo.accentColor }}
@@ -395,14 +395,14 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
                 </div>
 
                 {formattedTime && (
-                  <div className="inline-flex w-max rounded-full border border-[rgba(148,163,184,0.18)] bg-[rgba(148,163,184,0.08)] px-3 py-1 text-xs text-[var(--color-text-tertiary)]">
+                  <div className="inline-flex w-max rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1 text-xs text-[var(--color-text-tertiary)]">
                     Actualizado: {formattedTime}
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="space-y-4 rounded-2xl border border-[rgba(148,163,184,0.14)] bg-[rgba(148,163,184,0.06)] p-5">
+            <div className="space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-5">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
                   <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--color-text-tertiary)]">Avance global</span>
@@ -413,7 +413,7 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
                 </div>
               </div>
 
-              <div className="relative h-2 w-full overflow-hidden rounded-full bg-[rgba(148,163,184,0.18)]">
+              <div className="relative h-2 w-full overflow-hidden rounded-full bg-[var(--surface-2)]">
                 <div
                   className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
                   style={{ width: `${overallPercent}%`, background: statusInfo.accentColor }}
@@ -463,7 +463,7 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
                       </div>
                     </div>
 
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-[rgba(148,163,184,0.14)]">
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--surface-2)]">
                       <div
                         className={cn('h-full rounded-full transition-all duration-500', style.progress)}
                         style={{ width: `${step.percent}%` }}
@@ -479,10 +479,10 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
               })}
             </div>
 
-            <div className="flex items-center gap-3 rounded-2xl border border-[rgba(148,163,184,0.14)] bg-[rgba(148,163,184,0.05)] px-4 py-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[rgba(148,163,184,0.12)] text-[var(--color-text-primary)]">
+            <div className="flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] px-4 py-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--surface-2)] text-[var(--color-text-primary)]">
                 {progress.status === 'error' ? (
-                  <AlertCircle className="h-5 w-5 text-[#dc2626]" />
+                  <AlertCircle className="h-5 w-5 text-[var(--neg)]" />
                 ) : (
                   <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin" />
                 )}

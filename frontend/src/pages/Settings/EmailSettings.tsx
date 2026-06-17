@@ -10,7 +10,7 @@ import {
   Unplug,
   User
 } from 'lucide-react'
-import { Button, PageHeader } from '@/components/common'
+import { Badge, Button, PageHeader } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { EmailStatus, emailService } from '@/services/emailService'
 import styles from './EmailSettings.module.css'
@@ -352,10 +352,10 @@ export const EmailSettings: React.FC = () => {
                 <span>{status.sender.fromEmail}</span>
               </div>
             </div>
-            <span className={`${styles.statusPill} ${styles.statusPillConnected}`}>
+            <Badge variant="success">
               <ShieldCheck size={14} />
               Conectado
-            </span>
+            </Badge>
           </div>
 
           <dl className={styles.summaryList}>

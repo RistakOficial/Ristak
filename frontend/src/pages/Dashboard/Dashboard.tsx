@@ -30,6 +30,8 @@ import { transactionsService, type Transaction } from '@/services/transactionsSe
 import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
 import { campaignsService, type Campaign } from '@/services/campaignsService'
 import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, formatEndDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber, formatDate } from '@/utils/format'
+import { getTransactionStatusBadge, getAppointmentStatusBadge } from '@/utils/statusBadges'
+import { Badge } from '@/components/common/Badge'
 
 const parseAnalyticsFlag = (value: unknown) => {
   if (value === null || value === undefined) return false
@@ -148,28 +150,6 @@ const emptyChartInsightModal: ChartInsightModalState = {
   subtitle: '',
   loading: false,
   columns: []
-}
-
-const TRANSACTION_STATUS_LABELS: Record<Transaction['status'], string> = {
-  draft: 'Borrador',
-  sent: 'Enviado',
-  paid: 'Pagado',
-  pending: 'Pendiente',
-  overdue: 'Vencido',
-  partial: 'Parcial',
-  void: 'Anulado',
-  refunded: 'Reembolsado',
-  failed: 'Fallido',
-  deleted: 'Eliminado'
-}
-
-const APPOINTMENT_STATUS_LABELS: Record<CalendarEvent['appointmentStatus'], string> = {
-  confirmed: 'Confirmada',
-  pending: 'Pendiente',
-  cancelled: 'Cancelada',
-  showed: 'Asistió',
-  noshow: 'No asistió',
-  rescheduled: 'Reagendada'
 }
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
@@ -1180,24 +1160,6 @@ export const Dashboard: React.FC = () => {
     </div>
   )
 
-  const getStatusClassName = (status?: string | null) => {
-    const normalized = status?.toLowerCase()
-
-    if (normalized === 'paid' || normalized === 'succeeded' || normalized === 'success' || normalized === 'completed' || normalized === 'confirmed' || normalized === 'showed') {
-      return 'border-[rgba(16,185,129,0.34)] text-[var(--color-status-success)]'
-    }
-
-    if (normalized === 'pending' || normalized === 'sent' || normalized === 'partial' || normalized === 'rescheduled') {
-      return 'border-[rgba(245,158,11,0.34)] text-[var(--color-status-warning)]'
-    }
-
-    if (normalized === 'failed' || normalized === 'overdue' || normalized === 'refunded' || normalized === 'void' || normalized === 'cancelled' || normalized === 'noshow') {
-      return 'border-[rgba(220,38,38,0.34)] text-[var(--color-status-error)]'
-    }
-
-    return 'border-[rgba(148,163,184,0.22)] text-[var(--color-text-secondary)]'
-  }
-
   const normalizeContacts = React.useCallback((contacts: ContactListItem[]) => (
     contacts.map(contact => ({
       ...contact,
@@ -1548,9 +1510,7 @@ export const Dashboard: React.FC = () => {
           <span className="text-sm font-semibold text-[var(--color-text-primary)]">{item.value}</span>
         )}
         {item.status && (
-          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${getStatusClassName(item.status)}`}>
-            {item.status}
-          </span>
+          <Badge variant="neutral">{item.status}</Badge>
         )}
       </div>
     </div>
@@ -1774,7 +1734,9 @@ export const Dashboard: React.FC = () => {
             <div className="flex-1">
               {operationsLoading ? renderOperationsLoadingRows() : recentTransactions.length > 0 ? (
                 <div className="divide-y divide-[rgba(148,163,184,0.12)]">
-                  {recentTransactions.map((transaction) => (
+                  {recentTransactions.map((transaction) => {
+                    const desc = getTransactionStatusBadge(transaction.status)
+                    return (
                     <div key={transaction.id} className="flex items-center justify-between gap-4 py-3">
                       <div className="min-w-0">
                         <p className="m-0 truncate text-sm font-semibold text-[var(--color-text-primary)]">
@@ -1788,12 +1750,11 @@ export const Dashboard: React.FC = () => {
                         <span className="text-sm font-semibold text-[var(--color-text-primary)]">
                           {formatCurrency(transaction.amount)}
                         </span>
-                        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${getStatusClassName(transaction.status)}`}>
-                          {TRANSACTION_STATUS_LABELS[transaction.status] ?? transaction.status}
-                        </span>
+                        <Badge variant={desc.variant}>{desc.label}</Badge>
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               ) : (
                 renderEmptyOperationsState('Sin pagos registrados en este rango.')
@@ -1823,7 +1784,9 @@ export const Dashboard: React.FC = () => {
             <div className="flex-1">
               {operationsLoading ? renderOperationsLoadingRows() : recentAppointments.length > 0 ? (
                 <div className="divide-y divide-[rgba(148,163,184,0.12)]">
-                  {recentAppointments.map((appointment) => (
+                  {recentAppointments.map((appointment) => {
+                    const desc = getAppointmentStatusBadge(appointment.appointmentStatus)
+                    return (
                     <div key={appointment.id} className="flex items-start justify-between gap-4 py-3">
                       <div className="min-w-0">
                         <p className="m-0 truncate text-sm font-semibold text-[var(--color-text-primary)]">
@@ -1834,11 +1797,10 @@ export const Dashboard: React.FC = () => {
                           {formatLocalDateTime(appointment.startTime)}
                         </p>
                       </div>
-                      <span className={`flex-shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${getStatusClassName(appointment.appointmentStatus)}`}>
-                        {APPOINTMENT_STATUS_LABELS[appointment.appointmentStatus] ?? appointment.appointmentStatus}
-                      </span>
+                      <Badge variant={desc.variant}>{desc.label}</Badge>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               ) : (
                 renderEmptyOperationsState(locationId && accessToken ? 'No hay citas en el rango activo.' : 'Conecta HighLevel para ver citas aquí.')

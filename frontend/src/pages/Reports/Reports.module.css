@@ -454,11 +454,11 @@
 }
 
 .financialPositive {
-  color: color-mix(in srgb, var(--color-status-success, #10b981) 72%, var(--color-text-primary) 28%);
+  color: color-mix(in srgb, var(--pos) 72%, var(--color-text-primary) 28%);
 }
 
 .financialNegative {
-  color: color-mix(in srgb, var(--color-status-error, #dc2626) 68%, var(--color-text-primary) 32%);
+  color: color-mix(in srgb, var(--neg) 68%, var(--color-text-primary) 32%);
 }
 
 .businessExpenseInputShell {

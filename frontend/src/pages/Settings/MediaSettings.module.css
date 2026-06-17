@@ -119,12 +119,11 @@
   align-items: center;
   width: 100%;
   min-height: 42px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: var(--design-control-radius, 12px);
-  background: var(--effect-glassMorphism-background, rgba(255, 255, 255, 0.04));
-  backdrop-filter: var(--effect-glassMorphism-backdropFilter, blur(10px));
-  color: var(--color-text-tertiary);
-  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-mute);
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .searchBox *,
@@ -134,14 +133,14 @@
 }
 
 .searchBox:focus-within {
-  border-color: rgba(148, 163, 184, 0.32);
-  background: color-mix(in srgb, var(--effect-glassMorphism-background, rgba(255, 255, 255, 0.04)) 86%, var(--color-background-primary) 14%);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .searchIcon {
   position: absolute;
   left: 12px;
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   pointer-events: none;
 }
 
@@ -156,14 +155,14 @@
   border: 0;
   background: transparent;
   box-shadow: none !important;
-  color: var(--color-text-primary);
+  color: var(--text);
   font-size: 0.95rem;
   line-height: 1;
   outline: none;
 }
 
 .searchBox input::placeholder {
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
 }
 
 .viewToggle button {
@@ -254,7 +253,7 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -268,7 +267,7 @@
   overflow: hidden;
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -316,7 +315,7 @@
 .folderNavItem small {
   color: var(--color-text-tertiary);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .folderNavItem:hover,
@@ -382,7 +381,7 @@
 .selectionBar span {
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 550;
   white-space: nowrap;
 }
 
@@ -491,7 +490,7 @@
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: 13px;
-  font-weight: 680;
+  font-weight: 500;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -700,7 +699,7 @@
 .moveFolderMeta strong {
   color: var(--color-text-primary);
   font-size: 13px;
-  font-weight: 680;
+  font-weight: 580;
 }
 
 .moveFolderMeta small,
@@ -802,7 +801,7 @@
 .fileMeta dt {
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .fileMeta dd {

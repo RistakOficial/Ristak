@@ -15,6 +15,7 @@ import {
   X
 } from 'lucide-react'
 import { Button, CustomSelect, PageHeader } from '@/components/common'
+import { Badge } from '@/components/common/Badge'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   customFieldsService,
@@ -685,7 +686,7 @@ export const CustomFields: React.FC = () => {
                         <strong>{field.label}</strong>
                       </td>
                       <td><code>{customFieldParameter(field)}</code></td>
-                      <td><span className={styles.typePill}>{getTypeLabel(field.dataType)}</span></td>
+                      <td><Badge variant="neutral">{getTypeLabel(field.dataType)}</Badge></td>
                       <td>{field.folderName || getFolderName(folders, field.folderId)}</td>
                       <td>{field.options?.length ? `${field.options.length} opciones` : '-'}</td>
                       <td>{getSourceLabel(field.sourceType)}</td>

@@ -213,7 +213,7 @@
   border-radius: var(--radius-full);
   font-weight: 600;
   font-size: 0.75rem;
-  background-color: rgba(148, 163, 184, 0.18);
+  background-color: var(--surface-2);
   color: var(--color-text-secondary);
 }
 
@@ -261,7 +261,7 @@
 .detailSummaryBlock span {
   color: var(--color-text-secondary);
   font-size: 0.78rem;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .detailSummaryItem strong {
@@ -269,7 +269,7 @@
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: 0.98rem;
-  font-weight: 760;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -280,7 +280,7 @@
   margin: 0;
   color: var(--color-text-secondary);
   font-size: 0.9rem;
-  font-weight: 520;
+  font-weight: 500;
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -297,17 +297,17 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  color: var(--color-error-500, #ef4444);
+  background: var(--neg-soft);
+  border: 1px solid color-mix(in srgb, var(--neg) 30%, transparent);
+  color: var(--neg);
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .deleteButton:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.18);
+  background: color-mix(in srgb, var(--neg) 18%, transparent);
   transform: translateY(-1px);
-  box-shadow: 0 8px 16px rgba(239, 68, 68, 0.15);
+  box-shadow: var(--shadow-xs);
 }
 
 .deleteButton:disabled {
@@ -507,7 +507,7 @@
 .mobileSheetContainer .label {
   color: var(--appointment-mobile-muted);
   font-size: 12px;
-  font-weight: 760;
+  font-weight: 500;
   letter-spacing: 0;
 }
 
@@ -515,7 +515,7 @@
   margin: 0;
   color: var(--appointment-mobile-muted);
   font-size: 12px;
-  font-weight: 620;
+  font-weight: 500;
 }
 
 /* Cajas sin contorno, como las del Registrar pago: solo el relleno oscuro
@@ -529,7 +529,7 @@
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-panel);
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 500;
   box-shadow: none;
 }
 
@@ -541,7 +541,7 @@
   background: var(--appointment-mobile-panel) !important;
   box-shadow: none !important;
   font-size: 16px !important;
-  font-weight: 650 !important;
+  font-weight: 500 !important;
 }
 
 .mobileSheetContainer .textarea {
@@ -564,12 +564,12 @@
 
 .label {
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-secondary);
 }
 
 .required {
-  color: var(--color-error, #ef4444);
+  color: var(--neg);
   margin-left: 2px;
 }
 
@@ -606,7 +606,7 @@
 .select:focus,
 .textarea:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(71, 85, 105, 0.18);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .select {
@@ -629,7 +629,7 @@
   background: var(--appointment-mobile-panel);
   border-color: transparent;
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .textarea {
@@ -738,7 +738,7 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-pop);
   z-index: 50;
 }
 
@@ -769,7 +769,7 @@
 .dropdownName {
   margin: 0;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
 }
 
@@ -848,7 +848,7 @@
   color: var(--color-text-secondary);
   background: var(--color-background-secondary);
   font-size: 13px;
-  font-weight: 780;
+  font-weight: 600;
   letter-spacing: 0;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
@@ -884,7 +884,7 @@
   color: var(--appointment-mobile-surface, #ffffff);
   background: var(--color-primary);
   font-size: 0.88rem;
-  font-weight: 760;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -931,7 +931,7 @@
 .guestItem strong {
   color: var(--color-text-primary);
   font-size: 0.9rem;
-  font-weight: 750;
+  font-weight: 550;
 }
 
 .guestItem small {
@@ -964,7 +964,7 @@
 .contactName {
   margin: 0;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -996,9 +996,9 @@
 }
 
 .clearButton:hover {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.3);
-  color: var(--color-error-500, #ef4444);
+  background: var(--neg-soft);
+  border-color: color-mix(in srgb, var(--neg) 30%, transparent);
+  color: var(--neg);
 }
 
 @media (max-width: 640px) {
@@ -1115,37 +1115,27 @@
 
 .slotValid {
   margin: 0;
-  color: #22c55e;
-  background: rgba(34, 197, 94, 0.1);
+  color: var(--pos);
+  background: var(--pos-soft);
   padding: 0.75rem 1rem;
   border-radius: var(--radius-md);
-  border: 1px solid rgba(34, 197, 94, 0.3);
+  border: 1px solid color-mix(in srgb, var(--pos) 30%, transparent);
 }
 
 .slotInvalid {
   margin: 0;
-  color: #f97316;
-  background: rgba(249, 115, 22, 0.1);
+  color: var(--warn);
+  background: var(--warn-soft);
   padding: 0.75rem 1rem;
   border-radius: var(--radius-md);
-  border: 1px solid rgba(249, 115, 22, 0.3);
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
   line-height: 1.5;
-}
-
-:global(body.dark) .slotValid {
-  background: rgba(34, 197, 94, 0.2);
-  color: #4ade80;
-}
-
-:global(body.dark) .slotInvalid {
-  background: rgba(249, 115, 22, 0.2);
-  color: #fb923c;
 }
 
 /* Contenedor visual de sección de Fecha y Hora */
 .dateTimeSection {
   border: 0;
-  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  border-top: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
   padding: 1rem 0 0;
@@ -1165,7 +1155,7 @@
   display: block;
   width: 100%;
   padding-bottom: 0.75rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid var(--border);
 }
 
 .tabListWrapper :global([data-ristak-tablist]) {
@@ -1257,5 +1247,5 @@
   margin: 0;
   color: var(--phone-chat-muted, var(--color-text-tertiary, #737373));
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 500;
 }

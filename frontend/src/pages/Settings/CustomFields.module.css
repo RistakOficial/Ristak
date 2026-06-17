@@ -100,7 +100,7 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 500;
   text-align: left;
 }
 
@@ -306,10 +306,15 @@
   width: min(440px, 100%);
   min-height: 40px;
   padding: 0 12px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 8px;
-  background: var(--color-background-primary);
-  color: var(--color-text-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-mute);
+}
+
+.search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .search input {
@@ -317,6 +322,11 @@
   padding: 0;
   border: 0;
   background: transparent;
+  color: var(--text);
+}
+
+.search input::placeholder {
+  color: var(--text-mute);
 }
 
 .selectionBar {
@@ -554,7 +564,7 @@
   min-height: 28px;
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -644,7 +654,7 @@
 .field span {
   color: var(--color-text-secondary);
   font-size: 12px;
-  font-weight: 720;
+  font-weight: 500;
 }
 
 .field input,

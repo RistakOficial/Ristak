@@ -93,18 +93,25 @@
 
 .input {
   width: 100%;
+  min-height: 40px;
   padding: var(--spacing-sm) var(--spacing-md);
   padding-left: 48px;
   font-size: var(--font-size-base);
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  color: var(--text);
   transition: all 0.2s ease;
+}
+
+.input:hover {
+  border-color: var(--border-strong);
 }
 
 .input:focus {
   outline: none;
-  border-color: var(--color-primary);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .input:disabled {
@@ -133,18 +140,15 @@
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  background: white;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  background: var(--surface-solid, var(--surface));
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-pop);
   z-index: 10000;
   max-height: 280px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-}
-
-body.dark .dropdown {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04);
 }
 
 /* Suggestions */
@@ -155,7 +159,7 @@ body.dark .dropdown {
   max-height: 200px;
   overflow-y: auto;
   flex: 1;
-  background: white;
+  background: transparent;
 }
 
 .suggestionItem {
@@ -168,9 +172,12 @@ body.dark .dropdown {
   transition: background 0.1s ease;
 }
 
-.suggestionItem:hover,
+.suggestionItem:hover {
+  background: var(--surface-2);
+}
+
 .suggestionItem.selected {
-  background: #f5f5f5;
+  background: var(--accent-soft);
 }
 
 .suggestionItem svg {
@@ -204,7 +211,7 @@ body.dark .dropdown {
 .highlight {
   background: rgba(var(--color-primary-rgb), 0.2);
   color: var(--color-primary);
-  font-weight: 600;
+  font-weight: 500;
   padding: 0 2px;
   border-radius: 2px;
 }
@@ -214,7 +221,7 @@ body.dark .dropdown {
   text-align: center;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-sm);
-  background: white;
+  background: transparent;
 }
 
 .addNewButton {
@@ -225,9 +232,9 @@ body.dark .dropdown {
   gap: var(--spacing-sm);
   width: 100%;
   padding: var(--spacing-sm) var(--spacing-md);
-  background: white;
+  background: transparent;
   border: none;
-  border-top: 1px solid #e5e5e5;
+  border-top: 1px solid var(--border);
   border-radius: 0 !important;
   color: var(--color-primary);
   font-size: var(--font-size-base);
@@ -307,15 +314,16 @@ body.dark .dropdown {
   width: 100%;
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: var(--font-size-sm);
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border-subtle);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  color: var(--text);
   transition: all 0.2s ease;
 }
 
 .formField input:focus {
   outline: none;
-  border-color: var(--color-primary);
+  border-color: var(--accent);
 }
 
 .formField input.inputError {
@@ -358,7 +366,7 @@ body.dark .dropdown {
   background: var(--color-primary);
   border: none;
   border-radius: var(--radius-sm);
-  color: white;
+  color: var(--on-accent);
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -378,38 +386,4 @@ body.dark .dropdown {
   font-size: var(--font-size-xs);
   color: var(--color-danger);
   margin-top: var(--spacing-xs);
-}
-
-/* Dark mode support */
-[data-theme="dark"] .chip {
-  background: rgba(var(--color-primary-rgb), 0.2);
-}
-
-[data-theme="dark"] .dropdown {
-  background: #1a1a1a;
-  border-color: #333;
-}
-
-[data-theme="dark"] .suggestions {
-  background: #1a1a1a;
-}
-
-[data-theme="dark"] .noResults {
-  background: #1a1a1a;
-}
-
-[data-theme="dark"] .addNewButton {
-  background: #1a1a1a;
-  border-top-color: #333;
-}
-
-[data-theme="dark"] .suggestionItem:hover,
-[data-theme="dark"] .suggestionItem.selected,
-[data-theme="dark"] .addNewButton:hover,
-[data-theme="dark"] .addNewButton.selected {
-  background: #2a2a2a;
-}
-
-[data-theme="dark"] .highlight {
-  background: rgba(var(--color-warning-rgb), 0.3);
 }

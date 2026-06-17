@@ -16,6 +16,7 @@ import {
   Plus,
   UserX
 } from 'lucide-react'
+import { Badge } from '@/components/common/Badge'
 import { highLevelService } from '@/services/highLevelService'
 import { hiddenContactsService, type HiddenFilter } from '@/services/hiddenContactsService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
@@ -242,25 +243,25 @@ export const HighLevelIntegration: React.FC = () => {
             </div>
             <div className={styles.headerRight}>
               {checkingStatus ? (
-                <div className={styles.statusConnected}>
+                <Badge variant="warning">
                   <Loader2 size={16} className={styles.spinIcon} />
                   <span>Verificando...</span>
-                </div>
+                </Badge>
               ) : isConnected ? (
-                <div className={styles.statusConnected}>
+                <Badge variant="success">
                   <CheckCircle size={16} />
                   <span>Conectado</span>
-                </div>
+                </Badge>
               ) : isConfigured ? (
-                <div className={styles.statusWarning}>
+                <Badge variant="warning">
                   <AlertCircle size={16} />
                   <span>Sin conexión</span>
-                </div>
+                </Badge>
               ) : (
-                <div className={styles.statusDisconnected}>
+                <Badge variant="error">
                   <XCircle size={16} />
                   <span>No configurado</span>
-                </div>
+                </Badge>
               )}
             </div>
           </div>
@@ -380,15 +381,15 @@ export const HighLevelIntegration: React.FC = () => {
               <label className={styles.infoLabel}>Estado de Conexión</label>
               <div className={styles.infoValue}>
                 {isConnected ? (
-                  <span className={styles.statusSuccess}>
+                  <Badge variant="success">
                     <CheckCircle size={14} />
                     Conexión activa
-                  </span>
+                  </Badge>
                 ) : (
-                  <span className={styles.statusError}>
+                  <Badge variant="error">
                     <XCircle size={14} />
                     Sin conexión
-                  </span>
+                  </Badge>
                 )}
               </div>
             </div>

@@ -28,7 +28,7 @@
 
 .label {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
 }
 
@@ -56,7 +56,7 @@
 .select {
   width: 100%;
   padding: 10px 36px 10px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--border);
   border-radius: 10px;
   font-size: 14px;
   font-weight: 500;
@@ -96,9 +96,9 @@
 }
 
 .selectError {
-  border-color: rgba(239, 68, 68, 0.7);
-  background-color: rgba(239, 68, 68, 0.06);
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+  border-color: var(--neg);
+  background-color: var(--neg-soft);
+  box-shadow: 0 0 0 3px var(--neg-soft);
 }
 
 .phoneSelectButton {
@@ -106,7 +106,7 @@
   padding: 0 12px;
   border-radius: 10px;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   background-image: none;
   backdrop-filter: blur(8px);
 }
@@ -115,7 +115,7 @@
   min-height: 41px;
   border-radius: 10px;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .customSelectControl {
@@ -128,7 +128,7 @@
   gap: 6px;
   padding: 7px 9px;
   border-radius: 8px;
-  background: rgba(239, 68, 68, 0.08);
+  background: var(--neg-soft);
   color: var(--color-status-error);
   font-size: 12px;
   font-weight: 600;
@@ -151,7 +151,7 @@
   gap: 8px;
   padding: 4px;
   background: rgba(148, 163, 184, 0.06);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--border);
   border-radius: 10px;
 }
 
@@ -174,7 +174,7 @@
 .radioOptionActive {
   background: rgba(148, 163, 184, 0.16);
   color: var(--color-text-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .radioOption:hover:not(.radioOptionActive) {
@@ -230,7 +230,7 @@
 
 .contactName {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
   margin: 0 0 4px 0;
 }
@@ -274,8 +274,8 @@
   padding: 0 13px;
   border: 0;
   border-radius: 999px;
-  color: #4b5563;
-  background: #ffffff;
+  color: var(--text-mute);
+  background: var(--surface);
 }
 
 .contactSearchBox .searchIcon,
@@ -368,7 +368,7 @@
 
 .dropdownName {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
   margin: 0 0 4px 0;
 }
@@ -406,7 +406,7 @@
   min-height: 72px;
   padding: 8px 4px;
   border: 0;
-  border-bottom: 1px solid rgba(17, 17, 17, 0.08);
+  border-bottom: 1px solid var(--border);
   border-radius: 0;
   color: #050505;
   background: transparent;
@@ -425,7 +425,7 @@
   color: #ffffff;
   background: #00a884;
   font-size: 15px;
-  font-weight: 850;
+  font-weight: 750;
   overflow: hidden;
 }
 
@@ -445,14 +445,14 @@
 .contactOption strong {
   color: #050505;
   font-size: 17px;
-  font-weight: 830;
+  font-weight: 730;
   line-height: 1.12;
 }
 
 .contactOption small {
-  color: #7a7a7a;
+  color: var(--text-dim);
   font-size: 14px;
-  font-weight: 620;
+  font-weight: 500;
   line-height: 1.2;
 }
 
@@ -461,10 +461,10 @@
   place-items: center;
   min-height: 108px;
   padding: 18px;
-  color: #8e8e93;
+  color: var(--text-dim);
   text-align: center;
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 500;
 }
 
 /* Amount input */
@@ -735,7 +735,7 @@
 .cellLabel {
   display: none;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-tertiary);
 }
 
@@ -765,7 +765,7 @@
   background: transparent;
   color: var(--color-primary);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -818,7 +818,7 @@
   background: var(--color-surface);
   color: var(--color-text-tertiary);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -888,7 +888,7 @@
 
 .allocationTop span {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-secondary);
 }
 
@@ -900,7 +900,7 @@
 
 .allocationTop em {
   font-style: normal;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-tertiary);
 }
 
@@ -1047,7 +1047,7 @@ body.dark .summaryBadge,
 
 .summaryTax {
   color: var(--color-status-info);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .summaryFooter {
@@ -1056,7 +1056,7 @@ body.dark .summaryBadge,
   align-items: center;
   padding-top: 12px;
   border-top: 1px solid var(--color-border);
-  font-weight: 600;
+  font-weight: 500;
   font-size: 14px;
   color: var(--color-text-primary);
 }
@@ -1227,7 +1227,7 @@ body.dark .tooltipInfo {
 
 .optionInfo p {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
   margin: 0 0 4px 0;
 }
@@ -1275,7 +1275,7 @@ body.dark .tooltipInfo {
 .cardButton div p {
   margin: 0;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
 }
 
@@ -1329,7 +1329,7 @@ body.dark .tooltipInfo {
 
 .manualField label {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-secondary);
 }
 
@@ -1369,7 +1369,7 @@ body.dark .tooltipInfo {
 .manualTransferText p {
   margin: 0;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
 }
 
@@ -1454,7 +1454,7 @@ body.dark .tooltipInfo {
 
 .processingText {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
   margin: 0;
 }
@@ -1668,7 +1668,7 @@ body.dark .tooltipInfo {
   color: var(--record-payment-embedded-text);
   background: var(--record-payment-embedded-soft);
   font-size: 16px;
-  font-weight: 760;
+  font-weight: 600;
   cursor: pointer;
   box-shadow: none;
   -webkit-tap-highlight-color: transparent;
@@ -1755,12 +1755,12 @@ body.dark .tooltipInfo {
   min-width: 0;
   color: var(--record-payment-embedded-text);
   font-size: 16px;
-  font-weight: 850;
+  font-weight: 600;
 }
 
 .embeddedTotalRow small {
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .embeddedTotalRow strong {
@@ -1812,7 +1812,7 @@ body.dark .tooltipInfo {
   color: var(--record-payment-embedded-text);
   background: var(--record-payment-embedded-panel);
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 500;
   box-shadow: none;
 }
 
@@ -1849,7 +1849,7 @@ body.dark .tooltipInfo {
   color: var(--record-payment-embedded-text);
   background: transparent;
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .embeddedRoot .contactSearchBox .input::placeholder {
@@ -2021,7 +2021,7 @@ body.dark .tooltipInfo {
   overflow: hidden;
   color: var(--record-payment-embedded-muted);
   font-size: 14px;
-  font-weight: 750;
+  font-weight: 600;
   text-overflow: ellipsis;
 }
 
@@ -2044,7 +2044,7 @@ body.dark .tooltipInfo {
 .embeddedRoot .cellLabel {
   color: var(--record-payment-embedded-muted);
   font-size: 13px;
-  font-weight: 760;
+  font-weight: 500;
   letter-spacing: 0;
 }
 
@@ -2056,7 +2056,7 @@ body.dark .tooltipInfo {
   color: var(--record-payment-embedded-text);
   background: var(--record-payment-embedded-panel) !important;
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 500;
   box-shadow: none !important;
 }
 

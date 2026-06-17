@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Card, Button, NumberInput } from '@/components/common'
+import { Badge } from '@/components/common/Badge'
 import { CheckCircle, Clock, CreditCard, Loader2 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
@@ -208,20 +209,20 @@ export const PaymentsConfiguration: React.FC = () => {
             </div>
             <div className={styles.headerRight}>
               {loadingHighLevelConnection ? (
-                <div className={styles.statusWarning}>
+                <Badge variant="warning">
                   <Loader2 size={16} className={styles.spinIcon} />
                   <span>Revisando conexión</span>
-                </div>
+                </Badge>
               ) : highLevelConnected ? (
-                <div className={styles.statusConnected}>
+                <Badge variant="success">
                   <CheckCircle size={16} />
                   <span>GoHighLevel conectado</span>
-                </div>
+                </Badge>
               ) : (
-                <div className={styles.statusDisconnected}>
+                <Badge variant="warning">
                   <Clock size={16} />
                   <span>Pasarela pendiente</span>
-                </div>
+                </Badge>
               )}
             </div>
           </div>
@@ -252,9 +253,9 @@ export const PaymentsConfiguration: React.FC = () => {
                     >
                       <span className={styles.gatewayCardHeader}>
                         <span className={styles.gatewayCardName}>{gateway.name}</span>
-                        <span className={isConnected ? styles.gatewayStatusConnected : styles.gatewayStatusSoon}>
+                        <Badge variant={isConnected ? 'success' : 'warning'}>
                           {isConnected ? 'Conectado' : 'Próximamente'}
-                        </span>
+                        </Badge>
                       </span>
                       <span className={styles.gatewayCardDescription}>{gateway.description}</span>
                     </button>

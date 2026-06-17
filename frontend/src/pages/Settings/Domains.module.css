@@ -97,7 +97,7 @@
 .copyExamples strong {
   color: var(--color-text-primary);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .copyExamples p {
@@ -107,7 +107,7 @@
 
 .copyExamples span {
   color: var(--color-text-primary);
-  font-weight: 760;
+  font-weight: 550;
 }
 
 .domainControls > button {
@@ -122,7 +122,7 @@
 .field span {
   color: var(--color-text-secondary);
   font-size: 0.82rem;
-  font-weight: 800;
+  font-weight: 500;
 }
 
 .field input,
@@ -171,7 +171,7 @@
   margin: -2px 0 0;
   color: var(--color-status-warning);
   font-size: 0.88rem;
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .actions {
@@ -193,7 +193,7 @@
   padding: 0 12px;
   text-decoration: none;
   font-size: 0.88rem;
-  font-weight: 750;
+  font-weight: 650;
 }
 
 .linkButton:hover {
