@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { CHEAPEST_OPENAI_MODEL } from '../src/config/openAIModels.js'
+import { APPOINTMENT_CONFIRMATION_MODEL } from '../src/agents/appointmentConfirmationAgent.js'
 import {
   buildConversationalAgentMetrics,
   getAgentReplyDeliveryPartDelayMs,
@@ -17,6 +19,7 @@ import {
   splitReplyIntoParts
 } from '../src/agents/conversational/runner.js'
 import {
+  MESSAGE_SPLITTER_MODEL,
   splitMessageIntoBubbles,
   splitMessageIntoBubblesFallback
 } from '../src/agents/conversational/messageSplitter.js'
@@ -31,6 +34,12 @@ import {
   buildBusinessProfilePromptParameters,
   normalizeBusinessProfileExtraction
 } from '../src/services/aiAgentService.js'
+
+test('flujos IA automaticos de bajo costo usan siempre el modelo mas barato aprobado', () => {
+  assert.equal(CHEAPEST_OPENAI_MODEL, 'gpt-5.4-nano')
+  assert.equal(MESSAGE_SPLITTER_MODEL, CHEAPEST_OPENAI_MODEL)
+  assert.equal(APPOINTMENT_CONFIRMATION_MODEL, CHEAPEST_OPENAI_MODEL)
+})
 
 test('normaliza la entrega de respuestas en partes', () => {
   const delivery = normalizeAgentReplyDelivery({
@@ -137,6 +146,7 @@ test('crea calendario de pausas dejando el primer globo inmediato', () => {
 
 test('envio real espera antes de cada globo posterior', async () => {
   const sequence = []
+  let splitterArgs = null
   const result = await sendReplyParts({
     contactId: 'contacto-test',
     phone: '+526561111111',
@@ -160,7 +170,10 @@ test('envio real espera antes de cada globo posterior', async () => {
     apiKey: 'sk-test',
     model: 'test-model',
     dependencies: {
-      splitter: async () => ({ messages: ['globo uno', 'globo dos', 'globo tres'], source: 'test', reason: 'ok' }),
+      splitter: async (args) => {
+        splitterArgs = args
+        return { messages: ['globo uno', 'globo dos', 'globo tres'], source: 'test', reason: 'ok' }
+      },
       sendTextMessage: async ({ text }) => {
         sequence.push(`send:${text}`)
       },
@@ -175,6 +188,8 @@ test('envio real espera antes de cada globo posterior', async () => {
     }
   })
 
+  assert.equal(splitterArgs?.model, undefined)
+  assert.equal(splitterArgs?.apiKey, 'sk-test')
   assert.deepEqual(result.delaySchedule, [0, 2000, 2000])
   assert.deepEqual(sequence, [
     'send:globo uno',

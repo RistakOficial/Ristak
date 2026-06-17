@@ -1,10 +1,9 @@
 import { Agent, Runner, OpenAIProvider } from '@openai/agents'
+import { CHEAPEST_OPENAI_MODEL } from '../../config/openAIModels.js'
 import { logger } from '../../utils/logger.js'
 import { normalizeAgentReplyDelivery } from '../../services/conversationalAgentService.js'
 
-const DEFAULT_SPLITTER_MODEL = process.env.OPENAI_CONVERSATIONAL_SPLITTER_MODEL ||
-  process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL ||
-  'gpt-5.4-nano'
+export const MESSAGE_SPLITTER_MODEL = CHEAPEST_OPENAI_MODEL
 
 const NATURAL_SHORT_MESSAGE_PATTERN = /^(va|ok|okay|listo|perfecto|sale|claro|sí|si|no|ya|hecho|de una)[.!?¡¿]*$/i
 const NATURAL_STANDALONE_REACTION_PATTERN = /^(?:ah+h?|ah+ ya|ah+ okaa?y|ok+a+y?|va|sale|perfecto|listo|claro|órale|orale|uff|mmm(?: a ver)?|no+ manches|buen[ií]simo|déjame ver|dejame ver|ya te entend[ií]|ah ya te entend[ií])(?:[.!?…]+)?$/i
@@ -425,10 +424,10 @@ function buildSplitterUserPrompt(text, settings) {
   ].join('\n\n')
 }
 
-async function runAiSplitter({ text, settings, apiKey, model }) {
+async function runAiSplitter({ text, settings, apiKey }) {
   const agent = new Agent({
     name: 'Ristak · Divisor de mensajes WhatsApp',
-    model: model || DEFAULT_SPLITTER_MODEL,
+    model: MESSAGE_SPLITTER_MODEL,
     instructions: buildSplitterInstructions(settings),
     tools: []
   })
@@ -503,7 +502,7 @@ export async function splitMessageIntoBubbles({
     const raw = typeof aiSplitter === 'function'
       ? await aiSplitter({ text: clean, settings: delivery })
       : apiKey
-        ? await runAiSplitter({ text: clean, settings: delivery, apiKey, model })
+        ? await runAiSplitter({ text: clean, settings: delivery, apiKey })
         : null
 
     if (!raw) {

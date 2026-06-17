@@ -610,8 +610,7 @@ export async function sendReplyParts({
   const splitResult = await splitter({
     text: reply,
     settings: agentConfig.replyDelivery,
-    apiKey,
-    model
+    apiKey
   })
   const parts = splitResult.messages
   if (!parts.length) return { parts: [], sentParts: 0, interruptedBy: null }
