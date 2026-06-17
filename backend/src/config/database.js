@@ -3599,6 +3599,7 @@ async function initTables() {
       CREATE TABLE IF NOT EXISTS conversational_agent_config (
         id INTEGER PRIMARY KEY,
         enabled INTEGER DEFAULT 0,
+        ai_provider TEXT DEFAULT 'openai',
         model TEXT DEFAULT 'gpt-5.4-nano',
         objective TEXT DEFAULT 'citas',
         custom_objective TEXT,
@@ -3619,6 +3620,7 @@ async function initTables() {
 
     // Columnas agregadas después del despliegue inicial del agente conversacional
     for (const [columnName, columnType] of [
+      ['ai_provider', "TEXT DEFAULT 'openai'"],
       ['model', "TEXT DEFAULT 'gpt-5.4-nano'"],
       ['hide_attended_notifications', 'INTEGER'],
       ['closing_strategy_mode', "TEXT DEFAULT 'system'"],
@@ -3642,6 +3644,7 @@ async function initTables() {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         enabled INTEGER DEFAULT 1,
+        ai_provider TEXT DEFAULT 'openai',
         model TEXT DEFAULT 'gpt-5.4-nano',
         position INTEGER DEFAULT 0,
         objective TEXT DEFAULT 'citas',
@@ -3666,6 +3669,7 @@ async function initTables() {
       )
     `)
     for (const [columnName, columnType] of [
+      ['ai_provider', "TEXT DEFAULT 'openai'"],
       ['model', "TEXT DEFAULT 'gpt-5.4-nano'"],
       ['hide_attended', 'INTEGER DEFAULT 0'],
       ['hide_attended_notifications', 'INTEGER DEFAULT 0'],

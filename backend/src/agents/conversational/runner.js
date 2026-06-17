@@ -1,4 +1,4 @@
-import { Agent, Runner, OpenAIProvider } from '@openai/agents'
+import { Agent, Runner } from '@openai/agents'
 import { db } from '../../config/database.js'
 import { logger } from '../../utils/logger.js'
 import { getAccountTimezone } from '../../utils/dateUtils.js'
@@ -6,8 +6,7 @@ import { getAccountLocaleSettings } from '../../utils/accountLocale.js'
 import {
   buildBusinessProfilePromptParameters,
   getAIAgentConfig,
-  getBusinessProfileSnapshot,
-  getOpenAIApiKey
+  getBusinessProfileSnapshot
 } from '../../services/aiAgentService.js'
 import {
   startAgentRun,
@@ -32,6 +31,10 @@ import {
   normalizeAgentReplyDelivery,
   ADVANCED_CLOSING_CONTEXT_FIELDS
 } from '../../services/conversationalAgentService.js'
+import {
+  normalizeConversationalAIProvider,
+  resolveConversationalAIRuntime
+} from '../../services/conversationalAIProviderService.js'
 import { tagNamesForIds } from '../../services/contactTagsService.js'
 import {
   buildClosingStrategyTemplateParameters,
@@ -468,7 +471,8 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
   ])
 
-  const model = normalizeConversationalAgentModel(conversationModel || config?.model || DEFAULT_MODEL)
+  const aiProvider = normalizeConversationalAIProvider(config?.aiProvider)
+  const model = normalizeConversationalAgentModel(conversationModel || config?.model || DEFAULT_MODEL, aiProvider)
   const nowIso = new Date().toLocaleString(getAccountRegionalLocaleTag(accountLocale), { timeZone: timezone, dateStyle: 'full', timeStyle: 'short' })
 
   let businessName = null
@@ -516,10 +520,10 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     tools
   })
 
-  return { agent, ctx, model }
+  return { agent, ctx, model, aiProvider }
 }
 
-async function executeAgent({ agent, apiKey, messages, contactId, model, traceMessage = '' }) {
+async function executeAgent({ agent, modelProvider, messages, contactId, model, aiProvider = 'openai', traceMessage = '' }) {
   let agentRun = null
   try {
     agentRun = await startAgentRun({
@@ -531,7 +535,7 @@ async function executeAgent({ agent, apiKey, messages, contactId, model, traceMe
       domain: 'conversacional',
       action: 'whatsapp_reply',
       model,
-      route: { engine: 'openai-agents-sdk', category: 'conversacional', contactId }
+      route: { engine: aiProvider === 'openai' ? 'openai-agents-sdk' : `${aiProvider}-openai-compatible`, category: 'conversacional', contactId }
     })
   } catch (error) {
     logger.warn(`[Agente conversacional] No se pudo iniciar rastro: ${error.message}`)
@@ -539,7 +543,7 @@ async function executeAgent({ agent, apiKey, messages, contactId, model, traceMe
 
   try {
     const runner = new Runner({
-      modelProvider: new OpenAIProvider({ apiKey }),
+      modelProvider,
       tracingDisabled: true
     })
     const result = await runner.run(agent, buildInputItems(messages), {
@@ -551,9 +555,9 @@ async function executeAgent({ agent, apiKey, messages, contactId, model, traceMe
     await recordAgentStep(agentRun, {
       stepType: 'final_response',
       status: 'completed',
-      output: { reply: reply.slice(0, 1600), model }
+      output: { reply: reply.slice(0, 1600), model, aiProvider }
     })
-    await completeAgentRun(agentRun, { status: 'completed', reply, model, usage: null })
+    await completeAgentRun(agentRun, { status: 'completed', reply, model, aiProvider, usage: null })
 
     return reply
   } catch (error) {
@@ -731,12 +735,6 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         WHERE contact_id = ?
       `, [latest.id, contactId])
 
-      const apiKey = await getOpenAIApiKey()
-      if (!apiKey) {
-        logger.warn('[Agente conversacional] Sin API Key de OpenAI configurada; no se puede responder')
-        return
-      }
-
       // Resolver qué agente atiende esta conversación: el ya asignado o el
       // primero cuyas reglas de entrada coincidan con el mensaje/contacto.
       const ruleContext = await buildRuleContext({
@@ -782,6 +780,10 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         return
       }
 
+      const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || config.aiProvider)
+      const runtime = await resolveConversationalAIRuntime(aiProvider)
+      agentConfig = { ...agentConfig, aiProvider }
+
       const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
       const messages = await loadConversationHistory(contactId)
       if (!messages.length) return
@@ -802,10 +804,11 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
 
       const reply = await executeAgent({
         agent,
-        apiKey,
+        modelProvider: runtime.modelProvider,
         messages: messagesForAgent,
         contactId,
         model,
+        aiProvider,
         traceMessage
       })
 
@@ -873,7 +876,18 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         return
       }
 
-      const delivery = await sendReplyParts({ contactId, phone, latest, agentConfig, reply, apiKey, model })
+      const delivery = await sendReplyParts({
+        contactId,
+        phone,
+        latest,
+        agentConfig,
+        reply,
+        apiKey: runtime.apiKey,
+        model,
+        dependencies: {
+          splitter: runtime.supportsAISplitting ? splitMessageIntoBubbles : splitMessageIntoBubblesFallback
+        }
+      })
       if (delivery.interruptedBy) {
         await recordConversationalAgentEvent({
           contactId,
@@ -905,6 +919,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
           replyPreview: reply.slice(0, 280),
           partCount: delivery.parts.length,
           pendingInboundCount: pendingMessages.length,
+          aiProvider,
           actions: ctx.actions
         }
       })
@@ -987,13 +1002,6 @@ export async function recoverPendingConversationalAgentConversations({
  * se devuelven como lista para mostrarlas en la prueba.
  */
 export async function runConversationalAgentPreview({ messages = [], configOverride = null, agentId = null }) {
-  const apiKey = await getOpenAIApiKey()
-  if (!apiKey) {
-    const error = new Error('Primero configura una API Key válida de OpenAI en la sección General del Agente AI')
-    error.statusCode = 409
-    throw error
-  }
-
   const globalConfig = await getConversationalAgentConfig()
   let baseConfig = agentId ? await getConversationalAgent(agentId) : null
   if (!baseConfig) {
@@ -1003,12 +1011,15 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     baseConfig = {
       name: 'Agente', objective: 'citas', customObjective: '', successAction: 'ready_for_human',
       successExtras: [], requiredData: '', handoffRules: '', extraInstructions: '',
-      allowEmojis: false, model: globalConfig.model, defaultCalendarId: null, closingStrategyMode: 'system', closingStrategyCustom: '',
+      allowEmojis: false, aiProvider: globalConfig.aiProvider, model: globalConfig.model, defaultCalendarId: null, closingStrategyMode: 'system', closingStrategyCustom: '',
       responseDelay: { mode: 'none', fixedValue: 10, fixedUnit: 'seconds', minValue: 1, maxValue: 10, rangeUnit: 'minutes' },
       replyDelivery: { mode: 'single', targetChars: 280, minDelaySeconds: 2, maxDelaySeconds: 6 }
     }
   }
   const config = configOverride ? { ...baseConfig, ...configOverride } : baseConfig
+  const aiProvider = normalizeConversationalAIProvider(config.aiProvider || globalConfig.aiProvider)
+  const runtime = await resolveConversationalAIRuntime(aiProvider)
+  const runtimeConfig = { ...config, aiProvider }
 
   const cleanMessages = (Array.isArray(messages) ? messages : [])
     .filter((m) => m && typeof m.content === 'string' && m.content.trim())
@@ -1022,8 +1033,8 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
   }
 
   const { agent, ctx, model } = await buildAgentForRun({
-    config,
-    conversationModel: config.model || globalConfig.model,
+    config: runtimeConfig,
+    conversationModel: runtimeConfig.model || globalConfig.model,
     contactId: null,
     contactName: null,
     dryRun: true,
@@ -1031,18 +1042,30 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     ruleContext: null
   })
 
-  const reply = await executeAgent({ agent, apiKey, messages: cleanMessages, contactId: null, model })
+  const reply = await executeAgent({
+    agent,
+    modelProvider: runtime.modelProvider,
+    messages: cleanMessages,
+    contactId: null,
+    model,
+    aiProvider
+  })
 
   const splitResult = ctx.suppressReply
     ? { messages: [] }
-    : await splitMessageIntoBubbles({
-      text: reply,
-      settings: config.replyDelivery,
-      apiKey,
-      model
-    })
+    : runtime.supportsAISplitting
+      ? await splitMessageIntoBubbles({
+        text: reply,
+        settings: runtimeConfig.replyDelivery,
+        apiKey: runtime.apiKey,
+        model
+      })
+      : splitMessageIntoBubblesFallback({
+        text: reply,
+        settings: runtimeConfig.replyDelivery
+      })
   const replyParts = splitResult.messages
-  const replyPartDelaysMs = buildReplyPartDelaySchedule(replyParts, { replyDelivery: config.replyDelivery })
+  const replyPartDelaysMs = buildReplyPartDelaySchedule(replyParts, { replyDelivery: runtimeConfig.replyDelivery })
 
   return {
     reply: ctx.suppressReply ? '' : reply,
@@ -1050,6 +1073,7 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     replyPartDelaysMs,
     suppressed: ctx.suppressReply,
     actions: ctx.actions,
+    aiProvider,
     model
   }
 }

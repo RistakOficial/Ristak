@@ -12,7 +12,10 @@ import {
   createAgent,
   updateAgent,
   deleteAgent,
-  getFilterOptions
+  getFilterOptions,
+  listAIProviders,
+  connectAIProvider,
+  deleteAIProvider
 } from '../controllers/conversationalAgentController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireOpenAIConfigured } from '../middleware/openAIConfigMiddleware.js'
@@ -26,6 +29,9 @@ router.use(requireOpenAIConfigured)
 
 router.get('/config', getConfig)
 router.post('/config', saveConfig)
+router.get('/ai-providers', listAIProviders)
+router.post('/ai-providers/:providerId', connectAIProvider)
+router.delete('/ai-providers/:providerId', deleteAIProvider)
 router.get('/agents', listAgents)
 router.get('/metrics', getMetrics)
 router.get('/filter-options', getFilterOptions)
