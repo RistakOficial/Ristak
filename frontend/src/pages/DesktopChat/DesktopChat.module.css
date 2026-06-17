@@ -76,6 +76,32 @@
   font-size: var(--font-size-xs);
 }
 
+.agentInboxButton[data-btn] {
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  min-height: 52px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+}
+
+.agentInboxButton[data-btn]:hover,
+.agentInboxButton[data-btn]:focus-visible,
+.agentInboxButtonActive[data-btn] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.agentInboxButton[data-btn] > span {
+  pointer-events: none;
+}
+
 .searchBox {
   position: relative;
   display: flex;

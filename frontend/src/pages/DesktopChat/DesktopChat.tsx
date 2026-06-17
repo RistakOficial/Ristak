@@ -52,7 +52,7 @@ import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
 import styles from './DesktopChat.module.css'
 
-type ChatFilter = 'all' | 'unread' | 'appointments' | 'customers'
+type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers'
 type AdvancedChannelFilter = 'all' | 'whatsapp' | 'messenger' | 'instagram' | 'webchat' | 'sms' | 'email'
 type AdvancedSocialFilter = 'all' | 'facebook' | 'instagram' | 'messenger' | 'whatsapp' | 'google' | 'unknown'
 type AdvancedOriginFilter = 'all' | 'meta' | 'site' | 'organic' | 'trigger' | 'unknown'
@@ -1236,21 +1236,39 @@ export const DesktopChat: React.FC = () => {
     () => new Set(agentPriorityStates.map((state) => state.contactId)),
     [agentPriorityStates]
   )
+  const agentActiveChatIdSet = useMemo(
+    () => conversationAgentEnabled
+      ? new Set(
+          Object.values(agentStates)
+            .filter((state) => state.status === 'active' && state.signal !== 'discarded')
+            .map((state) => state.contactId)
+        )
+      : new Set<string>(),
+    [agentStates, conversationAgentEnabled]
+  )
+  const agentAssignedChatCount = useMemo(
+    () => chats.filter((contact) => !archivedChatIdSet.has(contact.id) && agentActiveChatIdSet.has(contact.id)).length,
+    [agentActiveChatIdSet, archivedChatIdSet, chats]
+  )
   const listBaseChats = useMemo(
     () => chats.filter((contact) => {
+      if (chatFilter === 'agent') return !archivedChatIdSet.has(contact.id) && agentActiveChatIdSet.has(contact.id)
       if (archivedViewOpen) return archivedChatIdSet.has(contact.id)
       if (archivedChatIdSet.has(contact.id)) return false
       if (agentPriorityChatIdSet.has(contact.id)) return false
       return true
     }),
-    [agentPriorityChatIdSet, archivedChatIdSet, archivedViewOpen, chats]
+    [agentActiveChatIdSet, agentPriorityChatIdSet, archivedChatIdSet, archivedViewOpen, chatFilter, chats]
   )
-  const hasActiveChatFilters = Boolean(chatQuery.trim()) || chatFilter !== 'all' || activeAdvancedFilterCount > 0
+  const agentAssignedViewOpen = chatFilter === 'agent'
+  const hasTextOrAdvancedChatFilters = Boolean(chatQuery.trim()) || activeAdvancedFilterCount > 0
+  const hasActiveChatFilters = hasTextOrAdvancedChatFilters || chatFilter !== 'all'
   const filteredChats = useMemo(() => {
     return listBaseChats
       .filter((contact) => contactMatchesQuery(contact, chatQuery))
       .filter((contact) => contactMatchesAdvancedFilters(contact, advancedFilters))
       .filter((contact) => {
+        if (chatFilter === 'agent') return true
         if (chatFilter === 'unread') return Number(contact.unreadCount || 0) > 0
         if (chatFilter === 'appointments') return Boolean(contact.hasAppointments || contact.nextAppointmentDate)
         if (chatFilter === 'customers') return contact.status === 'customer'
@@ -1284,9 +1302,31 @@ export const DesktopChat: React.FC = () => {
     setActiveContactId(chats.find((contact) => !archivedSet.has(contact.id) && !agentSet.has(contact.id))?.id || chats[0]?.id || '')
   }, [activeContactId, chats])
   const visibleChatCount = filteredChats.length + agentPriorityChatRows.length
+  const inboxTitle = archivedViewOpen ? 'Archivados' : agentAssignedViewOpen ? 'Chats del bot' : 'Conversaciones'
   const inboxSubtitle = archivedViewOpen
     ? `${filteredChats.length} de ${archivedChatCount} archivados`
+    : agentAssignedViewOpen
+    ? `${filteredChats.length} de ${agentAssignedChatCount} asignados al bot`
     : `${visibleChatCount} de ${Math.max(0, chats.length - archivedChatCount)} visibles`
+  const emptyChatTitle = archivedViewOpen
+    ? 'No hay chats archivados'
+    : agentAssignedViewOpen
+    ? hasTextOrAdvancedChatFilters ? 'No encontré chats del bot' : 'Sin chats del bot'
+    : hasActiveChatFilters ? 'No encontré chats' : chats.length === 0 ? 'Todavía no hay conversaciones' : 'No hay chats en esta vista'
+  const emptyChatDescription = archivedViewOpen
+    ? 'Cuando archives una conversación, aparecerá en esta sección.'
+    : agentAssignedViewOpen
+    ? hasTextOrAdvancedChatFilters
+      ? 'Prueba con menos filtros o busca otro contacto atendido por el bot.'
+      : conversationAgentEnabled
+      ? 'Cuando el bot esté atendiendo una conversación activa, aparecerá aquí.'
+      : 'Cuando enciendas el agente conversacional y tome chats, aparecerán aquí.'
+    : hasActiveChatFilters
+    ? 'Prueba con menos filtros o busca otro contacto.'
+    : chats.length === 0
+    ? 'Cuando lleguen mensajes, aparecerán aquí con su canal, estado y último movimiento.'
+    : 'Cuando llegue un mensaje nuevo, aparecerá aquí.'
+  const resetChatFiltersLabel = agentAssignedViewOpen && !hasTextOrAdvancedChatFilters ? 'Volver a conversaciones' : 'Limpiar filtros'
   const messageGroups = useMemo(() => {
     const groups: Array<{ key: string; label: string; messages: DesktopChatMessage[] }> = []
     messages.forEach((message) => {
@@ -1944,6 +1984,11 @@ export const DesktopChat: React.FC = () => {
     setActiveContactId(contact.id)
     acknowledgeAgentPriorityOnOpen(contact.id)
   }, [acknowledgeAgentPriorityOnOpen])
+
+  const handleToggleAgentAssignedView = useCallback(() => {
+    setArchivedViewOpen(false)
+    setChatFilter((current) => (current === 'agent' ? 'all' : 'agent'))
+  }, [])
 
   const handleArchiveChat = useCallback((contact: DesktopChatContact | Contact) => {
     const alreadyArchived = archivedChatIdSet.has(contact.id)
@@ -2628,9 +2673,21 @@ export const DesktopChat: React.FC = () => {
         <aside className={styles.inboxPanel} aria-label="Lista de chats">
           <div className={styles.inboxHeader}>
             <div>
-              <h2>{archivedViewOpen ? 'Archivados' : 'Conversaciones'}</h2>
+              <h2>{inboxTitle}</h2>
               <p>{inboxSubtitle}</p>
             </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={`${styles.agentInboxButton} ${agentAssignedViewOpen ? styles.agentInboxButtonActive : ''}`}
+              onClick={handleToggleAgentAssignedView}
+              aria-label={agentAssignedViewOpen ? 'Cerrar vista de conversaciones asignadas al bot' : 'Ver conversaciones asignadas al bot'}
+              aria-pressed={agentAssignedViewOpen}
+              title={agentAssignedViewOpen ? 'Cerrar chats del bot' : 'Conversaciones asignadas al bot'}
+            >
+              <AgentRobot size={42} active={conversationAgentEnabled} label="Agente conversacional" />
+            </Button>
           </div>
 
           <label className={styles.searchBox}>
@@ -2722,9 +2779,9 @@ export const DesktopChat: React.FC = () => {
             ) : filteredChats.length === 0 && agentPriorityChatRows.length === 0 && !archivedViewOpen && archivedChatCount === 0 ? (
               <div className={styles.emptyChatList}>
                 <MessageCircle size={22} />
-                <strong>{archivedViewOpen ? 'No hay chats archivados' : hasActiveChatFilters ? 'No encontré chats' : 'Todavía no hay conversaciones'}</strong>
-                <span>{archivedViewOpen ? 'Cuando archives una conversación, aparecerá en esta sección.' : hasActiveChatFilters ? 'Prueba con menos filtros o busca otro contacto.' : 'Cuando lleguen mensajes, aparecerán aquí con su canal, estado y último movimiento.'}</span>
-                {hasActiveChatFilters ? <button type="button" onClick={resetChatFilters}>Limpiar filtros</button> : null}
+                <strong>{emptyChatTitle}</strong>
+                <span>{emptyChatDescription}</span>
+                {hasActiveChatFilters ? <button type="button" onClick={resetChatFilters}>{resetChatFiltersLabel}</button> : null}
               </div>
             ) : (
               <>
@@ -2779,7 +2836,7 @@ export const DesktopChat: React.FC = () => {
                     <strong>Volver a conversaciones</strong>
                     <span>{archivedChatCount}</span>
                   </button>
-                ) : (
+                ) : agentAssignedViewOpen ? null : (
                   (chats.length > 0 || archivedChatCount > 0) ? (
                     <button
                       type="button"
@@ -2848,9 +2905,9 @@ export const DesktopChat: React.FC = () => {
                 {filteredChats.length === 0 && agentPriorityChatRows.length === 0 ? (
                   <div className={styles.emptyChatList}>
                     <MessageCircle size={22} />
-                    <strong>{archivedViewOpen ? 'No hay chats archivados' : hasActiveChatFilters ? 'No encontré chats' : 'No hay chats en esta vista'}</strong>
-                    <span>{archivedViewOpen ? 'Cuando archives una conversación, aparecerá en esta sección.' : hasActiveChatFilters ? 'Prueba con menos filtros o busca otro contacto.' : 'Cuando llegue un mensaje nuevo, aparecerá aquí.'}</span>
-                    {hasActiveChatFilters ? <button type="button" onClick={resetChatFilters}>Limpiar filtros</button> : null}
+                    <strong>{emptyChatTitle}</strong>
+                    <span>{emptyChatDescription}</span>
+                    {hasActiveChatFilters ? <button type="button" onClick={resetChatFilters}>{resetChatFiltersLabel}</button> : null}
                   </div>
                 ) : null}
               </>
