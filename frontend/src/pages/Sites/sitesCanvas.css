@@ -33,6 +33,28 @@
   --color-background-secondary: var(--rstk-input-bg);
   --color-border: var(--rstk-input-border);
   --color-surface: var(--rstk-surface2);
+  /* AISLAMIENTO TOTAL: el lienzo NO debe heredar el tema del CRM (claro/oscuro/
+     familia). Neutralizamos aquí el resto de tokens del CRM y los tokens nuevos
+     del sistema global apuntándolos al diseño propio del sitio (--rstk-*), con
+     fallbacks claros. Así el preview se edita como un canvas en blanco. */
+  --color-text-tertiary: var(--rstk-muted);
+  --color-text-muted: var(--rstk-muted);
+  --color-background-primary: var(--rstk-page-bg, #ffffff);
+  --color-bg-primary: var(--rstk-page-bg, #ffffff);
+  --color-background-tertiary: var(--rstk-surface2, #f1f5f9);
+  --bg: var(--rstk-page-bg, #ffffff);
+  --bg-soft: var(--rstk-input-bg, #ffffff);
+  --surface: var(--rstk-surface, #ffffff);
+  --surface-2: var(--rstk-surface2, #f1f5f9);
+  --surface-hover: var(--rstk-surface2, #eef2f7);
+  --text: var(--rstk-ink);
+  --text-dim: var(--rstk-muted);
+  --text-mute: var(--rstk-muted);
+  --border: var(--rstk-input-border);
+  --border-strong: var(--rstk-input-border);
+  --accent: var(--rstk-accent);
+  --accent-2: var(--rstk-accent-strong, var(--rstk-accent));
+  --accent-soft: var(--rstk-ring, transparent);
   --native-control-bg: var(--rstk-form-field-bg, var(--rstk-input-bg));
   --native-control-bg-hover: color-mix(in srgb, var(--rstk-form-field-bg, var(--rstk-input-bg)) 88%, var(--rstk-accent) 12%);
   --native-control-border: var(--rstk-form-field-border, var(--rstk-input-border));

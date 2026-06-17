@@ -3194,28 +3194,8 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --chat-soft: var(--surface-2);
     --chat-soft-strong: var(--surface-hover);
 
-    /* Editor de sitios (--rstk-* / --sites-editor-* / --site-* / --block-*) */
-    --rstk-muted: var(--text-mute);
-    --rstk-ink: var(--text);
-    --rstk-border: var(--border);
-    --rstk-surface: var(--surface);
-    --rstk-surface2: var(--surface-2);
-    --rstk-page-bg: var(--bg);
-    --rstk-on-accent: var(--on-accent);
-    --rstk-input-bg: var(--bg-soft);
-    --rstk-input-border: var(--border);
-    --rstk-input-ink: var(--text);
-    --rstk-form-field-bg: var(--bg-soft);
-    --rstk-form-field-text: var(--text);
-    --rstk-form-field-border: var(--border);
-    --rstk-block-text: var(--text);
-    --rstk-block-bg: var(--surface);
-    --rstk-block-border: var(--border);
-    --rstk-assistant-text: var(--text-dim);
-    --rstk-card-bg: var(--surface);
-    --rstk-field-bg: var(--bg-soft);
-    --rstk-cyan: var(--info);
-    --rstk-gradient: linear-gradient(135deg, var(--accent), var(--accent-2));
+    /* Chrome del EDITOR de sitios (toolbars/paneles del CRM alrededor del
+       lienzo): sí deben seguir el tema del CRM. */
     --sites-editor-border: var(--border);
     --sites-editor-border-strong: var(--border-strong);
     --sites-editor-control-bg: var(--bg-soft);
@@ -3223,17 +3203,11 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --sites-editor-hover-bg: var(--surface-hover);
     --sites-editor-focus: var(--accent);
     --sites-editor-card-bg: var(--surface);
-    --site-text: var(--text);
-    --site-background: var(--bg);
-    --site-surface: var(--surface);
-    --site-on-accent: var(--on-accent);
-    --site-frame: var(--border);
-    --site-muted: var(--text-mute);
-    --site-border: var(--border);
-    --block-text: var(--text);
-    --block-bg: var(--surface);
-    --block-field-border: var(--border);
-    --block-field-bg: var(--bg-soft);
+    /* ⚠️ NO mapear --rstk-* / --site-* / --block-* aquí: son tokens del LIENZO
+       (la página que el usuario diseña). El lienzo (.rstkCanvas) debe quedar
+       AISLADO del tema del CRM — se tematiza solo vía sitesCanvasTheme.ts y usa
+       sus propios fallbacks claros. Definirlos aquí los "secuestraba" y hacía que
+       el preview heredara el modo oscuro del CRM. */
 
     /* Esqueletos de carga (--skeleton-* / --app-skeleton-*) */
     --skeleton-card: var(--surface-2);
