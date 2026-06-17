@@ -3578,6 +3578,18 @@ function normalizePhoneSet(values = []) {
   )
 }
 
+function normalizePhoneComparable(value) {
+  return normalizePhoneForStorage(value) || cleanString(value)
+}
+
+function phoneMatches(left, right) {
+  const leftPhone = normalizePhoneComparable(left)
+  const rightPhone = normalizePhoneComparable(right)
+  if (!leftPhone || !rightPhone) return false
+  const rightCandidates = new Set(buildPhoneMatchCandidates(rightPhone))
+  return buildPhoneMatchCandidates(leftPhone).some(candidate => rightCandidates.has(candidate))
+}
+
 function inferMessageDirection({ payload = {}, direction = '', message = {}, businessPhoneHints = [] }) {
   const type = cleanString(payload.type)
   const explicitDirection = normalizeDirectionValue(
@@ -4532,6 +4544,128 @@ function directionFromCandidatePath(path = [], payload = {}) {
   return ''
 }
 
+function isHistoryPayload(payload = {}) {
+  return HISTORY_MESSAGE_EVENT_TYPES.has(cleanString(payload?.type)) ||
+    cleanString(payload?.event).toLowerCase() === 'history'
+}
+
+function pickFirstPhone(values = []) {
+  for (const value of values) {
+    const phone = normalizePhoneComparable(value)
+    if (phone) return phone
+  }
+  return ''
+}
+
+function getHistoryBusinessPhoneFromObject(value = {}) {
+  if (!isPlainObject(value)) return ''
+  const metadata = isPlainObject(value.metadata) ? value.metadata : {}
+  const valueMetadata = isPlainObject(value.value?.metadata) ? value.value.metadata : {}
+  const dataMetadata = isPlainObject(value.data?.metadata) ? value.data.metadata : {}
+
+  return pickFirstPhone([
+    metadata.display_phone_number,
+    metadata.displayPhoneNumber,
+    metadata.business_phone_number,
+    metadata.businessPhoneNumber,
+    valueMetadata.display_phone_number,
+    valueMetadata.displayPhoneNumber,
+    dataMetadata.display_phone_number,
+    dataMetadata.displayPhoneNumber,
+    value.businessPhone,
+    value.business_phone,
+    value.businessPhoneNumber,
+    value.business_phone_number,
+    value.senderPhoneNumber,
+    value.sender_phone_number
+  ])
+}
+
+function getHistoryCustomerPhoneFromObject(value = {}) {
+  if (!isPlainObject(value)) return ''
+  if (Array.isArray(value.messages) || Array.isArray(value.whatsappMessages)) {
+    return pickFirstPhone([
+      value.customerPhone,
+      value.customer_phone,
+      value.customer,
+      value.phone,
+      value.waId,
+      value.wa_id,
+      value.id
+    ])
+  }
+
+  return pickFirstPhone([
+    value.customerPhone,
+    value.customer_phone,
+    value.customer,
+    value.contactPhone,
+    value.contact_phone
+  ])
+}
+
+function mergeHistoryContext(context = {}, value = {}) {
+  const businessPhone = getHistoryBusinessPhoneFromObject(value)
+  const customerPhone = getHistoryCustomerPhoneFromObject(value)
+
+  return {
+    businessPhone: businessPhone || context.businessPhone || '',
+    customerPhone: customerPhone || context.customerPhone || ''
+  }
+}
+
+function withHistoryMessageContext(message = {}, context = {}, payload = {}) {
+  if (!isHistoryPayload(payload) || !isPlainObject(message)) return message
+
+  const businessPhone = normalizePhoneComparable(
+    message.businessPhone ||
+    message.business_phone ||
+    message.businessPhoneNumber ||
+    message.business_phone_number ||
+    context.businessPhone
+  )
+  const customerPhone = normalizePhoneComparable(
+    message.customerPhone ||
+    message.customer_phone ||
+    message.customer ||
+    message.phone ||
+    context.customerPhone
+  )
+
+  if (!businessPhone && !customerPhone) return message
+
+  const next = { ...message }
+  if (businessPhone && !pickFirstPhone([next.businessPhone, next.business_phone, next.businessPhoneNumber, next.business_phone_number])) {
+    next.businessPhone = businessPhone
+  }
+  if (customerPhone && !pickFirstPhone([next.customerPhone, next.customer_phone, next.customer, next.phone])) {
+    next.customerPhone = customerPhone
+  }
+
+  const fromPhone = normalizePhoneComparable(next.from || next.fromPhone || next.from_phone || next.sender || next.senderPhone)
+  const toPhone = normalizePhoneComparable(next.to || next.toPhone || next.to_phone || next.recipient || next.recipientPhone)
+  const hasExplicitDirection = normalizeDirectionValue(next.direction || next.messageDirection || next.message_direction)
+
+  if (businessPhone && customerPhone) {
+    const fromIsBusiness = phoneMatches(fromPhone, businessPhone)
+    const fromIsCustomer = phoneMatches(fromPhone, customerPhone)
+    const toIsBusiness = phoneMatches(toPhone, businessPhone)
+    const toIsCustomer = phoneMatches(toPhone, customerPhone)
+
+    if (fromIsBusiness || toIsCustomer) {
+      if (!hasExplicitDirection) next.direction = 'outbound'
+      if (!toPhone) next.to = customerPhone
+      if (!fromPhone) next.from = businessPhone
+    } else if (fromIsCustomer || toIsBusiness) {
+      if (!hasExplicitDirection) next.direction = 'inbound'
+      if (!fromPhone) next.from = customerPhone
+      if (!toPhone) next.to = businessPhone
+    }
+  }
+
+  return next
+}
+
 function looksLikeWhatsAppMessage(value = {}) {
   if (!isPlainObject(value)) return false
 
@@ -4543,7 +4677,9 @@ function looksLikeWhatsAppMessage(value = {}) {
     value.toPhone ||
     value.sender ||
     value.recipient ||
-    value.customer
+    value.customer ||
+    value.customerPhone ||
+    value.customer_phone
   ))
   const hasContent = Boolean(
     value.text ||
@@ -4593,24 +4729,29 @@ function candidateKey(candidate = {}) {
   ].join('|')
 }
 
-function collectWhatsAppMessageCandidates(value, { payload, path = [], candidates = [], seen = new WeakSet() } = {}) {
+function collectWhatsAppMessageCandidates(value, { payload, path = [], candidates = [], seen = new WeakSet(), historyContext = {} } = {}) {
   if (!value || typeof value !== 'object') return candidates
   if (seen.has(value)) return candidates
   seen.add(value)
+
+  const nextHistoryContext = isHistoryPayload(payload)
+    ? mergeHistoryContext(historyContext, value)
+    : historyContext
 
   if (Array.isArray(value)) {
     value.forEach((item, index) => collectWhatsAppMessageCandidates(item, {
       payload,
       path: [...path, String(index)],
       candidates,
-      seen
+      seen,
+      historyContext: nextHistoryContext
     }))
     return candidates
   }
 
   if (looksLikeWhatsAppMessage(value) && !isMetadataPath(path)) {
     candidates.push({
-      message: value,
+      message: withHistoryMessageContext(value, nextHistoryContext, payload),
       direction: directionFromCandidatePath(path, payload),
       path: path.join('.')
     })
@@ -4622,7 +4763,8 @@ function collectWhatsAppMessageCandidates(value, { payload, path = [], candidate
       payload,
       path: [...path, key],
       candidates,
-      seen
+      seen,
+      historyContext: nextHistoryContext
     })
   }
 
@@ -4672,6 +4814,11 @@ async function getKnownBusinessPhoneHints(config = {}) {
 }
 
 async function processWhatsAppMessageEventPayload({ payload = {}, businessPhoneHints = [] } = {}) {
+  const payloadBusinessPhone = getHistoryBusinessPhoneFromObject(payload)
+  const effectiveBusinessPhoneHints = [
+    ...businessPhoneHints,
+    payloadBusinessPhone
+  ].filter(Boolean)
   const candidates = extractWhatsAppMessageCandidates(payload)
   const results = []
 
@@ -4680,7 +4827,7 @@ async function processWhatsAppMessageEventPayload({ payload = {}, businessPhoneH
       payload,
       message: candidate.message,
       direction: candidate.direction,
-      businessPhoneHints
+      businessPhoneHints: effectiveBusinessPhoneHints
     }))
   }
 
