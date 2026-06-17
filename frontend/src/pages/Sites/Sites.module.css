@@ -4243,6 +4243,11 @@
   gap: 8px;
 }
 
+.customFieldCreateAction {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .customFieldHint {
   margin: 0;
   color: var(--color-text-tertiary);
@@ -15884,6 +15889,32 @@
   margin: 0;
   border-bottom: 0;
   padding-bottom: 0;
+}
+
+@media (min-width: 1361px) {
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm {
+    grid-template-columns: minmax(260px, 288px) minmax(0, 1fr) minmax(440px, 520px) !important;
+  }
+
+  .builderGridFormMode,
+  .containerFocused .builderGridFormMode,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
+    grid-template-columns: minmax(286px, 324px) minmax(320px, 1fr) minmax(500px, 560px) !important;
+  }
+}
+
+@media (min-width: 1181px) and (max-width: 1360px) {
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm {
+    grid-template-columns: minmax(224px, 260px) minmax(0, 1fr) minmax(390px, 450px) !important;
+  }
+
+  .builderGridFormMode,
+  .containerFocused .builderGridFormMode,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
+    grid-template-columns: minmax(248px, 286px) minmax(280px, 1fr) minmax(420px, 480px) !important;
+  }
 }
 
 .formFieldList {

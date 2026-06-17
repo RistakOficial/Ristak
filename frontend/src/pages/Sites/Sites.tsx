@@ -145,10 +145,15 @@ import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import {
   customFieldsService,
   isSystemCustomFieldDefinition,
-  type CustomFieldDefinition
+  type CustomFieldDataType,
+  type CustomFieldDefinition,
+  type CustomFieldFolder,
+  type CustomFieldOption,
+  type SaveCustomFieldInput
 } from '@/services/customFieldsService'
 import { COUNTRY_OPTIONS, getCountryDefaults, getCountryFlagEmoji, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import styles from './Sites.module.css'
+import customFieldModalStyles from '../Settings/CustomFields.module.css'
 import './sitesCanvas.css'
 import { buildCanvasTheme } from './sitesCanvasTheme'
 
@@ -3727,6 +3732,7 @@ function FormEmbedEditorPanel({
   activeField,
   activeElement,
   customFields,
+  customFieldFolders,
   pages,
   activePageId,
   sitePages,
@@ -3737,6 +3743,7 @@ function FormEmbedEditorPanel({
   onPatchField,
   onPatchFieldSettings,
   onDeleteField,
+  onCustomFieldCreated,
   onSave,
   onSaveSite,
   onActivePageChange,
@@ -3751,6 +3758,7 @@ function FormEmbedEditorPanel({
   activeField: SiteBlock | null
   activeElement: EmbeddedFormActiveElement
   customFields: CustomFieldDefinition[]
+  customFieldFolders: CustomFieldFolder[]
   pages: SitePage[]
   activePageId: string
   sitePages: SitePage[]
@@ -3761,6 +3769,7 @@ function FormEmbedEditorPanel({
   onPatchField: (fieldId: string, patch: Partial<SiteBlock>) => void
   onPatchFieldSettings: (field: SiteBlock, patch: Record<string, unknown>) => void
   onDeleteField: (fieldId: string) => void
+  onCustomFieldCreated: (field: CustomFieldDefinition) => void
   onSave: () => void
   onSaveSite: () => void
   onActivePageChange: (pageId: string) => void
@@ -4029,7 +4038,9 @@ function FormEmbedEditorPanel({
           <CustomFieldBindingControl
             block={activeField}
             customFields={customFields}
+            customFieldFolders={customFieldFolders}
             onPatchSettings={patchActiveFieldSettings}
+            onCustomFieldCreated={onCustomFieldCreated}
             onSave={onSave}
           />
 
@@ -4218,6 +4229,7 @@ export const Sites: React.FC = () => {
   const [domainInput, setDomainInput] = useState('')
   const [calendars, setCalendars] = useState<CalendarType[]>([])
   const [customFields, setCustomFields] = useState<CustomFieldDefinition[]>([])
+  const [customFieldFolders, setCustomFieldFolders] = useState<CustomFieldFolder[]>([])
   const [metaPixelConnected, setMetaPixelConnected] = useState(false)
   const [connectedSocialProfiles, setConnectedSocialProfiles] = useState<ConnectedSocialProfile[]>([])
   const [loadingSocialProfiles, setLoadingSocialProfiles] = useState(false)
@@ -5085,11 +5097,23 @@ export const Sites: React.FC = () => {
   const loadCustomFieldsForBuilder = async () => {
     try {
       const catalog = await customFieldsService.listCatalog()
+      setCustomFieldFolders(catalog.folders || [])
       setCustomFields((catalog.fields || []).filter(field => !isSystemCustomFieldDefinition(field)))
     } catch {
+      setCustomFieldFolders([])
       setCustomFields([])
     }
   }
+
+  const handleCustomFieldCreated = useCallback((field: CustomFieldDefinition) => {
+    setCustomFields(current => {
+      const withoutDuplicate = current.filter(item => item.definitionId !== field.definitionId)
+      return [...withoutDuplicate, field].sort((a, b) => (
+        String(a.folderName || '').localeCompare(String(b.folderName || '')) ||
+        String(a.label || '').localeCompare(String(b.label || ''))
+      ))
+    })
+  }, [])
 
   const loadLeads = async () => {
     if (!sites.length) {
@@ -8176,6 +8200,7 @@ export const Sites: React.FC = () => {
                     activeField={activeEmbeddedFormField}
                     activeElement={activeEmbeddedFormSubmitSelected ? 'submit' : 'field'}
                     customFields={customFields}
+                    customFieldFolders={customFieldFolders}
                     pages={formEditPages}
                     activePageId={activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID}
                     sitePages={pages}
@@ -8186,6 +8211,7 @@ export const Sites: React.FC = () => {
                     onPatchField={patchEmbeddedFormField}
                     onPatchFieldSettings={patchEmbeddedFormFieldSettings}
                     onDeleteField={removeEmbeddedFormField}
+                    onCustomFieldCreated={handleCustomFieldCreated}
                     onSave={() => handleSaveBlock()}
                     onSaveSite={() => handleSaveSite()}
                     onActivePageChange={selectEmbeddedFormPage}
@@ -8204,6 +8230,7 @@ export const Sites: React.FC = () => {
                     forms={forms}
                     calendars={calendars}
                     customFields={customFields}
+                    customFieldFolders={customFieldFolders}
                     pages={pages}
                     activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                     metaPixelConnected={metaPixelConnected}
@@ -8217,6 +8244,7 @@ export const Sites: React.FC = () => {
                     onPatchSettings={(patch) => patchSelectedBlockSettings(patch)}
                     onPatchCategorySettings={(block, patch) => patchBlockCategorySettingsLocal(block, patch)}
                     onSaveCategory={(block) => handleSaveBlockCategory(block)}
+                    onCustomFieldCreated={handleCustomFieldCreated}
                     onSave={() => handleSaveBlock()}
                   />
                 )}
@@ -22384,6 +22412,7 @@ interface PropertiesPanelProps {
   forms: PublicSite[]
   calendars: CalendarType[]
   customFields: CustomFieldDefinition[]
+  customFieldFolders: CustomFieldFolder[]
   pages: SitePage[]
   activePageId: string
   metaPixelConnected: boolean
@@ -22397,6 +22426,7 @@ interface PropertiesPanelProps {
   onPatchSettings: (patch: Record<string, unknown>) => void
   onPatchCategorySettings: (block: SiteBlock, patch: Record<string, unknown>) => void
   onSaveCategory: (block: SiteBlock) => void
+  onCustomFieldCreated: (field: CustomFieldDefinition) => void
   onSave: () => void
 }
 
@@ -23322,6 +23352,120 @@ const customFieldTypeCompatibility: Partial<Record<SiteBlockType, string[]>> = {
   date: ['date']
 }
 
+type CustomFieldQuickDraft = {
+  label: string
+  fieldKey: string
+  dataType: CustomFieldDataType
+  folderId: string
+  optionsText: string
+}
+
+const customFieldEditorTypes: Array<{ value: CustomFieldDataType; label: string; detail: string }> = [
+  { value: 'text', label: 'Texto corto', detail: 'Una línea de texto.' },
+  { value: 'textarea', label: 'Párrafo', detail: 'Texto largo o notas.' },
+  { value: 'radio', label: 'Radio buttons', detail: 'Una opción visible.' },
+  { value: 'dropdown', label: 'Dropdown', detail: 'Una opción en lista.' },
+  { value: 'checkboxes', label: 'Checkboxes', detail: 'Varias opciones.' },
+  { value: 'number', label: 'Número', detail: 'Solo cantidad numérica.' },
+  { value: 'currency', label: 'Moneda', detail: 'Importe de dinero.' },
+  { value: 'date', label: 'Fecha', detail: 'Día o fecha.' },
+  { value: 'email', label: 'Email', detail: 'Correo electrónico.' },
+  { value: 'phone', label: 'Teléfono', detail: 'Número de contacto.' }
+]
+
+const customFieldChoiceTypes = new Set<CustomFieldDataType>(['radio', 'dropdown', 'checkboxes', 'select', 'multiselect'])
+
+const normalizeCustomFieldKey = (value: string) => {
+  const normalized = value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+
+  return normalized || 'campo_personalizado'
+}
+
+const customFieldOptionsFromText = (value: string): CustomFieldOption[] => (
+  value
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => ({ label: line, value: normalizeCustomFieldKey(line) }))
+)
+
+const customFieldTokenPreview = (fieldKey: string) => `{{custom.${fieldKey || 'campo_personalizado'}}}`
+
+const getCustomFieldFolderName = (folders: CustomFieldFolder[], folderId: string) => (
+  folders.find(folder => folder.id === folderId)?.name || 'Sin carpeta'
+)
+
+const customFieldDataTypeForBlock = (blockType: SiteBlockType): CustomFieldDataType => {
+  if (blockType === 'paragraph') return 'textarea'
+  if (blockType === 'radio') return 'radio'
+  if (blockType === 'dropdown') return 'dropdown'
+  if (blockType === 'checkboxes') return 'checkboxes'
+  if (blockType === 'number') return 'number'
+  if (blockType === 'currency') return 'currency'
+  if (blockType === 'date') return 'date'
+  if (blockType === 'email') return 'email'
+  if (blockType === 'phone') return 'phone'
+  return 'text'
+}
+
+const makeCustomFieldDraftForBlock = (block: SiteBlock): CustomFieldQuickDraft => {
+  const label = block.label || 'Campo personalizado'
+  const dataType = customFieldDataTypeForBlock(block.blockType)
+  const optionsText = isChoiceBlock(block.blockType)
+    ? getOptions(block).map(option => option.label || option.value).filter(Boolean).join('\n')
+    : ''
+
+  return {
+    label,
+    fieldKey: normalizeCustomFieldKey(label),
+    dataType,
+    folderId: '',
+    optionsText
+  }
+}
+
+const buildCustomFieldPayload = (
+  draft: CustomFieldQuickDraft,
+  folders: CustomFieldFolder[],
+  notify: (title: string, message: string) => void
+): SaveCustomFieldInput | null => {
+  const label = draft.label.trim()
+  const fieldKey = normalizeCustomFieldKey(draft.fieldKey || label)
+  const options = customFieldChoiceTypes.has(draft.dataType)
+    ? customFieldOptionsFromText(draft.optionsText)
+    : []
+
+  if (!label) {
+    notify('Falta nombre', 'Ponle un nombre al campo.')
+    return null
+  }
+
+  if (!fieldKey) {
+    notify('Falta parámetro', 'El parámetro sirve para guardar y usar el dato del contacto.')
+    return null
+  }
+
+  if (customFieldChoiceTypes.has(draft.dataType) && options.length === 0) {
+    notify('Faltan opciones', 'Agrega al menos una opción para este tipo de campo.')
+    return null
+  }
+
+  return {
+    label,
+    fieldKey,
+    dataType: draft.dataType,
+    folderId: draft.folderId || undefined,
+    fieldGroup: draft.folderId ? getCustomFieldFolderName(folders, draft.folderId) : 'general',
+    options,
+    syncTarget: 'local'
+  }
+}
+
 const normalizeCustomFieldDataType = (value = '') => {
   if (value === 'select') return 'dropdown'
   if (value === 'multiselect') return 'checkboxes'
@@ -23353,11 +23497,70 @@ const isCustomFieldCompatibleWithBlock = (blockType: SiteBlockType, field: Custo
 const CustomFieldBindingControl: React.FC<{
   block: SiteBlock
   customFields: CustomFieldDefinition[]
+  customFieldFolders: CustomFieldFolder[]
   onPatchSettings: (patch: Record<string, unknown>) => void
+  onCustomFieldCreated: (field: CustomFieldDefinition) => void
   onSave: () => void
-}> = ({ block, customFields, onPatchSettings, onSave }) => {
+}> = ({ block, customFields, customFieldFolders, onPatchSettings, onCustomFieldCreated, onSave }) => {
+  const { showToast } = useNotification()
   const settings = block.settings || {}
+  const [creatorOpen, setCreatorOpen] = useState(false)
+  const [creatorSaving, setCreatorSaving] = useState(false)
+  const [creatorDraft, setCreatorDraft] = useState<CustomFieldQuickDraft>(() => makeCustomFieldDraftForBlock(block))
   const systemPreset = getSystemFormFieldPresetForBlock(block)
+
+  useEffect(() => {
+    if (!creatorOpen) setCreatorDraft(makeCustomFieldDraftForBlock(block))
+  }, [block, creatorOpen])
+
+  const openCreator = () => {
+    setCreatorDraft(makeCustomFieldDraftForBlock(block))
+    setCreatorOpen(true)
+  }
+
+  const closeCreator = () => {
+    if (creatorSaving) return
+    setCreatorOpen(false)
+  }
+
+  const patchCreatorDraft = (patch: Partial<CustomFieldQuickDraft>) => {
+    setCreatorDraft(current => ({ ...current, ...patch }))
+  }
+
+  const handleCreatorLabelChange = (value: string) => {
+    setCreatorDraft(current => ({
+      ...current,
+      label: value,
+      fieldKey: normalizeCustomFieldKey(value)
+    }))
+  }
+
+  const handleCreateField = async () => {
+    const payload = buildCustomFieldPayload(creatorDraft, customFieldFolders, (title, message) => {
+      showToast('warning', title, message)
+    })
+    if (!payload) return
+
+    setCreatorSaving(true)
+    try {
+      const field = await customFieldsService.createField(payload)
+      onCustomFieldCreated(field)
+      onPatchSettings({
+        customFieldDefinitionId: field.definitionId,
+        customFieldKey: field.fieldKey || field.key,
+        customFieldLabel: field.label,
+        customFieldDataType: field.dataType
+      })
+      setCreatorOpen(false)
+      showToast('success', 'Campo creado', 'Ya quedó ligado a esta pregunta.')
+      window.setTimeout(onSave, 0)
+    } catch (error) {
+      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Intenta otra vez')
+    } finally {
+      setCreatorSaving(false)
+    }
+  }
+
   if (systemPreset) {
     return (
       <div className={styles.customFieldBinding}>
@@ -23434,14 +23637,94 @@ const CustomFieldBindingControl: React.FC<{
           ))}
         </CustomSelect>
       </label>
+      <div className={styles.customFieldCreateAction}>
+        <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={openCreator}>
+          Crear campo personalizado
+        </Button>
+      </div>
       {selectedField ? (
         <p className={styles.customFieldHint}>
           Se guardara como <code>{selectedField.fieldKey || selectedField.key}</code> ({customFieldTypeLabel(selectedField.dataType)}).
         </p>
       ) : (
         <p className={styles.customFieldHint}>
-          Crea campos compatibles en Configuración para guardar este dato dentro del contacto.
+          {compatibleFields.length
+            ? 'Selecciona un campo compatible para guardar este dato dentro del contacto.'
+            : 'No hay campos compatibles todavía. Crea un campo personalizado para guardar este dato.'}
         </p>
+      )}
+      {creatorOpen && (
+        <div className={customFieldModalStyles.editorOverlay} role="dialog" aria-modal="true" aria-labelledby="sites-custom-field-editor-title">
+          <section className={customFieldModalStyles.editorPanel}>
+            <div className={customFieldModalStyles.editorHeader}>
+              <div>
+                <p className={customFieldModalStyles.eyebrow}>Nuevo campo</p>
+                <h3 id="sites-custom-field-editor-title">Crear campo personalizado</h3>
+              </div>
+              <button type="button" className={customFieldModalStyles.iconButton} onClick={closeCreator} aria-label="Cerrar editor">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className={customFieldModalStyles.editorBody}>
+              <label className={customFieldModalStyles.field}>
+                <span>Nombre visible</span>
+                <input value={creatorDraft.label} placeholder="Ej. Presupuesto mensual" onChange={(event) => handleCreatorLabelChange(event.target.value)} />
+                <small className={customFieldModalStyles.parameterPreview}>Parámetro: <code>{customFieldTokenPreview(creatorDraft.fieldKey || normalizeCustomFieldKey(creatorDraft.label))}</code></small>
+              </label>
+
+              <label className={customFieldModalStyles.field}>
+                <span>Tipo</span>
+                <CustomSelect
+                  portal
+                  value={creatorDraft.dataType}
+                  onChange={(event) => patchCreatorDraft({ dataType: event.target.value as CustomFieldDataType })}
+                >
+                  {customFieldEditorTypes.map(type => (
+                    <option key={type.value} value={type.value}>{type.label}</option>
+                  ))}
+                </CustomSelect>
+              </label>
+
+              <div className={customFieldModalStyles.typeHint}>
+                <ChevronRight size={15} />
+                <span>{customFieldEditorTypes.find(type => type.value === creatorDraft.dataType)?.detail}</span>
+              </div>
+
+              <label className={customFieldModalStyles.field}>
+                <span>Carpeta</span>
+                <CustomSelect portal value={creatorDraft.folderId} onChange={(event) => patchCreatorDraft({ folderId: event.target.value })}>
+                  <option value="">Sin carpeta</option>
+                  {customFieldFolders.map(folder => (
+                    <option key={folder.id} value={folder.id}>{folder.name}</option>
+                  ))}
+                </CustomSelect>
+              </label>
+
+              {customFieldChoiceTypes.has(creatorDraft.dataType) && (
+                <label className={customFieldModalStyles.field}>
+                  <span>Opciones</span>
+                  <textarea
+                    rows={5}
+                    value={creatorDraft.optionsText}
+                    placeholder={'Opción 1\nOpción 2\nOpción 3'}
+                    onChange={(event) => patchCreatorDraft({ optionsText: event.target.value })}
+                  />
+                  <small>Una opción por línea.</small>
+                </label>
+              )}
+            </div>
+
+            <div className={customFieldModalStyles.editorActions}>
+              <Button type="button" variant="ghost" onClick={closeCreator}>
+                Cancelar
+              </Button>
+              <Button type="button" onClick={() => void handleCreateField()} loading={creatorSaving} leftIcon={<Save size={16} />}>
+                Guardar campo
+              </Button>
+            </div>
+          </section>
+        </div>
       )}
     </div>
   )
@@ -23457,6 +23740,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   forms,
   calendars,
   customFields,
+  customFieldFolders,
   pages,
   activePageId,
   metaPixelConnected,
@@ -23470,6 +23754,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onPatchSettings,
   onPatchCategorySettings,
   onSaveCategory,
+  onCustomFieldCreated,
   onSave
 }) => {
   if (surfaceSelectionId === POPUP_SELECTED_ID) {
@@ -23696,7 +23981,9 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           <CustomFieldBindingControl
             block={block}
             customFields={customFields}
+            customFieldFolders={customFieldFolders}
             onPatchSettings={onPatchSettings}
+            onCustomFieldCreated={onCustomFieldCreated}
             onSave={onSave}
           />
         </>

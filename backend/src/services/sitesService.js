@@ -13599,6 +13599,15 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         message.textContent = text;
         message.style.color = state === 'error' ? '#b91c1c' : '#166534';
       };
+      const showImportedMessageOnly = (form, text) => {
+        Array.from(form.querySelectorAll('input, select, textarea, button')).forEach((element) => {
+          const type = String(element.type || '').toLowerCase();
+          if (type === 'hidden') return;
+          const wrapper = element.closest('label, .field, .form-field, .form-group, .rstk-field') || element;
+          wrapper.hidden = true;
+        });
+        setMessage(form, text || 'Gracias. Por ahora no califica.', 'success');
+      };
 
       Array.from(document.querySelectorAll('form')).forEach((form, index) => {
         form.setAttribute('data-rstk-import-form', 'true');
@@ -13618,6 +13627,8 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
             }
           }
           if (!immediate) return;
+          form.dataset.rstkImmediateDisqualify = 'true';
+          showImportedMessageOnly(form, immediate.buttonMessage || 'Gracias. Por ahora no califica.');
           if (typeof form.requestSubmit === 'function') form.requestSubmit();
           else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         });
@@ -13649,7 +13660,8 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
                   fbc: readCookie('_fbc'),
                   importedChoiceActions: selectedChoiceActions,
                   importedDisqualified: Boolean(disqualifyingAction),
-                  importedDisqualifiedMessage: disqualifyingAction && disqualifyingAction.buttonMessage ? disqualifyingAction.buttonMessage : ''
+                  importedDisqualifiedMessage: disqualifyingAction && disqualifyingAction.buttonMessage ? disqualifyingAction.buttonMessage : '',
+                  immediateDisqualify: form.dataset.rstkImmediateDisqualify === 'true'
                 }
               })
             });
@@ -13701,6 +13713,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           } catch (error) {
             setMessage(form, error && error.message ? error.message : 'No se pudo enviar el formulario', 'error');
           } finally {
+            delete form.dataset.rstkImmediateDisqualify;
             if (submitter) submitter.disabled = false;
           }
         });
@@ -14592,16 +14605,40 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         if (rule.action === 'site_page') return pageUrl(rule.targetPageId || '');
         return '';
       };
-      const handleBlockingRule = (rule, rulePageId, targetMessage) => {
+      const showOnlyRuleMessage = (targetMessage, text) => {
+        const scope = targetMessage && targetMessage.closest ? targetMessage.closest('.rstk-embedded-form') || form : form;
+        scope.querySelectorAll('.rstk-field, [data-interactive-page-content], [data-embedded-page-content]').forEach((element) => {
+          element.hidden = true;
+        });
+        scope.querySelectorAll('[data-next], [data-form-next], [data-back], [data-submit], [data-embedded-next], [data-embedded-back]').forEach((element) => {
+          element.hidden = true;
+        });
+        if (progressLabel) progressLabel.hidden = true;
+        if (progressFill && progressFill.parentElement) progressFill.parentElement.hidden = true;
+        if (targetMessage) {
+          targetMessage.hidden = false;
+          targetMessage.textContent = text;
+        }
+      };
+      const handleBlockingRule = (rule, rulePageId, targetMessage, options = {}) => {
         if (!rule) return false;
         if (isExitRule(rule) && !shouldSubmitRule(rule)) {
           const targetUrl = getRuleRedirectUrl(rule);
           if (targetUrl) window.location.href = targetUrl;
           return true;
         }
-        if (targetMessage) targetMessage.textContent = isExitRule(rule) ? 'Enviando...' : (rule.message || 'Gracias. Tu información fue recibida.');
+        const immediateDisqualify = options.immediate === true && rule.action === 'disqualify';
+        const statusText = isExitRule(rule) ? 'Enviando...' : (rule.message || 'Gracias. Tu información fue recibida.');
+        if (immediateDisqualify) {
+          showOnlyRuleMessage(targetMessage, statusText);
+        } else if (targetMessage) {
+          targetMessage.textContent = statusText;
+        }
         form.dataset.ruleSubmit = 'true';
         form.dataset.rulePageId = rulePageId || getCurrentPageId();
+        form.dataset.ruleAction = rule.action || '';
+        form.dataset.ruleFieldId = options.fieldId || '';
+        form.dataset.immediateDisqualify = immediateDisqualify ? 'true' : '';
         form.requestSubmit();
         return true;
       };
@@ -14650,6 +14687,31 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         if (progressLabel) progressLabel.textContent = 'Pantalla ' + (index + 1) + ' de ' + stepPages.length;
         if (progressFill) progressFill.style.width = (((index + 1) / stepPages.length) * 100) + '%';
       };
+
+      const getFieldMessageTarget = (field) => {
+        const embeddedForm = field && field.closest ? field.closest('.rstk-embedded-form') : null;
+        return embeddedForm ? embeddedForm.querySelector('[data-message]') || message : message;
+      };
+
+      const handleImmediateRuleChange = (event) => {
+        if (form.dataset.ruleSubmit === 'true') return;
+        const target = event.target;
+        if (!target || !target.closest) return;
+        if (!target.matches('input[type="radio"], input[type="checkbox"], select')) return;
+        if (target.matches('input[type="checkbox"]') && !target.checked) return;
+        const field = target.closest('.rstk-field');
+        if (!field) return;
+        const rule = readSelectedRules(field).find(item => item.action === 'disqualify') || null;
+        if (!rule) return;
+        const fieldPageId = field.getAttribute('data-page-id') || getCurrentPageId();
+        const fieldId = field.getAttribute('data-block-id') || '';
+        handleBlockingRule(rule, fieldPageId, getFieldMessageTarget(field), {
+          immediate: true,
+          fieldId
+        });
+      };
+
+      form.addEventListener('change', handleImmediateRuleChange);
 
       const embeddedForms = Array.from(form.querySelectorAll('[data-embedded-form-pages]')).map((host) => {
         const pageContents = Array.from(host.querySelectorAll('[data-embedded-page-content]'));
@@ -14755,10 +14817,18 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         event.preventDefault();
         const ruleSubmit = form.dataset.ruleSubmit === 'true';
         const rulePageId = form.dataset.rulePageId || getCurrentPageId();
-        const fieldsToValidate = ruleSubmit ? getPageFields(rulePageId) : fields;
+        const ruleAction = form.dataset.ruleAction || '';
+        const ruleFieldId = form.dataset.ruleFieldId || '';
+        const immediateDisqualify = form.dataset.immediateDisqualify === 'true';
+        const fieldsToValidate = immediateDisqualify && ruleFieldId
+          ? fields.filter(field => field.getAttribute('data-block-id') === ruleFieldId)
+          : ruleSubmit ? getPageFields(rulePageId) : fields;
         const valid = fieldsToValidate.every(validateField);
         if (!valid) {
           delete form.dataset.ruleSubmit;
+          delete form.dataset.ruleAction;
+          delete form.dataset.ruleFieldId;
+          delete form.dataset.immediateDisqualify;
           return;
         }
 
@@ -14791,6 +14861,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
                 visitorId: nativeIdentity.visitorId || null,
                 sessionId: nativeIdentity.sessionId || null,
                 ruleSubmit,
+                ruleAction,
+                ruleFieldId,
+                immediateDisqualify,
                 formFinalSubmit: isStandardForm && !ruleSubmit && !isStandardFormIntermediatePage,
                 tracking: nativeTracking,
                 fbp: (document.cookie.match(/(?:^|; )_fbp=([^;]+)/) || [])[1] || null,
@@ -14815,9 +14888,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
               conversion_type: 'form_submit'
             }, metaEventName);
           }
-          form.reset();
           clearStoredResponses();
-          initPhoneCountryFields();
           if (window.ristakNativeRememberContact && submission.contactId) {
             window.ristakNativeRememberContact({
               contactId: submission.contactId,
@@ -14825,12 +14896,16 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
               email: submission.contactEmail || ''
             });
           }
-          index = 0;
-          renderStep();
-          embeddedForms.forEach((state) => {
-            state.index = 0;
-            renderEmbeddedForm(state);
-          });
+          if (!immediateDisqualify) {
+            form.reset();
+            initPhoneCountryFields();
+            index = 0;
+            renderStep();
+            embeddedForms.forEach((state) => {
+              state.index = 0;
+              renderEmbeddedForm(state);
+            });
+          }
           if (submission.redirectUrl) {
             window.location.href = preserveUrl(submission.redirectUrl);
             return;
@@ -14850,6 +14925,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         } finally {
           delete form.dataset.ruleSubmit;
           delete form.dataset.rulePageId;
+          delete form.dataset.ruleAction;
+          delete form.dataset.ruleFieldId;
+          delete form.dataset.immediateDisqualify;
           if (submitButton) submitButton.disabled = false;
           if (formNextButton) formNextButton.disabled = false;
         }
@@ -15365,9 +15443,10 @@ async function upsertContactFromSubmission({ site, contact, meta }) {
   return contactId
 }
 
-function normalizeSubmissionResponses(blocks, responses = {}) {
+function normalizeSubmissionResponses(blocks, responses = {}, options = {}) {
   const normalized = {}
   const errors = []
+  const skipRequired = options.skipRequired === true
 
   for (const block of collectFieldBlocks(blocks)) {
     if (!FIELD_BLOCK_TYPES.has(block.blockType)) continue
@@ -15384,7 +15463,7 @@ function normalizeSubmissionResponses(blocks, responses = {}) {
     }
 
     const missing = Array.isArray(value) ? value.length === 0 : !value
-    if (block.required && missing) {
+    if (!skipRequired && block.required && missing) {
       errors.push(`${block.label || 'Pregunta'} es requerida`)
     }
 
@@ -16258,7 +16337,15 @@ export async function createSubmissionFromRequest(req, body = {}) {
     : site.siteType === 'landing_page' && submittedPageId
       ? getPageBlocks(siteWithBlocks, submittedPageId)
       : orderedSubmissionBlocks
-  const { responses, errors } = normalizeSubmissionResponses(submissionBlocks, body.responses || {})
+  const immediateDisqualifySubmit = normalizeBoolean(
+    body.meta?.immediateDisqualify ||
+    body.meta?.immediate_disqualify ||
+    (body.meta?.ruleAction === 'disqualify' ? true : false) ||
+    (body.meta?.rule_action === 'disqualify' ? true : false)
+  )
+  const { responses, errors } = normalizeSubmissionResponses(submissionBlocks, body.responses || {}, {
+    skipRequired: immediateDisqualifySubmit
+  })
   if (errors.length) {
     const error = new Error(errors.join(', '))
     error.status = 400
