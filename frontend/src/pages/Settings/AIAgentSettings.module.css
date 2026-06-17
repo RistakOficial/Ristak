@@ -1279,9 +1279,9 @@
 
 .agentOpsGrid {
   display: grid;
-  grid-template-columns: minmax(220px, 360px) minmax(280px, 1fr);
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
   align-items: start;
-  gap: 14px;
+  gap: 14px 12px;
 }
 
 .aiProviderSettings {

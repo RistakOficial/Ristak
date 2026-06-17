@@ -70,6 +70,31 @@ const actionsByObjective: Record<ConversationalObjective, ConversationalSuccessA
   custom: ['ready_for_human']
 }
 
+const attendedChatActionOptions = [
+  {
+    value: 'keep_visible',
+    label: 'Nada raro: visible y con avisos',
+    description: 'Se queda en la bandeja y te avisa normal, como cualquier chat.'
+  },
+  {
+    value: 'hide_only',
+    label: 'Escóndelo mientras lo atiende',
+    description: 'Mientras la IA responde, lo sacamos de la vista para no meter ruido.'
+  },
+  {
+    value: 'mute_only',
+    label: 'Visible, pero sin avisos',
+    description: 'El chat sigue ahí, pero no te molesta con notificaciones mientras la IA trabaja.'
+  },
+  {
+    value: 'hide_and_mute',
+    label: 'Escóndelo y avísame si ya urge',
+    description: 'Lo ocultamos y no te molestamos; si cumple la meta, entra como prioridad.'
+  }
+] as const
+
+type AttendedChatActionValue = (typeof attendedChatActionOptions)[number]['value']
+
 const extraTypeOptions: Array<{ value: SuccessExtraType; label: string }> = [
   { value: 'add_tag', label: 'Agregar etiqueta' },
   { value: 'remove_tag', label: 'Quitar etiqueta' },
@@ -148,6 +173,20 @@ function getAgentResponseDelay(agent: ConversationalAgentDef): AgentResponseDela
 
 function getAgentReplyDelivery(agent: ConversationalAgentDef): AgentReplyDeliveryConfig {
   return { ...defaultReplyDelivery, ...((agent.replyDelivery || {}) as Partial<AgentReplyDeliveryConfig>) }
+}
+
+function getAttendedChatActionValue(agent: Pick<ConversationalAgentDef, 'hideAttended' | 'hideAttendedNotifications'>): AttendedChatActionValue {
+  if (agent.hideAttended && agent.hideAttendedNotifications) return 'hide_and_mute'
+  if (agent.hideAttended) return 'hide_only'
+  if (agent.hideAttendedNotifications) return 'mute_only'
+  return 'keep_visible'
+}
+
+function getAttendedChatActionPatch(value: AttendedChatActionValue): Pick<ConversationalAgentDefInput, 'hideAttended' | 'hideAttendedNotifications'> {
+  return {
+    hideAttended: value === 'hide_only' || value === 'hide_and_mute',
+    hideAttendedNotifications: value === 'mute_only' || value === 'hide_and_mute'
+  }
 }
 
 function getDelayUnitLabel(unit: AgentResponseDelayUnit, value: number) {
@@ -273,6 +312,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
   const selectedAgentModel = selectedProvider.modelGroups
     .flatMap((group) => group.options)
     .find((option) => option.value === selectedAgentModelValue)
+  const selectedAttendedChatActionValue = getAttendedChatActionValue(agent)
+  const selectedAttendedChatAction = attendedChatActionOptions.find((option) => option.value === selectedAttendedChatActionValue) || attendedChatActionOptions[0]
   const strategyIsCustom = agent.closingStrategyMode === 'custom'
   const strategyText = strategyIsCustom ? agent.closingStrategyCustom : agent.systemClosingStrategy || systemStrategy
   const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
@@ -437,72 +478,70 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>Modelo y orden del chat</h3>
             <div className={styles.agentOpsGrid}>
-              <div className={styles.aiProviderSettings}>
-                <div className={styles.field}>
-                  <label className={styles.label}>IA que responde</label>
-                  <CustomSelect
-                    value={selectedProviderId}
-                    onChange={(event) => handleProviderSelect(getKnownConversationalAIProvider(event.target.value))}
-                    portal
-                    aria-label="IA del agente"
-                  >
-                    {conversationalAIProviderOptions.map((provider) => {
-                      const status = getProviderStatus(aiProviders, provider.id)
-                      const connected = Boolean(status?.connected)
-                      return (
-                        <option key={provider.id} value={provider.id}>
-                          {provider.label} · {connected ? 'Conectado' : 'Toca para conectar'}
-                        </option>
-                      )
-                    })}
-                  </CustomSelect>
-                  <div className={styles.aiProviderSelectMeta}>
-                    <Badge variant={selectedProviderConnected ? 'success' : 'neutral'}>
-                      {selectedProviderConnected ? 'Conectado' : 'Toca para conectar'}
-                    </Badge>
-                    <span>{selectedProvider.description}</span>
-                  </div>
-                  {selectedProviderStatus?.needsReconnect && (
-                    <p className={styles.helperWarning}>{selectedProviderStatus.connectionIssue || `${selectedProvider.label} necesita reconectarse.`}</p>
-                  )}
+              <div className={styles.field}>
+                <label className={styles.label}>IA que responde</label>
+                <CustomSelect
+                  value={selectedProviderId}
+                  onChange={(event) => handleProviderSelect(getKnownConversationalAIProvider(event.target.value))}
+                  portal
+                  aria-label="IA del agente"
+                >
+                  {conversationalAIProviderOptions.map((provider) => {
+                    const status = getProviderStatus(aiProviders, provider.id)
+                    const connected = Boolean(status?.connected)
+                    return (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.label} · {connected ? 'Conectado' : 'Toca para conectar'}
+                      </option>
+                    )
+                  })}
+                </CustomSelect>
+                <div className={styles.aiProviderSelectMeta}>
+                  <Badge variant={selectedProviderConnected ? 'success' : 'neutral'}>
+                    {selectedProviderConnected ? 'Conectado' : 'Toca para conectar'}
+                  </Badge>
+                  <span>{selectedProvider.description}</span>
                 </div>
-
-                <div className={styles.field}>
-                  <label className={styles.label}>Modelo de {selectedProvider.label}</label>
-                  <CustomSelect
-                    value={selectedAgentModelValue}
-                    onChange={(event) => onChange({ model: event.target.value })}
-                    portal
-                  >
-                    {selectedProvider.modelGroups.map((group) => (
-                      <optgroup key={group.label} label={group.label}>
-                        {group.options.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </CustomSelect>
-                  <p className={styles.helper}>
-                    {(selectedAgentModel?.label || selectedAgentModelValue)} responde sólo para este agente.
-                  </p>
-                </div>
+                {selectedProviderStatus?.needsReconnect && (
+                  <p className={styles.helperWarning}>{selectedProviderStatus.connectionIssue || `${selectedProvider.label} necesita reconectarse.`}</p>
+                )}
               </div>
 
-              <div className={styles.agentOpsToggles}>
-                <SelectionToggle
-                  checked={agent.hideAttended}
-                  title="Ocultar conversaciones atendidas"
-                  description="Sólo aplica a conversaciones que este agente esté atendiendo."
-                  onChange={(checked) => onChange({ hideAttended: checked })}
-                />
-                <SelectionToggle
-                  checked={agent.hideAttendedNotifications}
-                  title="Silenciar notificaciones atendidas"
-                  description="Sin avisos mientras responde; si cumple el objetivo, manda push de prioridad."
-                  onChange={(checked) => onChange({ hideAttendedNotifications: checked })}
-                />
+              <div className={styles.field}>
+                <label className={styles.label}>Modelo de {selectedProvider.label}</label>
+                <CustomSelect
+                  value={selectedAgentModelValue}
+                  onChange={(event) => onChange({ model: event.target.value })}
+                  portal
+                >
+                  {selectedProvider.modelGroups.map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.options.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </CustomSelect>
+                <p className={styles.helper}>
+                  {(selectedAgentModel?.label || selectedAgentModelValue)} responde sólo para este agente.
+                </p>
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Qué hace con chats atendidos</label>
+                <CustomSelect
+                  value={selectedAttendedChatActionValue}
+                  onChange={(event) => onChange(getAttendedChatActionPatch(event.target.value as AttendedChatActionValue))}
+                  portal
+                  aria-label="Qué hace el chat con conversaciones atendidas"
+                >
+                  {attendedChatActionOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </CustomSelect>
+                <p className={styles.helper}>{selectedAttendedChatAction.description}</p>
               </div>
             </div>
           </div>
