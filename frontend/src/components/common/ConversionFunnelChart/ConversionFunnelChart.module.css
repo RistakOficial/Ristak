@@ -284,7 +284,7 @@
 .conversionRate {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--pos);
+  color: var(--color-text-secondary);
 }
 
 .progressBar {
@@ -348,7 +348,7 @@
 }
 
 .insightHighlight {
-  color: var(--pos);
+  color: var(--color-text-secondary);
   font-size: 1rem;
 }
 
