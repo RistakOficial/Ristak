@@ -41,9 +41,7 @@ import {
   Link2,
   Bell,
   BellOff,
-  Smartphone,
-  Braces,
-  Search
+  Smartphone
 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useHighLevelConnected } from '@/hooks'
@@ -56,11 +54,13 @@ import {
   type GoogleCalendarMergePreview
 } from '@/services/calendarsService'
 import {
-  loadAllVariables,
-  tokenFor,
-  VARIABLE_CATEGORIES,
+  FlowVariablesContext,
   type FlowVariable
 } from '@/pages/Automations/editor/variablesCatalog'
+import {
+  MessageComposer,
+  VariableTextInput
+} from '@/pages/Automations/editor/composer/MessageComposer'
 import styles from './HighLevelIntegration.module.css'
 import pageStyles from './CalendarsConfiguration.module.css'
 
@@ -123,14 +123,6 @@ const CALENDAR_TEMPLATE_EXTRA_VARIABLES: FlowVariable[] = [
   { fieldId: 'calendar.google_calendar', label: 'Calendario de Google ligado', category: 'calendar' },
   { fieldId: 'calendar.google_calendar_id', label: 'ID del calendario de Google', category: 'calendar' }
 ]
-const CALENDAR_TEMPLATE_CATEGORY_LABELS = [
-  ...VARIABLE_CATEGORIES,
-  ...CALENDAR_TEMPLATE_EXTRA_CATEGORIES
-].reduce<Record<string, string>>((map, category) => {
-  map[category.id] = category.label
-  return map
-}, {})
-
 const normalizeBase64 = (value: string) => {
   const normalized = value.trim().replace(/-/g, '+').replace(/_/g, '/')
   return normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
@@ -273,8 +265,6 @@ export const CalendarsConfiguration: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showNotificationsModal, setShowNotificationsModal] = useState(false)
   const [creatingCalendar, setCreatingCalendar] = useState(false)
-  const [calendarTemplateVariables, setCalendarTemplateVariables] = useState<FlowVariable[]>(CALENDAR_TEMPLATE_EXTRA_VARIABLES)
-  const [calendarParameterQuery, setCalendarParameterQuery] = useState('')
   const [newCalendar, setNewCalendar] = useState<Partial<CalendarType>>({
     name: '',
     calendarType: 'event',
@@ -307,27 +297,6 @@ export const CalendarsConfiguration: React.FC = () => {
 
   useEffect(() => {
     loadGoogleIntegration()
-  }, [])
-
-  useEffect(() => {
-    let mounted = true
-
-    loadAllVariables()
-      .then((variables) => {
-        if (!mounted) return
-        const byId = new Map<string, FlowVariable>()
-        ;[...variables, ...CALENDAR_TEMPLATE_EXTRA_VARIABLES].forEach((variable) => {
-          if (!byId.has(variable.fieldId)) byId.set(variable.fieldId, variable)
-        })
-        setCalendarTemplateVariables([...byId.values()])
-      })
-      .catch(() => {
-        if (mounted) setCalendarTemplateVariables(CALENDAR_TEMPLATE_EXTRA_VARIABLES)
-      })
-
-    return () => {
-      mounted = false
-    }
   }, [])
 
   useEffect(() => {
@@ -448,26 +417,10 @@ export const CalendarsConfiguration: React.FC = () => {
 
   const serviceAccountEmailForSharing = parsedServiceAccountEmail || googleIntegration?.serviceAccountEmail || ''
 
-  const calendarTemplateVariableGroups = useMemo(() => {
-    const normalizedQuery = calendarParameterQuery.trim().toLowerCase()
-
-    return [...VARIABLE_CATEGORIES, ...CALENDAR_TEMPLATE_EXTRA_CATEGORIES]
-      .map((category) => {
-        const items = calendarTemplateVariables
-          .filter((variable) => variable.category === category.id)
-          .filter((variable) => {
-            if (!normalizedQuery) return true
-            return (
-              variable.label.toLowerCase().includes(normalizedQuery) ||
-              variable.fieldId.toLowerCase().includes(normalizedQuery) ||
-              tokenFor(variable).toLowerCase().includes(normalizedQuery)
-            )
-          })
-
-        return { category, items }
-      })
-      .filter((group) => group.items.length > 0)
-  }, [calendarParameterQuery, calendarTemplateVariables])
+  const calendarTemplateVariableCatalog = useMemo(() => ({
+    categories: CALENDAR_TEMPLATE_EXTRA_CATEGORIES,
+    variables: CALENDAR_TEMPLATE_EXTRA_VARIABLES
+  }), [])
 
   const findConnectedGoogleCalendar = (
     calendarList: CalendarType[] = calendars,
@@ -1133,85 +1086,6 @@ export const CalendarsConfiguration: React.FC = () => {
     )
   }
 
-  const insertCalendarTemplateVariable = (
-    inputId: string,
-    currentValue: string,
-    onChange: (nextValue: string) => void,
-    variable: FlowVariable
-  ) => {
-    const token = tokenFor(variable)
-    const input = document.getElementById(inputId) as HTMLInputElement | HTMLTextAreaElement | null
-    const start = input?.selectionStart ?? currentValue.length
-    const end = input?.selectionEnd ?? start
-    const prefix = currentValue.slice(0, start)
-    const suffix = currentValue.slice(end)
-    const spacerBefore = prefix && !/\s$/.test(prefix) ? ' ' : ''
-    const spacerAfter = suffix && !/^\s/.test(suffix) ? ' ' : ''
-    const nextValue = `${prefix}${spacerBefore}${token}${spacerAfter}${suffix}`
-    const cursor = prefix.length + spacerBefore.length + token.length + spacerAfter.length
-
-    onChange(nextValue)
-    window.requestAnimationFrame(() => {
-      input?.focus()
-      input?.setSelectionRange(cursor, cursor)
-    })
-  }
-
-  const renderCalendarParameterPicker = (
-    inputId: string,
-    currentValue: string,
-    onChange: (nextValue: string) => void
-  ) => (
-    <DropdownMenu onOpenChange={(open) => {
-      if (!open) setCalendarParameterQuery('')
-    }}>
-      <DropdownMenuTrigger asChild>
-        <button type="button" className={pageStyles.parameterButton}>
-          <Braces size={14} />
-          Parámetros
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        className={pageStyles.parameterMenu}
-        align="end"
-        side="bottom"
-        sideOffset={8}
-        collisionPadding={16}
-      >
-        <div className={pageStyles.parameterSearch} onKeyDown={(event) => event.stopPropagation()}>
-          <Search size={14} />
-          <input
-            value={calendarParameterQuery}
-            onChange={(event) => setCalendarParameterQuery(event.target.value)}
-            placeholder="Buscar dato"
-            aria-label="Buscar parámetro"
-          />
-        </div>
-        <div className={pageStyles.parameterGroups}>
-          {calendarTemplateVariableGroups.length ? (
-            calendarTemplateVariableGroups.map((group) => (
-              <div key={group.category.id} className={pageStyles.parameterGroup}>
-                <span>{CALENDAR_TEMPLATE_CATEGORY_LABELS[group.category.id] || group.category.label}</span>
-                {group.items.map((variable) => (
-                  <DropdownMenuItem
-                    key={variable.fieldId}
-                    className={pageStyles.parameterItem}
-                    onSelect={() => insertCalendarTemplateVariable(inputId, currentValue, onChange, variable)}
-                  >
-                    <strong>{variable.label}</strong>
-                    <code>{tokenFor(variable)}</code>
-                  </DropdownMenuItem>
-                ))}
-              </div>
-            ))
-          ) : (
-            <p className={pageStyles.parameterEmpty}>No encontré ese parámetro.</p>
-          )}
-        </div>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-
   const renderCalendarTemplateField = ({
     id,
     label,
@@ -1230,28 +1104,24 @@ export const CalendarsConfiguration: React.FC = () => {
     multiline?: boolean
   }) => (
     <div className={pageStyles.editorField}>
-      <div className={pageStyles.templateFieldTop}>
-        <label htmlFor={id}>{label}</label>
-        {renderCalendarParameterPicker(id, value, onChange)}
-      </div>
-      {multiline ? (
-        <textarea
-          id={id}
-          className={pageStyles.templateTextarea}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
-          rows={4}
-        />
-      ) : (
-        <input
-          id={id}
-          className={styles.input}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
-        />
-      )}
+      <span id={`${id}-label`}>{label}</span>
+      <FlowVariablesContext.Provider value={calendarTemplateVariableCatalog}>
+        {multiline ? (
+          <MessageComposer
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            aria-label={label}
+          />
+        ) : (
+          <VariableTextInput
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            aria-label={label}
+          />
+        )}
+      </FlowVariablesContext.Provider>
       <small>{help}</small>
     </div>
   )
