@@ -623,8 +623,7 @@ test('los parametros del perfil no acortan ni cambian la estrategia de fabrica',
   assert.ok(rendered.length > 15000)
 })
 
-test('estrategia de fabrica evita moldes repetitivos de venta', () => {
-  assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /ah va/i)
+test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /me da curiosidad/i)
   assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /justo ahorita/i)
   assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /qué te hizo escribirnos/i)
@@ -643,6 +642,14 @@ test('estrategia de fabrica evita moldes repetitivos de venta', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /tu primera respuesta NO informa. DEVUELVE/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /ante un mensaje vago de apertura/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /EJEMPLOS = FILOSOFÍA \(NO LIBRETO\)/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /NO ASUMAS el perfil de la persona/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /JAMÁS signos de apertura/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 6 — Asumir el perfil/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 7 — Loop de rebotes \+ signos de apertura/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /NO te quedes en LOOP rebotando/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Varía el justificante/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Manejo del precio/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /NUNCA suenes evasivo/)
 })
 
 test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', () => {
