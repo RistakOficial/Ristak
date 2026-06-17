@@ -733,7 +733,7 @@ test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /ante un mensaje vago de apertura/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /EJEMPLOS = FILOSOFÍA \(NO LIBRETO\)/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /NO ASUMAS el perfil de la persona/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /JAMÁS signos de apertura/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /signos de apertura/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /Error 6 — Asumir el perfil/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /Error 7 — Loop de rebotes \+ signos de apertura/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /NO te quedes en LOOP rebotando/)
