@@ -1439,9 +1439,6 @@ export const ConversationalAgentSettings: React.FC = () => {
               <h3 className={styles.sectionTitle}>IAs conectadas</h3>
             </div>
             <div className={styles.aiProviderManagerActions}>
-              <span className={styles.aiProviderManagerSummary}>
-                {conversationalAIProviderOptions.length} IAs disponibles · {connectedAIProviderLabel}
-              </span>
               <Button
                 variant="secondary"
                 size="sm"
@@ -1449,13 +1446,17 @@ export const ConversationalAgentSettings: React.FC = () => {
                 onClick={() => setAIProvidersExpanded((current) => !current)}
                 aria-expanded={aiProvidersExpanded}
                 aria-controls="conversational-ai-provider-list"
+                aria-label={aiProvidersExpanded ? 'Ocultar modelos de IA disponibles' : 'Mostrar modelos de IA disponibles'}
               >
-                {aiProvidersExpanded ? 'Ocultar IAs' : 'Ver IAs'}
+                Modelos de IA Disponibles
                 <ChevronDown
                   size={15}
                   className={`${styles.aiProviderManagerToggleIcon} ${aiProvidersExpanded ? styles.aiProviderManagerToggleIconOpen : ''}`}
                 />
               </Button>
+              <span className={styles.aiProviderManagerSummary}>
+                {conversationalAIProviderOptions.length} IAs disponibles · {connectedAIProviderLabel}
+              </span>
             </div>
           </div>
           {aiProvidersExpanded && (

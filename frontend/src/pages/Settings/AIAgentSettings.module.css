@@ -1316,16 +1316,16 @@
 }
 
 .aiProviderManagerHeader {
-  display: flex;
+  display: grid;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
+  justify-content: start;
+  gap: 10px;
 }
 
 .aiProviderManagerActions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 10px;
   min-width: 0;
 }
@@ -1335,14 +1335,21 @@
   color: var(--color-text-tertiary);
   font-size: 12.5px;
   line-height: 1.4;
-  text-align: right;
+  text-align: left;
 }
 
 .aiProviderManagerToggle {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  max-width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 34px;
+  white-space: normal;
+  text-align: left;
 }
 
 .aiProviderManagerToggleIcon {
+  flex: 0 0 auto;
   transition: transform 0.15s ease;
 }
 
@@ -1453,7 +1460,7 @@
 
   .aiProviderManagerActions {
     align-items: flex-start;
-    justify-content: space-between;
+    justify-content: flex-start;
     flex-wrap: wrap;
   }
 
