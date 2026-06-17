@@ -6,8 +6,11 @@ import { normalizeAgentReplyDelivery } from '../../services/conversationalAgentS
 export const MESSAGE_SPLITTER_MODEL = CHEAPEST_OPENAI_MODEL
 
 const NATURAL_SHORT_MESSAGE_PATTERN = /^(va|ok|okay|listo|perfecto|sale|claro|sí|si|no|ya|hecho|de una)[.!?¡¿]*$/i
-const NATURAL_STANDALONE_REACTION_PATTERN = /^(?:ah+h?|ah+ ya|ah+ okaa?y|ok+a+y?|va|sale|perfecto|listo|claro|órale|orale|uff|mmm(?: a ver)?|no+ manches|buen[ií]simo|déjame ver|dejame ver|ya te entend[ií]|ah ya te entend[ií])(?:[.!?…]+)?$/i
-const LEADING_REACTION_SPLIT_PATTERN = /^((?:ah+\s+ok+a?y?|mmm)(?:[.!?…]+|\.{2,}|…+)?|(?:ah+\s+ya|ah+h?|ok+a+y?|va|sale|perfecto|listo|claro|órale|orale|uff|h[ií]jole|tsss|uy|ya)(?:[.!?…]+|\.{2,}|…+))\s+(.+)$/i
+const NATURAL_STANDALONE_REACTION_PATTERN = /^(?:ah+h?|ah+ ya|ah+ okaa?y|ok+a+y?|ok perfecto|va|sale|perfecto|listo|claro|órale|orale|uff|mmm(?: a ver)?|no+ manches|buen[ií]simo|déjame ver|dejame ver|ya te entend[ií]|ah ya te entend[ií])(?:[,.!?;:…]+)?$/i
+const LEADING_REACTION_SPLIT_PATTERN = /^((?:ah+\s+ok+a?y?|mmm(?:\s+a\s+ver)?|ok\s+perfecto)(?:[,.!?;:…]+|\.{2,}|…+)?|(?:ah+\s+ya|ah+h?|ok+a+y?|ok|va|sale|perfecto|listo|claro|órale|orale|uff|h[ií]jole|tsss|uy|ya)(?:[,.!?;:…]+|\.{2,}|…+))\s+(.+)$/i
+const INTENT_BRIDGE_PATTERN = /^(.{10,140}?)\s+((?:pa|para)\s+(?:entender(?:te|le)?|captar|ubicar|aterrizar|no\s+(?:marearte|llenarte|decirte)|darte|decirte)\b.+)$/i
+const SETUP_INTENT_HINT_PATTERN = /\b(?:pa|para|nom[aá]s|solo|s[oó]lo|digo|antes|as[ií]|déjame|dejame|entender(?:te|le)?|contexto|aire|marear(?:te)?|aterrizar|ubicar|captar|checar|revisar|decirte|darte|llenarte)\b/i
+const QUESTION_START_PATTERN = /^(?:hoy\s+|ahorita\s+|actualmente\s+|entonces\s+|ya\s+)?(?:c[oó]mo|qu[eé]|cu[aá]l|cu[aá]ndo|d[oó]nde|por\s+qu[eé]|qui[eé]n|cu[aá]nt[oa]s?|t[uú]|me\s+dices|dime|cu[eé]ntame)\b/i
 const VISIBLE_LABEL_PATTERN = /^(?:globo|mensaje|parte)\s*#?\s*\d+\s*[:.)-]\s*/i
 const BREAK_TOKEN_PATTERN = /\s*\[BREAK\]\s*/gi
 const MAX_AI_INPUT_CHARS = 4000
@@ -94,10 +97,45 @@ function splitLeadingReaction(segment) {
   return [reaction, rest]
 }
 
+function splitBridgeIntent(segment) {
+  const clean = cleanText(segment)
+  const match = clean.match(INTENT_BRIDGE_PATTERN)
+  if (!match) return [clean].filter(Boolean)
+
+  const first = cleanText(match[1])
+  const bridge = cleanText(match[2])
+  if (!first || !bridge) return [clean].filter(Boolean)
+  return [first, bridge]
+}
+
+function splitSetupQuestionIntent(segment) {
+  const clean = cleanText(segment)
+  if (!clean || !clean.includes('?')) return [clean].filter(Boolean)
+
+  const separators = [...clean.matchAll(/[,;:]\s+/g)]
+  for (const separator of separators) {
+    const index = separator.index ?? -1
+    if (index < 0) continue
+
+    const left = cleanText(clean.slice(0, index))
+    const right = cleanText(clean.slice(index + separator[0].length))
+    if (left.length < 8 || right.length < 8) continue
+    if (!right.endsWith('?')) continue
+    if (!SETUP_INTENT_HINT_PATTERN.test(left)) continue
+    if (!QUESTION_START_PATTERN.test(right)) continue
+
+    return [left, right]
+  }
+
+  return [clean]
+}
+
 function splitHumanBubbleFragments(message) {
   return splitExplicitBreaks(message)
-    .flatMap((part) => String(part || '').split(/\n{2,}/))
+    .flatMap((part) => String(part || '').split(/\n+/))
     .flatMap((part) => splitLeadingReaction(part))
+    .flatMap((part) => splitBridgeIntent(part))
+    .flatMap((part) => splitSetupQuestionIntent(part))
     .map(cleanText)
     .filter(Boolean)
 }
@@ -396,9 +434,11 @@ function buildSplitterInstructions(settings) {
     '- Si hay una pregunta importante al final, déjala preferentemente como último mensaje.',
     '- Si el texto es técnico o formal, conserva ese tono. Si es casual, conserva el tono casual.',
     '- Si hay bullets, pasos o instrucciones, conserva el orden lógico.',
-    '- Una idea o intención = un mensaje. Separa reacción, confirmación, dato, pregunta, empatía, acción y pasos cuando naturalmente sean intenciones distintas.',
-    '- Si una reacción corta tipo "ya..", "ahh ok", "mmm" o "uff" viene antes de una lectura, dato o pregunta, déjala como mensaje separado cuando suene natural.',
-    '- Si el texto trae salto de párrafo dentro de una misma respuesta, normalmente eso indica otro globo: no metas dos líneas con intenciones distintas en el mismo mensaje.',
+    '- Regla de oro: una idea o intención = un mensaje. Separa reacción, confirmación, lectura, dato, pregunta, empatía, acción y pasos cuando sean intenciones distintas.',
+    '- Regla dura: si el texto empieza con una reacción o muletilla corta ("ya..", "ok", "claro", "ahh", "mmm", "uff", "sale", "perfecto"), esa reacción va sola como primer mensaje casi siempre.',
+    '- No pegues reacción + lectura + pregunta en el mismo mensaje. Ejemplo de separación: "ya.." / "entonces sí traes ese tema encima" / "pa entenderte bien y no decirte algo al aire" / "hoy cómo te llegan los pacientes?".',
+    '- Si hay una frase puente tipo "pa entenderte", "para no marearte", "pa darte algo que sí sirva" y luego una pregunta, separa la frase puente y deja la pregunta en otro mensaje.',
+    '- Si el texto trae salto de línea o salto de párrafo dentro de una misma respuesta, normalmente eso indica otro globo: no metas dos líneas con intenciones distintas en el mismo mensaje.',
     '- No dividas por dividir. Si el texto es una sola idea corta y limpia, devuelve un solo mensaje.',
     '- No fuerces 2-4 mensajes siempre. Lo normal suele ser 1-4 según el texto; usa 5 o 6 sólo si el texto está largo y realmente lo amerita.',
     '- No hagas spam de mensajes mínimos. Cada mensaje debe entenderse por sí solo.',

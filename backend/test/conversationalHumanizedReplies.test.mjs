@@ -314,8 +314,36 @@ test('modo humano repara globos con reacción, salto y pregunta en el mismo mens
   assert.deepEqual(result.messages, [
     'ya..',
     'entonces sí traes ese tema encima',
-    'pa entenderte bien y no decirte algo al aire, hoy cómo te llegan los pacientes?'
+    'pa entenderte bien y no decirte algo al aire',
+    'hoy cómo te llegan los pacientes?'
   ])
+})
+
+test('modo humano fallback separa reaccion lectura puente y pregunta final', () => {
+  const original = 'ya.. entonces sí traes ese tema encima\npa entenderte bien y no decirte algo al aire, hoy cómo te llegan los pacientes?'
+  const result = splitMessageIntoBubblesFallback({
+    text: original,
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 240, randomizeSplitting: true },
+    random: () => 0.99
+  })
+
+  assert.deepEqual(result.messages, [
+    'ya..',
+    'entonces sí traes ese tema encima',
+    'pa entenderte bien y no decirte algo al aire',
+    'hoy cómo te llegan los pacientes?'
+  ])
+})
+
+test('modo humano deja una reaccion con coma como globo propio', async () => {
+  const result = await splitMessageIntoBubbles({
+    text: 'claro, de qué te gustaría saber?',
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 4, maxBubbleLength: 120, randomizeSplitting: true },
+    aiSplitter: async () => ({ messages: ['claro, de qué te gustaría saber?'] })
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.deepEqual(result.messages, ['claro,', 'de qué te gustaría saber?'])
 })
 
 test('modo humano puede llegar hasta seis globos sólo cuando el texto largo lo amerita', () => {
