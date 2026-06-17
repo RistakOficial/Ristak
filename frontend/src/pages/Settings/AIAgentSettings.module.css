@@ -1191,7 +1191,7 @@
 
 .agentTestColumn {
   position: fixed;
-  top: 230px;
+  top: 104px;
   right: max(68px, calc((100vw - 224px - var(--app-page-max, 1664px)) / 2 + 25px));
   bottom: 20px;
   z-index: 30;
@@ -1416,19 +1416,19 @@
 .agentTestPanel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  justify-content: center;
   height: 100%;
   max-height: none;
   min-width: 0;
-  padding: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  background: var(--color-background-secondary);
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .agentTestHeader {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 @media (max-width: 1180px) {
@@ -1472,9 +1472,6 @@
     width: auto;
   }
 
-  .agentTestPanel .testChatBox {
-    min-height: 320px;
-  }
 }
 
 @media (max-width: 640px) {
@@ -1508,6 +1505,7 @@
   .agentCardActions {
     justify-content: space-between;
   }
+
 }
 
 .agentCardHeader {
@@ -1919,30 +1917,108 @@
 /* Conversación simulada para probar el agente                         */
 /* ------------------------------------------------------------------ */
 
+.testPhoneFrame {
+  position: relative;
+  display: flex;
+  align-self: center;
+  width: min(100%, 390px);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 38px;
+  background: color-mix(in srgb, var(--surface) 76%, var(--bg) 24%);
+  box-shadow: var(--shadow-pop);
+}
+
+.testPhoneFrame::before {
+  position: absolute;
+  inset: 5px;
+  border: 1px solid var(--border);
+  border-radius: 33px;
+  pointer-events: none;
+  content: '';
+}
+
+.testPhoneIsland {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  z-index: 3;
+  width: 88px;
+  height: 24px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 78%, var(--bg) 22%);
+  box-shadow: inset 0 0 0 1px var(--border);
+  transform: translateX(-50%);
+}
+
+.testPhoneScreen {
+  z-index: 1;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.testChatTopbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 44px 14px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.testChatResetButton[data-btn] {
+  flex: 0 0 auto;
+  padding: 0 10px;
+}
+
+.testChatResetButton[data-btn] svg {
+  flex-shrink: 0;
+}
+
+.testChatSendButton[data-btn] {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+}
+
 .testChatBox {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 8px;
   padding: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 10px;
-  background: var(--color-background-primary);
-  min-height: 130px;
-  max-height: 340px;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg);
+  min-height: 0;
+  max-height: none;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .agentTestPanel .testChatBox {
   flex: 1 1 auto;
   height: auto;
-  min-height: 220px;
+  min-height: 0;
   max-height: none;
 }
 
 .testChatEmpty {
   margin: auto;
   font-size: 13px;
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   text-align: center;
 }
 
@@ -1958,22 +2034,22 @@
 
 .testChatUser {
   align-self: flex-end;
-  background: #2563eb;
-  color: #ffffff;
+  background: var(--accent);
+  color: var(--on-accent);
   border-bottom-right-radius: 4px;
 }
 
 .testChatAssistant {
   align-self: flex-start;
-  background: rgba(148, 163, 184, 0.14);
-  color: var(--color-text-primary);
+  background: var(--surface-2);
+  color: var(--text);
   border-bottom-left-radius: 4px;
 }
 
 .testChatInternal {
   background: transparent;
-  border: 1px dashed rgba(148, 163, 184, 0.4);
-  color: var(--color-text-tertiary);
+  border: 1px dashed var(--border-strong);
+  color: var(--text-mute);
   font-size: 12.5px;
   font-style: italic;
 }
@@ -1982,15 +2058,57 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .agentTestPanel .testChatComposer {
-  align-items: stretch;
+  align-items: center;
 }
 
 .testChatComposer .input {
   flex: 1;
+  min-width: 0;
   padding-right: 12px;
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+@media (max-width: 900px) {
+  .testPhoneFrame {
+    height: clamp(560px, calc(100vh - 48px), 760px);
+  }
+}
+
+@media (max-width: 640px) {
+  .testPhoneFrame {
+    height: clamp(520px, calc(100vh - 32px), 720px);
+    padding: 10px;
+    border-radius: 34px;
+  }
+
+  .testPhoneFrame::before {
+    border-radius: 29px;
+  }
+
+  .testPhoneScreen {
+    border-radius: 24px;
+  }
+
+  .testChatTopbar {
+    padding: 40px 12px 10px;
+  }
+
+  .testChatResetButton[data-btn] {
+    padding: 0 8px;
+  }
+
+  .testChatSendButton[data-btn] {
+    width: 40px;
+    height: 40px;
+  }
 }
 
 /* ------------------------------------------------------------------ */

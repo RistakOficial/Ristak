@@ -279,6 +279,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
   const responseDelay = getAgentResponseDelay(agent)
   const responseDelaySummary = getResponseDelaySummary(responseDelay)
   const replyDelivery = getAgentReplyDelivery(agent)
+  const hasTestConversation = testMessages.length > 0 || Boolean(testInput.trim())
 
   const updateExtra = (index: number, patch: Partial<AgentSuccessExtra>) => {
     onChange({ successExtras: agent.successExtras.map((extra, i) => (i === index ? { ...extra, ...patch } : extra)) })
@@ -354,6 +355,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
     } finally {
       setTesting(false)
     }
+  }
+
+  const handleResetTestChat = () => {
+    if (testing) return
+    setTestMessages([])
+    setTestInput('')
   }
 
   return (
@@ -896,65 +903,76 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
 
         <aside className={styles.agentTestColumn}>
           <div className={styles.agentTestPanel}>
-            <div className={styles.agentTestHeader}>
-              <div className={styles.sectionHeading}>
-                <Play size={17} />
-                <h3 className={styles.sectionTitle}>Prueba del chat</h3>
-              </div>
-              <p className={styles.agentSectionHint}>
-                Es una prueba: no manda WhatsApp ni mueve contactos.
-              </p>
-            </div>
-
-            <div className={styles.testChatBox}>
-              {testMessages.length === 0 && (
-                <p className={styles.testChatEmpty}>Escribe como prospecto y revisa si contesta como debe.</p>
-              )}
-              {testMessages.map((message, index) => (
-                <div
-                  key={index}
-                  className={`${styles.testChatMessage} ${message.role === 'user' ? styles.testChatUser : styles.testChatAssistant} ${message.internal ? styles.testChatInternal : ''}`}
-                >
-                  {message.content}
+            <div className={styles.testPhoneFrame} aria-label="Vista previa de chat en celular">
+              <span className={styles.testPhoneIsland} aria-hidden="true" />
+              <div className={styles.testPhoneScreen}>
+                <div className={styles.testChatTopbar}>
+                  <div className={styles.agentTestHeader}>
+                    <div className={styles.sectionHeading}>
+                      <Play size={17} />
+                      <h3 className={styles.sectionTitle}>Prueba del chat</h3>
+                    </div>
+                    <p className={styles.agentSectionHint}>
+                      Es una prueba: no manda WhatsApp ni mueve contactos.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    leftIcon={<RotateCcw size={14} />}
+                    className={styles.testChatResetButton}
+                    onClick={handleResetTestChat}
+                    disabled={testing || !hasTestConversation}
+                    title="Reiniciar chat de prueba"
+                    aria-label="Reiniciar chat de prueba"
+                  >
+                    Reiniciar
+                  </Button>
                 </div>
-              ))}
-              {testing && <div className={`${styles.testChatMessage} ${styles.testChatAssistant}`}>Escribiendo…</div>}
-            </div>
 
-            <div className={styles.testChatComposer}>
-              <input
-                className={styles.input}
-                value={testInput}
-                placeholder="Ejemplo: Hola, quiero agendar"
-                onChange={(event) => setTestInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault()
-                    handleSendTestMessage()
-                  }
-                }}
-                disabled={testing}
-              />
-              <button
-                type="button"
-                className={styles.inlineActionButton}
-                onClick={handleSendTestMessage}
-                disabled={testing || !testInput.trim()}
-              >
-                <Send size={14} />
-                Enviar
-              </button>
-              {testMessages.length > 0 && (
-                <button
-                  type="button"
-                  className={styles.iconButton}
-                  onClick={() => setTestMessages([])}
-                  aria-label="Limpiar conversación de prueba"
-                  disabled={testing}
-                >
-                  <Trash2 size={15} />
-                </button>
-              )}
+                <div className={styles.testChatBox}>
+                  {testMessages.length === 0 && (
+                    <p className={styles.testChatEmpty}>Escribe como prospecto y revisa si contesta como debe.</p>
+                  )}
+                  {testMessages.map((message, index) => (
+                    <div
+                      key={index}
+                      className={`${styles.testChatMessage} ${message.role === 'user' ? styles.testChatUser : styles.testChatAssistant} ${message.internal ? styles.testChatInternal : ''}`}
+                    >
+                      {message.content}
+                    </div>
+                  ))}
+                  {testing && <div className={`${styles.testChatMessage} ${styles.testChatAssistant}`}>Escribiendo…</div>}
+                </div>
+
+                <div className={styles.testChatComposer}>
+                  <input
+                    className={styles.input}
+                    value={testInput}
+                    placeholder="Ejemplo: Hola, quiero agendar"
+                    onChange={(event) => setTestInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault()
+                        handleSendTestMessage()
+                      }
+                    }}
+                    disabled={testing}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className={styles.testChatSendButton}
+                    onClick={handleSendTestMessage}
+                    disabled={testing || !testInput.trim()}
+                    title="Enviar mensaje de prueba"
+                    aria-label="Enviar mensaje de prueba"
+                  >
+                    <Send size={14} />
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
         </aside>
