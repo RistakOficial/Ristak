@@ -76,29 +76,31 @@
   font-size: var(--font-size-xs);
 }
 
-.agentInboxButton[data-btn] {
+.inboxHeader .agentInboxButton[data-btn] {
   width: 52px;
   min-width: 52px;
   height: 52px;
   min-height: 52px;
+  aspect-ratio: 1 / 1;
+  flex: 0 0 52px;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
+  border-radius: 50%;
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow-xs);
   overflow: hidden;
 }
 
-.agentInboxButton[data-btn]:hover,
-.agentInboxButton[data-btn]:focus-visible,
-.agentInboxButtonActive[data-btn] {
+.inboxHeader .agentInboxButton[data-btn]:hover,
+.inboxHeader .agentInboxButton[data-btn]:focus-visible,
+.inboxHeader .agentInboxButtonActive[data-btn] {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
 }
 
-.agentInboxButton[data-btn] > span {
+.inboxHeader .agentInboxButton[data-btn] > span {
   pointer-events: none;
 }
 
