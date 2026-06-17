@@ -753,6 +753,46 @@ test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /dosis EXTRA de ligereza/)
 })
 
+test('instrucciones del agente respetan el toggle de emojis', () => {
+  const baseConfig = {
+    objective: 'citas',
+    customObjective: '',
+    successAction: 'ready_for_human',
+    requiredData: '',
+    handoffRules: '',
+    extraInstructions: '',
+    allowEmojis: false,
+    closingStrategyMode: 'custom',
+    closingStrategyCustom: 'Haz cierre breve y humano.'
+  }
+  const commonContext = {
+    businessContext: '',
+    brandVoice: '',
+    businessName: 'Clinica Sol',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: null,
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+  }
+
+  const disabledInstructions = buildConversationalInstructions({
+    config: baseConfig,
+    ...commonContext
+  })
+  const enabledInstructions = buildConversationalInstructions({
+    config: { ...baseConfig, allowEmojis: true },
+    ...commonContext
+  })
+
+  assert.match(disabledInstructions, /Control de emojis: APAGADO/)
+  assert.match(disabledInstructions, /No uses emojis en ningún mensaje visible/)
+  assert.doesNotMatch(disabledInstructions, /Control de emojis: ACTIVADO/)
+  assert.match(enabledInstructions, /Control de emojis: ACTIVADO/)
+  assert.match(enabledInstructions, /incluye 1 emoji cuando suene natural/)
+  assert.match(enabledInstructions, /No uses más de 1 emoji por mensaje/)
+  assert.doesNotMatch(enabledInstructions, /Control de emojis: APAGADO/)
+})
+
 test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', () => {
   const baseConfig = {
     objective: 'ventas',

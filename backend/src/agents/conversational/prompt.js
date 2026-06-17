@@ -1503,6 +1503,18 @@ ${qualification.questions ? `Preguntas útiles para calificar:\n${qualification.
   return sections.filter(Boolean).join('\n\n')
 }
 
+function buildEmojiUsageInstruction(config = {}) {
+  if (config.allowEmojis) {
+    return [
+      'Control de emojis: ACTIVADO.',
+      'En respuestas casuales, cálidas, positivas, de avance o de cierre ligero, incluye 1 emoji cuando suene natural.',
+      'No uses más de 1 emoji por mensaje, no lo metas en cada respuesta y omítelo en temas sensibles, quejas o tonos formales.'
+    ].join(' ')
+  }
+
+  return 'Control de emojis: APAGADO. No uses emojis en ningún mensaje visible.'
+}
+
 export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, advancedClosingContext = null, accountLocale = {} }) {
   const sections = []
   const regionalParameters = {
@@ -1579,7 +1591,7 @@ ${config.requiredData}`)
 - Espejo y rapport: ${mirrorCriteria}
 - Antes de escribir, revisa tus últimos mensajes del historial y cambia la entrada, el ritmo y la forma de preguntar. No uses el mismo molde dos veces seguidas.
 - Si ya validaste con una muletilla, la siguiente respuesta debe avanzar distinto: precisión concreta, reflejo breve, respuesta puntual o siguiente paso.
-- ${config.allowEmojis ? 'Puedes usar emojis con moderación cuando aporten calidez.' : 'No uses emojis, salvo cierre mínimo de cortesía.'}
+- ${buildEmojiUsageInstruction(config)}
 - No uses signos de admiración ni interrogación invertidos (¡ ¿). No saludos forzados. No prometas resultados garantizados.
 - Evita frases de robot: "agradecemos su interés", "permítame", "será canalizado", "procederé a".
 - Si la conversación ya cerró y solo contestan por educación, responde mínimo ("va", "claro").`)
