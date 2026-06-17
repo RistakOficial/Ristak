@@ -2804,12 +2804,14 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --sidebar:rgba(255,255,255,0.74); --topbar:rgba(237,236,232,0.55); --chart-grid:rgba(60,54,40,0.09);
   }
 
-  /* Aurora: fondo casi opaco para modales, date-picker y popovers — conserva apenas un toque de glass */
-  body[data-dir='e'].dark  { --surface-solid: rgba(33,38,72,0.95); }
-  body[data-dir='en'].dark { --surface-solid: rgba(31,37,48,0.95); }
-  body[data-dir='eb'].dark { --surface-solid: rgba(24,35,58,0.95); }
-  body[data-dir='em'].dark { --surface-solid: rgba(30,32,39,0.95); }
-  body[data-dir^='e'].light { --surface-solid: rgba(255,255,255,0.96); }
+  /* Aurora: superficie TOTALMENTE opaca para modales, dropdowns, popovers y los
+     nodos del canvas (que se solapan entre sí, así que cualquier translucidez deja
+     ver el nodo de atrás). Las tarjetas normales siguen usando --surface (glass). */
+  body[data-dir='e'].dark  { --surface-solid: rgb(33,38,72); }
+  body[data-dir='en'].dark { --surface-solid: rgb(31,37,48); }
+  body[data-dir='eb'].dark { --surface-solid: rgb(24,35,58); }
+  body[data-dir='em'].dark { --surface-solid: rgb(30,32,39); }
+  body[data-dir^='e'].light { --surface-solid: rgb(255,255,255); }
 
   ::selection { background: var(--accent-soft); }
   [data-scroll]::-webkit-scrollbar { width: 9px; height: 9px; }
