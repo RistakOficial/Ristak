@@ -53,6 +53,7 @@ interface MessageBlocksEditorProps {
   value: unknown
   onChange: (blocks: MessageBlock[]) => void
   supportsQuickReplies?: boolean
+  buttonLabelMaxLength?: number
   /** 'chat' = globos normales; 'template' = secuencia de plantillas + retrasos */
   variant?: 'chat' | 'template'
 }
@@ -289,6 +290,7 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
   value,
   onChange,
   supportsQuickReplies = false,
+  buttonLabelMaxLength = 40,
   variant = 'chat'
 }) => {
   const blocks = asMessageBlocks(value)
@@ -391,8 +393,8 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
         <TextInput
           className={styles.configRowGrow}
           value={button.label}
-          maxLength={40}
-          placeholder="Texto del botón"
+          maxLength={buttonLabelMaxLength}
+          placeholder={buttonLabelMaxLength === 20 ? 'Botón (máx. 20)' : 'Texto del botón'}
           onChange={(event) => update(buttonIndex, { label: event.target.value })}
         />
         <div style={{ width: 118, flexShrink: 0 }}>

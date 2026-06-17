@@ -230,9 +230,13 @@ function firstTextBlock(config: Record<string, unknown>): string {
   return block?.compiledText || ''
 }
 
-function validateMessageBlocks(config: Record<string, unknown>): string[] {
+function validateMessageBlocks(
+  config: Record<string, unknown>,
+  options: { strictWhatsAppButtons?: boolean } = {}
+): string[] {
   const blocks = asMessageBlocks(config.messageBlocks)
   const errors: string[] = []
+  const strictWhatsAppButtons = options.strictWhatsAppButtons === true
   const hasContent = blocks.some(
     (block) =>
       (block.type === 'text' && (block.compiledText || '').trim()) ||
@@ -248,9 +252,21 @@ function validateMessageBlocks(config: Record<string, unknown>): string[] {
     if (MEDIA_BLOCK_TYPES.includes(block.type) && !(block.url || '').trim()) {
       errors.push(`El adjunto del bloque ${index + 1} necesita una URL`)
     }
-    ;[...(block.buttons || []), ...(block.quickReplies || [])].forEach((button) => {
+    const buttons = [...(block.buttons || []), ...(block.quickReplies || [])]
+    const urlButtons = buttons.filter((button) => button.action === 'url')
+    const branchButtons = buttons.filter((button) => button.action !== 'url')
+    if (strictWhatsAppButtons && urlButtons.length > 1) {
+      errors.push(`WhatsApp permite un solo botón de URL en el mensaje ${index + 1}`)
+    }
+    if (strictWhatsAppButtons && urlButtons.length > 0 && branchButtons.length > 0) {
+      errors.push(`No mezcles botón de URL con salidas en el mensaje ${index + 1}`)
+    }
+    buttons.forEach((button) => {
       if (!String(button.label || '').trim()) {
         errors.push(`Hay un botón sin nombre en el mensaje ${index + 1}`)
+      }
+      if (strictWhatsAppButtons && String(button.label || '').trim().length > 20) {
+        errors.push(`El botón "${button.label || 'sin nombre'}" debe tener máximo 20 caracteres`)
       }
       if (button.action === 'url' && !String(button.url || '').trim()) {
         errors.push(`El botón "${button.label || 'sin nombre'}" necesita URL`)
@@ -1281,7 +1297,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
         const hasTemplateBlock = blocks.some((block) => block.type === 'template' && str(block.templateId))
         if (!str(config.templateId) && !hasTemplateBlock) errors.push('Selecciona al menos una plantilla de WhatsApp')
       } else {
-        errors.push(...validateMessageBlocks(config))
+        errors.push(...validateMessageBlocks(config, { strictWhatsAppButtons: true }))
       }
       if (str(config.sender) === 'specific' && !str(config.senderNumberId)) {
         errors.push('Selecciona el número de WhatsApp remitente')

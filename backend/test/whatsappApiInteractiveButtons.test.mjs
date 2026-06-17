@@ -1,0 +1,296 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { db, setAppConfig } from '../src/config/database.js'
+import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
+import {
+  getWhatsAppApiConfigKeys,
+  sendWhatsAppApiInteractiveMessage,
+  sendWhatsAppApiTemplateMessage,
+  setYCloudFetchForTest
+} from '../src/services/whatsappApiService.js'
+import {
+  handleAutomationEvent,
+  handleIncomingMessage
+} from '../src/services/automationEngine.js'
+
+function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText,
+    text: async () => JSON.stringify(body)
+  }
+}
+
+async function snapshotAppConfig(keys = [], callback) {
+  const uniqueKeys = [...new Set(keys)]
+  const placeholders = uniqueKeys.map(() => '?').join(', ')
+  const previousRows = placeholders
+    ? await db.all(
+        `SELECT config_key, config_value FROM app_config WHERE config_key IN (${placeholders})`,
+        uniqueKeys
+      )
+    : []
+
+  try {
+    if (placeholders) {
+      await db.run(`DELETE FROM app_config WHERE config_key IN (${placeholders})`, uniqueKeys)
+    }
+    return await callback()
+  } finally {
+    if (placeholders) {
+      await db.run(`DELETE FROM app_config WHERE config_key IN (${placeholders})`, uniqueKeys)
+    }
+    for (const row of previousRows) {
+      await db.run(`
+        INSERT INTO app_config (config_key, config_value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(config_key) DO UPDATE SET
+          config_value = excluded.config_value,
+          updated_at = CURRENT_TIMESTAMP
+      `, [row.config_key, row.config_value])
+    }
+  }
+}
+
+async function withYCloudMessageCapture(callback) {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [
+    keys.enabled,
+    keys.apiKey,
+    keys.senderPhone,
+    keys.phoneNumberId,
+    keys.wabaId,
+    keys.provider,
+    keys.lastError
+  ]
+  const captures = []
+
+  return snapshotAppConfig(configKeys, async () => {
+    await setAppConfig(keys.enabled, '1')
+    await setAppConfig(keys.apiKey, encrypt('ycloud_test_secret'))
+    await setAppConfig(keys.senderPhone, '+526561234567')
+    await setAppConfig(keys.phoneNumberId, 'phone_ycloud_buttons_test')
+    await setAppConfig(keys.wabaId, 'waba_ycloud_buttons_test')
+    await setAppConfig(keys.provider, 'ycloud')
+    await setAppConfig(keys.lastError, '')
+
+    setYCloudFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(String(url))
+      const path = parsed.pathname.replace(/^\/v2/, '')
+      const method = String(options.method || 'GET').toUpperCase()
+      if (path === '/whatsapp/messages' && method === 'POST') {
+        const body = JSON.parse(options.body || '{}')
+        captures.push(body)
+        return ycloudJsonResponse({
+          id: `ycloud_msg_${captures.length}`,
+          from: body.from,
+          to: body.to,
+          type: body.type,
+          status: 'sent',
+          [body.type]: body[body.type]
+        })
+      }
+      return ycloudJsonResponse({ ok: true })
+    })
+
+    try {
+      return await callback(captures)
+    } finally {
+      setYCloudFetchForTest(null)
+    }
+  })
+}
+
+test('envía botones interactivos de respuesta por YCloud', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const to = '+5215511112222'
+    try {
+      await sendWhatsAppApiInteractiveMessage({
+        to,
+        body: 'Elige una opción',
+        buttons: [
+          { id: 'interesado', title: 'Me interesa' },
+          { id: 'despues', title: 'Luego' }
+        ]
+      })
+
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].type, 'interactive')
+      assert.equal(captures[0].interactive.type, 'button')
+      assert.deepEqual(captures[0].interactive.action.buttons.map(button => button.reply), [
+        { id: 'interesado', title: 'Me interesa' },
+        { id: 'despues', title: 'Luego' }
+      ])
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_messages WHERE phone = ? OR to_phone = ?', [to, to])
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+      await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+    }
+  })
+})
+
+test('agrega payloads a quick replies de plantillas al enviarlas por YCloud', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const suffix = randomUUID()
+    const templateId = `template_buttons_${suffix}`
+    const to = '+5215522223333'
+    const components = [
+      {
+        type: 'BODY',
+        text: 'Hola, elige una opción'
+      },
+      {
+        type: 'BUTTONS',
+        buttons: [
+          { type: 'QUICK_REPLY', text: 'Sí quiero' },
+          { type: 'QUICK_REPLY', text: 'Después' }
+        ]
+      }
+    ]
+
+    try {
+      await db.run(
+        `INSERT INTO whatsapp_api_templates (
+          id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json
+        ) VALUES (?, ?, ?, ?, ?, 'APPROVED', ?, ?)`,
+        [
+          templateId,
+          `official_${suffix}`,
+          'waba_ycloud_buttons_test',
+          `botones_${suffix.replace(/-/g, '_')}`,
+          'es_MX',
+          JSON.stringify(components),
+          JSON.stringify({ components })
+        ]
+      )
+
+      await sendWhatsAppApiTemplateMessage({
+        to,
+        templateId
+      })
+
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].type, 'template')
+      const buttonComponents = captures[0].template.components.filter(component => component.type === 'button')
+      assert.equal(buttonComponents.length, 2)
+      assert.deepEqual(buttonComponents.map(component => component.sub_type), ['quick_reply', 'quick_reply'])
+      assert.deepEqual(buttonComponents.map(component => component.index), ['0', '1'])
+      assert.equal(buttonComponents.every(component => component.parameters?.[0]?.type === 'payload'), true)
+      assert.equal(buttonComponents[0].parameters[0].payload.includes(':button:0:si_quiero'), true)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_template_sends WHERE template_id = ?', [templateId])
+      await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [templateId])
+      await db.run('DELETE FROM whatsapp_api_messages WHERE phone = ? OR to_phone = ?', [to, to])
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+      await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+    }
+  })
+})
+
+test('automatización de WhatsApp queda esperando botón y continúa por la salida elegida', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const suffix = randomUUID()
+    const contactId = `contact_button_wait_${suffix}`
+    const automationId = `automation_button_wait_${suffix}`
+    const phone = `+52155${Date.now().toString().slice(-8)}`
+    const flow = {
+      nodes: [
+        {
+          id: 'start',
+          type: 'start',
+          label: 'Cuando...',
+          config: {
+            triggers: [
+              { id: 'trigger-contact-created', type: 'trigger-contact-created', config: { source: '' } }
+            ]
+          }
+        },
+        {
+          id: 'send-whatsapp',
+          type: 'channel-whatsapp',
+          label: 'WhatsApp',
+          config: {
+            sender: 'default',
+            messageType: 'text',
+            messageBlocks: [
+              {
+                id: 'block-buttons',
+                type: 'text',
+                compiledText: '¿Te interesa?',
+                buttons: [
+                  { id: 'interesado', label: 'Me interesa', action: 'branch' },
+                  { id: 'despues', label: 'Luego', action: 'branch' }
+                ]
+              }
+            ]
+          }
+        },
+        { id: 'done-interesado', type: 'extra-comment', label: 'Interesado', config: {} },
+        { id: 'done-despues', type: 'extra-comment', label: 'Después', config: {} }
+      ],
+      edges: [
+        { id: 'edge-start-send', sourceNodeId: 'start', targetNodeId: 'send-whatsapp' },
+        { id: 'edge-button-interesado', sourceNodeId: 'send-whatsapp', sourceHandle: 'btn_interesado', targetNodeId: 'done-interesado' },
+        { id: 'edge-button-despues', sourceNodeId: 'send-whatsapp', sourceHandle: 'btn_despues', targetNodeId: 'done-despues' }
+      ],
+      settings: { allowReentry: true }
+    }
+
+    try {
+      await db.run(
+        `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [contactId, phone, `button-wait-${suffix}@example.com`, 'Contacto Botón', 'Contacto', '{}']
+      )
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationId, 'Test botón WhatsApp', JSON.stringify(flow), JSON.stringify(flow)]
+      )
+
+      await handleAutomationEvent('contact-created', { contactId })
+
+      let enrollment = await db.get(
+        'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [automationId, contactId]
+      )
+      assert.equal(enrollment.status, 'waiting')
+      assert.equal(enrollment.wait_kind, 'button_reply')
+      assert.equal(enrollment.current_node_id, 'send-whatsapp')
+      assert.deepEqual(JSON.parse(enrollment.context).waitButtons, [
+        { id: 'interesado', label: 'Me interesa' },
+        { id: 'despues', label: 'Luego' }
+      ])
+      assert.equal(captures[0].interactive.type, 'button')
+
+      await handleIncomingMessage({
+        contactId,
+        phone,
+        text: 'Me interesa',
+        buttonId: 'interesado',
+        buttonPayload: 'interesado',
+        buttonTitle: 'Me interesa',
+        buttonReplyType: 'button_reply',
+        channel: 'whatsapp'
+      })
+
+      enrollment = await db.get(
+        'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [automationId, contactId]
+      )
+      assert.equal(enrollment.status, 'completed')
+      assert.equal(enrollment.current_node_id, 'done-interesado')
+      const log = JSON.parse(enrollment.log)
+      assert.equal(log.some(entry => String(entry.detail || '').includes('Botón "Me interesa" recibido')), true)
+    } finally {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+      await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+      await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ?', [contactId, phone])
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId, phone])
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    }
+  })
+})

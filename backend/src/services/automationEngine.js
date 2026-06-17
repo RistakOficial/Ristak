@@ -27,6 +27,7 @@ const MAX_STEPS = 60
 const MAX_INLINE_DELAY_SECONDS = 120
 const SCHEDULE_TRIGGER_WINDOW_MINUTES = 2
 const WAIT_KIND_REPLY = 'reply'
+const WAIT_KIND_BUTTON_REPLY = 'button_reply'
 const WAIT_KIND_TRIGGER_LINK_CLICK = 'trigger-link-click'
 const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 const CONDITION_VARIABLE_FIELD_PREFIX = 'var:'
@@ -65,6 +66,48 @@ function engineError(status, message) {
 
 function normalizeText(value) {
   return String(value || '').trim().toLowerCase()
+}
+
+function normalizeButtonMatchText(value) {
+  return normalizeText(value).replace(/\s+/g, ' ')
+}
+
+function normalizeMessageButtons(value = []) {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((button, index) => {
+      const label = cleanString(button?.label || button?.title || button?.text)
+      const id = cleanString(button?.id || button?.payload || `btn_${index}`)
+      const action = cleanString(button?.action) === 'url' ? 'url' : 'branch'
+      return {
+        id,
+        label,
+        action,
+        url: cleanString(button?.url)
+      }
+    })
+    .filter(button => button.label)
+}
+
+function findMatchingWaitButton(waitButtons = [], reply = {}) {
+  const buttons = normalizeMessageButtons(waitButtons)
+  if (!buttons.length) return null
+
+  const candidates = [
+    reply.buttonId,
+    reply.buttonPayload,
+    reply.buttonTitle,
+    reply.text
+  ].map(normalizeButtonMatchText).filter(Boolean)
+
+  return buttons.find(button => {
+    const buttonCandidates = [
+      button.id,
+      `btn_${button.id}`,
+      button.label
+    ].map(normalizeButtonMatchText).filter(Boolean)
+    return buttonCandidates.some(candidate => candidates.includes(candidate))
+  }) || null
 }
 
 function boolText(value) {
@@ -1642,7 +1685,11 @@ async function sendMediaBlock({ block, to, phoneNumberId, ctx }) {
 }
 
 async function sendWhatsAppBlocks(node, ctx) {
-  const { sendWhatsAppApiTextMessage, sendWhatsAppApiTemplateMessage } = await import('./whatsappApiService.js')
+  const {
+    sendWhatsAppApiInteractiveMessage,
+    sendWhatsAppApiTextMessage,
+    sendWhatsAppApiTemplateMessage
+  } = await import('./whatsappApiService.js')
   const config = node.config || {}
   const to = ctx.contact?.phone
   if (!to) throw new Error('El contacto no tiene teléfono')
@@ -1728,9 +1775,11 @@ async function sendWhatsAppBlocks(node, ctx) {
       }
     }
     if (sentNames.length === 0) throw new Error('No hay plantilla seleccionada')
-    return sentNames.length === 1
-      ? `Plantilla "${sentNames[0]}" enviada`
-      : `${sentNames.length} plantillas enviadas (${sentNames.join(', ')})`
+    return {
+      detail: sentNames.length === 1
+        ? `Plantilla "${sentNames[0]}" enviada`
+        : `${sentNames.length} plantillas enviadas (${sentNames.join(', ')})`
+    }
   }
 
   const blocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
@@ -1740,11 +1789,42 @@ async function sendWhatsAppBlocks(node, ctx) {
     if (block.type === 'text') {
       const text = renderTemplate(str(block.compiledText), ctx, { preserveUnknown: true }).trim()
       if (!text) continue
-      const buttons = Array.isArray(block.buttons) ? block.buttons.filter((b) => str(b.label).trim()) : []
-      const body = buttons.length
-        ? `${text}\n\n${buttons.map((b) => `▸ ${b.label.trim()}`).join('\n')}`
-        : text
-      await sendWhatsAppApiTextMessage({ to, text: body, contactId: ctx.contact?.id, phoneNumberId })
+      const buttons = normalizeMessageButtons(block.buttons)
+      const branchButtons = buttons.filter(button => button.action !== 'url')
+      const urlButtons = buttons.filter(button => button.action === 'url')
+      if (branchButtons.length && urlButtons.length) {
+        throw new Error('WhatsApp no permite mezclar botones de salida y botones de URL en el mismo globo')
+      }
+      if (urlButtons.length > 1) {
+        throw new Error('WhatsApp permite un solo botón de URL por globo')
+      }
+
+      if (branchButtons.length) {
+        await sendWhatsAppApiInteractiveMessage({
+          to,
+          body: text,
+          buttons: branchButtons.map(button => ({ id: button.id, title: button.label })),
+          contactId: ctx.contact?.id,
+          phoneNumberId
+        })
+        sent += 1
+        return {
+          detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''}; esperando botón`,
+          waitForButtons: branchButtons.map(button => ({ id: button.id, label: button.label }))
+        }
+      }
+
+      if (urlButtons.length) {
+        await sendWhatsAppApiInteractiveMessage({
+          to,
+          body: text,
+          urlButton: { title: urlButtons[0].label, url: urlButtons[0].url },
+          contactId: ctx.contact?.id,
+          phoneNumberId
+        })
+      } else {
+        await sendWhatsAppApiTextMessage({ to, text, contactId: ctx.contact?.id, phoneNumberId })
+      }
       sent += 1
     } else if (block.type === 'delay') {
       const seconds = Math.min(
@@ -1760,7 +1840,9 @@ async function sendWhatsAppBlocks(node, ctx) {
     }
   }
   if (sent === 0) throw new Error('El mensaje está vacío: configura al menos un globo de texto')
-  return `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''}${notes.length ? ` (${notes.join(', ')})` : ''}`
+  return {
+    detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''}${notes.length ? ` (${notes.join(', ')})` : ''}`
+  }
 }
 
 /**
@@ -1772,16 +1854,36 @@ async function sendWhatsAppBlocks(node, ctx) {
 async function executeNode(node, ctx) {
   switch (node.type) {
     case 'channel-whatsapp': {
-      const detail = await sendWhatsAppBlocks(node, ctx)
+      const sendResult = await sendWhatsAppBlocks(node, ctx)
+      const detail = sendResult?.detail || 'Mensaje de WhatsApp enviado'
+      const output = {
+        id_mensaje: '',
+        estado: 'enviado',
+        numero_destino: ctx.contact?.phone || '',
+        fecha_envio: nowIso()
+      }
+      if (Array.isArray(sendResult?.waitForButtons) && sendResult.waitForButtons.length) {
+        return {
+          wait: {
+            kind: WAIT_KIND_BUTTON_REPLY,
+            resumeAt: null,
+            context: {
+              waitExpectedAction: 'button_reply',
+              waitActionResource: node.id,
+              waitActionResourceName: node.label || nodeLabel(node),
+              waitActionChannel: 'whatsapp',
+              waitButtons: sendResult.waitForButtons
+            }
+          },
+          detail,
+          output,
+          outputBaseId: 'enviar_whatsapp'
+        }
+      }
       return {
         handle: 'out',
         detail,
-        output: {
-          id_mensaje: '',
-          estado: 'enviado',
-          numero_destino: ctx.contact?.phone || '',
-          fecha_envio: nowIso()
-        },
+        output,
         outputBaseId: 'enviar_whatsapp'
       }
     }
@@ -2289,13 +2391,83 @@ async function resumeWaitingTriggerLinkClicks(automations, baseCtx) {
 }
 
 /** Evento principal: llega un mensaje entrante (WhatsApp por ahora) */
-export async function handleIncomingMessage({ contactId, phone, contactName, text, channel = 'whatsapp', businessPhoneNumberId = null }) {
+export async function handleIncomingMessage({
+  contactId,
+  phone,
+  contactName,
+  text,
+  messageType = '',
+  buttonId = '',
+  buttonPayload = '',
+  buttonTitle = '',
+  buttonReplyType = '',
+  channel = 'whatsapp',
+  businessPhoneNumberId = null
+}) {
   try {
     const contact = await loadContact(contactId, { phone, name: contactName })
-    const baseCtx = { contact, messageText: text || '', channel, businessPhoneNumberId }
+    const baseCtx = {
+      contact,
+      messageText: text || '',
+      channel,
+      businessPhoneNumberId,
+      messageType,
+      buttonId,
+      buttonPayload,
+      buttonTitle,
+      buttonReplyType
+    }
     const automations = await listPublishedAutomations()
 
-    // 1) Reanudar inscripciones que esperaban respuesta de este contacto
+    // 1) Reanudar inscripciones que esperaban un botón de este contacto
+    const waitingButtons = await db.all(
+      `SELECT * FROM automation_enrollments WHERE contact_id = ? AND status = 'waiting' AND wait_kind = ?`,
+      [contact.id, WAIT_KIND_BUTTON_REPLY]
+    )
+    for (const row of waitingButtons) {
+      const automation = automations.find((candidate) => candidate.id === row.automation_id)
+      if (!automation) continue
+      const storedContext = parseJson(row.context, {})
+      const matchedButton = findMatchingWaitButton(storedContext.waitButtons, {
+        buttonId,
+        buttonPayload,
+        buttonTitle,
+        text
+      })
+      if (!matchedButton) continue
+
+      const enrollment = {
+        id: row.id,
+        automationId: row.automation_id,
+        status: 'active',
+        currentNodeId: row.current_node_id,
+        log: parseJson(row.log, []),
+        resumeAt: null,
+        waitKind: null,
+        context: storedContext
+      }
+      const ctx = {
+        ...baseCtx,
+        buttonId: matchedButton.id,
+        buttonTitle: buttonTitle || matchedButton.label,
+        buttonPayload: buttonPayload || matchedButton.id,
+        businessPhoneNumberId: businessPhoneNumberId || enrollment.context.businessPhoneNumberId
+      }
+      addLog(enrollment, {
+        nodeId: row.current_node_id,
+        label: nodeLabel(getNode(automation.flow, row.current_node_id)) || 'WhatsApp',
+        status: 'ok',
+        detail: `Botón "${matchedButton.label}" recibido`
+      })
+      const edge = edgesFrom(automation.flow, row.current_node_id, `btn_${matchedButton.id}`)[0]
+      if (edge) await runFrom(automation.flow, enrollment, edge.targetNodeId, ctx)
+      else {
+        enrollment.status = 'completed'
+        await saveEnrollment(enrollment)
+      }
+    }
+
+    // 2) Reanudar inscripciones que esperaban respuesta de este contacto
     const waiting = await db.all(
       `SELECT * FROM automation_enrollments WHERE contact_id = ? AND status = 'waiting' AND wait_kind = ?`,
       [contact.id, WAIT_KIND_REPLY]
@@ -2329,25 +2501,19 @@ export async function handleIncomingMessage({ contactId, phone, contactName, tex
       }
     }
 
-    // 2) Detener flujos configurados con "salir al responder"
+    // 3) Detener flujos configurados con "salir al responder"
     for (const automation of automations) {
       if (automation.flow?.settings?.stopOnContactResponse) {
         await db.run(
           `UPDATE automation_enrollments SET status = 'exited', updated_at = CURRENT_TIMESTAMP
-           WHERE automation_id = ? AND contact_id = ? AND status IN ('active', 'waiting') AND wait_kind IS DISTINCT FROM ?`,
-          [automation.id, contact.id, WAIT_KIND_REPLY]
-        ).catch(async () => {
-          // SQLite no soporta IS DISTINCT FROM
-          await db.run(
-            `UPDATE automation_enrollments SET status = 'exited', updated_at = CURRENT_TIMESTAMP
-             WHERE automation_id = ? AND contact_id = ? AND status IN ('active', 'waiting') AND (wait_kind IS NULL OR wait_kind != ?)`,
-            [automation.id, contact.id, WAIT_KIND_REPLY]
-          )
-        })
+           WHERE automation_id = ? AND contact_id = ? AND status IN ('active', 'waiting')
+             AND (wait_kind IS NULL OR wait_kind NOT IN (?, ?))`,
+          [automation.id, contact.id, WAIT_KIND_REPLY, WAIT_KIND_BUTTON_REPLY]
+        )
       }
     }
 
-    // 3) Inscribir en automatizaciones cuyo disparador coincide
+    // 4) Inscribir en automatizaciones cuyo disparador coincide
     await enrollMatching(automations, 'message-received', baseCtx)
   } catch (error) {
     logger.error(`[Automatizaciones] Error procesando mensaje entrante: ${error.message}`)

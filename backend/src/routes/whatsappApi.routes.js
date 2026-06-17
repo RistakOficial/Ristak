@@ -22,6 +22,7 @@ import {
   sendWhatsAppApiAudioMessageView,
   sendWhatsAppApiDocumentMessageView,
   sendWhatsAppApiImageMessageView,
+  sendWhatsAppApiInteractiveMessageView,
   sendWhatsAppApiTemplateMessageView,
   sendWhatsAppApiTextMessageView,
   sendMetaDirectTestMessageView,
@@ -65,6 +66,7 @@ router.get('/messages/scheduled', listScheduledChatMessagesView)
 router.post('/messages/scheduled', scheduleChatMessageView)
 router.delete('/messages/scheduled/:id', cancelScheduledChatMessageView)
 router.post('/messages/text', sendWhatsAppApiTextMessageView)
+router.post('/messages/interactive', sendWhatsAppApiInteractiveMessageView)
 router.post('/messages/image', sendWhatsAppApiImageMessageView)
 router.post('/messages/document', sendWhatsAppApiDocumentMessageView)
 router.post('/messages/audio', sendWhatsAppApiAudioMessageView)

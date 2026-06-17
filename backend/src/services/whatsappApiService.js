@@ -65,6 +65,9 @@ const MAX_WHATSAPP_DOCUMENT_BYTES = 20 * 1024 * 1024
 const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 const WHATSAPP_API_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const WHATSAPP_API_PROFILE_PICTURE_BATCH_LIMIT = 40
+const WHATSAPP_INTERACTIVE_REPLY_BUTTON_LIMIT = 3
+const WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX = 20
+const WHATSAPP_INTERACTIVE_REPLY_BUTTON_ID_MAX = 256
 const IMAGE_EXTENSION_BY_MIME = {
   'image/jpeg': 'jpg',
   'image/jpg': 'jpg',
@@ -3236,6 +3239,47 @@ function extractMessageText(message = {}) {
   )
 }
 
+function extractButtonReply(message = {}) {
+  const messageType = cleanString(message.type).toLowerCase()
+  const interactiveType = cleanString(message.interactive?.type).toLowerCase()
+  const buttonReply = message.interactive?.button_reply
+  if (buttonReply) {
+    const id = cleanString(buttonReply.id)
+    const title = cleanString(buttonReply.title)
+    return {
+      id: id || title,
+      payload: id || title,
+      title,
+      type: interactiveType || 'button_reply'
+    }
+  }
+
+  const listReply = message.interactive?.list_reply
+  if (listReply) {
+    const id = cleanString(listReply.id)
+    const title = cleanString(listReply.title)
+    return {
+      id: id || title,
+      payload: id || title,
+      title,
+      type: interactiveType || 'list_reply'
+    }
+  }
+
+  if (messageType === 'button' || message.button) {
+    const payload = cleanString(message.button?.payload || message.button?.id)
+    const title = cleanString(message.button?.text || message.button?.title)
+    return {
+      id: payload || title,
+      payload: payload || title,
+      title,
+      type: 'template_button'
+    }
+  }
+
+  return null
+}
+
 function extractMessageMedia(message = {}) {
   const messageType = cleanString(message.type).toLowerCase()
   const candidates = [
@@ -4123,6 +4167,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const errorCode = cleanString(error?.code || normalizedMessage.errorCode)
   const errorMessage = cleanString(error?.message || error?.title || normalizedMessage.errorMessage)
   const messageType = cleanString(normalizedMessage.type) || 'unknown'
+  const buttonReply = extractButtonReply(normalizedMessage)
   const media = await hydrateInboundMessageMedia(
     normalizedMessage,
     extractMessageMedia(normalizedMessage),
@@ -4341,6 +4386,10 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     profileName,
     messageText,
     messageType,
+    buttonId: buttonReply?.id || '',
+    buttonPayload: buttonReply?.payload || '',
+    buttonTitle: buttonReply?.title || '',
+    buttonReplyType: buttonReply?.type || '',
     isNew: !existingMessage,
     messageTimestamp
   }
@@ -5020,6 +5069,11 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
           phone: result.phone,
           contactName: result.contactName,
           text: result.messageText,
+          messageType: result.messageType,
+          buttonId: result.buttonId,
+          buttonPayload: result.buttonPayload,
+          buttonTitle: result.buttonTitle,
+          buttonReplyType: result.buttonReplyType,
           channel: 'whatsapp',
           businessPhoneNumberId: result.businessPhoneNumberId || null
         }))
@@ -5568,6 +5622,11 @@ export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = ''
           phone: result.phone,
           contactName: result.contactName,
           text: result.messageText,
+          messageType: result.messageType,
+          buttonId: result.buttonId,
+          buttonPayload: result.buttonPayload,
+          buttonTitle: result.buttonTitle,
+          buttonReplyType: result.buttonReplyType,
           channel: 'whatsapp',
           businessPhoneNumberId: result.businessPhoneNumberId || null
         }))
@@ -5663,6 +5722,122 @@ async function sendTemplateViaMetaDirect({ to, template, components, externalId 
         language: { code: template.language },
         ...(Array.isArray(components) && components.length ? { components } : {})
       },
+      ...(externalId ? { biz_opaque_callback_data: externalId } : {})
+    }
+  })
+}
+
+function normalizeInteractiveReplyButtons(buttons = []) {
+  if (!Array.isArray(buttons)) return []
+  const normalized = buttons
+    .map((button, index) => {
+      const title = cleanString(button?.title || button?.label || button?.text)
+      const id = cleanString(button?.id || button?.payload || `btn_${index}_${slugForButtonPayload(title)}`)
+      return {
+        id: id.slice(0, WHATSAPP_INTERACTIVE_REPLY_BUTTON_ID_MAX),
+        title
+      }
+    })
+    .filter(button => button.title)
+
+  if (normalized.length > WHATSAPP_INTERACTIVE_REPLY_BUTTON_LIMIT) {
+    throw new Error(`WhatsApp permite máximo ${WHATSAPP_INTERACTIVE_REPLY_BUTTON_LIMIT} botones por mensaje`)
+  }
+
+  const ids = new Set()
+  normalized.forEach((button) => {
+    if (button.title.length > WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX) {
+      throw new Error(`El botón "${button.title}" supera ${WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX} caracteres`)
+    }
+    if (!button.id) throw new Error(`El botón "${button.title}" necesita un identificador`)
+    if (ids.has(button.id)) throw new Error(`Hay botones repetidos con el identificador "${button.id}"`)
+    ids.add(button.id)
+  })
+
+  return normalized
+}
+
+function normalizeInteractiveUrlButton(value = null) {
+  if (!value || typeof value !== 'object') return null
+  const title = cleanString(value.title || value.label || value.text || value.displayText)
+  const url = cleanString(value.url)
+  if (!title && !url) return null
+  if (!title) throw new Error('El botón de URL necesita texto')
+  if (!url) throw new Error('El botón de URL necesita URL')
+  if (title.length > WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX) {
+    throw new Error(`El botón "${title}" supera ${WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX} caracteres`)
+  }
+  if (!/^https?:\/\//i.test(url)) throw new Error('El botón de URL debe empezar con http:// o https://')
+  return { title, url }
+}
+
+function buildInteractiveMessagePayload({ body, buttons, urlButton } = {}) {
+  const bodyText = cleanString(body)
+  if (!bodyText) throw new Error('Falta el texto del mensaje')
+
+  const replyButtons = normalizeInteractiveReplyButtons(buttons)
+  const ctaButton = normalizeInteractiveUrlButton(urlButton)
+  if (replyButtons.length && ctaButton) {
+    throw new Error('WhatsApp no permite mezclar botones de respuesta y botón de URL en el mismo mensaje')
+  }
+  if (!replyButtons.length && !ctaButton) {
+    throw new Error('Agrega al menos un botón')
+  }
+
+  if (ctaButton) {
+    return {
+      interactive: {
+        type: 'cta_url',
+        body: { text: bodyText },
+        action: {
+          name: 'cta_url',
+          parameters: {
+            display_text: ctaButton.title,
+            url: ctaButton.url
+          }
+        }
+      },
+      fallbackText: `${bodyText}\n\n${ctaButton.title}: ${ctaButton.url}`,
+      buttons: [],
+      urlButton: ctaButton
+    }
+  }
+
+  return {
+    interactive: {
+      type: 'button',
+      body: { text: bodyText },
+      action: {
+        buttons: replyButtons.map((button) => ({
+          type: 'reply',
+          reply: {
+            id: button.id,
+            title: button.title
+          }
+        }))
+      }
+    },
+    fallbackText: `${bodyText}\n\n${replyButtons.map((button) => `- ${button.title}`).join('\n')}`,
+    buttons: replyButtons,
+    urlButton: null
+  }
+}
+
+async function sendInteractiveViaMetaDirect({ to, interactive, externalId } = {}) {
+  const config = await loadMetaDirectConfig({ includeSecrets: true })
+  if (!config.connected) throw new Error('Meta directo no está conectado')
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  if (!toPhone) throw new Error('Falta el número destino')
+  if (!interactive) throw new Error('Falta el mensaje interactivo')
+
+  return metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
+    method: 'POST',
+    token: config.systemUserToken,
+    body: {
+      messaging_product: 'whatsapp',
+      to: toPhone,
+      type: 'interactive',
+      interactive,
       ...(externalId ? { biz_opaque_callback_data: externalId } : {})
     }
   })
@@ -5798,6 +5973,49 @@ function buildTemplateComponents({ components, variables } = {}) {
   }]
 }
 
+function slugForButtonPayload(value = '') {
+  return cleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function templateButtonPayload({ template, button, index }) {
+  const name = slugForButtonPayload(template?.name) || 'template'
+  const language = slugForButtonPayload(template?.language) || 'lang'
+  const label = slugForButtonPayload(button?.text || button?.label || button?.title) || `button_${index}`
+  return `template:${name}:${language}:button:${index}:${label}`.slice(0, WHATSAPP_INTERACTIVE_REPLY_BUTTON_ID_MAX)
+}
+
+function templateQuickReplyButtonComponents(template = {}, components = []) {
+  const existingComponents = Array.isArray(components) ? components : []
+  if (existingComponents.some(component => cleanString(component?.type).toLowerCase() === 'button')) {
+    return existingComponents
+  }
+
+  const sourceComponents = parseJsonValue(template?.components_json, [])
+  const buttonsComponent = (Array.isArray(sourceComponents) ? sourceComponents : []).find(component =>
+    cleanString(component?.type).toUpperCase() === 'BUTTONS'
+  )
+  const buttons = Array.isArray(buttonsComponent?.buttons) ? buttonsComponent.buttons : []
+  const quickReplies = buttons
+    .map((button, index) => ({ button, index }))
+    .filter(({ button }) => cleanString(button?.type).toUpperCase() === 'QUICK_REPLY')
+    .map(({ button, index }) => ({
+      type: 'button',
+      sub_type: 'quick_reply',
+      index: String(index),
+      parameters: [{
+        type: 'payload',
+        payload: templateButtonPayload({ template, button, index })
+      }]
+    }))
+
+  return quickReplies.length ? [...existingComponents, ...quickReplies] : existingComponents
+}
+
 async function findTemplateForSend({ templateId, templateName, language }) {
   if (templateId) {
     return db.get(`
@@ -5849,6 +6067,16 @@ function buildTemplateTextForQrFallback({ template, components, variables } = {}
     const params = getComponentParameters(requestComponents, type)
     const values = params.length ? params : type === 'body' ? normalizedVariables : []
     textParts.push(renderTemplateText(sourceText, values))
+  }
+
+  const buttonsComponent = (Array.isArray(sourceComponents) ? sourceComponents : []).find(component =>
+    cleanString(component?.type).toUpperCase() === 'BUTTONS'
+  )
+  const buttonLabels = (Array.isArray(buttonsComponent?.buttons) ? buttonsComponent.buttons : [])
+    .map(button => cleanString(button?.text || button?.label || button?.title))
+    .filter(Boolean)
+  if (buttonLabels.length) {
+    textParts.push(buttonLabels.map(label => `- ${label}`).join('\n'))
   }
 
   return textParts.map(cleanString).filter(Boolean).join('\n\n')
@@ -5949,7 +6177,10 @@ export async function sendWhatsAppApiTemplateMessage({
     publicBaseUrl,
     extraVariables
   })
-  const templateComponents = buildTemplateComponents({ components, variables: renderedVariables })
+  const templateComponents = templateQuickReplyButtonComponents(
+    finalTemplate,
+    buildTemplateComponents({ components, variables: renderedVariables })
+  )
 
   if (config.provider === META_DIRECT_PROVIDER_NAME) {
     return sendTemplateViaMetaDirect({
@@ -6081,6 +6312,144 @@ export async function sendWhatsAppApiTemplateMessage({
       to: response.to || toPhone,
       type: response.type || 'template',
       template: response.template || requestBody.template,
+      transport: 'api',
+      createTime: response.createTime || nowIso()
+    },
+    direction: 'outbound',
+    transport: 'api',
+    contactId
+  })
+
+  return response
+}
+
+export async function sendWhatsAppApiInteractiveMessage({
+  to,
+  from,
+  body,
+  text,
+  buttons,
+  urlButton,
+  externalId,
+  transport = 'api',
+  contactId,
+  userId,
+  publicBaseUrl,
+  extraVariables,
+  phoneNumberId
+} = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const renderedBody = await renderTemplateVariables(body || text, {
+    contactId,
+    phone: toPhone || to,
+    userId,
+    publicBaseUrl,
+    extraVariables
+  })
+  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  const interactivePayload = buildInteractiveMessagePayload({
+    body: renderedBody,
+    buttons,
+    urlButton
+  })
+
+  if (!toPhone) throw new Error('Falta el número destino')
+
+  if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
+    return sendInteractiveViaMetaDirect({
+      to: toPhone,
+      interactive: interactivePayload.interactive,
+      externalId
+    })
+  }
+
+  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
+    throw new Error('WhatsApp_API no está conectado')
+  }
+
+  if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
+
+  if (cleanTransport === 'qr') {
+    return sendTextViaQrFallback({
+      phoneNumberId,
+      fromPhone,
+      toPhone,
+      body: interactivePayload.fallbackText,
+      externalId,
+      contactId
+    })
+  }
+
+  const fallbackDecision = await getOfficialApiFallbackDecision({
+    config,
+    fromPhone,
+    phoneNumberId
+  })
+  if (fallbackDecision.shouldFallback) {
+    return sendTextViaQrFallback({
+      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      fromPhone,
+      toPhone,
+      body: interactivePayload.fallbackText,
+      externalId,
+      contactId,
+      fallbackReason: fallbackDecision.reason
+    })
+  }
+
+  const requestBody = {
+    from: fromPhone,
+    to: toPhone,
+    type: 'interactive',
+    interactive: interactivePayload.interactive,
+    ...(externalId ? { externalId } : {})
+  }
+
+  let response
+  try {
+    response = await ycloudRequest('/whatsapp/messages', {
+      apiKey: config.apiKey,
+      method: 'POST',
+      body: requestBody
+    })
+  } catch (error) {
+    const retryDecision = await getOfficialApiFallbackDecision({
+      config,
+      fromPhone,
+      phoneNumberId,
+      error
+    })
+    if (retryDecision.shouldFallback) {
+      logger.warn(`[WhatsApp API] Envio interactivo API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
+      return sendTextViaQrFallback({
+        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        fromPhone,
+        toPhone,
+        body: interactivePayload.fallbackText,
+        externalId,
+        contactId,
+        fallbackReason: retryDecision.reason,
+        originalError: error
+      })
+    }
+    throw error
+  }
+
+  await upsertMessage({
+    payload: {
+      id: response.id || externalId || hashId('waapi_interactive_send_event', `${fromPhone}|${toPhone}|${safeJson(interactivePayload.interactive)}`),
+      type: 'whatsapp.message.updated',
+      createTime: nowIso(),
+      whatsappMessage: response
+    },
+    message: {
+      ...response,
+      from: response.from || fromPhone,
+      to: response.to || toPhone,
+      type: response.type || 'interactive',
+      interactive: response.interactive || interactivePayload.interactive,
       transport: 'api',
       createTime: response.createTime || nowIso()
     },
