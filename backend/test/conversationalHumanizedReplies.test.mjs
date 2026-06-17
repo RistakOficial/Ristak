@@ -445,7 +445,7 @@ test('convierte el perfil estructurado del negocio en parametros del prompt', ()
   assert.doesNotMatch(rendered, /\[INDUSTRIA\]/)
 })
 
-test('adapta el cierre de fabrica al lenguaje del negocio descrito', () => {
+test('parametriza el cierre de fabrica sin transformar el guion general', () => {
   const parameters = buildBusinessProfilePromptParameters({
     businessName: 'Growth Médico',
     industry: 'marketing para médicos especialistas',
@@ -472,12 +472,17 @@ test('adapta el cierre de fabrica al lenguaje del negocio descrito', () => {
     parameters
   })
 
-  assert.match(section, /Adaptación conversacional al negocio/)
+  assert.match(section, /Parámetros del negocio para el guión de fábrica/)
   assert.match(section, /Growth Médico/)
   assert.match(section, /marketing para médicos especialistas/)
   assert.match(section, /No vendas marketing/)
   assert.match(section, /pacientes, agenda, consultas/)
+  assert.match(section, /no reescribe, resume, reemplaza ni transforma el guión de fábrica/)
+  assert.match(section, /El guión de fábrica manda completo/)
   assert.match(section, /No pongas a la persona en modo comprador/)
+  assert.doesNotMatch(section, /Adaptación conversacional al negocio/)
+  assert.doesNotMatch(section, /Adapta todo el diálogo/)
+  assert.doesNotMatch(section, /manda sobre los ejemplos genéricos/)
 })
 
 test('los parametros del perfil no acortan ni cambian la estrategia de fabrica', () => {
@@ -581,7 +586,8 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
   assert.match(instructions, /Puntos aprendidos de esta conversación/)
   assert.match(instructions, /Problema real: sus conversaciones se enfrían/)
   assert.match(instructions, /update_closing_context/)
-  assert.match(instructions, /Adaptación conversacional al negocio/)
+  assert.match(instructions, /Parámetros del negocio para el guión de fábrica/)
+  assert.match(instructions, /El guión de fábrica manda completo/)
   assert.match(instructions, /No pongas a la persona en modo comprador/)
   assert.match(instructions, /Cultura textual regional/)
   assert.match(instructions, /Cuenta configurada en México/)
@@ -612,6 +618,7 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
   assert.match(customInstructions, /Cuenta configurada en España/)
   assert.match(customInstructions, /vale/)
   assert.doesNotMatch(customInstructions, /Lenguaje natural, cercano, mexicano/)
+  assert.doesNotMatch(customInstructions, /Parámetros del negocio para el guión de fábrica/)
   assert.doesNotMatch(customInstructions, /Adaptación conversacional al negocio/)
   assert.doesNotMatch(customInstructions, /Parametros internos de cierre avanzado/)
 })

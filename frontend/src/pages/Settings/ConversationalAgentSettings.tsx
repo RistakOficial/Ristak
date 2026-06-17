@@ -188,7 +188,7 @@ function getBusinessPromptBlockerText(status?: ConversationalBusinessPromptStatu
   if (status?.ready) return ''
   if (status?.extractionError) return status.extractionError
   if (!status || status.status === 'empty') {
-    return 'Antes de publicar agentes, describe el negocio en Agente AI para que Ristak adapte la conversación.'
+    return 'Antes de publicar agentes, describe el negocio en Agente AI para que Ristak parametrice el guión de fábrica.'
   }
   if (status.status === 'needs_more_context') {
     return 'Agrega más detalle del negocio: qué vende, a quién atiende, cómo opera y qué debe evitar.'
@@ -635,7 +635,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, calendars, filterOptions, 
                   ? 'Este agente usa tu versión editada.'
                   : businessPromptReady
                     ? 'Esta vista ya incluye el lenguaje, giro y encuadre actual del negocio. Si cambias la descripción en Agente AI, se vuelve a preparar.'
-                    : 'Primero completa la descripción del negocio para ver la versión adaptada.'}
+                    : 'Primero completa la descripción del negocio para ver el guión parametrizado.'}
               </p>
             </div>
           </details>
@@ -1209,7 +1209,7 @@ export const ConversationalAgentSettings: React.FC = () => {
           <strong>{promptStatusText}</strong>
           <span>
             {businessPromptReady
-              ? 'La estrategia avanzada de fábrica ya está adaptada con la descripción actual del negocio.'
+              ? 'La estrategia avanzada de fábrica ya está parametrizada con la descripción actual del negocio.'
               : promptBlockerText}
           </span>
         </div>

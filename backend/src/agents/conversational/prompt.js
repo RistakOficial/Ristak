@@ -1107,7 +1107,7 @@ export function buildClosingStrategyTemplateParameters({
     URGENCIA_DETECTADA: firstClosingText(learnedContext.urgencyLevel, 'desconocida'),
     CAMINO_1_CONSECUENCIA: firstClosingText(learnedContext.consequenceIfNoAction, 'seguir igual con el problema que ya conto'),
     CAMINO_2_RESULTADO_DESEADO: firstClosingText(learnedContext.desiredOutcome, 'tomar accion hacia el resultado que busca'),
-    ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO: firstClosingText(adaptation.ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO, 'adapta la estrategia al contexto real del negocio sin sonar vendedor ni presionar'),
+    ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO: firstClosingText(adaptation.ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO, 'usa el contexto real del negocio solo como parametros; no reescribas ni transformes el guion de fabrica'),
     LENGUAJE_DEL_NEGOCIO: firstClosingText(adaptation.LENGUAJE_DEL_NEGOCIO, 'usa el lenguaje natural del giro del negocio y del problema que la persona describa'),
     NARRATIVA_DE_CONTRASTE_DEL_NEGOCIO: firstClosingText(adaptation.NARRATIVA_DE_CONTRASTE_DEL_NEGOCIO, 'contrasta seguir igual contra revisar un siguiente paso claro, sin miedo inventado'),
     PERCEPCION_DEL_CLIENTE: firstClosingText(adaptation.PERCEPCION_DEL_CLIENTE, 'la persona debe sentirse guiada, no vendida'),
@@ -1186,7 +1186,7 @@ export function buildBusinessAdaptiveClosingSection(context = {}) {
   const businessName = readClosingParameter(parameters, 'NOMBRE_DEL_NEGOCIO', 'ESCRIBIR_NOMBRE_DEL_NEGOCIO') || 'este negocio'
   const industry = readClosingParameter(parameters, 'INDUSTRIA', 'ESCRIBIR_INDUSTRIA') || 'el giro del negocio'
   const offering = readClosingParameter(parameters, 'PRODUCTO_O_SERVICIO', 'ESCRIBIR_PRODUCTO_O_SERVICIO') || 'lo que el negocio ofrece'
-  const adaptation = readClosingParameter(parameters, 'ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO')
+  const businessParameters = readClosingParameter(parameters, 'ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO')
   const language = readClosingParameter(parameters, 'LENGUAJE_DEL_NEGOCIO')
   const contrast = readClosingParameter(parameters, 'NARRATIVA_DE_CONTRASTE_DEL_NEGOCIO')
   const perception = readClosingParameter(parameters, 'PERCEPCION_DEL_CLIENTE')
@@ -1199,7 +1199,7 @@ export function buildBusinessAdaptiveClosingSection(context = {}) {
     `Negocio/giro: ${businessName} · ${industry} · ${offering}`,
     regionalCulture ? `Cultura textual regional: ${regionalCulture}` : '',
     mirrorCriteria ? `Espejo y rapport: ${mirrorCriteria}` : '',
-    adaptation ? `Adaptación obligatoria: ${adaptation}` : '',
+    businessParameters ? `Parámetros conversacionales del negocio: ${businessParameters}` : '',
     language ? `Lenguaje y mundo mental: ${language}` : '',
     perception ? `Cómo debe sentirse la persona: ${perception}` : '',
     contrast ? `Contraste correcto para este negocio: ${contrast}` : '',
@@ -1210,9 +1210,9 @@ export function buildBusinessAdaptiveClosingSection(context = {}) {
   if (!lines.length) return ''
 
   return [
-    '## Adaptación conversacional al negocio',
-    'Este bloque sale de la descripción actual del negocio y manda sobre los ejemplos genéricos de la estrategia. Si la descripción cambia, este encuadre cambia con ella.',
-    'Adapta todo el diálogo a este giro sin cambiar la cadencia de conciencia y contraste: origen, motivo, urgencia, problema real, consecuencia lógica, resultado deseado y siguiente paso.',
+    '## Parámetros del negocio para el guión de fábrica',
+    'Este bloque sale de la descripción actual del negocio. Sólo rellena el contexto y los campos variables; no reescribe, resume, reemplaza ni transforma el guión de fábrica.',
+    'El guión de fábrica manda completo: conserva su estructura, cadencia e idea general. Usa estos datos sólo para elegir palabras, preguntas y ejemplos acordes al nicho.',
     ...lines,
     'No pongas a la persona en modo comprador. No hables desde vender, ofrecer, empujar, cobrar o cerrar por presión. Habla desde claridad, criterio, amistad y autoridad tranquila.',
     'Si toca hablar de valor, hazlo sólo con datos reales y como una referencia para decidir, no como presión.'

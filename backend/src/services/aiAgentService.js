@@ -16312,8 +16312,8 @@ function buildBusinessProfileExtractionInstructions() {
     'Si es el mismo negocio, mezcla datos: conserva lo anterior cuando siga vigente y agrega o corrige con lo nuevo.',
     'Si claramente es otro negocio, reemplaza el perfil anterior y usa sólo el contexto nuevo.',
     'Detecta nombre del negocio, industria, giro/naturaleza, si vende productos, servicios o ambos, ubicaciones, horarios, teléfonos, extensiones, persona encargada, precios, métodos de pago, facturación, productos/servicios, frecuencia/cadencia, condiciones, cliente ideal y tono útil.',
-    'Además, adapta la estrategia conversacional de cierre al giro del negocio. No escribas como vendedor: define cómo guiar a la persona desde autoridad tranquila, amistad y claridad, sin ponerla en posición de comprador ni empujarla con palabras de riesgo como dinero, compra, pago, oferta o inversión antes de que ella pida avanzar.',
-    'La adaptación debe conservar la misma cadencia de conciencia y contraste: descubrir origen, motivo, urgencia, problema real, consecuencia lógica y resultado deseado, pero usando el lenguaje, narrativa, miedos reales, aspiraciones y contexto del cliente de ese negocio.',
+    'Además, extrae parámetros conversacionales del giro del negocio para rellenar los campos del guión de fábrica. No reescribas, resumas, transformes ni cambies la idea general del guión: la estructura de pull, conciencia, contraste, preguntas y cierre ya está definida por Ristak.',
+    'Estos parámetros sólo deben cambiar nicho, lenguaje del negocio, objeciones, contexto del cliente, riesgos verbales y ejemplos mentales. La cadencia general sigue siendo la misma: descubrir origen, motivo, urgencia, problema real, consecuencia lógica, resultado deseado y siguiente paso.',
     'Devuelve solamente JSON válido, sin markdown, sin explicación y sin texto fuera del JSON.',
     'Schema esperado:',
     JSON.stringify({
