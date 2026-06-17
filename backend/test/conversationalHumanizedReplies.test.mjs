@@ -346,6 +346,29 @@ test('modo humano deja una reaccion con coma como globo propio', async () => {
   assert.deepEqual(result.messages, ['claro,', 'de qué te gustaría saber?'])
 })
 
+test('modo humano no deja una frase dependiente sola antes de una pregunta', async () => {
+  const original = 'depende de lo que necesites. tú eres médico o lo ves para alguien más?'
+  const result = await splitMessageIntoBubbles({
+    text: original,
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 160, randomizeSplitting: true },
+    aiSplitter: async () => ({ messages: ['depende de lo que necesites.', 'tú eres médico o lo ves para alguien más?'] })
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.deepEqual(result.messages, [original])
+})
+
+test('modo humano fallback no corta depende de lo que necesitas antes del contexto', () => {
+  const original = 'depende de lo que necesites. tú eres médico o lo ves para alguien más?'
+  const result = splitMessageIntoBubblesFallback({
+    text: original,
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 160, randomizeSplitting: true },
+    random: () => 0.99
+  })
+
+  assert.deepEqual(result.messages, [original])
+})
+
 test('modo humano puede llegar hasta seis globos sólo cuando el texto largo lo amerita', () => {
   const longReply = [
     'va, ya te entendí.',

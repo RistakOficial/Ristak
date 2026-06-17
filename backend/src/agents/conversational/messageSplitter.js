@@ -10,7 +10,8 @@ const NATURAL_STANDALONE_REACTION_PATTERN = /^(?:ah+h?|ah+ ya|ah+ okaa?y|ok+a+y?
 const LEADING_REACTION_SPLIT_PATTERN = /^((?:ah+\s+ok+a?y?|mmm(?:\s+a\s+ver)?|ok\s+perfecto)(?:[,.!?;:…]+|\.{2,}|…+)?|(?:ah+\s+ya|ah+h?|ok+a+y?|ok|va|sale|perfecto|listo|claro|órale|orale|uff|h[ií]jole|tsss|uy|ya)(?:[,.!?;:…]+|\.{2,}|…+))\s+(.+)$/i
 const INTENT_BRIDGE_PATTERN = /^(.{10,140}?)\s+((?:pa|para)\s+(?:entender(?:te|le)?|captar|ubicar|aterrizar|no\s+(?:marearte|llenarte|decirte)|darte|decirte)\b.+)$/i
 const SETUP_INTENT_HINT_PATTERN = /\b(?:pa|para|nom[aá]s|solo|s[oó]lo|digo|antes|as[ií]|déjame|dejame|entender(?:te|le)?|contexto|aire|marear(?:te)?|aterrizar|ubicar|captar|checar|revisar|decirte|darte|llenarte)\b/i
-const QUESTION_START_PATTERN = /^(?:hoy\s+|ahorita\s+|actualmente\s+|entonces\s+|ya\s+)?(?:c[oó]mo|qu[eé]|cu[aá]l|cu[aá]ndo|d[oó]nde|por\s+qu[eé]|qui[eé]n|cu[aá]nt[oa]s?|t[uú]|me\s+dices|dime|cu[eé]ntame)\b/i
+const QUESTION_START_PATTERN = /^(?:hoy\s+|ahorita\s+|actualmente\s+|entonces\s+|ya\s+)?(?:c[oó]mo|qu[eé]|cu[aá]l|cu[aá]ndo|d[oó]nde|por\s+qu[eé]|qui[eé]n|cu[aá]nt[oa]s?|t[uú]|eres|me\s+dices|dime|cu[eé]ntame)\b/i
+const DEPENDENT_SETUP_MESSAGE_PATTERN = /^(?:(?:pues|mira|ok|va)\s+)?(?:eso\s+)?(?:depende(?:\s+de|\b)|depende\s+un\s+poco\b|va\s+a\s+depender\b|puede\s+depender\b|depender[ií]a\b|var[ií]a\s+seg[uú]n\b)/i
 const VISIBLE_LABEL_PATTERN = /^(?:globo|mensaje|parte)\s*#?\s*\d+\s*[:.)-]\s*/i
 const BREAK_TOKEN_PATTERN = /\s*\[BREAK\]\s*/gi
 const MAX_AI_INPUT_CHARS = 4000
@@ -207,6 +208,45 @@ function mergeShortMessages(messages, settings) {
   return result
 }
 
+function isDependentSetupMessage(message) {
+  const clean = cleanText(message)
+  if (!clean || clean.length > 90) return false
+  return DEPENDENT_SETUP_MESSAGE_PATTERN.test(clean)
+}
+
+function isQuestionLikeMessage(message) {
+  const clean = cleanText(message)
+  if (!clean) return false
+  return clean.endsWith('?') || QUESTION_START_PATTERN.test(clean)
+}
+
+function mergeDependentSetupMessages(messages, settings) {
+  const maxLength = settings.maxBubbleLength
+  const result = []
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const current = cleanText(messages[index])
+    if (!current) continue
+
+    const next = cleanText(messages[index + 1])
+    const merged = next ? `${current} ${next}`.trim() : current
+    if (
+      next &&
+      isDependentSetupMessage(current) &&
+      isQuestionLikeMessage(next) &&
+      merged.length <= maxLength
+    ) {
+      result.push(merged)
+      index += 1
+      continue
+    }
+
+    result.push(current)
+  }
+
+  return result
+}
+
 function limitBubbleCount(messages, maxBubbles) {
   const parts = [...messages]
   while (parts.length > maxBubbles) {
@@ -301,6 +341,7 @@ function splitTextByHumanIntent(text, settings, random = Math.random) {
   }
 
   parts = mergeShortMessages(parts, settings)
+  parts = mergeDependentSetupMessages(parts, settings)
   parts = limitBubbleCount(parts, Math.min(settings.maxBubbles, 6))
   return parts.map(cleanText).filter(Boolean)
 }
@@ -360,6 +401,7 @@ function repairMessages(rawMessages, originalText, settings) {
 
   let repaired = sourceMessages.flatMap((message) => splitTextConservatively(message, settings.maxBubbleLength))
   repaired = mergeShortMessages(repaired, settings)
+  repaired = mergeDependentSetupMessages(repaired, settings)
   repaired = limitBubbleCount(repaired, settings.maxBubbles)
   repaired = repaired.map(cleanText).filter(Boolean)
 
@@ -438,6 +480,7 @@ function buildSplitterInstructions(settings) {
     '- Regla dura: si el texto empieza con una reacción o muletilla corta ("ya..", "ok", "claro", "ahh", "mmm", "uff", "sale", "perfecto"), esa reacción va sola como primer mensaje casi siempre.',
     '- No pegues reacción + lectura + pregunta en el mismo mensaje. Ejemplo de separación: "ya.." / "entonces sí traes ese tema encima" / "pa entenderte bien y no decirte algo al aire" / "hoy cómo te llegan los pacientes?".',
     '- Si hay una frase puente tipo "pa entenderte", "para no marearte", "pa darte algo que sí sirva" y luego una pregunta, separa la frase puente y deja la pregunta en otro mensaje.',
+    '- No dejes frases dependientes solas antes de una pregunta. Si una parte dice "depende de lo que necesites" y la siguiente es "tú eres médico o lo ves para alguien más?", van juntas en un solo mensaje.',
     '- Si el texto trae salto de línea o salto de párrafo dentro de una misma respuesta, normalmente eso indica otro globo: no metas dos líneas con intenciones distintas en el mismo mensaje.',
     '- No dividas por dividir. Si el texto es una sola idea corta y limpia, devuelve un solo mensaje.',
     '- No fuerces 2-4 mensajes siempre. Lo normal suele ser 1-4 según el texto; usa 5 o 6 sólo si el texto está largo y realmente lo amerita.',
