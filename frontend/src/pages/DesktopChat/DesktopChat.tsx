@@ -117,6 +117,7 @@ interface DesktopChatMessage {
     name?: string
     mimeType?: string
     durationMs?: number
+    isGif?: boolean
   }
 }
 
@@ -743,6 +744,7 @@ function pickMessageText(data: Record<string, unknown>) {
 
 function getMessageTypeLabel(type = '', fallback = 'Mensaje') {
   const normalized = type.toLowerCase()
+  if (normalized.includes('gif')) return 'GIF'
   if (normalized.includes('image')) return 'Foto'
   if (normalized.includes('video')) return 'Video'
   if (normalized.includes('audio') || normalized.includes('voice')) return 'Mensaje de voz'
@@ -753,13 +755,32 @@ function getMessageTypeLabel(type = '', fallback = 'Mensaje') {
   return fallback
 }
 
-function getMediaAttachmentType(messageType = '', mimeType = '', name = ''): ChatAttachmentType | null {
+function getMediaPathExtension(value = '') {
+  const clean = String(value || '').trim().split('?')[0].split('#')[0].toLowerCase()
+  const leaf = clean.split('/').pop() || clean
+  const extension = leaf.split('.').pop() || ''
+  return /^[a-z0-9]{2,8}$/.test(extension) ? extension : ''
+}
+
+function hasGifFileSignature(mimeType = '', name = '', mediaUrl = '') {
+  const normalizedMime = mimeType.split(';')[0].trim().toLowerCase()
+  return normalizedMime === 'image/gif' || getMediaPathExtension(name) === 'gif' || getMediaPathExtension(mediaUrl) === 'gif'
+}
+
+function isGifMedia(messageType = '', mimeType = '', name = '', mediaUrl = '') {
+  return messageType.toLowerCase().includes('gif') || hasGifFileSignature(mimeType, name, mediaUrl)
+}
+
+function getMediaAttachmentType(messageType = '', mimeType = '', name = '', mediaUrl = ''): ChatAttachmentType | null {
   const normalizedType = messageType.toLowerCase()
-  const normalizedMime = mimeType.toLowerCase()
+  const normalizedMime = mimeType.split(';')[0].trim().toLowerCase()
   const normalizedName = name.toLowerCase()
+  const gifFile = hasGifFileSignature(mimeType, name, mediaUrl)
+  const gifMessageType = normalizedType.includes('gif')
   if (normalizedType.includes('audio') || normalizedType.includes('voice') || normalizedMime.startsWith('audio/')) return 'audio'
+  if (gifFile || (gifMessageType && !normalizedMime.startsWith('video/'))) return 'image'
   if (normalizedType.includes('image') || normalizedType.includes('sticker') || normalizedMime.startsWith('image/')) return 'image'
-  if (normalizedType.includes('video') || normalizedType.includes('gif') || normalizedMime.startsWith('video/')) return 'video'
+  if (normalizedType.includes('video') || gifMessageType || normalizedMime.startsWith('video/')) return 'video'
   if (
     normalizedType.includes('document') ||
     normalizedMime === 'application/pdf' ||
@@ -803,7 +824,7 @@ function cleanAttachmentMessageText(text = '', attachment?: DesktopChatMessage['
   if (!attachment) return text
   const placeholderByType: Record<ChatAttachmentType, string[]> = {
     audio: ['audio', 'voice', 'voice message', 'mensaje de voz'],
-    image: ['image', 'photo', 'foto', 'imagen'],
+    image: ['image', 'photo', 'foto', 'imagen', 'gif'],
     video: ['video'],
     document: ['document', 'documento'],
     file: ['file', 'archivo']
@@ -880,14 +901,16 @@ function getJourneyMediaAttachment(event: JourneyEvent): DesktopChatMessage['att
   const mimeType = String(data.media_mime_type || data.mediaMimeType || data.mimeType || data.mime_type || '').trim()
   const name = String(data.media_filename || data.mediaFilename || data.filename || data.fileName || '').trim()
   const durationMs = Number(data.media_duration_ms || data.mediaDurationMs || data.durationMs || data.duration_ms || 0) || undefined
-  const type = getMediaAttachmentType(messageType, mimeType, name)
+  const type = getMediaAttachmentType(messageType, mimeType, name, mediaUrl)
+  const isGif = isGifMedia(messageType, mimeType, name, mediaUrl)
   if (!type) return undefined
   return {
     type,
     url: mediaUrl,
-    name: type === 'audio' ? 'Mensaje de voz' : (name || mediaId || getMessageTypeLabel(type, 'Archivo')),
+    name: type === 'audio' ? 'Mensaje de voz' : (name || mediaId || (isGif ? 'GIF enviado' : getMessageTypeLabel(type, 'Archivo'))),
     mimeType,
-    durationMs
+    durationMs,
+    isGif
   }
 }
 
@@ -2521,31 +2544,41 @@ export const DesktopChat: React.FC = () => {
         return (
           <span className={`${styles.attachment} ${styles.attachmentUnavailable}`}>
             <ImageIcon size={15} />
-            <span>{attachment.name || 'Foto no disponible'}</span>
+            <span>{attachment.name || (attachment.isGif ? 'GIF no disponible' : 'Foto no disponible')}</span>
           </span>
         )
       }
 
       return (
-        <a className={styles.mediaAttachment} href={attachmentSrc} target="_blank" rel="noreferrer" aria-label={attachment.name || 'Abrir foto'}>
-          <img src={attachmentSrc} alt={attachment.name || 'Foto enviada'} loading="lazy" />
+        <a className={styles.mediaAttachment} href={attachmentSrc} target="_blank" rel="noreferrer" aria-label={attachment.name || (attachment.isGif ? 'Abrir GIF' : 'Abrir foto')}>
+          <img src={attachmentSrc} alt={attachment.name || (attachment.isGif ? 'GIF enviado' : 'Foto enviada')} loading="lazy" />
         </a>
       )
     }
 
     if (attachment.type === 'video') {
+      const isGifVideo = Boolean(attachment.isGif)
       if (!attachmentSrc) {
         return (
           <span className={`${styles.attachment} ${styles.attachmentUnavailable}`}>
-            <Video size={15} />
-            <span>{attachment.name || 'Video no disponible'}</span>
+            {isGifVideo ? <ImageIcon size={15} /> : <Video size={15} />}
+            <span>{attachment.name || (isGifVideo ? 'GIF no disponible' : 'Video no disponible')}</span>
           </span>
         )
       }
 
       return (
         <div className={styles.mediaAttachment}>
-          <video src={attachmentSrc} controls playsInline preload="metadata" />
+          <video
+            src={attachmentSrc}
+            controls={!isGifVideo}
+            autoPlay={isGifVideo}
+            muted={isGifVideo}
+            loop={isGifVideo}
+            playsInline
+            preload={isGifVideo ? 'auto' : 'metadata'}
+            aria-label={isGifVideo ? (attachment.name || 'GIF enviado') : undefined}
+          />
         </div>
       )
     }

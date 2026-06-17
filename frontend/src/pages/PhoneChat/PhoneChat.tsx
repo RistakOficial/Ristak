@@ -591,6 +591,7 @@ interface ChatMessage {
     name?: string
     mimeType?: string
     durationMs?: number
+    isGif?: boolean
   }
 }
 
@@ -682,6 +683,7 @@ interface ContactInfoArchiveItem {
   date: string
   direction: 'inbound' | 'outbound'
   mimeType?: string
+  isGif?: boolean
 }
 
 interface ContactInfoCustomFieldView {
@@ -1457,7 +1459,8 @@ function getMessageSignature(message: ChatMessage) {
     attachment?.url,
     attachment?.name,
     attachment?.mimeType,
-    attachment?.durationMs
+    attachment?.durationMs,
+    attachment?.isGif
   ].map(compactCompareValue).join('\u001f')
 }
 
@@ -1475,20 +1478,42 @@ function getJourneySignature(journey: JourneyEvent[]) {
   }
 }
 
-function getMediaAttachmentType(messageType = '', mimeType = '', name = ''): ChatAttachmentType | null {
+function getMediaPathExtension(value = '') {
+  const clean = String(value || '').trim().split('?')[0].split('#')[0].toLowerCase()
+  const leaf = clean.split('/').pop() || clean
+  const extension = leaf.split('.').pop() || ''
+  return /^[a-z0-9]{2,8}$/.test(extension) ? extension : ''
+}
+
+function hasGifFileSignature(mimeType = '', name = '', mediaUrl = '') {
+  const normalizedMime = mimeType.split(';')[0].trim().toLowerCase()
+  return normalizedMime === 'image/gif' || getMediaPathExtension(name) === 'gif' || getMediaPathExtension(mediaUrl) === 'gif'
+}
+
+function isGifMedia(messageType = '', mimeType = '', name = '', mediaUrl = '') {
+  return messageType.toLowerCase().includes('gif') || hasGifFileSignature(mimeType, name, mediaUrl)
+}
+
+function getMediaAttachmentType(messageType = '', mimeType = '', name = '', mediaUrl = ''): ChatAttachmentType | null {
   const normalizedType = messageType.toLowerCase()
-  const normalizedMime = mimeType.toLowerCase()
+  const normalizedMime = mimeType.split(';')[0].trim().toLowerCase()
   const normalizedName = name.toLowerCase()
+  const gifFile = hasGifFileSignature(mimeType, name, mediaUrl)
+  const gifMessageType = normalizedType.includes('gif')
 
   if (normalizedType.includes('audio') || normalizedType.includes('voice') || normalizedMime.startsWith('audio/')) {
     return 'audio'
+  }
+
+  if (gifFile || (gifMessageType && !normalizedMime.startsWith('video/'))) {
+    return 'image'
   }
 
   if (normalizedType.includes('image') || normalizedType.includes('sticker') || normalizedMime.startsWith('image/')) {
     return 'image'
   }
 
-  if (normalizedType.includes('video') || normalizedType.includes('gif') || normalizedMime.startsWith('video/')) {
+  if (normalizedType.includes('video') || gifMessageType || normalizedMime.startsWith('video/')) {
     return 'video'
   }
 
@@ -1556,7 +1581,7 @@ function cleanAttachmentMessageText(text = '', attachment?: ChatMessage['attachm
   if (!attachment) return text
   const placeholderByType: Record<ChatAttachmentType, string[]> = {
     audio: ['audio', 'voice', 'voice message', 'mensaje de voz'],
-    image: ['image', 'photo', 'foto', 'imagen'],
+    image: ['image', 'photo', 'foto', 'imagen', 'gif'],
     video: ['video'],
     document: ['document', 'documento'],
     file: ['file', 'archivo']
@@ -1581,7 +1606,8 @@ function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment
   const mimeType = String(data.media_mime_type || data.mediaMimeType || data.mimeType || data.mime_type || '').trim()
   const name = String(data.media_filename || data.mediaFilename || data.filename || data.fileName || '').trim()
   const durationMs = Number(data.media_duration_ms || data.mediaDurationMs || data.durationMs || data.duration_ms || 0) || undefined
-  const attachmentType = getMediaAttachmentType(messageType, mimeType, name)
+  const attachmentType = getMediaAttachmentType(messageType, mimeType, name, mediaUrl)
+  const isGif = isGifMedia(messageType, mimeType, name, mediaUrl)
 
   if (attachmentType === 'audio') {
     return {
@@ -1589,7 +1615,8 @@ function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment
       url: mediaUrl,
       name: getAttachmentFallbackName('audio', name, mediaId),
       mimeType,
-      durationMs
+      durationMs,
+      isGif
     }
   }
 
@@ -1597,8 +1624,9 @@ function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment
     return {
       type: attachmentType,
       url: mediaUrl,
-      name: getAttachmentFallbackName(attachmentType, name, mediaId),
-      mimeType
+      name: name || mediaId || (isGif ? 'GIF enviado' : getAttachmentFallbackName(attachmentType, name, mediaId)),
+      mimeType,
+      isGif
     }
   }
 
@@ -1646,13 +1674,14 @@ function getContactInfoArchiveItems(journey: JourneyEvent[] = []): ContactInfoAr
     const mediaId = String(eventData.media_id || eventData.mediaId || '').trim()
     const mimeType = String(eventData.media_mime_type || eventData.mediaMimeType || eventData.mimeType || eventData.mime_type || '').trim()
     const name = String(eventData.media_filename || eventData.mediaFilename || eventData.filename || eventData.fileName || '').trim()
-    const attachmentType = getMediaAttachmentType(messageType, mimeType, name)
+    const attachmentType = getMediaAttachmentType(messageType, mimeType, name, mediaUrl)
+    const isGif = isGifMedia(messageType, mimeType, name, mediaUrl)
 
     if (attachmentType && attachmentType !== 'audio' && (mediaUrl || mediaId)) {
       const tab: ContactInfoArchiveTab = attachmentType === 'image' || attachmentType === 'video'
         ? 'media'
         : 'documents'
-      const fallbackName = getAttachmentFallbackName(attachmentType, name, mediaId)
+      const fallbackName = name || mediaId || (isGif ? 'GIF enviado' : getAttachmentFallbackName(attachmentType, name, mediaId))
 
       items.push({
         id: `${messageId}-${tab}-${items.length}`,
@@ -1663,7 +1692,8 @@ function getContactInfoArchiveItems(journey: JourneyEvent[] = []): ContactInfoAr
         caption: text,
         date: event.date,
         direction,
-        mimeType
+        mimeType,
+        isGif
       })
     }
 
@@ -1772,6 +1802,7 @@ function getScheduledChatMessageBubble(message: ScheduledChatMessage): ChatMessa
 
 function getMessageTypeLabel(type = '', fallback = 'Mensaje de WhatsApp') {
   const normalized = type.toLowerCase()
+  if (normalized.includes('gif')) return 'GIF'
   if (normalized.includes('image')) return 'Foto'
   if (normalized.includes('video')) return 'Video'
   if (normalized.includes('audio') || normalized.includes('voice')) return 'Mensaje de voz'
@@ -8530,13 +8561,14 @@ export const PhoneChat: React.FC = () => {
     const dateLabel = formatLocalDateShort(item.date)
 
     if (item.tab === 'media') {
+      const isGifVideo = item.type === 'video' && Boolean(item.isGif)
       const media = item.type === 'video'
-        ? <video src={item.url || undefined} preload="metadata" muted playsInline />
+        ? <video src={item.url || undefined} preload={isGifVideo ? 'auto' : 'metadata'} muted playsInline autoPlay={isGifVideo} loop={isGifVideo} aria-label={isGifVideo ? item.title : undefined} />
         : <img src={item.url || undefined} alt={item.title} loading="lazy" />
       const mediaContent = (
         <>
           {item.url ? media : <ImageIcon size={24} />}
-          {item.type === 'video' && (
+          {item.type === 'video' && !isGifVideo && (
             <span className={styles.contactInfoMediaType}>
               <Play size={12} />
             </span>
@@ -9075,6 +9107,7 @@ export const PhoneChat: React.FC = () => {
               const isAudioAttachment = message.attachment?.type === 'audio'
               const isAudioMessage = isAudioAttachment && Boolean(message.attachment?.dataUrl || message.attachment?.url)
               const isVideoMessage = message.attachment?.type === 'video' && Boolean(message.attachment.dataUrl || message.attachment.url)
+              const isGifVideoMessage = isVideoMessage && Boolean(message.attachment?.isGif)
               const isFileMessage = Boolean(message.attachment && ['document', 'file'].includes(message.attachment.type))
               const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage
               const messageSwipeOffset = draggingMessageInfoSwipe?.messageId === message.id ? draggingMessageInfoSwipe.offset : 0
@@ -9115,15 +9148,19 @@ export const PhoneChat: React.FC = () => {
                       onTouchCancel={canOpenMessageInfo ? handleMessageInfoTouchEnd : undefined}
                     >
                     {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
-                      <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
+                      <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || (message.attachment.isGif ? 'GIF enviado' : 'Foto enviada')} />
                     )}
                     {isVideoMessage && (
                       <video
                         className={styles.messageVideo}
                         src={message.attachment?.dataUrl || message.attachment?.url}
-                        controls
+                        controls={!isGifVideoMessage}
+                        autoPlay={isGifVideoMessage}
+                        muted={isGifVideoMessage}
+                        loop={isGifVideoMessage}
                         playsInline
-                        preload="metadata"
+                        preload={isGifVideoMessage ? 'auto' : 'metadata'}
+                        aria-label={isGifVideoMessage ? (message.attachment?.name || 'GIF enviado') : undefined}
                       />
                     )}
                     {isFileMessage && renderMessageFile(message)}
