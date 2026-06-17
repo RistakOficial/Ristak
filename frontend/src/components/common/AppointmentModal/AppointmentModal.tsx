@@ -127,6 +127,10 @@ const getContactDelivery = (contact: Partial<Contact>) => (
   contact.phone || contact.email || ''
 );
 
+const isHighLevelCalendar = (calendar?: Calendar | null) => (
+  calendar?.source === 'ghl' || Boolean(calendar?.ghlCalendarId)
+);
+
 /**
  * Formatea slot completo con duración
  * Ej: "2025-10-22T15:30:00-06:00" con 60min → "3:30 PM - 4:30 PM"
@@ -353,6 +357,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const contactLocked = Boolean(lockInitialContact && initialContact?.id && isCreateMode);
   const showGuestsSection = Boolean(enableGuests && isCreateMode);
   const showContactAssignment = !contactLocked;
+  const allowHighLevelOverlap = isHighLevelCalendar(calendar);
 
   useEffect(() => {
     if (isOpen && !isCreateMode) {
@@ -927,6 +932,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
    * Verificar si el horario seleccionado está bloqueado
    */
   const checkIfTimeIsBlocked = async (startTime: string, endTime: string): Promise<BlockedSlot | null> => {
+    if (allowHighLevelOverlap) return null;
     if (!calendar || !accessToken || !locationId) return null;
 
     try {
