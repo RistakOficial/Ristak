@@ -476,7 +476,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
           )}
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>Modelo y orden del chat</h3>
+            <h3 className={styles.sectionTitle}>1. Modelo y orden del chat</h3>
+            <p className={styles.agentSectionHint}>
+              Escoge qué IA contesta y cómo se siente el ritmo del chat.
+            </p>
             <div className={styles.agentOpsGrid}>
               <div className={styles.field}>
                 <label className={styles.label}>IA que responde</label>
@@ -528,9 +531,163 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
                   {(selectedAgentModel?.label || selectedAgentModelValue)} responde sólo para este agente.
                 </p>
               </div>
+            </div>
 
-              <div className={styles.field}>
-                <label className={styles.label}>Qué hace con chats atendidos</label>
+            <div className={styles.agentNestedSection}>
+              <div className={styles.sectionHeading}>
+                <Clock size={17} />
+                <h4 className={styles.sectionTitle}>Ritmo de respuesta</h4>
+              </div>
+              <p className={styles.agentSectionHint}>
+                Define si contesta al momento, espera tantito o parte mensajes como humano.
+              </p>
+              <div className={styles.responseDelayGrid}>
+                <div className={styles.field}>
+                  <label className={styles.label}>Espera</label>
+                  <CustomSelect
+                    value={responseDelay.mode}
+                    onChange={(event) => updateResponseDelay({ mode: event.target.value as AgentResponseDelayMode })}
+                    portal
+                  >
+                    {responseDelayModeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </CustomSelect>
+                </div>
+
+                {responseDelay.mode === 'fixed' && (
+                  <div className={styles.responseDelayControls}>
+                    <div className={`${styles.field} ${styles.delayNumberField}`}>
+                      <label className={styles.label}>Tiempo</label>
+                      <input
+                        className={`${styles.input} ${styles.delayNumberInput}`}
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={responseDelay.fixedValue}
+                        onChange={(event) => updateResponseDelay({ fixedValue: Number(event.target.value) || 0 })}
+                      />
+                    </div>
+                    <div className={`${styles.field} ${styles.delayUnitField}`}>
+                      <label className={styles.label}>Unidad</label>
+                      <CustomSelect
+                        value={responseDelay.fixedUnit}
+                        onChange={(event) => updateResponseDelay({ fixedUnit: event.target.value as AgentResponseDelayUnit })}
+                        portal
+                      >
+                        {responseDelayUnitOptions.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </CustomSelect>
+                    </div>
+                  </div>
+                )}
+
+                {responseDelay.mode === 'random' && (
+                  <div className={styles.responseDelayControls}>
+                    <div className={`${styles.field} ${styles.delayNumberField}`}>
+                      <label className={styles.label}>Mínimo</label>
+                      <input
+                        className={`${styles.input} ${styles.delayNumberInput}`}
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={responseDelay.minValue}
+                        onChange={(event) => updateResponseDelay({ minValue: Number(event.target.value) || 0 })}
+                      />
+                    </div>
+                    <div className={`${styles.field} ${styles.delayNumberField}`}>
+                      <label className={styles.label}>Máximo</label>
+                      <input
+                        className={`${styles.input} ${styles.delayNumberInput}`}
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={responseDelay.maxValue}
+                        onChange={(event) => updateResponseDelay({ maxValue: Number(event.target.value) || 0 })}
+                      />
+                    </div>
+                    <div className={`${styles.field} ${styles.delayUnitField}`}>
+                      <label className={styles.label}>Unidad</label>
+                      <CustomSelect
+                        value={responseDelay.rangeUnit}
+                        onChange={(event) => updateResponseDelay({ rangeUnit: event.target.value as AgentResponseDelayUnit })}
+                        portal
+                      >
+                        {responseDelayUnitOptions.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </CustomSelect>
+                    </div>
+                  </div>
+                )}
+
+                <p className={`${styles.helper} ${styles.responseDelayHelp}`}>{getResponseDelayHelp(responseDelay)}</p>
+              </div>
+
+              <div className={styles.replyDeliveryGrid}>
+                <SelectionToggle
+                  checked={replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split'}
+                  title="Modo mensajes humanos"
+                  description="Parte respuestas largas en varios globos."
+                  onChange={(enabled) => {
+                    updateReplyDelivery({
+                      mode: (enabled ? 'split' : 'single') as AgentReplyDeliveryMode,
+                      splitMessagesEnabled: enabled,
+                      ...systemReplyDeliveryDefaults
+                    })
+                  }}
+                />
+
+                {(replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split') && (
+                  <div className={styles.replyDeliveryControls}>
+                    <div className={`${styles.field} ${styles.delayNumberField}`}>
+                      <label className={styles.label}>Pausa mín.</label>
+                      <input
+                        className={`${styles.input} ${styles.delayNumberInput}`}
+                        type="number"
+                        min={0}
+                        max={60}
+                        step={1}
+                        value={replyDelivery.minDelaySeconds}
+                        onChange={(event) => updateReplyDelivery({ minDelaySeconds: Number(event.target.value) || 0 })}
+                      />
+                    </div>
+                    <div className={`${styles.field} ${styles.delayNumberField}`}>
+                      <label className={styles.label}>Pausa máx.</label>
+                      <input
+                        className={`${styles.input} ${styles.delayNumberInput}`}
+                        type="number"
+                        min={0}
+                        max={60}
+                        step={1}
+                        value={replyDelivery.maxDelaySeconds}
+                        onChange={(event) => updateReplyDelivery({ maxDelaySeconds: Number(event.target.value) || 0 })}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <p className={`${styles.helper} ${styles.responseDelayHelp}`}>{getReplyDeliveryHelp(replyDelivery)}</p>
+              </div>
+
+              <SelectionToggle
+                checked={agent.allowEmojis}
+                title="Puede usar emojis si se siente natural"
+                description="Déjalo apagado si quieres un tono más serio."
+                onChange={(checked) => onChange({ allowEmojis: checked })}
+              />
+            </div>
+          </div>
+
+          <div className={styles.agentSection}>
+            <h3 className={styles.sectionTitle}>2. Acciones del chat</h3>
+            <p className={styles.agentSectionHint}>
+              Define qué hace la IA mientras toma la conversación, qué objetivo quieres que logre y qué pasa cuando lo cumple.
+            </p>
+            <div className={styles.agentOpsGrid}>
+              <div className={styles.fieldWide}>
+                <label className={styles.label}>¿Qué hace cuando la IA está tomando la conversación?</label>
                 <CustomSelect
                   value={selectedAttendedChatActionValue}
                   onChange={(event) => onChange(getAttendedChatActionPatch(event.target.value as AttendedChatActionValue))}
@@ -545,59 +702,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
               </div>
 
               <div className={styles.field}>
-                <label className={styles.label}>Cuando logra el objetivo</label>
-                <CustomSelect
-                  value={agent.successAction}
-                  onChange={(event) => onChange({ successAction: event.target.value as ConversationalSuccessAction })}
-                  portal
-                >
-                  {allowedActions.map((action) => (
-                    <option key={action} value={action}>{successActionLabels[action].label}</option>
-                  ))}
-                </CustomSelect>
-                <p className={styles.helper}>{selectedActionInfo.description}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>1. Cuándo contesta</h3>
-            <p className={styles.agentSectionHint}>
-              Sin reglas, contesta cualquier chat nuevo. Si pones reglas, sólo entra cuando se cumplan.
-            </p>
-            <ConditionBuilder
-              groups={agent.filters.entry.groups}
-              mode="entry"
-              calendars={calendars}
-              options={filterOptions}
-              emptyText="Sin reglas: este agente puede contestar cualquier chat nuevo."
-              onChange={(groups) => onChange({ filters: { ...agent.filters, entry: { groups } } })}
-            />
-
-            <div className={styles.agentNestedSection}>
-              <div className={styles.agentSubsectionHeader}>
-                <h4>Cuándo se sale</h4>
-                <span>Opcional</span>
-              </div>
-              <p className={styles.agentSectionHint}>
-                Úsalo si quieres que deje de contestar cuando pase algo, como cita agendada o etiqueta puesta.
-              </p>
-              <ConditionBuilder
-                groups={agent.filters.exit.groups}
-                mode="exit"
-                calendars={calendars}
-                options={filterOptions}
-                emptyText="Opcional: si no agregas reglas, el agente no se suelta solo por filtros."
-                onChange={(groups) => onChange({ filters: { ...agent.filters, exit: { groups } } })}
-              />
-            </div>
-          </div>
-
-          <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>2. Qué tiene que lograr</h3>
-            <div className={styles.compactSettingsGrid}>
-              <div className={styles.field}>
-                <label className={styles.label}>Meta</label>
+                <label className={styles.label}>¿Qué objetivo quieres que logre?</label>
                 <CustomSelect
                   value={agent.objective}
                   onChange={(event) => handleObjectiveChange(event.target.value as ConversationalObjective)}
@@ -608,6 +713,20 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
                   ))}
                 </CustomSelect>
                 <p className={styles.helper}>{selectedObjective.description}</p>
+              </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Cuando logre ese objetivo, ¿qué quieres que haga?</label>
+                <CustomSelect
+                  value={agent.successAction}
+                  onChange={(event) => onChange({ successAction: event.target.value as ConversationalSuccessAction })}
+                  portal
+                >
+                  {allowedActions.map((action) => (
+                    <option key={action} value={action}>{successActionLabels[action].label}</option>
+                  ))}
+                </CustomSelect>
+                <p className={styles.helper}>{selectedActionInfo.description}</p>
               </div>
 
               {agent.successAction === 'book_appointment' && (
@@ -630,7 +749,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
 
             {agent.objective === 'custom' && (
               <div className={styles.fieldWide}>
-                <label className={styles.label}>Meta escrita a mano</label>
+                <label className={styles.label}>Objetivo escrito a mano</label>
                 <textarea
                   className={styles.textarea}
                   value={agent.customObjective}
@@ -644,7 +763,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
             <details className={styles.advancedDetails} open={agent.successExtras.length > 0 || undefined}>
               <summary>
                 <span>Acciones extra</span>
-                <small>Etiquetas o campos cuando cierre.</small>
+                <small>Etiquetas o campos cuando logre el objetivo.</small>
               </summary>
               <div className={styles.advancedContent}>
                 {agent.successExtras.map((extra, index) => (
@@ -713,10 +832,82 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
                   Añadir acción
                 </button>
                 <p className={styles.helper}>
-                  Se ejecutan cuando el agente logra su meta.
+                  Se ejecutan cuando el agente logra ese objetivo.
                 </p>
               </div>
             </details>
+          </div>
+
+          <div className={styles.agentSection}>
+            <h3 className={styles.sectionTitle}>3. ¿Cuándo quieres que inicie la conversación?</h3>
+            <p className={styles.agentSectionHint}>
+              Con qué condiciones quieres que el agente entre al chat. Sin reglas, puede contestar cualquier chat nuevo.
+            </p>
+            <ConditionBuilder
+              groups={agent.filters.entry.groups}
+              mode="entry"
+              calendars={calendars}
+              options={filterOptions}
+              emptyText="Sin reglas: este agente puede iniciar con cualquier chat nuevo."
+              onChange={(groups) => onChange({ filters: { ...agent.filters, entry: { groups } } })}
+            />
+
+            <div className={styles.agentNestedSection}>
+              <div className={styles.agentSubsectionHeader}>
+                <h4>¿Y cuándo quieres que se salga?</h4>
+                <span>Opcional</span>
+              </div>
+              <p className={styles.agentSectionHint}>
+                Aparte del objetivo establecido, úsalo si quieres que deje de contestar cuando pase algo, como cita agendada o etiqueta puesta.
+              </p>
+              <ConditionBuilder
+                groups={agent.filters.exit.groups}
+                mode="exit"
+                calendars={calendars}
+                options={filterOptions}
+                emptyText="Opcional: si no agregas reglas, sólo se sale cuando logra el objetivo o un humano lo toma."
+                onChange={(groups) => onChange({ filters: { ...agent.filters, exit: { groups } } })}
+              />
+            </div>
+          </div>
+
+          <div className={styles.agentSection}>
+            <h3 className={styles.sectionTitle}>4. Qué debe cuidar</h3>
+            <div className={styles.agentTextGrid}>
+              <div className={styles.field}>
+                <label className={styles.label}>Datos que debe pedir</label>
+                <textarea
+                  className={styles.textarea}
+                  value={agent.requiredData}
+                  placeholder={'Ejemplo:\n- Nombre completo\n- Servicio que le interesa'}
+                  onChange={(event) => onChange({ requiredData: event.target.value })}
+                  rows={3}
+                />
+                <p className={styles.helper}>
+                  Si ya lo tiene el contacto, no lo repite.
+                </p>
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Cuándo pasar al equipo</label>
+                <textarea
+                  className={styles.textarea}
+                  value={agent.handoffRules}
+                  placeholder={'Ejemplo:\n- Se enojó\n- Pregunta por facturación'}
+                  onChange={(event) => onChange({ handoffRules: event.target.value })}
+                  rows={3}
+                />
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Tips del negocio</label>
+                <textarea
+                  className={styles.textarea}
+                  value={agent.extraInstructions}
+                  placeholder="Ejemplo: menciona la promo de junio sólo si preguntan por precio."
+                  onChange={(event) => onChange({ extraInstructions: event.target.value })}
+                  rows={3}
+                />
+              </div>
+            </div>
           </div>
 
           <details className={styles.advancedDetails} open={strategyIsCustom || undefined}>
@@ -766,189 +957,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
               </p>
             </div>
           </details>
-
-          <div className={styles.agentSection}>
-            <div className={styles.sectionHeading}>
-              <Clock size={17} />
-              <h3 className={styles.sectionTitle}>3. Cuándo responde</h3>
-            </div>
-            <p className={styles.agentSectionHint}>
-              Controla si responde al instante, espera un tiempo fijo o usa una pausa aleatoria para sentirse más natural.
-            </p>
-            <div className={styles.responseDelayGrid}>
-              <div className={styles.field}>
-                <label className={styles.label}>Espera</label>
-                <CustomSelect
-                  value={responseDelay.mode}
-                  onChange={(event) => updateResponseDelay({ mode: event.target.value as AgentResponseDelayMode })}
-                  portal
-                >
-                  {responseDelayModeOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </CustomSelect>
-              </div>
-
-              {responseDelay.mode === 'fixed' && (
-                <div className={styles.responseDelayControls}>
-                  <div className={`${styles.field} ${styles.delayNumberField}`}>
-                    <label className={styles.label}>Tiempo</label>
-                    <input
-                      className={`${styles.input} ${styles.delayNumberInput}`}
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={responseDelay.fixedValue}
-                      onChange={(event) => updateResponseDelay({ fixedValue: Number(event.target.value) || 0 })}
-                    />
-                  </div>
-                  <div className={`${styles.field} ${styles.delayUnitField}`}>
-                    <label className={styles.label}>Unidad</label>
-                    <CustomSelect
-                      value={responseDelay.fixedUnit}
-                      onChange={(event) => updateResponseDelay({ fixedUnit: event.target.value as AgentResponseDelayUnit })}
-                      portal
-                    >
-                      {responseDelayUnitOptions.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </CustomSelect>
-                  </div>
-                </div>
-              )}
-
-              {responseDelay.mode === 'random' && (
-                <div className={styles.responseDelayControls}>
-                  <div className={`${styles.field} ${styles.delayNumberField}`}>
-                    <label className={styles.label}>Mínimo</label>
-                    <input
-                      className={`${styles.input} ${styles.delayNumberInput}`}
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={responseDelay.minValue}
-                      onChange={(event) => updateResponseDelay({ minValue: Number(event.target.value) || 0 })}
-                    />
-                  </div>
-                  <div className={`${styles.field} ${styles.delayNumberField}`}>
-                    <label className={styles.label}>Máximo</label>
-                    <input
-                      className={`${styles.input} ${styles.delayNumberInput}`}
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={responseDelay.maxValue}
-                      onChange={(event) => updateResponseDelay({ maxValue: Number(event.target.value) || 0 })}
-                    />
-                  </div>
-                  <div className={`${styles.field} ${styles.delayUnitField}`}>
-                    <label className={styles.label}>Unidad</label>
-                    <CustomSelect
-                      value={responseDelay.rangeUnit}
-                      onChange={(event) => updateResponseDelay({ rangeUnit: event.target.value as AgentResponseDelayUnit })}
-                      portal
-                    >
-                      {responseDelayUnitOptions.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </CustomSelect>
-                  </div>
-                </div>
-              )}
-
-              <p className={`${styles.helper} ${styles.responseDelayHelp}`}>{getResponseDelayHelp(responseDelay)}</p>
-            </div>
-            <div className={styles.replyDeliveryGrid}>
-              <SelectionToggle
-                checked={replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split'}
-                title="Modo mensajes humanos"
-                description="Parte respuestas largas en varios globos."
-                onChange={(enabled) => {
-                  updateReplyDelivery({
-                    mode: (enabled ? 'split' : 'single') as AgentReplyDeliveryMode,
-                    splitMessagesEnabled: enabled,
-                    ...systemReplyDeliveryDefaults
-                  })
-                }}
-              />
-
-              {(replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split') && (
-                <div className={styles.replyDeliveryControls}>
-                  <div className={`${styles.field} ${styles.delayNumberField}`}>
-                    <label className={styles.label}>Pausa mín.</label>
-                    <input
-                      className={`${styles.input} ${styles.delayNumberInput}`}
-                      type="number"
-                      min={0}
-                      max={60}
-                      step={1}
-                      value={replyDelivery.minDelaySeconds}
-                      onChange={(event) => updateReplyDelivery({ minDelaySeconds: Number(event.target.value) || 0 })}
-                    />
-                  </div>
-                  <div className={`${styles.field} ${styles.delayNumberField}`}>
-                    <label className={styles.label}>Pausa máx.</label>
-                    <input
-                      className={`${styles.input} ${styles.delayNumberInput}`}
-                      type="number"
-                      min={0}
-                      max={60}
-                      step={1}
-                      value={replyDelivery.maxDelaySeconds}
-                      onChange={(event) => updateReplyDelivery({ maxDelaySeconds: Number(event.target.value) || 0 })}
-                    />
-                  </div>
-                </div>
-              )}
-
-              <p className={`${styles.helper} ${styles.responseDelayHelp}`}>{getReplyDeliveryHelp(replyDelivery)}</p>
-            </div>
-          </div>
-
-          <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>4. Qué debe cuidar</h3>
-            <div className={styles.agentTextGrid}>
-              <div className={styles.field}>
-                <label className={styles.label}>Datos que debe pedir</label>
-                <textarea
-                  className={styles.textarea}
-                  value={agent.requiredData}
-                  placeholder={'Ejemplo:\n- Nombre completo\n- Servicio que le interesa'}
-                  onChange={(event) => onChange({ requiredData: event.target.value })}
-                  rows={3}
-                />
-                <p className={styles.helper}>
-                  Si ya lo tiene el contacto, no lo repite.
-                </p>
-              </div>
-              <div className={styles.field}>
-                <label className={styles.label}>Cuándo pasar al equipo</label>
-                <textarea
-                  className={styles.textarea}
-                  value={agent.handoffRules}
-                  placeholder={'Ejemplo:\n- Se enojó\n- Pregunta por facturación'}
-                  onChange={(event) => onChange({ handoffRules: event.target.value })}
-                  rows={3}
-                />
-              </div>
-              <div className={styles.field}>
-                <label className={styles.label}>Tips del negocio</label>
-                <textarea
-                  className={styles.textarea}
-                  value={agent.extraInstructions}
-                  placeholder="Ejemplo: menciona la promo de junio sólo si preguntan por precio."
-                  onChange={(event) => onChange({ extraInstructions: event.target.value })}
-                  rows={3}
-                />
-              </div>
-            </div>
-            <SelectionToggle
-              checked={agent.allowEmojis}
-              title="Puede usar emojis si se siente natural"
-              description="Déjalo apagado si quieres un tono más serio."
-              onChange={(checked) => onChange({ allowEmojis: checked })}
-            />
-          </div>
 
         </div>
 
