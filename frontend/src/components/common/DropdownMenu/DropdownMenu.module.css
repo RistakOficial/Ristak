@@ -5,7 +5,7 @@
   overflow: hidden;
   border-radius: var(--ristak-dropdown-radius);
   border: 1px solid var(--ristak-dropdown-border);
-  background: var(--ristak-dropdown-bg);
+  background: var(--surface-solid, var(--surface));
   padding: 4px 0;
   color: var(--color-text-primary);
   box-shadow: var(--ristak-dropdown-panel-shadow);

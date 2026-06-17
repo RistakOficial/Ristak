@@ -576,7 +576,7 @@ body:not([data-phone-app='active']) [data-ristak-dropdown-trigger][data-state='o
 body:not([data-phone-app='active']) [data-ristak-dropdown-panel] {
   border: 1px solid var(--ristak-dropdown-border) !important;
   border-radius: var(--ristak-dropdown-radius) !important;
-  background: var(--ristak-dropdown-bg) !important;
+  background: var(--ristak-dropdown-panel-bg, var(--surface-solid, var(--surface))) !important;
   color: var(--color-text-primary);
   box-shadow: var(--ristak-dropdown-panel-shadow) !important;
   overflow: hidden;
@@ -1195,7 +1195,7 @@ body.light [data-ristak-user-menu] {
 }
 
 body [data-ristak-notification-menu] {
-  background: color-mix(in srgb, var(--color-background-secondary) 98%, var(--color-background-tertiary) 2%) !important;
+  background: var(--surface-solid, var(--surface)) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   border-radius: 0.9rem !important;

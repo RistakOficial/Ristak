@@ -6126,7 +6126,7 @@
   width: min(460px, 100%);
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 8px;
-  background: var(--color-background-secondary);
+  background: var(--surface-solid, var(--color-background-secondary));
   box-shadow: 0 28px 80px -36px rgba(0, 0, 0, 0.78);
   padding: 20px;
 }
@@ -6182,7 +6182,7 @@
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 8px;
-  background: var(--color-background-secondary);
+  background: var(--surface-solid, var(--color-background-secondary));
   box-shadow: 0 30px 90px -38px rgba(2, 6, 23, 0.82);
 }
 
@@ -9638,7 +9638,7 @@
   gap: 10px;
   border: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.24));
   border-radius: 8px;
-  background: var(--color-background-secondary);
+  background: var(--surface-solid, var(--color-background-secondary));
   padding: 10px;
 }
 
@@ -12790,7 +12790,7 @@
   gap: 10px;
   border: 1px solid var(--sites-editor-border, rgba(148, 163, 184, 0.2));
   border-radius: var(--radius-md, 8px);
-  background: var(--ristak-dropdown-bg, var(--color-background-primary));
+  background: var(--ristak-dropdown-panel-bg, var(--ristak-dropdown-bg, var(--color-background-primary)));
   padding: 12px;
   box-shadow: 0 10px 24px -20px rgba(15, 23, 42, 0.45);
 }
@@ -13553,7 +13553,7 @@
   overflow: auto;
   border: 1px solid var(--ristak-dropdown-border, rgba(148, 163, 184, 0.26));
   border-radius: 8px;
-  background: var(--ristak-dropdown-bg, #ffffff);
+  background: var(--ristak-dropdown-panel-bg, var(--ristak-dropdown-bg, #ffffff));
   color: var(--color-text-primary);
   padding: 16px;
   box-shadow: var(--ristak-dropdown-panel-shadow, 0 18px 46px -30px rgba(15, 23, 42, 0.46));
@@ -14746,7 +14746,7 @@
 .pageFrame .containerFocused .pagesDropdownPanel {
   border: 1px solid var(--sites-editor-border);
   border-radius: 8px;
-  background: var(--ristak-dropdown-bg, var(--color-background-secondary));
+  background: var(--ristak-dropdown-panel-bg, var(--ristak-dropdown-bg, var(--color-background-secondary)));
   padding: 12px;
   box-shadow: var(--ristak-dropdown-panel-shadow, 0 18px 46px -30px rgba(15, 23, 42, 0.46));
 }

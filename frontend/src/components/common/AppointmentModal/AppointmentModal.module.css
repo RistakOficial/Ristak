@@ -1036,7 +1036,7 @@
 }
 
 .deleteModal {
-  background-color: var(--color-background);
+  background-color: var(--surface-solid, var(--color-background));
   border-radius: var(--radius-lg);
   padding: var(--spacing-xl);
   max-width: 500px;

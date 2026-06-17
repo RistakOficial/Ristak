@@ -437,7 +437,7 @@ body.dark .dropdownTrigger:focus {
 }
 
 .dropdownMenu {
-  background: var(--color-background);
+  background: var(--surface-solid, var(--color-background));
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
@@ -1341,7 +1341,7 @@ body.dark .warningBox {
 }
 
 .hiddenContactsModal {
-  background: var(--color-background);
+  background: var(--surface-solid, var(--color-background));
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-xl);
   max-width: 600px;

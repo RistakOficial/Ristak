@@ -881,7 +881,7 @@
   min-width: min(420px, calc(100vw - 48px));
   max-width: min(960px, calc(100vw - 48px));
   max-height: min(86vh, 820px);
-  background: var(--color-background);
+  background: var(--surface-solid, var(--color-background));
   border: 1px solid var(--color-border-subtle);
   border-radius: 8px;
   overflow: hidden;
