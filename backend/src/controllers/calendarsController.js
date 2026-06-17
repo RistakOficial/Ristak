@@ -637,6 +637,7 @@ export async function deleteGoogleCalendarIntegration(req, res) {
   try {
     if (isLicenseEnforced()) {
       const calendar = await disconnectCentralGoogleCalendar();
+      await googleCalendarService.deleteGoogleCalendarConfig();
       await localCalendarService.reconcileCalendarDefaults().catch(error => {
         logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras desconectar Google central: ${error.message}`);
       });

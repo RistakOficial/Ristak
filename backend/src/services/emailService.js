@@ -1,7 +1,8 @@
 import nodemailer from 'nodemailer'
-import { db, getAppConfig, setAppConfig } from '../config/database.js'
+import { getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
+import { clearEmailIntegrationCredentials } from './integrationCredentialsCleanupService.js'
 
 // Configuración del remitente de correo de la cuenta.
 // El password SMTP se guarda cifrado en una llave separada de app_config.
@@ -52,10 +53,7 @@ async function readStoredPassword() {
 }
 
 async function clearEmailCredentials() {
-  await db.run(
-    `DELETE FROM app_config WHERE config_key IN (?, ?)`,
-    [EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY]
-  )
+  await clearEmailIntegrationCredentials()
 }
 
 /**

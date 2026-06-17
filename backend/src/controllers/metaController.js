@@ -31,6 +31,7 @@ import { parseContactCustomFields } from '../utils/contactCustomFields.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
 import { getMetaWebhookVerifyToken } from '../services/metaSocialMessagingService.js';
+import { clearMetaIntegrationCredentials } from '../services/integrationCredentialsCleanupService.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -502,16 +503,8 @@ export const getMetaWebhookInfo = async (req, res) => {
  */
 export const deleteMetaConfig = async (req, res) => {
   try {
-    await db.run('DELETE FROM meta_config');
+    await clearMetaIntegrationCredentials();
     await setAppConfig('meta_config_disconnected', '1');
-    await db.run(
-      `DELETE FROM app_config WHERE config_key IN (?, ?, ?)`,
-      [
-        'meta_whatsapp_schedule_enabled',
-        'meta_whatsapp_purchase_enabled',
-        'meta_whatsapp_business_account_id'
-      ]
-    );
 
     logger.info('Configuración de Meta eliminada');
 

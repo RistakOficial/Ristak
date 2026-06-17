@@ -4,6 +4,7 @@ import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   connectWhatsAppApi,
+  disconnectMetaDirectConnection,
   disconnectWhatsAppApi,
   getWhatsAppApiConfigKeys,
   getWhatsAppApiStatus,
@@ -15,6 +16,7 @@ import {
   disconnectEmail,
   getEmailStatus
 } from '../src/services/emailService.js'
+import { getIntegrationAppConfigKeys } from '../src/services/integrationCredentialsCleanupService.js'
 
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
@@ -355,5 +357,36 @@ test('correo no reutiliza password SMTP viejo cuando estaba desconectado', async
     assert.equal(status.configured, false)
     assert.equal(status.smtp.hasPassword, false)
     assert.equal(await countExistingAppConfig([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY]), 0)
+  })
+})
+
+test('desconectar WhatsApp Meta directo borra token e identificadores reutilizables', async () => {
+  await initializeMasterKey()
+  const metaDirectKeys = getIntegrationAppConfigKeys('whatsappMetaDirect')
+  const snapshotKeys = [
+    ...metaDirectKeys,
+    'whatsapp_api_provider',
+    'whatsapp_meta_direct_disconnected_at'
+  ]
+
+  await snapshotAppConfig(snapshotKeys, async () => {
+    for (const key of metaDirectKeys) {
+      await setAppConfig(key, key.includes('token') ? encrypt('meta_direct_secret') : `value_${key}`)
+    }
+    await setAppConfig('whatsapp_api_provider', 'meta_direct')
+
+    const disconnected = await disconnectMetaDirectConnection()
+
+    assert.equal(disconnected.metaDirect.connected, false)
+    assert.equal(disconnected.metaDirect.configured, false)
+    assert.equal(disconnected.metaDirect.hasSystemUserToken, false)
+    assert.equal(await getAppConfig('whatsapp_meta_direct_status'), 'disconnected')
+    assert.equal(await getAppConfig('whatsapp_api_provider'), 'ycloud')
+    assert.ok(await getAppConfig('whatsapp_meta_direct_disconnected_at'))
+    assert.equal(await countExistingAppConfig(metaDirectKeys), 1)
+    assert.equal(await getAppConfig('whatsapp_meta_direct_system_user_token_encrypted'), null)
+    assert.equal(await getAppConfig('whatsapp_meta_direct_waba_id'), null)
+    assert.equal(await getAppConfig('whatsapp_meta_direct_phone_number_id'), null)
+    assert.equal(await getAppConfig('whatsapp_meta_direct_installer_webhook_url'), null)
   })
 })

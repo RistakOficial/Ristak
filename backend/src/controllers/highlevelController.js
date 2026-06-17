@@ -14,6 +14,7 @@ import { markHumanTakeoverIfActive } from '../services/conversationalAgentServic
 import { renderTemplateVariables } from '../services/templateVariablesService.js';
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
+import { clearHighLevelIntegrationCredentials } from '../services/integrationCredentialsCleanupService.js';
 import {
   getGhlContactIdForLocalContact,
   linkContactToGhl,
@@ -1343,7 +1344,7 @@ export const refreshLocationData = async (req, res) => {
  */
 export const deleteConfig = async (req, res) => {
   try {
-    await db.run('DELETE FROM highlevel_config');
+    await clearHighLevelIntegrationCredentials();
     logger.info('Configuración de HighLevel eliminada');
 
     await localCalendarService.reconcileCalendarDefaults().catch(error => {

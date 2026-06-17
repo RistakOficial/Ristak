@@ -35,6 +35,10 @@ import {
 import { getMetaConfig } from './metaAdsService.js'
 import { getVerifiedAppBaseUrl } from './sitesService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
+import {
+  clearWhatsAppApiIntegrationCredentials,
+  clearWhatsAppMetaDirectIntegrationCredentials
+} from './integrationCredentialsCleanupService.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -982,27 +986,8 @@ async function setEncryptedConfig(key, value) {
   await setAppConfig(key, encrypt(cleanValue))
 }
 
-async function deleteAppConfig(keys = []) {
-  for (const key of keys) {
-    await db.run('DELETE FROM app_config WHERE config_key = ?', [key])
-  }
-}
-
-const YCLOUD_CONNECTION_CONFIG_KEYS = [
-  CONFIG_KEYS.apiKey,
-  CONFIG_KEYS.webhookSecret,
-  CONFIG_KEYS.senderPhone,
-  CONFIG_KEYS.phoneNumberId,
-  CONFIG_KEYS.wabaId,
-  CONFIG_KEYS.webhookEndpointId,
-  CONFIG_KEYS.webhookUrl,
-  CONFIG_KEYS.webhookStatus,
-  CONFIG_KEYS.connectedAt,
-  CONFIG_KEYS.lastSyncedAt
-]
-
 async function clearYCloudConnectionConfig() {
-  await deleteAppConfig(YCLOUD_CONNECTION_CONFIG_KEYS)
+  await clearWhatsAppApiIntegrationCredentials()
 }
 
 async function clearStaleDisconnectedYCloudCredentials(config) {
@@ -5302,10 +5287,7 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
 }
 
 export async function disconnectMetaDirectConnection() {
-  await deleteAppConfig([
-    CONFIG_KEYS.metaSystemUserToken,
-    CONFIG_KEYS.metaLastError
-  ])
+  await clearWhatsAppMetaDirectIntegrationCredentials()
   await setAppConfig(CONFIG_KEYS.metaStatus, 'disconnected')
   await setAppConfig(CONFIG_KEYS.metaDisconnectedAt, nowIso())
 

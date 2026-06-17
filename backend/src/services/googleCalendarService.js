@@ -4,6 +4,7 @@ import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { getAccountTimezone, normalizeToUtcIso } from '../utils/dateUtils.js'
 import { logger } from '../utils/logger.js'
 import * as localCalendarService from './localCalendarService.js'
+import { clearGoogleCalendarIntegrationCredentials } from './integrationCredentialsCleanupService.js'
 import {
   deleteCentralGoogleCalendarEvent,
   isLicenseEnforced,
@@ -273,7 +274,7 @@ export async function saveGoogleCalendarConfig({ calendarId, credentials }) {
 }
 
 export async function deleteGoogleCalendarConfig() {
-  await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEY])
+  await clearGoogleCalendarIntegrationCredentials()
   tokenCache = null
 }
 
