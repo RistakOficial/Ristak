@@ -25,15 +25,21 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, formatUrlParameter, parseLocalDateString } from '@/utils/format'
 import { contactsService, type Contact, type ContactStats } from '@/services/contactsService'
+import { contactTagsService } from '@/services/contactTagsService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
-import type { ContactAppointment, ContactCustomField, ContactPayment } from '@/types'
+import type { ContactAppointment, ContactCustomField, ContactCustomFieldDefinition, ContactPayment } from '@/types'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
 import styles from './Contacts.module.css'
 import { dedupeContacts } from '@/utils/contactDedup'
 import { getContactStageBadge, isAttendedAppointmentStatus } from '@/utils/contactStageBadge'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
+import {
+  formatContactCustomFieldDisplayValue,
+  getContactCustomFieldDisplayLabel,
+  getContactCustomFieldKeys
+} from '@/utils/contactCustomFields'
 import {
   COUNTRY_OPTIONS,
   composePhoneWithDialCode,
@@ -67,6 +73,13 @@ const contactViewModes: ContactViewMode[] = ['all', 'by-date']
 const contactFilters = ['all', 'leads', 'appointments', 'attendances', 'customers']
 const isContactViewMode = (value?: string): value is ContactViewMode => contactViewModes.includes(value as ContactViewMode)
 const isContactFilter = (value?: string) => Boolean(value && contactFilters.includes(value))
+const CUSTOM_FIELD_COLUMN_PREFIX = 'custom-field:'
+
+interface ContactCustomFieldColumnSpec {
+  columnKey: string
+  label: string
+  matchKeySet: Set<string>
+}
 
 const parseContactsRoute = (pathname: string) => {
   const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
@@ -266,6 +279,55 @@ const getContactTrackingData = (contact: Contact) => {
 
 const getCustomFieldIdentity = (field: ContactCustomField, index: number) =>
   field.id || field.key || field.fieldKey || field.label || field.name || `custom-field-${index}`
+
+const cleanColumnValue = (value: unknown) => String(value ?? '').trim()
+
+const createTagLabelMap = (tags: Array<{ id?: string; name?: string }>) => {
+  const labels: Record<string, string> = {}
+
+  tags.forEach((tag) => {
+    const id = cleanColumnValue(tag.id)
+    const name = cleanColumnValue(tag.name)
+    if (!name) return
+    if (id) labels[id] = name
+    labels[name] = name
+  })
+
+  return labels
+}
+
+const getContactTagLabels = (tagIds: string[] | undefined, tagLabelMap: Record<string, string>) => {
+  if (!Array.isArray(tagIds)) return []
+
+  return tagIds
+    .map((tagId) => {
+      const cleanTagId = cleanColumnValue(tagId)
+      if (!cleanTagId) return ''
+      return tagLabelMap[cleanTagId] || contactTagsService.getDisplayName(cleanTagId, {
+        fallback: cleanTagId,
+        includeSystem: true
+      })
+    })
+    .filter(Boolean)
+}
+
+const getCustomFieldColumnLabel = (
+  field: ContactCustomField | ContactCustomFieldDefinition,
+  index: number
+) => {
+  const baseLabel = getContactCustomFieldDisplayLabel(field, index)
+  const folderName = cleanColumnValue((field as ContactCustomFieldDefinition).folderName)
+  return folderName ? `${baseLabel} · ${folderName}` : baseLabel
+}
+
+const shouldExposeCustomFieldColumn = (field: ContactCustomField | ContactCustomFieldDefinition) =>
+  !Boolean((field as ContactCustomFieldDefinition).archived) &&
+  (field.sourceType || '') !== 'system'
+
+const findContactCustomField = (contact: Contact, matchKeySet: Set<string>) =>
+  (contact.customFields || []).find((field) =>
+    getContactCustomFieldKeys(field).some((key) => matchKeySet.has(key))
+  )
 
 const mergeCustomFields = (baseFields: ContactCustomField[] = [], nextFields: ContactCustomField[] = []) => {
   const fieldMap = new Map<string, ContactCustomField>()
@@ -477,6 +539,11 @@ const ContactsTable: React.FC = () => {
   const [viewMode, setViewMode] = useState<ContactViewMode>(routeState.viewMode)
   const [isClient, setIsClient] = useState(false)
   const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]) // Eventos de calendarios
+  const [contactTagLabels, setContactTagLabels] = useState<Record<string, string>>(() => {
+    const cachedTags = contactTagsService.getCachedTags({ includeSystem: true }) || contactTagsService.getCachedTags()
+    return cachedTags ? createTagLabelMap(cachedTags) : {}
+  })
+  const [customFieldDefinitions, setCustomFieldDefinitions] = useState<ContactCustomFieldDefinition[]>([])
   const [hasLoadedContacts, setHasLoadedContacts] = useState(false)
   const handledOpenContactRef = useRef<string | null>(null)
   const fetchRequestRef = useRef(0)
@@ -619,6 +686,44 @@ const ContactsTable: React.FC = () => {
 
   useEffect(() => {
     setIsClient(true)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    contactTagsService.getTags({ includeSystem: true })
+      .then((tags) => {
+        if (!cancelled) {
+          setContactTagLabels(createTagLabelMap(Array.isArray(tags) ? tags : []))
+        }
+      })
+      .catch(() => {
+        // Las etiquetas siguen mostrándose con el valor guardado si el catálogo no carga.
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    contactsService.getCustomFieldDefinitions()
+      .then((definitions) => {
+        if (cancelled) return
+        const activeDefinitions = Array.isArray(definitions)
+          ? definitions.filter((field) => !field.archived && field.sourceType !== 'system')
+          : []
+        setCustomFieldDefinitions(activeDefinitions)
+      })
+      .catch(() => {
+        if (!cancelled) setCustomFieldDefinitions([])
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -1372,6 +1477,40 @@ const ContactsTable: React.FC = () => {
     { label: labels.customers, value: 'customers' }
   ]
 
+  const customFieldColumnSpecs = useMemo(() => {
+    const specs: ContactCustomFieldColumnSpec[] = []
+
+    const upsertCustomFieldColumn = (
+      field: ContactCustomField | ContactCustomFieldDefinition,
+      index: number
+    ) => {
+      if (!shouldExposeCustomFieldColumn(field)) return
+
+      const keys = getContactCustomFieldKeys(field)
+      if (keys.length === 0) return
+
+      const existingSpec = specs.find((spec) => keys.some((key) => spec.matchKeySet.has(key)))
+      if (existingSpec) {
+        keys.forEach((key) => existingSpec.matchKeySet.add(key))
+        return
+      }
+
+      specs.push({
+        columnKey: `${CUSTOM_FIELD_COLUMN_PREFIX}${keys[0]}`,
+        label: getCustomFieldColumnLabel(field, index),
+        matchKeySet: new Set(keys)
+      })
+    }
+
+    customFieldDefinitions.forEach(upsertCustomFieldColumn)
+    contacts.forEach((contact) => {
+      const fields = contact.customFields || []
+      fields.forEach(upsertCustomFieldColumn)
+    })
+
+    return specs.sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }))
+  }, [contacts, customFieldDefinitions])
+
   const hasAttendedAppointment = (contact: Contact) =>
     Boolean(contact.hasShowedAppointment || contact.hasAttendedAppointment) ||
     Boolean(allEvents.some(event =>
@@ -1487,6 +1626,17 @@ const ContactsTable: React.FC = () => {
       sortable: true
     },
     {
+      key: 'tags',
+      header: 'Etiquetas',
+      render: (_value, item) => {
+        const tagLabels = getContactTagLabels(item.tags, contactTagLabels)
+        return tagLabels.length > 0 ? tagLabels.join(', ') : '-'
+      },
+      searchValue: (_value, item) => getContactTagLabels(item.tags, contactTagLabels),
+      sortable: false,
+      visible: false
+    },
+    {
       key: 'phone',
       header: 'Teléfono',
       sortable: true
@@ -1503,6 +1653,22 @@ const ContactsTable: React.FC = () => {
       render: (value) => value > 0 ? formatCurrency(value) : '-',
       sortable: true
     },
+    ...customFieldColumnSpecs.map((fieldColumn): Column<Contact> => ({
+      key: fieldColumn.columnKey,
+      header: fieldColumn.label,
+      render: (_value, item) => {
+        const field = findContactCustomField(item, fieldColumn.matchKeySet)
+        const displayValue = formatContactCustomFieldDisplayValue(field?.value)
+        return displayValue || '-'
+      },
+      searchValue: (_value, item) => {
+        const field = findContactCustomField(item, fieldColumn.matchKeySet)
+        const displayValue = formatContactCustomFieldDisplayValue(field?.value)
+        return displayValue ? [displayValue] : []
+      },
+      sortable: false,
+      visible: false
+    })),
     {
       key: 'id',
       header: 'Acciones',
