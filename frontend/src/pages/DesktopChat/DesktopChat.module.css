@@ -1088,6 +1088,11 @@
   background: var(--color-background-primary);
 }
 
+.composerTextField {
+  position: relative;
+  min-width: 0;
+}
+
 .composer textarea {
   width: 100%;
   min-height: 38px;
@@ -1102,6 +1107,10 @@
   font-size: var(--font-size-sm);
   line-height: 18px;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+}
+
+.composerTextField textarea {
+  padding-right: 48px;
 }
 
 .composer textarea:disabled {
@@ -1179,6 +1188,7 @@
 .composerPlusButton,
 .micButton,
 .sendButton,
+.scheduleComposerButton,
 .agentComposerMenu button,
 .composerMenu button {
   display: inline-flex;
@@ -1188,6 +1198,34 @@
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
+}
+
+.scheduleComposerButton {
+  position: absolute;
+  right: 5px;
+  bottom: 6px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--color-text-tertiary);
+  transition: background-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.scheduleComposerButton:hover,
+.scheduleComposerButton:focus-visible {
+  background: var(--chat-soft);
+  color: var(--color-text-primary);
+}
+
+.scheduleComposerButton:focus-visible {
+  outline: 0;
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.scheduleComposerButton:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .draftAttachment button {

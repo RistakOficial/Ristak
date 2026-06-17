@@ -3426,10 +3426,6 @@ export const DesktopChat: React.FC = () => {
                   </button>
                   {composerMenuOpen ? (
                     <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
-                      <button type="button" role="menuitem" onClick={handleOpenScheduleModal}>
-                        <Clock size={16} />
-                        <span>Programar</span>
-                      </button>
                       <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
                         <FileText size={16} />
                         <span>Plantillas</span>
@@ -3453,18 +3449,30 @@ export const DesktopChat: React.FC = () => {
                     </div>
                   ) : null}
                 </div>
-                <textarea
-                  data-ristak-unstyled
-                  value={composerText}
-                  onChange={(event) => setComposerText(event.target.value)}
-                  placeholder={voiceRecording ? 'Grabando audio...' : voiceDraft ? 'Audio listo para enviar' : 'Escribe una respuesta...'}
-                  rows={1}
-                  onFocus={() => {
-                    setComposerMenuOpen(false)
-                    closeComposerAgentMenu()
-                  }}
-                  disabled={voiceRecording || voiceProcessing || Boolean(voiceDraft)}
-                />
+                <div className={styles.composerTextField}>
+                  <textarea
+                    data-ristak-unstyled
+                    value={composerText}
+                    onChange={(event) => setComposerText(event.target.value)}
+                    placeholder={voiceRecording ? 'Grabando audio...' : voiceDraft ? 'Audio listo para enviar' : 'Escribe una respuesta...'}
+                    rows={1}
+                    onFocus={() => {
+                      setComposerMenuOpen(false)
+                      closeComposerAgentMenu()
+                    }}
+                    disabled={voiceRecording || voiceProcessing || Boolean(voiceDraft)}
+                  />
+                  <button
+                    type="button"
+                    className={styles.scheduleComposerButton}
+                    onClick={handleOpenScheduleModal}
+                    disabled={!activeContact || composerStatus === 'sending' || voiceRecording || voiceProcessing || Boolean(voiceDraft)}
+                    aria-label="Programar mensaje"
+                    title="Programar mensaje"
+                  >
+                    <Clock size={16} />
+                  </button>
+                </div>
                 <button
                   type="button"
                   className={styles.micButton}
