@@ -395,7 +395,6 @@ Todos se inician en `server.js`; no son servicios cron de Render.
 - Settings: `GET /api/settings/timezone`
 - Payment methods: `/api/payment-methods/*`
 - Costs: `/api/costs/*`
-- Maintenance: `POST /api/maintenance/fix-visitor-ids`
 - Hidden contacts: `/api/hidden-contacts/*`
 - Global search: `/api/search/global`
 - Webhook config: `/api/webhook-config/*`

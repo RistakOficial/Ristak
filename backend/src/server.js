@@ -38,7 +38,6 @@ import trackingRoutes, { publicTrackingRoutes } from './routes/tracking.routes.j
 import triggerLinksRoutes from './routes/triggerLinks.routes.js'
 import configRoutes from './routes/config.routes.js'
 import costsRoutes from './routes/costs.routes.js'
-import maintenanceRoutes from './routes/maintenance.routes.js'
 import authRoutes from './routes/auth.routes.js'
 import apiAccessRoutes from './routes/apiAccess.routes.js'
 import oauthRoutes from './routes/oauth.routes.js'
@@ -138,7 +137,6 @@ app.use('/api/push', pushRoutes)
 app.use('/api/license', licenseRoutes)
 app.use('/api/config', configRoutes)
 app.use('/api', costsRoutes)
-app.use('/api/maintenance', maintenanceRoutes)
 app.use('/api/hidden-contacts', hiddenContactsRoutes)
 app.use('/api/ai-agent', requireFeature('app_assistant_ai'), aiAgentRoutes)
 app.use('/api/conversational-agent', requireFeature('conversational_ai'), conversationalAgentRoutes)
