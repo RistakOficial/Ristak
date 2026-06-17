@@ -15354,7 +15354,154 @@ async function findExistingContact({ email, phone }) {
   return null
 }
 
-async function upsertContactFromSubmission({ site, contact, meta }) {
+function automationAnswerKey(value, fallback = 'campo') {
+  const normalized = cleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return normalized || fallback
+}
+
+function automationAnswerText(value) {
+  if (Array.isArray(value)) return value.map(automationAnswerText).filter(Boolean).join(', ')
+  if (value && typeof value === 'object') return JSON.stringify(value)
+  return cleanString(value)
+}
+
+function setAutomationAnswerAlias(target, key, value) {
+  const directKey = cleanString(key)
+  const normalizedKey = automationAnswerKey(directKey, '')
+  if (directKey && target[directKey] === undefined) target[directKey] = value
+  if (normalizedKey && target[normalizedKey] === undefined) target[normalizedKey] = value
+}
+
+function addAutomationAnswer(output, answer = {}) {
+  const value = Object.prototype.hasOwnProperty.call(answer, 'value') ? answer.value : ''
+  const id = cleanString(answer.id || answer.fieldId || answer.blockId)
+  const label = cleanString(answer.label || answer.question || answer.name || id)
+  const key = automationAnswerKey(answer.key || answer.fieldKey || answer.internalName || label || id, id || 'respuesta')
+  const entry = {
+    id,
+    key,
+    label: label || key,
+    type: cleanString(answer.type || answer.blockType || ''),
+    value
+  }
+  output.answers.push(entry)
+  setAutomationAnswerAlias(output.byId, id, value)
+  setAutomationAnswerAlias(output.byKey, key, value)
+  setAutomationAnswerAlias(output.byLabel, entry.label, value)
+}
+
+function finishAutomationResponses(output) {
+  output.summary = output.answers
+    .map(answer => `${answer.label || answer.key}: ${automationAnswerText(answer.value)}`)
+    .filter(line => !/:\s*$/.test(line))
+    .join('\n')
+  return output
+}
+
+function makeEmptyAutomationResponses() {
+  return {
+    answers: [],
+    byId: {},
+    byKey: {},
+    byLabel: {},
+    summary: ''
+  }
+}
+
+function buildNativeAutomationFormResponses({ blocks = [], responses = {} } = {}) {
+  const output = makeEmptyAutomationResponses()
+  for (const block of collectFieldBlocks(blocks)) {
+    if (!Object.prototype.hasOwnProperty.call(responses || {}, block.id)) continue
+    const settings = block.settings || {}
+    const value = responses[block.id]
+    const empty = Array.isArray(value) ? value.length === 0 : !cleanString(value)
+    if (empty) continue
+    addAutomationAnswer(output, {
+      id: block.id,
+      key: settings.customFieldKey || settings.internalName || settings.systemFieldKey || block.id,
+      label: block.label || settings.customFieldLabel || settings.internalName || block.id,
+      type: block.blockType,
+      value
+    })
+  }
+  return finishAutomationResponses(output)
+}
+
+function buildImportedAutomationFormResponses({ rawFields = {}, mappedFields = {} } = {}) {
+  const output = makeEmptyAutomationResponses()
+  Object.entries(rawFields || {}).forEach(([key, value]) => {
+    if (isEmptyImportedValue(value)) return
+    addAutomationAnswer(output, {
+      id: key,
+      key,
+      label: key,
+      type: Array.isArray(value) ? 'checkboxes' : 'text',
+      value
+    })
+  })
+  ;['standard', 'custom', 'ignored'].forEach(section => {
+    Object.entries(mappedFields?.[section] || {}).forEach(([key, value]) => {
+      if (isEmptyImportedValue(value)) return
+      setAutomationAnswerAlias(output.byKey, key, value)
+      setAutomationAnswerAlias(output.byKey, `${section}.${key}`, value)
+    })
+  })
+  return finishAutomationResponses(output)
+}
+
+function customFieldChangeKeys(fields = []) {
+  return fields
+    .map(field => cleanString(field.fieldKey || field.key || field.field_key))
+    .filter(Boolean)
+    .flatMap(key => [`custom:${key}`, key])
+}
+
+function emitSiteSubmissionAutomationEvents({ contactResult, formEvent, contactChangedFields = [] }) {
+  const contactId = contactResult?.contactId || formEvent?.contactId
+  import('./automationEngine.js')
+    .then(async (engine) => {
+      if (contactId) {
+        const contactEvent = {
+          contactId,
+          source: 'form',
+          contactChangeSource: 'form',
+          formId: formEvent.formId,
+          formName: formEvent.formName,
+          submissionId: formEvent.submissionId,
+          formStatus: formEvent.formStatus,
+          status: formEvent.status,
+          formDisqualified: formEvent.formDisqualified,
+          submittedAt: formEvent.submittedAt,
+          formResponses: formEvent.formResponses
+        }
+        if (contactResult?.created) {
+          await engine.handleAutomationEvent('contact-created', contactEvent)
+        } else {
+          await engine.handleAutomationEvent('contact-updated', {
+            ...contactEvent,
+            changedFields: [...new Set([
+              ...(contactResult?.changedFields || []),
+              ...contactChangedFields,
+              'formSubmission',
+              'publicSiteSubmission',
+              'updatedAt'
+            ].filter(Boolean))]
+          })
+        }
+      }
+      await engine.handleAutomationEvent('form-submitted', formEvent)
+    })
+    .catch(error => {
+      logger.warn(`No se pudieron disparar automatizaciones de formulario: ${error.message}`)
+    })
+}
+
+async function upsertContactFromSubmissionWithResult({ site, contact, meta }) {
   const email = normalizeEmail(contact.email)
   const phone = await normalizePhoneForAccount(contact.phone) || cleanString(contact.phone)
   const explicitFirstName = cleanString(contact.firstName || contact.first_name)
@@ -15374,6 +15521,14 @@ async function upsertContactFromSubmission({ site, contact, meta }) {
   const visitorId = cleanString(meta?.visitorId || meta?.visitor_id)
 
   if (existing) {
+    const changedFields = ['updatedAt']
+    if (!cleanString(existing.phone) && phone) changedFields.push('phone')
+    if (!cleanString(existing.email) && email) changedFields.push('email')
+    if (!cleanString(existing.full_name) && fullName) changedFields.push('fullName')
+    if (!cleanString(existing.first_name) && firstName) changedFields.push('firstName')
+    if (!cleanString(existing.last_name) && lastName) changedFields.push('lastName')
+    if (visitorId) changedFields.push('visitorId')
+
     await db.run(`
       UPDATE contacts SET
         phone = COALESCE(NULLIF(phone, ''), ?),
@@ -15406,7 +15561,11 @@ async function upsertContactFromSubmission({ site, contact, meta }) {
       contactId
     ])
     await finalizePreparedPhoneUpsert(phoneUpsert, contactId)
-    return contactId
+    return {
+      contactId,
+      created: false,
+      changedFields: [...new Set(changedFields)]
+    }
   }
 
   await db.run(`
@@ -15440,7 +15599,25 @@ async function upsertContactFromSubmission({ site, contact, meta }) {
   ])
 
   await finalizePreparedPhoneUpsert(phoneUpsert, contactId)
-  return contactId
+  return {
+    contactId,
+    created: true,
+    changedFields: [
+      'createdAt',
+      'phone',
+      'email',
+      'fullName',
+      'firstName',
+      'lastName',
+      'source',
+      visitorId ? 'visitorId' : ''
+    ].filter(Boolean)
+  }
+}
+
+async function upsertContactFromSubmission(args) {
+  const result = await upsertContactFromSubmissionWithResult(args)
+  return result.contactId
 }
 
 function normalizeSubmissionResponses(blocks, responses = {}, options = {}) {
@@ -16123,8 +16300,9 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields }) {
 }
 
 async function upsertImportedContactFromSubmission({ site, contact, customFields, meta, imported, formMapping }) {
-  const contactId = await upsertContactFromSubmission({ site, contact, meta })
-  if (!contactId || !Array.isArray(customFields) || customFields.length === 0) return contactId
+  const contactResult = await upsertContactFromSubmissionWithResult({ site, contact, meta })
+  const contactId = contactResult.contactId
+  if (!contactId || !Array.isArray(customFields) || customFields.length === 0) return contactResult
 
   const preparedFields = await prepareContactCustomFieldsForStorage(customFields, {
     sourceType: 'imported_html',
@@ -16151,7 +16329,13 @@ async function upsertImportedContactFromSubmission({ site, contact, customFields
     contactId
   ])
 
-  return contactId
+  return {
+    ...contactResult,
+    changedFields: [
+      ...(contactResult.changedFields || []),
+      ...customFieldChangeKeys(preparedFields)
+    ]
+  }
 }
 
 async function createImportedSubmissionFromRequest({ req, body, site, host }) {
@@ -16196,7 +16380,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
   const responseMessage = importedDisqualified
     ? cleanString(meta.importedDisqualifiedMessage || meta.imported_disqualified_message) || 'Gracias. Por ahora esta solicitud no califica.'
     : 'Listo. Recibimos tu información.'
-  const contactId = await upsertImportedContactFromSubmission({
+  const contactResult = await upsertImportedContactFromSubmission({
     site,
     contact,
     customFields: layers.customFields,
@@ -16204,6 +16388,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
     imported,
     formMapping: layers.formMapping
   })
+  const contactId = contactResult.contactId
   const submissionId = crypto.randomUUID()
 
   await db.run(`
@@ -16224,9 +16409,9 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
     submissionStatus
   ])
 
-  // Motor de automatizaciones: formulario enviado
-  import('./automationEngine.js')
-    .then(engine => engine.handleAutomationEvent('form-submitted', {
+  emitSiteSubmissionAutomationEvents({
+    contactResult,
+    formEvent: {
       contactId,
       formId: site.id,
       formName: site.name || '',
@@ -16235,9 +16420,13 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
       status: submissionStatus,
       formDisqualified: submissionStatus === 'disqualified',
       submittedAt: meta.submittedAt,
-      formResponses: layers.mappedFields
-    }))
-    .catch(() => {})
+      formResponses: buildImportedAutomationFormResponses({
+        rawFields: layers.rawFields,
+        mappedFields: layers.mappedFields
+      })
+    },
+    contactChangedFields: customFieldChangeKeys(layers.customFields)
+  })
 
   const capi = await sendSiteLeadMetaEvent({
     site,
@@ -16365,7 +16554,8 @@ export async function createSubmissionFromRequest(req, body = {}) {
   }
   const nativeLayers = buildNativeSubmissionLayers({ site, blocks: submissionBlocks, responses })
   const inferredContact = inferContactFromResponses(collectFieldBlocks(submissionBlocks), responses)
-  const contactId = await upsertContactFromSubmission({ site, contact: inferredContact, meta })
+  const contactResult = await upsertContactFromSubmissionWithResult({ site, contact: inferredContact, meta })
+  const contactId = contactResult.contactId
   const preparedCustomFields = await upsertNativeContactCustomFields({
     site,
     contactId,
@@ -16402,9 +16592,9 @@ export async function createSubmissionFromRequest(req, body = {}) {
     ruleEvaluation.status
   ])
 
-  // Motor de automatizaciones: formulario enviado
-  import('./automationEngine.js')
-    .then(engine => engine.handleAutomationEvent('form-submitted', {
+  emitSiteSubmissionAutomationEvents({
+    contactResult,
+    formEvent: {
       contactId,
       formId: site.id,
       formName: site.name || '',
@@ -16413,9 +16603,14 @@ export async function createSubmissionFromRequest(req, body = {}) {
       status: ruleEvaluation.status,
       formDisqualified: ruleEvaluation.status === 'disqualified' || ruleEvaluation.disqualified === true,
       submittedAt: meta.submittedAt,
-      formResponses: responses
-    }))
-    .catch(() => {})
+      formResponses: buildNativeAutomationFormResponses({
+        blocks: submissionBlocks,
+        responses
+      }),
+      immediateDisqualify: immediateDisqualifySubmit
+    },
+    contactChangedFields: customFieldChangeKeys(preparedCustomFields)
+  })
 
   const capi = await sendSiteLeadMetaEvent({
     site,

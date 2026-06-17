@@ -193,6 +193,158 @@ function readPath(source, path) {
   return current
 }
 
+function normalizeAnswerLookupKey(value) {
+  return cleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function answerComparableValue(value) {
+  if (Array.isArray(value)) return value.map(answerComparableValue).filter(Boolean).join(', ')
+  if (isPlainObject(value)) return JSON.stringify(value)
+  return cleanString(value)
+}
+
+function setAnswerAlias(target, key, value) {
+  const directKey = cleanString(key)
+  const normalizedKey = normalizeAnswerLookupKey(directKey)
+  if (directKey && target[directKey] === undefined) target[directKey] = value
+  if (normalizedKey && target[normalizedKey] === undefined) target[normalizedKey] = value
+}
+
+function addFormAnswer(normalized, answer = {}, index = 0) {
+  const value = Object.prototype.hasOwnProperty.call(answer, 'value')
+    ? answer.value
+    : Object.prototype.hasOwnProperty.call(answer, 'answer')
+      ? answer.answer
+      : ''
+  const id = cleanString(answer.id || answer.fieldId || answer.field_id || answer.blockId || answer.block_id)
+  const key = cleanString(answer.key || answer.fieldKey || answer.field_key || answer.name || answer.internalName || answer.internal_name)
+  const label = cleanString(answer.label || answer.question || answer.title || answer.name || key || id || `Respuesta ${index + 1}`)
+  const entry = {
+    id,
+    key: key || normalizeAnswerLookupKey(label || id || `respuesta_${index + 1}`),
+    label,
+    value,
+    type: cleanString(answer.type || answer.blockType || answer.block_type || '')
+  }
+
+  normalized.answers.push(entry)
+  setAnswerAlias(normalized.byId, id, value)
+  setAnswerAlias(normalized.byKey, entry.key, value)
+  setAnswerAlias(normalized.byLabel, label, value)
+}
+
+function normalizeFormResponses(raw) {
+  const normalized = {
+    answers: [],
+    byId: {},
+    byKey: {},
+    byLabel: {},
+    summary: ''
+  }
+  const source = parseJson(raw, raw)
+  if (!source || typeof source !== 'object') return normalized
+
+  if (Array.isArray(source.answers)) {
+    source.answers.forEach((answer, index) => addFormAnswer(normalized, answer, index))
+  }
+
+  const bags = [
+    ['byId', source.byId || source.by_id],
+    ['byKey', source.byKey || source.by_key],
+    ['byLabel', source.byLabel || source.by_label]
+  ]
+  for (const [targetKey, bag] of bags) {
+    if (!isPlainObject(bag)) continue
+    Object.entries(bag).forEach(([key, value]) => setAnswerAlias(normalized[targetKey], key, value))
+  }
+
+  for (const section of ['standard', 'custom', 'system', 'ignored', 'raw']) {
+    const bag = source[section]
+    if (!isPlainObject(bag)) continue
+    Object.entries(bag).forEach(([key, value]) => {
+      setAnswerAlias(normalized.byKey, key, value)
+      setAnswerAlias(normalized.byKey, `${section}.${key}`, value)
+    })
+  }
+
+  const knownEnvelopeKeys = new Set([
+    'answers',
+    'byId',
+    'by_id',
+    'byKey',
+    'by_key',
+    'byLabel',
+    'by_label',
+    'summary',
+    'text',
+    'standard',
+    'custom',
+    'system',
+    'ignored',
+    'raw'
+  ])
+  Object.entries(source).forEach(([key, value]) => {
+    if (knownEnvelopeKeys.has(key)) return
+    setAnswerAlias(normalized.byKey, key, value)
+  })
+
+  normalized.summary = cleanString(source.summary || source.text) || normalized.answers
+    .filter(answer => answer.label || answer.key)
+    .map(answer => `${answer.label || answer.key}: ${answerComparableValue(answer.value)}`)
+    .filter(line => cleanString(line.replace(/^[^:]+:\s*$/, '')))
+    .join('\n')
+
+  if (!normalized.summary && Object.keys(normalized.byKey).length) {
+    normalized.summary = Object.entries(normalized.byKey)
+      .map(([key, value]) => `${key}: ${answerComparableValue(value)}`)
+      .join('\n')
+  }
+
+  return normalized
+}
+
+function formResponsesFromContext(ctx = {}) {
+  return normalizeFormResponses(
+    ctx.formResponses ||
+    ctx.form_responses ||
+    ctx.formAnswers ||
+    ctx.form_answers ||
+    ctx.responses ||
+    {}
+  )
+}
+
+function hasFormResponses(responses) {
+  return Boolean(
+    responses.summary ||
+    responses.answers.length ||
+    Object.keys(responses.byId).length ||
+    Object.keys(responses.byKey).length ||
+    Object.keys(responses.byLabel).length
+  )
+}
+
+function formResponseValue(ctx = {}, key = '') {
+  const responses = formResponsesFromContext(ctx)
+  if (!cleanString(key)) return responses.summary
+  const wanted = normalizeAnswerLookupKey(key)
+  const bags = [responses.byKey, responses.byId, responses.byLabel]
+  for (const bag of bags) {
+    for (const [candidate, value] of Object.entries(bag)) {
+      if (normalizeAnswerLookupKey(candidate) === wanted) return value
+    }
+  }
+  const answer = responses.answers.find(item => (
+    [item.id, item.key, item.label].some(candidate => normalizeAnswerLookupKey(candidate) === wanted)
+  ))
+  return answer ? answer.value : ''
+}
+
 function resolveDynamicToken(token, ctx) {
   if (!token) return undefined
   const webhookRoot = token.match(/^(webhook(?:_\d+)?)(.*)$/)
@@ -402,13 +554,21 @@ function formDisqualifiedFromContext(ctx = {}) {
 
 function formDataFromContext(ctx = {}) {
   const status = ctx.formStatus || ctx.form_status || ctx.submissionStatus || ctx.submission_status || ctx.status || ''
+  const responses = formResponsesFromContext(ctx)
   return {
     id_formulario: ctx.formId || ctx.form_id || '',
     nombre_formulario: ctx.formName || ctx.form_name || '',
+    nombre: ctx.contact?.fullName || ctx.contactName || '',
+    telefono: ctx.contact?.phone || ctx.phone || '',
+    email: ctx.contact?.email || ctx.email || '',
     estado: status,
     descalificado: formDisqualifiedFromContext(ctx),
     id_envio: ctx.submissionId || ctx.submission_id || '',
-    fecha_de_envio: ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || ''
+    fecha_de_envio: ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || '',
+    respuestas: responses.byKey,
+    respuestas_por_id: responses.byId,
+    respuestas_por_etiqueta: responses.byLabel,
+    resumen_respuestas: responses.summary
   }
 }
 
@@ -505,7 +665,16 @@ function buildVariableMap(ctx) {
     map['payment.date'] = String(payment.fecha ?? '')
   }
   const form = formDataFromContext(ctx)
-  if (Object.values(form).some((value) => value !== '' && value !== false)) {
+  const formResponses = formResponsesFromContext(ctx)
+  const hasFormData = Boolean(
+    form.id_formulario ||
+    form.nombre_formulario ||
+    form.estado ||
+    form.id_envio ||
+    form.fecha_de_envio ||
+    hasFormResponses(formResponses)
+  )
+  if (hasFormData) {
     setDeepVariable(map, 'formulario', form)
     setDeepVariable(map, 'formulario_1', form)
     map['form.id'] = String(form.id_formulario ?? '')
@@ -514,6 +683,17 @@ function buildVariableMap(ctx) {
     map['form.disqualified'] = boolText(Boolean(form.descalificado))
     map['form.submission_id'] = String(form.id_envio ?? '')
     map['form.submitted_at'] = String(form.fecha_de_envio ?? '')
+    map['form.answers'] = formResponses.summary
+    map['form.answers_text'] = formResponses.summary
+    if (hasFormResponses(formResponses)) {
+      map['formulario.respuestas'] = JSON.stringify(formResponses.byKey)
+      map['formulario_1.respuestas'] = JSON.stringify(formResponses.byKey)
+      map['formulario.respuestas_por_id'] = JSON.stringify(formResponses.byId)
+      map['formulario.respuestas_por_etiqueta'] = JSON.stringify(formResponses.byLabel)
+      map['formulario.resumen_respuestas'] = formResponses.summary
+      setDeepVariable(map, 'form.responses', formResponses.byKey)
+      setDeepVariable(map, 'form.answers_by_id', formResponses.byId)
+    }
   }
   const appointment = appointmentDataFromContext(ctx)
   if (Object.values(appointment).some((value) => value !== '')) {
@@ -631,6 +811,11 @@ function filterFieldValue(filter, ctx) {
     case 'campaign': return ctx.campaign || null
     case 'form_disqualified': return boolText(formDisqualifiedFromContext(ctx))
     case 'form_status': return ctx.formStatus || ctx.form_status || ctx.submissionStatus || ctx.submission_status || ctx.status || ''
+    case 'form-submitted': return (ctx.submissionId || ctx.submission_id || ctx.formId || ctx.form_id) ? 'true' : 'false'
+    case 'form-specific': return ctx.formId || ctx.form_id || ''
+    case 'form-date': return ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || ''
+    case 'form-field-value':
+    case 'form_field': return formResponseValue(ctx, filter.customKey || filter.custom_key || filter.fieldKey || filter.field_key)
     case 'link': return ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ''
     case 'trigger_link': return ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ''
     case 'destination_url': return ctx.destinationUrl || ''
@@ -884,6 +1069,12 @@ function ruleFieldValue(rule, ctx) {
     case 'pay-product': return ctx.product || ctx.title || ctx.description || ''
     case 'pay-currency': return ctx.currency || ''
     case 'pay-date': return ctx.paymentDate || ctx.date || ctx.createdAt || ''
+    case 'form-submitted': return (ctx.submissionId || ctx.submission_id || ctx.formId || ctx.form_id) ? 'true' : 'false'
+    case 'form-specific': return ctx.formId || ctx.form_id || ''
+    case 'form-date': return ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || ''
+    case 'form_disqualified': return boolText(formDisqualifiedFromContext(ctx))
+    case 'form-field-value':
+    case 'form_field': return formResponseValue(ctx, rule.customKey || rule.custom_key || rule.fieldKey || rule.field_key)
     case 'tag-has':
     case 'tag-any-of':
       return (contact.tagKeys || contact.tags || []).join(' , ')
@@ -1130,6 +1321,9 @@ async function createEnrollment(automation, contact, ctx) {
       formDisqualified: formDisqualifiedFromContext(ctx),
       submissionId: ctx.submissionId || ctx.submission_id || null,
       submittedAt: ctx.submittedAt || ctx.submitted_at || null,
+      formResponses: ctx.formResponses || ctx.form_responses || null,
+      formAnswers: ctx.formAnswers || ctx.form_answers || null,
+      formAnswersText: ctx.formAnswersText || ctx.form_answers_text || '',
       scheduledFor: ctx.scheduledFor || null,
       scheduleRunKey: ctx.scheduleRunKey || null,
       scheduleRecurrence: ctx.scheduleRecurrence || null,

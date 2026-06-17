@@ -13,6 +13,24 @@ const DOMAIN_KEYS = {
   error: 'sites_public_domain_error'
 }
 
+async function waitForAutomationEnrollments(automationIds, timeoutMs = 1500) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const placeholders = automationIds.map(() => '?').join(',')
+    const rows = await db.all(
+      `SELECT * FROM automation_enrollments WHERE automation_id IN (${placeholders})`,
+      automationIds
+    )
+    if (rows.length >= automationIds.length) return rows
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  const placeholders = automationIds.map(() => '?').join(',')
+  return db.all(
+    `SELECT * FROM automation_enrollments WHERE automation_id IN (${placeholders})`,
+    automationIds
+  )
+}
+
 test('native form system fields save to contact and locked system fields', async () => {
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),
@@ -258,6 +276,167 @@ test('native form option rules redirect to site pages and external URLs with sub
       await deleteSite(site.id).catch(() => undefined)
     }
     await db.run('DELETE FROM contacts WHERE source = ?', [`ristak_site:${slug}`]).catch(() => undefined)
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
+test('native form submission triggers contact and form automations with mappable answers', async () => {
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  const suffix = crypto.randomUUID()
+  const email = `form-automation-${suffix}@example.test`
+  const contactAutomationId = `automation_contact_form_${suffix}`
+  const formAutomationId = `automation_form_submit_${suffix}`
+  let site
+
+  const doneFlow = (trigger) => ({
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: { triggers: [trigger] }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: `edge-${trigger.id}`, sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: false }
+  })
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    site = await createSite({
+      name: 'Formulario automatizaciones',
+      slug: `form-automation-${Date.now()}`,
+      siteType: 'standard_form',
+      status: 'published',
+      blankCanvas: true
+    })
+
+    let siteWithBlocks = await createBlock(site.id, {
+      blockType: 'email',
+      label: 'Correo electronico',
+      required: true,
+      settings: { systemFieldKey: 'email', internalName: 'email', validation: 'email' }
+    })
+    siteWithBlocks = await createBlock(site.id, {
+      blockType: 'currency',
+      label: 'Presupuesto mensual',
+      required: false,
+      settings: { internalName: 'presupuesto' }
+    })
+    siteWithBlocks = await createBlock(site.id, {
+      blockType: 'radio',
+      label: 'Calificación',
+      required: true,
+      settings: { internalName: 'calificacion' },
+      options: [
+        {
+          id: 'qualified',
+          label: 'Sí califico',
+          value: 'Sí califico',
+          action: 'continue'
+        },
+        {
+          id: 'not-qualified',
+          label: 'No califico',
+          value: 'No califico',
+          action: 'disqualify_after_submit',
+          message: 'No califica por ahora.'
+        }
+      ]
+    })
+
+    const emailBlock = siteWithBlocks.blocks.find(block => block.blockType === 'email')
+    const budgetBlock = siteWithBlocks.blocks.find(block => block.label === 'Presupuesto mensual')
+    const qualificationBlock = siteWithBlocks.blocks.find(block => block.blockType === 'radio')
+    assert.ok(emailBlock)
+    assert.ok(budgetBlock)
+    assert.ok(qualificationBlock)
+
+    const contactFlow = doneFlow({
+      id: 'trigger-contact-created',
+      type: 'trigger-contact-created',
+      config: { source: '' }
+    })
+    const formFlow = doneFlow({
+      id: 'trigger-form-submitted',
+      type: 'trigger-form-submitted',
+      config: {
+        form: site.id,
+        filters: [{ field: 'form_disqualified', match: 'is_disqualified', value: '' }]
+      }
+    })
+
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [contactAutomationId, 'Contacto desde formulario', JSON.stringify(contactFlow), JSON.stringify(contactFlow)]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [formAutomationId, 'Formulario descalificado', JSON.stringify(formFlow), JSON.stringify(formFlow)]
+    )
+
+    const result = await createSubmissionFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId: site.id,
+        finalSubmit: true,
+        responses: {
+          [emailBlock.id]: email,
+          [budgetBlock.id]: '5000',
+          [qualificationBlock.id]: 'No califico'
+        }
+      }
+    )
+
+    assert.equal(result.status, 'disqualified')
+    assert.ok(result.contactId)
+
+    const enrollments = await waitForAutomationEnrollments([contactAutomationId, formAutomationId])
+    const byAutomation = new Map(enrollments.map(row => [row.automation_id, row]))
+    assert.ok(byAutomation.get(contactAutomationId))
+    assert.ok(byAutomation.get(formAutomationId))
+
+    const formContext = JSON.parse(byAutomation.get(formAutomationId).context)
+    assert.equal(formContext.formStatus, 'disqualified')
+    assert.equal(formContext.formDisqualified, true)
+    assert.equal(formContext.formResponses.byKey.presupuesto, '5000')
+    assert.equal(formContext.formResponses.byLabel['Presupuesto mensual'], '5000')
+    assert.match(formContext.formResponses.summary, /Presupuesto mensual: 5000/)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id IN (?, ?)', [contactAutomationId, formAutomationId]).catch(() => undefined)
+    await db.run('DELETE FROM automations WHERE id IN (?, ?)', [contactAutomationId, formAutomationId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
     await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
     await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
     await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)

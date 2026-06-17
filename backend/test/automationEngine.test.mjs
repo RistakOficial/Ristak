@@ -113,6 +113,53 @@ test('filtersMatch: formulario enviado puede ser descalificado o no descalificad
   }), false)
 })
 
+test('formularios exponen respuestas no guardadas para variables, filtros y condiciones', () => {
+  const formCtx = {
+    contact: {
+      fullName: 'Lead Formulario',
+      phone: '+5215555555555',
+      email: 'lead-form@test.com'
+    },
+    formId: 'site_form_123',
+    formName: 'Diagnóstico',
+    submissionId: 'submission_123',
+    formStatus: 'disqualified',
+    formDisqualified: true,
+    submittedAt: '2026-06-17T20:00:00.000Z',
+    formResponses: {
+      answers: [
+        { id: 'field_budget', key: 'presupuesto', label: 'Presupuesto mensual', value: '5000', type: 'currency' },
+        { id: 'field_need', key: 'necesidad', label: 'Necesidad', value: 'Seguimiento por WhatsApp', type: 'text' }
+      ]
+    }
+  }
+
+  assert.equal(renderTemplate('{{form.answers}}', formCtx), 'Presupuesto mensual: 5000\nNecesidad: Seguimiento por WhatsApp')
+  assert.equal(renderTemplate('{{formulario.respuestas.presupuesto}}', formCtx), '5000')
+  assert.equal(renderTemplate('{{formulario.respuestas_por_id.field_budget}}', formCtx), '5000')
+  assert.equal(filtersMatch([{ field: 'form-field-value', customKey: 'presupuesto', match: 'is', value: '5000' }], formCtx), true)
+  assert.equal(filtersMatch([{ field: 'form-field-value', match: 'contains', value: 'WhatsApp' }], formCtx), true)
+
+  const condition = {
+    branches: [
+      {
+        name: 'Presupuesto suficiente',
+        groupsOperator: 'AND',
+        groups: [{
+          operator: 'AND',
+          negate: false,
+          rules: [{
+            field: 'var:formulario.respuestas.presupuesto',
+            operator: 'gte',
+            value: '4000'
+          }]
+        }]
+      }
+    ]
+  }
+  assert.equal(evaluateConditionNode(condition, formCtx).handle, 'yes')
+})
+
 test('evaluateConditionNode: una rama → Sí/No', () => {
   const config = {
     branches: [

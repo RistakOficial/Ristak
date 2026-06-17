@@ -105,6 +105,8 @@ export const BASE_VARIABLES: FlowVariable[] = [
 
   // Formularios
   { fieldId: 'form.name', label: 'Nombre del formulario', category: 'form' },
+  { fieldId: 'form.status', label: 'Estado del formulario', category: 'form' },
+  { fieldId: 'form.disqualified', label: 'Descalificado', category: 'form' },
   { fieldId: 'form.submitted_at', label: 'Fecha de envío', category: 'form' },
   { fieldId: 'form.answers', label: 'Respuestas del formulario', category: 'form' },
 

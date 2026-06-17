@@ -469,13 +469,18 @@ const WHATSAPP_REPLY_FIELDS: VariableSchemaField[] = [
 ]
 
 const FORM_FIELDS: VariableSchemaField[] = [
+  field('ID del formulario', 'id_formulario'),
+  field('Nombre del formulario', 'nombre_formulario'),
   field('Nombre', 'nombre'),
   field('Teléfono', 'telefono'),
   field('Email', 'email'),
-  field('Ciudad', 'ciudad'),
-  field('Servicio de interés', 'servicio_de_interes'),
-  field('Mensaje', 'mensaje'),
-  field('Fecha de envío', 'fecha_de_envio')
+  field('Estado', 'estado'),
+  field('Descalificado', 'descalificado', 'boolean'),
+  field('ID del envío', 'id_envio'),
+  field('Fecha de envío', 'fecha_de_envio'),
+  field('Resumen de respuestas', 'resumen_respuestas'),
+  field('Respuestas', 'respuestas', 'object'),
+  field('Respuestas por ID', 'respuestas_por_id', 'object')
 ]
 
 const TRIGGER_LINK_FIELDS: VariableSchemaField[] = [
