@@ -301,7 +301,9 @@ const PHONE_AGENT_RESPONSE_DELAY_UNIT_OPTIONS: Array<{ value: AgentResponseDelay
 const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   appointments: {
     owner: 'human',
-    calendarId: null
+    calendarId: null,
+    url: '',
+    trackingParam: 'ristak_goal_id'
   },
   sales: {
     owner: 'human',
@@ -310,7 +312,9 @@ const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     productName: '',
     priceName: '',
     amount: null,
-    currency: ''
+    currency: '',
+    url: '',
+    trackingParam: 'ristak_goal_id'
   },
   data: {
     afterComplete: 'human'
@@ -324,7 +328,8 @@ const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
 
 const PHONE_AGENT_OWNER_OPTIONS = [
   { value: 'human', label: 'Pasar a humano' },
-  { value: 'ai', label: 'Que lo haga la IA' }
+  { value: 'ai', label: 'Que lo haga la IA' },
+  { value: 'url', label: 'Mandar URL' }
 ]
 
 interface ProductPrice {
@@ -11256,6 +11261,7 @@ export const PhoneChat: React.FC = () => {
     ready_to_schedule: 'Pasar a humano',
     ready_to_buy: 'Link de pago enviado',
     appointment_booked: 'Cita agendada',
+    purchase_completed: 'Compra confirmada',
     discarded: 'Descartada'
   }
 
@@ -11381,17 +11387,27 @@ export const PhoneChat: React.FC = () => {
       const calendarId = owner === 'ai'
         ? goalWorkflow.appointments.calendarId || selectedAgentDef?.defaultCalendarId || calendars[0]?.id || null
         : goalWorkflow.appointments.calendarId
+      const successAction: ConversationalSuccessAction = owner === 'ai'
+        ? 'book_appointment'
+        : owner === 'url'
+        ? 'send_goal_url'
+        : 'ready_for_human'
       saveSelectedAgentPatch({
         goalWorkflow: mergeGoalWorkflow({ appointments: { ...goalWorkflow.appointments, owner, calendarId } }),
-        successAction: owner === 'ai' ? 'book_appointment' : 'ready_for_human',
+        successAction,
         defaultCalendarId: owner === 'ai' ? calendarId : selectedAgentDef?.defaultCalendarId || null
       })
     }
 
     const updateSalesOwner = (owner: AgentGoalWorkflowConfig['sales']['owner']) => {
+      const successAction: ConversationalSuccessAction = owner === 'ai'
+        ? 'ready_to_buy'
+        : owner === 'url'
+        ? 'send_goal_url'
+        : 'ready_for_human'
       saveSelectedAgentPatch({
         goalWorkflow: mergeGoalWorkflow({ sales: { ...goalWorkflow.sales, owner } }),
-        successAction: owner === 'ai' ? 'ready_to_buy' : 'ready_for_human'
+        successAction
       })
     }
 
@@ -11451,7 +11467,7 @@ export const PhoneChat: React.FC = () => {
           <section className={styles.agentMenuSection} aria-label="Flujo de agenda">
             <div className={styles.agentMenuSectionHeader}>
               <span>Agenda</span>
-              <small>{goalWorkflow.appointments.owner === 'ai' ? 'La IA agenda' : 'Pasa a humano'}</small>
+              <small>{goalWorkflow.appointments.owner === 'ai' ? 'La IA agenda' : goalWorkflow.appointments.owner === 'url' ? 'Manda URL' : 'Pasa a humano'}</small>
             </div>
             <label className={styles.agentMenuField}>
               <span>Quién quieres que lo agende</span>
@@ -11496,6 +11512,28 @@ export const PhoneChat: React.FC = () => {
                   La IA revisa horarios reales, confirma el horario con la persona y agenda en este calendario.
                 </p>
               </div>
+            ) : goalWorkflow.appointments.owner === 'url' ? (
+              <div className={styles.agentGoalPanel}>
+                <PhoneTextField
+                  label="URL para agendar"
+                  value={goalWorkflow.appointments.url}
+                  onChange={(value) => updateGoalWorkflowDraft({ appointments: { ...goalWorkflow.appointments, url: value } })}
+                  onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
+                  placeholder="https://calendly.com/tu-negocio/cita"
+                  disabled={agentConfigSaving}
+                />
+                <PhoneTextField
+                  label="Parámetro del ID"
+                  value={goalWorkflow.appointments.trackingParam || 'ristak_goal_id'}
+                  onChange={(value) => updateGoalWorkflowDraft({ appointments: { ...goalWorkflow.appointments, trackingParam: value } })}
+                  onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
+                  placeholder="ristak_goal_id"
+                  disabled={agentConfigSaving}
+                />
+                <p className={styles.agentMenuHint}>
+                  La IA manda el enlace con seguimiento y Ristak confirma la cita cuando regresa el webhook.
+                </p>
+              </div>
             ) : (
               <p className={styles.agentMenuHint}>
                 Cuando la persona quiera cita, el chat sube como prioridad para que un humano lo agende.
@@ -11524,7 +11562,7 @@ export const PhoneChat: React.FC = () => {
           <section className={styles.agentMenuSection} aria-label="Flujo de ventas">
             <div className={styles.agentMenuSectionHeader}>
               <span>Venta</span>
-              <small>{goalWorkflow.sales.owner === 'ai' ? 'IA cobra' : 'Humano cobra'}</small>
+              <small>{goalWorkflow.sales.owner === 'ai' ? 'IA cobra' : goalWorkflow.sales.owner === 'url' ? 'Manda URL' : 'Humano cobra'}</small>
             </div>
             <label className={styles.agentMenuField}>
               <span>Quién cierra la venta</span>
@@ -11591,6 +11629,28 @@ export const PhoneChat: React.FC = () => {
                 )}
                 <p className={styles.agentMenuHint}>
                   La IA confirma el cobro y el canal antes de mandar el link de pago.
+                </p>
+              </div>
+            ) : goalWorkflow.sales.owner === 'url' ? (
+              <div className={styles.agentGoalPanel}>
+                <PhoneTextField
+                  label="URL de compra o pago"
+                  value={goalWorkflow.sales.url}
+                  onChange={(value) => updateGoalWorkflowDraft({ sales: { ...goalWorkflow.sales, url: value } })}
+                  onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
+                  placeholder="https://tutienda.com/checkout"
+                  disabled={agentConfigSaving}
+                />
+                <PhoneTextField
+                  label="Parámetro del ID"
+                  value={goalWorkflow.sales.trackingParam || 'ristak_goal_id'}
+                  onChange={(value) => updateGoalWorkflowDraft({ sales: { ...goalWorkflow.sales, trackingParam: value } })}
+                  onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
+                  placeholder="ristak_goal_id"
+                  disabled={agentConfigSaving}
+                />
+                <p className={styles.agentMenuHint}>
+                  La IA manda el enlace con seguimiento y Ristak confirma la venta cuando regresa el webhook.
                 </p>
               </div>
             ) : (
@@ -11852,8 +11912,12 @@ export const PhoneChat: React.FC = () => {
                     const objective = value as ConversationalObjective
                     const nextSuccessAction: ConversationalSuccessAction = objective === 'citas' && goalWorkflow.appointments.owner === 'ai'
                       ? 'book_appointment'
+                      : objective === 'citas' && goalWorkflow.appointments.owner === 'url'
+                      ? 'send_goal_url'
                       : objective === 'ventas' && goalWorkflow.sales.owner === 'ai'
                       ? 'ready_to_buy'
+                      : objective === 'ventas' && goalWorkflow.sales.owner === 'url'
+                      ? 'send_goal_url'
                       : 'ready_for_human'
                     saveSelectedAgentPatch({
                       objective,

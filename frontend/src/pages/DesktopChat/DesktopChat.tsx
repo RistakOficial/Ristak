@@ -296,6 +296,7 @@ const AGENT_SIGNAL_LABELS: Record<string, string> = {
   ready_to_schedule: 'Listo para agendar',
   ready_to_buy: 'Listo para cobrar',
   appointment_booked: 'Cita agendada',
+  purchase_completed: 'Compra confirmada',
   discarded: 'Descartado'
 }
 

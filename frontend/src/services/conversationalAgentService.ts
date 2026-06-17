@@ -2,9 +2,9 @@ import type { ConversationalAIProviderId } from '@/constants/conversationalAIPro
 import { apiUrl } from './apiBaseUrl'
 
 export type ConversationalObjective = 'citas' | 'ventas' | 'datos' | 'filtrar' | 'custom'
-export type ConversationalSuccessAction = 'book_appointment' | 'ready_for_human' | 'ready_to_buy' | 'internal_signal' | 'none'
+export type ConversationalSuccessAction = 'book_appointment' | 'ready_for_human' | 'ready_to_buy' | 'send_goal_url' | 'internal_signal' | 'none'
 export type ConversationStatus = 'active' | 'paused' | 'human' | 'skipped' | 'completed' | 'discarded'
-export type ConversationSignal = 'ready_for_human' | 'ready_to_schedule' | 'ready_to_buy' | 'appointment_booked' | 'discarded'
+export type ConversationSignal = 'ready_for_human' | 'ready_to_schedule' | 'ready_to_buy' | 'appointment_booked' | 'purchase_completed' | 'discarded'
 export type ClosingStrategyMode = 'system' | 'custom'
 export type AgentResponseDelayMode = 'none' | 'fixed' | 'random'
 export type AgentResponseDelayUnit = 'seconds' | 'minutes'
@@ -56,12 +56,14 @@ export interface AgentReplyDeliveryConfig {
   maxDelaySeconds: number
 }
 
-export type AgentGoalOwner = 'human' | 'ai'
+export type AgentGoalOwner = 'human' | 'ai' | 'url'
 
 export interface AgentGoalWorkflowConfig {
   appointments: {
     owner: AgentGoalOwner
     calendarId: string | null
+    url: string
+    trackingParam: string
   }
   sales: {
     owner: AgentGoalOwner
@@ -71,6 +73,8 @@ export interface AgentGoalWorkflowConfig {
     priceName: string
     amount: number | null
     currency: string
+    url: string
+    trackingParam: string
   }
   data: {
     afterComplete: 'human'
@@ -311,6 +315,7 @@ const VALID_CONVERSATIONAL_SUCCESS_ACTIONS = new Set<ConversationalSuccessAction
   'book_appointment',
   'ready_for_human',
   'ready_to_buy',
+  'send_goal_url',
   'internal_signal',
   'none'
 ])
@@ -319,7 +324,9 @@ const VALID_CONVERSATIONAL_AI_PROVIDERS = new Set<ConversationalAIProviderId>(['
 const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   appointments: {
     owner: 'human',
-    calendarId: null
+    calendarId: null,
+    url: '',
+    trackingParam: 'ristak_goal_id'
   },
   sales: {
     owner: 'human',
@@ -328,7 +335,9 @@ const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     productName: '',
     priceName: '',
     amount: null,
-    currency: ''
+    currency: '',
+    url: '',
+    trackingParam: 'ristak_goal_id'
   },
   data: {
     afterComplete: 'human'

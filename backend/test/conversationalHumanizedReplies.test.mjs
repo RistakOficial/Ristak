@@ -1,12 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { db } from '../src/config/database.js'
 import { CHEAPEST_OPENAI_MODEL } from '../src/config/openAIModels.js'
 import { APPOINTMENT_CONFIRMATION_MODEL } from '../src/agents/appointmentConfirmationAgent.js'
 import {
   buildConversationalAgentMetrics,
+  completeConversationGoalLinkFromWebhook,
+  createConversationGoalLink,
+  getConversationGoalLink,
   getAgentReplyDeliveryPartDelayMs,
   mergeAdvancedClosingContext,
+  normalizeAgentGoalWorkflow,
   normalizeAgentReplyDelivery,
   normalizeConversationalSuccessAction,
   shouldMigrateLegacyConversationalAgentConfig
@@ -62,9 +67,80 @@ test('normaliza la entrega de respuestas en partes', () => {
 test('normaliza acciones del agente conversacional', () => {
   assert.equal(normalizeConversationalSuccessAction('book_appointment'), 'book_appointment')
   assert.equal(normalizeConversationalSuccessAction('ready_to_buy'), 'ready_to_buy')
+  assert.equal(normalizeConversationalSuccessAction('send_goal_url'), 'send_goal_url')
   assert.equal(normalizeConversationalSuccessAction('ready_for_human'), 'ready_for_human')
   for (const action of ['internal_signal', 'none', '', null]) {
     assert.equal(normalizeConversationalSuccessAction(action), 'ready_for_human')
+  }
+})
+
+test('normaliza flujo por URL con parametro de seguimiento', () => {
+  const workflow = normalizeAgentGoalWorkflow({
+    appointments: {
+      owner: 'url',
+      url: 'agenda.test/reserva',
+      trackingParam: 'booking-ref!'
+    },
+    sales: {
+      owner: 'url',
+      url: 'https://tienda.test/checkout',
+      trackingParam: 'order_id'
+    }
+  })
+
+  assert.equal(workflow.appointments.owner, 'url')
+  assert.equal(workflow.appointments.url, 'https://agenda.test/reserva')
+  assert.equal(workflow.appointments.trackingParam, 'booking-ref')
+  assert.equal(workflow.sales.owner, 'url')
+  assert.equal(workflow.sales.trackingParam, 'order_id')
+})
+
+test('webhook de URL externa confirma cita con ID real', async () => {
+  const contactId = 'test_goal_url_contact'
+  await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '+5215550000000', 'goal-url@test.local', 'Goal URL Test', 'test']
+    )
+
+    const link = await createConversationGoalLink({
+      contactId,
+      objective: 'citas',
+      targetUrl: 'https://agenda.test/reserva?origen=whatsapp',
+      trackingParam: 'booking_ref'
+    })
+
+    assert.match(link.id, /^goal_/)
+    assert.equal(new URL(link.sentUrl).searchParams.get('booking_ref'), link.id)
+
+    const completed = await completeConversationGoalLinkFromWebhook({
+      booking_ref: link.id,
+      appointment_id: 'appt_123',
+      status: 'scheduled'
+    })
+
+    assert.equal(completed.status, 'completed')
+    assert.equal(completed.externalObjectId, 'appt_123')
+    assert.equal(completed.signal, 'appointment_booked')
+
+    const stored = await getConversationGoalLink(link.id)
+    assert.equal(stored.status, 'completed')
+    assert.equal(stored.externalObjectId, 'appt_123')
+
+    const state = await db.get('SELECT status, signal, signal_summary FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+    assert.equal(state.status, 'completed')
+    assert.equal(state.signal, 'appointment_booked')
+    assert.match(state.signal_summary, /appt_123/)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
 })
 

@@ -21,6 +21,7 @@ import { useAIAgentAvailability } from '@/hooks'
 import {
   conversationalAgentService,
   type AgentFilterOptions,
+  type AgentGoalWorkflowConfig,
   type AgentReplyDeliveryConfig,
   type AgentReplyDeliveryMode,
   type AgentResponseDelayConfig,
@@ -58,17 +59,21 @@ const successActionLabels: Record<ConversationalSuccessAction, { label: string; 
   book_appointment: { label: 'Que agende la IA', description: 'La IA revisa disponibilidad real y agenda cuando la persona confirma horario.' },
   ready_for_human: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' },
   ready_to_buy: { label: 'Que mande link de pago', description: 'La IA confirma el cobro y crea el link de pago si el contacto acepta.' },
+  send_goal_url: { label: 'Mandar URL y esperar webhook', description: 'La IA manda un enlace con ID de seguimiento; Ristak confirma el objetivo hasta que el webhook regresa el ID real.' },
   internal_signal: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' },
   none: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' }
 }
 
 const actionsByObjective: Record<ConversationalObjective, ConversationalSuccessAction[]> = {
-  citas: ['ready_for_human', 'book_appointment'],
-  ventas: ['ready_for_human', 'ready_to_buy'],
+  citas: ['ready_for_human', 'book_appointment', 'send_goal_url'],
+  ventas: ['ready_for_human', 'ready_to_buy', 'send_goal_url'],
   datos: ['ready_for_human'],
   filtrar: ['ready_for_human'],
   custom: ['ready_for_human']
 }
+
+const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
+const GOAL_WEBHOOK_PATH = '/webhook/conversational-agent/goal'
 
 const attendedChatActionOptions = [
   {
@@ -135,6 +140,34 @@ const defaultReplyDelivery: AgentReplyDeliveryConfig = {
   maxDelaySeconds: 7
 }
 
+const defaultGoalWorkflow: AgentGoalWorkflowConfig = {
+  appointments: {
+    owner: 'human',
+    calendarId: null,
+    url: '',
+    trackingParam: DEFAULT_GOAL_TRACKING_PARAM
+  },
+  sales: {
+    owner: 'human',
+    productId: '',
+    priceId: '',
+    productName: '',
+    priceName: '',
+    amount: null,
+    currency: '',
+    url: '',
+    trackingParam: DEFAULT_GOAL_TRACKING_PARAM
+  },
+  data: {
+    afterComplete: 'human'
+  },
+  qualification: {
+    questions: '',
+    qualifies: '',
+    disqualifies: ''
+  }
+}
+
 const systemReplyDeliveryDefaults: Pick<
   AgentReplyDeliveryConfig,
   'minMessageLengthToSplit' | 'maxBubbles' | 'minBubbleLength' | 'maxBubbleLength' | 'targetChars' | 'randomizeSplitting' | 'delayBetweenBubblesEnabled'
@@ -173,6 +206,68 @@ function getAgentResponseDelay(agent: ConversationalAgentDef): AgentResponseDela
 
 function getAgentReplyDelivery(agent: ConversationalAgentDef): AgentReplyDeliveryConfig {
   return { ...defaultReplyDelivery, ...((agent.replyDelivery || {}) as Partial<AgentReplyDeliveryConfig>) }
+}
+
+function getAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowConfig {
+  const workflow = (agent.goalWorkflow || {}) as Partial<AgentGoalWorkflowConfig>
+  return {
+    ...defaultGoalWorkflow,
+    ...workflow,
+    appointments: {
+      ...defaultGoalWorkflow.appointments,
+      ...((workflow.appointments || {}) as Partial<AgentGoalWorkflowConfig['appointments']>)
+    },
+    sales: {
+      ...defaultGoalWorkflow.sales,
+      ...((workflow.sales || {}) as Partial<AgentGoalWorkflowConfig['sales']>)
+    },
+    data: {
+      ...defaultGoalWorkflow.data,
+      ...((workflow.data || {}) as Partial<AgentGoalWorkflowConfig['data']>)
+    },
+    qualification: {
+      ...defaultGoalWorkflow.qualification,
+      ...((workflow.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+    }
+  }
+}
+
+function mergeGoalWorkflow(
+  base: AgentGoalWorkflowConfig,
+  patch: Partial<AgentGoalWorkflowConfig>
+): AgentGoalWorkflowConfig {
+  return {
+    ...base,
+    ...patch,
+    appointments: {
+      ...base.appointments,
+      ...((patch.appointments || {}) as Partial<AgentGoalWorkflowConfig['appointments']>)
+    },
+    sales: {
+      ...base.sales,
+      ...((patch.sales || {}) as Partial<AgentGoalWorkflowConfig['sales']>)
+    },
+    data: {
+      ...base.data,
+      ...((patch.data || {}) as Partial<AgentGoalWorkflowConfig['data']>)
+    },
+    qualification: {
+      ...base.qualification,
+      ...((patch.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+    }
+  }
+}
+
+function getObjectiveSuccessAction(objective: ConversationalObjective, workflow: AgentGoalWorkflowConfig): ConversationalSuccessAction {
+  if (objective === 'citas') {
+    if (workflow.appointments.owner === 'ai') return 'book_appointment'
+    if (workflow.appointments.owner === 'url') return 'send_goal_url'
+  }
+  if (objective === 'ventas') {
+    if (workflow.sales.owner === 'ai') return 'ready_to_buy'
+    if (workflow.sales.owner === 'url') return 'send_goal_url'
+  }
+  return 'ready_for_human'
 }
 
 function getAttendedChatActionValue(agent: Pick<ConversationalAgentDef, 'hideAttended' | 'hideAttendedNotifications'>): AttendedChatActionValue {
@@ -325,6 +420,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
   const responseDelay = getAgentResponseDelay(agent)
   const responseDelaySummary = getResponseDelaySummary(responseDelay)
   const replyDelivery = getAgentReplyDelivery(agent)
+  const goalWorkflow = getAgentGoalWorkflow(agent)
+  const goalUrlConfig = agent.objective === 'ventas' ? goalWorkflow.sales : goalWorkflow.appointments
+  const goalUrlLabel = agent.objective === 'ventas' ? 'URL de compra o pago' : 'URL para agendar'
+  const goalUrlPlaceholder = agent.objective === 'ventas' ? 'https://tutienda.com/checkout' : 'https://calendly.com/tu-negocio/cita'
   const hasTestConversation = testMessages.length > 0 || Boolean(testInput.trim())
   const testPreviewMessages: PhoneChatPreviewMessage[] = testMessages.map((message, index) => ({
     id: `test-${index}`,
@@ -344,6 +443,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
 
   const updateReplyDelivery = (patch: Partial<AgentReplyDeliveryConfig>) => {
     onChange({ replyDelivery: { ...replyDelivery, ...patch } })
+  }
+
+  const updateGoalWorkflow = (patch: Partial<AgentGoalWorkflowConfig>) => {
+    onChange({ goalWorkflow: mergeGoalWorkflow(goalWorkflow, patch) })
   }
 
   const handleProviderSelect = (providerId: ConversationalAIProviderId) => {
@@ -366,10 +469,38 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
   const handleObjectiveChange = (objective: ConversationalObjective) => {
     const allowed = actionsByObjective[objective] || actionsByObjective.custom
     const patch: ConversationalAgentDefInput = { objective }
-    if (!allowed.includes(agent.successAction)) {
-      patch.successAction = allowed[0]
+    const objectiveAction = getObjectiveSuccessAction(objective, goalWorkflow)
+    patch.successAction = allowed.includes(objectiveAction) ? objectiveAction : allowed[0]
+    onChange(patch)
+  }
+
+  const handleSuccessActionChange = (successAction: ConversationalSuccessAction) => {
+    const patch: ConversationalAgentDefInput = { successAction }
+    if (agent.objective === 'citas') {
+      const owner = successAction === 'book_appointment' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
+      const calendarId = owner === 'ai'
+        ? goalWorkflow.appointments.calendarId || agent.defaultCalendarId || calendars[0]?.id || null
+        : goalWorkflow.appointments.calendarId
+      patch.goalWorkflow = mergeGoalWorkflow(goalWorkflow, {
+        appointments: { ...goalWorkflow.appointments, owner, calendarId }
+      })
+      if (owner === 'ai') patch.defaultCalendarId = calendarId
+    }
+    if (agent.objective === 'ventas') {
+      const owner = successAction === 'ready_to_buy' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
+      patch.goalWorkflow = mergeGoalWorkflow(goalWorkflow, {
+        sales: { ...goalWorkflow.sales, owner }
+      })
     }
     onChange(patch)
+  }
+
+  const updateGoalUrl = (patch: { url?: string; trackingParam?: string }) => {
+    if (agent.objective === 'ventas') {
+      updateGoalWorkflow({ sales: { ...goalWorkflow.sales, ...patch } })
+      return
+    }
+    updateGoalWorkflow({ appointments: { ...goalWorkflow.appointments, ...patch } })
   }
 
   const handleSendTestMessage = async () => {
@@ -719,7 +850,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
                 <label className={styles.label}>Cuando logre ese objetivo, ¿qué quieres que haga?</label>
                 <CustomSelect
                   value={agent.successAction}
-                  onChange={(event) => onChange({ successAction: event.target.value as ConversationalSuccessAction })}
+                  onChange={(event) => handleSuccessActionChange(event.target.value as ConversationalSuccessAction)}
                   portal
                 >
                   {allowedActions.map((action) => (
@@ -734,7 +865,15 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
                   <label className={styles.label}>Calendario</label>
                   <CustomSelect
                     value={agent.defaultCalendarId || ''}
-                    onChange={(event) => onChange({ defaultCalendarId: event.target.value || null })}
+                    onChange={(event) => {
+                      const calendarId = event.target.value || null
+                      onChange({
+                        defaultCalendarId: calendarId,
+                        goalWorkflow: mergeGoalWorkflow(goalWorkflow, {
+                          appointments: { ...goalWorkflow.appointments, owner: 'ai', calendarId }
+                        })
+                      })
+                    }}
                     portal
                   >
                     <option value="">Que elija entre calendarios activos</option>
@@ -744,6 +883,44 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
                   </CustomSelect>
                   <p className={styles.helper}>Sólo agenda con horarios reales.</p>
                 </div>
+              )}
+
+              {agent.successAction === 'send_goal_url' && (agent.objective === 'citas' || agent.objective === 'ventas') && (
+                <>
+                  <div className={styles.fieldWide}>
+                    <label className={styles.label}>{goalUrlLabel}</label>
+                    <input
+                      className={styles.input}
+                      value={goalUrlConfig.url}
+                      placeholder={goalUrlPlaceholder}
+                      onChange={(event) => updateGoalUrl({ url: event.target.value })}
+                    />
+                    <p className={styles.helper}>
+                      La IA manda este enlace con un ID de seguimiento. El objetivo queda pendiente hasta que regrese el webhook.
+                    </p>
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={styles.label}>Parámetro del ID</label>
+                    <input
+                      className={styles.input}
+                      value={goalUrlConfig.trackingParam || DEFAULT_GOAL_TRACKING_PARAM}
+                      placeholder={DEFAULT_GOAL_TRACKING_PARAM}
+                      onChange={(event) => updateGoalUrl({ trackingParam: event.target.value })}
+                    />
+                    <p className={styles.helper}>
+                      Se agrega como <strong>{goalUrlConfig.trackingParam || DEFAULT_GOAL_TRACKING_PARAM}=goal_...</strong>
+                    </p>
+                  </div>
+
+                  <div className={styles.fieldWide}>
+                    <label className={styles.label}>Webhook de confirmación</label>
+                    <input className={styles.input} value={GOAL_WEBHOOK_PATH} readOnly />
+                    <p className={styles.helper}>
+                      Tu sistema externo debe mandar POST con {goalUrlConfig.trackingParam || DEFAULT_GOAL_TRACKING_PARAM} y el ID real de la cita, compra, orden o pago.
+                    </p>
+                  </div>
+                </>
               )}
             </div>
 

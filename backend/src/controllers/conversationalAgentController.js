@@ -16,7 +16,8 @@ import {
   createConversationalAgent,
   updateConversationalAgent,
   deleteConversationalAgent,
-  listAgentFilterOptions
+  listAgentFilterOptions,
+  completeConversationGoalLinkFromWebhook
 } from '../services/conversationalAgentService.js'
 import {
   connectConversationalAIProvider,
@@ -175,6 +176,34 @@ export async function deleteAIProvider(req, res) {
     res.status(error.statusCode || 500).json({
       success: false,
       error: error.message || 'Error al eliminar la IA del agente conversacional'
+    })
+  }
+}
+
+export async function handleGoalWebhook(req, res) {
+  try {
+    const result = await completeConversationGoalLinkFromWebhook({
+      ...(req.query || {}),
+      ...(req.body || {})
+    })
+
+    res.json({
+      success: true,
+      data: {
+        goalId: result.id,
+        contactId: result.contactId,
+        agentId: result.agentId,
+        objective: result.objective,
+        signal: result.signal,
+        externalObjectId: result.externalObjectId,
+        alreadyCompleted: Boolean(result.alreadyCompleted)
+      }
+    })
+  } catch (error) {
+    logger.warn(`Webhook de objetivo conversacional rechazado: ${error.message}`)
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo procesar el webhook del objetivo'
     })
   }
 }

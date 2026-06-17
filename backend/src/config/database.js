@@ -3741,6 +3741,30 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_events_contact ON conversational_agent_events(contact_id, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_events_type ON conversational_agent_events(event_type, created_at)')
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agent_goal_links (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        agent_id TEXT,
+        objective TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        target_url TEXT NOT NULL,
+        sent_url TEXT NOT NULL,
+        tracking_param TEXT NOT NULL DEFAULT 'ristak_goal_id',
+        external_object_id TEXT,
+        external_status TEXT,
+        metadata_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        completed_at DATETIME,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
+        FOREIGN KEY (agent_id) REFERENCES conversational_agents(id) ON DELETE SET NULL
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_contact ON conversational_agent_goal_links(contact_id, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_status ON conversational_agent_goal_links(status, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_external ON conversational_agent_goal_links(external_object_id)')
+
     const userOptionalColumns = [
       ['first_name', 'TEXT'],
       ['last_name', 'TEXT'],

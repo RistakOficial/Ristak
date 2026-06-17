@@ -12,7 +12,10 @@ import {
   setConversationStatus,
   recordConversationalAgentEvent,
   applyAgentSuccessExtras,
-  updateConversationClosingContext
+  updateConversationClosingContext,
+  createConversationGoalLink,
+  getConversationalGoalWebhookUrl,
+  DEFAULT_GOAL_TRACKING_PARAM
 } from '../../services/conversationalAgentService.js'
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 
@@ -35,6 +38,13 @@ function pushAction(ctx, type, detail = {}) {
 function resolveAdvanceSignal(config) {
   if (config?.successAction === 'ready_to_buy') return 'ready_to_buy'
   return 'ready_for_human'
+}
+
+function getConfiguredGoalUrl(config = {}) {
+  const workflow = config.goalWorkflow || {}
+  if (config.objective === 'ventas') return workflow.sales || {}
+  if (config.objective === 'citas') return workflow.appointments || {}
+  return {}
 }
 
 function buildPaymentChannels(channel) {
@@ -474,6 +484,61 @@ export function createConversationalTools(ctx) {
     }
   })
 
+  const sendGoalUrlTool = tool({
+    name: 'send_goal_url',
+    description: 'Genera un enlace externo con ID de seguimiento para que la persona agende o compre fuera de Ristak. Úsala sólo cuando la persona ya esté lista para avanzar. El objetivo NO queda cumplido hasta que el sistema externo mande el webhook de regreso con el ID de cita, compra, orden o pago.',
+    parameters: z.object({
+      intencionDetectada: z.string().describe('Qué quiere lograr la persona, por ejemplo agendar valoración o completar compra'),
+      resumen: z.string().describe('Resumen breve del contexto útil para auditoría interna'),
+      confirm: z.boolean().describe('true sólo cuando la persona ya aceptó avanzar por enlace')
+    }),
+    execute: async ({ intencionDetectada, resumen, confirm }) => {
+      if (!confirm) {
+        return { ok: false, error: 'Falta confirmación explícita. Primero confirma que la persona quiere avanzar por enlace.' }
+      }
+
+      const goalConfig = getConfiguredGoalUrl(config)
+      const targetUrl = goalConfig.url || ''
+      const trackingParam = goalConfig.trackingParam || DEFAULT_GOAL_TRACKING_PARAM
+      if (!targetUrl) {
+        return { ok: false, error: 'No hay URL configurada para este objetivo. Manda a humano con send_to_human y avisa que falta configurar el enlace.' }
+      }
+
+      pushAction(ctx, 'send_goal_url', { objective: config.objective, intencionDetectada, targetUrl })
+      if (ctx.dryRun) {
+        return {
+          ok: true,
+          simulated: true,
+          sentUrl: `${targetUrl}${targetUrl.includes('?') ? '&' : '?'}${trackingParam}=goal_simulado`,
+          trackingParam,
+          callbackUrl: getConversationalGoalWebhookUrl(),
+          note: 'Manda esta URL visible en el chat. El objetivo se confirma hasta que llegue el webhook.'
+        }
+      }
+
+      const link = await createConversationGoalLink({
+        contactId: ctx.contactId,
+        agentId: config.id || ctx.agentId || null,
+        objective: config.objective,
+        targetUrl,
+        trackingParam,
+        metadata: {
+          intencionDetectada,
+          resumen
+        }
+      })
+
+      return {
+        ok: true,
+        goalId: link.id,
+        sentUrl: link.sentUrl,
+        trackingParam: link.trackingParam,
+        callbackUrl: link.callbackUrl,
+        note: 'Manda sentUrl visible en el chat. No digas que el objetivo ya quedó cumplido; se confirma cuando llegue el webhook con ese ID.'
+      }
+    }
+  })
+
   const sendToHumanTool = tool({
     name: 'send_to_human',
     description: 'Manda la conversación a un humano: preguntas delicadas, quejas serias, confusión fuerte, información que no tienes, o casos definidos por el negocio. Crea la señal interna y el agente deja de responder. No le digas al cliente que lo estás transfiriendo.',
@@ -547,5 +612,6 @@ export function createConversationalTools(ctx) {
   tools.push(listCalendarsTool, getFreeSlotsTool)
   if (config?.successAction === 'book_appointment') tools.push(bookAppointmentTool)
   if (config?.successAction === 'ready_to_buy') tools.push(createPaymentLinkTool)
+  if (config?.successAction === 'send_goal_url') tools.push(sendGoalUrlTool)
   return tools
 }
