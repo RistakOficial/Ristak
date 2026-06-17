@@ -99,6 +99,7 @@ export const PhoneChatPreviewComposer: React.FC<PhoneChatPreviewComposerProps> =
       <div className={styles.messageInputWrap}>
         <input
           className={styles.composerInput}
+          data-ristak-unstyled
           value={value}
           placeholder={placeholder}
           onChange={(event) => onChange?.(event.target.value)}

@@ -956,9 +956,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
           <div className={styles.agentTestPanel}>
             <PhoneChatPreview
               className={styles.agentTestPhonePreview}
-              title="Prospecto de prueba"
+              title="Mi negocio"
               subtitle="Prueba interna"
-              avatarLabel="Prospecto"
+              avatarLabel="Mi negocio"
               messages={testPreviewMessages}
               emptyText="Escribe como prospecto y revisa si contesta como debe."
               typing={testing}
