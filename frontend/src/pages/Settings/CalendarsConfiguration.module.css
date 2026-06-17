@@ -867,8 +867,8 @@
 
 .editorSection {
   display: grid;
-  grid-template-columns: minmax(170px, 0.28fr) minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
   align-items: start;
   padding-bottom: 18px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
@@ -883,6 +883,7 @@
   display: grid;
   gap: 5px;
   min-width: 0;
+  max-width: 620px;
 }
 
 .editorSectionHeader strong {
@@ -900,9 +901,10 @@
 
 .editorFields {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   min-width: 0;
+  max-width: 760px;
 }
 
 .editorGrid {
@@ -950,17 +952,171 @@
 }
 
 .editorFieldWide {
-  grid-column: span 2;
+  grid-column: auto;
 }
 
 .editorFieldLarge {
-  grid-column: span 2;
+  grid-column: auto;
 }
 
 .inlineFieldGroup {
   display: grid;
   grid-template-columns: minmax(72px, 0.8fr) minmax(116px, 1.2fr);
   gap: 8px;
+  max-width: 420px;
+}
+
+.templateFieldTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.templateFieldTop > label {
+  min-width: 0;
+  color: var(--text-mute);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.parameterButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.parameterButton:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.parameterMenu {
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(320px, calc(100vh - 32px));
+  overflow: hidden;
+  padding: 8px;
+}
+
+.parameterSearch {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-mute);
+}
+
+.parameterSearch input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.parameterGroups {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  margin-top: 8px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.parameterGroup {
+  display: grid;
+  gap: 4px;
+}
+
+.parameterGroup > span {
+  padding: 5px 7px 2px;
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.parameterItem {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start !important;
+  gap: 3px;
+  min-height: 46px;
+  border-radius: var(--radius-ctl) !important;
+  padding: 8px 9px !important;
+}
+
+.parameterItem strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parameterItem code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-mute);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parameterEmpty {
+  margin: 10px 6px 6px;
+  color: var(--text-mute);
+  font-size: 13px;
+}
+
+.templateTextarea {
+  min-height: 108px;
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 11px 12px;
+  outline: none;
+}
+
+.templateTextarea:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
 }
 
 .googleSyncHint {
@@ -1179,6 +1335,27 @@
 .editorFooter {
   justify-content: flex-end;
   padding-top: 2px;
+}
+
+.createCalendarForm {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 24px;
+}
+
+.createTimingGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.createActions {
+  display: flex;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
 }
 
 /* ===== Empty state ===== */

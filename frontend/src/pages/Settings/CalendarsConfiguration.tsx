@@ -41,7 +41,9 @@ import {
   Link2,
   Bell,
   BellOff,
-  Smartphone
+  Smartphone,
+  Braces,
+  Search
 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useHighLevelConnected } from '@/hooks'
@@ -53,6 +55,12 @@ import {
   type GoogleCalendarIntegrationStatus,
   type GoogleCalendarMergePreview
 } from '@/services/calendarsService'
+import {
+  loadAllVariables,
+  tokenFor,
+  VARIABLE_CATEGORIES,
+  type FlowVariable
+} from '@/pages/Automations/editor/variablesCatalog'
 import styles from './HighLevelIntegration.module.css'
 import pageStyles from './CalendarsConfiguration.module.css'
 
@@ -104,6 +112,24 @@ const CALENDAR_COLOR_PALETTE = [
 
 const CALENDAR_DEFAULT_COLOR = '#3b82f6'
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i
+const CALENDAR_TEMPLATE_EXTRA_CATEGORIES = [
+  { id: 'calendar', label: 'Calendario' }
+]
+const CALENDAR_TEMPLATE_EXTRA_VARIABLES: FlowVariable[] = [
+  { fieldId: 'appointment.id', label: 'ID de la cita', category: 'appointment' },
+  { fieldId: 'appointment.notes', label: 'Notas escritas en la cita', category: 'appointment' },
+  { fieldId: 'calendar.id', label: 'ID del calendario', category: 'calendar' },
+  { fieldId: 'calendar.name', label: 'Nombre del calendario', category: 'calendar' },
+  { fieldId: 'calendar.google_calendar', label: 'Calendario de Google ligado', category: 'calendar' },
+  { fieldId: 'calendar.google_calendar_id', label: 'ID del calendario de Google', category: 'calendar' }
+]
+const CALENDAR_TEMPLATE_CATEGORY_LABELS = [
+  ...VARIABLE_CATEGORIES,
+  ...CALENDAR_TEMPLATE_EXTRA_CATEGORIES
+].reduce<Record<string, string>>((map, category) => {
+  map[category.id] = category.label
+  return map
+}, {})
 
 const normalizeBase64 = (value: string) => {
   const normalized = value.trim().replace(/-/g, '+').replace(/_/g, '/')
@@ -247,10 +273,13 @@ export const CalendarsConfiguration: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showNotificationsModal, setShowNotificationsModal] = useState(false)
   const [creatingCalendar, setCreatingCalendar] = useState(false)
+  const [calendarTemplateVariables, setCalendarTemplateVariables] = useState<FlowVariable[]>(CALENDAR_TEMPLATE_EXTRA_VARIABLES)
+  const [calendarParameterQuery, setCalendarParameterQuery] = useState('')
   const [newCalendar, setNewCalendar] = useState<Partial<CalendarType>>({
     name: '',
     calendarType: 'event',
     eventTitle: 'Cita',
+    notes: '',
     eventColor: '#3b82f6',
     isActive: true,
     slotDuration: 60,
@@ -278,6 +307,27 @@ export const CalendarsConfiguration: React.FC = () => {
 
   useEffect(() => {
     loadGoogleIntegration()
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+
+    loadAllVariables()
+      .then((variables) => {
+        if (!mounted) return
+        const byId = new Map<string, FlowVariable>()
+        ;[...variables, ...CALENDAR_TEMPLATE_EXTRA_VARIABLES].forEach((variable) => {
+          if (!byId.has(variable.fieldId)) byId.set(variable.fieldId, variable)
+        })
+        setCalendarTemplateVariables([...byId.values()])
+      })
+      .catch(() => {
+        if (mounted) setCalendarTemplateVariables(CALENDAR_TEMPLATE_EXTRA_VARIABLES)
+      })
+
+    return () => {
+      mounted = false
+    }
   }, [])
 
   useEffect(() => {
@@ -397,6 +447,27 @@ export const CalendarsConfiguration: React.FC = () => {
   }, [serviceAccountJson])
 
   const serviceAccountEmailForSharing = parsedServiceAccountEmail || googleIntegration?.serviceAccountEmail || ''
+
+  const calendarTemplateVariableGroups = useMemo(() => {
+    const normalizedQuery = calendarParameterQuery.trim().toLowerCase()
+
+    return [...VARIABLE_CATEGORIES, ...CALENDAR_TEMPLATE_EXTRA_CATEGORIES]
+      .map((category) => {
+        const items = calendarTemplateVariables
+          .filter((variable) => variable.category === category.id)
+          .filter((variable) => {
+            if (!normalizedQuery) return true
+            return (
+              variable.label.toLowerCase().includes(normalizedQuery) ||
+              variable.fieldId.toLowerCase().includes(normalizedQuery) ||
+              tokenFor(variable).toLowerCase().includes(normalizedQuery)
+            )
+          })
+
+        return { category, items }
+      })
+      .filter((group) => group.items.length > 0)
+  }, [calendarParameterQuery, calendarTemplateVariables])
 
   const findConnectedGoogleCalendar = (
     calendarList: CalendarType[] = calendars,
@@ -832,6 +903,7 @@ export const CalendarsConfiguration: React.FC = () => {
       const updateData: any = {
         name: selectedCalendar.name?.trim() || 'Calendario',
         eventTitle: selectedCalendar.eventTitle?.trim() || selectedCalendar.name?.trim() || 'Cita',
+        notes: selectedCalendar.notes?.trim() || '',
         eventColor: selectedCalendar.eventColor || '#3b82f6',
         isActive: selectedCalendar.isActive,
         slotDuration: selectedCalendar.slotDuration,
@@ -898,7 +970,8 @@ export const CalendarsConfiguration: React.FC = () => {
       const created = await calendarsService.createCalendar({
         ...newCalendar,
         name: newCalendar.name.trim(),
-        eventTitle: newCalendar.eventTitle || newCalendar.name.trim()
+        eventTitle: newCalendar.eventTitle || newCalendar.name.trim(),
+        notes: newCalendar.notes || ''
       }, accessToken || undefined)
 
       showToast(
@@ -921,6 +994,7 @@ export const CalendarsConfiguration: React.FC = () => {
         name: '',
         calendarType: 'event',
         eventTitle: 'Cita',
+        notes: '',
         eventColor: '#3b82f6',
         isActive: true,
         slotDuration: 60,
@@ -1059,6 +1133,129 @@ export const CalendarsConfiguration: React.FC = () => {
     )
   }
 
+  const insertCalendarTemplateVariable = (
+    inputId: string,
+    currentValue: string,
+    onChange: (nextValue: string) => void,
+    variable: FlowVariable
+  ) => {
+    const token = tokenFor(variable)
+    const input = document.getElementById(inputId) as HTMLInputElement | HTMLTextAreaElement | null
+    const start = input?.selectionStart ?? currentValue.length
+    const end = input?.selectionEnd ?? start
+    const prefix = currentValue.slice(0, start)
+    const suffix = currentValue.slice(end)
+    const spacerBefore = prefix && !/\s$/.test(prefix) ? ' ' : ''
+    const spacerAfter = suffix && !/^\s/.test(suffix) ? ' ' : ''
+    const nextValue = `${prefix}${spacerBefore}${token}${spacerAfter}${suffix}`
+    const cursor = prefix.length + spacerBefore.length + token.length + spacerAfter.length
+
+    onChange(nextValue)
+    window.requestAnimationFrame(() => {
+      input?.focus()
+      input?.setSelectionRange(cursor, cursor)
+    })
+  }
+
+  const renderCalendarParameterPicker = (
+    inputId: string,
+    currentValue: string,
+    onChange: (nextValue: string) => void
+  ) => (
+    <DropdownMenu onOpenChange={(open) => {
+      if (!open) setCalendarParameterQuery('')
+    }}>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className={pageStyles.parameterButton}>
+          <Braces size={14} />
+          Parámetros
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        className={pageStyles.parameterMenu}
+        align="end"
+        side="bottom"
+        sideOffset={8}
+        collisionPadding={16}
+      >
+        <div className={pageStyles.parameterSearch} onKeyDown={(event) => event.stopPropagation()}>
+          <Search size={14} />
+          <input
+            value={calendarParameterQuery}
+            onChange={(event) => setCalendarParameterQuery(event.target.value)}
+            placeholder="Buscar dato"
+            aria-label="Buscar parámetro"
+          />
+        </div>
+        <div className={pageStyles.parameterGroups}>
+          {calendarTemplateVariableGroups.length ? (
+            calendarTemplateVariableGroups.map((group) => (
+              <div key={group.category.id} className={pageStyles.parameterGroup}>
+                <span>{CALENDAR_TEMPLATE_CATEGORY_LABELS[group.category.id] || group.category.label}</span>
+                {group.items.map((variable) => (
+                  <DropdownMenuItem
+                    key={variable.fieldId}
+                    className={pageStyles.parameterItem}
+                    onSelect={() => insertCalendarTemplateVariable(inputId, currentValue, onChange, variable)}
+                  >
+                    <strong>{variable.label}</strong>
+                    <code>{tokenFor(variable)}</code>
+                  </DropdownMenuItem>
+                ))}
+              </div>
+            ))
+          ) : (
+            <p className={pageStyles.parameterEmpty}>No encontré ese parámetro.</p>
+          )}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+
+  const renderCalendarTemplateField = ({
+    id,
+    label,
+    value,
+    onChange,
+    placeholder,
+    help,
+    multiline = false
+  }: {
+    id: string
+    label: string
+    value: string
+    onChange: (nextValue: string) => void
+    placeholder: string
+    help: string
+    multiline?: boolean
+  }) => (
+    <div className={pageStyles.editorField}>
+      <div className={pageStyles.templateFieldTop}>
+        <label htmlFor={id}>{label}</label>
+        {renderCalendarParameterPicker(id, value, onChange)}
+      </div>
+      {multiline ? (
+        <textarea
+          id={id}
+          className={pageStyles.templateTextarea}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          rows={4}
+        />
+      ) : (
+        <input
+          id={id}
+          className={styles.input}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+        />
+      )}
+      <small>{help}</small>
+    </div>
+  )
+
   const renderCreateCalendarModal = () => showCreateModal ? createPortal(
     <Modal
       isOpen={showCreateModal}
@@ -1070,9 +1267,9 @@ export const CalendarsConfiguration: React.FC = () => {
       size="md"
       flushContent
     >
-      <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+      <div className={pageStyles.createCalendarForm}>
         <div className={styles.formField}>
-          <label className={styles.label}>Nombre</label>
+          <label className={styles.label}>Nombre del calendario</label>
           <input
             className={styles.input}
             value={newCalendar.name || ''}
@@ -1081,19 +1278,28 @@ export const CalendarsConfiguration: React.FC = () => {
           />
         </div>
 
-        <div className={styles.formField}>
-          <label className={styles.label}>Título de evento</label>
-          <input
-            className={styles.input}
-            value={newCalendar.eventTitle || ''}
-            onChange={(e) => setNewCalendar({ ...newCalendar, eventTitle: e.target.value })}
-            placeholder="Ej. Cita"
-          />
-        </div>
+        {renderCalendarTemplateField({
+          id: 'new-calendar-event-title',
+          label: 'Nombre de la cita en Google',
+          value: newCalendar.eventTitle || '',
+          onChange: (nextValue) => setNewCalendar({ ...newCalendar, eventTitle: nextValue }),
+          placeholder: 'Ej. Cita con {{contact.full_name}}',
+          help: 'Este texto será el título de cada cita nueva.'
+        })}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+        {renderCalendarTemplateField({
+          id: 'new-calendar-notes',
+          label: 'Notas para Google Calendar',
+          value: newCalendar.notes || '',
+          onChange: (nextValue) => setNewCalendar({ ...newCalendar, notes: nextValue }),
+          placeholder: 'Ej. Cliente: {{contact.full_name}}\nTeléfono: {{contact.phone}}\nNotas: {{appointment.notes}}',
+          help: 'Esto se manda como descripción del evento cuando el calendario está ligado a Google.',
+          multiline: true
+        })}
+
+        <div className={pageStyles.createTimingGrid}>
           <div className={styles.formField}>
-            <label className={styles.label}>Duración</label>
+            <label className={styles.label}>Cuánto dura la cita</label>
             <NumberInput
               className={styles.input}
               value={newCalendar.slotDuration || 60}
@@ -1102,7 +1308,7 @@ export const CalendarsConfiguration: React.FC = () => {
             />
           </div>
           <div className={styles.formField}>
-            <label className={styles.label}>Intervalo</label>
+            <label className={styles.label}>Cada cuánto mostrar horarios</label>
             <NumberInput
               className={styles.input}
               value={newCalendar.slotInterval || 60}
@@ -1113,14 +1319,14 @@ export const CalendarsConfiguration: React.FC = () => {
         </div>
 
         <div className={styles.formField}>
-          <label className={styles.label}>Color</label>
+          <label className={styles.label}>Color del calendario</label>
           {renderCalendarColorPicker(
             newCalendar.eventColor,
             (nextColor) => setNewCalendar({ ...newCalendar, eventColor: nextColor })
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: '12px', paddingTop: '8px', borderTop: '1px solid var(--color-border)' }}>
+        <div className={pageStyles.createActions}>
           <Button onClick={handleCreateCalendar} disabled={creatingCalendar}>
             {creatingCalendar ? (
               <>
@@ -1380,12 +1586,12 @@ export const CalendarsConfiguration: React.FC = () => {
         <div className={pageStyles.editorSections}>
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
-              <strong>Información</strong>
-              <span>Nombre, título y estado visible.</span>
+              <strong>Lo básico</strong>
+              <span>Cómo se llama el calendario y cómo se van a ver sus citas.</span>
             </div>
             <div className={pageStyles.editorFields}>
-              <label className={`${pageStyles.editorField} ${pageStyles.editorFieldLarge}`}>
-                <span>Nombre</span>
+              <label className={pageStyles.editorField}>
+                <span>Nombre del calendario</span>
                 <input
                   className={styles.input}
                   value={selectedCalendar.name || ''}
@@ -1393,17 +1599,27 @@ export const CalendarsConfiguration: React.FC = () => {
                 />
               </label>
 
-              <label className={pageStyles.editorField}>
-                <span>Título de evento</span>
-                <input
-                  className={styles.input}
-                  value={selectedCalendar.eventTitle || ''}
-                  onChange={(event) => updateSelectedCalendar({ eventTitle: event.target.value })}
-                />
-              </label>
+              {renderCalendarTemplateField({
+                id: `calendar-event-title-${calendar.id}`,
+                label: 'Nombre de la cita en Google',
+                value: selectedCalendar.eventTitle || '',
+                onChange: (nextValue) => updateSelectedCalendar({ eventTitle: nextValue }),
+                placeholder: 'Ej. Cita con {{contact.full_name}}',
+                help: 'Este texto será el título de cada cita nueva. Puedes meter parámetros.'
+              })}
+
+              {renderCalendarTemplateField({
+                id: `calendar-notes-${calendar.id}`,
+                label: 'Notas para Google Calendar',
+                value: selectedCalendar.notes || '',
+                onChange: (nextValue) => updateSelectedCalendar({ notes: nextValue }),
+                placeholder: 'Ej. Cliente: {{contact.full_name}}\nTeléfono: {{contact.phone}}\nNotas: {{appointment.notes}}',
+                help: 'Esto se manda como descripción del evento cuando el calendario está ligado a Google.',
+                multiline: true
+              })}
 
               <div className={pageStyles.editorField}>
-                <span>Color</span>
+                <span>Color del calendario</span>
                 {renderCalendarColorPicker(
                   selectedCalendar.eventColor,
                   (nextColor) => updateSelectedCalendar({ eventColor: nextColor }),
@@ -1412,7 +1628,7 @@ export const CalendarsConfiguration: React.FC = () => {
               </div>
 
               <div className={pageStyles.editorField}>
-                <span>Estado</span>
+                <span>Disponible para agendar</span>
                 <div className={styles.toggleContainer}>
                   <button
                     type="button"
@@ -1424,7 +1640,7 @@ export const CalendarsConfiguration: React.FC = () => {
                     <span className={styles.toggleThumb} />
                   </button>
                   <span className={`${styles.toggleLabel} ${selectedCalendar.isActive ? styles.toggleLabelActive : ''}`}>
-                    {selectedCalendar.isActive ? 'Activo' : 'Inactivo'}
+                    {selectedCalendar.isActive ? 'Sí, activo' : 'No, pausado'}
                   </span>
                 </div>
               </div>
@@ -1433,12 +1649,12 @@ export const CalendarsConfiguration: React.FC = () => {
 
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
-              <strong>Horarios</strong>
-              <span>Duración, intervalo y fuente de disponibilidad.</span>
+              <strong>Tiempos de cita</strong>
+              <span>Cuánto dura cada cita y cada cuánto se muestran horarios.</span>
             </div>
             <div className={pageStyles.editorFields}>
               <label className={pageStyles.editorField}>
-                <span>Duración</span>
+                <span>Cuánto dura la cita</span>
                 <div className={pageStyles.inlineFieldGroup}>
                   <NumberInput
                     className={styles.input}
@@ -1458,7 +1674,7 @@ export const CalendarsConfiguration: React.FC = () => {
               </label>
 
               <label className={pageStyles.editorField}>
-                <span>Intervalo</span>
+                <span>Cada cuánto mostrar horarios</span>
                 <div className={pageStyles.inlineFieldGroup}>
                   <NumberInput
                     className={styles.input}
@@ -1477,17 +1693,17 @@ export const CalendarsConfiguration: React.FC = () => {
                 </div>
               </label>
 
-              <label className={`${pageStyles.editorField} ${pageStyles.editorFieldLarge}`}>
-                <span>Disponibilidad</span>
+              <label className={pageStyles.editorField}>
+                <span>Qué horarios usar</span>
                 <CustomSelect
                   value={selectedCalendar.availabilityType !== undefined ? String(selectedCalendar.availabilityType) : ''}
                   onValueChange={(value) => updateSelectedCalendar({
                     availabilityType: value === '' ? undefined : parseInt(value, 10)
                   })}
                   options={[
-                    { value: '', label: 'Horarios abiertos + disponibilidad personalizada' },
+                    { value: '', label: 'Horarios abiertos y horarios especiales' },
                     { value: '0', label: 'Solo horarios abiertos' },
-                    { value: '1', label: 'Solo disponibilidad personalizada' }
+                    { value: '1', label: 'Solo horarios especiales' }
                   ]}
                 />
               </label>
@@ -1496,12 +1712,12 @@ export const CalendarsConfiguration: React.FC = () => {
 
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
-              <strong>Reglas de reserva</strong>
-              <span>Cuándo y cuántas citas puede tomar este calendario.</span>
+              <strong>Reglas para agendar</strong>
+              <span>Cuánto antes pueden agendar y cuántas citas permites.</span>
             </div>
             <div className={pageStyles.editorFields}>
               <label className={pageStyles.editorField}>
-                <span>Anticipación mínima</span>
+                <span>Tiempo mínimo antes de la cita</span>
                 <div className={pageStyles.inlineFieldGroup}>
                   <NumberInput
                     className={styles.input}
@@ -1523,7 +1739,7 @@ export const CalendarsConfiguration: React.FC = () => {
               </label>
 
               <label className={pageStyles.editorField}>
-                <span>Ventana para agendar</span>
+                <span>Hasta cuándo se puede agendar</span>
                 <div className={pageStyles.inlineFieldGroup}>
                   <NumberInput
                     className={styles.input}
@@ -1544,7 +1760,7 @@ export const CalendarsConfiguration: React.FC = () => {
               </label>
 
               <label className={pageStyles.editorField}>
-                <span>Personas por horario</span>
+                <span>Citas por horario</span>
                 <NumberInput
                   className={styles.input}
                   value={selectedCalendar.appoinmentPerSlot}
@@ -1554,7 +1770,7 @@ export const CalendarsConfiguration: React.FC = () => {
               </label>
 
               <label className={pageStyles.editorField}>
-                <span>Límite diario</span>
+                <span>Máximo de citas por día</span>
                 <NumberInput
                   className={styles.input}
                   value={selectedCalendar.appoinmentPerDay}
@@ -1567,12 +1783,12 @@ export const CalendarsConfiguration: React.FC = () => {
 
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
-              <strong>Espacios y demanda</strong>
-              <span>Buffers antes/después y disponibilidad simulada.</span>
+              <strong>Espacios entre citas</strong>
+              <span>Tiempo libre antes/después y opción para ocultar algunos horarios.</span>
             </div>
             <div className={pageStyles.editorFields}>
               <label className={pageStyles.editorField}>
-                <span>Buffer antes</span>
+                <span>Tiempo libre antes</span>
                 <div className={pageStyles.inlineFieldGroup}>
                   <NumberInput
                     className={styles.input}
@@ -1592,7 +1808,7 @@ export const CalendarsConfiguration: React.FC = () => {
               </label>
 
               <label className={pageStyles.editorField}>
-                <span>Buffer después</span>
+                <span>Tiempo libre después</span>
                 <div className={pageStyles.inlineFieldGroup}>
                   <NumberInput
                     className={styles.input}
@@ -1611,8 +1827,8 @@ export const CalendarsConfiguration: React.FC = () => {
                 </div>
               </label>
 
-              <div className={`${pageStyles.editorField} ${pageStyles.editorFieldLarge}`}>
-                <span>Parecer ocupado</span>
+              <div className={pageStyles.editorField}>
+                <span>Ocultar horarios al azar</span>
                 <div className={pageStyles.lookBusyRow}>
                   <label>
                     <input
@@ -1625,7 +1841,7 @@ export const CalendarsConfiguration: React.FC = () => {
                         }
                       })}
                     />
-                    Activar
+                    Sí, ocultar algunos horarios
                   </label>
 
                   {selectedCalendar.lookBusyConfig?.enabled && (
@@ -1654,12 +1870,12 @@ export const CalendarsConfiguration: React.FC = () => {
           {showGoogleSyncSettings && (
             <section className={pageStyles.editorSection}>
               <div className={pageStyles.editorSectionHeader}>
-                <strong>Sincronización Google</strong>
-                <span>Liga este calendario de Ristak con uno existente en la cuenta conectada.</span>
+                <strong>Google Calendar</strong>
+                <span>Elige dónde se guardan y actualizan las citas de este calendario.</span>
               </div>
               <div className={pageStyles.editorFields}>
-                <div className={`${pageStyles.editorField} ${pageStyles.editorFieldLarge}`}>
-                  <span>Cuenta conectada</span>
+                <div className={pageStyles.editorField}>
+                  <span>Cuenta de Google</span>
                   <div className={pageStyles.googleLinkedAccount}>
                     <span className={pageStyles.googleLinkedAccountIcon}>
                       <Calendar size={15} />
@@ -1671,9 +1887,9 @@ export const CalendarsConfiguration: React.FC = () => {
                   </div>
                 </div>
 
-                <div className={`${pageStyles.editorField} ${pageStyles.editorFieldLarge}`}>
+                <div className={pageStyles.editorField}>
                   <div className={pageStyles.googleSyncFieldTop}>
-                    <span>Calendario de Google</span>
+                    <span>Dónde guardar las citas</span>
                     {currentGoogleCalendarId && (
                       <Button
                         variant="ghost"
@@ -1701,17 +1917,17 @@ export const CalendarsConfiguration: React.FC = () => {
                         : currentGoogleCalendarId
                           ? `Se sincroniza con ${currentGoogleOption?.summary || selectedCalendar.googleCalendarSummary || currentGoogleCalendarId}.`
                           : googleCalendarOptions.length && !writableGoogleCalendarCount
-                            ? 'Los calendarios disponibles están en solo lectura. Elige uno con permiso para editar eventos.'
+                            ? 'Los calendarios disponibles están en solo lectura. Necesitas uno con permiso para editar eventos.'
                             : googleCalendarOptions.length
-                              ? 'Elige el calendario de Google que quieres ligar con este calendario de Ristak.'
-                              : 'No hay calendarios de Google disponibles para vincular.'}
+                              ? 'Elige el calendario de Google donde quieres que caigan estas citas.'
+                              : 'No hay calendarios de Google disponibles para ligar.'}
                   </small>
                 </div>
 
                 <div className={pageStyles.googleSyncHint}>
                   <Link2 size={16} />
                   <span>
-                    Al guardar, Ristak traerá citas de ese calendario de Google y actualizará ese mismo calendario cuando crees o edites citas aquí.
+                    Al guardar, Ristak traerá citas de Google y también actualizará ese calendario cuando crees o edites citas aquí.
                   </span>
                 </div>
               </div>

@@ -9,6 +9,7 @@ import { getAccountTimezone } from '../utils/dateUtils.js';
 import { triggerWhatsappAppointmentBookedEvent } from '../services/metaWhatsappEventsService.js';
 import { sendCalendarAppointmentNotification } from '../services/pushNotificationsService.js';
 import { getRequestHost, resolveConnectedPublicDomainForHost } from '../services/sitesService.js';
+import { renderCalendarAppointmentTemplates } from '../services/calendarAppointmentTemplateService.js';
 import { normalizePhoneForAccount } from '../utils/accountLocale.js';
 import {
   isLicenseEnforced,
@@ -1129,16 +1130,26 @@ export async function createPublicAppointment(req, res) {
 
     const durationMinutes = Math.max(1, Number(calendar.slotDuration || 60));
     const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
-    let appointment = await localCalendarService.createLocalAppointment({
-      calendarId: calendar.id,
+    const publicAppointmentData = {
       contactId,
-      locationId: context.locationId || calendar.locationId,
-      title: calendar.eventTitle || calendar.name || 'Cita',
+      calendarId: calendar.id,
       appointmentStatus: calendar.autoConfirm ? 'confirmed' : 'pending',
       status: calendar.autoConfirm ? 'confirmed' : 'pending',
       startTime: start.toISOString(),
       endTime: end.toISOString(),
-      notes: cleanString(body.notes),
+      notes: cleanString(body.notes)
+    };
+    const renderedTemplates = await renderCalendarAppointmentTemplates({
+      calendar,
+      appointmentData: publicAppointmentData,
+      titleTemplate: calendar.eventTitle || calendar.name || 'Cita',
+      notesTemplate: calendar.notes || publicAppointmentData.notes
+    });
+    let appointment = await localCalendarService.createLocalAppointment({
+      ...publicAppointmentData,
+      locationId: context.locationId || calendar.locationId,
+      title: renderedTemplates.title,
+      notes: renderedTemplates.notes,
       source: 'ristak'
     }, {
       locationId: context.locationId || calendar.locationId,
@@ -1150,11 +1161,11 @@ export async function createPublicAppointment(req, res) {
         const remote = await calendarService.createAppointment({
           calendarId: calendar.ghlCalendarId,
           contactId,
-          title: calendar.eventTitle || calendar.name || 'Cita',
+          title: renderedTemplates.title,
           appointmentStatus: calendar.autoConfirm ? 'confirmed' : 'pending',
           startTime: start.toISOString(),
           endTime: end.toISOString(),
-          notes: cleanString(body.notes)
+          notes: renderedTemplates.notes
         }, context.locationId, context.accessToken);
 
         appointment = await localCalendarService.upsertLocalAppointment(remote, {
@@ -1406,8 +1417,19 @@ export async function createAppointment(req, res) {
     const { accessToken, locationId, ...appointmentData } = req.body;
     const context = await getHighLevelContext(req, { locationId, accessToken });
     const localCalendar = await localCalendarService.getLocalCalendar(appointmentData.calendarId || appointmentData.calendar_id);
-    let appointment = await localCalendarService.createLocalAppointment({
+    const renderedTemplates = await renderCalendarAppointmentTemplates({
+      calendar: localCalendar || {},
+      appointmentData,
+      titleTemplate: appointmentData.title || localCalendar?.eventTitle || localCalendar?.name || 'Cita',
+      notesTemplate: localCalendar?.notes || appointmentData.notes || appointmentData.description || ''
+    });
+    const localAppointmentData = {
       ...appointmentData,
+      title: renderedTemplates.title,
+      notes: renderedTemplates.notes
+    };
+    let appointment = await localCalendarService.createLocalAppointment({
+      ...localAppointmentData,
       calendarId: localCalendar?.id || appointmentData.calendarId,
       locationId: context.locationId
     }, {
@@ -1419,7 +1441,7 @@ export async function createAppointment(req, res) {
       try {
         const remote = await calendarService.createAppointment(
           {
-            ...appointmentData,
+            ...localAppointmentData,
             calendarId: localCalendar?.ghlCalendarId || appointmentData.calendarId
           },
           context.locationId,
