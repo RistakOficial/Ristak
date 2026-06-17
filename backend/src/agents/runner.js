@@ -19,6 +19,7 @@ const CONTEXT_FIELD_LIMIT = 4000
 
 const MAX_CHAT_ATTACHMENTS = 8
 const MAX_ATTACHMENT_TEXT_CHARS = 18000
+const AUTO_CATEGORY_IDS = new Set(['', 'auto'])
 
 const CONTEXT_FIELD_LABELS = {
   business_context: 'Contexto del negocio',
@@ -250,6 +251,74 @@ Reglas:
 - Solo contesta tú directamente saludos ("hola") o "¿qué puedes hacer?": ahí preséntate en 2-3 líneas con las áreas disponibles, en español.
 - En caso de duda entre dos especialistas, usa general.`
 
+function normalizeRoutingText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9ñ\s$%./_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function scorePattern(text, patterns) {
+  return patterns.reduce((score, pattern) => score + (pattern.test(text) ? 1 : 0), 0)
+}
+
+export function inferAgentCategoryFromMessage({ latestUserMessage = '', messages = [], viewContext = {} } = {}) {
+  const previousText = (Array.isArray(messages) ? messages : [])
+    .slice(-4)
+    .map((message) => message?.content || '')
+    .join(' ')
+  const text = normalizeRoutingText([
+    latestUserMessage,
+    viewContext?.path,
+    viewContext?.title,
+    viewContext?.routeLabel,
+    previousText
+  ].filter(Boolean).join(' '))
+
+  if (!text || /^(hola|buenas|hey|ola|que puedes hacer|qué puedes hacer|ayuda|help)\b/.test(text)) {
+    return null
+  }
+
+  const scores = {
+    anuncios: scorePattern(text, [
+      /\b(meta ads|facebook ads|ads manager|publicidad|anuncios?|campan(?:a|as)|campañas?|adsets?|conjuntos? de anuncios?|roas|retorno|rentabilidad|cpc|cpm|ctr|cpl|cac|gasto publicitario|inversion ads|inversion publicitaria)\b/,
+      /\b(resultados?|rendimiento|performance|conversion(?:es)?|leads?|ventas?|ingresos?|utilidad|escala|escalar)\b.*\b(campan(?:a|as)|campañas?|anuncios?|ads|meta|facebook|instagram)\b/,
+      /\b(campan(?:a|as)|campañas?|anuncios?|ads|meta|facebook|instagram)\b.*\b(resultados?|rendimiento|performance|conversion(?:es)?|leads?|ventas?|ingresos?|utilidad|roas|retorno|rentabilidad)\b/
+    ]),
+    pagos: scorePattern(text, [
+      /\b(pagos?|cobros?|cobrar|cobrale|cóbrale|link de pago|links? de pago|parcialidades|domiciliacion|domiciliación|tarjeta|invoice|factura|ingresos?|transacciones?|deposito|depósito|transferencia|efectivo)\b/
+    ]),
+    citas: scorePattern(text, [
+      /\b(citas?|agenda|agendar|reprograma|reprogramar|calendarios?|horarios?|disponibilidad|appointment|booking|no show|showed|asistencia)\b/
+    ]),
+    contactos: scorePattern(text, [
+      /\b(contactos?|clientes?|prospectos?|leads?|crm|campo personalizado|custom fields?|telefono|teléfono|email|correo)\b/
+    ]),
+    redes: scorePattern(text, [
+      /\b(redes sociales|bandeja social|inbox|dm|dms|mensajes? de instagram|mensajes? de facebook|conversaciones? de instagram|conversaciones? de facebook|perfiles? conectados?|pagina de facebook|página de facebook|instagram conectado|facebook conectado)\b/
+    ]),
+    costos: scorePattern(text, [
+      /\b(costos? variables?|comisiones?|margen|rentabilidad neta|gastos variables?|pasarela|stripe fee|fee|costo por venta)\b/
+    ])
+  }
+
+  if (scores.anuncios > 0 && scores.contactos > 0) {
+    scores.anuncios += 1
+  }
+
+  const ranked = Object.entries(scores)
+    .filter(([, score]) => score > 0)
+    .sort((a, b) => b[1] - a[1])
+
+  if (!ranked.length) return null
+  if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) return 'general'
+
+  return ranked[0][0]
+}
+
 /**
  * Construye los agentes especializados con handoffs cruzados y el triage.
  * El nombre de cada agente es el id de su categoría, así las herramientas de
@@ -306,6 +375,7 @@ export async function runSpecializedAgentReply({ apiKey, category: categoryId, m
   const requestedCategory = getAgentCategory(categoryId)
 
   const latestUserMessage = [...(messages || [])].reverse().find((message) => message?.role === 'user')?.content || ''
+  const inferredCategoryId = inferAgentCategoryFromMessage({ latestUserMessage, messages, viewContext })
 
   let agentRun = null
   try {
@@ -338,19 +408,26 @@ export async function runSpecializedAgentReply({ apiKey, category: categoryId, m
       webSearchEnabled
     })
 
-    const entryAgent = requestedCategory ? byCategory[requestedCategory.id] : triage
-    const entryCategory = requestedCategory?.id || 'auto'
+    const explicitAuto = AUTO_CATEGORY_IDS.has(String(categoryId || 'auto').trim().toLowerCase())
+    const inferredCategory = inferredCategoryId && inferredCategoryId !== 'general'
+      ? getAgentCategory(inferredCategoryId)
+      : null
+    const entryAgent = inferredCategory ||
+      (requestedCategory && requestedCategory.id !== 'general' ? byCategory[requestedCategory.id] : null) ||
+      (requestedCategory ? byCategory[requestedCategory.id] : triage)
+    const entryCategory = inferredCategory?.id || requestedCategory?.id || 'auto'
+    const requestedCategoryId = explicitAuto ? 'auto' : (requestedCategory?.id || 'auto')
 
     await updateAgentRun(agentRun, {
       domain: entryCategory,
       action: 'specialized_chat',
       model,
-      route: { engine: 'openai-agents-sdk', entry: entryAgent.name, requested: entryCategory, webSearchEnabled }
+      route: { engine: 'openai-agents-sdk', entry: entryAgent.name, requested: requestedCategoryId, inferred: inferredCategoryId || null, webSearchEnabled }
     })
     await recordAgentStep(agentRun, {
       stepType: 'route',
       status: 'completed',
-      output: { engine: 'openai-agents-sdk', entry: entryAgent.name, requested: entryCategory, model, webSearchEnabled }
+      output: { engine: 'openai-agents-sdk', entry: entryAgent.name, requested: requestedCategoryId, inferred: inferredCategoryId || null, model, webSearchEnabled }
     })
 
     const runner = new Runner({

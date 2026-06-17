@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { AGENT_CATEGORIES, getAgentCategory, listAgentCategories } from '../src/agents/registry.js'
 import { invokeController, toToolResult } from '../src/agents/invokeController.js'
-import { buildInputItems } from '../src/agents/runner.js'
+import { buildInputItems, inferAgentCategoryFromMessage } from '../src/agents/runner.js'
 
 const EXPECTED_CATEGORIES = ['citas', 'pagos', 'redes', 'anuncios', 'contactos', 'costos', 'general']
 
@@ -85,6 +85,37 @@ test('listAgentCategories expone solo los campos públicos', () => {
   for (const category of listAgentCategories()) {
     assert.deepEqual(Object.keys(category).sort(), ['description', 'icon', 'id', 'label'])
   }
+})
+
+test('el ruteo inicial detecta la especialidad desde el primer mensaje', () => {
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Mide resultados de campaña y dime el retorno real' }),
+    'anuncios'
+  )
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Cóbrale 500 a Juan con link de pago' }),
+    'pagos'
+  )
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Agenda una cita mañana a las 4' }),
+    'citas'
+  )
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Busca el contacto de Ana y actualiza su correo' }),
+    'contactos'
+  )
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Revisa los DMs de Instagram de la bandeja social' }),
+    'redes'
+  )
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Configura costos variables y comisiones por venta' }),
+    'costos'
+  )
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Hola' }),
+    null
+  )
 })
 
 test('invokeController captura status y payload del controller', async () => {
