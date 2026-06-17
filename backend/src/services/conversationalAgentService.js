@@ -56,7 +56,7 @@ const DEFAULT_REPLY_DELIVERY_CONFIG = {
   mode: 'single',
   splitMessagesEnabled: false,
   minMessageLengthToSplit: 120,
-  maxBubbles: 5,
+  maxBubbles: 6,
   minBubbleLength: 20,
   maxBubbleLength: 350,
   targetChars: 350,

@@ -17,7 +17,8 @@ import {
   splitReplyIntoParts
 } from '../src/agents/conversational/runner.js'
 import {
-  splitMessageIntoBubbles
+  splitMessageIntoBubbles,
+  splitMessageIntoBubblesFallback
 } from '../src/agents/conversational/messageSplitter.js'
 import {
   DEFAULT_CLOSING_STRATEGY,
@@ -239,6 +240,72 @@ test('mensaje corto se queda en un solo globo', async () => {
 
   assert.equal(result.source, 'threshold')
   assert.deepEqual(result.messages, ['Ok, listo.'])
+})
+
+test('modo humano no fuerza globos cuando la respuesta corta es una sola idea', () => {
+  const result = splitMessageIntoBubblesFallback({
+    text: 'sí, mañana a las 5 está perfecto',
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 20, maxBubbleLength: 120, randomizeSplitting: true },
+    random: () => 0
+  })
+
+  assert.deepEqual(result.messages, ['sí, mañana a las 5 está perfecto'])
+})
+
+test('modo humano usa fallback natural cuando no hay splitter IA disponible', async () => {
+  const result = await splitMessageIntoBubbles({
+    text: 'ah ya te entendí… ¿pero cómo está eso exactamente?',
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 120, randomizeSplitting: true },
+    random: () => 0.8
+  })
+
+  assert.equal(result.source, 'fallback')
+  assert.deepEqual(result.messages, ['ah ya te entendí…', '¿pero cómo está eso exactamente?'])
+})
+
+test('modo humano acepta BREAK como separador pero no lo expone al contacto', async () => {
+  const result = await splitMessageIntoBubbles({
+    text: 'ok perfecto ahora dime qué fecha te queda mejor',
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 4, maxBubbleLength: 120 },
+    aiSplitter: async () => 'ok perfecto [BREAK] ahora dime qué fecha te queda mejor'
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.deepEqual(result.messages, ['ok perfecto', 'ahora dime qué fecha te queda mejor'])
+  assert.ok(result.messages.every((message) => !message.includes('[BREAK]')))
+})
+
+test('modo humano separa BREAK aunque venga dentro de JSON válido', async () => {
+  const result = await splitMessageIntoBubbles({
+    text: 'ok perfecto ahora dime qué fecha te queda mejor',
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 4, maxBubbleLength: 120 },
+    aiSplitter: async () => '{"messages":["ok perfecto [BREAK] ahora dime qué fecha te queda mejor"]}'
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.deepEqual(result.messages, ['ok perfecto', 'ahora dime qué fecha te queda mejor'])
+  assert.ok(result.messages.every((message) => !message.includes('[BREAK]')))
+})
+
+test('modo humano puede llegar hasta seis globos sólo cuando el texto largo lo amerita', () => {
+  const longReply = [
+    'va, ya te entendí.',
+    'Primero revisamos qué estás intentando resolver ahorita.',
+    'Luego vemos qué ya probaste antes para no repetir lo mismo.',
+    'Después ubicamos qué dato real falta para darte una respuesta clara.',
+    'Con eso te digo cuál sería el siguiente paso sin inventarte nada.',
+    'Y si sí hace sentido, lo pasamos a revisión con alguien del equipo.'
+  ].join(' ')
+
+  const result = splitMessageIntoBubblesFallback({
+    text: longReply,
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 120, randomizeSplitting: true },
+    random: () => 0.99
+  })
+
+  assert.ok(result.messages.length > 4)
+  assert.ok(result.messages.length <= 6)
+  assert.equal(result.messages.join(' '), longReply)
 })
 
 test('mensaje casual se divide en globos humanos con IA', async () => {

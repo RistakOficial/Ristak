@@ -276,7 +276,7 @@ const DEFAULT_PHONE_AGENT_REPLY_DELIVERY: AgentReplyDeliveryConfig = {
   mode: 'single',
   splitMessagesEnabled: false,
   minMessageLengthToSplit: 120,
-  maxBubbles: 5,
+  maxBubbles: 6,
   minBubbleLength: 20,
   maxBubbleLength: 350,
   targetChars: 350,

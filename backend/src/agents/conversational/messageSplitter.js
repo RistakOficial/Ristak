@@ -7,7 +7,9 @@ const DEFAULT_SPLITTER_MODEL = process.env.OPENAI_CONVERSATIONAL_SPLITTER_MODEL 
   'gpt-5.4-nano'
 
 const NATURAL_SHORT_MESSAGE_PATTERN = /^(va|ok|okay|listo|perfecto|sale|claro|sí|si|no|hecho|de una)[.!?¡¿]*$/i
+const NATURAL_STANDALONE_REACTION_PATTERN = /^(?:ah+h?|ah+ ya|ah+ okaa?y|ok+a+y?|va|sale|perfecto|listo|claro|órale|orale|uff|mmm(?: a ver)?|no+ manches|buen[ií]simo|déjame ver|dejame ver|ya te entend[ií]|ah ya te entend[ií])(?:[.!?…]+)?$/i
 const VISIBLE_LABEL_PATTERN = /^(?:globo|mensaje|parte)\s*#?\s*\d+\s*[:.)-]\s*/i
+const BREAK_TOKEN_PATTERN = /\s*\[BREAK\]\s*/gi
 const MAX_AI_INPUT_CHARS = 4000
 const SIGNIFICANT_TOKEN_MIN_LENGTH = 4
 
@@ -50,8 +52,15 @@ function splitNaturalSegments(text) {
   return masked
     .split(/\n{2,}/)
     .flatMap((paragraph) => paragraph.split(/(?=\n\s*(?:[-*]|\d+[.)])\s+)/g))
-    .flatMap((paragraph) => paragraph.match(/[^.!?;]+[.!?;]+(?:\s+|$)|[^.!?;]+$/g) || [paragraph])
+    .flatMap((paragraph) => paragraph.match(/[^.!?;…]+[.!?;…]+(?:\s+|$)|[^.!?;…]+$/g) || [paragraph])
     .map((segment) => cleanText(restore(segment)))
+    .filter(Boolean)
+}
+
+function splitExplicitBreaks(text) {
+  return String(text || '')
+    .split(BREAK_TOKEN_PATTERN)
+    .map((part) => cleanText(part))
     .filter(Boolean)
 }
 
@@ -103,7 +112,10 @@ function splitTextConservatively(text, maxLength) {
 
 function isMeaningfulShortMessage(message) {
   const clean = cleanText(message)
-  return clean.length > 0 && clean.length <= 16 && NATURAL_SHORT_MESSAGE_PATTERN.test(clean)
+  return clean.length > 0 && clean.length <= 28 && (
+    NATURAL_SHORT_MESSAGE_PATTERN.test(clean) ||
+    NATURAL_STANDALONE_REACTION_PATTERN.test(clean)
+  )
 }
 
 function mergeShortMessages(messages, settings) {
@@ -147,6 +159,95 @@ function limitBubbleCount(messages, maxBubbles) {
   return parts
 }
 
+function mergeAtIndex(messages, index) {
+  if (index < 0 || index >= messages.length - 1) return messages
+  const next = [...messages]
+  next.splice(index, 2, `${next[index]} ${next[index + 1]}`.trim())
+  return next
+}
+
+function findMergeablePair(messages, settings, random = Math.random) {
+  const candidates = []
+  for (let index = 0; index < messages.length - 1; index += 1) {
+    const merged = `${messages[index]} ${messages[index + 1]}`.trim()
+    if (merged.length <= settings.maxBubbleLength || messages.length > settings.maxBubbles) {
+      candidates.push(index)
+    }
+  }
+  if (!candidates.length) return messages.length > 1 ? messages.length - 2 : -1
+  return candidates[Math.floor(random() * candidates.length)]
+}
+
+function naturalBubbleCap(text, settings) {
+  const max = Math.max(1, settings.maxBubbles)
+  const length = cleanText(text).length
+  if (length >= 900) return Math.min(max, 6)
+  if (length >= 620) return Math.min(max, 5)
+  if (length >= 280) return Math.min(max, 4)
+  if (length >= 130) return Math.min(max, 3)
+  return Math.min(max, 2)
+}
+
+function hasNaturalSplitSignal(text, segments = []) {
+  const clean = cleanText(text)
+  if (splitExplicitBreaks(clean).length > 1) return true
+  if (segments.length > 1) return true
+  if (/[.!…]\s*¿?[\wáéíóúñ]/i.test(clean)) return true
+  if (/[^\n?]{12,}\?\s+[^\n]{8,}/.test(clean)) return true
+  if (/\b(?:primero|luego|después|despues|ahora|entonces)\b/i.test(clean) && clean.length >= 110) return true
+  return false
+}
+
+function splitTextByHumanIntent(text, settings, random = Math.random) {
+  const clean = cleanText(text)
+  if (!clean) return []
+
+  const explicit = splitExplicitBreaks(clean)
+  let parts = explicit.length > 1
+    ? explicit
+    : splitNaturalSegments(clean)
+
+  parts = parts
+    .flatMap((part) => part.length > settings.maxBubbleLength ? splitLongSegmentByWords(part, settings.maxBubbleLength) : [part])
+    .map(cleanText)
+    .filter(Boolean)
+
+  if (!parts.length) return []
+
+  const mustSplitByLength = clean.length > settings.maxBubbleLength
+  const hasSplitSignal = hasNaturalSplitSignal(clean, parts)
+  if (!mustSplitByLength && !hasSplitSignal) {
+    return [clean]
+  }
+
+  const maxNaturalBubbles = naturalBubbleCap(clean, settings)
+  let minTarget = mustSplitByLength
+    ? Math.min(maxNaturalBubbles, Math.max(2, Math.ceil(clean.length / settings.maxBubbleLength)))
+    : (hasSplitSignal ? Math.min(2, maxNaturalBubbles) : 1)
+  minTarget = Math.max(1, Math.min(minTarget, maxNaturalBubbles))
+
+  let maxTarget = Math.min(parts.length, maxNaturalBubbles)
+  if (!mustSplitByLength && clean.length < settings.minMessageLengthToSplit && maxTarget > 1) {
+    maxTarget = Math.max(1, Math.min(maxTarget, 2))
+  }
+
+  const targetCount = settings.randomizeSplitting && maxTarget > minTarget
+    ? minTarget + Math.floor(random() * (maxTarget - minTarget + 1))
+    : maxTarget
+
+  while (parts.length > targetCount) {
+    const index = settings.randomizeSplitting
+      ? findMergeablePair(parts, settings, random)
+      : parts.length - 2
+    if (index < 0) break
+    parts = mergeAtIndex(parts, index)
+  }
+
+  parts = mergeShortMessages(parts, settings)
+  parts = limitBubbleCount(parts, Math.min(settings.maxBubbles, 6))
+  return parts.map(cleanText).filter(Boolean)
+}
+
 function normalizeToken(value) {
   return String(value || '')
     .toLowerCase()
@@ -185,6 +286,7 @@ function protectedTokensAreIntact(original, messages) {
 function repairMessages(rawMessages, originalText, settings) {
   const sourceMessages = (Array.isArray(rawMessages) ? rawMessages : [])
     .map((message) => stripVisibleLabel(message))
+    .flatMap((message) => splitExplicitBreaks(message))
     .filter(Boolean)
 
   if (!sourceMessages.length) {
@@ -235,6 +337,11 @@ function parseSplitterJson(rawOutput) {
     if (start >= 0 && end > start) {
       return JSON.parse(text.slice(start, end + 1))
     }
+    if (BREAK_TOKEN_PATTERN.test(text)) {
+      BREAK_TOKEN_PATTERN.lastIndex = 0
+      return { messages: splitExplicitBreaks(text) }
+    }
+    BREAK_TOKEN_PATTERN.lastIndex = 0
     throw new Error('invalid_splitter_json')
   }
 }
@@ -258,6 +365,7 @@ function shouldUseAiForText(text, settings, random) {
 function buildSplitterInstructions(settings) {
   return [
     'Eres un procesador de mensajes para WhatsApp. Tu única tarea es dividir una respuesta ya generada por otro agente en varios mensajes naturales.',
+    'Piensa en [BREAK] como el punto donde termina un globo y empieza otro, pero tu salida final debe ser un arreglo JSON de mensajes, no texto con [BREAK].',
     '',
     'Reglas no negociables:',
     '- No cambies el significado del texto original.',
@@ -269,11 +377,16 @@ function buildSplitterInstructions(settings) {
     '- Si hay una pregunta importante al final, déjala preferentemente como último mensaje.',
     '- Si el texto es técnico o formal, conserva ese tono. Si es casual, conserva el tono casual.',
     '- Si hay bullets, pasos o instrucciones, conserva el orden lógico.',
+    '- Una idea o intención = un mensaje. Separa reacción, confirmación, dato, pregunta, empatía, acción y pasos cuando naturalmente sean intenciones distintas.',
+    '- No dividas por dividir. Si el texto es una sola idea corta y limpia, devuelve un solo mensaje.',
+    '- No fuerces 2-4 mensajes siempre. Lo normal suele ser 1-4 según el texto; usa 5 o 6 sólo si el texto está largo y realmente lo amerita.',
+    '- No hagas spam de mensajes mínimos. Cada mensaje debe entenderse por sí solo.',
+    '- Varía el patrón: no cortes siempre en la misma cantidad ni después de la misma muletilla.',
     '- No devuelvas markdown, explicaciones ni texto fuera del JSON.',
     '',
     `Parámetros: mínimo para dividir ${settings.minMessageLengthToSplit} caracteres; máximo ${settings.maxBubbles} mensajes; longitud sugerida por mensaje ${settings.minBubbleLength}-${settings.maxBubbleLength} caracteres.`,
     settings.randomizeSplitting
-      ? 'Puedes variar naturalmente si conviene devolver 1, 2, 3, 4 o más mensajes, siempre dentro del máximo.'
+      ? 'Varía naturalmente si conviene devolver 1, 2, 3, 4, 5 o 6 mensajes, siempre dentro del máximo y sólo cuando el texto lo amerite.'
       : 'Usa una división conservadora y consistente.',
     '',
     'Devuelve únicamente JSON válido con esta estructura:',
@@ -314,7 +427,7 @@ async function runAiSplitter({ text, settings, apiKey, model }) {
   return result.finalOutput
 }
 
-export function splitMessageIntoBubblesFallback({ text, settings = {} } = {}) {
+export function splitMessageIntoBubblesFallback({ text, settings = {}, random = Math.random } = {}) {
   const clean = cleanText(text)
   if (!clean) return { messages: [], source: 'empty', reason: 'empty_text' }
 
@@ -324,10 +437,21 @@ export function splitMessageIntoBubblesFallback({ text, settings = {} } = {}) {
   }
 
   if (clean.length < delivery.minMessageLengthToSplit) {
-    return { messages: [clean], source: 'threshold', reason: 'below_min_length' }
+    const naturalParts = delivery.randomizeSplitting
+      ? splitTextByHumanIntent(clean, delivery, random)
+      : [clean]
+    if (naturalParts.length <= 1) {
+      return { messages: [clean], source: 'threshold', reason: 'below_min_length' }
+    }
+    const repairedShort = repairMessages(naturalParts, clean, delivery)
+    if (!repairedShort.ok) return fallbackResult(clean, repairedShort.reason)
+    return { messages: repairedShort.messages, source: 'fallback', reason: 'natural_short_split' }
   }
 
-  const repaired = repairMessages(splitTextConservatively(clean, delivery.maxBubbleLength), clean, delivery)
+  const candidateParts = delivery.randomizeSplitting
+    ? splitTextByHumanIntent(clean, delivery, random)
+    : splitTextConservatively(clean, delivery.maxBubbleLength)
+  const repaired = repairMessages(candidateParts, clean, delivery)
   if (!repaired.ok) return fallbackResult(clean, repaired.reason)
   return { messages: repaired.messages, source: 'fallback', reason: 'safe_split' }
 }
@@ -360,7 +484,13 @@ export async function splitMessageIntoBubbles({
         ? await runAiSplitter({ text: clean, settings: delivery, apiKey, model })
         : null
 
-    if (!raw) return fallbackResult(clean, 'splitter_unavailable')
+    if (!raw) {
+      return splitMessageIntoBubblesFallback({
+        text: clean,
+        settings: delivery,
+        random
+      })
+    }
 
     const parsed = parseSplitterJson(raw)
     const repaired = repairMessages(parsed?.messages, clean, delivery)
