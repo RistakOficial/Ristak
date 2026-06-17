@@ -3525,6 +3525,8 @@ export const DesktopChat: React.FC = () => {
                       disabled={savingTags}
                       portal
                       placeholder="Agregar etiqueta"
+                      triggerVariant="chip"
+                      closeOnSelect
                       aria-label="Etiquetas del contacto"
                     />
                     {savingTags ? <small>Guardando etiquetas...</small> : null}
@@ -3624,11 +3626,11 @@ export const DesktopChat: React.FC = () => {
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className={styles.journeyBackButton}
+                      className={`${styles.summaryJourneyButton} ${styles.journeySummaryButton}`}
                       onClick={() => setInfoPanelView('summary')}
-                      aria-label="Volver al resumen"
                     >
-                      <ChevronLeft size={16} aria-hidden="true" />
+                      <ChevronLeft size={15} aria-hidden="true" />
+                      Resumen
                     </Button>
                   </div>
                   <ContactJourney contactId={activeContact.id} />

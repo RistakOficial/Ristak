@@ -36,6 +36,8 @@ interface TagPickerBaseProps {
   /** Dibuja el dropdown en un portal (paneles con scroll que recortan) */
   portal?: boolean
   size?: 'default' | 'large'
+  triggerVariant?: 'button' | 'chip'
+  closeOnSelect?: boolean
   'aria-label'?: string
 }
 
@@ -65,9 +67,12 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
     placeholder,
     disabled = false,
     portal = false,
-    size = 'default'
+    size = 'default',
+    triggerVariant = 'button',
+    closeOnSelect = false
   } = props
   const isMultiple = props.multiple === true
+  const useChipTrigger = isMultiple && triggerVariant === 'chip'
 
   const { tags, loading } = useContactTags(includeSystem)
   const [isOpen, setIsOpen] = useState(false)
@@ -157,7 +162,11 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
         multi.onChange([...multi.selectedIds, tag.id])
       }
       setSearch('')
-      searchInputRef.current?.focus()
+      if (closeOnSelect) {
+        setIsOpen(false)
+      } else {
+        searchInputRef.current?.focus()
+      }
     } else {
       const single = props as TagPickerSingleProps
       single.onValueChange(tag.id, tag.name)
@@ -263,8 +272,8 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
 
   return (
     <div ref={containerRef} className={`${styles.container} ${size === 'large' ? styles.large : ''}`}>
-      {isMultiple && (lockedTags.length > 0 || selectedIds.length > 0) && (
-        <div className={styles.chips}>
+      {isMultiple && (lockedTags.length > 0 || selectedIds.length > 0 || useChipTrigger) && (
+        <div className={`${styles.chips} ${useChipTrigger ? styles.chipsInline : ''}`}>
           {lockedTags.map((tag) => (
             <span key={tag.id} className={`${styles.chip} ${styles.chipSystem}`} title="Etiqueta interna: se asigna sola según la actividad del contacto">
               <span className={styles.chipLock}><Lock size={11} /></span>
@@ -290,26 +299,43 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
               </span>
             )
           })}
+          {useChipTrigger && (
+            <button
+              type="button"
+              className={`${styles.chip} ${styles.chipAdd} ${isOpen ? styles.chipAddOpen : ''}`}
+              onClick={() => !disabled && setIsOpen((open) => !open)}
+              disabled={disabled}
+              aria-expanded={isOpen}
+              aria-haspopup="listbox"
+              aria-label={props['aria-label'] || placeholder || 'Agregar etiqueta'}
+              title={placeholder || 'Agregar etiqueta'}
+              data-ristak-dropdown-trigger
+            >
+              <Plus size={13} aria-hidden="true" />
+            </button>
+          )}
         </div>
       )}
 
-      <button
-        type="button"
-        className={`${styles.trigger} ${isOpen ? styles.open : ''}`}
-        onClick={() => !disabled && setIsOpen((open) => !open)}
-        disabled={disabled}
-        aria-expanded={isOpen}
-        aria-haspopup="listbox"
-        aria-label={props['aria-label']}
-        data-ristak-dropdown-trigger
-      >
-        <span className={isMultiple || !singleLabel ? styles.triggerPlaceholder : styles.triggerLabel}>
-          {isMultiple
-            ? placeholder || 'Agregar etiqueta…'
-            : singleLabel || placeholder || 'Selecciona una etiqueta'}
-        </span>
-        <ChevronDown size={16} className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ''}`} />
-      </button>
+      {!useChipTrigger && (
+        <button
+          type="button"
+          className={`${styles.trigger} ${isOpen ? styles.open : ''}`}
+          onClick={() => !disabled && setIsOpen((open) => !open)}
+          disabled={disabled}
+          aria-expanded={isOpen}
+          aria-haspopup="listbox"
+          aria-label={props['aria-label']}
+          data-ristak-dropdown-trigger
+        >
+          <span className={isMultiple || !singleLabel ? styles.triggerPlaceholder : styles.triggerLabel}>
+            {isMultiple
+              ? placeholder || 'Agregar etiqueta…'
+              : singleLabel || placeholder || 'Selecciona una etiqueta'}
+          </span>
+          <ChevronDown size={16} className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ''}`} />
+        </button>
+      )}
 
       {portal ? createPortal(dropdown, document.body) : dropdown}
     </div>

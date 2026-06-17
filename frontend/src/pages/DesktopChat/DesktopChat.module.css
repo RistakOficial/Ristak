@@ -1614,9 +1614,9 @@
   margin-bottom: 10px;
 }
 
-.journeyBackButton[data-btn] {
-  width: 32px;
-  padding: 0;
+.journeySummaryButton[data-btn] {
+  justify-content: center;
+  gap: 6px;
 }
 
 .metricsGrid {

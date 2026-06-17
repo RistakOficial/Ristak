@@ -10,6 +10,10 @@
   margin-bottom: 6px;
 }
 
+.chipsInline {
+  margin-bottom: 0;
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
@@ -55,6 +59,27 @@
 .chipLock {
   color: var(--color-text-tertiary);
   display: inline-flex;
+}
+
+.chipAdd {
+  justify-content: center;
+  min-width: 26px;
+  min-height: 26px;
+  padding-inline: 7px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.chipAdd:hover,
+.chipAddOpen {
+  border-color: var(--color-primary);
+  background: var(--color-surface-secondary);
+  color: var(--color-text-primary);
+}
+
+.chipAdd:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
 }
 
 .trigger {
