@@ -6,8 +6,9 @@ const DEFAULT_SPLITTER_MODEL = process.env.OPENAI_CONVERSATIONAL_SPLITTER_MODEL 
   process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL ||
   'gpt-5.4-nano'
 
-const NATURAL_SHORT_MESSAGE_PATTERN = /^(va|ok|okay|listo|perfecto|sale|claro|sí|si|no|hecho|de una)[.!?¡¿]*$/i
+const NATURAL_SHORT_MESSAGE_PATTERN = /^(va|ok|okay|listo|perfecto|sale|claro|sí|si|no|ya|hecho|de una)[.!?¡¿]*$/i
 const NATURAL_STANDALONE_REACTION_PATTERN = /^(?:ah+h?|ah+ ya|ah+ okaa?y|ok+a+y?|va|sale|perfecto|listo|claro|órale|orale|uff|mmm(?: a ver)?|no+ manches|buen[ií]simo|déjame ver|dejame ver|ya te entend[ií]|ah ya te entend[ií])(?:[.!?…]+)?$/i
+const LEADING_REACTION_SPLIT_PATTERN = /^((?:ah+\s+ok+a?y?|mmm)(?:[.!?…]+|\.{2,}|…+)?|(?:ah+\s+ya|ah+h?|ok+a+y?|va|sale|perfecto|listo|claro|órale|orale|uff|h[ií]jole|tsss|uy|ya)(?:[.!?…]+|\.{2,}|…+))\s+(.+)$/i
 const VISIBLE_LABEL_PATTERN = /^(?:globo|mensaje|parte)\s*#?\s*\d+\s*[:.)-]\s*/i
 const BREAK_TOKEN_PATTERN = /\s*\[BREAK\]\s*/gi
 const MAX_AI_INPUT_CHARS = 4000
@@ -81,6 +82,25 @@ function splitLongSegmentByWords(segment, maxLength) {
 
   if (current) parts.push(current)
   return parts
+}
+
+function splitLeadingReaction(segment) {
+  const clean = cleanText(segment)
+  const match = clean.match(LEADING_REACTION_SPLIT_PATTERN)
+  if (!match) return [clean].filter(Boolean)
+
+  const reaction = cleanText(match[1])
+  const rest = cleanText(match[2])
+  if (!reaction || !rest) return [clean].filter(Boolean)
+  return [reaction, rest]
+}
+
+function splitHumanBubbleFragments(message) {
+  return splitExplicitBreaks(message)
+    .flatMap((part) => String(part || '').split(/\n{2,}/))
+    .flatMap((part) => splitLeadingReaction(part))
+    .map(cleanText)
+    .filter(Boolean)
 }
 
 function splitTextConservatively(text, maxLength) {
@@ -286,7 +306,7 @@ function protectedTokensAreIntact(original, messages) {
 function repairMessages(rawMessages, originalText, settings) {
   const sourceMessages = (Array.isArray(rawMessages) ? rawMessages : [])
     .map((message) => stripVisibleLabel(message))
-    .flatMap((message) => splitExplicitBreaks(message))
+    .flatMap((message) => splitHumanBubbleFragments(message))
     .filter(Boolean)
 
   if (!sourceMessages.length) {
@@ -378,6 +398,8 @@ function buildSplitterInstructions(settings) {
     '- Si el texto es técnico o formal, conserva ese tono. Si es casual, conserva el tono casual.',
     '- Si hay bullets, pasos o instrucciones, conserva el orden lógico.',
     '- Una idea o intención = un mensaje. Separa reacción, confirmación, dato, pregunta, empatía, acción y pasos cuando naturalmente sean intenciones distintas.',
+    '- Si una reacción corta tipo "ya..", "ahh ok", "mmm" o "uff" viene antes de una lectura, dato o pregunta, déjala como mensaje separado cuando suene natural.',
+    '- Si el texto trae salto de párrafo dentro de una misma respuesta, normalmente eso indica otro globo: no metas dos líneas con intenciones distintas en el mismo mensaje.',
     '- No dividas por dividir. Si el texto es una sola idea corta y limpia, devuelve un solo mensaje.',
     '- No fuerces 2-4 mensajes siempre. Lo normal suele ser 1-4 según el texto; usa 5 o 6 sólo si el texto está largo y realmente lo amerita.',
     '- No hagas spam de mensajes mínimos. Cada mensaje debe entenderse por sí solo.',

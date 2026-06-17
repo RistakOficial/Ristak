@@ -287,6 +287,22 @@ test('modo humano separa BREAK aunque venga dentro de JSON válido', async () =>
   assert.ok(result.messages.every((message) => !message.includes('[BREAK]')))
 })
 
+test('modo humano repara globos con reacción, salto y pregunta en el mismo mensaje', async () => {
+  const original = 'ya.. entonces sí traes ese tema encima\n\npa entenderte bien y no decirte algo al aire, hoy cómo te llegan los pacientes?'
+  const result = await splitMessageIntoBubbles({
+    text: original,
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 240, randomizeSplitting: true },
+    aiSplitter: async () => ({ messages: [original] })
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.deepEqual(result.messages, [
+    'ya..',
+    'entonces sí traes ese tema encima',
+    'pa entenderte bien y no decirte algo al aire, hoy cómo te llegan los pacientes?'
+  ])
+})
+
 test('modo humano puede llegar hasta seis globos sólo cuando el texto largo lo amerita', () => {
   const longReply = [
     'va, ya te entendí.',
