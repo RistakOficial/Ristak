@@ -1,6 +1,6 @@
 import { DEFAULT_AI_MODEL, aiModelOptionGroups, aiModelOptions, getKnownAIModel } from './aiModels'
 
-export type ConversationalAIProviderId = 'openai' | 'gemini' | 'deepseek'
+export type ConversationalAIProviderId = 'openai' | 'gemini' | 'claude' | 'deepseek'
 
 export interface ConversationalAIModelOption {
   value: string
@@ -41,6 +41,23 @@ const geminiModelGroups: ConversationalAIModelGroup[] = [
   }
 ]
 
+const claudeModelGroups: ConversationalAIModelGroup[] = [
+  {
+    label: 'Claude actuales',
+    options: [
+      { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', description: 'Rápido y económico para alto volumen de chats.' },
+      { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', description: 'Mejor balance entre inteligencia, velocidad y costo.' }
+    ]
+  },
+  {
+    label: 'Claude alta capacidad',
+    options: [
+      { value: 'claude-opus-4-8', label: 'Claude Opus 4.8', description: 'Más capacidad para conversaciones complejas y cierres delicados.' },
+      { value: 'claude-fable-5', label: 'Claude Fable 5', description: 'El modelo más capaz de Anthropic para casos donde el costo se justifica.' }
+    ]
+  }
+]
+
 const deepSeekModelGroups: ConversationalAIModelGroup[] = [
   {
     label: 'DeepSeek actuales',
@@ -72,6 +89,13 @@ export const conversationalAIProviderOptions: ConversationalAIProviderOption[] =
     description: 'Alternativa de Google para bajar costo por conversación.',
     defaultModel: 'gemini-3.5-flash',
     modelGroups: geminiModelGroups
+  },
+  {
+    id: 'claude',
+    label: 'Claude',
+    description: 'Alternativa de Anthropic con buen balance de criterio y costo.',
+    defaultModel: 'claude-haiku-4-5',
+    modelGroups: claudeModelGroups
   },
   {
     id: 'deepseek',

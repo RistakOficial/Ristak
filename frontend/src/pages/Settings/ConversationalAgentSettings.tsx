@@ -1418,7 +1418,7 @@ export const ConversationalAgentSettings: React.FC = () => {
               <Brain size={17} />
               <h3 className={styles.sectionTitle}>IAs conectadas</h3>
             </div>
-            <span>OpenAI es el default; Gemini y DeepSeek son opcionales para ahorrar.</span>
+            <span>OpenAI es el default; Claude, Gemini y DeepSeek son opcionales para ahorrar.</span>
           </div>
           <div className={styles.aiProviderManagerList}>
             {conversationalAIProviderOptions.map((provider) => {

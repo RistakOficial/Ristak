@@ -29,6 +29,14 @@ export const CONVERSATIONAL_AI_PROVIDER_DEFINITIONS = [
     canDelete: true
   },
   {
+    id: 'claude',
+    label: 'Claude',
+    defaultModel: process.env.CLAUDE_CONVERSATIONAL_AGENT_MODEL || 'claude-haiku-4-5',
+    baseURL: 'https://api.anthropic.com/v1/',
+    configKey: 'conversational_ai_provider_claude_api_key_encrypted',
+    canDelete: true
+  },
+  {
     id: 'deepseek',
     label: 'DeepSeek',
     defaultModel: process.env.DEEPSEEK_CONVERSATIONAL_AGENT_MODEL || 'deepseek-v4-flash',

@@ -314,7 +314,7 @@ const VALID_CONVERSATIONAL_SUCCESS_ACTIONS = new Set<ConversationalSuccessAction
   'internal_signal',
   'none'
 ])
-const VALID_CONVERSATIONAL_AI_PROVIDERS = new Set<ConversationalAIProviderId>(['openai', 'gemini', 'deepseek'])
+const VALID_CONVERSATIONAL_AI_PROVIDERS = new Set<ConversationalAIProviderId>(['openai', 'gemini', 'claude', 'deepseek'])
 
 const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   appointments: {
