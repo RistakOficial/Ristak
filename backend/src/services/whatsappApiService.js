@@ -291,6 +291,9 @@ const CONFIG_KEYS = {
   lastError: 'whatsapp_api_last_error'
 }
 
+const HISTORY_DIRECTION_REPAIR_CONFIG_KEY = 'whatsapp_api_history_direction_repair_version'
+const HISTORY_DIRECTION_REPAIR_VERSION = '2026-06-17-nested-history-context'
+
 function nowIso() {
   return new Date().toISOString()
 }
@@ -5029,9 +5032,15 @@ async function syncYCloudMessagesFromApi(apiKey, { businessPhoneHints = [], waba
   return summary
 }
 
-async function backfillStoredWhatsAppApiMessageEvents({ businessPhoneHints = [], limit = 0 } = {}) {
-  const eventTypes = [...MESSAGE_EVENT_TYPES]
-  const placeholders = eventTypes.map(() => '?').join(', ')
+async function backfillStoredWhatsAppApiMessageEvents({ businessPhoneHints = [], limit = 0, eventTypes = [...MESSAGE_EVENT_TYPES] } = {}) {
+  const cleanEventTypes = [...new Set((Array.isArray(eventTypes) ? eventTypes : [])
+    .map(cleanString)
+    .filter(Boolean))]
+  if (!cleanEventTypes.length) {
+    return { events: 0, messages: 0 }
+  }
+
+  const placeholders = cleanEventTypes.map(() => '?').join(', ')
   const cleanLimit = Math.max(Number(limit) || 0, 0)
   const rows = await db.all(`
     SELECT id, event_type, raw_payload_json
@@ -5039,7 +5048,7 @@ async function backfillStoredWhatsAppApiMessageEvents({ businessPhoneHints = [],
     WHERE event_type IN (${placeholders})
     ORDER BY COALESCE(ycloud_create_time, created_at) ASC, id ASC
     ${cleanLimit ? 'LIMIT ?' : ''}
-  `, cleanLimit ? [...eventTypes, cleanLimit] : eventTypes)
+  `, cleanLimit ? [...cleanEventTypes, cleanLimit] : cleanEventTypes)
 
   let savedMessages = 0
   for (const row of rows) {
@@ -5058,6 +5067,44 @@ async function backfillStoredWhatsAppApiMessageEvents({ businessPhoneHints = [],
   }
 
   return { events: rows.length, messages: savedMessages }
+}
+
+export async function repairStoredYCloudHistoryMessageDirections({ force = false, limit = 0 } = {}) {
+  if (!force) {
+    const currentVersion = await getAppConfig(HISTORY_DIRECTION_REPAIR_CONFIG_KEY).catch(() => '')
+    if (currentVersion === HISTORY_DIRECTION_REPAIR_VERSION) {
+      return { skipped: true, reason: 'already_repaired', events: 0, messages: 0 }
+    }
+  }
+
+  const config = await loadConfig({ includeSecrets: false }).catch(error => {
+    logger.warn(`No se pudo cargar configuración WhatsApp API para reparación de historial: ${error.message}`)
+    return {}
+  })
+  const businessPhoneHints = await getKnownBusinessPhoneHints(config).catch(error => {
+    logger.warn(`No se pudieron cargar números WhatsApp API para reparación de historial: ${error.message}`)
+    return []
+  })
+
+  const result = await backfillStoredWhatsAppApiMessageEvents({
+    businessPhoneHints,
+    limit,
+    eventTypes: [...HISTORY_MESSAGE_EVENT_TYPES]
+  })
+
+  await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
+    logger.warn(`No se pudo reparar identidad tras recalcular historial WhatsApp API: ${error.message}`)
+  })
+  await setAppConfig(HISTORY_DIRECTION_REPAIR_CONFIG_KEY, HISTORY_DIRECTION_REPAIR_VERSION)
+
+  if (result.events) {
+    logger.info(`WhatsApp API recalculo dirección de historial guardado: ${result.messages} mensajes en ${result.events} eventos.`)
+  }
+
+  return {
+    skipped: false,
+    ...result
+  }
 }
 
 function parseSignatureHeader(signatureHeader = '') {

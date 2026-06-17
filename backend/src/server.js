@@ -62,6 +62,7 @@ import { publicSiteHostMiddleware } from './controllers/sitesController.js'
 import { getHealthInfo } from './services/licenseService.js'
 import { requireFeature } from './middleware/licenseMiddleware.js'
 import { recoverPendingConversationalAgentConversations } from './agents/conversational/runner.js'
+import { repairStoredYCloudHistoryMessageDirections } from './services/whatsappApiService.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -209,6 +210,10 @@ app.listen(PORT, '0.0.0.0', async () => {
 
   repairPendingPaymentFlows().catch(error => {
     logger.error(`No se pudo ejecutar reparación inicial de parcialidades: ${error.message}`)
+  })
+
+  repairStoredYCloudHistoryMessageDirections().catch(error => {
+    logger.error(`No se pudo recalcular historial WhatsApp API afectado: ${error.message}`)
   })
 
   recoverPendingConversationalAgentConversations().catch(error => {

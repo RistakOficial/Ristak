@@ -11,6 +11,7 @@ import {
 } from '../src/utils/whatsappContactProfile.js'
 import {
   processYCloudWhatsAppWebhook,
+  repairStoredYCloudHistoryMessageDirections,
   syncYCloudContacts,
   syncYCloudMessageRecords
 } from '../src/services/whatsappApiService.js'
@@ -328,6 +329,122 @@ test('historial smb anidado usa metadata y thread para separar hablante e interl
     assert.equal(rows[1].business_phone, businessPhone)
     assert.equal(rows[1].contact_id, rows[0].contact_id)
   } finally {
+    await db.run('DELETE FROM whatsapp_api_attribution WHERE ycloud_message_id IN (?, ?) OR phone = ?', [outboundMessageId, inboundMessageId, phone]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id IN (?, ?) OR phone = ?', [outboundMessageId, inboundMessageId, phone]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [phone]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_webhook_events WHERE event_id = ? OR id = ?', [eventId, eventId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE phone = ?', [phone]).catch(() => undefined)
+  }
+})
+
+test('reparacion retroactiva recalcula mensajes historicos ya guardados con direccion incorrecta', async () => {
+  const id = randomUUID()
+  const phone = `+52988${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000000'
+  const eventId = `evt_history_repair_${id}`
+  const outboundMessageId = `ycloud_history_repair_outbound_${id}`
+  const inboundMessageId = `ycloud_history_repair_inbound_${id}`
+  const messageAt = '2024-06-09T08:09:10.000Z'
+  const repairConfigKey = 'whatsapp_api_history_direction_repair_version'
+  const payload = {
+    id: eventId,
+    type: 'whatsapp.smb.history',
+    apiVersion: 'v2',
+    createTime: messageAt,
+    data: {
+      metadata: {
+        display_phone_number: businessPhone,
+        phone_number_id: '113110828517698'
+      },
+      history: [
+        {
+          threads: [
+            {
+              id: phone,
+              messages: [
+                {
+                  id: outboundMessageId,
+                  from: businessPhone,
+                  timestamp: messageAt,
+                  type: 'text',
+                  text: { body: 'Mensaje viejo del negocio' }
+                },
+                {
+                  id: inboundMessageId,
+                  from: phone,
+                  timestamp: '2024-06-09T08:10:10.000Z',
+                  type: 'text',
+                  text: { body: 'Mensaje viejo del cliente' }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  await cleanup({ phone, eventId })
+  await db.run('DELETE FROM app_config WHERE config_key = ?', [repairConfigKey]).catch(() => undefined)
+
+  try {
+    await db.run(`
+      INSERT INTO whatsapp_api_webhook_events (
+        id, event_id, event_type, api_version, signature_valid, processed_status,
+        raw_payload_json, ycloud_create_time, created_at, updated_at
+      ) VALUES (?, ?, 'whatsapp.smb.history', 'v2', NULL, 'processed', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      eventId,
+      eventId,
+      JSON.stringify(payload),
+      messageAt
+    ])
+
+    for (const [messageId, text] of [
+      [outboundMessageId, 'Mensaje viejo del negocio'],
+      [inboundMessageId, 'Mensaje viejo del cliente']
+    ]) {
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, origin, ycloud_message_id, phone, from_phone, to_phone,
+          business_phone, direction, message_type, message_text, message_timestamp,
+          raw_payload_json, created_at, updated_at
+        ) VALUES (?, 'ycloud', 'whatsapp.smb.history', ?, ?, ?, NULL, NULL, 'inbound', 'text', ?, ?, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        `wrong_${messageId}`,
+        messageId,
+        businessPhone,
+        businessPhone,
+        text,
+        messageAt
+      ])
+    }
+
+    const result = await repairStoredYCloudHistoryMessageDirections({ force: true })
+    assert.ok(result.events >= 1)
+
+    const rows = await db.all(`
+      SELECT ycloud_message_id, direction, phone, from_phone, to_phone, business_phone
+      FROM whatsapp_api_messages
+      WHERE ycloud_message_id IN (?, ?)
+      ORDER BY message_timestamp ASC
+    `, [outboundMessageId, inboundMessageId])
+
+    assert.equal(rows.length, 2)
+    assert.equal(rows[0].ycloud_message_id, outboundMessageId)
+    assert.equal(rows[0].direction, 'outbound')
+    assert.equal(rows[0].phone, phone)
+    assert.equal(rows[0].from_phone, businessPhone)
+    assert.equal(rows[0].to_phone, phone)
+    assert.equal(rows[0].business_phone, businessPhone)
+    assert.equal(rows[1].ycloud_message_id, inboundMessageId)
+    assert.equal(rows[1].direction, 'inbound')
+    assert.equal(rows[1].phone, phone)
+    assert.equal(rows[1].from_phone, phone)
+    assert.equal(rows[1].to_phone, businessPhone)
+    assert.equal(rows[1].business_phone, businessPhone)
+  } finally {
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [repairConfigKey]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_attribution WHERE ycloud_message_id IN (?, ?) OR phone = ?', [outboundMessageId, inboundMessageId, phone]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id IN (?, ?) OR phone = ?', [outboundMessageId, inboundMessageId, phone]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [phone]).catch(() => undefined)
