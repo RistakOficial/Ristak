@@ -314,6 +314,7 @@ export const WeekdaysPicker: React.FC<{ values: string[]; onChange: (values: str
 )
 
 export const DURATION_UNIT_OPTIONS = [
+  { value: 'seconds', label: 'Segundos' },
   { value: 'minutes', label: 'Minutos' },
   { value: 'hours', label: 'Horas' },
   { value: 'days', label: 'Días' },
@@ -324,25 +325,56 @@ export const DurationInput: React.FC<{
   amount: number
   unit: string
   onChange: (amount: number, unit: string) => void
-}> = ({ amount, unit, onChange }) => (
-  <div className={styles.configRow}>
-    <TextInput
-      type="number"
-      min={0}
-      value={Number.isFinite(amount) ? amount : 0}
-      className={styles.configRowGrow}
-      onChange={(event) => onChange(Number(event.target.value), unit)}
-    />
-    <div className={styles.configRowGrow}>
-      <CustomSelect
-        options={DURATION_UNIT_OPTIONS}
-        value={unit || 'hours'}
-        onValueChange={(next) => onChange(amount, next)}
-        aria-label="Unidad de tiempo"
+}> = ({ amount, unit, onChange }) => {
+  const formatAmount = (value: number) => (Number.isFinite(value) && value > 0 ? String(value) : '')
+  const [draftAmount, setDraftAmount] = useState(formatAmount(amount))
+  const [editing, setEditing] = useState(false)
+
+  useEffect(() => {
+    if (!editing) {
+      setDraftAmount(formatAmount(amount))
+    }
+  }, [amount, editing])
+
+  const currentAmount = formatAmount(amount)
+  const commitAmount = (raw: string) => {
+    const parsed = Number(raw)
+    onChange(raw === '' || !Number.isFinite(parsed) ? 0 : parsed, unit)
+  }
+
+  return (
+    <div className={styles.configRow}>
+      <TextInput
+        type="number"
+        min={0}
+        value={editing ? draftAmount : currentAmount}
+        placeholder="0"
+        className={styles.configRowGrow}
+        onFocus={() => {
+          setEditing(true)
+          setDraftAmount(currentAmount)
+        }}
+        onChange={(event) => {
+          const next = event.target.value
+          setDraftAmount(next)
+          commitAmount(next)
+        }}
+        onBlur={() => {
+          setEditing(false)
+          setDraftAmount(formatAmount(amount))
+        }}
       />
+      <div className={styles.configRowGrow}>
+        <CustomSelect
+          options={DURATION_UNIT_OPTIONS}
+          value={unit || 'hours'}
+          onValueChange={(next) => onChange(amount, next)}
+          aria-label="Unidad de tiempo"
+        />
+      </div>
     </div>
-  </div>
-)
+  )
+}
 
 /** Sub-bloque visual dentro de un configurador (timeout, ventana horaria…) */
 export const ConfigSection: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (

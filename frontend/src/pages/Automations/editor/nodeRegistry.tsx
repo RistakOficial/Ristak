@@ -383,6 +383,7 @@ export const channelLabel = (value: string): string =>
   CHANNEL_OPTIONS_WITH_ANY.find((option) => option.value === value)?.label || value
 
 const DURATION_LABELS: Record<string, [string, string]> = {
+  seconds: ['segundo', 'segundos'],
   minutes: ['minuto', 'minutos'],
   hours: ['hora', 'horas'],
   days: ['día', 'días'],

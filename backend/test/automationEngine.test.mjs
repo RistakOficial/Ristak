@@ -243,6 +243,94 @@ test('filtersMatch: conector O entre filtros', () => {
   assert.equal(filtersMatch(andFilters, ctx), false)
 })
 
+test('logic-wait por duración respeta segundos', async () => {
+  const suffix = randomUUID()
+  const contactId = `rstk_contact_wait_seconds_${suffix}`
+  const automationId = `automation_wait_seconds_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-message',
+              type: 'trigger-customer-replied',
+              config: { channel: 'any' }
+            }
+          ]
+        }
+      },
+      {
+        id: 'wait-seconds',
+        type: 'logic-wait',
+        label: 'Esperar',
+        config: {
+          mode: 'duration',
+          amount: 10,
+          unit: 'seconds'
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-wait', sourceNodeId: 'start', targetNodeId: 'wait-seconds' },
+      { id: 'edge-wait-done', sourceNodeId: 'wait-seconds', sourceHandle: 'out', targetNodeId: 'done' }
+    ],
+    settings: {}
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `wait-seconds-${suffix}@example.com`,
+        'Contacto Segundos',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test espera segundos', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    const before = Date.now()
+    await handleAutomationEvent('message-received', {
+      contactId,
+      messageText: 'hola',
+      channel: 'whatsapp'
+    })
+    const after = Date.now()
+
+    const enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    const resumeAt = new Date(enrollment.resume_at).getTime()
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.wait_kind, 'duration')
+    assert.equal(enrollment.current_node_id, 'wait-seconds')
+    assert.ok(resumeAt >= before + 10_000)
+    assert.ok(resumeAt <= after + 11_000)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
 test('logic-wait por clic de disparo reanuda cuando llega el trigger link configurado', async () => {
   const suffix = randomUUID()
   const contactId = `rstk_contact_trigger_wait_${suffix}`
