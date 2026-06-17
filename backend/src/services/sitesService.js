@@ -855,7 +855,32 @@ function getImportedAssetPublicUrl(siteId, assetPath) {
   return `/api/sites/public/imported-assets/${encodeURIComponent(siteId)}/${encodedPath}`
 }
 
-function rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths) {
+function buildImportedPageIdByAssetPath(pages = []) {
+  const entries = (Array.isArray(pages) ? pages : [])
+    .map(page => [
+      normalizeImportedAssetPath(page?.importedAssetPath || page?.imported_asset_path || page?.filename || page?.assetPath),
+      cleanString(page?.id || page?.pageId || page?.page_id)
+    ])
+    .filter(([assetPath, pageId]) => assetPath && pageId)
+
+  return new Map(entries)
+}
+
+function buildImportedPageQueryHref(pageId = '', search = '', hash = '') {
+  const cleanPageId = cleanString(pageId)
+  if (!cleanPageId) return hash || '#'
+
+  const params = new URLSearchParams()
+  params.set('page', cleanPageId)
+  const extraParams = new URLSearchParams(String(search || '').replace(/^\?/, ''))
+  extraParams.forEach((value, key) => {
+    if (key !== 'page') params.append(key, value)
+  })
+
+  return `?${params.toString()}${hash || ''}`
+}
+
+function rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths, options = {}) {
   const raw = String(value || '')
   if (isImportedExternalReference(raw)) return raw
 
@@ -874,6 +899,11 @@ function rewriteImportedReferenceValue(value, currentAssetPath, siteId, availabl
   }
 
   if (!availablePaths.has(assetPath)) return raw
+
+  const pageIdByAssetPath = options?.pageIdByAssetPath instanceof Map ? options.pageIdByAssetPath : null
+  if (options?.preferPageHref && pageIdByAssetPath?.has(assetPath)) {
+    return buildImportedPageQueryHref(pageIdByAssetPath.get(assetPath), search, hash)
+  }
 
   return `${getImportedAssetPublicUrl(siteId, assetPath)}${search}${hash}`
 }
@@ -905,18 +935,26 @@ function rewriteImportedCssReferences(css = '', currentAssetPath = '', siteId = 
   return rewritten
 }
 
-function rewriteImportedHtmlReferences(html = '', currentAssetPath = '', siteId = '', availablePaths = new Set()) {
+function rewriteImportedHtmlReferences(html = '', currentAssetPath = '', siteId = '', availablePaths = new Set(), options = {}) {
   let rewritten = String(html || '').replace(/\s(src|href|poster|action|srcset)\s*=\s*(["'])([^"']*)\2/gi, (_match, attr, quote, value) => {
+    const attrName = attr.toLowerCase()
     const nextValue = attr.toLowerCase() === 'srcset'
       ? rewriteImportedSrcsetValue(value, currentAssetPath, siteId, availablePaths)
-      : rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths)
+      : rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths, {
+        ...options,
+        preferPageHref: attrName === 'href'
+      })
     return ` ${attr}=${quote}${nextValue}${quote}`
   })
 
   rewritten = rewritten.replace(/\s(src|href|poster|action|srcset)\s*=\s*([^\s"'=<>`]+)/gi, (_match, attr, value) => {
-    const nextValue = attr.toLowerCase() === 'srcset'
+    const attrName = attr.toLowerCase()
+    const nextValue = attrName === 'srcset'
       ? rewriteImportedSrcsetValue(value, currentAssetPath, siteId, availablePaths)
-      : rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths)
+      : rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths, {
+        ...options,
+        preferPageHref: attrName === 'href'
+      })
     return ` ${attr}="${nextValue}"`
   })
 
@@ -7206,6 +7244,10 @@ async function addImportedEditableImageAsset(siteId, currentImport, input = {}) 
 async function prepareImportedZipContent({ filename, fileBase64, siteId, importId }) {
   const archive = await extractImportedZipArchive(filename, decodeBase64Buffer(fileBase64))
   const availablePaths = new Set(archive.files.map(file => file.assetPath))
+  const pageIdByAssetPath = new Map(archive.htmlPaths.map((assetPath, index) => [
+    normalizeImportedAssetPath(assetPath),
+    index === 0 ? DEFAULT_FUNNEL_PAGE_ID : `page-${index + 1}`
+  ]))
   const usedFormIds = new Set()
   const detectedForms = []
   const assets = []
@@ -7225,7 +7267,7 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
         title: file.assetPath === archive.mainPath ? form.title : `${form.title} - ${file.assetPath}`
       })))
       let pageHtml = assignImportedFormIds(sanitized.html, pageForms)
-      pageHtml = rewriteImportedHtmlReferences(pageHtml, file.assetPath, siteId, availablePaths)
+      pageHtml = rewriteImportedHtmlReferences(pageHtml, file.assetPath, siteId, availablePaths, { pageIdByAssetPath })
       pageHtml = annotateImportedEditableHtml(pageHtml)
 
       for (const item of sanitized.report) {
@@ -7305,6 +7347,7 @@ async function prepareGeneratedImportedPagesContent({ pages = [], siteId, import
   }
 
   const availablePaths = new Set(normalizedPages.map(page => page.filename))
+  const pageIdByAssetPath = buildImportedPageIdByAssetPath(normalizedPages)
   const usedFormIds = new Set()
   const detectedForms = []
   const assets = []
@@ -7321,7 +7364,7 @@ async function prepareGeneratedImportedPagesContent({ pages = [], siteId, import
     })))
 
     let pageHtml = assignImportedFormIds(sanitized.html, pageForms)
-    pageHtml = rewriteImportedHtmlReferences(pageHtml, page.filename, siteId, availablePaths)
+    pageHtml = rewriteImportedHtmlReferences(pageHtml, page.filename, siteId, availablePaths, { pageIdByAssetPath })
     pageHtml = annotateImportedEditableHtml(pageHtml)
 
     for (const item of sanitized.report) {
@@ -8066,7 +8109,9 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
     ORDER BY asset_path COLLATE NOCASE ASC
   `, [siteId]).catch(() => [])
   const assetByPath = new Map(assetRows.map(row => [normalizeImportedAssetPath(row.asset_path), row]))
+  const availablePaths = new Set(assetRows.map(row => normalizeImportedAssetPath(row.asset_path)).filter(Boolean))
   const pages = normalizeSitePages(currentSite)
+  const pageIdByAssetPath = buildImportedPageIdByAssetPath(pages)
   const pageByAssetPath = new Map()
   const orderedPageAssetPaths = []
 
@@ -8134,7 +8179,9 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
       if (formId) usedFormIds.add(formId)
     })
     detectedForms.push(...pageForms)
-    const htmlSanitized = annotateImportedEditableHtml(assignImportedFormIds(sanitized.html, pageForms))
+    let htmlSanitized = assignImportedFormIds(sanitized.html, pageForms)
+    htmlSanitized = rewriteImportedHtmlReferences(htmlSanitized, assetPath, siteId, availablePaths, { pageIdByAssetPath })
+    htmlSanitized = annotateImportedEditableHtml(htmlSanitized)
     sanitizedHtmlByPath.set(assetPath, htmlSanitized)
     securityReport.push(...sanitized.report.map(item => (
       assetPath ? `${pageByAssetPath.get(assetPath)?.title || assetPath}: ${item}` : item
