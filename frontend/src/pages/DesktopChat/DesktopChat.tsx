@@ -3536,30 +3536,24 @@ export const DesktopChat: React.FC = () => {
                 </div>
               </div>
 
-              <div className={styles.infoModeTabs} role="tablist" aria-label="Panel del contacto">
-                <button
-                  type="button"
-                  className={infoPanelView === 'summary' ? styles.infoModeTabActive : ''}
-                  onClick={() => setInfoPanelView('summary')}
-                >
-                  Resumen
-                </button>
-                <button
-                  type="button"
-                  className={infoPanelView === 'journey' ? styles.infoModeTabActive : ''}
-                  onClick={() => setInfoPanelView('journey')}
-                >
-                  Viaje del cliente
-                </button>
-              </div>
-
               {infoPanelView === 'summary' ? (
                 <>
                   <div className={styles.infoSection}>
-                    <h3>Resumen</h3>
+                    <div className={styles.summaryHeaderRow}>
+                      <h3>Resumen</h3>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className={styles.summaryJourneyButton}
+                        onClick={() => setInfoPanelView('journey')}
+                      >
+                        Viaje del cliente
+                      </Button>
+                    </div>
                     <div className={styles.metricsGrid}>
-                      <span><strong>{formatCurrencyNoDecimals(contactPayments.filter(isSuccessfulPayment).reduce((sum, payment) => sum + payment.amount, 0))}</strong><small>Comprado</small></span>
-                      <span><strong>{contactAppointments.filter(isActiveAppointment).length}</strong><small>Citas activas</small></span>
+                      <span><strong>{formatCurrencyNoDecimals(contactPayments.filter(isSuccessfulPayment).reduce((sum, payment) => sum + payment.amount, 0))}</strong><small>Total Pagado</small></span>
+                      <span><strong>{contactAppointments.length}</strong><small>Citas totales</small></span>
                       <span><strong>{Number(activeContact.messageCount || messages.length)}</strong><small>Mensajes</small></span>
                     </div>
                   </div>
@@ -3625,6 +3619,18 @@ export const DesktopChat: React.FC = () => {
                 </>
               ) : (
                 <div className={`${styles.infoSection} ${styles.contactJourneySection}`} data-desktop-chat-contact-journey>
+                  <div className={styles.journeyPanelHeader}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className={styles.journeyBackButton}
+                      onClick={() => setInfoPanelView('summary')}
+                      aria-label="Volver al resumen"
+                    >
+                      <ChevronLeft size={16} aria-hidden="true" />
+                    </Button>
+                  </div>
                   <ContactJourney contactId={activeContact.id} />
                 </div>
               )}
@@ -3645,8 +3651,8 @@ export const DesktopChat: React.FC = () => {
                 <div><span>Origen</span><strong>Canal, campaña y primer contacto</strong></div>
               </div>
               <div className={styles.emptyInfoMetrics}>
-                <span><strong>$0</strong><small>comprado</small></span>
-                <span><strong>0</strong><small>citas</small></span>
+                <span><strong>$0</strong><small>Total Pagado</small></span>
+                <span><strong>0</strong><small>Citas totales</small></span>
                 <span><strong>0</strong><small>mensajes</small></span>
               </div>
             </div>

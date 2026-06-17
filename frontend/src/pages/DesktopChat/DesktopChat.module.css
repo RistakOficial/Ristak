@@ -1588,37 +1588,35 @@
   color: var(--color-text-primary);
 }
 
-.infoModeTabs {
-  display: flex;
-  gap: 6px;
-  padding: 12px 16px 0;
-}
-
-.infoModeTabs button {
-  min-height: 30px;
-  flex: 1 1 0;
-  border: 1px solid var(--chat-border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.infoModeTabs button:hover,
-.infoModeTabActive {
-  border-color: var(--chat-border-strong);
-  background: var(--chat-soft);
-  color: var(--color-text-primary);
-}
-
 .contactJourneySection {
   --text-primary: var(--color-text-primary);
   --text-secondary: var(--color-text-secondary);
   --text-tertiary: var(--color-text-tertiary);
   --color-border: var(--chat-border);
   border-bottom: 0;
+}
+
+.summaryHeaderRow,
+.journeyPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.summaryJourneyButton[data-btn] {
+  flex: 0 0 auto;
+  height: 30px;
+  padding-inline: 10px;
+}
+
+.journeyPanelHeader {
+  margin-bottom: 10px;
+}
+
+.journeyBackButton[data-btn] {
+  width: 32px;
+  padding: 0;
 }
 
 .metricsGrid {
