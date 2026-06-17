@@ -52,12 +52,14 @@ const DEFAULT_MODEL = process.env.OPENAI_AGENT_MODEL || 'gpt-5.4-nano'
 const DEFAULT_TRANSCRIPTION_MODEL = process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe'
 const OPENAI_CREDENTIAL_RECONNECT_CODE = 'OPENAI_CREDENTIAL_RECONNECT_REQUIRED'
 const OPENAI_CREDENTIAL_RECONNECT_MESSAGE = 'OpenAI necesita reconectarse. Ve a Configuración > Agente AI y pega nuevamente tu API token.'
-const REQUEST_TIMEOUT_MS = 45000
-const BUSINESS_CONTEXT_LIMIT = 12000
+const REQUEST_TIMEOUT_MS = readBoundedNumberEnv('OPENAI_AGENT_REQUEST_TIMEOUT_MS', 45_000, 10_000, 180_000)
+const BUSINESS_PROFILE_EXTRACTION_TIMEOUT_MS = readBoundedNumberEnv('OPENAI_BUSINESS_PROFILE_EXTRACTION_TIMEOUT_MS', 90_000, 15_000, 180_000)
+const BUSINESS_CONTEXT_LIMIT = 50_000
 const BUSINESS_PROFILE_CONTEXT_MIN_LENGTH = 40
 const BUSINESS_PROFILE_TEXT_LIMIT = 1200
 const BUSINESS_PROFILE_SUMMARY_LIMIT = 2400
-const BUSINESS_PROFILE_SOURCE_LIMIT = 12000
+const BUSINESS_PROFILE_SOURCE_LIMIT = 50_000
+const BUSINESS_PROFILE_EXTRACTION_CONTEXT_LIMIT = 16_000
 const VIEW_CONTEXT_LIMIT = 6000
 const MESSAGE_HISTORY_LIMIT = 12
 const MAX_MODEL_QUERIES = 6
@@ -530,15 +532,23 @@ function getAudioExtension(mimeType = '') {
   return 'webm'
 }
 
-async function fetchWithTimeout(url, options = {}) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
     return await fetch(url, {
       ...options,
       signal: controller.signal
     })
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error('OpenAI tardó demasiado en responder. Se usará una preparación segura del contexto para no detener el guardado.')
+      timeoutError.name = 'OpenAIRequestTimeoutError'
+      timeoutError.code = 'OPENAI_REQUEST_TIMEOUT'
+      throw timeoutError
+    }
+    throw error
   } finally {
     clearTimeout(timeout)
   }
@@ -12436,6 +12446,7 @@ async function callOpenAIResponseRaw(apiKey, {
   temperature = null,
   topP = null,
   reasoning = null,
+  timeoutMs = REQUEST_TIMEOUT_MS,
   retryWithoutResponseTuning = true
 }) {
   const body = {
@@ -12479,7 +12490,7 @@ async function callOpenAIResponseRaw(apiKey, {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(body)
-  })
+  }, timeoutMs)
 
   let data = null
 
@@ -12506,6 +12517,7 @@ async function callOpenAIResponseRaw(apiKey, {
         temperature: null,
         topP: null,
         reasoning: null,
+        timeoutMs,
         retryWithoutResponseTuning: false
       })
     }
@@ -12525,7 +12537,8 @@ async function callOpenAIResponse(apiKey, {
   include = [],
   temperature = null,
   topP = null,
-  reasoning = null
+  reasoning = null,
+  timeoutMs = REQUEST_TIMEOUT_MS
 }) {
   const data = await callOpenAIResponseRaw(apiKey, {
     model,
@@ -12536,7 +12549,8 @@ async function callOpenAIResponse(apiKey, {
     include,
     temperature,
     topP,
-    reasoning
+    reasoning,
+    timeoutMs
   })
 
   const text = extractResponseText(data)
@@ -15690,6 +15704,114 @@ function getBusinessContextHash(value = '') {
     .digest('hex')
 }
 
+function normalizeBusinessContextWhitespace(value = '') {
+  return String(value || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function buildBusinessProfileFallbackDescription(businessContext = '', maxLength = BUSINESS_PROFILE_SUMMARY_LIMIT) {
+  const clean = normalizeBusinessContextWhitespace(businessContext)
+  if (clean.length <= maxLength) return cleanBusinessProfileText(clean, maxLength)
+
+  const headLength = Math.max(400, Math.floor(maxLength * 0.46))
+  const tailLength = Math.max(300, Math.floor(maxLength * 0.26))
+  const middleLength = Math.max(300, maxLength - headLength - tailLength - 20)
+  const middleStart = Math.max(headLength, Math.floor((clean.length - middleLength) / 2))
+
+  return cleanBusinessProfileText([
+    clean.slice(0, headLength).trim(),
+    clean.slice(middleStart, middleStart + middleLength).trim(),
+    clean.slice(Math.max(0, clean.length - tailLength)).trim()
+  ].filter(Boolean).join(' … '), maxLength)
+}
+
+const BUSINESS_PROFILE_PRIORITY_PATTERN = /\b(agenda|agendar|atiende|atencion|atención|cita|citas|cliente|clientes|condicion|condición|condiciones|costo|costos|diferenciador|diferenciadores|direccion|dirección|domingo|factura|facturacion|facturación|garantiz|horario|horarios|ideal|incluye|lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|mxn|negocio|paquete|paquetes|pago|pagos|precio|precios|producto|productos|promesa|restriccion|restricción|servicio|servicios|tarjeta|ticket|transferencia|ubicacion|ubicación|vende|venta|ventas|whatsapp)\b/gi
+
+function buildBusinessProfilePrioritySnippets(businessContext = '', maxLength = 2400) {
+  const clean = normalizeBusinessContextWhitespace(businessContext)
+  if (!clean || maxLength <= 0) return ''
+
+  const sentences = clean.match(/[^.!?\n]+[.!?]?/g) || [clean]
+  const snippets = []
+  const seen = new Set()
+  let used = 0
+
+  for (const sentence of sentences) {
+    BUSINESS_PROFILE_PRIORITY_PATTERN.lastIndex = 0
+    const match = BUSINESS_PROFILE_PRIORITY_PATTERN.exec(sentence)
+    if (!match) continue
+
+    const start = Math.max(0, match.index - 220)
+    const snippet = cleanBusinessProfileText(sentence.slice(start, start + 760), 760)
+    const fingerprint = snippet.slice(0, 160).toLowerCase()
+    if (!snippet || seen.has(fingerprint)) continue
+
+    const nextUsed = used + snippet.length + (snippets.length ? 3 : 0)
+    if (nextUsed > maxLength) break
+
+    snippets.push(snippet)
+    seen.add(fingerprint)
+    used = nextUsed
+  }
+
+  return snippets.join(' | ')
+}
+
+export function buildBusinessProfileExtractionContext(businessContext = '', maxLength = BUSINESS_PROFILE_EXTRACTION_CONTEXT_LIMIT) {
+  const clean = normalizeBusinessContextWhitespace(businessContext)
+  if (!clean || clean.length <= maxLength) return clean
+
+  const priorityBudget = maxLength < 6000 ? 700 : 2600
+  const prioritySnippets = buildBusinessProfilePrioritySnippets(clean, priorityBudget)
+  const header = [
+    `Contexto completo guardado: ${clean.length} caracteres.`,
+    'Este es un extracto representativo repartido entre inicio, medio y final para evitar abortos por tamaño.',
+    'Extrae sólo datos presentes aquí y no inventes información.'
+  ].join(' ')
+  const segmentCount = maxLength < 6000 ? 2 : 4
+  const overhead = header.length + prioritySnippets.length + 500
+  const usableBudget = Math.max(1200, maxLength - overhead)
+  const minEdgeLength = maxLength < 6000 ? 420 : 1600
+  const minMiddleLength = maxLength < 6000 ? 260 : 600
+  const edgeLength = Math.max(minEdgeLength, Math.floor(usableBudget * 0.28))
+  const middleLength = Math.max(minMiddleLength, Math.floor((usableBudget - edgeLength * 2) / segmentCount))
+  const middleStart = edgeLength
+  const middleEnd = Math.max(middleStart, clean.length - edgeLength)
+  const middleRange = Math.max(1, middleEnd - middleStart)
+  const segments = [
+    ['Inicio', clean.slice(0, edgeLength).trim()]
+  ]
+
+  for (let index = 0; index < segmentCount; index += 1) {
+    const ratio = (index + 1) / (segmentCount + 1)
+    const start = Math.min(
+      Math.max(middleStart, Math.floor(middleStart + middleRange * ratio - middleLength / 2)),
+      Math.max(middleStart, middleEnd - middleLength)
+    )
+    const text = clean.slice(start, start + middleLength).trim()
+    if (text) {
+      segments.push([`Extracto medio ${index + 1}`, text])
+    }
+  }
+
+  segments.push(['Final', clean.slice(Math.max(0, clean.length - edgeLength)).trim()])
+
+  const compacted = [
+    header,
+    prioritySnippets ? `## Datos prioritarios detectados\n${prioritySnippets}` : '',
+    ...segments
+      .filter(([, text]) => Boolean(text))
+      .map(([label, text]) => `## ${label}\n${text}`)
+  ].filter(Boolean).join('\n\n')
+
+  return compacted.length <= maxLength
+    ? compacted
+    : `${compacted.slice(0, Math.max(0, maxLength - 1)).trim()}…`
+}
+
 function parseStoredJson(value, fallback) {
   if (value === null || value === undefined || value === '') return fallback
   if (typeof value === 'object') return value
@@ -15882,7 +16004,7 @@ function buildBusinessProfileFallback(businessContext = '') {
     industry: '',
     businessNature: '',
     businessType: 'unknown',
-    description: cleanBusinessProfileText(businessContext, BUSINESS_PROFILE_SUMMARY_LIMIT),
+    description: buildBusinessProfileFallbackDescription(businessContext),
     offerings: [],
     locations: [],
     hours: {},
@@ -16381,31 +16503,41 @@ function buildBusinessProfileExtractionInstructions() {
   ].join('\n')
 }
 
-async function extractBusinessProfileWithAI({ apiKey, model, businessContext, previousSnapshot } = {}) {
+async function extractBusinessProfileWithAI({ apiKey, model, businessContext, sourceBusinessContext = businessContext, previousSnapshot } = {}) {
+  const previousSourceContext = previousSnapshot?.sourceContext
+    ? buildBusinessProfileExtractionContext(previousSnapshot.sourceContext, 6000)
+    : ''
   const { text } = await callOpenAIResponse(apiKey, {
     model: normalizeAIAgentModel(model),
     maxOutputTokens: 3200,
     instructions: buildBusinessProfileExtractionInstructions(),
     input: JSON.stringify({
       contextoNuevoDelNegocio: businessContext,
+      contextoCompletoGuardadoCaracteres: normalizeBusinessContextWhitespace(sourceBusinessContext).length,
       perfilAnterior: previousSnapshot?.configured
         ? {
             status: previousSnapshot.extractionStatus,
-            sourceContext: previousSnapshot.sourceContext,
+            sourceContext: previousSourceContext,
             profile: previousSnapshot.profile
           }
         : null
     }, null, 2),
     temperature: 0.1,
-    topP: 0.9
+    topP: 0.9,
+    timeoutMs: BUSINESS_PROFILE_EXTRACTION_TIMEOUT_MS
   })
 
   return normalizeBusinessProfileExtraction(parseJsonObjectFromAI(text, 'La IA no devolvió JSON válido para el perfil del negocio'), {
-    businessContext
+    businessContext: sourceBusinessContext
   })
 }
 
-async function syncBusinessProfileFromContext({ businessContext, model } = {}) {
+export async function syncBusinessProfileFromContext({
+  businessContext,
+  model,
+  apiKey: providedApiKey,
+  extractor = extractBusinessProfileWithAI
+} = {}) {
   const normalizedContext = cleanConfigText(businessContext, BUSINESS_PROFILE_SOURCE_LIMIT)
   if (!normalizedContext) {
     await db.run('DELETE FROM ai_business_profile').catch(() => undefined)
@@ -16430,10 +16562,14 @@ async function syncBusinessProfileFromContext({ businessContext, model } = {}) {
   }
 
   let apiKey = null
-  try {
-    apiKey = await getOpenAIApiKey()
-  } catch (error) {
-    logger.warn(`[Agente AI] No se pudo leer OpenAI para extraer perfil del negocio: ${error.message}`)
+  if (providedApiKey !== undefined) {
+    apiKey = providedApiKey || null
+  } else {
+    try {
+      apiKey = await getOpenAIApiKey()
+    } catch (error) {
+      logger.warn(`[Agente AI] No se pudo leer OpenAI para extraer perfil del negocio: ${error.message}`)
+    }
   }
 
   if (!apiKey) {
@@ -16447,10 +16583,12 @@ async function syncBusinessProfileFromContext({ businessContext, model } = {}) {
   }
 
   try {
-    const extraction = await extractBusinessProfileWithAI({
+    const extractionContext = buildBusinessProfileExtractionContext(normalizedContext)
+    const extraction = await extractor({
       apiKey,
       model,
-      businessContext: normalizedContext,
+      businessContext: extractionContext,
+      sourceBusinessContext: normalizedContext,
       previousSnapshot
     })
 
@@ -16468,8 +16606,8 @@ async function syncBusinessProfileFromContext({ businessContext, model } = {}) {
       businessContext: normalizedContext,
       sourceHash,
       profile: fallbackProfile,
-      status: 'failed',
-      error: error.message || 'Error extrayendo perfil del negocio'
+      status: 'ready',
+      error: null
     })
   }
 }
@@ -16732,7 +16870,7 @@ export async function saveRefinedAIAgentBusinessContextAnswer({ field, answer } 
     throw new Error('Primero configura una API Key válida de OpenAI')
   }
 
-  const rawAnswer = cleanConfigText(answer, 1800)
+  const rawAnswer = cleanConfigText(answer, BUSINESS_CONTEXT_LIMIT)
 
   if (!rawAnswer) {
     throw new Error('Escribe una respuesta para guardar el contexto')
@@ -16740,27 +16878,35 @@ export async function saveRefinedAIAgentBusinessContextAnswer({ field, answer } 
 
   const config = await getAIAgentConfig()
   const existingText = buildUnifiedBusinessContext(config)
-  const { text } = await callOpenAIResponse(apiKey, {
-    model: normalizeAIAgentModel(config?.model),
-    maxOutputTokens: 650,
-    instructions: [
-      'Eres editor de contexto de negocio para un agente AI dentro de Ristak.',
-      'Tu trabajo es convertir la respuesta cruda del usuario en un solo bloque de contexto claro, profesional y útil para guardar en configuración.',
-      'No inventes datos. No agregues números, ciudades, competidores, promesas ni públicos que el usuario no haya mencionado.',
-      'Puedes ordenar, corregir redacción, quitar muletillas y unir con el texto existente si aporta continuidad.',
-      'Si el dato nuevo contradice el texto existente, prioriza el dato nuevo sin hacer drama.',
-      'Devuelve solamente el texto final para guardar. No uses título, saludo, explicación ni markdown decorativo.',
-      'Mantén el texto en español, directo, natural y fácil de leer para que otro agente pueda usarlo como memoria del negocio.'
-    ].join('\n'),
-    input: JSON.stringify({
-      campo: fieldDefinition.label,
-      objetivoDelCampo: fieldDefinition.instruction,
-      textoExistente: existingText,
-      respuestaNuevaDelUsuario: rawAnswer
-    }, null, 2)
-  })
+  let refinedText = ''
 
-  const refinedText = cleanConfigText(text, 3000)
+  try {
+    const { text } = await callOpenAIResponse(apiKey, {
+      model: normalizeAIAgentModel(config?.model),
+      maxOutputTokens: 900,
+      instructions: [
+        'Eres editor de contexto de negocio para un agente AI dentro de Ristak.',
+        'Tu trabajo es convertir la respuesta cruda del usuario en un solo bloque de contexto claro, profesional y útil para guardar en configuración.',
+        'No inventes datos. No agregues números, ciudades, competidores, promesas ni públicos que el usuario no haya mencionado.',
+        'Puedes ordenar, corregir redacción, quitar muletillas y unir con el texto existente si aporta continuidad.',
+        'Si el dato nuevo contradice el texto existente, prioriza el dato nuevo sin hacer drama.',
+        'Devuelve solamente el texto final para guardar. No uses título, saludo, explicación ni markdown decorativo.',
+        'Mantén el texto en español, directo, natural y fácil de leer para que otro agente pueda usarlo como memoria del negocio.'
+      ].join('\n'),
+      input: JSON.stringify({
+        campo: fieldDefinition.label,
+        objetivoDelCampo: fieldDefinition.instruction,
+        textoExistente: buildBusinessProfileExtractionContext(existingText, 6000),
+        respuestaNuevaDelUsuario: buildBusinessProfileExtractionContext(rawAnswer, 10000)
+      }, null, 2),
+      timeoutMs: BUSINESS_PROFILE_EXTRACTION_TIMEOUT_MS
+    })
+
+    refinedText = cleanConfigText(text, BUSINESS_CONTEXT_LIMIT)
+  } catch (error) {
+    logger.warn(`[Agente AI] No se pudo refinar contexto del negocio; guardando texto seguro: ${error.message}`)
+    refinedText = cleanConfigText(rawAnswer, BUSINESS_CONTEXT_LIMIT)
+  }
 
   if (!refinedText) {
     throw new Error('OpenAI no devolvió texto útil para guardar')
