@@ -543,6 +543,20 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
                 </CustomSelect>
                 <p className={styles.helper}>{selectedAttendedChatAction.description}</p>
               </div>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Cuando logra el objetivo</label>
+                <CustomSelect
+                  value={agent.successAction}
+                  onChange={(event) => onChange({ successAction: event.target.value as ConversationalSuccessAction })}
+                  portal
+                >
+                  {allowedActions.map((action) => (
+                    <option key={action} value={action}>{successActionLabels[action].label}</option>
+                  ))}
+                </CustomSelect>
+                <p className={styles.helper}>{selectedActionInfo.description}</p>
+              </div>
             </div>
           </div>
 
@@ -594,20 +608,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
                   ))}
                 </CustomSelect>
                 <p className={styles.helper}>{selectedObjective.description}</p>
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label}>Al lograrlo</label>
-                <CustomSelect
-                  value={agent.successAction}
-                  onChange={(event) => onChange({ successAction: event.target.value as ConversationalSuccessAction })}
-                  portal
-                >
-                  {allowedActions.map((action) => (
-                    <option key={action} value={action}>{successActionLabels[action].label}</option>
-                  ))}
-                </CustomSelect>
-                <p className={styles.helper}>{selectedActionInfo.description}</p>
               </div>
 
               {agent.successAction === 'book_appointment' && (
