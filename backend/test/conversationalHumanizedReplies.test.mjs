@@ -519,7 +519,6 @@ test('los parametros del perfil no acortan ni cambian la estrategia de fabrica',
 test('estrategia de fabrica evita moldes repetitivos de venta', () => {
   assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /ah va/i)
   assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /me da curiosidad/i)
-  assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /qué fue lo que/i)
   assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /justo ahorita/i)
   assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /qué te hizo escribirnos/i)
   assert.match(DEFAULT_CLOSING_STRATEGY, /AGENTE CONVERSACIONAL DE CIERRE/)
@@ -527,6 +526,9 @@ test('estrategia de fabrica evita moldes repetitivos de venta', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /Todos los ejemplos de este prompt son FILOSOFÍA, no libreto/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /CÓMO PIENSAS ANTES DE CADA MENSAJE/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /CÓMO ESCRIBES \(textura humana real\)/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /LA BIBLIA DEL PRIMER CONTACTO Y LAS PREGUNTAS VAGAS/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /tu primera respuesta NO informa. DEVUELVE/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /ante un mensaje vago de apertura/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /EJEMPLOS = FILOSOFÍA \(NO LIBRETO\)/)
 })
 

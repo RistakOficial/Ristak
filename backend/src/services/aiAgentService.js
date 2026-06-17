@@ -16079,6 +16079,10 @@ export function buildBusinessProfilePromptParameters(profile = {}, extraParamete
     normalizedProfile.differentiators,
     'usa solo casos, pruebas o resultados reales que aparezcan en las tools o en el perfil; si no existen, no inventes'
   )
+  const marketObjections = firstBusinessProfileValue(
+    readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['objections', 'objeciones', 'marketObjections', 'objecionesTipicas', 'truthBehindObjections', 'verdadDetrasObjeciones'], 1000),
+    'detecta la objecion real en conversacion y respondela con datos reales; no inventes razones ni presiones'
+  )
   const regionContext = firstBusinessProfileValue(
     readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['regionalContext', 'contextoRegional', 'cityContext', 'contextoCiudad', 'cultureContext', 'contextoCultural'], 1000),
     location
@@ -16122,6 +16126,7 @@ export function buildBusinessProfilePromptParameters(profile = {}, extraParamete
     A_QUIEN_AYUDAMOS_Y_A_QUIEN_NO: whoWeHelp,
     EL_PROBLEMA_REAL_QUE_RESOLVEMOS: deepProblem,
     CASOS_PRUEBAS_RESULTADOS_REALES: proofContext,
+    OBJECIONES_TIPICAS_DE_ESTE_MERCADO_Y_LA_VERDAD_DETRAS_DE_CADA_UNA: marketObjections,
     CONTEXTO_DE_CIUDAD_REGION_CULTURA_CREENCIAS: regionContext,
     CONTEXTO_DE_CIUDAD_REGION: regionContext,
     COMO_HABLA_NUESTRO_TIPO_DE_CLIENTE: customerLanguage,
