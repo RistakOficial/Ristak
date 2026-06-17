@@ -1362,12 +1362,32 @@
   gap: 14px;
 }
 
-.aiProviderManagerHeader > span {
+.aiProviderManagerActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.aiProviderManagerSummary {
   max-width: 420px;
   color: var(--color-text-tertiary);
   font-size: 12.5px;
   line-height: 1.4;
   text-align: right;
+}
+
+.aiProviderManagerToggle {
+  flex-shrink: 0;
+}
+
+.aiProviderManagerToggleIcon {
+  transition: transform 0.15s ease;
+}
+
+.aiProviderManagerToggleIconOpen {
+  transform: rotate(180deg);
 }
 
 .aiProviderManagerList {
@@ -1463,7 +1483,6 @@
     grid-template-columns: 1fr;
   }
 
-  .aiProviderManagerHeader,
   .aiProviderManagerRow {
     grid-template-columns: 1fr;
   }
@@ -1472,7 +1491,13 @@
     display: grid;
   }
 
-  .aiProviderManagerHeader > span {
+  .aiProviderManagerActions {
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .aiProviderManagerSummary {
     max-width: none;
     text-align: left;
   }

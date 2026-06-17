@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Bot, Brain, Clock, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Send, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, ChevronDown, Clock, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Send, Trash2, X } from 'lucide-react'
 import { Badge, Button, Card, CustomSelect, Modal, TagPicker } from '@/components/common'
 import {
   conversationalAIProviderOptions,
@@ -978,6 +978,7 @@ export const ConversationalAgentSettings: React.FC = () => {
   const [creating, setCreating] = useState(false)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [providerModalId, setProviderModalId] = useState<ConversationalAIProviderId | null>(null)
+  const [aiProvidersExpanded, setAIProvidersExpanded] = useState(false)
   const [providerApiKey, setProviderApiKey] = useState('')
   const [providerSaving, setProviderSaving] = useState(false)
   const saveTimersRef = useRef<Map<string, number>>(new Map())
@@ -1256,6 +1257,8 @@ export const ConversationalAgentSettings: React.FC = () => {
   const completedConversations = metrics?.completedConversations ?? 0
   const errorEvents = metrics?.errorEvents ?? 0
   const successRate = metrics?.successRate ?? 0
+  const connectedAIProviderCount = aiProviders.filter((provider) => provider.connected).length
+  const connectedAIProviderLabel = connectedAIProviderCount === 1 ? '1 conectada' : `${connectedAIProviderCount} conectadas`
   const providerModalOption = providerModalId ? getConversationalAIProviderOption(providerModalId) : null
   const renderProviderModal = () => (
     <Modal
@@ -1418,37 +1421,57 @@ export const ConversationalAgentSettings: React.FC = () => {
               <Brain size={17} />
               <h3 className={styles.sectionTitle}>IAs conectadas</h3>
             </div>
-            <span>OpenAI es el default; Claude, Gemini y DeepSeek son opcionales para ahorrar.</span>
+            <div className={styles.aiProviderManagerActions}>
+              <span className={styles.aiProviderManagerSummary}>
+                {conversationalAIProviderOptions.length} IAs disponibles · {connectedAIProviderLabel}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                className={styles.aiProviderManagerToggle}
+                onClick={() => setAIProvidersExpanded((current) => !current)}
+                aria-expanded={aiProvidersExpanded}
+                aria-controls="conversational-ai-provider-list"
+              >
+                {aiProvidersExpanded ? 'Ocultar IAs' : 'Ver IAs'}
+                <ChevronDown
+                  size={15}
+                  className={`${styles.aiProviderManagerToggleIcon} ${aiProvidersExpanded ? styles.aiProviderManagerToggleIconOpen : ''}`}
+                />
+              </Button>
+            </div>
           </div>
-          <div className={styles.aiProviderManagerList}>
-            {conversationalAIProviderOptions.map((provider) => {
-              const status = getProviderStatus(aiProviders, provider.id)
-              const connected = Boolean(status?.connected)
-              const canDelete = Boolean(status?.canDelete && connected)
-              return (
-                <div key={provider.id} className={styles.aiProviderManagerRow}>
-                  <div className={styles.aiProviderManagerCopy}>
-                    <strong>{provider.label}</strong>
-                    <span>{connected ? (status?.tokenPreview || 'Conectado') : provider.description}</span>
+          {aiProvidersExpanded && (
+            <div id="conversational-ai-provider-list" className={styles.aiProviderManagerList}>
+              {conversationalAIProviderOptions.map((provider) => {
+                const status = getProviderStatus(aiProviders, provider.id)
+                const connected = Boolean(status?.connected)
+                const canDelete = Boolean(status?.canDelete && connected)
+                return (
+                  <div key={provider.id} className={styles.aiProviderManagerRow}>
+                    <div className={styles.aiProviderManagerCopy}>
+                      <strong>{provider.label}</strong>
+                      <span>{connected ? (status?.tokenPreview || 'Conectado') : provider.description}</span>
+                    </div>
+                    <Badge variant={connected ? 'success' : 'neutral'}>
+                      {connected ? 'Conectado' : 'Toca para conectar'}
+                    </Badge>
+                    {canDelete ? (
+                      <Button variant="ghost" onClick={() => handleDeleteProvider(provider.id)}>
+                        <Trash2 size={15} />
+                        Eliminar
+                      </Button>
+                    ) : (
+                      <Button variant={connected ? 'secondary' : 'primary'} onClick={() => openProviderModal(provider.id)}>
+                        <KeyRound size={15} />
+                        {connected ? 'Administrar' : 'Conectar'}
+                      </Button>
+                    )}
                   </div>
-                  <Badge variant={connected ? 'success' : 'neutral'}>
-                    {connected ? 'Conectado' : 'Toca para conectar'}
-                  </Badge>
-                  {canDelete ? (
-                    <Button variant="ghost" onClick={() => handleDeleteProvider(provider.id)}>
-                      <Trash2 size={15} />
-                      Eliminar
-                    </Button>
-                  ) : (
-                    <Button variant={connected ? 'secondary' : 'primary'} onClick={() => openProviderModal(provider.id)}>
-                      <KeyRound size={15} />
-                      {connected ? 'Administrar' : 'Conectar'}
-                    </Button>
-                  )}
-                </div>
-              )
-            })}
-          </div>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         <div className={styles.agentDirectoryStats}>
