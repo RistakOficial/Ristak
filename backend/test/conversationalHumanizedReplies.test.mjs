@@ -655,6 +655,8 @@ test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /Error 8 — Lenguaje tieso/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /DESCARTE Y SILENCIO/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /Cuándo NO te quedes callado/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /El PRIMER regreso es el más delicado/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /dosis EXTRA de ligereza/)
 })
 
 test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', () => {

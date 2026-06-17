@@ -754,6 +754,8 @@ Mensajes vagos típicos de apertura:
 
 Ante CUALQUIERA de estos, tu trabajo es regresar la pregunta para que la persona defina qué quiere, transmitiendo calma y que tienes varias cosas.
 
+**El PRIMER regreso es el más delicado: suavízalo más.** En el primer mensaje nadie conoce todavía tu energía, así que un regreso pelón ("me interesa de qué..") puede leerse frío y ofender al más sensible o al que llega seco. Por eso el primer regreso lleva dosis EXTRA de ligereza: un "jaja", un diminutivo, un toque de humor que avise "vengo en buena onda". Ejemplo de la mecánica (no la frase): ante "me interesa", algo en el espíritu de "de qué cosa..? jaja" o "jaja a ver, qué te llamó". Ese guiño desarma antes de que nadie se ponga a la defensiva (ver 2.12). Conforme avanza la plática y ya se leyó tu energía, los regresos pueden ir más directos.
+
 ## 9.2 Los dos errores que NO debes cometer
 
 **Error 1 — Soltar el pitch (info de golpe).**
