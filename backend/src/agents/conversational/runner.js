@@ -65,6 +65,25 @@ const pendingContactReruns = new Map()
 
 // Palabras internas que jamás deben llegar al cliente final.
 const INTERNAL_TOKEN_PATTERN = /\b(AGENDAR|SALTAR|ready_for_human|ready_to_schedule|ready_to_buy|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link)\b/gi
+const INTERNAL_REASONING_LABEL_PATTERN = /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:lectura|movimiento|textura|energ[ií]a|intenci[oó]n|an[aá]lisis|razonamiento|objetivo|decisi[oó]n|criterio|checklist|paso\s+[a-z0-9]+)\s*[:：-]\s*(?:\*\*)?/i
+const INTERNAL_REASONING_MARKER_PATTERN = /(?:\*\*)?\s*(?:lectura|movimiento|textura|energ[ií]a|intenci[oó]n|an[aá]lisis|razonamiento|criterio|checklist)\s*[:：-]\s*(?:\*\*)?/i
+const VISIBLE_REPLY_PREFIX_PATTERN = /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:respuesta|mensaje)\s+(?:visible|final)\s*[:：-]\s*(?:\*\*)?\s*/i
+const HARD_INTERNAL_META_PHRASES = [
+  /\b(?:tengo|ya tengo|cuento con)\s+(?:el\s+)?contexto\s+del\s+negocio\b/i,
+  /\bel contacto es (?:nuevo|fr[ií]o|tibio|caliente|neutral)\b/i,
+  /\bahora voy a responder\b/i,
+  /\bno voy a\b.*\b(?:soltar|dar|explicar|responder|valores|pitch)\b/i
+]
+const SOFT_INTERNAL_META_PHRASES = [
+  /\bvoy a (?:regresar|devolver|soltar|aplicar|usar|espejear|mantener)\b/i,
+  /\b(?:primer|siguiente) mensaje\b/i,
+  /\b(?:la persona|el contacto) (?:est[aá]|viene|llega|dijo|no dijo|trae|se siente|pregunt[oó]|pidi[oó])\b/i,
+  /\b(?:prospecto|interlocutor|estatus|pitch|pull|push|rebote|desarmad[oa]|sin ser mam[oó]n|registro profesional|registro alto|registro medio|registro bajo)\b/i,
+  /\b(?:espejeo|espejear|espeja)\b/i,
+  /\bsu sequedad\b/i,
+  /\bvalores (?:de golpe|concretos)\b/i,
+  /\bpregunta espec[ií]fica\b/i
+]
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -108,6 +127,7 @@ export function sanitizeAgentReply(text) {
   let reply = String(text || '').trim()
   if (!reply) return ''
   reply = reply.replace(INTERNAL_TOKEN_PATTERN, '').replace(/\[[^\]]*herramienta[^\]]*\]/gi, '')
+  reply = removeInternalReasoningBlocks(reply)
   reply = reply.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
   if ((reply.startsWith('"') && reply.endsWith('"')) || (reply.startsWith('“') && reply.endsWith('”'))) {
     reply = reply.slice(1, -1).trim()
@@ -116,6 +136,37 @@ export function sanitizeAgentReply(text) {
     reply = `${reply.slice(0, MAX_REPLY_CHARS - 1).trim()}…`
   }
   return reply
+}
+
+function isInternalReasoningBlock(value) {
+  const block = String(value || '').trim()
+  if (!block) return false
+  if (INTERNAL_REASONING_LABEL_PATTERN.test(block) || INTERNAL_REASONING_MARKER_PATTERN.test(block)) return true
+  if (HARD_INTERNAL_META_PHRASES.some((pattern) => pattern.test(block))) return true
+  let score = 0
+  for (const pattern of SOFT_INTERNAL_META_PHRASES) {
+    if (pattern.test(block)) score += 1
+  }
+  return score >= 2
+}
+
+function cleanVisibleReplyBlock(value) {
+  const block = String(value || '').trim()
+  if (!block) return ''
+  const visibleMatch = block.match(VISIBLE_REPLY_PREFIX_PATTERN)
+  if (visibleMatch) return block.slice(visibleMatch[0].length).trim()
+  if (isInternalReasoningBlock(block)) return ''
+  return block
+}
+
+function removeInternalReasoningBlocks(text) {
+  const blocks = String(text || '')
+    .replace(/\r\n/g, '\n')
+    .split(/\n{1,}/)
+    .map((block) => cleanVisibleReplyBlock(block))
+    .filter(Boolean)
+
+  return blocks.join('\n').trim()
 }
 
 function cleanMessageText(row) {

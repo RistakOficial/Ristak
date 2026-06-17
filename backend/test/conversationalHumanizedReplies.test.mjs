@@ -14,6 +14,7 @@ import {
 import {
   buildReplyPartDelaySchedule,
   buildPendingReplyContextMessage,
+  sanitizeAgentReply,
   sendReplyParts,
   shouldRecoverPendingInbound,
   splitReplyIntoParts
@@ -142,6 +143,44 @@ test('crea calendario de pausas dejando el primer globo inmediato', () => {
   })
 
   assert.deepEqual(schedule, [0, 2000, 2000])
+})
+
+test('sanitiza razonamiento interno antes de enviar al contacto', () => {
+  const raw = [
+    'Vale. Tengo el contexto del negocio. El contacto es nuevo. Ahora voy a responder.',
+    '',
+    '**Lectura:** llega corto, directo, con una necesidad puntual (costos). **Movimiento:** no voy a soltar los valores de golpe.',
+    '',
+    'Voy a regresar la pregunta para que se especifique qué es lo que le interesa exactamente, transmitiendo que tengo varias cosas. Desarmado, sin ser mamón.',
+    '',
+    'Corto. Uno o dos valores concretos nada más si pregunta específico después. Espejeo su sequedad pero desde arriba.',
+    '',
+    'qué cosa.. digo, tengo varias cosas por acá, cuál fue lo que te llamó?'
+  ].join('\n')
+
+  assert.equal(
+    sanitizeAgentReply(raw),
+    'qué cosa.. digo, tengo varias cosas por acá, cuál fue lo que te llamó?'
+  )
+})
+
+test('bloquea una respuesta que solo contiene razonamiento interno', () => {
+  const raw = [
+    '**Lectura:** pregunta precio, energía seca.',
+    'Voy a regresar la pregunta y no voy a soltar valores de golpe.',
+    'Primer mensaje desarmado, registro profesional.'
+  ].join('\n')
+
+  assert.equal(sanitizeAgentReply(raw), '')
+})
+
+test('conserva una respuesta visible etiquetada tras razonamiento interno', () => {
+  const raw = [
+    '**Lectura:** trae una duda puntual.',
+    '**Respuesta visible:** claro, depende de qué necesitas revisar primero'
+  ].join('\n')
+
+  assert.equal(sanitizeAgentReply(raw), 'claro, depende de qué necesitas revisar primero')
 })
 
 test('envio real espera antes de cada globo posterior', async () => {

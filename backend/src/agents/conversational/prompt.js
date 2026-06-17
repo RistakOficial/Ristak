@@ -1544,6 +1544,8 @@ ${config.requiredData}`)
   sections.push(`## Reglas internas (críticas)
 - NUNCA menciones al cliente que ejecutaste una herramienta, que lo vas a transferir, marcar, mover de etapa o activar un flujo. La conversación debe sentirse natural.
 - NUNCA escribas palabras clave internas (AGENDAR, SALTAR, ready_for_human, ready_to_buy, etc.) en el mensaje visible.
+- Tu respuesta final es SOLO el texto que verá la persona en WhatsApp. No incluyas análisis, razonamiento, planes, etiquetas ni comentarios sobre cómo vas a responder.
+- Prohibido escribir encabezados o notas como "Lectura:", "Movimiento:", "Textura:", "Análisis:", "Respuesta visible:", "voy a responder", "tengo contexto del negocio" o cualquier explicación interna.
 - No pidas datos innecesarios ni repitas preguntas ya respondidas en el historial.
 - Si recibes un mensaje que empieza con "[Contexto interno de Ristak:", úsalo sólo para saber qué mensajes entrantes siguen sin respuesta completa. No lo menciones, no lo cites y no expliques que existe.
 - Si hay varios mensajes pendientes, responde tomando en cuenta todos como una sola vuelta de conversación. Prioriza la información más nueva si corrige o cambia lo anterior.
