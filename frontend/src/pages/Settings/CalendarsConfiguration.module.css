@@ -871,7 +871,7 @@
   gap: 12px;
   align-items: start;
   padding-bottom: 18px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid var(--border);
 }
 
 .editorSection:last-child {
@@ -901,10 +901,11 @@
 
 .editorFields {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
+  row-gap: 12px;
   min-width: 0;
-  max-width: 760px;
+  max-width: 940px;
 }
 
 .editorGrid {
@@ -952,11 +953,11 @@
 }
 
 .editorFieldWide {
-  grid-column: auto;
+  grid-column: 1 / -1;
 }
 
 .editorFieldLarge {
-  grid-column: auto;
+  grid-column: 1 / -1;
 }
 
 .inlineFieldGroup {

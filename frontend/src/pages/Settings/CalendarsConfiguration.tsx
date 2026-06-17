@@ -1280,21 +1280,11 @@ export const CalendarsConfiguration: React.FC = () => {
 
         {renderCalendarTemplateField({
           id: 'new-calendar-event-title',
-          label: 'Nombre de la cita en Google',
+          label: 'Título de la cita',
           value: newCalendar.eventTitle || '',
           onChange: (nextValue) => setNewCalendar({ ...newCalendar, eventTitle: nextValue }),
           placeholder: 'Ej. Cita con {{contact.full_name}}',
           help: 'Este texto será el título de cada cita nueva.'
-        })}
-
-        {renderCalendarTemplateField({
-          id: 'new-calendar-notes',
-          label: 'Notas para Google Calendar',
-          value: newCalendar.notes || '',
-          onChange: (nextValue) => setNewCalendar({ ...newCalendar, notes: nextValue }),
-          placeholder: 'Ej. Cliente: {{contact.full_name}}\nTeléfono: {{contact.phone}}\nNotas: {{appointment.notes}}',
-          help: 'Esto se manda como descripción del evento cuando el calendario está ligado a Google.',
-          multiline: true
         })}
 
         <div className={pageStyles.createTimingGrid}>
@@ -1325,6 +1315,16 @@ export const CalendarsConfiguration: React.FC = () => {
             (nextColor) => setNewCalendar({ ...newCalendar, eventColor: nextColor })
           )}
         </div>
+
+        {renderCalendarTemplateField({
+          id: 'new-calendar-notes',
+          label: 'Notas',
+          value: newCalendar.notes || '',
+          onChange: (nextValue) => setNewCalendar({ ...newCalendar, notes: nextValue }),
+          placeholder: 'Ej. Cliente: {{contact.full_name}}\nTeléfono: {{contact.phone}}\nNotas: {{appointment.notes}}',
+          help: 'Estas notas se guardan como descripción de la cita cuando el calendario esté conectado.',
+          multiline: true
+        })}
 
         <div className={pageStyles.createActions}>
           <Button onClick={handleCreateCalendar} disabled={creatingCalendar}>
@@ -1601,21 +1601,11 @@ export const CalendarsConfiguration: React.FC = () => {
 
               {renderCalendarTemplateField({
                 id: `calendar-event-title-${calendar.id}`,
-                label: 'Nombre de la cita en Google',
+                label: 'Título de la cita',
                 value: selectedCalendar.eventTitle || '',
                 onChange: (nextValue) => updateSelectedCalendar({ eventTitle: nextValue }),
                 placeholder: 'Ej. Cita con {{contact.full_name}}',
                 help: 'Este texto será el título de cada cita nueva. Puedes meter parámetros.'
-              })}
-
-              {renderCalendarTemplateField({
-                id: `calendar-notes-${calendar.id}`,
-                label: 'Notas para Google Calendar',
-                value: selectedCalendar.notes || '',
-                onChange: (nextValue) => updateSelectedCalendar({ notes: nextValue }),
-                placeholder: 'Ej. Cliente: {{contact.full_name}}\nTeléfono: {{contact.phone}}\nNotas: {{appointment.notes}}',
-                help: 'Esto se manda como descripción del evento cuando el calendario está ligado a Google.',
-                multiline: true
               })}
 
               <div className={pageStyles.editorField}>
@@ -1867,10 +1857,30 @@ export const CalendarsConfiguration: React.FC = () => {
             </div>
           </section>
 
+          <section className={pageStyles.editorSection}>
+            <div className={pageStyles.editorSectionHeader}>
+              <strong>Notas</strong>
+              <span>Texto interno que acompaña cada cita y puede usar parámetros.</span>
+            </div>
+            <div className={pageStyles.editorFields}>
+              <div className={pageStyles.editorFieldWide}>
+                {renderCalendarTemplateField({
+                  id: `calendar-notes-${calendar.id}`,
+                  label: 'Notas',
+                  value: selectedCalendar.notes || '',
+                  onChange: (nextValue) => updateSelectedCalendar({ notes: nextValue }),
+                  placeholder: 'Ej. Cliente: {{contact.full_name}}\nTeléfono: {{contact.phone}}\nNotas: {{appointment.notes}}',
+                  help: 'Estas notas se guardan como descripción de la cita cuando el calendario esté conectado.',
+                  multiline: true
+                })}
+              </div>
+            </div>
+          </section>
+
           {showGoogleSyncSettings && (
             <section className={pageStyles.editorSection}>
               <div className={pageStyles.editorSectionHeader}>
-                <strong>Google Calendar</strong>
+                <strong>Conexión bidireccional</strong>
                 <span>Elige dónde se guardan y actualizan las citas de este calendario.</span>
               </div>
               <div className={pageStyles.editorFields}>
