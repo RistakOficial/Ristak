@@ -258,7 +258,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-pop);
-  z-index: 200;
+  z-index: var(--z-index-popover);
   overflow-y: auto;
   max-height: 210px;
   min-width: 110px;

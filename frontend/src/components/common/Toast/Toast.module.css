@@ -110,7 +110,8 @@
 }
 
 .success {
-  background: var(--pos-soft);
+  background-color: var(--surface-solid, var(--surface));
+  background-image: linear-gradient(0deg, var(--pos-soft), var(--pos-soft));
   border-color: var(--pos);
 }
 
@@ -119,7 +120,8 @@
 }
 
 .error {
-  background: var(--neg-soft);
+  background-color: var(--surface-solid, var(--surface));
+  background-image: linear-gradient(0deg, var(--neg-soft), var(--neg-soft));
   border-color: var(--neg);
 }
 
@@ -128,7 +130,8 @@
 }
 
 .warning {
-  background: var(--warn-soft);
+  background-color: var(--surface-solid, var(--surface));
+  background-image: linear-gradient(0deg, var(--warn-soft), var(--warn-soft));
   border-color: var(--warn);
 }
 
@@ -137,7 +140,8 @@
 }
 
 .info {
-  background: var(--info-soft);
+  background-color: var(--surface-solid, var(--surface));
+  background-image: linear-gradient(0deg, var(--info-soft), var(--info-soft));
   border-color: var(--info);
 }
 

@@ -1093,7 +1093,7 @@ export const AccountSettings: React.FC = () => {
                       top: dropdownPos.top,
                       left: dropdownPos.left,
                       width: dropdownPos.width,
-                      zIndex: 9999
+                      zIndex: 'var(--z-index-dropdown)'
                     }}
                   >
                     <div className={styles.dropdownMenu} data-ristak-dropdown-panel>

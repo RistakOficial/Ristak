@@ -1,5 +1,6 @@
 .tooltip {
   --tooltip-gap: 8px;
+  z-index: var(--z-index-tooltip);
   background-color: var(--design-chart-tooltip-bg, #1a1a1a);
   border: 1px solid var(--design-chart-tooltip-border, rgba(255, 255, 255, 0.1));
   border-radius: var(--design-table-radius, var(--radius-lg));

@@ -1157,7 +1157,7 @@ body.dark .select:focus {
   top: calc(100% + 4px);
   right: 0;
   left: 0;
-  z-index: 30;
+  z-index: var(--z-index-popover);
 }
 
 .dropdownMenu {
@@ -1165,7 +1165,7 @@ body.dark .select:focus {
   overflow-y: auto;
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 8px;
-  background: var(--color-background-primary);
+  background: var(--surface-solid, var(--surface));
   box-shadow: 0 16px 32px -24px rgba(15, 23, 42, 0.65);
 }
 

@@ -71,7 +71,7 @@
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  z-index: 1000;
+  z-index: var(--z-index-popover);
   background: var(--surface-solid, var(--surface));
   border: 1px solid var(--ristak-dropdown-border);
   border-radius: var(--ristak-dropdown-radius);

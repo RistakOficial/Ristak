@@ -433,7 +433,7 @@ body.dark .dropdownTrigger:focus {
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  z-index: 1000;
+  z-index: var(--z-index-popover);
 }
 
 .dropdownMenu {

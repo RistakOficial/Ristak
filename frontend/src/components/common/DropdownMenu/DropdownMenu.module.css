@@ -1,6 +1,6 @@
 /* Content */
 .content {
-  z-index: 50;
+  z-index: var(--z-index-popover);
   min-width: 8rem;
   overflow: hidden;
   border-radius: var(--ristak-dropdown-radius);

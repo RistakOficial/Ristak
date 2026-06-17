@@ -1277,7 +1277,7 @@
 
 .importedInlineEditor {
   position: fixed;
-  z-index: 90;
+  z-index: var(--z-index-popover);
   width: min(340px, calc(100vw - 32px));
   display: grid;
   gap: 10px;
@@ -1620,7 +1620,7 @@
   position: fixed;
   left: var(--imported-element-popover-left, 24px);
   top: var(--imported-element-popover-top, 96px);
-  z-index: 160;
+  z-index: var(--z-index-popover);
   width: min(430px, calc(100vw - 24px));
   max-height: min(620px, calc(100vh - 24px));
   display: grid;
@@ -1630,7 +1630,7 @@
   scrollbar-gutter: stable;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 10px;
-  background: var(--color-background-primary);
+  background: var(--surface-solid, var(--surface));
   color: var(--color-text-primary);
   padding: 14px;
   box-shadow: 0 28px 72px -42px rgba(15, 23, 42, 0.82);
@@ -5318,7 +5318,7 @@
 
 .pageMenu {
   position: absolute;
-  z-index: 20;
+  z-index: var(--z-index-popover);
   top: calc(100% + 4px);
   right: 0;
   min-width: 172px;
@@ -5326,7 +5326,7 @@
   gap: 4px;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 8px;
-  background: var(--color-background-primary);
+  background: var(--surface-solid, var(--surface));
   padding: 6px;
   box-shadow: 0 18px 48px -30px rgba(15, 23, 42, 0.75);
 }
@@ -7886,7 +7886,7 @@
 
 /* --- Pages context menu (Radix portal content) --- */
 .pageMenu {
-  z-index: 4200;
+  z-index: var(--z-index-popover);
   min-width: 196px;
   padding: 6px;
   border-radius: 12px;
@@ -9629,7 +9629,7 @@
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 90;
+  z-index: var(--z-index-popover);
   width: min(340px, calc(100vw - 48px));
   max-height: min(78vh, 760px);
   overflow-y: auto;
@@ -10281,11 +10281,11 @@
 }
 
 .colorField:has(.colorPopover) {
-  z-index: 2600;
+  z-index: var(--z-index-dropdown);
 }
 
 .colorPopover {
-  z-index: 2600;
+  z-index: var(--z-index-popover);
   box-shadow: 0 24px 70px -42px rgba(15, 23, 42, 0.75);
 }
 
@@ -12260,7 +12260,7 @@
 
 .editorSettingsDropdown {
   position: relative;
-  z-index: 90;
+  z-index: var(--z-index-dropdown);
   flex: 0 0 auto;
 }
 
@@ -12320,7 +12320,7 @@
   position: absolute;
   top: calc(100% + 10px);
   left: 0;
-  z-index: 3600;
+  z-index: var(--z-index-popover);
   width: min(520px, calc(100vw - 32px));
   max-height: min(720px, calc(100dvh - 112px));
   display: grid;
@@ -12330,7 +12330,7 @@
   overscroll-behavior: contain;
   border: 1px solid var(--ristak-dropdown-border, rgba(148, 163, 184, 0.24));
   border-radius: var(--design-control-radius, var(--radius-md));
-  background: var(--color-background-primary);
+  background: var(--surface-solid, var(--surface));
   color: var(--color-text-primary);
   padding: 12px 14px;
   font-family: var(--font-app, inherit);
@@ -12784,7 +12784,7 @@
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  z-index: 70;
+  z-index: var(--z-index-popover);
   width: min(420px, calc(100vw - 32px));
   display: grid;
   gap: 10px;
@@ -13479,7 +13479,7 @@
 }
 
 .pagesDropdownOpen {
-  z-index: 3400;
+  z-index: var(--z-index-dropdown);
 }
 
 .pagesDropdownTrigger {
@@ -13546,14 +13546,14 @@
   top: calc(100% + 10px);
   left: 0;
   right: auto;
-  z-index: 1;
+  z-index: var(--z-index-popover);
   width: min(420px, calc(100vw - 32px));
   min-width: min(420px, calc(100vw - 32px));
   max-height: min(720px, calc(100dvh - 96px));
   overflow: auto;
   border: 1px solid var(--ristak-dropdown-border, rgba(148, 163, 184, 0.26));
   border-radius: 8px;
-  background: var(--ristak-dropdown-panel-bg, var(--ristak-dropdown-bg, #ffffff));
+  background: var(--ristak-dropdown-panel-bg, var(--surface-solid, var(--surface)));
   color: var(--color-text-primary);
   padding: 16px;
   box-shadow: var(--ristak-dropdown-panel-shadow, 0 18px 46px -30px rgba(15, 23, 42, 0.46));
@@ -13819,7 +13819,7 @@
 }
 
 .pagesDropdownActionMenu {
-  z-index: 4600 !important;
+  z-index: var(--z-index-tooltip) !important;
   min-width: 206px;
   display: grid;
   gap: 4px;

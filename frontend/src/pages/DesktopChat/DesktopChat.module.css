@@ -1340,13 +1340,13 @@
   position: absolute;
   bottom: calc(100% + 10px);
   left: 0;
-  z-index: 20;
+  z-index: var(--z-index-popover);
   display: grid;
   width: 190px;
   padding: 6px;
   border: 1px solid var(--chat-border);
   border-radius: 8px;
-  background: var(--color-background-primary);
+  background: var(--surface-solid, var(--surface));
   box-shadow: 0 10px 24px -20px rgba(15, 23, 42, 0.45);
 }
 
@@ -1370,14 +1370,14 @@
   position: absolute;
   bottom: calc(100% + 10px);
   left: 0;
-  z-index: 24;
+  z-index: var(--z-index-popover);
   display: grid;
   gap: 6px;
   width: min(300px, calc(100vw - 32px));
   padding: 8px;
   border: 1px solid var(--chat-border);
   border-radius: 8px;
-  background: var(--color-background-primary);
+  background: var(--surface-solid, var(--surface));
   box-shadow: 0 10px 24px -20px rgba(15, 23, 42, 0.45);
 }
 

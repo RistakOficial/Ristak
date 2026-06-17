@@ -308,10 +308,13 @@ body.dark {
     --opacity-hover: 0.8;
     --opacity-backdrop: 0.6;
 
-    --z-index-dropdown: 1100;
-    --z-index-popover: 1150;
+    /* Orden de apilado: los flotantes (dropdown/popover) van POR ENCIMA del header
+       y de los modales (para que un select dentro de un modal también funcione).
+       Antes el header (1200) tapaba a los dropdowns (1100) -> aparecían detrás. */
     --z-index-header: 1200;
     --z-index-modal: 9999;
+    --z-index-dropdown: 10000;
+    --z-index-popover: 10010;
     --z-index-tooltip: 10100;
     --z-index-toast: 10200;
 
