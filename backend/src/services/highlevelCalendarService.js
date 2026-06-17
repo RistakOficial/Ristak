@@ -727,6 +727,15 @@ export async function updateAppointment(eventId, updateData, accessToken) {
       delete payload.notes;
     }
 
+    if (payload.startTime || payload.endTime || payload.start_time || payload.end_time) {
+      if (payload.ignoreFreeSlotValidation === undefined) {
+        payload.ignoreFreeSlotValidation = true;
+      }
+      if (payload.ignoreDateRange === undefined) {
+        payload.ignoreDateRange = true;
+      }
+    }
+
     const response = await fetchWithTimeout(
       `${GHL_API_BASE}/calendars/events/appointments/${eventId}`,
       {

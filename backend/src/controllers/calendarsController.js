@@ -3,7 +3,7 @@ import * as calendarService from '../services/highlevelCalendarService.js';
 import * as localCalendarService from '../services/localCalendarService.js';
 import * as googleCalendarService from '../services/googleCalendarService.js';
 import { logger } from '../utils/logger.js';
-import { getGHLClient } from '../services/ghlClient.js';
+import GHLClient, { getGHLClient } from '../services/ghlClient.js';
 import { db } from '../config/database.js';
 import { getAccountTimezone } from '../utils/dateUtils.js';
 import { triggerWhatsappAppointmentBookedEvent } from '../services/metaWhatsappEventsService.js';
@@ -187,6 +187,35 @@ function addDays(date, days) {
   return next;
 }
 
+function getCalendarSlotLimit(calendar = {}) {
+  const value = Number(calendar.appoinmentPerSlot ?? calendar.appointmentPerSlot ?? calendar.appoinment_per_slot ?? 1);
+  return Number.isFinite(value) ? Math.max(1, Math.trunc(value)) : 1;
+}
+
+function shouldUseLocalAvailabilityForOverlaps(calendar = {}) {
+  return getCalendarSlotLimit(calendar) > 1;
+}
+
+function keepLocalContactOnRemoteAppointment(remote = {}, contactId = '') {
+  const localContactId = cleanString(contactId);
+  if (!localContactId) return remote;
+
+  if (remote?.appointment && typeof remote.appointment === 'object') {
+    return {
+      ...remote,
+      appointment: {
+        ...remote.appointment,
+        contactId: localContactId
+      }
+    };
+  }
+
+  return {
+    ...remote,
+    contactId: localContactId
+  };
+}
+
 async function getSavedHighLevelOnlyContext() {
   const saved = await getSavedHighLevelConfig().catch(() => null);
   return {
@@ -222,6 +251,25 @@ async function ensurePublicCalendarRequest(req, slugOrId) {
 
 async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, timezone }, context = {}) {
   let slots = null;
+  const useLocalAvailability = shouldUseLocalAvailabilityForOverlaps(calendar);
+
+  await googleCalendarService.syncGoogleEventsForDateRange({
+    calendarId: calendar.id,
+    startDate,
+    endDate,
+    timezone
+  }).catch(error => {
+    logger.warn(`[Calendars Controller] Sync Google para slots publicos falló, usando DB local: ${error.message}`);
+  });
+
+  if (useLocalAvailability) {
+    return localCalendarService.getLocalFreeSlots(
+      calendar.id,
+      startDate,
+      endDate,
+      timezone
+    );
+  }
 
   if (context.accessToken && calendar.ghlCalendarId) {
     try {
@@ -236,15 +284,6 @@ async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, tim
       logger.warn(`[Calendars Controller] Free slots publicos GHL fallaron, usando local: ${error.message}`);
     }
   }
-
-  await googleCalendarService.syncGoogleEventsForDateRange({
-    calendarId: calendar.id,
-    startDate,
-    endDate,
-    timezone
-  }).catch(error => {
-    logger.warn(`[Calendars Controller] Sync Google para slots publicos falló, usando DB local: ${error.message}`);
-  });
 
   if (!slots) {
     slots = await localCalendarService.getLocalFreeSlots(
@@ -1158,9 +1197,13 @@ export async function createPublicAppointment(req, res) {
 
     if (context.locationId && context.accessToken && calendar.ghlCalendarId) {
       try {
+        const ghlContactId = await localCalendarService.ensureHighLevelContactForAppointment(
+          new GHLClient(context.accessToken, context.locationId),
+          { ...appointment, contactId }
+        );
         const remote = await calendarService.createAppointment({
           calendarId: calendar.ghlCalendarId,
-          contactId,
+          contactId: ghlContactId || contactId,
           title: renderedTemplates.title,
           appointmentStatus: calendar.autoConfirm ? 'confirmed' : 'pending',
           startTime: start.toISOString(),
@@ -1168,7 +1211,7 @@ export async function createPublicAppointment(req, res) {
           notes: renderedTemplates.notes
         }, context.locationId, context.accessToken);
 
-        appointment = await localCalendarService.upsertLocalAppointment(remote, {
+        appointment = await localCalendarService.upsertLocalAppointment(keepLocalContactOnRemoteAppointment(remote, contactId), {
           id: appointment.id,
           source: appointment.source || 'ristak',
           ghlAppointmentId: remote.appointment?.id || remote.id,
@@ -1240,7 +1283,23 @@ export async function getFreeSlots(req, res) {
     const localCalendar = await localCalendarService.getLocalCalendar(id);
     let slots;
 
-    if (accessToken && (localCalendar?.ghlCalendarId || (!localCalendar && id))) {
+    await googleCalendarService.syncGoogleEventsForDateRange({
+      calendarId: localCalendar?.id || id,
+      startDate,
+      endDate,
+      timezone
+    }).catch(error => {
+      logger.warn(`[Calendars Controller] Sync Google para slots falló, usando DB local: ${error.message}`);
+    });
+
+    if (localCalendar && shouldUseLocalAvailabilityForOverlaps(localCalendar)) {
+      slots = await localCalendarService.getLocalFreeSlots(
+        localCalendar.id,
+        startDate,
+        endDate,
+        timezone
+      );
+    } else if (accessToken && (localCalendar?.ghlCalendarId || (!localCalendar && id))) {
       try {
         slots = await calendarService.getFreeSlots(
           localCalendar?.ghlCalendarId || id,
@@ -1253,15 +1312,6 @@ export async function getFreeSlots(req, res) {
         logger.warn(`[Calendars Controller] Free slots GHL falló, usando local: ${error.message}`);
       }
     }
-
-    await googleCalendarService.syncGoogleEventsForDateRange({
-      calendarId: localCalendar?.id || id,
-      startDate,
-      endDate,
-      timezone
-    }).catch(error => {
-      logger.warn(`[Calendars Controller] Sync Google para slots falló, usando DB local: ${error.message}`);
-    });
 
     if (!slots) {
       slots = await localCalendarService.getLocalFreeSlots(
@@ -1439,15 +1489,21 @@ export async function createAppointment(req, res) {
 
     if (context.locationId && context.accessToken && (localCalendar?.ghlCalendarId || !localCalendar)) {
       try {
+        const localContactId = appointment.contactId || appointmentData.contactId || appointmentData.contact_id;
+        const ghlContactId = await localCalendarService.ensureHighLevelContactForAppointment(
+          new GHLClient(context.accessToken, context.locationId),
+          { ...appointment, contactId: localContactId }
+        );
         const remote = await calendarService.createAppointment(
           {
             ...localAppointmentData,
-            calendarId: localCalendar?.ghlCalendarId || appointmentData.calendarId
+            calendarId: localCalendar?.ghlCalendarId || appointmentData.calendarId,
+            contactId: ghlContactId || localContactId || localAppointmentData.contactId || localAppointmentData.contact_id
           },
           context.locationId,
           context.accessToken
         );
-        appointment = await localCalendarService.upsertLocalAppointment(remote, {
+        appointment = await localCalendarService.upsertLocalAppointment(keepLocalContactOnRemoteAppointment(remote, localContactId), {
           id: appointment.id,
           source: appointment.source || 'ristak',
           ghlAppointmentId: remote.appointment?.id || remote.id,
