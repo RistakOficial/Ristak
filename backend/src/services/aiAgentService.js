@@ -16064,6 +16064,36 @@ export function buildBusinessProfilePromptParameters(profile = {}, extraParamete
   const location = firstBusinessProfileValue(summaries.locationSummary, 'ubicación o modalidad no especificada')
   const availability = firstBusinessProfileValue(summaries.hoursSummary, 'horarios no especificados; consulta disponibilidad real antes de prometer horarios')
   const value = firstBusinessProfileValue(summaries.pricingSummary, summaries.offeringsSummary, 'valor no especificado; consulta productos/precios reales antes de hablar de precio')
+  const whoWeAre = firstBusinessProfileValue(summaries.profileSummary, normalizedProfile.description, offering)
+  const whoWeHelp = firstBusinessProfileValue(
+    normalizedProfile.targetCustomers,
+    `personas interesadas en ${offering}`
+  )
+  const deepProblem = firstBusinessProfileValue(
+    readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['problem', 'problema', 'realProblem', 'problemaReal', 'pain', 'dolor'], 1000),
+    normalizedProfile.description,
+    offering
+  )
+  const proofContext = firstBusinessProfileValue(
+    readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['proof', 'pruebas', 'results', 'resultados', 'cases', 'casos'], 1000),
+    normalizedProfile.differentiators,
+    'usa solo casos, pruebas o resultados reales que aparezcan en las tools o en el perfil; si no existen, no inventes'
+  )
+  const regionContext = firstBusinessProfileValue(
+    readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['regionalContext', 'contextoRegional', 'cityContext', 'contextoCiudad', 'cultureContext', 'contextoCultural'], 1000),
+    location
+  )
+  const customerLanguage = firstBusinessProfileValue(
+    normalizedProfile.languageTone,
+    readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['customerLanguage', 'lenguajeCliente', 'clientLanguage', 'comoHablaCliente'], 1000),
+    summaries.conversationAdaptationSummary,
+    `usa vocabulario natural de ${industry} y calibra el lenguaje al estilo del contacto`
+  )
+  const businessRegister = firstBusinessProfileValue(
+    readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['register', 'registro', 'businessRegister', 'registroDelNegocio'], 600),
+    normalizedProfile.languageTone,
+    'registro medio: cercano, claro y profesional; ajusta informalidad segun la persona, industria y valor del servicio'
+  )
   const conditions = [
     normalizedProfile.importantConditions,
     summaries.paymentSummary ? `Pagos/facturación: ${summaries.paymentSummary}` : '',
@@ -16088,6 +16118,14 @@ export function buildBusinessProfilePromptParameters(profile = {}, extraParamete
     DISPONIBILIDAD: availability,
     CONDICIONES_IMPORTANTES: conditions,
     CONDICIONES_DEL_NEGOCIO: conditions,
+    QUIENES_SOMOS_QUIEN_SOY: whoWeAre,
+    A_QUIEN_AYUDAMOS_Y_A_QUIEN_NO: whoWeHelp,
+    EL_PROBLEMA_REAL_QUE_RESOLVEMOS: deepProblem,
+    CASOS_PRUEBAS_RESULTADOS_REALES: proofContext,
+    CONTEXTO_DE_CIUDAD_REGION_CULTURA_CREENCIAS: regionContext,
+    CONTEXTO_DE_CIUDAD_REGION: regionContext,
+    COMO_HABLA_NUESTRO_TIPO_DE_CLIENTE: customerLanguage,
+    REGISTRO_DEL_NEGOCIO: businessRegister,
     ...buildBusinessConversationPromptParameters(normalizedProfile, summaries)
   }
 
