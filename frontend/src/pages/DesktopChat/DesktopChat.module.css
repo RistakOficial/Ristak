@@ -746,6 +746,47 @@
   opacity: 0.72;
 }
 
+.messageScheduled {
+  border-style: dashed;
+}
+
+.scheduledActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.scheduledActions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.scheduledActions button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.scheduledActions button:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.scheduledActions .scheduledDangerAction {
+  color: var(--neg);
+}
+
 .attachment {
   display: inline-flex;
   align-items: center;
@@ -1711,6 +1752,170 @@
   color: var(--color-text-tertiary);
   font-size: 11px;
   font-style: normal;
+}
+
+.scheduleModalBody {
+  display: grid;
+  gap: 14px;
+}
+
+.scheduleModalDescription {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.scheduleField {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.scheduleField > span:first-child {
+  color: var(--text-mute);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.scheduleField input {
+  width: 100%;
+  height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  outline: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.scheduleField input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.scheduleDateControl {
+  position: relative;
+  display: grid;
+  align-items: center;
+  height: 40px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.scheduleDateControl:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.scheduleDateText {
+  padding: 0 11px;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.scheduleDateNativeInput {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.scheduleTimeRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.schedulePeriodToggle {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(42px, 1fr));
+  gap: 2px;
+  min-height: 40px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.schedulePeriodToggle button {
+  border: 0;
+  border-radius: calc(var(--radius-ctl) - 3px);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.schedulePeriodToggle button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.schedulePeriodToggle .schedulePeriodActive {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.schedulePreview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.scheduleError {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-ctl);
+  background: var(--neg-soft);
+  color: var(--neg);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.scheduleMessageField textarea {
+  width: 100%;
+  min-height: 86px;
+  max-height: 150px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  outline: 0;
+  resize: vertical;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.scheduleMessageField textarea:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.scheduleMessageField textarea:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.scheduleModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
 }
 
 .automationModalBody {

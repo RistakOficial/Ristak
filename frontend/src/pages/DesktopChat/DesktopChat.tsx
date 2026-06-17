@@ -19,6 +19,7 @@ import {
   Mic,
   MousePointerClick,
   Pause,
+  Pencil,
   Phone,
   Play,
   Plus,
@@ -63,6 +64,7 @@ type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
 type DraftAttachmentKind = 'image' | 'document'
 type InfoPanelView = 'summary' | 'journey'
 type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'webchat' | 'meta'
+type SchedulePeriod = 'AM' | 'PM'
 
 interface ContactChannelBadge {
   kind: ContactChannelBadgeKind
@@ -128,6 +130,13 @@ interface DesktopDraftAttachment {
   mimeType: string
   dataUrl: string
   size: number
+}
+
+interface ScheduleDraft {
+  date: string
+  hour: string
+  minute: string
+  period: SchedulePeriod
 }
 
 interface VoiceDraftAttachment {
@@ -618,6 +627,108 @@ function formatMessageTime(value?: string | null) {
   return new Intl.DateTimeFormat('es-MX', { hour: 'numeric', minute: '2-digit', hour12: true }).format(date)
 }
 
+function formatMessageDate(value?: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const now = new Date()
+  if (date.toDateString() === now.toDateString()) return formatMessageTime(value)
+
+  return new Intl.DateTimeFormat('es-MX', {
+    day: '2-digit',
+    month: 'short'
+  }).format(date).replace('.', '')
+}
+
+function padTwoDigits(value: number) {
+  return String(value).padStart(2, '0')
+}
+
+function formatDateInputValue(date: Date) {
+  return `${date.getFullYear()}-${padTwoDigits(date.getMonth() + 1)}-${padTwoDigits(date.getDate())}`
+}
+
+function formatScheduleDateDisplay(value: string) {
+  const [year, month, day] = value.split('-').map(Number)
+  if (!year || !month || !day) return 'Elige fecha'
+
+  const date = new Date(year, month - 1, day)
+  if (Number.isNaN(date.getTime())) return 'Elige fecha'
+
+  return new Intl.DateTimeFormat('es-MX', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  }).format(date).replace('.', '')
+}
+
+function createDefaultScheduleDraft(): ScheduleDraft {
+  const date = new Date(Date.now() + 15 * 60 * 1000)
+  const minutes = date.getMinutes()
+  date.setMinutes(minutes + ((5 - (minutes % 5)) % 5), 0, 0)
+
+  const hour24 = date.getHours()
+  const hour12 = hour24 % 12 || 12
+  return {
+    date: formatDateInputValue(date),
+    hour: String(hour12),
+    minute: padTwoDigits(date.getMinutes()),
+    period: hour24 >= 12 ? 'PM' : 'AM'
+  }
+}
+
+function createScheduleDraftFromDate(value?: string | null): ScheduleDraft {
+  const date = value ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) return createDefaultScheduleDraft()
+
+  const hour24 = date.getHours()
+  const hour12 = hour24 % 12 || 12
+  return {
+    date: formatDateInputValue(date),
+    hour: String(hour12),
+    minute: padTwoDigits(date.getMinutes()),
+    period: hour24 >= 12 ? 'PM' : 'AM'
+  }
+}
+
+function getScheduleDateFromDraft(draft: ScheduleDraft) {
+  const [year, month, day] = draft.date.split('-').map(Number)
+  const hour = Number(draft.hour)
+  const minute = Number(draft.minute)
+
+  if (!year || !month || !day || !Number.isFinite(hour) || !Number.isFinite(minute)) return null
+  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null
+
+  const hour24 = draft.period === 'PM'
+    ? (hour === 12 ? 12 : hour + 12)
+    : (hour === 12 ? 0 : hour)
+  const date = new Date(year, month - 1, day, hour24, minute, 0, 0)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function formatScheduledMessageLabel(value?: string | null) {
+  if (!value) return 'Programado'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Programado'
+
+  const time = formatMessageTime(value)
+  if (date.toDateString() === new Date().toDateString()) return `Programado ${time}`
+
+  return `Programado ${formatMessageDate(value)} ${time}`.trim()
+}
+
+function formatSchedulePreviewLabel(value?: string | null) {
+  if (!value) return 'Elige fecha y hora'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Elige fecha y hora'
+
+  const time = formatMessageTime(value)
+  if (date.toDateString() === new Date().toDateString()) return `Se enviará a las ${time}`
+
+  return `Se enviará el ${formatMessageDate(value)} a las ${time}`.trim()
+}
+
 function getConversationDayKey(value?: string | null, timeZone?: string) {
   if (!value) return ''
   const date = new Date(value)
@@ -970,6 +1081,14 @@ function getScheduledChatMessageBubble(message: ScheduledChatMessage): DesktopCh
   }
 }
 
+function isMessageScheduled(message: DesktopChatMessage) {
+  return String(message.status || '').trim().toLowerCase() === 'scheduled' || Boolean(message.scheduledAt && message.scheduledMessageId)
+}
+
+function getScheduledMessageActionId(message: DesktopChatMessage) {
+  return message.scheduledMessageId || (message.id.startsWith('scheduled-') ? message.id.slice('scheduled-'.length) : '')
+}
+
 function getChatPreview(contact: DesktopChatContact) {
   const text = String(contact.lastMessageText || '').trim()
   if (text) return contact.lastMessageDirection === 'outbound' ? `Tú: ${text}` : text
@@ -1130,6 +1249,7 @@ export const DesktopChat: React.FC = () => {
   const chatsRequestRef = useRef<AbortController | null>(null)
   const photoInputRef = useRef<HTMLInputElement | null>(null)
   const documentInputRef = useRef<HTMLInputElement | null>(null)
+  const composerMenuRef = useRef<HTMLDivElement | null>(null)
   const voiceRecorderRef = useRef<MediaRecorder | null>(null)
   const voiceStreamRef = useRef<MediaStream | null>(null)
   const voiceChunksRef = useRef<Blob[]>([])
@@ -1162,6 +1282,12 @@ export const DesktopChat: React.FC = () => {
   const [composerText, setComposerText] = useState('')
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
   const [composerMenuOpen, setComposerMenuOpen] = useState(false)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(() => createDefaultScheduleDraft())
+  const [scheduleEditingMessageId, setScheduleEditingMessageId] = useState<string | null>(null)
+  const [scheduleError, setScheduleError] = useState('')
+  const [schedulingMessage, setSchedulingMessage] = useState(false)
+  const [cancelingScheduledMessageId, setCancelingScheduledMessageId] = useState<string | null>(null)
   const [draftAttachments, setDraftAttachments] = useState<DesktopDraftAttachment[]>([])
   const [voiceDraft, setVoiceDraft] = useState<VoiceDraftAttachment | null>(null)
   const [voiceRecording, setVoiceRecording] = useState(false)
@@ -1301,6 +1427,25 @@ export const DesktopChat: React.FC = () => {
     const agentSet = agentPriorityChatIdSetRef.current
     setActiveContactId(chats.find((contact) => !archivedSet.has(contact.id) && !agentSet.has(contact.id))?.id || chats[0]?.id || '')
   }, [activeContactId, chats])
+  useEffect(() => {
+    if (!composerMenuOpen) return
+
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Node && composerMenuRef.current?.contains(target)) return
+      setComposerMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setComposerMenuOpen(false)
+    }
+
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [composerMenuOpen])
   const visibleChatCount = filteredChats.length + agentPriorityChatRows.length
   const inboxTitle = archivedViewOpen ? 'Archivados' : agentAssignedViewOpen ? 'Chats del bot' : 'Conversaciones'
   const inboxSubtitle = archivedViewOpen
@@ -1908,6 +2053,214 @@ export const DesktopChat: React.FC = () => {
       return nextOpen
     })
   }, [activeContact?.id, conversationAgentActive, conversationAgentBusy, conversationAgentState?.agentId])
+
+  const closeScheduleModal = useCallback(() => {
+    if (schedulingMessage) return
+    setScheduleOpen(false)
+    setScheduleEditingMessageId(null)
+    setScheduleError('')
+  }, [schedulingMessage])
+
+  const handleOpenScheduleModal = useCallback(() => {
+    if (!activeContact) return
+    setComposerMenuOpen(false)
+    closeComposerAgentMenu()
+
+    if (!composerText.trim()) {
+      showToast('warning', 'Escribe el mensaje', 'Primero escribe el texto que quieres programar.')
+      return
+    }
+
+    if (draftAttachments.length > 0 || voiceDraft) {
+      showToast('warning', 'Solo texto por ahora', 'Programa mensajes escritos; las fotos, documentos y audios se mandan al momento.')
+      return
+    }
+
+    setScheduleDraft(createDefaultScheduleDraft())
+    setScheduleError('')
+    setScheduleEditingMessageId(null)
+    setScheduleOpen(true)
+  }, [activeContact, closeComposerAgentMenu, composerText, draftAttachments.length, showToast, voiceDraft])
+
+  const handleScheduleDraftChange = useCallback((patch: Partial<ScheduleDraft>) => {
+    setScheduleDraft((current) => ({ ...current, ...patch }))
+    setScheduleError('')
+  }, [])
+
+  const handleScheduleMessage = useCallback(async () => {
+    if (!activeContact || schedulingMessage) return
+
+    const text = composerText.trim()
+    if (!text) {
+      setScheduleError('Escribe el mensaje que quieres programar.')
+      return
+    }
+
+    if (draftAttachments.length > 0 || voiceDraft) {
+      setScheduleError('Por ahora sólo se pueden programar mensajes escritos.')
+      return
+    }
+
+    const scheduledDate = getScheduleDateFromDraft(scheduleDraft)
+    if (!scheduledDate) {
+      setScheduleError('Revisa la fecha y la hora.')
+      return
+    }
+
+    if (scheduledDate.getTime() < Date.now() + 10 * 1000) {
+      setScheduleError('Elige una hora que todavía no haya pasado.')
+      return
+    }
+
+    let provider: 'highlevel' | 'whatsapp_api' = 'whatsapp_api'
+    let channel: HighLevelChatChannel | undefined
+    let transport: 'api' | undefined = 'api'
+
+    if (whatsappConnected && activeContact.phone) {
+      provider = 'whatsapp_api'
+    } else if (highLevelConnected) {
+      provider = 'highlevel'
+      channel = activeConversationChannel
+      transport = undefined
+      if (!activeContact.phone && channel !== 'instagram' && channel !== 'messenger') {
+        setScheduleError('Este contacto necesita teléfono para programar por este canal.')
+        return
+      }
+    } else {
+      setScheduleError('Conecta WhatsApp API o HighLevel para programar mensajes.')
+      return
+    }
+
+    if (provider === 'whatsapp_api' && !activeContact.phone) {
+      setScheduleError('Guarda el teléfono del contacto antes de programar.')
+      return
+    }
+
+    if (provider === 'whatsapp_api' && !selectedBusinessPhoneValue) {
+      setScheduleError('Elige el WhatsApp del negocio que mandará el mensaje.')
+      return
+    }
+
+    setSchedulingMessage(true)
+    setScheduleError('')
+    const editingScheduledMessageId = scheduleEditingMessageId
+
+    try {
+      const scheduledMessage = await whatsappApiService.scheduleMessage({
+        id: editingScheduledMessageId || undefined,
+        contactId: activeContact.id,
+        provider,
+        channel,
+        transport,
+        text,
+        toPhone: activeContact.phone || undefined,
+        fromPhone: selectedBusinessPhoneValue || undefined,
+        businessPhoneNumberId: selectedBusinessPhone?.id || undefined,
+        scheduledAt: scheduledDate.toISOString(),
+        externalId: editingScheduledMessageId || undefined
+      })
+      const scheduledBubble = getScheduledChatMessageBubble(scheduledMessage)
+
+      setComposerText('')
+      setDraftAttachments([])
+      setVoiceDraft(null)
+      setVoiceElapsedMs(0)
+
+      if (scheduledBubble) {
+        setMessages((current) => {
+          const next = current.filter((message) => (
+            message.id !== scheduledBubble.id &&
+            message.scheduledMessageId !== editingScheduledMessageId
+          ))
+          next.push(scheduledBubble)
+          return next.sort((left, right) => Date.parse(left.date) - Date.parse(right.date))
+        })
+        setChats((current) => current.map((contact) => (
+          contact.id === activeContact.id
+            ? {
+                ...contact,
+                lastMessageText: `Programado: ${text}`,
+                lastMessageDate: scheduledBubble.date,
+                lastMessageDirection: 'outbound',
+                lastMessageChannel: provider === 'highlevel' ? channel : contact.lastMessageChannel,
+                messageCount: Number(contact.messageCount || 0) + (editingScheduledMessageId ? 0 : 1)
+              }
+            : contact
+        )))
+      }
+
+      setScheduleOpen(false)
+      setScheduleEditingMessageId(null)
+      showToast(
+        'success',
+        editingScheduledMessageId ? 'Programación actualizada' : 'Mensaje programado',
+        formatScheduledMessageLabel(scheduledDate.toISOString())
+      )
+    } catch (error: any) {
+      const errorMessage = error?.message || 'No se pudo programar el mensaje.'
+      setScheduleError(errorMessage)
+      showToast('error', 'No se programó', errorMessage)
+    } finally {
+      setSchedulingMessage(false)
+    }
+  }, [
+    activeContact,
+    activeConversationChannel,
+    composerText,
+    draftAttachments.length,
+    highLevelConnected,
+    scheduleDraft,
+    scheduleEditingMessageId,
+    schedulingMessage,
+    selectedBusinessPhone?.id,
+    selectedBusinessPhoneValue,
+    showToast,
+    voiceDraft,
+    whatsappConnected
+  ])
+
+  const handleEditScheduledMessage = useCallback((message: DesktopChatMessage) => {
+    const scheduledMessageId = getScheduledMessageActionId(message)
+    if (!scheduledMessageId) {
+      showToast('error', 'No se pudo editar', 'No encontramos la programación de este mensaje.')
+      return
+    }
+
+    setScheduleEditingMessageId(scheduledMessageId)
+    setComposerText(message.text)
+    setDraftAttachments([])
+    cancelVoiceDraft()
+    setScheduleDraft(createScheduleDraftFromDate(message.scheduledAt || message.date))
+    setScheduleError('')
+    setScheduleOpen(true)
+    setComposerMenuOpen(false)
+    closeComposerAgentMenu()
+  }, [cancelVoiceDraft, closeComposerAgentMenu, showToast])
+
+  const handleCancelScheduledMessage = useCallback(async (message: DesktopChatMessage) => {
+    if (!activeContact || cancelingScheduledMessageId) return
+
+    const scheduledMessageId = getScheduledMessageActionId(message)
+    if (!scheduledMessageId) {
+      showToast('error', 'No se pudo eliminar', 'No encontramos la programación de este mensaje.')
+      return
+    }
+
+    setCancelingScheduledMessageId(scheduledMessageId)
+    try {
+      await whatsappApiService.cancelScheduledMessage(scheduledMessageId, activeContact.id)
+      setMessages((current) => current.filter((item) => item.id !== message.id && item.scheduledMessageId !== scheduledMessageId))
+      await Promise.all([
+        loadConversation(activeContact.id),
+        loadChats({ silent: true })
+      ])
+      showToast('success', 'Programación eliminada', 'Ese mensaje ya no se enviará.')
+    } catch (error: any) {
+      showToast('error', 'No se eliminó', error?.message || 'Intenta eliminar la programación otra vez.')
+    } finally {
+      setCancelingScheduledMessageId(null)
+    }
+  }, [activeContact, cancelingScheduledMessageId, loadChats, loadConversation, showToast])
 
   const handleRunConversationAgentAction = useCallback(async (
     action: ConversationStateAction,
@@ -2517,6 +2870,26 @@ export const DesktopChat: React.FC = () => {
     }
   }, [showToast])
 
+  const renderScheduledMessageActions = (message: DesktopChatMessage) => {
+    if (!isMessageScheduled(message)) return null
+
+    const scheduledMessageId = getScheduledMessageActionId(message)
+    const deleting = Boolean(scheduledMessageId && cancelingScheduledMessageId === scheduledMessageId)
+
+    return (
+      <div className={styles.scheduledActions} aria-label="Acciones del mensaje programado">
+        <button type="button" onClick={() => handleEditScheduledMessage(message)} disabled={deleting}>
+          <Pencil size={13} />
+          <span>Editar</span>
+        </button>
+        <button type="button" className={styles.scheduledDangerAction} onClick={() => handleCancelScheduledMessage(message)} disabled={deleting}>
+          {deleting ? <Loader2 size={13} className={styles.spin} /> : <Trash2 size={13} />}
+          <span>{deleting ? 'Eliminando' : 'Eliminar'}</span>
+        </button>
+      </div>
+    )
+  }
+
   const renderAttachment = (message: DesktopChatMessage) => {
     if (!message.attachment) return null
     const { attachment } = message
@@ -2666,6 +3039,9 @@ export const DesktopChat: React.FC = () => {
       </span>
     )
   }
+
+  const schedulePreviewDate = getScheduleDateFromDraft(scheduleDraft)
+  const canSubmitSchedule = Boolean(schedulePreviewDate && composerText.trim() && !schedulingMessage)
 
   return (
     <div className={styles.page} data-ristak-page>
@@ -2961,12 +3337,13 @@ export const DesktopChat: React.FC = () => {
                     {group.messages.map((message) => (
                       <article
                         key={message.id}
-                        className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound}`}
+                        className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''}`}
                       >
                         {renderAttachment(message)}
                         {message.text ? <p>{message.text}</p> : null}
                         {message.errorReason ? <small className={styles.errorText}>{message.errorReason}</small> : null}
                         {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
+                        {renderScheduledMessageActions(message)}
                         {renderMessageMeta(message)}
                       </article>
                     ))}
@@ -3034,7 +3411,7 @@ export const DesktopChat: React.FC = () => {
                   </button>
                   {renderComposerAgentMenu()}
                 </div>
-                <div className={styles.composerActionWrap}>
+                <div ref={composerMenuRef} className={styles.composerActionWrap}>
                   <button
                     type="button"
                     className={styles.composerPlusButton}
@@ -3049,6 +3426,10 @@ export const DesktopChat: React.FC = () => {
                   </button>
                   {composerMenuOpen ? (
                     <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
+                      <button type="button" role="menuitem" onClick={handleOpenScheduleModal}>
+                        <Clock size={16} />
+                        <span>Programar</span>
+                      </button>
                       <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
                         <FileText size={16} />
                         <span>Plantillas</span>
@@ -3311,6 +3692,110 @@ export const DesktopChat: React.FC = () => {
         onSave={handleSaveAppointment}
         onDelete={editingAppointmentEvent ? handleDeleteAppointment : undefined}
       />
+
+      <Modal
+        isOpen={scheduleOpen}
+        onClose={closeScheduleModal}
+        title={scheduleEditingMessageId ? 'Editar programación' : 'Programar mensaje'}
+        size="sm"
+      >
+        <form
+          className={styles.scheduleModalBody}
+          onSubmit={(event) => {
+            event.preventDefault()
+            void handleScheduleMessage()
+          }}
+        >
+          <p className={styles.scheduleModalDescription}>
+            {scheduleEditingMessageId ? 'Ajusta cuándo saldrá este mensaje.' : 'El mensaje se guardará y saldrá automáticamente a la hora elegida.'}
+          </p>
+          <label className={`${styles.scheduleField} ${styles.scheduleMessageField}`}>
+            <span>Mensaje</span>
+            <textarea
+              value={composerText}
+              onChange={(event) => {
+                setComposerText(event.target.value)
+                setScheduleError('')
+              }}
+              placeholder="Escribe el mensaje que quieres programar"
+              rows={3}
+              disabled={schedulingMessage}
+            />
+          </label>
+          <label className={styles.scheduleField}>
+            <span>Fecha</span>
+            <span className={styles.scheduleDateControl}>
+              <span className={styles.scheduleDateText} aria-hidden="true">
+                {formatScheduleDateDisplay(scheduleDraft.date)}
+              </span>
+              <input
+                className={styles.scheduleDateNativeInput}
+                type="date"
+                value={scheduleDraft.date}
+                min={formatDateInputValue(new Date())}
+                aria-label="Fecha"
+                onChange={(event) => handleScheduleDraftChange({ date: event.target.value })}
+              />
+            </span>
+          </label>
+          <div className={styles.scheduleTimeRow}>
+            <label className={styles.scheduleField}>
+              <span>Hora</span>
+              <input
+                type="number"
+                min="1"
+                max="12"
+                inputMode="numeric"
+                value={scheduleDraft.hour}
+                onChange={(event) => handleScheduleDraftChange({ hour: event.target.value.slice(0, 2) })}
+              />
+            </label>
+            <label className={styles.scheduleField}>
+              <span>Min</span>
+              <input
+                type="number"
+                min="0"
+                max="59"
+                inputMode="numeric"
+                value={scheduleDraft.minute}
+                onChange={(event) => handleScheduleDraftChange({ minute: event.target.value.slice(0, 2) })}
+                onBlur={() => {
+                  const minute = Math.min(59, Math.max(0, Number(scheduleDraft.minute) || 0))
+                  handleScheduleDraftChange({ minute: padTwoDigits(minute) })
+                }}
+              />
+            </label>
+            <div className={styles.schedulePeriodToggle} role="group" aria-label="AM o PM">
+              {(['AM', 'PM'] as SchedulePeriod[]).map((period) => (
+                <button
+                  key={period}
+                  type="button"
+                  className={scheduleDraft.period === period ? styles.schedulePeriodActive : ''}
+                  onClick={() => handleScheduleDraftChange({ period })}
+                >
+                  {period}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className={styles.schedulePreview} aria-live="polite">
+            <Clock size={15} />
+            <span>{formatSchedulePreviewLabel(schedulePreviewDate?.toISOString())}</span>
+          </div>
+
+          {scheduleError ? <p className={styles.scheduleError}>{scheduleError}</p> : null}
+
+          <div className={styles.scheduleModalActions}>
+            <Button type="button" variant="secondary" onClick={closeScheduleModal} disabled={schedulingMessage}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={!canSubmitSchedule}>
+              {schedulingMessage ? 'Guardando...' : scheduleEditingMessageId ? 'Guardar cambios' : 'Programar'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       <Modal
         isOpen={automationModalOpen}
