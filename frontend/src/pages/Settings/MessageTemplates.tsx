@@ -1212,7 +1212,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const renderPreview = () => {
     const templatePreviewMessage: PhoneChatPreviewMessage = {
       id: 'template-preview',
-      direction: 'outbound',
+      direction: 'inbound',
       header: renderPreviewHeader(),
       body: preview.bodyText || 'El mensaje aparecerá aquí',
       footer: preview.footerText || undefined,
@@ -1220,7 +1220,13 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       buttons: preview.buttons.map((button, index) => ({
         id: button.id || `button-${index}`,
         label: button.label || 'Botón',
-        icon: button.type === 'website' ? <Globe2 size={14} /> : button.type === 'phone' ? <Phone size={14} /> : <MousePointerClick size={14} />
+        // En WhatsApp solo los CTA (sitio/teléfono) llevan ícono; las respuestas
+        // rápidas se muestran como texto centrado sin ícono.
+        icon: button.type === 'website'
+          ? <Globe2 size={14} />
+          : (button.type === 'phone' || button.type === 'whatsapp_call')
+            ? <Phone size={14} />
+            : undefined
       }))
     }
 

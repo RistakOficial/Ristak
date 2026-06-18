@@ -14,6 +14,7 @@
   --pc-accent: var(--phone-chat-accent, #25d366);
   --pc-accent-rgb: var(--phone-chat-accent-rgb, 37, 211, 102);
   --pc-accent-soft: var(--phone-chat-accent-soft, #dff8e8);
+  --pc-link: var(--phone-chat-link, #0a91ff);
   --pc-inbound: var(--phone-chat-inbound, #ffffff);
   --pc-outbound: var(--phone-chat-outbound, #d8fdd2);
   --pc-outbound-text: var(--phone-chat-outbound-text, #0b0b0d);
@@ -264,6 +265,16 @@
 .messageRowSystem .messageStack {
   max-width: 88%;
   justify-items: center;
+}
+
+/* Cuando el mensaje trae botones de plantilla, la burbuja y los botones
+   comparten exactamente el mismo ancho (como en WhatsApp) para que "coincidan". */
+.messageStack:has(.templateButtons) {
+  width: min(78%, 300px);
+}
+
+.messageStack:has(.templateButtons) .messageBubble {
+  width: 100%;
 }
 
 .messageBubble {
@@ -520,14 +531,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 0 10px;
+  gap: 6px;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 12px;
   border-radius: 10px;
-  color: var(--pc-primary);
+  color: var(--pc-link);
   background: var(--pc-inbound);
-  font-size: 13px;
-  font-weight: 820;
+  font-size: 14px;
+  font-weight: 550;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
 }
 
