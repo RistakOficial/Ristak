@@ -18480,17 +18480,17 @@ const paletteGroups: Array<{ label: string; items: PaletteItem[] }> = [
     }))
   },
   {
-    label: 'Contenido',
-    items: ['title', 'subtitle', 'text', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'faq', 'cta', 'embed', 'calendar_embed', 'form_embed', 'social_profile']
-      .map(blockType => ({ id: blockType, label: blockLabels[blockType as SiteBlockType], blockType: blockType as SiteBlockType }))
-  },
-  {
     label: 'Sistema',
     items: systemFormFieldPaletteItems
   },
   {
     label: 'Campos',
     items: ['short_text', 'paragraph', 'number', 'currency', 'date', 'dropdown', 'radio', 'checkboxes', 'description']
+      .map(blockType => ({ id: blockType, label: blockLabels[blockType as SiteBlockType], blockType: blockType as SiteBlockType }))
+  },
+  {
+    label: 'Contenido',
+    items: ['title', 'subtitle', 'text', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'faq', 'cta', 'embed', 'calendar_embed', 'form_embed', 'social_profile']
       .map(blockType => ({ id: blockType, label: blockLabels[blockType as SiteBlockType], blockType: blockType as SiteBlockType }))
   }
 ]
