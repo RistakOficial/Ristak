@@ -12076,6 +12076,7 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
         const state = createState(readMeta(video));
         state.videoProvider = state.videoProvider || 'html5_video';
         const emit = (eventName, force = false, beacon = false) => {
+          if (video.dataset.rstkVideoPreviewing === 'true' && eventName !== 'video_ready' && eventName !== 'video_error') return;
           const duration = Number.isFinite(video.duration) ? video.duration : state.durationSeconds;
           const info = updateStateTiming(state, video.currentTime || 0, duration || 0);
           const percent = info.duration > 0 ? (info.position / info.duration) * 100 : 0;
@@ -12149,6 +12150,9 @@ const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
 const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
 const VIDEO_SPEED_OPTIONS = ['0.75', '1', '1.25', '1.5', '2']
+const VIDEO_PREVIEW_MAX_SECONDS = 40
+const VIDEO_PREVIEW_DEFAULT_SECONDS = 5
+const VIDEO_PREVIEW_STEP_SECONDS = 0.25
 
 function normalizeVideoPlayIconStyle(value) {
   const style = cleanString(value)
@@ -12220,6 +12224,34 @@ function getVideoSoundNoticeHideAfter(settings = {}) {
   if (!Number.isFinite(value)) return DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER
   if (value <= 0) return 0
   return Math.min(12, Math.max(3, value))
+}
+
+function roundVideoPreviewSecond(value) {
+  return Math.round(value / VIDEO_PREVIEW_STEP_SECONDS) * VIDEO_PREVIEW_STEP_SECONDS
+}
+
+function normalizeVideoPreviewRange(settings = {}, durationSeconds = VIDEO_PREVIEW_MAX_SECONDS) {
+  const rawMax = Number(durationSeconds)
+  const maxSeconds = Number.isFinite(rawMax) && rawMax > 0
+    ? Math.max(VIDEO_PREVIEW_STEP_SECONDS, Math.min(VIDEO_PREVIEW_MAX_SECONDS, roundVideoPreviewSecond(rawMax)))
+    : VIDEO_PREVIEW_MAX_SECONDS
+  const minSpan = Math.min(1, Math.max(VIDEO_PREVIEW_STEP_SECONDS, maxSeconds))
+  const fallbackEnd = Math.min(VIDEO_PREVIEW_DEFAULT_SECONDS, maxSeconds)
+  const rawStart = Number(settings.videoPreviewStart)
+  const rawEnd = Number(settings.videoPreviewEnd)
+  const start = Math.min(
+    Math.max(0, roundVideoPreviewSecond(Number.isFinite(rawStart) ? rawStart : 0)),
+    Math.max(0, maxSeconds - minSpan)
+  )
+  const end = Math.min(
+    Math.max(start + minSpan, roundVideoPreviewSecond(Number.isFinite(rawEnd) ? rawEnd : fallbackEnd)),
+    maxSeconds
+  )
+
+  return {
+    start: Number(start.toFixed(2)),
+    end: Number(end.toFixed(2))
+  }
 }
 
 function renderVideoSpeedOptions(selectedSpeed) {
@@ -12738,6 +12770,8 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const previewEnabled = settings.videoPreviewEnabled !== false
   const muted = settings.videoMuted !== false
   const autoplay = Boolean(settings.videoAutoplay)
+  const previewLoopEnabled = previewEnabled && !autoplay
+  const previewRange = normalizeVideoPreviewRange(settings)
   const showSoundNotice = showOverlay && soundHint && !autoplay
   const loop = Boolean(settings.videoLoop) || autoplay
   const rawSpeed = Number(settings.videoDefaultSpeed || 1)
@@ -12803,6 +12837,9 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const videoSourceAttrs = [
     hlsSource ? '' : `src="${escapeHtml(videoSrc)}"`,
     `data-rstk-video-src="${escapeHtml(videoSrc)}"`,
+    `data-rstk-video-preview="${previewLoopEnabled ? 'true' : 'false'}"`,
+    `data-rstk-video-preview-start="${escapeHtml(String(previewRange.start))}"`,
+    `data-rstk-video-preview-end="${escapeHtml(String(previewRange.end))}"`,
     trackingAttrs
   ].filter(Boolean).join(' ')
 
@@ -13904,7 +13941,6 @@ const RSTK_BASE_CSS = `
 		  .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:linear-gradient(180deg,transparent,rgba(0,0,0,.12));color:var(--rstk-video-play-color,#fff);cursor:pointer}
 		  .rstk-video-play-dot{width:var(--rstk-video-play-width,var(--rstk-video-play-size,96px));height:var(--rstk-video-play-size,96px);display:grid;place-items:center;border:var(--rstk-video-play-border-width,0) solid var(--rstk-video-play-border-color,transparent);border-radius:var(--rstk-video-play-radius,8px);background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:0 16px 38px rgba(0,0,0,.28);transition:opacity .18s ease,transform .18s ease}
 		  .rstk-video-is-playing .rstk-video-play-dot{opacity:0;transform:scale(.9)}
-		  .rstk-video-is-playing:hover .rstk-video-play-dot{opacity:.92;transform:scale(1)}
 		  .rstk-video-play-shape-round .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,999px)}
 		  .rstk-video-play-shape-rectangle .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,8px)}
 		  .rstk-video-play-dot svg{width:var(--rstk-video-play-icon-size,54px);height:var(--rstk-video-play-icon-size,54px)}
@@ -15485,6 +15521,28 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        });
 	        return hlsLoader;
 	      };
+	      const previewStep = 0.25;
+	      const previewMax = 40;
+	      const roundPreviewSecond = value => Math.round(value / previewStep) * previewStep;
+	      const normalizePreviewRange = video => {
+	        const rawDuration = Number(video.duration);
+	        const maxSeconds = Number.isFinite(rawDuration) && rawDuration > 0
+	          ? Math.max(previewStep, Math.min(previewMax, roundPreviewSecond(rawDuration)))
+	          : previewMax;
+	        const minSpan = Math.min(1, Math.max(previewStep, maxSeconds));
+	        const fallbackEnd = Math.min(5, maxSeconds);
+	        const rawStart = Number(video.getAttribute('data-rstk-video-preview-start') || '0');
+	        const rawEnd = Number(video.getAttribute('data-rstk-video-preview-end') || fallbackEnd);
+	        const start = Math.min(
+	          Math.max(0, roundPreviewSecond(Number.isFinite(rawStart) ? rawStart : 0)),
+	          Math.max(0, maxSeconds - minSpan)
+	        );
+	        const end = Math.min(
+	          Math.max(start + minSpan, roundPreviewSecond(Number.isFinite(rawEnd) ? rawEnd : fallbackEnd)),
+	          maxSeconds
+	        );
+	        return { start, end };
+	      };
 	      document.querySelectorAll('.rstk-video-player').forEach(host => {
 	        const video = host.querySelector('video');
 	        if (!video) return;
@@ -15518,20 +15576,62 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        const speedSelect = host.querySelector('[data-rstk-video-speed-select]');
 	        const toggleButtons = Array.from(host.querySelectorAll('[data-rstk-video-toggle]'));
 	        const muteButtons = Array.from(host.querySelectorAll('[data-rstk-video-mute]'));
+	        const soundNotice = host.querySelector('.rstk-video-sound');
+	        const previewEnabled = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
+	        let previewing = false;
+	        let hasUserPlayed = Boolean(video.autoplay);
+	        const hideSoundNotice = () => {
+	          if (!hasUserPlayed) return;
+	          host.classList.remove('rstk-video-sound-hint');
+	          if (soundNotice) soundNotice.hidden = true;
+	        };
+	        const stopPreviewLoop = () => {
+	          previewing = false;
+	          delete video.dataset.rstkVideoPreviewing;
+	          host.classList.remove('rstk-video-is-previewing');
+	        };
+	        const startPreviewLoop = () => {
+	          if (!previewEnabled || hasUserPlayed) return;
+	          const range = normalizePreviewRange(video);
+	          previewing = true;
+	          video.dataset.rstkVideoPreviewing = 'true';
+	          video.muted = true;
+	          if (video.currentTime < range.start || video.currentTime >= range.end) video.currentTime = range.start;
+	          video.play().then(sync).catch(() => {
+	            stopPreviewLoop();
+	            sync();
+	          });
+	          sync();
+	        };
 	        const sync = () => {
-	          host.classList.toggle('rstk-video-is-playing', !video.paused);
+	          if (previewing) {
+	            const range = normalizePreviewRange(video);
+	            if (video.currentTime >= range.end || video.currentTime < Math.max(0, range.start - 0.25)) {
+	              video.currentTime = range.start;
+	            }
+	            if (video.paused && !hasUserPlayed) {
+	              video.play().catch(() => stopPreviewLoop());
+	            }
+	          }
+	          host.classList.toggle('rstk-video-is-playing', !video.paused && !previewing);
+	          host.classList.toggle('rstk-video-is-previewing', !video.paused && previewing);
 	          host.classList.toggle('rstk-video-is-muted', video.muted || video.volume === 0);
 	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
 	          if (progress) progress.style.width = duration > 0 ? Math.max(0, Math.min(100, (video.currentTime / duration) * 100)) + '%' : '0%';
-	          toggleButtons.forEach(button => button.setAttribute('aria-label', video.paused ? 'Reproducir video' : 'Pausar video'));
+	          toggleButtons.forEach(button => button.setAttribute('aria-label', video.paused || previewing ? 'Reproducir video' : 'Pausar video'));
 	          muteButtons.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
+	          hideSoundNotice();
 	        };
 	        const togglePlayback = unmute => {
+	          const wasPreviewing = previewing;
+	          if (wasPreviewing) stopPreviewLoop();
+	          hasUserPlayed = true;
+	          hideSoundNotice();
 	          if (unmute) {
 	            video.muted = false;
 	            if (video.volume === 0) video.volume = 1;
 	          }
-	          if (video.paused) {
+	          if (video.paused || wasPreviewing) {
 	            video.play().catch(() => {
 	              if (!unmute) return;
 	              video.muted = true;
@@ -15575,7 +15675,17 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	            video.playbackRate = Math.min(4, Math.max(0.25, nextSpeed));
 	          });
 	        }
-	        ['play', 'pause', 'timeupdate', 'loadedmetadata', 'volumechange', 'ended'].forEach(eventName => video.addEventListener(eventName, sync));
+	        video.addEventListener('play', () => {
+	          if (!previewing) {
+	            hasUserPlayed = true;
+	            hideSoundNotice();
+	          }
+	          sync();
+	        });
+	        video.addEventListener('loadedmetadata', startPreviewLoop);
+	        video.addEventListener('canplay', startPreviewLoop);
+	        ['pause', 'timeupdate', 'loadedmetadata', 'volumechange', 'ended'].forEach(eventName => video.addEventListener(eventName, sync));
+	        if (video.readyState >= 1) startPreviewLoop();
 	        sync();
 	      });
 	    })();

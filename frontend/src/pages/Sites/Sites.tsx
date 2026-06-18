@@ -672,6 +672,9 @@ const VIDEO_PLAY_SIZE_MIN = 56
 const VIDEO_PLAY_SIZE_MAX = 160
 const VIDEO_PLAY_ICON_SIZE_MIN = 18
 const VIDEO_PLAY_ICON_SIZE_MAX = 76
+const VIDEO_PREVIEW_MAX_SECONDS = 40
+const VIDEO_PREVIEW_DEFAULT_SECONDS = 5
+const VIDEO_PREVIEW_STEP_SECONDS = 0.25
 const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControlsMode: DEFAULT_VIDEO_CONTROLS_MODE,
   videoControls: false,
@@ -679,6 +682,8 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControlVolume: true,
   videoControlSpeed: true,
   videoPreviewEnabled: true,
+  videoPreviewStart: 0,
+  videoPreviewEnd: VIDEO_PREVIEW_DEFAULT_SECONDS,
   videoSoundHint: true,
   videoSoundNoticeText: DEFAULT_VIDEO_SOUND_NOTICE_TEXT,
   videoSoundNoticeHideAfter: DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER,
@@ -2203,6 +2208,51 @@ const getVideoSoundNoticeHideAfter = (settings: Record<string, unknown>) => {
   if (!Number.isFinite(value)) return DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER
   if (value <= 0) return 0
   return Math.min(12, Math.max(3, value))
+}
+
+const roundVideoPreviewSecond = (value: number) =>
+  Math.round(value / VIDEO_PREVIEW_STEP_SECONDS) * VIDEO_PREVIEW_STEP_SECONDS
+
+const getVideoPreviewMaxSeconds = (durationSeconds?: number) => {
+  const duration = Number(durationSeconds)
+  if (!Number.isFinite(duration) || duration <= 0) return VIDEO_PREVIEW_MAX_SECONDS
+  return Math.max(VIDEO_PREVIEW_STEP_SECONDS, Math.min(VIDEO_PREVIEW_MAX_SECONDS, roundVideoPreviewSecond(duration)))
+}
+
+const getVideoPreviewMinimumSpan = (maxSeconds: number) =>
+  Math.min(1, Math.max(VIDEO_PREVIEW_STEP_SECONDS, maxSeconds))
+
+const normalizeVideoPreviewRange = (settings: Record<string, unknown>, durationSeconds?: number) => {
+  const maxSeconds = getVideoPreviewMaxSeconds(durationSeconds)
+  const minSpan = getVideoPreviewMinimumSpan(maxSeconds)
+  const fallbackEnd = Math.min(VIDEO_PREVIEW_DEFAULT_SECONDS, maxSeconds)
+  const rawStart = Number(settings.videoPreviewStart)
+  const rawEnd = Number(settings.videoPreviewEnd)
+  const clampedStart = Math.min(
+    Math.max(0, roundVideoPreviewSecond(Number.isFinite(rawStart) ? rawStart : 0)),
+    Math.max(0, maxSeconds - minSpan)
+  )
+  const clampedEnd = Math.min(
+    Math.max(clampedStart + minSpan, roundVideoPreviewSecond(Number.isFinite(rawEnd) ? rawEnd : fallbackEnd)),
+    maxSeconds
+  )
+
+  return {
+    start: Number(clampedStart.toFixed(2)),
+    end: Number(clampedEnd.toFixed(2)),
+    max: Number(maxSeconds.toFixed(2)),
+    minSpan: Number(minSpan.toFixed(2))
+  }
+}
+
+const formatVideoPreviewSecond = (value: number) => {
+  const safe = Math.max(0, Number.isFinite(value) ? value : 0)
+  const minutes = Math.floor(safe / 60)
+  const seconds = safe - minutes * 60
+  const formattedSeconds = seconds % 1 === 0
+    ? String(seconds).padStart(2, '0')
+    : seconds.toFixed(1).padStart(4, '0')
+  return `${minutes}:${formattedSeconds}`
 }
 
 const withDefaultVideoPlayerSettings = (settings: Record<string, unknown> = {}) => ({
@@ -4389,6 +4439,7 @@ function FormEmbedEditorPanel({
           {mediaKind === 'video' && (
             <VideoPlayerSettingsControls
               settings={activeFieldSettings}
+              mediaUrl={getSettingString(activeFieldSettings, 'mediaUrl')}
               onPatchSettings={patchActiveFieldSettings}
               onSave={onSave}
             />
@@ -18966,15 +19017,168 @@ const MediaUploadControl: React.FC<{
   )
 }
 
-const VideoPlayerSettingsControls: React.FC<{
+const VideoPreviewRangeControl: React.FC<{
   settings: Record<string, unknown>
+  durationSeconds: number
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ settings, onPatchSettings, onSave }) => {
+}> = ({ settings, durationSeconds, onPatchSettings, onSave }) => {
+  const trackRef = useRef<HTMLDivElement | null>(null)
+  const dragStateRef = useRef<{ startX: number; start: number; end: number; width: number } | null>(null)
+  const range = normalizeVideoPreviewRange(settings, durationSeconds)
+  const startPercent = range.max > 0 ? (range.start / range.max) * 100 : 0
+  const endPercent = range.max > 0 ? (range.end / range.max) * 100 : 100
+
+  const patchRange = useCallback((nextStart: number, nextEnd: number, commit = false) => {
+    const normalized = normalizeVideoPreviewRange({
+      ...settings,
+      videoPreviewStart: nextStart,
+      videoPreviewEnd: nextEnd
+    }, durationSeconds)
+
+    onPatchSettings({
+      videoPreviewStart: normalized.start,
+      videoPreviewEnd: normalized.end
+    })
+    if (commit) window.setTimeout(onSave, 0)
+  }, [durationSeconds, onPatchSettings, onSave, settings])
+
+  const handleStartChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextStart = Math.min(Number(event.target.value), range.end - range.minSpan)
+    patchRange(nextStart, range.end)
+  }
+
+  const handleEndChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextEnd = Math.max(Number(event.target.value), range.start + range.minSpan)
+    patchRange(range.start, nextEnd)
+  }
+
+  const handleSelectionPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (range.end <= range.start) return
+    const track = trackRef.current
+    if (!track) return
+    const rect = track.getBoundingClientRect()
+    dragStateRef.current = {
+      startX: event.clientX,
+      start: range.start,
+      end: range.end,
+      width: rect.width || 1
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const handleSelectionPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const dragState = dragStateRef.current
+    if (!dragState) return
+    const deltaSeconds = ((event.clientX - dragState.startX) / dragState.width) * range.max
+    const span = dragState.end - dragState.start
+    const nextStart = Math.min(Math.max(0, dragState.start + deltaSeconds), Math.max(0, range.max - span))
+    patchRange(nextStart, nextStart + span)
+  }
+
+  const handleSelectionPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStateRef.current) return
+    dragStateRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    window.setTimeout(onSave, 0)
+  }
+
+  return (
+    <div className={styles.videoPreviewRange}>
+      <div className={styles.videoPreviewRangeHeader}>
+        <span>Loop del preview</span>
+        <strong>{formatVideoPreviewSecond(range.start)} - {formatVideoPreviewSecond(range.end)}</strong>
+      </div>
+      <div
+        ref={trackRef}
+        className={styles.videoPreviewTrack}
+        style={{
+          ['--video-preview-start' as string]: `${startPercent}%`,
+          ['--video-preview-end' as string]: `${endPercent}%`
+        } as React.CSSProperties}
+      >
+        <div className={styles.videoPreviewTrackBase} aria-hidden="true" />
+        <div
+          className={styles.videoPreviewSelection}
+          onPointerDown={handleSelectionPointerDown}
+          onPointerMove={handleSelectionPointerMove}
+          onPointerUp={handleSelectionPointerUp}
+          onPointerCancel={handleSelectionPointerUp}
+          aria-hidden="true"
+        />
+        <input
+          className={styles.videoPreviewThumb}
+          type="range"
+          min={0}
+          max={range.max}
+          step={VIDEO_PREVIEW_STEP_SECONDS}
+          value={range.start}
+          aria-label="Inicio del loop"
+          onChange={handleStartChange}
+          onMouseUp={onSave}
+          onTouchEnd={onSave}
+        />
+        <input
+          className={styles.videoPreviewThumb}
+          type="range"
+          min={0}
+          max={range.max}
+          step={VIDEO_PREVIEW_STEP_SECONDS}
+          value={range.end}
+          aria-label="Fin del loop"
+          onChange={handleEndChange}
+          onMouseUp={onSave}
+          onTouchEnd={onSave}
+        />
+      </div>
+      <div className={styles.videoPreviewRangeFooter}>
+        <span>0:00</span>
+        <span>Max {formatVideoPreviewSecond(range.max)}</span>
+      </div>
+    </div>
+  )
+}
+
+const VideoPlayerSettingsControls: React.FC<{
+  settings: Record<string, unknown>
+  mediaUrl?: string
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ settings, mediaUrl = '', onPatchSettings, onSave }) => {
   const controlsMode = getVideoControlsMode(settings)
   const showCustomControls = controlsMode === 'clean'
   const showCustomControlBar = settings.videoControlBar === true
   const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
+  const [metadataDuration, setMetadataDuration] = useState(0)
+  const metadataSource = mediaUrl || getSettingString(settings, 'mediaUrl')
+  const metadataPreviewEnabled = settings.videoPreviewEnabled !== false
+
+  useEffect(() => {
+    const source = safePublicMediaUrl(metadataSource, 'video')
+    if (!source || !metadataPreviewEnabled) {
+      setMetadataDuration(0)
+      return
+    }
+
+    let cancelled = false
+    const probe = document.createElement('video')
+    probe.preload = 'metadata'
+    probe.src = appendEditorNoTrackParam(source)
+    probe.onloadedmetadata = () => {
+      if (!cancelled) setMetadataDuration(Number.isFinite(probe.duration) ? probe.duration : 0)
+    }
+    probe.onerror = () => {
+      if (!cancelled) setMetadataDuration(0)
+    }
+
+    return () => {
+      cancelled = true
+      probe.removeAttribute('src')
+      probe.load()
+    }
+  }, [metadataPreviewEnabled, metadataSource])
 
   return (
     <div className={styles.videoSettingsBox}>
@@ -19067,6 +19271,15 @@ const VideoPlayerSettingsControls: React.FC<{
           <span>Autoplay</span>
         </label>
       </div>
+
+      {settings.videoPreviewEnabled !== false && (
+        <VideoPreviewRangeControl
+          settings={settings}
+          durationSeconds={metadataDuration}
+          onPatchSettings={onPatchSettings}
+          onSave={onSave}
+        />
+      )}
 
       <div className={styles.twoColumn}>
         <label className={styles.checkboxLabel}>
@@ -22818,9 +23031,12 @@ const VideoPlayerPreview: React.FC<{
 }> = ({ src, label, settings, editable = false, selected = false }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<RistakHlsInstance | null>(null)
+  const previewLoopRef = useRef(false)
+  const hasStartedPlaybackRef = useRef(Boolean(settings.videoAutoplay))
   const noTrackSrc = appendEditorNoTrackParam(src)
   const isHlsSource = isHlsVideoUrl(noTrackSrc)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isPreviewLooping, setIsPreviewLooping] = useState(false)
   const [isMuted, setIsMuted] = useState(settings.videoMuted !== false)
   const [progress, setProgress] = useState(0)
   const controlsMode = getVideoControlsMode(settings)
@@ -22836,6 +23052,7 @@ const VideoPlayerPreview: React.FC<{
   const previewEnabled = settings.videoPreviewEnabled !== false
   const muted = settings.videoMuted !== false
   const autoplay = Boolean(settings.videoAutoplay)
+  const previewLoopEnabled = previewEnabled && !autoplay
   const loop = Boolean(settings.videoLoop) || autoplay
   const speed = getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4)
   const [currentSpeed, setCurrentSpeed] = useState(speed)
@@ -22859,7 +23076,7 @@ const VideoPlayerPreview: React.FC<{
   const soundColor = getSettingString(settings, 'videoSoundColor') || playColor
   const soundNoticeCycle = `${Math.max(1, soundNoticeHideAfter + 1.6)}s`
   const shouldLetEditorSelect = editable && !selected
-  const showOverlayLayer = showOverlay && !isPlaying
+  const showOverlayLayer = showOverlay && (!isPlaying || isPreviewLooping)
   const showSoundNotice = showOverlayLayer && soundHint && !hasStartedPlayback
   const className = [
     'rstk-video',
@@ -22868,15 +23085,58 @@ const VideoPlayerPreview: React.FC<{
     showCustomControlBar ? 'rstk-video-has-control-bar' : '',
     showSoundNotice ? 'rstk-video-sound-hint' : '',
     isPlaying ? 'rstk-video-is-playing' : '',
+    isPreviewLooping ? 'rstk-video-is-previewing' : '',
     isMuted ? 'rstk-video-is-muted' : '',
     `rstk-video-play-shape-${playShape}`,
     `rstk-video-play-${playIconStyle}`
   ].filter(Boolean).join(' ')
 
   useEffect(() => {
+    hasStartedPlaybackRef.current = hasStartedPlayback
+  }, [hasStartedPlayback])
+
+  const getActivePreviewRange = useCallback(() => {
+    const duration = videoRef.current?.duration
+    return normalizeVideoPreviewRange(settings, Number.isFinite(duration) ? duration : undefined)
+  }, [settings])
+
+  const stopPreviewLoop = useCallback(() => {
+    previewLoopRef.current = false
+    if (videoRef.current) delete videoRef.current.dataset.rstkVideoPreviewing
+    setIsPreviewLooping(false)
+  }, [])
+
+  const markUserPlaybackStarted = useCallback(() => {
+    hasStartedPlaybackRef.current = true
+    setHasStartedPlayback(true)
+  }, [])
+
+  const startPreviewLoop = useCallback(() => {
+    const video = videoRef.current
+    if (!video || !previewLoopEnabled || hasStartedPlaybackRef.current) return
+    const range = getActivePreviewRange()
+    previewLoopRef.current = true
+    video.dataset.rstkVideoPreviewing = 'true'
+    video.muted = true
+    if (video.currentTime < range.start || video.currentTime >= range.end) {
+      video.currentTime = range.start
+    }
+    setIsMuted(true)
+    setIsPreviewLooping(true)
+    void video.play().then(() => {
+      setIsPlaying(false)
+      setIsPreviewLooping(true)
+    }).catch(() => {
+      stopPreviewLoop()
+      setIsPlaying(false)
+    })
+  }, [getActivePreviewRange, previewLoopEnabled, stopPreviewLoop])
+
+  useEffect(() => {
     const video = videoRef.current
     if (!video) return
 
+    stopPreviewLoop()
     hlsRef.current?.destroy()
     hlsRef.current = null
 
@@ -22927,26 +23187,56 @@ const VideoPlayerPreview: React.FC<{
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
-  }, [autoplay, isHlsSource, noTrackSrc])
+  }, [autoplay, isHlsSource, noTrackSrc, stopPreviewLoop])
 
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
+    stopPreviewLoop()
     video.playbackRate = speed
     video.muted = muted
     setCurrentSpeed(speed)
     setIsMuted(video.muted || video.volume === 0)
     setIsPlaying(!video.paused)
     setProgress(0)
-    setHasStartedPlayback(Boolean(autoplay || !video.paused))
-  }, [speed, muted, noTrackSrc, autoplay])
+    hasStartedPlaybackRef.current = Boolean(autoplay)
+    setHasStartedPlayback(Boolean(autoplay))
+  }, [speed, muted, noTrackSrc, autoplay, stopPreviewLoop])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !previewLoopEnabled) {
+      stopPreviewLoop()
+      return
+    }
+
+    const start = () => startPreviewLoop()
+    video.addEventListener('loadedmetadata', start)
+    video.addEventListener('canplay', start)
+    if (video.readyState >= 1) start()
+
+    return () => {
+      video.removeEventListener('loadedmetadata', start)
+      video.removeEventListener('canplay', start)
+    }
+  }, [noTrackSrc, previewLoopEnabled, startPreviewLoop, stopPreviewLoop])
 
   const syncVideoState = () => {
     const video = videoRef.current
     if (!video) return
     const duration = Number.isFinite(video.duration) ? video.duration : 0
-    if (!video.paused) setHasStartedPlayback(true)
-    setIsPlaying(!video.paused)
+    if (previewLoopRef.current) {
+      const range = getActivePreviewRange()
+      if (duration > 0 && (video.currentTime >= range.end || video.currentTime < Math.max(0, range.start - 0.25))) {
+        video.currentTime = range.start
+      }
+      if (video.paused && !hasStartedPlaybackRef.current) {
+        void video.play().catch(() => stopPreviewLoop())
+      }
+    }
+    if (!video.paused && !previewLoopRef.current) markUserPlaybackStarted()
+    setIsPlaying(!video.paused && !previewLoopRef.current)
+    setIsPreviewLooping(!video.paused && previewLoopRef.current)
     setIsMuted(video.muted || video.volume === 0)
     setProgress(duration > 0 ? Math.min(1, Math.max(0, video.currentTime / duration)) : 0)
   }
@@ -22954,6 +23244,8 @@ const VideoPlayerPreview: React.FC<{
   const playVideo = async (unmute = false) => {
     const video = videoRef.current
     if (!video) return
+    stopPreviewLoop()
+    markUserPlaybackStarted()
     if (unmute) {
       video.muted = false
       if (video.volume === 0) video.volume = 1
@@ -22973,7 +23265,7 @@ const VideoPlayerPreview: React.FC<{
   const togglePlayback = (unmute = false) => {
     const video = videoRef.current
     if (!video) return
-    if (video.paused) {
+    if (video.paused || previewLoopRef.current) {
       void playVideo(unmute)
     } else {
       video.pause()
@@ -23060,6 +23352,7 @@ const VideoPlayerPreview: React.FC<{
         onTimeUpdate={syncVideoState}
         onLoadedMetadata={syncVideoState}
         onVolumeChange={syncVideoState}
+        onEnded={syncVideoState}
         onClick={handleVideoClick}
       />
       {showOverlayLayer && (
@@ -25825,6 +26118,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
         {block.blockType === 'video' && (
           <VideoPlayerSettingsControls
             settings={settings}
+            mediaUrl={getSettingString(settings, 'mediaUrl')}
             onPatchSettings={onPatchSettings}
             onSave={onSave}
           />

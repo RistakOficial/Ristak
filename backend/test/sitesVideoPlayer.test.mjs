@@ -120,6 +120,43 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /--rstk-video-sound-color:#22d3ee/)
 })
 
+test('video player renders configurable first-seconds preview loop settings', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoControlsMode: 'clean',
+    videoPreviewEnabled: true,
+    videoPreviewStart: 12.4,
+    videoPreviewEnd: 55
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: true,
+    preview: false
+  })
+
+  assert.match(html, /data-rstk-video-preview="true"/)
+  assert.match(html, /data-rstk-video-preview-start="12\.5"/)
+  assert.match(html, /data-rstk-video-preview-end="40"/)
+  assert.match(html, /rstkVideoPreviewing === 'true'/)
+  assert.match(html, /rstkVideoPreviewing/)
+  assert.doesNotMatch(html, /rstk-video-is-playing:hover \.rstk-video-play-dot/)
+
+  const autoplayHtml = await renderPublicSiteHtml(baseSite({
+    videoControlsMode: 'clean',
+    videoPreviewEnabled: true,
+    videoPreviewStart: 3,
+    videoPreviewEnd: 11,
+    videoAutoplay: true
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(autoplayHtml, /autoplay/)
+  assert.match(autoplayHtml, /data-rstk-video-preview="false"/)
+  assert.match(autoplayHtml, /data-rstk-video-preview-start="3"/)
+  assert.match(autoplayHtml, /data-rstk-video-preview-end="11"/)
+})
+
 test('video player uses the same visual signature for direct and Bunny Stream renders', async () => {
   const assetId = `site_parity_stream_${Date.now()}`
   const plainUrl = 'https://cdn.example.com/sites/plain-parity-video.mp4'
