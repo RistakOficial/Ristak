@@ -160,7 +160,7 @@ interface TableProps<T> {
   tableId?: string // ID para guardar config en rstk_config
   initialSortBy?: string // Columna para ordenar inicialmente
   initialSortOrder?: 'asc' | 'desc' // Orden inicial
-  loadingVariant?: 'skeleton' | 'spinner'
+  loadingVariant?: 'spinner'
   focusedRowKey?: string | null
   rowClassName?: (item: T) => string | undefined
   toolbarStart?: React.ReactNode
@@ -187,7 +187,6 @@ export function Table<T extends Record<string, any>>({
   tableId,
   initialSortBy,
   initialSortOrder = 'asc',
-  loadingVariant = 'skeleton',
   focusedRowKey,
   rowClassName,
   toolbarStart,
@@ -498,53 +497,11 @@ export function Table<T extends Record<string, any>>({
     </div>
   ) : null
 
-  if (loading && loadingVariant === 'spinner') {
+  if (loading) {
     return (
       <div className={styles.loadingContainer} role="status" aria-live="polite" aria-label="Cargando tabla">
         <div className={styles.spinner}></div>
-      </div>
-    )
-  }
-
-  if (loading) {
-    const skeletonColumnCount = Math.max(totalVisibleColumns, 4)
-    const skeletonRows = Math.min(Math.max(pageSize, 6), 10)
-
-    return (
-      <div className={styles.container} data-ristak-table aria-busy="true" aria-live="polite" aria-label="Cargando tabla">
-        <div className={styles.tableHeader}>
-          <div className={styles.leftControls}>
-            {searchable && <div className={`${styles.skeletonBlock} ${styles.skeletonSearch}`} />}
-            {filters && <div className={`${styles.skeletonBlock} ${styles.skeletonFilters}`} />}
-          </div>
-          <div className={`${styles.skeletonBlock} ${styles.skeletonAction}`} />
-        </div>
-
-        <div className={styles.skeletonTableWrapper}>
-          <div
-            className={styles.skeletonTable}
-            style={{
-              '--skeleton-columns': skeletonColumnCount,
-              minWidth: `${skeletonColumnCount * 120}px`
-            } as React.CSSProperties}
-          >
-            <div className={`${styles.skeletonRow} ${styles.skeletonHeaderRow}`}>
-              {Array.from({ length: skeletonColumnCount }).map((_, index) => (
-                <div className={`${styles.skeletonBlock} ${styles.skeletonHeaderCell}`} key={`skeleton-heading-${index}`} />
-              ))}
-            </div>
-            {Array.from({ length: skeletonRows }).map((_, rowIndex) => (
-              <div className={styles.skeletonRow} key={`skeleton-row-${rowIndex}`}>
-                {Array.from({ length: skeletonColumnCount }).map((_, cellIndex) => (
-                  <div
-                    className={`${styles.skeletonBlock} ${styles.skeletonCell}`}
-                    key={`skeleton-cell-${rowIndex}-${cellIndex}`}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
+        <p className={styles.loadingText}>Cargando</p>
       </div>
     )
   }
