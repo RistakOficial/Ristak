@@ -632,6 +632,11 @@ const videoPlayIconOptions = [
   { value: 'spark', label: 'Play con brillo' }
 ] as const
 type VideoPlayIconStyle = typeof videoPlayIconOptions[number]['value']
+const videoPlayShapeOptions = [
+  { value: 'round', label: 'Redondo' },
+  { value: 'rectangle', label: 'Rectangular' }
+] as const
+type VideoPlayShape = typeof videoPlayShapeOptions[number]['value']
 const videoSoundNoticeDurationOptions = [
   { value: '3', label: '3 segundos' },
   { value: '5', label: '5 segundos' },
@@ -641,12 +646,19 @@ const videoSoundNoticeDurationOptions = [
 ] as const
 const DEFAULT_VIDEO_CONTROLS_MODE: VideoControlsMode = 'clean'
 const DEFAULT_VIDEO_PLAY_ICON_STYLE: VideoPlayIconStyle = 'solid'
+const DEFAULT_VIDEO_PLAY_SHAPE: VideoPlayShape = 'round'
 const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
 const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
 const DEFAULT_VIDEO_PLAYER_COLOR = 'rgba(0,0,0,.52)'
 const DEFAULT_VIDEO_PLAY_COLOR = '#ffffff'
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
+const DEFAULT_VIDEO_PLAY_SIZE = 82
+const DEFAULT_VIDEO_PLAY_ICON_SIZE = 32
+const VIDEO_PLAY_SIZE_MIN = 56
+const VIDEO_PLAY_SIZE_MAX = 160
+const VIDEO_PLAY_ICON_SIZE_MIN = 18
+const VIDEO_PLAY_ICON_SIZE_MAX = 76
 const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControlsMode: DEFAULT_VIDEO_CONTROLS_MODE,
   videoControls: false,
@@ -668,10 +680,11 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoPlayerBorderWidth: 0,
   videoPlayerColor: DEFAULT_VIDEO_PLAYER_COLOR,
   videoPlayColor: DEFAULT_VIDEO_PLAY_COLOR,
-  videoPlaySize: 64,
+  videoPlaySize: DEFAULT_VIDEO_PLAY_SIZE,
+  videoPlayShape: DEFAULT_VIDEO_PLAY_SHAPE,
   videoPlayRadius: 999,
   videoPlayIconStyle: DEFAULT_VIDEO_PLAY_ICON_STYLE,
-  videoPlayIconSize: 22,
+  videoPlayIconSize: DEFAULT_VIDEO_PLAY_ICON_SIZE,
   videoPlayBorderColor: DEFAULT_VIDEO_TRANSPARENT,
   videoPlayBorderWidth: 0,
   videoSoundColor: DEFAULT_VIDEO_PLAY_COLOR
@@ -2035,6 +2048,34 @@ const isVideoPlayIconStyle = (value: string): value is VideoPlayIconStyle =>
 const getVideoPlayIconStyle = (settings: Record<string, unknown>): VideoPlayIconStyle => {
   const rawStyle = getSettingString(settings, 'videoPlayIconStyle')
   return isVideoPlayIconStyle(rawStyle) ? rawStyle : DEFAULT_VIDEO_PLAY_ICON_STYLE
+}
+
+const isVideoPlayShape = (value: string): value is VideoPlayShape =>
+  videoPlayShapeOptions.some(option => option.value === value)
+
+const getVideoPlayShape = (settings: Record<string, unknown>): VideoPlayShape => {
+  const rawShape = getSettingString(settings, 'videoPlayShape')
+  if (isVideoPlayShape(rawShape)) return rawShape
+  const radius = Number(settings.videoPlayRadius)
+  return Number.isFinite(radius) && radius < 120 ? 'rectangle' : DEFAULT_VIDEO_PLAY_SHAPE
+}
+
+const getVideoPlaySizeValue = (settings: Record<string, unknown>) => {
+  const rawSize = Number(settings.videoPlaySize)
+  if (!Number.isFinite(rawSize)) return DEFAULT_VIDEO_PLAY_SIZE
+  if (rawSize === 64 && !Object.prototype.hasOwnProperty.call(settings, 'videoPlayShape')) {
+    return DEFAULT_VIDEO_PLAY_SIZE
+  }
+  return Math.min(VIDEO_PLAY_SIZE_MAX, Math.max(VIDEO_PLAY_SIZE_MIN, rawSize))
+}
+
+const getVideoPlayIconSizeValue = (settings: Record<string, unknown>) => {
+  const rawSize = Number(settings.videoPlayIconSize)
+  if (!Number.isFinite(rawSize)) return DEFAULT_VIDEO_PLAY_ICON_SIZE
+  if (rawSize === 22 && !Object.prototype.hasOwnProperty.call(settings, 'videoPlayShape')) {
+    return DEFAULT_VIDEO_PLAY_ICON_SIZE
+  }
+  return Math.min(VIDEO_PLAY_ICON_SIZE_MAX, Math.max(VIDEO_PLAY_ICON_SIZE_MIN, rawSize))
 }
 
 const getVideoSoundNoticeText = (settings: Record<string, unknown>) => {
@@ -18978,28 +19019,38 @@ const VideoPlayerSettingsControls: React.FC<{
           <div className={styles.twoColumn}>
             <DimensionField
               label="Tamaño del play"
-              value={getSettingNumber(settings, 'videoPlaySize', 64, 42, 110)}
-              min={42}
-              max={110}
-              onChange={(value) => onPatchSettings({ videoPlaySize: value })}
+              value={getVideoPlaySizeValue(settings)}
+              min={VIDEO_PLAY_SIZE_MIN}
+              max={VIDEO_PLAY_SIZE_MAX}
+              onChange={(value) => onPatchSettings({ videoPlaySize: value, videoPlayShape: getVideoPlayShape(settings) })}
               onCommit={onSave}
             />
-            <DimensionField
-              label="Radio del play"
-              value={getSettingNumber(settings, 'videoPlayRadius', 999, 0, 999)}
-              min={0}
-              max={999}
-              onChange={(value) => onPatchSettings({ videoPlayRadius: value })}
-              onCommit={onSave}
-            />
+            <label className={styles.field}>
+              <span>Forma del play</span>
+              <CustomSelect
+                value={getVideoPlayShape(settings)}
+                onChange={(event) => {
+                  const nextShape = isVideoPlayShape(event.target.value) ? event.target.value : DEFAULT_VIDEO_PLAY_SHAPE
+                  onPatchSettings({
+                    videoPlayShape: nextShape,
+                    videoPlayRadius: nextShape === 'rectangle' ? 18 : 999
+                  })
+                }}
+                onBlur={onSave}
+              >
+                {videoPlayShapeOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
           </div>
           <div className={styles.twoColumn}>
             <DimensionField
               label="Ícono play"
-              value={getSettingNumber(settings, 'videoPlayIconSize', 22, 14, 54)}
-              min={14}
-              max={54}
-              onChange={(value) => onPatchSettings({ videoPlayIconSize: value })}
+              value={getVideoPlayIconSizeValue(settings)}
+              min={VIDEO_PLAY_ICON_SIZE_MIN}
+              max={VIDEO_PLAY_ICON_SIZE_MAX}
+              onChange={(value) => onPatchSettings({ videoPlayIconSize: value, videoPlayShape: getVideoPlayShape(settings) })}
               onCommit={onSave}
             />
             <DimensionField
@@ -22642,6 +22693,7 @@ const VideoPlayerPreview: React.FC<{
   const loop = Boolean(settings.videoLoop) || autoplay
   const speed = getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4)
   const [currentSpeed, setCurrentSpeed] = useState(speed)
+  const [hasStartedPlayback, setHasStartedPlayback] = useState(Boolean(autoplay))
   const fit = getSettingString(settings, 'videoFit') || 'cover'
   const playerBackground = getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND
   const playerRadius = `${getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}px`
@@ -22649,23 +22701,29 @@ const VideoPlayerPreview: React.FC<{
   const playerBorderWidth = `${getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}px`
   const playerColor = getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR
   const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
-  const playSize = `${getSettingNumber(settings, 'videoPlaySize', 64, 42, 110)}px`
+  const playShape = getVideoPlayShape(settings)
+  const playSizeValue = getVideoPlaySizeValue(settings)
+  const playSize = `${playSizeValue}px`
+  const playWidth = `${playShape === 'rectangle' ? Math.round(playSizeValue * 1.45) : playSizeValue}px`
   const playRadius = `${getSettingNumber(settings, 'videoPlayRadius', 999, 0, 999)}px`
   const playIconStyle = getVideoPlayIconStyle(settings)
-  const playIconSize = getSettingNumber(settings, 'videoPlayIconSize', 22, 14, 54)
+  const playIconSize = getVideoPlayIconSizeValue(settings)
   const playBorderColor = getSettingString(settings, 'videoPlayBorderColor') || DEFAULT_VIDEO_TRANSPARENT
   const playBorderWidth = `${getSettingNumber(settings, 'videoPlayBorderWidth', 0, 0, 10)}px`
   const soundColor = getSettingString(settings, 'videoSoundColor') || playColor
   const soundNoticeCycle = `${Math.max(1, soundNoticeHideAfter + 1.6)}s`
   const shouldLetEditorSelect = editable && !selected
+  const showOverlayLayer = showOverlay && !isPlaying
+  const showSoundNotice = showOverlayLayer && soundHint && !hasStartedPlayback
   const className = [
     'rstk-video',
     'rstk-video-player',
     showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     showCustomControlBar ? 'rstk-video-has-control-bar' : '',
-    soundHint && showOverlay ? 'rstk-video-sound-hint' : '',
+    showSoundNotice ? 'rstk-video-sound-hint' : '',
     isPlaying ? 'rstk-video-is-playing' : '',
     isMuted ? 'rstk-video-is-muted' : '',
+    `rstk-video-play-shape-${playShape}`,
     `rstk-video-play-${playIconStyle}`
   ].filter(Boolean).join(' ')
 
@@ -22734,12 +22792,14 @@ const VideoPlayerPreview: React.FC<{
     setIsMuted(video.muted || video.volume === 0)
     setIsPlaying(!video.paused)
     setProgress(0)
-  }, [speed, muted, noTrackSrc])
+    setHasStartedPlayback(Boolean(autoplay || !video.paused))
+  }, [speed, muted, noTrackSrc, autoplay])
 
   const syncVideoState = () => {
     const video = videoRef.current
     if (!video) return
     const duration = Number.isFinite(video.duration) ? video.duration : 0
+    if (!video.paused) setHasStartedPlayback(true)
     setIsPlaying(!video.paused)
     setIsMuted(video.muted || video.volume === 0)
     setProgress(duration > 0 ? Math.min(1, Math.max(0, video.currentTime / duration)) : 0)
@@ -22782,6 +22842,13 @@ const VideoPlayerPreview: React.FC<{
     togglePlayback(true)
   }
 
+  const handleVideoClick = (event: React.MouseEvent<HTMLVideoElement>) => {
+    if (!showOverlay || showNativeControls || shouldLetEditorSelect) return
+    event.preventDefault()
+    event.stopPropagation()
+    togglePlayback(false)
+  }
+
   const handleControlPlayClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     if (shouldLetEditorSelect) return
     event.preventDefault()
@@ -22820,6 +22887,7 @@ const VideoPlayerPreview: React.FC<{
         ['--rstk-video-border-width' as string]: playerBorderWidth,
         ['--rstk-video-player-color' as string]: playerColor,
         ['--rstk-video-play-color' as string]: playColor,
+        ['--rstk-video-play-width' as string]: playWidth,
         ['--rstk-video-play-size' as string]: playSize,
         ['--rstk-video-play-radius' as string]: playRadius,
         ['--rstk-video-play-icon-size' as string]: `${playIconSize}px`,
@@ -22846,11 +22914,12 @@ const VideoPlayerPreview: React.FC<{
         onTimeUpdate={syncVideoState}
         onLoadedMetadata={syncVideoState}
         onVolumeChange={syncVideoState}
+        onClick={handleVideoClick}
       />
-      {showOverlay && (
+      {showOverlayLayer && (
         <button type="button" className="rstk-video-overlay" onClick={handleOverlayClick} aria-label="Reproducir video">
           <span className="rstk-video-play-dot"><VideoPlayGlyph iconStyle={playIconStyle} size={playIconSize} /></span>
-          {soundHint && (
+          {showSoundNotice && (
             <span className={`rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}`}>
               <span className="rstk-video-sound-icon" aria-hidden="true">
                 <Volume2 size={16} />
