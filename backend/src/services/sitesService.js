@@ -12738,6 +12738,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const previewEnabled = settings.videoPreviewEnabled !== false
   const muted = settings.videoMuted !== false
   const autoplay = Boolean(settings.videoAutoplay)
+  const showSoundNotice = showOverlay && soundHint && !autoplay
   const loop = Boolean(settings.videoLoop) || autoplay
   const rawSpeed = Number(settings.videoDefaultSpeed || 1)
   const speed = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1
@@ -12766,7 +12767,8 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     'rstk-video-player',
     showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     showCustomControlBar ? 'rstk-video-has-control-bar' : '',
-    soundHint && showOverlay ? 'rstk-video-sound-hint' : '',
+    showSoundNotice ? 'rstk-video-sound-hint' : '',
+    muted ? 'rstk-video-is-muted' : '',
     `rstk-video-play-shape-${playShape}`,
     `rstk-video-play-${playIconStyle}`
   ].filter(Boolean).join(' ')
@@ -12810,7 +12812,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
       ${showOverlay ? `
         <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
           <span class="rstk-video-play-dot">${getVideoPlayIconMarkup(playIconStyle)}</span>
-          ${soundHint ? `<span class="rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}"><span class="rstk-video-sound-icon" aria-hidden="true">${RSTK_ICONS.volume}</span>${soundNoticeText ? `<span class="rstk-video-sound-text">${escapeHtml(soundNoticeText)}</span>` : ''}</span>` : ''}
+          ${showSoundNotice ? `<span class="rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}"><span class="rstk-video-sound-icon" aria-hidden="true">${RSTK_ICONS.volume}</span>${soundNoticeText ? `<span class="rstk-video-sound-text">${escapeHtml(soundNoticeText)}</span>` : ''}</span>` : ''}
         </button>
       ` : ''}
       ${showCustomControlBar ? `

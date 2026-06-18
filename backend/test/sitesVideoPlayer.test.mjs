@@ -38,6 +38,46 @@ const baseSite = (settings) => ({
   ]
 })
 
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const getHtmlAttribute = (attrs, name) => {
+  const match = String(attrs || '').match(new RegExp(`(?:^|\\s)${escapeRegExp(name)}="([^"]*)"`, 'i'))
+  return match ? match[1] : ''
+}
+
+const hasHtmlBooleanAttribute = (attrs, name) =>
+  new RegExp(`(?:^|\\s)${escapeRegExp(name)}(?:\\s|$)`, 'i').test(String(attrs || ''))
+
+const getVideoPlayerVisualSignature = (html) => {
+  const source = String(html || '')
+  const hostMatch = source.match(/<div class="([^"]*\brstk-video-player\b[^"]*)" style="([^"]*)">/)
+  assert.ok(hostMatch, 'expected rendered custom video player host')
+
+  const videoMatch = source.match(/<video\s+([^>]*)>/)
+  assert.ok(videoMatch, 'expected rendered video element')
+  const videoAttrs = videoMatch[1]
+
+  return {
+    classes: hostMatch[1],
+    style: hostMatch[2],
+    hasOverlay: /class="rstk-video-overlay"/.test(source),
+    hasSoundNotice: /class="rstk-video-sound\b/.test(source),
+    soundText: source.match(/<span class="rstk-video-sound-text">([^<]*)<\/span>/)?.[1] || '',
+    hasControlBar: /class="rstk-video-control-bar"/.test(source),
+    hasVolumeControl: /data-rstk-video-mute/.test(source),
+    hasSpeedControl: /data-rstk-video-speed-select/.test(source),
+    selectedSpeed: source.match(/<option value="([^"]+)" selected>/)?.[1] || '',
+    nativeControls: hasHtmlBooleanAttribute(videoAttrs, 'controls'),
+    muted: hasHtmlBooleanAttribute(videoAttrs, 'muted'),
+    autoplay: hasHtmlBooleanAttribute(videoAttrs, 'autoplay'),
+    loop: hasHtmlBooleanAttribute(videoAttrs, 'loop'),
+    playsinline: hasHtmlBooleanAttribute(videoAttrs, 'playsinline'),
+    preload: getHtmlAttribute(videoAttrs, 'preload'),
+    speed: getHtmlAttribute(videoAttrs, 'data-rstk-video-speed'),
+    objectFit: getHtmlAttribute(videoAttrs, 'style')
+  }
+}
+
 test('video player clean mode renders custom overlay controls', async () => {
   const html = await renderPublicSiteHtml(baseSite({
     videoControlsMode: 'clean',
@@ -78,6 +118,122 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /--rstk-video-play-border-color:#facc15/)
   assert.match(html, /--rstk-video-play-border-width:2px/)
   assert.match(html, /--rstk-video-sound-color:#22d3ee/)
+})
+
+test('video player uses the same visual signature for direct and Bunny Stream renders', async () => {
+  const assetId = `site_parity_stream_${Date.now()}`
+  const plainUrl = 'https://cdn.example.com/sites/plain-parity-video.mp4'
+  const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
+  const streamVideoId = `stream-${assetId}`
+  const visualSettings = {
+    videoControlsMode: 'clean',
+    videoControlBar: true,
+    videoControlVolume: true,
+    videoControlSpeed: true,
+    videoPreviewEnabled: true,
+    videoSoundHint: true,
+    videoSoundNoticeText: 'Toca para escuchar',
+    videoSoundNoticeHideAfter: 8,
+    videoMuted: true,
+    videoAutoplay: false,
+    videoLoop: false,
+    videoDefaultSpeed: 1.25,
+    videoFit: 'contain',
+    videoPlayerBackground: '#050505',
+    videoPlayerRadius: 31,
+    videoPlayerBorderColor: '#a855f7',
+    videoPlayerBorderWidth: 5,
+    videoPlayerColor: 'rgba(19, 51, 255, 0.66)',
+    videoPlayColor: '#fafafa',
+    videoPlaySize: 104,
+    videoPlayShape: 'rectangle',
+    videoPlayRadius: 17,
+    videoPlayIconStyle: 'spark',
+    videoPlayIconSize: 48,
+    videoPlayBorderColor: 'rgba(255, 255, 255, 0.35)',
+    videoPlayBorderWidth: 3,
+    videoSoundColor: '#facc15'
+  }
+  const expectedEditorInitialClasses = [
+    'rstk-video',
+    'rstk-video-player',
+    'rstk-video-custom-controls',
+    'rstk-video-has-control-bar',
+    'rstk-video-sound-hint',
+    'rstk-video-is-muted',
+    'rstk-video-play-shape-rectangle',
+    'rstk-video-play-spark'
+  ].join(' ')
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json
+      ) VALUES (?, 'default', 'video.mp4', 'video.mp4', ?, ?, 'video/mp4', 'video', 'mp4', 128, 128, 128, 'ready', 'bunny', 'sites', ?, 1, ?)`,
+      [
+        assetId,
+        `sites/${assetId}.mp4`,
+        storageUrl,
+        'site_video_player',
+        JSON.stringify({
+          stream: {
+            provider: 'bunny_stream',
+            syncStatus: 'uploaded',
+            libraryId: '123456',
+            videoId: streamVideoId
+          }
+        })
+      ]
+    )
+
+    const render = (site, options) => renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      ...options
+    })
+    const plainSite = baseSite({ ...visualSettings, mediaUrl: plainUrl })
+    const streamSite = baseSite({ ...visualSettings, mediaUrl: storageUrl })
+
+    const plainPreviewHtml = await render(plainSite, { trackingEnabled: false, preview: true })
+    const plainLiveHtml = await render(plainSite, { trackingEnabled: true, preview: false })
+    const streamPreviewHtml = await render(streamSite, { trackingEnabled: false, preview: true })
+    const streamLiveHtml = await render(streamSite, { trackingEnabled: true, preview: false })
+
+    const plainPreviewSignature = getVideoPlayerVisualSignature(plainPreviewHtml)
+    assert.equal(plainPreviewSignature.classes, expectedEditorInitialClasses)
+    assert.equal(plainPreviewSignature.soundText, 'Toca para escuchar')
+    assert.deepEqual(getVideoPlayerVisualSignature(plainLiveHtml), plainPreviewSignature)
+    assert.deepEqual(getVideoPlayerVisualSignature(streamPreviewHtml), plainPreviewSignature)
+    assert.deepEqual(getVideoPlayerVisualSignature(streamLiveHtml), plainPreviewSignature)
+
+    assert.match(plainLiveHtml, /data-rstk-video-provider="html5_video"/)
+    assert.match(streamLiveHtml, /data-rstk-video-provider="bunny_stream"/)
+    assert.match(streamLiveHtml, new RegExp(`data-rstk-media-asset-id="${escapeRegExp(assetId)}"`))
+    assert.match(streamLiveHtml, new RegExp(`data-rstk-stream-video-id="${escapeRegExp(streamVideoId)}"`))
+    assert.doesNotMatch(streamPreviewHtml, /<iframe[^>]+player\.mediadelivery\.net\/embed/)
+    assert.doesNotMatch(streamLiveHtml, /<iframe[^>]+player\.mediadelivery\.net\/embed/)
+
+    const autoplayHtml = await render(baseSite({
+      ...visualSettings,
+      mediaUrl: plainUrl,
+      videoAutoplay: true
+    }), { trackingEnabled: false, preview: true })
+    const autoplaySignature = getVideoPlayerVisualSignature(autoplayHtml)
+    assert.equal(autoplaySignature.classes, [
+      'rstk-video',
+      'rstk-video-player',
+      'rstk-video-custom-controls',
+      'rstk-video-has-control-bar',
+      'rstk-video-is-muted',
+      'rstk-video-play-shape-rectangle',
+      'rstk-video-play-spark'
+    ].join(' '))
+    assert.equal(autoplaySignature.hasSoundNotice, false)
+  } finally {
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+  }
 })
 
 test('video player none mode removes overlay and audio prompt', async () => {
