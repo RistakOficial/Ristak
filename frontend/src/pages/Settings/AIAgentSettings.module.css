@@ -1301,11 +1301,11 @@
 }
 
 .agentDetailLayout {
-  --agent-test-panel-width: clamp(320px, 24vw, 400px);
+  --agent-test-panel-width: min(100%, 390px);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--agent-test-panel-width);
+  grid-template-columns: minmax(0, 7fr) minmax(320px, 3fr);
   align-items: start;
-  gap: 20px;
+  gap: 24px;
 }
 
 .agentConfigColumn,
@@ -1320,12 +1320,14 @@
 }
 
 .agentTestColumn {
-  position: fixed;
-  top: 104px;
-  right: max(68px, calc((100vw - 224px - var(--app-page-max, 1664px)) / 2 + 25px));
-  bottom: 20px;
-  z-index: 30;
-  width: var(--agent-test-panel-width);
+  position: sticky;
+  top: 18px;
+  z-index: 1;
+  align-self: start;
+  justify-self: stretch;
+  width: 100%;
+  height: calc(100vh - 128px);
+  min-height: 620px;
 }
 
 .agentStatusPill {
@@ -1553,6 +1555,7 @@
 .agentTestPanel {
   display: flex;
   flex-direction: column;
+  align-items: center;
   justify-content: center;
   height: 100%;
   max-height: none;
@@ -1607,6 +1610,8 @@
   .agentTestColumn {
     position: static;
     width: auto;
+    height: auto;
+    min-height: 0;
   }
 
 }
@@ -2053,6 +2058,7 @@
 .agentTestPhonePreview {
   height: 100%;
   min-height: 0;
+  width: var(--agent-test-panel-width);
 }
 
 @media (max-width: 900px) {
