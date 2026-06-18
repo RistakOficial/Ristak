@@ -1790,6 +1790,17 @@ async function syncBalance(balanceRecord) {
 
 async function syncTemplates(templates = [], options = {}) {
   for (const item of templates.map(normalizeTemplateRecord).filter(template => template.wabaId && template.name && template.language)) {
+    if (item.status === 'DELETED') {
+      await deleteWhatsAppApiTemplateSnapshot({
+        wabaId: item.wabaId,
+        name: item.name,
+        language: item.language,
+        ids: [item.id, item.officialTemplateId]
+      })
+      await deleteLocalMessageTemplateMirror(item)
+      continue
+    }
+
     await db.run(`
       INSERT INTO whatsapp_api_templates (
         id, official_template_id, waba_id, name, language, category,
@@ -1838,6 +1849,66 @@ async function syncTemplates(templates = [], options = {}) {
 
     await syncTemplateAlert(item, options)
     await syncLocalMessageTemplateFromYCloud(item)
+  }
+}
+
+async function deleteLocalMessageTemplateMirror(template = {}) {
+  const name = cleanString(template.name)
+  const language = cleanString(template.language)
+  if (!name || !language) return { deleted: 0 }
+
+  const result = await db.run(
+    'DELETE FROM whatsapp_message_templates WHERE name = ? AND language = ?',
+    [name, language]
+  )
+  return { deleted: Number(result?.changes || 0) }
+}
+
+export async function deleteWhatsAppApiTemplateSnapshot({ wabaId, name, language, ids = [] } = {}) {
+  const cleanWabaId = cleanString(wabaId)
+  const cleanName = cleanString(name)
+  const cleanLanguage = cleanString(language)
+  const cleanIds = [...new Set((Array.isArray(ids) ? ids : [ids]).map(cleanString).filter(Boolean))]
+  const clauses = []
+  const params = []
+
+  if (cleanName && cleanLanguage) {
+    const clause = cleanWabaId
+      ? '(waba_id = ? AND name = ? AND language = ?)'
+      : '(name = ? AND language = ?)'
+    clauses.push(clause)
+    if (cleanWabaId) params.push(cleanWabaId)
+    params.push(cleanName, cleanLanguage)
+  }
+
+  if (cleanIds.length) {
+    const placeholders = cleanIds.map(() => '?').join(', ')
+    clauses.push(`(id IN (${placeholders}) OR official_template_id IN (${placeholders}))`)
+    params.push(...cleanIds, ...cleanIds)
+  }
+
+  if (!clauses.length) {
+    return { deleted: 0, sendReferencesReleased: 0 }
+  }
+
+  const whereSql = clauses.join(' OR ')
+  const rows = await db.all(`SELECT id FROM whatsapp_api_templates WHERE ${whereSql}`, params)
+  const templateIds = [...new Set(rows.map(row => cleanString(row.id)).filter(Boolean))]
+  let sendReferencesReleased = 0
+
+  if (templateIds.length) {
+    const placeholders = templateIds.map(() => '?').join(', ')
+    const result = await db.run(
+      `UPDATE whatsapp_api_template_sends SET template_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE template_id IN (${placeholders})`,
+      templateIds
+    )
+    sendReferencesReleased = Number(result?.changes || 0)
+  }
+
+  const result = await db.run(`DELETE FROM whatsapp_api_templates WHERE ${whereSql}`, params)
+  return {
+    deleted: Number(result?.changes || 0),
+    sendReferencesReleased
   }
 }
 
@@ -6165,6 +6236,56 @@ export async function createWhatsAppApiTemplate(templatePayload = {}) {
 
   await syncTemplates([response], { eventType: 'manual_template_submit' })
   return response
+}
+
+export async function deleteWhatsAppApiTemplate({ wabaId, name, language } = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  if (!config.enabled || !config.apiKey) {
+    throw new Error('WhatsApp Business no está conectado con WhatsApp API')
+  }
+
+  const cleanWabaId = cleanString(wabaId || config.wabaId)
+  const cleanName = cleanString(name)
+  const cleanLanguage = cleanString(language)
+
+  if (!cleanWabaId) throw new Error('Falta el WABA ID de WhatsApp Business')
+  if (!cleanName) throw new Error('Falta el nombre de la plantilla')
+  if (!cleanLanguage) throw new Error('Falta el idioma de la plantilla')
+
+  let ycloud = null
+  let notFound = false
+
+  try {
+    ycloud = await ycloudRequest(
+      `/whatsapp/templates/${encodeURIComponent(cleanWabaId)}/${encodeURIComponent(cleanName)}/${encodeURIComponent(cleanLanguage)}`,
+      {
+        apiKey: config.apiKey,
+        method: 'DELETE'
+      }
+    )
+  } catch (error) {
+    if (Number(error.statusCode || 0) === 404) {
+      notFound = true
+    } else {
+      throw error
+    }
+  }
+
+  const snapshot = await deleteWhatsAppApiTemplateSnapshot({
+    wabaId: cleanWabaId,
+    name: cleanName,
+    language: cleanLanguage
+  })
+
+  return {
+    deleted: !notFound,
+    notFound,
+    wabaId: cleanWabaId,
+    name: cleanName,
+    language: cleanLanguage,
+    snapshot,
+    ycloud
+  }
 }
 
 export async function retrieveWhatsAppApiTemplate({ wabaId, name, language } = {}) {

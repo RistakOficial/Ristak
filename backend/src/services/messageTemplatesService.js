@@ -2,6 +2,8 @@ import crypto from 'crypto'
 import { db } from '../config/database.js'
 import {
   createWhatsAppApiTemplate,
+  deleteWhatsAppApiTemplate,
+  deleteWhatsAppApiTemplateSnapshot,
   retrieveWhatsAppApiTemplate,
   sendWhatsAppApiTemplateMessage,
   syncWhatsAppApiTemplatesFromYCloud,
@@ -1187,9 +1189,54 @@ export async function sendMessageTemplateTest(id, payload = {}) {
   }
 }
 
+function getTemplateWabaId(template = {}) {
+  const raw = template.ycloudRawPayload && typeof template.ycloudRawPayload === 'object'
+    ? template.ycloudRawPayload
+    : {}
+  return cleanString(template.wabaId || template.waba_id || raw.wabaId || raw.waba_id)
+}
+
+function shouldDeleteTemplateFromYCloud(template = {}) {
+  return Boolean(
+    cleanString(template.ycloudTemplateId) ||
+    cleanString(template.ycloudStatus) ||
+    cleanString(template.ycloudSubmittedAt) ||
+    template.ycloudRawPayload
+  )
+}
+
 export async function deleteMessageTemplate(id) {
+  const row = await db.get('SELECT * FROM whatsapp_message_templates WHERE id = ?', [id])
+  if (!row) return { deleted: false, ycloud: null, snapshot: { deleted: 0, sendReferencesReleased: 0 } }
+
+  const template = mapTemplate(row)
+  let ycloud = null
+
+  if (shouldDeleteTemplateFromYCloud(template)) {
+    try {
+      ycloud = await deleteWhatsAppApiTemplate({
+        wabaId: getTemplateWabaId(template),
+        name: template.name,
+        language: template.language
+      })
+    } catch (error) {
+      const message = await saveTemplateLastError(id, error)
+      throw new Error(message)
+    }
+  }
+
+  const snapshot = ycloud?.snapshot || await deleteWhatsAppApiTemplateSnapshot({
+    wabaId: getTemplateWabaId(template),
+    name: template.name,
+    language: template.language,
+    ids: [template.id, template.ycloudTemplateId]
+  })
   const result = await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [id])
-  return { deleted: result.changes > 0 }
+  return {
+    deleted: result.changes > 0,
+    ycloud,
+    snapshot
+  }
 }
 
 export async function createTemplateFolder(payload = {}) {
