@@ -100,7 +100,7 @@ const SOFT_INTERNAL_META_PHRASES = [
 ]
 
 export function shouldIncludeConversationalBinaryMedia({ runtime } = {}) {
-  return runtime?.supportsMultimodalInputs !== false
+  return runtime?.supportsMultimodalInputs === true
 }
 
 function sleep(ms) {
@@ -810,14 +810,15 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   agentConfig = { ...agentConfig, aiProvider }
   const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
   const rawMessages = await loadConversationHistory(contactId)
-  const audioTranscriptionApiKey = aiProvider === 'openai'
+  const openAIFallbackApiKey = aiProvider === 'openai'
     ? runtime.apiKey
     : await getOpenAIApiKey().catch(() => null)
   const includeBinaryMedia = shouldIncludeConversationalBinaryMedia({ runtime })
   const hydratedMessages = await hydrateConversationalMessagesMedia(rawMessages, {
     aiProvider,
     apiKey: runtime.apiKey,
-    audioTranscriptionApiKey,
+    audioTranscriptionApiKey: openAIFallbackApiKey,
+    visualAnalysisApiKey: openAIFallbackApiKey,
     includeBinary: includeBinaryMedia
   })
   if (!hydratedMessages.length) return
@@ -1129,14 +1130,15 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
 
       const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
       const rawMessages = await loadConversationHistory(contactId)
-      const audioTranscriptionApiKey = aiProvider === 'openai'
+      const openAIFallbackApiKey = aiProvider === 'openai'
         ? runtime.apiKey
         : await getOpenAIApiKey().catch(() => null)
       const includeBinaryMedia = shouldIncludeConversationalBinaryMedia({ runtime })
       const messages = await hydrateConversationalMessagesMedia(rawMessages, {
         aiProvider,
         apiKey: runtime.apiKey,
-        audioTranscriptionApiKey,
+        audioTranscriptionApiKey: openAIFallbackApiKey,
+        visualAnalysisApiKey: openAIFallbackApiKey,
         includeBinary: includeBinaryMedia
       })
       if (!messages.length) return
@@ -1479,14 +1481,15 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     ruleContext: null
   })
 
-  const audioTranscriptionApiKey = aiProvider === 'openai'
+  const openAIFallbackApiKey = aiProvider === 'openai'
     ? runtime.apiKey
     : await getOpenAIApiKey().catch(() => null)
   const includeBinaryMedia = shouldIncludeConversationalBinaryMedia({ runtime })
   const messagesForAgent = await hydrateConversationalPreviewMessagesMedia(cleanMessages, {
     aiProvider,
     apiKey: runtime.apiKey,
-    audioTranscriptionApiKey,
+    audioTranscriptionApiKey: openAIFallbackApiKey,
+    visualAnalysisApiKey: openAIFallbackApiKey,
     includeBinary: includeBinaryMedia
   })
 

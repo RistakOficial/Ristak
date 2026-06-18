@@ -17,6 +17,7 @@ export const CONVERSATIONAL_AI_PROVIDER_DEFINITIONS = [
     id: 'openai',
     label: 'OpenAI',
     defaultModel: process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || 'gpt-5.4-nano',
+    supportsMultimodalInputs: true,
     canDelete: false,
     managedBy: 'ai_agent_config'
   },
@@ -26,6 +27,7 @@ export const CONVERSATIONAL_AI_PROVIDER_DEFINITIONS = [
     defaultModel: process.env.GEMINI_CONVERSATIONAL_AGENT_MODEL || 'gemini-3.5-flash',
     baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     configKey: 'conversational_ai_provider_gemini_api_key_encrypted',
+    supportsMultimodalInputs: true,
     canDelete: true
   },
   {
@@ -34,6 +36,7 @@ export const CONVERSATIONAL_AI_PROVIDER_DEFINITIONS = [
     defaultModel: process.env.CLAUDE_CONVERSATIONAL_AGENT_MODEL || 'claude-haiku-4-5',
     baseURL: 'https://api.anthropic.com/v1/',
     configKey: 'conversational_ai_provider_claude_api_key_encrypted',
+    supportsMultimodalInputs: false,
     canDelete: true
   },
   {
@@ -42,6 +45,7 @@ export const CONVERSATIONAL_AI_PROVIDER_DEFINITIONS = [
     defaultModel: process.env.DEEPSEEK_CONVERSATIONAL_AGENT_MODEL || 'deepseek-v4-flash',
     baseURL: 'https://api.deepseek.com',
     configKey: 'conversational_ai_provider_deepseek_api_key_encrypted',
+    supportsMultimodalInputs: false,
     canDelete: true
   }
 ]
@@ -251,6 +255,7 @@ export async function resolveConversationalAIRuntime(providerId) {
     providerLabel: provider.label,
     apiKey,
     modelProvider,
-    supportsAISplitting: provider.id === 'openai'
+    supportsAISplitting: provider.id === 'openai',
+    supportsMultimodalInputs: provider.supportsMultimodalInputs === true
   }
 }

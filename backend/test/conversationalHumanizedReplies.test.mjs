@@ -944,10 +944,11 @@ test('describe adjuntos multimedia en mensajes conversacionales', () => {
   assert.match(summary, /image\/jpeg/)
 })
 
-test('habilita multimedia binaria por defecto para el demo conversacional', () => {
-  assert.equal(shouldIncludeConversationalBinaryMedia({ runtime: { providerId: 'gemini' } }), true)
-  assert.equal(shouldIncludeConversationalBinaryMedia({ runtime: { providerId: 'openai' } }), true)
+test('habilita multimedia binaria solo si el runtime la soporta', () => {
+  assert.equal(shouldIncludeConversationalBinaryMedia({ runtime: { providerId: 'gemini', supportsMultimodalInputs: true } }), true)
+  assert.equal(shouldIncludeConversationalBinaryMedia({ runtime: { providerId: 'openai', supportsMultimodalInputs: true } }), true)
   assert.equal(shouldIncludeConversationalBinaryMedia({ runtime: { supportsMultimodalInputs: false } }), false)
+  assert.equal(shouldIncludeConversationalBinaryMedia({ runtime: { providerId: 'claude' } }), false)
 })
 
 test('prepara imagen entrante como adjunto visual para el agente conversacional', async () => {
@@ -974,6 +975,33 @@ test('prepara imagen entrante como adjunto visual para el agente conversacional'
   assert.match(hydrated[0].attachments[0].dataUrl, /^data:image\/jpeg;base64,/)
   assert.match(hydrated[0].content, /Contexto del adjunto/)
   assert.match(hydrated[0].content, /analisis directo/)
+})
+
+test('convierte imagen entrante a analisis textual cuando el proveedor no acepta binario', async () => {
+  const messages = [{
+    role: 'user',
+    content: 'que ves',
+    message_type: 'image',
+    media_url: 'https://cdn.test/foto.jpg',
+    media_mime_type: 'image/jpeg',
+    media_filename: 'foto.jpg'
+  }]
+
+  const hydrated = await hydrateConversationalMessagesMedia(messages, {
+    includeBinary: false,
+    fetchMediaBuffer: async () => ({
+      buffer: Buffer.from([1, 2, 3, 4]),
+      mimeType: 'image/jpeg',
+      filename: 'foto.jpg'
+    }),
+    analyzeVisualMedia: async ({ attachment }) => {
+      assert.equal(attachment.kind, 'image')
+      return 'Se ve una persona frente a una cabina roja.'
+    }
+  })
+
+  assert.equal(hydrated[0].attachments.length, 0)
+  assert.match(hydrated[0].content, /Analisis automatico del adjunto: Se ve una persona frente a una cabina roja/)
 })
 
 test('transcribe audio entrante antes de responder con el agente conversacional', async () => {
@@ -1055,6 +1083,31 @@ test('prepara adjuntos del demo conversacional aunque el mensaje no tenga texto'
   assert.match(hydrated[0].content, /analisis directo/)
 })
 
+test('demo convierte imagen a analisis textual cuando el proveedor no acepta image_url', async () => {
+  const dataUrl = `data:image/jpeg;base64,${Buffer.from('image bytes').toString('base64')}`
+  const hydrated = await hydrateConversationalPreviewMessagesMedia([{
+    role: 'user',
+    content: '',
+    attachments: [{
+      kind: 'image',
+      name: 'foto.jpg',
+      mimeType: 'image/jpeg',
+      dataUrl
+    }]
+  }], {
+    includeBinary: false,
+    analyzeVisualMedia: async ({ attachment, analysisPart }) => {
+      assert.equal(attachment.kind, 'image')
+      assert.equal(analysisPart.type, 'input_image')
+      return { text: 'Hay una persona en la calle junto a una cabina telefonica roja.' }
+    }
+  })
+
+  assert.match(hydrated[0].content, /Adjunto recibido: imagen/)
+  assert.match(hydrated[0].content, /Analisis automatico del adjunto: Hay una persona en la calle/)
+  assert.equal(hydrated[0].attachments.length, 0)
+})
+
 test('transcribe notas de voz enviadas desde el demo conversacional', async () => {
   const hydrated = await hydrateConversationalPreviewMessagesMedia([{
     role: 'user',
@@ -1104,6 +1157,33 @@ test('prepara miniatura de video del demo como entrada visual', async () => {
   assert.equal(hydrated[0].attachments.length, 1)
   assert.equal(hydrated[0].attachments[0].kind, 'video')
   assert.equal(hydrated[0].attachments[0].thumbnailDataUrl, thumbnailDataUrl)
+})
+
+test('demo convierte miniatura de video a analisis textual para proveedores sin binario', async () => {
+  const thumbnailDataUrl = `data:image/jpeg;base64,${Buffer.from('thumbnail bytes').toString('base64')}`
+  const hydrated = await hydrateConversationalPreviewMessagesMedia([{
+    role: 'user',
+    content: 'mira este video',
+    attachments: [{
+      kind: 'video',
+      name: 'situacion.mp4',
+      mimeType: 'video/mp4',
+      dataUrl: `data:video/mp4;base64,${Buffer.from('video bytes').toString('base64')}`,
+      thumbnailDataUrl,
+      durationMs: 3400
+    }]
+  }], {
+    includeBinary: false,
+    analyzeVisualMedia: async ({ attachment, analysisPart }) => {
+      assert.equal(attachment.kind, 'video')
+      assert.equal(analysisPart.image_url, thumbnailDataUrl)
+      return 'La miniatura muestra una recepcion con varias personas esperando.'
+    }
+  })
+
+  assert.match(hydrated[0].content, /Analisis automatico del adjunto: La miniatura muestra/)
+  assert.match(hydrated[0].content, /miniatura visual/)
+  assert.equal(hydrated[0].attachments.length, 0)
 })
 
 test('rellena parametros de la estrategia de cierre de fabrica', () => {

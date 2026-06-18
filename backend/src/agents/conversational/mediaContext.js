@@ -15,7 +15,11 @@ const MAX_INLINE_MEDIA_BYTES = Number(process.env.CONVERSATIONAL_AGENT_INLINE_ME
 const MAX_AUDIO_TRANSCRIPTION_BYTES = Number(process.env.CONVERSATIONAL_AGENT_AUDIO_TRANSCRIPTION_MAX_BYTES || 24 * 1024 * 1024)
 const MAX_PREVIEW_ATTACHMENT_BYTES = Number(process.env.CONVERSATIONAL_AGENT_PREVIEW_MEDIA_MAX_BYTES || MAX_INLINE_MEDIA_BYTES)
 const FETCH_TIMEOUT_MS = Number(process.env.CONVERSATIONAL_AGENT_MEDIA_FETCH_TIMEOUT_MS || 12_000)
+const VISUAL_ANALYSIS_TIMEOUT_MS = Number(process.env.CONVERSATIONAL_AGENT_VISUAL_ANALYSIS_TIMEOUT_MS || 20_000)
+const VISUAL_ANALYSIS_MODEL = process.env.CONVERSATIONAL_AGENT_VISUAL_ANALYSIS_MODEL || process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || 'gpt-5.4-nano'
+const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
 const MAX_TEXT_FILE_CHARS = 18_000
+const MAX_ATTACHMENT_ANALYSIS_CHARS = 2_400
 
 const TEXT_MIME_PATTERN = /^(text\/|application\/(json|xml|javascript|x-javascript|csv))/
 const SUPPORTED_FILE_INPUT_EXTENSIONS = new Set([
@@ -106,6 +110,9 @@ export function buildConversationalMediaSummary(row = {}, extra = {}) {
   if (extra.readableText) {
     lines.push(`Texto extraído del archivo: ${extra.readableText}`)
   }
+  if (extra.analysis) {
+    lines.push(`Analisis automatico del adjunto: ${extra.analysis}`)
+  }
   if (extra.binaryAttached) {
     lines.push(extra.binaryAttached)
   }
@@ -171,6 +178,124 @@ function dataUrlToBuffer(dataUrl = '', maxBytes = MAX_PREVIEW_ATTACHMENT_BYTES) 
   }
 }
 
+function extractOpenAIResponseText(payload = {}) {
+  if (typeof payload.output_text === 'string' && payload.output_text.trim()) {
+    return cleanString(payload.output_text)
+  }
+
+  const chunks = []
+  for (const item of Array.isArray(payload.output) ? payload.output : []) {
+    for (const part of Array.isArray(item?.content) ? item.content : []) {
+      if (typeof part?.text === 'string' && part.text.trim()) {
+        chunks.push(part.text.trim())
+      }
+    }
+  }
+
+  return cleanString(chunks.join('\n'))
+}
+
+async function resolveVisualAnalysisApiKey(options = {}) {
+  const explicit = cleanString(options.visualAnalysisApiKey)
+  if (explicit) return explicit
+  if (options.aiProvider === 'openai' && cleanString(options.apiKey)) return cleanString(options.apiKey)
+  return getOpenAIApiKey().catch(() => null)
+}
+
+function buildAttachmentAnalysisPart(attachment = {}) {
+  if (attachment.kind === 'video' && isDataUrl(attachment.thumbnailDataUrl)) {
+    return {
+      type: 'input_image',
+      image_url: attachment.thumbnailDataUrl,
+      detail: 'auto'
+    }
+  }
+
+  if (attachment.kind === 'image' && isDataUrl(attachment.dataUrl)) {
+    return {
+      type: 'input_image',
+      image_url: attachment.dataUrl,
+      detail: 'auto'
+    }
+  }
+
+  if (isSupportedFileInput(attachment.mimeType, attachment.name) && isDataUrl(attachment.dataUrl)) {
+    return {
+      type: 'input_file',
+      filename: attachment.name || 'archivo',
+      file_data: attachment.dataUrl
+    }
+  }
+
+  return null
+}
+
+async function analyzeAttachmentAsText(attachment = {}, options = {}) {
+  const analysisPart = buildAttachmentAnalysisPart(attachment)
+  if (!analysisPart) return ''
+
+  if (typeof options.analyzeVisualMedia === 'function') {
+    try {
+      const result = await options.analyzeVisualMedia({ attachment, analysisPart })
+      return cleanString(typeof result === 'string' ? result : result?.text).slice(0, MAX_ATTACHMENT_ANALYSIS_CHARS)
+    } catch (error) {
+      logger.warn(`[Agente conversacional] Lector auxiliar de adjunto fallo: ${error.message}`)
+      return ''
+    }
+  }
+
+  const apiKey = await resolveVisualAnalysisApiKey(options)
+  if (!apiKey) return ''
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), VISUAL_ANALYSIS_TIMEOUT_MS)
+  try {
+    const kind = attachment.kind === 'video' ? 'miniatura de video' : mediaKindLabel(attachment.kind)
+    const response = await fetch(OPENAI_RESPONSES_URL, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: VISUAL_ANALYSIS_MODEL,
+        max_output_tokens: 450,
+        instructions: 'Eres un lector auxiliar de adjuntos para un chat de WhatsApp. Describe solo lo visible o legible, en espanol natural, breve y util para que otro agente pueda responder. No inventes datos fuera del adjunto.',
+        input: [{
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: `Analiza este adjunto (${kind}). Nombre: ${attachment.name || 'archivo'}. Tipo MIME: ${attachment.mimeType || 'desconocido'}.`
+            },
+            analysisPart
+          ]
+        }]
+      })
+    })
+
+    let payload = null
+    try {
+      payload = await response.json()
+    } catch {
+      payload = null
+    }
+
+    if (!response.ok) {
+      const message = payload?.error?.message || payload?.message || `HTTP ${response.status}`
+      throw new Error(message)
+    }
+
+    return extractOpenAIResponseText(payload).slice(0, MAX_ATTACHMENT_ANALYSIS_CHARS)
+  } catch (error) {
+    logger.warn(`[Agente conversacional] No se pudo analizar adjunto con lector auxiliar: ${error.message}`)
+    return ''
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 function inferPreviewAttachmentKind(attachment = {}) {
   const explicit = cleanString(attachment.kind || attachment.type).toLowerCase()
   const mimeType = normalizeMimeType(attachment.mimeType || attachment.type || mimeTypeFromDataUrl(attachment.dataUrl))
@@ -223,6 +348,9 @@ function previewAttachmentSummary(attachment = {}, extra = {}) {
   }
   if (extra.readableText) {
     lines.push(`Texto extraído del archivo: ${extra.readableText}`)
+  }
+  if (extra.analysis) {
+    lines.push(`Analisis automatico del adjunto: ${extra.analysis}`)
   }
   if (extra.binaryAttached) {
     lines.push(extra.binaryAttached)
@@ -338,6 +466,55 @@ async function buildAudioContext(row, options = {}) {
   }
 }
 
+async function buildTextualAnalysisContext(row, options = {}) {
+  const kind = inferConversationalMediaKind(row)
+  const filename = pickFilename(row)
+  const declaredMimeType = normalizeMimeType(row.media_mime_type || row.mediaMimeType)
+
+  if (kind === 'video') return null
+
+  try {
+    const media = await readMediaBuffer(row, {
+      maxBytes: MAX_INLINE_MEDIA_BYTES,
+      fetchMediaBuffer: options.fetchMediaBuffer
+    })
+    if (!media?.buffer?.length) {
+      throw new Error('archivo no descargable')
+    }
+
+    const mimeType = normalizeMimeType(media.mimeType || declaredMimeType || 'application/octet-stream')
+    const finalFilename = cleanString(media.filename) || filename
+
+    if (isTextFile(mimeType, finalFilename)) {
+      const text = media.buffer.toString('utf8').slice(0, MAX_TEXT_FILE_CHARS)
+      return {
+        context: buildConversationalMediaSummary(row, { readableText: text }),
+        attachments: [{ kind: 'text', name: finalFilename, mimeType, text }]
+      }
+    }
+
+    if (kind === 'image' || isSupportedFileInput(mimeType, finalFilename)) {
+      const analysis = await analyzeAttachmentAsText({
+        kind: inferAttachmentKind(kind, mimeType, finalFilename),
+        name: finalFilename,
+        mimeType,
+        dataUrl: bufferToDataUrl(media.buffer, mimeType)
+      }, options)
+
+      if (analysis) {
+        return {
+          context: buildConversationalMediaSummary(row, { analysis }),
+          attachments: []
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn(`[Agente conversacional] No se pudo preparar lectura textual del adjunto: ${error.message}`)
+  }
+
+  return null
+}
+
 async function buildBinaryContext(row, options = {}) {
   const kind = inferConversationalMediaKind(row)
   const includeBinary = options.includeBinary !== false
@@ -354,6 +531,9 @@ async function buildBinaryContext(row, options = {}) {
   }
 
   if (!includeBinary) {
+    const analyzed = await buildTextualAnalysisContext(row, options)
+    if (analyzed) return analyzed
+
     return {
       context: buildConversationalMediaSummary(row, {
         limitation: 'El proveedor de IA actual no tiene entrada multimedia binaria habilitada en Ristak. Usa sólo el texto, nombre y URL del adjunto.'
@@ -495,10 +675,16 @@ async function preparePreviewAttachment(attachment = {}, options = {}) {
 
   if (item.kind === 'video') {
     const hasThumbnail = Boolean(item.thumbnailDataUrl && includeBinary)
+    const analysis = hasThumbnail ? '' : await analyzeAttachmentAsText(item, options)
     return {
       context: previewAttachmentSummary(item, hasThumbnail
         ? { binaryAttached: binaryMediaGuidance('video') }
-        : {
+        : analysis
+          ? {
+              analysis,
+              limitation: 'El analisis se baso en una miniatura visual del video; no afirmes movimiento ni audio completo sin transcripcion.'
+            }
+          : {
             limitation: 'El agente recibe la referencia del video, pero no analiza movimiento ni audio del video completo en esta ruta. No afirmes haberlo visto completo si no hay descripción o transcripción.'
           }),
       attachment: hasThumbnail
@@ -534,10 +720,13 @@ async function preparePreviewAttachment(attachment = {}, options = {}) {
   }
 
   if (!includeBinary) {
+    const analysis = await analyzeAttachmentAsText(item, options)
     return {
-      context: previewAttachmentSummary(item, {
-        limitation: 'El proveedor de IA actual no tiene entrada multimedia binaria habilitada en Ristak. Usa sólo el texto y datos del adjunto.'
-      }),
+      context: previewAttachmentSummary(item, analysis
+        ? { analysis }
+        : {
+            limitation: 'El proveedor de IA actual no tiene entrada multimedia binaria habilitada en Ristak. Usa sólo el texto y datos del adjunto.'
+          }),
       attachment: null
     }
   }
