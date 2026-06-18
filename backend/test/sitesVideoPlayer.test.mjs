@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { db } from '../src/config/database.js'
 import { renderPublicSiteHtml } from '../src/services/sitesService.js'
 
 const baseSite = (settings) => ({
@@ -147,4 +148,122 @@ test('video player prepares HLS sources for Bunny Stream playback', async () => 
   assert.match(html, /data-rstk-video-src="https:\/\/vz-123\.b-cdn\.net\/stream-video\/playlist\.m3u8"/)
   assert.doesNotMatch(html, /<video src="https:\/\/vz-123\.b-cdn\.net\/stream-video\/playlist\.m3u8"/)
   assert.match(html, /hls\.js@1\/dist\/hls\.min\.js/)
+})
+
+test('preview uses storage video while live render uses Bunny Stream player when synced', async () => {
+  const assetId = `site_stream_asset_${Date.now()}`
+  const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
+  const streamVideoId = `stream-${assetId}`
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json
+      ) VALUES (?, 'default', 'video.mp4', 'video.mp4', ?, ?, 'video/mp4', 'video', 'mp4', 128, 128, 128, 'ready', 'bunny', 'sites', ?, 1, ?)`,
+      [
+        assetId,
+        `sites/${assetId}.mp4`,
+        storageUrl,
+        'site_video_player',
+        JSON.stringify({
+          stream: {
+            provider: 'bunny_stream',
+            syncStatus: 'uploaded',
+            libraryId: '123456',
+            videoId: streamVideoId
+          }
+        })
+      ]
+    )
+
+    const site = baseSite({
+      mediaUrl: storageUrl,
+      videoAutoplay: true,
+      videoMuted: false,
+      videoLoop: true
+    })
+
+    const previewHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    const escapedStorageUrl = storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    assert.match(previewHtml, new RegExp(`src="${escapedStorageUrl}"`))
+    assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
+    assert.doesNotMatch(previewHtml, /no_track=1/)
+    assert.doesNotMatch(previewHtml, /player\.mediadelivery\.net\/embed/)
+
+    const liveHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+
+    assert.match(liveHtml, new RegExp(`src="https://player\\.mediadelivery\\.net/embed/123456/${streamVideoId}\\?autoplay=true&amp;muted=false&amp;loop=true&amp;preload=true&amp;playsinline=true"`))
+    assert.doesNotMatch(liveHtml, new RegExp(`src="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
+  } finally {
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+  }
+})
+
+test('editor-style preview does not load manually pasted Bunny Stream embeds', async () => {
+  const assetId = `site_manual_stream_${Date.now()}`
+  const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
+  const streamVideoId = `stream-${assetId}`
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json
+      ) VALUES (?, 'default', 'video.mp4', 'video.mp4', ?, ?, 'video/mp4', 'video', 'mp4', 128, 128, 128, 'ready', 'bunny', 'sites', ?, 1, ?)`,
+      [
+        assetId,
+        `sites/${assetId}.mp4`,
+        storageUrl,
+        'site_video_player',
+        JSON.stringify({
+          stream: {
+            provider: 'bunny_stream',
+            syncStatus: 'uploaded',
+            libraryId: '123456',
+            videoId: streamVideoId
+          }
+        })
+      ]
+    )
+
+    const site = baseSite({
+      mediaUrl: `https://player.mediadelivery.net/embed/123456/${streamVideoId}`
+    })
+
+    const previewHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    const escapedStorageUrl = storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    assert.match(previewHtml, new RegExp(`src="${escapedStorageUrl}"`))
+    assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
+    assert.doesNotMatch(previewHtml, /no_track=1/)
+    assert.doesNotMatch(previewHtml, /player\.mediadelivery\.net\/embed/)
+
+    const liveHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+
+    assert.match(liveHtml, new RegExp(`src="https://player\\.mediadelivery\\.net/embed/123456/${streamVideoId}"`))
+  } finally {
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+  }
 })

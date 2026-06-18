@@ -28,6 +28,10 @@ import {
   findContactByPhoneCandidates,
   prepareContactPhoneUpsert
 } from './contactIdentityService.js'
+import {
+  findMediaAssetsByBunnyStreamVideoIds,
+  findMediaAssetsByPublicUrls
+} from './mediaStorageService.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { createSession, linkVisitorToContact, unifyVisitorIds } from './trackingService.js'
 
@@ -10088,6 +10092,192 @@ function normalizeVideoEmbedUrl(value) {
   }
 }
 
+function normalizeMediaLookupUrl(value) {
+  const raw = safePublicMediaUrl(value, 'video')
+  if (!raw || /^data:/i.test(raw)) return ''
+
+  try {
+    const parsed = new URL(raw)
+    parsed.hash = ''
+    parsed.searchParams.delete('no_track')
+    parsed.searchParams.delete('noTrack')
+    parsed.searchParams.delete('notrack')
+    parsed.searchParams.delete('rstk_no_track')
+    parsed.searchParams.delete('rstkNoTrack')
+    return parsed.toString()
+  } catch {
+    return raw.split('#')[0].replace(/([?&])no_track=1\b&?/i, '$1').replace(/[?&]$/, '')
+  }
+}
+
+function getMediaAssetStreamMetadata(asset) {
+  const stream = asset?.metadata?.stream
+  if (!stream || typeof stream !== 'object') return null
+  const videoId = cleanString(stream.videoId)
+  const libraryId = cleanString(stream.libraryId || stream.video?.libraryId)
+  if (!videoId || !libraryId) return null
+  return { videoId, libraryId }
+}
+
+function buildBunnyStreamEmbedUrl(stream, settings = {}) {
+  if (!stream?.libraryId || !stream?.videoId) return ''
+  const url = new URL(`https://player.mediadelivery.net/embed/${encodeURIComponent(stream.libraryId)}/${encodeURIComponent(stream.videoId)}`)
+  const autoplay = Boolean(settings.videoAutoplay)
+  const muted = settings.videoMuted !== false
+  const loop = Boolean(settings.videoLoop) || autoplay
+  const preload = settings.videoPreviewEnabled !== false
+  url.searchParams.set('autoplay', autoplay ? 'true' : 'false')
+  url.searchParams.set('muted', muted ? 'true' : 'false')
+  url.searchParams.set('loop', loop ? 'true' : 'false')
+  url.searchParams.set('preload', preload ? 'true' : 'false')
+  url.searchParams.set('playsinline', 'true')
+  return url.toString()
+}
+
+function getBunnyStreamVideoIdFromUrl(value = '') {
+  const url = safeUrl(value)
+  if (!url) return ''
+
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase()
+    if (host !== 'player.mediadelivery.net' && host !== 'iframe.mediadelivery.net') return ''
+    const pathParts = parsed.pathname.split('/').filter(Boolean)
+    if (pathParts[0] !== 'embed') return ''
+    return cleanString(pathParts[2])
+  } catch {
+    return ''
+  }
+}
+
+function renderBunnyStreamIframe(embedUrl, block) {
+  return `<div class="rstk-video"><iframe src="${escapeHtml(embedUrl)}" title="${escapeHtml(block.label || 'Video')}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
+}
+
+function collectVideoStorageUrlsFromBlocks(blocks = [], urls = new Set()) {
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const settings = block?.settings || {}
+    if (block?.blockType === 'video') {
+      const rawVideoUrl = settings.mediaUrl || block.content
+      if (isDirectVideoUrl(rawVideoUrl)) {
+        const lookupUrl = normalizeMediaLookupUrl(rawVideoUrl)
+        if (lookupUrl) urls.add(lookupUrl)
+      }
+    }
+
+    if (Array.isArray(settings.embeddedBlocks) && settings.embeddedBlocks.length) {
+      collectVideoStorageUrlsFromBlocks(settings.embeddedBlocks, urls)
+    }
+  }
+  return urls
+}
+
+async function buildVideoStreamAssetsByStorageUrl(blocks = [], { enabled = false } = {}) {
+  if (!enabled) return new Map()
+  const urls = [...collectVideoStorageUrlsFromBlocks(blocks)]
+  if (!urls.length) return new Map()
+
+  const assets = await findMediaAssetsByPublicUrls(urls)
+  const assetsByUrl = new Map()
+  for (const asset of assets) {
+    if (!getMediaAssetStreamMetadata(asset)) continue
+    const lookupUrl = normalizeMediaLookupUrl(asset.publicUrl)
+    if (lookupUrl) assetsByUrl.set(lookupUrl, asset)
+  }
+  return assetsByUrl
+}
+
+function collectBunnyStreamVideoIdsFromBlocks(blocks = [], ids = new Set()) {
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const settings = block?.settings || {}
+    if (block?.blockType === 'video') {
+      const rawVideoUrl = settings.mediaUrl || block.content
+      const embedUrl = isDirectVideoUrl(rawVideoUrl) ? '' : normalizeVideoEmbedUrl(rawVideoUrl)
+      const videoId = getBunnyStreamVideoIdFromUrl(embedUrl)
+      if (videoId) ids.add(videoId)
+    }
+
+    if (Array.isArray(settings.embeddedBlocks) && settings.embeddedBlocks.length) {
+      collectBunnyStreamVideoIdsFromBlocks(settings.embeddedBlocks, ids)
+    }
+  }
+  return ids
+}
+
+async function buildVideoStorageAssetsByStreamVideoId(blocks = [], { enabled = false } = {}) {
+  if (!enabled) return new Map()
+  const videoIds = [...collectBunnyStreamVideoIdsFromBlocks(blocks)]
+  if (!videoIds.length) return new Map()
+
+  const assets = await findMediaAssetsByBunnyStreamVideoIds(videoIds)
+  const assetsByVideoId = new Map()
+  for (const asset of assets) {
+    const stream = getMediaAssetStreamMetadata(asset)
+    if (stream?.videoId && asset.publicUrl) assetsByVideoId.set(stream.videoId, asset)
+  }
+  return assetsByVideoId
+}
+
+function getLiveStreamEmbedUrlForStorageVideo(rawVideoUrl, settings = {}, context = {}) {
+  if (context.noTrack) return ''
+  const lookupUrl = normalizeMediaLookupUrl(rawVideoUrl)
+  if (!lookupUrl) return ''
+  const asset = context.videoStreamAssetsByStorageUrl?.get(lookupUrl)
+  const stream = getMediaAssetStreamMetadata(asset)
+  return stream ? buildBunnyStreamEmbedUrl(stream, settings) : ''
+}
+
+function renderNoTrackBunnyStreamBlock(videoUrl, block, settings = {}, context = {}) {
+  const videoId = getBunnyStreamVideoIdFromUrl(videoUrl)
+  if (!context.noTrack || !videoId) return ''
+  const asset = context.videoStorageAssetsByStreamVideoId?.get(videoId)
+  if (asset?.publicUrl) {
+    return renderVideoPlayer(asset.publicUrl, block, settings, { noTrack: false })
+  }
+  return `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Video disponible en el sitio publicado</div>`
+}
+
+function collectBunnyStreamVideoIdsFromHtml(html = '') {
+  const ids = new Set()
+  String(html || '').replace(/\s(?:src|data-rstk-video-url)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi, (_match, doubleValue, singleValue, bareValue) => {
+    const videoId = getBunnyStreamVideoIdFromUrl(doubleValue || singleValue || bareValue || '')
+    if (videoId) ids.add(videoId)
+    return _match
+  })
+  return [...ids]
+}
+
+function renderImportedNoTrackVideoFromAsset(asset) {
+  const src = cleanString(asset?.publicUrl || '')
+  if (!src) return ''
+  return `<video src="${escapeHtml(src)}" controls playsinline preload="metadata" data-rstk-preview-storage-video="true" style="width:100%;height:100%;min-height:220px;aspect-ratio:16/9;display:block;background:#000;border:0;border-radius:inherit;object-fit:cover;"></video>`
+}
+
+function renderImportedDisabledStreamPreview() {
+  return '<div data-rstk-preview-stream-disabled="true" style="width:100%;min-height:220px;aspect-ratio:16/9;display:grid;place-items:center;background:#000;border:0;border-radius:inherit;color:#fff;font:600 14px system-ui,-apple-system,BlinkMacSystemFont,&quot;Segoe UI&quot;,sans-serif;">Video disponible en el sitio publicado</div>'
+}
+
+async function rewriteImportedBunnyStreamPlayersForNoTrack(html = '') {
+  const videoIds = collectBunnyStreamVideoIdsFromHtml(html)
+  if (!videoIds.length) return html
+
+  const assets = await findMediaAssetsByBunnyStreamVideoIds(videoIds)
+  const assetsByVideoId = new Map()
+  for (const asset of assets) {
+    const stream = getMediaAssetStreamMetadata(asset)
+    if (stream?.videoId) assetsByVideoId.set(stream.videoId, asset)
+  }
+
+  return String(html || '').replace(/<iframe\b([^>]*)>[\s\S]*?<\/iframe>/gi, (match, attrsText = '') => {
+    const attrs = parseHtmlAttributes(attrsText)
+    const videoId = getBunnyStreamVideoIdFromUrl(attrs.src || '')
+    if (!videoId) return match
+
+    const storageMarkup = renderImportedNoTrackVideoFromAsset(assetsByVideoId.get(videoId))
+    return storageMarkup || renderImportedDisabledStreamPreview()
+  })
+}
+
 function normalizePopupTrigger(theme = {}) {
   const trigger = cleanString(theme.popupTrigger ?? theme.popup_trigger)
   if (trigger === 'never' || trigger === 'delay' || trigger === 'exit_intent') return trigger
@@ -12171,9 +12361,15 @@ function renderContentBlock(block, context = {}) {
     const rawVideoUrl = settings.mediaUrl || block.content
     const directVideoUrl = isDirectVideoUrl(rawVideoUrl) ? safePublicMediaUrl(rawVideoUrl, 'video') : ''
     const videoUrl = directVideoUrl ? '' : normalizeVideoEmbedUrl(rawVideoUrl)
+    const liveStreamEmbedUrl = directVideoUrl ? getLiveStreamEmbedUrlForStorageVideo(rawVideoUrl, settings, context) : ''
+    const noTrackStreamMarkup = videoUrl ? renderNoTrackBunnyStreamBlock(videoUrl, block, settings, context) : ''
     const embedVideoUrl = context.noTrack ? appendNoTrackParam(videoUrl) : videoUrl
     return directVideoUrl
-      ? renderVideoPlayer(directVideoUrl, block, settings, { noTrack: context.noTrack })
+      ? liveStreamEmbedUrl
+        ? renderBunnyStreamIframe(liveStreamEmbedUrl, block)
+        : renderVideoPlayer(directVideoUrl, block, settings, { noTrack: false })
+      : noTrackStreamMarkup
+        ? noTrackStreamMarkup
       : embedVideoUrl
         ? `<div class="rstk-video"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
       : `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
@@ -14327,6 +14523,9 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
     }
   }
   html = rewriteImportedHtmlForRender(site, html, importedAssetPath, availablePaths)
+  if (!trackingEnabled || preview) {
+    html = await rewriteImportedBunnyStreamPlayersForNoTrack(html)
+  }
 
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
     trackingEnabled,
@@ -14363,12 +14562,15 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
 
     const page = getImportedRenderPageByAssetPath(site, asset.assetPath)
     const availablePaths = await getImportedSiteAvailableAssetPaths(site.id)
-    const html = rewriteImportedHtmlForRender(
+    let html = rewriteImportedHtmlForRender(
       site,
       asset.content.toString('utf8'),
       asset.assetPath,
       availablePaths
     )
+    if (!trackingEnabled) {
+      html = await rewriteImportedBunnyStreamPlayersForNoTrack(html)
+    }
     const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
       trackingEnabled,
       pageId: page?.id || DEFAULT_FUNNEL_PAGE_ID,
@@ -14586,7 +14788,14 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	  ].filter(Boolean).join(' ')
 
 	  const phoneLocale = await getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
-	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack: !trackingEnabled || preview }
+  const popupBlocks = getPopupBlocks(site)
+  const videoLookupBlocks = [...blocks, ...popupBlocks]
+  const noTrack = !trackingEnabled || preview
+  const [videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId] = await Promise.all([
+    buildVideoStreamAssetsByStorageUrl(videoLookupBlocks, { enabled: !noTrack }),
+    buildVideoStorageAssetsByStreamVideoId(videoLookupBlocks, { enabled: noTrack })
+  ])
+	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
@@ -14623,7 +14832,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, activePage)
   const headerTrackingCode = trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''
   const popupHtml = renderSitePopup(site, {
-    popupBlocks: getPopupBlocks(site),
+    popupBlocks,
     renderContext
   })
 

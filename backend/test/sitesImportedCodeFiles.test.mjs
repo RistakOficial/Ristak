@@ -240,6 +240,78 @@ test('imported HTML internal page links stay inside the site preview flow', asyn
   }
 })
 
+test('imported HTML preview rewrites Bunny Stream embeds to storage video', async () => {
+  const {
+    createImportedSiteFromHtml,
+    deleteSite,
+    getSitePreview,
+    renderPublicSiteHtml
+  } = await import('../src/services/sitesService.js')
+  const { db } = await import('../src/config/database.js')
+
+  const assetId = `imported_stream_asset_${Date.now()}`
+  const storageUrl = `https://cdn.example.com/imported/${assetId}.mp4`
+  const streamVideoId = `stream-${assetId}`
+  let siteId = ''
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json
+      ) VALUES (?, 'default', 'video.mp4', 'video.mp4', ?, ?, 'video/mp4', 'video', 'mp4', 128, 128, 128, 'ready', 'bunny', 'sites', ?, 1, ?)`,
+      [
+        assetId,
+        `imported/${assetId}.mp4`,
+        storageUrl,
+        'imported-video-site',
+        JSON.stringify({
+          stream: {
+            provider: 'bunny_stream',
+            syncStatus: 'uploaded',
+            libraryId: '123456',
+            videoId: streamVideoId
+          }
+        })
+      ]
+    )
+
+    const html = `<!doctype html><html><head><title>Imported Bunny</title></head><body><main><iframe src="https://player.mediadelivery.net/embed/123456/${streamVideoId}" title="Stream"></iframe></main></body></html>`
+    const created = await createImportedSiteFromHtml({
+      filename: 'imported-bunny.html',
+      fileBase64: Buffer.from(html, 'utf8').toString('base64'),
+      siteType: 'landing_page',
+      name: `Imported Bunny ${Date.now()}`
+    })
+    siteId = created.site.id
+
+    const previewSite = await getSitePreview(siteId)
+    const previewHtml = await renderPublicSiteHtml(previewSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    const escapedStorageUrl = storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    assert.match(previewHtml, new RegExp(`src="${escapedStorageUrl}"`))
+    assert.doesNotMatch(previewHtml, /no_track=1/)
+    assert.doesNotMatch(previewHtml, /player\.mediadelivery\.net\/embed/)
+
+    const liveHtml = await renderPublicSiteHtml(previewSite, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+
+    assert.match(liveHtml, new RegExp(`src="https://player\\.mediadelivery\\.net/embed/123456/${streamVideoId}"`))
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+  }
+})
+
 test('AI HTML editor instructions stay scoped to active code only', async () => {
   const { buildSitesAIHtmlInstructions } = await import('../src/services/sitesService.js')
 

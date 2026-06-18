@@ -3547,6 +3547,22 @@ const normalizeImportedVideoPreviewUrl = (url: string) => {
   }
 }
 
+const isBunnyStreamEmbedUrl = (url: string) => {
+  const safeUrl = safeEmbedUrl(url)
+  if (!safeUrl) return false
+
+  try {
+    const parsed = new URL(safeUrl)
+    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase()
+    const pathParts = parsed.pathname.split('/').filter(Boolean)
+    return (host === 'player.mediadelivery.net' || host === 'iframe.mediadelivery.net') &&
+      pathParts[0] === 'embed' &&
+      Boolean(pathParts[1] && pathParts[2])
+  } catch {
+    return false
+  }
+}
+
 const normalizeEmbedHeight = (value: string | null | undefined) => {
   const match = String(value || '').match(/(\d{2,5})/)
   if (!match) return undefined
@@ -22980,7 +22996,9 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     return directVideoUrl
       ? <VideoPlayerPreview src={directVideoUrl} label={block.label || 'Video'} settings={settings} />
       : videoUrl
-        ? <div className="rstk-video"><iframe src={appendEditorNoTrackParam(videoUrl)} title={block.label || 'Video'} loading="lazy" allow={DEFAULT_EMBED_ALLOW} allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
+        ? isBunnyStreamEmbedUrl(videoUrl)
+          ? <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Video disponible en el sitio publicado</div>
+          : <div className="rstk-video"><iframe src={appendEditorNoTrackParam(videoUrl)} title={block.label || 'Video'} loading="lazy" allow={DEFAULT_EMBED_ALLOW} allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
       : <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
   }
 

@@ -1467,6 +1467,57 @@ export async function getMediaAsset(assetId) {
   return mapAssetRow(row)
 }
 
+export async function findMediaAssetsByPublicUrls(publicUrls = []) {
+  const seen = new Set()
+  const urls = (Array.isArray(publicUrls) ? publicUrls : [])
+    .map(cleanString)
+    .filter((url) => {
+      if (!url || seen.has(url)) return false
+      seen.add(url)
+      return true
+    })
+
+  if (!urls.length) return []
+
+  const placeholders = urls.map(() => '?').join(', ')
+  const rows = await db.all(
+    `SELECT * FROM media_assets
+     WHERE public_url IN (${placeholders})
+       AND deleted_at IS NULL
+       AND status != 'deleted'`,
+    urls
+  )
+  return rows.map(mapAssetRow).filter(Boolean)
+}
+
+export async function findMediaAssetsByBunnyStreamVideoIds(videoIds = []) {
+  const seen = new Set()
+  const ids = (Array.isArray(videoIds) ? videoIds : [])
+    .map(cleanString)
+    .filter((videoId) => {
+      if (!videoId || seen.has(videoId)) return false
+      seen.add(videoId)
+      return true
+    })
+
+  if (!ids.length) return []
+
+  const rows = await db.all(
+    `SELECT * FROM media_assets
+     WHERE media_type = 'video'
+       AND metadata_json IS NOT NULL
+       AND deleted_at IS NULL
+       AND status != 'deleted'
+       AND (${ids.map(() => 'metadata_json LIKE ?').join(' OR ')})`,
+    ids.map((videoId) => `%${videoId}%`)
+  )
+
+  const wanted = new Set(ids)
+  return rows
+    .map(mapAssetRow)
+    .filter((asset) => asset && wanted.has(cleanString(asset.metadata?.stream?.videoId)))
+}
+
 export async function getMediaAssetBunnyStreamAnalytics(assetId, options = {}) {
   const asset = await getMediaAsset(assetId)
   if (asset.mediaType !== 'video') {
