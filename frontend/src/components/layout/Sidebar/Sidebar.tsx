@@ -95,7 +95,7 @@ const baseNavigation: NavItem[] = [
 
 const navPermissionById: Partial<Record<string, PermissionKey>> = {
   dashboard: 'dashboard',
-  chat: 'contacts',
+  chat: 'chat',
   appointments: 'appointments',
   transactions: 'payments',
   contacts: 'contacts',

@@ -37,6 +37,13 @@ export const ACCESS_MODULES = [
     path: '/contacts'
   },
   {
+    key: 'chat',
+    label: 'Chat',
+    description: 'Bandeja de conversaciones y mensajes de WhatsApp.',
+    group: 'CRM',
+    path: '/chat'
+  },
+  {
     key: 'reports',
     label: 'Reportes',
     description: 'Tablas, métricas y gastos manuales.',
@@ -171,7 +178,7 @@ export const ACCESS_MODULES = [
   },
   {
     key: 'settings_users',
-    label: 'Usuarios y accesos',
+    label: 'Usuarios',
     description: 'Personas, roles y permisos del CRM.',
     group: 'Configuración',
     path: '/settings/users-access'
@@ -242,6 +249,11 @@ export function normalizeAccessConfig(accessConfig?: Partial<Record<PermissionKe
   })
   normalized.settings_account = 'write'
   normalized.settings_users = 'none'
+  // Compatibilidad: el Chat antes heredaba el permiso de Contactos. Si una config
+  // guardada no trae la clave 'chat', conserva el acceso que tenía vía contactos.
+  if (!accessConfig || accessConfig.chat === undefined) {
+    normalized.chat = normalized.contacts
+  }
   return normalized
 }
 
@@ -303,7 +315,7 @@ export const ROUTE_ACCESS: Array<{ prefix: string; moduleKey: PermissionKey }> =
   { prefix: '/settings/api-access', moduleKey: 'settings_api_access' },
   { prefix: '/api-docs', moduleKey: 'settings_api_access' },
   { prefix: '/dashboard', moduleKey: 'dashboard' },
-  { prefix: '/chat', moduleKey: 'contacts' },
+  { prefix: '/chat', moduleKey: 'chat' },
   { prefix: '/appointments', moduleKey: 'appointments' },
   { prefix: '/transactions', moduleKey: 'payments' },
   { prefix: '/contacts', moduleKey: 'contacts' },

@@ -3,18 +3,22 @@ import {
   CheckCircle2,
   ChevronDown,
   Eye,
+  Info,
   Loader2,
   LockKeyhole,
   Mail,
   Phone,
   Save,
   ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
   Trash2,
   UserPlus,
   UserRound,
-  Users
+  Users,
+  Zap
 } from 'lucide-react'
-import { Badge, Button, Card } from '@/components/common'
+import { Badge, Button, Card, Modal } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { userAccessService, type SaveTeamUserInput, type TeamUser } from '@/services/userAccessService'
@@ -90,9 +94,9 @@ const permissionCategories: PermissionCategory[] = [
         keys: ['dashboard']
       },
       {
-        title: 'Personas y agenda',
-        description: 'Contactos y calendario operativo.',
-        keys: ['contacts', 'appointments']
+        title: 'Personas y conversaciones',
+        description: 'Contactos, chat y calendario operativo.',
+        keys: ['contacts', 'chat', 'appointments']
       },
       {
         title: 'Cobros',
@@ -145,8 +149,8 @@ const permissionCategories: PermissionCategory[] = [
       },
       {
         title: 'Sitios y datos',
-        description: 'Tracking, dominios, campos, API y app móvil.',
-        keys: ['settings_tracking', 'settings_domains', 'settings_custom_fields', 'settings_api_access', 'settings_mobile']
+        description: 'Tracking, dominios, media, campos, API y app móvil.',
+        keys: ['settings_tracking', 'settings_domains', 'settings_media', 'settings_custom_fields', 'settings_api_access', 'settings_mobile']
       }
     ]
   }
@@ -154,6 +158,65 @@ const permissionCategories: PermissionCategory[] = [
 
 const permissionModuleKeys = permissionCategories.flatMap((category) =>
   category.sections.flatMap((section) => section.keys)
+)
+
+type AccessPreset = 'default' | 'read' | 'full' | 'custom'
+
+const accessPresets: Array<{ id: AccessPreset; title: string; description: string; icon: React.ReactNode }> = [
+  { id: 'default', title: 'Predeterminado', description: 'Solo lo esencial. Tú activas lo demás.', icon: <Sparkles size={14} /> },
+  { id: 'read', title: 'Solo lectura', description: 'Ve todo el CRM, sin editar.', icon: <Eye size={14} /> },
+  { id: 'full', title: 'Acceso total', description: 'Ve y edita todo (sin gestionar usuarios).', icon: <Zap size={14} /> },
+  { id: 'custom', title: 'Personalizado', description: 'Ajusta módulo por módulo.', icon: <SlidersHorizontal size={14} /> }
+]
+
+const buildPresetAccess = (preset: AccessPreset, current: AccessConfig): AccessConfig => {
+  if (preset === 'full') {
+    return normalizeAccessConfig(
+      Object.fromEntries(ACCESS_MODULES.map((module) => [module.key, 'write'])) as Partial<Record<PermissionKey, AccessLevel>>,
+      'employee'
+    )
+  }
+  if (preset === 'read') {
+    return normalizeAccessConfig(
+      Object.fromEntries(ACCESS_MODULES.map((module) => [module.key, 'read'])) as Partial<Record<PermissionKey, AccessLevel>>,
+      'employee'
+    )
+  }
+  if (preset === 'default') {
+    return { ...DEFAULT_EMPLOYEE_ACCESS }
+  }
+  return current
+}
+
+interface AccessPresetsProps {
+  value: AccessPreset
+  disabled?: boolean
+  onSelect: (preset: AccessPreset) => void
+}
+
+const AccessPresets: React.FC<AccessPresetsProps> = ({ value, disabled = false, onSelect }) => (
+  <div className={styles.presetRow} role="radiogroup" aria-label="Plantilla de permisos">
+    {accessPresets.map((preset) => {
+      const selected = value === preset.id
+      return (
+        <button
+          key={preset.id}
+          type="button"
+          role="radio"
+          aria-checked={selected}
+          className={`${styles.presetChip} ${selected ? styles.presetChipActive : ''}`}
+          disabled={disabled}
+          onClick={() => onSelect(preset.id)}
+        >
+          <span className={styles.presetChipTitle}>
+            {preset.icon}
+            {preset.title}
+          </span>
+          <span className={styles.presetChipDesc}>{preset.description}</span>
+        </button>
+      )
+    })}
+  </div>
 )
 
 const blankDraft = (role: UserRole = 'employee'): Draft => ({
@@ -426,6 +489,7 @@ export const UserAccessSettings: React.FC = () => {
   const [savingEdit, setSavingEdit] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [createExpanded, setCreateExpanded] = useState(false)
+  const [createPreset, setCreatePreset] = useState<AccessPreset>('default')
   const [createDraft, setCreateDraft] = useState<Draft>(() => blankDraft())
   const [editDraft, setEditDraft] = useState<Draft | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -495,6 +559,7 @@ export const UserAccessSettings: React.FC = () => {
   }
 
   const updateCreateAccess = (moduleKey: PermissionKey, level: AccessLevel) => {
+    setCreatePreset('custom')
     setCreateDraft((current) => ({
       ...current,
       accessConfig: normalizeAccessConfig({
@@ -502,6 +567,24 @@ export const UserAccessSettings: React.FC = () => {
         [moduleKey]: level
       }, current.role)
     }))
+  }
+
+  const handleCreatePreset = (preset: AccessPreset) => {
+    setCreatePreset(preset)
+    setCreateDraft((current) => ({
+      ...current,
+      accessConfig: buildPresetAccess(preset, current.accessConfig)
+    }))
+  }
+
+  const openCreate = () => {
+    setCreateDraft(blankDraft())
+    setCreatePreset('default')
+    setCreateExpanded(true)
+  }
+
+  const closeCreate = () => {
+    setCreateExpanded(false)
   }
 
   const updateEditAccess = (moduleKey: PermissionKey, level: AccessLevel) => {
@@ -596,7 +679,7 @@ export const UserAccessSettings: React.FC = () => {
               <ShieldCheck size={22} />
             </div>
             <div>
-              <h2 className={styles.panelTitle}>Usuarios y accesos</h2>
+              <h2 className={styles.panelTitle}>Usuarios</h2>
               <p className={styles.panelDescription}>
                 Administra personas, roles y permisos sin abrirle todo el CRM a quien no lo necesita.
               </p>
@@ -609,136 +692,158 @@ export const UserAccessSettings: React.FC = () => {
         </div>
 
         <section className={styles.section}>
-          <button
-            type="button"
-            className={`${styles.disclosureHeader} ${createExpanded ? styles.disclosureHeaderOpen : ''}`}
-            aria-expanded={createExpanded}
-            onClick={() => setCreateExpanded((current) => !current)}
-          >
-            <span className={styles.disclosureTitleBlock}>
+          <div className={styles.addRow}>
+            <div className={styles.addRowText}>
               <span className={styles.sectionTitle}>Nuevo acceso</span>
               <span className={styles.sectionDescription}>
-                Correo o teléfono, rol y permisos iniciales en un flujo corto.
+                Crea el acceso de una persona en tres pasos: datos, rol y permisos.
               </span>
-            </span>
-            <span className={styles.disclosureAction}>
-              <UserPlus size={15} />
+            </div>
+            <Button type="button" variant="primary" onClick={openCreate} leftIcon={<UserPlus size={16} />}>
               Agregar persona
-              <ChevronDown size={17} className={`${styles.chevron} ${createExpanded ? styles.chevronOpen : ''}`} />
-            </span>
-          </button>
+            </Button>
+          </div>
+        </section>
 
-          {createExpanded && (
-            <form className={styles.createPanel} onSubmit={handleCreate}>
-              <div className={styles.formBlock}>
-                <div className={styles.blockHeader}>
-                  <div>
-                    <h4 className={styles.blockTitle}>Datos de entrada</h4>
-                    <p className={styles.blockDescription}>El correo o teléfono será su usuario para iniciar sesión.</p>
-                  </div>
-                </div>
-
-                <div className={styles.createGrid}>
-                  <div className={styles.field}>
-                    <label className={styles.label} htmlFor="access-first-name">Nombre</label>
-                    <input
-                      id="access-first-name"
-                      className={styles.input}
-                      value={createDraft.firstName}
-                      onChange={(event) => setCreateDraft((current) => ({ ...current, firstName: event.target.value }))}
-                      autoComplete="given-name"
-                    />
-                  </div>
-                  <div className={styles.field}>
-                    <label className={styles.label} htmlFor="access-last-name">Apellido</label>
-                    <input
-                      id="access-last-name"
-                      className={styles.input}
-                      value={createDraft.lastName}
-                      onChange={(event) => setCreateDraft((current) => ({ ...current, lastName: event.target.value }))}
-                      autoComplete="family-name"
-                    />
-                  </div>
-                  <div className={styles.field}>
-                    <label className={styles.label} htmlFor="access-email">Correo</label>
-                    <input
-                      id="access-email"
-                      className={styles.input}
-                      type="email"
-                      value={createDraft.email}
-                      onChange={(event) => setCreateDraft((current) => ({ ...current, email: event.target.value }))}
-                      autoComplete="email"
-                      placeholder="persona@negocio.com"
-                    />
-                  </div>
-                  <div className={styles.field}>
-                    <label className={styles.label} htmlFor="access-phone">Teléfono</label>
-                    <input
-                      id="access-phone"
-                      className={styles.input}
-                      type="tel"
-                      value={createDraft.phone}
-                      onChange={(event) => setCreateDraft((current) => ({ ...current, phone: event.target.value }))}
-                      autoComplete="tel"
-                      placeholder="+52 656 000 0000"
-                    />
-                  </div>
-                  <div className={styles.field}>
-                    <label className={styles.label} htmlFor="access-password">Contraseña temporal</label>
-                    <input
-                      id="access-password"
-                      className={styles.input}
-                      type="password"
-                      value={createDraft.password}
-                      onChange={(event) => setCreateDraft((current) => ({ ...current, password: event.target.value }))}
-                      autoComplete="new-password"
-                      minLength={6}
-                    />
-                  </div>
-                  <div className={`${styles.field} ${styles.fieldWide}`}>
-                    <p className={styles.helperText}>
-                      Para crear el acceso se necesita al menos correo o teléfono y una contraseña temporal.
-                    </p>
-                  </div>
+        <Modal
+          isOpen={createExpanded}
+          onClose={closeCreate}
+          title="Agregar persona"
+          type="custom"
+          size="lg"
+          showCloseButton
+        >
+          <form className={styles.modalForm} onSubmit={handleCreate}>
+            <div className={styles.formBlock}>
+              <div className={styles.blockHeader}>
+                <div>
+                  <h4 className={styles.blockTitle}>1 · Datos de la persona</h4>
+                  <p className={styles.blockDescription}>El correo o teléfono será su usuario para iniciar sesión.</p>
                 </div>
               </div>
 
-              <div className={styles.formBlock}>
-                <div className={styles.blockHeader}>
-                  <div>
-                    <h4 className={styles.blockTitle}>Rol</h4>
-                    <p className={styles.blockDescription}>El rol define si esta persona tiene control total o acceso limitado.</p>
-                  </div>
+              <div className={styles.createGrid}>
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="access-first-name">Nombre</label>
+                  <input
+                    id="access-first-name"
+                    className={styles.input}
+                    value={createDraft.firstName}
+                    onChange={(event) => setCreateDraft((current) => ({ ...current, firstName: event.target.value }))}
+                    autoComplete="given-name"
+                  />
                 </div>
-                <RoleSelector value={createDraft.role} onChange={updateCreateRole} />
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="access-last-name">Apellido</label>
+                  <input
+                    id="access-last-name"
+                    className={styles.input}
+                    value={createDraft.lastName}
+                    onChange={(event) => setCreateDraft((current) => ({ ...current, lastName: event.target.value }))}
+                    autoComplete="family-name"
+                  />
+                </div>
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="access-email">Correo</label>
+                  <input
+                    id="access-email"
+                    className={styles.input}
+                    type="email"
+                    value={createDraft.email}
+                    onChange={(event) => setCreateDraft((current) => ({ ...current, email: event.target.value }))}
+                    autoComplete="email"
+                    placeholder="persona@negocio.com"
+                  />
+                </div>
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="access-phone">Teléfono</label>
+                  <input
+                    id="access-phone"
+                    className={styles.input}
+                    type="tel"
+                    value={createDraft.phone}
+                    onChange={(event) => setCreateDraft((current) => ({ ...current, phone: event.target.value }))}
+                    autoComplete="tel"
+                    placeholder="+52 656 000 0000"
+                  />
+                </div>
+                <div className={`${styles.field} ${styles.fieldWide}`}>
+                  <label className={styles.label} htmlFor="access-password">Contraseña temporal</label>
+                  <input
+                    id="access-password"
+                    className={styles.input}
+                    type="password"
+                    value={createDraft.password}
+                    onChange={(event) => setCreateDraft((current) => ({ ...current, password: event.target.value }))}
+                    autoComplete="new-password"
+                    minLength={6}
+                  />
+                  <p className={styles.helperText}>
+                    Necesitas al menos correo o teléfono y una contraseña temporal.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className={styles.formBlock}>
+              <div className={styles.blockHeader}>
+                <div>
+                  <h4 className={styles.blockTitle}>2 · Rol</h4>
+                  <p className={styles.blockDescription}>Define si tiene control total o un acceso limitado.</p>
+                </div>
+              </div>
+              <RoleSelector value={createDraft.role} onChange={updateCreateRole} />
+            </div>
+
+            <div className={styles.formBlock}>
+              <div className={styles.blockHeader}>
+                <div>
+                  <h4 className={styles.blockTitle}>3 · Permisos</h4>
+                  <p className={styles.blockDescription}>
+                    {createDraft.role === 'admin'
+                      ? 'El administrador tiene acceso completo al CRM.'
+                      : 'Empieza con una plantilla y ajusta solo si lo necesitas.'}
+                  </p>
+                </div>
               </div>
 
-              <div className={styles.formBlock}>
-                <div className={styles.blockHeader}>
-                  <div>
-                    <h4 className={styles.blockTitle}>Permisos por categoría</h4>
-                    <p className={styles.blockDescription}>Abre cada categoría y decide si puede ver, editar o no entrar.</p>
-                  </div>
-                </div>
+              {createDraft.role === 'admin' ? (
                 <AccessMatrix
                   role={createDraft.role}
                   accessConfig={createDraft.accessConfig}
                   disabled={savingCreate}
                   onChange={updateCreateAccess}
                 />
-              </div>
+              ) : (
+                <>
+                  <AccessPresets value={createPreset} disabled={savingCreate} onSelect={handleCreatePreset} />
+                  {createPreset === 'custom' ? (
+                    <AccessMatrix
+                      role={createDraft.role}
+                      accessConfig={createDraft.accessConfig}
+                      disabled={savingCreate}
+                      onChange={updateCreateAccess}
+                    />
+                  ) : (
+                    <div className={styles.permissionsHint}>
+                      <Info size={15} />
+                      <span>Esta plantilla se aplica a todos los módulos. Elige «Personalizado» para ajustar cada uno por separado.</span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
 
-              <div className={styles.actions}>
-                <Button type="button" variant="ghost" onClick={() => setCreateExpanded(false)} disabled={savingCreate}>
-                  Cancelar
-                </Button>
-                <Button type="submit" variant="primary" loading={savingCreate} leftIcon={<UserPlus size={16} />}>
-                  Crear acceso
-                </Button>
-              </div>
-            </form>
-          )}
-        </section>
+            <div className={styles.modalFooter}>
+              <Button type="button" variant="secondary" onClick={closeCreate} disabled={savingCreate}>
+                Cancelar
+              </Button>
+              <Button type="submit" variant="primary" loading={savingCreate} leftIcon={<UserPlus size={16} />}>
+                Crear acceso
+              </Button>
+            </div>
+          </form>
+        </Modal>
 
         <section className={styles.section}>
           <div className={styles.sectionHeader}>

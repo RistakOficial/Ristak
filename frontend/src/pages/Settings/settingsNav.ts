@@ -20,7 +20,7 @@ export interface SettingsNavItem {
 
 export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/account', label: 'Cuenta', permissionKey: 'settings_account' },
-  { to: '/settings/users-access', label: 'Usuarios y accesos', permissionKey: 'settings_users' },
+  { to: '/settings/users-access', label: 'Usuarios', permissionKey: 'settings_users' },
   { to: '/settings/mobile-app', label: 'Aplicación móvil', permissionKey: 'settings_mobile' },
   { to: '/settings/calendars', label: 'Calendarios', permissionKey: 'settings_calendars' },
   { to: '/settings/payments', label: 'Pagos', permissionKey: 'settings_payments' },

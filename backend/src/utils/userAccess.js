@@ -7,6 +7,7 @@ export const ACCESS_MODULES = [
   'appointments',
   'payments',
   'contacts',
+  'chat',
   'reports',
   'analytics',
   'campaigns',
@@ -61,6 +62,14 @@ export function normalizeAccessConfig(value, role = 'employee') {
 
     if (moduleKey === 'settings_users') {
       access[moduleKey] = normalizedRole === 'admin' ? 'write' : 'none'
+      continue
+    }
+
+    // Compatibilidad: el Chat antes heredaba el permiso de Contactos. Si la config
+    // guardada no trae la clave 'chat', conserva el acceso que tenía vía contactos.
+    if (moduleKey === 'chat' && source.chat === undefined) {
+      const contactsLevel = String(source.contacts || '').toLowerCase()
+      access[moduleKey] = ACCESS_LEVEL_SET.has(contactsLevel) ? contactsLevel : 'none'
       continue
     }
 
