@@ -195,14 +195,18 @@ function templateToPayload(template: MessageTemplate, folderId: string | null): 
   }
 }
 
-function normalizeTemplateNameInput(value: string) {
+function normalizeTemplateNameDraftInput(value: string) {
   return value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9_]+/g, '_')
-    .replace(/^_+|_+$/g, '')
+    .replace(/^_+/g, '')
     .replace(/_+/g, '_')
+}
+
+function normalizeTemplateNameInput(value: string) {
+  return normalizeTemplateNameDraftInput(value).replace(/_+$/g, '')
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -1582,7 +1586,8 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
             <span>Nombre</span>
             <input
               value={draft.name}
-              onChange={(event) => updateDraft('name', normalizeTemplateNameInput(event.target.value))}
+              onChange={(event) => updateDraft('name', normalizeTemplateNameDraftInput(event.target.value))}
+              onBlur={() => updateDraft('name', normalizeTemplateNameInput(draft.name))}
               placeholder="recordatorio_cita"
             />
           </label>
