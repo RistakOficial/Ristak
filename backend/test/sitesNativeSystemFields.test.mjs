@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
-import { createBlock, createSite, createSubmissionFromRequest, deleteSite } from '../src/services/sitesService.js'
+import { createBlock, createSite, createSubmissionFromRequest, deleteSite, renderPublicSiteHtml } from '../src/services/sitesService.js'
 import { parseContactCustomFields } from '../src/utils/contactCustomFields.js'
 
 const DOMAIN_KEYS = {
@@ -156,6 +156,37 @@ test('native form system fields save to contact and locked system fields', async
     await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
     await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
     await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
+test('native form URL validation renders a real URL validator', async () => {
+  let site
+
+  try {
+    site = await createSite({
+      name: 'Formulario URL',
+      slug: `form-url-${Date.now()}`,
+      siteType: 'standard_form',
+      status: 'published',
+      blankCanvas: true
+    })
+
+    const siteWithField = await createBlock(site.id, {
+      blockType: 'short_text',
+      label: 'Sitio web',
+      placeholder: 'https://tusitio.com',
+      required: true,
+      settings: { internalName: 'website', validation: 'url' }
+    })
+
+    const html = await renderPublicSiteHtml(siteWithField, { preview: true })
+    assert.match(html, /data-validation="url"/)
+    assert.match(html, /type="url"/)
+    assert.match(html, /Ingresa una URL válida\./)
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
   }
 })
 

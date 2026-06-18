@@ -368,6 +368,15 @@ const normalizeVisibleRuleAction = (action?: SiteOptionAction): SiteOptionAction
   action && visibleRuleActionValues.has(action) ? action : 'continue'
 )
 const exitRuleActions = new Set<SiteOptionAction>(['redirect', 'site_page'])
+const fieldValidationOptions = [
+  { value: '', label: 'Ninguna' },
+  { value: 'email', label: 'Correo' },
+  { value: 'phone', label: 'Teléfono' },
+  { value: 'number', label: 'Número' },
+  { value: 'currency', label: 'Moneda' },
+  { value: 'date', label: 'Fecha' },
+  { value: 'url', label: 'URL' }
+]
 
 const embeddedFormFieldTypes: SiteBlockType[] = [
   'short_text',
@@ -1299,6 +1308,9 @@ const hasEditablePages = (site?: PublicSite | null) => isLanding(site) || isInte
 const canManagePages = (site?: PublicSite | null) => hasEditablePages(site)
 const isFormFinalPageId = (pageId?: string) => Boolean(pageId && FORM_FINAL_PAGE_IDS.has(pageId))
 const isFormFinalPage = (page?: SitePage | null) => isFormFinalPageId(page?.id)
+const getManualRedirectPages = (pages: SitePage[], activePageId?: string) => (
+  pages.filter(page => page.id !== activePageId && !isFormFinalPage(page))
+)
 
 const formatDate = (value?: string | null) => {
   if (!value) return 'Sin fecha'
@@ -4000,12 +4012,7 @@ function FormEmbedEditorPanel({
                   onChange={(event) => patchActiveFieldSettings({ validation: event.target.value })}
                   onBlur={onSave}
                 >
-                  <option value="">Ninguna</option>
-                  <option value="email">Correo</option>
-                  <option value="phone">Teléfono</option>
-                  <option value="number">Número</option>
-                  <option value="currency">Moneda</option>
-                  <option value="date">Fecha</option>
+                  {fieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
                 </CustomSelect>
               </label>
               <label className={styles.checkboxLabel}>
@@ -14363,7 +14370,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     }
   }
 
-  const targetImportedPages = importedPages.filter(page => page.id !== activeImportedPage?.id)
+  const targetImportedPages = getManualRedirectPages(importedPages, activeImportedPage?.id)
   const buttonEditorFormRuleMessage = buttonEditor
     ? getImportedButtonFormRuleMessage(buttonEditor.selection, buttonEditor.buttonActions)
     : ''
@@ -22284,11 +22291,13 @@ const PhoneCountryInputPreview: React.FC<{ placeholder?: string }> = ({ placehol
   )
 }
 
-const getFieldPreviewInputType = (blockType: SiteBlockType) => {
-  if (blockType === 'email') return 'email'
-  if (blockType === 'phone') return 'tel'
-  if (blockType === 'date') return 'date'
-  if (blockType === 'number' || blockType === 'currency') return 'number'
+const getFieldPreviewInputType = (block: SiteBlock) => {
+  const validation = getSettingString(block.settings || {}, 'validation')
+  if (block.blockType === 'email' || validation === 'email') return 'email'
+  if (block.blockType === 'phone' || validation === 'phone') return 'tel'
+  if (block.blockType === 'date' || validation === 'date') return 'date'
+  if (validation === 'url') return 'url'
+  if (block.blockType === 'number' || block.blockType === 'currency' || validation === 'number' || validation === 'currency') return 'number'
   return 'text'
 }
 
@@ -22330,7 +22339,7 @@ const FieldControlPreview: React.FC<{ block: SiteBlock }> = ({ block }) => {
     return <PhoneCountryInputPreview placeholder={block.placeholder || ''} />
   }
 
-  return <input type={getFieldPreviewInputType(block.blockType)} readOnly placeholder={block.placeholder || 'Respuesta'} />
+  return <input type={getFieldPreviewInputType(block)} readOnly placeholder={block.placeholder || 'Respuesta'} />
 }
 
 // Read-only field preview (rstk markup) for embedded form fields on the canvas.
@@ -23428,7 +23437,7 @@ const PageInspector: React.FC<{
       title="Página"
       subtitle={isLanding(site) ? (site.theme?.pageMode === 'website' ? 'Sitio web' : 'Embudo') : 'Formulario'}
       tabs={[
-        { value: 'edit', label: 'Página', icon: <FileText size={14} />, content: pageConfigContent },
+        { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: pageConfigContent },
         { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: pageDesignContent },
         { value: 'settings', label: 'Global', icon: <Globe2 size={14} />, content: pageGlobalContent }
       ]}
@@ -23982,12 +23991,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 onChange={(event) => onPatchSettings({ validation: event.target.value })}
                 onBlur={onSave}
               >
-                <option value="">Ninguna</option>
-                <option value="email">Correo</option>
-                <option value="phone">Teléfono</option>
-                <option value="number">Número</option>
-                <option value="currency">Moneda</option>
-                <option value="date">Fecha</option>
+                {fieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
               </CustomSelect>
             </label>
             <label className={styles.checkboxLabel}>
@@ -24170,8 +24174,7 @@ interface OptionsRulesEditorProps {
 const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, pages, sitePages, activeSitePageId, onPatchBlock, onSave }) => {
   const options = getOptions(block)
   const fieldTargets = blocks.filter(item => fieldBlockTypes.has(item.blockType) && item.id !== block.id)
-  const pageTargets = (sitePages && sitePages.length ? sitePages : pages)
-    .filter(page => page.id !== activeSitePageId)
+  const pageTargets = getManualRedirectPages(sitePages && sitePages.length ? sitePages : pages, activeSitePageId)
   const getTargetLabel = (target: SiteBlock) => {
     const page = pages.find(item => item.id === getBlockPageId(target, pages))
     return page ? `${target.label} - ${page.title}` : target.label

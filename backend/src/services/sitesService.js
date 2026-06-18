@@ -12092,12 +12092,27 @@ function renderContentBlock(block, context = {}) {
   return `<div class="rstk-text">${content.replace(/\n/g, '<br>')}</div>`
 }
 
+const supportedNativeFieldValidations = new Set(['email', 'phone', 'number', 'currency', 'date', 'url'])
+
+function getNativeFieldValidation(block = {}) {
+  const settings = block.settings || {}
+  const explicit = cleanString(settings.validation || settings.fieldValidation || settings.field_validation).toLowerCase()
+  if (supportedNativeFieldValidations.has(explicit)) return explicit
+  if (block.blockType === 'email') return 'email'
+  if (block.blockType === 'phone') return 'phone'
+  if (block.blockType === 'number') return 'number'
+  if (block.blockType === 'currency') return 'currency'
+  if (block.blockType === 'date') return 'date'
+  return ''
+}
+
 function renderFieldInput(block, context = {}) {
   const id = escapeHtml(block.id)
   const placeholder = escapeHtml(block.placeholder)
   const required = block.required ? 'required' : ''
   const options = getBlockOptions(block)
   const settings = block.settings || {}
+  const validation = getNativeFieldValidation(block)
 
   if (block.blockType === 'paragraph') {
     return `<textarea id="${id}" name="${id}" rows="5" placeholder="${placeholder}" ${required}></textarea>`
@@ -12175,6 +12190,10 @@ function renderFieldInput(block, context = {}) {
     `
   }
 
+  if (validation === 'url') {
+    return `<input id="${id}" name="${id}" type="url" inputmode="url" placeholder="${placeholder}" ${required}>`
+  }
+
   return `<input id="${id}" name="${id}" type="text" placeholder="${placeholder}" ${required}>`
 }
 
@@ -12183,7 +12202,7 @@ function renderFieldBlock(block, _interactive = false, pageId = '', context = {}
   const required = block.required ? '<span class="rstk-required">*</span>' : ''
 
   return `
-    <section class="rstk-field" data-block-id="${escapeHtml(block.id)}" data-page-id="${escapeHtml(pageId)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}">
+    <section class="rstk-field" data-block-id="${escapeHtml(block.id)}" data-page-id="${escapeHtml(pageId)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}" data-validation="${escapeHtml(getNativeFieldValidation(block))}">
       <label for="${escapeHtml(block.id)}">${label}${required}</label>
       ${block.content ? `<p class="rstk-help">${escapeHtml(block.content)}</p>` : ''}
       ${renderFieldInput(block, context)}
@@ -14661,12 +14680,52 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         return [];
       };
 
+      const isValidUrlValue = (raw) => {
+        const value = String(raw || '').trim();
+        if (!value) return true;
+        try {
+          const parsed = new URL(value.match(/^https?:\\/\\//i) ? value : 'https://' + value);
+          return ['http:', 'https:'].includes(parsed.protocol) && Boolean(parsed.hostname);
+        } catch {
+          return false;
+        }
+      };
+
+      const isValidFieldValue = (validation, value) => {
+        const text = Array.isArray(value) ? value.join(',') : String(value || '').trim();
+        if (!text) return true;
+        if (validation === 'email') return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(text);
+        if (validation === 'phone') return phoneDigits(text).length >= 7;
+        if (validation === 'number') return Number.isFinite(Number(text));
+        if (validation === 'currency') return Number.isFinite(Number(text)) && Number(text) >= 0;
+        if (validation === 'date') return !Number.isNaN(Date.parse(text));
+        if (validation === 'url') return isValidUrlValue(text);
+        return true;
+      };
+
+      const getValidationMessage = (validation) => {
+        if (validation === 'email') return 'Ingresa un correo válido.';
+        if (validation === 'phone') return 'Ingresa un teléfono válido.';
+        if (validation === 'number') return 'Ingresa un número válido.';
+        if (validation === 'currency') return 'Ingresa un monto válido.';
+        if (validation === 'date') return 'Ingresa una fecha válida.';
+        if (validation === 'url') return 'Ingresa una URL válida.';
+        return 'Revisa esta respuesta.';
+      };
+
       const validateField = (field) => {
         const required = field.getAttribute('data-required') === 'true';
+        const validation = field.getAttribute('data-validation') || '';
         const value = readFieldValue(field);
-        const valid = !required || (Array.isArray(value) ? value.length > 0 : String(value || '').trim() !== '');
+        const empty = Array.isArray(value) ? value.length === 0 : String(value || '').trim() === '';
+        const hasRequiredValue = !required || !empty;
+        const hasValidFormat = empty || isValidFieldValue(validation, value);
+        const valid = hasRequiredValue && hasValidFormat;
         const error = field.querySelector('.rstk-error');
-        if (error) error.hidden = valid;
+        if (error) {
+          error.textContent = !hasRequiredValue ? 'Esta respuesta es requerida.' : getValidationMessage(validation);
+          error.hidden = valid;
+        }
         return valid;
       };
 
