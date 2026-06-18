@@ -316,45 +316,51 @@
 }
 .rstkCanvas .rstk-video-sound {
   position: absolute;
-  left: 14px;
-  top: 14px;
+  top: 22px;
+  right: 22px;
+  z-index: 3;
+  box-sizing: border-box;
   display: inline-flex;
+  flex-direction: row-reverse;
   align-items: center;
-  justify-content: flex-start;
-  gap: 9px;
-  max-width: 38px;
-  min-height: 38px;
+  justify-content: flex-end;
+  gap: 13px;
+  max-width: 76px;
+  min-height: 64px;
   overflow: hidden;
   border-radius: 999px;
-  background: color-mix(in srgb, #020617 76%, transparent);
+  background: color-mix(in srgb, #020617 88%, transparent);
   color: var(--rstk-video-sound-color, var(--rstk-video-play-color, #fff));
-  box-shadow: 0 18px 42px rgba(0,0,0,.32);
-  padding: 8px 11px;
+  box-shadow: 0 18px 44px rgba(0,0,0,.34);
+  padding: 0 19px 0 22px;
   pointer-events: none;
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(14px);
+  transform-origin: right center;
 }
-.rstkCanvas .rstk-video-has-control-bar .rstk-video-sound { top: 14px; }
+.rstkCanvas .rstk-video-has-control-bar .rstk-video-sound { top: 22px; }
 .rstkCanvas .rstk-video-sound-auto { animation: rstkVideoSoundNotice var(--rstk-video-sound-cycle, 6.6s) cubic-bezier(.2, .8, .2, 1) .45s both; }
 .rstkCanvas .rstk-video-sound-persistent { animation: rstkVideoSoundNoticeOpen .8s cubic-bezier(.2, .8, .2, 1) .45s both; }
 .rstkCanvas .rstk-video-sound-icon {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
   flex: 0 0 auto;
-  min-width: 16px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
 }
 .rstkCanvas .rstk-video-sound-text {
   display: inline-block;
-  max-width: 280px;
+  max-width: min(260px, calc(100vw - 150px));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: currentColor;
-  font-size: .78rem;
-  font-weight: 750;
+  font-size: 1rem;
+  font-weight: 500;
   letter-spacing: 0;
   opacity: 0;
-  transform: translateX(-8px);
+  transform: translateX(10px);
 }
 .rstkCanvas .rstk-video-sound-auto .rstk-video-sound-text { animation: rstkVideoSoundText var(--rstk-video-sound-cycle, 6.6s) ease .45s both; }
 .rstkCanvas .rstk-video-sound-persistent .rstk-video-sound-text { animation: rstkVideoSoundTextOpen .8s ease .55s both; }
@@ -428,36 +434,21 @@
 }
 .rstkCanvas .rstk-video-speed-control option { color: #111827; }
 @keyframes rstkVideoSoundNotice {
-  0%, 12% { max-width: 38px; }
-  22%, 70% { max-width: min(76%, 380px); }
-  100% { max-width: 38px; }
+  0%, 12% { max-width: 76px; }
+  22%, 70% { max-width: min(calc(100% - 44px), 360px); }
+  100% { max-width: 76px; }
 }
 @keyframes rstkVideoSoundNoticeOpen {
-  0% { max-width: 38px; }
-  100% { max-width: min(76%, 380px); }
+  0% { max-width: 76px; }
+  100% { max-width: min(calc(100% - 44px), 360px); }
 }
 @keyframes rstkVideoSoundText {
-  0%, 17%, 76%, 100% { opacity: 0; transform: translateX(-8px); }
+  0%, 17%, 76%, 100% { opacity: 0; transform: translateX(10px); }
   26%, 68% { opacity: 1; transform: translateX(0); }
 }
 @keyframes rstkVideoSoundTextOpen {
-  0% { opacity: 0; transform: translateX(-8px); }
+  0% { opacity: 0; transform: translateX(10px); }
   100% { opacity: 1; transform: translateX(0); }
-}
-.rstkCanvas .rstk-video-sound-icon i {
-  width: 5px;
-  height: 12px;
-  border-radius: 999px;
-  background: currentColor;
-  animation: rstkVideoSound 1s ease-in-out infinite;
-}
-.rstkCanvas .rstk-video-sound-icon i:last-child {
-  height: 18px;
-  animation-delay: .18s;
-}
-@keyframes rstkVideoSound {
-  0%, 100% { transform: scaleY(.55); opacity: .65; }
-  50% { transform: scaleY(1); opacity: 1; }
 }
 .rstkCanvas .rstk-media-empty { min-height: 190px; display: grid; place-items: center; gap: 8px; color: var(--rstk-muted); font-size: .92rem; }
 .rstkCanvas .rstk-play { display: grid; place-items: center; width: 58px; height: 58px; border-radius: 50%; background: var(--rstk-accent); color: var(--rstk-on-accent); }

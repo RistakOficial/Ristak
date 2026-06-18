@@ -647,7 +647,8 @@ const videoSoundNoticeDurationOptions = [
 const DEFAULT_VIDEO_CONTROLS_MODE: VideoControlsMode = 'clean'
 const DEFAULT_VIDEO_PLAY_ICON_STYLE: VideoPlayIconStyle = 'solid'
 const DEFAULT_VIDEO_PLAY_SHAPE: VideoPlayShape = 'round'
-const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
+const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
+const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
 const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
 const DEFAULT_VIDEO_PLAYER_COLOR = 'rgba(0,0,0,.52)'
@@ -2080,7 +2081,8 @@ const getVideoPlayIconSizeValue = (settings: Record<string, unknown>) => {
 
 const getVideoSoundNoticeText = (settings: Record<string, unknown>) => {
   if (Object.prototype.hasOwnProperty.call(settings, 'videoSoundNoticeText')) {
-    return getSettingString(settings, 'videoSoundNoticeText').trim()
+    const text = getSettingString(settings, 'videoSoundNoticeText').trim()
+    return text === LEGACY_VIDEO_SOUND_NOTICE_TEXT ? DEFAULT_VIDEO_SOUND_NOTICE_TEXT : text
   }
   return DEFAULT_VIDEO_SOUND_NOTICE_TEXT
 }
@@ -22922,9 +22924,7 @@ const VideoPlayerPreview: React.FC<{
           {showSoundNotice && (
             <span className={`rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}`}>
               <span className="rstk-video-sound-icon" aria-hidden="true">
-                <Volume2 size={16} />
-                <i />
-                <i />
+                <Volume2 size={22} />
               </span>
               {soundNoticeText && <span className="rstk-video-sound-text">{soundNoticeText}</span>}
             </span>
