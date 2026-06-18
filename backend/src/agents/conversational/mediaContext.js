@@ -74,6 +74,16 @@ function mediaKindLabel(kind = 'unknown') {
   }[kind] || 'archivo'
 }
 
+function binaryMediaGuidance(kind = 'file') {
+  if (kind === 'video') {
+    return 'Lectura del adjunto: se adjunto una miniatura visual del video para analizar lo visible en ese cuadro. No afirmes movimiento ni audio completo sin transcripcion.'
+  }
+  if (kind === 'image') {
+    return 'Lectura del adjunto: la imagen fue adjuntada al modelo para analisis directo. Usala para responder; no digas que no puedes verla salvo que el adjunto no este disponible.'
+  }
+  return 'Lectura del adjunto: el archivo fue adjuntado al modelo para analisis directo. Usalo para responder; no digas que no puedes verlo salvo que el adjunto no este disponible.'
+}
+
 function hasMedia(row = {}) {
   return Boolean(cleanString(row.media_url || row.mediaUrl))
 }
@@ -95,6 +105,9 @@ export function buildConversationalMediaSummary(row = {}, extra = {}) {
   }
   if (extra.readableText) {
     lines.push(`Texto extraído del archivo: ${extra.readableText}`)
+  }
+  if (extra.binaryAttached) {
+    lines.push(extra.binaryAttached)
   }
   if (extra.limitation) {
     lines.push(`Límite de lectura: ${extra.limitation}`)
@@ -210,6 +223,9 @@ function previewAttachmentSummary(attachment = {}, extra = {}) {
   }
   if (extra.readableText) {
     lines.push(`Texto extraído del archivo: ${extra.readableText}`)
+  }
+  if (extra.binaryAttached) {
+    lines.push(extra.binaryAttached)
   }
   if (extra.limitation) {
     lines.push(`Límite de lectura: ${extra.limitation}`)
@@ -368,7 +384,7 @@ async function buildBinaryContext(row, options = {}) {
 
     if (kind === 'image' || isSupportedFileInput(mimeType, finalFilename)) {
       return {
-        context: buildConversationalMediaSummary(row),
+        context: buildConversationalMediaSummary(row, { binaryAttached: binaryMediaGuidance(kind) }),
         attachments: [{
           kind: inferAttachmentKind(kind, mimeType, finalFilename),
           name: finalFilename,
@@ -478,11 +494,14 @@ async function preparePreviewAttachment(attachment = {}, options = {}) {
   }
 
   if (item.kind === 'video') {
+    const hasThumbnail = Boolean(item.thumbnailDataUrl && includeBinary)
     return {
-      context: previewAttachmentSummary(item, {
-        limitation: 'El agente recibe la referencia del video, pero no analiza movimiento ni audio del video completo en esta ruta. No afirmes haberlo visto completo si no hay descripción o transcripción.'
-      }),
-      attachment: item.thumbnailDataUrl && includeBinary
+      context: previewAttachmentSummary(item, hasThumbnail
+        ? { binaryAttached: binaryMediaGuidance('video') }
+        : {
+            limitation: 'El agente recibe la referencia del video, pero no analiza movimiento ni audio del video completo en esta ruta. No afirmes haberlo visto completo si no hay descripción o transcripción.'
+          }),
+      attachment: hasThumbnail
         ? {
             kind: 'video',
             name: item.name,
@@ -529,7 +548,7 @@ async function preparePreviewAttachment(attachment = {}, options = {}) {
     }
     if (item.kind === 'image' || isSupportedFileInput(item.mimeType, item.name)) {
       return {
-        context: previewAttachmentSummary(item),
+        context: previewAttachmentSummary(item, { binaryAttached: binaryMediaGuidance(item.kind) }),
         attachment: {
           kind: inferAttachmentKind(item.kind, item.mimeType, item.name),
           name: item.name,

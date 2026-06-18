@@ -99,6 +99,10 @@ const SOFT_INTERNAL_META_PHRASES = [
   /\bpregunta espec[ií]fica\b/i
 ]
 
+export function shouldIncludeConversationalBinaryMedia({ runtime } = {}) {
+  return runtime?.supportsMultimodalInputs !== false
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -809,11 +813,12 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   const audioTranscriptionApiKey = aiProvider === 'openai'
     ? runtime.apiKey
     : await getOpenAIApiKey().catch(() => null)
+  const includeBinaryMedia = shouldIncludeConversationalBinaryMedia({ runtime })
   const hydratedMessages = await hydrateConversationalMessagesMedia(rawMessages, {
     aiProvider,
     apiKey: runtime.apiKey,
     audioTranscriptionApiKey,
-    includeBinary: aiProvider === 'openai'
+    includeBinary: includeBinaryMedia
   })
   if (!hydratedMessages.length) return
 
@@ -1127,11 +1132,12 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       const audioTranscriptionApiKey = aiProvider === 'openai'
         ? runtime.apiKey
         : await getOpenAIApiKey().catch(() => null)
+      const includeBinaryMedia = shouldIncludeConversationalBinaryMedia({ runtime })
       const messages = await hydrateConversationalMessagesMedia(rawMessages, {
         aiProvider,
         apiKey: runtime.apiKey,
         audioTranscriptionApiKey,
-        includeBinary: aiProvider === 'openai'
+        includeBinary: includeBinaryMedia
       })
       if (!messages.length) return
       const pendingMessages = await loadPendingInboundMessages(contactId, freshState)
@@ -1476,11 +1482,12 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
   const audioTranscriptionApiKey = aiProvider === 'openai'
     ? runtime.apiKey
     : await getOpenAIApiKey().catch(() => null)
+  const includeBinaryMedia = shouldIncludeConversationalBinaryMedia({ runtime })
   const messagesForAgent = await hydrateConversationalPreviewMessagesMedia(cleanMessages, {
     aiProvider,
     apiKey: runtime.apiKey,
     audioTranscriptionApiKey,
-    includeBinary: aiProvider === 'openai'
+    includeBinary: includeBinaryMedia
   })
 
   const reply = await executeAgent({

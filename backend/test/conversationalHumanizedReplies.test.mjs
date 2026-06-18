@@ -28,6 +28,7 @@ import {
   buildPendingReplyContextMessage,
   sanitizeAgentReply,
   sendReplyParts,
+  shouldIncludeConversationalBinaryMedia,
   shouldRecoverPendingInbound,
   splitReplyIntoParts
 } from '../src/agents/conversational/runner.js'
@@ -943,6 +944,12 @@ test('describe adjuntos multimedia en mensajes conversacionales', () => {
   assert.match(summary, /image\/jpeg/)
 })
 
+test('habilita multimedia binaria por defecto para el demo conversacional', () => {
+  assert.equal(shouldIncludeConversationalBinaryMedia({ runtime: { providerId: 'gemini' } }), true)
+  assert.equal(shouldIncludeConversationalBinaryMedia({ runtime: { providerId: 'openai' } }), true)
+  assert.equal(shouldIncludeConversationalBinaryMedia({ runtime: { supportsMultimodalInputs: false } }), false)
+})
+
 test('prepara imagen entrante como adjunto visual para el agente conversacional', async () => {
   const messages = [{
     role: 'user',
@@ -966,6 +973,7 @@ test('prepara imagen entrante como adjunto visual para el agente conversacional'
   assert.equal(hydrated[0].attachments[0].kind, 'image')
   assert.match(hydrated[0].attachments[0].dataUrl, /^data:image\/jpeg;base64,/)
   assert.match(hydrated[0].content, /Contexto del adjunto/)
+  assert.match(hydrated[0].content, /analisis directo/)
 })
 
 test('transcribe audio entrante antes de responder con el agente conversacional', async () => {
@@ -1044,6 +1052,7 @@ test('prepara adjuntos del demo conversacional aunque el mensaje no tenga texto'
   assert.equal(hydrated[0].attachments.length, 1)
   assert.equal(hydrated[0].attachments[0].kind, 'pdf')
   assert.equal(hydrated[0].attachments[0].dataUrl, dataUrl)
+  assert.match(hydrated[0].content, /analisis directo/)
 })
 
 test('transcribe notas de voz enviadas desde el demo conversacional', async () => {
@@ -1071,6 +1080,30 @@ test('transcribe notas de voz enviadas desde el demo conversacional', async () =
 
   assert.equal(hydrated[0].attachments.length, 0)
   assert.match(hydrated[0].content, /Transcripción del audio: busco una cita con el doctor el viernes/)
+})
+
+test('prepara miniatura de video del demo como entrada visual', async () => {
+  const thumbnailDataUrl = `data:image/jpeg;base64,${Buffer.from('thumbnail bytes').toString('base64')}`
+  const hydrated = await hydrateConversationalPreviewMessagesMedia([{
+    role: 'user',
+    content: 'mira este video',
+    attachments: [{
+      kind: 'video',
+      name: 'situacion.mp4',
+      mimeType: 'video/mp4',
+      dataUrl: `data:video/mp4;base64,${Buffer.from('video bytes').toString('base64')}`,
+      thumbnailDataUrl,
+      durationMs: 3400
+    }]
+  }], {
+    includeBinary: true
+  })
+
+  assert.match(hydrated[0].content, /Adjunto recibido: video/)
+  assert.match(hydrated[0].content, /miniatura visual/)
+  assert.equal(hydrated[0].attachments.length, 1)
+  assert.equal(hydrated[0].attachments[0].kind, 'video')
+  assert.equal(hydrated[0].attachments[0].thumbnailDataUrl, thumbnailDataUrl)
 })
 
 test('rellena parametros de la estrategia de cierre de fabrica', () => {

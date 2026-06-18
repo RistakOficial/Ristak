@@ -292,6 +292,7 @@ const MAX_TEST_REPLY_DELAY_MS = 60_000
 const MAX_TEST_ATTACHMENT_BYTES = 18 * 1024 * 1024
 const MAX_TEST_TEXT_ATTACHMENT_BYTES = 750 * 1024
 const MAX_TEST_ATTACHMENTS = 6
+const TEST_VIDEO_THUMBNAIL_MAX_SIZE = 900
 const TEST_MEDIA_TTL_MS = 30 * 60 * 1000
 const TEST_MEDIA_CACHE_DB_NAME = 'ristak_conversational_agent_practice_media'
 const TEST_MEDIA_CACHE_STORE = 'practice-media'
@@ -469,6 +470,87 @@ function readBlobAsDataUrl(blob: Blob): Promise<string> {
   })
 }
 
+function createVideoThumbnailDataUrl(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined' || typeof URL === 'undefined' || !URL.createObjectURL) {
+      resolve('')
+      return
+    }
+
+    const objectUrl = URL.createObjectURL(file)
+    const video = document.createElement('video')
+    let settled = false
+    const timeoutId = window.setTimeout(() => finish(''), 5000)
+
+    function cleanup() {
+      window.clearTimeout(timeoutId)
+      video.removeAttribute('src')
+      video.load()
+      URL.revokeObjectURL(objectUrl)
+    }
+
+    function finish(value: string) {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(value)
+    }
+
+    function drawFrame() {
+      try {
+        const sourceWidth = video.videoWidth || 0
+        const sourceHeight = video.videoHeight || 0
+        if (!sourceWidth || !sourceHeight) {
+          finish('')
+          return
+        }
+
+        const scale = Math.min(1, TEST_VIDEO_THUMBNAIL_MAX_SIZE / Math.max(sourceWidth, sourceHeight))
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(sourceWidth * scale))
+        canvas.height = Math.max(1, Math.round(sourceHeight * scale))
+
+        const context = canvas.getContext('2d')
+        if (!context) {
+          finish('')
+          return
+        }
+
+        context.drawImage(video, 0, 0, canvas.width, canvas.height)
+        finish(canvas.toDataURL('image/jpeg', 0.82))
+      } catch {
+        finish('')
+      }
+    }
+
+    video.muted = true
+    video.playsInline = true
+    video.preload = 'metadata'
+    video.onerror = () => finish('')
+    video.onloadeddata = () => {
+      const duration = Number.isFinite(video.duration) ? video.duration : 0
+      if (!duration || duration <= 0.25) {
+        drawFrame()
+      }
+    }
+    video.onloadedmetadata = () => {
+      const duration = Number.isFinite(video.duration) ? video.duration : 0
+      const targetSecond = duration > 1.2 ? Math.min(1, duration - 0.1) : 0
+      if (!targetSecond) return
+
+      video.onseeked = () => drawFrame()
+      try {
+        video.currentTime = targetSecond
+      } catch {
+        drawFrame()
+      }
+    }
+
+    video.src = objectUrl
+    video.load()
+  })
+}
+
 function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -497,8 +579,11 @@ function canReadTextAttachment(file: File) {
 
 async function createTestAttachment(file: File): Promise<TestAttachment> {
   const kind = inferTestAttachmentKind(file)
-  const dataUrl = await readFileAsDataUrl(file)
-  const text = canReadTextAttachment(file) ? await readFileAsText(file) : undefined
+  const [dataUrl, text, thumbnailDataUrl] = await Promise.all([
+    readFileAsDataUrl(file),
+    canReadTextAttachment(file) ? readFileAsText(file) : Promise.resolve(undefined),
+    kind === 'video' ? createVideoThumbnailDataUrl(file) : Promise.resolve(undefined)
+  ])
   const id = `test-attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`
   const expiry = createTestMediaExpiry()
   return {
@@ -510,6 +595,7 @@ async function createTestAttachment(file: File): Promise<TestAttachment> {
     dataUrl,
     cacheKey: createTestMediaCacheKey(id),
     ...expiry,
+    ...(thumbnailDataUrl ? { thumbnailDataUrl } : {}),
     ...(text ? { text: text.slice(0, 18_000) } : {})
   }
 }
