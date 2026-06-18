@@ -465,6 +465,137 @@ body.dark .select:focus {
   gap: 18px;
 }
 
+.settingsLayout {
+  display: grid;
+  grid-template-columns: minmax(232px, 268px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  width: 100%;
+  max-width: var(--app-page-max);
+  margin: 0 auto;
+}
+
+.settingsNavPanel {
+  position: sticky;
+  top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: calc(100vh - var(--header-height) - 36px);
+  min-width: 0;
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.settingsNavIntro {
+  display: grid;
+  gap: 5px;
+  padding: 4px 6px 2px;
+}
+
+.settingsNavIntro h1 {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.settingsNavIntro p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.settingsNavGroups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settingsNavGroup {
+  min-width: 0;
+}
+
+.settingsNavGroupTitle {
+  margin: 0;
+  padding: 0 8px 7px;
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.settingsNavList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settingsNavItem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  min-width: 0;
+  padding: 7px 9px;
+  border-radius: var(--radius-ctl);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.settingsNavItem:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.settingsNavItem:focus-visible {
+  outline: none;
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.settingsNavItemActive {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.settingsNavIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
+  color: var(--text-mute);
+}
+
+.settingsNavItemActive .settingsNavIcon {
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--accent);
+}
+
+.settingsNavLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settingsContent {
   display: flex;
   flex-direction: column;
@@ -1576,6 +1707,22 @@ body.dark .select:focus {
 }
 
 @media (max-width: 900px) {
+  .settingsLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsNavPanel {
+    position: relative;
+    top: auto;
+    max-height: none;
+  }
+
+  .settingsNavGroups {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 14px;
+  }
+
   .panelHeader {
     flex-direction: column;
     align-items: stretch;
