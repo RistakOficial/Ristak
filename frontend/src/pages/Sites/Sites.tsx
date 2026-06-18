@@ -7823,22 +7823,22 @@ export const Sites: React.FC = () => {
                       </button>
                     </div>
                     {isPublicSiteLive(editorSite, domainConfig) && (
-                      <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating}>
+                      <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating} aria-label="Ver en vivo">
                         <ExternalLink size={15} />
-                        Ver en vivo
+                        <span className={styles.editorActionLabel}>Ver en vivo</span>
                       </Button>
                     )}
-                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handlePreviewSite} disabled={editorAIGenerating}>
+                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handlePreviewSite} disabled={editorAIGenerating} aria-label="Previsualizar">
                       <Eye size={15} />
-                      Previsualizar
+                      <span className={styles.editorActionLabel}>Previsualizar</span>
                     </Button>
-                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={() => handleSaveSite()} loading={saving} disabled={editorAIGenerating}>
+                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={() => handleSaveSite()} loading={saving} disabled={editorAIGenerating} aria-label="Guardar">
                       <Save size={15} />
-                      Guardar
+                      <span className={styles.editorActionLabel}>Guardar</span>
                     </Button>
-                    <Button size="md" className={styles.editorPublishButton} onClick={() => handleSaveSite('published')} loading={saving} disabled={editorAIGenerating}>
+                    <Button size="md" className={styles.editorPublishButton} onClick={() => handleSaveSite('published')} loading={saving} disabled={editorAIGenerating} aria-label="Publicar">
                       <Send size={15} />
-                      Publicar
+                      <span className={styles.editorActionLabel}>Publicar</span>
                     </Button>
                   </div>
                 </div>

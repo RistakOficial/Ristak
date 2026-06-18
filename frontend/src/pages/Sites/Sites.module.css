@@ -16095,3 +16095,352 @@
   border-top: 1px solid rgba(148, 163, 184, 0.16);
   padding-top: 12px;
 }
+
+/* Sites editor responsive density: keep the top toolbar usable on short/small monitors. */
+.pageFrame .containerFocused:has(.builder) {
+  --sites-editor-toolbar-gap: 10px;
+  --sites-editor-toolbar-pad-x: 16px;
+  --sites-editor-tools-pad-x: 10px;
+  --sites-editor-action-pad-x: 13px;
+  --sites-editor-page-selector-w: 224px;
+  --sites-editor-toolbar-offset: calc(var(--sites-editor-topbar-h, 72px) + 18px);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorHeader {
+  padding: calc((var(--sites-editor-topbar-h, 72px) - var(--editor-control-h, 40px)) / 2) var(--sites-editor-toolbar-pad-x);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTop {
+  grid-template-columns: minmax(200px, 0.85fr) minmax(0, max-content) minmax(0, 1.15fr);
+  gap: var(--sites-editor-toolbar-gap);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarContext,
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools,
+.pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools {
+  padding-inline: var(--sites-editor-tools-pad-x);
+  overflow: hidden;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarPrimary::-webkit-scrollbar {
+  display: none;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorPageSelectorSlot {
+  flex: 0 1 var(--sites-editor-page-selector-w);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorPageSelectorSlot .pagesDropdown {
+  width: min(var(--sites-editor-page-selector-w), 100%);
+  min-width: 0;
+}
+
+.editorActionButton,
+.editorPublishButton {
+  flex: 0 0 auto;
+  max-width: 100%;
+  gap: 7px !important;
+  padding-inline: var(--sites-editor-action-pad-x) !important;
+}
+
+.editorActionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editorSaveStatus {
+  flex: 0 1 132px;
+  min-width: 0;
+  max-width: 132px;
+}
+
+.editorSaveStatus > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1680px), (max-height: 900px) {
+  .pageFrame .containerFocused:has(.builder) {
+    --sites-editor-topbar-h: 64px;
+    --editor-control-h: 36px;
+    --sites-editor-toolbar-gap: 8px;
+    --sites-editor-toolbar-pad-x: 12px;
+    --sites-editor-tools-pad-x: 8px;
+    --sites-editor-action-pad-x: 10px;
+    --sites-editor-page-selector-w: 206px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
+    grid-template-columns: minmax(176px, 0.8fr) minmax(246px, max-content) minmax(0, 1.2fr);
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarContext,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+    gap: 6px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop .backButton {
+    padding-inline: 6px;
+    font-size: 12px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop .editorToolbarNameField {
+    flex-basis: 156px;
+    min-width: 108px;
+    max-width: 168px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorSettingsButton,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools .seoToolbarButton {
+    padding-inline: 9px;
+    font-size: 12px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary .deviceToggle {
+    padding: 2px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary .deviceToggle button {
+    width: 29px;
+    height: 29px;
+  }
+
+  .editorActionButton,
+  .editorPublishButton {
+    font-size: 12px !important;
+  }
+
+  .editorActionButton .editorActionLabel {
+    max-width: 92px;
+  }
+
+  .editorSaveStatus {
+    flex-basis: 118px;
+    max-width: 118px;
+    font-size: 11.5px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm {
+    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr) minmax(360px, 420px) !important;
+    gap: 10px;
+  }
+
+  .builderGridFormMode,
+  .containerFocused .builderGridFormMode,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
+    grid-template-columns: minmax(238px, 280px) minmax(280px, 1fr) minmax(390px, 450px) !important;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .blocksRail,
+  .pageFrame .containerFocused:has(.builder) .propertiesPanel {
+    padding-inline: 8px;
+  }
+
+  .importedCodeEditorPanel {
+    grid-template-columns: minmax(304px, var(--imported-code-source-width, 48%)) 10px minmax(180px, 1fr);
+  }
+
+  .importedCodePaneHeader {
+    min-height: 46px;
+    padding-inline: 10px;
+  }
+
+  .importedCodeHighlight,
+  .importedCodeTextarea {
+    font-size: 13px;
+    line-height: 1.5;
+  }
+}
+
+@media (max-width: 1540px), (max-height: 820px) {
+  .pageFrame .containerFocused:has(.builder) {
+    --sites-editor-topbar-h: 58px;
+    --editor-control-h: 34px;
+    --sites-editor-toolbar-gap: 6px;
+    --sites-editor-toolbar-pad-x: 10px;
+    --sites-editor-tools-pad-x: 6px;
+    --sites-editor-action-pad-x: 0px;
+    --sites-editor-page-selector-w: 190px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
+    grid-template-columns: minmax(150px, 0.72fr) minmax(222px, max-content) minmax(0, 1.28fr);
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop .editorToolbarNameField {
+    flex-basis: 132px;
+    min-width: 94px;
+    max-width: 146px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop .editorToolbarNameField input,
+  .pageFrame .containerFocused:has(.builder) .editorPageSelectorSlot .pagesDropdownTriggerText strong {
+    font-size: 12px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorSettingsButton,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools .seoToolbarButton {
+    padding-inline: 8px;
+  }
+
+  .editorActionButton {
+    width: var(--editor-control-h, 34px);
+    min-width: var(--editor-control-h, 34px);
+    justify-content: center;
+  }
+
+  .editorActionButton .editorActionLabel {
+    display: none;
+  }
+
+  .editorPublishButton {
+    min-width: 96px;
+    padding-inline: 10px !important;
+  }
+
+  .editorSaveStatus {
+    flex: 0 0 30px;
+    width: 30px;
+    max-width: 30px;
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .editorSaveStatus > span {
+    display: none;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm {
+    grid-template-columns: minmax(198px, 232px) minmax(0, 1fr) minmax(312px, 360px) !important;
+    gap: 8px;
+  }
+
+  .builderGridFormMode,
+  .containerFocused .builderGridFormMode,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
+    grid-template-columns: minmax(212px, 248px) minmax(260px, 1fr) minmax(340px, 390px) !important;
+  }
+
+  .importedCodeEditorPanel {
+    grid-template-columns: minmax(280px, var(--imported-code-source-width, 46%)) 8px minmax(160px, 1fr);
+  }
+
+  .importedCodePaneHeader {
+    min-height: 42px;
+    gap: 8px;
+    padding-inline: 8px;
+  }
+
+  .importedCodeTitleBlock strong,
+  .importedCodeTitleBlock span {
+    font-size: 12px;
+  }
+
+  .importedCodeAssistantPanel {
+    gap: 8px;
+    padding: 10px;
+  }
+}
+
+@media (max-width: 1320px) {
+  .pageFrame .containerFocused:has(.builder) {
+    --sites-editor-topbar-h: 108px;
+    --editor-control-h: 34px;
+    --sites-editor-toolbar-offset: calc(var(--sites-editor-topbar-h, 108px) + 14px);
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorHeader {
+    padding-block: 8px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    grid-template-areas:
+      "context tools"
+      "primary primary";
+    row-gap: 8px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarContext,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+    width: auto;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools {
+    justify-content: flex-end;
+    padding-inline: 0;
+    border-inline: 0;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+    justify-content: flex-start;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary::-webkit-scrollbar {
+    display: block;
+    height: 4px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm,
+  .builderGridFormMode,
+  .containerFocused .builderGridFormMode,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
+    grid-template-columns: 1fr !important;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .blocksRail,
+  .pageFrame .containerFocused:has(.builder) .propertiesPanel {
+    max-height: none;
+  }
+}
+
+@media (max-width: 980px) {
+  .pageFrame .containerFocused:has(.builder) {
+    --sites-editor-topbar-h: 148px;
+    --sites-editor-toolbar-offset: calc(var(--sites-editor-topbar-h, 148px) + 12px);
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "context"
+      "tools"
+      "primary";
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarContext,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools {
+    max-width: none;
+  }
+}
