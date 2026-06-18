@@ -29,6 +29,11 @@ import {
   splitReplyIntoParts
 } from '../src/agents/conversational/runner.js'
 import {
+  buildConversationalMediaSummary,
+  hydrateConversationalMessagesMedia,
+  inferConversationalMediaKind
+} from '../src/agents/conversational/mediaContext.js'
+import {
   MESSAGE_SPLITTER_MODEL,
   splitMessageIntoBubbles,
   splitMessageIntoBubblesFallback
@@ -832,6 +837,102 @@ test('construye contexto interno con mensajes pendientes sin exponerlo al client
   assert.match(context.content, /Responde considerando TODOS/)
   assert.match(context.content, /1\. hola, quiero info/)
   assert.match(context.content, /2\. también cuánto cuesta\?/)
+})
+
+test('describe adjuntos multimedia en mensajes conversacionales', () => {
+  const row = {
+    message_type: 'image',
+    media_url: 'https://cdn.test/foto.jpg',
+    media_mime_type: 'image/jpeg',
+    media_filename: 'foto.jpg'
+  }
+
+  assert.equal(inferConversationalMediaKind(row), 'image')
+  const summary = buildConversationalMediaSummary(row)
+  assert.match(summary, /Adjunto recibido: imagen/)
+  assert.match(summary, /foto\.jpg/)
+  assert.match(summary, /image\/jpeg/)
+})
+
+test('prepara imagen entrante como adjunto visual para el agente conversacional', async () => {
+  const messages = [{
+    role: 'user',
+    content: 'te mando foto',
+    message_type: 'image',
+    media_url: 'https://cdn.test/foto.jpg',
+    media_mime_type: 'image/jpeg',
+    media_filename: 'foto.jpg'
+  }]
+
+  const hydrated = await hydrateConversationalMessagesMedia(messages, {
+    includeBinary: true,
+    fetchMediaBuffer: async () => ({
+      buffer: Buffer.from([1, 2, 3, 4]),
+      mimeType: 'image/jpeg',
+      filename: 'foto.jpg'
+    })
+  })
+
+  assert.equal(hydrated[0].attachments.length, 1)
+  assert.equal(hydrated[0].attachments[0].kind, 'image')
+  assert.match(hydrated[0].attachments[0].dataUrl, /^data:image\/jpeg;base64,/)
+  assert.match(hydrated[0].content, /Contexto del adjunto/)
+})
+
+test('transcribe audio entrante antes de responder con el agente conversacional', async () => {
+  const messages = [{
+    role: 'user',
+    content: '',
+    message_type: 'audio',
+    media_url: 'https://cdn.test/nota.webm',
+    media_mime_type: 'audio/webm',
+    media_filename: 'nota.webm'
+  }]
+
+  const hydrated = await hydrateConversationalMessagesMedia(messages, {
+    aiProvider: 'openai',
+    apiKey: 'sk-test',
+    audioTranscriptionApiKey: 'sk-test',
+    includeBinary: true,
+    fetchMediaBuffer: async () => ({
+      buffer: Buffer.from('audio bytes'),
+      mimeType: 'audio/webm',
+      filename: 'nota.webm'
+    }),
+    transcribeAudio: async ({ audioBuffer, mimeType }) => {
+      assert.equal(audioBuffer.toString(), 'audio bytes')
+      assert.equal(mimeType, 'audio/webm')
+      return { text: 'quiero cotizar una cita para mañana' }
+    }
+  })
+
+  assert.equal(hydrated[0].attachments.length, 0)
+  assert.match(hydrated[0].content, /Transcripción del audio: quiero cotizar una cita para mañana/)
+})
+
+test('video entrante queda como referencia sin fingir análisis visual completo', async () => {
+  let fetched = false
+  const messages = [{
+    role: 'user',
+    content: 'mira este video',
+    message_type: 'video',
+    media_url: 'https://cdn.test/video.mp4',
+    media_mime_type: 'video/mp4',
+    media_filename: 'video.mp4'
+  }]
+
+  const hydrated = await hydrateConversationalMessagesMedia(messages, {
+    includeBinary: true,
+    fetchMediaBuffer: async () => {
+      fetched = true
+      return null
+    }
+  })
+
+  assert.equal(fetched, false)
+  assert.equal(hydrated[0].attachments.length, 0)
+  assert.match(hydrated[0].content, /Adjunto recibido: video/)
+  assert.match(hydrated[0].content, /no analiza movimiento/)
 })
 
 test('rellena parametros de la estrategia de cierre de fabrica', () => {

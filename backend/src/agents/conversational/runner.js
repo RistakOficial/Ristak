@@ -6,6 +6,7 @@ import { getAccountLocaleSettings } from '../../utils/accountLocale.js'
 import {
   buildBusinessProfilePromptParameters,
   getAIAgentConfig,
+  getOpenAIApiKey,
   getBusinessProfileSnapshot
 } from '../../services/aiAgentService.js'
 import {
@@ -48,6 +49,10 @@ import {
   splitMessageIntoBubbles,
   splitMessageIntoBubblesFallback
 } from './messageSplitter.js'
+import {
+  buildConversationalMediaSummary,
+  hydrateConversationalMessagesMedia
+} from './mediaContext.js'
 
 const HISTORY_LIMIT = 20
 const MAX_TURNS = 10
@@ -170,7 +175,11 @@ function removeInternalReasoningBlocks(text) {
 }
 
 function cleanMessageText(row) {
-  return String(row?.message_text || '').trim() ||
+  const text = String(row?.message_text || row?.content || '').trim()
+  const mediaSummary = buildConversationalMediaSummary(row)
+  if (text && mediaSummary) return `${text}\n${mediaSummary}`
+  return text ||
+    mediaSummary ||
     (row?.message_type && row.message_type !== 'text' ? `[${row.message_type} sin texto]` : '') ||
     '(mensaje vacío)'
 }
@@ -461,7 +470,8 @@ export function buildPendingReplyContextMessage(pendingMessages = []) {
 
 async function loadConversationHistory(contactId) {
   const rows = await db.all(`
-    SELECT id, direction, message_type, message_text, message_timestamp, created_at
+    SELECT id, direction, message_type, message_text, media_url, media_mime_type,
+           media_filename, media_duration_ms, message_timestamp, created_at
     FROM whatsapp_api_messages
     WHERE contact_id = ?
     ORDER BY COALESCE(message_timestamp, created_at) DESC
@@ -472,7 +482,12 @@ async function loadConversationHistory(contactId) {
     return {
       id: row.id,
       role: row.direction === 'outbound' ? 'assistant' : 'user',
-      content: cleanMessageText(row),
+      content: String(row.message_text || '').trim(),
+      message_type: row.message_type,
+      media_url: row.media_url,
+      media_mime_type: row.media_mime_type,
+      media_filename: row.media_filename,
+      media_duration_ms: row.media_duration_ms,
       timestamp: row.message_timestamp || row.created_at || null
     }
   })
@@ -480,7 +495,8 @@ async function loadConversationHistory(contactId) {
 
 async function loadPendingInboundMessages(contactId, state = {}) {
   const rows = await db.all(`
-    SELECT id, message_text, message_type, message_timestamp, created_at
+    SELECT id, message_text, message_type, media_url, media_mime_type,
+           media_filename, media_duration_ms, message_timestamp, created_at
     FROM whatsapp_api_messages
     WHERE contact_id = ? AND direction = 'inbound'
     ORDER BY COALESCE(message_timestamp, created_at) DESC
@@ -506,7 +522,8 @@ async function loadPendingInboundMessages(contactId, state = {}) {
 
 async function loadLatestInboundMessage(contactId) {
   return db.get(`
-    SELECT id, message_text, message_type, phone, business_phone, business_phone_number_id
+    SELECT id, message_text, message_type, media_url, media_mime_type,
+           media_filename, media_duration_ms, phone, business_phone, business_phone_number_id
     FROM whatsapp_api_messages
     WHERE contact_id = ? AND direction = 'inbound'
     ORDER BY COALESCE(message_timestamp, created_at) DESC
@@ -788,9 +805,10 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
 
       // Resolver qué agente atiende esta conversación: el ya asignado o el
       // primero cuyas reglas de entrada coincidan con el mensaje/contacto.
+      const latestMessageText = cleanMessageText(latest)
       const ruleContext = await buildRuleContext({
         contactId,
-        messageText: latest.message_text || '',
+        messageText: latestMessageText,
         channel: 'whatsapp'
       })
 
@@ -812,7 +830,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       if (!agentConfig || !agentConfig.enabled) {
         agentConfig = await matchAgentForMessage({
           contactId,
-          messageText: latest.message_text || '',
+          messageText: latestMessageText,
           channel: 'whatsapp',
           excludeAgentId: releasedAgentId,
           ruleContext
@@ -836,7 +854,16 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       agentConfig = { ...agentConfig, aiProvider }
 
       const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
-      const messages = await loadConversationHistory(contactId)
+      const rawMessages = await loadConversationHistory(contactId)
+      const audioTranscriptionApiKey = aiProvider === 'openai'
+        ? runtime.apiKey
+        : await getOpenAIApiKey().catch(() => null)
+      const messages = await hydrateConversationalMessagesMedia(rawMessages, {
+        aiProvider,
+        apiKey: runtime.apiKey,
+        audioTranscriptionApiKey,
+        includeBinary: aiProvider === 'openai'
+      })
       if (!messages.length) return
       const pendingMessages = await loadPendingInboundMessages(contactId, freshState)
       const pendingContextMessage = buildPendingReplyContextMessage(pendingMessages)
@@ -1005,7 +1032,8 @@ export async function recoverPendingConversationalAgentConversations({
   if (!config.enabled) return { scanned: 0, scheduled: 0 }
 
   const rows = await db.all(`
-    SELECT id, contact_id, message_text, message_type, phone, business_phone,
+    SELECT id, contact_id, message_text, message_type, media_url, media_mime_type,
+           media_filename, media_duration_ms, phone, business_phone,
            business_phone_number_id, message_timestamp, created_at
     FROM whatsapp_api_messages
     WHERE direction = 'inbound' AND contact_id IS NOT NULL
