@@ -1556,7 +1556,7 @@ function buildEmojiUsageInstruction(config = {}) {
   return 'Control de emojis: APAGADO. No uses emojis en ningún mensaje visible.'
 }
 
-export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, advancedClosingContext = null, accountLocale = {} }) {
+export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, advancedClosingContext = null, accountLocale = {}, followUpContext = null }) {
   const sections = []
   const regionalParameters = {
     ...buildAccountTextualCultureParameters(accountLocale),
@@ -1591,7 +1591,15 @@ No estás para vender de forma agresiva. Estás para acompañar, orientar, resol
 - Si recibes un video o archivo donde sólo tienes URL/metadatos y no contenido visual/textual/transcrito, no digas que lo viste, leíste o escuchaste completo. Responde con lo que sí tengas, pide una descripción breve o manda a humano si el archivo es necesario para decidir.
 - No menciones detalles técnicos del adjunto ni digas "no tengo acceso al archivo" salvo que sea indispensable para destrabar la conversación.`)
 
-  sections.push(`## Jerarquía de prioridades (en este orden)
+  if (followUpContext) {
+    sections.push(`## Jerarquía de prioridades en seguimiento (en este orden)
+1. Usa el historial y el contexto del negocio para entender qué quedó abierto.
+2. Escribe un solo mensaje de reactivación, breve y natural.
+3. No intentes cerrar, cobrar, agendar, transferir ni marcar avance.
+4. Si no hay nada útil que retomar, abre con una pregunta simple y contextual.
+5. Tu respuesta final es sólo el texto visible para WhatsApp.`)
+  } else {
+    sections.push(`## Jerarquía de prioridades (en este orden)
 1. Si detectas acoso, insultos, spam, phishing, amenazas, contenido ilegal o mensajes claramente ajenos al negocio: ejecuta discard_conversation con el motivo y deja de conversar. No confrontes ni expliques de más.
 2. Si detectas una pregunta delicada, una queja seria, confusión fuerte o un caso que requiera criterio humano: ejecuta send_to_human con el motivo.${config.handoffRules ? `\n   Casos que este negocio definió para mandar a humano:\n   ${config.handoffRules}` : ''}
 3. Si la persona ya está lista para avanzar (mostró interés real, sus dudas importantes quedaron resueltas, pidió el siguiente paso, preguntó cómo pagar/agendar/empezar, o aceptó continuar): ejecuta la acción de avance que corresponde (abajo).
@@ -1599,11 +1607,26 @@ No estás para vender de forma agresiva. Estás para acompañar, orientar, resol
 5. Entiende su situación general.
 6. Aporta valor breve.
 7. Lleva la conversación de forma natural al siguiente paso.`)
+  }
 
-  sections.push(`## Acción cuando la persona está lista\n${SUCCESS_ACTION_TEXTS[config.successAction] || SUCCESS_ACTION_TEXTS.ready_for_human}`)
+  if (!followUpContext) {
+    sections.push(`## Acción cuando la persona está lista\n${SUCCESS_ACTION_TEXTS[config.successAction] || SUCCESS_ACTION_TEXTS.ready_for_human}`)
+  }
+
+  if (followUpContext) {
+    sections.push(`## Modo seguimiento automático
+Estás generando el seguimiento ${followUpContext.index || 1} de máximo 2 para reabrir una conversación donde el contacto dejó de responder.
+Tu única tarea es mandar UN mensaje visible para reactivar la conversación con el contexto actual.
+No cobres, no agendes, no marques avance, no transfieras y no ejecutes acciones de cierre en este mensaje.
+No menciones que eres automático, que estás dando seguimiento ni que pasó cierta cantidad de tiempo.
+No repitas literal tu último mensaje ni regañes al contacto por no responder.
+Retoma el punto más vivo del historial y deja una sola razón natural para contestar.
+Estrategia configurada por el negocio:
+${String(followUpContext.strategy || '').trim().slice(0, 5000)}`)
+  }
 
   const workflowSection = buildGoalWorkflowSection(config)
-  if (workflowSection) sections.push(workflowSection)
+  if (workflowSection && !followUpContext) sections.push(workflowSection)
 
   if (config.requiredData) {
     sections.push(`## Datos mínimos antes de cumplir el objetivo
@@ -1652,7 +1675,7 @@ ${config.requiredData}`)
 - Si recibes un mensaje que empieza con "[Contexto interno de Ristak:", úsalo sólo para saber qué mensajes entrantes siguen sin respuesta completa. No lo menciones, no lo cites y no expliques que existe.
 - Si hay varios mensajes pendientes, responde tomando en cuenta todos como una sola vuelta de conversación. Prioriza la información más nueva si corrige o cambia lo anterior.
 - Si la estrategia de fabrica esta activa y el contacto revela origen, motivo, urgencia, problema real, impacto, objecion, consecuencia logica o resultado deseado, actualiza la memoria con update_closing_context sin decirlo.
-- Si el último mensaje no necesita respuesta (confirmación, sticker, "ok" de cierre), puedes responder mínimo o ejecutar stay_silent para no responder.`)
+- Si el último mensaje no necesita respuesta (confirmación, sticker, "ok" de cierre), puedes responder mínimo${followUpContext ? '.' : ' o ejecutar stay_silent para no responder.'}`)
 
   if (config.extraInstructions) {
     sections.push(`## Instrucciones extra del negocio\n${config.extraInstructions}`)

@@ -11,13 +11,16 @@ import {
   createConversationGoalLink,
   getConversationGoalLink,
   getConversationState,
+  getAgentFollowUpStepDelayMs,
   getAgentReplyDeliveryPartDelayMs,
   handleConversationalAgentTriggerLinkClick,
   mergeAdvancedClosingContext,
+  normalizeAgentFollowUp,
   normalizeAgentGoalWorkflow,
   normalizeAgentReplyDelivery,
   normalizeConversationalSuccessAction,
-  shouldMigrateLegacyConversationalAgentConfig
+  shouldMigrateLegacyConversationalAgentConfig,
+  updateConversationalAgent
 } from '../src/services/conversationalAgentService.js'
 import { createTriggerLink } from '../src/services/triggerLinksService.js'
 import {
@@ -72,6 +75,91 @@ test('normaliza la entrega de respuestas en partes', () => {
   assert.equal(delivery.maxBubbles, 10)
   assert.equal(delivery.minDelaySeconds, 3)
   assert.equal(delivery.maxDelaySeconds, 12)
+})
+
+test('normaliza seguimiento del agente conversacional dentro de ventana WhatsApp', () => {
+  const followUp = normalizeAgentFollowUp({
+    enabled: true,
+    first: { value: 30, unit: 'minutes' },
+    second: { enabled: true, value: 40, unit: 'hours' },
+    strategy: 'retomar contexto sin sonar automático'
+  })
+
+  assert.equal(followUp.enabled, true)
+  assert.equal(followUp.first.enabled, true)
+  assert.equal(followUp.first.value, 30)
+  assert.equal(followUp.second.enabled, true)
+  assert.equal(followUp.second.value, 23)
+  assert.equal(getAgentFollowUpStepDelayMs(followUp.second), 23 * 60 * 60 * 1000)
+  assert.equal(followUp.strategy, 'retomar contexto sin sonar automático')
+})
+
+test('rechaza rangos invertidos al guardar el agente conversacional', async () => {
+  const agent = await createConversationalAgent({
+    name: 'Agente rango inválido',
+    enabled: false
+  })
+
+  try {
+    await assert.rejects(
+      updateConversationalAgent(agent.id, {
+        responseDelay: {
+          mode: 'random',
+          fixedValue: 10,
+          fixedUnit: 'seconds',
+          minValue: 8,
+          maxValue: 2,
+          rangeUnit: 'minutes'
+        }
+      }),
+      /Revisa el rango de espera/
+    )
+
+    await assert.rejects(
+      updateConversationalAgent(agent.id, {
+        replyDelivery: {
+          mode: 'split',
+          splitMessagesEnabled: true,
+          minMessageLengthToSplit: 120,
+          maxBubbles: 6,
+          minBubbleLength: 20,
+          maxBubbleLength: 350,
+          targetChars: 350,
+          randomizeSplitting: true,
+          delayBetweenBubblesEnabled: true,
+          minDelaySeconds: 8,
+          maxDelaySeconds: 2
+        }
+      }),
+      /Revisa el rango de pausa/
+    )
+
+    await assert.rejects(
+      updateConversationalAgent(agent.id, {
+        followUp: {
+          enabled: true,
+          first: { enabled: true, value: 24, unit: 'hours' },
+          second: { enabled: false, value: 2, unit: 'hours' },
+          strategy: 'retomar sin sonar automático'
+        }
+      }),
+      /23 horas/
+    )
+
+    await assert.rejects(
+      updateConversationalAgent(agent.id, {
+        followUp: {
+          enabled: true,
+          first: { enabled: true, value: 3, unit: 'hours' },
+          second: { enabled: true, value: 2, unit: 'hours' },
+          strategy: 'retomar sin sonar automático'
+        }
+      }),
+      /orden de los seguimientos/
+    )
+  } finally {
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+  }
 })
 
 test('normaliza acciones del agente conversacional', () => {

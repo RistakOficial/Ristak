@@ -73,6 +73,29 @@ const DEFAULT_REPLY_DELIVERY_CONFIG = {
   minDelaySeconds: 2,
   maxDelaySeconds: 7
 }
+const FOLLOW_UP_UNITS = new Set(['minutes', 'hours'])
+export const MAX_FOLLOW_UP_DELAY_MINUTES = 23 * 60
+export const DEFAULT_FOLLOW_UP_STRATEGY = [
+  'Lee el historial y el contexto actual antes de escribir.',
+  'Abre la conversación con un solo mensaje natural, corto y contextual.',
+  'No menciones que es seguimiento automático ni que pasó cierto tiempo.',
+  'Retoma el último punto útil que dejó la persona y deja una razón clara para responder.',
+  'No cobres, no agendes y no ejecutes acciones de avance en este mensaje.'
+].join(' ')
+const DEFAULT_FOLLOW_UP_CONFIG = {
+  enabled: false,
+  first: {
+    enabled: true,
+    value: 30,
+    unit: 'minutes'
+  },
+  second: {
+    enabled: false,
+    value: 2,
+    unit: 'hours'
+  },
+  strategy: DEFAULT_FOLLOW_UP_STRATEGY
+}
 export const ADVANCED_CLOSING_CONTEXT_FIELDS = [
   { key: 'arrivalSource', label: 'De donde llego' },
   { key: 'contactReason', label: 'Por que contacto' },
@@ -1249,6 +1272,119 @@ export function normalizeAgentReplyDelivery(input) {
   }
 }
 
+function followUpDelayMinutes(step = {}) {
+  const unit = FOLLOW_UP_UNITS.has(step.unit) ? step.unit : 'minutes'
+  const value = Math.max(1, Number(step.value) || 1)
+  return unit === 'hours' ? value * 60 : value
+}
+
+function normalizeFollowUpStep(input, fallback) {
+  const raw = input && typeof input === 'object' ? input : {}
+  const unit = FOLLOW_UP_UNITS.has(raw.unit) ? raw.unit : fallback.unit
+  const maxValue = unit === 'hours' ? 23 : MAX_FOLLOW_UP_DELAY_MINUTES
+  const value = clampInteger(raw.value, 1, maxValue, fallback.value)
+  return {
+    enabled: raw.enabled === undefined ? Boolean(fallback.enabled) : toBoolean(raw.enabled),
+    value,
+    unit
+  }
+}
+
+export function normalizeAgentFollowUp(input) {
+  const raw = input && typeof input === 'object' ? input : {}
+  const enabled = raw.enabled === undefined ? DEFAULT_FOLLOW_UP_CONFIG.enabled : toBoolean(raw.enabled)
+  const first = normalizeFollowUpStep(raw.first, DEFAULT_FOLLOW_UP_CONFIG.first)
+  const second = normalizeFollowUpStep(raw.second, DEFAULT_FOLLOW_UP_CONFIG.second)
+  const strategy = String(raw.strategy === undefined ? DEFAULT_FOLLOW_UP_CONFIG.strategy : raw.strategy || '')
+    .trim()
+    .slice(0, 5000)
+
+  return {
+    enabled,
+    first: {
+      ...first,
+      enabled: true
+    },
+    second: {
+      ...second,
+      enabled: enabled && toBoolean(second.enabled)
+    },
+    strategy: strategy || DEFAULT_FOLLOW_UP_CONFIG.strategy
+  }
+}
+
+export function getAgentFollowUpSteps(agentConfig = {}) {
+  const followUp = normalizeAgentFollowUp(agentConfig.followUp)
+  if (!followUp.enabled) return []
+  const steps = [followUp.first]
+  if (followUp.second.enabled) steps.push(followUp.second)
+  return steps
+}
+
+export function getAgentFollowUpStepDelayMs(step = {}) {
+  return Math.min(followUpDelayMinutes(step), MAX_FOLLOW_UP_DELAY_MINUTES) * 60 * 1000
+}
+
+function buildAgentConfigError(message, code = 'CONVERSATIONAL_AGENT_INVALID_CONFIG') {
+  return Object.assign(new Error(message), { statusCode: 400, code })
+}
+
+function assertDelayRange(minValue, maxValue, message) {
+  const min = Number(minValue)
+  const max = Number(maxValue)
+  if (Number.isFinite(min) && Number.isFinite(max) && min > max) {
+    throw buildAgentConfigError(message)
+  }
+}
+
+function readFollowUpDelayMinutes(rawStep = {}, fallback = {}) {
+  const unit = FOLLOW_UP_UNITS.has(rawStep.unit) ? rawStep.unit : fallback.unit || 'minutes'
+  const value = Number(rawStep.value === undefined ? fallback.value : rawStep.value)
+  if (!Number.isFinite(value)) return followUpDelayMinutes(fallback)
+  return value * (unit === 'hours' ? 60 : 1)
+}
+
+function assertAgentTimingInput(input = {}) {
+  if (input.responseDelay !== undefined) {
+    const raw = input.responseDelay && typeof input.responseDelay === 'object' ? input.responseDelay : {}
+    if (raw.mode === 'random') {
+      assertDelayRange(raw.minValue, raw.maxValue, 'Revisa el rango de espera.')
+    }
+  }
+
+  if (input.replyDelivery !== undefined) {
+    const raw = input.replyDelivery && typeof input.replyDelivery === 'object' ? input.replyDelivery : {}
+    const splitEnabled = raw.splitMessagesEnabled === undefined ? raw.mode === 'split' : toBoolean(raw.splitMessagesEnabled)
+    if (splitEnabled) {
+      assertDelayRange(raw.minDelaySeconds, raw.maxDelaySeconds, 'Revisa el rango de pausa entre globos.')
+    }
+  }
+
+  if (input.followUp !== undefined) {
+    const raw = input.followUp && typeof input.followUp === 'object' ? input.followUp : {}
+    const followUp = normalizeAgentFollowUp(raw)
+    if (!followUp.enabled) return
+    const rawFirstDelay = readFollowUpDelayMinutes(raw.first || {}, DEFAULT_FOLLOW_UP_CONFIG.first)
+    if (rawFirstDelay > MAX_FOLLOW_UP_DELAY_MINUTES) {
+      throw buildAgentConfigError('El seguimiento no puede pasar de 23 horas.')
+    }
+    const firstDelay = followUpDelayMinutes(followUp.first)
+    if (followUp.second.enabled) {
+      const rawSecondDelay = readFollowUpDelayMinutes(raw.second || {}, DEFAULT_FOLLOW_UP_CONFIG.second)
+      if (rawSecondDelay > MAX_FOLLOW_UP_DELAY_MINUTES) {
+        throw buildAgentConfigError('El segundo seguimiento no puede pasar de 23 horas.')
+      }
+      const secondDelay = followUpDelayMinutes(followUp.second)
+      if (secondDelay <= firstDelay) {
+        throw buildAgentConfigError('Revisa el orden de los seguimientos.')
+      }
+    }
+    if (!String(input.followUp?.strategy || '').trim()) {
+      throw buildAgentConfigError('Falta la estrategia de seguimiento.')
+    }
+  }
+}
+
 function normalizeAgentReplyDeliveryForConfig(input) {
   const delivery = normalizeAgentReplyDelivery(input)
   return {
@@ -1299,6 +1435,7 @@ function mapAgentRow(row) {
     closingStrategyCustom: row.closing_strategy_custom || '',
     responseDelay: normalizeAgentResponseDelay(parseJsonField(row.response_delay_config, null)),
     replyDelivery: normalizeAgentReplyDeliveryForConfig(parseJsonField(row.reply_delivery_config, null)),
+    followUp: normalizeAgentFollowUp(parseJsonField(row.follow_up_config, null)),
     goalWorkflow: normalizeAgentGoalWorkflow(parseJsonField(row.goal_workflow_config, null)),
     filters: normalizeAgentFilters(parseJsonField(row.entry_filters, null)),
     createdAt: row.created_at || null,
@@ -1346,8 +1483,8 @@ export async function ensureAgentsMigration() {
       success_extras, required_data, handoff_rules, extra_instructions,
       allow_emojis, hide_attended, hide_attended_notifications,
       default_calendar_id, closing_strategy_mode, closing_strategy_custom,
-      response_delay_config, reply_delivery_config, goal_workflow_config, entry_filters
-    ) VALUES (?, ?, 1, ?, ?, 0, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      response_delay_config, reply_delivery_config, follow_up_config, goal_workflow_config, entry_filters
+    ) VALUES (?, ?, 1, ?, ?, 0, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     `cagent_${randomUUID()}`,
     'Agente principal',
@@ -1369,6 +1506,7 @@ export async function ensureAgentsMigration() {
     legacy.closing_strategy_custom || '',
     JSON.stringify(DEFAULT_RESPONSE_DELAY_CONFIG),
     JSON.stringify(DEFAULT_REPLY_DELIVERY_CONFIG),
+    JSON.stringify(DEFAULT_FOLLOW_UP_CONFIG),
     JSON.stringify(DEFAULT_GOAL_WORKFLOW_CONFIG),
     JSON.stringify({ entry: [], exit: [] })
   ])
@@ -1541,6 +1679,7 @@ export async function getConversationalAgent(agentId) {
 }
 
 function agentInputToRowValues(input, base) {
+  assertAgentTimingInput(input)
   const next = {
     name: input.name === undefined ? base.name : String(input.name || 'Agente').trim().slice(0, 120) || 'Agente',
     enabled: input.enabled === undefined ? base.enabled : toBoolean(input.enabled),
@@ -1574,6 +1713,9 @@ function agentInputToRowValues(input, base) {
     replyDelivery: input.replyDelivery === undefined
       ? normalizeAgentReplyDeliveryForConfig(base.replyDelivery)
       : normalizeAgentReplyDeliveryForConfig(input.replyDelivery),
+    followUp: input.followUp === undefined
+      ? normalizeAgentFollowUp(base.followUp)
+      : normalizeAgentFollowUp(input.followUp),
     goalWorkflow: input.goalWorkflow === undefined
       ? normalizeAgentGoalWorkflow(base.goalWorkflow)
       : normalizeAgentGoalWorkflow(input.goalWorkflow),
@@ -1603,6 +1745,7 @@ const DEFAULT_AGENT_BASE = {
   closingStrategyCustom: '',
   responseDelay: DEFAULT_RESPONSE_DELAY_CONFIG,
   replyDelivery: DEFAULT_REPLY_DELIVERY_CONFIG,
+  followUp: DEFAULT_FOLLOW_UP_CONFIG,
   goalWorkflow: DEFAULT_GOAL_WORKFLOW_CONFIG,
   filters: { entry: [], exit: [] }
 }
@@ -1618,15 +1761,15 @@ export async function createConversationalAgent(input = {}) {
       success_extras, required_data, handoff_rules, extra_instructions,
       allow_emojis, hide_attended, hide_attended_notifications,
       default_calendar_id, closing_strategy_mode, closing_strategy_custom,
-      response_delay_config, reply_delivery_config, goal_workflow_config, entry_filters
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      response_delay_config, reply_delivery_config, follow_up_config, goal_workflow_config, entry_filters
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     id, next.name, next.enabled ? 1 : 0, next.aiProvider, next.model, next.position, next.objective, next.customObjective,
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
     next.extraInstructions, next.allowEmojis ? 1 : 0,
     next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
-    JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters)
+    JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters)
   ])
   await recordConversationalAgentEvent({ eventType: 'agent_created', detail: { agentId: id, name: next.name } })
   return getConversationalAgent(id)
@@ -1645,7 +1788,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
         extra_instructions = ?, allow_emojis = ?, hide_attended = ?, hide_attended_notifications = ?,
         default_calendar_id = ?,
         closing_strategy_mode = ?, closing_strategy_custom = ?, response_delay_config = ?,
-        reply_delivery_config = ?, goal_workflow_config = ?, entry_filters = ?,
+        reply_delivery_config = ?, follow_up_config = ?, goal_workflow_config = ?, entry_filters = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
@@ -1654,7 +1797,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
     next.extraInstructions, next.allowEmojis ? 1 : 0,
     next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
-    JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters),
+    JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters),
     agentId
   ])
   return getConversationalAgent(agentId)
@@ -2308,6 +2451,9 @@ function mapStateRow(row) {
     lastInboundMessageId: row.last_inbound_message_id || null,
     lastAnsweredInboundMessageId: row.last_answered_inbound_message_id || null,
     lastReplyAt: row.last_reply_at || null,
+    followUpBaseMessageId: row.follow_up_base_message_id || null,
+    followUpSentCount: Math.max(0, Number(row.follow_up_sent_count) || 0),
+    followUpLastSentAt: row.follow_up_last_sent_at || null,
     updatedBy: row.updated_by || null,
     agentId: row.agent_id || null,
     closingContext: normalizeStoredAdvancedClosingContext(row.closing_context_json || '{}'),

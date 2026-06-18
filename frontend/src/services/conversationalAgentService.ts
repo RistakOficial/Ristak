@@ -9,6 +9,7 @@ export type ClosingStrategyMode = 'system' | 'custom'
 export type AgentResponseDelayMode = 'none' | 'fixed' | 'random'
 export type AgentResponseDelayUnit = 'seconds' | 'minutes'
 export type AgentReplyDeliveryMode = 'single' | 'split'
+export type AgentFollowUpUnit = 'minutes' | 'hours'
 
 export interface ConversationalAIProviderStatus {
   id: ConversationalAIProviderId
@@ -54,6 +55,19 @@ export interface AgentReplyDeliveryConfig {
   delayBetweenBubblesEnabled: boolean
   minDelaySeconds: number
   maxDelaySeconds: number
+}
+
+export interface AgentFollowUpStepConfig {
+  enabled: boolean
+  value: number
+  unit: AgentFollowUpUnit
+}
+
+export interface AgentFollowUpConfig {
+  enabled: boolean
+  first: AgentFollowUpStepConfig
+  second: AgentFollowUpStepConfig
+  strategy: string
 }
 
 export type AgentGoalOwner = 'human' | 'ai' | 'url'
@@ -225,6 +239,7 @@ export interface ConversationalAgentDef {
   systemClosingStrategy?: string
   responseDelay: AgentResponseDelayConfig
   replyDelivery: AgentReplyDeliveryConfig
+  followUp: AgentFollowUpConfig
   goalWorkflow: AgentGoalWorkflowConfig
   filters: AgentFilters
   createdAt: string | null
@@ -244,6 +259,9 @@ export interface ConversationAgentState {
   lastInboundMessageId: string | null
   lastAnsweredInboundMessageId: string | null
   lastReplyAt: string | null
+  followUpBaseMessageId?: string | null
+  followUpSentCount?: number
+  followUpLastSentAt?: string | null
   updatedBy: string | null
   closingContext?: Record<string, string>
   updatedAt: string | null
@@ -382,6 +400,27 @@ const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   }
 }
 
+const DEFAULT_AGENT_FOLLOW_UP: AgentFollowUpConfig = {
+  enabled: false,
+  first: {
+    enabled: true,
+    value: 30,
+    unit: 'minutes'
+  },
+  second: {
+    enabled: false,
+    value: 2,
+    unit: 'hours'
+  },
+  strategy: [
+    'Lee el historial y el contexto actual antes de escribir.',
+    'Abre la conversación con un solo mensaje natural, corto y contextual.',
+    'No menciones que es seguimiento automático ni que pasó cierto tiempo.',
+    'Retoma el último punto útil que dejó la persona y deja una razón clara para responder.',
+    'No cobres, no agendes y no ejecutes acciones de avance en este mensaje.'
+  ].join(' ')
+}
+
 function normalizeConversationalSuccessAction(value?: unknown): ConversationalSuccessAction {
   const action = String(value || '').trim() as ConversationalSuccessAction
   return VALID_CONVERSATIONAL_SUCCESS_ACTIONS.has(action) ? action : 'ready_for_human'
@@ -406,6 +445,18 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
     ...agent,
     aiProvider: normalizeConversationalAIProvider(agent.aiProvider),
     successAction: normalizeConversationalSuccessAction(agent.successAction),
+    followUp: {
+      ...DEFAULT_AGENT_FOLLOW_UP,
+      ...((agent.followUp || {}) as Partial<AgentFollowUpConfig>),
+      first: {
+        ...DEFAULT_AGENT_FOLLOW_UP.first,
+        ...((agent.followUp?.first || {}) as Partial<AgentFollowUpStepConfig>)
+      },
+      second: {
+        ...DEFAULT_AGENT_FOLLOW_UP.second,
+        ...((agent.followUp?.second || {}) as Partial<AgentFollowUpStepConfig>)
+      }
+    },
     goalWorkflow: {
       ...DEFAULT_AGENT_GOAL_WORKFLOW,
       ...((agent.goalWorkflow || {}) as Partial<AgentGoalWorkflowConfig>),

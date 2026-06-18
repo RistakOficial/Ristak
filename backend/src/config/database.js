@@ -3800,6 +3800,7 @@ async function initTables() {
         closing_strategy_custom TEXT,
         response_delay_config TEXT,
         reply_delivery_config TEXT,
+        follow_up_config TEXT,
         goal_workflow_config TEXT,
         entry_filters TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -3813,6 +3814,7 @@ async function initTables() {
       ['hide_attended_notifications', 'INTEGER DEFAULT 0'],
       ['response_delay_config', 'TEXT'],
       ['reply_delivery_config', 'TEXT'],
+      ['follow_up_config', 'TEXT'],
       ['goal_workflow_config', 'TEXT']
     ]) {
       try {
@@ -3838,6 +3840,9 @@ async function initTables() {
         last_inbound_message_id TEXT,
         last_answered_inbound_message_id TEXT,
         last_reply_at DATETIME,
+        follow_up_base_message_id TEXT,
+        follow_up_sent_count INTEGER DEFAULT 0,
+        follow_up_last_sent_at DATETIME,
         updated_by TEXT,
         agent_id TEXT,
         closing_context_json TEXT,
@@ -3854,7 +3859,10 @@ async function initTables() {
     for (const [columnName, columnType] of [
       ['agent_id', 'TEXT'],
       ['last_answered_inbound_message_id', 'TEXT'],
-      ['closing_context_json', 'TEXT']
+      ['closing_context_json', 'TEXT'],
+      ['follow_up_base_message_id', 'TEXT'],
+      ['follow_up_sent_count', 'INTEGER DEFAULT 0'],
+      ['follow_up_last_sent_at', 'DATETIME']
     ]) {
       try {
         if (usePostgres) {

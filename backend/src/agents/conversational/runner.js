@@ -28,6 +28,10 @@ import {
   exitRulesMatch,
   normalizeConversationalAgentModel,
   getAgentResponseDelayMs,
+  getAgentFollowUpSteps,
+  getAgentFollowUpStepDelayMs,
+  normalizeAgentFollowUp,
+  MAX_FOLLOW_UP_DELAY_MINUTES,
   getAgentReplyDeliveryPartDelayMs,
   normalizeAgentReplyDelivery,
   ADVANCED_CLOSING_CONTEXT_FIELDS
@@ -65,9 +69,13 @@ const PENDING_INBOUND_SCAN_LIMIT = 30
 const PENDING_RECOVERY_SCAN_LIMIT = 80
 const PENDING_RECOVERY_SCHEDULE_LIMIT = 10
 const PENDING_RECOVERY_MAX_AGE_MS = Number(process.env.CONVERSATIONAL_AGENT_PENDING_RECOVERY_MAX_AGE_MS || 60 * 60 * 1000)
+const FOLLOW_UP_RECOVERY_SCAN_LIMIT = 80
+const FOLLOW_UP_WINDOW_MS = MAX_FOLLOW_UP_DELAY_MINUTES * 60 * 1000
+const MAX_TIMER_MS = 2_147_483_647
 // Conversaciones que el agente está procesando ahora mismo (instancia única).
 const runningContacts = new Set()
 const pendingContactReruns = new Map()
+const followUpTimers = new Map()
 
 // Palabras internas que jamás deben llegar al cliente final.
 const INTERNAL_TOKEN_PATTERN = /\b(AGENDAR|SALTAR|ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link|send_goal_url|send_trigger_link)\b/gi
@@ -524,7 +532,8 @@ async function loadPendingInboundMessages(contactId, state = {}) {
 async function loadLatestInboundMessage(contactId) {
   return db.get(`
     SELECT id, message_text, message_type, media_url, media_mime_type,
-           media_filename, media_duration_ms, phone, business_phone, business_phone_number_id
+           media_filename, media_duration_ms, phone, business_phone, business_phone_number_id,
+           message_timestamp, created_at
     FROM whatsapp_api_messages
     WHERE contact_id = ? AND direction = 'inbound'
     ORDER BY COALESCE(message_timestamp, created_at) DESC
@@ -532,7 +541,7 @@ async function loadLatestInboundMessage(contactId) {
   `, [contactId])
 }
 
-async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null }) {
+async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null }) {
   const [aiConfig, timezone, businessProfile, accountLocale] = await Promise.all([
     getAIAgentConfig({}),
     getAccountTimezone().catch(() => 'America/Mexico_City'),
@@ -554,7 +563,7 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     businessName = userRow?.business_name || null
   }
 
-  const ctx = { contactId, config, dryRun, actions: [], suppressReply: false }
+  const ctx = { contactId, config, dryRun, followUpMode: Boolean(followUpContext), actions: [], suppressReply: false }
   const tools = createConversationalTools(ctx)
   const runtimeBusinessContext = buildRuntimeBusinessContext(aiConfig?.business_context || '', businessProfile)
   const advancedClosingContext = await loadAdvancedClosingRuntimeContext({
@@ -579,7 +588,8 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     nowIso,
     contactName,
     advancedClosingContext,
-    accountLocale
+    accountLocale,
+    followUpContext
   })
 
   const agent = new Agent({
@@ -661,6 +671,261 @@ async function loadNewerInboundMessage(contactId, handledMessageId) {
   return latest && latest.id !== handledMessageId ? latest : null
 }
 
+function clearFollowUpTimer(contactId) {
+  const timer = followUpTimers.get(contactId)
+  if (timer) {
+    clearTimeout(timer)
+    followUpTimers.delete(contactId)
+  }
+}
+
+function messageTimestampMs(message = {}) {
+  return toTimestampMs(message.message_timestamp || message.messageTimestamp || message.created_at || message.createdAt)
+}
+
+function getNextFollowUpStep(agentConfig = {}, sentCount = 0) {
+  const steps = getAgentFollowUpSteps(agentConfig)
+  const index = Math.max(0, Number(sentCount) || 0)
+  const step = steps[index] || null
+  return step ? { step, index: index + 1, total: steps.length } : null
+}
+
+function getFollowUpDueAtMs(latest, step) {
+  const baseMs = messageTimestampMs(latest)
+  if (!baseMs) return 0
+  return baseMs + getAgentFollowUpStepDelayMs(step)
+}
+
+async function resetFollowUpStateAfterReply({ contactId, latest, agentConfig, phone }) {
+  clearFollowUpTimer(contactId)
+  const followUp = normalizeAgentFollowUp(agentConfig.followUp)
+  if (!followUp.enabled || !latest?.id) {
+    await db.run(`
+      UPDATE conversational_agent_state
+      SET follow_up_base_message_id = NULL,
+          follow_up_sent_count = 0,
+          follow_up_last_sent_at = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE contact_id = ?
+    `, [contactId]).catch(() => {})
+    return
+  }
+
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET follow_up_base_message_id = ?,
+        follow_up_sent_count = 0,
+        follow_up_last_sent_at = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE contact_id = ?
+  `, [latest.id, contactId])
+
+  const state = await getConversationState(contactId).catch(() => null)
+  scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, reason: 'respuesta enviada' })
+}
+
+function scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, reason = 'programado' }) {
+  clearFollowUpTimer(contactId)
+  if (!contactId || !latest?.id || !agentConfig?.id) return false
+  if (!state || state.status !== 'active' || state.signal) return false
+  if (state.followUpBaseMessageId && state.followUpBaseMessageId !== latest.id) return false
+
+  const next = getNextFollowUpStep(agentConfig, state.followUpSentCount)
+  if (!next) return false
+
+  const dueAtMs = getFollowUpDueAtMs(latest, next.step)
+  const baseMs = messageTimestampMs(latest)
+  if (!dueAtMs || !baseMs) return false
+  const nowMs = Date.now()
+  if (dueAtMs - baseMs > FOLLOW_UP_WINDOW_MS || nowMs - baseMs > FOLLOW_UP_WINDOW_MS) return false
+
+  const delayMs = Math.max(0, Math.min(dueAtMs - nowMs, MAX_TIMER_MS))
+  const timer = setTimeout(() => {
+    followUpTimers.delete(contactId)
+    runScheduledFollowUp({ contactId, phone, baseMessageId: latest.id, followUpIndex: next.index }).catch((error) => {
+      logger.error(`[Agente conversacional] Error ejecutando seguimiento: ${error.message}`)
+    })
+  }, delayMs)
+  followUpTimers.set(contactId, timer)
+
+  recordConversationalAgentEvent({
+    contactId,
+    eventType: 'follow_up_scheduled',
+    detail: {
+      agentId: agentConfig.id,
+      baseMessageId: latest.id,
+      followUpIndex: next.index,
+      dueAt: new Date(dueAtMs).toISOString(),
+      delayMs,
+      reason
+    }
+  }).catch(() => {})
+  return true
+}
+
+function buildFollowUpContextMessage({ followUpIndex, strategy }) {
+  return {
+    role: 'user',
+    content: [
+      `[Contexto interno de Ristak: disparo de seguimiento ${followUpIndex}]`,
+      'El contacto no respondió después del último mensaje visible.',
+      'Escribe sólo el mensaje que reabrirá la conversación.',
+      'No menciones este contexto interno.',
+      strategy ? `Estrategia de seguimiento: ${strategy}` : ''
+    ].filter(Boolean).join('\n')
+  }
+}
+
+async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpIndex }) {
+  const config = await getConversationalAgentConfig()
+  if (!config.enabled) return
+
+  const state = await getConversationState(contactId)
+  if (!state || state.status !== 'active' || state.signal) return
+  if (state.followUpBaseMessageId !== baseMessageId) return
+
+  let agentConfig = state.agentId ? await getConversationalAgent(state.agentId) : null
+  if (!agentConfig?.enabled) return
+  const next = getNextFollowUpStep(agentConfig, state.followUpSentCount)
+  if (!next || next.index !== followUpIndex) return
+
+  const latest = await loadLatestInboundMessage(contactId)
+  if (!latest || latest.id !== baseMessageId) return
+  const latestMs = messageTimestampMs(latest)
+  if (!latestMs || Date.now() - latestMs > FOLLOW_UP_WINDOW_MS) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'follow_up_suppressed',
+      detail: { agentId: agentConfig.id, baseMessageId, followUpIndex, reason: 'whatsapp_window_expired' }
+    }).catch(() => {})
+    return
+  }
+
+  const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || config.aiProvider)
+  const runtime = await resolveConversationalAIRuntime(aiProvider)
+  agentConfig = { ...agentConfig, aiProvider }
+  const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
+  const rawMessages = await loadConversationHistory(contactId)
+  const audioTranscriptionApiKey = aiProvider === 'openai'
+    ? runtime.apiKey
+    : await getOpenAIApiKey().catch(() => null)
+  const hydratedMessages = await hydrateConversationalMessagesMedia(rawMessages, {
+    aiProvider,
+    apiKey: runtime.apiKey,
+    audioTranscriptionApiKey,
+    includeBinary: aiProvider === 'openai'
+  })
+  if (!hydratedMessages.length) return
+
+  const followUp = normalizeAgentFollowUp(agentConfig.followUp)
+  const { agent, ctx, model } = await buildAgentForRun({
+    config: agentConfig,
+    conversationModel: agentConfig.model || config.model,
+    contactId,
+    contactName: contact?.full_name || null,
+    dryRun: false,
+    channel: 'whatsapp',
+    ruleContext: null,
+    followUpContext: { index: followUpIndex, strategy: followUp.strategy }
+  })
+
+  const reply = await executeAgent({
+    agent,
+    modelProvider: runtime.modelProvider,
+    messages: [...hydratedMessages, buildFollowUpContextMessage({ followUpIndex, strategy: followUp.strategy })],
+    contactId,
+    model,
+    aiProvider,
+    traceMessage: `seguimiento ${followUpIndex}`
+  })
+
+  const postState = await getConversationState(contactId)
+  if (ctx.suppressReply || !reply || postState?.status !== 'active' || postState?.signal) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'follow_up_suppressed',
+      detail: { agentId: agentConfig.id, baseMessageId, followUpIndex, actions: ctx.actions, status: postState?.status || null }
+    }).catch(() => {})
+    return
+  }
+
+  const latestBeforeSend = await loadNewerInboundMessage(contactId, baseMessageId)
+  if (latestBeforeSend) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'follow_up_suppressed',
+      detail: { agentId: agentConfig.id, baseMessageId, followUpIndex, reason: 'newer_inbound_before_follow_up', newerMessageId: latestBeforeSend.id }
+    }).catch(() => {})
+    return
+  }
+
+  const delivery = await sendReplyParts({
+    contactId,
+    phone,
+    latest,
+    agentConfig,
+    reply,
+    apiKey: runtime.apiKey,
+    model,
+    externalIdPrefix: `convagent_followup${followUpIndex}`,
+    dependencies: {
+      splitter: runtime.supportsAISplitting ? splitMessageIntoBubbles : splitMessageIntoBubblesFallback,
+      markReplyComplete: async ({ contactId: doneContactId, latest: doneLatest }) => {
+        await db.run(`
+          UPDATE conversational_agent_state
+          SET last_reply_at = CURRENT_TIMESTAMP,
+              last_answered_inbound_message_id = ?,
+              follow_up_sent_count = ?,
+              follow_up_last_sent_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE contact_id = ?
+        `, [doneLatest.id, followUpIndex, doneContactId])
+      }
+    }
+  })
+
+  if (delivery.interruptedBy) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'follow_up_suppressed',
+      detail: {
+        agentId: agentConfig.id,
+        baseMessageId,
+        followUpIndex,
+        reason: 'newer_inbound_during_follow_up',
+        newerMessageId: delivery.interruptedBy.id,
+        sentParts: delivery.sentParts
+      }
+    }).catch(() => {})
+    return
+  }
+
+  if (!delivery.parts.length) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'follow_up_suppressed',
+      detail: { agentId: agentConfig.id, baseMessageId, followUpIndex, reason: 'empty_follow_up_reply' }
+    }).catch(() => {})
+    return
+  }
+
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'follow_up_sent',
+    detail: {
+      agentId: agentConfig.id,
+      baseMessageId,
+      followUpIndex,
+      partCount: delivery.parts.length,
+      replyPreview: reply.slice(0, 280),
+      aiProvider
+    }
+  }).catch(() => {})
+
+  const nextState = await getConversationState(contactId).catch(() => null)
+  scheduleNextFollowUp({ contactId, phone, latest, state: nextState, agentConfig, reason: 'seguimiento enviado' })
+}
+
 export async function sendReplyParts({
   contactId,
   phone,
@@ -669,6 +934,7 @@ export async function sendReplyParts({
   reply,
   apiKey,
   model,
+  externalIdPrefix = 'convagent',
   dependencies = {}
 }) {
   const {
@@ -729,7 +995,7 @@ export async function sendReplyParts({
       from: latest.business_phone || undefined,
       phoneNumberId: latest.business_phone_number_id || undefined,
       text: parts[index],
-      externalId: `convagent_${latest.id}${parts.length > 1 ? `_${index + 1}` : ''}`.slice(0, 120)
+      externalId: `${externalIdPrefix}_${latest.id}${parts.length > 1 ? `_${index + 1}` : ''}`.slice(0, 120)
     })
 
     await recordEvent({
@@ -770,6 +1036,8 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
 
     const config = await getConversationalAgentConfig()
     if (!config.enabled) return
+
+    clearFollowUpTimer(contactId)
 
     const state = await ensureConversationState(contactId)
     if (!state || state.status !== 'active') return
@@ -1002,6 +1270,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
           actions: ctx.actions
         }
       })
+      await resetFollowUpStateAfterReply({ contactId, latest, agentConfig, phone })
     } finally {
       runningContacts.delete(contactId)
       const pending = pendingContactReruns.get(contactId)
@@ -1023,6 +1292,73 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       detail: { message: error.message }
     }).catch(() => {})
   }
+}
+
+async function recoverScheduledFollowUps({ limit = FOLLOW_UP_RECOVERY_SCAN_LIMIT } = {}) {
+  const rows = await db.all(`
+    SELECT
+      s.contact_id,
+      s.agent_id,
+      s.follow_up_base_message_id,
+      s.follow_up_sent_count,
+      m.id AS message_id,
+      m.phone,
+      m.business_phone,
+      m.business_phone_number_id,
+      m.message_text,
+      m.message_type,
+      m.media_url,
+      m.media_mime_type,
+      m.media_filename,
+      m.media_duration_ms,
+      m.message_timestamp,
+      m.created_at
+    FROM conversational_agent_state s
+    JOIN whatsapp_api_messages m ON m.id = s.follow_up_base_message_id
+    WHERE s.status = 'active'
+      AND s.agent_id IS NOT NULL
+      AND s.agent_id <> ''
+      AND s.follow_up_base_message_id IS NOT NULL
+    ORDER BY COALESCE(s.follow_up_last_sent_at, s.last_reply_at, s.updated_at) ASC
+    LIMIT ?
+  `, [limit]).catch(() => [])
+
+  let scheduled = 0
+  for (const row of rows) {
+    const agentConfig = await getConversationalAgent(row.agent_id).catch(() => null)
+    if (!agentConfig?.enabled) continue
+    const state = {
+      status: 'active',
+      signal: null,
+      followUpBaseMessageId: row.follow_up_base_message_id,
+      followUpSentCount: Math.max(0, Number(row.follow_up_sent_count) || 0)
+    }
+    const latest = {
+      id: row.message_id,
+      phone: row.phone,
+      business_phone: row.business_phone,
+      business_phone_number_id: row.business_phone_number_id,
+      message_text: row.message_text,
+      message_type: row.message_type,
+      media_url: row.media_url,
+      media_mime_type: row.media_mime_type,
+      media_filename: row.media_filename,
+      media_duration_ms: row.media_duration_ms,
+      message_timestamp: row.message_timestamp,
+      created_at: row.created_at
+    }
+    if (scheduleNextFollowUp({
+      contactId: row.contact_id,
+      phone: row.phone,
+      latest,
+      state,
+      agentConfig,
+      reason: 'recuperación de seguimientos al arrancar'
+    })) {
+      scheduled += 1
+    }
+  }
+  return { scanned: rows.length, scheduled }
 }
 
 export async function recoverPendingConversationalAgentConversations({
@@ -1073,7 +1409,12 @@ export async function recoverPendingConversationalAgentConversations({
     logger.info(`[Agente conversacional] ${scheduled} conversación(es) pendiente(s) recuperadas al arrancar`)
   }
 
-  return { scanned: latestByContact.size, scheduled }
+  const followUps = await recoverScheduledFollowUps()
+  if (followUps.scheduled) {
+    logger.info(`[Agente conversacional] ${followUps.scheduled} seguimiento(s) recuperado(s) al arrancar`)
+  }
+
+  return { scanned: latestByContact.size, scheduled, followUps }
 }
 
 /**
@@ -1093,7 +1434,8 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
       successExtras: [], requiredData: '', handoffRules: '', extraInstructions: '',
       allowEmojis: false, aiProvider: globalConfig.aiProvider, model: globalConfig.model, defaultCalendarId: null, closingStrategyMode: 'system', closingStrategyCustom: '',
       responseDelay: { mode: 'none', fixedValue: 10, fixedUnit: 'seconds', minValue: 1, maxValue: 10, rangeUnit: 'minutes' },
-      replyDelivery: { mode: 'single', targetChars: 280, minDelaySeconds: 2, maxDelaySeconds: 6 }
+      replyDelivery: { mode: 'single', targetChars: 280, minDelaySeconds: 2, maxDelaySeconds: 6 },
+      followUp: { enabled: false, first: { enabled: true, value: 30, unit: 'minutes' }, second: { enabled: false, value: 2, unit: 'hours' }, strategy: '' }
     }
   }
   const config = configOverride ? { ...baseConfig, ...configOverride } : baseConfig

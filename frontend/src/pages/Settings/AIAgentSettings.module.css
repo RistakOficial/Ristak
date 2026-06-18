@@ -296,6 +296,10 @@
   color: #b45309;
 }
 
+.helperError {
+  color: var(--neg);
+}
+
 .saveStatus {
   display: inline-flex;
   align-items: center;
@@ -414,6 +418,35 @@
 
 .responseDelayHelp {
   grid-column: 1 / -1;
+}
+
+.followUpConfig {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.followUpDelayRow {
+  display: grid;
+  grid-template-columns: minmax(150px, auto) auto minmax(92px, 120px) minmax(130px, 160px) minmax(180px, 1fr);
+  align-items: end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.followUpDelayLabel {
+  align-self: center;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.followUpDelayText {
+  align-self: center;
+  color: var(--text-mute);
+  font-size: 12.5px;
+  line-height: 1.35;
 }
 
 .agentTextGrid {
@@ -800,6 +833,10 @@
     width: 100%;
   }
 
+  .followUpDelayRow {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .replyOptionToggle,
   .delayNumberField,
   .replyPartSizeField,
@@ -826,6 +863,11 @@
   .responseDelayControls,
   .replyDeliveryControls {
     grid-template-columns: 1fr;
+  }
+
+  .followUpDelayRow {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .header {

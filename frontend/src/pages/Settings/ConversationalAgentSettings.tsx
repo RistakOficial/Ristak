@@ -26,6 +26,9 @@ import { useAIAgentAvailability } from '@/hooks'
 import {
   conversationalAgentService,
   type AgentFilterOptions,
+  type AgentFollowUpConfig,
+  type AgentFollowUpStepConfig,
+  type AgentFollowUpUnit,
   type AgentGoalWorkflowConfig,
   type AgentReplyDeliveryConfig,
   type AgentReplyDeliveryMode,
@@ -127,6 +130,11 @@ const responseDelayUnitOptions: Array<{ value: AgentResponseDelayUnit; label: st
   { value: 'minutes', label: 'Minutos' }
 ]
 
+const followUpUnitOptions: Array<{ value: AgentFollowUpUnit; label: string }> = [
+  { value: 'minutes', label: 'Minutos' },
+  { value: 'hours', label: 'Horas' }
+]
+
 const defaultResponseDelay: AgentResponseDelayConfig = {
   mode: 'none',
   fixedValue: 10,
@@ -148,6 +156,30 @@ const defaultReplyDelivery: AgentReplyDeliveryConfig = {
   delayBetweenBubblesEnabled: true,
   minDelaySeconds: 2,
   maxDelaySeconds: 7
+}
+
+const MAX_FOLLOW_UP_MINUTES = 23 * 60
+const defaultFollowUpStrategy = [
+  'Lee el historial y el contexto actual antes de escribir.',
+  'Abre la conversación con un solo mensaje natural, corto y contextual.',
+  'No menciones que es seguimiento automático ni que pasó cierto tiempo.',
+  'Retoma el último punto útil que dejó la persona y deja una razón clara para responder.',
+  'No cobres, no agendes y no ejecutes acciones de avance en este mensaje.'
+].join(' ')
+
+const defaultFollowUp: AgentFollowUpConfig = {
+  enabled: false,
+  first: {
+    enabled: true,
+    value: 30,
+    unit: 'minutes'
+  },
+  second: {
+    enabled: false,
+    value: 2,
+    unit: 'hours'
+  },
+  strategy: defaultFollowUpStrategy
 }
 
 const defaultGoalWorkflow: AgentGoalWorkflowConfig = {
@@ -568,6 +600,24 @@ function getAgentReplyDelivery(agent: ConversationalAgentDef): AgentReplyDeliver
   return { ...defaultReplyDelivery, ...((agent.replyDelivery || {}) as Partial<AgentReplyDeliveryConfig>) }
 }
 
+function getAgentFollowUp(agent: ConversationalAgentDef): AgentFollowUpConfig {
+  const followUp = (agent.followUp || {}) as Partial<AgentFollowUpConfig>
+  return {
+    ...defaultFollowUp,
+    ...followUp,
+    first: {
+      ...defaultFollowUp.first,
+      ...((followUp.first || {}) as Partial<AgentFollowUpStepConfig>),
+      enabled: true
+    },
+    second: {
+      ...defaultFollowUp.second,
+      ...((followUp.second || {}) as Partial<AgentFollowUpStepConfig>)
+    },
+    strategy: String(followUp.strategy || defaultFollowUp.strategy)
+  }
+}
+
 function getAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowConfig {
   const workflow = (agent.goalWorkflow || {}) as Partial<AgentGoalWorkflowConfig>
   return {
@@ -594,6 +644,54 @@ function getAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowC
       ...((workflow.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
     }
   }
+}
+
+function getFollowUpDelayMinutes(step: AgentFollowUpStepConfig) {
+  return Math.max(1, Number(step.value) || 1) * (step.unit === 'hours' ? 60 : 1)
+}
+
+function getFollowUpMaxValue(unit: AgentFollowUpUnit) {
+  return unit === 'hours' ? 23 : MAX_FOLLOW_UP_MINUTES
+}
+
+function clampFollowUpStepValue(value: number, unit: AgentFollowUpUnit) {
+  return Math.min(Math.max(Math.round(Number(value) || 1), 1), getFollowUpMaxValue(unit))
+}
+
+function getFollowUpStepLabel(step: AgentFollowUpStepConfig) {
+  const value = Number(step.value) || 0
+  if (step.unit === 'hours') return `${value} ${value === 1 ? 'hora' : 'horas'}`
+  return `${value} ${value === 1 ? 'minuto' : 'minutos'}`
+}
+
+function getFollowUpError(followUp: AgentFollowUpConfig) {
+  if (!followUp.enabled) return ''
+  const firstDelay = getFollowUpDelayMinutes(followUp.first)
+  if (firstDelay > MAX_FOLLOW_UP_MINUTES) return 'Revisa el tiempo del seguimiento.'
+  if (followUp.second.enabled) {
+    const secondDelay = getFollowUpDelayMinutes(followUp.second)
+    if (secondDelay > MAX_FOLLOW_UP_MINUTES || secondDelay <= firstDelay) return 'Revisa el orden de los seguimientos.'
+  }
+  if (!followUp.strategy.trim()) return 'Falta la estrategia de seguimiento.'
+  return ''
+}
+
+function getResponseDelayError(delay: AgentResponseDelayConfig) {
+  if (delay.mode === 'random' && Number(delay.minValue) > Number(delay.maxValue)) return 'Revisa el rango de espera.'
+  return ''
+}
+
+function getReplyDeliveryError(delivery: AgentReplyDeliveryConfig) {
+  if ((delivery.splitMessagesEnabled || delivery.mode === 'split') && Number(delivery.minDelaySeconds) > Number(delivery.maxDelaySeconds)) {
+    return 'Revisa el rango de pausa entre globos.'
+  }
+  return ''
+}
+
+function getAgentValidationError(agent: ConversationalAgentDef) {
+  return getResponseDelayError(getAgentResponseDelay(agent)) ||
+    getReplyDeliveryError(getAgentReplyDelivery(agent)) ||
+    getFollowUpError(getAgentFollowUp(agent))
 }
 
 function mergeGoalWorkflow(
@@ -682,6 +780,13 @@ function getReplyDeliveryHelp(delivery: AgentReplyDeliveryConfig) {
     return `El sistema decide cortes y cantidad de globos. Sólo ajusta la pausa entre globos: ${delivery.minDelaySeconds} a ${delivery.maxDelaySeconds} segundos.`
   }
   return 'Envía cada respuesta completa en un solo WhatsApp.'
+}
+
+function getFollowUpSummary(followUp: AgentFollowUpConfig) {
+  if (!followUp.enabled) return ''
+  const parts = [`seguimiento a ${getFollowUpStepLabel(followUp.first)}`]
+  if (followUp.second.enabled) parts.push(`2do a ${getFollowUpStepLabel(followUp.second)}`)
+  return parts.join(' · ')
 }
 
 function isBusinessPromptReady(status?: ConversationalBusinessPromptStatus | null) {
@@ -833,6 +938,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const responseDelay = getAgentResponseDelay(agent)
   const responseDelaySummary = getResponseDelaySummary(responseDelay)
   const replyDelivery = getAgentReplyDelivery(agent)
+  const followUp = getAgentFollowUp(agent)
+  const followUpSummary = getFollowUpSummary(followUp)
+  const responseDelayError = getResponseDelayError(responseDelay)
+  const replyDeliveryError = getReplyDeliveryError(replyDelivery)
+  const followUpError = getFollowUpError(followUp)
   const goalWorkflow = getAgentGoalWorkflow(agent)
   const goalUrlConfig = agent.objective === 'ventas' ? goalWorkflow.sales : goalWorkflow.appointments
   const goalUrlLabel = agent.objective === 'ventas' ? 'Enlace del pedido' : 'Enlace del calendario'
@@ -899,11 +1009,47 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const updateResponseDelay = (patch: Partial<AgentResponseDelayConfig>) => {
-    onChange({ responseDelay: { ...responseDelay, ...patch } })
+    const next = { ...responseDelay, ...patch }
+    const error = getResponseDelayError(next)
+    if (error) {
+      showToast('warning', 'Rango inválido', error)
+      return
+    }
+    onChange({ responseDelay: next })
   }
 
   const updateReplyDelivery = (patch: Partial<AgentReplyDeliveryConfig>) => {
-    onChange({ replyDelivery: { ...replyDelivery, ...patch } })
+    const next = { ...replyDelivery, ...patch }
+    const error = getReplyDeliveryError(next)
+    if (error) {
+      showToast('warning', 'Rango inválido', error)
+      return
+    }
+    onChange({ replyDelivery: next })
+  }
+
+  const updateFollowUp = (patch: Partial<AgentFollowUpConfig>) => {
+    onChange({ followUp: { ...followUp, ...patch } })
+  }
+
+  const updateFollowUpStep = (stepKey: 'first' | 'second', patch: Partial<AgentFollowUpStepConfig>) => {
+    const currentStep = followUp[stepKey]
+    const unit = (patch.unit || currentStep.unit) as AgentFollowUpUnit
+    const rawValue = patch.value === undefined ? currentStep.value : patch.value
+    const nextStep: AgentFollowUpStepConfig = {
+      ...currentStep,
+      ...patch,
+      unit,
+      value: clampFollowUpStepValue(rawValue, unit)
+    }
+    if (stepKey === 'first') nextStep.enabled = true
+    const nextFollowUp = { ...followUp, [stepKey]: nextStep }
+    const error = getFollowUpError(nextFollowUp)
+    if (error && error !== 'Falta la estrategia de seguimiento.') {
+      showToast('warning', 'Seguimiento inválido', error)
+      return
+    }
+    updateFollowUp({ [stepKey]: nextStep } as Partial<AgentFollowUpConfig>)
   }
 
   const updateGoalWorkflow = (patch: Partial<AgentGoalWorkflowConfig>) => {
@@ -1551,6 +1697,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             {exitCount > 0 ? ` · se suelta con ${exitCount}` : ''}
             {responseDelaySummary ? ` · espera ${responseDelaySummary}` : ''}
             {replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split' ? ' · responde en partes' : ''}
+            {followUpSummary ? ` · ${followUpSummary}` : ''}
           </p>
           {!businessPromptReady && (
             <div className={styles.promptReadinessNotice}>
@@ -1703,7 +1850,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   </div>
                 )}
 
-                <p className={`${styles.helper} ${styles.responseDelayHelp}`}>{getResponseDelayHelp(responseDelay)}</p>
+                <p className={`${styles.helper} ${styles.responseDelayHelp} ${responseDelayError ? styles.helperError : ''}`}>
+                  {responseDelayError || getResponseDelayHelp(responseDelay)}
+                </p>
               </div>
 
               <div className={styles.replyDeliveryGrid}>
@@ -1747,7 +1896,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   </div>
                 )}
 
-                <p className={`${styles.helper} ${styles.responseDelayHelp}`}>{getReplyDeliveryHelp(replyDelivery)}</p>
+                <p className={`${styles.helper} ${styles.responseDelayHelp} ${replyDeliveryError ? styles.helperError : ''}`}>
+                  {replyDeliveryError || getReplyDeliveryHelp(replyDelivery)}
+                </p>
               </div>
 
               <SelectionToggle
@@ -2064,7 +2215,102 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           </div>
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>3. ¿Cuándo quieres que inicie la conversación?</h3>
+            <h3 className={styles.sectionTitle}>3. Seguimiento</h3>
+            <p className={styles.agentSectionHint}>
+              Reactiva el chat si la persona se queda callada, sin salirte de la ventana de WhatsApp.
+            </p>
+            <SelectionToggle
+              checked={followUp.enabled}
+              title="¿Quieres darle seguimiento al contacto?"
+              description="Si se queda sin responder, el agente puede abrir de nuevo con contexto."
+              onChange={(enabled) => {
+                updateFollowUp({
+                  enabled,
+                  first: { ...followUp.first, enabled: true },
+                  second: { ...followUp.second, enabled: enabled ? followUp.second.enabled : false },
+                  strategy: followUp.strategy || defaultFollowUpStrategy
+                })
+              }}
+            />
+
+            {followUp.enabled && (
+              <div className={styles.followUpConfig}>
+                <div className={styles.followUpDelayRow}>
+                  <span className={styles.followUpDelayLabel}>¿En qué momento?</span>
+                  <span className={styles.followUpDelayText}>Después de</span>
+                  <NumberInput
+                    className={`${styles.input} ${styles.delayNumberInput}`}
+                    min={1}
+                    max={getFollowUpMaxValue(followUp.first.unit)}
+                    step={1}
+                    value={followUp.first.value}
+                    onValueChange={(value) => updateFollowUpStep('first', { value })}
+                  />
+                  <CustomSelect
+                    value={followUp.first.unit}
+                    onChange={(event) => updateFollowUpStep('first', { unit: event.target.value as AgentFollowUpUnit })}
+                    portal
+                    aria-label="Unidad del primer seguimiento"
+                  >
+                    {followUpUnitOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </CustomSelect>
+                  <span className={styles.followUpDelayText}>desde el último mensaje enviado.</span>
+                </div>
+
+                <SelectionToggle
+                  checked={followUp.second.enabled}
+                  title="¿Quieres darle un 2do seguimiento al contacto?"
+                  description="Sólo se manda si el contacto sigue sin contestar."
+                  onChange={(enabled) => updateFollowUpStep('second', { enabled })}
+                />
+
+                {followUp.second.enabled && (
+                  <div className={styles.followUpDelayRow}>
+                    <span className={styles.followUpDelayLabel}>Segundo seguimiento</span>
+                    <span className={styles.followUpDelayText}>Después de</span>
+                    <NumberInput
+                      className={`${styles.input} ${styles.delayNumberInput}`}
+                      min={1}
+                      max={getFollowUpMaxValue(followUp.second.unit)}
+                      step={1}
+                      value={followUp.second.value}
+                      onValueChange={(value) => updateFollowUpStep('second', { value })}
+                    />
+                    <CustomSelect
+                      value={followUp.second.unit}
+                      onChange={(event) => updateFollowUpStep('second', { unit: event.target.value as AgentFollowUpUnit })}
+                      portal
+                      aria-label="Unidad del segundo seguimiento"
+                    >
+                      {followUpUnitOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </CustomSelect>
+                    <span className={styles.followUpDelayText}>desde el último mensaje enviado.</span>
+                  </div>
+                )}
+
+                <div className={styles.fieldWide}>
+                  <label className={styles.label}>Estrategia de seguimiento</label>
+                  <textarea
+                    className={styles.textarea}
+                    value={followUp.strategy}
+                    placeholder="Ejemplo: retoma lo último que dijo, no vendas de golpe y abre con una pregunta corta."
+                    onChange={(event) => updateFollowUp({ strategy: event.target.value })}
+                    rows={4}
+                  />
+                  <p className={`${styles.helper} ${followUpError ? styles.helperError : ''}`}>
+                    {followUpError || 'Define cómo debe abrir la conversación con el contexto que ya tiene.'}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className={styles.agentSection}>
+            <h3 className={styles.sectionTitle}>4. ¿Cuándo quieres que inicie la conversación?</h3>
             <p className={styles.agentSectionHint}>
               Con qué condiciones quieres que el agente entre al chat. Sin reglas, puede contestar cualquier chat nuevo.
             </p>
@@ -2097,7 +2343,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           </div>
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>4. Qué debe cuidar</h3>
+            <h3 className={styles.sectionTitle}>5. Qué debe cuidar</h3>
             <div className={styles.agentTextGrid}>
               <div className={styles.field}>
                 <label className={styles.label}>Datos que debe pedir</label>
@@ -2444,6 +2690,11 @@ export const ConversationalAgentSettings: React.FC = () => {
       timers.delete(agentId)
       const agent = agentsRef.current.find((item) => item.id === agentId)
       if (!agent) return
+      const validationError = getAgentValidationError(agent)
+      if (validationError) {
+        showToast('warning', 'Revisa el agente', validationError)
+        return
+      }
       try {
         await conversationalAgentService.updateAgent(agentId, agentToInput(agent))
       } catch (error: any) {

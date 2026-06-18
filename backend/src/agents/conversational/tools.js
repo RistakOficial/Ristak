@@ -731,20 +731,24 @@ export function createConversationalTools(ctx) {
     getBusinessProfileTool,
     listProductsTool,
     getContactProfileTool,
-    saveContactDataTool,
-    ...(config.closingStrategyMode === 'custom' ? [] : [updateClosingContextTool]),
+    ...(ctx.followUpMode ? [] : [saveContactDataTool]),
+    ...(ctx.followUpMode || config.closingStrategyMode === 'custom' ? [] : [updateClosingContextTool]),
+    ...(ctx.followUpMode ? [] : [
     markReadyTool,
     sendToHumanTool,
     discardConversationTool,
     staySilentTool
+    ])
   ]
 
   // Disponibilidad y agenda: lectura siempre (para responder horarios reales);
   // escritura solo si el negocio configuró agenda directa.
   tools.push(listCalendarsTool, getFreeSlotsTool)
-  if (config?.successAction === 'book_appointment') tools.push(bookAppointmentTool)
-  if (config?.successAction === 'ready_to_buy') tools.push(createPaymentLinkTool)
-  if (config?.successAction === 'send_goal_url') tools.push(sendGoalUrlTool)
-  if (config?.successAction === 'send_trigger_link') tools.push(sendTriggerLinkTool)
+  if (!ctx.followUpMode) {
+    if (config?.successAction === 'book_appointment') tools.push(bookAppointmentTool)
+    if (config?.successAction === 'ready_to_buy') tools.push(createPaymentLinkTool)
+    if (config?.successAction === 'send_goal_url') tools.push(sendGoalUrlTool)
+    if (config?.successAction === 'send_trigger_link') tools.push(sendTriggerLinkTool)
+  }
   return tools
 }
