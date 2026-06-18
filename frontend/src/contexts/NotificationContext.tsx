@@ -12,6 +12,9 @@ interface ToastData {
 
 interface ConfirmOptions {
   typeToConfirm?: string
+  secondaryActionText?: string
+  secondaryActionVariant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline'
+  onSecondaryAction?: () => void
 }
 
 interface ModalData {
@@ -21,7 +24,10 @@ interface ModalData {
   message: string
   confirmText?: string
   cancelText?: string
+  secondaryActionText?: string
+  secondaryActionVariant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline'
   onConfirm?: () => void
+  onSecondaryAction?: () => void
   onCancel?: () => void
   typeToConfirm?: string
 }
@@ -92,7 +98,10 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       message,
       confirmText,
       cancelText,
+      secondaryActionText: options?.secondaryActionText,
+      secondaryActionVariant: options?.secondaryActionVariant,
       onConfirm,
+      onSecondaryAction: options?.onSecondaryAction,
       onCancel,
       typeToConfirm: options?.typeToConfirm
     })

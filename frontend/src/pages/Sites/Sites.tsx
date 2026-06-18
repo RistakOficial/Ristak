@@ -4870,7 +4870,20 @@ export const Sites: React.FC = () => {
       () => handleConfirmLeaveEditor(action),
       'Salir sin guardar',
       'Seguir editando',
-      handleCancelLeaveEditor
+      handleCancelLeaveEditor,
+      {
+        secondaryActionText: 'Salir y Guardar',
+        secondaryActionVariant: 'primary',
+        onSecondaryAction: () => {
+          void flushPendingEditorSaves({ silent: true }).then((saved) => {
+            if (saved) {
+              handleConfirmLeaveEditor(action)
+              return
+            }
+            handleCancelLeaveEditor()
+          })
+        }
+      }
     )
   }, [handleCancelLeaveEditor, handleConfirmLeaveEditor, hasUnsavedChanges, showConfirm])
 
@@ -7899,8 +7912,7 @@ export const Sites: React.FC = () => {
                       size="md"
                       className={`${styles.editorActionButton} ${editorDirtyActionTarget === 'save' ? styles.editorDirtyActionButton : ''}`}
                       onClick={() => handleSaveSite()}
-                      loading={saving}
-                      disabled={editorAIGenerating}
+                      disabled={editorAIGenerating || saving}
                       aria-label="Guardar"
                     >
                       <Save size={15} />
@@ -7910,8 +7922,7 @@ export const Sites: React.FC = () => {
                       size="md"
                       className={`${styles.editorPublishButton} ${editorDirtyActionTarget === 'publish' ? styles.editorDirtyActionButton : ''}`}
                       onClick={() => handleSaveSite('published')}
-                      loading={saving}
-                      disabled={editorAIGenerating}
+                      disabled={editorAIGenerating || saving}
                       aria-label="Publicar"
                     >
                       <Send size={15} />

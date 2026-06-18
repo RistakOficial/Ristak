@@ -749,7 +749,10 @@ const AppWithNotifications: React.FC = () => {
         type={modal.type}
         confirmText={modal.confirmText}
         cancelText={modal.cancelText}
+        secondaryActionText={modal.secondaryActionText}
+        secondaryActionVariant={modal.secondaryActionVariant}
         onConfirm={modal.onConfirm}
+        onSecondaryAction={modal.onSecondaryAction}
         onCancel={modal.onCancel}
         typeToConfirm={modal.typeToConfirm}
       />

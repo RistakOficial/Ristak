@@ -88,6 +88,7 @@ const STATUS_BADGE_VARIANT: Record<AutomationStatus, 'neutral' | 'success' | 'wa
 }
 
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error'
+type PersistAutomation = (options?: { notify?: boolean }) => Promise<boolean>
 
 interface PickerState {
   kind: NodeKind
@@ -203,7 +204,7 @@ function automationContentSignature(
 ) {
   return JSON.stringify({
     name: name.trim(),
-    nodes,
+    nodes: nodes.map((node) => ({ ...node, position: undefined })),
     edges,
     settings
   })
@@ -262,6 +263,7 @@ export const AutomationEditor: React.FC = () => {
   stateRef.current = state
   const automationRef = useRef(automation)
   automationRef.current = automation
+  const persistAutomationRef = useRef<PersistAutomation | null>(null)
   const multiSelectedRefEditor = useRef(multiSelectedIds)
   multiSelectedRefEditor.current = multiSelectedIds
 
@@ -387,7 +389,19 @@ export const AutomationEditor: React.FC = () => {
         'Si sales ahora, los cambios que no guardaste se perderán.',
         onContinue,
         'Salir sin guardar',
-        'Seguir editando'
+        'Seguir editando',
+        undefined,
+        {
+          secondaryActionText: 'Salir y Guardar',
+          secondaryActionVariant: 'primary',
+          onSecondaryAction: () => {
+            const saveBeforeLeaving = persistAutomationRef.current
+            if (!saveBeforeLeaving) return
+            void saveBeforeLeaving({ notify: true }).then((saved) => {
+              if (saved) onContinue()
+            })
+          }
+        }
       )
     },
     [getHasUnsavedChanges, showConfirm]
@@ -550,6 +564,7 @@ export const AutomationEditor: React.FC = () => {
       return false
     }
   }, [getHasUnsavedChanges, showToast])
+  persistAutomationRef.current = persistAutomation
 
   useEffect(() => {
     if (!automation) return
@@ -1441,7 +1456,7 @@ export const AutomationEditor: React.FC = () => {
       : 'save'
     : null
   const saveIndicatorMode =
-    saveState === 'saving'
+    saveState === 'saving' || statusBusy
       ? 'saving'
       : saveState === 'error'
         ? 'error'
@@ -1568,7 +1583,7 @@ export const AutomationEditor: React.FC = () => {
             size="sm"
             className={dirtyActionTarget === 'save' ? styles.dirtyActionButton : undefined}
             leftIcon={<Save size={13} />}
-            loading={saveState === 'saving'}
+            disabled={saveState === 'saving' || statusBusy}
             onClick={() => void persistAutomation({ notify: true })}
           >
             Guardar
@@ -1582,7 +1597,7 @@ export const AutomationEditor: React.FC = () => {
               variant="secondary"
               size="sm"
               leftIcon={<Pause size={13} />}
-              loading={statusBusy}
+              disabled={statusBusy || saveState === 'saving'}
               onClick={() => void changeStatus('paused')}
             >
               Pausar
@@ -1593,7 +1608,7 @@ export const AutomationEditor: React.FC = () => {
               size="sm"
               className={cn(styles.publishButton, dirtyActionTarget === 'publish' && styles.dirtyActionButton)}
               leftIcon={<Play size={13} />}
-              loading={statusBusy}
+              disabled={statusBusy || saveState === 'saving'}
               onClick={() => void changeStatus('published')}
             >
               {publishButtonLabel}

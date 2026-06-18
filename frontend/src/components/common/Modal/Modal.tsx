@@ -18,7 +18,10 @@ interface ModalProps {
   size?: ModalSize
   confirmText?: string
   cancelText?: string
+  secondaryActionText?: string
+  secondaryActionVariant?: ButtonVariant
   onConfirm?: () => void
+  onSecondaryAction?: () => void
   onCancel?: () => void
   showCloseButton?: boolean
   className?: string
@@ -83,7 +86,10 @@ export const Modal: React.FC<ModalProps> = ({
   size = 'md',
   confirmText = 'Aceptar',
   cancelText = 'Cancelar',
+  secondaryActionText,
+  secondaryActionVariant = 'primary',
   onConfirm,
+  onSecondaryAction,
   onCancel,
   showCloseButton = true,
   className = '',
@@ -260,6 +266,20 @@ export const Modal: React.FC<ModalProps> = ({
                 >
                   {cancelText}
                 </Button>
+                {secondaryActionText && onSecondaryAction && (
+                  <Button
+                    variant={secondaryActionVariant}
+                    disabled={!typedConfirmationValid}
+                    onClick={() => {
+                      if (!typedConfirmationValid) return
+                      onSecondaryAction()
+                      onClose()
+                    }}
+                    size="medium"
+                  >
+                    {secondaryActionText}
+                  </Button>
+                )}
                 <Button
                   variant={confirmButtonVariant}
                   disabled={!typedConfirmationValid}
