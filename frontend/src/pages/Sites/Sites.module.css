@@ -6631,6 +6631,7 @@
 
 .videoRetentionChart {
   position: relative;
+  aspect-ratio: 16 / 9;
   min-height: 420px;
   overflow: hidden;
   isolation: isolate;
@@ -6648,7 +6649,7 @@
 
 .videoRetentionMedia {
   background: var(--surface-solid, var(--surface));
-  object-fit: contain;
+  object-fit: cover;
 }
 
 .videoRetentionMediaEmpty {
@@ -6667,8 +6668,15 @@
   inset: 0;
   z-index: 1;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-solid, var(--surface)) 46%, transparent), transparent 34%),
-    linear-gradient(0deg, color-mix(in srgb, var(--surface-solid, var(--surface)) 52%, transparent), transparent 44%);
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-solid, var(--surface)) 24%, transparent), transparent 36%),
+    linear-gradient(0deg, color-mix(in srgb, var(--surface-solid, var(--surface)) 34%, transparent), transparent 42%);
+  pointer-events: none;
+}
+
+.videoRetentionPlot {
+  position: absolute;
+  inset: 28px 12px 44px;
+  z-index: 2;
   pointer-events: none;
 }
 
@@ -6682,7 +6690,7 @@
 }
 
 .videoRetentionCurve path {
-  fill: color-mix(in srgb, var(--accent) 34%, transparent);
+  fill: color-mix(in srgb, var(--info) 24%, transparent);
 }
 
 .videoRetentionCurve polyline {
@@ -6690,13 +6698,14 @@
   stroke: var(--warn);
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 0.7;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .videoRetentionGrid {
   position: absolute;
-  inset: 28px 12px 44px;
-  z-index: 3;
+  inset: 0;
+  z-index: 1;
   display: grid;
   grid-template-rows: repeat(4, 1fr);
   pointer-events: none;
@@ -6705,9 +6714,10 @@
 .videoRetentionGrid span {
   display: flex;
   justify-content: flex-end;
-  border-top: 1px dashed var(--border);
+  border-top: 1px dashed color-mix(in srgb, var(--text) 22%, transparent);
   color: var(--text);
   font-size: 0.72rem;
+  line-height: 1;
   text-shadow: 0 1px 2px var(--surface-solid, var(--surface));
 }
 
@@ -17387,7 +17397,7 @@
     min-height: 300px;
   }
 
-  .videoRetentionGrid {
+  .videoRetentionPlot {
     inset: 22px 10px 42px;
   }
 

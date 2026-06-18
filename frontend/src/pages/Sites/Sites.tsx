@@ -26743,19 +26743,21 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
               )}
               <div className={styles.videoRetentionShade} aria-hidden="true" />
               {retentionSegments.length && retentionCurvePoints ? (
-                <svg className={styles.videoRetentionCurve} viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  <path d={retentionAreaPath} />
-                  <polyline points={retentionCurvePoints} />
-                </svg>
+                <div className={styles.videoRetentionPlot} aria-hidden="true">
+                  <svg className={styles.videoRetentionCurve} viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <path d={retentionAreaPath} />
+                    <polyline points={retentionCurvePoints} />
+                  </svg>
+                  <div className={styles.videoRetentionGrid}>
+                    <span>100%</span>
+                    <span>75%</span>
+                    <span>50%</span>
+                    <span>25%</span>
+                  </div>
+                </div>
               ) : (
                 <div className={styles.videoRetentionEmptyNote}>Aún no hay suficientes reproducciones para dibujar retención.</div>
               )}
-              <div className={styles.videoRetentionGrid} aria-hidden="true">
-                <span>100%</span>
-                <span>75%</span>
-                <span>50%</span>
-                <span>25%</span>
-              </div>
               <div className={styles.videoRetentionTimes}>
                 <span>0:00</span>
                 <span>{formatSitesTimecode(readSitesNumber(selectedVideo.duration) || retentionSegments[retentionSegments.length - 1]?.endSeconds || 0)}</span>
