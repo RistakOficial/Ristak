@@ -26863,23 +26863,68 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       { key: 'drop-off', label: 'Drop off', value: dropOffRate === null ? 'Sin dato' : formatSitesPercent(dropOffRate), hint: 'Promedio que se perdió antes del final.' },
       { key: 'identified', label: 'Identificados', value: formatSitesCompactNumber(firstPartySummary?.identifiedContacts ?? 0), hint: `${formatSitesCompactNumber(firstPartySummary?.anonymousVisitors ?? 0)} anónimos.` }
     ]
+    const videoDetailMetrics = [
+      { key: 'average', icon: <Clock3 size={15} />, label: 'Promedio visto', value: formatSitesSeconds(averageWatchTime) },
+      { key: 'viewers', icon: <Eye size={15} />, label: 'Viewers únicos', value: formatSitesCompactNumber(uniqueVideoViewers) },
+      { key: 'loads', icon: <MousePointerClick size={15} />, label: 'Cargas del player', value: formatSitesCompactNumber(videoLoads) },
+      { key: 'top-country', icon: <Globe2 size={15} />, label: 'País top', value: topCountry }
+    ]
 
     return (
       <div className={styles.videoEngagementDashboard}>
         <div className={styles.videoEngagementHero}>
-          <div className={styles.videoEngagementMetrics}>
-            <div className={styles.videoEngagementHeader}>
-              <span>Engagement</span>
-              <strong>{firstPartyTracking ? 'Tracking Ristak' : 'Stream'}</strong>
-            </div>
-            {primaryVideoMetrics.map(metric => (
-              <div key={metric.key} className={styles.videoEngagementMetric}>
-                <span>{metric.label}</span>
-                <strong>{metric.value}</strong>
-                <small>{metric.hint}</small>
+          <section className={styles.videoDetailPanel}>
+            <div className={styles.videoAnalyticsSectionHeader}>
+              <div>
+                <span>Detalle del video</span>
+                <strong>{formatSitesSeconds(videoWatchTime)} vistos</strong>
               </div>
-            ))}
-          </div>
+            </div>
+            <div className={styles.videoDetailBody}>
+              <div className={styles.videoDetailMetricGrid}>
+                {videoDetailMetrics.map(metric => (
+                  <div key={metric.key} className={styles.videoDetailMetricCard}>
+                    <span className={styles.videoDetailMetricIcon}>{metric.icon}</span>
+                    <span>{metric.label}</span>
+                    <strong>{metric.value}</strong>
+                  </div>
+                ))}
+              </div>
+              <div className={styles.videoDetailBreakdowns}>
+                <div className={styles.videoDetailBreakdownGroup}>
+                  <div className={styles.videoDetailBreakdownTitle}>
+                    <LayoutTemplate size={15} />
+                    <span>Páginas</span>
+                  </div>
+                  {renderDetailRows(
+                    pageBreakdown.slice(0, 4).map(row => ({
+                      key: row.key,
+                      icon: <LayoutTemplate size={15} />,
+                      label: row.label,
+                      value: `${formatSitesCompactNumber(row.plays)} plays · ${formatSitesPercent(row.avgProgressPercent)}`
+                    })),
+                    'Sin páginas asociadas.'
+                  )}
+                </div>
+
+                <div className={styles.videoDetailBreakdownGroup}>
+                  <div className={styles.videoDetailBreakdownTitle}>
+                    <Video size={15} />
+                    <span>Bloques de video</span>
+                  </div>
+                  {renderDetailRows(
+                    blockBreakdown.slice(0, 4).map(row => ({
+                      key: row.key,
+                      icon: <Video size={15} />,
+                      label: row.label,
+                      value: `${formatSitesCompactNumber(row.playbackSessions)} sesiones · ${formatSitesSeconds(row.watchedSeconds)}`
+                    })),
+                    'Sin bloques asociados.'
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
 
           <div className={styles.videoRetentionPanel}>
             <div className={styles.videoRetentionHeader}>
@@ -27010,37 +27055,18 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           <section className={styles.videoAnalyticsSection}>
             <div className={styles.videoAnalyticsSectionHeader}>
               <div>
-                <span>Detalle del video</span>
-                <strong>{formatSitesSeconds(videoWatchTime)} vistos</strong>
+                <span>Engagement</span>
+                <strong>{firstPartyTracking ? 'Tracking Ristak' : 'Stream'}</strong>
               </div>
             </div>
-            <div className={styles.videoDetailColumns}>
-              {renderDetailRows([
-                { key: 'average', icon: <Clock3 size={15} />, label: 'Promedio visto', value: formatSitesSeconds(averageWatchTime) },
-                { key: 'viewers', icon: <Eye size={15} />, label: 'Viewers únicos', value: formatSitesCompactNumber(uniqueVideoViewers) },
-                { key: 'loads', icon: <MousePointerClick size={15} />, label: 'Cargas del player', value: formatSitesCompactNumber(videoLoads) },
-                { key: 'top-country', icon: <Globe2 size={15} />, label: 'País top', value: topCountry }
-              ], 'Sin métricas suficientes.')}
-
-              {renderDetailRows(
-                pageBreakdown.slice(0, 4).map(row => ({
-                  key: row.key,
-                  icon: <LayoutTemplate size={15} />,
-                  label: row.label,
-                  value: `${formatSitesCompactNumber(row.plays)} plays · ${formatSitesPercent(row.avgProgressPercent)}`
-                })),
-                'Sin páginas asociadas.'
-              )}
-
-              {renderDetailRows(
-                blockBreakdown.slice(0, 4).map(row => ({
-                  key: row.key,
-                  icon: <Video size={15} />,
-                  label: row.label,
-                  value: `${formatSitesCompactNumber(row.playbackSessions)} sesiones · ${formatSitesSeconds(row.watchedSeconds)}`
-                })),
-                'Sin bloques asociados.'
-              )}
+            <div className={styles.videoEngagementMetricList}>
+              {primaryVideoMetrics.map(metric => (
+                <div key={metric.key} className={styles.videoEngagementMetric}>
+                  <span>{metric.label}</span>
+                  <strong>{metric.value}</strong>
+                  <small>{metric.hint}</small>
+                </div>
+              ))}
             </div>
           </section>
         </div>

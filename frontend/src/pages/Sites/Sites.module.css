@@ -6552,7 +6552,7 @@
   align-items: stretch;
 }
 
-.videoEngagementMetrics,
+.videoDetailPanel,
 .videoRetentionPanel,
 .videoAnalyticsSection {
   min-width: 0;
@@ -6561,7 +6561,7 @@
   background: var(--surface);
 }
 
-.videoEngagementMetrics {
+.videoDetailPanel {
   display: grid;
   align-content: start;
   overflow: hidden;
@@ -6602,6 +6602,85 @@
   color: var(--text-mute);
   font-size: 0.78rem;
   font-style: normal;
+}
+
+.videoDetailBody {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.videoDetailMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.videoDetailMetricCard {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 9px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
+  padding: 10px;
+}
+
+.videoDetailMetricIcon {
+  grid-row: 1 / 3;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-ctl);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.videoDetailMetricCard > span:not(.videoDetailMetricIcon) {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-mute);
+  font-size: 0.76rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.videoDetailMetricCard strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.videoDetailBreakdowns {
+  display: grid;
+  gap: 12px;
+}
+
+.videoDetailBreakdownGroup {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.videoDetailBreakdownTitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-mute);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.videoEngagementMetricList {
+  display: grid;
 }
 
 .videoEngagementMetric {
@@ -6962,13 +7041,6 @@
   font-family: var(--font-body);
   font-size: 0.85rem;
   font-weight: 500;
-}
-
-.videoDetailColumns {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  padding: 14px;
 }
 
 .unsavedModalBackdrop {
@@ -17481,8 +17553,7 @@
   .videoAggregateDashboard,
   .videoEngagementHero,
   .videoEngagementGrid,
-  .videoStreamCharts,
-  .videoDetailColumns {
+  .videoStreamCharts {
     grid-template-columns: 1fr;
   }
 
@@ -17501,6 +17572,10 @@
 
 @media (max-width: 720px) {
   .sitesAnalyticsKpis {
+    grid-template-columns: 1fr;
+  }
+
+  .videoDetailMetricGrid {
     grid-template-columns: 1fr;
   }
 
