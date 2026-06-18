@@ -16,6 +16,7 @@ const DEFAULT_TEMPLATE_NAMES = [
   'recordatorio_cita_un_dia_antes',
   'confirmacion_cita_dia_anterior'
 ]
+const DEFAULT_FOLDER_ID = 'Reminders'
 
 function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
   return {
@@ -61,6 +62,7 @@ async function deleteDefaultTemplates() {
   const placeholders = DEFAULT_TEMPLATE_NAMES.map(() => '?').join(', ')
   await db.run(`DELETE FROM whatsapp_message_templates WHERE name IN (${placeholders})`, DEFAULT_TEMPLATE_NAMES)
   await db.run(`DELETE FROM whatsapp_api_templates WHERE name IN (${placeholders})`, DEFAULT_TEMPLATE_NAMES)
+  await db.run('DELETE FROM whatsapp_template_folders WHERE id = ?', [DEFAULT_FOLDER_ID])
 }
 
 test('crea plantillas default de citas y las manda a revisión una sola vez', async () => {
@@ -110,13 +112,21 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       assert.match(scheduledTemplate.components[1].text, /Te llegarán \*varios\* recordatorios/)
 
       const bundle = await getMessageTemplateBundle()
+      const folder = bundle.folders.find((item) => item.id === DEFAULT_FOLDER_ID)
+      assert.ok(folder)
+      assert.equal(folder.name, 'Recordatorios')
+
       const localTemplate = bundle.templates.find((template) => template.name === 'recordatorio_cita_un_dia_antes')
       assert.ok(localTemplate)
+      assert.equal(localTemplate.folderId, DEFAULT_FOLDER_ID)
       assert.equal(localTemplate.ycloudStatus, 'PENDING')
       assert.equal(localTemplate.footerText, 'Esto es un mensaje automático')
       assert.equal(localTemplate.variableBindings.bodyText['1'].variableKey, 'contact.first_name')
       assert.equal(localTemplate.variableBindings.bodyText['2'].variableKey, 'cita.fecha')
       assert.equal(localTemplate.variableBindings.bodyText['3'].variableKey, 'cita.hora')
+      assert.ok(bundle.templates
+        .filter((template) => DEFAULT_TEMPLATE_NAMES.includes(template.name))
+        .every((template) => template.folderId === DEFAULT_FOLDER_ID))
 
       const apiTemplate = await db.get(
         'SELECT status, components_json FROM whatsapp_api_templates WHERE name = ? AND language = ?',

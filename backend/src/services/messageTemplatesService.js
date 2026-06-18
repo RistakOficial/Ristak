@@ -59,6 +59,11 @@ const BASE_APPOINTMENT_VARIABLES = [
 }))
 
 const DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE = 'es_MX'
+const DEFAULT_APPOINTMENT_TEMPLATE_FOLDER = {
+  id: 'Reminders',
+  name: 'Recordatorios'
+}
+
 const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
   {
     name: 'cita_programada',
@@ -992,14 +997,58 @@ async function findMessageTemplateByNameLanguage(name, language) {
   return row ? mapTemplate(row) : null
 }
 
-async function ensureDefaultMessageTemplate(definition) {
+async function ensureDefaultTemplateFolder() {
+  const existing = await db.get(
+    'SELECT * FROM whatsapp_template_folders WHERE id = ?',
+    [DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.id]
+  )
+
+  if (existing) {
+    if (existing.name !== DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.name || existing.parent_id) {
+      await db.run(`
+        UPDATE whatsapp_template_folders
+        SET name = ?, parent_id = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.name, DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.id])
+      return mapFolder(await db.get(
+        'SELECT * FROM whatsapp_template_folders WHERE id = ?',
+        [DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.id]
+      ))
+    }
+
+    return mapFolder(existing)
+  }
+
+  await db.run(`
+    INSERT INTO whatsapp_template_folders (id, name, parent_id, sort_order, created_at, updated_at)
+    VALUES (?, ?, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.id, DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.name, -100])
+
+  return mapFolder(await db.get(
+    'SELECT * FROM whatsapp_template_folders WHERE id = ?',
+    [DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.id]
+  ))
+}
+
+async function ensureDefaultMessageTemplate(definition, folderId) {
   const name = normalizeTemplateName(definition.name)
   const language = normalizeLanguage(definition.language)
   const existing = await findMessageTemplateByNameLanguage(name, language)
-  if (existing) return existing
+  if (existing) {
+    if (folderId && existing.folderId !== folderId) {
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET folder_id = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [folderId, existing.id])
+      return getMessageTemplateById(existing.id)
+    }
+    return existing
+  }
 
   return createMessageTemplate({
     ...definition,
+    folderId,
     name,
     language
   })
@@ -1009,9 +1058,10 @@ const TEMPLATE_REVIEW_STATES = new Set(['APPROVED', 'PENDING', 'IN_APPEAL'])
 
 export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud = false } = {}) {
   const results = []
+  const folder = await ensureDefaultTemplateFolder()
 
   for (const definition of DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES) {
-    let template = await ensureDefaultMessageTemplate(definition)
+    let template = await ensureDefaultMessageTemplate(definition, folder.id)
     const ycloudStatus = normalizeYCloudTemplateStatus(template.ycloudStatus)
     let submitted = false
     let error = null
