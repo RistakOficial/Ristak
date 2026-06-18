@@ -488,7 +488,13 @@ body.dark .select:focus {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   background: var(--surface);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
+  scrollbar-width: none;
+}
+
+.settingsNavPanel::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .settingsNavIntro {

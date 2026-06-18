@@ -185,40 +185,19 @@ interface SettingsNavLinkProps {
 const SettingsNavLink: React.FC<SettingsNavLinkProps> = ({ pathname, collapsed = false, onNavigate }) => {
   const isSettingsRoute = pathname.startsWith('/settings')
 
-  if (collapsed) {
-    return (
-      <div className="pt-2">
-        <div className="mx-2 mb-2 border-t border-[var(--border)]" />
-        <Link
-          to="/settings"
-          onClick={onNavigate}
-          aria-label="Configuración"
-          title="Configuración"
-          data-ristak-sidebar-nav-item
-          data-active={isSettingsRoute ? 'true' : undefined}
-          className={cn(getNavLinkClasses(isSettingsRoute, 'w-full', true))}
-        >
-          <Settings className="h-5 w-5 flex-shrink-0" />
-          <span className="sr-only">Configuración</span>
-        </Link>
-      </div>
-    )
-  }
-
   return (
-    <div className="pt-2">
-      <div className="mb-2 border-t border-[var(--border)]" />
-      <Link
-        to="/settings"
-        onClick={onNavigate}
-        data-ristak-sidebar-nav-item
-        data-active={isSettingsRoute ? 'true' : undefined}
-        className={cn(getNavLinkClasses(isSettingsRoute, 'w-full'))}
-      >
-        <Settings className="h-5 w-5 flex-shrink-0" />
-        <span className="flex-1 text-left">Configuración</span>
-      </Link>
-    </div>
+    <Link
+      to="/settings"
+      onClick={onNavigate}
+      aria-label={collapsed ? 'Configuración' : undefined}
+      title={collapsed ? 'Configuración' : undefined}
+      data-ristak-sidebar-nav-item
+      data-active={isSettingsRoute ? 'true' : undefined}
+      className={cn(getNavLinkClasses(isSettingsRoute, 'w-full', collapsed))}
+    >
+      <Settings className="h-5 w-5 flex-shrink-0" />
+      <span className={collapsed ? 'sr-only' : 'flex-1 text-left'}>Configuración</span>
+    </Link>
   )
 }
 
@@ -900,7 +879,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onNavigate={handleNavigate}
               />
             )}
-            <SettingsNavLink pathname={location.pathname} onNavigate={handleNavigate} />
           </DndContext>
         ) : (
           <div
@@ -943,16 +921,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onNavigate={handleNavigate}
               />
             )}
-            <SettingsNavLink
-              pathname={location.pathname}
-              collapsed={collapsed}
-              onNavigate={handleNavigate}
-            />
           </div>
         )}
       </nav>
 
-      <div data-ristak-sidebar-footer className="border-t border-[var(--border)] p-3">
+      <div data-ristak-sidebar-footer className="p-3">
         <button
           type="button"
           onClick={handleToggleCollapsed}
@@ -975,6 +948,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </>
           )}
         </button>
+        <div className="my-2 border-t border-[var(--border)]" />
+        <SettingsNavLink
+          pathname={location.pathname}
+          collapsed={collapsed}
+          onNavigate={handleNavigate}
+        />
       </div>
     </div>
   )
