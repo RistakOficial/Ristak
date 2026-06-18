@@ -138,10 +138,6 @@
   gap: 10px;
 }
 
-.videoAnalyticsTabs {
-  max-width: 280px;
-}
-
 .videoAnalyticsKpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1156,10 +1152,6 @@
   .videoAnalyticsKpis,
   .videoAnalyticsGrid {
     grid-template-columns: 1fr;
-  }
-
-  .videoAnalyticsTabs {
-    max-width: none;
   }
 
   .toolbar {

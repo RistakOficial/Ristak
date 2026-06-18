@@ -94,6 +94,7 @@ import {
   Badge,
   type BadgeVariant,
   Button,
+  DateRangePicker,
   Loading,
   NumberInput,
   CustomSelect,
@@ -104,6 +105,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from '@/components/common'
+import { useDateRange } from '@/contexts/DateRangeContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAgentAvailability } from '@/hooks'
 import {
@@ -147,6 +149,7 @@ import { campaignsService, type ConnectedSocialProfile } from '@/services/campai
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
 import mediaService, { type MediaAsset, type MediaStreamAnalytics, type StreamChartPoint } from '@/services/mediaService'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
+import { formatDateToISO, parseLocalDateString } from '@/utils/format'
 import {
   customFieldsService,
   isSystemCustomFieldDefinition,
@@ -165,7 +168,6 @@ import { buildCanvasTheme } from './sitesCanvasTheme'
 type SitesSection = 'landings' | 'forms' | 'leads' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
 type SitesAnalyticsSiteType = 'all' | 'landings' | 'forms'
-type SitesAnalyticsPeriod = '7d' | '30d' | '90d'
 type CreateFlow =
   | 'closed'
   | 'landing-start'
@@ -1348,12 +1350,6 @@ const formatDate = (value?: string | null) => {
   }).format(date)
 }
 
-const sitesAnalyticsPeriodTabs: Array<{ value: SitesAnalyticsPeriod; label: string }> = [
-  { value: '7d', label: '7 días' },
-  { value: '30d', label: '30 días' },
-  { value: '90d', label: '90 días' }
-]
-
 const formatSitesCompactNumber = (value?: number | null) => {
   const parsed = Number(value || 0)
   if (!Number.isFinite(parsed)) return '0'
@@ -1372,15 +1368,17 @@ const formatSitesSeconds = (value?: number | null) => {
   return restMinutes ? `${hours}h ${restMinutes}m` : `${hours}h`
 }
 
-const getSitesAnalyticsRange = (period: SitesAnalyticsPeriod) => {
-  const days = period === '7d' ? 7 : period === '90d' ? 90 : 30
-  const end = new Date()
-  const start = new Date()
-  start.setDate(end.getDate() - days + 1)
+const getSitesAnalyticsRange = (startValue: Date, endValue: Date) => {
+  const start = startValue instanceof Date ? startValue : new Date(startValue)
+  const end = endValue instanceof Date ? endValue : new Date(endValue)
+  const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate())
+  const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate())
+  const days = Math.max(1, Math.round((endDay.getTime() - startDay.getTime()) / 86400000) + 1)
+
   return {
-    dateFrom: start.toISOString().slice(0, 10),
-    dateTo: end.toISOString().slice(0, 10),
-    hourly: period === '7d'
+    dateFrom: formatDateToISO(start),
+    dateTo: formatDateToISO(end),
+    hourly: days <= 7
   }
 }
 
@@ -4358,6 +4356,7 @@ const hydrateFormSitesForBuilder = async (list: PublicSite[]) => {
 
 export const Sites: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
+  const { dateRange, setDateRange } = useDateRange()
   const navigate = useNavigate()
   const location = useLocation()
   const routeState = useMemo(
@@ -4403,11 +4402,9 @@ export const Sites: React.FC = () => {
   const [sitesAnalyticsSiteType, setSitesAnalyticsSiteType] = useState<SitesAnalyticsSiteType>('all')
   const [sitesAnalyticsSiteId, setSitesAnalyticsSiteId] = useState('')
   const [sitesAnalyticsVideoId, setSitesAnalyticsVideoId] = useState('')
-  const [sitesAnalyticsPeriod, setSitesAnalyticsPeriod] = useState<SitesAnalyticsPeriod>('30d')
   const [sitesVideoAnalytics, setSitesVideoAnalytics] = useState<MediaStreamAnalytics | null>(null)
   const [sitesVideoAnalyticsLoading, setSitesVideoAnalyticsLoading] = useState(false)
   const [sitesVideoAnalyticsError, setSitesVideoAnalyticsError] = useState('')
-  const [sitesAnalyticsRefreshKey, setSitesAnalyticsRefreshKey] = useState(0)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
   const [saveStatusNow, setSaveStatusNow] = useState(() => Date.now())
@@ -5386,7 +5383,7 @@ export const Sites: React.FC = () => {
     setSitesVideoAnalyticsLoading(true)
     setSitesVideoAnalyticsError('')
 
-    sitesService.getVideoAnalytics(asset.id, getSitesAnalyticsRange(sitesAnalyticsPeriod))
+    sitesService.getVideoAnalytics(asset.id, getSitesAnalyticsRange(dateRange.start, dateRange.end))
       .then((analytics) => {
         if (!cancelled) setSitesVideoAnalytics(analytics)
       })
@@ -5403,7 +5400,7 @@ export const Sites: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [section, selectedAnalyticsVideo, sitesAnalyticsPeriod, sitesAnalyticsRefreshKey])
+  }, [dateRange.end, dateRange.start, section, selectedAnalyticsVideo])
 
   const openSite = async (siteId: string, pageId?: string, options?: { replaceRoute?: boolean }) => {
     try {
@@ -8247,16 +8244,19 @@ export const Sites: React.FC = () => {
                 loadingVideos={loadingSiteVideos}
                 loadingAnalytics={sitesVideoAnalyticsLoading}
                 analyticsError={sitesVideoAnalyticsError}
-                period={sitesAnalyticsPeriod}
+                startDate={formatDateToISO(dateRange.start)}
+                endDate={formatDateToISO(dateRange.end)}
                 onSiteTypeChange={(value) => {
                   setSitesAnalyticsSiteType(value)
                   setSitesAnalyticsSiteId('')
                 }}
                 onSiteChange={setSitesAnalyticsSiteId}
                 onVideoChange={setSitesAnalyticsVideoId}
-                onPeriodChange={setSitesAnalyticsPeriod}
-                onRefreshVideos={loadSiteVideos}
-                onRefreshAnalytics={() => setSitesAnalyticsRefreshKey(current => current + 1)}
+                onDateRangeChange={(start, end) => setDateRange({
+                  start: parseLocalDateString(start),
+                  end: parseLocalDateString(end),
+                  preset: 'custom'
+                })}
               />
             ) : section === 'domains' ? (
               <DomainsPanel
@@ -25158,13 +25158,12 @@ interface SitesAnalyticsPanelProps {
   loadingVideos: boolean
   loadingAnalytics: boolean
   analyticsError: string
-  period: SitesAnalyticsPeriod
+  startDate: string
+  endDate: string
   onSiteTypeChange: (value: SitesAnalyticsSiteType) => void
   onSiteChange: (value: string) => void
   onVideoChange: (value: string) => void
-  onPeriodChange: (value: SitesAnalyticsPeriod) => void
-  onRefreshVideos: () => void
-  onRefreshAnalytics: () => void
+  onDateRangeChange: (start: string, end: string) => void
 }
 
 const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
@@ -25180,13 +25179,12 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   loadingVideos,
   loadingAnalytics,
   analyticsError,
-  period,
+  startDate,
+  endDate,
   onSiteTypeChange,
   onSiteChange,
   onVideoChange,
-  onPeriodChange,
-  onRefreshVideos,
-  onRefreshAnalytics
+  onDateRangeChange
 }) => {
   const totalSiteViews = sites.reduce((total, site) => total + Number(site.trackingStats?.views || 0), 0)
   const totalVisitors = sites.reduce((total, site) => total + Number(site.trackingStats?.visitors || 0), 0)
@@ -25212,31 +25210,18 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
         : 'Todos los sitios'
 
   return (
-    <section className={`${styles.dataPanel} ${styles.sitesAnalyticsPanel}`}>
+    <section className={`${styles.dataPanel} ${styles.sitesAnalyticsPanel}`} aria-busy={loadingVideos || loadingAnalytics}>
       <div className={styles.builderHeader}>
         <div>
           <h2>Analíticas</h2>
           <p>Rendimiento individual de sitios, formularios y videos publicados en Stream.</p>
         </div>
         <div className={styles.sitesAnalyticsHeaderActions}>
-          <TabList
-            tabs={sitesAnalyticsPeriodTabs}
-            activeTab={period}
-            onTabChange={(value) => onPeriodChange(value as SitesAnalyticsPeriod)}
-            variant="compact"
-            className={styles.sitesAnalyticsTabs}
+          <DateRangePicker
+            startDate={startDate}
+            endDate={endDate}
+            onChange={onDateRangeChange}
           />
-          <Button
-            variant="secondary"
-            onClick={() => {
-              onRefreshVideos()
-              onRefreshAnalytics()
-            }}
-            loading={loadingVideos || loadingAnalytics}
-          >
-            <RefreshCw size={16} />
-            Refrescar
-          </Button>
         </div>
       </div>
 

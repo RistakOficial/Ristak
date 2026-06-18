@@ -34,6 +34,7 @@ import {
   AreaChart,
   Button,
   Card,
+  DateRangePicker,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -43,6 +44,7 @@ import {
   PageHeader,
   TabList
 } from '@/components/common'
+import { useDateRange } from '@/contexts/DateRangeContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import mediaService, {
@@ -53,11 +55,11 @@ import mediaService, {
   type StorageUsage,
   type StreamChartPoint
 } from '@/services/mediaService'
+import { formatDateToISO, parseLocalDateString } from '@/utils/format'
 import styles from './MediaSettings.module.css'
 
 type MediaFilter = 'all' | 'image' | 'video' | 'audio' | 'document' | 'other'
 type ViewMode = 'grid' | 'list'
-type VideoAnalyticsPeriod = '7d' | '30d' | '90d'
 
 interface ExplorerFile {
   asset: MediaAsset
@@ -104,12 +106,6 @@ const mediaTabs: Array<{ value: MediaFilter; label: string; icon: React.ReactNod
   { value: 'audio', label: 'Audio', icon: <FileAudio size={14} /> },
   { value: 'document', label: 'Docs', icon: <FileText size={14} /> },
   { value: 'other', label: 'Otros', icon: <File size={14} /> }
-]
-
-const videoAnalyticsPeriodTabs: Array<{ value: VideoAnalyticsPeriod; label: string }> = [
-  { value: '7d', label: '7 días' },
-  { value: '30d', label: '30 días' },
-  { value: '90d', label: '90 días' }
 ]
 
 const folderLabelMap: Record<string, string> = {
@@ -199,15 +195,17 @@ function formatSeconds(value?: number | null) {
   return restMinutes ? `${hours}h ${restMinutes}m` : `${hours}h`
 }
 
-function getVideoAnalyticsRange(period: VideoAnalyticsPeriod) {
-  const days = period === '7d' ? 7 : period === '90d' ? 90 : 30
-  const end = new Date()
-  const start = new Date()
-  start.setDate(end.getDate() - days + 1)
+function getVideoAnalyticsRange(startValue: Date, endValue: Date) {
+  const start = startValue instanceof Date ? startValue : new Date(startValue)
+  const end = endValue instanceof Date ? endValue : new Date(endValue)
+  const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate())
+  const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate())
+  const days = Math.max(1, Math.round((endDay.getTime() - startDay.getTime()) / 86400000) + 1)
+
   return {
-    dateFrom: start.toISOString().slice(0, 10),
-    dateTo: end.toISOString().slice(0, 10),
-    hourly: period === '7d'
+    dateFrom: formatDateToISO(start),
+    dateTo: formatDateToISO(end),
+    hourly: days <= 7
   }
 }
 
@@ -457,6 +455,7 @@ function readDraggedMediaIds(dataTransfer: DataTransfer) {
 
 export const MediaSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
+  const { dateRange, setDateRange } = useDateRange()
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const filePaneRef = useRef<HTMLElement>(null)
   const [assets, setAssets] = useState<MediaAsset[]>([])
@@ -480,11 +479,9 @@ export const MediaSettings: React.FC = () => {
   const [draggingFileIds, setDraggingFileIds] = useState<string[]>([])
   const [dragOverFolderPath, setDragOverFolderPath] = useState<string | null>(null)
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null)
-  const [videoAnalyticsPeriod, setVideoAnalyticsPeriod] = useState<VideoAnalyticsPeriod>('30d')
   const [videoAnalytics, setVideoAnalytics] = useState<MediaStreamAnalytics | null>(null)
   const [videoAnalyticsLoading, setVideoAnalyticsLoading] = useState(false)
   const [videoAnalyticsError, setVideoAnalyticsError] = useState('')
-  const [videoAnalyticsRefreshKey, setVideoAnalyticsRefreshKey] = useState(0)
 
   const loadMedia = useCallback(async (mode: 'initial' | 'refresh' = 'refresh') => {
     if (mode === 'initial') setLoading(true)
@@ -644,7 +641,7 @@ export const MediaSettings: React.FC = () => {
     setVideoAnalyticsLoading(true)
     setVideoAnalyticsError('')
 
-    mediaService.getAssetStreamAnalytics(asset.id, getVideoAnalyticsRange(videoAnalyticsPeriod))
+    mediaService.getAssetStreamAnalytics(asset.id, getVideoAnalyticsRange(dateRange.start, dateRange.end))
       .then((analytics) => {
         if (!cancelled) setVideoAnalytics(analytics)
       })
@@ -661,7 +658,7 @@ export const MediaSettings: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [selectedVideoFile?.asset, showVideoAnalytics, videoAnalyticsPeriod, videoAnalyticsRefreshKey])
+  }, [dateRange.end, dateRange.start, selectedVideoFile?.asset, showVideoAnalytics])
 
   const handleFolderOpen = (path: string) => {
     setCurrentPath(path)
@@ -1441,9 +1438,13 @@ export const MediaSettings: React.FC = () => {
           analytics={videoAnalytics}
           loading={videoAnalyticsLoading}
           error={videoAnalyticsError}
-          period={videoAnalyticsPeriod}
-          onPeriodChange={setVideoAnalyticsPeriod}
-          onRefresh={() => setVideoAnalyticsRefreshKey((current) => current + 1)}
+          startDate={formatDateToISO(dateRange.start)}
+          endDate={formatDateToISO(dateRange.end)}
+          onDateRangeChange={(start, end) => setDateRange({
+            start: parseLocalDateString(start),
+            end: parseLocalDateString(end),
+            preset: 'custom'
+          })}
         />
       ) : null}
 
@@ -1814,9 +1815,9 @@ interface VideoAnalyticsPanelProps {
   analytics: MediaStreamAnalytics | null
   loading: boolean
   error: string
-  period: VideoAnalyticsPeriod
-  onPeriodChange: (period: VideoAnalyticsPeriod) => void
-  onRefresh: () => void
+  startDate: string
+  endDate: string
+  onDateRangeChange: (start: string, end: string) => void
 }
 
 const VideoAnalyticsPanel: React.FC<VideoAnalyticsPanelProps> = ({
@@ -1824,9 +1825,9 @@ const VideoAnalyticsPanel: React.FC<VideoAnalyticsPanelProps> = ({
   analytics,
   loading,
   error,
-  period,
-  onPeriodChange,
-  onRefresh
+  startDate,
+  endDate,
+  onDateRangeChange
 }) => {
   const asset = file?.asset || null
   const stream = getStreamRecord(asset)
@@ -1846,7 +1847,7 @@ const VideoAnalyticsPanel: React.FC<VideoAnalyticsPanelProps> = ({
   const title = file?.fileName || 'Sin video seleccionado'
 
   return (
-    <section className={styles.videoAnalyticsPanel} aria-label="Analíticas de video">
+    <section className={styles.videoAnalyticsPanel} aria-label="Analíticas de video" aria-busy={loading}>
       <div className={styles.videoAnalyticsHeader}>
         <div>
           <span className={styles.videoAnalyticsEyebrow}>
@@ -1857,22 +1858,11 @@ const VideoAnalyticsPanel: React.FC<VideoAnalyticsPanelProps> = ({
           <p>{streamVideoId ? `Video listo para métricas · ${streamVideoId}` : 'Selecciona un video sincronizado para ver reproducción, países y retención.'}</p>
         </div>
         <div className={styles.videoAnalyticsActions}>
-          <TabList
-            tabs={videoAnalyticsPeriodTabs}
-            activeTab={period}
-            onTabChange={(value) => onPeriodChange(value as VideoAnalyticsPeriod)}
-            variant="compact"
-            className={styles.videoAnalyticsTabs}
+          <DateRangePicker
+            startDate={startDate}
+            endDate={endDate}
+            onChange={onDateRangeChange}
           />
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={loading ? <Loader2 size={15} className={styles.spin} /> : <RefreshCw size={15} />}
-            onClick={onRefresh}
-            disabled={loading || !streamVideoId}
-          >
-            Actualizar
-          </Button>
         </div>
       </div>
 

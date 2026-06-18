@@ -6140,10 +6140,6 @@
   gap: 10px;
 }
 
-.sitesAnalyticsTabs {
-  max-width: 280px;
-}
-
 .sitesAnalyticsFilters {
   display: grid;
   grid-template-columns: minmax(180px, 0.72fr) minmax(220px, 1fr) minmax(240px, 1.2fr);
@@ -16714,9 +16710,5 @@
   .sitesAnalyticsHeaderActions {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .sitesAnalyticsTabs {
-    max-width: none;
   }
 }
