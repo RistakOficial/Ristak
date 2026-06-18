@@ -9988,9 +9988,44 @@ function safePublicMediaUrl(value, kind = 'image') {
   return safeUrl(raw)
 }
 
+const HLS_VIDEO_RE = /\.m3u8(?:[?#]|$)/i
+const DIRECT_VIDEO_RE = /\.(mp4|m4v|mov|webm|ogg|ogv|m3u8)(?:[?#]|$)/i
+const RISTAK_MEDIA_FILE_RE = /(?:^|\/)(?:api\/)?media\/assets\/[^/?#]+\/file(?:[?#]|$)/i
+
+function looksLikeDirectVideoUrl(value) {
+  const raw = cleanString(value)
+  if (!raw) return false
+  if (/^data:video\//i.test(raw)) return true
+  const withoutHash = raw.split('#')[0] || raw
+  const withoutQuery = withoutHash.split('?')[0] || withoutHash
+  return DIRECT_VIDEO_RE.test(withoutQuery) || RISTAK_MEDIA_FILE_RE.test(withoutHash)
+}
+
+function isHlsVideoUrl(value) {
+  const raw = cleanString(value)
+  if (!raw) return false
+  const withoutHash = raw.split('#')[0] || raw
+  const withoutQuery = withoutHash.split('?')[0] || withoutHash
+  return HLS_VIDEO_RE.test(withoutQuery)
+}
+
+function shouldAppendNoTrackParam(value) {
+  const raw = cleanString(value)
+  if (!raw || /^data:/i.test(raw) || looksLikeDirectVideoUrl(raw)) return false
+  if (raw.startsWith('/')) return true
+
+  try {
+    const parsed = new URL(raw, 'https://rstk.local')
+    return parsed.origin === 'https://rstk.local'
+  } catch {
+    return false
+  }
+}
+
 function appendNoTrackParam(value) {
   const raw = cleanString(value)
   if (!raw || /^data:/i.test(raw)) return raw
+  if (!shouldAppendNoTrackParam(raw)) return raw
 
   try {
     const absolute = /^https?:\/\//i.test(raw)
@@ -10009,7 +10044,7 @@ function appendNoTrackParam(value) {
 function isDirectVideoUrl(value) {
   const url = safePublicMediaUrl(value, 'video')
   if (!url) return false
-  return /^data:video\//i.test(url) || /\.(mp4|m4v|mov|webm|ogg|ogv|m3u8)(?:[?#]|$)/i.test(url.split('?')[0] || url)
+  return looksLikeDirectVideoUrl(url)
 }
 
 // Watch/share URLs (YouTube, Vimeo, Loom, Wistia) refuse to load inside an
@@ -12043,10 +12078,15 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   ].join(';')
 
   const videoSrc = options.noTrack ? appendNoTrackParam(src) : src
+  const hlsSource = isHlsVideoUrl(videoSrc)
+  const videoSourceAttrs = [
+    hlsSource ? '' : `src="${escapeHtml(videoSrc)}"`,
+    `data-rstk-video-src="${escapeHtml(videoSrc)}"`
+  ].filter(Boolean).join(' ')
 
   return `
     <div class="${classes}" style="${styleVars}">
-      <video src="${escapeHtml(videoSrc)}" title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${muted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${previewEnabled ? 'auto' : 'metadata'}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
+      <video ${videoSourceAttrs} title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${muted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${previewEnabled ? 'auto' : 'metadata'}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
       ${showOverlay ? `
         <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
           <span class="rstk-video-play-dot">${getVideoPlayIconMarkup(playIconStyle)}</span>
@@ -12135,7 +12175,7 @@ function renderContentBlock(block, context = {}) {
     return directVideoUrl
       ? renderVideoPlayer(directVideoUrl, block, settings, { noTrack: context.noTrack })
       : embedVideoUrl
-        ? `<div class="rstk-video"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
+        ? `<div class="rstk-video"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
       : `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
   }
 
@@ -14640,9 +14680,67 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   </script>
 	  <script>
 	    (() => {
+	      const HLS_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';
+	      let hlsLoader = null;
+	      const isHlsSource = src => {
+	        const raw = String(src || '').split('#')[0] || '';
+	        const withoutQuery = raw.split('?')[0] || raw;
+	        return /\.m3u8$/i.test(withoutQuery);
+	      };
+	      const canPlayNativeHls = video => {
+	        try {
+	          return Boolean(video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL'));
+	        } catch (_) {
+	          return false;
+	        }
+	      };
+	      const loadHls = () => {
+	        if (window.Hls) return Promise.resolve(window.Hls);
+	        if (hlsLoader) return hlsLoader;
+	        hlsLoader = new Promise(resolve => {
+	          const existing = document.querySelector('script[data-rstk-hls-player="true"]');
+	          if (existing) {
+	            existing.addEventListener('load', () => resolve(window.Hls || null), { once: true });
+	            existing.addEventListener('error', () => resolve(null), { once: true });
+	            return;
+	          }
+	          const script = document.createElement('script');
+	          script.src = HLS_SCRIPT_URL;
+	          script.async = true;
+	          script.dataset.rstkHlsPlayer = 'true';
+	          script.onload = () => resolve(window.Hls || null);
+	          script.onerror = () => resolve(null);
+	          document.head.appendChild(script);
+	        });
+	        return hlsLoader;
+	      };
 	      document.querySelectorAll('.rstk-video-player').forEach(host => {
 	        const video = host.querySelector('video');
 	        if (!video) return;
+	        const source = video.getAttribute('data-rstk-video-src') || video.getAttribute('src') || '';
+	        if (source && isHlsSource(source)) {
+	          if (canPlayNativeHls(video)) {
+	            video.src = source;
+	            video.load();
+	          } else {
+	            video.removeAttribute('src');
+	            video.load();
+	            loadHls().then(Hls => {
+	              if (!Hls || !Hls.isSupported || !Hls.isSupported()) {
+	                video.src = source;
+	                video.load();
+	                return;
+	              }
+	              const hls = new Hls({ enableWorker: true });
+	              host.rstkHls = hls;
+	              hls.loadSource(source);
+	              hls.attachMedia(video);
+	            }).catch(() => {
+	              video.src = source;
+	              video.load();
+	            });
+	          }
+	        }
 	        const rawSpeed = Number(video.getAttribute('data-rstk-video-speed') || '1');
 	        video.playbackRate = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1;
 	        const progress = host.querySelector('[data-rstk-video-progress]');
@@ -14658,18 +14756,26 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          muteButtons.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
 	        };
 	        const togglePlayback = unmute => {
-	          if (unmute) video.muted = false;
+	          if (unmute) {
+	            video.muted = false;
+	            if (video.volume === 0) video.volume = 1;
+	          }
 	          if (video.paused) {
-	            video.play().catch(() => {});
+	            video.play().catch(() => {
+	              if (!unmute) return;
+	              video.muted = true;
+	              video.play().catch(() => {});
+	            }).finally(() => window.setTimeout(sync, 0));
 	          } else {
 	            video.pause();
+	            sync();
 	          }
-	          window.setTimeout(sync, 0);
 	        };
 	        const overlay = host.querySelector('[data-rstk-video-overlay]');
 	        if (overlay) {
 	          overlay.addEventListener('click', event => {
 	            event.preventDefault();
+	            event.stopPropagation();
 	            togglePlayback(true);
 	          });
 	        }
@@ -14684,7 +14790,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          button.addEventListener('click', event => {
 	            event.preventDefault();
 	            event.stopPropagation();
-	            video.muted = !(video.muted || video.volume === 0);
+	            const shouldUnmute = video.muted || video.volume === 0;
+	            video.muted = !shouldUnmute;
+	            if (shouldUnmute && video.volume === 0) video.volume = 1;
 	            sync();
 	          });
 	        });

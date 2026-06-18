@@ -37,7 +37,7 @@ const baseSite = (settings) => ({
   ]
 })
 
-test('video player clean mode renders Wistia-style overlay controls', async () => {
+test('video player clean mode renders custom overlay controls', async () => {
   const html = await renderPublicSiteHtml(baseSite({
     videoControlsMode: 'clean',
     videoSoundHint: true,
@@ -61,7 +61,9 @@ test('video player clean mode renders Wistia-style overlay controls', async () =
 
   assert.match(html, /rstk-video-custom-controls/)
   assert.match(html, /<button type="button" class="rstk-video-overlay" data-rstk-video-overlay/)
-  assert.match(html, /src="https:\/\/cdn\.example\.com\/video\.mp4\?no_track=1"/)
+  assert.match(html, /src="https:\/\/cdn\.example\.com\/video\.mp4"/)
+  assert.match(html, /data-rstk-video-src="https:\/\/cdn\.example\.com\/video\.mp4"/)
+  assert.doesNotMatch(html, /video\.mp4\?no_track=1/)
   assert.match(html, /<span class="rstk-video-sound\b/)
   assert.match(html, /--rstk-video-bg:#111827/)
   assert.match(html, /--rstk-video-radius:28px/)
@@ -103,7 +105,8 @@ test('preview render suppresses custom tracking code without changing live track
   })
 
   assert.doesNotMatch(previewHtml, /__previewTrackingLeak/)
-  assert.match(previewHtml, /src="https:\/\/cdn\.example\.com\/video\.mp4\?no_track=1"/)
+  assert.match(previewHtml, /src="https:\/\/cdn\.example\.com\/video\.mp4"/)
+  assert.doesNotMatch(previewHtml, /video\.mp4\?no_track=1/)
 
   const liveHtml = await renderPublicSiteHtml(site, {
     pageId: 'page-1',
@@ -114,4 +117,34 @@ test('preview render suppresses custom tracking code without changing live track
   assert.match(liveHtml, /__previewTrackingLeak/)
   assert.match(liveHtml, /src="https:\/\/cdn\.example\.com\/video\.mp4"/)
   assert.doesNotMatch(liveHtml, /video\.mp4\?no_track=1/)
+})
+
+test('video player treats Ristak media file routes as playable video sources', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    mediaUrl: '/media/assets/media_video_123/file',
+    videoControlsMode: 'clean'
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(html, /rstk-video-custom-controls/)
+  assert.match(html, /<video src="\/media\/assets\/media_video_123\/file" data-rstk-video-src="\/media\/assets\/media_video_123\/file"/)
+  assert.doesNotMatch(html, /<iframe src="\/media\/assets\/media_video_123\/file"/)
+})
+
+test('video player prepares HLS sources for Bunny Stream playback', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    mediaUrl: 'https://vz-123.b-cdn.net/stream-video/playlist.m3u8',
+    videoControlsMode: 'clean'
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: true,
+    preview: false
+  })
+
+  assert.match(html, /data-rstk-video-src="https:\/\/vz-123\.b-cdn\.net\/stream-video\/playlist\.m3u8"/)
+  assert.doesNotMatch(html, /<video src="https:\/\/vz-123\.b-cdn\.net\/stream-video\/playlist\.m3u8"/)
+  assert.match(html, /hls\.js@1\/dist\/hls\.min\.js/)
 })

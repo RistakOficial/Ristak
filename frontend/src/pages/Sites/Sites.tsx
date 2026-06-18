@@ -3344,7 +3344,9 @@ const safeEmbedUrl = (value: string) => {
   }
 }
 
+const HLS_VIDEO_RE = /\.m3u8(?:[?#]|$)/i
 const DIRECT_VIDEO_RE = /\.(mp4|m4v|mov|webm|ogg|ogv|m3u8)(?:[?#]|$)/i
+const RISTAK_MEDIA_FILE_RE = /(?:^|\/)(?:api\/)?media\/assets\/[^/?#]+\/file(?:[?#]|$)/i
 
 const safePublicMediaUrl = (value: string, kind: 'image' | 'video') => {
   const raw = decodeHtmlEntities(String(value || '')).trim()
@@ -3355,9 +3357,40 @@ const safePublicMediaUrl = (value: string, kind: 'image' | 'video') => {
   return safeEmbedUrl(raw)
 }
 
+const looksLikeDirectVideoUrl = (value: string) => {
+  const raw = decodeHtmlEntities(String(value || '')).trim()
+  if (!raw) return false
+  if (/^data:video\//i.test(raw)) return true
+  const withoutHash = raw.split('#')[0] || raw
+  const withoutQuery = withoutHash.split('?')[0] || withoutHash
+  return DIRECT_VIDEO_RE.test(withoutQuery) || RISTAK_MEDIA_FILE_RE.test(withoutHash)
+}
+
+const isHlsVideoUrl = (value: string) => {
+  const raw = decodeHtmlEntities(String(value || '')).trim()
+  if (!raw) return false
+  const withoutHash = raw.split('#')[0] || raw
+  const withoutQuery = withoutHash.split('?')[0] || withoutHash
+  return HLS_VIDEO_RE.test(withoutQuery)
+}
+
+const shouldAppendEditorNoTrackParam = (value: string) => {
+  const raw = String(value || '').trim()
+  if (!raw || /^data:/i.test(raw) || looksLikeDirectVideoUrl(raw)) return false
+
+  try {
+    const absolute = /^https?:\/\//i.test(raw)
+    const parsed = new URL(raw, window.location.origin)
+    return !absolute || parsed.origin === window.location.origin
+  } catch {
+    return false
+  }
+}
+
 const appendEditorNoTrackParam = (value: string) => {
   const raw = String(value || '').trim()
   if (!raw || /^data:/i.test(raw)) return raw
+  if (!shouldAppendEditorNoTrackParam(raw)) return raw
 
   try {
     const absolute = /^https?:\/\//i.test(raw)
@@ -3376,8 +3409,62 @@ const appendEditorNoTrackParam = (value: string) => {
 const isDirectVideoUrl = (value: string) => {
   const raw = safePublicMediaUrl(value, 'video')
   if (!raw) return false
-  return /^data:video\//i.test(raw) || DIRECT_VIDEO_RE.test(raw.split('?')[0] || raw)
+  return looksLikeDirectVideoUrl(raw)
 }
+
+type RistakHlsInstance = {
+  loadSource: (source: string) => void
+  attachMedia: (media: HTMLMediaElement) => void
+  destroy: () => void
+  on?: (eventName: string, handler: () => void) => void
+}
+
+type RistakHlsConstructor = {
+  new(options?: Record<string, unknown>): RistakHlsInstance
+  isSupported?: () => boolean
+  Events?: {
+    MANIFEST_PARSED?: string
+  }
+}
+
+declare global {
+  interface Window {
+    Hls?: RistakHlsConstructor
+  }
+}
+
+const HLS_PLAYER_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js'
+let hlsPlayerScriptPromise: Promise<RistakHlsConstructor | null> | null = null
+
+const loadHlsPlayerScript = () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return Promise.resolve(null)
+  if (window.Hls) return Promise.resolve(window.Hls)
+  if (hlsPlayerScriptPromise) return hlsPlayerScriptPromise
+
+  hlsPlayerScriptPromise = new Promise((resolve) => {
+    const existing = document.querySelector<HTMLScriptElement>('script[data-rstk-hls-player="true"]')
+    if (existing) {
+      existing.addEventListener('load', () => resolve(window.Hls || null), { once: true })
+      existing.addEventListener('error', () => resolve(null), { once: true })
+      return
+    }
+
+    const script = document.createElement('script')
+    script.src = HLS_PLAYER_SCRIPT_URL
+    script.async = true
+    script.dataset.rstkHlsPlayer = 'true'
+    script.onload = () => resolve(window.Hls || null)
+    script.onerror = () => resolve(null)
+    document.head.appendChild(script)
+  })
+
+  return hlsPlayerScriptPromise
+}
+
+const canPlayNativeHls = (video: HTMLVideoElement) => (
+  Boolean(video.canPlayType('application/vnd.apple.mpegurl')) ||
+  Boolean(video.canPlayType('application/x-mpegURL'))
+)
 
 const cssPublicImageUrl = (value: string) => {
   const url = safePublicMediaUrl(value, 'image')
@@ -22494,7 +22581,9 @@ const VideoPlayerPreview: React.FC<{
   settings: Record<string, unknown>
 }> = ({ src, label, settings }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const hlsRef = useRef<RistakHlsInstance | null>(null)
   const noTrackSrc = appendEditorNoTrackParam(src)
+  const isHlsSource = isHlsVideoUrl(noTrackSrc)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(settings.videoMuted !== false)
   const [progress, setProgress] = useState(0)
@@ -22543,6 +22632,62 @@ const VideoPlayerPreview: React.FC<{
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
+
+    hlsRef.current?.destroy()
+    hlsRef.current = null
+
+    if (!isHlsSource) {
+      if (video.getAttribute('src') !== noTrackSrc) {
+        video.src = noTrackSrc
+      }
+      return
+    }
+
+    let cancelled = false
+    if (canPlayNativeHls(video)) {
+      video.src = noTrackSrc
+      video.load()
+      return
+    }
+
+    video.removeAttribute('src')
+    video.load()
+
+    loadHlsPlayerScript().then((Hls) => {
+      if (cancelled || !videoRef.current) return
+      const currentVideo = videoRef.current
+
+      if (!Hls?.isSupported?.()) {
+        currentVideo.src = noTrackSrc
+        currentVideo.load()
+        return
+      }
+
+      const hls = new Hls({ enableWorker: true })
+      hlsRef.current = hls
+      hls.loadSource(noTrackSrc)
+      hls.attachMedia(currentVideo)
+      if (autoplay && Hls.Events?.MANIFEST_PARSED) {
+        hls.on?.(Hls.Events.MANIFEST_PARSED, () => {
+          void currentVideo.play().catch(() => undefined)
+        })
+      }
+    }).catch(() => {
+      if (cancelled || !videoRef.current) return
+      videoRef.current.src = noTrackSrc
+      videoRef.current.load()
+    })
+
+    return () => {
+      cancelled = true
+      hlsRef.current?.destroy()
+      hlsRef.current = null
+    }
+  }, [autoplay, isHlsSource, noTrackSrc])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
     video.playbackRate = speed
     video.muted = muted
     setCurrentSpeed(speed)
@@ -22560,16 +22705,34 @@ const VideoPlayerPreview: React.FC<{
     setProgress(duration > 0 ? Math.min(1, Math.max(0, video.currentTime / duration)) : 0)
   }
 
+  const playVideo = async (unmute = false) => {
+    const video = videoRef.current
+    if (!video) return
+    if (unmute) {
+      video.muted = false
+      if (video.volume === 0) video.volume = 1
+    }
+
+    try {
+      await video.play()
+    } catch {
+      if (!unmute) return
+      video.muted = true
+      await video.play().catch(() => undefined)
+    } finally {
+      syncVideoState()
+    }
+  }
+
   const togglePlayback = (unmute = false) => {
     const video = videoRef.current
     if (!video) return
-    if (unmute) video.muted = false
     if (video.paused) {
-      void video.play().catch(() => undefined)
+      void playVideo(unmute)
     } else {
       video.pause()
+      syncVideoState()
     }
-    window.setTimeout(syncVideoState, 0)
   }
 
   const handleOverlayClick = (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -22589,7 +22752,9 @@ const VideoPlayerPreview: React.FC<{
     event.stopPropagation()
     const video = videoRef.current
     if (!video) return
-    video.muted = !(video.muted || video.volume === 0)
+    const shouldUnmute = video.muted || video.volume === 0
+    video.muted = !shouldUnmute
+    if (shouldUnmute && video.volume === 0) video.volume = 1
     syncVideoState()
   }
 
@@ -22623,7 +22788,8 @@ const VideoPlayerPreview: React.FC<{
     >
       <video
         ref={videoRef}
-        src={noTrackSrc}
+        src={isHlsSource ? undefined : noTrackSrc}
+        data-rstk-video-src={noTrackSrc}
         title={label || 'Video'}
         controls={showNativeControls}
         muted={muted}
@@ -22814,7 +22980,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     return directVideoUrl
       ? <VideoPlayerPreview src={directVideoUrl} label={block.label || 'Video'} settings={settings} />
       : videoUrl
-        ? <div className="rstk-video"><iframe src={appendEditorNoTrackParam(videoUrl)} title={block.label || 'Video'} loading="lazy" allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
+        ? <div className="rstk-video"><iframe src={appendEditorNoTrackParam(videoUrl)} title={block.label || 'Video'} loading="lazy" allow={DEFAULT_EMBED_ALLOW} allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
       : <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
   }
 
