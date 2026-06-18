@@ -9,6 +9,7 @@ import {
 } from './configPrimitives'
 import { MessageBlocksEditor } from './MessageBlocksEditor'
 import type { MessageBlock } from '../nodeRegistry'
+import { genId } from '../flowUtils'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -19,6 +20,13 @@ import styles from '../AutomationEditor.module.css'
 type Config = Record<string, unknown>
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '')
+
+const newTemplateBlock = (): MessageBlock => ({
+  id: genId('tpl'),
+  type: 'template',
+  templateId: '',
+  templateName: ''
+})
 
 export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config: Config) => void }> = ({
   config,
@@ -41,6 +49,34 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
             templateName: str(config.templateName)
           }
         ]
+
+  const firstTemplateBlock = (blocks: MessageBlock[]) => blocks.find((block) => block.type === 'template')
+
+  const setTemplateBlocks = (messageBlocks: MessageBlock[]) => {
+    const firstTemplate = firstTemplateBlock(messageBlocks)
+    set({
+      messageBlocks,
+      templateId: str(firstTemplate?.templateId),
+      templateName: str(firstTemplate?.templateName)
+    })
+  }
+
+  const setMessageType = (next: string) => {
+    if (next === 'template') {
+      const nextBlocks = templateBlocks.some((block) => block.type === 'template')
+        ? templateBlocks
+        : [...templateBlocks, newTemplateBlock()]
+      const firstTemplate = firstTemplateBlock(nextBlocks)
+      set({
+        messageType: 'template',
+        messageBlocks: nextBlocks,
+        templateId: str(firstTemplate?.templateId),
+        templateName: str(firstTemplate?.templateName)
+      })
+      return
+    }
+    set({ messageType: next })
+  }
 
   return (
     <div className={styles.whatsappConfig}>
@@ -89,7 +125,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
               { value: 'template', label: 'Mensaje desde plantilla' }
             ]}
             value={messageType}
-            onValueChange={(next) => set({ messageType: next })}
+            onValueChange={setMessageType}
             aria-label="Tipo de mensaje"
           />
         </Field>
@@ -107,7 +143,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
           <>
             <MessageBlocksEditor
               value={templateBlocks}
-              onChange={(messageBlocks: MessageBlock[]) => set({ messageBlocks })}
+              onChange={setTemplateBlocks}
               variant="template"
             />
             <p className={styles.configHelp}>

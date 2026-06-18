@@ -1316,10 +1316,13 @@ const CHANNEL_NODES: NodeDefinition[] = [
         specific: str(config.senderNumberLabel) || 'Número elegido'
       }
       const isTemplate = str(config.messageType) === 'template'
-      const blocks = asMessageBlocks(config.messageBlocks).filter((block) => block.type === 'text').length
+      const messageBlocks = asMessageBlocks(config.messageBlocks)
+      const blocks = messageBlocks.filter((block) => block.type === 'text').length
+      const firstTemplate = messageBlocks.find((block) => block.type === 'template')
+      const templateLabel = str(config.templateName) || str(firstTemplate?.templateName) || str(firstTemplate?.templateId)
       return {
         text: `${senderLabels[str(config.sender)] || 'Número principal'}${isTemplate ? ' · Plantilla' : blocks > 1 ? ` · ${blocks} mensajes` : ''}`,
-        box: isTemplate ? str(config.templateName) || undefined : firstTextBlock(config) || undefined,
+        box: isTemplate ? templateLabel || undefined : firstTextBlock(config) || undefined,
         empty: 'Configura el mensaje de WhatsApp'
       }
     }

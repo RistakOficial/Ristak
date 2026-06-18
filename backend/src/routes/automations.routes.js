@@ -21,6 +21,7 @@ import {
   getAdsCatalogHandler,
   getFormsCatalogHandler,
   getFormFieldsCatalogHandler,
+  getWhatsAppTemplatesCatalogHandler,
   uploadAssetHandler,
   serveAssetHandler
 } from '../controllers/automationsController.js'
@@ -48,6 +49,7 @@ router.get('/catalogs/adsets', getAdsetsCatalogHandler)
 router.get('/catalogs/ads', getAdsCatalogHandler)
 router.get('/catalogs/forms', getFormsCatalogHandler)
 router.get('/catalogs/form-fields', getFormFieldsCatalogHandler)
+router.get('/catalogs/whatsapp-templates', getWhatsAppTemplatesCatalogHandler)
 
 // Automatizaciones
 router.get('/', getAutomationsHandler)

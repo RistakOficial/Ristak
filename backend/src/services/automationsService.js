@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { normalizeFlow, validateFlowForPublish, START_NODE_TYPE } from './automationFlowValidation.js'
 import { enrollContactManually } from './automationEngine.js'
+import { getWhatsAppApiTemplates } from './whatsappApiService.js'
 
 const usePostgres = !!process.env.DATABASE_URL
 const flowPlaceholder = usePostgres ? '?::jsonb' : '?'
@@ -1033,6 +1034,12 @@ export async function getEnrollmentStats(automationId) {
   return { active, total: Number(totals?.total) || 0, byNode }
 }
 
+export async function listAutomationWhatsAppTemplatesCatalog({ status = 'APPROVED', limit = 200 } = {}) {
+  return getWhatsAppApiTemplates({
+    status: cleanCatalogString(status) || 'APPROVED',
+    limit
+  })
+}
 
 // ---------------------------------------------------------------------------
 // Archivos adjuntos (imágenes/videos/audios/docs de los bloques de mensaje)

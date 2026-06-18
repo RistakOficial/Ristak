@@ -9,6 +9,7 @@ import {
   listAttributionCampaigns,
   listAutomationFormFieldsCatalog,
   listAutomationFormsCatalog,
+  listAutomationWhatsAppTemplatesCatalog,
   updateAutomation
 } from '../src/services/automationsService.js'
 
@@ -146,6 +147,60 @@ test('catálogos de Meta Ads devuelven campañas, conjuntos y anuncios reales', 
     )))
   } finally {
     await db.run('DELETE FROM meta_ads WHERE ad_account_id = ?', [accountId])
+  }
+})
+
+test('catálogo de plantillas WhatsApp para automatizaciones devuelve aprobadas con componentes', async () => {
+  const suffix = Date.now()
+  const approvedId = `wa_tpl_approved_${suffix}`
+  const pendingId = `wa_tpl_pending_${suffix}`
+  const approvedName = `recordatorio_cita_${suffix}`
+  const pendingName = `plantilla_pendiente_${suffix}`
+  const components = [
+    { type: 'BODY', text: 'Hola {{1}}, tu cita está lista.' },
+    { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Confirmar' }] }
+  ]
+
+  await db.run(
+    `INSERT INTO whatsapp_api_templates (
+      id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json
+    ) VALUES (?, ?, ?, ?, ?, 'APPROVED', ?, ?)`,
+    [
+      approvedId,
+      `official_${approvedId}`,
+      'waba_catalog_test',
+      approvedName,
+      'es_MX',
+      JSON.stringify(components),
+      '{}'
+    ]
+  )
+  await db.run(
+    `INSERT INTO whatsapp_api_templates (
+      id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json
+    ) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+    [
+      pendingId,
+      `official_${pendingId}`,
+      'waba_catalog_test',
+      pendingName,
+      'es_MX',
+      JSON.stringify([{ type: 'BODY', text: 'Pendiente' }]),
+      '{}'
+    ]
+  )
+
+  try {
+    const catalog = await listAutomationWhatsAppTemplatesCatalog()
+    const item = catalog.items.find((template) => template.id === approvedId)
+
+    assert.ok(item)
+    assert.equal(item.name, approvedName)
+    assert.equal(item.language, 'es_MX')
+    assert.deepEqual(item.components, components)
+    assert.ok(!catalog.items.some((template) => template.id === pendingId))
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_templates WHERE id IN (?, ?)', [approvedId, pendingId])
   }
 })
 

@@ -5,7 +5,7 @@ import {
   type CustomFieldDefinition
 } from './customFieldsService'
 import { calendarsService } from './calendarsService'
-import { whatsappApiService, type WhatsAppApiTemplate } from './whatsappApiService'
+import { whatsappApiService, type WhatsAppApiTemplate, type WhatsAppApiTemplatesResponse } from './whatsappApiService'
 import { contactTagsService } from './contactTagsService'
 import { campaignsService, type ConnectedSocialProfile } from './campaignsService'
 import { triggerLinksService } from './triggerLinksService'
@@ -317,8 +317,10 @@ let rawTemplatesPromise: Promise<WhatsAppApiTemplate[]> | null = null
 async function loadRawWhatsAppTemplates(): Promise<WhatsAppApiTemplate[]> {
   if (rawTemplatesCache) return rawTemplatesCache
   if (!rawTemplatesPromise) {
-    rawTemplatesPromise = whatsappApiService
-      .getTemplates('APPROVED')
+    rawTemplatesPromise = apiClient
+      .get<WhatsAppApiTemplatesResponse>('/automations/catalogs/whatsapp-templates', {
+        params: { status: 'APPROVED' }
+      })
       .then(async (response) => {
         let items = response.items || []
         if (items.length === 0) {
@@ -416,4 +418,6 @@ export function getCatalog(kind: CatalogKind): Promise<CatalogOption[]> {
 export function resetCatalogCache() {
   cache.clear()
   formFieldCache.clear()
+  rawTemplatesCache = null
+  rawTemplatesPromise = null
 }

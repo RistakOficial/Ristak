@@ -20,6 +20,7 @@ import {
   listAttributionAds,
   listAutomationFormsCatalog,
   listAutomationFormFieldsCatalog,
+  listAutomationWhatsAppTemplatesCatalog,
   saveAutomationAsset,
   getAutomationAsset
 } from '../services/automationsService.js'
@@ -172,6 +173,19 @@ export async function getFormFieldsCatalogHandler(req, res) {
   } catch (error) {
     logger.error(`Error listando preguntas de formulario: ${error.message}`)
     sendError(res, error, 'Error listando las preguntas del formulario')
+  }
+}
+
+export async function getWhatsAppTemplatesCatalogHandler(req, res) {
+  try {
+    const data = await listAutomationWhatsAppTemplatesCatalog({
+      status: req.query?.status || 'APPROVED',
+      limit: req.query?.limit
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error listando plantillas de WhatsApp para automatizaciones: ${error.message}`)
+    sendError(res, error, 'Error listando las plantillas de WhatsApp')
   }
 }
 
