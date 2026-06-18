@@ -65,6 +65,20 @@ export interface MediaDownloadEntry {
   path?: string
 }
 
+export interface MediaUploadProgress {
+  loaded: number
+  total: number
+  percent: number
+}
+
+export interface UploadMediaFileInput {
+  file: File
+  module?: string
+  moduleEntityId?: string
+  isPublic?: boolean
+  onProgress?: (progress: MediaUploadProgress) => void
+}
+
 export interface MediaMoveEntry {
   id: string
   targetFolderPath?: string
@@ -273,19 +287,82 @@ async function downloadFromApi(endpoint: string, options: RequestInit, fallbackF
   saveBlob(blob, filename)
 }
 
+function extractApiPayload<T>(payload: unknown): T {
+  if (payload && typeof payload === 'object' && 'data' in payload && 'success' in payload && (payload as { data?: unknown }).data !== undefined) {
+    return (payload as { data: unknown }).data as T
+  }
+
+  return payload as T
+}
+
+function extractApiErrorMessage(payload: unknown, status: number, statusText: string) {
+  if (payload && typeof payload === 'object') {
+    const body = payload as { error?: unknown; message?: unknown }
+    if (body.error) return String(body.error)
+    if (body.message) return String(body.message)
+  }
+
+  return `API Error: ${status} ${statusText}`
+}
+
+function postFormWithProgress<T>(
+  endpoint: string,
+  body: FormData,
+  onProgress?: (progress: MediaUploadProgress) => void
+): Promise<T> {
+  if (!onProgress || typeof XMLHttpRequest === 'undefined') {
+    return apiClient.postForm<T>(endpoint, body)
+  }
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', buildApiUrl(endpoint))
+
+    Object.entries(getAuthHeaders()).forEach(([key, value]) => {
+      xhr.setRequestHeader(key, value)
+    })
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable || event.total <= 0) return
+      onProgress({
+        loaded: event.loaded,
+        total: event.total,
+        percent: Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)))
+      })
+    }
+
+    xhr.onload = () => {
+      let payload: unknown = null
+      if (xhr.responseText) {
+        try {
+          payload = JSON.parse(xhr.responseText)
+        } catch {
+          payload = xhr.responseText
+        }
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(extractApiPayload<T>(payload))
+        return
+      }
+
+      reject(new Error(extractApiErrorMessage(payload, xhr.status, xhr.statusText)))
+    }
+
+    xhr.onerror = () => reject(new Error('No se pudo conectar con el servidor.'))
+    xhr.onabort = () => reject(new Error('La subida se canceló.'))
+    xhr.send(body)
+  })
+}
+
 export const mediaService = {
-  uploadFile(input: {
-    file: File
-    module?: string
-    moduleEntityId?: string
-    isPublic?: boolean
-  }): Promise<MediaAsset> {
+  uploadFile(input: UploadMediaFileInput): Promise<MediaAsset> {
     const formData = new FormData()
     formData.append('file', input.file)
     formData.append('module', input.module || 'other')
     formData.append('isPublic', String(input.isPublic ?? true))
     if (input.moduleEntityId) formData.append('moduleEntityId', input.moduleEntityId)
-    return apiClient.postForm<MediaAsset>('/media/upload', formData)
+    return postFormWithProgress<MediaAsset>('/media/upload', formData, input.onProgress)
   },
 
   uploadDataUrl(input: {

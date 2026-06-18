@@ -52,6 +52,8 @@ export { SegmentTabs } from './SegmentTabs'
 export type { SegmentTab } from './SegmentTabs'
 export { Loading } from './Loading'
 export { AppStartupLoader } from './AppStartupLoader'
+export { MediaUploadTray } from './MediaUploadTray'
+export type { MediaUploadTask, MediaUploadTaskStatus } from './MediaUploadTray'
 export {
   DropdownMenu,
   DropdownMenuTrigger,

@@ -105,11 +105,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger
+  DropdownMenuTrigger,
+  MediaUploadTray
 } from '@/components/common'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAgentAvailability } from '@/hooks'
+import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import {
   blockLabels,
   fieldBlockTypes,
@@ -18663,6 +18665,7 @@ const SitesMediaPickerModal: React.FC<{
   onSelect: (url: string) => void
 }> = ({ kind, moduleEntityId, onClose, onSelect }) => {
   const inputRef = useRef<HTMLInputElement>(null)
+  const uploadQueue = useMediaUploadQueue()
   const [assets, setAssets] = useState<MediaAsset[]>([])
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
@@ -18761,18 +18764,22 @@ const SitesMediaPickerModal: React.FC<{
     }
 
     setUploading(true)
+    const taskId = uploadQueue.addTask(file)
     try {
       const uploaded = await mediaService.uploadFile({
         file,
         module: 'sites',
         moduleEntityId,
-        isPublic: true
+        isPublic: true,
+        onProgress: ({ percent }) => uploadQueue.setTaskProgress(taskId, percent)
       })
+      uploadQueue.finishTask(taskId, 'complete', 'Subida completa')
       setAssets(current => [uploaded, ...current.filter(asset => asset.id !== uploaded.id)].slice(0, mediaPickerAssetLimit))
       onSelect(getMediaPickerAssetUrl(uploaded))
       onClose()
       showToast('success', kind === 'image' ? 'Imagen seleccionada' : 'Video seleccionado', 'El archivo ya quedó puesto en el editor.')
     } catch (error) {
+      uploadQueue.finishTask(taskId, 'error', error instanceof Error ? error.message : 'No se pudo subir')
       showToast('error', 'No se pudo subir', error instanceof Error ? error.message : 'Inténtalo otra vez.')
     } finally {
       setUploading(false)
@@ -18919,6 +18926,12 @@ const SitesMediaPickerModal: React.FC<{
             </div>
           )}
         </div>
+        <MediaUploadTray
+          tasks={uploadQueue.tasks}
+          scope="modal"
+          onDismissTask={uploadQueue.dismissTask}
+          onClearFinished={uploadQueue.clearFinished}
+        />
       </div>
     </div>
   )

@@ -40,11 +40,13 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  MediaUploadTray,
   Modal,
   PageHeader,
   TabList
 } from '@/components/common'
 import { useDateRange } from '@/contexts/DateRangeContext'
+import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { useNotification } from '@/contexts/NotificationContext'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import mediaService, {
@@ -456,6 +458,7 @@ function readDraggedMediaIds(dataTransfer: DataTransfer) {
 export const MediaSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const { dateRange, setDateRange } = useDateRange()
+  const uploadQueue = useMediaUploadQueue()
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const filePaneRef = useRef<HTMLElement>(null)
   const [assets, setAssets] = useState<MediaAsset[]>([])
@@ -958,24 +961,54 @@ export const MediaSettings: React.FC = () => {
   }
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
+    const files = Array.from(event.target.files || [])
     event.target.value = ''
-    if (!file) return
+    if (!files.length) return
 
     setUploading(true)
+    let lastUploaded: MediaAsset | null = null
+    let successCount = 0
+    let failedCount = 0
     try {
-      const uploaded = await mediaService.uploadFile({
-        file,
-        module: 'media',
-        isPublic: true
-      })
-      const uploadedFile = toExplorerFile(uploaded)
-      await loadMedia('refresh')
-      setCurrentPath(uploadedFile.folderPath)
-      setSelectedAssetId(uploaded.id)
-      showToast('success', 'Archivo subido', `${uploadedFile.fileName} ya aparece en Media.`)
-    } catch (uploadError) {
-      showToast('error', 'No se pudo subir', uploadError instanceof Error ? uploadError.message : 'Intenta subir el archivo otra vez.')
+      for (const file of files) {
+        const taskId = uploadQueue.addTask(file)
+        try {
+          const uploaded = await mediaService.uploadFile({
+            file,
+            module: 'media',
+            isPublic: true,
+            onProgress: ({ percent }) => uploadQueue.setTaskProgress(taskId, percent)
+          })
+          uploadQueue.finishTask(taskId, 'complete', 'Subida completa')
+          lastUploaded = uploaded
+          successCount += 1
+        } catch (uploadError) {
+          failedCount += 1
+          uploadQueue.finishTask(
+            taskId,
+            'error',
+            uploadError instanceof Error ? uploadError.message : 'No se pudo subir'
+          )
+        }
+      }
+
+      if (successCount > 0) {
+        await loadMedia('refresh')
+        if (lastUploaded) {
+          const uploadedFile = toExplorerFile(lastUploaded)
+          setCurrentPath(uploadedFile.folderPath)
+          setSelectedAssetId(lastUploaded.id)
+        }
+        showToast(
+          'success',
+          successCount === 1 ? 'Archivo subido' : 'Archivos subidos',
+          successCount === 1 ? 'Ya aparece en Media.' : `${successCount} archivos ya aparecen en Media.`
+        )
+      }
+
+      if (failedCount > 0) {
+        showToast('error', 'Algunas subidas fallaron', `${failedCount} archivo${failedCount === 1 ? '' : 's'} no se pudo subir.`)
+      }
     } finally {
       setUploading(false)
     }
@@ -1413,8 +1446,16 @@ export const MediaSettings: React.FC = () => {
       <input
         ref={uploadInputRef}
         type="file"
+        multiple
         className={styles.hiddenInput}
         onChange={handleFileUpload}
+      />
+
+      <MediaUploadTray
+        tasks={uploadQueue.tasks}
+        scope="page"
+        onDismissTask={uploadQueue.dismissTask}
+        onClearFinished={uploadQueue.clearFinished}
       />
 
       <section className={styles.usageStrip} aria-label="Uso de almacenamiento multimedia">
