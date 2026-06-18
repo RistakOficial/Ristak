@@ -335,13 +335,14 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 8px 10px;
   min-height: 44px;
-  padding: 8px 14px;
+  padding: 9px 14px;
   border-bottom: 1px solid var(--chat-border);
   background: var(--surface);
   color: var(--text-dim);
   font-size: var(--font-size-xs);
+  overflow: visible;
 }
 
 .chatSelectionBar[data-chat-selection-active='true'] {
@@ -384,18 +385,35 @@
 }
 
 .chatSelectionActions {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px;
   align-items: center;
-  justify-content: flex-end;
   gap: 6px;
-  flex-wrap: wrap;
-  min-width: 0;
+  width: 100%;
+  flex: 1 0 100%;
+  min-width: 100%;
 }
 
 .chatSelectionActions [data-btn] {
+  width: 100%;
+  min-width: 0;
   min-height: 30px;
-  padding: 0 9px;
+  padding: 0 8px;
   gap: 5px;
+  justify-content: center;
+  white-space: normal;
+  line-height: 1.12;
+}
+
+.chatSelectionDeleteAction[data-btn] {
+  grid-column: 1 / span 2;
+}
+
+.chatSelectionClear[data-btn] {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: stretch;
+  padding: 0;
 }
 
 .chatSelectControl {

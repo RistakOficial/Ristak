@@ -89,6 +89,7 @@ type ComposerStatus = 'idle' | 'sending'
 type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
 type DraftAttachmentKind = 'image' | 'document'
 type InfoPanelView = 'summary' | 'journey'
+type BulkChatConfirmAction = 'archive' | 'remove'
 type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'webchat' | 'meta'
 type SchedulePeriod = 'AM' | 'PM'
 type TemplatePanelMode = 'choice' | 'select' | 'create'
@@ -222,6 +223,9 @@ const CHAT_CACHE_KEY = 'ristak_desktop_chat_list_cache_v1'
 const CHAT_CACHE_MAX_AGE_MS = 30 * 60 * 1000
 const CHAT_CACHE_STALE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_REFRESH_INTERVAL_MS = 20000
+const BULK_CHAT_ARCHIVE_CONFIRM_WORD = 'archivar'
+const BULK_CHAT_RESTORE_CONFIRM_WORD = 'restaurar'
+const BULK_CHAT_REMOVE_CONFIRM_WORD = 'eliminar'
 const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024
 const DOCUMENT_ATTACHMENT_ACCEPT = [
@@ -1495,6 +1499,7 @@ export const DesktopChat: React.FC = () => {
   const [removedChatStates, setRemovedChatStates] = useState<RemovedChatState[]>(() => readStoredRemovedChatStates())
   const [activeContactId, setActiveContactId] = useState<string>('')
   const [selectedChatIds, setSelectedChatIds] = useState<string[]>([])
+  const [bulkChatConfirmAction, setBulkChatConfirmAction] = useState<BulkChatConfirmAction | null>(null)
 
   const [messages, setMessages] = useState<DesktopChatMessage[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
@@ -1775,7 +1780,13 @@ export const DesktopChat: React.FC = () => {
     ? 'Cuando lleguen mensajes, aparecerán aquí con su canal, estado y último movimiento.'
     : 'Cuando llegue un mensaje nuevo, aparecerá aquí.'
   const resetChatFiltersLabel = agentAssignedViewOpen && !hasTextOrAdvancedChatFilters ? 'Volver a conversaciones' : 'Limpiar filtros'
-  const bulkArchiveActionLabel = archivedViewOpen ? 'Restaurar' : 'Archivar'
+  const bulkArchiveActionLabel = archivedViewOpen ? 'Restaurar todos' : 'Archivar todos'
+  const bulkArchiveConfirmWord = archivedViewOpen ? BULK_CHAT_RESTORE_CONFIRM_WORD : BULK_CHAT_ARCHIVE_CONFIRM_WORD
+  const bulkArchiveConfirmTitle = archivedViewOpen ? 'Restaurar chats seleccionados' : 'Archivar chats seleccionados'
+  const bulkArchiveConfirmMessage = archivedViewOpen
+    ? `${selectedVisibleChatCount} chat${selectedVisibleChatCount === 1 ? '' : 's'} volverá${selectedVisibleChatCount === 1 ? '' : 'n'} a la bandeja principal.`
+    : `${selectedVisibleChatCount} chat${selectedVisibleChatCount === 1 ? '' : 's'} se moverá${selectedVisibleChatCount === 1 ? '' : 'n'} a Archivados.`
+  const bulkRemoveConfirmMessage = `${selectedVisibleChatCount} chat${selectedVisibleChatCount === 1 ? '' : 's'} se ocultará${selectedVisibleChatCount === 1 ? '' : 'n'} de esta lista. El historial no se borra y volverá${selectedVisibleChatCount === 1 ? '' : 'n'} si llega un mensaje nuevo.`
   const messageGroups = useMemo(() => {
     const groups: Array<{ key: string; label: string; messages: DesktopChatMessage[] }> = []
     messages.forEach((message) => {
@@ -3047,6 +3058,20 @@ export const DesktopChat: React.FC = () => {
     )
   }, [selectedChatContacts, showToast])
 
+  const handleOpenBulkArchiveConfirm = useCallback(() => {
+    if (selectedChatContacts.length === 0) return
+    setBulkChatConfirmAction('archive')
+  }, [selectedChatContacts.length])
+
+  const handleOpenBulkRemoveConfirm = useCallback(() => {
+    if (selectedChatContacts.length === 0) return
+    setBulkChatConfirmAction('remove')
+  }, [selectedChatContacts.length])
+
+  const closeBulkChatConfirm = useCallback(() => {
+    setBulkChatConfirmAction(null)
+  }, [])
+
   const openAutomationModal = useCallback(() => {
     setAutomationModalOpen(true)
   }, [])
@@ -4129,22 +4154,23 @@ export const DesktopChat: React.FC = () => {
             </span>
             {selectedVisibleChatCount > 0 ? (
               <span className={styles.chatSelectionActions}>
-                <Button type="button" variant="secondary" size="sm" onClick={handleMarkSelectedChatsAsRead}>
+                <Button type="button" variant="secondary" size="sm" className={styles.chatSelectionAction} onClick={handleMarkSelectedChatsAsRead}>
                   <CheckCheck size={14} />
-                  Leídos
+                  Marcar como leídos
                 </Button>
-                <Button type="button" variant="secondary" size="sm" onClick={handleArchiveSelectedChats}>
+                <Button type="button" variant="secondary" size="sm" className={styles.chatSelectionAction} onClick={handleOpenBulkArchiveConfirm}>
                   <Archive size={14} />
                   {bulkArchiveActionLabel}
                 </Button>
-                <Button type="button" variant="danger" size="sm" onClick={handleRemoveSelectedChatsFromList}>
+                <Button type="button" variant="danger" size="sm" className={styles.chatSelectionDeleteAction} onClick={handleOpenBulkRemoveConfirm}>
                   <Trash2 size={14} />
-                  Quitar
+                  Eliminar
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
+                  className={styles.chatSelectionClear}
                   onClick={() => setSelectedChatIds([])}
                   aria-label="Limpiar selección de chats"
                 >
@@ -4826,6 +4852,32 @@ export const DesktopChat: React.FC = () => {
           </div>
         </form>
       </Modal>
+
+      <Modal
+        isOpen={bulkChatConfirmAction === 'archive'}
+        onClose={closeBulkChatConfirm}
+        title={bulkArchiveConfirmTitle}
+        message={bulkArchiveConfirmMessage}
+        type="confirm"
+        size="sm"
+        confirmText={bulkArchiveActionLabel}
+        cancelText="Cancelar"
+        typeToConfirm={bulkArchiveConfirmWord}
+        onConfirm={handleArchiveSelectedChats}
+      />
+
+      <Modal
+        isOpen={bulkChatConfirmAction === 'remove'}
+        onClose={closeBulkChatConfirm}
+        title="Eliminar chats seleccionados"
+        message={bulkRemoveConfirmMessage}
+        type="confirm"
+        size="sm"
+        confirmText="Eliminar"
+        cancelText="Cancelar"
+        typeToConfirm={BULK_CHAT_REMOVE_CONFIRM_WORD}
+        onConfirm={handleRemoveSelectedChatsFromList}
+      />
 
       <Modal
         isOpen={automationModalOpen}
