@@ -438,6 +438,248 @@ const resolveContactJourneyOrigin = ({ contact = {}, sessions = [], whatsappEven
 
   return { channel: null, webData: null, whatsappEvent: null, scores: { web: web.score, whatsapp: whatsapp.score } }
 }
+
+const toFiniteNumber = (value) => {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : 0
+}
+
+const normalizeJourneyPageUrl = (value) => {
+  const raw = cleanString(value)
+  if (!raw) return ''
+
+  try {
+    const parsed = new URL(raw, 'https://ristak.local')
+    for (const param of ['no_track', 'preview', 'preview_mode', 'rstk_play_id']) {
+      parsed.searchParams.delete(param)
+    }
+    parsed.hash = ''
+    const host = parsed.hostname === 'ristak.local' ? '' : parsed.hostname.toLowerCase()
+    const pathname = parsed.pathname.replace(/\/+$/, '') || '/'
+    const search = parsed.searchParams.toString()
+    return `${host}${pathname}${search ? `?${search}` : ''}`.toLowerCase()
+  } catch {
+    return raw.split('#')[0].replace(/\/+$/, '').toLowerCase()
+  }
+}
+
+const normalizeJourneyPagePath = (value) => {
+  const raw = cleanString(value)
+  if (!raw) return ''
+
+  try {
+    const parsed = new URL(raw, 'https://ristak.local')
+    return (parsed.pathname.replace(/\/+$/, '') || '/').toLowerCase()
+  } catch {
+    const withoutQuery = raw.split('?')[0].split('#')[0]
+    return (withoutQuery.replace(/\/+$/, '') || '/').toLowerCase()
+  }
+}
+
+const buildVideoEngagementJourneyData = (row = {}) => {
+  const maxPosition = Math.max(
+    toFiniteNumber(row.max_position_seconds),
+    toFiniteNumber(row.max_event_position_seconds),
+    toFiniteNumber(row.last_position_seconds)
+  )
+
+  return {
+    id: row.id,
+    playback_id: row.playback_id,
+    visitor_id: row.visitor_id,
+    session_id: row.session_id,
+    media_asset_id: row.media_asset_id,
+    stream_library_id: row.stream_library_id,
+    stream_video_id: row.stream_video_id,
+    video_provider: row.video_provider,
+    video_title: row.video_title,
+    tracking_source: row.tracking_source,
+    site_id: row.site_id,
+    site_slug: row.site_slug,
+    site_name: row.site_name,
+    site_type: row.site_type,
+    form_site_id: row.form_site_id,
+    form_site_name: row.form_site_name,
+    public_page_id: row.public_page_id,
+    public_page_title: row.public_page_title,
+    block_id: row.block_id,
+    block_label: row.block_label,
+    page_url: row.page_url,
+    referrer_url: row.referrer_url,
+    duration_seconds: toFiniteNumber(row.duration_seconds),
+    watched_seconds: toFiniteNumber(row.watched_seconds),
+    start_position_seconds: toFiniteNumber(row.min_position_seconds),
+    end_position_seconds: maxPosition,
+    max_position_seconds: maxPosition,
+    max_progress_percent: toFiniteNumber(row.max_progress_percent),
+    play_count: toFiniteNumber(row.play_count),
+    pause_count: toFiniteNumber(row.pause_count),
+    seek_count: toFiniteNumber(row.seek_count),
+    event_count: toFiniteNumber(row.event_count),
+    ended: Boolean(row.ended),
+    match_method: row.match_method,
+    first_event_at: row.first_event_at || row.started_at || row.last_event_at,
+    last_event_at: row.last_event_at || row.ended_at || row.first_event_at,
+    ended_at: row.ended_at,
+    standalone: false
+  }
+}
+
+const getVideoEngagementKey = (video = {}) => cleanString(video.playback_id || video.id)
+
+const getJourneyRowTime = (row = {}, fallback = 0) => {
+  const raw = row.first_event_at || row.started_at || row.last_event_at || row.created_at || row.date
+  const time = new Date(raw || 0).getTime()
+  return Number.isFinite(time) ? time : fallback
+}
+
+const pickNearestSessionEntry = (video, sessionEntries, predicate) => {
+  const candidates = sessionEntries.filter(({ session }) => predicate(session))
+  if (!candidates.length) return null
+
+  const videoTime = getJourneyRowTime(video)
+  return candidates
+    .map(entry => ({
+      entry,
+      distance: Math.abs(getJourneyRowTime(entry.session) - videoTime)
+    }))
+    .sort((left, right) => left.distance - right.distance)[0]?.entry || null
+}
+
+const findVideoSessionEntry = (video, sessionEntries) => {
+  const sessionId = cleanString(video.session_id)
+  if (sessionId) {
+    const match = pickNearestSessionEntry(video, sessionEntries, session => cleanString(session.session_id) === sessionId)
+    if (match) return match
+  }
+
+  const publicPageId = cleanString(video.public_page_id)
+  if (publicPageId) {
+    const match = pickNearestSessionEntry(video, sessionEntries, session => cleanString(session.public_page_id) === publicPageId)
+    if (match) return match
+  }
+
+  const normalizedUrl = normalizeJourneyPageUrl(video.page_url)
+  if (normalizedUrl) {
+    const match = pickNearestSessionEntry(video, sessionEntries, session =>
+      normalizeJourneyPageUrl(session.page_url || session.landing_page) === normalizedUrl
+    )
+    if (match) return match
+  }
+
+  const normalizedPath = normalizeJourneyPagePath(video.page_url)
+  if (normalizedPath) {
+    return pickNearestSessionEntry(video, sessionEntries, session =>
+      normalizeJourneyPagePath(session.page_url || session.landing_page) === normalizedPath
+    )
+  }
+
+  return null
+}
+
+const buildPageVisitJourneyEvent = (session, videoEngagements = []) => ({
+  type: 'page_visit',
+  date: session.started_at,
+  data: {
+    event_name: session.event_name,
+    session_id: session.session_id,
+    tracking_session_id: session.id,
+    page_url: session.page_url,
+    landing_page: session.landing_page,
+    referrer_url: session.referrer_url,
+    utm_source: session.utm_source,
+    utm_medium: session.utm_medium,
+    utm_campaign: session.utm_campaign,
+    utm_content: session.utm_content,
+    source_platform: session.source_platform,
+    site_source_name: session.site_source_name,
+    campaign_name: session.campaign_name,
+    ad_name: session.ad_name,
+    ad_id: session.ad_id,
+    device_type: session.device_type,
+    browser: session.browser,
+    geo_city: session.geo_city,
+    geo_region: session.geo_region,
+    geo_country: session.geo_country,
+    tracking_source: session.tracking_source,
+    site_id: session.site_id,
+    site_slug: session.site_slug,
+    site_name: session.site_name,
+    site_type: session.site_type,
+    form_site_id: session.form_site_id,
+    form_site_name: session.form_site_name,
+    public_page_id: session.public_page_id,
+    public_page_title: session.public_page_title,
+    conversion_type: session.conversion_type,
+    submission_id: session.submission_id,
+    ...(videoEngagements.length ? { video_engagements: videoEngagements } : {})
+  }
+})
+
+const attachVideoEngagementsToPageVisits = (sessionEntries, videoEngagements) => {
+  const attached = new Set()
+
+  videoEngagements.forEach(video => {
+    const key = getVideoEngagementKey(video)
+    const match = findVideoSessionEntry(video, sessionEntries)
+    if (!key || !match) return
+
+    const existing = Array.isArray(match.event.data.video_engagements)
+      ? match.event.data.video_engagements
+      : []
+    match.event.data.video_engagements = [...existing, video]
+    attached.add(key)
+  })
+
+  return attached
+}
+
+const loadContactVideoEngagements = async (contact = {}) => {
+  const conditions = ['vps.contact_id = ?']
+  const params = [contact.id]
+
+  if (cleanString(contact.visitor_id)) {
+    conditions.push('vps.visitor_id = ?')
+    params.push(cleanString(contact.visitor_id))
+  }
+
+  if (cleanString(contact.email)) {
+    conditions.push('vps.email = ?')
+    params.push(cleanString(contact.email))
+  }
+
+  const rows = await db.all(`
+    SELECT
+      vps.*,
+      COALESCE((
+        SELECT MIN(position_seconds)
+        FROM video_playback_events vpe
+        WHERE vpe.playback_id = vps.playback_id
+      ), 0) as min_position_seconds,
+      COALESCE((
+        SELECT MAX(position_seconds)
+        FROM video_playback_events vpe
+        WHERE vpe.playback_id = vps.playback_id
+      ), vps.max_position_seconds, 0) as max_event_position_seconds,
+      COALESCE((
+        SELECT COUNT(*)
+        FROM video_playback_events vpe
+        WHERE vpe.playback_id = vps.playback_id
+      ), 0) as event_count
+    FROM video_playback_sessions vps
+    WHERE (${conditions.join(' OR ')})
+      AND (
+        COALESCE(vps.play_count, 0) > 0
+        OR COALESCE(vps.watched_seconds, 0) > 0
+        OR COALESCE(vps.max_progress_percent, 0) > 0
+        OR COALESCE(vps.ended, 0) = 1
+      )
+    ORDER BY COALESCE(vps.first_event_at, vps.started_at, vps.last_event_at) ASC
+  `, params)
+
+  return rows.map(buildVideoEngagementJourneyData)
+}
+
 const HIGHLEVEL_MESSAGE_REFRESH_LIMIT = 12
 const HIGHLEVEL_REFRESHABLE_STATUS = new Set(['', 'pending', 'queued', 'processing', 'scheduled', 'sent', 'accepted'])
 const HIGHLEVEL_STATUS_PRIORITY = {
@@ -3287,41 +3529,31 @@ export const getContactJourney = async (req, res) => {
       }
     }
 
-    // Agregar todas las visitas al journey
-    sessions.forEach(session => {
+    const videoEngagements = await loadContactVideoEngagements(contact)
+    const sessionJourneyEntries = sessions.map(session => ({
+      session,
+      event: buildPageVisitJourneyEvent(session)
+    }))
+    const attachedVideoKeys = attachVideoEngagementsToPageVisits(sessionJourneyEntries, videoEngagements)
+
+    // Agregar todas las visitas al journey, enriquecidas con video si el tracking
+    // detectó reproducción en la misma sesión/página.
+    sessionJourneyEntries.forEach(({ event }) => {
+      journey.push(event)
+    })
+
+    // Si el video se enlazó al contacto pero no hay visita exacta para colgarlo,
+    // no se pierde: queda como evento propio de video dentro del viaje.
+    videoEngagements.forEach(video => {
+      const key = getVideoEngagementKey(video)
+      if (key && attachedVideoKeys.has(key)) return
+
       journey.push({
-        type: 'page_visit',
-        date: session.started_at,
+        type: 'video_playback',
+        date: video.first_event_at || video.last_event_at || contact.created_at,
         data: {
-          event_name: session.event_name,
-          page_url: session.page_url,
-          landing_page: session.landing_page,
-          referrer_url: session.referrer_url,
-          utm_source: session.utm_source,
-          utm_medium: session.utm_medium,
-          utm_campaign: session.utm_campaign,
-          utm_content: session.utm_content,
-          source_platform: session.source_platform,
-          site_source_name: session.site_source_name,
-          campaign_name: session.campaign_name,
-          ad_name: session.ad_name,
-          ad_id: session.ad_id,
-          device_type: session.device_type,
-          browser: session.browser,
-          geo_city: session.geo_city,
-          geo_region: session.geo_region,
-          geo_country: session.geo_country,
-          tracking_source: session.tracking_source,
-          site_id: session.site_id,
-          site_slug: session.site_slug,
-          site_name: session.site_name,
-          site_type: session.site_type,
-          form_site_id: session.form_site_id,
-          form_site_name: session.form_site_name,
-          public_page_id: session.public_page_id,
-          public_page_title: session.public_page_title,
-          conversion_type: session.conversion_type,
-          submission_id: session.submission_id
+          ...video,
+          standalone: true
         }
       })
     })

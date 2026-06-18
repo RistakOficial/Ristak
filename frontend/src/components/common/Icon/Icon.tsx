@@ -70,6 +70,7 @@ const iconMap: Record<string, React.FC<any>> = {
   'dollar': LucideIcons.DollarSign,
   'dollar-sign': LucideIcons.DollarSign,
   'circle-dollar-sign': LucideIcons.CircleDollarSign,
+  'circle-play': LucideIcons.CirclePlay,
   'mouse-pointer-click': LucideIcons.MousePointerClick,
   'sparkles': LucideIcons.Sparkles,
   'globe': LucideIcons.Globe,

@@ -31,6 +31,133 @@ const WHATSAPP_JOURNEY_SOURCE_PATTERN = /(whatsapp|waapi|ycloud|click_to_whatsap
 const getEventData = (event?: JourneyEvent | null): Record<string, any> =>
   event && event.data && typeof event.data === 'object' ? event.data : {}
 
+const getNumberValue = (value: unknown): number => {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : 0
+}
+
+const getVideoEngagements = (event?: JourneyEvent | null): Record<string, any>[] => {
+  const data = getEventData(event)
+  if (event?.type === 'video_playback') return [data]
+  return Array.isArray(data.video_engagements)
+    ? data.video_engagements.filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object'))
+    : []
+}
+
+const formatVideoTimestamp = (seconds: unknown): string => {
+  const totalSeconds = Math.max(0, Math.floor(getNumberValue(seconds)))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const remainingSeconds = totalSeconds % 60
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+  }
+
+  return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`
+}
+
+const getVideoEndPosition = (video: Record<string, any>): number => {
+  const duration = getNumberValue(video.duration_seconds)
+  const end = Math.max(
+    getNumberValue(video.end_position_seconds),
+    getNumberValue(video.max_position_seconds),
+    getNumberValue(video.last_position_seconds)
+  )
+
+  if (video.ended && duration > 0) return duration
+  return end
+}
+
+const getVideoDisplayTitle = (video: Record<string, any>): string =>
+  String(
+    video.video_title ||
+    video.block_label ||
+    video.public_page_title ||
+    video.media_asset_id ||
+    video.stream_video_id ||
+    'Video'
+  )
+
+const formatVideoProgressSummary = (video: Record<string, any>): string => {
+  const duration = getNumberValue(video.duration_seconds)
+  const endPosition = getVideoEndPosition(video)
+  const rawProgress = getNumberValue(video.max_progress_percent)
+  const computedProgress = duration > 0 ? (endPosition / duration) * 100 : 0
+  const progress = Math.min(100, Math.max(rawProgress, computedProgress))
+  const parts: string[] = []
+
+  if (progress > 0) {
+    parts.push(`${Math.round(progress)}%`)
+  }
+
+  if (endPosition > 0 || duration > 0) {
+    parts.push(duration > 0
+      ? `${formatVideoTimestamp(endPosition)} de ${formatVideoTimestamp(duration)}`
+      : `${formatVideoTimestamp(endPosition)} vistos`
+    )
+  } else if (getNumberValue(video.watched_seconds) > 0) {
+    parts.push(`${formatVideoTimestamp(video.watched_seconds)} vistos`)
+  }
+
+  return parts.length ? parts.join(' · ') : 'Reproducción detectada'
+}
+
+const formatVideoPositionRange = (video: Record<string, any>): string => {
+  const start = getNumberValue(video.start_position_seconds)
+  const end = Math.max(start, getVideoEndPosition(video))
+  return `${formatVideoTimestamp(start)} - ${formatVideoTimestamp(end)}`
+}
+
+const formatVideoTimeRange = (video: Record<string, any>, timezone?: string): string => {
+  const options: Intl.DateTimeFormatOptions = {
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(timezone ? { timeZone: timezone } : {})
+  }
+  const formatter = new Intl.DateTimeFormat('es-MX', options)
+  const first = video.first_event_at ? new Date(video.first_event_at) : null
+  const last = video.last_event_at ? new Date(video.last_event_at) : null
+  const firstValid = first && Number.isFinite(first.getTime())
+  const lastValid = last && Number.isFinite(last.getTime())
+
+  if (firstValid && lastValid && first!.getTime() !== last!.getTime()) {
+    return `${formatter.format(first!)} - ${formatter.format(last!)}`
+  }
+
+  if (firstValid) return formatter.format(first!)
+  if (lastValid) return formatter.format(last!)
+  return ''
+}
+
+const appendVideoTooltipItems = (
+  items: { label: string; value: string }[],
+  videos: Record<string, any>[],
+  timezone?: string,
+  includePage = false
+) => {
+  videos.slice(0, 3).forEach((video, index) => {
+    const suffix = videos.length > 1 ? ` ${index + 1}` : ''
+    items.push({ label: `Video${suffix}`, value: getVideoDisplayTitle(video) })
+    items.push({ label: `Visto${suffix}`, value: formatVideoProgressSummary(video) })
+    items.push({ label: `Tramo${suffix}`, value: formatVideoPositionRange(video) })
+
+    const timeRange = formatVideoTimeRange(video, timezone)
+    if (timeRange) {
+      items.push({ label: `Horario${suffix}`, value: timeRange })
+    }
+
+    const page = video.public_page_title || video.page_url
+    if (includePage && page) {
+      items.push({ label: `Página${suffix}`, value: String(page) })
+    }
+  })
+
+  if (videos.length > 3) {
+    items.push({ label: 'Videos extra', value: `${videos.length - 3} más` })
+  }
+}
+
 const sourceLooksWhatsApp = (source?: string | null) =>
   WHATSAPP_JOURNEY_SOURCE_PATTERN.test(String(source || '').trim().toLowerCase())
 
@@ -130,6 +257,10 @@ const getPlatformColor = (platform?: string | null) => {
 }
 
 const getEventIcon = (event: JourneyEvent) => {
+  if (event.type === 'video_playback') {
+    return 'circle-play'
+  }
+
   if (event.type === 'page_visit' || isWebContactJourneyEvent(event)) {
     return getEventSourceIcon(event) || 'mouse-pointer-click'
   }
@@ -158,6 +289,8 @@ const getEventTitle = (event: JourneyEvent) => {
   switch (event.type) {
     case 'page_visit':
       return 'Visita'
+    case 'video_playback':
+      return 'Video'
     case 'contact_created':
       return 'Contacto'
     case 'appointment':
@@ -170,6 +303,10 @@ const getEventTitle = (event: JourneyEvent) => {
 }
 
 const getEventColor = (event: JourneyEvent) => {
+  if (event.type === 'video_playback') {
+    return 'video'
+  }
+
   if (event.type === 'page_visit' || isWebContactJourneyEvent(event)) {
     return getPlatformColor(getEventSourceLabel(event)) || 'blue'
   }
@@ -221,6 +358,11 @@ const getEventDescription = (event?: JourneyEvent | null): string => {
 
   if (type === 'page_visit') {
     return getEventSourceLabel(event) || 'Sitio web'
+  }
+
+  if (type === 'video_playback') {
+    const [video] = getVideoEngagements(event)
+    return video ? getVideoDisplayTitle(video) : 'Video visto'
   }
 
   if (type === 'whatsapp_message') {
@@ -296,6 +438,11 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string) => {
       const location = [data.geo_city, data.geo_region, data.geo_country].filter(Boolean).join(', ')
       items.push({ label: 'Ubicación', value: location })
     }
+    appendVideoTooltipItems(items, getVideoEngagements(event), timezone)
+  }
+
+  if (type === 'video_playback') {
+    appendVideoTooltipItems(items, getVideoEngagements(event), timezone, true)
   }
 
   if (type === 'whatsapp_message') {
@@ -599,6 +746,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
           const isLast = index === displayJourney.length - 1
           const isAdAttributed = Boolean(event.data?.is_ad_attributed)
           const adPlatformIcon = getAdPlatformIcon(event.data?.ad_platform)
+          const hasAttachedVideo = event.type !== 'video_playback' && getVideoEngagements(event).length > 0
 
           const tooltipItems = getTooltipContent(event, timezone)
 
@@ -624,6 +772,11 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
                   {isAdAttributed && (
                     <span className={getAdPlatformBadgeClass(event.data?.ad_platform)} title={event.data?.ad_platform || 'Anuncio'}>
                       <Icon name={adPlatformIcon as any} size={11} />
+                    </span>
+                  )}
+                  {hasAttachedVideo && (
+                    <span className={styles.videoBadge} title="Vio video" aria-label="Vio video">
+                      <Icon name="circle-play" size={11} />
                     </span>
                   )}
                 </div>

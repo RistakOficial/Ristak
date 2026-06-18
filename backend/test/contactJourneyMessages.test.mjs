@@ -42,6 +42,9 @@ async function readChatContacts(query = {}) {
 }
 
 async function cleanup(contactId, phone) {
+  await db.run('DELETE FROM video_playback_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM video_playback_sessions WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM sessions WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
   await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
@@ -367,6 +370,204 @@ test('contact journey exposes image and video media from raw payload', async () 
     assert.equal(videoEvent.data.media_id, `video_${id}`)
     assert.equal(videoEvent.data.media_mime_type, 'video/mp4')
     assert.equal(videoEvent.data.media_filename, 'video-del-cliente.mp4')
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
+test('contact journey annotates page visits with matched video playback', async () => {
+  const id = randomUUID()
+  const contactId = `journey_video_${id}`
+  const phone = `+52995${Date.now().toString().slice(-7)}`
+  const visitorId = `visitor_${id}`
+  const sessionId = `session_${id}`
+  const playbackId = `playback_${id}`
+  const orphanPlaybackId = `orphan_playback_${id}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, email, full_name, first_name, source, visitor_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      `video-${id}@ristak.test`,
+      'Cliente Video',
+      'Cliente',
+      'native_site',
+      visitorId,
+      '2026-06-16T12:00:00.000Z',
+      '2026-06-16T12:00:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO sessions (
+        id, session_id, visitor_id, contact_id, full_name, email, event_name,
+        started_at, created_at, page_url, referrer_url, tracking_source,
+        site_id, site_name, public_page_id, public_page_title
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `session_row_${id}`,
+      sessionId,
+      visitorId,
+      contactId,
+      'Cliente Video',
+      `video-${id}@ristak.test`,
+      'page_view',
+      '2026-06-16T12:01:00.000Z',
+      '2026-06-16T12:01:00.000Z',
+      'https://demo.ristak.test/landing?utm_source=instagram',
+      'https://instagram.com/',
+      'native_site',
+      `site_${id}`,
+      'Sitio Demo',
+      `page_${id}`,
+      'Landing Demo'
+    ])
+
+    await db.run(`
+      INSERT INTO video_playback_sessions (
+        id, playback_id, visitor_id, session_id, contact_id, full_name, email,
+        media_asset_id, stream_video_id, video_provider, video_title,
+        tracking_source, site_id, site_name, public_page_id, public_page_title,
+        block_id, block_label, page_url, duration_seconds, max_position_seconds,
+        last_position_seconds, watched_seconds, max_progress_percent, play_count,
+        ended, match_method, first_event_at, started_at, last_event_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `video_session_${id}`,
+      playbackId,
+      visitorId,
+      sessionId,
+      contactId,
+      'Cliente Video',
+      `video-${id}@ristak.test`,
+      `asset_${id}`,
+      `stream_${id}`,
+      'bunny_stream',
+      'Video de Oferta',
+      'native_site_video',
+      `site_${id}`,
+      'Sitio Demo',
+      `page_${id}`,
+      'Landing Demo',
+      `block_${id}`,
+      'Sección principal',
+      'https://demo.ristak.test/landing?utm_source=instagram&rstk_play_id=temp',
+      120,
+      90,
+      90,
+      84,
+      75,
+      1,
+      0,
+      'direct_contact_id',
+      '2026-06-16T12:01:15.000Z',
+      '2026-06-16T12:01:15.000Z',
+      '2026-06-16T12:03:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO video_playback_events (
+        id, event_id, playback_id, visitor_id, session_id, contact_id, event_name,
+        media_asset_id, stream_video_id, video_provider, site_id, public_page_id,
+        block_id, page_url, position_seconds, duration_seconds, progress_percent,
+        watched_delta_seconds, event_at
+      ) VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `video_event_start_${id}`,
+      `video_event_start_id_${id}`,
+      playbackId,
+      visitorId,
+      sessionId,
+      contactId,
+      'video_play',
+      `asset_${id}`,
+      `stream_${id}`,
+      'bunny_stream',
+      `site_${id}`,
+      `page_${id}`,
+      `block_${id}`,
+      'https://demo.ristak.test/landing?utm_source=instagram',
+      0,
+      120,
+      0,
+      0,
+      '2026-06-16T12:01:15.000Z',
+      `video_event_progress_${id}`,
+      `video_event_progress_id_${id}`,
+      playbackId,
+      visitorId,
+      sessionId,
+      contactId,
+      'video_progress',
+      `asset_${id}`,
+      `stream_${id}`,
+      'bunny_stream',
+      `site_${id}`,
+      `page_${id}`,
+      `block_${id}`,
+      'https://demo.ristak.test/landing?utm_source=instagram',
+      90,
+      120,
+      75,
+      30,
+      '2026-06-16T12:03:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO video_playback_sessions (
+        id, playback_id, visitor_id, session_id, contact_id, full_name, email,
+        media_asset_id, stream_video_id, video_provider, video_title,
+        tracking_source, page_url, duration_seconds, max_position_seconds,
+        watched_seconds, max_progress_percent, play_count, ended, match_method,
+        first_event_at, started_at, last_event_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `orphan_video_session_${id}`,
+      orphanPlaybackId,
+      visitorId,
+      `orphan_session_${id}`,
+      contactId,
+      'Cliente Video',
+      `video-${id}@ristak.test`,
+      `orphan_asset_${id}`,
+      `orphan_stream_${id}`,
+      'bunny_stream',
+      'Video sin visita exacta',
+      'native_site_video',
+      'https://demo.ristak.test/otra-pagina',
+      60,
+      18,
+      18,
+      30,
+      1,
+      0,
+      'direct_contact_id',
+      '2026-06-16T12:05:00.000Z',
+      '2026-06-16T12:05:00.000Z',
+      '2026-06-16T12:05:30.000Z'
+    ])
+
+    const journey = await readJourney(contactId)
+    const pageVisit = journey.find(event => event.type === 'page_visit')
+    const standaloneVideo = journey.find(event => event.type === 'video_playback')
+
+    assert.ok(pageVisit)
+    assert.equal(pageVisit.data.video_engagements?.length, 1)
+    assert.equal(pageVisit.data.video_engagements[0].playback_id, playbackId)
+    assert.equal(pageVisit.data.video_engagements[0].video_title, 'Video de Oferta')
+    assert.equal(pageVisit.data.video_engagements[0].max_progress_percent, 75)
+    assert.equal(pageVisit.data.video_engagements[0].end_position_seconds, 90)
+
+    assert.ok(standaloneVideo)
+    assert.equal(standaloneVideo.data.playback_id, orphanPlaybackId)
+    assert.equal(standaloneVideo.data.standalone, true)
   } finally {
     await cleanup(contactId, phone)
   }
