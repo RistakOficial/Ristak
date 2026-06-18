@@ -44,6 +44,134 @@ const BASE_CONTACT_VARIABLES = [
   source: 'system'
 }))
 
+const BASE_APPOINTMENT_VARIABLES = [
+  ['Título de cita', 'cita.titulo', 'Consulta inicial'],
+  ['Fecha de cita', 'cita.fecha', 'viernes 19 de junio'],
+  ['Hora de cita', 'cita.hora', '9:00'],
+  ['Fecha y hora de cita', 'cita.fecha_hora', 'viernes, 19 de junio de 2026 9:00']
+].map(([label, key, example]) => ({
+  key,
+  label,
+  mergeField: `{{${key}}}`,
+  example,
+  group: 'Citas',
+  source: 'system'
+}))
+
+const DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE = 'es_MX'
+const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
+  {
+    name: 'cita_programada',
+    description: 'Plantilla automática de Ristak para avisar cuando una cita queda agendada.',
+    category: 'utility',
+    language: DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE,
+    status: 'active',
+    headerEnabled: true,
+    headerType: 'text',
+    headerText: '🗓️ Cita programada para {{1}}',
+    bodyText: 'Hola {{1}}.\n\n*🔔 Importante:* Te llegarán *varios* recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!',
+    footerText: '',
+    buttons: [],
+    variableExamples: {
+      '{{cita.fecha_hora}}': 'viernes, 19 de junio de 2026 9:00',
+      '{{contact.first_name}}': 'María'
+    },
+    variableBindings: {
+      headerText: {
+        1: {
+          variableKey: 'cita.fecha_hora',
+          mergeField: '{{cita.fecha_hora}}',
+          label: 'Fecha y hora de cita',
+          example: 'viernes, 19 de junio de 2026 9:00'
+        }
+      },
+      bodyText: {
+        1: {
+          variableKey: 'contact.first_name',
+          mergeField: '{{contact.first_name}}',
+          label: 'Primer nombre',
+          example: 'María'
+        }
+      }
+    }
+  },
+  {
+    name: 'recordatorio_cita_un_dia_antes',
+    description: 'Plantilla automática de Ristak para recordar una cita un día antes.',
+    category: 'utility',
+    language: DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE,
+    status: 'active',
+    headerEnabled: true,
+    headerType: 'text',
+    headerText: 'Recordatorio',
+    bodyText: 'Hola {{1}}, tienes una cita programada para dentro de 1 día, el {{2}} a las {{3}}. Recuerda estar al pendiente. 😄',
+    footerText: 'Esto es un mensaje automático',
+    buttons: [],
+    variableExamples: {
+      '{{contact.first_name}}': 'María',
+      '{{cita.fecha}}': 'viernes 19 de junio',
+      '{{cita.hora}}': '9:00'
+    },
+    variableBindings: {
+      headerText: {},
+      bodyText: {
+        1: {
+          variableKey: 'contact.first_name',
+          mergeField: '{{contact.first_name}}',
+          label: 'Primer nombre',
+          example: 'María'
+        },
+        2: {
+          variableKey: 'cita.fecha',
+          mergeField: '{{cita.fecha}}',
+          label: 'Fecha de cita',
+          example: 'viernes 19 de junio'
+        },
+        3: {
+          variableKey: 'cita.hora',
+          mergeField: '{{cita.hora}}',
+          label: 'Hora de cita',
+          example: '9:00'
+        }
+      }
+    }
+  },
+  {
+    name: 'confirmacion_cita_dia_anterior',
+    description: 'Plantilla automática de Ristak para confirmar asistencia un día antes de la cita.',
+    category: 'utility',
+    language: DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE,
+    status: 'active',
+    headerEnabled: false,
+    headerType: 'none',
+    headerText: '',
+    bodyText: '{{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?',
+    footerText: 'Es necesario RESPONDER para evitar errores en la agenda',
+    buttons: [],
+    variableExamples: {
+      '{{contact.first_name}}': 'María',
+      '{{cita.hora}}': '12:00'
+    },
+    variableBindings: {
+      headerText: {},
+      bodyText: {
+        1: {
+          variableKey: 'contact.first_name',
+          mergeField: '{{contact.first_name}}',
+          label: 'Primer nombre',
+          example: 'María'
+        },
+        2: {
+          variableKey: 'cita.hora',
+          mergeField: '{{cita.hora}}',
+          label: 'Hora de cita',
+          example: '12:00'
+        }
+      }
+    }
+  }
+]
+
 function makeId(prefix) {
   return `${prefix}_${crypto.randomUUID()}`
 }
@@ -341,7 +469,7 @@ function customFieldVariables(customFields = []) {
 }
 
 function buildCatalog(customFields = []) {
-  return [...BASE_CONTACT_VARIABLES, ...customFieldVariables(customFields)]
+  return [...BASE_CONTACT_VARIABLES, ...BASE_APPOINTMENT_VARIABLES, ...customFieldVariables(customFields)]
 }
 
 function getVariableLookup(catalog = []) {
@@ -854,6 +982,67 @@ export async function updateMessageTemplate(id, payload = {}) {
   const saved = mapTemplate(row)
   await persistWhatsAppApiSnapshot(saved)
   return saved
+}
+
+async function findMessageTemplateByNameLanguage(name, language) {
+  const row = await db.get(
+    'SELECT * FROM whatsapp_message_templates WHERE name = ? AND language = ?',
+    [name, language]
+  )
+  return row ? mapTemplate(row) : null
+}
+
+async function ensureDefaultMessageTemplate(definition) {
+  const name = normalizeTemplateName(definition.name)
+  const language = normalizeLanguage(definition.language)
+  const existing = await findMessageTemplateByNameLanguage(name, language)
+  if (existing) return existing
+
+  return createMessageTemplate({
+    ...definition,
+    name,
+    language
+  })
+}
+
+const TEMPLATE_REVIEW_STATES = new Set(['APPROVED', 'PENDING', 'IN_APPEAL'])
+
+export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud = false } = {}) {
+  const results = []
+
+  for (const definition of DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES) {
+    let template = await ensureDefaultMessageTemplate(definition)
+    const ycloudStatus = normalizeYCloudTemplateStatus(template.ycloudStatus)
+    let submitted = false
+    let error = null
+
+    if (submitToYCloud && !TEMPLATE_REVIEW_STATES.has(ycloudStatus) && !template.ycloudTemplateId) {
+      try {
+        const result = await submitMessageTemplateToYCloud(template.id)
+        template = result.template
+        submitted = true
+      } catch (submitError) {
+        error = getTemplateErrorMessage(submitError, 'No se pudo enviar a revisión')
+        logger.warn(`No se pudo enviar plantilla default ${template.name}/${template.language} a revisión: ${error}`)
+      }
+    }
+
+    results.push({
+      id: template.id,
+      name: template.name,
+      language: template.language,
+      ycloudStatus: template.ycloudStatus || null,
+      submitted,
+      error
+    })
+  }
+
+  return {
+    total: results.length,
+    submitted: results.filter((result) => result.submitted).length,
+    errors: results.filter((result) => result.error).length,
+    templates: results
+  }
 }
 
 export async function submitMessageTemplateToYCloud(id) {

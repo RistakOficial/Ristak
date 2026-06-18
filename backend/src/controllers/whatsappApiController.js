@@ -35,6 +35,7 @@ import {
   createScheduledChatMessage,
   listScheduledChatMessages
 } from '../services/scheduledChatMessagesService.js'
+import { ensureDefaultAppointmentMessageTemplates } from '../services/messageTemplatesService.js'
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { markHumanTakeoverByPhone } from '../services/conversationalAgentService.js'
@@ -67,6 +68,15 @@ function getPublicBaseUrl(req) {
 
 function getWebhookUrl(req) {
   return `${getPublicBaseUrl(req)}${getWhatsAppApiWebhookPath()}`
+}
+
+async function ensureDefaultAppointmentTemplatesForWhatsAppApi() {
+  try {
+    return await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: true })
+  } catch (error) {
+    logger.warn(`WhatsApp API conectado, pero no se pudieron preparar plantillas default de citas: ${error.message}`)
+    return null
+  }
 }
 
 function getInstallerSignatureHeaders(req) {
@@ -111,15 +121,16 @@ export async function getWhatsAppMetaBusinessAccountView(req, res) {
 
 export async function connectWhatsAppApiView(req, res) {
   try {
-    const data = await connectWhatsAppApi({
+    await connectWhatsAppApi({
       apiKey: req.body?.apiKey,
       senderPhone: req.body?.senderPhone,
       phoneNumberId: req.body?.phoneNumberId,
       wabaId: req.body?.wabaId,
       webhookUrl: getWebhookUrl(req)
     })
+    await ensureDefaultAppointmentTemplatesForWhatsAppApi()
 
-    res.json({ success: true, data })
+    res.json({ success: true, data: await getWhatsAppApiStatus() })
   } catch (error) {
     logger.error(`Error conectando WhatsApp_API: ${error.message}`)
     res.status(400).json({
@@ -131,8 +142,9 @@ export async function connectWhatsAppApiView(req, res) {
 
 export async function refreshWhatsAppApiView(req, res) {
   try {
-    const data = await refreshWhatsAppApi()
-    res.json({ success: true, data })
+    await refreshWhatsAppApi()
+    await ensureDefaultAppointmentTemplatesForWhatsAppApi()
+    res.json({ success: true, data: await getWhatsAppApiStatus() })
   } catch (error) {
     logger.error(`Error actualizando WhatsApp_API: ${error.message}`)
     res.status(400).json({

@@ -5,10 +5,10 @@ import { DateTime } from 'luxon'
 // variables y detección de respuestas afirmativas.
 
 export const DEFAULT_REMINDER_TEXT =
-  'Hola {{contact.first_name}}, te recordamos tu cita "{{cita.titulo}}" el {{cita.fecha}} a las {{cita.hora}}. ¡Te esperamos!'
+  'Hola {{contact.first_name}}, tienes una cita programada para dentro de 1 día, el {{cita.fecha}} a las {{cita.hora}}. Recuerda estar al pendiente. 😄\n\nEsto es un mensaje automático'
 
 export const DEFAULT_CONFIRMATION_TEXT =
-  'Hola {{contact.first_name}}, ¿confirmas tu cita "{{cita.titulo}}" el {{cita.fecha}} a las {{cita.hora}}? Responde SÍ para confirmarla.'
+  '{{contact.first_name}}, solo para confirmar tu cita mañana a las {{cita.hora}}. ¿Confirmamos?\n\nEs necesario RESPONDER para evitar errores en la agenda'
 
 export const OFFSET_UNIT_MS = {
   minutes: 60 * 1000,
@@ -100,7 +100,10 @@ export function renderMessageText(template, { contact = {}, appointment = {}, ti
     'contact.phone': cleanString(contact.phone),
     'cita.titulo': cleanString(appointment.title) || 'tu cita',
     'cita.fecha': start.isValid ? start.toFormat("cccc d 'de' LLLL") : '',
-    'cita.hora': start.isValid ? start.toFormat('h:mm a').toLowerCase() : ''
+    'cita.hora': start.isValid ? start.toFormat('h:mm a').toLowerCase() : '',
+    'cita.fecha_hora': start.isValid
+      ? `${start.toFormat("cccc, d 'de' LLLL 'de' yyyy")} ${start.toFormat('H:mm')}`
+      : ''
   }
 
   return cleanString(template).replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, key) => values[key] ?? match)

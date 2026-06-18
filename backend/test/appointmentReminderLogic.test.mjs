@@ -75,7 +75,7 @@ test('el ajuste nunca empuja el envío después de la cita', () => {
 
 test('renderMessageText sustituye variables de contacto y cita en la zona horaria', () => {
   const text = renderMessageText(
-    'Hola {{contact.first_name}}, tu cita "{{cita.titulo}}" es el {{cita.fecha}} a las {{cita.hora}}.',
+    'Hola {{contact.first_name}}, tu cita "{{cita.titulo}}" es el {{cita.fecha}} a las {{cita.hora}} ({{cita.fecha_hora}}).',
     {
       contact: { first_name: 'Ana', full_name: 'Ana López' },
       appointment: { title: 'Valoración', start_time: '2026-06-15T18:00:00.000Z' },
@@ -84,7 +84,7 @@ test('renderMessageText sustituye variables de contacto y cita en la zona horari
   )
   // El locale usa espacios no separables en "p. m."; normalizamos para comparar.
   const normalized = text.replace(/\s+/gu, ' ')
-  assert.equal(normalized, 'Hola Ana, tu cita "Valoración" es el lunes 15 de junio a las 12:00 p. m..')
+  assert.equal(normalized, 'Hola Ana, tu cita "Valoración" es el lunes 15 de junio a las 12:00 p. m. (lunes, 15 de junio de 2026 12:00).')
 })
 
 test('formatOffsetLabel genera títulos legibles', () => {
