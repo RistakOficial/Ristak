@@ -2,15 +2,20 @@ import React from 'react'
 
 interface LayoutProps {
   sidebar: React.ReactNode
+  sidebarCollapsed?: boolean
   rightSidebar?: React.ReactNode
   children: React.ReactNode
 }
 
-export const Layout: React.FC<LayoutProps> = ({ sidebar, rightSidebar, children }) => {
+export const Layout: React.FC<LayoutProps> = ({ sidebar, sidebarCollapsed = false, rightSidebar, children }) => {
   return (
     <div data-ristak-layout className="flex h-screen overflow-hidden bg-[var(--color-bg-primary)]">
       {/* Sidebar */}
-      <aside data-ristak-layout-sidebar className="w-56 flex-shrink-0 border-r border-[rgba(148,163,184,0.12)]">
+      <aside
+        data-ristak-layout-sidebar
+        data-collapsed={sidebarCollapsed ? 'true' : undefined}
+        className={`${sidebarCollapsed ? 'w-20' : 'w-56'} flex-shrink-0 border-r border-[var(--border)] transition-[width] duration-200 ease-out`}
+      >
         {sidebar}
       </aside>
 

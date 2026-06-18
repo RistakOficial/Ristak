@@ -17,6 +17,7 @@ import styles from './AppShell.module.css'
 const AI_AGENT_FLOATING_OPEN_KEY = 'ristak.aiAgentFloating.open'
 const AI_AGENT_WIDTH_CONFIG_KEY = 'ai_agent_dock_width'
 const AI_AGENT_LEGACY_WIDTH_KEY = 'ristak.aiAgentDock.width'
+const SIDEBAR_COLLAPSED_CONFIG_KEY = 'sidebar_collapsed'
 const AI_AGENT_MIN_WIDTH = 360
 const AI_AGENT_DEFAULT_WIDTH = 640
 const AI_AGENT_MAX_WIDTH = 1600
@@ -61,9 +62,14 @@ export const AppShell: React.FC = () => {
     AI_AGENT_WIDTH_CONFIG_KEY,
     getInitialAIAgentWidth()
   )
+  const [persistedSidebarCollapsed, savePersistedSidebarCollapsed] = useAppConfig<boolean>(
+    SIDEBAR_COLLAPSED_CONFIG_KEY,
+    false
+  )
   const [syncProgressVisible, setSyncProgressVisible] = useState(false)
   const [aiAgentOpen, setAIAgentOpen] = useState(getInitialAIAgentOpenState)
   const [aiAgentWidth, setAIAgentWidth] = useState(getInitialAIAgentWidth)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(persistedSidebarCollapsed)
   const [aiAgentResizing, setAIAgentResizing] = useState(false)
   const [sitesEditorActive, setSitesEditorActive] = useState(false)
   const aiAgentAvailability = useAIAgentAvailability()
@@ -170,9 +176,18 @@ export const AppShell: React.FC = () => {
     setAIAgentWidth(nextWidth)
   }, [aiAgentResizing, persistedAIAgentWidth])
 
+  useEffect(() => {
+    setSidebarCollapsed(Boolean(persistedSidebarCollapsed))
+  }, [persistedSidebarCollapsed])
+
   const handleLogout = () => {
     logout()
     navigate('/login', { replace: true })
+  }
+
+  const handleSidebarCollapsedChange = (nextCollapsed: boolean) => {
+    setSidebarCollapsed(nextCollapsed)
+    void savePersistedSidebarCollapsed(nextCollapsed).catch(() => undefined)
   }
 
   const handleProgressBarClose = () => {
@@ -250,7 +265,14 @@ export const AppShell: React.FC = () => {
       >
         <div className={styles.mainPane}>
           <Layout
-            sidebar={<Sidebar onLogout={handleLogout} />}
+            sidebarCollapsed={sidebarCollapsed}
+            sidebar={
+              <Sidebar
+                collapsed={sidebarCollapsed}
+                onCollapsedChange={handleSidebarCollapsedChange}
+                onLogout={handleLogout}
+              />
+            }
           >
             <div className="flex flex-col min-h-full">
               {!sitesEditorActive && <Header />}
