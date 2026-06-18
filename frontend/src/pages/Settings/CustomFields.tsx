@@ -130,6 +130,7 @@ export const CustomFields: React.FC = () => {
   const [draft, setDraft] = useState<FieldDraft>(emptyDraft())
   const [selectedFieldIds, setSelectedFieldIds] = useState<Set<string>>(() => new Set())
   const [movingFields, setMovingFields] = useState(false)
+  const [deletingFields, setDeletingFields] = useState(false)
   const [draggingFieldIds, setDraggingFieldIds] = useState<string[]>([])
   const [dropTarget, setDropTarget] = useState<FolderFilter | null>(null)
   const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null)
@@ -199,6 +200,7 @@ export const CustomFields: React.FC = () => {
   const selectedCount = selectedFields.length
   const visibleSelectedCount = visibleSelectableFields.filter(field => selectedFieldIds.has(field.definitionId)).length
   const allVisibleSelected = visibleSelectableFields.length > 0 && visibleSelectedCount === visibleSelectableFields.length
+  const selectionBusy = movingFields || deletingFields
   const isDraggingFields = draggingFieldIds.length > 0
 
   const openCreateEditor = () => {
@@ -378,6 +380,37 @@ export const CustomFields: React.FC = () => {
 
   const clearSelection = () => {
     setSelectedFieldIds(new Set())
+  }
+
+  const handleDeleteSelectedFields = () => {
+    if (!selectedFields.length || deletingFields) return
+
+    const fieldsToDelete = selectedFields
+    const total = fieldsToDelete.length
+    showConfirm(
+      'Eliminar campos seleccionados',
+      `Se eliminarán ${total} campo${total === 1 ? '' : 's'} personalizado${total === 1 ? '' : 's'} y también se borrarán sus valores guardados en todos los contactos. Esta acción no se puede deshacer.`,
+      () => {
+        const archive = async () => {
+          setDeletingFields(true)
+          try {
+            await Promise.all(fieldsToDelete.map(field => customFieldsService.deleteField(field.definitionId)))
+            clearSelection()
+            await loadCatalog()
+            showToast('success', 'Campos eliminados', `${total} campo${total === 1 ? '' : 's'} personalizado${total === 1 ? '' : 's'} se eliminaron.`)
+          } catch (error) {
+            showToast('error', 'No se pudieron eliminar', error instanceof Error ? error.message : 'Intenta otra vez')
+          } finally {
+            setDeletingFields(false)
+          }
+        }
+        void archive()
+      },
+      'Eliminar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
+    )
   }
 
   const moveFieldsToFolder = async (fieldIds: string[], folderId: string, targetLabel?: string) => {
@@ -607,7 +640,7 @@ export const CustomFields: React.FC = () => {
               <strong>{selectedCount} seleccionado{selectedCount === 1 ? '' : 's'}</strong>
               <CustomSelect
                 defaultValue=""
-                disabled={movingFields}
+                disabled={selectionBusy}
                 onChange={(event) => {
                   handleMoveSelectedChange(event.target.value)
                   event.currentTarget.value = ''
@@ -620,9 +653,20 @@ export const CustomFields: React.FC = () => {
                 ))}
                 <option value="__new_folder">Crear carpeta...</option>
               </CustomSelect>
-              <button type="button" onClick={clearSelection} disabled={movingFields}>
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={handleDeleteSelectedFields}
+                loading={deletingFields}
+                disabled={selectionBusy}
+                leftIcon={<Trash2 size={15} />}
+              >
+                Eliminar
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={clearSelection} disabled={selectionBusy} leftIcon={<X size={15} />}>
                 Limpiar
-              </button>
+              </Button>
             </div>
           )}
 
@@ -668,7 +712,7 @@ export const CustomFields: React.FC = () => {
                     <tr
                       key={field.definitionId}
                       className={`${systemField ? styles.lockedRow : styles.draggableRow} ${selected ? styles.rowSelected : ''} ${dragging ? styles.rowDragging : ''}`}
-                      draggable={!movingFields && !systemField}
+                      draggable={!selectionBusy && !systemField}
                       onDragStart={(event) => handleFieldDragStart(field, event)}
                       onDragEnd={handleDragEnd}
                     >
@@ -677,7 +721,7 @@ export const CustomFields: React.FC = () => {
                           type="checkbox"
                           aria-label={systemField ? `${field.label} protegido por el sistema` : `Seleccionar ${field.label}`}
                           checked={selected}
-                          disabled={systemField}
+                          disabled={systemField || selectionBusy}
                           onChange={() => toggleFieldSelection(field.definitionId)}
                           onClick={(event) => event.stopPropagation()}
                         />

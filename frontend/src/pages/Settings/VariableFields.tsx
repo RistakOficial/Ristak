@@ -60,9 +60,11 @@ export const VariableFields: React.FC = () => {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [deletingFields, setDeletingFields] = useState(false)
   const [editorOpen, setEditorOpen] = useState(false)
   const [editingField, setEditingField] = useState<VariableField | null>(null)
   const [draft, setDraft] = useState<VariableFieldDraft>(emptyDraft())
+  const [selectedFieldIds, setSelectedFieldIds] = useState<Set<string>>(() => new Set())
 
   const loadFields = async () => {
     setLoading(true)
@@ -81,6 +83,14 @@ export const VariableFields: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    setSelectedFieldIds(current => {
+      const activeIds = new Set(fields.map(field => field.id))
+      const next = new Set([...current].filter(id => activeIds.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [fields])
+
   const visibleFields = useMemo(() => {
     const query = search.trim().toLowerCase()
     return fields.filter(field => {
@@ -93,6 +103,15 @@ export const VariableFields: React.FC = () => {
       ].some(value => String(value || '').toLowerCase().includes(query))
     })
   }, [fields, search])
+
+  const selectedFields = useMemo(
+    () => fields.filter(field => selectedFieldIds.has(field.id)),
+    [fields, selectedFieldIds]
+  )
+
+  const selectedCount = selectedFields.length
+  const visibleSelectedCount = visibleFields.filter(field => selectedFieldIds.has(field.id)).length
+  const allVisibleSelected = visibleFields.length > 0 && visibleSelectedCount === visibleFields.length
 
   const patchDraft = (patch: Partial<VariableFieldDraft>) => {
     setDraft(current => ({ ...current, ...patch }))
@@ -128,6 +147,31 @@ export const VariableFields: React.FC = () => {
     } catch {
       showToast('error', 'No se pudo copiar', 'Cópialo manualmente.')
     }
+  }
+
+  const toggleFieldSelection = (fieldId: string) => {
+    setSelectedFieldIds(current => {
+      const next = new Set(current)
+      if (next.has(fieldId)) next.delete(fieldId)
+      else next.add(fieldId)
+      return next
+    })
+  }
+
+  const toggleVisibleSelection = () => {
+    setSelectedFieldIds(current => {
+      const next = new Set(current)
+      if (allVisibleSelected) {
+        visibleFields.forEach(field => next.delete(field.id))
+      } else {
+        visibleFields.forEach(field => next.add(field.id))
+      }
+      return next
+    })
+  }
+
+  const clearSelection = () => {
+    setSelectedFieldIds(new Set())
   }
 
   const handleLabelChange = (value: string) => {
@@ -201,6 +245,37 @@ export const VariableFields: React.FC = () => {
     )
   }
 
+  const handleDeleteSelectedFields = () => {
+    if (!selectedFields.length || deletingFields) return
+
+    const fieldsToDelete = selectedFields
+    const total = fieldsToDelete.length
+    showConfirm(
+      'Eliminar campos variables seleccionados',
+      `Se eliminarán ${total} campo${total === 1 ? '' : 's'} variable${total === 1 ? '' : 's'}. Sus parámetros dejarán de resolverse en mensajes nuevos.`,
+      () => {
+        const archive = async () => {
+          setDeletingFields(true)
+          try {
+            await Promise.all(fieldsToDelete.map(field => variableFieldsService.delete(field.id)))
+            clearSelection()
+            await loadFields()
+            showToast('success', 'Campos eliminados', `${total} campo${total === 1 ? '' : 's'} variable${total === 1 ? '' : 's'} ya no están activos.`)
+          } catch (error) {
+            showToast('error', 'No se pudieron eliminar', error instanceof Error ? error.message : 'Intenta otra vez')
+          } finally {
+            setDeletingFields(false)
+          }
+        }
+        void archive()
+      },
+      'Eliminar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
+    )
+  }
+
   return (
     <div className={styles.page}>
       <PageHeader
@@ -239,6 +314,25 @@ export const VariableFields: React.FC = () => {
             <span>{visibleFields.length} campos</span>
           </div>
 
+          {selectedCount > 0 && (
+            <div className={styles.selectionBar}>
+              <strong>{selectedCount} seleccionado{selectedCount === 1 ? '' : 's'}</strong>
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={handleDeleteSelectedFields}
+                loading={deletingFields}
+                leftIcon={<Trash2 size={15} />}
+              >
+                Eliminar
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={clearSelection} disabled={deletingFields} leftIcon={<X size={15} />}>
+                Limpiar
+              </Button>
+            </div>
+          )}
+
           {loading ? (
             <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando campos">
               <Loader2 className={styles.spin} size={22} aria-hidden="true" />
@@ -254,6 +348,15 @@ export const VariableFields: React.FC = () => {
               <table className={`${styles.table} ${styles.plainTable}`}>
                 <thead>
                   <tr>
+                    <th className={styles.selectionHead}>
+                      <input
+                        type="checkbox"
+                        aria-label="Seleccionar campos visibles"
+                        checked={allVisibleSelected}
+                        disabled={visibleFields.length === 0 || deletingFields}
+                        onChange={toggleVisibleSelection}
+                      />
+                    </th>
                     <th>Campo</th>
                     <th>Parámetro</th>
                     <th>Valor</th>
@@ -262,9 +365,21 @@ export const VariableFields: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleFields.map(field => (
-                    <tr key={field.id}>
-                      <td>
+                  {visibleFields.map(field => {
+                    const selected = selectedFieldIds.has(field.id)
+                    return (
+                    <tr key={field.id} className={selected ? styles.rowSelected : ''}>
+                      <td className={styles.selectionCell}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Seleccionar ${field.label}`}
+                          checked={selected}
+                          disabled={deletingFields}
+                          onChange={() => toggleFieldSelection(field.id)}
+                          onClick={(event) => event.stopPropagation()}
+                        />
+                      </td>
+                      <td className={styles.primaryCell}>
                         <strong>{field.label}</strong>
                       </td>
                       <td><code>{field.parameter || variableParameter(field)}</code></td>
@@ -284,7 +399,8 @@ export const VariableFields: React.FC = () => {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

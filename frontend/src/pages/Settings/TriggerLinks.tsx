@@ -50,9 +50,11 @@ export const TriggerLinks: React.FC = () => {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [deletingLinks, setDeletingLinks] = useState(false)
   const [editorOpen, setEditorOpen] = useState(false)
   const [editingLink, setEditingLink] = useState<TriggerLink | null>(null)
   const [draft, setDraft] = useState<TriggerLinkDraft>(emptyDraft())
+  const [selectedLinkIds, setSelectedLinkIds] = useState<Set<string>>(() => new Set())
 
   const loadLinks = async () => {
     setLoading(true)
@@ -71,6 +73,14 @@ export const TriggerLinks: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    setSelectedLinkIds(current => {
+      const activeIds = new Set(links.map(link => link.id))
+      const next = new Set([...current].filter(id => activeIds.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [links])
+
   const visibleLinks = useMemo(() => {
     const query = search.trim().toLowerCase()
     return links.filter(link => {
@@ -84,6 +94,15 @@ export const TriggerLinks: React.FC = () => {
       ].some(value => String(value || '').toLowerCase().includes(query))
     })
   }, [links, search])
+
+  const selectedLinks = useMemo(
+    () => links.filter(link => selectedLinkIds.has(link.id)),
+    [links, selectedLinkIds]
+  )
+
+  const selectedCount = selectedLinks.length
+  const visibleSelectedCount = visibleLinks.filter(link => selectedLinkIds.has(link.id)).length
+  const allVisibleSelected = visibleLinks.length > 0 && visibleSelectedCount === visibleLinks.length
 
   const patchDraft = (patch: Partial<TriggerLinkDraft>) => {
     setDraft(current => ({ ...current, ...patch }))
@@ -118,6 +137,31 @@ export const TriggerLinks: React.FC = () => {
     } catch {
       showToast('error', 'No se pudo copiar', 'Copia el enlace manualmente.')
     }
+  }
+
+  const toggleLinkSelection = (linkId: string) => {
+    setSelectedLinkIds(current => {
+      const next = new Set(current)
+      if (next.has(linkId)) next.delete(linkId)
+      else next.add(linkId)
+      return next
+    })
+  }
+
+  const toggleVisibleSelection = () => {
+    setSelectedLinkIds(current => {
+      const next = new Set(current)
+      if (allVisibleSelected) {
+        visibleLinks.forEach(link => next.delete(link.id))
+      } else {
+        visibleLinks.forEach(link => next.add(link.id))
+      }
+      return next
+    })
+  }
+
+  const clearSelection = () => {
+    setSelectedLinkIds(new Set())
   }
 
   const buildPayload = (): SaveTriggerLinkInput | null => {
@@ -182,6 +226,37 @@ export const TriggerLinks: React.FC = () => {
     )
   }
 
+  const handleDeleteSelectedLinks = () => {
+    if (!selectedLinks.length || deletingLinks) return
+
+    const linksToDelete = selectedLinks
+    const total = linksToDelete.length
+    showConfirm(
+      'Eliminar enlaces seleccionados',
+      `Se eliminarán ${total} enlace${total === 1 ? '' : 's'} de disparo. Sus URLs públicas dejarán de funcionar y los disparos históricos se conservarán para consulta interna.`,
+      () => {
+        const archive = async () => {
+          setDeletingLinks(true)
+          try {
+            await Promise.all(linksToDelete.map(link => triggerLinksService.delete(link.id)))
+            clearSelection()
+            await loadLinks()
+            showToast('success', 'Enlaces eliminados', `${total} enlace${total === 1 ? '' : 's'} ya no están activos.`)
+          } catch (error) {
+            showToast('error', 'No se pudieron eliminar', error instanceof Error ? error.message : 'Intenta otra vez')
+          } finally {
+            setDeletingLinks(false)
+          }
+        }
+        void archive()
+      },
+      'Eliminar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
+    )
+  }
+
   const renderFilterButton = () => (
     <div className={`${styles.folderRow} ${styles.folderSystemRow} ${styles.folderSystemRowActive}`}>
       <button type="button" aria-current="true">
@@ -224,6 +299,25 @@ export const TriggerLinks: React.FC = () => {
             <span>{visibleLinks.length} enlaces</span>
           </div>
 
+          {selectedCount > 0 && (
+            <div className={styles.selectionBar}>
+              <strong>{selectedCount} seleccionado{selectedCount === 1 ? '' : 's'}</strong>
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={handleDeleteSelectedLinks}
+                loading={deletingLinks}
+                leftIcon={<Trash2 size={15} />}
+              >
+                Eliminar
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={clearSelection} disabled={deletingLinks} leftIcon={<X size={15} />}>
+                Limpiar
+              </Button>
+            </div>
+          )}
+
           {loading ? (
             <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando enlaces">
               <Loader2 className={styles.spin} size={22} aria-hidden="true" />
@@ -239,6 +333,15 @@ export const TriggerLinks: React.FC = () => {
               <table className={`${styles.table} ${styles.plainTable}`}>
                 <thead>
                   <tr>
+                    <th className={styles.selectionHead}>
+                      <input
+                        type="checkbox"
+                        aria-label="Seleccionar enlaces visibles"
+                        checked={allVisibleSelected}
+                        disabled={visibleLinks.length === 0 || deletingLinks}
+                        onChange={toggleVisibleSelection}
+                      />
+                    </th>
                     <th>Enlace</th>
                     <th>Parámetro</th>
                     <th>Destino</th>
@@ -248,9 +351,21 @@ export const TriggerLinks: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleLinks.map(link => (
-                    <tr key={link.id}>
-                      <td>
+                  {visibleLinks.map(link => {
+                    const selected = selectedLinkIds.has(link.id)
+                    return (
+                    <tr key={link.id} className={selected ? styles.rowSelected : ''}>
+                      <td className={styles.selectionCell}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Seleccionar ${link.name}`}
+                          checked={selected}
+                          disabled={deletingLinks}
+                          onChange={() => toggleLinkSelection(link.id)}
+                          onClick={(event) => event.stopPropagation()}
+                        />
+                      </td>
+                      <td className={styles.primaryCell}>
                         <strong>{link.name}</strong>
                         <span>{link.publicUrl}</span>
                       </td>
@@ -275,7 +390,8 @@ export const TriggerLinks: React.FC = () => {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

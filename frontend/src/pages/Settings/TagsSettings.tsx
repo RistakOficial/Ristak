@@ -77,6 +77,7 @@ export const TagsSettings: React.FC = () => {
   const [draft, setDraft] = useState<TagDraft>(emptyDraft())
   const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(() => new Set())
   const [movingTags, setMovingTags] = useState(false)
+  const [deletingTags, setDeletingTags] = useState(false)
   const [draggingTagIds, setDraggingTagIds] = useState<string[]>([])
   const [dropTarget, setDropTarget] = useState<FolderFilter | null>(null)
   const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null)
@@ -147,6 +148,7 @@ export const TagsSettings: React.FC = () => {
   const selectedCount = selectedTags.length
   const visibleSelectedCount = visibleSelectableTags.filter(tag => selectedTagIds.has(tag.id)).length
   const allVisibleSelected = visibleSelectableTags.length > 0 && visibleSelectedCount === visibleSelectableTags.length
+  const selectionBusy = movingTags || deletingTags
   const isDraggingTags = draggingTagIds.length > 0
 
   const openCreateEditor = () => {
@@ -277,6 +279,37 @@ export const TagsSettings: React.FC = () => {
 
   const clearSelection = () => {
     setSelectedTagIds(new Set())
+  }
+
+  const handleDeleteSelectedTags = () => {
+    if (!selectedTags.length || deletingTags) return
+
+    const tagsToDelete = selectedTags
+    const total = tagsToDelete.length
+    showConfirm(
+      'Eliminar etiquetas seleccionadas',
+      `Se eliminarán ${total} etiqueta${total === 1 ? '' : 's'} del sistema y también se quitarán de todos los contactos que las tienen. Esta acción no se puede deshacer.`,
+      () => {
+        const remove = async () => {
+          setDeletingTags(true)
+          try {
+            await Promise.all(tagsToDelete.map(tag => contactTagsService.deleteTag(tag.id)))
+            clearSelection()
+            await loadCatalog()
+            showToast('success', 'Etiquetas eliminadas', `${total} etiqueta${total === 1 ? '' : 's'} se quitaron de todos los contactos que las tenían.`)
+          } catch (error) {
+            showToast('error', 'No se pudieron eliminar', error instanceof Error ? error.message : 'Intenta otra vez')
+          } finally {
+            setDeletingTags(false)
+          }
+        }
+        void remove()
+      },
+      'Eliminar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
+    )
   }
 
   const moveTagsToFolder = async (tagIds: string[], folderId: string, targetLabel?: string) => {
@@ -520,7 +553,7 @@ export const TagsSettings: React.FC = () => {
               <strong>{selectedCount} seleccionada{selectedCount === 1 ? '' : 's'}</strong>
               <CustomSelect
                 defaultValue=""
-                disabled={movingTags}
+                disabled={selectionBusy}
                 onChange={(event) => {
                   handleMoveSelectedChange(event.target.value)
                   event.currentTarget.value = ''
@@ -533,9 +566,20 @@ export const TagsSettings: React.FC = () => {
                 ))}
                 <option value="__new_folder">Crear carpeta...</option>
               </CustomSelect>
-              <button type="button" onClick={clearSelection} disabled={movingTags}>
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={handleDeleteSelectedTags}
+                loading={deletingTags}
+                disabled={selectionBusy}
+                leftIcon={<Trash2 size={15} />}
+              >
+                Eliminar
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={clearSelection} disabled={selectionBusy} leftIcon={<X size={15} />}>
                 Limpiar
-              </button>
+              </Button>
             </div>
           )}
 
@@ -579,7 +623,7 @@ export const TagsSettings: React.FC = () => {
                     <tr
                       key={tag.id}
                       className={`${systemTag ? styles.lockedRow : styles.draggableRow} ${selected ? styles.rowSelected : ''} ${dragging ? styles.rowDragging : ''}`}
-                      draggable={!movingTags && !systemTag}
+                      draggable={!selectionBusy && !systemTag}
                       onDragStart={(event) => handleTagDragStart(tag, event)}
                       onDragEnd={handleDragEnd}
                     >
@@ -588,7 +632,7 @@ export const TagsSettings: React.FC = () => {
                           type="checkbox"
                           aria-label={systemTag ? `${tag.name} protegida por el sistema` : `Seleccionar ${tag.name}`}
                           checked={selected}
-                          disabled={systemTag}
+                          disabled={systemTag || selectionBusy}
                           onChange={() => toggleTagSelection(tag.id)}
                           onClick={(event) => event.stopPropagation()}
                         />

@@ -332,28 +332,28 @@
 .selectionBar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   min-height: 44px;
   margin: -2px 0 12px;
   padding: 0 12px;
-  border: 1px solid rgba(var(--color-primary-rgb), 0.22);
-  border-radius: 8px;
-  background: rgba(var(--color-primary-rgb), 0.08);
+  border: 1px solid var(--accent-soft);
+  border-radius: var(--radius-ctl);
+  background: var(--accent-soft);
 }
 
 .selectionBar strong {
-  color: var(--color-text-primary);
+  color: var(--text);
   font-size: 13px;
   font-weight: 760;
 }
 
-.selectionBar select,
-.selectionBar button {
+.selectionBar select {
   min-height: 32px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 8px;
-  background: var(--color-background-primary);
-  color: var(--color-text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
   font-size: 12px;
 }
 
@@ -362,9 +362,8 @@
   padding: 0 30px 0 10px;
 }
 
-.selectionBar button {
-  padding: 0 11px;
-  cursor: pointer;
+.selectionBar [data-btn] {
+  min-height: 32px;
 }
 
 .tableWrap {
@@ -451,7 +450,7 @@
   width: 16px;
   height: 16px;
   margin: 0;
-  accent-color: var(--color-primary);
+  accent-color: var(--accent);
   cursor: pointer;
 }
 
@@ -476,7 +475,7 @@
 }
 
 .rowSelected {
-  background: rgba(var(--color-primary-rgb), 0.075);
+  background: var(--accent-soft);
 }
 
 .rowDragging {
@@ -502,18 +501,21 @@
   line-height: 1.45;
 }
 
-.plainTable td:first-child {
+.plainTable .primaryCell,
+.plainTable td:first-child:not(.selectionCell) {
   min-width: 230px;
 }
 
-.plainTable td:first-child strong {
+.plainTable .primaryCell strong,
+.plainTable td:first-child:not(.selectionCell) strong {
   display: block;
   color: var(--color-text-primary);
   font-size: 14px;
   line-height: 1.3;
 }
 
-.plainTable td:first-child span {
+.plainTable .primaryCell span,
+.plainTable td:first-child:not(.selectionCell) span {
   display: block;
   max-width: 420px;
   margin-top: 4px;
@@ -753,7 +755,7 @@
 
   .headerActions button,
   .selectionBar select,
-  .selectionBar button {
+  .selectionBar [data-btn] {
     width: 100%;
   }
 }

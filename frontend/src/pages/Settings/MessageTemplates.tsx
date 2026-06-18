@@ -815,15 +815,17 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   }
 
   const deleteSelection = () => {
-    if (!selectedTotal || bulkWorking) return
+    if (!selectedTemplates.length || bulkWorking) return
 
+    const templatesToDelete = selectedTemplates
+    const total = templatesToDelete.length
     showConfirm(
       'Eliminar selección',
-      `Se eliminarán ${selectedTotal} plantilla${selectedTotal === 1 ? '' : 's'}.`,
+      `Se eliminarán ${total} plantilla${total === 1 ? '' : 's'}.`,
       async () => {
         setBulkWorking(true)
         try {
-          for (const template of selectedTemplates) {
+          for (const template of templatesToDelete) {
             await messageTemplatesService.deleteTemplate(template.id)
           }
           clearSelection()
@@ -836,7 +838,9 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         }
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 
@@ -1465,7 +1469,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                 <RefreshCw size={15} />
                 Sincronizar
               </Button>
-              <Button variant="danger" size="sm" onClick={deleteSelection} disabled={bulkWorking}>
+              <Button variant="danger" size="sm" onClick={deleteSelection} disabled={!selectedTemplates.length || bulkWorking}>
                 <Trash2 size={15} />
                 Eliminar
               </Button>
