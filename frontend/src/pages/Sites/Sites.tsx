@@ -8,6 +8,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragOverEvent,
   type DragStartEvent
 } from '@dnd-kit/core'
 import {
@@ -4242,7 +4243,6 @@ export const Sites: React.FC = () => {
   const [device, setDevice] = useState<DeviceMode>(routeState.device)
   const [createFlow, setCreateFlow] = useState<CreateFlow>(routeState.createFlow)
   const [activePageId, setActivePageId] = useState<string>(routeState.pageId || DEFAULT_FUNNEL_PAGE_ID)
-  const [draggingPageId, setDraggingPageId] = useState<string | null>(null)
   const [activeDragId, setActiveDragId] = useState<string | null>(null)
   const [paletteDragging, setPaletteDragging] = useState(false)
   const [paletteDragPayload, setPaletteDragPayload] = useState<PaletteDragPayload | null>(null)
@@ -5303,7 +5303,6 @@ export const Sites: React.FC = () => {
       setSelectedSite(null)
       setSelectedBlockId('')
       setActivePageId(DEFAULT_FUNNEL_PAGE_ID)
-      setDraggingPageId(null)
       setActiveDragId(null)
       setPaletteDragging(false)
       setPaletteDragPayload(null)
@@ -5331,7 +5330,6 @@ export const Sites: React.FC = () => {
       setSelectedSite(null)
       setSelectedBlockId('')
       setActivePageId(DEFAULT_FUNNEL_PAGE_ID)
-      setDraggingPageId(null)
       setActiveDragId(null)
       setPaletteDragging(false)
       setPaletteDragPayload(null)
@@ -5826,7 +5824,15 @@ export const Sites: React.FC = () => {
     )
   }
 
-  const handleReorderPages = (sourcePageId: string, targetPageId: string) => {
+  const orderPagesByIds = (sourcePages: SitePage[], pageIds?: string[]) => {
+    if (!pageIds?.length) return sourcePages
+    const byId = new Map(sourcePages.map(page => [page.id, page]))
+    const ordered = pageIds.map(pageId => byId.get(pageId)).filter((page): page is SitePage => Boolean(page))
+    if (ordered.length !== sourcePages.length) return sourcePages
+    return ordered
+  }
+
+  const handleReorderPages = (sourcePageId: string, targetPageId: string, orderedPageIds?: string[]) => {
     if (!selectedSite || !canManagePages(selectedSite)) return
     if (!sourcePageId || sourcePageId === targetPageId) return
     if (isStandardForm(selectedSite)) {
@@ -5835,8 +5841,11 @@ export const Sites: React.FC = () => {
       const oldIndex = contentPages.findIndex(page => page.id === sourcePageId)
       const newIndex = contentPages.findIndex(page => page.id === targetPageId)
       if (oldIndex < 0 || newIndex < 0) return
+      const nextContentPages = orderedPageIds?.length
+        ? orderPagesByIds(contentPages, orderedPageIds)
+        : arrayMove(contentPages, oldIndex, newIndex)
       void persistFunnelPages([
-        ...arrayMove(contentPages, oldIndex, newIndex),
+        ...nextContentPages,
         ...pages.filter(isFormFinalPage)
       ], activePageId)
       return
@@ -5847,6 +5856,10 @@ export const Sites: React.FC = () => {
       if (!source || !target) return
       // Only reorder among siblings (same parent); moving a page across levels is not allowed.
       if ((source.parentPageId || '') !== (target.parentPageId || '')) return
+      if (orderedPageIds?.length) {
+        void persistFunnelPages(orderPagesByIds(pages, orderedPageIds), activePageId)
+        return
+      }
       const subtreeSet = new Set([sourcePageId, ...getDescendantPageIds(sourcePageId, pages)])
       const subtreePages = pages.filter(page => subtreeSet.has(page.id))
       const without = pages.filter(page => !subtreeSet.has(page.id))
@@ -5863,7 +5876,8 @@ export const Sites: React.FC = () => {
     const oldIndex = pages.findIndex(page => page.id === sourcePageId)
     const newIndex = pages.findIndex(page => page.id === targetPageId)
     if (oldIndex < 0 || newIndex < 0) return
-    void persistFunnelPages(arrayMove(pages, oldIndex, newIndex), activePageId)
+    const nextPages = orderedPageIds?.length ? orderPagesByIds(pages, orderedPageIds) : arrayMove(pages, oldIndex, newIndex)
+    void persistFunnelPages(nextPages, activePageId)
   }
 
   const handleRenamePage = (pageId: string, title: string) => {
@@ -7702,7 +7716,6 @@ export const Sites: React.FC = () => {
       pages={pages}
       activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
       locked={!canManagePages(editorSite) || editorAIGenerating}
-      draggingPageId={draggingPageId}
       colorFinalPages={isStandardForm(editorSite)}
       isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
       pageMode={getSitePageMode(editorSite)}
@@ -7719,7 +7732,6 @@ export const Sites: React.FC = () => {
       onAddPage={handleAddPage}
       onDuplicatePage={handleDuplicatePage}
       onDeletePage={handleDeletePage}
-      onDragPage={setDraggingPageId}
       onReorderPages={handleReorderPages}
       onRenamePage={handleRenamePage}
     />
@@ -19515,7 +19527,6 @@ interface FunnelPagesPanelProps {
   pages: SitePage[]
   activePageId: string
   locked?: boolean
-  draggingPageId: string | null
   colorFinalPages?: boolean
   isFixedPage?: (page: SitePage) => boolean
   pageMode?: 'funnel' | 'website'
@@ -19530,8 +19541,7 @@ interface FunnelPagesPanelProps {
   onAddPage: () => void
   onDuplicatePage: (pageId: string) => void
   onDeletePage: (pageId: string) => void
-  onDragPage: (pageId: string | null) => void
-  onReorderPages: (sourcePageId: string, targetPageId: string) => void
+  onReorderPages: (sourcePageId: string, targetPageId: string, orderedPageIds?: string[]) => void
   onRenamePage: (pageId: string, title: string) => void
 }
 
@@ -19539,7 +19549,6 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   pages,
   activePageId,
   locked = false,
-  draggingPageId,
   colorFinalPages = false,
   isFixedPage = () => false,
   pageMode = 'funnel',
@@ -19554,12 +19563,14 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   onAddPage,
   onDuplicatePage,
   onDeletePage,
-  onDragPage,
   onReorderPages,
   onRenamePage
 }) => {
   const [renamingPageId, setRenamingPageId] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
+  const [draggingPageId, setDraggingPageId] = useState<string | null>(null)
+  const [dragOrderedPageIds, setDragOrderedPageIds] = useState<string[] | null>(null)
+  const dragOrderedPageIdsRef = useRef<string[] | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
   const hasFixedPageSection = colorFinalPages
@@ -19570,6 +19581,12 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   const orderedItems = websiteMode
     ? buildOrderedPageTree(movablePages)
     : movablePages.map(page => ({ page, depth: 0 }))
+  const orderedItemById = useMemo(() => new Map(orderedItems.map(item => [item.page.id, item])), [orderedItems])
+  const visibleOrderedItems = useMemo(() => {
+    if (!dragOrderedPageIds || dragOrderedPageIds.length !== orderedItems.length) return orderedItems
+    const nextItems = dragOrderedPageIds.map(pageId => orderedItemById.get(pageId)).filter((item): item is { page: SitePage; depth: number } => Boolean(item))
+    return nextItems.length === orderedItems.length ? nextItems : orderedItems
+  }, [dragOrderedPageIds, orderedItemById, orderedItems])
 
   useEffect(() => {
     if (!open) return
@@ -19601,6 +19618,9 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   useEffect(() => {
     if (!open) {
       setRenamingPageId(null)
+      setDraggingPageId(null)
+      setDragOrderedPageIds(null)
+      dragOrderedPageIdsRef.current = null
     }
   }, [open])
 
@@ -19615,16 +19635,75 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
     const pageId = String(event.active.id)
     const page = movablePages.find(item => item.id === pageId)
     if (!page || locked || isFixedPage(page)) return
-    onDragPage(pageId)
+    const initialOrder = orderedItems.map(item => item.page.id)
+    setDraggingPageId(pageId)
+    setDragOrderedPageIds(initialOrder)
+    dragOrderedPageIdsRef.current = initialOrder
+  }
+
+  const canSortPageOver = (sourcePageId: string, targetPageId: string) => {
+    if (!sourcePageId || !targetPageId || sourcePageId === targetPageId) return false
+    const source = movablePages.find(page => page.id === sourcePageId)
+    const target = movablePages.find(page => page.id === targetPageId)
+    if (!source || !target || locked || isFixedPage(source) || isFixedPage(target)) return false
+    return !websiteMode || (source.parentPageId || '') === (target.parentPageId || '')
+  }
+
+  const handlePageDragOver = (event: DragOverEvent) => {
+    const sourcePageId = String(event.active.id)
+    const targetPageId = event.over?.id ? String(event.over.id) : ''
+    if (!canSortPageOver(sourcePageId, targetPageId)) return
+
+    setDragOrderedPageIds(current => {
+      const currentIds = current?.length ? current : orderedItems.map(item => item.page.id)
+      const oldIndex = currentIds.indexOf(sourcePageId)
+      const newIndex = currentIds.indexOf(targetPageId)
+      if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) {
+        dragOrderedPageIdsRef.current = currentIds
+        return currentIds
+      }
+
+      if (websiteMode) {
+        const subtreeIds = new Set([sourcePageId, ...getDescendantPageIds(sourcePageId, movablePages)])
+        const movingIds = currentIds.filter(pageId => subtreeIds.has(pageId))
+        const remainingIds = currentIds.filter(pageId => !subtreeIds.has(pageId))
+        const targetIndex = remainingIds.indexOf(targetPageId)
+        if (targetIndex < 0 || movingIds.length === 0) {
+          dragOrderedPageIdsRef.current = currentIds
+          return currentIds
+        }
+        const insertIndex = oldIndex < newIndex ? targetIndex + 1 : targetIndex
+        const nextIds = [
+          ...remainingIds.slice(0, insertIndex),
+          ...movingIds,
+          ...remainingIds.slice(insertIndex)
+        ]
+        dragOrderedPageIdsRef.current = nextIds
+        return nextIds
+      }
+
+      const nextIds = arrayMove(currentIds, oldIndex, newIndex)
+      dragOrderedPageIdsRef.current = nextIds
+      return nextIds
+    })
   }
 
   const handlePageDragEnd = (event: DragEndEvent) => {
     const sourcePageId = String(event.active.id)
     const targetPageId = event.over?.id ? String(event.over.id) : ''
-    onDragPage(null)
-    if (!targetPageId || sourcePageId === targetPageId) return
+    const finalOrderedPageIds = dragOrderedPageIdsRef.current || dragOrderedPageIds || orderedItems.map(item => item.page.id)
+    setDraggingPageId(null)
+    setDragOrderedPageIds(null)
+    dragOrderedPageIdsRef.current = null
+    if (!canSortPageOver(sourcePageId, targetPageId)) return
     if (hasFixedPageSection && fixedPages.some(page => page.id === targetPageId)) return
-    onReorderPages(sourcePageId, targetPageId)
+    onReorderPages(sourcePageId, targetPageId, finalOrderedPageIds)
+  }
+
+  const handlePageDragCancel = () => {
+    setDraggingPageId(null)
+    setDragOrderedPageIds(null)
+    dragOrderedPageIdsRef.current = null
   }
 
   return (
@@ -19693,12 +19772,13 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
             sensors={pageSensors}
             collisionDetection={closestCenter}
             onDragStart={handlePageDragStart}
+            onDragOver={handlePageDragOver}
             onDragEnd={handlePageDragEnd}
-            onDragCancel={() => onDragPage(null)}
+            onDragCancel={handlePageDragCancel}
           >
-            <SortableContext items={orderedItems.map(item => item.page.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={visibleOrderedItems.map(item => item.page.id)} strategy={verticalListSortingStrategy}>
               <div className={styles.pagesDropdownList}>
-                {orderedItems.map(({ page, depth }, index) => {
+                {visibleOrderedItems.map(({ page, depth }, index) => {
                   const fixedPage = isFixedPage(page)
                   const pageCanDelete = !locked && canDeletePage(page)
                   const pageCanDuplicate = !locked && canDuplicatePage(page)
