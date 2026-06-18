@@ -23,7 +23,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { formatCurrency, formatRoas, formatDateToISO, formatEndDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber } from '@/utils/format'
 import { campaignsService, type CampaignContact } from '@/services/campaignsService'
 import { reportsService, type CampaignsReport } from '@/services/reportsService'
-import { useAppConfig, useMetaTimezone } from '@/hooks'
+import { useAppConfig, useMetaTimezone, useUrlDateRangeSync } from '@/hooks'
 import styles from './Campaigns.module.css'
 
 interface AdData {
@@ -308,6 +308,11 @@ export const Campaigns: React.FC = () => {
   const [highlightedRowKey, setHighlightedRowKey] = useState<string | null>(null)
   const handledOpenCampaignRef = React.useRef<string | null>(null)
   const adjustedCampaignRangeRef = React.useRef<string | null>(null)
+
+  useUrlDateRangeSync({
+    dateRange,
+    setDateRange
+  })
 
   useEffect(() => {
     const nextPath = buildCampaignsPath(routeState.viewMode, routeState.campaignTableView, routeState.winnersCategory)

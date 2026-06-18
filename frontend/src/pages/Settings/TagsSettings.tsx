@@ -15,6 +15,7 @@ import {
 import { Button, CustomSelect, PageHeader } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useUrlStringState } from '@/hooks'
 import {
   contactTagsService,
   type ContactTag,
@@ -34,6 +35,8 @@ import styles from './CustomFields.module.css'
  */
 
 type FolderFilter = 'all' | 'unfiled' | string
+const isFolderFilterParam = (value?: string | null): value is FolderFilter => typeof value === 'string' && value.length > 0
+const isSearchParam = (value?: string | null): value is string => typeof value === 'string'
 
 type TagDraft = {
   name: string
@@ -64,8 +67,8 @@ export const TagsSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [folders, setFolders] = useState<ContactTagFolder[]>([])
   const [tags, setTags] = useState<ContactTag[]>([])
-  const [activeFolder, setActiveFolder] = useState<FolderFilter>('all')
-  const [search, setSearch] = useState('')
+  const [activeFolder, setActiveFolder] = useUrlStringState<FolderFilter>('folder', 'all', isFolderFilterParam)
+  const [search, setSearch] = useUrlStringState<string>('q', '', isSearchParam)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [creatingFolder, setCreatingFolder] = useState(false)

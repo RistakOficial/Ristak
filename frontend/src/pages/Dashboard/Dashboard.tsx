@@ -22,7 +22,7 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { useAppConfig } from '@/hooks'
+import { useAppConfig, useUrlDateRangeSync } from '@/hooks'
 import { dashboardService, type DashboardMetrics, type ChartData, type DashboardVisitorDetail } from '@/services/dashboardService'
 import { trackingService } from '@/services/trackingService'
 import { reportsService, type ContactListItem } from '@/services/reportsService'
@@ -499,6 +499,11 @@ export const Dashboard: React.FC = () => {
   const [recentContacts, setRecentContacts] = useState<ContactListItem[]>([])
   const [chartInsightModal, setChartInsightModal] = useState<ChartInsightModalState>(emptyChartInsightModal)
 
+  useUrlDateRangeSync({
+    dateRange,
+    setDateRange
+  })
+
   const funnelChartData = React.useMemo(() => {
     if (analyticsEnabled) return funnelData
     return funnelData.filter((stage) => stage.stage?.trim().toLowerCase() !== 'visitantes')
@@ -867,9 +872,9 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     if (!analyticsEnabled && selectedChartView === 'visitors-leads') {
       setSelectedChartView('revenue-spend')
-      navigate(buildDashboardChartPath('revenue-spend'), { replace: true })
+      navigate({ pathname: buildDashboardChartPath('revenue-spend'), search: location.search }, { replace: true })
     }
-  }, [analyticsEnabled, navigate, selectedChartView])
+  }, [analyticsEnabled, location.search, navigate, selectedChartView])
 
   // Cargar datasets extendidos del gráfico solo cuando sean necesarios
   const loadExtendedChartData = React.useCallback(async () => {
@@ -1632,7 +1637,7 @@ export const Dashboard: React.FC = () => {
                   onChange={(value) => {
                     if (isDashboardChartView(value)) {
                       setSelectedChartView(value)
-                      navigate(buildDashboardChartPath(value))
+                      navigate({ pathname: buildDashboardChartPath(value), search: location.search })
                     }
                   }}
                 />

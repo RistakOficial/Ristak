@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   DndContext,
   DragOverlay,
@@ -110,8 +110,9 @@ import {
 } from '@/components/common'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAIAgentAvailability } from '@/hooks'
+import { useAIAgentAvailability, useUrlDateRangeSync } from '@/hooks'
 import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
+import { setSearchParam } from '@/utils/urlState'
 import {
   blockLabels,
   fieldBlockTypes,
@@ -178,6 +179,9 @@ import { buildCanvasTheme } from './sitesCanvasTheme'
 type SitesSection = 'landings' | 'forms' | 'leads' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
 type SitesAnalyticsSiteType = 'sites' | 'forms' | 'videos'
+const sitesAnalyticsSiteTypes: SitesAnalyticsSiteType[] = ['sites', 'forms', 'videos']
+const isSitesAnalyticsSiteType = (value?: string | null): value is SitesAnalyticsSiteType =>
+  sitesAnalyticsSiteTypes.includes(value as SitesAnalyticsSiteType)
 type CreateFlow =
   | 'closed'
   | 'landing-start'
@@ -4866,10 +4870,17 @@ export const Sites: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
   const routeState = useMemo(
     () => parseSitesRoute(location.pathname, location.search),
     [location.pathname, location.search]
   )
+  const routeAnalyticsSiteType = useMemo<SitesAnalyticsSiteType>(
+    () => isSitesAnalyticsSiteType(searchParams.get('type')) ? searchParams.get('type') as SitesAnalyticsSiteType : 'sites',
+    [searchParams]
+  )
+  const routeAnalyticsSiteId = searchParams.get('siteId') || ''
+  const routeAnalyticsVideoId = searchParams.get('videoId') || ''
   const routeHasBlockParam = useMemo(() => new URLSearchParams(location.search).has('block'), [location.search])
   const { configured: aiAgentConfigured } = useAIAgentAvailability()
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
@@ -4906,9 +4917,9 @@ export const Sites: React.FC = () => {
   const [loadingLeads, setLoadingLeads] = useState(false)
   const [siteVideoAssets, setSiteVideoAssets] = useState<MediaAsset[]>([])
   const [loadingSiteVideos, setLoadingSiteVideos] = useState(false)
-  const [sitesAnalyticsSiteType, setSitesAnalyticsSiteType] = useState<SitesAnalyticsSiteType>('sites')
-  const [sitesAnalyticsSiteId, setSitesAnalyticsSiteId] = useState('')
-  const [sitesAnalyticsVideoId, setSitesAnalyticsVideoId] = useState('')
+  const [sitesAnalyticsSiteType, setSitesAnalyticsSiteType] = useState<SitesAnalyticsSiteType>(routeAnalyticsSiteType)
+  const [sitesAnalyticsSiteId, setSitesAnalyticsSiteId] = useState(routeAnalyticsSiteId)
+  const [sitesAnalyticsVideoId, setSitesAnalyticsVideoId] = useState(routeAnalyticsVideoId)
   const [sitesVideoAnalytics, setSitesVideoAnalytics] = useState<MediaStreamAnalytics | null>(null)
   const [sitesVideoAnalyticsLoading, setSitesVideoAnalyticsLoading] = useState(false)
   const [sitesVideoAnalyticsError, setSitesVideoAnalyticsError] = useState('')
@@ -4945,6 +4956,50 @@ export const Sites: React.FC = () => {
   const pendingBlockOrderScopesRef = useRef<Set<string>>(new Set())
   const pendingImportedCodeDraftsRef = useRef<Map<string, string>>(new Map())
   const savingPendingEditorRef = useRef(false)
+
+  const updateSitesAnalyticsQuery = useCallback((patch: {
+    type?: SitesAnalyticsSiteType
+    siteId?: string
+    videoId?: string
+  }) => {
+    const nextParams = new URLSearchParams(searchParams)
+    if (patch.type !== undefined) setSearchParam(nextParams, 'type', patch.type, 'sites')
+    if (patch.siteId !== undefined) setSearchParam(nextParams, 'siteId', patch.siteId)
+    if (patch.videoId !== undefined) setSearchParam(nextParams, 'videoId', patch.videoId)
+    setSearchParams(nextParams, { replace: true })
+  }, [searchParams, setSearchParams])
+
+  useEffect(() => {
+    if (section !== 'analytics') return
+    setSitesAnalyticsSiteType(current => current === routeAnalyticsSiteType ? current : routeAnalyticsSiteType)
+    setSitesAnalyticsSiteId(current => current === routeAnalyticsSiteId ? current : routeAnalyticsSiteId)
+    setSitesAnalyticsVideoId(current => current === routeAnalyticsVideoId ? current : routeAnalyticsVideoId)
+  }, [routeAnalyticsSiteId, routeAnalyticsSiteType, routeAnalyticsVideoId, section])
+
+  useUrlDateRangeSync({
+    dateRange,
+    setDateRange,
+    enabled: section === 'analytics'
+  })
+
+  const handleSitesAnalyticsTypeChange = useCallback((value: SitesAnalyticsSiteType) => {
+    setSitesAnalyticsSiteType(value)
+    setSitesAnalyticsSiteId('')
+    setSitesAnalyticsVideoId('')
+    setSitesVideoAnalytics(null)
+    setSitesVideoAnalyticsError('')
+    updateSitesAnalyticsQuery({ type: value, siteId: '', videoId: '' })
+  }, [updateSitesAnalyticsQuery])
+
+  const handleSitesAnalyticsSiteChange = useCallback((value: string) => {
+    setSitesAnalyticsSiteId(value)
+    updateSitesAnalyticsQuery({ siteId: value })
+  }, [updateSitesAnalyticsQuery])
+
+  const handleSitesAnalyticsVideoChange = useCallback((value: string) => {
+    setSitesAnalyticsVideoId(value)
+    updateSitesAnalyticsQuery({ videoId: value })
+  }, [updateSitesAnalyticsQuery])
 
   const markEditorExitInProgress = () => {
     suppressEditorRouteRestoreRef.current = true
@@ -5056,20 +5111,23 @@ export const Sites: React.FC = () => {
     if (!sitesAnalyticsSiteId) return
     if (!analyticsSites.some(site => site.id === sitesAnalyticsSiteId)) {
       setSitesAnalyticsSiteId('')
+      updateSitesAnalyticsQuery({ siteId: '' })
     }
-  }, [analyticsSites, sitesAnalyticsSiteId])
+  }, [analyticsSites, sitesAnalyticsSiteId, updateSitesAnalyticsQuery])
   useEffect(() => {
     if (section !== 'analytics') return
     if (sitesAnalyticsSiteType !== 'videos') {
       if (sitesAnalyticsVideoId) {
         setSitesAnalyticsVideoId('')
+        updateSitesAnalyticsQuery({ videoId: '' })
       }
       return
     }
     if (sitesAnalyticsVideoId && !filteredAnalyticsVideos.some(asset => asset.id === sitesAnalyticsVideoId)) {
       setSitesAnalyticsVideoId('')
+      updateSitesAnalyticsQuery({ videoId: '' })
     }
-  }, [filteredAnalyticsVideos, section, sitesAnalyticsSiteType, sitesAnalyticsVideoId])
+  }, [filteredAnalyticsVideos, section, sitesAnalyticsSiteType, sitesAnalyticsVideoId, updateSitesAnalyticsQuery])
   const blocks = useMemo(
     () => [...(selectedSite?.blocks || [])].sort((a, b) => a.sortOrder - b.sortOrder),
     [selectedSite?.blocks]
@@ -8771,15 +8829,9 @@ export const Sites: React.FC = () => {
                 analyticsError={sitesVideoAnalyticsError}
                 startDate={formatDateToISO(dateRange.start)}
                 endDate={formatDateToISO(dateRange.end)}
-                onSiteTypeChange={(value) => {
-                  setSitesAnalyticsSiteType(value)
-                  setSitesAnalyticsSiteId('')
-                  setSitesAnalyticsVideoId('')
-                  setSitesVideoAnalytics(null)
-                  setSitesVideoAnalyticsError('')
-                }}
-                onSiteChange={setSitesAnalyticsSiteId}
-                onVideoChange={setSitesAnalyticsVideoId}
+                onSiteTypeChange={handleSitesAnalyticsTypeChange}
+                onSiteChange={handleSitesAnalyticsSiteChange}
+                onVideoChange={handleSitesAnalyticsVideoChange}
                 onDateRangeChange={(start, end) => setDateRange({
                   start: parseLocalDateString(start),
                   end: parseLocalDateString(end),

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Card,
   KpiCard,
@@ -30,7 +30,8 @@ import {
 } from '@/services/reportsService'
 import { costsService, type Cost } from '@/services/costsService'
 import { formatCurrency, formatNumber, formatDate, formatDateToISO, parseLocalDateString } from '@/utils/format'
-import { useAppConfig, useChartHover, useMetaTimezone, useTableConfig } from '@/hooks'
+import { useAppConfig, useChartHover, useMetaTimezone, useTableConfig, useUrlDateRangeSync } from '@/hooks'
+import { readNumberParam, setSearchParam } from '@/utils/urlState'
 import { DEFAULT_BAR_RADIUS, getTopRoundedBarPath } from '@/components/common/chartShapes'
 import { ChartTooltip } from '@/components/common/ChartTooltip/ChartTooltip'
 import styles from './Reports.module.css'
@@ -102,6 +103,7 @@ const DEFAULT_REPORTS_COLUMN_ORDER = [
 type ViewType = 'day' | 'month' | 'year'
 type ReportType = 'cashflow' | 'attribution' | 'campaigns'
 type DisplayMode = 'table' | 'metrics'
+type ReportMonthPreset = 'last12' | 'thisYear' | 'custom'
 type ModalType = 'interesados' | 'sales' | 'appointments' | 'attendances' | 'customers'
 
 type MetricsLoadState = {
@@ -190,6 +192,7 @@ const displayTabs = [
 const reportDisplayModes: DisplayMode[] = ['table', 'metrics']
 const reportViewTypes: ViewType[] = ['day', 'month', 'year']
 const reportTypes: ReportType[] = ['cashflow', 'attribution', 'campaigns']
+const reportMonthPresets: ReportMonthPreset[] = ['last12', 'thisYear', 'custom']
 
 const isReportDisplayMode = (value?: string): value is DisplayMode =>
   reportDisplayModes.includes(value as DisplayMode)
@@ -199,6 +202,9 @@ const isReportViewType = (value?: string): value is ViewType =>
 
 const isReportType = (value?: string): value is ReportType =>
   reportTypes.includes(value as ReportType)
+
+const isReportMonthPreset = (value?: string | null): value is ReportMonthPreset =>
+  reportMonthPresets.includes(value as ReportMonthPreset)
 
 const buildReportsPath = (displayMode: DisplayMode, viewType: ViewType, reportType: ReportType) =>
   `/reports/${displayMode}/${viewType}/${reportType}`
@@ -716,7 +722,7 @@ const buildBusinessExpenseEditGuard = (
 const computeRangeForView = (
   viewType: ViewType,
   baseRange: { start: Date; end: Date },
-  monthPreset: 'last12' | 'thisYear' | 'custom',
+  monthPreset: ReportMonthPreset,
   yearRange: { start: number; end: number }
 ) => {
   if (viewType === 'day') {
@@ -1682,10 +1688,23 @@ const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({
 export const Reports: React.FC = () => {
   const location = useLocation()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { dateRange, setDateRange } = useDateRange()
   const { showToast } = useNotification()
   const { labels } = useLabels()
   const routeState = useMemo(() => parseReportsPath(location.pathname), [location.pathname])
+  const routeMonthPreset = useMemo<ReportMonthPreset>(
+    () => isReportMonthPreset(searchParams.get('preset')) ? searchParams.get('preset') as ReportMonthPreset : 'last12',
+    [searchParams]
+  )
+  const routeYearRange = useMemo(() => {
+    const nextRange = {
+      start: readNumberParam(searchParams, 'yearStart', defaultYearRange.start, { min: 2000, max: 2100 }),
+      end: readNumberParam(searchParams, 'yearEnd', defaultYearRange.end, { min: 2000, max: 2100 })
+    }
+
+    return nextRange.start <= nextRange.end ? nextRange : defaultYearRange
+  }, [searchParams])
 
   // Detectar discrepancia de timezone con Meta
   const timezoneInfo = useMetaTimezone()
@@ -1709,8 +1728,8 @@ export const Reports: React.FC = () => {
   }, [reportType])
   const [viewType, setViewType] = useState<ViewType>(routeState.viewType)
   const [displayMode, setDisplayMode] = useState<DisplayMode>(routeState.displayMode)
-  const [monthPreset, setMonthPreset] = useState<'last12' | 'thisYear' | 'custom'>('last12')
-  const [yearRange, setYearRange] = useState(defaultYearRange)
+  const [monthPreset, setMonthPreset] = useState<ReportMonthPreset>(routeMonthPreset)
+  const [yearRange, setYearRange] = useState(routeYearRange)
 
   const [metricsState, setMetricsState] = useState<MetricsLoadState>({ rows: [], viewType: null })
   const [metricsRange, setMetricsRange] = useState<ReportRange | null>(null)
@@ -1772,6 +1791,21 @@ export const Reports: React.FC = () => {
     setViewType(current => current === routeState.viewType ? current : routeState.viewType)
     setReportType(current => current === routeState.reportType ? current : routeState.reportType)
   }, [location.pathname, location.search, navigate, routeState.displayMode, routeState.reportType, routeState.viewType])
+
+  useEffect(() => {
+    setMonthPreset(current => current === routeMonthPreset ? current : routeMonthPreset)
+    setYearRange(current => (
+      current.start === routeYearRange.start && current.end === routeYearRange.end
+        ? current
+        : routeYearRange
+    ))
+  }, [routeMonthPreset, routeYearRange])
+
+  useUrlDateRangeSync({
+    dateRange,
+    setDateRange,
+    enabled: viewType === 'day' || (viewType === 'month' && monthPreset === 'custom')
+  })
 
   const navigateReportsView = useCallback((next: {
     displayMode?: DisplayMode
@@ -2762,7 +2796,15 @@ export const Reports: React.FC = () => {
   ] : []
 
   const handleMonthPresetChange = (value: string) => {
-    setMonthPreset(value as typeof monthPreset)
+    if (!isReportMonthPreset(value)) return
+    setMonthPreset(value)
+    const nextParams = new URLSearchParams(searchParams)
+    setSearchParam(nextParams, 'preset', value, 'last12')
+    if (value !== 'custom') {
+      nextParams.delete('from')
+      nextParams.delete('to')
+    }
+    setSearchParams(nextParams, { replace: true })
   }
 
   const handleYearRangeChange = (key: 'start' | 'end', delta: number) => {
@@ -2771,6 +2813,10 @@ export const Reports: React.FC = () => {
       if (updated.start > updated.end) {
         return prev
       }
+      const nextParams = new URLSearchParams(searchParams)
+      setSearchParam(nextParams, 'yearStart', updated.start, defaultYearRange.start)
+      setSearchParam(nextParams, 'yearEnd', updated.end, defaultYearRange.end)
+      setSearchParams(nextParams, { replace: true })
       return updated
     })
   }

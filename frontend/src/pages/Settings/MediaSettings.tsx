@@ -46,6 +46,7 @@ import {
   TabList
 } from '@/components/common'
 import { useDateRange } from '@/contexts/DateRangeContext'
+import { useUrlDateRangeSync, useUrlStringState } from '@/hooks'
 import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { useNotification } from '@/contexts/NotificationContext'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
@@ -62,6 +63,11 @@ import styles from './MediaSettings.module.css'
 
 type MediaFilter = 'all' | 'image' | 'video' | 'audio' | 'document' | 'other'
 type ViewMode = 'grid' | 'list'
+const mediaFilters: MediaFilter[] = ['all', 'image', 'video', 'audio', 'document', 'other']
+const viewModes: ViewMode[] = ['grid', 'list']
+const isMediaFilter = (value?: string | null): value is MediaFilter => mediaFilters.includes(value as MediaFilter)
+const isViewMode = (value?: string | null): value is ViewMode => viewModes.includes(value as ViewMode)
+const isQueryParam = (value?: string | null): value is string => typeof value === 'string'
 
 interface ExplorerFile {
   asset: MediaAsset
@@ -471,11 +477,15 @@ export const MediaSettings: React.FC = () => {
   const [bulkAction, setBulkAction] = useState<'download' | 'delete' | null>(null)
   const [moving, setMoving] = useState(false)
   const [error, setError] = useState('')
-  const [query, setQuery] = useState('')
-  const [activeFilter, setActiveFilter] = useState<MediaFilter>('all')
-  const [viewMode, setViewMode] = useState<ViewMode>('list')
-  const [currentPath, setCurrentPath] = useState('')
-  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
+  const [query, setQuery] = useUrlStringState<string>('q', '', isQueryParam)
+  const [activeFilter, setActiveFilter] = useUrlStringState<MediaFilter>('type', 'all', isMediaFilter)
+  const [viewMode, setViewMode] = useUrlStringState<ViewMode>('view', 'list', isViewMode)
+  const [currentPath, setCurrentPath] = useUrlStringState<string>('path', '', isQueryParam)
+  const [selectedAssetParam, setSelectedAssetParam] = useUrlStringState<string>('asset', '', isQueryParam)
+  const selectedAssetId = selectedAssetParam || null
+  const setSelectedAssetId = useCallback((value: string | null) => {
+    setSelectedAssetParam(value || '')
+  }, [setSelectedAssetParam])
   const [selectedItemKeys, setSelectedItemKeys] = useState<Set<string>>(() => new Set())
   const [moveDialog, setMoveDialog] = useState<MoveDialogState | null>(null)
   const [moveTargetPath, setMoveTargetPath] = useState('')
@@ -579,6 +589,11 @@ export const MediaSettings: React.FC = () => {
     return null
   }, [activeFilter, selectedFile, visibleFiles])
   const showVideoAnalytics = activeFilter === 'video' || selectedFile?.asset.mediaType === 'video'
+  useUrlDateRangeSync({
+    dateRange,
+    setDateRange,
+    enabled: showVideoAnalytics
+  })
   const usagePercent = Math.max(0, Math.min(100, Number(usage?.usage_percent || 0)))
   const filesCount = usage?.files_count ?? assets.length
   const folderPathParts = pathSegments(currentPath)

@@ -43,6 +43,14 @@ export const AIAgent: React.FC = () => {
                 </AIAgentFeatureRoute>
               )}
             />
+            <Route
+              path="conversational/:agentId"
+              element={(
+                <AIAgentFeatureRoute featureKeys={['conversational_ai', 'ai']}>
+                  <ConversationalAgentSettings />
+                </AIAgentFeatureRoute>
+              )}
+            />
             <Route path="*" element={<Navigate to={getFirstAllowedAIAgentPath(user)} replace />} />
           </Routes>
         </div>

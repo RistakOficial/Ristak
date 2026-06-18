@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { Button, PageHeader } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useUrlStringState } from '@/hooks'
 import {
   triggerLinksService,
   type TriggerLink,
@@ -26,6 +27,7 @@ type TriggerLinkDraft = {
   name: string
   destinationUrl: string
 }
+const isSearchParam = (value?: string | null): value is string => typeof value === 'string'
 
 const emptyDraft = (): TriggerLinkDraft => ({
   name: '',
@@ -47,7 +49,7 @@ const triggerLinkParameter = (link: Pick<TriggerLink, 'publicId'>) => `{{trigger
 export const TriggerLinks: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [links, setLinks] = useState<TriggerLink[]>([])
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useUrlStringState<string>('q', '', isSearchParam)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deletingLinks, setDeletingLinks] = useState(false)

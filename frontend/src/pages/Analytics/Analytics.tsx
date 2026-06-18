@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useDateRange } from '../../contexts/DateRangeContext'
 import { useTimezone } from '../../contexts/TimezoneContext'
 import { useLabels } from '../../contexts/LabelsContext'
+import { useUrlDateRangeSync, useUrlFilterState } from '../../hooks'
 import {
   PageContainer,
   PageHeader,
@@ -36,6 +37,7 @@ import { trackingService, type TrackingSession } from '../../services/trackingSe
 import type { ContactListItem } from '../../services/reportsService'
 import { formatDateToISO, parseLocalDateString, formatUrlParameter, formatChartNumber } from '../../utils/format'
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
+import { readNumberParam, setSearchParam } from '../../utils/urlState'
 
 type ViewType = 'day' | 'month' | 'year'
 type MonthPreset = 'last12' | 'thisYear' | 'custom'
@@ -64,10 +66,12 @@ const viewTabs = [
 ]
 
 const analyticsViewTypes: ViewType[] = ['day', 'month', 'year']
+const analyticsMonthPresets: MonthPreset[] = ['last12', 'thisYear', 'custom']
 const analyticsMainChartViews: AnalyticsMainChartView[] = ['traffic', 'visitors-registrations', 'sessions-visitors', 'identity-returning']
 const analyticsConversionChartViews: AnalyticsConversionChartView[] = ['registrations-customers', 'appointments-attendances', 'prospects-customers', 'messages-appointments', 'appointments-patients']
 const defaultAnalyticsViewType: ViewType = 'month'
 const isAnalyticsViewType = (value?: string): value is ViewType => analyticsViewTypes.includes(value as ViewType)
+const isAnalyticsMonthPreset = (value?: string | null): value is MonthPreset => analyticsMonthPresets.includes(value as MonthPreset)
 const isAnalyticsMainChartView = (value?: string): value is AnalyticsMainChartView => analyticsMainChartViews.includes(value as AnalyticsMainChartView)
 const isAnalyticsConversionChartView = (value?: string): value is AnalyticsConversionChartView => analyticsConversionChartViews.includes(value as AnalyticsConversionChartView)
 const parseAnalyticsRoute = (pathname: string) => {
@@ -918,7 +922,20 @@ const buildFilteredContactListFromSessions = (
 const Analytics: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
   const routeState = React.useMemo(() => parseAnalyticsRoute(location.pathname), [location.pathname])
+  const routeMonthPreset = React.useMemo<MonthPreset>(
+    () => isAnalyticsMonthPreset(searchParams.get('preset')) ? searchParams.get('preset') as MonthPreset : 'last12',
+    [searchParams]
+  )
+  const routeYearRange = React.useMemo(() => {
+    const nextRange = {
+      start: readNumberParam(searchParams, 'yearStart', defaultYearRange.start, { min: 2000, max: 2100 }),
+      end: readNumberParam(searchParams, 'yearEnd', defaultYearRange.end, { min: 2000, max: 2100 })
+    }
+
+    return nextRange.start <= nextRange.end ? nextRange : defaultYearRange
+  }, [searchParams])
   const { dateRange, setDateRange } = useDateRange()
   const { convertToLocalTime } = useTimezone()
   const { labels: appLabels } = useLabels()
@@ -942,7 +959,7 @@ const Analytics: React.FC = () => {
   ], [customersLabel, leadsLabel])
 
   // Estado para filtros
-  const [selectedFilters, setSelectedFilters] = useState<Record<string, string[]>>({})
+  const [selectedFilters, setSelectedFilters] = useUrlFilterState('filters')
   const [availableFilterData, setAvailableFilterData] = useState<any>({})
   const [allSessions, setAllSessions] = useState<Session[]>([])
   const [sessions, setSessions] = useState<Session[]>([])
@@ -959,8 +976,8 @@ const Analytics: React.FC = () => {
   const [browserData, setBrowserData] = useState<any[]>([])
   const [topVisitors, setTopVisitors] = useState<any[]>([])
   const [viewType, setViewType] = useState<ViewType>(routeState.viewType)
-  const [monthPreset, setMonthPreset] = useState<MonthPreset>('last12')
-  const [yearRange, setYearRange] = useState(defaultYearRange)
+  const [monthPreset, setMonthPreset] = useState<MonthPreset>(routeMonthPreset)
+  const [yearRange, setYearRange] = useState(routeYearRange)
   const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>(routeState.mainChart)
   const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>(routeState.conversionChart)
   const [conversionChartTouched, setConversionChartTouched] = useState(false)
@@ -971,18 +988,36 @@ const Analytics: React.FC = () => {
     conversionChart?: AnalyticsConversionChartView
     replace?: boolean
   }) => {
-    navigate(buildAnalyticsPath(
+    navigate({
+      pathname: buildAnalyticsPath(
       next?.viewType ?? viewType,
       next?.mainChart ?? selectedMainChartView,
       next?.conversionChart ?? selectedConversionChartView
-    ), { replace: next?.replace })
-  }, [navigate, selectedConversionChartView, selectedMainChartView, viewType])
+      ),
+      search: location.search
+    }, { replace: next?.replace })
+  }, [location.search, navigate, selectedConversionChartView, selectedMainChartView, viewType])
 
   useEffect(() => {
     setViewType(current => current === routeState.viewType ? current : routeState.viewType)
     setSelectedMainChartView(current => current === routeState.mainChart ? current : routeState.mainChart)
     setSelectedConversionChartView(current => current === routeState.conversionChart ? current : routeState.conversionChart)
   }, [routeState.conversionChart, routeState.mainChart, routeState.viewType])
+
+  useEffect(() => {
+    setMonthPreset(current => current === routeMonthPreset ? current : routeMonthPreset)
+    setYearRange(current => (
+      current.start === routeYearRange.start && current.end === routeYearRange.end
+        ? current
+        : routeYearRange
+    ))
+  }, [routeMonthPreset, routeYearRange])
+
+  useUrlDateRangeSync({
+    dateRange,
+    setDateRange,
+    enabled: viewType === 'day' || (viewType === 'month' && monthPreset === 'custom')
+  })
 
   // Guardar el valor ORIGINAL de registros para restaurar al quitar filtros
   const [originalRegistros, setOriginalRegistros] = useState<number>(0)
@@ -2029,7 +2064,15 @@ const Analytics: React.FC = () => {
       ]
 
   const handleMonthPresetChange = (value: string) => {
-    setMonthPreset(value as MonthPreset)
+    if (!isAnalyticsMonthPreset(value)) return
+    setMonthPreset(value)
+    const nextParams = new URLSearchParams(searchParams)
+    setSearchParam(nextParams, 'preset', value, 'last12')
+    if (value !== 'custom') {
+      nextParams.delete('from')
+      nextParams.delete('to')
+    }
+    setSearchParams(nextParams, { replace: true })
   }
 
   const handleYearRangeChange = (key: 'start' | 'end', delta: number) => {
@@ -2038,6 +2081,10 @@ const Analytics: React.FC = () => {
       if (updated.start > updated.end) {
         return prev
       }
+      const nextParams = new URLSearchParams(searchParams)
+      setSearchParam(nextParams, 'yearStart', updated.start, defaultYearRange.start)
+      setSearchParam(nextParams, 'yearEnd', updated.end, defaultYearRange.end)
+      setSearchParams(nextParams, { replace: true })
       return updated
     })
   }

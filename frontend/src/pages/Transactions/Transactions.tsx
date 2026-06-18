@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect } from '@/components/common'
@@ -30,7 +30,7 @@ import {
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { useAppConfig, useHighLevelConnected } from '@/hooks'
+import { useAppConfig, useHighLevelConnected, useUrlDateRangeSync, useUrlFilterState } from '@/hooks'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString, formatName } from '@/utils/format'
 import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { transactionsService, type Transaction, type TransactionSummary, type PaymentPlan } from '@/services/transactionsService'
@@ -372,8 +372,8 @@ export const Transactions: React.FC = () => {
   // Los planes de pago dependen de una integración de terceros (HighLevel).
   // Sin ella, Ristak solo registra transacciones locales: no hay tab de planes.
   const { connected: highLevelConnected } = useHighLevelConnected()
-  const [transactionStatusFilters, setTransactionStatusFilters] = useState<StatusFilters>({})
-  const [paymentPlanStatusFilters, setPaymentPlanStatusFilters] = useState<StatusFilters>({})
+  const [transactionStatusFilters, setTransactionStatusFilters] = useUrlFilterState('statusFilters')
+  const [paymentPlanStatusFilters, setPaymentPlanStatusFilters] = useUrlFilterState('planFilters')
   const [viewMode, setViewMode] = useState<TransactionsViewMode>(routeState.viewMode)
   const [showRecordPaymentModal, setShowRecordPaymentModal] = useState(false)
   const [isClient, setIsClient] = useState(false)
@@ -381,8 +381,18 @@ export const Transactions: React.FC = () => {
   const handledOpenPaymentRef = useRef<string | null>(null)
   const handledOpenPaymentPlanRef = useRef<string | null>(null)
 
+  const navigateTransactionsPath = useCallback((pathname: string, options?: { replace?: boolean }) => {
+    navigate({ pathname, search: location.search }, options)
+  }, [location.search, navigate])
+
+  useUrlDateRangeSync({
+    dateRange,
+    setDateRange,
+    enabled: paymentTableTab === 'transactions' && viewMode === 'by-date'
+  })
+
   const navigatePaymentsTable = (nextTab: PaymentsTableTab, nextViewMode = viewMode) => {
-    navigate(nextTab === 'payment-plans' ? buildPaymentPlansPath() : buildTransactionsPath(nextViewMode))
+    navigateTransactionsPath(nextTab === 'payment-plans' ? buildPaymentPlansPath() : buildTransactionsPath(nextViewMode))
   }
 
   useEffect(() => {
@@ -402,9 +412,9 @@ export const Transactions: React.FC = () => {
   useEffect(() => {
     if (!highLevelConnected && paymentTableTab === 'payment-plans') {
       setPaymentTableTab('transactions')
-      navigate(buildTransactionsPath(viewMode), { replace: true })
+      navigateTransactionsPath(buildTransactionsPath(viewMode), { replace: true })
     }
-  }, [highLevelConnected, navigate, paymentTableTab, viewMode])
+  }, [highLevelConnected, navigateTransactionsPath, paymentTableTab, viewMode])
 
   useEffect(() => {
     if (!highLevelConnected && routeState.tab === 'payment-plans') {
@@ -536,12 +546,12 @@ export const Transactions: React.FC = () => {
       purchases: 0
     }
     setModal({ type: 'edit', transaction, selectedContact: mockContact })
-    navigate(buildTransactionDetailPath(viewMode, transaction.id))
+    navigateTransactionsPath(buildTransactionDetailPath(viewMode, transaction.id))
   }
 
   const closeTransactionModal = () => {
     setModal({ type: null, selectedContact: null })
-    navigate(buildTransactionsPath(viewMode), { replace: true })
+    navigateTransactionsPath(buildTransactionsPath(viewMode), { replace: true })
   }
 
   const closePaymentPlanModal = () => {
@@ -550,7 +560,7 @@ export const Transactions: React.FC = () => {
       loading: false,
       saving: false
     })
-    navigate(buildPaymentPlansPath(), { replace: true })
+    navigateTransactionsPath(buildPaymentPlansPath(), { replace: true })
   }
 
   const openPaymentPlanCreateModal = () => {
@@ -564,7 +574,7 @@ export const Transactions: React.FC = () => {
       endType: 'never',
       monthlyMode: 'dayOfMonth'
     })
-    navigate('/transactions/payment-plans/new')
+    navigateTransactionsPath('/transactions/payment-plans/new')
   }
 
   const closePaymentPlanCreateModal = () => {
@@ -577,12 +587,12 @@ export const Transactions: React.FC = () => {
       endType: 'never',
       monthlyMode: 'dayOfMonth'
     })
-    navigate(buildPaymentPlansPath(), { replace: true })
+    navigateTransactionsPath(buildPaymentPlansPath(), { replace: true })
   }
 
   const handleOpenPaymentPlan = async (plan: PaymentPlan) => {
     setPaymentTableTab('payment-plans')
-    navigate(buildPaymentPlanDetailPath(plan.id))
+    navigateTransactionsPath(buildPaymentPlanDetailPath(plan.id))
     setPaymentPlanModal({
       plan,
       loading: true,
@@ -1775,7 +1785,7 @@ export const Transactions: React.FC = () => {
                 onTabChange={(value) => {
                   if (isTransactionsViewMode(value)) {
                     setViewMode(value)
-                    navigate(buildTransactionsPath(value))
+                    navigateTransactionsPath(buildTransactionsPath(value))
                   }
                 }}
                 variant="compact"
@@ -1811,7 +1821,7 @@ export const Transactions: React.FC = () => {
                 variant="secondary"
                 onClick={() => {
                   setShowRecordPaymentModal(true)
-                  navigate(buildCreateTransactionPath(viewMode))
+                  navigateTransactionsPath(buildCreateTransactionPath(viewMode))
                 }}
               >
                 <Plus size={16} />
@@ -2508,11 +2518,11 @@ export const Transactions: React.FC = () => {
         isOpen={showRecordPaymentModal}
         onClose={() => {
           setShowRecordPaymentModal(false)
-          navigate(buildTransactionsPath(viewMode), { replace: true })
+          navigateTransactionsPath(buildTransactionsPath(viewMode), { replace: true })
         }}
         onSuccess={() => {
           setShowRecordPaymentModal(false)
-          navigate(buildTransactionsPath(viewMode), { replace: true })
+          navigateTransactionsPath(buildTransactionsPath(viewMode), { replace: true })
           // El modal ya sincronizó el invoice específico desde GHL.
           // Solo recargar desde BD local (sin sync completo).
           fetchData()

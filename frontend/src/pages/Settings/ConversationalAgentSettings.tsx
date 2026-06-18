@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Bot, Brain, ChevronDown, FileText, Image as ImageIcon, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Trash2, Video, X } from 'lucide-react'
 import { Badge, Button, Card, CustomSelect, Modal, NumberInput, TagPicker } from '@/components/common'
 import {
@@ -59,6 +59,9 @@ import styles from './AIAgentSettings.module.css'
 
 const AUTOSAVE_DELAY_MS = 900
 const OMIT_ALL_CONFIRM_TEXT = 'OMITIR TODO'
+const buildConversationalAgentPath = (agentId?: string | null) => (
+  agentId ? `/ai-agent/conversational/${encodeURIComponent(agentId)}` : '/ai-agent/conversational'
+)
 
 const objectiveOptions: Array<{ value: ConversationalObjective; label: string; description: string }> = [
   { value: 'citas', label: 'Agendar citas', description: 'Debe llevar a la persona hasta una cita. Ejemplo: que termine pidiendo día y hora.' },
@@ -2705,6 +2708,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
 export const ConversationalAgentSettings: React.FC = () => {
   const navigate = useNavigate()
+  const { agentId: routeAgentIdParam } = useParams<{ agentId?: string }>()
+  const routeAgentId = routeAgentIdParam ? decodeURIComponent(routeAgentIdParam) : ''
   const { showToast, showConfirm } = useNotification()
   const openAIAvailability = useAIAgentAvailability()
   const [config, setConfig] = useState<ConversationalAgentConfig | null>(null)
@@ -2719,7 +2724,7 @@ export const ConversationalAgentSettings: React.FC = () => {
   const [filterOptions, setFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => routeAgentId || null)
   const [providerModalId, setProviderModalId] = useState<ConversationalAIProviderId | null>(null)
   const [aiProvidersExpanded, setAIProvidersExpanded] = useState(false)
   const [providerApiKey, setProviderApiKey] = useState('')
@@ -2829,6 +2834,23 @@ export const ConversationalAgentSettings: React.FC = () => {
       timers.clear()
     }
   }, [])
+
+  useEffect(() => {
+    if (loading) return
+
+    if (!routeAgentId) {
+      setSelectedAgentId(current => current ? null : current)
+      return
+    }
+
+    if (agents.some((agent) => agent.id === routeAgentId)) {
+      setSelectedAgentId(current => current === routeAgentId ? current : routeAgentId)
+      return
+    }
+
+    setSelectedAgentId(null)
+    navigate(buildConversationalAgentPath(), { replace: true })
+  }, [agents, loading, navigate, routeAgentId])
 
   const scheduleAgentSave = useCallback((agentId: string) => {
     const timers = saveTimersRef.current
@@ -2960,6 +2982,7 @@ export const ConversationalAgentSettings: React.FC = () => {
       }
       setAgents((current) => [...current, agent])
       setSelectedAgentId(agent.id)
+      navigate(buildConversationalAgentPath(agent.id))
       void refreshMetrics()
     } catch (error: any) {
       showToast('error', 'No se pudo crear', error?.message || 'Error al crear el agente')
@@ -2977,6 +3000,9 @@ export const ConversationalAgentSettings: React.FC = () => {
           await conversationalAgentService.deleteAgent(agent.id)
           setAgents((current) => current.filter((item) => item.id !== agent.id))
           setSelectedAgentId((current) => (current === agent.id ? null : current))
+          if (selectedAgentId === agent.id || routeAgentId === agent.id) {
+            navigate(buildConversationalAgentPath(), { replace: true })
+          }
           void refreshMetrics()
         } catch (error: any) {
           showToast('error', 'No se pudo eliminar', error?.message || 'Error al eliminar el agente')
@@ -3004,6 +3030,7 @@ export const ConversationalAgentSettings: React.FC = () => {
           setConfig(nextConfig)
           setAgents(updatedAgents)
           setSelectedAgentId(null)
+          navigate(buildConversationalAgentPath(), { replace: true })
           void refreshMetrics()
           showToast('success', 'Agente conversacional', 'Todo quedó omitido y apagado.')
         } catch (error: any) {
@@ -3127,7 +3154,10 @@ export const ConversationalAgentSettings: React.FC = () => {
           systemStrategy={systemStrategy}
           businessPromptStatus={businessPromptStatus}
           onConnectProvider={openProviderModal}
-          onBack={() => setSelectedAgentId(null)}
+          onBack={() => {
+            setSelectedAgentId(null)
+            navigate(buildConversationalAgentPath())
+          }}
           onChange={(patch) => handleAgentChange(selectedAgent.id, patch)}
           onDelete={() => handleDeleteAgent(selectedAgent)}
         />
@@ -3324,7 +3354,10 @@ export const ConversationalAgentSettings: React.FC = () => {
                 <button
                   type="button"
                   className={styles.agentDirectoryOpenButton}
-                  onClick={() => setSelectedAgentId(agent.id)}
+                  onClick={() => {
+                    setSelectedAgentId(agent.id)
+                    navigate(buildConversationalAgentPath(agent.id))
+                  }}
                 >
                   <div className={styles.agentDirectoryCardTop}>
                     <span className={`${styles.iconBox} ${agent.enabled ? '' : styles.iconBoxMuted}`}>

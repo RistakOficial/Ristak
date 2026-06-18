@@ -19,6 +19,7 @@ import {
 import { SiWhatsapp } from 'react-icons/si'
 import { Badge, Button, Modal, PageHeader } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useUrlStringState } from '@/hooks'
 import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
 import { MessageTemplates } from './MessageTemplates'
 import styles from './WhatsAppSettings.module.css'
@@ -34,6 +35,11 @@ type BusinessProfile = {
 type ConnectedSection = 'numbers' | 'templates' | 'alerts'
 type PhoneFilter = 'all' | 'main' | 'qr' | 'attention'
 type AlertFilter = 'all' | 'critical' | 'warning' | 'info'
+const phoneFilters: PhoneFilter[] = ['all', 'main', 'qr', 'attention']
+const alertFilters: AlertFilter[] = ['all', 'critical', 'warning', 'info']
+const isPhoneFilter = (value?: string | null): value is PhoneFilter => phoneFilters.includes(value as PhoneFilter)
+const isAlertFilter = (value?: string | null): value is AlertFilter => alertFilters.includes(value as AlertFilter)
+const isQueryText = (value?: string | null): value is string => typeof value === 'string'
 
 const YCLOUD_REGISTER_URL = 'https://www.ycloud.com/console/#/entry/register'
 const YCLOUD_CONSOLE_URL = 'https://www.ycloud.com/console/#/app/dashboard/analytics'
@@ -136,10 +142,10 @@ export const WhatsAppSettings: React.FC = () => {
   const location = useLocation()
   const routeSection = useMemo(() => parseWhatsAppSection(location.pathname), [location.pathname])
   const [activeSection, setActiveSection] = useState<ConnectedSection>(routeSection)
-  const [phoneFilter, setPhoneFilter] = useState<PhoneFilter>('all')
-  const [alertFilter, setAlertFilter] = useState<AlertFilter>('all')
-  const [phoneSearch, setPhoneSearch] = useState('')
-  const [alertSearch, setAlertSearch] = useState('')
+  const [phoneFilter, setPhoneFilter] = useUrlStringState<PhoneFilter>('phoneFilter', 'all', isPhoneFilter)
+  const [alertFilter, setAlertFilter] = useUrlStringState<AlertFilter>('alertFilter', 'all', isAlertFilter)
+  const [phoneSearch, setPhoneSearch] = useUrlStringState<string>('phoneSearch', '', isQueryText)
+  const [alertSearch, setAlertSearch] = useUrlStringState<string>('alertSearch', '', isQueryText)
   const [apiStatus, setApiStatus] = useState<WhatsAppApiStatus | null>(null)
   const [apiLoading, setApiLoading] = useState(true)
   const [apiConnecting, setApiConnecting] = useState(false)

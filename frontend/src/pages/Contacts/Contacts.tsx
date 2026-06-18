@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, Loading, TreeFilter, CustomSelect } from '@/components/common'
@@ -23,6 +23,7 @@ import {
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useLabels } from '@/contexts/LabelsContext'
+import { useUrlDateRangeSync, useUrlFilterState } from '@/hooks'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, formatUrlParameter, parseLocalDateString } from '@/utils/format'
 import { contactsService, type Contact, type ContactStats } from '@/services/contactsService'
 import { contactTagsService } from '@/services/contactTagsService'
@@ -518,7 +519,7 @@ const ContactsTable: React.FC = () => {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [stats, setStats] = useState<ContactStats | null>(null)
   const [filter, setFilter] = useState(routeState.filter)
-  const [selectedFilters, setSelectedFilters] = useState<Record<string, string[]>>({})
+  const [selectedFilters, setSelectedFilters] = useUrlFilterState('filters')
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
   const [selectedContactDetails, setSelectedContactDetails] = useState<Contact | null>(null)
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null)
@@ -548,12 +549,22 @@ const ContactsTable: React.FC = () => {
   const handledOpenContactRef = useRef<string | null>(null)
   const fetchRequestRef = useRef(0)
 
+  const navigateContactsPath = useCallback((pathname: string, options?: { replace?: boolean }) => {
+    navigate({ pathname, search: location.search }, options)
+  }, [location.search, navigate])
+
+  useUrlDateRangeSync({
+    dateRange,
+    setDateRange,
+    enabled: viewMode === 'by-date'
+  })
+
   const openContactModal = (contact: Contact) => {
     setSelectedContact(contact)
     setSelectedContactDetails(null)
     setSelectedContactId(contact.id)
     setContactDetailsLoading(true)
-    navigate(buildContactDetailPath(viewMode, filter, contact.id))
+    navigateContactsPath(buildContactDetailPath(viewMode, filter, contact.id))
   }
 
   const closeContactModal = () => {
@@ -561,7 +572,7 @@ const ContactsTable: React.FC = () => {
     setSelectedContactId(null)
     setContactDetailsLoading(false)
     setSelectedContactDetails(null)
-    navigate(buildContactsPath(viewMode, filter), { replace: true })
+    navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
   }
 
   useEffect(() => {
@@ -1724,7 +1735,7 @@ const ContactsTable: React.FC = () => {
                 {/* Editar */}
                 <DropdownMenuItem onClick={() => {
                   setEditingContact(item)
-                  navigate(`/contacts/${encodeURIComponent(item.id)}/edit`)
+                  navigateContactsPath(`/contacts/${encodeURIComponent(item.id)}/edit`)
                 }}>
                   <Pencil size={16} />
                   <span style={{ marginLeft: '8px' }}>Editar contacto</span>
@@ -1875,7 +1886,7 @@ const ContactsTable: React.FC = () => {
               onTabChange={(value) => {
                 if (isContactViewMode(value)) {
                   setViewMode(value)
-                  navigate(buildContactsPath(value, filter))
+                  navigateContactsPath(buildContactsPath(value, filter))
                 }
               }}
               variant="compact"
@@ -1898,7 +1909,7 @@ const ContactsTable: React.FC = () => {
               variant="secondary"
               onClick={() => {
                 setShowNewContactModal(true)
-                navigate('/contacts/new')
+                navigateContactsPath('/contacts/new')
               }}
             >
               <Plus size={16} />
@@ -1958,7 +1969,7 @@ const ContactsTable: React.FC = () => {
           activeFilter={filter}
           onFilterChange={(value) => {
             setFilter(value)
-            navigate(buildContactsPath(viewMode, value))
+            navigateContactsPath(buildContactsPath(viewMode, value))
           }}
           tableId="contacts_v2"
           selectionActions={contactSelectionToolbar}
@@ -2014,7 +2025,7 @@ const ContactsTable: React.FC = () => {
       {isClient && showNewContactModal && createPortal(
         <div className={styles.modalOverlay} onClick={() => {
           setShowNewContactModal(false)
-          navigate(buildContactsPath(viewMode, filter), { replace: true })
+          navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
         }}>
           <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
@@ -2026,7 +2037,7 @@ const ContactsTable: React.FC = () => {
 	                className={styles.closeButton}
 	                onClick={() => {
                     setShowNewContactModal(false)
-                    navigate(buildContactsPath(viewMode, filter), { replace: true })
+                    navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
                   }}
 	                type="button"
 	              >
@@ -2064,7 +2075,7 @@ const ContactsTable: React.FC = () => {
               <div className={styles.formActions}>
 	                <Button type="button" variant="ghost" onClick={() => {
                     setShowNewContactModal(false)
-                    navigate(buildContactsPath(viewMode, filter), { replace: true })
+                    navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
                   }}>
                   Cancelar
                 </Button>
@@ -2081,7 +2092,7 @@ const ContactsTable: React.FC = () => {
       {isClient && editingContact && createPortal(
         <div className={styles.modalOverlay} onClick={() => {
           setEditingContact(null)
-          navigate(buildContactsPath(viewMode, filter), { replace: true })
+          navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
         }}>
           <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
@@ -2090,7 +2101,7 @@ const ContactsTable: React.FC = () => {
 	                className={styles.closeButton}
 	                onClick={() => {
                     setEditingContact(null)
-                    navigate(buildContactsPath(viewMode, filter), { replace: true })
+                    navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
                   }}
 	              >
                 <X size={20} />
@@ -2109,7 +2120,7 @@ const ContactsTable: React.FC = () => {
               try {
 	                await contactsService.updateContact(editingContact.id, updatedContact)
 	                setEditingContact(null)
-                  navigate(buildContactsPath(viewMode, filter), { replace: true })
+                  navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
 	                showToast('success', '¡Contacto actualizado!', 'Los cambios se guardaron correctamente')
                 fetchData()
               } catch (error) {
@@ -2148,7 +2159,7 @@ const ContactsTable: React.FC = () => {
               <div className={styles.formActions}>
 	                <Button type="button" variant="ghost" onClick={() => {
                     setEditingContact(null)
-                    navigate(buildContactsPath(viewMode, filter), { replace: true })
+                    navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
                   }}>
                   Cancelar
                 </Button>
