@@ -119,6 +119,9 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /--rstk-video-play-border-width:2px/)
   assert.match(html, /--rstk-video-sound-color:#22d3ee/)
   assert.match(html, /\.rstk-video-control-bar\{[^}]*background:var\(--rstk-video-player-color/)
+  assert.match(html, /\.rstk-video-player\{container-type:inline-size/)
+  assert.match(html, /15cqw/)
+  assert.match(html, /22cqw/)
 })
 
 test('video player default preset uses large rectangular solid play button', async () => {
