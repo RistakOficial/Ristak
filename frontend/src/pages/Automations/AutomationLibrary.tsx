@@ -4,8 +4,6 @@ import {
   ArrowLeft,
   AlertTriangle,
   Check,
-  ChevronLeft,
-  ChevronRight,
   Copy,
   Folder,
   FolderInput,
@@ -73,8 +71,6 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   const navigate = useNavigate()
   const { showToast, showConfirm } = useNotification()
 
-  const [collapsed, setCollapsed] = useState(false)
-  const [hoverExpanded, setHoverExpanded] = useState(false)
   const [folders, setFolders] = useState<AutomationFolder[]>(automationsCache.overview?.folders || [])
   const [automations, setAutomations] = useState<AutomationSummary[]>(automationsCache.overview?.automations || [])
   const [folderId, setFolderId] = useState<string | null>(null)
@@ -85,7 +81,6 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   const [nameModal, setNameModal] = useState<NameModal | null>(null)
   const [moveModal, setMoveModal] = useState<{ ids: string[]; folderId: string } | null>(null)
   const [saving, setSaving] = useState(false)
-  const navRef = useRef<HTMLDivElement>(null)
   const prefetchTimerRef = useRef<number | null>(null)
 
   const openAutomation = (automationId: string) => {
@@ -164,32 +159,6 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
         : [currentAutomation, ...current]
     })
   }, [currentAutomation])
-
-  useEffect(() => {
-    if (!collapsed || !hoverExpanded) return
-
-    const closeWhenPointerLeaves = (event: MouseEvent | PointerEvent) => {
-      const nav = navRef.current
-      if (!nav) return
-
-      const rect = nav.getBoundingClientRect()
-      const outside =
-        event.clientX < rect.left ||
-        event.clientX > rect.right ||
-        event.clientY < rect.top ||
-        event.clientY > rect.bottom
-
-      if (outside) setHoverExpanded(false)
-    }
-
-    window.addEventListener('mousemove', closeWhenPointerLeaves)
-    window.addEventListener('pointermove', closeWhenPointerLeaves)
-
-    return () => {
-      window.removeEventListener('mousemove', closeWhenPointerLeaves)
-      window.removeEventListener('pointermove', closeWhenPointerLeaves)
-    }
-  }, [collapsed, hoverExpanded])
 
   const currentFolder = folderId ? folders.find((folder) => folder.id === folderId) || null : null
 
@@ -368,35 +337,12 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   // ------------------------------------------------------------------
   // Render
   // ------------------------------------------------------------------
-  const openHoverPreview = () => setHoverExpanded(true)
-  const closeHoverPreview = () => setHoverExpanded(false)
-
-  if (collapsed && !hoverExpanded) {
-    return (
-      <div
-        ref={navRef}
-        className={cn(styles.leftNav, styles.leftNavCollapsed)}
-        data-automation-interactive="true"
-        onMouseEnter={openHoverPreview}
-        onMouseMove={openHoverPreview}
-        onPointerEnter={openHoverPreview}
-      >
-        <button type="button" className={styles.leftNavToggle} title="Expandir librería" onClick={() => setCollapsed(false)}>
-          <ChevronRight size={14} />
-        </button>
-      </div>
-    )
-  }
-
   const selectionActive = selected.size > 0
 
   return (
     <div
-      ref={navRef}
-      className={cn(styles.leftNav, collapsed && styles.leftNavHoverExpanded)}
+      className={styles.leftNav}
       data-automation-interactive="true"
-      onMouseLeave={collapsed ? closeHoverPreview : undefined}
-      onPointerLeave={collapsed ? closeHoverPreview : undefined}
     >
       {/* Ruta de navegación (tipo Finder) */}
       <div className={styles.libPath} {...(currentFolder ? dropHandlers(null) : {})}>
@@ -432,9 +378,6 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <button type="button" className={styles.leftNavToggle} title="Contraer librería" onClick={() => setCollapsed(true)}>
-          <ChevronLeft size={16} />
-        </button>
       </div>
 
       {/* Acciones en bloque (encima del buscador) */}
