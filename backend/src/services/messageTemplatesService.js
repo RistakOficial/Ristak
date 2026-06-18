@@ -556,6 +556,28 @@ function normalizeYCloudTemplateStatus(value) {
   return status || null
 }
 
+const TEMPLATE_LOCKED_REVIEW_STATES = new Set(['PENDING', 'IN_APPEAL', 'IN_REVIEW', 'UNDER_REVIEW', 'PENDING_REVIEW'])
+
+function isTemplateLockedForEditing(status) {
+  return TEMPLATE_LOCKED_REVIEW_STATES.has(normalizeYCloudTemplateStatus(status))
+}
+
+function stableJson(value) {
+  const normalize = (input) => {
+    if (Array.isArray(input)) return input.map(normalize)
+    if (input && typeof input === 'object') {
+      return Object.fromEntries(
+        Object.keys(input)
+          .sort()
+          .map((key) => [key, normalize(input[key])])
+      )
+    }
+    return input
+  }
+
+  return JSON.stringify(normalize(value ?? null))
+}
+
 function normalizeYCloudCategory(category) {
   const normalized = normalizeCategory(category).toUpperCase()
   if (normalized === 'SERVICE') return 'UTILITY'
@@ -620,6 +642,41 @@ function buildYCloudButtons(buttons = []) {
 
     return { type: 'QUICK_REPLY', text: label }
   }).filter(Boolean)
+}
+
+const TEMPLATE_REVIEW_LOCK_FIELDS = [
+  'name',
+  'description',
+  'category',
+  'language',
+  'status',
+  'headerEnabled',
+  'headerType',
+  'headerText',
+  'headerMediaUrl',
+  'headerLocation',
+  'bodyText',
+  'footerText',
+  'buttons',
+  'variableExamples',
+  'variableBindings',
+  'ycloudTemplateId',
+  'ycloudStatus'
+]
+
+function assertTemplateReviewLockAllowsUpdate(existingRow, nextTemplate) {
+  if (!isTemplateLockedForEditing(existingRow.ycloud_status)) return
+
+  const existingTemplate = normalizeTemplatePayload(mapTemplate(existingRow))
+  const changedLockedField = TEMPLATE_REVIEW_LOCK_FIELDS.some((field) => (
+    stableJson(existingTemplate[field]) !== stableJson(nextTemplate[field])
+  ))
+
+  if (!changedLockedField) return
+
+  const error = new Error('Esta plantilla está en revisión. Espera la respuesta de Meta antes de editarla otra vez.')
+  error.statusCode = 409
+  throw error
 }
 
 function buildYCloudTemplatePayload(template) {
@@ -930,6 +987,7 @@ export async function updateMessageTemplate(id, payload = {}) {
   }
 
   const template = normalizeTemplatePayload(payload)
+  assertTemplateReviewLockAllowsUpdate(existing, template)
   await assertFolderExists(template.folderId)
 
   try {
@@ -1067,7 +1125,7 @@ async function ensureDefaultMessageTemplate(definition, folderId) {
   })
 }
 
-const TEMPLATE_REVIEW_STATES = new Set(['APPROVED', 'PENDING', 'IN_APPEAL'])
+const TEMPLATE_REVIEW_STATES = new Set(['APPROVED', 'PENDING', 'IN_APPEAL', 'IN_REVIEW', 'UNDER_REVIEW', 'PENDING_REVIEW'])
 
 async function shouldSubmitDefaultAppointmentTemplates() {
   const [enabled, apiKey] = await Promise.all([

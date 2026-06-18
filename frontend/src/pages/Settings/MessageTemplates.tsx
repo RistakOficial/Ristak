@@ -33,6 +33,7 @@ import {
 } from 'lucide-react'
 import { Button, Loading, CustomSelect, PageHeader } from '@/components/common'
 import { PhoneChatPreview, type PhoneChatPreviewMessage } from '@/components/phone/PhoneChatPreview'
+import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   messageTemplatesService,
@@ -85,6 +86,12 @@ const statusOptions: Array<{ value: MessageTemplateStatus; label: string }> = [
 ]
 
 type TemplateReviewStatusFilter = 'all' | 'active' | 'pending' | 'rejected' | 'draft' | 'paused' | 'archived'
+
+type WhatsAppBusinessProfile = {
+  businessName?: string
+  name?: string
+  verifiedName?: string
+}
 
 const reviewStatusFilterOptions: Array<{ value: TemplateReviewStatusFilter; label: string }> = [
   { value: 'all', label: 'Todos los estados' },
@@ -249,7 +256,7 @@ function getYCloudStatusTone(status?: string | null) {
   const normalized = (status || '').toUpperCase()
   if (normalized === 'APPROVED') return 'Success'
   if (normalized === 'REJECTED' || normalized === 'DISABLED' || normalized === 'PAUSED') return 'Danger'
-  if (normalized === 'PENDING' || normalized === 'IN_APPEAL') return 'Warning'
+  if (isTemplateUnderReviewStatus(normalized)) return 'Warning'
   return 'Neutral'
 }
 
@@ -258,11 +265,17 @@ function getYCloudStatusLabel(status?: string | null) {
   if (!normalized) return 'Sin enviar'
   if (normalized === 'APPROVED') return 'Aprobada'
   if (normalized === 'REJECTED') return 'Rechazada'
-  if (normalized === 'PENDING') return 'En revisión'
+  if (normalized === 'PENDING' || normalized === 'IN_REVIEW' || normalized === 'UNDER_REVIEW' || normalized === 'PENDING_REVIEW') return 'En revisión'
   if (normalized === 'PAUSED') return 'Pausada'
   if (normalized === 'DISABLED') return 'Deshabilitada'
   if (normalized === 'ARCHIVED') return 'Archivada'
+  if (normalized === 'IN_APPEAL') return 'En apelación'
   return normalized
+}
+
+function isTemplateUnderReviewStatus(status?: string | null) {
+  const normalized = String(status || '').toUpperCase()
+  return ['PENDING', 'IN_APPEAL', 'IN_REVIEW', 'UNDER_REVIEW', 'PENDING_REVIEW'].includes(normalized)
 }
 
 function normalizeFilterValue(value?: string | null) {
@@ -274,11 +287,24 @@ function getPhoneFilterLabel(phone: WhatsAppApiPhoneNumber) {
   return phone.verified_name ? `${number} · ${phone.verified_name}` : number
 }
 
+function parseBusinessProfile(value?: string | null): WhatsAppBusinessProfile | null {
+  if (!value) return null
+  try {
+    return JSON.parse(value) as WhatsAppBusinessProfile
+  } catch {
+    return null
+  }
+}
+
+function cleanDisplayName(value?: string | null) {
+  return String(value || '').trim()
+}
+
 function getTemplateReviewStatus(template: MessageTemplate): TemplateReviewStatusFilter {
   const ycloudStatus = String(template.ycloudStatus || '').toUpperCase()
 
   if (ycloudStatus === 'APPROVED') return 'active'
-  if (ycloudStatus === 'PENDING' || ycloudStatus === 'IN_APPEAL') return 'pending'
+  if (isTemplateUnderReviewStatus(ycloudStatus)) return 'pending'
   if (ycloudStatus === 'REJECTED') return 'rejected'
   if (ycloudStatus === 'PAUSED' || ycloudStatus === 'DISABLED') return 'paused'
   if (ycloudStatus === 'ARCHIVED') return 'archived'
@@ -346,6 +372,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   title = 'Plantillas',
   subtitle = 'WhatsApp · Variables · WhatsApp API'
 }) => {
+  const { user } = useAuth()
   const { showToast, showConfirm } = useNotification()
   const [bundle, setBundle] = useState<MessageTemplateBundle>({
     folders: [],
@@ -445,6 +472,22 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   ), [whatsappPhones])
 
   const selectedFilterPhone = templatePhoneFilter === 'all' ? null : phoneById.get(templatePhoneFilter) || null
+  const defaultWhatsappPhone = useMemo(() => (
+    whatsappPhones.find((phone) => phone.is_default_sender) || whatsappPhones[0] || null
+  ), [whatsappPhones])
+
+  const previewBusinessName = useMemo(() => {
+    const phone = selectedFilterPhone || defaultWhatsappPhone
+    const phoneProfile = parseBusinessProfile(phone?.business_profile_json)
+
+    return cleanDisplayName(user?.businessName) ||
+      cleanDisplayName(phone?.verified_name) ||
+      cleanDisplayName(phoneProfile?.businessName) ||
+      cleanDisplayName(phoneProfile?.verifiedName) ||
+      cleanDisplayName(phoneProfile?.name) ||
+      cleanDisplayName(phone?.label) ||
+      'Mi negocio'
+  }, [defaultWhatsappPhone, selectedFilterPhone, user?.businessName])
 
   const hasTemplateFilters = Boolean(
     templatePhoneFilter !== 'all' ||
@@ -585,6 +628,11 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   }
 
   const editTemplate = (template: MessageTemplate) => {
+    if (isTemplateUnderReviewStatus(template.ycloudStatus)) {
+      showToast('warning', 'Plantilla en revisión', 'Meta está revisando esta plantilla. Puedes eliminarla o sincronizar el estado, pero no editarla todavía.')
+      return
+    }
+
     setSelectedTemplateId(template.id)
     setDraft(templateToDraft(template))
     setActiveVariablePicker(null)
@@ -699,9 +747,11 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     setSubmitting(true)
     try {
       const result = await messageTemplatesService.submitTemplate(saved.id)
-      setSelectedTemplateId(result.template.id)
-      setDraft(templateToDraft(result.template))
+      setSelectedTemplateId(null)
+      setDraft(createEmptyDraft(result.template.folderId || null))
+      setActiveFolderId(result.template.folderId || 'unfiled')
       await loadBundle()
+      setView('list')
       showToast('success', 'Enviada a revisión', result.message || 'WhatsApp API recibio la plantilla')
     } catch (error) {
       await loadBundle()
@@ -722,6 +772,10 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       const result = await messageTemplatesService.syncTemplate(selectedTemplateId)
       setDraft(templateToDraft(result.template))
       await loadBundle()
+      if (isTemplateUnderReviewStatus(result.template.ycloudStatus)) {
+        setSelectedTemplateId(null)
+        setView('list')
+      }
       showToast('success', 'Estado sincronizado', result.message || 'WhatsApp API respondió correctamente')
     } catch (error) {
       await loadBundle()
@@ -1238,9 +1292,9 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         </div>
         <PhoneChatPreview
           className={styles.templatePhonePreview}
-          title={draft.name || 'Nueva plantilla'}
+          title={previewBusinessName}
           subtitle="Plantilla de WhatsApp"
-          avatarLabel={draft.name || 'WhatsApp'}
+          avatarLabel={previewBusinessName}
           messages={[templatePreviewMessage]}
         />
       </aside>
@@ -1507,59 +1561,78 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleTemplates.map((template) => (
-                    <tr
-                      key={template.id}
-                      className={selectedTemplateIds.has(template.id) ? styles.collectionRowSelected : ''}
-                      draggable
-                      onDragStart={(event) => handleDragStart(event, template.id)}
-                      onDragEnd={() => {
-                        setDragging(null)
-                        setDropTargetFolderId(null)
-                      }}
-                    >
-                      <td className={styles.selectionCell}>
-                        <span className={styles.dragHandle} aria-hidden="true">
-                          <GripVertical size={15} />
-                        </span>
-                        <input
-                          type="checkbox"
-                          aria-label={`Seleccionar ${template.name}`}
-                          checked={selectedTemplateIds.has(template.id)}
-                          onChange={() => toggleTemplateSelection(template.id)}
-                        />
-                      </td>
-                      <td>
-                        <button type="button" className={styles.collectionNameButton} onClick={() => editTemplate(template)}>
-                          <strong>{template.name}</strong>
-                          <small>{template.bodyText || template.description || 'Sin texto principal'}</small>
-                        </button>
-                      </td>
-                      <td>
-                        <span className={`${styles.collectionTypeBadge} ${styles.collectionTypeTemplate}`}>
-                          <FileText size={14} />
-                          {getCategoryLabel(template.category)}
-                        </span>
-                      </td>
-                      <td>{folderMap.get(template.folderId || '')?.name || 'Sin carpeta'}</td>
-                      <td>{template.language}</td>
-                      <td>
-                        <span className={`${styles.ycloudBadge} ${styles[`ycloudBadge${getYCloudStatusTone(template.ycloudStatus)}`]}`}>
-                          {getYCloudStatusLabel(template.ycloudStatus)}
-                        </span>
-                      </td>
-                      <td>
-                        <div className={styles.collectionTableActions}>
-                          <button type="button" className={styles.iconButton} onClick={() => editTemplate(template)} aria-label={`Editar ${template.name}`} title="Editar">
-                            <Edit3 size={15} />
+                  {visibleTemplates.map((template) => {
+                    const templateLockedForEditing = isTemplateUnderReviewStatus(template.ycloudStatus)
+                    return (
+                      <tr
+                        key={template.id}
+                        className={[
+                          selectedTemplateIds.has(template.id) ? styles.collectionRowSelected : '',
+                          templateLockedForEditing ? styles.collectionRowLocked : ''
+                        ].filter(Boolean).join(' ')}
+                        draggable
+                        onDragStart={(event) => handleDragStart(event, template.id)}
+                        onDragEnd={() => {
+                          setDragging(null)
+                          setDropTargetFolderId(null)
+                        }}
+                      >
+                        <td className={styles.selectionCell}>
+                          <span className={styles.dragHandle} aria-hidden="true">
+                            <GripVertical size={15} />
+                          </span>
+                          <input
+                            type="checkbox"
+                            aria-label={`Seleccionar ${template.name}`}
+                            checked={selectedTemplateIds.has(template.id)}
+                            onChange={() => toggleTemplateSelection(template.id)}
+                          />
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className={styles.collectionNameButton}
+                            onClick={() => editTemplate(template)}
+                            disabled={templateLockedForEditing}
+                            title={templateLockedForEditing ? 'En revisión: espera respuesta de Meta antes de editar' : 'Editar plantilla'}
+                          >
+                            <strong>{template.name}</strong>
+                            <small>{template.bodyText || template.description || 'Sin texto principal'}</small>
                           </button>
-                          <button type="button" className={styles.iconButton} onClick={() => confirmDeleteTemplate(template)} aria-label={`Eliminar ${template.name}`} title="Eliminar">
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td>
+                          <span className={`${styles.collectionTypeBadge} ${styles.collectionTypeTemplate}`}>
+                            <FileText size={14} />
+                            {getCategoryLabel(template.category)}
+                          </span>
+                        </td>
+                        <td>{folderMap.get(template.folderId || '')?.name || 'Sin carpeta'}</td>
+                        <td>{template.language}</td>
+                        <td>
+                          <span className={`${styles.ycloudBadge} ${styles[`ycloudBadge${getYCloudStatusTone(template.ycloudStatus)}`]}`}>
+                            {getYCloudStatusLabel(template.ycloudStatus)}
+                          </span>
+                        </td>
+                        <td>
+                          <div className={styles.collectionTableActions}>
+                            <button
+                              type="button"
+                              className={styles.iconButton}
+                              onClick={() => editTemplate(template)}
+                              disabled={templateLockedForEditing}
+                              aria-label={templateLockedForEditing ? `${template.name} está en revisión` : `Editar ${template.name}`}
+                              title={templateLockedForEditing ? 'En revisión' : 'Editar'}
+                            >
+                              <Edit3 size={15} />
+                            </button>
+                            <button type="button" className={styles.iconButton} onClick={() => confirmDeleteTemplate(template)} aria-label={`Eliminar ${template.name}`} title="Eliminar">
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1665,33 +1738,44 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     )
   }
 
-  const renderEditor = () => (
-    <div className={styles.editorGrid}>
-      <section className={styles.editorPanel}>
-        <div className={styles.editorActions}>
-          <Button variant="ghost" onClick={() => setView('list')}>
-            <ArrowLeft size={16} />
-            Atrás
-          </Button>
-          <div className={styles.editorActionGroup}>
-            {selectedTemplateId && (
-              <Button variant="outline" onClick={syncCurrentTemplate} loading={syncing}>
+  const renderEditor = () => {
+    const draftLockedForEditing = isTemplateUnderReviewStatus(draft.ycloudStatus)
+
+    return (
+      <div className={styles.editorGrid}>
+        <section className={styles.editorPanel}>
+          <div className={styles.editorActions}>
+            <Button variant="ghost" onClick={() => setView('list')}>
+              <ArrowLeft size={16} />
+              Atrás
+            </Button>
+            <div className={styles.editorActionGroup}>
+              {selectedTemplateId && (
+                <Button variant="outline" onClick={syncCurrentTemplate} loading={syncing}>
                 <RefreshCw size={16} />
                 Sincronizar estado
+                </Button>
+              )}
+              <Button variant="secondary" onClick={saveTemplate} loading={saving} disabled={draftLockedForEditing}>
+                <Save size={16} />
+                Guardar
               </Button>
-            )}
-            <Button variant="secondary" onClick={saveTemplate} loading={saving}>
-              <Save size={16} />
-              Guardar
-            </Button>
-            <Button onClick={submitTemplate} loading={submitting}>
-              <UploadCloud size={16} />
-              Enviar a revisión
-            </Button>
+              <Button onClick={submitTemplate} loading={submitting} disabled={draftLockedForEditing}>
+                <UploadCloud size={16} />
+                Enviar a revisión
+              </Button>
+            </div>
           </div>
-        </div>
 
-        <div className={styles.formGrid}>
+          {draftLockedForEditing && (
+            <div className={styles.editorLockNotice}>
+              <UploadCloud size={17} />
+              <span>Esta plantilla está en revisión. Espera la respuesta de Meta antes de editarla otra vez.</span>
+            </div>
+          )}
+
+          <fieldset className={styles.editorFieldset} disabled={draftLockedForEditing}>
+          <div className={styles.formGrid}>
           <label className={styles.field}>
             <span>Nombre</span>
             <input
@@ -1818,13 +1902,14 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
             </div>
           </div>
         )}
+        </fieldset>
       </section>
 
       <div className={styles.editorSide}>
         {renderPreview()}
       </div>
     </div>
-  )
+  )}
 
   if (loading) {
     return <Loading page="settings-list" />
