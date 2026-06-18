@@ -1801,29 +1801,29 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   return (
-    <Card padding="md" className={styles.conversationAgentCard}>
-      <div className={styles.agentDetailTopbar}>
-        <Button variant="ghost" onClick={onBack}>
-          <ArrowLeft size={16} />
-          Volver
-        </Button>
-        <div className={styles.agentStickyActions}>
-          <Badge variant={agent.enabled ? 'success' : 'neutral'}>
-            {agent.enabled ? 'Publicado' : 'En pausa'}
-          </Badge>
-          <Button
-            variant={agent.enabled ? 'secondary' : 'primary'}
-            onClick={() => onChange({ enabled: !agent.enabled })}
-            disabled={!agent.enabled && !businessPromptReady}
-            title={!agent.enabled && !businessPromptReady ? promptBlockerText : undefined}
-          >
-            {agent.enabled ? <Pause size={16} /> : <Play size={16} />}
-            {agent.enabled ? 'Pausar' : 'Publicar'}
+    <div className={styles.agentDetailLayout}>
+      <Card padding="md" className={styles.conversationAgentCard}>
+        <div className={styles.agentDetailTopbar}>
+          <Button variant="ghost" onClick={onBack}>
+            <ArrowLeft size={16} />
+            Volver
           </Button>
+          <div className={styles.agentStickyActions}>
+            <Badge variant={agent.enabled ? 'success' : 'neutral'}>
+              {agent.enabled ? 'Publicado' : 'En pausa'}
+            </Badge>
+            <Button
+              variant={agent.enabled ? 'secondary' : 'primary'}
+              onClick={() => onChange({ enabled: !agent.enabled })}
+              disabled={!agent.enabled && !businessPromptReady}
+              title={!agent.enabled && !businessPromptReady ? promptBlockerText : undefined}
+            >
+              {agent.enabled ? <Pause size={16} /> : <Play size={16} />}
+              {agent.enabled ? 'Pausar' : 'Publicar'}
+            </Button>
+          </div>
         </div>
-      </div>
 
-      <div className={styles.agentDetailLayout}>
         <div className={styles.agentConfigColumn}>
           <div className={styles.agentCardHeader}>
             <span className={`${styles.iconBox} ${agent.enabled ? '' : styles.iconBoxMuted}`}>
@@ -2578,128 +2578,128 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           </details>
 
         </div>
+      </Card>
 
-        <aside className={styles.agentTestColumn}>
-          <div className={styles.agentTestPanel}>
-            <PhoneChatPreview
-              className={styles.agentTestPhonePreview}
-              title="Mi negocio"
-              subtitle="Prueba interna"
-              avatarLabel="Mi negocio"
-              messages={testPreviewMessages}
-              emptyText={testPracticeExpired ? TEST_MEDIA_EXPIRED_NOTICE : 'Escribe como prospecto y revisa si contesta como debe.'}
-              typing={!testPracticeExpired && testing}
-              headerActions={[
-                {
-                  id: 'reset',
-                  label: 'Reiniciar chat de prueba',
-                  icon: <RotateCcw size={16} />,
-                  onClick: handleResetTestChat,
-                  disabled: testing || !hasTestConversation
-                }
-              ]}
-              composer={(
-                <>
-                  <input
-                    ref={testPhotoInputRef}
-                    type="file"
-                    accept={TEST_PHOTO_ATTACHMENT_ACCEPT}
-                    multiple
-                    hidden
-                    onChange={handleTestAttachmentInputChange}
-                  />
-                  <input
-                    ref={testFileInputRef}
-                    type="file"
-                    accept={TEST_FILE_ATTACHMENT_ACCEPT}
-                    multiple
-                    hidden
-                    onChange={handleTestAttachmentInputChange}
-                  />
-                  <input
-                    ref={testVideoInputRef}
-                    type="file"
-                    accept={TEST_VIDEO_ATTACHMENT_ACCEPT}
-                    multiple
-                    hidden
-                    onChange={handleTestAttachmentInputChange}
-                  />
-                  <PhoneChatPreviewAttachmentMenu
-                    open={testAttachmentMenuOpen}
-                    actions={[
-                      {
-                        id: 'photo',
-                        label: 'Mandar foto',
-                        icon: <ImageIcon size={29} />,
-                        onClick: () => handlePickTestAttachment('photo')
-                      },
-                      {
-                        id: 'file',
-                        label: 'Mandar archivo',
-                        icon: <FileText size={29} />,
-                        onClick: () => handlePickTestAttachment('file')
-                      },
-                      {
-                        id: 'video',
-                        label: 'Mandar video',
-                        icon: <Video size={29} />,
-                        onClick: () => handlePickTestAttachment('video')
-                      }
-                    ]}
-                  />
-                  <PhoneChatPreviewEmojiPicker
-                    open={testEmojiPickerOpen}
-                    onSelect={handleSelectTestEmoji}
-                  />
-                  <PhoneChatPreviewDraftAttachments
-                    attachments={testAttachments}
-                    onRemove={handleRemoveTestAttachment}
-                  />
-                  <PhoneChatPreviewComposer
-                    inputRef={testComposerInputRef}
-                    value={testInput}
-                    placeholder={testPracticeExpired ? 'Prueba expirada. Reinicia el chat.' : 'Ejemplo: Hola, quiero agendar'}
-                    disabled={testPracticeExpired || testing}
-                    sendDisabled={testPracticeExpired || testing || (!testInput.trim() && testAttachments.length === 0)}
-                    hasDraftContent={testAttachments.length > 0}
-                    onChange={setTestInput}
-                    onSend={handleSendTestMessage}
-                    onAttach={handleOpenTestAttachmentPicker}
-                    onEmoji={handleToggleTestEmojiPicker}
-                    onVoice={handleStartTestVoiceRecording}
-                    emojiOpen={testEmojiPickerOpen}
-                    recording={testVoiceRecording}
-                    voicePanel={testVoicePanelActive ? (
-                      <PhoneChatPreviewVoiceComposer
-                        recording={testVoiceRecording}
-                        processing={testVoiceProcessing}
-                        playing={testVoicePlaying}
-                        durationMs={testVoiceDraft?.durationMs || testVoiceElapsedMs}
-                        bars={testVoiceBars}
-                        audioSrc={testVoiceDraft?.dataUrl}
-                        audioRef={testVoiceAudioRef}
-                        onCancel={handleCancelTestVoiceDraft}
-                        onPrimary={handleTestVoicePrimary}
-                        onSend={handleSendTestVoice}
-                        onAudioEnded={() => setTestVoicePlaying(false)}
-                        onAudioPause={() => setTestVoicePlaying(false)}
-                        onAudioPlay={() => setTestVoicePlaying(true)}
-                      />
-                    ) : undefined}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault()
-                        handleSendTestMessage()
-                      }
-                    }}
-                  />
-                </>
-              )}
-            />
-          </div>
-        </aside>
-      </div>
-    </Card>
+      <aside className={styles.agentTestColumn}>
+        <div className={styles.agentTestPanel}>
+          <PhoneChatPreview
+            className={styles.agentTestPhonePreview}
+            title="Mi negocio"
+            subtitle="Prueba interna"
+            avatarLabel="Mi negocio"
+            messages={testPreviewMessages}
+            emptyText={testPracticeExpired ? TEST_MEDIA_EXPIRED_NOTICE : 'Escribe como prospecto y revisa si contesta como debe.'}
+            typing={!testPracticeExpired && testing}
+            headerActions={[
+              {
+                id: 'reset',
+                label: 'Reiniciar chat de prueba',
+                icon: <RotateCcw size={16} />,
+                onClick: handleResetTestChat,
+                disabled: testing || !hasTestConversation
+              }
+            ]}
+            composer={(
+              <>
+                <input
+                  ref={testPhotoInputRef}
+                  type="file"
+                  accept={TEST_PHOTO_ATTACHMENT_ACCEPT}
+                  multiple
+                  hidden
+                  onChange={handleTestAttachmentInputChange}
+                />
+                <input
+                  ref={testFileInputRef}
+                  type="file"
+                  accept={TEST_FILE_ATTACHMENT_ACCEPT}
+                  multiple
+                  hidden
+                  onChange={handleTestAttachmentInputChange}
+                />
+                <input
+                  ref={testVideoInputRef}
+                  type="file"
+                  accept={TEST_VIDEO_ATTACHMENT_ACCEPT}
+                  multiple
+                  hidden
+                  onChange={handleTestAttachmentInputChange}
+                />
+                <PhoneChatPreviewAttachmentMenu
+                  open={testAttachmentMenuOpen}
+                  actions={[
+                    {
+                      id: 'photo',
+                      label: 'Mandar foto',
+                      icon: <ImageIcon size={29} />,
+                      onClick: () => handlePickTestAttachment('photo')
+                    },
+                    {
+                      id: 'file',
+                      label: 'Mandar archivo',
+                      icon: <FileText size={29} />,
+                      onClick: () => handlePickTestAttachment('file')
+                    },
+                    {
+                      id: 'video',
+                      label: 'Mandar video',
+                      icon: <Video size={29} />,
+                      onClick: () => handlePickTestAttachment('video')
+                    }
+                  ]}
+                />
+                <PhoneChatPreviewEmojiPicker
+                  open={testEmojiPickerOpen}
+                  onSelect={handleSelectTestEmoji}
+                />
+                <PhoneChatPreviewDraftAttachments
+                  attachments={testAttachments}
+                  onRemove={handleRemoveTestAttachment}
+                />
+                <PhoneChatPreviewComposer
+                  inputRef={testComposerInputRef}
+                  value={testInput}
+                  placeholder={testPracticeExpired ? 'Prueba expirada. Reinicia el chat.' : 'Ejemplo: Hola, quiero agendar'}
+                  disabled={testPracticeExpired || testing}
+                  sendDisabled={testPracticeExpired || testing || (!testInput.trim() && testAttachments.length === 0)}
+                  hasDraftContent={testAttachments.length > 0}
+                  onChange={setTestInput}
+                  onSend={handleSendTestMessage}
+                  onAttach={handleOpenTestAttachmentPicker}
+                  onEmoji={handleToggleTestEmojiPicker}
+                  onVoice={handleStartTestVoiceRecording}
+                  emojiOpen={testEmojiPickerOpen}
+                  recording={testVoiceRecording}
+                  voicePanel={testVoicePanelActive ? (
+                    <PhoneChatPreviewVoiceComposer
+                      recording={testVoiceRecording}
+                      processing={testVoiceProcessing}
+                      playing={testVoicePlaying}
+                      durationMs={testVoiceDraft?.durationMs || testVoiceElapsedMs}
+                      bars={testVoiceBars}
+                      audioSrc={testVoiceDraft?.dataUrl}
+                      audioRef={testVoiceAudioRef}
+                      onCancel={handleCancelTestVoiceDraft}
+                      onPrimary={handleTestVoicePrimary}
+                      onSend={handleSendTestVoice}
+                      onAudioEnded={() => setTestVoicePlaying(false)}
+                      onAudioPause={() => setTestVoicePlaying(false)}
+                      onAudioPlay={() => setTestVoicePlaying(true)}
+                    />
+                  ) : undefined}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      handleSendTestMessage()
+                    }
+                  }}
+                />
+              </>
+            )}
+          />
+        </div>
+      </aside>
+    </div>
   )
 }
 

@@ -1301,11 +1301,13 @@
 }
 
 .agentDetailLayout {
-  --agent-test-panel-width: min(100%, 390px);
+  --agent-test-panel-width: clamp(330px, 22vw, 390px);
+  --agent-test-panel-gutter: 28px;
   display: grid;
-  grid-template-columns: minmax(0, 7fr) minmax(320px, 3fr);
+  grid-template-columns: minmax(0, 1fr) var(--agent-test-panel-width);
   align-items: start;
-  gap: 24px;
+  gap: var(--agent-test-panel-gutter);
+  width: 100%;
 }
 
 .agentConfigColumn,
@@ -1316,6 +1318,7 @@
 .agentConfigColumn {
   display: flex;
   flex-direction: column;
+  width: 100%;
   min-width: 0;
 }
 
@@ -1324,10 +1327,10 @@
   top: 18px;
   z-index: 1;
   align-self: start;
-  justify-self: stretch;
-  width: 100%;
-  height: calc(100vh - 128px);
-  min-height: 620px;
+  justify-self: end;
+  width: var(--agent-test-panel-width);
+  height: calc(100vh - 36px);
+  min-height: 0;
 }
 
 .agentStatusPill {
@@ -1575,6 +1578,10 @@
   .agentDirectoryGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .agentConfigColumn {
+    width: 100%;
+  }
 }
 
 @media (max-width: 900px) {
@@ -1612,6 +1619,10 @@
     width: auto;
     height: auto;
     min-height: 0;
+  }
+
+  .agentConfigColumn {
+    width: 100%;
   }
 
 }
@@ -1780,6 +1791,8 @@
 
 .conversationAgentCard,
 .conversationAgentCard:global([data-ristak-card]) {
+  justify-self: center;
+  width: min(100%, 1040px);
   overflow: visible !important;
 }
 
@@ -2056,9 +2069,9 @@
 }
 
 .agentTestPhonePreview {
-  height: 100%;
+  height: clamp(600px, calc(100vh - 72px), 760px);
   min-height: 0;
-  width: var(--agent-test-panel-width);
+  width: min(100%, var(--agent-test-panel-width));
 }
 
 @media (max-width: 900px) {
