@@ -6147,6 +6147,14 @@
   align-items: end;
 }
 
+.sitesAnalyticsFiltersCompact {
+  grid-template-columns: minmax(180px, 0.72fr) minmax(240px, 1fr);
+}
+
+.sitesAnalyticsVideoSelect {
+  min-width: 0;
+}
+
 .sitesAnalyticsKpis {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -6335,6 +6343,18 @@
   font-size: 0.86rem;
   font-weight: 820;
   white-space: nowrap;
+}
+
+.sitesAnalyticsDetailEmpty {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  margin: 0;
+  border: 1px dashed var(--design-panel-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  font-size: 0.84rem;
+  text-align: center;
 }
 
 .unsavedModalBackdrop {

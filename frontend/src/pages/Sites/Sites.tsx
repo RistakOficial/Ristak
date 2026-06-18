@@ -169,7 +169,7 @@ import { buildCanvasTheme } from './sitesCanvasTheme'
 
 type SitesSection = 'landings' | 'forms' | 'leads' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
-type SitesAnalyticsSiteType = 'all' | 'landings' | 'forms'
+type SitesAnalyticsSiteType = 'sites' | 'forms' | 'videos'
 type CreateFlow =
   | 'closed'
   | 'landing-start'
@@ -1381,6 +1381,18 @@ const formatSitesCompactNumber = (value?: number | null) => {
   return new Intl.NumberFormat('es-MX', { notation: parsed >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(parsed)
 }
 
+const formatSitesDecimal = (value?: number | null) => {
+  const parsed = Number(value || 0)
+  if (!Number.isFinite(parsed)) return '0'
+  return new Intl.NumberFormat('es-MX', { maximumFractionDigits: 1 }).format(parsed)
+}
+
+const formatSitesPercent = (value?: number | null) => {
+  const parsed = Number(value || 0)
+  if (!Number.isFinite(parsed)) return '0%'
+  return `${new Intl.NumberFormat('es-MX', { maximumFractionDigits: parsed >= 10 ? 0 : 1 }).format(parsed)}%`
+}
+
 const formatSitesSeconds = (value?: number | null) => {
   const total = Math.max(0, Math.round(Number(value || 0)))
   if (!Number.isFinite(total) || total <= 0) return '0s'
@@ -1443,6 +1455,22 @@ const readSitesNumber = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+const getSiteAnalyticsStats = (site: PublicSite) => {
+  const views = readSitesNumber(site.trackingStats?.views)
+  const visitors = readSitesNumber(site.trackingStats?.visitors)
+  const sessions = readSitesNumber(site.trackingStats?.sessions)
+  const conversions = readSitesNumber(site.trackingStats?.conversions) || readSitesNumber(site.submissionsCount)
+  const conversionRate = readSitesNumber(site.trackingStats?.conversionRate)
+
+  return {
+    views,
+    visitors,
+    sessions,
+    conversions,
+    conversionRate: conversionRate || (visitors > 0 ? Number(((conversions / visitors) * 100).toFixed(1)) : 0)
+  }
+}
+
 const formatSitesChartLabel = (value = '', compact = false) => {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
@@ -1461,14 +1489,35 @@ const buildSitesChartPoints = (points: StreamChartPoint[] = [], mode: 'count' | 
 )
 
 const getSiteTypeFilterMatch = (site: PublicSite, selectedType: SitesAnalyticsSiteType) => {
-  if (selectedType === 'all') return true
-  if (selectedType === 'landings') return site.siteType === 'landing_page'
-  return site.siteType === 'standard_form' || site.siteType === 'interactive_form'
+  if (selectedType === 'videos') return true
+  if (selectedType === 'sites') return site.siteType === 'landing_page'
+  return isFormSite(site)
+}
+
+const shortenSitesText = (value: string, maxLength = 48) => {
+  const normalized = value.trim()
+  if (normalized.length <= maxLength) return normalized
+  const tailLength = Math.max(8, Math.round(maxLength * 0.28))
+  const headLength = Math.max(12, maxLength - tailLength - 3)
+  return `${normalized.slice(0, headLength).trim()}...${normalized.slice(-tailLength).trim()}`
+}
+
+const getMediaAssetDisplayName = (asset: MediaAsset) => (
+  (asset.originalFilename || asset.storedFilename || 'Video')
+    .replace(/\.[a-z0-9]{2,5}$/i, '')
+    .trim() || 'Video'
+)
+
+const getSiteStatusLabel = (status: PublicSite['status']) => {
+  if (status === 'published') return 'Publicado'
+  if (status === 'archived') return 'Archivado'
+  return 'Borrador'
 }
 
 const getSiteAnalyticsVideoLabel = (asset: MediaAsset, sitesById: Map<string, PublicSite>) => {
   const siteName = sitesById.get(getMediaSourceSiteId(asset))?.name
-  return [asset.originalFilename || asset.storedFilename || 'Video', siteName].filter(Boolean).join(' · ')
+  const videoName = shortenSitesText(getMediaAssetDisplayName(asset), siteName ? 34 : 54)
+  return [videoName, siteName ? shortenSitesText(siteName, 24) : ''].filter(Boolean).join(' · ')
 }
 
 const slugifyName = (value: string) => value
@@ -4464,7 +4513,7 @@ export const Sites: React.FC = () => {
   const [loadingLeads, setLoadingLeads] = useState(false)
   const [siteVideoAssets, setSiteVideoAssets] = useState<MediaAsset[]>([])
   const [loadingSiteVideos, setLoadingSiteVideos] = useState(false)
-  const [sitesAnalyticsSiteType, setSitesAnalyticsSiteType] = useState<SitesAnalyticsSiteType>('all')
+  const [sitesAnalyticsSiteType, setSitesAnalyticsSiteType] = useState<SitesAnalyticsSiteType>('sites')
   const [sitesAnalyticsSiteId, setSitesAnalyticsSiteId] = useState('')
   const [sitesAnalyticsVideoId, setSitesAnalyticsVideoId] = useState('')
   const [sitesVideoAnalytics, setSitesVideoAnalytics] = useState<MediaStreamAnalytics | null>(null)
@@ -4600,7 +4649,8 @@ export const Sites: React.FC = () => {
     siteVideoAssets.filter((asset) => {
       const sourceSiteId = getMediaSourceSiteId(asset)
       if (sitesAnalyticsSiteId) return sourceSiteId === sitesAnalyticsSiteId
-      if (!sourceSiteId) return sitesAnalyticsSiteType === 'all'
+      if (sitesAnalyticsSiteType === 'videos') return true
+      if (!sourceSiteId) return false
       return analyticsSiteIds.has(sourceSiteId)
     })
   ), [analyticsSiteIds, siteVideoAssets, sitesAnalyticsSiteId, sitesAnalyticsSiteType])
@@ -4615,11 +4665,17 @@ export const Sites: React.FC = () => {
   }, [analyticsSites, sitesAnalyticsSiteId])
   useEffect(() => {
     if (section !== 'analytics') return
+    if (sitesAnalyticsSiteType !== 'videos') {
+      if (sitesAnalyticsVideoId) {
+        setSitesAnalyticsVideoId('')
+      }
+      return
+    }
     const nextVideoId = selectedAnalyticsVideo?.id || ''
     if (sitesAnalyticsVideoId !== nextVideoId) {
       setSitesAnalyticsVideoId(nextVideoId)
     }
-  }, [section, selectedAnalyticsVideo?.id, sitesAnalyticsVideoId])
+  }, [section, selectedAnalyticsVideo?.id, sitesAnalyticsSiteType, sitesAnalyticsVideoId])
   const blocks = useMemo(
     () => [...(selectedSite?.blocks || [])].sort((a, b) => a.sortOrder - b.sortOrder),
     [selectedSite?.blocks]
@@ -5434,7 +5490,12 @@ export const Sites: React.FC = () => {
   }, [section])
 
   useEffect(() => {
-    if (section !== 'analytics') return
+    if (section !== 'analytics' || sitesAnalyticsSiteType !== 'videos') {
+      setSitesVideoAnalytics(null)
+      setSitesVideoAnalyticsError('')
+      setSitesVideoAnalyticsLoading(false)
+      return
+    }
     const asset = selectedAnalyticsVideo
     const streamVideoId = getMediaStreamVideoId(asset)
     if (!asset || !streamVideoId) {
@@ -5465,7 +5526,7 @@ export const Sites: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [dateRange.end, dateRange.start, section, selectedAnalyticsVideo])
+  }, [dateRange.end, dateRange.start, section, selectedAnalyticsVideo, sitesAnalyticsSiteType])
 
   const openSite = async (siteId: string, pageId?: string, options?: { replaceRoute?: boolean }) => {
     try {
@@ -8314,6 +8375,9 @@ export const Sites: React.FC = () => {
                 onSiteTypeChange={(value) => {
                   setSitesAnalyticsSiteType(value)
                   setSitesAnalyticsSiteId('')
+                  setSitesAnalyticsVideoId('')
+                  setSitesVideoAnalytics(null)
+                  setSitesVideoAnalyticsError('')
                 }}
                 onSiteChange={setSitesAnalyticsSiteId}
                 onVideoChange={setSitesAnalyticsVideoId}
@@ -25455,9 +25519,37 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   onVideoChange,
   onDateRangeChange
 }) => {
-  const totalSiteViews = sites.reduce((total, site) => total + Number(site.trackingStats?.views || 0), 0)
-  const totalVisitors = sites.reduce((total, site) => total + Number(site.trackingStats?.visitors || 0), 0)
-  const totalConversions = sites.reduce((total, site) => total + Number(site.trackingStats?.conversions || site.submissionsCount || 0), 0)
+  const isVideosView = selectedSiteType === 'videos'
+  const isFormsView = selectedSiteType === 'forms'
+  const typeLabel = isVideosView ? 'Videos' : isFormsView ? 'Formularios' : 'Sitios'
+  const entityLabel = isFormsView ? 'formulario' : 'sitio'
+  const entityPluralLabel = isFormsView ? 'formularios' : 'sitios'
+  const siteFilterLabel = isVideosView ? 'Origen' : isFormsView ? 'Formulario' : 'Sitio'
+  const siteFilterEmptyLabel = isVideosView ? 'Todos los orígenes' : isFormsView ? 'Todos los formularios' : 'Todos los sitios'
+  const siteRows = sites.map(site => ({
+    site,
+    stats: getSiteAnalyticsStats(site),
+    videoCount: videos.filter(asset => getMediaSourceSiteId(asset) === site.id).length
+  }))
+  const totalSiteViews = siteRows.reduce((total, row) => total + row.stats.views, 0)
+  const totalVisitors = siteRows.reduce((total, row) => total + row.stats.visitors, 0)
+  const totalSessions = siteRows.reduce((total, row) => total + row.stats.sessions, 0)
+  const totalConversions = siteRows.reduce((total, row) => total + row.stats.conversions, 0)
+  const conversionRate = totalVisitors > 0 ? Number(((totalConversions / totalVisitors) * 100).toFixed(1)) : 0
+  const averageConversions = sites.length > 0 ? totalConversions / sites.length : 0
+  const publishedCount = sites.filter(site => site.status === 'published').length
+  const draftCount = sites.filter(site => site.status === 'draft').length
+  const archivedCount = sites.filter(site => site.status === 'archived').length
+  const latestUpdatedSite = [...siteRows]
+    .sort((a, b) => new Date(b.site.updatedAt).getTime() - new Date(a.site.updatedAt).getTime())[0]?.site || null
+  const rowsByViews = [...siteRows].sort((a, b) => b.stats.views - a.stats.views)
+  const rowsByConversions = [...siteRows].sort((a, b) =>
+    b.stats.conversions - a.stats.conversions || b.stats.conversionRate - a.stats.conversionRate
+  )
+  const rowsByConversionRate = [...siteRows].sort((a, b) =>
+    b.stats.conversionRate - a.stats.conversionRate || b.stats.conversions - a.stats.conversions
+  )
+  const rowsByVideoCount = [...siteRows].filter(row => row.videoCount > 0).sort((a, b) => b.videoCount - a.videoCount)
   const selectedVideoStats = getMediaStreamVideoRecord(selectedVideo)
   const totalVideoViews = videos.reduce((total, asset) => total + readSitesNumber(getMediaStreamVideoRecord(asset).views), 0)
   const totalVideoWatchTime = videos.reduce((total, asset) => total + readSitesNumber(getMediaStreamVideoRecord(asset).totalWatchTime), 0)
@@ -25470,16 +25562,270 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const watchTimeChart = buildSitesChartPoints(analytics?.watchTimeChart || [], 'seconds')
   const heatmap = analytics?.heatmap || []
   const countryRows = analytics?.countries || []
+  const topCountry = selectedVideo ? analytics?.summary.topCountry || countryRows[0]?.country || 'Sin dato' : 'Sin dato'
+  const currentVideoLabel = selectedVideo ? getSiteAnalyticsVideoLabel(selectedVideo, sitesById) : 'Sin video seleccionado'
   const scopeSiteLabel = selectedSiteId
     ? sitesById.get(selectedSiteId)?.name || 'Sitio seleccionado'
-    : selectedSiteType === 'landings'
-      ? 'Sitios web'
-      : selectedSiteType === 'forms'
-        ? 'Formularios'
-        : 'Todos los sitios'
+    : typeLabel
+  const scopeDescription = isVideosView
+    ? `${videos.length} video${videos.length === 1 ? '' : 's'} en filtro${selectedVideo ? ` · ${currentVideoLabel}` : ''}`
+    : `${allSites.length} sitio${allSites.length === 1 ? '' : 's'} total · ${sites.length} ${entityPluralLabel} en filtro · ${videos.length} video${videos.length === 1 ? '' : 's'} dentro`
+  const kpiCards = isVideosView
+    ? [
+        { key: 'videos', icon: <Video size={16} />, label: 'Videos', value: formatSitesCompactNumber(videos.length) },
+        { key: 'plays', icon: <Play size={16} />, label: 'Reproducciones', value: formatSitesCompactNumber(videoViews) },
+        { key: 'watch-time', icon: <Clock3 size={16} />, label: 'Tiempo visto', value: formatSitesSeconds(videoWatchTime) },
+        { key: 'average', icon: <MousePointerClick size={16} />, label: 'Promedio visto', value: formatSitesSeconds(averageWatchTime) },
+        { key: 'engagement', icon: <Flame size={16} />, label: 'Engagement', value: engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore) },
+        { key: 'country', icon: <Globe2 size={16} />, label: 'País top', value: topCountry }
+      ]
+    : isFormsView
+      ? [
+          { key: 'forms', icon: <FormInput size={16} />, label: 'Formularios', value: formatSitesCompactNumber(sites.length) },
+          { key: 'views', icon: <Eye size={16} />, label: 'Vistas', value: formatSitesCompactNumber(totalSiteViews) },
+          { key: 'visitors', icon: <Globe2 size={16} />, label: 'Visitantes', value: formatSitesCompactNumber(totalVisitors) },
+          { key: 'submissions', icon: <ListChecks size={16} />, label: 'Envíos', value: formatSitesCompactNumber(totalConversions) },
+          { key: 'conversion', icon: <BarChart3 size={16} />, label: 'Conversión', value: formatSitesPercent(conversionRate) },
+          { key: 'average', icon: <MousePointerClick size={16} />, label: 'Envíos/form', value: formatSitesDecimal(averageConversions) }
+        ]
+      : [
+          { key: 'sites', icon: <LayoutTemplate size={16} />, label: 'Sitios', value: formatSitesCompactNumber(sites.length) },
+          { key: 'views', icon: <Eye size={16} />, label: 'Vistas', value: formatSitesCompactNumber(totalSiteViews) },
+          { key: 'visitors', icon: <Globe2 size={16} />, label: 'Visitantes', value: formatSitesCompactNumber(totalVisitors) },
+          { key: 'sessions', icon: <MousePointerClick size={16} />, label: 'Sesiones', value: formatSitesCompactNumber(totalSessions) },
+          { key: 'conversion', icon: <ListChecks size={16} />, label: 'Conversiones', value: formatSitesCompactNumber(totalConversions) },
+          { key: 'rate', icon: <BarChart3 size={16} />, label: 'Conversión', value: formatSitesPercent(conversionRate) }
+        ]
+
+  const renderDetailRows = (
+    rows: Array<{ key: string; icon: React.ReactNode; label: string; value: string }>,
+    emptyText: string
+  ) => (
+    <div className={styles.sitesAnalyticsDetailList}>
+      {rows.length ? rows.map(row => (
+        <div key={row.key}>
+          {row.icon}
+          <span>{row.label}</span>
+          <strong>{row.value}</strong>
+        </div>
+      )) : (
+        <p className={styles.sitesAnalyticsDetailEmpty}>{emptyText}</p>
+      )}
+    </div>
+  )
+
+  const renderEntityAnalytics = () => {
+    if (!sites.length) {
+      return (
+        <div className={styles.sitesAnalyticsEmpty}>
+          {isFormsView ? <FormInput size={24} /> : <LayoutTemplate size={24} />}
+          <strong>Sin {entityPluralLabel} en este filtro</strong>
+          <p>Cambia el tipo o el origen para ver analíticas individuales.</p>
+        </div>
+      )
+    }
+
+    return (
+      <div className={styles.sitesAnalyticsGrid}>
+        <div className={styles.sitesAnalyticsChartBlock}>
+          <div className={styles.sitesAnalyticsChartTitle}>
+            <span>{isFormsView ? 'Formularios con más envíos' : 'Sitios con más vistas'}</span>
+            <strong>{formatSitesCompactNumber(isFormsView ? totalConversions : totalSiteViews)}</strong>
+          </div>
+          {renderDetailRows(
+            (isFormsView ? rowsByConversions : rowsByViews).slice(0, 5).map(row => ({
+              key: row.site.id,
+              icon: isFormsView ? <ListChecks size={15} /> : <Eye size={15} />,
+              label: row.site.name,
+              value: isFormsView
+                ? `${formatSitesCompactNumber(row.stats.conversions)} envíos`
+                : `${formatSitesCompactNumber(row.stats.views)} vistas`
+            })),
+            `Sin actividad registrada en estos ${entityPluralLabel}.`
+          )}
+        </div>
+
+        <div className={styles.sitesAnalyticsChartBlock}>
+          <div className={styles.sitesAnalyticsChartTitle}>
+            <span>Conversión por {entityLabel}</span>
+            <strong>{formatSitesPercent(conversionRate)}</strong>
+          </div>
+          {renderDetailRows(
+            rowsByConversionRate.slice(0, 5).map(row => ({
+              key: row.site.id,
+              icon: <BarChart3 size={15} />,
+              label: row.site.name,
+              value: `${formatSitesPercent(row.stats.conversionRate)} · ${formatSitesCompactNumber(row.stats.conversions)}`
+            })),
+            `Sin conversiones registradas en estos ${entityPluralLabel}.`
+          )}
+        </div>
+
+        <div className={styles.sitesAnalyticsChartBlock}>
+          <div className={styles.sitesAnalyticsChartTitle}>
+            <span>Videos dentro de {entityPluralLabel}</span>
+            <strong>{formatSitesCompactNumber(videos.length)}</strong>
+          </div>
+          {renderDetailRows(
+            rowsByVideoCount.slice(0, 5).map(row => ({
+              key: row.site.id,
+              icon: <Video size={15} />,
+              label: row.site.name,
+              value: `${formatSitesCompactNumber(row.videoCount)} video${row.videoCount === 1 ? '' : 's'}`
+            })),
+            `No hay videos asociados a estos ${entityPluralLabel}.`
+          )}
+        </div>
+
+        <div className={styles.sitesAnalyticsChartBlock}>
+          <div className={styles.sitesAnalyticsChartTitle}>
+            <span>Estado</span>
+            <strong>{formatSitesCompactNumber(sites.length)} {entityPluralLabel}</strong>
+          </div>
+          {renderDetailRows([
+            { key: 'published', icon: <CheckCircle2 size={15} />, label: 'Publicados', value: formatSitesCompactNumber(publishedCount) },
+            { key: 'draft', icon: <Pencil size={15} />, label: 'Borradores', value: formatSitesCompactNumber(draftCount) },
+            { key: 'archived', icon: <Trash2 size={15} />, label: 'Archivados', value: formatSitesCompactNumber(archivedCount) },
+            ...(latestUpdatedSite ? [{
+              key: 'latest',
+              icon: <CalendarDays size={15} />,
+              label: `Último cambio: ${latestUpdatedSite.name}`,
+              value: getSiteStatusLabel(latestUpdatedSite.status)
+            }] : [])
+          ], `Sin estado para estos ${entityPluralLabel}.`)}
+        </div>
+      </div>
+    )
+  }
+
+  const renderVideoAnalytics = () => {
+    if (!selectedVideo) {
+      return (
+        <div className={styles.sitesAnalyticsEmpty}>
+          <Video size={24} />
+          <strong>Sin videos en este filtro</strong>
+          <p>Cuando un sitio o formulario use un video sincronizado a Stream, aquí saldrán sus métricas.</p>
+        </div>
+      )
+    }
+
+    if (!streamVideoId) {
+      return (
+        <div className={styles.sitesAnalyticsEmpty}>
+          <BarChart3 size={24} />
+          <strong>Video sin analíticas</strong>
+          <p>Este archivo existe en storage, pero todavía no tiene ID de Stream para consultar reproducciones.</p>
+        </div>
+      )
+    }
+
+    if (analyticsError) {
+      return (
+        <div className={styles.sitesAnalyticsEmpty}>
+          <AlertTriangle size={24} />
+          <strong>No se cargaron los datos del video</strong>
+          <p>{analyticsError}</p>
+        </div>
+      )
+    }
+
+    return (
+      <div className={styles.sitesAnalyticsGrid}>
+        <div className={styles.sitesAnalyticsChartBlock}>
+          <div className={styles.sitesAnalyticsChartTitle}>
+            <span>Reproducciones del video</span>
+            <strong>{formatSitesCompactNumber(videoViews)}</strong>
+          </div>
+          {viewsChart.length ? (
+            <AreaChart
+              data={viewsChart}
+              height={220}
+              showLegend={false}
+              formatValue={(value) => formatSitesCompactNumber(value)}
+              formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} reproducciones`}
+            />
+          ) : (
+            <div className={styles.sitesAnalyticsChartEmpty}>Sin reproducciones en este periodo.</div>
+          )}
+        </div>
+
+        <div className={styles.sitesAnalyticsChartBlock}>
+          <div className={styles.sitesAnalyticsChartTitle}>
+            <span>Tiempo visto</span>
+            <strong>{formatSitesSeconds(videoWatchTime)}</strong>
+          </div>
+          {watchTimeChart.length ? (
+            <AreaChart
+              data={watchTimeChart}
+              height={220}
+              color="var(--pos)"
+              showLegend={false}
+              formatValue={(value) => `${formatSitesCompactNumber(value)}m`}
+              formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} min vistos`}
+            />
+          ) : (
+            <div className={styles.sitesAnalyticsChartEmpty}>Sin tiempo visto en este periodo.</div>
+          )}
+        </div>
+
+        <div className={styles.sitesAnalyticsChartBlock}>
+          <div className={styles.sitesAnalyticsChartTitle}>
+            <span>Retención</span>
+            <strong>{heatmap.length ? `${heatmap.length} puntos` : 'Sin dato'}</strong>
+          </div>
+          {heatmap.length ? (
+            <div className={styles.sitesAnalyticsHeatmap} aria-label="Mapa de retención">
+              {heatmap.map((point, index) => (
+                <span
+                  key={`${point.segment}-${index}`}
+                  title={`${point.label || point.segment}: ${Math.round(point.intensity)}%`}
+                  style={{ height: `${Math.max(6, point.intensity)}%` }}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className={styles.sitesAnalyticsChartEmpty}>Sin heatmap todavía.</div>
+          )}
+        </div>
+
+        <div className={styles.sitesAnalyticsChartBlock}>
+          <div className={styles.sitesAnalyticsChartTitle}>
+            <span>Detalle</span>
+            <strong>{engagementScore === null ? 'Sin engagement' : formatSitesPercent(engagementScore)}</strong>
+          </div>
+          <div className={styles.sitesAnalyticsDetailList}>
+            <div>
+              <Flame size={15} />
+              <span>Engagement</span>
+              <strong>{engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore)}</strong>
+            </div>
+            <div>
+              <Clock3 size={15} />
+              <span>Promedio visto</span>
+              <strong>{formatSitesSeconds(averageWatchTime)}</strong>
+            </div>
+            {countryRows.slice(0, 4).map(country => (
+              <div key={country.country}>
+                <Globe2 size={15} />
+                <span>{country.country}</span>
+                <strong>{formatSitesCompactNumber(country.views)} · {formatSitesSeconds(country.watchTime)}</strong>
+              </div>
+            ))}
+            {countryRows.length === 0 && (
+              <div>
+                <Globe2 size={15} />
+                <span>Países</span>
+                <strong>Sin dato</strong>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <section className={`${styles.dataPanel} ${styles.sitesAnalyticsPanel}`} aria-busy={loadingVideos || loadingAnalytics}>
+    <section className={`${styles.dataPanel} ${styles.sitesAnalyticsPanel}`} aria-busy={loadingVideos || (isVideosView && loadingAnalytics)}>
       <div className={styles.builderHeader}>
         <div>
           <h2>Analíticas</h2>
@@ -25494,185 +25840,65 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
         </div>
       </div>
 
-      <div className={styles.sitesAnalyticsFilters}>
+      <div className={`${styles.sitesAnalyticsFilters} ${isVideosView ? '' : styles.sitesAnalyticsFiltersCompact}`}>
         <label className={styles.field}>
           <span>Tipo</span>
           <CustomSelect value={selectedSiteType} onChange={(event) => onSiteTypeChange(event.target.value as SitesAnalyticsSiteType)}>
-            <option value="all">Sitios y formularios</option>
-            <option value="landings">Sitios web</option>
+            <option value="sites">Sitios</option>
             <option value="forms">Formularios</option>
+            <option value="videos">Videos</option>
           </CustomSelect>
         </label>
         <label className={styles.field}>
-          <span>Sitio</span>
-          <CustomSelect value={selectedSiteId} onChange={(event) => onSiteChange(event.target.value)}>
-            <option value="">Todos dentro del filtro</option>
+          <span>{siteFilterLabel}</span>
+          <CustomSelect value={selectedSiteId} onChange={(event) => onSiteChange(event.target.value)} disabled={sites.length === 0}>
+            <option value="">{siteFilterEmptyLabel}</option>
             {sites.map(site => (
               <option key={site.id} value={site.id}>{site.name}</option>
             ))}
           </CustomSelect>
         </label>
-        <label className={styles.field}>
-          <span>Video</span>
-          <CustomSelect value={selectedVideoId} onChange={(event) => onVideoChange(event.target.value)} disabled={videos.length === 0}>
-            {videos.length === 0 ? (
-              <option value="">Sin videos</option>
-            ) : videos.map(asset => (
-              <option key={asset.id} value={asset.id}>{getSiteAnalyticsVideoLabel(asset, sitesById)}</option>
-            ))}
-          </CustomSelect>
-        </label>
+        {isVideosView && (
+          <label className={styles.field}>
+            <span>Video</span>
+            <CustomSelect
+              value={selectedVideoId}
+              onChange={(event) => onVideoChange(event.target.value)}
+              disabled={videos.length === 0}
+              className={styles.sitesAnalyticsVideoSelect}
+              portal
+            >
+              {videos.length === 0 ? (
+                <option value="">Sin videos</option>
+              ) : (
+                <>
+                  <option value="">Selecciona un video</option>
+                  {videos.map(asset => (
+                    <option key={asset.id} value={asset.id}>{getSiteAnalyticsVideoLabel(asset, sitesById)}</option>
+                  ))}
+                </>
+              )}
+            </CustomSelect>
+          </label>
+        )}
       </div>
 
       <div className={styles.sitesAnalyticsKpis}>
-        <div>
-          <Eye size={16} />
-          <span>Vistas sitio</span>
-          <strong>{formatSitesCompactNumber(totalSiteViews)}</strong>
-        </div>
-        <div>
-          <Globe2 size={16} />
-          <span>Visitantes</span>
-          <strong>{formatSitesCompactNumber(totalVisitors)}</strong>
-        </div>
-        <div>
-          <ListChecks size={16} />
-          <span>Conversiones</span>
-          <strong>{formatSitesCompactNumber(totalConversions)}</strong>
-        </div>
-        <div>
-          <Video size={16} />
-          <span>Videos</span>
-          <strong>{formatSitesCompactNumber(videos.length)}</strong>
-        </div>
-        <div>
-          <Play size={16} />
-          <span>Reproducciones</span>
-          <strong>{formatSitesCompactNumber(videoViews)}</strong>
-        </div>
-        <div>
-          <Clock3 size={16} />
-          <span>Tiempo visto</span>
-          <strong>{formatSitesSeconds(videoWatchTime)}</strong>
-        </div>
+        {kpiCards.map(card => (
+          <div key={card.key}>
+            {card.icon}
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+          </div>
+        ))}
       </div>
 
       <div className={styles.sitesAnalyticsScope}>
         <strong>{scopeSiteLabel}</strong>
-        <span>{allSites.length} sitio{allSites.length === 1 ? '' : 's'} total · {sites.length} en filtro · {videos.length} video{videos.length === 1 ? '' : 's'}</span>
+        <span>{scopeDescription}</span>
       </div>
 
-      {!selectedVideo ? (
-        <div className={styles.sitesAnalyticsEmpty}>
-          <Video size={24} />
-          <strong>Sin videos en este filtro</strong>
-          <p>Cuando un sitio o formulario use un video sincronizado a Stream, aquí saldrán sus métricas.</p>
-        </div>
-      ) : !streamVideoId ? (
-        <div className={styles.sitesAnalyticsEmpty}>
-          <BarChart3 size={24} />
-          <strong>Video sin analíticas</strong>
-          <p>Este archivo existe en storage, pero todavía no tiene ID de Stream para consultar reproducciones.</p>
-        </div>
-      ) : analyticsError ? (
-        <div className={styles.sitesAnalyticsEmpty}>
-          <AlertTriangle size={24} />
-          <strong>No se cargaron los datos del video</strong>
-          <p>{analyticsError}</p>
-        </div>
-      ) : (
-        <div className={styles.sitesAnalyticsGrid}>
-          <div className={styles.sitesAnalyticsChartBlock}>
-            <div className={styles.sitesAnalyticsChartTitle}>
-              <span>Reproducciones del video</span>
-              <strong>{formatSitesCompactNumber(videoViews)}</strong>
-            </div>
-            {viewsChart.length ? (
-              <AreaChart
-                data={viewsChart}
-                height={220}
-                showLegend={false}
-                formatValue={(value) => formatSitesCompactNumber(value)}
-                formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} reproducciones`}
-              />
-            ) : (
-              <div className={styles.sitesAnalyticsChartEmpty}>Sin reproducciones en este periodo.</div>
-            )}
-          </div>
-
-          <div className={styles.sitesAnalyticsChartBlock}>
-            <div className={styles.sitesAnalyticsChartTitle}>
-              <span>Tiempo visto</span>
-              <strong>{formatSitesSeconds(videoWatchTime)}</strong>
-            </div>
-            {watchTimeChart.length ? (
-              <AreaChart
-                data={watchTimeChart}
-                height={220}
-                color="var(--pos)"
-                showLegend={false}
-                formatValue={(value) => `${formatSitesCompactNumber(value)}m`}
-                formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} min vistos`}
-              />
-            ) : (
-              <div className={styles.sitesAnalyticsChartEmpty}>Sin tiempo visto en este periodo.</div>
-            )}
-          </div>
-
-          <div className={styles.sitesAnalyticsChartBlock}>
-            <div className={styles.sitesAnalyticsChartTitle}>
-              <span>Retención</span>
-              <strong>{heatmap.length ? `${heatmap.length} puntos` : 'Sin dato'}</strong>
-            </div>
-            {heatmap.length ? (
-              <div className={styles.sitesAnalyticsHeatmap} aria-label="Mapa de retención">
-                {heatmap.map((point, index) => (
-                  <span
-                    key={`${point.segment}-${index}`}
-                    title={`${point.label || point.segment}: ${Math.round(point.intensity)}%`}
-                    style={{ height: `${Math.max(6, point.intensity)}%` }}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className={styles.sitesAnalyticsChartEmpty}>Sin heatmap todavía.</div>
-            )}
-          </div>
-
-          <div className={styles.sitesAnalyticsChartBlock}>
-            <div className={styles.sitesAnalyticsChartTitle}>
-              <span>Detalle</span>
-              <strong>{engagementScore === null ? 'Sin engagement' : `${Math.round(engagementScore)}%`}</strong>
-            </div>
-            <div className={styles.sitesAnalyticsDetailList}>
-              <div>
-                <Flame size={15} />
-                <span>Engagement</span>
-                <strong>{engagementScore === null ? 'Sin dato' : `${Math.round(engagementScore)}%`}</strong>
-              </div>
-              <div>
-                <Clock3 size={15} />
-                <span>Promedio visto</span>
-                <strong>{formatSitesSeconds(averageWatchTime)}</strong>
-              </div>
-              {countryRows.slice(0, 4).map(country => (
-                <div key={country.country}>
-                  <Globe2 size={15} />
-                  <span>{country.country}</span>
-                  <strong>{formatSitesCompactNumber(country.views)} · {formatSitesSeconds(country.watchTime)}</strong>
-                </div>
-              ))}
-              {countryRows.length === 0 && (
-                <div>
-                  <Globe2 size={15} />
-                  <span>Países</span>
-                  <strong>Sin dato</strong>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {isVideosView ? renderVideoAnalytics() : renderEntityAnalytics()}
     </section>
   )
 }
