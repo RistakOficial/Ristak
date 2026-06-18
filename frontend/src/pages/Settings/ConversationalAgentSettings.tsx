@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Bot, Brain, ChevronDown, Clock, FileText, Image as ImageIcon, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Trash2, Video, X } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, ChevronDown, FileText, Image as ImageIcon, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Trash2, Video, X } from 'lucide-react'
 import { Badge, Button, Card, CustomSelect, Modal, NumberInput, TagPicker } from '@/components/common'
 import {
   PhoneChatPreview,
@@ -128,6 +128,13 @@ const responseDelayModeOptions: Array<{ value: AgentResponseDelayMode; label: st
 const responseDelayUnitOptions: Array<{ value: AgentResponseDelayUnit; label: string }> = [
   { value: 'seconds', label: 'Segundos' },
   { value: 'minutes', label: 'Minutos' }
+]
+
+type BinaryChoice = 'yes' | 'no'
+
+const binaryChoiceOptions: Array<{ value: BinaryChoice; label: string }> = [
+  { value: 'yes', label: 'Sí' },
+  { value: 'no', label: 'No' }
 ]
 
 const followUpUnitOptions: Array<{ value: AgentFollowUpUnit; label: string }> = [
@@ -909,28 +916,66 @@ function getBusinessPromptBlockerText(status?: ConversationalBusinessPromptStatu
   return 'Ristak está preparando el prompt interno. Espera a que quede listo antes de publicar.'
 }
 
-interface SelectionToggleProps {
-  checked: boolean
-  title: string
-  description?: string
+interface QuestionSelectOption<T extends string> {
+  value: T
+  label: string
   disabled?: boolean
-  onChange: (checked: boolean) => void
 }
 
-const SelectionToggle: React.FC<SelectionToggleProps> = ({ checked, title, description, disabled, onChange }) => (
-  <label className={`${styles.selectionToggle} ${checked ? styles.selectionToggleChecked : ''} ${disabled ? styles.selectionToggleDisabled : ''}`}>
-    <input
-      type="checkbox"
-      checked={checked}
-      disabled={disabled}
-      onChange={(event) => onChange(event.target.checked)}
-    />
-    <span className={styles.selectionToggleCopy}>
-      <strong>{title}</strong>
-      {description && <small>{description}</small>}
-    </span>
-  </label>
-)
+interface QuestionSelectRowProps<T extends string> {
+  question: string
+  helper?: string
+  error?: string
+  value: T
+  options: Array<QuestionSelectOption<T>>
+  selectLabel?: string
+  children?: React.ReactNode
+  onChange: (value: T) => void
+}
+
+function QuestionSelectRow<T extends string>({
+  question,
+  helper,
+  error,
+  value,
+  options,
+  selectLabel,
+  children,
+  onChange
+}: QuestionSelectRowProps<T>) {
+  const visibleChildren = React.Children
+    .toArray(children)
+    .filter((child) => child !== null && child !== undefined)
+
+  return (
+    <div className={`${styles.configQuestion} ${visibleChildren.length ? styles.configQuestionOpen : ''}`}>
+      <div className={styles.configQuestionHeader}>
+        <div className={styles.configQuestionCopy}>
+          <span>{question}</span>
+          {(helper || error) && (
+            <small className={error ? styles.helperError : ''}>{error || helper}</small>
+          )}
+        </div>
+        <CustomSelect
+          className={styles.configQuestionSelect}
+          value={value}
+          onChange={(event) => onChange(event.target.value as T)}
+          portal
+          aria-label={selectLabel || question}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </div>
+      {visibleChildren.length > 0 && (
+        <div className={styles.configQuestionBody}>
+          {visibleChildren}
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface AgentCardProps {
   agent: ConversationalAgentDef
@@ -968,6 +1013,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const [testVoiceElapsedMs, setTestVoiceElapsedMs] = useState(0)
   const [testVoicePlaying, setTestVoicePlaying] = useState(false)
   const [testVoiceBars, setTestVoiceBars] = useState(() => createTestVoiceBars())
+  const [guidanceOpen, setGuidanceOpen] = useState({
+    requiredData: false,
+    handoffRules: false,
+    extraInstructions: false
+  })
   const testComposerInputRef = useRef<HTMLInputElement | null>(null)
   const testPhotoInputRef = useRef<HTMLInputElement | null>(null)
   const testFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -993,6 +1043,14 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }, [])
 
   useEffect(() => {
+    setGuidanceOpen({
+      requiredData: false,
+      handoffRules: false,
+      extraInstructions: false
+    })
+  }, [agent.id])
+
+  useEffect(() => {
     testPracticeExpiredRef.current = testPracticeExpired
   }, [testPracticeExpired])
 
@@ -1011,6 +1069,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const selectedAgentModel = selectedProvider.modelGroups
     .flatMap((group) => group.options)
     .find((option) => option.value === selectedAgentModelValue)
+  const selectedAgentModelOptions = selectedProvider.modelGroups.flatMap((group) => (
+    group.options.map((option) => ({
+      value: option.value,
+      label: `${group.label} · ${option.label}`
+    }))
+  ))
   const selectedAttendedChatActionValue = getAttendedChatActionValue(agent)
   const selectedAttendedChatAction = attendedChatActionOptions.find((option) => option.value === selectedAttendedChatActionValue) || attendedChatActionOptions[0]
   const strategyIsCustom = agent.closingStrategyMode === 'custom'
@@ -1024,11 +1088,15 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const responseDelay = getAgentResponseDelay(agent)
   const responseDelaySummary = getResponseDelaySummary(responseDelay)
   const replyDelivery = getAgentReplyDelivery(agent)
+  const humanMessagesEnabled = replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split'
   const followUp = getAgentFollowUp(agent)
   const followUpSummary = getFollowUpSummary(followUp)
   const responseDelayError = getResponseDelayError(responseDelay)
   const replyDeliveryError = getReplyDeliveryError(replyDelivery)
   const followUpError = getFollowUpError(followUp)
+  const requiredDataConfigOpen = guidanceOpen.requiredData || Boolean(String(agent.requiredData || '').trim())
+  const handoffRulesConfigOpen = guidanceOpen.handoffRules || Boolean(String(agent.handoffRules || '').trim())
+  const extraInstructionsConfigOpen = guidanceOpen.extraInstructions || Boolean(String(agent.extraInstructions || '').trim())
   const goalWorkflow = getAgentGoalWorkflow(agent)
   const goalUrlConfig = agent.objective === 'ventas' ? goalWorkflow.sales : goalWorkflow.appointments
   const goalUrlLabel = agent.objective === 'ventas' ? 'Enlace del pedido' : 'Enlace del calendario'
@@ -1797,83 +1865,51 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             <p className={styles.agentSectionHint}>
               Escoge qué IA contesta y cómo se siente el ritmo del chat.
             </p>
-            <div className={styles.agentOpsGrid}>
-              <div className={styles.field}>
-                <label className={styles.label}>IA que responde</label>
-                <CustomSelect
-                  value={selectedProviderId}
-                  onChange={(event) => handleProviderSelect(getKnownConversationalAIProvider(event.target.value))}
-                  portal
-                  aria-label="IA del agente"
-                >
-                  {conversationalAIProviderOptions.map((provider) => {
-                    const status = getProviderStatus(aiProviders, provider.id)
-                    const connected = Boolean(status?.connected)
-                    return (
-                      <option key={provider.id} value={provider.id}>
-                        {provider.label} · {connected ? 'Conectado' : 'Toca para conectar'}
-                      </option>
-                    )
-                  })}
-                </CustomSelect>
-                <div className={styles.aiProviderSelectMeta}>
+            <div className={styles.configQuestionList}>
+              <QuestionSelectRow
+                question="¿Qué IA quieres que responda?"
+                helper={selectedProvider.description}
+                value={selectedProviderId}
+                options={conversationalAIProviderOptions.map((provider) => {
+                  const status = getProviderStatus(aiProviders, provider.id)
+                  const connected = Boolean(status?.connected)
+                  return {
+                    value: provider.id,
+                    label: `${provider.label} · ${connected ? 'Conectado' : 'Toca para conectar'}`
+                  }
+                })}
+                selectLabel="IA del agente"
+                onChange={(providerId) => handleProviderSelect(getKnownConversationalAIProvider(providerId))}
+              >
+                <div className={styles.inlineMeta}>
                   <Badge variant={selectedProviderConnected ? 'success' : 'neutral'}>
                     {selectedProviderConnected ? 'Conectado' : 'Toca para conectar'}
                   </Badge>
-                  <span>{selectedProvider.description}</span>
+                  {selectedProviderStatus?.needsReconnect && (
+                    <span className={styles.helperWarning}>{selectedProviderStatus.connectionIssue || `${selectedProvider.label} necesita reconectarse.`}</span>
+                  )}
                 </div>
-                {selectedProviderStatus?.needsReconnect && (
-                  <p className={styles.helperWarning}>{selectedProviderStatus.connectionIssue || `${selectedProvider.label} necesita reconectarse.`}</p>
-                )}
-              </div>
+              </QuestionSelectRow>
 
-              <div className={styles.field}>
-                <label className={styles.label}>Modelo de {selectedProvider.label}</label>
-                <CustomSelect
-                  value={selectedAgentModelValue}
-                  onChange={(event) => onChange({ model: event.target.value })}
-                  portal
-                >
-                  {selectedProvider.modelGroups.map((group) => (
-                    <optgroup key={group.label} label={group.label}>
-                      {group.options.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </CustomSelect>
-                <p className={styles.helper}>
-                  {(selectedAgentModel?.label || selectedAgentModelValue)} responde sólo para este agente.
-                </p>
-              </div>
-            </div>
-
-            <div className={styles.agentNestedSection}>
-              <div className={styles.sectionHeading}>
-                <Clock size={17} />
-                <h4 className={styles.sectionTitle}>Ritmo de respuesta</h4>
-              </div>
-              <p className={styles.agentSectionHint}>
-                Define si contesta al momento, espera tantito o parte mensajes como humano.
-              </p>
-              <div className={styles.responseDelayGrid}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Espera</label>
-                  <CustomSelect
-                    value={responseDelay.mode}
-                    onChange={(event) => updateResponseDelay({ mode: event.target.value as AgentResponseDelayMode })}
-                    portal
-                  >
-                    {responseDelayModeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </CustomSelect>
-                </div>
-
+              <QuestionSelectRow
+                question={`¿Qué modelo de ${selectedProvider.label} quieres usar?`}
+                helper={`${selectedAgentModel?.label || selectedAgentModelValue} responde sólo para este agente.`}
+                value={selectedAgentModelValue}
+                options={selectedAgentModelOptions}
+                selectLabel={`Modelo de ${selectedProvider.label}`}
+                onChange={(model) => onChange({ model })}
+              />
+              <QuestionSelectRow
+                question="¿Cuánto quieres que espere antes de responder?"
+                helper={getResponseDelayHelp(responseDelay)}
+                error={responseDelayError}
+                value={responseDelay.mode}
+                options={responseDelayModeOptions}
+                selectLabel="Espera antes de responder"
+                onChange={(mode) => updateResponseDelay({ mode })}
+              >
                 {responseDelay.mode === 'fixed' && (
-                  <div className={styles.responseDelayControls}>
+                  <div className={styles.inlineFields}>
                     <div className={`${styles.field} ${styles.delayNumberField}`}>
                       <label className={styles.label}>Tiempo</label>
                       <NumberInput
@@ -1900,7 +1936,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 )}
 
                 {responseDelay.mode === 'random' && (
-                  <div className={styles.responseDelayControls}>
+                  <div className={styles.inlineFields}>
                     <div className={`${styles.field} ${styles.delayNumberField}`}>
                       <label className={styles.label}>Mínimo</label>
                       <NumberInput
@@ -1935,30 +1971,28 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                     </div>
                   </div>
                 )}
+              </QuestionSelectRow>
 
-                <p className={`${styles.helper} ${styles.responseDelayHelp} ${responseDelayError ? styles.helperError : ''}`}>
-                  {responseDelayError || getResponseDelayHelp(responseDelay)}
-                </p>
-              </div>
-
-              <div className={styles.replyDeliveryGrid}>
-                <SelectionToggle
-                  checked={replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split'}
-                  title="Modo mensajes humanos"
-                  description="Parte respuestas largas en varios globos."
-                  onChange={(enabled) => {
-                    updateReplyDelivery({
-                      mode: (enabled ? 'split' : 'single') as AgentReplyDeliveryMode,
-                      splitMessagesEnabled: enabled,
-                      ...systemReplyDeliveryDefaults
-                    })
-                  }}
-                />
-
-                {(replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split') && (
-                  <div className={styles.replyDeliveryControls}>
+              <QuestionSelectRow
+                question="¿Quieres activar modo mensajes humanos?"
+                helper={getReplyDeliveryHelp(replyDelivery)}
+                error={replyDeliveryError}
+                value={humanMessagesEnabled ? 'yes' : 'no'}
+                options={binaryChoiceOptions}
+                selectLabel="Modo mensajes humanos"
+                onChange={(value) => {
+                  const enabled = value === 'yes'
+                  updateReplyDelivery({
+                    mode: (enabled ? 'split' : 'single') as AgentReplyDeliveryMode,
+                    splitMessagesEnabled: enabled,
+                    ...(enabled ? systemReplyDeliveryDefaults : {})
+                  })
+                }}
+              >
+                {humanMessagesEnabled && (
+                  <div className={styles.inlineFields}>
                     <div className={`${styles.field} ${styles.delayNumberField}`}>
-                      <label className={styles.label}>Pausa mín.</label>
+                      <label className={styles.label}>Pausa mínima</label>
                       <NumberInput
                         className={`${styles.input} ${styles.delayNumberInput}`}
                         min={0}
@@ -1969,7 +2003,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                       />
                     </div>
                     <div className={`${styles.field} ${styles.delayNumberField}`}>
-                      <label className={styles.label}>Pausa máx.</label>
+                      <label className={styles.label}>Pausa máxima</label>
                       <NumberInput
                         className={`${styles.input} ${styles.delayNumberInput}`}
                         min={0}
@@ -1981,17 +2015,15 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                     </div>
                   </div>
                 )}
+              </QuestionSelectRow>
 
-                <p className={`${styles.helper} ${styles.responseDelayHelp} ${replyDeliveryError ? styles.helperError : ''}`}>
-                  {replyDeliveryError || getReplyDeliveryHelp(replyDelivery)}
-                </p>
-              </div>
-
-              <SelectionToggle
-                checked={agent.allowEmojis}
-                title="Puede usar emojis si se siente natural"
-                description="Déjalo apagado si quieres un tono más serio."
-                onChange={(checked) => onChange({ allowEmojis: checked })}
+              <QuestionSelectRow
+                question="¿Puede usar emojis si se siente natural?"
+                helper="Úsalo sólo si el tono del negocio permite algo más casual."
+                value={agent.allowEmojis ? 'yes' : 'no'}
+                options={binaryChoiceOptions}
+                selectLabel="Uso de emojis"
+                onChange={(value) => onChange({ allowEmojis: value === 'yes' })}
               />
             </div>
           </div>
@@ -2001,49 +2033,36 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             <p className={styles.agentSectionHint}>
               Define qué hace la IA mientras toma la conversación, qué objetivo quieres que logre y qué pasa cuando lo cumple.
             </p>
+            <div className={styles.configQuestionList}>
+              <QuestionSelectRow
+                question="¿Qué hace cuando la IA está tomando la conversación?"
+                helper={selectedAttendedChatAction.description}
+                value={selectedAttendedChatActionValue}
+                options={attendedChatActionOptions.map((option) => ({ value: option.value, label: option.label }))}
+                selectLabel="Qué hace el chat con conversaciones atendidas"
+                onChange={(value) => onChange(getAttendedChatActionPatch(value as AttendedChatActionValue))}
+              />
+
+              <QuestionSelectRow
+                question="¿Qué objetivo quieres que logre?"
+                helper={selectedObjective.description}
+                value={agent.objective}
+                options={objectiveOptions.map((option) => ({ value: option.value, label: option.label }))}
+                selectLabel="Objetivo del agente"
+                onChange={(objective) => handleObjectiveChange(objective as ConversationalObjective)}
+              />
+
+              <QuestionSelectRow
+                question="Cuando logre ese objetivo, ¿qué quieres que haga?"
+                helper={selectedActionInfo.description}
+                value={agent.successAction}
+                options={allowedActions.map((action) => ({ value: action, label: getSuccessActionInfo(action, agent.objective).label }))}
+                selectLabel="Acción al lograr objetivo"
+                onChange={(action) => handleSuccessActionChange(action as ConversationalSuccessAction)}
+              />
+            </div>
+
             <div className={styles.agentOpsGrid}>
-              <div className={styles.fieldWide}>
-                <label className={styles.label}>¿Qué hace cuando la IA está tomando la conversación?</label>
-                <CustomSelect
-                  value={selectedAttendedChatActionValue}
-                  onChange={(event) => onChange(getAttendedChatActionPatch(event.target.value as AttendedChatActionValue))}
-                  portal
-                  aria-label="Qué hace el chat con conversaciones atendidas"
-                >
-                  {attendedChatActionOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </CustomSelect>
-                <p className={styles.helper}>{selectedAttendedChatAction.description}</p>
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label}>¿Qué objetivo quieres que logre?</label>
-                <CustomSelect
-                  value={agent.objective}
-                  onChange={(event) => handleObjectiveChange(event.target.value as ConversationalObjective)}
-                  portal
-                >
-                  {objectiveOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </CustomSelect>
-                <p className={styles.helper}>{selectedObjective.description}</p>
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label}>Cuando logre ese objetivo, ¿qué quieres que haga?</label>
-                <CustomSelect
-                  value={agent.successAction}
-                  onChange={(event) => handleSuccessActionChange(event.target.value as ConversationalSuccessAction)}
-                  portal
-                >
-                  {allowedActions.map((action) => (
-                    <option key={action} value={action}>{getSuccessActionInfo(action, agent.objective).label}</option>
-                  ))}
-                </CustomSelect>
-                <p className={styles.helper}>{selectedActionInfo.description}</p>
-              </div>
 
               {agent.successAction === 'book_appointment' && (
                 <div className={styles.field}>
@@ -2305,70 +2324,42 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             <p className={styles.agentSectionHint}>
               Reactiva el chat si la persona se queda callada, sin salirte de la ventana de WhatsApp.
             </p>
-            <SelectionToggle
-              checked={followUp.enabled}
-              title="¿Quieres darle seguimiento al contacto?"
-              description="Si se queda sin responder, el agente puede abrir de nuevo con contexto."
-              onChange={(enabled) => {
-                updateFollowUp({
-                  enabled,
-                  first: { ...followUp.first, enabled: true },
-                  second: { ...followUp.second, enabled: enabled ? followUp.second.enabled : false },
-                  strategy: followUp.strategy || defaultFollowUpStrategy
-                })
-              }}
-            />
+            <div className={styles.configQuestionList}>
+              <QuestionSelectRow
+                question="¿Quieres darle seguimiento al contacto?"
+                helper="Si se queda sin responder, el agente puede abrir de nuevo con contexto."
+                value={followUp.enabled ? 'yes' : 'no'}
+                options={binaryChoiceOptions}
+                selectLabel="Seguimiento del contacto"
+                onChange={(value) => {
+                  const enabled = value === 'yes'
+                  updateFollowUp({
+                    enabled,
+                    first: { ...followUp.first, enabled: true },
+                    second: { ...followUp.second, enabled: enabled ? followUp.second.enabled : false },
+                    strategy: followUp.strategy || defaultFollowUpStrategy
+                  })
+                }}
+              />
 
-            {followUp.enabled && (
-              <div className={styles.followUpConfig}>
-                <div className={styles.followUpDelayRow}>
-                  <span className={styles.followUpDelayLabel}>¿En qué momento?</span>
-                  <span className={styles.followUpDelayText}>Después de</span>
-                  <NumberInput
-                    className={`${styles.input} ${styles.delayNumberInput}`}
-                    min={1}
-                    max={getFollowUpMaxValue(followUp.first.unit)}
-                    step={1}
-                    value={followUp.first.value}
-                    onValueChange={(value) => updateFollowUpStep('first', { value })}
-                  />
-                  <CustomSelect
-                    value={followUp.first.unit}
-                    onChange={(event) => updateFollowUpStep('first', { unit: event.target.value as AgentFollowUpUnit })}
-                    portal
-                    aria-label="Unidad del primer seguimiento"
-                  >
-                    {followUpUnitOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </CustomSelect>
-                  <span className={styles.followUpDelayText}>desde el último mensaje enviado.</span>
-                </div>
-
-                <SelectionToggle
-                  checked={followUp.second.enabled}
-                  title="¿Quieres darle un 2do seguimiento al contacto?"
-                  description="Sólo se manda si el contacto sigue sin contestar."
-                  onChange={(enabled) => updateFollowUpStep('second', { enabled })}
-                />
-
-                {followUp.second.enabled && (
+              {followUp.enabled && (
+                <>
                   <div className={styles.followUpDelayRow}>
-                    <span className={styles.followUpDelayLabel}>Segundo seguimiento</span>
+                    <span className={styles.followUpDelayLabel}>¿En qué momento?</span>
                     <span className={styles.followUpDelayText}>Después de</span>
                     <NumberInput
                       className={`${styles.input} ${styles.delayNumberInput}`}
                       min={1}
-                      max={getFollowUpMaxValue(followUp.second.unit)}
+                      max={getFollowUpMaxValue(followUp.first.unit)}
                       step={1}
-                      value={followUp.second.value}
-                      onValueChange={(value) => updateFollowUpStep('second', { value })}
+                      value={followUp.first.value}
+                      onValueChange={(value) => updateFollowUpStep('first', { value })}
                     />
                     <CustomSelect
-                      value={followUp.second.unit}
-                      onChange={(event) => updateFollowUpStep('second', { unit: event.target.value as AgentFollowUpUnit })}
+                      value={followUp.first.unit}
+                      onChange={(event) => updateFollowUpStep('first', { unit: event.target.value as AgentFollowUpUnit })}
                       portal
-                      aria-label="Unidad del segundo seguimiento"
+                      aria-label="Unidad del primer seguimiento"
                     >
                       {followUpUnitOptions.map((option) => (
                         <option key={option.value} value={option.value}>{option.label}</option>
@@ -2376,23 +2367,59 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                     </CustomSelect>
                     <span className={styles.followUpDelayText}>desde el último mensaje enviado.</span>
                   </div>
-                )}
 
-                <div className={styles.fieldWide}>
-                  <label className={styles.label}>Estrategia de seguimiento</label>
-                  <textarea
-                    className={styles.textarea}
-                    value={followUp.strategy}
-                    placeholder="Ejemplo: retoma lo último que dijo, no vendas de golpe y abre con una pregunta corta."
-                    onChange={(event) => updateFollowUp({ strategy: event.target.value })}
-                    rows={4}
-                  />
-                  <p className={`${styles.helper} ${followUpError ? styles.helperError : ''}`}>
-                    {followUpError || 'Define cómo debe abrir la conversación con el contexto que ya tiene.'}
-                  </p>
-                </div>
-              </div>
-            )}
+                  <QuestionSelectRow
+                    question="¿Quieres darle un 2do seguimiento al contacto?"
+                    helper="Sólo se manda si el contacto sigue sin contestar."
+                    error={followUp.second.enabled ? followUpError : ''}
+                    value={followUp.second.enabled ? 'yes' : 'no'}
+                    options={binaryChoiceOptions}
+                    selectLabel="Segundo seguimiento"
+                    onChange={(value) => updateFollowUpStep('second', { enabled: value === 'yes' })}
+                  >
+                    {followUp.second.enabled && (
+                      <div className={styles.followUpDelayRow}>
+                        <span className={styles.followUpDelayLabel}>Segundo seguimiento</span>
+                        <span className={styles.followUpDelayText}>Después de</span>
+                        <NumberInput
+                          className={`${styles.input} ${styles.delayNumberInput}`}
+                          min={1}
+                          max={getFollowUpMaxValue(followUp.second.unit)}
+                          step={1}
+                          value={followUp.second.value}
+                          onValueChange={(value) => updateFollowUpStep('second', { value })}
+                        />
+                        <CustomSelect
+                          value={followUp.second.unit}
+                          onChange={(event) => updateFollowUpStep('second', { unit: event.target.value as AgentFollowUpUnit })}
+                          portal
+                          aria-label="Unidad del segundo seguimiento"
+                        >
+                          {followUpUnitOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </CustomSelect>
+                        <span className={styles.followUpDelayText}>desde el último mensaje enviado.</span>
+                      </div>
+                    )}
+                  </QuestionSelectRow>
+
+                  <div className={styles.fieldWide}>
+                    <label className={styles.label}>Estrategia de seguimiento</label>
+                    <textarea
+                      className={styles.textarea}
+                      value={followUp.strategy}
+                      placeholder="Ejemplo: retoma lo último que dijo, no vendas de golpe y abre con una pregunta corta."
+                      onChange={(event) => updateFollowUp({ strategy: event.target.value })}
+                      rows={4}
+                    />
+                    <p className={`${styles.helper} ${followUpError ? styles.helperError : ''}`}>
+                      {followUpError || 'Define cómo debe abrir la conversación con el contexto que ya tiene.'}
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           <div className={styles.agentSection}>
@@ -2430,40 +2457,75 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>5. Qué debe cuidar</h3>
-            <div className={styles.agentTextGrid}>
-              <div className={styles.field}>
-                <label className={styles.label}>Datos que debe pedir</label>
-                <textarea
-                  className={styles.textarea}
-                  value={agent.requiredData}
-                  placeholder={'Ejemplo:\n- Nombre completo\n- Servicio que le interesa'}
-                  onChange={(event) => onChange({ requiredData: event.target.value })}
-                  rows={3}
-                />
-                <p className={styles.helper}>
-                  Si ya lo tiene el contacto, no lo repite.
-                </p>
-              </div>
-              <div className={styles.field}>
-                <label className={styles.label}>Cuándo pasar al equipo</label>
-                <textarea
-                  className={styles.textarea}
-                  value={agent.handoffRules}
-                  placeholder={'Ejemplo:\n- Se enojó\n- Pregunta por facturación'}
-                  onChange={(event) => onChange({ handoffRules: event.target.value })}
-                  rows={3}
-                />
-              </div>
-              <div className={styles.field}>
-                <label className={styles.label}>Tips del negocio</label>
-                <textarea
-                  className={styles.textarea}
-                  value={agent.extraInstructions}
-                  placeholder="Ejemplo: menciona la promo de junio sólo si preguntan por precio."
-                  onChange={(event) => onChange({ extraInstructions: event.target.value })}
-                  rows={3}
-                />
-              </div>
+            <div className={styles.configQuestionList}>
+              <QuestionSelectRow
+                question="¿Quieres definir datos que debe pedir?"
+                helper="Si ya los tiene el contacto, no los repite."
+                value={requiredDataConfigOpen ? 'yes' : 'no'}
+                options={binaryChoiceOptions}
+                selectLabel="Datos que debe pedir"
+                onChange={(value) => {
+                  const enabled = value === 'yes'
+                  setGuidanceOpen((current) => ({ ...current, requiredData: enabled }))
+                  if (!enabled) onChange({ requiredData: '' })
+                }}
+              >
+                {requiredDataConfigOpen && (
+                  <textarea
+                    className={styles.textarea}
+                    value={agent.requiredData}
+                    placeholder={'Ejemplo:\n- Nombre completo\n- Servicio que le interesa'}
+                    onChange={(event) => onChange({ requiredData: event.target.value })}
+                    rows={3}
+                  />
+                )}
+              </QuestionSelectRow>
+
+              <QuestionSelectRow
+                question="¿Quieres definir cuándo pasarlo al equipo?"
+                helper="Úsalo para enojo, facturación, dudas delicadas o casos fuera de IA."
+                value={handoffRulesConfigOpen ? 'yes' : 'no'}
+                options={binaryChoiceOptions}
+                selectLabel="Cuándo pasar al equipo"
+                onChange={(value) => {
+                  const enabled = value === 'yes'
+                  setGuidanceOpen((current) => ({ ...current, handoffRules: enabled }))
+                  if (!enabled) onChange({ handoffRules: '' })
+                }}
+              >
+                {handoffRulesConfigOpen && (
+                  <textarea
+                    className={styles.textarea}
+                    value={agent.handoffRules}
+                    placeholder={'Ejemplo:\n- Se enojó\n- Pregunta por facturación'}
+                    onChange={(event) => onChange({ handoffRules: event.target.value })}
+                    rows={3}
+                  />
+                )}
+              </QuestionSelectRow>
+
+              <QuestionSelectRow
+                question="¿Quieres agregar tips del negocio?"
+                helper="Sólo aparece una caja si quieres darle instrucciones extra."
+                value={extraInstructionsConfigOpen ? 'yes' : 'no'}
+                options={binaryChoiceOptions}
+                selectLabel="Tips del negocio"
+                onChange={(value) => {
+                  const enabled = value === 'yes'
+                  setGuidanceOpen((current) => ({ ...current, extraInstructions: enabled }))
+                  if (!enabled) onChange({ extraInstructions: '' })
+                }}
+              >
+                {extraInstructionsConfigOpen && (
+                  <textarea
+                    className={styles.textarea}
+                    value={agent.extraInstructions}
+                    placeholder="Ejemplo: menciona la promo de junio sólo si preguntan por precio."
+                    onChange={(event) => onChange({ extraInstructions: event.target.value })}
+                    rows={3}
+                  />
+                )}
+              </QuestionSelectRow>
             </div>
           </div>
 

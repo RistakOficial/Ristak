@@ -351,6 +351,85 @@
   gap: 12px;
 }
 
+.configQuestionList {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
+.configQuestion {
+  min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.configQuestion:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.configQuestionOpen {
+  padding-bottom: 14px;
+}
+
+.configQuestionHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.configQuestionCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.configQuestionCopy span {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.configQuestionCopy small {
+  color: var(--text-mute);
+  font-size: 12.5px;
+  line-height: 1.42;
+}
+
+.configQuestionSelect {
+  width: 100%;
+  min-width: 0;
+}
+
+.configQuestionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  margin-top: 10px;
+}
+
+.inlineFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 180px));
+  gap: 10px;
+  max-width: 620px;
+  min-width: 0;
+}
+
+.inlineMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
 .responseDelayGrid {
   display: grid;
   grid-template-columns: minmax(180px, 260px) minmax(280px, 1fr);
@@ -822,6 +901,10 @@
     grid-template-columns: 1fr;
   }
 
+  .configQuestionHeader {
+    grid-template-columns: minmax(0, 1fr) minmax(190px, 240px);
+  }
+
   .actions {
     justify-content: stretch;
   }
@@ -862,6 +945,11 @@
 
   .responseDelayControls,
   .replyDeliveryControls {
+    grid-template-columns: 1fr;
+  }
+
+  .configQuestionHeader,
+  .inlineFields {
     grid-template-columns: 1fr;
   }
 
