@@ -131,6 +131,11 @@ interface RemovedChatState {
   removedAt: string
 }
 
+interface ChatListCacheSnapshot {
+  chats: DesktopChatContact[]
+  isFresh: boolean
+}
+
 interface DesktopChatMessage {
   id: string
   text: string
@@ -215,6 +220,7 @@ const CHAT_ARCHIVED_STATE_KEY = 'ristak_phone_chat_archived_state_v1'
 const CHAT_REMOVED_STATE_KEY = 'ristak_desktop_chat_removed_state_v1'
 const CHAT_CACHE_KEY = 'ristak_desktop_chat_list_cache_v1'
 const CHAT_CACHE_MAX_AGE_MS = 30 * 60 * 1000
+const CHAT_CACHE_STALE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_REFRESH_INTERVAL_MS = 20000
 const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -713,25 +719,31 @@ function getDefaultActiveChatId(chats: DesktopChatContact[], archivedIds: Set<st
     ''
 }
 
-function readCachedChatList(): DesktopChatContact[] {
-  if (typeof window === 'undefined') return []
+function readCachedChatList(): ChatListCacheSnapshot {
+  if (typeof window === 'undefined') return { chats: [], isFresh: false }
 
   try {
     const parsed = JSON.parse(window.localStorage.getItem(CHAT_CACHE_KEY) || 'null')
-    if (!parsed || typeof parsed !== 'object') return []
-    if (Date.now() - Number(parsed.storedAt || 0) > CHAT_CACHE_MAX_AGE_MS) return []
-    if (!Array.isArray(parsed.chats)) return []
+    if (!parsed || typeof parsed !== 'object') return { chats: [], isFresh: false }
+    const cacheAgeMs = Date.now() - Number(parsed.storedAt || 0)
+    if (cacheAgeMs > CHAT_CACHE_STALE_MAX_AGE_MS) return { chats: [], isFresh: false }
+    if (!Array.isArray(parsed.chats)) return { chats: [], isFresh: false }
 
-    return parsed.chats
+    const chats = parsed.chats
       .filter((contact: unknown): contact is DesktopChatContact => Boolean(
         contact &&
         typeof contact === 'object' &&
         typeof (contact as DesktopChatContact).id === 'string' &&
         (contact as DesktopChatContact).id.trim()
       ))
-      .slice(0, 100)
+      .slice(0, 120)
+
+    return {
+      chats,
+      isFresh: cacheAgeMs <= CHAT_CACHE_MAX_AGE_MS
+    }
   } catch {
-    return []
+    return { chats: [], isFresh: false }
   }
 }
 
@@ -741,7 +753,7 @@ function writeCachedChatList(chats: DesktopChatContact[]) {
   try {
     window.localStorage.setItem(CHAT_CACHE_KEY, JSON.stringify({
       storedAt: Date.now(),
-      chats: chats.slice(0, 100)
+      chats: chats.slice(0, 120)
     }))
   } catch {
     // Cache best-effort: si el navegador no deja guardar, la red sigue siendo la fuente.
@@ -1460,6 +1472,7 @@ export const DesktopChat: React.FC = () => {
   const voiceStartedAtRef = useRef(0)
   const voiceTimerRef = useRef<number | null>(null)
   const messageAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
+  const selectAllChatCheckboxRef = useRef<HTMLInputElement | null>(null)
   const chatsRef = useRef<DesktopChatContact[]>([])
   const activeContactIdRef = useRef('')
   const chatLiveRefreshTimeoutRef = useRef<number | null>(null)
@@ -1469,8 +1482,9 @@ export const DesktopChat: React.FC = () => {
   const removedChatStatesRef = useRef<RemovedChatState[]>([])
   const agentPriorityChatIdSetRef = useRef<Set<string>>(new Set())
 
-  const [chats, setChats] = useState<DesktopChatContact[]>(() => readCachedChatList())
-  const [chatsLoading, setChatsLoading] = useState(() => readCachedChatList().length === 0)
+  const [initialChatCache] = useState<ChatListCacheSnapshot>(() => readCachedChatList())
+  const [chats, setChats] = useState<DesktopChatContact[]>(() => initialChatCache.chats)
+  const [chatsLoading, setChatsLoading] = useState(() => initialChatCache.chats.length === 0)
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
@@ -1480,6 +1494,7 @@ export const DesktopChat: React.FC = () => {
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_ARCHIVED_STATE_KEY))
   const [removedChatStates, setRemovedChatStates] = useState<RemovedChatState[]>(() => readStoredRemovedChatStates())
   const [activeContactId, setActiveContactId] = useState<string>('')
+  const [selectedChatIds, setSelectedChatIds] = useState<string[]>([])
 
   const [messages, setMessages] = useState<DesktopChatMessage[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
@@ -1654,9 +1669,35 @@ export const DesktopChat: React.FC = () => {
           Date.parse(leftState?.signalAt || left.lastMessageDate || left.createdAt)
       })
   }, [activeAdvancedFilterCount, agentPriorityChatIdSet, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, chatQuery, visibleChatsForList])
+  const selectableChatRows = useMemo(() => {
+    const rows = [...agentPriorityChatRows, ...filteredChats]
+    const seen = new Set<string>()
+    return rows.filter((contact) => {
+      if (seen.has(contact.id)) return false
+      seen.add(contact.id)
+      return true
+    })
+  }, [agentPriorityChatRows, filteredChats])
+  const selectedChatIdSet = useMemo(() => new Set(selectedChatIds), [selectedChatIds])
+  const selectedChatContacts = useMemo(
+    () => selectableChatRows.filter((contact) => selectedChatIdSet.has(contact.id)),
+    [selectableChatRows, selectedChatIdSet]
+  )
+  const selectedVisibleChatCount = selectedChatContacts.length
+  const allVisibleChatsSelected = selectableChatRows.length > 0 && selectedVisibleChatCount === selectableChatRows.length
+  const someVisibleChatsSelected = selectedVisibleChatCount > 0 && !allVisibleChatsSelected
   useEffect(() => {
     chatsRef.current = chats
   }, [chats])
+  useEffect(() => {
+    if (!selectAllChatCheckboxRef.current) return
+    selectAllChatCheckboxRef.current.indeterminate = someVisibleChatsSelected
+  }, [someVisibleChatsSelected])
+  useEffect(() => {
+    if (selectedChatIds.length === 0) return
+    const selectableIds = new Set(selectableChatRows.map((contact) => contact.id))
+    setSelectedChatIds((current) => current.filter((id) => selectableIds.has(id)))
+  }, [selectableChatRows, selectedChatIds.length])
   useEffect(() => {
     activeContactIdRef.current = activeContactId
   }, [activeContactId])
@@ -1734,6 +1775,7 @@ export const DesktopChat: React.FC = () => {
     ? 'Cuando lleguen mensajes, aparecerán aquí con su canal, estado y último movimiento.'
     : 'Cuando llegue un mensaje nuevo, aparecerá aquí.'
   const resetChatFiltersLabel = agentAssignedViewOpen && !hasTextOrAdvancedChatFilters ? 'Volver a conversaciones' : 'Limpiar filtros'
+  const bulkArchiveActionLabel = archivedViewOpen ? 'Restaurar' : 'Archivar'
   const messageGroups = useMemo(() => {
     const groups: Array<{ key: string; label: string; messages: DesktopChatMessage[] }> = []
     messages.forEach((message) => {
@@ -1802,6 +1844,8 @@ export const DesktopChat: React.FC = () => {
 
   const loadChats = useCallback(async (options: { silent?: boolean } = {}) => {
     const silent = options.silent === true
+    if (silent && chatsRequestRef.current) return
+
     if (!silent) {
       setChatsError('')
       if (chatsRef.current.length === 0) {
@@ -1809,7 +1853,7 @@ export const DesktopChat: React.FC = () => {
       }
     }
 
-    chatsRequestRef.current?.abort()
+    if (!silent) chatsRequestRef.current?.abort()
     const controller = new AbortController()
     chatsRequestRef.current = controller
     const timeoutId = window.setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS)
@@ -1836,8 +1880,10 @@ export const DesktopChat: React.FC = () => {
       if (controller.signal.aborted && chatsRequestRef.current !== controller) return
       if (!silent) {
         const timedOut = controller.signal.aborted || error?.name === 'AbortError'
-        setChatsError(timedOut ? 'Los chats tardaron demasiado en cargar. Intenta otra vez.' : 'No se pudieron cargar los chats.')
-        setChats([])
+        if (chatsRef.current.length === 0) {
+          setChatsError(timedOut ? 'Los chats tardaron demasiado en cargar. Intenta otra vez.' : 'No se pudieron cargar los chats.')
+          setChats([])
+        }
       }
     } finally {
       window.clearTimeout(timeoutId)
@@ -1871,7 +1917,11 @@ export const DesktopChat: React.FC = () => {
       setConversationAgentState(agentState)
       setAgentStates((current) => (agentState ? { ...current, [contactId]: agentState } : current))
       setMessages([...journeyMessages, ...scheduledBubbles].sort((left, right) => Date.parse(left.date) - Date.parse(right.date)))
-      setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, unreadCount: 0 } : contact))
+      setChats((current) => {
+        const next = current.map((contact) => contact.id === contactId ? { ...contact, unreadCount: 0 } : contact)
+        writeCachedChatList(next)
+        return next
+      })
     } catch {
       if (!silent) {
         setMessages([])
@@ -2829,6 +2879,27 @@ export const DesktopChat: React.FC = () => {
     setChatFilter((current) => (current === 'agent' ? 'all' : 'agent'))
   }, [])
 
+  const handleToggleChatSelection = useCallback((contactId: string) => {
+    setSelectedChatIds((current) => (
+      current.includes(contactId)
+        ? current.filter((id) => id !== contactId)
+        : [...current, contactId]
+    ))
+  }, [])
+
+  const handleToggleVisibleChatSelection = useCallback(() => {
+    const visibleIds = selectableChatRows.map((contact) => contact.id)
+    if (visibleIds.length === 0) return
+
+    setSelectedChatIds((current) => {
+      const currentSet = new Set(current)
+      const allSelected = visibleIds.every((id) => currentSet.has(id))
+      if (allSelected) return current.filter((id) => !visibleIds.includes(id))
+      visibleIds.forEach((id) => currentSet.add(id))
+      return Array.from(currentSet)
+    })
+  }, [selectableChatRows])
+
   const handleArchiveChat = useCallback((contact: DesktopChatContact | Contact) => {
     const alreadyArchived = archivedChatIdSet.has(contact.id)
 
@@ -2865,6 +2936,26 @@ export const DesktopChat: React.FC = () => {
     )
   }, [showToast])
 
+  const handleMarkSelectedChatsAsRead = useCallback(() => {
+    if (selectedChatContacts.length === 0) return
+    const selectedIds = new Set(selectedChatContacts.map((contact) => contact.id))
+    const unreadCount = selectedChatContacts.filter((contact) => Number(contact.unreadCount || 0) > 0).length
+
+    setChats((current) => {
+      const next = current.map((contact) => selectedIds.has(contact.id) ? { ...contact, unreadCount: 0 } : contact)
+      writeCachedChatList(next)
+      return next
+    })
+
+    showToast(
+      unreadCount > 0 ? 'success' : 'info',
+      unreadCount > 0 ? 'Chats marcados como leídos' : 'Chats sin pendientes',
+      unreadCount > 0
+        ? `${unreadCount} chat${unreadCount === 1 ? '' : 's'} ya no aparece${unreadCount === 1 ? '' : 'n'} como pendiente${unreadCount === 1 ? '' : 's'}.`
+        : 'Los chats seleccionados ya estaban leídos.'
+    )
+  }, [selectedChatContacts, showToast])
+
   const handleRemoveChatFromList = useCallback((contact: DesktopChatContact) => {
     const snapshot = getChatRemovalSnapshot(contact)
     const nextRemovedStates = [
@@ -2893,6 +2984,68 @@ export const DesktopChat: React.FC = () => {
       `El historial de ${getContactName(contact)} sigue intacto y volverá si llega un mensaje nuevo.`
     )
   }, [showToast])
+
+  const handleArchiveSelectedChats = useCallback(() => {
+    if (selectedChatContacts.length === 0) return
+    const selectedIds = selectedChatContacts.map((contact) => contact.id)
+    const selectedSet = new Set(selectedIds)
+
+    setArchivedChatIds((current) => {
+      if (archivedViewOpen) return current.filter((id) => !selectedSet.has(id))
+      const next = new Set(current)
+      selectedIds.forEach((id) => next.add(id))
+      return Array.from(next)
+    })
+
+    if (!archivedViewOpen && activeContactId && selectedSet.has(activeContactId)) {
+      const nextArchivedSet = new Set(archivedChatIdSetRef.current)
+      selectedIds.forEach((id) => nextArchivedSet.add(id))
+      setActiveContactId(getDefaultActiveChatId(chatsRef.current, nextArchivedSet, agentPriorityChatIdSetRef.current, removedChatStatesRef.current))
+    }
+
+    setSelectedChatIds([])
+    showToast(
+      'success',
+      archivedViewOpen ? 'Chats restaurados' : 'Chats archivados',
+      archivedViewOpen
+        ? `${selectedIds.length} chat${selectedIds.length === 1 ? '' : 's'} volvió${selectedIds.length === 1 ? '' : 'ieron'} a conversaciones.`
+        : `${selectedIds.length} chat${selectedIds.length === 1 ? '' : 's'} se movió${selectedIds.length === 1 ? '' : 'ieron'} a Archivados.`
+    )
+  }, [activeContactId, archivedViewOpen, selectedChatContacts, showToast])
+
+  const handleRemoveSelectedChatsFromList = useCallback(() => {
+    if (selectedChatContacts.length === 0) return
+    const selectedSet = new Set(selectedChatContacts.map((contact) => contact.id))
+    const nextRemovedStates = [
+      ...selectedChatContacts.map((contact) => {
+        const snapshot = getChatRemovalSnapshot(contact)
+        return {
+          contactId: contact.id,
+          lastMessageDate: snapshot.lastMessageDate,
+          messageCount: snapshot.messageCount,
+          removedAt: new Date().toISOString()
+        }
+      }),
+      ...removedChatStatesRef.current.filter((state) => !selectedSet.has(state.contactId))
+    ].slice(0, 200)
+    const nextArchivedSet = new Set(archivedChatIdSetRef.current)
+    selectedSet.forEach((id) => nextArchivedSet.delete(id))
+
+    setRemovedChatStates(nextRemovedStates)
+    setArchivedChatIds((current) => current.filter((id) => !selectedSet.has(id)))
+    setActiveContactId((current) => (
+      current && selectedSet.has(current)
+        ? getDefaultActiveChatId(chatsRef.current.filter((item) => !selectedSet.has(item.id)), nextArchivedSet, agentPriorityChatIdSetRef.current, nextRemovedStates)
+        : current
+    ))
+    setSelectedChatIds([])
+
+    showToast(
+      'success',
+      'Chats eliminados de la vista',
+      `${selectedSet.size} chat${selectedSet.size === 1 ? '' : 's'} se ocultó${selectedSet.size === 1 ? '' : 'aron'} sin borrar historial. Volverán si llega un mensaje nuevo.`
+    )
+  }, [selectedChatContacts, showToast])
 
   const openAutomationModal = useCallback(() => {
     setAutomationModalOpen(true)
@@ -3035,17 +3188,21 @@ export const DesktopChat: React.FC = () => {
     setVoiceElapsedMs(0)
     setComposerMenuOpen(false)
     setMessages((current) => [...current, ...optimisticMessages])
-    setChats((current) => current.map((contact) => (
-      contact.id === activeContact.id
-        ? {
-            ...contact,
-            lastMessageText: voiceToSend ? 'Mensaje de voz' : attachmentsToSend.length > 0 ? (text || getAttachmentPreviewText(attachmentsToSend)) : text,
-            lastMessageDate: sentAt,
-            lastMessageDirection: 'outbound',
-            messageCount: Number(contact.messageCount || 0) + Math.max(1, voiceToSend ? 1 : attachmentsToSend.length)
-          }
-        : contact
-    )))
+    setChats((current) => {
+      const next = current.map((contact) => (
+        contact.id === activeContact.id
+          ? {
+              ...contact,
+              lastMessageText: voiceToSend ? 'Mensaje de voz' : attachmentsToSend.length > 0 ? (text || getAttachmentPreviewText(attachmentsToSend)) : text,
+              lastMessageDate: sentAt,
+              lastMessageDirection: 'outbound',
+              messageCount: Number(contact.messageCount || 0) + Math.max(1, voiceToSend ? 1 : attachmentsToSend.length)
+            }
+          : contact
+      ))
+      writeCachedChatList(next)
+      return next
+    })
 
     try {
       if (voiceToSend) {
@@ -3525,6 +3682,25 @@ export const DesktopChat: React.FC = () => {
     )
   }
 
+  const renderChatSelectionControl = (contact: DesktopChatContact) => {
+    const selected = selectedChatIdSet.has(contact.id)
+    return (
+      <label
+        className={styles.chatSelectControl}
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+        title={`Seleccionar ${getContactName(contact)}`}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => handleToggleChatSelection(contact.id)}
+          aria-label={`Seleccionar chat de ${getContactName(contact)}`}
+        />
+      </label>
+    )
+  }
+
   const renderChatActionsMenu = (contact: DesktopChatContact) => {
     const isArchived = archivedChatIdSet.has(contact.id)
     return (
@@ -3934,6 +4110,50 @@ export const DesktopChat: React.FC = () => {
             </div>
           ) : null}
 
+          <div className={styles.chatSelectionBar} data-chat-selection-active={selectedVisibleChatCount > 0 ? 'true' : undefined}>
+            <label className={styles.chatSelectAll}>
+              <input
+                ref={selectAllChatCheckboxRef}
+                type="checkbox"
+                checked={allVisibleChatsSelected}
+                disabled={selectableChatRows.length === 0}
+                onChange={handleToggleVisibleChatSelection}
+                aria-label="Seleccionar todos los chats visibles"
+              />
+              <span>Seleccionar todos</span>
+            </label>
+            <span className={styles.chatSelectionCount}>
+              {selectedVisibleChatCount > 0
+                ? `${selectedVisibleChatCount} seleccionado${selectedVisibleChatCount === 1 ? '' : 's'}`
+                : `${selectableChatRows.length} visible${selectableChatRows.length === 1 ? '' : 's'}`}
+            </span>
+            {selectedVisibleChatCount > 0 ? (
+              <span className={styles.chatSelectionActions}>
+                <Button type="button" variant="secondary" size="sm" onClick={handleMarkSelectedChatsAsRead}>
+                  <CheckCheck size={14} />
+                  Leídos
+                </Button>
+                <Button type="button" variant="secondary" size="sm" onClick={handleArchiveSelectedChats}>
+                  <Archive size={14} />
+                  {bulkArchiveActionLabel}
+                </Button>
+                <Button type="button" variant="danger" size="sm" onClick={handleRemoveSelectedChatsFromList}>
+                  <Trash2 size={14} />
+                  Quitar
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedChatIds([])}
+                  aria-label="Limpiar selección de chats"
+                >
+                  <X size={14} />
+                </Button>
+              </span>
+            ) : null}
+          </div>
+
           <div className={styles.chatList} data-chat-list>
             {chatsLoading ? (
               <div className={styles.stateBlock} role="status" aria-live="polite" aria-label="Cargando chats">
@@ -3964,7 +4184,7 @@ export const DesktopChat: React.FC = () => {
                       role="button"
                       tabIndex={0}
                       data-chat-row="agent-priority"
-                      className={`${styles.chatRow} ${styles.chatRowAgentAction} ${unread > 0 ? styles.chatRowUnread : ''} ${active ? styles.chatRowActive : ''}`}
+                      className={`${styles.chatRow} ${styles.chatRowAgentAction} ${unread > 0 ? styles.chatRowUnread : ''} ${active ? styles.chatRowActive : ''} ${selectedChatIdSet.has(contact.id) ? styles.chatRowSelected : ''}`}
                       onClick={() => handleSelectChat(contact)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
@@ -3973,6 +4193,7 @@ export const DesktopChat: React.FC = () => {
                         }
                       }}
                     >
+                      {renderChatSelectionControl(contact)}
                       {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge: true })}
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
@@ -4034,7 +4255,7 @@ export const DesktopChat: React.FC = () => {
                       role="button"
                       tabIndex={0}
                       data-chat-row={agentAssignedViewOpen ? 'agent-assigned' : unread > 0 ? 'unread' : 'chat'}
-                      className={`${styles.chatRow} ${agentAssignedViewOpen ? styles.chatRowAgentAssigned : ''} ${unread > 0 ? styles.chatRowUnread : ''} ${active ? styles.chatRowActive : ''}`}
+                      className={`${styles.chatRow} ${agentAssignedViewOpen ? styles.chatRowAgentAssigned : ''} ${unread > 0 ? styles.chatRowUnread : ''} ${active ? styles.chatRowActive : ''} ${selectedChatIdSet.has(contact.id) ? styles.chatRowSelected : ''}`}
                       onClick={() => handleSelectChat(contact)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
@@ -4043,6 +4264,7 @@ export const DesktopChat: React.FC = () => {
                         }
                       }}
                     >
+                      {renderChatSelectionControl(contact)}
                       {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge })}
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>

@@ -331,6 +331,80 @@
   padding: 0 10px;
 }
 
+.chatSelectionBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--chat-border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.chatSelectionBar[data-chat-selection-active='true'] {
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface));
+}
+
+.chatSelectAll,
+.chatSelectControl {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.chatSelectAll {
+  gap: 7px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.chatSelectAll input,
+.chatSelectControl input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.chatSelectAll input:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.chatSelectionCount {
+  margin-left: auto;
+  color: var(--text-mute);
+  white-space: nowrap;
+}
+
+.chatSelectionActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.chatSelectionActions [data-btn] {
+  min-height: 30px;
+  padding: 0 9px;
+  gap: 5px;
+}
+
+.chatSelectControl {
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  justify-self: center;
+}
+
 .chatList {
   min-height: 0;
   overflow: auto;
@@ -340,7 +414,6 @@
 .archiveRow,
 .chatRow {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -355,6 +428,10 @@
   cursor: pointer;
 }
 
+.chatRow {
+  grid-template-columns: 24px 42px minmax(0, 1fr) auto;
+}
+
 .archiveRow {
   grid-template-columns: 34px minmax(0, 1fr) auto;
   min-height: 50px;
@@ -365,12 +442,14 @@
 
 .chatRow:hover,
 .chatRowActive,
+.chatRowSelected,
 .archiveRow:hover,
 .archiveRowActive {
   background: var(--chat-soft);
 }
 
 .chatRowActive,
+.chatRowSelected,
 .archiveRowActive {
   border-radius: 0;
 }
@@ -2645,5 +2724,14 @@
 
   .templateFormGrid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chatSelectionCount {
+    margin-left: 0;
+  }
+
+  .chatSelectionActions {
+    width: 100%;
+    justify-content: flex-start;
   }
 }
