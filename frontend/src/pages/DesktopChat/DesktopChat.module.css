@@ -1155,10 +1155,10 @@
 .composer {
   position: relative;
   display: grid;
-  grid-template-columns: 34px 40px minmax(0, 1fr) 28px 40px;
+  grid-template-columns: 40px 40px minmax(0, 1fr) 36px 40px;
   gap: 8px;
-  align-items: end;
-  padding: 8px 12px 10px;
+  align-items: center;
+  padding: 10px 12px;
   border-top: 1px solid var(--chat-border);
   background: var(--color-background-primary);
 }
@@ -1169,10 +1169,12 @@
 }
 
 .composer textarea {
+  display: block;
+  box-sizing: border-box;
   width: 100%;
-  min-height: 38px;
+  min-height: 40px;
   max-height: 78px;
-  padding: 9px 12px;
+  padding: 10px 14px;
   border: 1px solid var(--design-control-border);
   border-radius: 999px;
   outline: 0;
@@ -1278,7 +1280,7 @@
 .scheduleComposerButton {
   position: absolute;
   right: 5px;
-  bottom: 6px;
+  bottom: 5px;
   width: 30px;
   height: 30px;
   padding: 0;
@@ -1366,11 +1368,10 @@
 }
 
 .micButton {
-  width: 28px;
-  height: 38px;
-  align-self: center;
+  width: 36px;
+  height: 40px;
   padding: 0;
-  border-radius: 0;
+  border-radius: 999px;
   color: var(--color-text-tertiary);
 }
 

@@ -3721,6 +3721,12 @@ export const DesktopChat: React.FC = () => {
                     data-ristak-unstyled
                     value={composerText}
                     onChange={(event) => setComposerText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                        event.preventDefault()
+                        if (canSend) void handleSendMessage()
+                      }
+                    }}
                     placeholder={voiceRecording ? 'Grabando audio...' : voiceDraft ? 'Audio listo para enviar' : 'Escribe una respuesta...'}
                     rows={1}
                     onFocus={() => {
