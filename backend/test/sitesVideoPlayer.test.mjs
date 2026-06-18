@@ -118,6 +118,22 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /--rstk-video-play-border-color:#facc15/)
   assert.match(html, /--rstk-video-play-border-width:2px/)
   assert.match(html, /--rstk-video-sound-color:#22d3ee/)
+  assert.match(html, /\.rstk-video-control-bar\{[^}]*background:var\(--rstk-video-player-color/)
+})
+
+test('video player default preset uses large rectangular solid play button', async () => {
+  const html = await renderPublicSiteHtml(baseSite({}), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  const signature = getVideoPlayerVisualSignature(html)
+
+  assert.match(signature.classes, /\brstk-video-play-shape-rectangle\b/)
+  assert.match(signature.classes, /\brstk-video-play-solid\b/)
+  assert.match(signature.style, /--rstk-video-play-width:232px/)
+  assert.match(signature.style, /--rstk-video-play-size:160px/)
+  assert.match(signature.style, /--rstk-video-play-icon-size:95px/)
 })
 
 test('video player renders configurable first-seconds preview loop settings', async () => {
