@@ -18036,6 +18036,7 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
   const hueRgb = hsvToRgb(hsv.h, 1, 1)
   const hueColor = rgbToHex(hueRgb.r, hueRgb.g, hueRgb.b)
   const alphaColor = formatCssColor({ r: rgba.r, g: rgba.g, b: rgba.b, a: 1 })
+  const alphaTransparent = formatCssColor({ r: rgba.r, g: rgba.g, b: rgba.b, a: 0 })
   const [text, setText] = useState(paint)
   const [open, setOpen] = useState(false)
 
@@ -18217,7 +18218,7 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
               min={0}
               max={100}
               value={Math.round(rgba.a * 100)}
-              style={{ ['--alpha-color' as string]: alphaColor } as React.CSSProperties}
+              style={{ ['--alpha-color' as string]: alphaColor, ['--alpha-from' as string]: alphaTransparent } as React.CSSProperties}
               onChange={(event) => patchActiveColor({ a: Number(event.target.value) / 100 })}
               onBlur={onCommit}
             />
@@ -18533,6 +18534,7 @@ const SitesMediaPickerModal: React.FC<{
           <label className={styles.mediaPickerSearch}>
             <Search size={15} />
             <input
+              data-ristak-unstyled
               value={query}
               placeholder={kind === 'image' ? 'Buscar imagen...' : 'Buscar video...'}
               onChange={(event) => setQuery(event.target.value)}
