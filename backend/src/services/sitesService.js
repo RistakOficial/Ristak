@@ -9902,6 +9902,56 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
   return { ok: true, site, host, domain: domainResolution.domain || host, path }
 }
 
+function normalizePublicPreviewContext(context = {}) {
+  if (!context || typeof context !== 'object') return null
+
+  const siteId = cleanString(context.siteId || context.site_id)
+  if (!siteId) return null
+
+  return {
+    siteId,
+    pageId: cleanString(context.pageId || context.page_id),
+    token: cleanString(context.token),
+    host: normalizeDomain(context.host)
+  }
+}
+
+function canUsePublicPreviewContext(host, submittedSiteId, previewContext) {
+  if (!host || !submittedSiteId || !previewContext?.siteId) return false
+  if (previewContext.siteId !== submittedSiteId) return false
+  if (isDashboardHost(host)) return true
+  return Boolean(previewContext.host && matchesPublicDomain(host, previewContext.host))
+}
+
+async function resolvePublicRequestAccess(req, body = {}, options = {}) {
+  const host = getRequestHost(req)
+  const submittedSiteId = cleanString(body.siteId || body.site_id)
+  const domainResolution = await resolveConnectedPublicDomainForHost(host)
+
+  if (domainResolution.ok) {
+    return { host, submittedSiteId, domainResolution, previewContext: null }
+  }
+
+  const previewContext = normalizePublicPreviewContext(options.previewContext)
+  if (canUsePublicPreviewContext(host, submittedSiteId, previewContext)) {
+    return {
+      host,
+      submittedSiteId,
+      domainResolution: {
+        ok: true,
+        host,
+        domain: host,
+        preview: true
+      },
+      previewContext
+    }
+  }
+
+  const error = new Error(domainResolution.message)
+  error.status = domainResolution.status
+  throw error
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -16412,7 +16462,7 @@ async function upsertImportedContactFromSubmission({ site, contact, customFields
   }
 }
 
-async function createImportedSubmissionFromRequest({ req, body, site, host }) {
+async function createImportedSubmissionFromRequest({ req, body, site, host, previewContext = null }) {
   const imported = await getImportedSiteBySiteId(site.id)
   if (!imported) {
     const error = new Error('Importacion de HTML no encontrada')
@@ -16443,6 +16493,8 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
   const meta = {
     ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),
     host,
+    previewSession: Boolean(previewContext),
+    previewPageId: previewContext?.pageId || '',
     importedHtml: true,
     importedFormId: layers.formMapping?.formId || importedFormId,
     importedFormTitle: layers.formMapping?.formTitle || '',
@@ -16550,17 +16602,13 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
   }
 }
 
-export async function createSubmissionFromRequest(req, body = {}) {
-  const host = getRequestHost(req)
-  const domainResolution = await resolveConnectedPublicDomainForHost(host)
-
-  if (!domainResolution.ok) {
-    const error = new Error(domainResolution.message)
-    error.status = domainResolution.status
-    throw error
-  }
-
-  const submittedSiteId = cleanString(body.siteId)
+export async function createSubmissionFromRequest(req, body = {}, options = {}) {
+  const {
+    host,
+    submittedSiteId,
+    domainResolution,
+    previewContext
+  } = await resolvePublicRequestAccess(req, body, options)
   const site = submittedSiteId
     ? await getSite(submittedSiteId, { includeBlocks: false, includeSubmissions: false })
     : await findSiteByRoutePath(req.path)
@@ -16579,7 +16627,7 @@ export async function createSubmissionFromRequest(req, body = {}) {
 
   site.domain = domainResolution.domain || host
   if (isImportedHtmlSite(site)) {
-    return createImportedSubmissionFromRequest({ req, body, site, host })
+    return createImportedSubmissionFromRequest({ req, body, site, host, previewContext })
   }
 
   site.blocks = await hydrateEmbeddedForms(await listSiteBlocks(site.id))
@@ -16629,6 +16677,8 @@ export async function createSubmissionFromRequest(req, body = {}) {
   const meta = {
     ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),
     host,
+    previewSession: Boolean(previewContext),
+    previewPageId: previewContext?.pageId || '',
     rules: ruleEvaluation,
     userAgent: req.headers['user-agent'] || '',
     submittedAt: new Date().toISOString()
@@ -16742,15 +16792,12 @@ export async function createSubmissionFromRequest(req, body = {}) {
   }
 }
 
-export async function createMetaPageEventFromRequest(req, body = {}) {
-  const host = getRequestHost(req)
-  const domainResolution = await resolveConnectedPublicDomainForHost(host)
-
-  if (!domainResolution.ok) {
-    const error = new Error(domainResolution.message)
-    error.status = domainResolution.status
-    throw error
-  }
+export async function createMetaPageEventFromRequest(req, body = {}, options = {}) {
+  const {
+    host,
+    domainResolution,
+    previewContext
+  } = await resolvePublicRequestAccess(req, body, options)
 
   const siteId = cleanString(body.siteId || body.site_id)
   if (!siteId) {
@@ -16784,7 +16831,11 @@ export async function createMetaPageEventFromRequest(req, body = {}) {
     return { sent: false, reason: 'page_event_disabled' }
   }
 
-  const meta = body.meta && typeof body.meta === 'object' ? body.meta : {}
+  const meta = {
+    ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),
+    previewSession: Boolean(previewContext),
+    previewPageId: previewContext?.pageId || ''
+  }
   const eventId = cleanString(body.eventId || body.event_id) || `site_page_${site.id}_${pageMeta.page.id}_${crypto.randomUUID()}`
   const contactId = cleanString(body.contactId || body.contact_id)
 
