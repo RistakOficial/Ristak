@@ -4842,7 +4842,7 @@
   min-width: 0;
   position: relative;
   display: grid;
-  grid-template-rows: 128px 1fr;
+  grid-template-rows: 128px minmax(0, 1fr);
   overflow: hidden;
   cursor: default;
 }
@@ -4858,9 +4858,16 @@
   align-items: center;
   justify-content: center;
   border-bottom: 1px solid var(--border);
-  /* franja diagonal (como el ZIP) */
   background: repeating-linear-gradient(135deg, var(--surface-2) 0 12px, var(--bg-soft) 12px 24px);
+  border-radius: 0;
   padding: 0;
+}
+
+.libraryCardStatus {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
 }
 
 .libraryThumbLabel {
@@ -4962,19 +4969,25 @@
   white-space: nowrap;
 }
 
-/* Pie de la tarjeta (estilo ZIP): dominio mono + fecha de edición */
 .libraryCardMeta {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 10px;
-  margin-top: 9px;
+  min-width: 0;
+  margin-top: 3px;
 }
 
 .libraryCardMeta time {
   flex-shrink: 0;
   font-size: 0.72rem;
   color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.libraryCardMeta .siteDomain {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .libraryCardMenuButton {
@@ -10025,14 +10038,14 @@
 }
 
 .libraryCard {
-  min-height: 274px;
-  grid-template-rows: 196px minmax(78px, auto);
+  min-height: 236px;
+  grid-template-rows: 128px minmax(78px, auto);
 }
 
 .libraryPreviewViewport {
   display: grid;
   place-items: start center;
-  padding: 8px;
+  padding: 0;
 }
 
 .libraryPreviewCanvas {
@@ -10047,15 +10060,13 @@
   position: relative;
   align-content: start;
   min-height: 78px;
-  gap: 0;
-  padding: 12px 13px 34px;
+  gap: 3px;
+  padding: 14px 16px;
 }
 
 .libraryCardBody .siteDomain {
-  position: absolute;
-  bottom: 12px;
-  left: 13px;
-  max-width: calc(100% - 26px);
+  position: static;
+  max-width: 100%;
 }
 
 .libraryRouteOverlay {
@@ -15126,6 +15137,48 @@
 .pageFrame .leadRow p,
 .pageFrame .muted {
   color: var(--color-text-secondary);
+}
+
+.pageFrame .libraryCard {
+  min-height: 236px;
+  grid-template-rows: 128px minmax(78px, auto);
+  border-color: var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.pageFrame .createLibraryCard {
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-card);
+  background: transparent;
+  box-shadow: none;
+}
+
+.pageFrame .libraryCard:hover,
+.pageFrame .libraryCardActive {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  transform: translateY(-2px);
+}
+
+.pageFrame .createLibraryCard:hover {
+  border-color: var(--accent);
+  background: transparent;
+  box-shadow: none;
+  transform: translateY(-2px);
+}
+
+.pageFrame .libraryCardPreview {
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: repeating-linear-gradient(135deg, var(--surface-2) 0 12px, var(--bg-soft) 12px 24px);
+}
+
+.pageFrame .libraryCardBody {
+  background: var(--surface);
+  padding: 14px 16px;
 }
 
 .pageFrame .field input,

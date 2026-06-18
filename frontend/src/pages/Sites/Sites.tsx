@@ -17607,9 +17607,10 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
             >
               <div className={styles.libraryCardPreview}>
                 <span className={styles.libraryThumbLabel}>{getSiteTypeLabel(site)}</span>
-                <span style={{ position: 'absolute', top: 10, left: 10, zIndex: 2 }}>
+                <span className={styles.libraryCardStatus}>
                   <Badge variant={getStatusVariant(site, domainConfig)}>{getStatusLabel(site, domainConfig)}</Badge>
                 </span>
+                <LibrarySitePreview site={site} forms={forms} calendars={calendars} />
                 <div className={styles.libraryCardHoverActions} data-library-card-action="true">
                   <button type="button" onClick={() => onEdit(site.id)}>
                     <Pencil size={16} />
@@ -17663,12 +17664,12 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
                 <div className={styles.libraryCardTitleRow}>
                   <strong>{site.name}</strong>
                 </div>
-                <span className={styles.siteDomain}>{getPublicRouteLabel(site, domainConfig)}</span>
-                {formatSiteEdited(site.updatedAt) && (
-                  <div className={styles.libraryCardMeta}>
+                <div className={styles.libraryCardMeta}>
+                  <span className={styles.siteDomain}>{getPublicRouteLabel(site, domainConfig)}</span>
+                  {formatSiteEdited(site.updatedAt) && (
                     <time dateTime={site.updatedAt || undefined}>Editado {formatSiteEdited(site.updatedAt)}</time>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </article>
           )
