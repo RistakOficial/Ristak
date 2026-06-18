@@ -1,5 +1,5 @@
 import crypto from 'crypto'
-import { db } from '../config/database.js'
+import { db, getAppConfig } from '../config/database.js'
 import {
   createWhatsAppApiTemplate,
   deleteWhatsAppApiTemplate,
@@ -1058,6 +1058,15 @@ async function ensureDefaultMessageTemplate(definition, folderId) {
 
 const TEMPLATE_REVIEW_STATES = new Set(['APPROVED', 'PENDING', 'IN_APPEAL'])
 
+async function shouldSubmitDefaultAppointmentTemplates() {
+  const [enabled, apiKey] = await Promise.all([
+    getAppConfig('whatsapp_api_enabled'),
+    getAppConfig('whatsapp_api_ycloud_api_key_encrypted')
+  ])
+
+  return enabled !== '0' && Boolean(cleanString(apiKey))
+}
+
 export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud = false } = {}) {
   const results = []
   const folder = await ensureDefaultTemplateFolder()
@@ -1095,6 +1104,11 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud 
     errors: results.filter((result) => result.error).length,
     templates: results
   }
+}
+
+export async function repairDefaultAppointmentMessageTemplatesForCurrentConnection() {
+  const submitToYCloud = await shouldSubmitDefaultAppointmentTemplates()
+  return ensureDefaultAppointmentMessageTemplates({ submitToYCloud })
 }
 
 export async function submitMessageTemplateToYCloud(id) {

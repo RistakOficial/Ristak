@@ -4,7 +4,8 @@ import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   ensureDefaultAppointmentMessageTemplates,
-  getMessageTemplateBundle
+  getMessageTemplateBundle,
+  repairDefaultAppointmentMessageTemplatesForCurrentConnection
 } from '../src/services/messageTemplatesService.js'
 import {
   getWhatsAppApiConfigKeys,
@@ -99,7 +100,7 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
     })
 
     try {
-      const firstRun = await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: true })
+      const firstRun = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
       assert.equal(firstRun.total, 3)
       assert.equal(firstRun.submitted, 3)
       assert.deepEqual(captures.map((capture) => capture.name).sort(), [...DEFAULT_TEMPLATE_NAMES].sort())
