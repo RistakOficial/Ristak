@@ -230,6 +230,8 @@ export const automationsCache = {
   automations: new Map<string, Automation>()
 }
 
+const automationRequests = new Map<string, Promise<Automation>>()
+
 function automationToSummary(automation: Automation): AutomationSummary {
   return {
     id: automation.id,
@@ -261,6 +263,24 @@ function cacheAutomation(automation: Automation) {
   }
 }
 
+function fetchAutomation(automationId: string): Promise<Automation> {
+  const inFlight = automationRequests.get(automationId)
+  if (inFlight) return inFlight
+
+  const request = apiClient
+    .get<Automation>(`/automations/${automationId}`)
+    .then((automation) => {
+      cacheAutomation(automation)
+      return automation
+    })
+    .finally(() => {
+      automationRequests.delete(automationId)
+    })
+
+  automationRequests.set(automationId, request)
+  return request
+}
+
 export const automationsService = {
   async getOverview(): Promise<AutomationsOverview> {
     const overview = await apiClient.get<AutomationsOverview>('/automations')
@@ -269,9 +289,12 @@ export const automationsService = {
   },
 
   async getAutomation(automationId: string): Promise<Automation> {
-    const automation = await apiClient.get<Automation>(`/automations/${automationId}`)
-    cacheAutomation(automation)
-    return automation
+    return fetchAutomation(automationId)
+  },
+
+  async prefetchAutomation(automationId: string): Promise<void> {
+    if (automationsCache.automations.has(automationId)) return
+    await fetchAutomation(automationId).catch(() => undefined)
   },
 
   async createAutomation(input: { name: string; folderId?: string | null }): Promise<Automation> {

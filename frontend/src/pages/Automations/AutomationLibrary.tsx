@@ -78,7 +78,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   const [folders, setFolders] = useState<AutomationFolder[]>(automationsCache.overview?.folders || [])
   const [automations, setAutomations] = useState<AutomationSummary[]>(automationsCache.overview?.automations || [])
   const [folderId, setFolderId] = useState<string | null>(null)
-  const [initialized, setInitialized] = useState(false)
+  const [initialFolderSynced, setInitialFolderSynced] = useState(false)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dropTarget, setDropTarget] = useState<string | null>(null)
@@ -86,13 +86,38 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   const [moveModal, setMoveModal] = useState<{ ids: string[]; folderId: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const navRef = useRef<HTMLDivElement>(null)
+  const prefetchTimerRef = useRef<number | null>(null)
 
   const openAutomation = (automationId: string) => {
+    if (automationId !== currentAutomationId) {
+      void automationsService.prefetchAutomation(automationId)
+    }
     if (onOpenAutomation) {
       onOpenAutomation(automationId)
       return
     }
     navigate(`/automations/${automationId}`)
+  }
+
+  const prefetchAutomation = (automationId: string) => {
+    if (automationId === currentAutomationId) return
+    void automationsService.prefetchAutomation(automationId)
+  }
+
+  const clearQueuedPrefetch = () => {
+    if (prefetchTimerRef.current === null) return
+    window.clearTimeout(prefetchTimerRef.current)
+    prefetchTimerRef.current = null
+  }
+
+  const queuePrefetchAutomation = (automationId: string) => {
+    clearQueuedPrefetch()
+    if (automationId === currentAutomationId) return
+
+    prefetchTimerRef.current = window.setTimeout(() => {
+      prefetchTimerRef.current = null
+      prefetchAutomation(automationId)
+    }, 120)
   }
 
   const reload = async () => {
@@ -108,16 +133,25 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   }
 
   useEffect(() => {
-    void reload().then((overview) => {
-      // Abre la librería en la carpeta del flujo actual
-      if (!initialized && overview && currentAutomationId) {
-        const current = overview.automations.find((automation) => automation.id === currentAutomationId)
-        if (current?.folderId) setFolderId(current.folderId)
-      }
-      setInitialized(true)
-    })
+    if (automationsCache.overview) return
+    void reload()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentAutomationId])
+  }, [])
+
+  useEffect(() => {
+    return () => clearQueuedPrefetch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (initialFolderSynced || !currentAutomationId) return
+
+    const current = automations.find((automation) => automation.id === currentAutomationId)
+    if (!current) return
+
+    if (current.folderId) setFolderId(current.folderId)
+    setInitialFolderSynced(true)
+  }, [automations, currentAutomationId, initialFolderSynced])
 
   useEffect(() => {
     if (!currentAutomation) return
@@ -500,6 +534,13 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
               )}
               role="button"
               draggable
+              onPointerEnter={() => queuePrefetchAutomation(automation.id)}
+              onPointerLeave={clearQueuedPrefetch}
+              onFocus={() => prefetchAutomation(automation.id)}
+              onPointerDown={() => {
+                clearQueuedPrefetch()
+                if (!selectionActive && !isCurrent) prefetchAutomation(automation.id)
+              }}
               onDragStart={(event) => handleDragStart(event, automation.id)}
               onClick={() => {
                 if (selectionActive) {
