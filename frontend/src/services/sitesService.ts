@@ -744,9 +744,10 @@ export const sitesService = {
     return response.text()
   },
 
-  createPreviewSession(siteId: string, pageId?: string) {
+  createPreviewSession(siteId: string, pageId?: string, draftSite?: PublicSite) {
     return apiClient.post<{ url: string; expiresAt: string }>(`/sites/${siteId}/preview-session`, {
-      pageId
+      pageId,
+      draftSite
     })
   },
 

@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import {
+  buildPreviewSiteDraft,
   createBlock,
   createImportedSiteFromHtml,
   createMetaPageEventFromRequest,
@@ -405,6 +406,7 @@ export async function createPreviewSessionHandler(req, res) {
     if (!site) {
       return res.status(404).json({ success: false, error: 'Site no encontrado' })
     }
+    const draftSite = await buildPreviewSiteDraft(site, req.body?.draftSite)
 
     cleanupPreviewSessions()
     const token = crypto.randomBytes(32).toString('base64url')
@@ -416,6 +418,7 @@ export async function createPreviewSessionHandler(req, res) {
       siteId: site.id,
       userId: getPreviewUserId(req),
       pageId,
+      siteSnapshot: draftSite || null,
       expiresAt
     })
     setPreviewCookie(req, res, token)
@@ -451,7 +454,7 @@ export async function previewSiteSessionHandler(req, res) {
       return res.status(403).type('html').send('Preview expirado o no autorizado')
     }
 
-    const site = await getSitePreview(req.params.siteId)
+    const site = session.siteSnapshot || await getSitePreview(req.params.siteId)
     if (!site) {
       return res.status(404).type('html').send('Site no encontrado')
     }

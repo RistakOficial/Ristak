@@ -6887,7 +6887,13 @@ export const Sites: React.FC = () => {
 
     writePreviewLoadingPage(previewWindow)
     try {
-      const session = await sitesService.createPreviewSession(editorSite.id, hasEditablePages(editorSite) ? activePage?.id : undefined)
+      await flushPendingEditorSaves({ silent: true })
+      const previewSite = selectedSiteRef.current || editorSite
+      const session = await sitesService.createPreviewSession(
+        previewSite.id,
+        hasEditablePages(previewSite) ? activePage?.id : undefined,
+        previewSite
+      )
       previewWindow.location.replace(session.url)
     } catch (error) {
       previewWindow.close()

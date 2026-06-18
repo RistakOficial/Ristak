@@ -6650,6 +6650,78 @@ export async function getSitePreview(siteId) {
   return site
 }
 
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function objectHasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key)
+}
+
+function normalizePreviewDraftSiteType(value, fallback = 'standard_form') {
+  const siteType = cleanString(value)
+  return ['standard_form', 'interactive_form', 'landing_page'].includes(siteType) ? siteType : fallback
+}
+
+function normalizePreviewDraftStatus(value, fallback = 'draft') {
+  const status = cleanString(value)
+  return ['draft', 'published', 'archived'].includes(status) ? status : fallback
+}
+
+function normalizePreviewDraftBlock(input, siteId, index = 0) {
+  if (!isPlainObject(input)) return null
+  const blockType = cleanString(input.blockType || input.block_type)
+  if (!BLOCK_TYPES.has(blockType)) return null
+  const sortOrder = Number(input.sortOrder ?? input.sort_order)
+  const now = new Date().toISOString()
+
+  return {
+    id: cleanString(input.id) || crypto.randomUUID(),
+    siteId,
+    blockType,
+    label: cleanString(input.label),
+    content: String(input.content ?? ''),
+    placeholder: String(input.placeholder ?? ''),
+    required: Boolean(input.required),
+    options: Array.isArray(input.options) ? input.options : [],
+    settings: isPlainObject(input.settings) ? input.settings : {},
+    sortOrder: Number.isFinite(sortOrder) ? sortOrder : index,
+    createdAt: cleanString(input.createdAt || input.created_at) || now,
+    updatedAt: cleanString(input.updatedAt || input.updated_at) || now
+  }
+}
+
+export async function buildPreviewSiteDraft(baseSite, draftSite) {
+  if (!baseSite || !isPlainObject(draftSite)) return null
+  if (cleanString(draftSite.id) !== cleanString(baseSite.id)) return null
+
+  const blocks = Array.isArray(draftSite.blocks)
+    ? draftSite.blocks
+      .map((block, index) => normalizePreviewDraftBlock(block, baseSite.id, index))
+      .filter(Boolean)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+    : Array.isArray(baseSite.blocks)
+      ? baseSite.blocks
+      : []
+
+  const site = {
+    ...baseSite,
+    name: cleanString(draftSite.name) || baseSite.name,
+    slug: cleanString(draftSite.slug) || baseSite.slug,
+    siteType: normalizePreviewDraftSiteType(draftSite.siteType || draftSite.site_type, baseSite.siteType),
+    status: normalizePreviewDraftStatus(draftSite.status, baseSite.status),
+    title: objectHasOwn(draftSite, 'title') ? cleanString(draftSite.title) : baseSite.title,
+    description: objectHasOwn(draftSite, 'description') ? cleanString(draftSite.description) : baseSite.description,
+    theme: isPlainObject(draftSite.theme) ? { ...DEFAULT_THEME, ...(baseSite.theme || {}), ...draftSite.theme } : baseSite.theme,
+    metaCapiEnabled: normalizeBoolean(draftSite.metaCapiEnabled ?? draftSite.meta_capi_enabled ?? baseSite.metaCapiEnabled),
+    metaEventName: normalizeSiteMetaEventName(draftSite.metaEventName || draftSite.meta_event_name || baseSite.metaEventName, { allowNone: true }),
+    blocks
+  }
+
+  site.blocks = await hydrateEmbeddedForms(site.blocks)
+  return site
+}
+
 export async function listSiteBlocks(siteId) {
   const rows = await db.all(
     'SELECT * FROM public_site_blocks WHERE site_id = ? ORDER BY sort_order ASC, created_at ASC',
