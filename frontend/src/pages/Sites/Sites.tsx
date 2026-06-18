@@ -23058,9 +23058,7 @@ const SiteGlobalSettings: React.FC<{
   </div>
 )
 
-const hasBlockSettingsTabContent = (block: SiteBlock, isField: boolean) => (
-  isField ||
-  isChoiceBlock(block.blockType) ||
+const hasBlockSettingsTabContent = (block: SiteBlock) => (
   isPanelBlock(block) ||
   block.blockType === SECTION_BLOCK_TYPE ||
   [
@@ -23839,7 +23837,112 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     </label>
   ) : null
 
-  const blockHasSettingsContent = hasBlockSettingsTabContent(block, isField)
+  const blockHasSettingsContent = hasBlockSettingsTabContent(block)
+  const fieldEditControls = isField ? (
+    <>
+      <div className={styles.settingsGroup}>
+        <div className={styles.panelSubheader}>Campo</div>
+        {systemFieldPreset ? (
+          <label className={styles.field}>
+            <span>Texto dentro del campo</span>
+            <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
+          </label>
+        ) : (
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Texto dentro del campo</span>
+              <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
+            </label>
+            <label className={styles.field}>
+              <span>Nombre interno</span>
+              <input
+                value={getSettingString(settings, 'internalName')}
+                onChange={(event) => onPatchSettings({ internalName: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+          </div>
+        )}
+
+        {systemFieldPreset ? (
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={block.required}
+              onChange={(event) => {
+                onPatchBlock({ required: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Campo requerido</span>
+          </label>
+        ) : (
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Validación</span>
+              <CustomSelect
+                value={getSettingString(settings, 'validation')}
+                onChange={(event) => onPatchSettings({ validation: event.target.value })}
+                onBlur={onSave}
+              >
+                <option value="">Ninguna</option>
+                <option value="email">Correo</option>
+                <option value="phone">Teléfono</option>
+                <option value="number">Número</option>
+                <option value="currency">Moneda</option>
+                <option value="date">Fecha</option>
+              </CustomSelect>
+            </label>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={block.required}
+                onChange={(event) => {
+                  onPatchBlock({ required: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Campo requerido</span>
+            </label>
+          </div>
+        )}
+
+        {block.blockType === 'phone' && !systemFieldPreset && (
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={isPhoneCountrySelectorEnabled(block)}
+              onChange={(event) => {
+                onPatchSettings({ phoneCountrySelectorEnabled: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Mostrar país y lada</span>
+          </label>
+        )}
+      </div>
+
+      <CustomFieldBindingControl
+        block={block}
+        customFields={customFields}
+        customFieldFolders={customFieldFolders}
+        onPatchSettings={onPatchSettings}
+        onCustomFieldCreated={onCustomFieldCreated}
+        onSave={onSave}
+      />
+    </>
+  ) : null
+  const choiceEditControls = isChoiceBlock(block.blockType) ? (
+    <OptionsRulesEditor
+      block={block}
+      blocks={allBlocks || blocks}
+      pages={pages}
+      sitePages={pages}
+      activeSitePageId={activePageId}
+      onPatchBlock={onPatchBlock}
+      onSave={onSave}
+    />
+  ) : null
   const defaultInspectorTab: InspectorTabId = isMediaBlock ? 'settings' : 'edit'
   const editContent = (
     <>
@@ -23891,118 +23994,15 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           />
         </label>
       )}
+
+      {fieldEditControls}
+
+      {choiceEditControls}
     </>
   )
 
   const settingsContent = (
     <>
-      {isField && (
-        <>
-          <div className={styles.settingsGroup}>
-            <div className={styles.panelSubheader}>Campo</div>
-            {systemFieldPreset ? (
-              <label className={styles.field}>
-                <span>Texto dentro del campo</span>
-                <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
-              </label>
-            ) : (
-              <div className={styles.twoColumn}>
-                <label className={styles.field}>
-                  <span>Texto dentro del campo</span>
-                  <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
-                </label>
-                <label className={styles.field}>
-                  <span>Nombre interno</span>
-                  <input
-                    value={getSettingString(settings, 'internalName')}
-                    onChange={(event) => onPatchSettings({ internalName: event.target.value })}
-                    onBlur={onSave}
-                  />
-                </label>
-              </div>
-            )}
-
-            {systemFieldPreset ? (
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={block.required}
-                  onChange={(event) => {
-                    onPatchBlock({ required: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Campo requerido</span>
-              </label>
-            ) : (
-              <div className={styles.twoColumn}>
-                <label className={styles.field}>
-                  <span>Validación</span>
-                  <CustomSelect
-                    value={getSettingString(settings, 'validation')}
-                    onChange={(event) => onPatchSettings({ validation: event.target.value })}
-                    onBlur={onSave}
-                  >
-                    <option value="">Ninguna</option>
-                    <option value="email">Correo</option>
-                    <option value="phone">Teléfono</option>
-                    <option value="number">Número</option>
-                    <option value="currency">Moneda</option>
-                    <option value="date">Fecha</option>
-                  </CustomSelect>
-                </label>
-                <label className={styles.checkboxLabel}>
-                  <input
-                    type="checkbox"
-                    checked={block.required}
-                    onChange={(event) => {
-                      onPatchBlock({ required: event.target.checked })
-                      window.setTimeout(onSave, 0)
-                    }}
-                  />
-                  <span>Campo requerido</span>
-                </label>
-              </div>
-            )}
-
-            {block.blockType === 'phone' && !systemFieldPreset && (
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={isPhoneCountrySelectorEnabled(block)}
-                  onChange={(event) => {
-                    onPatchSettings({ phoneCountrySelectorEnabled: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Mostrar país y lada</span>
-              </label>
-            )}
-          </div>
-
-          <CustomFieldBindingControl
-            block={block}
-            customFields={customFields}
-            customFieldFolders={customFieldFolders}
-            onPatchSettings={onPatchSettings}
-            onCustomFieldCreated={onCustomFieldCreated}
-            onSave={onSave}
-          />
-        </>
-      )}
-
-      {isChoiceBlock(block.blockType) && (
-        <OptionsRulesEditor
-          block={block}
-          blocks={allBlocks || blocks}
-          pages={pages}
-          sitePages={pages}
-          activeSitePageId={activePageId}
-          onPatchBlock={onPatchBlock}
-          onSave={onSave}
-        />
-      )}
-
       {!isField && (
         <LandingBlockSettings
           site={site}
@@ -24040,17 +24040,22 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     </>
   )
 
+  const inspectorTabs: InspectorTab[] = [
+    { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
+    { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent }
+  ]
+
+  if (blockHasSettingsContent) {
+    inspectorTabs.push({ value: 'settings', label: 'Ajustes', icon: <Settings2 size={14} />, content: settingsContent })
+  }
+
   return (
     <InspectorTabbedPanel
       key={`${block.id}:${block.blockType}`}
       title="Propiedades"
       subtitle={blockLabels[block.blockType]}
       defaultTab={defaultInspectorTab}
-      tabs={[
-        { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
-        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent },
-        { value: 'settings', label: 'Ajustes', icon: <Settings2 size={14} />, content: settingsContent }
-      ]}
+      tabs={inspectorTabs}
     />
   )
 }
