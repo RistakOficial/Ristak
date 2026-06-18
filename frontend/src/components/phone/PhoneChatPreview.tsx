@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useMemo, useRef } from 'react'
 import {
   ChevronLeft,
   MessageCircle,
@@ -143,6 +143,26 @@ export const PhoneChatPreview: React.FC<PhoneChatPreviewProps> = ({
   ariaLabel = 'Vista previa de chat en celular'
 }) => {
   const initials = getInitials(avatarLabel || title)
+  const chatSurfaceRef = useRef<HTMLDivElement | null>(null)
+  const messageScrollKey = useMemo(
+    () => messages.map((message) => message.id).join('|'),
+    [messages]
+  )
+
+  useEffect(() => {
+    const surface = chatSurfaceRef.current
+    if (!surface) return
+
+    const scrollToBottom = () => {
+      surface.scrollTo({
+        top: surface.scrollHeight,
+        behavior: 'smooth'
+      })
+    }
+
+    const frame = window.requestAnimationFrame(scrollToBottom)
+    return () => window.cancelAnimationFrame(frame)
+  }, [messageScrollKey, messages.length, typing])
 
   return (
     <div className={`${styles.phoneMockup} ${className}`.trim()} aria-label={ariaLabel}>
@@ -182,7 +202,7 @@ export const PhoneChatPreview: React.FC<PhoneChatPreviewProps> = ({
           </div>
         </header>
 
-        <div className={`${styles.chatSurface} ${chatClassName}`.trim()} data-phone-chat-scrollable="true">
+        <div ref={chatSurfaceRef} className={`${styles.chatSurface} ${chatClassName}`.trim()} data-phone-chat-scrollable="true">
           <div className={styles.messagesContent}>
             <div className={styles.daySeparator}>
               <span>Hoy</span>
