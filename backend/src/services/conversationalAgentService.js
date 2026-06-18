@@ -38,7 +38,7 @@ export const SUCCESS_ACTIONS = [
   { id: 'ready_for_human', label: 'Pasar a un humano' },
   { id: 'book_appointment', label: 'Agendar con IA' },
   { id: 'ready_to_buy', label: 'Enviar link de pago' },
-  { id: 'send_goal_url', label: 'Enviar URL y esperar webhook' }
+  { id: 'send_goal_url', label: 'Enviar enlace con confirmación automática' }
 ]
 
 const VALID_OBJECTIVES = new Set(CONVERSATIONAL_OBJECTIVES.map((item) => item.id))
@@ -775,13 +775,26 @@ export function getConversationalGoalWebhookUrl() {
   return new URL(CONVERSATIONAL_AGENT_GOAL_WEBHOOK_PATH, `${getPublicWebhookBaseUrl()}/`).toString()
 }
 
-function buildTrackedGoalUrl(targetUrl, trackingParam, goalId) {
+function normalizeGoalLinkParams(params = {}) {
+  if (!params || typeof params !== 'object') return {}
+  return Object.entries(params).reduce((acc, [key, value]) => {
+    const cleanKey = normalizeTrackingParam(key)
+    const cleanValue = String(value || '').trim()
+    if (cleanKey && cleanValue) acc[cleanKey] = cleanValue.slice(0, 240)
+    return acc
+  }, {})
+}
+
+function buildTrackedGoalUrl(targetUrl, trackingParam, goalId, linkParams = {}) {
   const cleanTargetUrl = normalizeGoalUrl(targetUrl)
   if (!cleanTargetUrl) {
-    throw Object.assign(new Error('Configura una URL válida para mandar este objetivo'), { statusCode: 400 })
+    throw Object.assign(new Error('Configura un enlace válido para mandar este objetivo'), { statusCode: 400 })
   }
   const parsed = new URL(cleanTargetUrl)
   parsed.searchParams.set(normalizeTrackingParam(trackingParam), goalId)
+  for (const [key, value] of Object.entries(normalizeGoalLinkParams(linkParams))) {
+    parsed.searchParams.set(key, value)
+  }
   return parsed.toString()
 }
 
@@ -817,6 +830,7 @@ export async function createConversationGoalLink({
   objective = 'custom',
   targetUrl,
   trackingParam = DEFAULT_GOAL_TRACKING_PARAM,
+  linkParams = {},
   metadata = {}
 } = {}) {
   const cleanContactId = String(contactId || '').trim()
@@ -828,7 +842,8 @@ export async function createConversationGoalLink({
   const cleanObjective = normalizeGoalLinkObjective(objective)
   const cleanTrackingParam = normalizeTrackingParam(trackingParam)
   const cleanTargetUrl = normalizeGoalUrl(targetUrl)
-  const sentUrl = buildTrackedGoalUrl(cleanTargetUrl, cleanTrackingParam, id)
+  const cleanLinkParams = normalizeGoalLinkParams(linkParams)
+  const sentUrl = buildTrackedGoalUrl(cleanTargetUrl, cleanTrackingParam, id, cleanLinkParams)
   const cleanMetadata = metadata && typeof metadata === 'object' ? metadata : {}
 
   await db.run(`
@@ -854,7 +869,8 @@ export async function createConversationGoalLink({
       agentId: agentId || null,
       objective: cleanObjective,
       trackingParam: cleanTrackingParam,
-      targetUrl: cleanTargetUrl
+      targetUrl: cleanTargetUrl,
+      linkParams: cleanLinkParams
     }
   })
 
@@ -867,6 +883,7 @@ export async function createConversationGoalLink({
     targetUrl: cleanTargetUrl,
     sentUrl,
     trackingParam: cleanTrackingParam,
+    linkParams: cleanLinkParams,
     callbackUrl: getConversationalGoalWebhookUrl()
   }
 }
@@ -881,27 +898,53 @@ function conversationSignalForGoalObjective(objective) {
   if (objective === 'ventas') {
     return {
       signal: 'purchase_completed',
-      reason: 'Compra confirmada por URL externa',
+      reason: 'Compra confirmada desde enlace de pedido',
       objectLabel: 'compra'
     }
   }
   if (objective === 'citas') {
     return {
       signal: 'appointment_booked',
-      reason: 'Cita confirmada por URL externa',
+      reason: 'Cita confirmada desde enlace de calendario',
       objectLabel: 'cita'
     }
   }
   return {
     signal: 'ready_for_human',
-    reason: 'Objetivo confirmado por URL externa',
+    reason: 'Objetivo confirmado desde enlace',
     objectLabel: 'objetivo'
+  }
+}
+
+function normalizeComparableId(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function validateExpectedGoalReference(expected = {}, received = {}) {
+  const checks = [
+    ['calendarId', 'calendario'],
+    ['productId', 'producto'],
+    ['priceId', 'precio']
+  ]
+  for (const [key, label] of checks) {
+    const expectedValue = normalizeComparableId(expected[key])
+    const receivedValue = normalizeComparableId(received[key])
+    if (expectedValue && receivedValue && expectedValue !== receivedValue) {
+      const error = new Error(`La confirmación no corresponde al ${label} esperado`)
+      error.statusCode = 409
+      error.expected = { [key]: expected[key] }
+      error.received = { [key]: received[key] }
+      throw error
+    }
   }
 }
 
 export async function completeConversationGoalLink(goalId, {
   externalObjectId = '',
   externalStatus = '',
+  calendarId = '',
+  productId = '',
+  priceId = '',
   metadata = {}
 } = {}) {
   const cleanGoalId = String(goalId || '').trim()
@@ -914,11 +957,7 @@ export async function completeConversationGoalLink(goalId, {
     throw Object.assign(new Error('No encontramos ese objetivo pendiente'), { statusCode: 404 })
   }
 
-  const cleanExternalObjectId = String(externalObjectId || '').trim().slice(0, 240)
-  const cleanExternalStatus = String(externalStatus || '').trim().slice(0, 120)
-  const cleanMetadata = metadata && typeof metadata === 'object' ? metadata : {}
   const mapped = conversationSignalForGoalObjective(row.objective)
-
   if (row.status === 'completed') {
     return {
       ...mapGoalLinkRow(row),
@@ -926,6 +965,25 @@ export async function completeConversationGoalLink(goalId, {
       signal: mapped.signal,
       callbackUrl: getConversationalGoalWebhookUrl()
     }
+  }
+
+  const cleanExternalObjectId = String(externalObjectId || '').trim().slice(0, 240)
+  const cleanExternalStatus = String(externalStatus || '').trim().slice(0, 120)
+  const cleanMetadata = metadata && typeof metadata === 'object' ? metadata : {}
+  const previousMetadata = parseJsonField(row.metadata_json, {})
+  const expected = previousMetadata.expected && typeof previousMetadata.expected === 'object'
+    ? previousMetadata.expected
+    : {}
+  const receivedReference = {
+    calendarId: String(calendarId || '').trim().slice(0, 160),
+    productId: String(productId || '').trim().slice(0, 160),
+    priceId: String(priceId || '').trim().slice(0, 160)
+  }
+  validateExpectedGoalReference(expected, receivedReference)
+  const nextMetadata = {
+    ...previousMetadata,
+    confirmation: cleanMetadata,
+    receivedReference
   }
 
   await db.run(`
@@ -940,13 +998,13 @@ export async function completeConversationGoalLink(goalId, {
   `, [
     cleanExternalObjectId || null,
     cleanExternalStatus || null,
-    JSON.stringify(cleanMetadata),
+    JSON.stringify(nextMetadata),
     cleanGoalId
   ])
 
   const summary = cleanExternalObjectId
     ? `ID de ${mapped.objectLabel}: ${cleanExternalObjectId}`
-    : `Webhook recibido para ${mapped.objectLabel}`
+    : `Confirmación recibida para ${mapped.objectLabel}`
 
   await setConversationSignal(row.contact_id, mapped.signal, {
     reason: mapped.reason,
@@ -970,7 +1028,8 @@ export async function completeConversationGoalLink(goalId, {
       objective: row.objective,
       signal: mapped.signal,
       externalObjectId: cleanExternalObjectId || null,
-      externalStatus: cleanExternalStatus || null
+      externalStatus: cleanExternalStatus || null,
+      receivedReference
     }
   })
 
@@ -1047,16 +1106,23 @@ const EXTERNAL_OBJECT_WEBHOOK_KEYS = [
 
 const EXTERNAL_STATUS_WEBHOOK_KEYS = ['status', 'state', 'eventStatus', 'event_status', 'paymentStatus', 'payment_status']
 
+const CALENDAR_WEBHOOK_KEYS = ['calendarId', 'calendar_id', 'calendar', 'calendarRef', 'calendar_ref']
+const PRODUCT_WEBHOOK_KEYS = ['productId', 'product_id', 'product', 'productRef', 'product_ref', 'itemId', 'item_id', 'sku']
+const PRICE_WEBHOOK_KEYS = ['priceId', 'price_id', 'price', 'priceRef', 'price_ref', 'variantId', 'variant_id']
+
 export async function completeConversationGoalLinkFromWebhook(payload = {}) {
   const source = payload && typeof payload === 'object' ? payload : {}
   const goalId = extractPayloadValue(source, GOAL_ID_WEBHOOK_KEYS) || extractGoalIdValue(source)
   if (!goalId) {
-    throw Object.assign(new Error(`Falta ${DEFAULT_GOAL_TRACKING_PARAM} en el webhook`), { statusCode: 400 })
+    throw Object.assign(new Error(`Falta ${DEFAULT_GOAL_TRACKING_PARAM} en la confirmación automática`), { statusCode: 400 })
   }
 
   return completeConversationGoalLink(goalId, {
     externalObjectId: extractPayloadValue(source, EXTERNAL_OBJECT_WEBHOOK_KEYS),
     externalStatus: extractPayloadValue(source, EXTERNAL_STATUS_WEBHOOK_KEYS),
+    calendarId: extractPayloadValue(source, CALENDAR_WEBHOOK_KEYS),
+    productId: extractPayloadValue(source, PRODUCT_WEBHOOK_KEYS),
+    priceId: extractPayloadValue(source, PRICE_WEBHOOK_KEYS),
     metadata: source
   })
 }

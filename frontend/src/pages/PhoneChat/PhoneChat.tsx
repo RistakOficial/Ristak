@@ -329,7 +329,7 @@ const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
 const PHONE_AGENT_OWNER_OPTIONS = [
   { value: 'human', label: 'Pasar a humano' },
   { value: 'ai', label: 'Que lo haga la IA' },
-  { value: 'url', label: 'Mandar URL' }
+  { value: 'url', label: 'Mandar enlace' }
 ]
 
 interface ProductPrice {
@@ -11384,7 +11384,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     const updateAppointmentOwner = (owner: AgentGoalWorkflowConfig['appointments']['owner']) => {
-      const calendarId = owner === 'ai'
+      const calendarId = owner === 'ai' || owner === 'url'
         ? goalWorkflow.appointments.calendarId || selectedAgentDef?.defaultCalendarId || calendars[0]?.id || null
         : goalWorkflow.appointments.calendarId
       const successAction: ConversationalSuccessAction = owner === 'ai'
@@ -11467,7 +11467,7 @@ export const PhoneChat: React.FC = () => {
           <section className={styles.agentMenuSection} aria-label="Flujo de agenda">
             <div className={styles.agentMenuSectionHeader}>
               <span>Agenda</span>
-              <small>{goalWorkflow.appointments.owner === 'ai' ? 'La IA agenda' : goalWorkflow.appointments.owner === 'url' ? 'Manda URL' : 'Pasa a humano'}</small>
+              <small>{goalWorkflow.appointments.owner === 'ai' ? 'La IA agenda' : goalWorkflow.appointments.owner === 'url' ? 'Manda enlace' : 'Pasa a humano'}</small>
             </div>
             <label className={styles.agentMenuField}>
               <span>Quién quieres que lo agende</span>
@@ -11514,8 +11514,31 @@ export const PhoneChat: React.FC = () => {
               </div>
             ) : goalWorkflow.appointments.owner === 'url' ? (
               <div className={styles.agentGoalPanel}>
+                <label className={styles.agentMenuField}>
+                  <span>Calendario del enlace</span>
+                  <PhoneSelect
+                    value={goalWorkflow.appointments.calendarId || agent.defaultCalendarId || ''}
+                    onChange={(value) => {
+                      const calendarId = value || null
+                      saveSelectedAgentPatch({
+                        goalWorkflow: mergeGoalWorkflow({ appointments: { ...goalWorkflow.appointments, calendarId } }),
+                        defaultCalendarId: calendarId,
+                        successAction: 'send_goal_url'
+                      })
+                    }}
+                    ariaLabel="Calendario del enlace para agendar"
+                    options={[
+                      { value: '', label: calendarsLoading ? '...' : 'Elegir calendario activo' },
+                      ...calendars.map((calendar) => ({ value: calendar.id, label: calendar.name }))
+                    ]}
+                    title="Calendario"
+                    placeholder="Calendario"
+                    disabled={agentConfigSaving || calendarsLoading || calendars.length === 0}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
                 <PhoneTextField
-                  label="URL para agendar"
+                  label="Enlace del calendario"
                   value={goalWorkflow.appointments.url}
                   onChange={(value) => updateGoalWorkflowDraft({ appointments: { ...goalWorkflow.appointments, url: value } })}
                   onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
@@ -11523,7 +11546,7 @@ export const PhoneChat: React.FC = () => {
                   disabled={agentConfigSaving}
                 />
                 <PhoneTextField
-                  label="Parámetro del ID"
+                  label="ID que se agrega al enlace"
                   value={goalWorkflow.appointments.trackingParam || 'ristak_goal_id'}
                   onChange={(value) => updateGoalWorkflowDraft({ appointments: { ...goalWorkflow.appointments, trackingParam: value } })}
                   onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
@@ -11531,7 +11554,7 @@ export const PhoneChat: React.FC = () => {
                   disabled={agentConfigSaving}
                 />
                 <p className={styles.agentMenuHint}>
-                  La IA manda el enlace con seguimiento y Ristak confirma la cita cuando regresa el webhook.
+                  La IA manda el enlace del calendario seleccionado y Ristak confirma la cita cuando regresa el ID real.
                 </p>
               </div>
             ) : (
@@ -11562,7 +11585,7 @@ export const PhoneChat: React.FC = () => {
           <section className={styles.agentMenuSection} aria-label="Flujo de ventas">
             <div className={styles.agentMenuSectionHeader}>
               <span>Venta</span>
-              <small>{goalWorkflow.sales.owner === 'ai' ? 'IA cobra' : goalWorkflow.sales.owner === 'url' ? 'Manda URL' : 'Humano cobra'}</small>
+              <small>{goalWorkflow.sales.owner === 'ai' ? 'IA cobra' : goalWorkflow.sales.owner === 'url' ? 'Manda enlace' : 'Humano cobra'}</small>
             </div>
             <label className={styles.agentMenuField}>
               <span>Quién cierra la venta</span>
@@ -11633,8 +11656,47 @@ export const PhoneChat: React.FC = () => {
               </div>
             ) : goalWorkflow.sales.owner === 'url' ? (
               <div className={styles.agentGoalPanel}>
+                <label className={styles.agentMenuField}>
+                  <span>Producto del pedido</span>
+                  <PhoneSelect
+                    value={goalWorkflow.sales.productId}
+                    onChange={updateSalesProduct}
+                    ariaLabel="Producto del pedido"
+                    options={productOptions}
+                    title="Producto"
+                    placeholder="Producto"
+                    disabled={agentConfigSaving || agentProductsLoading || agentProducts.length === 0}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
+                {selectedSalesProduct && (
+                  <label className={styles.agentMenuField}>
+                    <span>Precio del pedido</span>
+                    <PhoneSelect
+                      value={goalWorkflow.sales.priceId}
+                      onChange={(priceId) => {
+                        const price = (selectedSalesProduct.prices || []).find((item) => getPriceId(item) === priceId) || getPrimaryPrice(selectedSalesProduct)
+                        updateGoalWorkflow({
+                          sales: {
+                            ...goalWorkflow.sales,
+                            priceId: getPriceId(price),
+                            priceName: price?.name || '',
+                            amount: price ? getPriceAmount(price) : null,
+                            currency: price?.currency || selectedSalesProduct.currency || ''
+                          }
+                        })
+                      }}
+                      ariaLabel="Precio del pedido"
+                      options={priceOptions}
+                      title="Precio"
+                      placeholder="Precio"
+                      disabled={agentConfigSaving}
+                      buttonClassName={styles.agentMenuSelectButton}
+                    />
+                  </label>
+                )}
                 <PhoneTextField
-                  label="URL de compra o pago"
+                  label="Enlace del pedido"
                   value={goalWorkflow.sales.url}
                   onChange={(value) => updateGoalWorkflowDraft({ sales: { ...goalWorkflow.sales, url: value } })}
                   onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
@@ -11642,7 +11704,7 @@ export const PhoneChat: React.FC = () => {
                   disabled={agentConfigSaving}
                 />
                 <PhoneTextField
-                  label="Parámetro del ID"
+                  label="ID que se agrega al enlace"
                   value={goalWorkflow.sales.trackingParam || 'ristak_goal_id'}
                   onChange={(value) => updateGoalWorkflowDraft({ sales: { ...goalWorkflow.sales, trackingParam: value } })}
                   onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
@@ -11650,7 +11712,7 @@ export const PhoneChat: React.FC = () => {
                   disabled={agentConfigSaving}
                 />
                 <p className={styles.agentMenuHint}>
-                  La IA manda el enlace con seguimiento y Ristak confirma la venta cuando regresa el webhook.
+                  La IA manda el enlace del pedido ligado al producto seleccionado y Ristak confirma la compra cuando regresa el ID real.
                 </p>
               </div>
             ) : (

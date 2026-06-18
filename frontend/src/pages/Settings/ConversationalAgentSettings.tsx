@@ -41,6 +41,8 @@ import {
   type SuccessExtraType
 } from '@/services/conversationalAgentService'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
+import apiClient from '@/services/apiClient'
+import { formatCurrency } from '@/utils/format'
 import { ConditionBuilder } from './ConditionBuilder'
 import styles from './AIAgentSettings.module.css'
 
@@ -59,7 +61,7 @@ const successActionLabels: Record<ConversationalSuccessAction, { label: string; 
   book_appointment: { label: 'Que agende la IA', description: 'La IA revisa disponibilidad real y agenda cuando la persona confirma horario.' },
   ready_for_human: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' },
   ready_to_buy: { label: 'Que mande link de pago', description: 'La IA confirma el cobro y crea el link de pago si el contacto acepta.' },
-  send_goal_url: { label: 'Mandar URL y esperar webhook', description: 'La IA manda un enlace con ID de seguimiento; Ristak confirma el objetivo hasta que el webhook regresa el ID real.' },
+  send_goal_url: { label: 'Mandar enlace confirmado', description: 'La IA manda el enlace configurado y Ristak confirma el objetivo cuando regresa el ID real.' },
   internal_signal: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' },
   none: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' }
 }
@@ -73,7 +75,6 @@ const actionsByObjective: Record<ConversationalObjective, ConversationalSuccessA
 }
 
 const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
-const GOAL_WEBHOOK_PATH = '/webhook/conversational-agent/goal'
 
 const attendedChatActionOptions = [
   {
@@ -166,6 +167,59 @@ const defaultGoalWorkflow: AgentGoalWorkflowConfig = {
     qualifies: '',
     disqualifies: ''
   }
+}
+
+interface ProductPrice {
+  id?: string
+  _id?: string
+  localId?: string
+  name?: string
+  amount?: number
+  price?: number
+  currency?: string
+}
+
+interface ProductItem {
+  id?: string
+  _id?: string
+  localId?: string
+  name: string
+  description?: string
+  currency?: string
+  prices?: ProductPrice[]
+}
+
+function getProductId(product?: ProductItem | null) {
+  return product?.id || product?._id || product?.localId || ''
+}
+
+function getPriceId(price?: ProductPrice | null) {
+  return price?.id || price?._id || price?.localId || ''
+}
+
+function getPrimaryPrice(product?: ProductItem | null) {
+  return Array.isArray(product?.prices) ? product.prices[0] || null : null
+}
+
+function getPriceAmount(price?: ProductPrice | null) {
+  return Number(price?.amount ?? price?.price ?? 0) || 0
+}
+
+function getSuccessActionInfo(action: ConversationalSuccessAction, objective: ConversationalObjective) {
+  if (action !== 'send_goal_url') return successActionLabels[action] || successActionLabels.ready_for_human
+  if (objective === 'citas') {
+    return {
+      label: 'Mandar enlace del calendario',
+      description: 'La IA manda el enlace del calendario seleccionado; Ristak confirma la cita cuando regresa el ID real.'
+    }
+  }
+  if (objective === 'ventas') {
+    return {
+      label: 'Mandar enlace del pedido',
+      description: 'La IA manda el enlace del pedido del producto seleccionado; Ristak confirma la compra cuando regresa el ID real.'
+    }
+  }
+  return successActionLabels.send_goal_url
 }
 
 const systemReplyDeliveryDefaults: Pick<
@@ -377,6 +431,8 @@ interface AgentCardProps {
   agent: ConversationalAgentDef
   aiProviders: ConversationalAIProviderStatus[]
   calendars: Calendar[]
+  products: ProductItem[]
+  productsLoading: boolean
   filterOptions?: AgentFilterOptions
   systemStrategy: string
   businessPromptStatus?: ConversationalBusinessPromptStatus | null
@@ -390,7 +446,7 @@ function getProviderStatus(aiProviders: ConversationalAIProviderStatus[], provid
   return aiProviders.find((provider) => provider.id === providerId) || null
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, filterOptions, systemStrategy, businessPromptStatus, onConnectProvider, onBack, onChange, onDelete }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, filterOptions, systemStrategy, businessPromptStatus, onConnectProvider, onBack, onChange, onDelete }) => {
   const { showToast } = useNotification()
   const [testMessages, setTestMessages] = useState<TestMessage[]>([])
   const [testInput, setTestInput] = useState('')
@@ -398,7 +454,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
 
   const allowedActions = actionsByObjective[agent.objective] || actionsByObjective.custom
   const selectedObjective = objectiveOptions.find((option) => option.value === agent.objective) || objectiveOptions[0]
-  const selectedActionInfo = successActionLabels[agent.successAction] || successActionLabels.ready_for_human
+  const selectedActionInfo = getSuccessActionInfo(agent.successAction, agent.objective)
   const selectedProviderId = getKnownConversationalAIProvider(agent.aiProvider)
   const selectedProvider = getConversationalAIProviderOption(selectedProviderId)
   const selectedProviderStatus = getProviderStatus(aiProviders, selectedProviderId)
@@ -422,8 +478,26 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
   const replyDelivery = getAgentReplyDelivery(agent)
   const goalWorkflow = getAgentGoalWorkflow(agent)
   const goalUrlConfig = agent.objective === 'ventas' ? goalWorkflow.sales : goalWorkflow.appointments
-  const goalUrlLabel = agent.objective === 'ventas' ? 'URL de compra o pago' : 'URL para agendar'
+  const goalUrlLabel = agent.objective === 'ventas' ? 'Enlace del pedido' : 'Enlace del calendario'
   const goalUrlPlaceholder = agent.objective === 'ventas' ? 'https://tutienda.com/checkout' : 'https://calendly.com/tu-negocio/cita'
+  const selectedGoalCalendarId = goalWorkflow.appointments.calendarId || agent.defaultCalendarId || ''
+  const selectedSalesProduct = products.find((product) => getProductId(product) === goalWorkflow.sales.productId) || null
+  const selectedSalesPrice = selectedSalesProduct
+    ? (selectedSalesProduct.prices || []).find((price) => getPriceId(price) === goalWorkflow.sales.priceId) || getPrimaryPrice(selectedSalesProduct)
+    : null
+  const productOptions = [
+    { value: '', label: productsLoading ? 'Cargando productos...' : 'Elegir producto del sistema' },
+    ...products.map((product) => ({ value: getProductId(product), label: product.name }))
+  ]
+  const priceOptions = selectedSalesProduct
+    ? [
+        { value: '', label: 'Precio base' },
+        ...(selectedSalesProduct.prices || []).map((price) => ({
+          value: getPriceId(price),
+          label: `${price.name || 'Precio'} · ${formatCurrency(getPriceAmount(price), price.currency || selectedSalesProduct.currency || 'MXN')}`
+        }))
+      ]
+    : [{ value: '', label: 'Selecciona producto primero' }]
   const hasTestConversation = testMessages.length > 0 || Boolean(testInput.trim())
   const testPreviewMessages: PhoneChatPreviewMessage[] = testMessages.map((message, index) => ({
     id: `test-${index}`,
@@ -478,7 +552,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
     const patch: ConversationalAgentDefInput = { successAction }
     if (agent.objective === 'citas') {
       const owner = successAction === 'book_appointment' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
-      const calendarId = owner === 'ai'
+      const calendarId = owner === 'ai' || owner === 'url'
         ? goalWorkflow.appointments.calendarId || agent.defaultCalendarId || calendars[0]?.id || null
         : goalWorkflow.appointments.calendarId
       patch.goalWorkflow = mergeGoalWorkflow(goalWorkflow, {
@@ -501,6 +575,36 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
       return
     }
     updateGoalWorkflow({ appointments: { ...goalWorkflow.appointments, ...patch } })
+  }
+
+  const updateSalesProduct = (productId: string) => {
+    const product = products.find((item) => getProductId(item) === productId) || null
+    const price = getPrimaryPrice(product)
+    updateGoalWorkflow({
+      sales: {
+        ...goalWorkflow.sales,
+        productId: product ? getProductId(product) : '',
+        priceId: getPriceId(price),
+        productName: product?.name || '',
+        priceName: price?.name || '',
+        amount: price ? getPriceAmount(price) : null,
+        currency: price?.currency || product?.currency || ''
+      }
+    })
+  }
+
+  const updateSalesPrice = (priceId: string) => {
+    if (!selectedSalesProduct) return
+    const price = (selectedSalesProduct.prices || []).find((item) => getPriceId(item) === priceId) || getPrimaryPrice(selectedSalesProduct)
+    updateGoalWorkflow({
+      sales: {
+        ...goalWorkflow.sales,
+        priceId: getPriceId(price),
+        priceName: price?.name || '',
+        amount: price ? getPriceAmount(price) : null,
+        currency: price?.currency || selectedSalesProduct.currency || ''
+      }
+    })
   }
 
   const handleSendTestMessage = async () => {
@@ -854,7 +958,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
                   portal
                 >
                   {allowedActions.map((action) => (
-                    <option key={action} value={action}>{successActionLabels[action].label}</option>
+                    <option key={action} value={action}>{getSuccessActionInfo(action, agent.objective).label}</option>
                   ))}
                 </CustomSelect>
                 <p className={styles.helper}>{selectedActionInfo.description}</p>
@@ -887,6 +991,70 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
 
               {agent.successAction === 'send_goal_url' && (agent.objective === 'citas' || agent.objective === 'ventas') && (
                 <>
+                  {agent.objective === 'citas' && (
+                    <div className={styles.field}>
+                      <label className={styles.label}>Calendario del enlace</label>
+                      <CustomSelect
+                        value={selectedGoalCalendarId}
+                        onChange={(event) => {
+                          const calendarId = event.target.value || null
+                          onChange({
+                            defaultCalendarId: calendarId,
+                            goalWorkflow: mergeGoalWorkflow(goalWorkflow, {
+                              appointments: { ...goalWorkflow.appointments, owner: 'url', calendarId }
+                            })
+                          })
+                        }}
+                        portal
+                      >
+                        <option value="">Elegir calendario activo</option>
+                        {calendars.map((calendar) => (
+                          <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
+                        ))}
+                      </CustomSelect>
+                      <p className={styles.helper}>El enlace queda ligado a este calendario.</p>
+                    </div>
+                  )}
+
+                  {agent.objective === 'ventas' && (
+                    <>
+                      <div className={styles.field}>
+                        <label className={styles.label}>Producto del pedido</label>
+                        <CustomSelect
+                          value={goalWorkflow.sales.productId}
+                          onChange={(event) => updateSalesProduct(event.target.value)}
+                          portal
+                          disabled={productsLoading || products.length === 0}
+                        >
+                          {productOptions.map((option) => (
+                            <option key={option.value || 'empty-product'} value={option.value}>{option.label}</option>
+                          ))}
+                        </CustomSelect>
+                        <p className={styles.helper}>Ristak confirma la compra contra este producto.</p>
+                      </div>
+
+                      {selectedSalesProduct && (
+                        <div className={styles.field}>
+                          <label className={styles.label}>Precio del pedido</label>
+                          <CustomSelect
+                            value={goalWorkflow.sales.priceId}
+                            onChange={(event) => updateSalesPrice(event.target.value)}
+                            portal
+                          >
+                            {priceOptions.map((option) => (
+                              <option key={option.value || 'base-price'} value={option.value}>{option.label}</option>
+                            ))}
+                          </CustomSelect>
+                          {selectedSalesPrice && (
+                            <p className={styles.helper}>
+                              {selectedSalesProduct.name} · {formatCurrency(getPriceAmount(selectedSalesPrice), selectedSalesPrice.currency || selectedSalesProduct.currency || 'MXN')}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+
                   <div className={styles.fieldWide}>
                     <label className={styles.label}>{goalUrlLabel}</label>
                     <input
@@ -896,12 +1064,14 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
                       onChange={(event) => updateGoalUrl({ url: event.target.value })}
                     />
                     <p className={styles.helper}>
-                      La IA manda este enlace con un ID de seguimiento. El objetivo queda pendiente hasta que regrese el webhook.
+                      {agent.objective === 'ventas'
+                        ? 'La IA manda este enlace ligado al producto seleccionado; el objetivo queda pendiente hasta que se confirme esa compra.'
+                        : 'La IA manda este enlace ligado al calendario seleccionado; el objetivo queda pendiente hasta que se confirme esa cita.'}
                     </p>
                   </div>
 
                   <div className={styles.field}>
-                    <label className={styles.label}>Parámetro del ID</label>
+                    <label className={styles.label}>ID que se agrega al enlace</label>
                     <input
                       className={styles.input}
                       value={goalUrlConfig.trackingParam || DEFAULT_GOAL_TRACKING_PARAM}
@@ -914,10 +1084,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, fi
                   </div>
 
                   <div className={styles.fieldWide}>
-                    <label className={styles.label}>Webhook de confirmación</label>
-                    <input className={styles.input} value={GOAL_WEBHOOK_PATH} readOnly />
+                    <label className={styles.label}>Confirmación automática</label>
                     <p className={styles.helper}>
-                      Tu sistema externo debe mandar POST con {goalUrlConfig.trackingParam || DEFAULT_GOAL_TRACKING_PARAM} y el ID real de la cita, compra, orden o pago.
+                      {agent.objective === 'ventas'
+                        ? 'Ristak cumple el objetivo cuando el pedido confirma la compra de ese contacto, ese producto y ese enlace.'
+                        : 'Ristak cumple el objetivo cuando el calendario confirma la cita de ese contacto, ese calendario y ese enlace.'}
                     </p>
                   </div>
                 </>
@@ -1189,6 +1360,8 @@ export const ConversationalAgentSettings: React.FC = () => {
   const [aiProviders, setAIProviders] = useState<ConversationalAIProviderStatus[]>([])
   const [metrics, setMetrics] = useState<ConversationalAgentMetrics | null>(null)
   const [calendars, setCalendars] = useState<Calendar[]>([])
+  const [products, setProducts] = useState<ProductItem[]>([])
+  const [productsLoading, setProductsLoading] = useState(false)
   const [filterOptions, setFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -1237,6 +1410,8 @@ export const ConversationalAgentSettings: React.FC = () => {
         setAIProviders([])
         setMetrics(null)
         setCalendars([])
+        setProducts([])
+        setProductsLoading(false)
         setFilterOptions(undefined)
         setSelectedAgentId(null)
         setLoading(false)
@@ -1244,13 +1419,20 @@ export const ConversationalAgentSettings: React.FC = () => {
       }
 
       setLoading(true)
+      setProductsLoading(true)
       try {
-        const [nextConfig, nextAgents, nextProviders, nextMetrics, calendarList, nextOptions] = await Promise.all([
+        const [nextConfig, nextAgents, nextProviders, nextMetrics, calendarList, productsResponse, nextOptions] = await Promise.all([
           conversationalAgentService.getConfig(),
           conversationalAgentService.listAgents(),
           conversationalAgentService.listAIProviders(),
           conversationalAgentService.getMetrics().catch(() => null),
           calendarsService.getCalendars(),
+          apiClient.get<{ products?: ProductItem[] }>('/products', {
+            params: {
+              limit: '100',
+              includePrices: 'true'
+            }
+          }).catch(() => null),
           conversationalAgentService.getFilterOptions().catch(() => undefined)
         ])
         if (cancelled) return
@@ -1259,13 +1441,19 @@ export const ConversationalAgentSettings: React.FC = () => {
         setAIProviders(nextConfig.aiProviders || nextProviders)
         setMetrics(nextMetrics)
         setCalendars(calendarList.filter((cal) => cal.isActive !== false))
+        setProducts(Array.isArray(productsResponse?.products)
+          ? productsResponse.products.filter((product) => getProductId(product))
+          : [])
         setFilterOptions(nextOptions)
       } catch (error: any) {
         if (!cancelled) {
           showToast('error', 'Error', error?.message || 'No se pudo cargar el agente conversacional')
         }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setProductsLoading(false)
+          setLoading(false)
+        }
       }
     }
     load()
@@ -1566,6 +1754,8 @@ export const ConversationalAgentSettings: React.FC = () => {
           agent={selectedAgent}
           aiProviders={aiProviders}
           calendars={calendars}
+          products={products}
+          productsLoading={productsLoading}
           filterOptions={filterOptions}
           systemStrategy={systemStrategy}
           businessPromptStatus={businessPromptStatus}

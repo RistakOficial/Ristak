@@ -186,11 +186,11 @@ const SUCCESS_ACTION_TEXTS = {
 - Confirma concepto, monto, moneda y canal de envío.
 - Sólo después de confirmación explícita ejecuta create_payment_link.
 - Si no puedes crear el link, manda a humano con send_to_human y resume el motivo.`,
-  send_goal_url: `Cuando la persona esté lista para avanzar por enlace externo:
+  send_goal_url: `Cuando la persona esté lista para avanzar por enlace:
 - Confirma que sí quiere continuar por enlace.
-- Ejecuta send_goal_url y manda la URL devuelta como sentUrl en el mensaje visible.
+- Ejecuta send_goal_url y manda el enlace devuelto como sentUrl en el mensaje visible.
 - No digas que la cita, compra u objetivo ya quedó confirmado; sólo queda pendiente.
-- El objetivo se cumple hasta que el sistema externo mande el webhook de regreso con el ID real.`
+- El objetivo se cumple hasta que llegue la confirmación automática con el ID real.`
 }
 
 /**
@@ -1461,11 +1461,12 @@ function buildGoalWorkflowSection(config = {}) {
     const appointments = workflow.appointments || {}
     if (appointments.owner === 'url') {
       sections.push(`## Flujo de agenda configurado
-- Este agente debe mandar una URL externa para agendar.
-- URL configurada: ${appointments.url || 'sin URL configurada; si falta, manda a humano'}.
-- Parámetro de seguimiento: ${appointments.trackingParam || 'ristak_goal_id'}.
-- Cuando la persona quiera agendar, ejecuta send_goal_url y manda la URL devuelta.
-- La cita sólo queda confirmada cuando el webhook regresa el ID real de la cita.`)
+- Este agente debe mandar el enlace del calendario seleccionado para agendar.
+- Calendario configurado: ${appointments.calendarId || config.defaultCalendarId || 'sin calendario fijo configurado'}.
+- Enlace configurado: ${appointments.url || 'sin enlace configurado; si falta, manda a humano'}.
+- ID que se agrega al enlace: ${appointments.trackingParam || 'ristak_goal_id'}.
+- Cuando la persona quiera agendar, ejecuta send_goal_url y manda el enlace devuelto.
+- La cita sólo queda confirmada cuando llega el ID real de la cita desde ese enlace.`)
     } else if (appointments.owner === 'ai') {
       sections.push(`## Flujo de agenda configurado
 - Este agente debe intentar agendar por IA.
@@ -1482,12 +1483,16 @@ function buildGoalWorkflowSection(config = {}) {
   if (config.objective === 'ventas') {
     const sales = workflow.sales || {}
     if (sales.owner === 'url') {
+      const productLine = sales.productName
+        ? `Producto del pedido: ${sales.productName}${sales.priceName ? ` · ${sales.priceName}` : ''}${sales.amount ? ` · ${sales.amount} ${sales.currency || 'MXN'}` : ''}.`
+        : 'Producto del pedido: sin producto fijo configurado.'
       sections.push(`## Flujo de cobro configurado
-- Este agente debe mandar una URL externa para comprar o pagar.
-- URL configurada: ${sales.url || 'sin URL configurada; si falta, manda a humano'}.
-- Parámetro de seguimiento: ${sales.trackingParam || 'ristak_goal_id'}.
-- Cuando la persona quiera comprar, ejecuta send_goal_url y manda la URL devuelta.
-- La venta sólo queda confirmada cuando el webhook regresa el ID real de la compra, orden o pago.`)
+- Este agente debe mandar el enlace del pedido para comprar o pagar.
+- ${productLine}
+- Enlace configurado: ${sales.url || 'sin enlace configurado; si falta, manda a humano'}.
+- ID que se agrega al enlace: ${sales.trackingParam || 'ristak_goal_id'}.
+- Cuando la persona quiera comprar, ejecuta send_goal_url y manda el enlace devuelto.
+- La venta sólo queda confirmada cuando llega el ID real de compra, orden o pago de ese producto y ese enlace.`)
     } else if (sales.owner === 'ai') {
       const productLine = sales.productName
         ? `Producto configurado: ${sales.productName}${sales.amount ? ` · ${sales.amount} ${sales.currency || 'MXN'}` : ''}.`

@@ -14,7 +14,6 @@ import {
   applyAgentSuccessExtras,
   updateConversationClosingContext,
   createConversationGoalLink,
-  getConversationalGoalWebhookUrl,
   DEFAULT_GOAL_TRACKING_PARAM
 } from '../../services/conversationalAgentService.js'
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
@@ -45,6 +44,53 @@ function getConfiguredGoalUrl(config = {}) {
   if (config.objective === 'ventas') return workflow.sales || {}
   if (config.objective === 'citas') return workflow.appointments || {}
   return {}
+}
+
+function compactObject(input = {}) {
+  return Object.entries(input).reduce((acc, [key, value]) => {
+    const clean = String(value || '').trim()
+    if (clean) acc[key] = clean
+    return acc
+  }, {})
+}
+
+function getGoalLinkContext(config = {}, goalConfig = {}) {
+  if (config.objective === 'citas') {
+    const calendarId = goalConfig.calendarId || config.defaultCalendarId || ''
+    return {
+      linkParams: compactObject({ calendar_id: calendarId }),
+      expected: compactObject({ calendarId })
+    }
+  }
+  if (config.objective === 'ventas') {
+    return {
+      linkParams: compactObject({
+        product_id: goalConfig.productId,
+        price_id: goalConfig.priceId
+      }),
+      expected: compactObject({
+        productId: goalConfig.productId,
+        priceId: goalConfig.priceId,
+        productName: goalConfig.productName,
+        priceName: goalConfig.priceName
+      })
+    }
+  }
+  return { linkParams: {}, expected: {} }
+}
+
+function buildGoalLinkPreview(targetUrl, trackingParam, goalId, linkParams = {}) {
+  try {
+    const parsed = new URL(targetUrl)
+    parsed.searchParams.set(trackingParam, goalId)
+    for (const [key, value] of Object.entries(linkParams)) {
+      if (value) parsed.searchParams.set(key, value)
+    }
+    return parsed.toString()
+  } catch {
+    const separator = targetUrl.includes('?') ? '&' : '?'
+    return `${targetUrl}${separator}${trackingParam}=${goalId}`
+  }
 }
 
 function buildPaymentChannels(channel) {
@@ -486,7 +532,7 @@ export function createConversationalTools(ctx) {
 
   const sendGoalUrlTool = tool({
     name: 'send_goal_url',
-    description: 'Genera un enlace externo con ID de seguimiento para que la persona agende o compre fuera de Ristak. Úsala sólo cuando la persona ya esté lista para avanzar. El objetivo NO queda cumplido hasta que el sistema externo mande el webhook de regreso con el ID de cita, compra, orden o pago.',
+    description: 'Genera el enlace configurado para que la persona agende o compre fuera de Ristak. Úsala sólo cuando la persona ya esté lista para avanzar. El objetivo NO queda cumplido hasta que llegue la confirmación automática con el ID real de cita, compra, orden o pago.',
     parameters: z.object({
       intencionDetectada: z.string().describe('Qué quiere lograr la persona, por ejemplo agendar valoración o completar compra'),
       resumen: z.string().describe('Resumen breve del contexto útil para auditoría interna'),
@@ -501,18 +547,19 @@ export function createConversationalTools(ctx) {
       const targetUrl = goalConfig.url || ''
       const trackingParam = goalConfig.trackingParam || DEFAULT_GOAL_TRACKING_PARAM
       if (!targetUrl) {
-        return { ok: false, error: 'No hay URL configurada para este objetivo. Manda a humano con send_to_human y avisa que falta configurar el enlace.' }
+        return { ok: false, error: 'No hay enlace configurado para este objetivo. Manda a humano con send_to_human y avisa que falta configurar el enlace.' }
       }
+      const linkContext = getGoalLinkContext(config, goalConfig)
 
       pushAction(ctx, 'send_goal_url', { objective: config.objective, intencionDetectada, targetUrl })
       if (ctx.dryRun) {
         return {
           ok: true,
           simulated: true,
-          sentUrl: `${targetUrl}${targetUrl.includes('?') ? '&' : '?'}${trackingParam}=goal_simulado`,
+          sentUrl: buildGoalLinkPreview(targetUrl, trackingParam, 'goal_simulado', linkContext.linkParams),
           trackingParam,
-          callbackUrl: getConversationalGoalWebhookUrl(),
-          note: 'Manda esta URL visible en el chat. El objetivo se confirma hasta que llegue el webhook.'
+          linkParams: linkContext.linkParams,
+          note: 'Manda este enlace visible en el chat. El objetivo se confirma hasta que llegue el ID real.'
         }
       }
 
@@ -522,7 +569,9 @@ export function createConversationalTools(ctx) {
         objective: config.objective,
         targetUrl,
         trackingParam,
+        linkParams: linkContext.linkParams,
         metadata: {
+          expected: linkContext.expected,
           intencionDetectada,
           resumen
         }
@@ -533,8 +582,8 @@ export function createConversationalTools(ctx) {
         goalId: link.id,
         sentUrl: link.sentUrl,
         trackingParam: link.trackingParam,
-        callbackUrl: link.callbackUrl,
-        note: 'Manda sentUrl visible en el chat. No digas que el objetivo ya quedó cumplido; se confirma cuando llegue el webhook con ese ID.'
+        linkParams: link.linkParams,
+        note: 'Manda sentUrl visible en el chat. No digas que el objetivo ya quedó cumplido; se confirma cuando llegue el ID real.'
       }
     }
   })

@@ -74,7 +74,7 @@ test('normaliza acciones del agente conversacional', () => {
   }
 })
 
-test('normaliza flujo por URL con parametro de seguimiento', () => {
+test('normaliza flujo por enlace con parametro de seguimiento', () => {
   const workflow = normalizeAgentGoalWorkflow({
     appointments: {
       owner: 'url',
@@ -95,7 +95,7 @@ test('normaliza flujo por URL con parametro de seguimiento', () => {
   assert.equal(workflow.sales.trackingParam, 'order_id')
 })
 
-test('webhook de URL externa confirma cita con ID real', async () => {
+test('confirmacion automatica de enlace de calendario confirma cita con ID real', async () => {
   const contactId = 'test_goal_url_contact'
   await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
@@ -112,14 +112,20 @@ test('webhook de URL externa confirma cita con ID real', async () => {
       contactId,
       objective: 'citas',
       targetUrl: 'https://agenda.test/reserva?origen=whatsapp',
-      trackingParam: 'booking_ref'
+      trackingParam: 'booking_ref',
+      linkParams: { calendar_id: 'cal_demo' },
+      metadata: {
+        expected: { calendarId: 'cal_demo' }
+      }
     })
 
     assert.match(link.id, /^goal_/)
     assert.equal(new URL(link.sentUrl).searchParams.get('booking_ref'), link.id)
+    assert.equal(new URL(link.sentUrl).searchParams.get('calendar_id'), 'cal_demo')
 
     const completed = await completeConversationGoalLinkFromWebhook({
       booking_ref: link.id,
+      calendar_id: 'cal_demo',
       appointment_id: 'appt_123',
       status: 'scheduled'
     })
@@ -136,6 +142,81 @@ test('webhook de URL externa confirma cita con ID real', async () => {
     assert.equal(state.status, 'completed')
     assert.equal(state.signal, 'appointment_booked')
     assert.match(state.signal_summary, /appt_123/)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('confirmacion automatica de pedido valida producto antes de cerrar venta', async () => {
+  const contactId = 'test_goal_order_contact'
+  await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '+5215550000001', 'goal-order@test.local', 'Goal Order Test', 'test']
+    )
+
+    const link = await createConversationGoalLink({
+      contactId,
+      objective: 'ventas',
+      targetUrl: 'https://tienda.test/pedido',
+      trackingParam: 'pedido_ref',
+      linkParams: {
+        product_id: 'prod_x',
+        price_id: 'price_mensual'
+      },
+      metadata: {
+        expected: {
+          productId: 'prod_x',
+          priceId: 'price_mensual',
+          productName: 'Producto X',
+          priceName: 'Mensual'
+        }
+      }
+    })
+
+    const sentUrl = new URL(link.sentUrl)
+    assert.equal(sentUrl.searchParams.get('pedido_ref'), link.id)
+    assert.equal(sentUrl.searchParams.get('product_id'), 'prod_x')
+    assert.equal(sentUrl.searchParams.get('price_id'), 'price_mensual')
+
+    await assert.rejects(
+      () => completeConversationGoalLinkFromWebhook({
+        pedido_ref: link.id,
+        product_id: 'prod_y',
+        price_id: 'price_mensual',
+        purchase_id: 'purchase_wrong',
+        status: 'paid'
+      }),
+      /producto esperado/
+    )
+
+    const pending = await getConversationGoalLink(link.id)
+    assert.equal(pending.status, 'pending')
+
+    const completed = await completeConversationGoalLinkFromWebhook({
+      pedido_ref: link.id,
+      product_id: 'prod_x',
+      price_id: 'price_mensual',
+      purchase_id: 'purchase_123',
+      status: 'paid'
+    })
+
+    assert.equal(completed.status, 'completed')
+    assert.equal(completed.externalObjectId, 'purchase_123')
+    assert.equal(completed.signal, 'purchase_completed')
+
+    const state = await db.get('SELECT status, signal, signal_summary FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+    assert.equal(state.status, 'completed')
+    assert.equal(state.signal, 'purchase_completed')
+    assert.match(state.signal_summary, /purchase_123/)
   } finally {
     await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
