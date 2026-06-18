@@ -61,21 +61,21 @@ const AUTOSAVE_DELAY_MS = 900
 const OMIT_ALL_CONFIRM_TEXT = 'OMITIR TODO'
 
 const objectiveOptions: Array<{ value: ConversationalObjective; label: string; description: string }> = [
-  { value: 'citas', label: 'Agendar citas', description: 'Lleva la plática hasta dejar una cita lista.' },
-  { value: 'ventas', label: 'Cerrar ventas', description: 'Empuja la conversación hacia una compra real.' },
-  { value: 'datos', label: 'Pedir datos', description: 'Pide lo que falta, sin repetir lo que ya sabe.' },
-  { value: 'filtrar', label: 'Filtrar curiosos', description: 'Separa gente interesada de quien nomás anda viendo.' },
-  { value: 'custom', label: 'Objetivo propio', description: 'Escribe una meta específica para este agente.' }
+  { value: 'citas', label: 'Agendar citas', description: 'Debe llevar a la persona hasta una cita. Ejemplo: que termine pidiendo día y hora.' },
+  { value: 'ventas', label: 'Cerrar ventas', description: 'Debe llevar a la persona a comprar. Ejemplo: que pida cómo pagar.' },
+  { value: 'datos', label: 'Pedir datos', description: 'Debe pedir lo que falte. Ejemplo: nombre, teléfono o correo.' },
+  { value: 'filtrar', label: 'Filtrar curiosos', description: 'Debe ver si la persona sí va en serio. Ejemplo: separar quien pregunta nomás por ver.' },
+  { value: 'custom', label: 'Objetivo propio', description: 'Escribe tú la meta. Ejemplo: que pida una propuesta formal.' }
 ]
 
 const successActionLabels: Record<ConversationalSuccessAction, { label: string; description: string }> = {
-  book_appointment: { label: 'Que agende la IA', description: 'La IA revisa disponibilidad real y agenda cuando la persona confirma horario.' },
-  ready_for_human: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' },
-  ready_to_buy: { label: 'Que mande link de pago', description: 'La IA confirma el cobro y crea el link de pago si el contacto acepta.' },
-  send_goal_url: { label: 'Mandar enlace confirmado', description: 'La IA manda el enlace configurado y Ristak confirma el objetivo cuando regresa el ID real.' },
-  send_trigger_link: { label: 'Mandar enlace de disparo', description: 'La IA manda el enlace elegido y Ristak detiene la IA cuando el contacto lo toca.' },
-  internal_signal: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' },
-  none: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' }
+  book_appointment: { label: 'Que agende la IA', description: 'La IA busca un horario libre y lo agenda. Ejemplo: si dicen "mañana a las 4", revisa si se puede.' },
+  ready_for_human: { label: 'Pasar a un humano', description: 'Manda el chat al equipo. Ejemplo: aparece como importante para que alguien lo atienda.' },
+  ready_to_buy: { label: 'Que mande link de pago', description: 'Manda el pago cuando la persona ya quiere comprar. Ejemplo: "sí, pásame el link".' },
+  send_goal_url: { label: 'Mandar enlace confirmado', description: 'Manda un enlace y espera confirmación. Ejemplo: link de agenda o de compra.' },
+  send_trigger_link: { label: 'Mandar enlace y detenerse', description: 'Manda un enlace y se detiene cuando lo tocan. Ejemplo: link de WhatsApp, formulario o página.' },
+  internal_signal: { label: 'Pasar a un humano', description: 'Manda el chat al equipo. Ejemplo: aparece como importante para que alguien lo atienda.' },
+  none: { label: 'Pasar a un humano', description: 'Manda el chat al equipo. Ejemplo: aparece como importante para que alguien lo atienda.' }
 }
 
 const actionsByObjective: Record<ConversationalObjective, ConversationalSuccessAction[]> = {
@@ -92,22 +92,22 @@ const attendedChatActionOptions = [
   {
     value: 'keep_visible',
     label: 'Nada raro: visible y con avisos',
-    description: 'Se queda en la bandeja y te avisa normal, como cualquier chat.'
+    description: 'El chat se queda normal. Ejemplo: lo ves y te llegan avisos.'
   },
   {
     value: 'hide_only',
     label: 'Escóndelo mientras lo atiende',
-    description: 'Mientras la IA responde, lo sacamos de la vista para no meter ruido.'
+    description: 'El chat se guarda mientras la IA habla. Ejemplo: no te llena la bandeja.'
   },
   {
     value: 'mute_only',
     label: 'Visible, pero sin avisos',
-    description: 'El chat sigue ahí, pero no te molesta con notificaciones mientras la IA trabaja.'
+    description: 'El chat se ve, pero no suena. Ejemplo: puedes verlo sin notificaciones.'
   },
   {
     value: 'hide_and_mute',
     label: 'Escóndelo y avísame si ya urge',
-    description: 'Lo ocultamos y no te molestamos; si cumple la meta, entra como prioridad.'
+    description: 'Se guarda y no molesta. Ejemplo: vuelve arriba si ya necesita al equipo.'
   }
 ] as const
 
@@ -262,21 +262,21 @@ function getPriceAmount(price?: ProductPrice | null) {
 function getSuccessActionInfo(action: ConversationalSuccessAction, objective: ConversationalObjective) {
   if (action === 'send_trigger_link') {
     return {
-      label: 'Mandar enlace de disparo',
-      description: 'La IA manda el enlace elegido y Ristak detiene la IA cuando el contacto lo toca.'
+      label: 'Mandar enlace y detenerse',
+      description: 'Manda un enlace y se detiene cuando la persona lo toca. Ejemplo: link de formulario o página.'
     }
   }
   if (action !== 'send_goal_url') return successActionLabels[action] || successActionLabels.ready_for_human
   if (objective === 'citas') {
     return {
       label: 'Mandar enlace del calendario',
-      description: 'La IA manda el enlace del calendario seleccionado; Ristak confirma la cita cuando regresa el ID real.'
+      description: 'Manda el link para agendar. Ejemplo: la persona elige su horario.'
     }
   }
   if (objective === 'ventas') {
     return {
       label: 'Mandar enlace del pedido',
-      description: 'La IA manda el enlace del pedido del producto seleccionado; Ristak confirma la compra cuando regresa el ID real.'
+      description: 'Manda el link para comprar. Ejemplo: la persona paga el producto elegido.'
     }
   }
   return successActionLabels.send_goal_url
@@ -860,19 +860,19 @@ function getResponseDelaySummary(delay: AgentResponseDelayConfig) {
 
 function getResponseDelayHelp(delay: AgentResponseDelayConfig) {
   if (delay.mode === 'fixed') {
-    return `Espera ${getResponseDelaySummary(delay)} antes de enviar el mensaje.`
+    return `Espera ${getResponseDelaySummary(delay)} antes de contestar. Ejemplo: la persona escribe y el agente responde después de esa pausa.`
   }
   if (delay.mode === 'random') {
-    return `Escoge un tiempo entre ${getResponseDelaySummary(delay)} para que las respuestas no salgan siempre igual.`
+    return `Escoge un tiempo entre ${getResponseDelaySummary(delay)}. Ejemplo: a veces contesta en 3 minutos y a veces en 7.`
   }
-  return 'Contesta en cuanto termina de preparar la respuesta y agrupar mensajes recientes.'
+  return 'Contesta en cuanto tiene lista la respuesta. Ejemplo: no espera minutos extra.'
 }
 
 function getReplyDeliveryHelp(delivery: AgentReplyDeliveryConfig) {
   if (delivery.splitMessagesEnabled || delivery.mode === 'split') {
-    return `El sistema decide cortes y cantidad de globos. Sólo ajusta la pausa entre globos: ${delivery.minDelaySeconds} a ${delivery.maxDelaySeconds} segundos.`
+    return `Parte textos largos en globitos. Ejemplo: manda una idea, espera ${delivery.minDelaySeconds} a ${delivery.maxDelaySeconds} segundos y manda otra.`
   }
-  return 'Envía cada respuesta completa en un solo WhatsApp.'
+  return 'Manda todo junto en un solo globo. Ejemplo: una respuesta completa en un mensaje.'
 }
 
 function getFollowUpSummary(followUp: AgentFollowUpConfig) {
@@ -1108,7 +1108,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     : null
   const selectedTriggerLink = triggerLinks.find((link) => link.id === goalWorkflow.triggerLink.triggerLinkId) || null
   const triggerLinkOptions = [
-    { value: '', label: triggerLinksLoading ? 'Cargando enlaces...' : 'Elegir enlace de disparo' },
+    { value: '', label: triggerLinksLoading ? 'Cargando enlaces...' : 'Elegir enlace' },
     ...triggerLinks.map((link) => ({ value: link.id, label: link.name }))
   ]
   const productOptions = [
@@ -1861,14 +1861,14 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           )}
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>1. Modelo y orden del chat</h3>
+            <h3 className={styles.sectionTitle}>1. Cómo va a contestar</h3>
             <p className={styles.agentSectionHint}>
-              Escoge qué IA contesta y cómo se siente el ritmo del chat.
+              Elige quién escribe, cuándo contesta y si los mensajes se ven como chat real. Ejemplo: rápido, pausado o en globitos.
             </p>
             <div className={styles.configQuestionList}>
               <QuestionSelectRow
-                question="¿Qué IA quieres que responda?"
-                helper={selectedProvider.description}
+                question="¿Qué IA va a contestar?"
+                helper={`Es el cerebro que escribe los mensajes. Ejemplo: ${selectedProvider.label} contesta este agente.`}
                 value={selectedProviderId}
                 options={conversationalAIProviderOptions.map((provider) => {
                   const status = getProviderStatus(aiProviders, provider.id)
@@ -1892,15 +1892,15 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </QuestionSelectRow>
 
               <QuestionSelectRow
-                question={`¿Qué modelo de ${selectedProvider.label} quieres usar?`}
-                helper={`${selectedAgentModel?.label || selectedAgentModelValue} responde sólo para este agente.`}
+                question={`¿Qué versión de ${selectedProvider.label} va a usar?`}
+                helper={`Es la versión que va a escribir. Ejemplo: ${selectedAgentModel?.label || selectedAgentModelValue} se usa sólo en este agente.`}
                 value={selectedAgentModelValue}
                 options={selectedAgentModelOptions}
                 selectLabel={`Modelo de ${selectedProvider.label}`}
                 onChange={(model) => onChange({ model })}
               />
               <QuestionSelectRow
-                question="¿Cuánto quieres que espere antes de responder?"
+                question="¿Cuánto debe esperar antes de contestar?"
                 helper={getResponseDelayHelp(responseDelay)}
                 error={responseDelayError}
                 value={responseDelay.mode}
@@ -1974,7 +1974,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </QuestionSelectRow>
 
               <QuestionSelectRow
-                question="¿Quieres activar modo mensajes humanos?"
+                question="¿Quieres que mande mensajes como persona?"
                 helper={getReplyDeliveryHelp(replyDelivery)}
                 error={replyDeliveryError}
                 value={humanMessagesEnabled ? 'yes' : 'no'}
@@ -1990,7 +1990,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 }}
               >
                 {humanMessagesEnabled && (
-                  <div className={styles.inlineFields}>
+                  <div className={`${styles.inlineFields} ${styles.selectAlignedFields}`}>
                     <div className={`${styles.field} ${styles.delayNumberField}`}>
                       <label className={styles.label}>Pausa mínima</label>
                       <NumberInput
@@ -2018,8 +2018,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </QuestionSelectRow>
 
               <QuestionSelectRow
-                question="¿Puede usar emojis si se siente natural?"
-                helper="Úsalo sólo si el tono del negocio permite algo más casual."
+                question="¿Puede usar emojis?"
+                helper="Sólo si queda natural para tu negocio. Ejemplo: puede poner 🙂 cuando la plática está relajada."
                 value={agent.allowEmojis ? 'yes' : 'no'}
                 options={binaryChoiceOptions}
                 selectLabel="Uso de emojis"
@@ -2029,13 +2029,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           </div>
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>2. Acciones del chat</h3>
+            <h3 className={styles.sectionTitle}>2. Qué debe lograr</h3>
             <p className={styles.agentSectionHint}>
-              Define qué hace la IA mientras toma la conversación, qué objetivo quieres que logre y qué pasa cuando lo cumple.
+              Dile qué hacer con el chat, cuál es la meta y qué pasa cuando la cumple. Ejemplo: pasar a un humano o agendar.
             </p>
             <div className={styles.configQuestionList}>
               <QuestionSelectRow
-                question="¿Qué hace cuando la IA está tomando la conversación?"
+                question="¿Qué pasa con el chat mientras la IA habla?"
                 helper={selectedAttendedChatAction.description}
                 value={selectedAttendedChatActionValue}
                 options={attendedChatActionOptions.map((option) => ({ value: option.value, label: option.label }))}
@@ -2044,7 +2044,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               />
 
               <QuestionSelectRow
-                question="¿Qué objetivo quieres que logre?"
+                question="¿Cuál es la meta?"
                 helper={selectedObjective.description}
                 value={agent.objective}
                 options={objectiveOptions.map((option) => ({ value: option.value, label: option.label }))}
@@ -2053,7 +2053,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               />
 
               <QuestionSelectRow
-                question="Cuando logre ese objetivo, ¿qué quieres que haga?"
+                question="Cuando cumpla la meta, ¿qué hace?"
                 helper={selectedActionInfo.description}
                 value={agent.successAction}
                 options={allowedActions.map((action) => ({ value: action, label: getSuccessActionInfo(action, agent.objective).label }))}
@@ -2130,7 +2130,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                             <option key={option.value || 'empty-product'} value={option.value}>{option.label}</option>
                           ))}
                         </CustomSelect>
-                        <p className={styles.helper}>Ristak confirma la compra contra este producto.</p>
+                        <p className={styles.helper}>Ejemplo: si vendes un curso, aquí eliges ese curso.</p>
                       </div>
 
                       {selectedSalesProduct && (
@@ -2165,13 +2165,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                     />
                     <p className={styles.helper}>
                       {agent.objective === 'ventas'
-                        ? 'La IA manda este enlace ligado al producto seleccionado; el objetivo queda pendiente hasta que se confirme esa compra.'
-                        : 'La IA manda este enlace ligado al calendario seleccionado; el objetivo queda pendiente hasta que se confirme esa cita.'}
+                        ? 'Ejemplo: manda este link para que la persona compre el producto.'
+                        : 'Ejemplo: manda este link para que la persona elija día y hora.'}
                     </p>
                   </div>
 
                   <div className={styles.field}>
-                    <label className={styles.label}>ID que se agrega al enlace</label>
+                    <label className={styles.label}>Código para reconocer el enlace</label>
                     <input
                       className={styles.input}
                       value={goalUrlConfig.trackingParam ?? ''}
@@ -2182,16 +2182,16 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                       }}
                     />
                     <p className={styles.helper}>
-                      Se agrega como <strong>{goalUrlConfig.trackingParam || DEFAULT_GOAL_TRACKING_PARAM}=goal_...</strong>
+                      Ejemplo: ayuda a saber quién tocó el link.
                     </p>
                   </div>
 
                   <div className={styles.fieldWide}>
-                    <label className={styles.label}>Confirmación automática</label>
+                    <label className={styles.label}>Cómo sabe que ya pasó</label>
                     <p className={styles.helper}>
                       {agent.objective === 'ventas'
-                        ? 'Ristak cumple el objetivo cuando el pedido confirma la compra de ese contacto, ese producto y ese enlace.'
-                        : 'Ristak cumple el objetivo cuando el calendario confirma la cita de ese contacto, ese calendario y ese enlace.'}
+                        ? 'Ejemplo: marca la meta como lista cuando se confirma la compra.'
+                        : 'Ejemplo: marca la meta como lista cuando se confirma la cita.'}
                     </p>
                   </div>
                 </>
@@ -2200,7 +2200,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               {agent.successAction === 'send_trigger_link' && (
                 <>
                   <div className={styles.field}>
-                    <label className={styles.label}>Enlace de disparo</label>
+                    <label className={styles.label}>Enlace que va a mandar</label>
                     <CustomSelect
                       value={goalWorkflow.triggerLink.triggerLinkId}
                       onChange={(event) => updateTriggerLinkGoal(event.target.value)}
@@ -2212,7 +2212,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                       ))}
                     </CustomSelect>
                     <p className={styles.helper}>
-                      La IA manda este enlace y se detiene cuando el contacto lo toca.
+                      Ejemplo: manda un link y deja de contestar cuando la persona lo abre.
                     </p>
                   </div>
 
@@ -2220,8 +2220,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                     <label className={styles.label}>Qué pasa al tocarlo</label>
                     <p className={styles.helper}>
                       {selectedTriggerLink
-                        ? `Ristak cumple el objetivo cuando ese contacto toca "${selectedTriggerLink.name}" y pasa el chat al equipo.`
-                        : 'Elige un enlace de disparo para que Ristak pueda confirmar el objetivo.'}
+                        ? `Ejemplo: si toca "${selectedTriggerLink.name}", el chat pasa al equipo.`
+                        : 'Ejemplo: elige un link para saber cuándo la persona lo abrió.'}
                     </p>
                   </div>
                 </>
@@ -2243,8 +2243,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
             <details className={styles.advancedDetails} open={agent.successExtras.length > 0 || undefined}>
               <summary>
-                <span>Acciones extra</span>
-                <small>Etiquetas o campos cuando logre el objetivo.</small>
+                <span>Cosas extra al terminar</span>
+                <small>Ejemplo: poner una etiqueta o guardar un dato.</small>
               </summary>
               <div className={styles.advancedContent}>
                 {agent.successExtras.map((extra, index) => (
@@ -2313,21 +2313,21 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   Añadir acción
                 </button>
                 <p className={styles.helper}>
-                  Se ejecutan cuando el agente logra ese objetivo.
+                  Ejemplo: cuando agenda, puede poner la etiqueta "cita lista".
                 </p>
               </div>
             </details>
           </div>
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>3. Seguimiento</h3>
+            <h3 className={styles.sectionTitle}>3. Si la persona no contesta</h3>
             <p className={styles.agentSectionHint}>
-              Reactiva el chat si la persona se queda callada, sin salirte de la ventana de WhatsApp.
+              Manda un mensaje después si la persona se queda callada. Ejemplo: "oye, te quedó alguna duda?"
             </p>
             <div className={styles.configQuestionList}>
               <QuestionSelectRow
-                question="¿Quieres darle seguimiento al contacto?"
-                helper="Si se queda sin responder, el agente puede abrir de nuevo con contexto."
+                question="¿Quieres mandar un recordatorio?"
+                helper="Sólo se manda si la persona no responde. Ejemplo: el agente retoma lo último que hablaron."
                 value={followUp.enabled ? 'yes' : 'no'}
                 options={binaryChoiceOptions}
                 selectLabel="Seguimiento del contacto"
@@ -2345,7 +2345,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               {followUp.enabled && (
                 <>
                   <div className={styles.followUpDelayRow}>
-                    <span className={styles.followUpDelayLabel}>¿En qué momento?</span>
+                    <span className={styles.followUpDelayLabel}>¿Cuándo lo manda?</span>
                     <span className={styles.followUpDelayText}>Después de</span>
                     <NumberInput
                       className={`${styles.input} ${styles.delayNumberInput}`}
@@ -2369,8 +2369,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   </div>
 
                   <QuestionSelectRow
-                    question="¿Quieres darle un 2do seguimiento al contacto?"
-                    helper="Sólo se manda si el contacto sigue sin contestar."
+                    question="¿Quieres mandar un segundo recordatorio?"
+                    helper="Sólo sale si todavía no responde. Ejemplo: un último mensaje corto más tarde."
                     error={followUp.second.enabled ? followUpError : ''}
                     value={followUp.second.enabled ? 'yes' : 'no'}
                     options={binaryChoiceOptions}
@@ -2379,7 +2379,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   >
                     {followUp.second.enabled && (
                       <div className={styles.followUpDelayRow}>
-                        <span className={styles.followUpDelayLabel}>Segundo seguimiento</span>
+                        <span className={styles.followUpDelayLabel}>Segundo recordatorio</span>
                         <span className={styles.followUpDelayText}>Después de</span>
                         <NumberInput
                           className={`${styles.input} ${styles.delayNumberInput}`}
@@ -2405,7 +2405,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   </QuestionSelectRow>
 
                   <div className={styles.fieldWide}>
-                    <label className={styles.label}>Estrategia de seguimiento</label>
+                    <label className={styles.label}>Qué debe decir en el recordatorio</label>
                     <textarea
                       className={styles.textarea}
                       value={followUp.strategy}
@@ -2414,7 +2414,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                       rows={4}
                     />
                     <p className={`${styles.helper} ${followUpError ? styles.helperError : ''}`}>
-                      {followUpError || 'Define cómo debe abrir la conversación con el contexto que ya tiene.'}
+                      {followUpError || 'Ejemplo: que salude corto, use lo último que dijo la persona y haga una sola pregunta.'}
                     </p>
                   </div>
                 </>
@@ -2423,44 +2423,44 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           </div>
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>4. ¿Cuándo quieres que inicie la conversación?</h3>
+            <h3 className={styles.sectionTitle}>4. Cuándo empieza y cuándo se detiene</h3>
             <p className={styles.agentSectionHint}>
-              Con qué condiciones quieres que el agente entre al chat. Sin reglas, puede contestar cualquier chat nuevo.
+              Elige en qué chats puede entrar. Ejemplo: sólo cuando venga de una página, una etiqueta o cualquier chat nuevo.
             </p>
             <ConditionBuilder
               groups={agent.filters.entry.groups}
               mode="entry"
               calendars={calendars}
               options={filterOptions}
-              emptyText="Sin reglas: este agente puede iniciar con cualquier chat nuevo."
+              emptyText="Sin reglas: puede contestar cualquier chat nuevo."
               onChange={(groups) => onChange({ filters: { ...agent.filters, entry: { groups } } })}
             />
 
             <div className={styles.agentNestedSection}>
               <div className={styles.agentSubsectionHeader}>
-                <h4>¿Y cuándo quieres que se salga?</h4>
+                <h4>Cuándo se detiene</h4>
                 <span>Opcional</span>
               </div>
               <p className={styles.agentSectionHint}>
-                Aparte del objetivo establecido, úsalo si quieres que deje de contestar cuando pase algo, como cita agendada o etiqueta puesta.
+                Puedes hacer que deje de contestar cuando pase algo. Ejemplo: cuando ya haya cita o cuando alguien del equipo tome el chat.
               </p>
               <ConditionBuilder
                 groups={agent.filters.exit.groups}
                 mode="exit"
                 calendars={calendars}
                 options={filterOptions}
-                emptyText="Opcional: si no agregas reglas, sólo se sale cuando logra el objetivo o un humano lo toma."
+                emptyText="Opcional: si no agregas reglas, se detiene cuando cumple la meta o un humano toma el chat."
                 onChange={(groups) => onChange({ filters: { ...agent.filters, exit: { groups } } })}
               />
             </div>
           </div>
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>5. Qué debe cuidar</h3>
+            <h3 className={styles.sectionTitle}>5. Cosas que debe cuidar</h3>
             <div className={styles.configQuestionList}>
               <QuestionSelectRow
-                question="¿Quieres definir datos que debe pedir?"
-                helper="Si ya los tiene el contacto, no los repite."
+                question="¿Debe pedir algún dato?"
+                helper="Si ya lo tiene, no lo vuelve a pedir. Ejemplo: nombre, teléfono o servicio que quiere."
                 value={requiredDataConfigOpen ? 'yes' : 'no'}
                 options={binaryChoiceOptions}
                 selectLabel="Datos que debe pedir"
@@ -2482,8 +2482,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </QuestionSelectRow>
 
               <QuestionSelectRow
-                question="¿Quieres definir cuándo pasarlo al equipo?"
-                helper="Úsalo para enojo, facturación, dudas delicadas o casos fuera de IA."
+                question="¿Cuándo debe pasar el chat al equipo?"
+                helper="Úsalo para casos que una persona debe ver. Ejemplo: enojo, facturación o algo delicado."
                 value={handoffRulesConfigOpen ? 'yes' : 'no'}
                 options={binaryChoiceOptions}
                 selectLabel="Cuándo pasar al equipo"
@@ -2505,8 +2505,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </QuestionSelectRow>
 
               <QuestionSelectRow
-                question="¿Quieres agregar tips del negocio?"
-                helper="Sólo aparece una caja si quieres darle instrucciones extra."
+                question="¿Quieres darle algún tip extra?"
+                helper="Aquí pones cosas que debe recordar. Ejemplo: mencionar una promo sólo si preguntan precio."
                 value={extraInstructionsConfigOpen ? 'yes' : 'no'}
                 options={binaryChoiceOptions}
                 selectLabel="Tips del negocio"
@@ -2531,12 +2531,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
           <details className={styles.advancedDetails} open={strategyIsCustom || undefined}>
             <summary>
-              <span>Estrategia avanzada</span>
+              <span>Instrucciones avanzadas</span>
               <small>{strategyIsCustom ? 'Editada a mano' : promptStatusText}</small>
             </summary>
             <div className={styles.advancedContent}>
               <div className={styles.strategyHeaderRow}>
-                <label className={styles.label}>Estrategia de cierre</label>
+                <label className={styles.label}>Cómo debe vender o cerrar</label>
                 <span className={`${styles.strategyBadge} ${strategyIsCustom ? styles.strategyBadgeCustom : businessPromptReady ? styles.strategyBadgeReady : styles.strategyBadgeLocked}`}>
                   {strategyIsCustom ? 'Editada' : businessPromptReady ? 'Adaptada' : 'Pendiente'}
                 </span>
@@ -2556,7 +2556,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   <strong>{promptStatusText}</strong>
                   <span>
                     {businessPromptReady
-                      ? 'La estrategia de fábrica ya cambió con los datos actuales del negocio.'
+                      ? 'Ya usa los datos actuales de tu negocio.'
                       : promptBlockerText}
                   </span>
                 </div>
@@ -2569,10 +2569,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               />
               <p className={styles.helper}>
                 {strategyIsCustom
-                  ? 'Este agente usa tu versión editada.'
+                  ? 'Este agente usa tu texto editado.'
                   : businessPromptReady
-                    ? 'Esta vista ya incluye el lenguaje, giro y encuadre actual del negocio. Si cambias la descripción en Agente AI, se vuelve a preparar.'
-                    : 'Primero completa la descripción del negocio para ver el guión parametrizado.'}
+                    ? 'Ya usa los datos de tu negocio. Ejemplo: habla según lo que vendes y a quién atiendes.'
+                    : 'Primero describe tu negocio para preparar estas instrucciones.'}
               </p>
             </div>
           </details>
