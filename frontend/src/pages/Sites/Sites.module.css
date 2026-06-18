@@ -6504,6 +6504,16 @@
   gap: 12px;
 }
 
+.videoAggregateDashboard {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.videoAggregateChartWide {
+  grid-column: 1 / -1;
+}
+
 .videoEngagementHero {
   display: grid;
   grid-template-columns: minmax(260px, 0.44fr) minmax(0, 1fr);
@@ -6606,33 +6616,72 @@
 
 .videoRetentionChart {
   position: relative;
-  min-height: 360px;
+  min-height: 420px;
   overflow: hidden;
-  background: var(--surface-2);
+  isolation: isolate;
+  background: var(--surface-solid, var(--surface));
 }
 
-.videoRetentionChart svg {
+.videoRetentionMedia,
+.videoRetentionMediaEmpty {
   position: absolute;
   inset: 0;
+  z-index: 0;
   width: 100%;
   height: 100%;
 }
 
-.videoRetentionChart path {
-  fill: var(--accent-soft);
+.videoRetentionMedia {
+  background: var(--surface-solid, var(--surface));
+  object-fit: contain;
 }
 
-.videoRetentionChart polyline {
+.videoRetentionMediaEmpty {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  color: var(--text-mute);
+}
+
+.videoRetentionMediaEmpty span {
+  font-size: 0.82rem;
+}
+
+.videoRetentionShade {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-solid, var(--surface)) 46%, transparent), transparent 34%),
+    linear-gradient(0deg, color-mix(in srgb, var(--surface-solid, var(--surface)) 52%, transparent), transparent 44%);
+  pointer-events: none;
+}
+
+.videoRetentionCurve {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.videoRetentionCurve path {
+  fill: color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+.videoRetentionCurve polyline {
   fill: none;
-  stroke: var(--accent);
+  stroke: var(--warn);
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.3;
+  stroke-width: 0.7;
 }
 
 .videoRetentionGrid {
   position: absolute;
-  inset: 28px 44px 42px 18px;
+  inset: 28px 12px 44px;
+  z-index: 3;
   display: grid;
   grid-template-rows: repeat(4, 1fr);
   pointer-events: none;
@@ -6642,8 +6691,9 @@
   display: flex;
   justify-content: flex-end;
   border-top: 1px dashed var(--border);
-  color: var(--text-mute);
+  color: var(--text);
   font-size: 0.72rem;
+  text-shadow: 0 1px 2px var(--surface-solid, var(--surface));
 }
 
 .videoRetentionPreview {
@@ -6669,11 +6719,31 @@
   right: 12px;
   bottom: 8px;
   left: 12px;
+  z-index: 3;
   display: flex;
   justify-content: space-between;
-  color: var(--text-mute);
+  color: var(--text);
   font-family: var(--num-font);
   font-size: 0.76rem;
+  pointer-events: none;
+  text-shadow: 0 1px 2px var(--surface-solid, var(--surface));
+}
+
+.videoRetentionEmptyNote {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 4;
+  max-width: min(340px, calc(100% - 32px));
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-mute);
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  text-align: center;
+  pointer-events: none;
 }
 
 .videoEngagementGrid,
@@ -17260,6 +17330,7 @@
 @media (max-width: 1100px) {
   .sitesAnalyticsFilters,
   .sitesAnalyticsGrid,
+  .videoAggregateDashboard,
   .videoEngagementHero,
   .videoEngagementGrid,
   .videoStreamCharts,
@@ -17267,8 +17338,8 @@
     grid-template-columns: 1fr;
   }
 
-  .videoRetentionPreview {
-    inset: 62px 28% 50px;
+  .videoRetentionChart {
+    min-height: 380px;
   }
 
   .sitesAnalyticsKpis {
@@ -17301,8 +17372,8 @@
     min-height: 300px;
   }
 
-  .videoRetentionPreview {
-    inset: 72px 18% 54px;
+  .videoRetentionGrid {
+    inset: 22px 10px 42px;
   }
 
   .viewerHeatmapRow {
