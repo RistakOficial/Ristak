@@ -167,6 +167,13 @@ interface AutomationFormCatalogItem {
   meta?: string
 }
 
+interface AutomationFormFieldCatalogItem {
+  id: string
+  name: string
+  type?: string
+  meta?: string
+}
+
 async function loadForms(): Promise<CatalogOption[]> {
   const forms = await apiClient.get<AutomationFormCatalogItem[]>('/automations/catalogs/forms')
   return (forms || [])
@@ -176,6 +183,30 @@ async function loadForms(): Promise<CatalogOption[]> {
       meta: form.meta || form.siteName
     }))
     .filter((option) => option.value)
+}
+
+const formFieldCache = new Map<string, Promise<CatalogOption[]>>()
+
+export function getFormFieldCatalog(formId: string): Promise<CatalogOption[]> {
+  const cleanFormId = String(formId || '').trim()
+  if (!cleanFormId) return Promise.resolve([])
+  if (!formFieldCache.has(cleanFormId)) {
+    const promise = apiClient
+      .get<AutomationFormFieldCatalogItem[]>('/automations/catalogs/form-fields', { params: { formId: cleanFormId } })
+      .then((fields) => (fields || [])
+        .map((field) => ({
+          value: String(field.id || '').trim(),
+          label: field.name || field.id || 'Pregunta sin nombre',
+          meta: field.meta || field.type
+        }))
+        .filter((option) => option.value))
+      .catch(() => {
+        formFieldCache.delete(cleanFormId)
+        return []
+      })
+    formFieldCache.set(cleanFormId, promise)
+  }
+  return formFieldCache.get(cleanFormId) as Promise<CatalogOption[]>
 }
 
 async function loadTriggerLinks(): Promise<CatalogOption[]> {
@@ -384,4 +415,5 @@ export function getCatalog(kind: CatalogKind): Promise<CatalogOption[]> {
 /** Limpia la caché (p. ej. al entrar de nuevo al editor) */
 export function resetCatalogCache() {
   cache.clear()
+  formFieldCache.clear()
 }

@@ -522,6 +522,26 @@ function automationImportedFormId(siteId, importedFormId) {
   return site && form ? `${site}:imported:${form}` : ''
 }
 
+function parseAutomationImportedFormId(formId) {
+  const match = cleanCatalogString(formId).match(/^(.+):imported:(.+)$/)
+  return match ? { siteId: match[1], importedFormId: match[2] } : null
+}
+
+function parseAutomationInlineFormId(formId) {
+  const match = cleanCatalogString(formId).match(/^(.+):form_embed:(.+)$/)
+  return match ? { siteId: match[1], blockId: match[2] } : null
+}
+
+function automationAnswerKey(value, fallback = 'campo') {
+  const normalized = cleanCatalogString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return normalized || fallback
+}
+
 function mapAutomationFormOption({ id, name, siteId, siteName, kind, status, updatedAt, meta }) {
   return {
     id: cleanCatalogString(id),
@@ -542,6 +562,64 @@ function addAutomationFormOption(options, seen, option) {
   options.push(mapped)
 }
 
+function mapAutomationFieldOption({ value, label, type, meta }) {
+  return {
+    id: cleanCatalogString(value),
+    name: cleanCatalogString(label) || cleanCatalogString(value) || 'Pregunta sin nombre',
+    type: cleanCatalogString(type) || 'text',
+    meta: cleanCatalogString(meta)
+  }
+}
+
+function addAutomationFieldOption(options, seen, option) {
+  const mapped = mapAutomationFieldOption(option)
+  if (!mapped.id || seen.has(mapped.id)) return
+  seen.add(mapped.id)
+  options.push(mapped)
+}
+
+function mapNativeBlockToFieldOption(block = {}, meta = '') {
+  const settings = block.settings || {}
+  const label = cleanCatalogString(block.label || settings.customFieldLabel || settings.custom_field_label || settings.internalName || block.id)
+  const key = automationAnswerKey(
+    settings.customFieldKey ||
+      settings.custom_field_key ||
+      settings.internalName ||
+      settings.internal_name ||
+      settings.systemFieldKey ||
+      settings.system_field_key ||
+      block.id,
+    cleanCatalogString(block.id) || 'respuesta'
+  )
+
+  return {
+    value: key,
+    label,
+    type: block.blockType,
+    meta
+  }
+}
+
+function mapImportedFieldToFieldOption(field = {}, meta = '') {
+  const value = cleanCatalogString(
+    field.sourceName ||
+      field.source_name ||
+      field.fieldId ||
+      field.field_id ||
+      field.destinationKey ||
+      field.destination_key ||
+      field.label
+  )
+  const label = cleanCatalogString(field.label || field.sourceName || field.source_name || field.fieldId || field.destinationKey)
+
+  return {
+    value,
+    label,
+    type: cleanCatalogString(field.type || field.customFieldDataType || field.custom_field_data_type || 'text'),
+    meta
+  }
+}
+
 /**
  * Formularios reales disponibles para disparadores/filtros de automatizaciones.
  *
@@ -549,12 +627,11 @@ function addAutomationFormOption(options, seen, option) {
  * debe poder elegir el formulario que dispara la automatización.
  */
 export async function listAutomationFormsCatalog() {
-  const [siteRows, formEmbedRows, fieldSiteRows, importedRows] = await Promise.all([
+  const [allSiteRows, formEmbedRows, fieldSiteRows, importedRows] = await Promise.all([
     db.all(`
       SELECT id, name, slug, site_type, status, updated_at
       FROM public_sites
       WHERE COALESCE(status, 'draft') != 'archived'
-        AND site_type LIKE '%form%'
       ORDER BY updated_at DESC, name ASC
     `),
     db.all(`
@@ -599,6 +676,8 @@ export async function listAutomationFormsCatalog() {
 
   const options = []
   const seen = new Set()
+  const siteById = new Map(allSiteRows.map((site) => [cleanCatalogString(site.id), site]))
+  const siteRows = allSiteRows.filter((site) => cleanCatalogString(site.site_type).includes('form'))
 
   for (const site of siteRows) {
     addAutomationFormOption(options, seen, {
@@ -627,8 +706,12 @@ export async function listAutomationFormsCatalog() {
       settings.formSiteName ||
       settings.form_site_name
     )
+    const linkedSite = embeddedSiteId ? siteById.get(embeddedSiteId) : null
     const id = embeddedSiteId || `${row.site_id}:form_embed:${row.block_id}`
-    const name = embeddedSiteName || cleanCatalogString(row.block_label) || `Formulario de ${row.site_name}`
+    const name = cleanCatalogString(linkedSite?.name) ||
+      embeddedSiteName ||
+      cleanCatalogString(settings.formName || settings.form_name || settings.formTitle || settings.form_title || settings.name) ||
+      `Formulario de ${row.site_name}`
     addAutomationFormOption(options, seen, {
       id,
       name,
@@ -685,6 +768,69 @@ export async function listAutomationFormsCatalog() {
         meta: formTitle && formTitle !== row.site_name ? `Importado de ${row.site_name}` : 'Formulario importado'
       })
     }
+  }
+
+  return options
+}
+
+export async function listAutomationFormFieldsCatalog(formId) {
+  const requestedFormId = cleanCatalogString(formId)
+  if (!requestedFormId) return []
+
+  const options = []
+  const seen = new Set()
+  const importedForm = parseAutomationImportedFormId(requestedFormId)
+  if (importedForm) {
+    const row = await db.get(
+      'SELECT form_mappings_json FROM public_site_imports WHERE site_id = ? LIMIT 1',
+      [importedForm.siteId]
+    )
+    const mappings = parseCatalogJson(row?.form_mappings_json, [])
+    const mapping = Array.isArray(mappings)
+      ? mappings.find((item) => cleanCatalogString(item?.formId || item?.form_id) === importedForm.importedFormId)
+      : null
+    for (const field of Array.isArray(mapping?.fields) ? mapping.fields : []) {
+      addAutomationFieldOption(options, seen, mapImportedFieldToFieldOption(field, 'Importado'))
+    }
+    return options
+  }
+
+  const inlineForm = parseAutomationInlineFormId(requestedFormId)
+  if (inlineForm) {
+    const row = await db.get(
+      `SELECT settings_json FROM public_site_blocks WHERE id = ? AND site_id = ? AND block_type = 'form_embed' LIMIT 1`,
+      [inlineForm.blockId, inlineForm.siteId]
+    )
+    const settings = parseCatalogJson(row?.settings_json, {})
+    for (const block of Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks : []) {
+      if (!AUTOMATION_FORM_FIELD_BLOCK_TYPES.has(block?.blockType)) continue
+      addAutomationFieldOption(options, seen, mapNativeBlockToFieldOption(block, 'Pregunta'))
+    }
+    return options
+  }
+
+  const site = await db.get(
+    'SELECT id, name, site_type FROM public_sites WHERE id = ? LIMIT 1',
+    [requestedFormId]
+  )
+  if (!site) return []
+
+  const blocks = await db.all(
+    `SELECT id, block_type, label, settings_json
+     FROM public_site_blocks
+     WHERE site_id = ?
+       AND block_type IN (${Array.from(AUTOMATION_FORM_FIELD_BLOCK_TYPES).map(() => '?').join(',')})
+     ORDER BY sort_order ASC, created_at ASC`,
+    [requestedFormId, ...Array.from(AUTOMATION_FORM_FIELD_BLOCK_TYPES)]
+  )
+
+  for (const block of blocks) {
+    addAutomationFieldOption(options, seen, mapNativeBlockToFieldOption({
+      id: block.id,
+      blockType: block.block_type,
+      label: block.label,
+      settings: parseCatalogJson(block.settings_json, {})
+    }, 'Pregunta'))
   }
 
   return options

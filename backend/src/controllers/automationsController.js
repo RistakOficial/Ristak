@@ -19,6 +19,7 @@ import {
   listAttributionAdsets,
   listAttributionAds,
   listAutomationFormsCatalog,
+  listAutomationFormFieldsCatalog,
   saveAutomationAsset,
   getAutomationAsset
 } from '../services/automationsService.js'
@@ -162,6 +163,15 @@ export async function getFormsCatalogHandler(req, res) {
   } catch (error) {
     logger.error(`Error listando formularios de automatización: ${error.message}`)
     sendError(res, error, 'Error listando los formularios')
+  }
+}
+
+export async function getFormFieldsCatalogHandler(req, res) {
+  try {
+    res.json({ success: true, data: await listAutomationFormFieldsCatalog(req.query?.formId) })
+  } catch (error) {
+    logger.error(`Error listando preguntas de formulario: ${error.message}`)
+    sendError(res, error, 'Error listando las preguntas del formulario')
   }
 }
 

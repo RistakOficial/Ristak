@@ -713,6 +713,7 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
             value={config.filters}
             onChange={(filters: TriggerFilter[]) => setValue('filters', filters)}
             contextKey={definition.type}
+            selectedFormId={str(config.form)}
           />
         )}
 

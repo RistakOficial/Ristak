@@ -302,6 +302,7 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
           value={config.filters}
           onChange={(filters: TriggerFilter[]) => set({ filters })}
           contextKey={`goal-${goalType}`}
+          selectedFormId={str(config.form)}
         />
       )}
 
