@@ -26410,17 +26410,89 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   onVideoChange,
   onDateRangeChange
 }) => {
+  const retentionVideoRef = useRef<HTMLVideoElement | null>(null)
+  const retentionScrubbingRef = useRef(false)
   const [retentionPlaybackPercent, setRetentionPlaybackPercent] = useState(0)
-  const syncRetentionPlayback = useCallback((event: React.SyntheticEvent<HTMLVideoElement>) => {
-    const video = event.currentTarget
+  const [isRetentionScrubbing, setIsRetentionScrubbing] = useState(false)
+  const retentionPreviewUrl = getSitesAnalyticsStoragePreviewUrl(selectedVideo)
+  const syncRetentionVideoPlayback = useCallback((video: HTMLVideoElement) => {
     const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0
     const nextPercent = duration > 0 ? clampSitesPercent((video.currentTime / duration) * 100) : 0
     setRetentionPlaybackPercent(nextPercent)
   }, [])
+  const syncRetentionPlayback = useCallback((event: React.SyntheticEvent<HTMLVideoElement>) => {
+    syncRetentionVideoPlayback(event.currentTarget)
+  }, [syncRetentionVideoPlayback])
+  const seekRetentionPlaybackToPercent = useCallback((percent: number) => {
+    const nextPercent = clampSitesPercent(percent)
+    setRetentionPlaybackPercent(nextPercent)
+
+    const video = retentionVideoRef.current
+    if (!video) return
+
+    const fallbackDuration = readSitesNumber(selectedVideo?.duration)
+    const duration = Number.isFinite(video.duration) && video.duration > 0
+      ? video.duration
+      : fallbackDuration
+
+    if (duration <= 0) return
+
+    video.currentTime = (nextPercent / 100) * duration
+  }, [selectedVideo?.duration])
+  const seekRetentionPlaybackFromClientX = useCallback((clientX: number, element: HTMLElement) => {
+    const rect = element.getBoundingClientRect()
+    const width = rect.width > 0 ? rect.width : 1
+    seekRetentionPlaybackToPercent(((clientX - rect.left) / width) * 100)
+  }, [seekRetentionPlaybackToPercent])
+  const stopRetentionScrubbing = useCallback(() => {
+    retentionScrubbingRef.current = false
+    setIsRetentionScrubbing(false)
+  }, [])
+  const handleRetentionScrubPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!retentionPreviewUrl || (event.button !== undefined && event.button !== 0)) return
+    event.preventDefault()
+    retentionScrubbingRef.current = true
+    setIsRetentionScrubbing(true)
+    event.currentTarget.setPointerCapture(event.pointerId)
+    seekRetentionPlaybackFromClientX(event.clientX, event.currentTarget)
+  }, [retentionPreviewUrl, seekRetentionPlaybackFromClientX])
+  const handleRetentionScrubPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!retentionScrubbingRef.current) return
+    event.preventDefault()
+    seekRetentionPlaybackFromClientX(event.clientX, event.currentTarget)
+  }, [seekRetentionPlaybackFromClientX])
+  const handleRetentionScrubPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!retentionScrubbingRef.current) return
+    event.preventDefault()
+    seekRetentionPlaybackFromClientX(event.clientX, event.currentTarget)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    stopRetentionScrubbing()
+  }, [seekRetentionPlaybackFromClientX, stopRetentionScrubbing])
+  const handleRetentionScrubKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!retentionPreviewUrl) return
+
+    const step = event.shiftKey ? 5 : 1
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      seekRetentionPlaybackToPercent(retentionPlaybackPercent - step)
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      seekRetentionPlaybackToPercent(retentionPlaybackPercent + step)
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      seekRetentionPlaybackToPercent(0)
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      seekRetentionPlaybackToPercent(100)
+    }
+  }, [retentionPlaybackPercent, retentionPreviewUrl, seekRetentionPlaybackToPercent])
 
   useEffect(() => {
+    stopRetentionScrubbing()
     setRetentionPlaybackPercent(0)
-  }, [selectedVideoId])
+  }, [selectedVideoId, stopRetentionScrubbing])
 
   const isVideosView = selectedSiteType === 'videos'
   const isFormsView = selectedSiteType === 'forms'
@@ -26494,7 +26566,6 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const retentionSegments = buildSitesRetentionSegments(firstPartyTracking?.retentionSegments || [], heatmap)
   const retentionCurvePoints = buildSitesRetentionCurvePoints(retentionSegments)
   const retentionAreaPath = buildSitesRetentionAreaPath(retentionCurvePoints)
-  const retentionPreviewUrl = getSitesAnalyticsStoragePreviewUrl(selectedVideo)
   const retentionPlayheadStyle = {
     '--video-retention-playhead': `${retentionPlaybackPercent}%`
   } as React.CSSProperties
@@ -26821,6 +26892,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
             <div className={styles.videoRetentionChart}>
               {retentionPreviewUrl ? (
                 <video
+                  ref={retentionVideoRef}
                   className={styles.videoRetentionMedia}
                   src={retentionPreviewUrl}
                   controls
@@ -26844,7 +26916,25 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                 </div>
               )}
               <div className={styles.videoRetentionShade} aria-hidden="true" />
-              <div className={styles.videoRetentionPlot} style={retentionPlayheadStyle} aria-hidden="true">
+              <div
+                className={styles.videoRetentionPlot}
+                style={retentionPlayheadStyle}
+                role="slider"
+                tabIndex={retentionPreviewUrl ? 0 : -1}
+                aria-label="Navegador de reproducción del video"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(retentionPlaybackPercent)}
+                aria-valuetext={`${formatSitesPercent(retentionPlaybackPercent)} del video`}
+                aria-disabled={!retentionPreviewUrl}
+                data-scrubbing={isRetentionScrubbing ? 'true' : undefined}
+                onPointerDown={handleRetentionScrubPointerDown}
+                onPointerMove={handleRetentionScrubPointerMove}
+                onPointerUp={handleRetentionScrubPointerUp}
+                onPointerCancel={stopRetentionScrubbing}
+                onLostPointerCapture={stopRetentionScrubbing}
+                onKeyDown={handleRetentionScrubKeyDown}
+              >
                 {retentionSegments.length && retentionCurvePoints ? (
                   <>
                     <svg className={styles.videoRetentionCurve} viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -26859,7 +26949,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                     </div>
                   </>
                 ) : null}
-                <span className={styles.videoRetentionPlayhead} />
+                <span className={styles.videoRetentionPlayhead} aria-hidden="true" />
               </div>
               {!retentionSegments.length || !retentionCurvePoints ? (
                 <div className={styles.videoRetentionEmptyNote}>Aún no hay suficientes reproducciones para dibujar retención.</div>

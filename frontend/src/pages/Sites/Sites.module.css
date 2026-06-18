@@ -6727,6 +6727,19 @@
     var(--video-retention-plot-bottom)
     var(--video-retention-plot-left);
   z-index: 2;
+  cursor: ew-resize;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+}
+
+.videoRetentionPlot:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 3px;
+}
+
+.videoRetentionPlot[aria-disabled='true'] {
+  cursor: default;
   pointer-events: none;
 }
 
@@ -6780,12 +6793,15 @@
   left: clamp(0%, var(--video-retention-playhead, 0%), 100%);
   z-index: 4;
   width: 2px;
-  background: color-mix(in srgb, var(--video-retention-axis) 88%, transparent);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--surface-solid, var(--surface)) 42%, transparent),
-    0 0 12px color-mix(in srgb, var(--video-retention-line) 34%, transparent);
+  background: color-mix(in srgb, var(--on-accent, var(--text)) 92%, var(--video-retention-line) 8%);
+  mix-blend-mode: difference;
+  pointer-events: none;
   transform: translateX(-1px);
   transition: left 0.12s linear;
+}
+
+.videoRetentionPlot[data-scrubbing='true'] .videoRetentionPlayhead {
+  transition: none;
 }
 
 .videoRetentionPreview {
