@@ -104,6 +104,24 @@
   position: relative;
 }
 
+.dirtyActionButton {
+  position: relative;
+}
+
+.dirtyActionButton::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--surface);
+  border-radius: var(--radius-pill);
+  background: var(--warn);
+  box-shadow: var(--shadow-xs);
+  pointer-events: none;
+}
+
 .iconButton {
   display: inline-flex;
   align-items: center;

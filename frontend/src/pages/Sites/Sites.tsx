@@ -2536,6 +2536,19 @@ const cloneJson = <T,>(value: T): T => {
   }
 }
 
+const editorValuesEqual = (left: unknown, right: unknown) => {
+  if (Object.is(left, right)) return true
+
+  try {
+    return JSON.stringify(left) === JSON.stringify(right)
+  } catch {
+    return false
+  }
+}
+
+const editorPatchHasChanges = (current: Record<string, unknown>, patch: Record<string, unknown>) =>
+  Object.entries(patch).some(([key, value]) => !editorValuesEqual(current[key], value))
+
 const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
   const seen = new Set<string>()
   const normalized = rawPages
@@ -4502,6 +4515,11 @@ export const Sites: React.FC = () => {
     : editorSaveStatus.tone === 'dirty'
       ? styles.editorSaveStatusDirty
       : styles.editorSaveStatusSaved
+  const editorDirtyActionTarget = hasUnsavedChanges
+    ? editorSite?.status === 'published'
+      ? 'publish'
+      : 'save'
+    : null
   const editorActive = Boolean(editorSite)
   const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
   const createFlowHeaderCopy = getCreateFlowHeaderCopy(createFlow)
@@ -5504,18 +5522,21 @@ export const Sites: React.FC = () => {
   }, [editorSite])
 
   const updateSelectedSite = (patch: Partial<PublicSite>) => {
-    markEditorDirty({ site: true })
     const current = selectedSiteRef.current
     if (!current) return
+    if (!editorPatchHasChanges(current as unknown as Record<string, unknown>, patch as Record<string, unknown>)) return
+    markEditorDirty({ site: true })
     const next = { ...current, ...patch }
     selectedSiteRef.current = next
     setSelectedSite(next)
   }
 
   const patchSiteTheme = (patch: Partial<SiteTheme>) => {
-    markEditorDirty({ site: true })
     const current = selectedSiteRef.current
     if (!current) return
+    const currentTheme = (current.theme || {}) as Record<string, unknown>
+    if (!editorPatchHasChanges(currentTheme, patch as Record<string, unknown>)) return
+    markEditorDirty({ site: true })
     const next = { ...current, theme: { ...(current.theme || {}), ...patch } }
     selectedSiteRef.current = next
     setSelectedSite(next)
@@ -6916,9 +6937,12 @@ export const Sites: React.FC = () => {
   }
 
   const patchBlockLocal = (blockId: string, patch: Partial<SiteBlock>) => {
-    markEditorDirty({ blockIds: [blockId] })
     const current = selectedSiteRef.current
     if (!current?.blocks) return
+    const currentBlock = current.blocks.find(block => block.id === blockId)
+    if (!currentBlock) return
+    if (!editorPatchHasChanges(currentBlock as unknown as Record<string, unknown>, patch as Record<string, unknown>)) return
+    markEditorDirty({ blockIds: [blockId] })
     const next = {
       ...current,
       blocks: current.blocks.map(block => block.id === blockId ? { ...block, ...patch } : block)
@@ -7116,12 +7140,14 @@ export const Sites: React.FC = () => {
         const sameSurface = sourceIsPopupBlock ? isPopupBlock(block) : !isPopupBlock(block)
         const samePage = sourceIsPopupBlock || !isLanding(current) || getBlockPageId(block, pages) === sourcePageId
         if (sameType && samePage && sameSurface) {
+          if (!editorPatchHasChanges((block.settings || {}) as Record<string, unknown>, patch)) return block
           changedBlockIds.push(block.id)
           return { ...block, settings: { ...(block.settings || {}), ...patch } }
         }
         return block
       })
     }
+    if (!changedBlockIds.length) return
     selectedSiteRef.current = next
     setSelectedSite(next)
     markEditorDirty({ blockIds: changedBlockIds })
@@ -7149,6 +7175,16 @@ export const Sites: React.FC = () => {
   const handleSaveBlock = async (blockId = selectedBlock?.id) => {
     const siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave?.blocks || !blockId) return
+    if (
+      !pendingSiteSaveRef.current &&
+      !pendingCreatedBlockIdsRef.current.has(blockId) &&
+      !pendingDeletedBlockIdsRef.current.has(blockId) &&
+      !pendingBlockSaveIdsRef.current.has(blockId) &&
+      pendingBlockOrderScopesRef.current.size === 0 &&
+      pendingImportedCodeDraftsRef.current.size === 0
+    ) {
+      return
+    }
     if (!pendingBlockSaveIdsRef.current.has(blockId)) pendingBlockSaveIdsRef.current.add(blockId)
     setHasUnsavedChanges(true)
   }
@@ -7858,11 +7894,26 @@ export const Sites: React.FC = () => {
                       <Eye size={15} />
                       <span className={styles.editorActionLabel}>Previsualizar</span>
                     </Button>
-                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={() => handleSaveSite()} loading={saving} disabled={editorAIGenerating} aria-label="Guardar">
+                    <Button
+                      variant="secondary"
+                      size="md"
+                      className={`${styles.editorActionButton} ${editorDirtyActionTarget === 'save' ? styles.editorDirtyActionButton : ''}`}
+                      onClick={() => handleSaveSite()}
+                      loading={saving}
+                      disabled={editorAIGenerating}
+                      aria-label="Guardar"
+                    >
                       <Save size={15} />
                       <span className={styles.editorActionLabel}>Guardar</span>
                     </Button>
-                    <Button size="md" className={styles.editorPublishButton} onClick={() => handleSaveSite('published')} loading={saving} disabled={editorAIGenerating} aria-label="Publicar">
+                    <Button
+                      size="md"
+                      className={`${styles.editorPublishButton} ${editorDirtyActionTarget === 'publish' ? styles.editorDirtyActionButton : ''}`}
+                      onClick={() => handleSaveSite('published')}
+                      loading={saving}
+                      disabled={editorAIGenerating}
+                      aria-label="Publicar"
+                    >
                       <Send size={15} />
                       <span className={styles.editorActionLabel}>Publicar</span>
                     </Button>

@@ -15494,6 +15494,24 @@
   background: rgba(var(--color-primary-rgb), 0.18) !important;
 }
 
+.editorDirtyActionButton {
+  position: relative;
+}
+
+.editorDirtyActionButton::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--surface);
+  border-radius: var(--radius-pill);
+  background: var(--warn);
+  box-shadow: var(--shadow-xs);
+  pointer-events: none;
+}
+
 .editorSaveStatus {
   min-width: 126px;
   height: 32px;

@@ -128,8 +128,6 @@ interface PreviewStep {
 type EditorFlow = Pick<Automation['flow'], 'nodes' | 'edges' | 'viewport' | 'settings'>
 
 const DEFAULT_VIEWPORT: AutomationViewport = { x: 0, y: 0, zoom: 1 }
-const VISUAL_ONLY_NODE_TYPES = new Set(['extra-comment'])
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -203,18 +201,10 @@ function automationContentSignature(
   edges: Automation['flow']['edges'],
   settings: FlowSettings
 ) {
-  const contentNodes = nodes
-    .filter((node) => !VISUAL_ONLY_NODE_TYPES.has(node.type))
-    .map(({ position: _position, ...node }) => node)
-  const contentNodeIds = new Set(contentNodes.map((node) => node.id))
-  const contentEdges = edges.filter(
-    (edge) => contentNodeIds.has(edge.sourceNodeId) && contentNodeIds.has(edge.targetNodeId)
-  )
-
   return JSON.stringify({
     name: name.trim(),
-    nodes: contentNodes,
-    edges: contentEdges,
+    nodes,
+    edges,
     settings
   })
 }
@@ -373,11 +363,7 @@ export const AutomationEditor: React.FC = () => {
     ) !== savedContentSignatureRef.current
   }, [])
   const hasUnsavedChanges = Boolean(automation && currentContentSignature !== savedContentSignatureRef.current)
-  const shouldWarnBeforeLeaving = Boolean(
-    automation &&
-      (hasUnsavedChanges ||
-        (['published', 'paused'].includes(automation.status) && hasUnpublishedChanges))
-  )
+  const shouldWarnBeforeLeaving = Boolean(automation && hasUnsavedChanges)
 
   useEffect(() => {
     if (!shouldWarnBeforeLeaving) return
@@ -392,29 +378,19 @@ export const AutomationEditor: React.FC = () => {
   const confirmLeavingIfNeeded = useCallback(
     (onContinue: () => void) => {
       const pendingUnsavedChanges = getHasUnsavedChanges()
-      if (!pendingUnsavedChanges && !shouldWarnBeforeLeaving) {
+      if (!pendingUnsavedChanges) {
         onContinue()
         return
       }
-      if (pendingUnsavedChanges) {
-        showConfirm(
-          'Cambios sin guardar',
-          'Si sales ahora, los cambios que no guardaste se perderán.',
-          onContinue,
-          'Salir sin guardar',
-          'Seguir editando'
-        )
-        return
-      }
       showConfirm(
-        'Cambios sin publicar',
-        'Esta automatización ya tiene cambios guardados como borrador. La versión activa seguirá igual hasta que publiques.',
+        'Cambios sin guardar',
+        'Si sales ahora, los cambios que no guardaste se perderán.',
         onContinue,
-        'Salir sin publicar',
+        'Salir sin guardar',
         'Seguir editando'
       )
     },
-    [getHasUnsavedChanges, shouldWarnBeforeLeaving, showConfirm]
+    [getHasUnsavedChanges, showConfirm]
   )
 
   const navigateFromEditor = useCallback(
@@ -1457,6 +1433,13 @@ export const AutomationEditor: React.FC = () => {
 
   const status = automation.status
   const currentAutomationSummary = toAutomationSummary(automation)
+  const hasDraftChanges = hasUnsavedChanges || hasUnpublishedChanges
+  const automationHasPublishedVersion = Boolean(automation.publishedAt) || status === 'published' || status === 'paused'
+  const dirtyActionTarget = hasDraftChanges
+    ? automationHasPublishedVersion
+      ? 'publish'
+      : 'save'
+    : null
   const saveIndicatorMode =
     saveState === 'saving'
       ? 'saving'
@@ -1477,7 +1460,7 @@ export const AutomationEditor: React.FC = () => {
           : saveIndicatorMode === 'unpublished'
             ? 'Cambios sin publicar'
             : 'Guardado'
-  const publishButtonLabel = hasUnpublishedChanges
+  const publishButtonLabel = hasDraftChanges
     ? 'Publicar'
     : status === 'paused'
       ? 'Reanudar'
@@ -1583,6 +1566,7 @@ export const AutomationEditor: React.FC = () => {
           <Button
             variant="secondary"
             size="sm"
+            className={dirtyActionTarget === 'save' ? styles.dirtyActionButton : undefined}
             leftIcon={<Save size={13} />}
             loading={saveState === 'saving'}
             onClick={() => void persistAutomation({ notify: true })}
@@ -1593,7 +1577,7 @@ export const AutomationEditor: React.FC = () => {
             Vista previa
           </Button>
 
-          {status === 'published' && !hasUnpublishedChanges ? (
+          {status === 'published' && !hasDraftChanges ? (
             <Button
               variant="secondary"
               size="sm"
@@ -1607,7 +1591,7 @@ export const AutomationEditor: React.FC = () => {
             <Button
               variant="primary"
               size="sm"
-              className={styles.publishButton}
+              className={cn(styles.publishButton, dirtyActionTarget === 'publish' && styles.dirtyActionButton)}
               leftIcon={<Play size={13} />}
               loading={statusBusy}
               onClick={() => void changeStatus('published')}
