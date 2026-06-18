@@ -68,6 +68,13 @@ async function createBunnyMockServer() {
           res.end('ok')
           return
         }
+        if (req.method === 'GET') {
+          requests.push({ kind: 'storage-get', path, accessKey: req.headers.accesskey })
+          res.statusCode = 200
+          res.setHeader('Content-Type', 'video/mp4')
+          res.end('fake mp4 bytes from bunny storage')
+          return
+        }
         if (req.method === 'DELETE') {
           requests.push({ kind: 'storage-delete', path, accessKey: req.headers.accesskey })
           res.statusCode = 200
@@ -323,6 +330,67 @@ test('videos fuera de Sites o Forms no se mandan a Bunny Stream', async () => {
     assert.equal(created.module, 'chat')
     assert.equal(created.metadata.stream, undefined)
     assert.equal(bunny.requests.some(request => request.kind.startsWith('stream-')), false)
+  } finally {
+    if (mediaAssetId) {
+      const { softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')
+      await softDeleteMediaAsset(mediaAssetId).catch(() => undefined)
+    }
+    if (db && mediaAssetId) {
+      await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+    }
+    bunny.close()
+    restoreEnv(previousEnv)
+  }
+})
+
+test('videos existentes en Bunny Storage se sincronizan a Bunny Stream al agregarlos a Sites', async () => {
+  const previousEnv = snapshotEnv()
+  const bunny = await createBunnyMockServer()
+  let db = null
+  let mediaAssetId = ''
+
+  try {
+    configureBunnyEnv(bunny.baseUrl)
+
+    const [mediaStorageService, database] = await Promise.all([
+      import('../src/services/mediaStorageService.js'),
+      import('../src/config/database.js')
+    ])
+    mediaStorageService.resetCentralStorageConfigCache()
+    db = database.db
+
+    const created = await mediaStorageService.uploadMediaAsset({
+      buffer: Buffer.from('fake mp4 bytes for existing media'),
+      filename: 'existing-video.mp4',
+      mimeType: 'video/mp4',
+      module: 'chat',
+      moduleEntityId: 'conversation_2',
+      businessId: 'default',
+      isPublic: true,
+      skipCompression: true
+    })
+    mediaAssetId = created.id
+
+    assert.equal(created.storageProvider, 'bunny')
+    assert.equal(created.module, 'chat')
+    assert.equal(created.metadata.stream, undefined)
+    assert.equal(bunny.requests.some(request => request.kind.startsWith('stream-')), false)
+
+    const synced = await mediaStorageService.syncMediaAssetBunnyStream(created.id, {
+      module: 'sites',
+      moduleEntityId: 'site_existing'
+    })
+
+    assert.equal(synced.module, 'chat')
+    assert.equal(synced.metadata.stream.syncStatus, 'uploaded')
+    assert.equal(synced.metadata.stream.provider, 'bunny_stream')
+    assert.equal(synced.metadata.stream.source.mediaAssetId, created.id)
+    assert.equal(synced.metadata.stream.source.module, 'sites')
+    assert.equal(synced.metadata.stream.source.moduleEntityId, 'site_existing')
+    assert.equal(synced.metadata.stream.videoId, 'stream-video-1')
+    assert.ok(bunny.requests.some(request => request.kind === 'storage-get'))
+    assert.ok(bunny.requests.some(request => request.kind === 'stream-create-video'))
+    assert.ok(bunny.requests.some(request => request.kind === 'stream-upload-video'))
   } finally {
     if (mediaAssetId) {
       const { softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')

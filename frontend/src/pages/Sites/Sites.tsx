@@ -615,6 +615,10 @@ const videoControlsModeOptions = [
 ] as const
 type VideoControlsMode = typeof videoControlsModeOptions[number]['value']
 const DEFAULT_VIDEO_CONTROLS_MODE: VideoControlsMode = 'clean'
+const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
+const DEFAULT_VIDEO_PLAYER_COLOR = 'rgba(0,0,0,.52)'
+const DEFAULT_VIDEO_PLAY_COLOR = '#ffffff'
+const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
 const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControlsMode: DEFAULT_VIDEO_CONTROLS_MODE,
   videoControls: false,
@@ -625,9 +629,18 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoLoop: false,
   videoDefaultSpeed: 1,
   videoFit: 'cover',
-  videoPlayerColor: 'rgba(0,0,0,.52)',
-  videoPlayColor: '#ffffff',
-  videoPlaySize: 64
+  videoPlayerBackground: DEFAULT_VIDEO_PLAYER_BACKGROUND,
+  videoPlayerRadius: 18,
+  videoPlayerBorderColor: DEFAULT_VIDEO_TRANSPARENT,
+  videoPlayerBorderWidth: 0,
+  videoPlayerColor: DEFAULT_VIDEO_PLAYER_COLOR,
+  videoPlayColor: DEFAULT_VIDEO_PLAY_COLOR,
+  videoPlaySize: 64,
+  videoPlayRadius: 999,
+  videoPlayIconSize: 22,
+  videoPlayBorderColor: DEFAULT_VIDEO_TRANSPARENT,
+  videoPlayBorderWidth: 0,
+  videoSoundColor: DEFAULT_VIDEO_PLAY_COLOR
 }
 
 const SITES_AI_DRAFT_CREATED_EVENT = 'ristak-sites-ai-draft-created'
@@ -18006,11 +18019,13 @@ const SitesMediaPickerModal: React.FC<{
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
+  const [syncingAssetId, setSyncingAssetId] = useState('')
   const [deletingAssetId, setDeletingAssetId] = useState('')
   const { showToast, showConfirm } = useNotification()
   const accept = kind === 'image' ? 'image/*' : 'video/*'
   const title = kind === 'image' ? 'Elegir imagen' : 'Elegir video'
   const uploadText = uploading ? 'Subiendo...' : kind === 'image' ? 'Subir imagen nueva' : 'Subir video nuevo'
+  const mediaPickerBusy = uploading || Boolean(syncingAssetId)
 
   const loadAssets = useCallback(async () => {
     setLoading(true)
@@ -18051,12 +18066,35 @@ const SitesMediaPickerModal: React.FC<{
     })
   }, [assets, query])
 
-  const selectAsset = (asset: MediaAsset) => {
+  const selectAsset = async (asset: MediaAsset) => {
     const url = getMediaPickerAssetUrl(asset)
     if (!url) {
       showToast('error', 'Archivo sin URL', 'Este archivo no tiene una URL pública disponible.')
       return
     }
+
+    if (kind === 'video') {
+      setSyncingAssetId(asset.id)
+      try {
+        const synced = await mediaService.syncAssetStream(asset.id, {
+          module: 'sites',
+          moduleEntityId
+        })
+        setAssets(current => current.map(item => item.id === synced.id ? synced : item))
+        const streamMetadata = synced.metadata?.stream
+        const streamStatus = streamMetadata && typeof streamMetadata === 'object'
+          ? String((streamMetadata as { syncStatus?: unknown }).syncStatus || '')
+          : ''
+        if (streamStatus === 'failed' || streamStatus === 'skipped') {
+          showToast('warning', 'Video agregado sin metadata de Stream', 'Ristak lo mostrará, pero Bunny Stream no regresó metadata lista.')
+        }
+      } catch (error) {
+        showToast('warning', 'Video agregado sin metadata de Stream', error instanceof Error ? error.message : 'Ristak lo mostrará, pero no pudo sincronizarlo con Bunny Stream.')
+      } finally {
+        setSyncingAssetId('')
+      }
+    }
+
     onSelect(url)
     onClose()
   }
@@ -18140,18 +18178,18 @@ const SitesMediaPickerModal: React.FC<{
             />
           </label>
           <div className={styles.mediaPickerActions}>
-            <button type="button" className={styles.mediaPickerSecondaryButton} onClick={() => void loadAssets()} disabled={loading || uploading}>
+            <button type="button" className={styles.mediaPickerSecondaryButton} onClick={() => void loadAssets()} disabled={loading || mediaPickerBusy}>
               <RefreshCw size={14} />
               <span>Actualizar</span>
             </button>
             <input ref={inputRef} type="file" accept={accept} onChange={handleFile} className={styles.hiddenFileInput} />
-            <button type="button" className={styles.mediaPickerUploadButton} onClick={() => inputRef.current?.click()} disabled={uploading}>
+            <button type="button" className={styles.mediaPickerUploadButton} onClick={() => inputRef.current?.click()} disabled={mediaPickerBusy}>
               <Upload size={14} />
               <span>{uploadText}</span>
             </button>
           </div>
         </div>
-        <div className={styles.mediaPickerBody} aria-busy={loading || uploading}>
+        <div className={styles.mediaPickerBody} aria-busy={loading || mediaPickerBusy}>
           {loading ? (
             <div className={styles.mediaPickerEmpty} role="status" aria-live="polite" aria-label="Cargando biblioteca">
               <RefreshCw size={18} className={styles.previewSpin} aria-hidden="true" />
@@ -18163,18 +18201,26 @@ const SitesMediaPickerModal: React.FC<{
                 const previewUrl = getMediaPickerAssetUrl(asset, 'thumbnail')
                 const name = getMediaPickerAssetName(asset)
                 const deleting = deletingAssetId === asset.id
+                const syncing = syncingAssetId === asset.id
+                const disabled = Boolean(syncingAssetId)
 
                 return (
                   <div
                     role="button"
-                    tabIndex={0}
+                    tabIndex={disabled ? -1 : 0}
                     key={asset.id}
                     className={styles.mediaPickerAsset}
-                    onClick={() => selectAsset(asset)}
+                    aria-disabled={disabled}
+                    aria-busy={syncing}
+                    onClick={() => {
+                      if (disabled) return
+                      void selectAsset(asset)
+                    }}
                     onKeyDown={(event) => {
+                      if (disabled) return
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault()
-                        selectAsset(asset)
+                        void selectAsset(asset)
                       }
                     }}
                   >
@@ -18192,15 +18238,15 @@ const SitesMediaPickerModal: React.FC<{
                       <small>{formatMediaPickerAssetSize(asset)}</small>
                     </span>
                     <span className={styles.mediaPickerAssetFooter}>
-                      <span>Elegir</span>
+                      <span>{syncing ? 'Sincronizando' : 'Elegir'}</span>
                       <button
                         type="button"
                         className={styles.mediaPickerDeleteButton}
                         onClick={(event) => requestDeleteAsset(asset, event)}
-                        disabled={deleting}
+                        disabled={deleting || Boolean(syncingAssetId)}
                         aria-label={`Eliminar ${name}`}
                       >
-                        <Trash2 size={13} />
+                        {syncing ? <RefreshCw size={13} className={styles.previewSpin} /> : <Trash2 size={13} />}
                       </button>
                     </span>
                   </div>
@@ -18300,6 +18346,30 @@ const VideoPlayerSettingsControls: React.FC<{
         </label>
       </div>
 
+      <div className={styles.panelSubheader}>Marco del video</div>
+      <div className={styles.twoColumn}>
+        <ColorField label="Fondo del video" value={getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBackground: value })} onCommit={onSave} />
+        <ColorField label="Borde del video" value={getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBorderColor: value })} onCommit={onSave} />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField
+          label="Radio del video"
+          value={getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}
+          min={0}
+          max={80}
+          onChange={(value) => onPatchSettings({ videoPlayerRadius: value })}
+          onCommit={onSave}
+        />
+        <DimensionField
+          label="Borde del video"
+          value={getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}
+          min={0}
+          max={12}
+          onChange={(value) => onPatchSettings({ videoPlayerBorderWidth: value })}
+          onCommit={onSave}
+        />
+      </div>
+
       <div className={styles.twoColumn}>
         <label className={styles.checkboxLabel}>
           <input
@@ -18352,18 +18422,51 @@ const VideoPlayerSettingsControls: React.FC<{
 
       {showWistiaControls && (
         <>
+          <div className={styles.panelSubheader}>Controles custom</div>
           <div className={styles.twoColumn}>
-            <ColorField label="Fondo del player" value={getSettingString(settings, 'videoPlayerColor') || 'rgba(0,0,0,.52)'} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
-            <ColorField label="Ícono play" value={getSettingString(settings, 'videoPlayColor') || '#ffffff'} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
+            <ColorField label="Fondo del player" value={getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
+            <ColorField label="Ícono play" value={getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
           </div>
-          <DimensionField
-            label="Tamaño del play"
-            value={getSettingNumber(settings, 'videoPlaySize', 64, 42, 110)}
-            min={42}
-            max={110}
-            onChange={(value) => onPatchSettings({ videoPlaySize: value })}
-            onCommit={onSave}
-          />
+          <div className={styles.twoColumn}>
+            <ColorField label="Borde del play" value={getSettingString(settings, 'videoPlayBorderColor') || DEFAULT_VIDEO_TRANSPARENT} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayBorderColor: value })} onCommit={onSave} />
+            <ColorField label="Bocina" value={getSettingString(settings, 'videoSoundColor') || DEFAULT_VIDEO_PLAY_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoSoundColor: value })} onCommit={onSave} />
+          </div>
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label="Tamaño del play"
+              value={getSettingNumber(settings, 'videoPlaySize', 64, 42, 110)}
+              min={42}
+              max={110}
+              onChange={(value) => onPatchSettings({ videoPlaySize: value })}
+              onCommit={onSave}
+            />
+            <DimensionField
+              label="Radio del play"
+              value={getSettingNumber(settings, 'videoPlayRadius', 999, 0, 999)}
+              min={0}
+              max={999}
+              onChange={(value) => onPatchSettings({ videoPlayRadius: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label="Ícono play"
+              value={getSettingNumber(settings, 'videoPlayIconSize', 22, 14, 54)}
+              min={14}
+              max={54}
+              onChange={(value) => onPatchSettings({ videoPlayIconSize: value })}
+              onCommit={onSave}
+            />
+            <DimensionField
+              label="Borde del play"
+              value={getSettingNumber(settings, 'videoPlayBorderWidth', 0, 0, 10)}
+              min={0}
+              max={10}
+              onChange={(value) => onPatchSettings({ videoPlayBorderWidth: value })}
+              onCommit={onSave}
+            />
+          </div>
           <label className={styles.checkboxLabel}>
             <input
               type="checkbox"
@@ -21927,9 +22030,18 @@ const VideoPlayerPreview: React.FC<{
   const loop = Boolean(settings.videoLoop) || autoplay
   const speed = getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4)
   const fit = getSettingString(settings, 'videoFit') || 'cover'
-  const playerColor = getSettingString(settings, 'videoPlayerColor') || 'rgba(0,0,0,.52)'
-  const playColor = getSettingString(settings, 'videoPlayColor') || '#ffffff'
+  const playerBackground = getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND
+  const playerRadius = `${getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}px`
+  const playerBorderColor = getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT
+  const playerBorderWidth = `${getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}px`
+  const playerColor = getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR
+  const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
   const playSize = `${getSettingNumber(settings, 'videoPlaySize', 64, 42, 110)}px`
+  const playRadius = `${getSettingNumber(settings, 'videoPlayRadius', 999, 0, 999)}px`
+  const playIconSize = getSettingNumber(settings, 'videoPlayIconSize', 22, 14, 54)
+  const playBorderColor = getSettingString(settings, 'videoPlayBorderColor') || DEFAULT_VIDEO_TRANSPARENT
+  const playBorderWidth = `${getSettingNumber(settings, 'videoPlayBorderWidth', 0, 0, 10)}px`
+  const soundColor = getSettingString(settings, 'videoSoundColor') || playColor
   const className = [
     'rstk-video',
     'rstk-video-player',
@@ -21958,9 +22070,18 @@ const VideoPlayerPreview: React.FC<{
     <div
       className={className}
       style={{
+        ['--rstk-video-bg' as string]: playerBackground,
+        ['--rstk-video-radius' as string]: playerRadius,
+        ['--rstk-video-border-color' as string]: playerBorderColor,
+        ['--rstk-video-border-width' as string]: playerBorderWidth,
         ['--rstk-video-player-color' as string]: playerColor,
         ['--rstk-video-play-color' as string]: playColor,
-        ['--rstk-video-play-size' as string]: playSize
+        ['--rstk-video-play-size' as string]: playSize,
+        ['--rstk-video-play-radius' as string]: playRadius,
+        ['--rstk-video-play-icon-size' as string]: `${playIconSize}px`,
+        ['--rstk-video-play-border-color' as string]: playBorderColor,
+        ['--rstk-video-play-border-width' as string]: playBorderWidth,
+        ['--rstk-video-sound-color' as string]: soundColor
       } as React.CSSProperties}
     >
       <video
@@ -21977,7 +22098,7 @@ const VideoPlayerPreview: React.FC<{
       />
       {showOverlay && (
         <button type="button" className="rstk-video-overlay" onClick={handleOverlayClick} aria-label="Reproducir video">
-          <span className="rstk-video-play-dot"><Play size={22} fill="currentColor" /></span>
+          <span className="rstk-video-play-dot"><Play size={playIconSize} fill="currentColor" /></span>
           {soundHint && (
             <span className="rstk-video-sound">
               <Volume2 size={16} />

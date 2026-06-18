@@ -41,7 +41,18 @@ test('video player clean mode renders Wistia-style overlay controls', async () =
   const html = await renderPublicSiteHtml(baseSite({
     videoControlsMode: 'clean',
     videoSoundHint: true,
-    videoPlaySize: 82
+    videoPlayerBackground: '#111827',
+    videoPlayerRadius: 28,
+    videoPlayerBorderColor: '#38bdf8',
+    videoPlayerBorderWidth: 3,
+    videoPlayerColor: 'rgba(15, 23, 42, 0.72)',
+    videoPlayColor: '#f8fafc',
+    videoPlaySize: 82,
+    videoPlayRadius: 24,
+    videoPlayIconSize: 30,
+    videoPlayBorderColor: '#facc15',
+    videoPlayBorderWidth: 2,
+    videoSoundColor: '#22d3ee'
   }), {
     pageId: 'page-1',
     trackingEnabled: false,
@@ -51,7 +62,18 @@ test('video player clean mode renders Wistia-style overlay controls', async () =
   assert.match(html, /rstk-video-custom-controls/)
   assert.match(html, /<button type="button" class="rstk-video-overlay" data-rstk-video-overlay/)
   assert.match(html, /<span class="rstk-video-sound">/)
+  assert.match(html, /--rstk-video-bg:#111827/)
+  assert.match(html, /--rstk-video-radius:28px/)
+  assert.match(html, /--rstk-video-border-color:#38bdf8/)
+  assert.match(html, /--rstk-video-border-width:3px/)
+  assert.match(html, /--rstk-video-player-color:rgba\(15, 23, 42, 0\.72\)/)
+  assert.match(html, /--rstk-video-play-color:#f8fafc/)
   assert.match(html, /--rstk-video-play-size:82px/)
+  assert.match(html, /--rstk-video-play-radius:24px/)
+  assert.match(html, /--rstk-video-play-icon-size:30px/)
+  assert.match(html, /--rstk-video-play-border-color:#facc15/)
+  assert.match(html, /--rstk-video-play-border-width:2px/)
+  assert.match(html, /--rstk-video-sound-color:#22d3ee/)
 })
 
 test('video player none mode removes overlay and audio prompt', async () => {

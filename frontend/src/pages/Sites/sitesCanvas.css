@@ -281,9 +281,9 @@
 
 .rstkCanvas .rstk-media, .rstkCanvas .rstk-video { width: 100%; margin: 0; overflow: hidden; border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border)); border-radius: var(--rstk-media-radius, var(--rstk-block-radius, var(--rstk-radius))); background: var(--rstk-block-bg, var(--rstk-surface2)); }
 .rstkCanvas .rstk-media img, .rstkCanvas .rstk-video iframe, .rstkCanvas .rstk-video video { width: 100%; display: block; border: 0; }
-.rstkCanvas .rstk-video { aspect-ratio: 16/9; position: relative; }
+.rstkCanvas .rstk-video { aspect-ratio: 16/9; position: relative; border-width: var(--rstk-video-border-width, var(--rstk-block-border-width, 1px)); border-color: var(--rstk-video-border-color, var(--rstk-block-border, var(--rstk-border))); border-radius: var(--rstk-video-radius, var(--rstk-media-radius, var(--rstk-block-radius, var(--rstk-radius)))); background: var(--rstk-video-bg, var(--rstk-block-bg, var(--rstk-surface2))); }
 .rstkCanvas .rstk-video iframe, .rstkCanvas .rstk-video video { height: 100%; }
-.rstkCanvas .rstk-video video { background: #000; object-fit: cover; }
+.rstkCanvas .rstk-video video { background: var(--rstk-video-bg, #000); object-fit: cover; }
 .rstkCanvas .rstk-video-player { isolation: isolate; }
 .rstkCanvas .rstk-video-overlay {
   position: absolute;
@@ -301,10 +301,15 @@
   height: var(--rstk-video-play-size, 64px);
   display: grid;
   place-items: center;
-  border-radius: 999px;
+  border: var(--rstk-video-play-border-width, 0) solid var(--rstk-video-play-border-color, transparent);
+  border-radius: var(--rstk-video-play-radius, 999px);
   background: var(--rstk-video-player-color, rgba(0,0,0,.52));
   color: var(--rstk-video-play-color, #fff);
   box-shadow: 0 16px 38px rgba(0,0,0,.28);
+}
+.rstkCanvas .rstk-video-play-dot svg {
+  width: var(--rstk-video-play-icon-size, 22px);
+  height: var(--rstk-video-play-icon-size, 22px);
 }
 .rstkCanvas .rstk-video-sound {
   position: absolute;
@@ -315,7 +320,7 @@
   gap: 4px;
   border-radius: 999px;
   background: var(--rstk-video-player-color, rgba(0,0,0,.52));
-  color: var(--rstk-video-play-color, #fff);
+  color: var(--rstk-video-sound-color, var(--rstk-video-play-color, #fff));
   padding: 8px 10px;
 }
 .rstkCanvas .rstk-video-sound i {

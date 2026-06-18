@@ -661,6 +661,29 @@ function isBunnyStreamEligibleVideo({ mediaType = '', module = '' } = {}) {
   return cleanString(mediaType).toLowerCase() === 'video' && BUNNY_STREAM_MEDIA_MODULES.has(normalizeModule(module))
 }
 
+function bunnyStreamUsageContext(asset, context = {}) {
+  const module = normalizeModule(context.module || asset.module)
+  const moduleEntityId = context.moduleEntityId === undefined || context.moduleEntityId === null
+    ? asset.moduleEntityId
+    : cleanString(context.moduleEntityId)
+  return {
+    module,
+    moduleEntityId: moduleEntityId || null
+  }
+}
+
+function bunnyStreamSourceForAsset(asset, context) {
+  return {
+    mediaAssetId: asset.id,
+    businessId: asset.businessId,
+    module: context.module,
+    moduleEntityId: context.moduleEntityId,
+    storagePath: asset.bunnyPath,
+    storagePublicUrl: asset.publicUrl,
+    mimeType: asset.mimeType
+  }
+}
+
 function buildSkippedBunnyStreamMetadata(config, reason) {
   return {
     provider: 'bunny_stream',
@@ -1702,9 +1725,10 @@ export async function getMediaAssetDataUrl(assetId) {
   }
 }
 
-export async function syncMediaAssetBunnyStream(assetId) {
+export async function syncMediaAssetBunnyStream(assetId, context = {}) {
   const asset = await getMediaAsset(assetId)
-  if (!isBunnyStreamEligibleVideo({ mediaType: asset.mediaType, module: asset.module })) {
+  const usageContext = bunnyStreamUsageContext(asset, context)
+  if (!isBunnyStreamEligibleVideo({ mediaType: asset.mediaType, module: usageContext.module })) {
     throw errorWithStatus('Este archivo no es un video de sitios o formularios.', 400, 'bunny_stream_not_applicable')
   }
 
@@ -1727,21 +1751,30 @@ export async function syncMediaAssetBunnyStream(assetId) {
       collectionName: currentStream.collectionName || config.bunnyStreamCollectionName || null,
       videoId: currentVideoId,
       title: currentStream.title || cleanString(video?.title),
+      source: {
+        ...(currentStream.source || {}),
+        ...bunnyStreamSourceForAsset(asset, usageContext)
+      },
       video: normalizeBunnyStreamVideo(video) || currentStream.video || null
     }
   } else {
-    const { buffer, mimeType } = await getMediaAssetBuffer(asset.id)
+    const file = asset.storageProvider === 'bunny' && asset.bunnyPath
+      ? {
+          buffer: await readBunnyObjectBuffer({ config, objectPath: asset.bunnyPath, publicUrl: asset.publicUrl }),
+          mimeType: asset.mimeType
+        }
+      : await getMediaAssetBuffer(asset.id)
     stream = await syncVideoToBunnyStream({
       config,
       id: asset.id,
       businessId: asset.businessId,
-      module: asset.module,
-      moduleEntityId: asset.moduleEntityId,
+      module: usageContext.module,
+      moduleEntityId: usageContext.moduleEntityId,
       originalFilename: asset.originalFilename,
       objectPath: asset.bunnyPath,
       publicUrl: asset.publicUrl,
-      mimeType: mimeType || asset.mimeType,
-      buffer
+      mimeType: file.mimeType || asset.mimeType,
+      buffer: file.buffer
     })
   }
 

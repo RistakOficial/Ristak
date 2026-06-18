@@ -217,6 +217,16 @@
   outline: 0;
 }
 
+.mediaPickerAsset[aria-disabled="true"] {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.mediaPickerAsset[aria-disabled="true"]:hover,
+.mediaPickerAsset[aria-disabled="true"]:focus-visible {
+  box-shadow: none;
+}
+
 .mediaPickerAssetPreview {
   aspect-ratio: 16 / 10;
   display: grid;

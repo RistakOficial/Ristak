@@ -240,6 +240,13 @@ export const mediaService = {
     })
   },
 
+  syncAssetStream(assetId: string, input: {
+    module?: string
+    moduleEntityId?: string
+  } = {}) {
+    return apiClient.post<MediaAsset>(`/media/assets/${encodeURIComponent(assetId)}/stream/sync`, input)
+  },
+
   getStorageUsage() {
     return apiClient.get<StorageUsage>('/media/storage/usage')
   }
