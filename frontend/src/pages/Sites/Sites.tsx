@@ -3651,6 +3651,29 @@ const appendEditorNoTrackParam = (value: string) => {
   }
 }
 
+const appendAnalyticsNoTrackParam = (value: string) => {
+  const raw = String(value || '').trim()
+  if (!raw || /^data:/i.test(raw)) return raw
+
+  try {
+    const absolute = /^https?:\/\//i.test(raw)
+    const parsed = new URL(raw, window.location.origin)
+    parsed.searchParams.set('no_track', '1')
+    return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`
+  } catch {
+    const hashIndex = raw.indexOf('#')
+    const base = hashIndex >= 0 ? raw.slice(0, hashIndex) : raw
+    const hash = hashIndex >= 0 ? raw.slice(hashIndex) : ''
+    if (/[?&]no_track(?:=|&|$)/.test(base)) return raw
+    return `${base}${base.includes('?') ? '&' : '?'}no_track=1${hash}`
+  }
+}
+
+const getSitesAnalyticsStoragePreviewUrl = (asset?: MediaAsset | null) => {
+  const storageUrl = safePublicMediaUrl(asset?.publicUrl || '', 'video')
+  return appendAnalyticsNoTrackParam(storageUrl)
+}
+
 const isDirectVideoUrl = (value: string) => {
   const raw = safePublicMediaUrl(value, 'video')
   if (!raw) return false
@@ -26335,6 +26358,18 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   onVideoChange,
   onDateRangeChange
 }) => {
+  const [retentionPlaybackPercent, setRetentionPlaybackPercent] = useState(0)
+  const syncRetentionPlayback = useCallback((event: React.SyntheticEvent<HTMLVideoElement>) => {
+    const video = event.currentTarget
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0
+    const nextPercent = duration > 0 ? clampSitesPercent((video.currentTime / duration) * 100) : 0
+    setRetentionPlaybackPercent(nextPercent)
+  }, [])
+
+  useEffect(() => {
+    setRetentionPlaybackPercent(0)
+  }, [selectedVideoId])
+
   const isVideosView = selectedSiteType === 'videos'
   const isFormsView = selectedSiteType === 'forms'
   const typeLabel = isVideosView ? 'Videos' : isFormsView ? 'Formularios' : 'Sitios'
@@ -26407,6 +26442,10 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const retentionSegments = buildSitesRetentionSegments(firstPartyTracking?.retentionSegments || [], heatmap)
   const retentionCurvePoints = buildSitesRetentionCurvePoints(retentionSegments)
   const retentionAreaPath = buildSitesRetentionAreaPath(retentionCurvePoints)
+  const retentionPreviewUrl = getSitesAnalyticsStoragePreviewUrl(selectedVideo)
+  const retentionPlayheadStyle = {
+    '--video-retention-playhead': `${retentionPlaybackPercent}%`
+  } as React.CSSProperties
   const videoViewers = firstPartyTracking?.viewers || []
   const pageBreakdown = firstPartyTracking?.pages || []
   const blockBreakdown = firstPartyTracking?.blocks || []
@@ -26728,13 +26767,23 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
               {loadingAnalytics && <em>Actualizando...</em>}
             </div>
             <div className={styles.videoRetentionChart}>
-              {selectedVideo.publicUrl ? (
+              {retentionPreviewUrl ? (
                 <video
                   className={styles.videoRetentionMedia}
-                  src={selectedVideo.publicUrl}
+                  src={retentionPreviewUrl}
                   controls
                   playsInline
                   preload="metadata"
+                  data-no-track="true"
+                  data-rstk-video-track="false"
+                  data-rstk-analytics-preview="true"
+                  onLoadedMetadata={syncRetentionPlayback}
+                  onPlay={syncRetentionPlayback}
+                  onTimeUpdate={syncRetentionPlayback}
+                  onSeeking={syncRetentionPlayback}
+                  onSeeked={syncRetentionPlayback}
+                  onPause={syncRetentionPlayback}
+                  onEnded={syncRetentionPlayback}
                 />
               ) : (
                 <div className={styles.videoRetentionMediaEmpty}>
@@ -26743,22 +26792,26 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                 </div>
               )}
               <div className={styles.videoRetentionShade} aria-hidden="true" />
-              {retentionSegments.length && retentionCurvePoints ? (
-                <div className={styles.videoRetentionPlot} aria-hidden="true">
-                  <svg className={styles.videoRetentionCurve} viewBox="0 0 100 100" preserveAspectRatio="none">
-                    <path d={retentionAreaPath} />
-                    <polyline points={retentionCurvePoints} />
-                  </svg>
-                  <div className={styles.videoRetentionGrid}>
-                    <span>100%</span>
-                    <span>75%</span>
-                    <span>50%</span>
-                    <span>25%</span>
-                  </div>
-                </div>
-              ) : (
+              <div className={styles.videoRetentionPlot} style={retentionPlayheadStyle} aria-hidden="true">
+                {retentionSegments.length && retentionCurvePoints ? (
+                  <>
+                    <svg className={styles.videoRetentionCurve} viewBox="0 0 100 100" preserveAspectRatio="none">
+                      <path d={retentionAreaPath} />
+                      <polyline points={retentionCurvePoints} />
+                    </svg>
+                    <div className={styles.videoRetentionGrid}>
+                      <span>100%</span>
+                      <span>75%</span>
+                      <span>50%</span>
+                      <span>25%</span>
+                    </div>
+                  </>
+                ) : null}
+                <span className={styles.videoRetentionPlayhead} />
+              </div>
+              {!retentionSegments.length || !retentionCurvePoints ? (
                 <div className={styles.videoRetentionEmptyNote}>Aún no hay suficientes reproducciones para dibujar retención.</div>
-              )}
+              ) : null}
               <div className={styles.videoRetentionTimes}>
                 <span>0:00</span>
                 <span>{formatSitesTimecode(readSitesNumber(selectedVideo.duration) || retentionSegments[retentionSegments.length - 1]?.endSeconds || 0)}</span>

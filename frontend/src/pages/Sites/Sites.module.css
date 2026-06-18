@@ -6664,6 +6664,10 @@
 }
 
 .videoRetentionChart {
+  --video-retention-plot-top: 28px;
+  --video-retention-plot-right: 12px;
+  --video-retention-plot-bottom: 44px;
+  --video-retention-plot-left: 12px;
   position: relative;
   aspect-ratio: 16 / 9;
   min-height: 420px;
@@ -6709,7 +6713,11 @@
 
 .videoRetentionPlot {
   position: absolute;
-  inset: 28px 12px 44px;
+  inset:
+    var(--video-retention-plot-top)
+    var(--video-retention-plot-right)
+    var(--video-retention-plot-bottom)
+    var(--video-retention-plot-left);
   z-index: 2;
   pointer-events: none;
 }
@@ -6753,6 +6761,21 @@
   font-size: 0.72rem;
   line-height: 1;
   text-shadow: 0 1px 2px var(--surface-solid, var(--surface));
+}
+
+.videoRetentionPlayhead {
+  position: absolute;
+  top: calc(-1 * var(--video-retention-plot-top));
+  bottom: calc(-1 * var(--video-retention-plot-bottom));
+  left: clamp(0%, var(--video-retention-playhead, 0%), 100%);
+  z-index: 4;
+  width: 1px;
+  background: color-mix(in srgb, var(--text) 76%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--surface-solid, var(--surface)) 42%, transparent),
+    0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
+  transform: translateX(-0.5px);
+  transition: left 0.12s linear;
 }
 
 .videoRetentionPreview {
@@ -17468,11 +17491,11 @@
   }
 
   .videoRetentionChart {
+    --video-retention-plot-top: 22px;
+    --video-retention-plot-right: 10px;
+    --video-retention-plot-bottom: 42px;
+    --video-retention-plot-left: 10px;
     min-height: 300px;
-  }
-
-  .videoRetentionPlot {
-    inset: 22px 10px 42px;
   }
 
   .viewerHeatmapRow {
