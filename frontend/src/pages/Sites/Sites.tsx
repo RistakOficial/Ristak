@@ -26711,8 +26711,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
             </div>
             {primaryVideoMetrics.map(metric => (
               <div key={metric.key} className={styles.videoEngagementMetric}>
-                <strong>{metric.value}</strong>
                 <span>{metric.label}</span>
+                <strong>{metric.value}</strong>
                 <small>{metric.hint}</small>
               </div>
             ))}
