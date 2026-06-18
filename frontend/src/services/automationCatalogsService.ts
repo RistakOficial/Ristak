@@ -332,8 +332,12 @@ async function loadRawWhatsAppTemplates(): Promise<WhatsAppApiTemplate[]> {
             // sin credenciales o sin conexión: se queda vacío
           }
         }
-        rawTemplatesCache = items
-        return rawTemplatesCache
+        if (items.length > 0) {
+          rawTemplatesCache = items
+        } else {
+          rawTemplatesPromise = null
+        }
+        return items
       })
       .catch(() => {
         rawTemplatesPromise = null
@@ -405,10 +409,17 @@ const cache = new Map<CatalogKind, Promise<CatalogOption[]>>()
 
 export function getCatalog(kind: CatalogKind): Promise<CatalogOption[]> {
   if (!cache.has(kind)) {
-    const promise = loaders[kind]().catch(() => {
-      cache.delete(kind)
-      return fallbacks[kind] || []
-    })
+    const promise = loaders[kind]()
+      .then((loaded) => {
+        if (kind === 'whatsappTemplates' && loaded.length === 0) {
+          cache.delete(kind)
+        }
+        return loaded
+      })
+      .catch(() => {
+        cache.delete(kind)
+        return fallbacks[kind] || []
+      })
     cache.set(kind, promise)
   }
   return cache.get(kind) as Promise<CatalogOption[]>

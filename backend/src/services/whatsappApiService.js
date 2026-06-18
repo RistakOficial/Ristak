@@ -1841,6 +1841,68 @@ async function syncTemplates(templates = [], options = {}) {
   }
 }
 
+export async function upsertWhatsAppApiTemplateSnapshot(record = {}) {
+  const config = await loadConfig()
+  const wabaId = cleanString(record.wabaId || record.waba_id || config.wabaId)
+  const item = normalizeTemplateRecord({
+    ...record,
+    wabaId
+  })
+
+  if (!item.wabaId || !item.name || !item.language) return null
+
+  await db.run(`
+    INSERT INTO whatsapp_api_templates (
+      id, official_template_id, waba_id, name, language, category,
+      sub_category, previous_category, message_send_ttl_seconds, status,
+      quality_rating, reason, status_update_event, disable_date,
+      components_json, raw_payload_json, ycloud_create_time, ycloud_update_time,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(waba_id, name, language) DO UPDATE SET
+      id = excluded.id,
+      official_template_id = COALESCE(excluded.official_template_id, whatsapp_api_templates.official_template_id),
+      category = COALESCE(NULLIF(excluded.category, ''), whatsapp_api_templates.category),
+      sub_category = COALESCE(NULLIF(excluded.sub_category, ''), whatsapp_api_templates.sub_category),
+      previous_category = COALESCE(NULLIF(excluded.previous_category, ''), whatsapp_api_templates.previous_category),
+      message_send_ttl_seconds = COALESCE(excluded.message_send_ttl_seconds, whatsapp_api_templates.message_send_ttl_seconds),
+      status = COALESCE(NULLIF(excluded.status, ''), whatsapp_api_templates.status),
+      quality_rating = COALESCE(NULLIF(excluded.quality_rating, ''), whatsapp_api_templates.quality_rating),
+      reason = COALESCE(NULLIF(excluded.reason, ''), whatsapp_api_templates.reason),
+      status_update_event = COALESCE(NULLIF(excluded.status_update_event, ''), whatsapp_api_templates.status_update_event),
+      disable_date = COALESCE(excluded.disable_date, whatsapp_api_templates.disable_date),
+      components_json = CASE
+        WHEN excluded.components_json IS NOT NULL AND excluded.components_json != '[]' THEN excluded.components_json
+        ELSE whatsapp_api_templates.components_json
+      END,
+      raw_payload_json = excluded.raw_payload_json,
+      ycloud_create_time = COALESCE(excluded.ycloud_create_time, whatsapp_api_templates.ycloud_create_time),
+      ycloud_update_time = COALESCE(excluded.ycloud_update_time, whatsapp_api_templates.ycloud_update_time),
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    item.id,
+    item.officialTemplateId || null,
+    item.wabaId,
+    item.name,
+    item.language,
+    item.category || null,
+    item.subCategory || null,
+    item.previousCategory || null,
+    item.messageSendTtlSeconds,
+    item.status || null,
+    item.qualityRating || null,
+    item.reason || null,
+    item.statusUpdateEvent || null,
+    item.disableDate,
+    safeJson(item.components),
+    safeJson(item.raw),
+    item.createTime,
+    item.updateTime
+  ])
+
+  return item.id
+}
+
 async function syncLocalMessageTemplateFromYCloud(template) {
   if (!template?.name || !template?.language) return
 
@@ -6259,7 +6321,7 @@ function renderTemplateText(text = '', values = []) {
   })
 }
 
-function buildTemplateTextForQrFallback({ template, components, variables } = {}) {
+function buildRenderedTemplateText({ template, components, variables } = {}) {
   const sourceComponents = parseJsonValue(template?.components_json, [])
   const requestComponents = Array.isArray(components) ? components : []
   const normalizedVariables = normalizeTemplateVariables(variables).map(cleanString)
@@ -6290,7 +6352,17 @@ function buildTemplateTextForQrFallback({ template, components, variables } = {}
   return textParts.map(cleanString).filter(Boolean).join('\n\n')
 }
 
-async function saveTemplateSend({ template, requestBody, response, variables }) {
+function templateSendSnapshot(template = {}, renderedText = '') {
+  return {
+    id: template.id || null,
+    name: template.name || '',
+    language: template.language || '',
+    components: parseJsonValue(template.components_json, []),
+    renderedText: cleanString(renderedText)
+  }
+}
+
+async function saveTemplateSend({ template, requestBody, response, variables, renderedText = '' }) {
   const id = hashId('waapi_tpl_send', response?.id || requestBody.externalId || `${requestBody.from}|${requestBody.to}|${template.name}|${Date.now()}`)
 
   await db.run(`
@@ -6316,7 +6388,11 @@ async function saveTemplateSend({ template, requestBody, response, variables }) 
     cleanString(response?.wamid) || null,
     cleanString(response?.status) || 'accepted',
     safeJson(variables || []),
-    safeJson({ request: requestBody, response })
+    safeJson({
+      request: requestBody,
+      response,
+      template: templateSendSnapshot(template, renderedText)
+    })
   ])
 
   return id
@@ -6389,6 +6465,12 @@ export async function sendWhatsAppApiTemplateMessage({
     finalTemplate,
     buildTemplateComponents({ components, variables: renderedVariables })
   )
+  const normalizedVariables = normalizeTemplateVariables(renderedVariables)
+  const renderedTemplateText = buildRenderedTemplateText({
+    template: finalTemplate,
+    components: templateComponents,
+    variables: normalizedVariables
+  })
 
   if (config.provider === META_DIRECT_PROVIDER_NAME) {
     return sendTemplateViaMetaDirect({
@@ -6405,7 +6487,6 @@ export async function sendWhatsAppApiTemplateMessage({
 
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
-  const normalizedVariables = normalizeTemplateVariables(renderedVariables)
   const requestBody = {
     from: fromPhone,
     to: toPhone,
@@ -6424,7 +6505,7 @@ export async function sendWhatsAppApiTemplateMessage({
   }
 
   const sendTemplateViaQr = async ({ fallbackReason, originalError, fallbackPhoneNumberId } = {}) => {
-    const text = buildTemplateTextForQrFallback({
+    const text = buildRenderedTemplateText({
       template: finalTemplate,
       components: templateComponents,
       variables: normalizedVariables
@@ -6453,7 +6534,8 @@ export async function sendWhatsAppApiTemplateMessage({
         renderedText: text
       },
       response: qrResponse,
-      variables: normalizedVariables
+      variables: normalizedVariables,
+      renderedText: text
     })
 
     return {
@@ -6502,9 +6584,13 @@ export async function sendWhatsAppApiTemplateMessage({
 
   await saveTemplateSend({
     template: finalTemplate,
-    requestBody,
+    requestBody: {
+      ...requestBody,
+      ...(renderedTemplateText ? { renderedText: renderedTemplateText } : {})
+    },
     response,
-    variables: normalizedVariables
+    variables: normalizedVariables,
+    renderedText: renderedTemplateText
   })
 
   await upsertMessage({
@@ -6520,6 +6606,7 @@ export async function sendWhatsAppApiTemplateMessage({
       to: response.to || toPhone,
       type: response.type || 'template',
       template: response.template || requestBody.template,
+      text: response.text || (renderedTemplateText ? { body: renderedTemplateText } : undefined),
       transport: 'api',
       createTime: response.createTime || nowIso()
     },

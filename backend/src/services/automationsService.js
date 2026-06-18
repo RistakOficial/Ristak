@@ -3,6 +3,7 @@ import { db } from '../config/database.js'
 import { normalizeFlow, validateFlowForPublish, START_NODE_TYPE } from './automationFlowValidation.js'
 import { enrollContactManually } from './automationEngine.js'
 import { getWhatsAppApiTemplates } from './whatsappApiService.js'
+import { syncLocalMessageTemplateSnapshots } from './messageTemplatesService.js'
 import {
   AUTOMATION_REVIEW_OK,
   getAutomationReviewStatus,
@@ -1068,6 +1069,7 @@ export async function getEnrollmentStats(automationId) {
 }
 
 export async function listAutomationWhatsAppTemplatesCatalog({ status = 'APPROVED', limit = 200 } = {}) {
+  await syncLocalMessageTemplateSnapshots({ onlyApproved: true })
   return getWhatsAppApiTemplates({
     status: cleanCatalogString(status) || 'APPROVED',
     limit

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { db } from '../src/config/database.js'
+import { db, setAppConfig } from '../src/config/database.js'
 import {
   createAutomation,
   getAutomation,
@@ -13,6 +13,28 @@ import {
   listAutomations,
   updateAutomation
 } from '../src/services/automationsService.js'
+import { getWhatsAppApiConfigKeys } from '../src/services/whatsappApiService.js'
+
+async function withAppConfigValue(key, value, callback) {
+  const previous = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', [key])
+
+  try {
+    await setAppConfig(key, value)
+    return await callback()
+  } finally {
+    if (previous) {
+      await db.run(`
+        INSERT INTO app_config (config_key, config_value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(config_key) DO UPDATE SET
+          config_value = excluded.config_value,
+          updated_at = CURRENT_TIMESTAMP
+      `, [key, previous.config_value])
+    } else {
+      await db.run('DELETE FROM app_config WHERE config_key = ?', [key])
+    }
+  }
+}
 
 function makeFlow(label = 'Mensaje publicado', viewport = { x: 0, y: 0, zoom: 1 }) {
   return {
@@ -278,6 +300,58 @@ test('catálogo de plantillas WhatsApp para automatizaciones devuelve aprobadas 
   } finally {
     await db.run('DELETE FROM whatsapp_api_templates WHERE id IN (?, ?)', [approvedId, pendingId])
   }
+})
+
+test('catálogo de plantillas WhatsApp refleja plantillas locales aprobadas', async () => {
+  const suffix = Date.now()
+  const keys = getWhatsAppApiConfigKeys()
+  const templateId = `tmpl_local_catalog_${suffix}`
+  const officialId = `official_local_catalog_${suffix}`
+  const templateName = `seguimiento_local_${suffix}`
+  const wabaId = 'waba_catalog_local_test'
+  const buttons = [{ id: `btn_${suffix}`, type: 'quick_reply', label: 'Agendar', value: '' }]
+  const expectedComponents = [
+    { type: 'BODY', text: 'Hola {{1}}, tenemos cupo para tu cita.' },
+    { type: 'FOOTER', text: 'Responde cuando puedas' },
+    { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Agendar' }] }
+  ]
+
+  await withAppConfigValue(keys.wabaId, wabaId, async () => {
+    try {
+      await db.run(`
+        INSERT INTO whatsapp_message_templates (
+          id, name, description, category, language, status,
+          header_enabled, header_type, body_text, footer_text, buttons_json,
+          variables_json, variable_examples_json, variable_bindings_json,
+          ycloud_template_id, ycloud_status, ycloud_raw_payload_json,
+          created_at, updated_at
+        ) VALUES (?, ?, '', 'utility', 'es_MX', 'active', 0, 'none', ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        templateId,
+        templateName,
+        'Hola {{1}}, tenemos cupo para tu cita.',
+        'Responde cuando puedas',
+        JSON.stringify(buttons),
+        JSON.stringify(['{{1}}']),
+        JSON.stringify({ '{{1}}': 'Ana' }),
+        JSON.stringify({ bodyText: { 1: { variableKey: 'contact.first_name', mergeField: '{{contact.first_name}}', label: 'Nombre', example: 'Ana' } } }),
+        officialId,
+        JSON.stringify({ id: officialId, status: 'APPROVED' })
+      ])
+
+      const catalog = await listAutomationWhatsAppTemplatesCatalog()
+      const item = catalog.items.find((template) => template.id === officialId)
+
+      assert.ok(item)
+      assert.equal(item.name, templateName)
+      assert.equal(item.language, 'es_MX')
+      assert.equal(item.status, 'APPROVED')
+      assert.deepEqual(item.components, expectedComponents)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_templates WHERE waba_id = ? AND name = ? AND language = ?', [wabaId, templateName, 'es_MX'])
+      await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [templateId])
+    }
+  })
 })
 
 test('catálogo de formularios para automatizaciones incluye normales, embebidos e importados', async () => {

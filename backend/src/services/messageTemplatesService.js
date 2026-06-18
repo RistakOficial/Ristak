@@ -4,8 +4,10 @@ import {
   createWhatsAppApiTemplate,
   retrieveWhatsAppApiTemplate,
   sendWhatsAppApiTemplateMessage,
-  syncWhatsAppApiTemplatesFromYCloud
+  syncWhatsAppApiTemplatesFromYCloud,
+  upsertWhatsAppApiTemplateSnapshot
 } from './whatsappApiService.js'
+import { logger } from '../utils/logger.js'
 
 const TEMPLATE_CATEGORIES = new Set(['utility', 'marketing', 'authentication', 'service'])
 const TEMPLATE_STATUSES = new Set(['draft', 'active', 'archived'])
@@ -557,6 +559,121 @@ function buildYCloudTemplatePayload(template) {
   }
 }
 
+function buildSnapshotButtons(buttons = []) {
+  return buttons.map((button) => {
+    const type = cleanString(button?.type)
+    const label = clampText(button?.label || button?.text, 25)
+    const value = cleanString(button?.value)
+    if (!label) return null
+
+    if (type === 'website') return { type: 'URL', text: label, url: value }
+    if (type === 'phone') return { type: 'PHONE_NUMBER', text: label, phone_number: value }
+    if (type === 'whatsapp_call') return { type: 'VOICE_CALL', text: label }
+    return { type: 'QUICK_REPLY', text: label }
+  }).filter(Boolean)
+}
+
+function buildSnapshotComponents(template) {
+  const components = []
+
+  if (template.headerEnabled && template.headerType !== 'none') {
+    if (template.headerType === 'text' && template.headerText) {
+      components.push({
+        type: 'HEADER',
+        format: 'TEXT',
+        text: template.headerText
+      })
+    } else if (['image', 'video', 'document'].includes(template.headerType)) {
+      components.push({
+        type: 'HEADER',
+        format: template.headerType.toUpperCase()
+      })
+    } else if (template.headerType === 'location') {
+      components.push({
+        type: 'HEADER',
+        format: 'LOCATION'
+      })
+    }
+  }
+
+  components.push({
+    type: 'BODY',
+    text: template.bodyText
+  })
+
+  if (template.footerText) {
+    components.push({
+      type: 'FOOTER',
+      text: template.footerText
+    })
+  }
+
+  const buttons = buildSnapshotButtons(template.buttons)
+  if (buttons.length) {
+    components.push({
+      type: 'BUTTONS',
+      buttons
+    })
+  }
+
+  return components
+}
+
+function buildWhatsAppApiSnapshot(template) {
+  const raw = template.ycloudRawPayload && typeof template.ycloudRawPayload === 'object'
+    ? template.ycloudRawPayload
+    : {}
+  const officialTemplateId = cleanString(template.ycloudTemplateId || raw.officialTemplateId || raw.id)
+  const components = buildSnapshotComponents(template)
+
+  return {
+    id: officialTemplateId || template.id,
+    officialTemplateId,
+    wabaId: cleanString(raw.wabaId || raw.waba_id),
+    name: template.name,
+    language: template.language,
+    category: normalizeYCloudCategory(template.category),
+    status: normalizeYCloudTemplateStatus(template.ycloudStatus || template.status),
+    qualityRating: normalizeYCloudTemplateStatus(template.ycloudQualityRating),
+    reason: template.ycloudReason,
+    statusUpdateEvent: normalizeYCloudTemplateStatus(template.ycloudStatusUpdateEvent),
+    components,
+    raw: {
+      ...raw,
+      localTemplateId: template.id,
+      source: 'ristak_message_template',
+      components
+    }
+  }
+}
+
+async function persistWhatsAppApiSnapshot(template) {
+  if (!template?.name || !template?.language || !template?.bodyText) return null
+
+  try {
+    return await upsertWhatsAppApiTemplateSnapshot(buildWhatsAppApiSnapshot(template))
+  } catch (error) {
+    logger.warn(`No se pudo guardar snapshot WhatsApp API de plantilla ${template.name}/${template.language}: ${error.message}`)
+    return null
+  }
+}
+
+export async function syncLocalMessageTemplateSnapshots({ onlyApproved = false } = {}) {
+  const rows = await db.all(`
+    SELECT * FROM whatsapp_message_templates
+    ${onlyApproved ? "WHERE UPPER(COALESCE(ycloud_status, '')) = 'APPROVED'" : ''}
+    ORDER BY updated_at DESC
+  `)
+  let synced = 0
+
+  for (const row of rows) {
+    const snapshotId = await persistWhatsAppApiSnapshot(mapTemplate(row))
+    if (snapshotId) synced += 1
+  }
+
+  return { synced }
+}
+
 function normalizeYCloudTemplateResponse(record = {}) {
   return {
     officialTemplateId: cleanString(record.officialTemplateId || record.id) || null,
@@ -605,7 +722,9 @@ async function applyYCloudTemplateResponse(id, record = {}, { submitted = false 
     id
   ])
 
-  return getMessageTemplateById(id)
+  const updated = await getMessageTemplateById(id)
+  await persistWhatsAppApiSnapshot(updated)
+  return updated
 }
 
 async function saveTemplateLastError(id, error) {
@@ -662,7 +781,9 @@ export async function createMessageTemplate(payload = {}) {
   }
 
   const row = await db.get('SELECT * FROM whatsapp_message_templates WHERE id = ?', [id])
-  return mapTemplate(row)
+  const saved = mapTemplate(row)
+  await persistWhatsAppApiSnapshot(saved)
+  return saved
 }
 
 export async function updateMessageTemplate(id, payload = {}) {
@@ -730,7 +851,9 @@ export async function updateMessageTemplate(id, payload = {}) {
   }
 
   const row = await db.get('SELECT * FROM whatsapp_message_templates WHERE id = ?', [id])
-  return mapTemplate(row)
+  const saved = mapTemplate(row)
+  await persistWhatsAppApiSnapshot(saved)
+  return saved
 }
 
 export async function submitMessageTemplateToYCloud(id) {
@@ -771,6 +894,7 @@ export async function syncMessageTemplateStatus(id) {
 
 export async function syncAllMessageTemplatesWithYCloud() {
   await syncWhatsAppApiTemplatesFromYCloud()
+  await syncLocalMessageTemplateSnapshots({ onlyApproved: true })
   return getMessageTemplateBundle()
 }
 

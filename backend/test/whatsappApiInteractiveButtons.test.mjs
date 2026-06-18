@@ -190,6 +190,88 @@ test('agrega payloads a quick replies de plantillas al enviarlas por YCloud', as
   })
 })
 
+test('guarda en el chat el texto renderizado de plantillas enviadas por YCloud', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const suffix = randomUUID()
+    const templateId = `template_history_${suffix}`
+    const templateName = `recordatorio_${suffix.replace(/-/g, '_')}`
+    const to = `+52155${Date.now().toString().slice(-8)}`
+    let ycloudMessageId = ''
+    const components = [
+      {
+        type: 'BODY',
+        text: 'Hola {{1}}, tu cita es {{2}}.'
+      },
+      {
+        type: 'FOOTER',
+        text: 'Gracias'
+      },
+      {
+        type: 'BUTTONS',
+        buttons: [
+          { type: 'QUICK_REPLY', text: 'Confirmar' }
+        ]
+      }
+    ]
+
+    try {
+      await db.run(
+        `INSERT INTO whatsapp_api_templates (
+          id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json
+        ) VALUES (?, ?, ?, ?, ?, 'APPROVED', ?, ?)`,
+        [
+          templateId,
+          `official_${suffix}`,
+          'waba_ycloud_buttons_test',
+          templateName,
+          'es_MX',
+          JSON.stringify(components),
+          JSON.stringify({ components })
+        ]
+      )
+
+      await sendWhatsAppApiTemplateMessage({
+        to,
+        templateId,
+        variables: {
+          1: 'Ana',
+          2: 'mañana'
+        }
+      })
+      assert.equal(captures.length, 1)
+      ycloudMessageId = `ycloud_msg_${captures.length}`
+
+      const row = await db.get(
+        `SELECT message_type, message_text
+         FROM whatsapp_api_messages
+         WHERE ycloud_message_id = ?
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+        [ycloudMessageId]
+      )
+
+      assert.equal(row.message_type, 'template')
+      assert.equal(row.message_text, 'Hola Ana, tu cita es mañana.\n\nGracias\n\n- Confirmar')
+      assert.notEqual(row.message_text, templateName)
+
+      const sendRow = await db.get(
+        'SELECT raw_payload_json FROM whatsapp_api_template_sends WHERE template_id = ? LIMIT 1',
+        [templateId]
+      )
+      const sendPayload = JSON.parse(sendRow.raw_payload_json)
+      assert.equal(sendPayload.template.id, templateId)
+      assert.equal(sendPayload.template.renderedText, row.message_text)
+      assert.deepEqual(sendPayload.template.components, components)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_template_sends WHERE template_id = ?', [templateId])
+      await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [templateId])
+      await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR phone = ? OR to_phone = ?', [ycloudMessageId, to, to])
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+      await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+    }
+  })
+})
+
 test('automatización de WhatsApp queda esperando botón y continúa por la salida elegida', async () => {
   await withYCloudMessageCapture(async (captures) => {
     const suffix = randomUUID()

@@ -44,6 +44,7 @@ import automationsService, {
   type AutomationViewport,
   type FlowSettings
 } from '@/services/automationsService'
+import { resetCatalogCache } from '@/services/automationCatalogsService'
 import { AutomationCanvas, type PendingEdge, type PickerRequest } from './AutomationCanvas'
 import { StepPickerBubble } from './StepPickerBubble'
 import { NodeConfigBubble } from './NodeConfigBubble'
@@ -261,6 +262,11 @@ export const AutomationEditor: React.FC = () => {
   useEffect(() => {
     configRef.current = config
   }, [config])
+
+  useEffect(() => {
+    resetCatalogCache()
+  }, [automationId])
+
   const [nodeErrors, setNodeErrors] = useState<Record<string, string[]>>({})
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [previewOpen, setPreviewOpen] = useState(false)
