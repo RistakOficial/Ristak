@@ -3547,20 +3547,41 @@ const normalizeImportedVideoPreviewUrl = (url: string) => {
   }
 }
 
-const isBunnyStreamEmbedUrl = (url: string) => {
+const getBunnyStreamVideoIdFromUrl = (url: string) => {
   const safeUrl = safeEmbedUrl(url)
-  if (!safeUrl) return false
+  if (!safeUrl) return ''
 
   try {
     const parsed = new URL(safeUrl)
     const host = parsed.hostname.replace(/^www\./i, '').toLowerCase()
     const pathParts = parsed.pathname.split('/').filter(Boolean)
-    return (host === 'player.mediadelivery.net' || host === 'iframe.mediadelivery.net') &&
+    if (
+      (host === 'player.mediadelivery.net' || host === 'iframe.mediadelivery.net') &&
       pathParts[0] === 'embed' &&
-      Boolean(pathParts[1] && pathParts[2])
+      pathParts[1] &&
+      pathParts[2]
+    ) {
+      return pathParts[2]
+    }
   } catch {
-    return false
+    return ''
   }
+  return ''
+}
+
+const isBunnyStreamEmbedUrl = (url: string) => Boolean(getBunnyStreamVideoIdFromUrl(url))
+
+let siteVideoAssetsPreviewPromise: Promise<MediaAsset[]> | null = null
+
+const loadSiteVideoAssetsForPreview = (forceRefresh = false) => {
+  if (forceRefresh) siteVideoAssetsPreviewPromise = null
+  if (!siteVideoAssetsPreviewPromise) {
+    siteVideoAssetsPreviewPromise = sitesService.listVideoAssets().catch(error => {
+      siteVideoAssetsPreviewPromise = null
+      throw error
+    })
+  }
+  return siteVideoAssetsPreviewPromise
 }
 
 const normalizeEmbedHeight = (value: string | null | undefined) => {
@@ -22595,7 +22616,9 @@ const VideoPlayerPreview: React.FC<{
   src: string
   label?: string
   settings: Record<string, unknown>
-}> = ({ src, label, settings }) => {
+  editable?: boolean
+  selected?: boolean
+}> = ({ src, label, settings, editable = false, selected = false }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<RistakHlsInstance | null>(null)
   const noTrackSrc = appendEditorNoTrackParam(src)
@@ -22634,6 +22657,7 @@ const VideoPlayerPreview: React.FC<{
   const playBorderWidth = `${getSettingNumber(settings, 'videoPlayBorderWidth', 0, 0, 10)}px`
   const soundColor = getSettingString(settings, 'videoSoundColor') || playColor
   const soundNoticeCycle = `${Math.max(1, soundNoticeHideAfter + 1.6)}s`
+  const shouldLetEditorSelect = editable && !selected
   const className = [
     'rstk-video',
     'rstk-video-player',
@@ -22752,18 +22776,21 @@ const VideoPlayerPreview: React.FC<{
   }
 
   const handleOverlayClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (shouldLetEditorSelect) return
     event.preventDefault()
     event.stopPropagation()
     togglePlayback(true)
   }
 
   const handleControlPlayClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (shouldLetEditorSelect) return
     event.preventDefault()
     event.stopPropagation()
     togglePlayback(false)
   }
 
   const handleMuteToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (shouldLetEditorSelect) return
     event.preventDefault()
     event.stopPropagation()
     const video = videoRef.current
@@ -22836,7 +22863,9 @@ const VideoPlayerPreview: React.FC<{
         </button>
       )}
       {showCustomControlBar && (
-        <div className="rstk-video-control-bar" onClick={(event) => event.stopPropagation()}>
+        <div className="rstk-video-control-bar" onClick={(event) => {
+          if (!shouldLetEditorSelect) event.stopPropagation()
+        }}>
           <button type="button" className="rstk-video-control-button" onClick={handleControlPlayClick} aria-label={isPlaying ? 'Pausar video' : 'Reproducir video'}>
             {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}
           </button>
@@ -22858,6 +22887,68 @@ const VideoPlayerPreview: React.FC<{
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+const BunnyStreamStoragePreview: React.FC<{
+  embedUrl: string
+  label?: string
+  settings: Record<string, unknown>
+  editable?: boolean
+  selected?: boolean
+}> = ({ embedUrl, label, settings, editable = false, selected = false }) => {
+  const streamVideoId = useMemo(() => getBunnyStreamVideoIdFromUrl(embedUrl), [embedUrl])
+  const [storageUrl, setStorageUrl] = useState('')
+  const [resolved, setResolved] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setStorageUrl('')
+    setResolved(false)
+
+    const findStorageUrl = (assets: MediaAsset[]) => {
+      const storageAsset = assets.find(asset => getMediaStreamVideoId(asset) === streamVideoId)
+      return storageAsset?.publicUrl ? safePublicMediaUrl(storageAsset.publicUrl, 'video') : ''
+    }
+
+    if (!streamVideoId) {
+      setResolved(true)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    loadSiteVideoAssetsForPreview()
+      .then(async assets => {
+        if (cancelled) return
+        let publicUrl = findStorageUrl(assets)
+        if (!publicUrl) {
+          publicUrl = findStorageUrl(await loadSiteVideoAssetsForPreview(true))
+        }
+        if (cancelled) return
+        setStorageUrl(publicUrl)
+      })
+      .catch(() => {
+        if (!cancelled) setStorageUrl('')
+      })
+      .finally(() => {
+        if (!cancelled) setResolved(true)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [streamVideoId])
+
+  if (storageUrl) {
+    return <VideoPlayerPreview src={storageUrl} label={label} settings={settings} editable={editable} selected={selected} />
+  }
+
+  return (
+    <div className="rstk-media rstk-media-empty">
+      <span className="rstk-play"><Play size={22} /></span>
+      {resolved ? 'Video disponible en el sitio publicado' : 'Preparando video'}
     </div>
   )
 }
@@ -22994,10 +23085,10 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const directVideoUrl = isDirectVideoUrl(rawVideoUrl) ? safePublicMediaUrl(rawVideoUrl, 'video') : ''
     const videoUrl = directVideoUrl ? '' : normalizeImportedVideoPreviewUrl(rawVideoUrl)
     return directVideoUrl
-      ? <VideoPlayerPreview src={directVideoUrl} label={block.label || 'Video'} settings={settings} />
+      ? <VideoPlayerPreview src={directVideoUrl} label={block.label || 'Video'} settings={settings} editable={editable} selected={selected} />
       : videoUrl
         ? isBunnyStreamEmbedUrl(videoUrl)
-          ? <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Video disponible en el sitio publicado</div>
+          ? <BunnyStreamStoragePreview embedUrl={videoUrl} label={block.label || 'Video'} settings={settings} editable={editable} selected={selected} />
           : <div className="rstk-video"><iframe src={appendEditorNoTrackParam(videoUrl)} title={block.label || 'Video'} loading="lazy" allow={DEFAULT_EMBED_ALLOW} allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
       : <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
   }
