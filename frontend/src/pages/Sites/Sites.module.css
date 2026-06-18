@@ -6661,9 +6661,16 @@
 .videoRetentionPanel {
   display: grid;
   overflow: hidden;
+  border-color: var(--border-strong);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 36%, transparent);
 }
 
 .videoRetentionChart {
+  --video-retention-axis: var(--design-chart-axis, var(--text-mute));
+  --video-retention-border: var(--border-strong);
+  --video-retention-fill: color-mix(in srgb, var(--design-chart-primary, var(--accent)) 24%, transparent);
+  --video-retention-grid: var(--design-chart-grid, var(--chart-grid));
+  --video-retention-line: var(--design-chart-primary, var(--accent));
   --video-retention-plot-top: 28px;
   --video-retention-plot-right: 12px;
   --video-retention-plot-bottom: 44px;
@@ -6673,7 +6680,8 @@
   min-height: 420px;
   overflow: hidden;
   isolation: isolate;
-  background: var(--surface-solid, var(--surface));
+  background: var(--design-chart-panel-bg, var(--surface-solid, var(--surface)));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--video-retention-border) 70%, transparent);
 }
 
 .videoRetentionMedia,
@@ -6728,19 +6736,21 @@
   z-index: 2;
   width: 100%;
   height: 100%;
+  overflow: visible;
   pointer-events: none;
 }
 
 .videoRetentionCurve path {
-  fill: color-mix(in srgb, var(--info) 24%, transparent);
+  fill: var(--video-retention-fill);
 }
 
 .videoRetentionCurve polyline {
   fill: none;
-  stroke: var(--warn);
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--video-retention-line) 38%, transparent));
+  stroke: var(--video-retention-line);
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1;
+  stroke-width: 2.5;
   vector-effect: non-scaling-stroke;
 }
 
@@ -6756,8 +6766,8 @@
 .videoRetentionGrid span {
   display: flex;
   justify-content: flex-end;
-  border-top: 1px dashed color-mix(in srgb, var(--text) 22%, transparent);
-  color: var(--text);
+  border-top: 1px dashed var(--video-retention-grid);
+  color: var(--video-retention-axis);
   font-size: 0.72rem;
   line-height: 1;
   text-shadow: 0 1px 2px var(--surface-solid, var(--surface));
@@ -6769,12 +6779,12 @@
   bottom: calc(-1 * var(--video-retention-plot-bottom));
   left: clamp(0%, var(--video-retention-playhead, 0%), 100%);
   z-index: 4;
-  width: 1px;
-  background: color-mix(in srgb, var(--text) 76%, transparent);
+  width: 2px;
+  background: color-mix(in srgb, var(--video-retention-axis) 88%, transparent);
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--surface-solid, var(--surface)) 42%, transparent),
-    0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
-  transform: translateX(-0.5px);
+    0 0 12px color-mix(in srgb, var(--video-retention-line) 34%, transparent);
+  transform: translateX(-1px);
   transition: left 0.12s linear;
 }
 
@@ -6804,7 +6814,7 @@
   z-index: 3;
   display: flex;
   justify-content: space-between;
-  color: var(--text);
+  color: var(--video-retention-axis);
   font-family: var(--num-font);
   font-size: 0.76rem;
   pointer-events: none;
