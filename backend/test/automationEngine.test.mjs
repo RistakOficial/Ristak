@@ -160,6 +160,80 @@ test('formularios exponen respuestas no guardadas para variables, filtros y cond
   assert.equal(evaluateConditionNode(condition, formCtx).handle, 'yes')
 })
 
+test('trigger de formulario reconoce IDs específicos de formularios embebidos', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_embedded_form_${suffix}`
+  const contactId = `contact_embedded_form_${suffix}`
+  const siteId = `landing_${suffix}`
+  const formSiteId = `${siteId}:form_embed:block_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        category: 'trigger',
+        label: 'Cuando...',
+        position: { x: 120, y: 220 },
+        config: {
+          triggers: [{
+            id: 'trigger-form-submitted',
+            type: 'trigger-form-submitted',
+            config: { form: formSiteId }
+          }]
+        }
+      }
+    ],
+    edges: [],
+    viewport: { x: 0, y: 0, zoom: 1 },
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `embedded-form-${suffix}@example.com`,
+        'Lead Formulario Embebido',
+        'Lead',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test formulario embebido', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('form-submitted', {
+      contactId,
+      formId: formSiteId,
+      formName: 'Solicitud interna',
+      siteId,
+      siteName: 'Landing principal',
+      formSiteId,
+      formSiteName: 'Solicitud interna',
+      submissionId: `submission_${suffix}`,
+      formStatus: 'received'
+    })
+
+    const enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.ok(enrollment)
+    const context = JSON.parse(enrollment.context || '{}')
+    assert.equal(context.formSiteId, formSiteId)
+    assert.equal(context.siteId, siteId)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
 test('evaluateConditionNode: una rama → Sí/No', () => {
   const config = {
     branches: [

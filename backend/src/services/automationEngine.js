@@ -556,8 +556,8 @@ function formDataFromContext(ctx = {}) {
   const status = ctx.formStatus || ctx.form_status || ctx.submissionStatus || ctx.submission_status || ctx.status || ''
   const responses = formResponsesFromContext(ctx)
   return {
-    id_formulario: ctx.formId || ctx.form_id || '',
-    nombre_formulario: ctx.formName || ctx.form_name || '',
+    id_formulario: primaryFormIdFromContext(ctx),
+    nombre_formulario: primaryFormNameFromContext(ctx),
     nombre: ctx.contact?.fullName || ctx.contactName || '',
     telefono: ctx.contact?.phone || ctx.phone || '',
     email: ctx.contact?.email || ctx.email || '',
@@ -570,6 +570,75 @@ function formDataFromContext(ctx = {}) {
     respuestas_por_etiqueta: responses.byLabel,
     resumen_respuestas: responses.summary
   }
+}
+
+function automationImportedFormId(siteId, importedFormId) {
+  const site = str(siteId)
+  const form = str(importedFormId)
+  return site && form ? `${site}:imported:${form}` : ''
+}
+
+function primaryFormIdFromContext(ctx = {}) {
+  return (
+    ctx.automationFormId ||
+    ctx.automation_form_id ||
+    ctx.formSiteId ||
+    ctx.form_site_id ||
+    ctx.formId ||
+    ctx.form_id ||
+    ctx.importedFormId ||
+    ctx.imported_form_id ||
+    ctx.siteId ||
+    ctx.site_id ||
+    ''
+  )
+}
+
+function primaryFormNameFromContext(ctx = {}) {
+  return (
+    ctx.formName ||
+    ctx.form_name ||
+    ctx.formSiteName ||
+    ctx.form_site_name ||
+    ctx.importedFormName ||
+    ctx.imported_form_name ||
+    ctx.importedFormTitle ||
+    ctx.imported_form_title ||
+    ctx.siteName ||
+    ctx.site_name ||
+    ''
+  )
+}
+
+function formIdsFromContext(ctx = {}) {
+  const ids = new Set()
+  const add = (value) => {
+    const clean = str(value)
+    if (clean) ids.add(clean)
+  }
+
+  add(ctx.automationFormId)
+  add(ctx.automation_form_id)
+  add(ctx.formId)
+  add(ctx.form_id)
+  add(ctx.formSiteId)
+  add(ctx.form_site_id)
+  add(ctx.siteId)
+  add(ctx.site_id)
+  add(ctx.importedFormId)
+  add(ctx.imported_form_id)
+
+  const siteId = str(ctx.siteId || ctx.site_id || ctx.formId || ctx.form_id)
+  const importedFormId = str(ctx.importedFormId || ctx.imported_form_id)
+  add(automationImportedFormId(siteId, importedFormId))
+
+  return ids
+}
+
+function formSubmittedMatches(selectedForm, ctx = {}) {
+  const selected = str(selectedForm)
+  if (!selected) return true
+  return formIdsFromContext(ctx).has(selected)
 }
 
 function appointmentDataFromContext(ctx = {}) {
@@ -811,8 +880,8 @@ function filterFieldValue(filter, ctx) {
     case 'campaign': return ctx.campaign || null
     case 'form_disqualified': return boolText(formDisqualifiedFromContext(ctx))
     case 'form_status': return ctx.formStatus || ctx.form_status || ctx.submissionStatus || ctx.submission_status || ctx.status || ''
-    case 'form-submitted': return (ctx.submissionId || ctx.submission_id || ctx.formId || ctx.form_id) ? 'true' : 'false'
-    case 'form-specific': return ctx.formId || ctx.form_id || ''
+    case 'form-submitted': return (ctx.submissionId || ctx.submission_id || primaryFormIdFromContext(ctx)) ? 'true' : 'false'
+    case 'form-specific': return primaryFormIdFromContext(ctx)
     case 'form-date': return ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || ''
     case 'form-field-value':
     case 'form_field': return formResponseValue(ctx, filter.customKey || filter.custom_key || filter.fieldKey || filter.field_key)
@@ -950,7 +1019,7 @@ function triggerMatches(trigger, eventType, ctx) {
     case 'form-submitted': {
       if (trigger.type !== 'trigger-form-submitted') return false
       const form = str(config.form)
-      return !form || form === str(ctx.formId)
+      return formSubmittedMatches(form, ctx)
     }
 
     case 'scheduler': {
@@ -1069,8 +1138,8 @@ function ruleFieldValue(rule, ctx) {
     case 'pay-product': return ctx.product || ctx.title || ctx.description || ''
     case 'pay-currency': return ctx.currency || ''
     case 'pay-date': return ctx.paymentDate || ctx.date || ctx.createdAt || ''
-    case 'form-submitted': return (ctx.submissionId || ctx.submission_id || ctx.formId || ctx.form_id) ? 'true' : 'false'
-    case 'form-specific': return ctx.formId || ctx.form_id || ''
+    case 'form-submitted': return (ctx.submissionId || ctx.submission_id || primaryFormIdFromContext(ctx)) ? 'true' : 'false'
+    case 'form-specific': return primaryFormIdFromContext(ctx)
     case 'form-date': return ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || ''
     case 'form_disqualified': return boolText(formDisqualifiedFromContext(ctx))
     case 'form-field-value':
@@ -1317,6 +1386,13 @@ async function createEnrollment(automation, contact, ctx) {
       payload: ctx.payload || null,
       formId: ctx.formId || null,
       formName: ctx.formName || null,
+      automationFormId: ctx.automationFormId || ctx.automation_form_id || null,
+      siteId: ctx.siteId || ctx.site_id || null,
+      siteName: ctx.siteName || ctx.site_name || null,
+      formSiteId: ctx.formSiteId || ctx.form_site_id || null,
+      formSiteName: ctx.formSiteName || ctx.form_site_name || null,
+      importedFormId: ctx.importedFormId || ctx.imported_form_id || null,
+      importedFormName: ctx.importedFormName || ctx.imported_form_name || ctx.importedFormTitle || ctx.imported_form_title || null,
       formStatus: ctx.formStatus || ctx.form_status || ctx.submissionStatus || ctx.submission_status || ctx.status || null,
       formDisqualified: formDisqualifiedFromContext(ctx),
       submissionId: ctx.submissionId || ctx.submission_id || null,

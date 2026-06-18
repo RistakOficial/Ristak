@@ -7,6 +7,7 @@ import {
   listAttributionAdsets,
   listAttributionAds,
   listAttributionCampaigns,
+  listAutomationFormsCatalog,
   updateAutomation
 } from '../src/services/automationsService.js'
 
@@ -144,5 +145,73 @@ test('catálogos de Meta Ads devuelven campañas, conjuntos y anuncios reales', 
     )))
   } finally {
     await db.run('DELETE FROM meta_ads WHERE ad_account_id = ?', [accountId])
+  }
+})
+
+test('catálogo de formularios para automatizaciones incluye normales, embebidos e importados', async () => {
+  const suffix = Date.now()
+  const formSiteId = `site_form_catalog_${suffix}`
+  const landingSiteId = `site_landing_catalog_${suffix}`
+  const importedSiteId = `site_imported_catalog_${suffix}`
+  const blockId = `block_form_catalog_${suffix}`
+  const importId = `import_catalog_${suffix}`
+  const importedLeadFormId = `lead_form_${suffix}`
+  const importedCheckoutFormId = `checkout_form_${suffix}`
+
+  await db.run(
+    `INSERT INTO public_sites (id, name, slug, site_type, status, theme_json, updated_at)
+     VALUES (?, ?, ?, ?, 'published', '{}', CURRENT_TIMESTAMP)`,
+    [formSiteId, 'Formulario directo', `formulario-directo-${suffix}`, 'standard_form']
+  )
+  await db.run(
+    `INSERT INTO public_sites (id, name, slug, site_type, status, theme_json, updated_at)
+     VALUES (?, ?, ?, ?, 'published', '{}', CURRENT_TIMESTAMP)`,
+    [landingSiteId, 'Landing con formulario', `landing-formulario-${suffix}`, 'landing_page']
+  )
+  await db.run(
+    `INSERT INTO public_site_blocks (id, site_id, block_type, label, settings_json, sort_order)
+     VALUES (?, ?, 'form_embed', ?, ?, 1)`,
+    [
+      blockId,
+      landingSiteId,
+      'Solicitud interna',
+      JSON.stringify({ formSiteName: 'Solicitud interna' })
+    ]
+  )
+  await db.run(
+    `INSERT INTO public_sites (id, name, slug, site_type, status, theme_json, updated_at)
+     VALUES (?, ?, ?, ?, 'published', '{}', CURRENT_TIMESTAMP)`,
+    [importedSiteId, 'Landing importada', `landing-importada-${suffix}`, 'landing_page']
+  )
+  await db.run(
+    `INSERT INTO public_site_imports (
+       id, site_id, original_filename, html_sanitized, detected_forms_json,
+       form_mappings_json, security_report_json, status
+     ) VALUES (?, ?, ?, ?, '[]', ?, '[]', 'ready')`,
+    [
+      importId,
+      importedSiteId,
+      'landing.html',
+      '<form></form>',
+      JSON.stringify([
+        { formId: importedLeadFormId, formTitle: 'Formulario de lead', fields: [] },
+        { formId: importedCheckoutFormId, formTitle: 'Formulario de pago', fields: [] }
+      ])
+    ]
+  )
+
+  try {
+    const forms = await listAutomationFormsCatalog()
+    const ids = new Set(forms.map((form) => form.id))
+
+    assert.ok(ids.has(formSiteId))
+    assert.ok(ids.has(`${landingSiteId}:form_embed:${blockId}`))
+    assert.ok(ids.has(`${importedSiteId}:imported:${importedLeadFormId}`))
+    assert.ok(ids.has(`${importedSiteId}:imported:${importedCheckoutFormId}`))
+    assert.ok(forms.some((form) => form.id === `${importedSiteId}:imported:${importedLeadFormId}` && form.name === 'Formulario de lead'))
+  } finally {
+    await db.run('DELETE FROM public_site_imports WHERE id = ?', [importId])
+    await db.run('DELETE FROM public_site_blocks WHERE id = ?', [blockId])
+    await db.run('DELETE FROM public_sites WHERE id IN (?, ?, ?)', [formSiteId, landingSiteId, importedSiteId])
   }
 })

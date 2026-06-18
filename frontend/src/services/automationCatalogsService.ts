@@ -6,7 +6,6 @@ import {
 } from './customFieldsService'
 import { calendarsService } from './calendarsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from './whatsappApiService'
-import { sitesService } from './sitesService'
 import { contactTagsService } from './contactTagsService'
 import { campaignsService, type ConnectedSocialProfile } from './campaignsService'
 import { triggerLinksService } from './triggerLinksService'
@@ -161,11 +160,22 @@ async function loadCalendars(): Promise<CatalogOption[]> {
   }))
 }
 
+interface AutomationFormCatalogItem {
+  id: string
+  name: string
+  siteName?: string
+  meta?: string
+}
+
 async function loadForms(): Promise<CatalogOption[]> {
-  const sites = await sitesService.listSites()
-  return (sites || [])
-    .filter((site) => String(site.siteType || '').includes('form'))
-    .map((site) => ({ value: site.id || site.slug, label: site.name }))
+  const forms = await apiClient.get<AutomationFormCatalogItem[]>('/automations/catalogs/forms')
+  return (forms || [])
+    .map((form) => ({
+      value: String(form.id || '').trim(),
+      label: form.name || 'Formulario sin nombre',
+      meta: form.meta || form.siteName
+    }))
+    .filter((option) => option.value)
 }
 
 async function loadTriggerLinks(): Promise<CatalogOption[]> {

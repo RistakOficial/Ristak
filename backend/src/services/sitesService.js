@@ -15522,6 +15522,12 @@ function customFieldChangeKeys(fields = []) {
     .flatMap(key => [`custom:${key}`, key])
 }
 
+function automationImportedFormId(siteId, importedFormId) {
+  const site = cleanString(siteId)
+  const form = cleanString(importedFormId)
+  return site && form ? `${site}:imported:${form}` : ''
+}
+
 function emitSiteSubmissionAutomationEvents({ contactResult, formEvent, contactChangedFields = [] }) {
   const contactId = contactResult?.contactId || formEvent?.contactId
   import('./automationEngine.js')
@@ -15533,6 +15539,13 @@ function emitSiteSubmissionAutomationEvents({ contactResult, formEvent, contactC
           contactChangeSource: 'form',
           formId: formEvent.formId,
           formName: formEvent.formName,
+          automationFormId: formEvent.automationFormId,
+          siteId: formEvent.siteId,
+          siteName: formEvent.siteName,
+          formSiteId: formEvent.formSiteId,
+          formSiteName: formEvent.formSiteName,
+          importedFormId: formEvent.importedFormId,
+          importedFormName: formEvent.importedFormName,
           submissionId: formEvent.submissionId,
           formStatus: formEvent.formStatus,
           status: formEvent.status,
@@ -16451,6 +16464,8 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
   })
   const contactId = contactResult.contactId
   const submissionId = crypto.randomUUID()
+  const importedAutomationFormId = layers.formMapping?.formId || importedFormId
+  const importedAutomationFormName = layers.formMapping?.formTitle || site.name || ''
 
   await db.run(`
     INSERT INTO public_site_submissions (
@@ -16475,7 +16490,12 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
     formEvent: {
       contactId,
       formId: site.id,
-      formName: site.name || '',
+      formName: importedAutomationFormName,
+      automationFormId: automationImportedFormId(site.id, importedAutomationFormId),
+      siteId: site.id,
+      siteName: site.name || '',
+      importedFormId: importedAutomationFormId,
+      importedFormName: importedAutomationFormName,
       submissionId,
       formStatus: submissionStatus,
       status: submissionStatus,
@@ -16634,6 +16654,7 @@ export async function createSubmissionFromRequest(req, body = {}) {
       : {})
   }
   const submissionId = crypto.randomUUID()
+  const nativeFormContext = getNativeFormContext(site, submissionBlocks)
 
   await db.run(`
     INSERT INTO public_site_submissions (
@@ -16657,8 +16678,12 @@ export async function createSubmissionFromRequest(req, body = {}) {
     contactResult,
     formEvent: {
       contactId,
-      formId: site.id,
-      formName: site.name || '',
+      formId: nativeFormContext.formSiteId || site.id,
+      formName: nativeFormContext.formSiteName || site.name || '',
+      siteId: site.id,
+      siteName: site.name || '',
+      formSiteId: nativeFormContext.formSiteId || site.id,
+      formSiteName: nativeFormContext.formSiteName || site.name || '',
       submissionId,
       formStatus: ruleEvaluation.status,
       status: ruleEvaluation.status,

@@ -488,6 +488,208 @@ function mapMetaCatalogRow(row) {
   }
 }
 
+const AUTOMATION_FORM_FIELD_BLOCK_TYPES = new Set([
+  'short_text',
+  'paragraph',
+  'currency',
+  'number',
+  'dropdown',
+  'radio',
+  'checkboxes',
+  'phone',
+  'email',
+  'date'
+])
+
+function cleanCatalogString(value) {
+  return String(value || '').trim()
+}
+
+function parseCatalogJson(value, fallback) {
+  if (!value) return fallback
+  if (typeof value === 'object') return value
+  try {
+    const parsed = JSON.parse(String(value))
+    return parsed ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+function automationImportedFormId(siteId, importedFormId) {
+  const site = cleanCatalogString(siteId)
+  const form = cleanCatalogString(importedFormId)
+  return site && form ? `${site}:imported:${form}` : ''
+}
+
+function mapAutomationFormOption({ id, name, siteId, siteName, kind, status, updatedAt, meta }) {
+  return {
+    id: cleanCatalogString(id),
+    name: cleanCatalogString(name) || 'Formulario sin nombre',
+    siteId: cleanCatalogString(siteId),
+    siteName: cleanCatalogString(siteName),
+    kind: cleanCatalogString(kind) || 'site',
+    status: cleanCatalogString(status),
+    updatedAt: updatedAt || null,
+    meta: cleanCatalogString(meta)
+  }
+}
+
+function addAutomationFormOption(options, seen, option) {
+  const mapped = mapAutomationFormOption(option)
+  if (!mapped.id || seen.has(mapped.id)) return
+  seen.add(mapped.id)
+  options.push(mapped)
+}
+
+/**
+ * Formularios reales disponibles para disparadores/filtros de automatizaciones.
+ *
+ * No depende del permiso de Sites: si alguien puede administrar automatizaciones,
+ * debe poder elegir el formulario que dispara la automatización.
+ */
+export async function listAutomationFormsCatalog() {
+  const [siteRows, formEmbedRows, fieldSiteRows, importedRows] = await Promise.all([
+    db.all(`
+      SELECT id, name, slug, site_type, status, updated_at
+      FROM public_sites
+      WHERE COALESCE(status, 'draft') != 'archived'
+        AND site_type LIKE '%form%'
+      ORDER BY updated_at DESC, name ASC
+    `),
+    db.all(`
+      SELECT
+        b.id AS block_id,
+        b.label AS block_label,
+        b.settings_json,
+        b.updated_at AS block_updated_at,
+        s.id AS site_id,
+        s.name AS site_name,
+        s.site_type,
+        s.status,
+        s.updated_at AS site_updated_at
+      FROM public_site_blocks b
+      INNER JOIN public_sites s ON s.id = b.site_id
+      WHERE COALESCE(s.status, 'draft') != 'archived'
+        AND b.block_type = 'form_embed'
+      ORDER BY s.updated_at DESC, b.sort_order ASC, b.created_at ASC
+    `),
+    db.all(`
+      SELECT DISTINCT s.id, s.name, s.slug, s.site_type, s.status, s.updated_at
+      FROM public_sites s
+      INNER JOIN public_site_blocks b ON b.site_id = s.id
+      WHERE COALESCE(s.status, 'draft') != 'archived'
+        AND b.block_type IN (${Array.from(AUTOMATION_FORM_FIELD_BLOCK_TYPES).map(() => '?').join(',')})
+      ORDER BY s.updated_at DESC, s.name ASC
+    `, Array.from(AUTOMATION_FORM_FIELD_BLOCK_TYPES)),
+    db.all(`
+      SELECT
+        i.site_id,
+        i.form_mappings_json,
+        i.updated_at AS import_updated_at,
+        s.name AS site_name,
+        s.status,
+        s.updated_at AS site_updated_at
+      FROM public_site_imports i
+      INNER JOIN public_sites s ON s.id = i.site_id
+      WHERE COALESCE(s.status, 'draft') != 'archived'
+      ORDER BY s.updated_at DESC, i.updated_at DESC
+    `)
+  ])
+
+  const options = []
+  const seen = new Set()
+
+  for (const site of siteRows) {
+    addAutomationFormOption(options, seen, {
+      id: site.id,
+      name: site.name,
+      siteId: site.id,
+      siteName: site.name,
+      kind: 'site_form',
+      status: site.status,
+      updatedAt: site.updated_at,
+      meta: site.site_type === 'interactive_form' ? 'Formulario interactivo' : 'Formulario'
+    })
+  }
+
+  for (const row of formEmbedRows) {
+    const settings = parseCatalogJson(row.settings_json, {})
+    const embeddedSiteId = cleanCatalogString(
+      settings.embeddedSiteId ||
+      settings.embedded_site_id ||
+      settings.formSiteId ||
+      settings.form_site_id
+    )
+    const embeddedSiteName = cleanCatalogString(
+      settings.embeddedSiteName ||
+      settings.embedded_site_name ||
+      settings.formSiteName ||
+      settings.form_site_name
+    )
+    const id = embeddedSiteId || `${row.site_id}:form_embed:${row.block_id}`
+    const name = embeddedSiteName || cleanCatalogString(row.block_label) || `Formulario de ${row.site_name}`
+    addAutomationFormOption(options, seen, {
+      id,
+      name,
+      siteId: row.site_id,
+      siteName: row.site_name,
+      kind: embeddedSiteId ? 'embedded_site_form' : 'landing_form',
+      status: row.status,
+      updatedAt: row.block_updated_at || row.site_updated_at,
+      meta: embeddedSiteId ? `Embebido en ${row.site_name}` : `Formulario en ${row.site_name}`
+    })
+  }
+
+  for (const site of fieldSiteRows) {
+    addAutomationFormOption(options, seen, {
+      id: site.id,
+      name: site.name,
+      siteId: site.id,
+      siteName: site.name,
+      kind: 'native_fields',
+      status: site.status,
+      updatedAt: site.updated_at,
+      meta: site.site_type === 'landing_page' ? 'Formulario en landing' : 'Formulario'
+    })
+  }
+
+  for (const row of importedRows) {
+    const mappings = parseCatalogJson(row.form_mappings_json, [])
+    if (!Array.isArray(mappings) || !mappings.length) {
+      addAutomationFormOption(options, seen, {
+        id: row.site_id,
+        name: row.site_name,
+        siteId: row.site_id,
+        siteName: row.site_name,
+        kind: 'imported_site',
+        status: row.status,
+        updatedAt: row.import_updated_at || row.site_updated_at,
+        meta: 'Formulario importado'
+      })
+      continue
+    }
+
+    for (const mapping of mappings) {
+      const formId = cleanCatalogString(mapping?.formId || mapping?.form_id)
+      const id = automationImportedFormId(row.site_id, formId) || row.site_id
+      const formTitle = cleanCatalogString(mapping?.formTitle || mapping?.form_title || mapping?.title)
+      addAutomationFormOption(options, seen, {
+        id,
+        name: formTitle || row.site_name,
+        siteId: row.site_id,
+        siteName: row.site_name,
+        kind: 'imported_form',
+        status: row.status,
+        updatedAt: row.import_updated_at || row.site_updated_at,
+        meta: formTitle && formTitle !== row.site_name ? `Importado de ${row.site_name}` : 'Formulario importado'
+      })
+    }
+  }
+
+  return options
+}
+
 /**
  * Campañas reales sincronizadas desde Meta Ads: alimentan filtros y triggers
  * donde el usuario antes tenia que adivinar nombres o IDs.
