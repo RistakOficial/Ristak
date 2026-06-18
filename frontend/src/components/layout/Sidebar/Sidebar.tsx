@@ -29,7 +29,6 @@ import { useAppConfig, useAppVersion } from '@/hooks'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useInitialization } from '@/contexts/InitializationContext'
-import { settingsNavigation } from '@/pages/Settings/settingsNav'
 import {
   AI_AGENT_NAV_ITEMS,
   hasModuleAccess,
@@ -177,43 +176,22 @@ const getNavLinkClasses = (isActive: boolean, extraClasses?: string, collapsed =
   extraClasses
 )
 
-interface SettingsNavGroupProps {
+interface SettingsNavLinkProps {
   pathname: string
-  open: boolean
-  items: typeof settingsNavigation
   collapsed?: boolean
-  onToggle: () => void
-  onRequestExpand?: () => void
   onNavigate?: () => void
 }
 
-// Grupo expandible de Configuración (estilo Cloudflare): el padre vive en la
-// misma lista del sidebar y al expandirse muestra las secciones anidadas con
-// una guía vertical. El estado activo reutiliza la misma receta visual que el
-// resto de los items del panel.
-const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({
-  pathname,
-  open,
-  items,
-  collapsed = false,
-  onToggle,
-  onRequestExpand,
-  onNavigate
-}) => {
+const SettingsNavLink: React.FC<SettingsNavLinkProps> = ({ pathname, collapsed = false, onNavigate }) => {
   const isSettingsRoute = pathname.startsWith('/settings')
-
-  if (!items.length) return null
 
   if (collapsed) {
     return (
       <div className="pt-2">
         <div className="mx-2 mb-2 border-t border-[var(--border)]" />
-        <button
-          type="button"
-          onClick={() => {
-            if (!open) onToggle()
-            onRequestExpand?.()
-          }}
+        <Link
+          to="/settings"
+          onClick={onNavigate}
           aria-label="Configuración"
           title="Configuración"
           data-ristak-sidebar-nav-item
@@ -222,7 +200,7 @@ const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({
         >
           <Settings className="h-5 w-5 flex-shrink-0" />
           <span className="sr-only">Configuración</span>
-        </button>
+        </Link>
       </div>
     )
   }
@@ -230,83 +208,16 @@ const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({
   return (
     <div className="pt-2">
       <div className="mb-2 border-t border-[var(--border)]" />
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
+      <Link
+        to="/settings"
+        onClick={onNavigate}
         data-ristak-sidebar-nav-item
-        data-active={isSettingsRoute && !open ? 'true' : undefined}
-        className={cn(getNavLinkClasses(isSettingsRoute && !open, 'w-full'))}
+        data-active={isSettingsRoute ? 'true' : undefined}
+        className={cn(getNavLinkClasses(isSettingsRoute, 'w-full'))}
       >
         <Settings className="h-5 w-5 flex-shrink-0" />
         <span className="flex-1 text-left">Configuración</span>
-        <ChevronDown
-          className={cn(
-            'h-4 w-4 flex-shrink-0 text-[var(--text-mute)] transition-transform',
-            open && 'rotate-180'
-          )}
-        />
-      </button>
-
-      {open && (
-        <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[var(--border)] pl-2.5">
-          {items.map((item) => {
-            const hasChildren = Boolean(item.children?.length)
-            const sectionOpen = pathname.startsWith(item.to)
-            const isActive = hasChildren ? sectionOpen : pathname.startsWith(item.to)
-            return (
-              <React.Fragment key={item.to}>
-                <Link
-                  to={item.to}
-                  onClick={onNavigate}
-                  data-ristak-sidebar-nav-item
-                  data-active={isActive ? 'true' : undefined}
-                  className={cn(
-                    'flex items-center justify-between rounded-md px-2.5 py-[7px] text-[13px] font-medium transition-colors',
-                    isActive
-                      ? 'bg-[var(--accent-soft)] text-[var(--text)]'
-                      : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
-                  )}
-                >
-                  {item.label}
-                  {hasChildren && (
-                    <ChevronDown
-                      className={cn(
-                        'h-3.5 w-3.5 flex-shrink-0 text-[var(--text-mute)] transition-transform',
-                        sectionOpen && 'rotate-180'
-                      )}
-                    />
-                  )}
-                </Link>
-                {hasChildren && sectionOpen && (
-                  <div className="ml-2.5 space-y-0.5 border-l border-[var(--border)] pl-2">
-                    {item.children!.map((child) => {
-                      const childActive = child.end ? pathname === child.to : pathname.startsWith(child.to)
-                      return (
-                        <Link
-                          key={`${child.to}-${child.label}`}
-                          to={child.to}
-                          onClick={onNavigate}
-                          data-ristak-sidebar-nav-item
-                          data-active={childActive ? 'true' : undefined}
-                          className={cn(
-                            'block rounded-md px-2.5 py-[6px] text-[12.5px] font-medium transition-colors',
-                            childActive
-                              ? 'bg-[var(--accent-soft)] text-[var(--text)]'
-                              : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
-                          )}
-                        >
-                          {child.label}
-                        </Link>
-                      )
-                    })}
-                  </div>
-                )}
-              </React.Fragment>
-            )
-          })}
-        </div>
-      )}
+      </Link>
     </div>
   )
 }
@@ -571,15 +482,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isEditMode, setIsEditMode] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
   const isAIAgentRoute = location.pathname.startsWith('/ai-agent')
-  const isSettingsRoute = location.pathname.startsWith('/settings')
-  const [settingsOpen, setSettingsOpen] = useState(isSettingsRoute)
   const [aiAgentOpen, setAiAgentOpen] = useState(isAIAgentRoute)
 
   // Sincronizar el estado de los grupos con la ruta actual
-  useEffect(() => {
-    setSettingsOpen(isSettingsRoute)
-  }, [isSettingsRoute])
-
   useEffect(() => {
     setAiAgentOpen(isAIAgentRoute)
   }, [isAIAgentRoute])
@@ -594,10 +499,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const accountMenuLabel = user?.businessName || user?.email || user?.name || user?.username || 'Usuario'
   const initials = getInitials(accountMenuLabel, user?.email)
-  const visibleSettingsNavigation = useMemo(
-    () => settingsNavigation.filter((item) => !item.permissionKey || hasModuleAccess(user, item.permissionKey, 'read')),
-    [user]
-  )
   const canUseAIAgent = hasModuleAccess(user, 'ai_agent', 'read')
   const visibleAIAgentNavigation = useMemo(
     () => AI_AGENT_NAV_ITEMS.filter((item) => hasLicenseFeature(user, item.featureKeys)),
@@ -999,14 +900,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onNavigate={handleNavigate}
               />
             )}
-            <SettingsNavGroup
-              pathname={location.pathname}
-              open={settingsOpen}
-              items={visibleSettingsNavigation}
-              onToggle={() => setSettingsOpen((current) => !current)}
-              onRequestExpand={handleRequestExpand}
-              onNavigate={handleNavigate}
-            />
+            <SettingsNavLink pathname={location.pathname} onNavigate={handleNavigate} />
           </DndContext>
         ) : (
           <div
@@ -1049,13 +943,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onNavigate={handleNavigate}
               />
             )}
-            <SettingsNavGroup
+            <SettingsNavLink
               pathname={location.pathname}
-              open={settingsOpen}
-              items={visibleSettingsNavigation}
               collapsed={collapsed}
-              onToggle={() => setSettingsOpen((current) => !current)}
-              onRequestExpand={handleRequestExpand}
               onNavigate={handleNavigate}
             />
           </div>
