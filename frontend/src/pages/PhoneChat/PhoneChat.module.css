@@ -5847,6 +5847,10 @@
   text-align: left;
 }
 
+.templateChoiceGrid button:only-child {
+  grid-column: 1 / -1;
+}
+
 .templateChoiceGrid button span,
 .templateRowIcon {
   display: inline-flex;
@@ -5921,6 +5925,54 @@
   background: var(--phone-chat-surface-soft);
   font-size: 12px;
   font-weight: 820;
+}
+
+.templateSearchBox {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 14px;
+  background: var(--phone-chat-surface);
+  color: var(--phone-chat-muted);
+}
+
+.templateSearchBox > svg {
+  position: absolute;
+  left: 13px;
+  pointer-events: none;
+}
+
+.templateSearchBox input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 40px 0 40px;
+  border: 0;
+  outline: 0;
+  color: var(--phone-chat-text);
+  background: transparent;
+  font: inherit;
+  font-size: 16px;
+}
+
+.templateSearchBox input::placeholder {
+  color: var(--phone-chat-muted);
+}
+
+.templateSearchBox button {
+  position: absolute;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-surface-soft);
 }
 
 .quickTemplateForm {

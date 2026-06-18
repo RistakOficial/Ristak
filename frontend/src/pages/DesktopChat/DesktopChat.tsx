@@ -62,7 +62,18 @@ import { conversationalAgentService, type ConversationAgentState, type Conversat
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { subscribeToChatLiveEvents, type ChatLiveMessageEvent } from '@/services/chatLiveEventsService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
-import { whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus } from '@/services/whatsappApiService'
+import {
+  messageTemplatesService,
+  type MessageTemplateCategory,
+  type MessageTemplatePayload
+} from '@/services/messageTemplatesService'
+import {
+  whatsappApiService,
+  type ScheduledChatMessage,
+  type WhatsAppApiPhoneNumber,
+  type WhatsAppApiStatus,
+  type WhatsAppApiTemplate
+} from '@/services/whatsappApiService'
 import type { Contact, ContactAppointment, ContactPayment } from '@/types'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
@@ -80,6 +91,7 @@ type DraftAttachmentKind = 'image' | 'document'
 type InfoPanelView = 'summary' | 'journey'
 type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'webchat' | 'meta'
 type SchedulePeriod = 'AM' | 'PM'
+type TemplatePanelMode = 'choice' | 'select' | 'create'
 
 interface ContactChannelBadge {
   kind: ContactChannelBadgeKind
@@ -304,6 +316,7 @@ const MESSAGE_AUDIO_WAVE_PATTERN = [13, 24, 36, 19, 30, 46, 22, 15, 40, 52, 34, 
 const MESSAGE_AUDIO_WAVE_BAR_COUNT = 30
 const FAILED_MESSAGE_STATUSES = new Set(['failed', 'error', 'undelivered', 'rejected', 'cancelled'])
 const PENDING_MESSAGE_STATUSES = new Set(['pending', 'queued', 'sending', 'enviando', 'enviando por qr', 'scheduled'])
+const TEMPLATE_DISABLED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED', 'ARCHIVED', 'DELETED', 'PENDING', 'IN_APPEAL'])
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CANCELED_APPOINTMENT_STATUSES = new Set(['cancelled', 'canceled', 'no_show', 'noshow', 'invalid', 'failed', 'missed', 'deleted', 'void', 'voided'])
 const HIGHLEVEL_CHANNEL_LABELS: Record<HighLevelChatChannel, string> = {
@@ -329,6 +342,105 @@ const CONVERSATION_AGENT_STATUS_LABELS: Record<string, string> = {
   skipped: 'Agente omitido en este chat',
   completed: 'Objetivo completado por el agente',
   discarded: 'Conversación descartada'
+}
+const EMPTY_TEMPLATE_LOCATION = {
+  latitude: '',
+  longitude: '',
+  name: '',
+  address: ''
+}
+const QUICK_TEMPLATE_CATEGORIES: Array<{ value: MessageTemplateCategory; label: string }> = [
+  { value: 'utility', label: 'Utilidad' },
+  { value: 'marketing', label: 'Marketing' },
+  { value: 'authentication', label: 'Autenticación' }
+]
+const QUICK_TEMPLATE_LANGUAGES = [
+  { value: 'es_MX', label: 'Español México' },
+  { value: 'es', label: 'Español' },
+  { value: 'en_US', label: 'Inglés Estados Unidos' }
+]
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message?: unknown }).message || fallback)
+  }
+  return fallback
+}
+
+function normalizeTemplateNameInput(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function getTemplateStatus(template?: WhatsAppApiTemplate | null) {
+  return String(template?.status || '').trim().toUpperCase()
+}
+
+function getTemplateStatusLabel(status = '') {
+  const normalized = status.trim().toUpperCase()
+  const labels: Record<string, string> = {
+    APPROVED: 'Aprobada',
+    PENDING: 'En revisión',
+    REJECTED: 'Rechazada',
+    PAUSED: 'Pausada',
+    DISABLED: 'Bloqueada',
+    ARCHIVED: 'Archivada',
+    DELETED: 'Eliminada',
+    IN_APPEAL: 'En apelación'
+  }
+  return labels[normalized] || formatPlainStatus(normalized || 'Sin estado')
+}
+
+function getTemplateBodyPreview(template: WhatsAppApiTemplate) {
+  const components = Array.isArray(template.components) ? template.components : []
+  const body = components.find((component) => String(component?.type || '').toLowerCase() === 'body')
+  const header = components.find((component) => String(component?.type || '').toLowerCase() === 'header')
+  const text = String(body?.text || body?.body || header?.text || '').trim()
+  return text || `${template.name} · ${template.language}`
+}
+
+function getTemplateBlockedReason(template: WhatsAppApiTemplate) {
+  const status = getTemplateStatus(template)
+  if (status === 'APPROVED') return ''
+  return template.reason || `${getTemplateStatusLabel(status)}. Solo se pueden enviar plantillas aprobadas.`
+}
+
+function createQuickTemplatePayload({
+  name,
+  bodyText,
+  category,
+  language
+}: {
+  name: string
+  bodyText: string
+  category: MessageTemplateCategory
+  language: string
+}): MessageTemplatePayload {
+  return {
+    folderId: null,
+    name,
+    description: 'Creada desde Ristak',
+    category,
+    language,
+    status: 'draft',
+    headerEnabled: false,
+    headerType: 'none',
+    headerText: '',
+    headerMediaUrl: '',
+    headerLocation: { ...EMPTY_TEMPLATE_LOCATION },
+    bodyText,
+    footerText: '',
+    buttons: [],
+    variableExamples: {},
+    variableBindings: { headerText: {}, bodyText: {} },
+    ycloudTemplateId: null,
+    ycloudStatus: null
+  }
 }
 
 function getContactName(contact?: Partial<Contact> | null) {
@@ -1380,6 +1492,19 @@ export const DesktopChat: React.FC = () => {
   const [composerText, setComposerText] = useState('')
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
   const [composerMenuOpen, setComposerMenuOpen] = useState(false)
+  const [templatePanelOpen, setTemplatePanelOpen] = useState(false)
+  const [templatePanelMode, setTemplatePanelMode] = useState<TemplatePanelMode>('choice')
+  const [templates, setTemplates] = useState<WhatsAppApiTemplate[]>([])
+  const [templatesLoading, setTemplatesLoading] = useState(false)
+  const [templatesLoaded, setTemplatesLoaded] = useState(false)
+  const [templatesError, setTemplatesError] = useState('')
+  const [templateSearch, setTemplateSearch] = useState('')
+  const [templateSendingId, setTemplateSendingId] = useState<string | null>(null)
+  const [creatingTemplate, setCreatingTemplate] = useState(false)
+  const [newTemplateName, setNewTemplateName] = useState('')
+  const [newTemplateBody, setNewTemplateBody] = useState('')
+  const [newTemplateCategory, setNewTemplateCategory] = useState<MessageTemplateCategory>('utility')
+  const [newTemplateLanguage, setNewTemplateLanguage] = useState('es_MX')
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(() => createDefaultScheduleDraft())
   const [scheduleEditingMessageId, setScheduleEditingMessageId] = useState<string | null>(null)
@@ -1422,6 +1547,17 @@ export const DesktopChat: React.FC = () => {
   const selectedBusinessPhone = useMemo(() => getSelectedBusinessPhone(whatsappStatus), [whatsappStatus])
   const selectedBusinessPhoneValue = getBusinessPhoneValue(selectedBusinessPhone)
   const whatsappConnected = Boolean(whatsappStatus?.connected && selectedBusinessPhoneValue)
+  const filteredTemplates = useMemo(() => {
+    const query = templateSearch.trim().toLowerCase()
+    if (!query) return templates
+    return templates.filter((template) => [
+      template.name,
+      template.language,
+      template.category,
+      template.status,
+      getTemplateBodyPreview(template)
+    ].filter(Boolean).join(' ').toLowerCase().includes(query))
+  }, [templateSearch, templates])
   const selectedCalendar = useMemo(
     () => calendars.find((calendar) => calendar.id === selectedCalendarId) || calendars[0] || null,
     [calendars, selectedCalendarId]
@@ -1550,15 +1686,19 @@ export const DesktopChat: React.FC = () => {
     ))
   }, [activeContact, agentPriorityChatIdSet, archivedChatIdSet, chats, removedChatStateMap, removedChatStates])
   useEffect(() => {
-    if (!composerMenuOpen) return
+    if (!composerMenuOpen && !templatePanelOpen) return
 
     const closeOnOutsidePointer = (event: PointerEvent) => {
       const target = event.target
       if (target instanceof Node && composerMenuRef.current?.contains(target)) return
       setComposerMenuOpen(false)
+      setTemplatePanelOpen(false)
     }
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setComposerMenuOpen(false)
+      if (event.key === 'Escape') {
+        setComposerMenuOpen(false)
+        setTemplatePanelOpen(false)
+      }
     }
 
     document.addEventListener('pointerdown', closeOnOutsidePointer)
@@ -1567,7 +1707,7 @@ export const DesktopChat: React.FC = () => {
       document.removeEventListener('pointerdown', closeOnOutsidePointer)
       document.removeEventListener('keydown', closeOnEscape)
     }
-  }, [composerMenuOpen])
+  }, [composerMenuOpen, templatePanelOpen])
   const visibleChatCount = filteredChats.length + agentPriorityChatRows.length
   const inboxTitle = archivedViewOpen ? 'Archivados' : agentAssignedViewOpen ? 'Chats del bot' : 'Conversaciones'
   const inboxSubtitle = archivedViewOpen
@@ -1770,6 +1910,27 @@ export const DesktopChat: React.FC = () => {
       setCalendarsLoading(false)
     }
   }, [accessToken, locationId])
+
+  const loadTemplates = useCallback(async () => {
+    setTemplatesError('')
+    setTemplatesLoading(true)
+
+    try {
+      const [status, response] = await Promise.all([
+        whatsappApiService.getStatus().catch(() => null),
+        whatsappApiService.getTemplates()
+      ])
+      if (status) setWhatsappStatus(status)
+      setTemplates(Array.isArray(response.items) ? response.items : [])
+      setTemplatesLoaded(true)
+    } catch (error) {
+      setTemplates([])
+      setTemplatesLoaded(true)
+      setTemplatesError(getErrorMessage(error, 'No se pudieron cargar las plantillas.'))
+    } finally {
+      setTemplatesLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     loadChats()
@@ -2134,6 +2295,24 @@ export const DesktopChat: React.FC = () => {
     setDraftAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))
   }, [])
 
+  const closeComposerAgentMenu = useCallback(() => {
+    setAgentComposerMenuOpen(false)
+    setAgentPickerOpen(false)
+  }, [])
+
+  const closeTemplatePanel = useCallback(() => {
+    setTemplatePanelOpen(false)
+  }, [])
+
+  const handleOpenTemplatePanel = useCallback(() => {
+    setComposerMenuOpen(false)
+    closeComposerAgentMenu()
+    setTemplatePanelMode('choice')
+    setTemplateSearch('')
+    setTemplatePanelOpen(true)
+    void loadTemplates()
+  }, [closeComposerAgentMenu, loadTemplates])
+
   const handleComposerMenuAction = useCallback((action: 'templates' | 'photos' | 'documents' | 'location' | 'clabe') => {
     if (action === 'photos') {
       photoInputRef.current?.click()
@@ -2144,13 +2323,142 @@ export const DesktopChat: React.FC = () => {
       return
     }
     if (action === 'templates') {
-      setComposerText('Hola, te comparto la información en un momento.')
-      setComposerMenuOpen(false)
+      handleOpenTemplatePanel()
       return
     }
     showToast('info', action === 'location' ? 'Ubicación' : 'CLABE', 'Esta opción ya está en el menú. La conexión completa queda lista para el siguiente paso.')
     setComposerMenuOpen(false)
-  }, [showToast])
+  }, [handleOpenTemplatePanel, showToast])
+
+  const handleSendTemplate = async (template: WhatsAppApiTemplate) => {
+    if (!activeContact?.phone) {
+      showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de enviar una plantilla.')
+      return
+    }
+
+    if (!whatsappConnected) {
+      showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API en configuración para enviar plantillas.')
+      return
+    }
+
+    if (!selectedBusinessPhoneValue) {
+      showToast('error', 'Falta el WhatsApp del negocio', 'Configura el número conectado para responder este chat.')
+      return
+    }
+
+    const status = getTemplateStatus(template)
+    if (status !== 'APPROVED') {
+      showToast('warning', getTemplateStatusLabel(status), getTemplateBlockedReason(template))
+      return
+    }
+
+    const optimisticId = `desktop-template-${Date.now()}`
+    const sentAt = new Date().toISOString()
+    const preview = getTemplateBodyPreview(template)
+    setTemplateSendingId(template.id)
+    setTemplatePanelOpen(false)
+    setComposerMenuOpen(false)
+    setMessages((current) => [
+      ...current,
+      {
+        id: optimisticId,
+        text: preview,
+        date: sentAt,
+        direction: 'outbound',
+        status: 'enviando',
+        businessPhone: selectedBusinessPhoneValue,
+        businessPhoneNumberId: selectedBusinessPhone?.id || '',
+        transport: 'api'
+      }
+    ])
+    setChats((current) => current.map((contact) => (
+      contact.id === activeContact.id
+        ? {
+            ...contact,
+            lastMessageText: preview || `Plantilla: ${template.name}`,
+            lastMessageDate: sentAt,
+            lastMessageDirection: 'outbound',
+            messageCount: Number(contact.messageCount || 0) + 1
+          }
+        : contact
+    )))
+
+    try {
+      const result = await whatsappApiService.sendTemplate({
+        to: activeContact.phone,
+        from: selectedBusinessPhoneValue,
+        contactId: activeContact.id,
+        templateId: template.id,
+        templateName: template.name,
+        language: template.language,
+        externalId: optimisticId,
+        phoneNumberId: selectedBusinessPhone?.id || undefined
+      })
+      setMessages((current) => current.map((message) => (
+        message.id === optimisticId
+          ? { ...message, status: 'sent', errorReason: '', transport: result.transport || message.transport }
+          : message
+      )))
+      showToast(
+        'success',
+        result.transport === 'qr' ? 'Plantilla enviada por QR' : 'Plantilla enviada',
+        result.transport === 'qr'
+          ? `${template.name} se mandó como texto por el respaldo QR.`
+          : `${template.name} se mandó por WhatsApp.`
+      )
+      await Promise.all([
+        loadConversation(activeContact.id),
+        loadChats({ silent: true })
+      ])
+      await loadTemplates()
+    } catch (error) {
+      const message = getErrorMessage(error, 'Intenta enviar la plantilla otra vez.')
+      setMessages((current) => current.map((item) => (
+        item.id === optimisticId ? { ...item, status: 'error', errorReason: message } : item
+      )))
+      showToast('error', 'No se envió la plantilla', message)
+    } finally {
+      setTemplateSendingId(null)
+    }
+  }
+
+  const handleCreateQuickTemplate = async () => {
+    const name = normalizeTemplateNameInput(newTemplateName)
+    const bodyText = newTemplateBody.trim()
+
+    if (!name) {
+      showToast('warning', 'Falta el nombre', 'Escribe un nombre corto para identificar la plantilla.')
+      return
+    }
+
+    if (!bodyText) {
+      showToast('warning', 'Falta el mensaje', 'Escribe el texto que quieres mandar al cliente.')
+      return
+    }
+
+    setCreatingTemplate(true)
+    try {
+      const saved = await messageTemplatesService.createTemplate(createQuickTemplatePayload({
+        name,
+        bodyText,
+        category: newTemplateCategory,
+        language: newTemplateLanguage
+      }))
+      await messageTemplatesService.submitTemplate(saved.id)
+      setNewTemplateName('')
+      setNewTemplateBody('')
+      setNewTemplateCategory('utility')
+      setNewTemplateLanguage('es_MX')
+      setTemplatePanelMode('select')
+      showToast('success', 'Plantilla enviada a revisión', 'Cuando Meta la apruebe, aparecerá lista para enviar aquí mismo.')
+      await loadTemplates()
+    } catch (error) {
+      showToast('error', 'No se pudo crear', getErrorMessage(error, 'Revisa la plantilla e intenta otra vez.'))
+      await loadTemplates()
+    } finally {
+      setCreatingTemplate(false)
+    }
+  }
 
   const handleUpdateContactTags = useCallback(async (tagIds: string[]) => {
     if (!activeContact?.id) return
@@ -2220,20 +2528,16 @@ export const DesktopChat: React.FC = () => {
     setAgentStates((current) => ({ ...current, [nextState.contactId]: nextState }))
   }, [])
 
-  const closeComposerAgentMenu = useCallback(() => {
-    setAgentComposerMenuOpen(false)
-    setAgentPickerOpen(false)
-  }, [])
-
   const handleOpenComposerAgentMenu = useCallback(() => {
     if (!activeContact?.id || conversationAgentBusy) return
     setComposerMenuOpen(false)
+    closeTemplatePanel()
     setAgentComposerMenuOpen((current) => {
       const nextOpen = !current
       setAgentPickerOpen(nextOpen && (!conversationAgentActive || !conversationAgentState?.agentId))
       return nextOpen
     })
-  }, [activeContact?.id, conversationAgentActive, conversationAgentBusy, conversationAgentState?.agentId])
+  }, [activeContact?.id, closeTemplatePanel, conversationAgentActive, conversationAgentBusy, conversationAgentState?.agentId])
 
   const closeScheduleModal = useCallback(() => {
     if (schedulingMessage) return
@@ -2245,6 +2549,7 @@ export const DesktopChat: React.FC = () => {
   const handleOpenScheduleModal = useCallback(() => {
     if (!activeContact) return
     setComposerMenuOpen(false)
+    closeTemplatePanel()
     closeComposerAgentMenu()
 
     if (!composerText.trim()) {
@@ -2261,7 +2566,7 @@ export const DesktopChat: React.FC = () => {
     setScheduleError('')
     setScheduleEditingMessageId(null)
     setScheduleOpen(true)
-  }, [activeContact, closeComposerAgentMenu, composerText, draftAttachments.length, showToast, voiceDraft])
+  }, [activeContact, closeComposerAgentMenu, closeTemplatePanel, composerText, draftAttachments.length, showToast, voiceDraft])
 
   const handleScheduleDraftChange = useCallback((patch: Partial<ScheduleDraft>) => {
     setScheduleDraft((current) => ({ ...current, ...patch }))
@@ -2871,6 +3176,206 @@ export const DesktopChat: React.FC = () => {
     } finally {
       setComposerStatus('idle')
     }
+  }
+
+  const renderTemplatePanel = () => {
+    if (!templatePanelOpen) return null
+
+    const closePanel = () => {
+      setTemplatePanelOpen(false)
+      setTemplateSearch('')
+    }
+    const canSelectTemplates = templates.length > 0
+
+    const renderPanelHeader = (title: string, subtitle?: string, showBack = false) => (
+      <div className={styles.templatePanelHeader}>
+        <div className={styles.templatePanelTitle}>
+          {showBack ? (
+            <button type="button" className={styles.templateBackButton} onClick={() => setTemplatePanelMode('choice')} aria-label="Volver a opciones de plantillas">
+              <ChevronLeft size={16} />
+            </button>
+          ) : (
+            <span className={styles.templateHeaderIcon}>
+              <FileText size={16} />
+            </span>
+          )}
+          <span>
+            <strong>{title}</strong>
+            {subtitle ? <small>{subtitle}</small> : null}
+          </span>
+        </div>
+        <button type="button" className={styles.templateCloseButton} onClick={closePanel} aria-label="Cerrar plantillas">
+          <X size={16} />
+        </button>
+      </div>
+    )
+
+    if (templatePanelMode === 'create') {
+      return (
+        <div className={styles.templatePanel} role="dialog" aria-label="Crear plantilla desde el chat">
+          {renderPanelHeader('Nueva plantilla', 'Guárdala sin salir del chat.', true)}
+          <form
+            className={styles.templateForm}
+            onSubmit={(event) => {
+              event.preventDefault()
+              void handleCreateQuickTemplate()
+            }}
+          >
+            <label>
+              <span>Nombre</span>
+              <input
+                value={newTemplateName}
+                onChange={(event) => setNewTemplateName(event.target.value)}
+                onBlur={() => setNewTemplateName(normalizeTemplateNameInput(newTemplateName))}
+                placeholder="ej. recordatorio_cita"
+              />
+            </label>
+            <div className={styles.templateFormGrid}>
+              <label>
+                <span>Categoría</span>
+                <CustomSelect value={newTemplateCategory} onChange={(event) => setNewTemplateCategory(event.target.value as MessageTemplateCategory)}>
+                  {QUICK_TEMPLATE_CATEGORIES.map((category) => (
+                    <option key={category.value} value={category.value}>{category.label}</option>
+                  ))}
+                </CustomSelect>
+              </label>
+              <label>
+                <span>Idioma</span>
+                <CustomSelect value={newTemplateLanguage} onChange={(event) => setNewTemplateLanguage(event.target.value)}>
+                  {QUICK_TEMPLATE_LANGUAGES.map((language) => (
+                    <option key={language.value} value={language.value}>{language.label}</option>
+                  ))}
+                </CustomSelect>
+              </label>
+            </div>
+            <label>
+              <span>Mensaje</span>
+              <textarea
+                value={newTemplateBody}
+                onChange={(event) => setNewTemplateBody(event.target.value)}
+                placeholder="Hola, te escribo para confirmar..."
+                rows={5}
+              />
+            </label>
+            <Button type="submit" loading={creatingTemplate} fullWidth>
+              Guardar y enviar a revisión
+            </Button>
+          </form>
+        </div>
+      )
+    }
+
+    if (templatePanelMode === 'select') {
+      return (
+        <div className={styles.templatePanel} role="dialog" aria-label="Seleccionar plantilla guardada">
+          {renderPanelHeader('Seleccionar plantilla', `${templates.length} guardada${templates.length === 1 ? '' : 's'}`, true)}
+          <div className={styles.templateSearchBox}>
+            <Search size={15} />
+            <input
+              value={templateSearch}
+              onChange={(event) => setTemplateSearch(event.target.value)}
+              placeholder="Buscar plantilla..."
+              autoFocus
+            />
+            {templateSearch ? (
+              <button type="button" onClick={() => setTemplateSearch('')} aria-label="Limpiar búsqueda de plantillas">
+                <X size={14} />
+              </button>
+            ) : null}
+          </div>
+          {templatesError ? (
+            <div className={styles.templateEmptyState}>
+              <CircleAlert size={18} />
+              <span>{templatesError}</span>
+              <button type="button" onClick={() => { void loadTemplates() }}>Reintentar</button>
+            </div>
+          ) : templatesLoading && templates.length === 0 ? (
+            <div className={styles.templateLoadingState} role="status" aria-live="polite">
+              <Loader2 size={18} className={styles.spin} />
+              <span>Cargando plantillas</span>
+            </div>
+          ) : filteredTemplates.length === 0 ? (
+            <div className={styles.templateEmptyState}>
+              <FileText size={18} />
+              <span>{templateSearch ? 'No encontré plantillas con ese nombre.' : 'Todavía no hay plantillas guardadas.'}</span>
+              <button type="button" onClick={() => setTemplatePanelMode('create')}>Crear nueva</button>
+            </div>
+          ) : (
+            <div className={styles.templateList} role="listbox" aria-label="Plantillas guardadas">
+              {filteredTemplates.map((template) => {
+                const status = getTemplateStatus(template)
+                const approved = status === 'APPROVED'
+                const statusClass = approved
+                  ? styles.templateStatusApproved
+                  : TEMPLATE_DISABLED_STATUSES.has(status)
+                    ? styles.templateStatusBlocked
+                    : styles.templateStatusPending
+
+                return (
+                  <button
+                    key={`${template.id}-${template.language}`}
+                    type="button"
+                    className={styles.templateRow}
+                    onClick={() => { void handleSendTemplate(template) }}
+                    disabled={!approved || Boolean(templateSendingId)}
+                    role="option"
+                    aria-selected="false"
+                  >
+                    <span className={styles.templateRowIcon}>
+                      <FileText size={16} />
+                    </span>
+                    <span className={styles.templateRowMain}>
+                      <strong>{template.name}</strong>
+                      <small>{getTemplateBodyPreview(template)}</small>
+                      {!approved ? <em>{getTemplateBlockedReason(template)}</em> : null}
+                    </span>
+                    <span className={`${styles.templateStatus} ${statusClass}`}>
+                      {templateSendingId === template.id ? <Loader2 size={12} className={styles.spin} /> : getTemplateStatusLabel(status)}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    return (
+      <div className={styles.templatePanel} role="dialog" aria-label="Plantillas del chat">
+        {renderPanelHeader('Plantillas', templatesLoaded && !canSelectTemplates ? 'Crea la primera plantilla.' : 'Trabaja sin salir del chat.')}
+        <div className={styles.templateChoiceList}>
+          {templatesLoading && !templatesLoaded ? (
+            <div className={styles.templateLoadingState} role="status" aria-live="polite">
+              <Loader2 size={18} className={styles.spin} />
+              <span>Cargando plantillas</span>
+            </div>
+          ) : null}
+          {canSelectTemplates ? (
+            <button type="button" className={styles.templateChoiceButton} onClick={() => {
+              setTemplateSearch('')
+              setTemplatePanelMode('select')
+            }}>
+              <span><Search size={17} /></span>
+              <strong>Seleccionar plantilla</strong>
+              <small>Busca una guardada y envíala directo al chat.</small>
+            </button>
+          ) : null}
+          <button type="button" className={styles.templateChoiceButton} onClick={() => setTemplatePanelMode('create')}>
+            <span><Plus size={17} /></span>
+            <strong>Crear nueva plantilla</strong>
+            <small>Escribe el mensaje y mándalo a revisión.</small>
+          </button>
+        </div>
+        {templatesError ? (
+          <div className={styles.templateInlineError}>
+            <CircleAlert size={15} />
+            <span>{templatesError}</span>
+            <button type="button" onClick={() => { void loadTemplates() }}>Reintentar</button>
+          </div>
+        ) : null}
+      </div>
+    )
   }
 
   const renderComposerAgentMenu = () => {
@@ -3684,10 +4189,11 @@ export const DesktopChat: React.FC = () => {
                     className={styles.composerPlusButton}
                     onClick={() => {
                       closeComposerAgentMenu()
+                      closeTemplatePanel()
                       setComposerMenuOpen((current) => !current)
                     }}
                     aria-label="Abrir opciones de adjuntos"
-                    aria-expanded={composerMenuOpen}
+                    aria-expanded={composerMenuOpen || templatePanelOpen}
                   >
                     <Plus size={20} />
                   </button>
@@ -3715,6 +4221,7 @@ export const DesktopChat: React.FC = () => {
                       </button>
                     </div>
                   ) : null}
+                  {renderTemplatePanel()}
                 </div>
                 <div className={styles.composerTextField}>
                   <textarea
@@ -3731,6 +4238,7 @@ export const DesktopChat: React.FC = () => {
                     rows={1}
                     onFocus={() => {
                       setComposerMenuOpen(false)
+                      closeTemplatePanel()
                       closeComposerAgentMenu()
                     }}
                     disabled={voiceRecording || voiceProcessing || Boolean(voiceDraft)}

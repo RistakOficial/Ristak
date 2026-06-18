@@ -3092,6 +3092,7 @@ export const PhoneChat: React.FC = () => {
   const [templatesLoading, setTemplatesLoading] = useState(false)
   const [templatesRefreshing, setTemplatesRefreshing] = useState(false)
   const [templatesError, setTemplatesError] = useState('')
+  const [templateSearch, setTemplateSearch] = useState('')
   const [templateSendingId, setTemplateSendingId] = useState<string | null>(null)
   const [creatingTemplate, setCreatingTemplate] = useState(false)
   const [newTemplateName, setNewTemplateName] = useState('')
@@ -3625,6 +3626,17 @@ export const PhoneChat: React.FC = () => {
     })
     return alertMap
   }, [activeTemplateAlerts])
+  const filteredTemplates = useMemo(() => {
+    const query = templateSearch.trim().toLowerCase()
+    if (!query) return templates
+    return templates.filter((template) => [
+      template.name,
+      template.language,
+      template.category,
+      template.status,
+      getTemplateBodyPreview(template)
+    ].filter(Boolean).join(' ').toLowerCase().includes(query))
+  }, [templateSearch, templates])
   const hasChats = chats.length > 0
   const archivedChatIdSet = useMemo(() => new Set(archivedChatIds), [archivedChatIds])
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds])
@@ -6567,6 +6579,7 @@ export const PhoneChat: React.FC = () => {
 
   const handleOpenTemplatesSheet = () => {
     setTemplateMode('choice')
+    setTemplateSearch('')
     setSheet('templates')
   }
 
@@ -10763,13 +10776,18 @@ export const PhoneChat: React.FC = () => {
       return (
         <div className={styles.templatesStack} data-phone-chat-scrollable="true">
           <div className={styles.templateChoiceGrid}>
-            <button type="button" onClick={() => setTemplateMode('send')}>
-              <span>
-                <Send size={20} />
-              </span>
-              <strong>Enviar creada</strong>
-              <small>Usa una plantilla aprobada por Meta.</small>
-            </button>
+            {templates.length > 0 ? (
+              <button type="button" onClick={() => {
+                setTemplateSearch('')
+                setTemplateMode('send')
+              }}>
+                <span>
+                  <Send size={20} />
+                </span>
+                <strong>Enviar creada</strong>
+                <small>Usa una plantilla aprobada por Meta.</small>
+              </button>
+            ) : null}
             <button type="button" onClick={() => setTemplateMode('create')}>
               <span>
                 <Plus size={22} />
@@ -10883,47 +10901,68 @@ export const PhoneChat: React.FC = () => {
             <span>Crea una nueva y cuando Meta la apruebe podrás mandarla desde este chat.</span>
           </div>
         ) : (
-          <div className={styles.templateList}>
-            {templatesRefreshing && (
-              <div className={styles.cacheRefreshPill} role="status">
-                <Loader2 size={14} className={styles.spinIcon} />
-                Actualizando plantillas
-              </div>
-            )}
-            {templates.map((template) => {
-              const status = getTemplateStatus(template)
-              const approved = status === 'APPROVED'
-              const alertMessage = getTemplateAlertMessage(template)
-              const reason = getTemplateBlockedReason(template, alertMessage)
-              const statusClass = approved
-                ? styles.templateStatusApproved
-                : TEMPLATE_DISABLED_STATUSES.has(status)
-                  ? styles.templateStatusBlocked
-                  : styles.templateStatusPending
-
-              return (
-                <button
-                  key={`${template.id}-${template.language}`}
-                  type="button"
-                  className={styles.templateRow}
-                  onClick={() => handleSendTemplate(template)}
-                  disabled={!approved || Boolean(templateSendingId)}
-                >
-                  <span className={styles.templateRowIcon}>
-                    <FileText size={18} />
-                  </span>
-                  <span className={styles.templateRowMain}>
-                    <strong>{template.name}</strong>
-                    <small>{getTemplateBodyPreview(template)}</small>
-                    {!approved && <em>{reason}</em>}
-                  </span>
-                  <span className={`${styles.templateStatus} ${statusClass}`}>
-                    {templateSendingId === template.id ? <Loader2 size={13} className={styles.spinIcon} /> : getTemplateStatusLabel(status)}
-                  </span>
+          <>
+            <div className={styles.templateSearchBox}>
+              <Search size={16} />
+              <input
+                value={templateSearch}
+                onChange={(event) => setTemplateSearch(event.target.value)}
+                placeholder="Buscar plantilla..."
+              />
+              {templateSearch ? (
+                <button type="button" onClick={() => setTemplateSearch('')} aria-label="Limpiar búsqueda de plantillas">
+                  <X size={15} />
                 </button>
-              )
-            })}
-          </div>
+              ) : null}
+            </div>
+            <div className={styles.templateList}>
+              {templatesRefreshing && (
+                <div className={styles.cacheRefreshPill} role="status">
+                  <Loader2 size={14} className={styles.spinIcon} />
+                  Actualizando plantillas
+                </div>
+              )}
+              {filteredTemplates.length === 0 ? (
+                <div className={styles.emptySheetState}>
+                  <FileText size={24} />
+                  <strong>No la encontré</strong>
+                  <span>Prueba con otro nombre o crea una plantilla nueva.</span>
+                </div>
+              ) : filteredTemplates.map((template) => {
+                const status = getTemplateStatus(template)
+                const approved = status === 'APPROVED'
+                const alertMessage = getTemplateAlertMessage(template)
+                const reason = getTemplateBlockedReason(template, alertMessage)
+                const statusClass = approved
+                  ? styles.templateStatusApproved
+                  : TEMPLATE_DISABLED_STATUSES.has(status)
+                    ? styles.templateStatusBlocked
+                    : styles.templateStatusPending
+
+                return (
+                  <button
+                    key={`${template.id}-${template.language}`}
+                    type="button"
+                    className={styles.templateRow}
+                    onClick={() => handleSendTemplate(template)}
+                    disabled={!approved || Boolean(templateSendingId)}
+                  >
+                    <span className={styles.templateRowIcon}>
+                      <FileText size={18} />
+                    </span>
+                    <span className={styles.templateRowMain}>
+                      <strong>{template.name}</strong>
+                      <small>{getTemplateBodyPreview(template)}</small>
+                      {!approved && <em>{reason}</em>}
+                    </span>
+                    <span className={`${styles.templateStatus} ${statusClass}`}>
+                      {templateSendingId === template.id ? <Loader2 size={13} className={styles.spinIcon} /> : getTemplateStatusLabel(status)}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </>
         )}
       </div>
     )

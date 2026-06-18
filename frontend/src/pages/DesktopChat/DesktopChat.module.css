@@ -1442,6 +1442,387 @@
   color: var(--color-text-primary);
 }
 
+.templatePanel {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: var(--z-index-popover);
+  display: grid;
+  gap: 10px;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(560px, calc(100vh - 180px));
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-solid, var(--surface));
+  box-shadow: var(--shadow-pop);
+}
+
+.templatePanelHeader,
+.templatePanelTitle,
+.templateChoiceButton,
+.templateSearchBox,
+.templateRow,
+.templateLoadingState,
+.templateEmptyState,
+.templateInlineError {
+  min-width: 0;
+}
+
+.templatePanelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.templatePanelTitle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.templatePanelTitle > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.templatePanelTitle strong {
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+}
+
+.templatePanelTitle small {
+  overflow: hidden;
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.templateHeaderIcon,
+.templateBackButton,
+.templateCloseButton,
+.templateChoiceButton > span,
+.templateRowIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.templateHeaderIcon,
+.templateChoiceButton > span,
+.templateRowIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.templateBackButton,
+.templateCloseButton {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: var(--text-mute);
+  background: transparent;
+  cursor: pointer;
+}
+
+.templateBackButton:hover,
+.templateCloseButton:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.templateChoiceList {
+  display: grid;
+  gap: 8px;
+}
+
+.templateChoiceButton {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 10px;
+  align-items: center;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  color: var(--text);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.templateChoiceButton:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.templateChoiceButton > span {
+  grid-row: span 2;
+}
+
+.templateChoiceButton strong,
+.templateRowMain strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.templateChoiceButton small,
+.templateRowMain small,
+.templateRowMain em {
+  overflow: hidden;
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
+.templateSearchBox {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-mute);
+}
+
+.templateSearchBox:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.templateSearchBox > svg {
+  position: absolute;
+  left: 11px;
+  pointer-events: none;
+}
+
+.templateSearchBox input {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 34px 0 34px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.templateSearchBox button {
+  position: absolute;
+  right: 7px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: var(--text-mute);
+  background: transparent;
+  cursor: pointer;
+}
+
+.templateSearchBox button:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.templateList {
+  display: grid;
+  gap: 7px;
+  max-height: min(360px, calc(100vh - 310px));
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.templateRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: start;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  color: var(--text);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.templateRow:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.templateRow:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.templateRowMain {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.templateRowMain small {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.templateRowMain em {
+  color: var(--neg);
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.templateStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 96px;
+  min-height: 23px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.templateStatusApproved {
+  color: var(--pos);
+  background: var(--pos-soft);
+}
+
+.templateStatusPending {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.templateStatusBlocked {
+  color: var(--neg);
+  background: var(--neg-soft);
+}
+
+.templateLoadingState,
+.templateEmptyState,
+.templateInlineError {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 16px 12px;
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+  text-align: center;
+}
+
+.templateInlineError {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  justify-items: start;
+  padding: 8px 9px;
+  border-radius: var(--radius-ctl);
+  background: var(--neg-soft);
+  color: var(--neg);
+  text-align: left;
+}
+
+.templateEmptyState button,
+.templateInlineError button {
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.templateEmptyState button {
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.templateInlineError button {
+  min-height: 28px;
+  padding: 0 9px;
+}
+
+.templateForm {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.templateForm label {
+  display: grid;
+  gap: 6px;
+}
+
+.templateForm label span {
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.templateForm input,
+.templateForm textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.templateForm input:focus,
+.templateForm textarea:focus {
+  border-color: var(--accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.templateForm input {
+  min-height: 40px;
+  padding: 0 11px;
+}
+
+.templateForm textarea {
+  min-height: 112px;
+  padding: 10px 11px;
+  line-height: 1.42;
+  resize: vertical;
+}
+
+.templateFormGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
 .agentComposerMenu {
   position: absolute;
   bottom: calc(100% + 10px);
@@ -2262,5 +2643,13 @@
 
   .messageBubble {
     max-width: 90%;
+  }
+
+  .templatePanel {
+    width: min(360px, calc(100vw - 24px));
+  }
+
+  .templateFormGrid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
