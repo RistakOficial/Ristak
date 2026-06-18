@@ -23445,19 +23445,6 @@ const PageInspector: React.FC<{
   )
 }
 
-const customFieldTypeCompatibility: Partial<Record<SiteBlockType, string[]>> = {
-  short_text: ['text'],
-  paragraph: ['textarea', 'text'],
-  number: ['number'],
-  currency: ['currency', 'number'],
-  dropdown: ['dropdown', 'select', 'radio'],
-  radio: ['radio', 'dropdown', 'select'],
-  checkboxes: ['checkboxes', 'multiselect'],
-  phone: ['phone'],
-  email: ['email'],
-  date: ['date']
-}
-
 type CustomFieldQuickDraft = {
   label: string
   fieldKey: string
@@ -23593,13 +23580,6 @@ const customFieldTypeLabel = (value = '') => {
   return value || 'Campo'
 }
 
-const isCustomFieldCompatibleWithBlock = (blockType: SiteBlockType, field: CustomFieldDefinition) => {
-  const allowed = customFieldTypeCompatibility[blockType]
-  if (!allowed) return false
-  const dataType = normalizeCustomFieldDataType(field.dataType)
-  return allowed.includes(dataType)
-}
-
 const CustomFieldBindingControl: React.FC<{
   block: SiteBlock
   customFields: CustomFieldDefinition[]
@@ -23683,15 +23663,15 @@ const CustomFieldBindingControl: React.FC<{
   }
 
   const currentDefinitionId = getSettingString(settings, 'customFieldDefinitionId')
-  const compatibleFields = customFields
-    .filter(field => !field.archived && !isSystemCustomFieldDefinition(field) && isCustomFieldCompatibleWithBlock(block.blockType, field))
+  const availableFields = customFields
+    .filter(field => !field.archived && !isSystemCustomFieldDefinition(field))
     .sort((a, b) => (
       String(a.folderName || '').localeCompare(String(b.folderName || '')) ||
       String(a.label || '').localeCompare(String(b.label || ''))
     ))
-  const selectedField = compatibleFields.find(field => field.definitionId === currentDefinitionId) ||
+  const selectedField = availableFields.find(field => field.definitionId === currentDefinitionId) ||
     customFields.find(field => field.definitionId === currentDefinitionId && !isSystemCustomFieldDefinition(field))
-  const groups = compatibleFields.reduce((acc, field) => {
+  const groups = availableFields.reduce((acc, field) => {
     const folderName = field.folderName || 'Sin carpeta'
     const current = acc.get(folderName) || []
     current.push(field)
@@ -23708,7 +23688,7 @@ const CustomFieldBindingControl: React.FC<{
           value={currentDefinitionId}
           onChange={(event) => {
             const definitionId = event.target.value
-            const field = compatibleFields.find(item => item.definitionId === definitionId)
+            const field = availableFields.find(item => item.definitionId === definitionId)
 
             if (!field) {
               onPatchSettings({
@@ -23754,9 +23734,9 @@ const CustomFieldBindingControl: React.FC<{
         </p>
       ) : (
         <p className={styles.customFieldHint}>
-          {compatibleFields.length
-            ? 'Selecciona un campo compatible para guardar este dato dentro del contacto.'
-            : 'No hay campos compatibles todavía. Crea un campo personalizado para guardar este dato.'}
+          {availableFields.length
+            ? 'Selecciona un campo personalizado para guardar este dato dentro del contacto.'
+            : 'No hay campos personalizados todavía. Crea uno para guardar este dato.'}
         </p>
       )}
       {creatorOpen && (
