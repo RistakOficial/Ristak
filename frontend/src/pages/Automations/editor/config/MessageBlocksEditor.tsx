@@ -38,7 +38,7 @@ import {
 import { genId } from '../flowUtils'
 import automationsService from '@/services/automationsService'
 import { MessageComposer } from '../composer/MessageComposer'
-import { CatalogSelect, TextInput, Toggle } from './configPrimitives'
+import { CatalogSelect, NumberTextInput, TextInput, Toggle } from './configPrimitives'
 import { WhatsAppTemplatePreview, templateInputs, useWhatsAppTemplate } from './WhatsAppTemplatePreview'
 import { VariableTextInput } from '../composer/MessageComposer'
 import styles from '../AutomationEditor.module.css'
@@ -156,12 +156,11 @@ const DelayPopover: React.FC<{
       </div>
       <div className={styles.delayPopoverLabel}>Duración del retraso</div>
       <div className={styles.configRow}>
-        <TextInput
-          type="number"
+        <NumberTextInput
           min={1}
           style={{ width: 76 }}
           value={amount}
-          onChange={(event) => onChange({ amount: Number(event.target.value) })}
+          onValueChange={(nextAmount) => onChange({ amount: nextAmount })}
         />
         <div className={styles.configRowGrow}>
           <CustomSelect

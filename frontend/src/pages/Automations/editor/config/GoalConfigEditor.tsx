@@ -6,7 +6,7 @@ import { TriggerFiltersEditor } from './TriggerFiltersEditor'
 import type { TriggerFilter } from '../crmFields'
 import styles from '../AutomationEditor.module.css'
 import { CHANNEL_OPTIONS_WITH_ANY } from '../nodeRegistry'
-import { CatalogSelect, ConfigSection, DurationInput, Field, TextInput } from './configPrimitives'
+import { CatalogSelect, ConfigSection, DurationInput, Field, NumberTextInput, TextInput } from './configPrimitives'
 import { AdvancedConditionBuilder } from './AdvancedConditionBuilder'
 import type { AdvancedConditionConfig } from '../crmFields'
 
@@ -112,8 +112,7 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
           </Field>
           {str(config.amountOperator) !== 'any' && str(config.amountOperator) !== '' && (
             <Field label="Cantidad">
-              <TextInput
-                type="number"
+              <NumberTextInput
                 min={0}
                 value={config.amount === undefined ? '' : String(config.amount)}
                 onChange={(event) => set({ amount: event.target.value })}

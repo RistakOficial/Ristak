@@ -592,9 +592,7 @@ export const PhonePayments: React.FC = () => {
                 value={productForm.amount}
                 onChange={(event) => updateProductForm('amount', event.target.value)}
                 inputMode="decimal"
-                type="number"
-                min="0"
-                step="0.01"
+                type="text"
                 placeholder="0.00"
               />
             </label>

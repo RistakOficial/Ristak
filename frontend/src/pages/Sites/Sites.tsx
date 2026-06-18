@@ -20286,9 +20286,11 @@ const InlineEditable: React.FC<InlineEditableProps> = ({
   as = 'div', className, value, placeholder, disabled, multiline, onChange, onCommit
 }) => {
   const ref = useRef<HTMLElement>(null)
+  const editingRef = useRef(false)
 
   useEffect(() => {
     const el = ref.current
+    if (editingRef.current) return
     if (el && el.textContent !== value) el.textContent = value
   }, [value])
 
@@ -20304,12 +20306,21 @@ const InlineEditable: React.FC<InlineEditableProps> = ({
       data-rstk-edit=""
       data-empty={value ? 'false' : 'true'}
       data-placeholder={placeholder || ''}
+      onFocus={() => {
+        editingRef.current = true
+      }}
       onInput={(event: React.FormEvent<HTMLElement>) => {
         const text = event.currentTarget.textContent || ''
         event.currentTarget.setAttribute('data-empty', text ? 'false' : 'true')
         onChange(text)
       }}
-      onBlur={() => onCommit?.()}
+      onBlur={(event: React.FocusEvent<HTMLElement>) => {
+        editingRef.current = false
+        const text = event.currentTarget.textContent || ''
+        event.currentTarget.setAttribute('data-empty', text ? 'false' : 'true')
+        if (text !== value) onChange(text)
+        onCommit?.()
+      }}
       onKeyDown={(event: React.KeyboardEvent<HTMLElement>) => {
         if (!multiline && event.key === 'Enter') {
           event.preventDefault()
@@ -22972,13 +22983,12 @@ const PopupInspector: React.FC<{
             </label>
             <label className={styles.field}>
               <span>Segundos</span>
-              <input
-                type="number"
+              <NumberInput
                 min={0}
                 max={120}
                 value={delaySeconds}
                 disabled={popupTrigger !== 'delay'}
-                onChange={(event) => onPatchTheme({ popupDelaySeconds: Math.min(120, Math.max(0, Number(event.target.value) || 0)) })}
+                onValueChange={(popupDelaySeconds) => onPatchTheme({ popupDelaySeconds })}
                 onBlur={onSaveSite}
               />
             </label>

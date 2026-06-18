@@ -11054,23 +11054,23 @@ export const PhoneChat: React.FC = () => {
             <label className={styles.scheduleField}>
               <span>Hora</span>
               <input
-                type="number"
+                type="text"
                 min="1"
                 max="12"
                 inputMode="numeric"
                 value={scheduleDraft.hour}
-                onChange={(event) => handleScheduleDraftChange({ hour: event.target.value.slice(0, 2) })}
+                onChange={(event) => handleScheduleDraftChange({ hour: event.target.value.replace(/\D/g, '').slice(0, 2) })}
               />
             </label>
             <label className={styles.scheduleField}>
               <span>Min</span>
               <input
-                type="number"
+                type="text"
                 min="0"
                 max="59"
                 inputMode="numeric"
                 value={scheduleDraft.minute}
-                onChange={(event) => handleScheduleDraftChange({ minute: event.target.value.slice(0, 2) })}
+                onChange={(event) => handleScheduleDraftChange({ minute: event.target.value.replace(/\D/g, '').slice(0, 2) })}
                 onBlur={() => {
                   const minute = Math.min(59, Math.max(0, Number(scheduleDraft.minute) || 0))
                   handleScheduleDraftChange({ minute: padTwoDigits(minute) })
@@ -11561,9 +11561,16 @@ export const PhoneChat: React.FC = () => {
                 />
                 <PhoneTextField
                   label="ID que se agrega al enlace"
-                  value={goalWorkflow.appointments.trackingParam || 'ristak_goal_id'}
+                  value={goalWorkflow.appointments.trackingParam ?? ''}
                   onChange={(value) => updateGoalWorkflowDraft({ appointments: { ...goalWorkflow.appointments, trackingParam: value } })}
-                  onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
+                  onBlur={() => saveSelectedAgentPatch({
+                    goalWorkflow: mergeGoalWorkflow({
+                      appointments: {
+                        ...goalWorkflow.appointments,
+                        trackingParam: goalWorkflow.appointments.trackingParam?.trim() || DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.appointments.trackingParam
+                      }
+                    })
+                  })}
                   placeholder="ristak_goal_id"
                   disabled={agentConfigSaving}
                 />
@@ -11719,9 +11726,16 @@ export const PhoneChat: React.FC = () => {
                 />
                 <PhoneTextField
                   label="ID que se agrega al enlace"
-                  value={goalWorkflow.sales.trackingParam || 'ristak_goal_id'}
+                  value={goalWorkflow.sales.trackingParam ?? ''}
                   onChange={(value) => updateGoalWorkflowDraft({ sales: { ...goalWorkflow.sales, trackingParam: value } })}
-                  onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
+                  onBlur={() => saveSelectedAgentPatch({
+                    goalWorkflow: mergeGoalWorkflow({
+                      sales: {
+                        ...goalWorkflow.sales,
+                        trackingParam: goalWorkflow.sales.trackingParam?.trim() || DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.sales.trackingParam
+                      }
+                    })
+                  })}
                   placeholder="ristak_goal_id"
                   disabled={agentConfigSaving}
                 />

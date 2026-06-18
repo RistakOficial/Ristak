@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CalendarClock, ExternalLink, MessageSquare, Workflow } from 'lucide-react'
-import { Button, CustomSelect, Modal } from '@/components/common'
+import { Button, CustomSelect, Modal, NumberInput } from '@/components/common'
 import automationsService, { type AutomationSummary } from '@/services/automationsService'
 import { contactBulkActionsService, type ContactBulkAction, type ContactBulkActionScheduleInput } from '@/services/contactBulkActionsService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
@@ -341,12 +341,11 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
               {whatsappDrip && (
                 <div className={styles.bulkOptionField}>
                   <div className={styles.bulkInlineField}>
-                    <input
-                      type="number"
+                    <NumberInput
                       min={1}
                       max={1440}
                       value={whatsappDripMinutes}
-                      onChange={(event) => setWhatsappDripMinutes(Number(event.target.value) || 1)}
+                      onValueChange={setWhatsappDripMinutes}
                       disabled={sendingWhatsApp}
                       aria-label="Minutos entre contactos"
                     />
@@ -444,12 +443,11 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
               {automationDrip && (
                 <div className={styles.bulkOptionField}>
                   <div className={styles.bulkInlineField}>
-                    <input
-                      type="number"
+                    <NumberInput
                       min={1}
                       max={1440}
                       value={automationDripMinutes}
-                      onChange={(event) => setAutomationDripMinutes(Number(event.target.value) || 1)}
+                      onValueChange={setAutomationDripMinutes}
                       disabled={sendingAutomation}
                       aria-label="Minutos entre contactos"
                     />

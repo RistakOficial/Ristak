@@ -9,7 +9,7 @@ import type {
   ConditionOffsetUnit
 } from '@/services/conversationalAgentService'
 import type { Calendar } from '@/services/calendarsService'
-import { TagPicker, useContactTags } from '@/components/common'
+import { NumberInput, TagPicker, useContactTags } from '@/components/common'
 import { contactTagsService } from '@/services/contactTagsService'
 import styles from './AIAgentSettings.module.css'
 
@@ -877,12 +877,11 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
       case 'offset':
         return (
           <>
-            <input
-              type="number"
+            <NumberInput
               min={1}
               className={`${styles.ruleInput} ${styles.conditionNumberInput}`}
               value={param.offsetValue ?? 30}
-              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { offsetValue: Number(event.target.value) || 0 })}
+              onValueChange={(offsetValue) => updateParam(groupIndex, conditionIndex, paramIndex, { offsetValue })}
             />
             <select
               className={styles.ruleSelect}
@@ -897,34 +896,31 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
         )
       case 'amount':
         return (
-          <input
-            type="number"
+          <NumberInput
             min={0}
             className={`${styles.ruleInput} ${styles.conditionNumberInput}`}
             value={param.amount ?? ''}
             placeholder="0"
-            onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { amount: Number(event.target.value) || 0 })}
+            onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { amount: event.target.value === '' ? undefined : Number(event.target.value) })}
           />
         )
       case 'amountRange':
         return (
           <>
-            <input
-              type="number"
+            <NumberInput
               min={0}
               className={`${styles.ruleInput} ${styles.conditionNumberInput}`}
               value={param.amount ?? ''}
               placeholder="Mínimo"
-              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { amount: Number(event.target.value) || 0 })}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { amount: event.target.value === '' ? undefined : Number(event.target.value) })}
             />
             <span>y</span>
-            <input
-              type="number"
+            <NumberInput
               min={0}
               className={`${styles.ruleInput} ${styles.conditionNumberInput}`}
               value={param.amountMax ?? ''}
               placeholder="Máximo"
-              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { amountMax: Number(event.target.value) || 0 })}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { amountMax: event.target.value === '' ? undefined : Number(event.target.value) })}
             />
           </>
         )

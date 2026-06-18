@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Bot, Brain, ChevronDown, Clock, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Trash2, X } from 'lucide-react'
-import { Badge, Button, Card, CustomSelect, Modal, TagPicker } from '@/components/common'
+import { Badge, Button, Card, CustomSelect, Modal, NumberInput, TagPicker } from '@/components/common'
 import {
   PhoneChatPreview,
   PhoneChatPreviewComposer,
@@ -846,13 +846,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   <div className={styles.responseDelayControls}>
                     <div className={`${styles.field} ${styles.delayNumberField}`}>
                       <label className={styles.label}>Tiempo</label>
-                      <input
+                      <NumberInput
                         className={`${styles.input} ${styles.delayNumberInput}`}
-                        type="number"
                         min={0}
                         step={1}
                         value={responseDelay.fixedValue}
-                        onChange={(event) => updateResponseDelay({ fixedValue: Number(event.target.value) || 0 })}
+                        onValueChange={(fixedValue) => updateResponseDelay({ fixedValue })}
                       />
                     </div>
                     <div className={`${styles.field} ${styles.delayUnitField}`}>
@@ -874,24 +873,22 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   <div className={styles.responseDelayControls}>
                     <div className={`${styles.field} ${styles.delayNumberField}`}>
                       <label className={styles.label}>Mínimo</label>
-                      <input
+                      <NumberInput
                         className={`${styles.input} ${styles.delayNumberInput}`}
-                        type="number"
                         min={0}
                         step={1}
                         value={responseDelay.minValue}
-                        onChange={(event) => updateResponseDelay({ minValue: Number(event.target.value) || 0 })}
+                        onValueChange={(minValue) => updateResponseDelay({ minValue })}
                       />
                     </div>
                     <div className={`${styles.field} ${styles.delayNumberField}`}>
                       <label className={styles.label}>Máximo</label>
-                      <input
+                      <NumberInput
                         className={`${styles.input} ${styles.delayNumberInput}`}
-                        type="number"
                         min={0}
                         step={1}
                         value={responseDelay.maxValue}
-                        onChange={(event) => updateResponseDelay({ maxValue: Number(event.target.value) || 0 })}
+                        onValueChange={(maxValue) => updateResponseDelay({ maxValue })}
                       />
                     </div>
                     <div className={`${styles.field} ${styles.delayUnitField}`}>
@@ -930,26 +927,24 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   <div className={styles.replyDeliveryControls}>
                     <div className={`${styles.field} ${styles.delayNumberField}`}>
                       <label className={styles.label}>Pausa mín.</label>
-                      <input
+                      <NumberInput
                         className={`${styles.input} ${styles.delayNumberInput}`}
-                        type="number"
                         min={0}
                         max={60}
                         step={1}
                         value={replyDelivery.minDelaySeconds}
-                        onChange={(event) => updateReplyDelivery({ minDelaySeconds: Number(event.target.value) || 0 })}
+                        onValueChange={(minDelaySeconds) => updateReplyDelivery({ minDelaySeconds })}
                       />
                     </div>
                     <div className={`${styles.field} ${styles.delayNumberField}`}>
                       <label className={styles.label}>Pausa máx.</label>
-                      <input
+                      <NumberInput
                         className={`${styles.input} ${styles.delayNumberInput}`}
-                        type="number"
                         min={0}
                         max={60}
                         step={1}
                         value={replyDelivery.maxDelaySeconds}
-                        onChange={(event) => updateReplyDelivery({ maxDelaySeconds: Number(event.target.value) || 0 })}
+                        onValueChange={(maxDelaySeconds) => updateReplyDelivery({ maxDelaySeconds })}
                       />
                     </div>
                   </div>
@@ -1126,9 +1121,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                     <label className={styles.label}>ID que se agrega al enlace</label>
                     <input
                       className={styles.input}
-                      value={goalUrlConfig.trackingParam || DEFAULT_GOAL_TRACKING_PARAM}
+                      value={goalUrlConfig.trackingParam ?? ''}
                       placeholder={DEFAULT_GOAL_TRACKING_PARAM}
                       onChange={(event) => updateGoalUrl({ trackingParam: event.target.value })}
+                      onBlur={() => {
+                        if (!goalUrlConfig.trackingParam?.trim()) updateGoalUrl({ trackingParam: DEFAULT_GOAL_TRACKING_PARAM })
+                      }}
                     />
                     <p className={styles.helper}>
                       Se agrega como <strong>{goalUrlConfig.trackingParam || DEFAULT_GOAL_TRACKING_PARAM}=goal_...</strong>

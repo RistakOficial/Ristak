@@ -432,12 +432,26 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
           <div className={styles.configRow}>
             <div className={styles.configRowGrow}>
               <Field label="Desde">
-                <TextInput type="time" value={str(config.windowStart) || '09:00'} onChange={(event) => set({ windowStart: event.target.value })} />
+                <TextInput
+                  type="time"
+                  value={str(config.windowStart)}
+                  onChange={(event) => set({ windowStart: event.target.value })}
+                  onBlur={(event) => {
+                    if (!event.currentTarget.value) set({ windowStart: '09:00' })
+                  }}
+                />
               </Field>
             </div>
             <div className={styles.configRowGrow}>
               <Field label="Hasta">
-                <TextInput type="time" value={str(config.windowEnd) || '18:00'} onChange={(event) => set({ windowEnd: event.target.value })} />
+                <TextInput
+                  type="time"
+                  value={str(config.windowEnd)}
+                  onChange={(event) => set({ windowEnd: event.target.value })}
+                  onBlur={(event) => {
+                    if (!event.currentTarget.value) set({ windowEnd: '18:00' })
+                  }}
+                />
               </Field>
             </div>
           </div>

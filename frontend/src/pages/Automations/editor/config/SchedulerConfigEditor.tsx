@@ -194,7 +194,14 @@ export const SchedulerConfigEditor: React.FC<{
       </Field>
 
       <Field label="Hora">
-        <TextInput type="time" value={time || '09:00'} onChange={(event) => setTime(event.target.value)} />
+        <TextInput
+          type="time"
+          value={time}
+          onChange={(event) => setTime(event.target.value)}
+          onBlur={(event) => {
+            if (!event.currentTarget.value) setTime('09:00')
+          }}
+        />
       </Field>
 
       {mode === 'recurring' && (

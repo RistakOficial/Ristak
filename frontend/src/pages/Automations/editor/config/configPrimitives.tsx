@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { cn } from '@/utils/cn'
-import { CustomSelect as BaseCustomSelect, TagPicker } from '@/components/common'
+import { CustomSelect as BaseCustomSelect, NumberInput as BaseNumberInput, TagPicker } from '@/components/common'
 
 /** CustomSelect con portal: el dropdown se dibuja por delante del panel
  *  de configuración (los contenedores con scroll lo recortaban). */
@@ -32,6 +32,10 @@ export const Field: React.FC<{ label?: string; help?: string; children: React.Re
 
 export const TextInput: React.FC<React.InputHTMLAttributes<HTMLInputElement>> = ({ className, ...props }) => (
   <input className={cn(styles.configInput, className)} {...props} />
+)
+
+export const NumberTextInput: React.FC<React.ComponentProps<typeof BaseNumberInput>> = ({ className, ...props }) => (
+  <BaseNumberInput className={cn(styles.configInput, className)} {...props} />
 )
 
 export const TextArea: React.FC<React.TextareaHTMLAttributes<HTMLTextAreaElement>> = ({ className, ...props }) => (
@@ -344,8 +348,7 @@ export const DurationInput: React.FC<{
 
   return (
     <div className={styles.configRow}>
-      <TextInput
-        type="number"
+      <NumberTextInput
         min={0}
         value={editing ? draftAmount : currentAmount}
         placeholder="0"

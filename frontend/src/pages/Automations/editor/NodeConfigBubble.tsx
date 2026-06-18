@@ -9,6 +9,7 @@ import {
   CatalogTags,
   DurationInput,
   Field,
+  NumberTextInput,
   TextArea,
   TextInput,
   Toggle,
@@ -181,8 +182,7 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
       case 'number':
         return (
           <Field key={field.key} label={field.label} help={field.help}>
-            <TextInput
-              type="number"
+            <NumberTextInput
               value={config[field.key] === undefined || config[field.key] === '' ? '' : Number(config[field.key])}
               placeholder={field.placeholder}
               onChange={(event) =>
@@ -443,13 +443,12 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
                   onChange={(event) => updateRow(index, { label: event.target.value })}
                 />
                 {withPercent && (
-                  <TextInput
+                  <NumberTextInput
                     style={{ width: 72 }}
-                    type="number"
                     min={0}
                     max={100}
                     value={Number(row.percent) || 0}
-                    onChange={(event) => updateRow(index, { percent: Number(event.target.value) })}
+                    onChange={(event) => updateRow(index, { percent: event.target.value === '' ? '' : Number(event.target.value) })}
                   />
                 )}
                 <button

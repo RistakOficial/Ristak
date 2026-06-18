@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Pause, Play, RefreshCw, Trash2 } from 'lucide-react'
-import { Badge, Button, Card, Loading, PageContainer, PageHeader, Table, Modal } from '@/components/common'
+import { Badge, Button, Card, Loading, PageContainer, PageHeader, Table, Modal, NumberInput } from '@/components/common'
 import type { Column } from '@/components/common'
 import { contactBulkActionsService, type ContactBulkAction, type ContactBulkActionItem } from '@/services/contactBulkActionsService'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -271,12 +271,11 @@ export const ContactBulkActionProgress: React.FC<ContactBulkActionProgressProps>
           </label>
           {rescheduleDrip && (
             <div className={styles.bulkInlineField}>
-              <input
-                type="number"
+              <NumberInput
                 min={1}
                 max={1440}
                 value={rescheduleDripMinutes}
-                onChange={(event) => setRescheduleDripMinutes(Number(event.target.value) || 1)}
+                onValueChange={setRescheduleDripMinutes}
                 disabled={working}
               />
               <span>min entre contactos pendientes</span>

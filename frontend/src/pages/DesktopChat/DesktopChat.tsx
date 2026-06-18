@@ -4025,23 +4025,23 @@ export const DesktopChat: React.FC = () => {
             <label className={styles.scheduleField}>
               <span>Hora</span>
               <input
-                type="number"
+                type="text"
                 min="1"
                 max="12"
                 inputMode="numeric"
                 value={scheduleDraft.hour}
-                onChange={(event) => handleScheduleDraftChange({ hour: event.target.value.slice(0, 2) })}
+                onChange={(event) => handleScheduleDraftChange({ hour: event.target.value.replace(/\D/g, '').slice(0, 2) })}
               />
             </label>
             <label className={styles.scheduleField}>
               <span>Min</span>
               <input
-                type="number"
+                type="text"
                 min="0"
                 max="59"
                 inputMode="numeric"
                 value={scheduleDraft.minute}
-                onChange={(event) => handleScheduleDraftChange({ minute: event.target.value.slice(0, 2) })}
+                onChange={(event) => handleScheduleDraftChange({ minute: event.target.value.replace(/\D/g, '').slice(0, 2) })}
                 onBlur={() => {
                   const minute = Math.min(59, Math.max(0, Number(scheduleDraft.minute) || 0))
                   handleScheduleDraftChange({ minute: padTwoDigits(minute) })

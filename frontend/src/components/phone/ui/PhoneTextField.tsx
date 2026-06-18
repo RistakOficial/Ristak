@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import styles from './PhoneTextField.module.css'
 
 interface PhoneTextFieldBaseProps {
@@ -28,6 +28,15 @@ interface PhoneTextAreaProps extends PhoneTextFieldBaseProps {
   maxLength?: number
 }
 
+const sanitizeNumericDraft = (raw: string) => {
+  let value = raw.replace(',', '.').replace(/[^\d.]/g, '')
+  const dotIndex = value.indexOf('.')
+  if (dotIndex !== -1) {
+    value = `${value.slice(0, dotIndex + 1)}${value.slice(dotIndex + 1).replace(/\./g, '')}`
+  }
+  return value
+}
+
 /**
  * Campo de texto estándar de la app móvil: etiqueta arriba y caja tipo pastilla
  * con el mismo borde, fondo y tipografía que los selects del celular.
@@ -50,34 +59,64 @@ export const PhoneTextField: React.FC<PhoneTextFieldProps> = ({
   leading,
   onBlur,
   onSubmit
-}) => (
-  <label className={`${styles.field} ${className}`.trim()}>
-    {label && <span className={styles.label}>{label}</span>}
-    <span className={`${styles.control} ${invalid ? styles.invalid : ''} ${disabled ? styles.disabled : ''}`.trim()}>
-      {leading && <span className={styles.leading}>{leading}</span>}
-      <input
-        type={type}
-        inputMode={inputMode}
-        value={value}
-        maxLength={maxLength}
-        placeholder={placeholder}
-        disabled={disabled}
-        autoFocus={autoFocus}
-        aria-label={ariaLabel || label}
-        aria-invalid={invalid || undefined}
-        onChange={(event) => onChange(event.target.value)}
-        onBlur={onBlur}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && onSubmit) {
-            event.preventDefault()
-            onSubmit()
-          }
-        }}
-      />
-    </span>
-    {hint && <small className={styles.hint}>{hint}</small>}
-  </label>
-)
+}) => {
+  const isNumeric = type === 'number'
+  const [draft, setDraft] = useState(() => isNumeric ? sanitizeNumericDraft(value) : value)
+  const [editing, setEditing] = useState(false)
+
+  useEffect(() => {
+    if (!isNumeric || editing) return
+    setDraft(sanitizeNumericDraft(value))
+  }, [editing, isNumeric, value])
+
+  const displayValue = isNumeric ? (editing ? draft : sanitizeNumericDraft(value)) : value
+
+  return (
+    <label className={`${styles.field} ${className}`.trim()}>
+      {label && <span className={styles.label}>{label}</span>}
+      <span className={`${styles.control} ${invalid ? styles.invalid : ''} ${disabled ? styles.disabled : ''}`.trim()}>
+        {leading && <span className={styles.leading}>{leading}</span>}
+        <input
+          type={isNumeric ? 'text' : type}
+          inputMode={inputMode || (isNumeric ? 'decimal' : undefined)}
+          value={displayValue}
+          maxLength={maxLength}
+          placeholder={placeholder}
+          disabled={disabled}
+          autoFocus={autoFocus}
+          aria-label={ariaLabel || label}
+          aria-invalid={invalid || undefined}
+          onFocus={() => {
+            if (isNumeric) {
+              setEditing(true)
+              setDraft(sanitizeNumericDraft(value))
+            }
+          }}
+          onChange={(event) => {
+            if (!isNumeric) {
+              onChange(event.target.value)
+              return
+            }
+            const nextDraft = sanitizeNumericDraft(event.target.value)
+            setDraft(nextDraft)
+            onChange(nextDraft)
+          }}
+          onBlur={() => {
+            if (isNumeric) setEditing(false)
+            onBlur?.()
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && onSubmit) {
+              event.preventDefault()
+              onSubmit()
+            }
+          }}
+        />
+      </span>
+      {hint && <small className={styles.hint}>{hint}</small>}
+    </label>
+  )
+}
 
 /** Área de texto estándar de la app móvil, mismo lenguaje visual que PhoneTextField. */
 export const PhoneTextArea: React.FC<PhoneTextAreaProps> = ({
