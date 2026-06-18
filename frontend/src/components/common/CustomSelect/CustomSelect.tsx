@@ -74,6 +74,10 @@ const parseOptionChildren = (children: React.ReactNode): OptionEntry[] => {
   return React.Children.toArray(children).flatMap((child): OptionEntry[] => {
     if (!React.isValidElement<OptionElementProps>(child)) return []
 
+    if (child.type === React.Fragment) {
+      return parseOptionChildren(child.props.children)
+    }
+
     if (child.type === 'optgroup') {
       return [{
         label: String(child.props.label || ''),
