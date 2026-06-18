@@ -16944,6 +16944,22 @@ export async function deleteAIAgentConfig({ userId } = {}) {
   }
 }
 
+export async function deleteAIAgentToken({ userId } = {}) {
+  const existingConfig = await db.get('SELECT id FROM ai_agent_config WHERE id = 1 LIMIT 1')
+
+  if (existingConfig) {
+    await db.run(`
+      UPDATE ai_agent_config
+      SET
+        openai_api_key_encrypted = NULL,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = 1
+    `)
+  }
+
+  return getAIAgentStatus({ userId })
+}
+
 export async function getOpenAIApiKey() {
   const config = await getAIAgentConfig()
 

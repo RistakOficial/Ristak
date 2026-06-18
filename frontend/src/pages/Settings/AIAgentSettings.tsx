@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Bot, CheckCircle, Eye, EyeOff, Globe2, Trash2, XCircle } from 'lucide-react'
-import { Button, Card, CustomSelect } from '@/components/common'
+import { AlertTriangle, Bot, CheckCircle, Eye, EyeOff, Globe2, XCircle } from 'lucide-react'
+import { Card, CustomSelect } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
 import { DEFAULT_AI_MODEL, aiModelOptionGroups, aiModelOptions, getKnownAIModel } from '@/constants/aiModels'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -216,6 +216,7 @@ export const AIAgentSettings: React.FC = () => {
 
   const selectedModel = aiModelOptions.find((option) => option.value === form.model) || aiModelOptions[0]
   const needsReconnect = Boolean(status.needsReconnect)
+  const canDeleteToken = Boolean(status.configured || needsReconnect)
   const apiKeyNeedsMore = isEditingApiKey && Boolean(apiKey.trim() && !isApiKeyReady(apiKey))
   const saveStatusText = loading
     ? ''
@@ -231,7 +232,9 @@ export const AIAgentSettings: React.FC = () => {
           ? 'Guardando en automático...'
           : saveState === 'error'
             ? saveError || 'No se pudo guardar'
-            : 'Guardado automático'
+            : !status.configured && !needsReconnect
+              ? 'Sin token guardado'
+              : 'Guardado automático'
 
   useEffect(() => {
     return () => {
@@ -365,36 +368,53 @@ export const AIAgentSettings: React.FC = () => {
     }
   }
 
-  const disconnect = async () => {
+  const deleteToken = async () => {
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current)
+      autosaveTimerRef.current = null
+    }
+
+    const saveId = activeSaveIdRef.current + 1
+    activeSaveIdRef.current = saveId
     setDisconnecting(true)
+    setSaveState('saving')
+    setSaveError('')
+
     try {
-      await aiAgentService.deleteConfig()
-      setStatus(emptyStatus)
-      setForm(emptyForm)
+      const nextStatus = normalizeStatus(await aiAgentService.deleteToken())
+      if (activeSaveIdRef.current !== saveId) return
+
+      const nextForm = statusToForm(nextStatus)
+      setStatus(nextStatus)
+      setForm(nextForm)
       setApiKey('')
       setShowApiKey(false)
       setIsEditingApiKey(false)
-      lastSavedSignatureRef.current = getConfigSignature(emptyForm)
+      emitConfigChange(nextStatus)
+      lastSavedSignatureRef.current = getConfigSignature(nextForm)
       setSaveState('saved')
-      setSaveError('')
-      emitConfigChange(emptyStatus)
-      showToast('success', 'Agente AI desconectado', 'Las funciones de inteligencia artificial quedaron bloqueadas hasta conectar OpenAI otra vez.')
+      showToast('success', 'Token eliminado', 'El agente AI dejó de usar el token guardado. Tu contexto del negocio se conserva.')
     } catch (error: any) {
-      showToast('error', 'Error', error?.message || 'No se pudo desconectar el agente AI')
+      if (activeSaveIdRef.current !== saveId) return
+
+      const message = error?.message || 'No se pudo eliminar el token del agente'
+      setSaveState('error')
+      setSaveError(message)
+      showToast('error', 'No se pudo eliminar', message)
     } finally {
-      setDisconnecting(false)
+      if (activeSaveIdRef.current === saveId) {
+        setDisconnecting(false)
+      }
     }
   }
 
-  const handleDisconnect = () => {
+  const handleDeleteToken = () => {
     showConfirm(
-      'Desconectar Agente AI',
-      'Se eliminará el token guardado. El chat, el agente conversacional y las funciones de inteligencia artificial quedarán bloqueados.',
-      disconnect,
-      'Desconectar',
-      'Cancelar',
-      undefined,
-      { typeToConfirm: 'DESCONECTAR' }
+      'Eliminar token',
+      'Se borrará sólo el token de OpenAI. El modelo y la descripción del negocio se quedan guardados.',
+      deleteToken,
+      'Eliminar',
+      'Cancelar'
     )
   }
 
@@ -432,17 +452,6 @@ export const AIAgentSettings: React.FC = () => {
               </Badge>
             )}
 
-            {(status.configured || needsReconnect) && (
-              <Button
-                variant="danger"
-                onClick={handleDisconnect}
-                loading={disconnecting}
-                disabled={disconnecting}
-              >
-                <Trash2 size={16} />
-                Desconectar
-              </Button>
-            )}
           </div>
         </div>
 
@@ -454,9 +463,9 @@ export const AIAgentSettings: React.FC = () => {
         <div className={styles.settingsGrid}>
           <div className={styles.field}>
             <label className={styles.label}>API Token</label>
-            <div className={styles.inputWrap}>
+            <div className={`${styles.inputWrap} ${canDeleteToken ? styles.inputWrapStackable : ''}`}>
               <input
-                className={`${styles.input} ${styles.tokenInput} ${!isEditingApiKey ? styles.inputReadOnly : ''}`}
+                className={`${styles.input} ${styles.tokenInput} ${canDeleteToken ? styles.tokenInputWithDelete : ''} ${!isEditingApiKey ? styles.inputReadOnly : ''}`}
                 type={isEditingApiKey && showApiKey ? 'text' : 'password'}
                 value={isEditingApiKey ? apiKey : status.configured ? 'token-configurado' : needsReconnect ? 'token-no-disponible' : ''}
                 placeholder={status.configured ? 'Token configurado' : needsReconnect ? 'Token requiere reconexión' : 'Sin token configurado'}
@@ -494,6 +503,16 @@ export const AIAgentSettings: React.FC = () => {
                 >
                   {isEditingApiKey ? 'Guardar' : needsReconnect ? 'Reconectar' : 'Cambiar'}
                 </button>
+                {canDeleteToken && (
+                  <button
+                    type="button"
+                    className={`${styles.inlineActionButton} ${styles.inlineDeleteButton}`}
+                    onClick={handleDeleteToken}
+                    disabled={loading || disconnecting || savingApiKey}
+                  >
+                    Eliminar
+                  </button>
+                )}
               </div>
             </div>
             <p className={`${styles.helper} ${needsReconnect && !isEditingApiKey ? styles.helperWarning : ''}`}>

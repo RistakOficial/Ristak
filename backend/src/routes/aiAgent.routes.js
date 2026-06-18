@@ -1,5 +1,5 @@
 import express from 'express'
-import { chat, deleteConfig, getConfig, getRunTrace, listAgents, saveBusinessContextAnswer, saveConfig, transcribeVoice } from '../controllers/aiAgentController.js'
+import { chat, deleteConfig, deleteToken, getConfig, getRunTrace, listAgents, saveBusinessContextAnswer, saveConfig, transcribeVoice } from '../controllers/aiAgentController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireOpenAIConfigured } from '../middleware/openAIConfigMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
@@ -15,6 +15,7 @@ router.use(requireModuleAccess('ai_agent'))
 
 router.get('/config', getConfig)
 router.post('/config', saveConfig)
+router.delete('/config/token', deleteToken)
 router.delete('/config', deleteConfig)
 router.post('/business-context-answer', requireOpenAIConfigured, saveBusinessContextAnswer)
 router.get('/agents', requireOpenAIConfigured, listAgents)

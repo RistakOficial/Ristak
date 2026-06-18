@@ -1,6 +1,7 @@
 import { logger } from '../utils/logger.js'
 import {
   deleteAIAgentConfig,
+  deleteAIAgentToken,
   getAIAgentStatus,
   isAIAgentCredentialError,
   isAIAgentOpenAIRequiredError,
@@ -121,6 +122,24 @@ export async function deleteConfig(req, res) {
     res.status(500).json({
       success: false,
       error: 'Error al desconectar el agente AI'
+    })
+  }
+}
+
+export async function deleteToken(req, res) {
+  try {
+    const status = await deleteAIAgentToken({ userId: req.user?.userId })
+
+    res.json({
+      success: true,
+      message: 'Token de OpenAI eliminado correctamente',
+      data: status
+    })
+  } catch (error) {
+    logger.error('Error eliminando token del agente AI:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Error al eliminar el token del agente AI'
     })
   }
 }

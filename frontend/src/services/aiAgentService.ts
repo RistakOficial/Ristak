@@ -267,6 +267,12 @@ export const aiAgentService = {
     })
   },
 
+  deleteToken(): Promise<AIAgentConfigStatus> {
+    return request<AIAgentConfigStatus>('/config/token', {
+      method: 'DELETE'
+    })
+  },
+
   saveBusinessContextAnswer(
     field: AIAgentBusinessContextField,
     answer: string
