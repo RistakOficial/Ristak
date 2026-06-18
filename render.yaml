@@ -43,6 +43,10 @@ services:
         sync: false
       - key: BUNNY_STREAM_API_KEY
         sync: false
+      - key: BUNNY_STREAM_COLLECTION_ID
+        sync: false
+      - key: BUNNY_STREAM_COLLECTION_NAME
+        value: Ristak Sites & Forms
       - key: INTERNAL_INSTALLER_TOKEN
         sync: false
 

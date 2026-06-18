@@ -15,9 +15,19 @@ const __dirname = dirname(__filename)
 
 const GB = 1024 * 1024 * 1024
 const LOCAL_MEDIA_ROOT = join(__dirname, '../../uploads/media-storage')
+const BUNNY_STREAM_API_BASE_URL = 'https://video.bunnycdn.com'
+const DEFAULT_BUNNY_STREAM_COLLECTION_NAME = 'Ristak Sites & Forms'
 const CENTRAL_STORAGE_CONFIG_TTL_MS = Math.max(
   30_000,
   Number(process.env.MEDIA_CENTRAL_CONFIG_TTL_MS || 5 * 60 * 1000) || 5 * 60 * 1000
+)
+const BUNNY_STREAM_COLLECTION_CACHE_TTL_MS = Math.max(
+  60_000,
+  Number(process.env.BUNNY_STREAM_COLLECTION_CACHE_TTL_MS || 10 * 60 * 1000) || 10 * 60 * 1000
+)
+const BUNNY_STREAM_TIMEOUT_MS = Math.max(
+  10_000,
+  Number(process.env.BUNNY_STREAM_TIMEOUT_MS || 120_000) || 120_000
 )
 
 let centralStorageConfigCache = {
@@ -25,6 +35,21 @@ let centralStorageConfigCache = {
   env: null,
   promise: null
 }
+const bunnyStreamCollectionCache = new Map()
+
+const BUNNY_STREAM_MEDIA_MODULES = new Set(['sites', 'forms', 'landing'])
+
+const BUNNY_STREAM_STATUS_LABELS = new Map([
+  [0, 'created'],
+  [1, 'uploaded'],
+  [2, 'processing'],
+  [3, 'transcoding'],
+  [4, 'finished'],
+  [5, 'error'],
+  [6, 'upload_failed'],
+  [7, 'jit_segmenting'],
+  [8, 'jit_playlists_created']
+])
 
 const MEDIA_MODULES = new Set([
   'chat',
@@ -80,6 +105,11 @@ function nowIso() {
 function numberValue(value, fallback = 0) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function optionalNumberValue(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 function boolValue(value, fallback = false) {
@@ -255,8 +285,14 @@ function buildStorageRuntimeConfig(row) {
     bunnyStorageRegion: cleanString(process.env.BUNNY_STORAGE_REGION || row?.bunny_storage_region),
     bunnyStorageApiKey: cleanString(process.env.BUNNY_STORAGE_API_KEY),
     bunnyCdnBaseUrl: normalizeBaseUrl(process.env.BUNNY_CDN_BASE_URL || row?.bunny_cdn_base_url),
+    bunnyStreamEnabled: process.env.BUNNY_STREAM_ENABLED !== undefined
+      ? boolValue(process.env.BUNNY_STREAM_ENABLED, true)
+      : boolValue(row?.bunny_stream_enabled, true),
     bunnyStreamLibraryId: cleanString(process.env.BUNNY_STREAM_LIBRARY_ID || row?.bunny_stream_library_id),
     bunnyStreamApiKey: cleanString(process.env.BUNNY_STREAM_API_KEY),
+    bunnyStreamCollectionId: cleanString(process.env.BUNNY_STREAM_COLLECTION_ID || row?.bunny_stream_collection_id),
+    bunnyStreamCollectionName: cleanString(process.env.BUNNY_STREAM_COLLECTION_NAME || row?.bunny_stream_collection_name || DEFAULT_BUNNY_STREAM_COLLECTION_NAME),
+    bunnyStreamEndpoint: normalizeBaseUrl(process.env.BUNNY_STREAM_ENDPOINT || row?.bunny_stream_endpoint || BUNNY_STREAM_API_BASE_URL),
     bunnyStorageEndpoint: normalizeBaseUrl(process.env.BUNNY_STORAGE_ENDPOINT),
     requireBunny: boolValue(process.env.MEDIA_STORAGE_REQUIRE_BUNNY, false),
     maxImageSizeMb: numberValue(row?.max_image_size_mb, 25),
@@ -272,13 +308,24 @@ function buildStorageRuntimeConfig(row) {
     if (!config.bunnyCdnBaseUrl) missing.push('BUNNY_CDN_BASE_URL')
   }
 
+  const streamMissing = []
+  if (config.bunnyStreamEnabled) {
+    if (!config.bunnyStreamLibraryId) streamMissing.push('BUNNY_STREAM_LIBRARY_ID')
+    if (!config.bunnyStreamApiKey) streamMissing.push('BUNNY_STREAM_API_KEY')
+  }
+
   config.missingEnvironment = missing
+  config.streamMissingEnvironment = streamMissing
   config.bunnyConfigured = config.provider === 'bunny' && missing.length === 0
+  config.bunnyStreamConfigured = config.bunnyStreamEnabled && streamMissing.length === 0
   config.storageStatus = !config.storageEnabled
     ? 'disabled'
     : config.provider === 'bunny'
       ? config.bunnyConfigured ? 'configured' : 'not_configured'
       : 'local_fallback'
+  config.streamStatus = !config.bunnyStreamEnabled
+    ? 'disabled'
+    : config.bunnyStreamConfigured ? 'configured' : 'not_configured'
 
   return config
 }
@@ -317,8 +364,12 @@ function normalizeCentralStorageEnv(config = {}) {
     BUNNY_STORAGE_ENDPOINT: readCentralStorageConfigValue(config, 'bunny_storage_endpoint', 'BUNNY_STORAGE_ENDPOINT'),
     BUNNY_STORAGE_API_KEY: readCentralStorageConfigValue(config, 'bunny_storage_api_key', 'BUNNY_STORAGE_API_KEY'),
     BUNNY_CDN_BASE_URL: readCentralStorageConfigValue(config, 'bunny_cdn_base_url', 'BUNNY_CDN_BASE_URL'),
+    BUNNY_STREAM_ENABLED: readCentralStorageConfigValue(config, 'bunny_stream_enabled', 'BUNNY_STREAM_ENABLED'),
     BUNNY_STREAM_LIBRARY_ID: readCentralStorageConfigValue(config, 'bunny_stream_library_id', 'BUNNY_STREAM_LIBRARY_ID'),
-    BUNNY_STREAM_API_KEY: readCentralStorageConfigValue(config, 'bunny_stream_api_key', 'BUNNY_STREAM_API_KEY')
+    BUNNY_STREAM_API_KEY: readCentralStorageConfigValue(config, 'bunny_stream_api_key', 'BUNNY_STREAM_API_KEY'),
+    BUNNY_STREAM_COLLECTION_ID: readCentralStorageConfigValue(config, 'bunny_stream_collection_id', 'BUNNY_STREAM_COLLECTION_ID'),
+    BUNNY_STREAM_COLLECTION_NAME: readCentralStorageConfigValue(config, 'bunny_stream_collection_name', 'BUNNY_STREAM_COLLECTION_NAME'),
+    BUNNY_STREAM_ENDPOINT: readCentralStorageConfigValue(config, 'bunny_stream_endpoint', 'BUNNY_STREAM_ENDPOINT')
   }
 }
 
@@ -384,6 +435,7 @@ export function resetCentralStorageConfigCache() {
     env: null,
     promise: null
   }
+  bunnyStreamCollectionCache.clear()
 }
 
 export async function getStorageRuntimeConfig() {
@@ -416,6 +468,380 @@ function bunnyObjectUrl(config, objectPath) {
 
 function bunnyPublicUrl(config, objectPath) {
   return `${config.bunnyCdnBaseUrl.replace(/\/+$/, '')}/${objectPath.split('/').map(segment => encodeURIComponent(segment)).join('/')}`
+}
+
+function bunnyStreamBaseUrl(config) {
+  return normalizeBaseUrl(config.bunnyStreamEndpoint || BUNNY_STREAM_API_BASE_URL) || BUNNY_STREAM_API_BASE_URL
+}
+
+function bunnyStreamUrl(config, pathname = '', query = {}) {
+  const cleanPath = cleanString(pathname).replace(/^\/+/, '')
+  const url = new URL(`${bunnyStreamBaseUrl(config).replace(/\/+$/, '')}/${cleanPath}`)
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value === undefined || value === null || value === '') continue
+    url.searchParams.set(key, String(value))
+  }
+  return url.toString()
+}
+
+async function parseBunnyResponse(response) {
+  const text = await response.text().catch(() => '')
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return { message: text }
+  }
+}
+
+async function bunnyStreamRequest(config, pathname, {
+  method = 'GET',
+  query = {},
+  body,
+  headers = {},
+  okStatuses = [200]
+} = {}) {
+  const response = await fetch(bunnyStreamUrl(config, pathname, query), {
+    method,
+    headers: {
+      AccessKey: config.bunnyStreamApiKey,
+      ...(body !== undefined && !(Buffer.isBuffer(body)) ? { 'Content-Type': 'application/json' } : {}),
+      ...headers
+    },
+    body: body === undefined ? undefined : Buffer.isBuffer(body) ? body : JSON.stringify(body),
+    signal: AbortSignal.timeout(BUNNY_STREAM_TIMEOUT_MS)
+  })
+  const payload = await parseBunnyResponse(response)
+
+  if (!okStatuses.includes(response.status)) {
+    const detail = cleanString(payload?.message || payload?.error || payload?.Message || response.statusText)
+    throw errorWithStatus(
+      `Bunny Stream rechazó la operación (${response.status}): ${detail.slice(0, 180) || response.statusText}`,
+      502,
+      'bunny_stream_request_failed'
+    )
+  }
+
+  return payload
+}
+
+function bunnyStreamCollectionFromRow(row = {}) {
+  const guid = cleanString(row.guid || row.id || row.collectionId)
+  if (!guid) return null
+  return {
+    id: guid,
+    name: cleanString(row.name),
+    videoCount: optionalNumberValue(row.videoCount),
+    totalSize: optionalNumberValue(row.totalSize)
+  }
+}
+
+async function ensureBunnyStreamCollection(config) {
+  if (!config.bunnyStreamConfigured) return null
+  if (config.bunnyStreamCollectionId) {
+    return {
+      id: config.bunnyStreamCollectionId,
+      name: config.bunnyStreamCollectionName || ''
+    }
+  }
+
+  const name = config.bunnyStreamCollectionName || DEFAULT_BUNNY_STREAM_COLLECTION_NAME
+  const cacheKey = `${config.bunnyStreamLibraryId}:${name.toLowerCase()}`
+  const cached = bunnyStreamCollectionCache.get(cacheKey)
+  if (cached?.collection && cached.expiresAt > Date.now()) return cached.collection
+  if (cached?.promise) return cached.promise
+
+  const promise = (async () => {
+    const listPayload = await bunnyStreamRequest(
+      config,
+      `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/collections`,
+      {
+        query: { search: name, itemsPerPage: 100, includeThumbnails: false }
+      }
+    )
+    const exact = (Array.isArray(listPayload?.items) ? listPayload.items : [])
+      .map(bunnyStreamCollectionFromRow)
+      .find(collection => collection && collection.name.toLowerCase() === name.toLowerCase())
+
+    if (exact) return exact
+
+    const created = await bunnyStreamRequest(
+      config,
+      `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/collections`,
+      {
+        method: 'POST',
+        body: { name }
+      }
+    )
+    const collection = bunnyStreamCollectionFromRow(created)
+    if (!collection) {
+      throw errorWithStatus('Bunny Stream creó la colección pero no regresó un ID usable.', 502, 'bunny_stream_collection_missing')
+    }
+    return collection
+  })()
+
+  bunnyStreamCollectionCache.set(cacheKey, {
+    expiresAt: Date.now() + BUNNY_STREAM_COLLECTION_CACHE_TTL_MS,
+    promise
+  })
+
+  try {
+    const collection = await promise
+    bunnyStreamCollectionCache.set(cacheKey, {
+      expiresAt: Date.now() + BUNNY_STREAM_COLLECTION_CACHE_TTL_MS,
+      collection
+    })
+    return collection
+  } catch (error) {
+    bunnyStreamCollectionCache.delete(cacheKey)
+    throw error
+  }
+}
+
+function streamVideoStatusLabel(status) {
+  const parsed = Number(status)
+  return BUNNY_STREAM_STATUS_LABELS.get(parsed) || (Number.isFinite(parsed) ? `status_${parsed}` : '')
+}
+
+function normalizeBunnyStreamVideo(video = {}) {
+  if (!video || typeof video !== 'object') return null
+  const videoId = cleanString(video.guid || video.videoId || video.id)
+  if (!videoId) return null
+
+  return {
+    libraryId: optionalNumberValue(video.videoLibraryId ?? video.libraryId),
+    videoId,
+    title: cleanString(video.title),
+    dateUploaded: cleanString(video.dateUploaded),
+    views: optionalNumberValue(video.views),
+    isPublic: video.isPublic === undefined ? null : boolValue(video.isPublic),
+    length: optionalNumberValue(video.length),
+    status: optionalNumberValue(video.status),
+    statusLabel: streamVideoStatusLabel(video.status),
+    framerate: optionalNumberValue(video.framerate),
+    width: optionalNumberValue(video.width),
+    height: optionalNumberValue(video.height),
+    outputCodecs: cleanString(video.outputCodecs),
+    thumbnailCount: optionalNumberValue(video.thumbnailCount),
+    encodeProgress: optionalNumberValue(video.encodeProgress),
+    storageSize: optionalNumberValue(video.storageSize),
+    hasMP4Fallback: video.hasMP4Fallback === undefined ? null : boolValue(video.hasMP4Fallback),
+    averageWatchTime: optionalNumberValue(video.averageWatchTime),
+    totalWatchTime: optionalNumberValue(video.totalWatchTime),
+    description: video.description ?? null,
+    rotation: video.rotation ?? null,
+    availableResolutions: video.availableResolutions ?? null,
+    captions: Array.isArray(video.captions) ? video.captions : [],
+    collectionId: cleanString(video.collectionId),
+    thumbnailFileName: video.thumbnailFileName ?? null,
+    thumbnailBlurhash: video.thumbnailBlurhash ?? null,
+    category: video.category ?? null,
+    chapters: Array.isArray(video.chapters) ? video.chapters : [],
+    moments: Array.isArray(video.moments) ? video.moments : [],
+    metaTags: Array.isArray(video.metaTags) ? video.metaTags : [],
+    transcodingMessages: Array.isArray(video.transcodingMessages) ? video.transcodingMessages : [],
+    smartGenerateStatus: video.smartGenerateStatus ?? null,
+    smartGenerateFeaturesStatus: video.smartGenerateFeaturesStatus ?? null,
+    hasOriginal: video.hasOriginal ?? null,
+    originalHash: video.originalHash ?? null,
+    hasHighQualityPreview: video.hasHighQualityPreview ?? null
+  }
+}
+
+function buildBunnyStreamTitle({ originalFilename = '', module = '', moduleEntityId = '', id = '' } = {}) {
+  const base = filenameBase(originalFilename).replace(/[-_]+/g, ' ').trim()
+  const suffix = cleanString(moduleEntityId || id)
+  return [base || 'Ristak video', module ? `(${module})` : '', suffix ? suffix.slice(0, 40) : '']
+    .filter(Boolean)
+    .join(' ')
+    .slice(0, 180)
+}
+
+function isBunnyStreamEligibleVideo({ mediaType = '', module = '' } = {}) {
+  return cleanString(mediaType).toLowerCase() === 'video' && BUNNY_STREAM_MEDIA_MODULES.has(normalizeModule(module))
+}
+
+function buildSkippedBunnyStreamMetadata(config, reason) {
+  return {
+    provider: 'bunny_stream',
+    enabled: config.bunnyStreamEnabled,
+    providerReady: config.bunnyStreamConfigured,
+    syncStatus: 'skipped',
+    reason,
+    libraryId: config.bunnyStreamLibraryId || null,
+    collectionId: config.bunnyStreamCollectionId || null,
+    collectionName: config.bunnyStreamCollectionName || null,
+    missingEnvironment: config.streamMissingEnvironment || [],
+    checkedAt: nowIso()
+  }
+}
+
+async function createBunnyStreamVideo(config, { title, collectionId }) {
+  return await bunnyStreamRequest(
+    config,
+    `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/videos`,
+    {
+      method: 'POST',
+      body: {
+        title,
+        ...(collectionId ? { collectionId } : {})
+      }
+    }
+  )
+}
+
+async function uploadBunnyStreamVideo(config, { videoId, buffer }) {
+  return await bunnyStreamRequest(
+    config,
+    `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/videos/${encodeURIComponent(videoId)}`,
+    {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': String(buffer.length)
+      },
+      body: buffer
+    }
+  )
+}
+
+async function getBunnyStreamVideo(config, videoId) {
+  return await bunnyStreamRequest(
+    config,
+    `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/videos/${encodeURIComponent(videoId)}`
+  )
+}
+
+async function deleteBunnyStreamVideo(config, videoId) {
+  if (!config.bunnyStreamConfigured || !videoId) return null
+  return await bunnyStreamRequest(
+    config,
+    `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/videos/${encodeURIComponent(videoId)}`,
+    {
+      method: 'DELETE',
+      okStatuses: [200, 404]
+    }
+  )
+}
+
+async function syncVideoToBunnyStream({
+  config,
+  id,
+  businessId,
+  module,
+  moduleEntityId,
+  originalFilename,
+  objectPath,
+  publicUrl,
+  mimeType,
+  buffer
+}) {
+  if (!config.bunnyStreamEnabled) return buildSkippedBunnyStreamMetadata(config, 'stream_disabled')
+  if (!config.bunnyStreamConfigured) return buildSkippedBunnyStreamMetadata(config, 'stream_not_configured')
+
+  const title = buildBunnyStreamTitle({ originalFilename, module, moduleEntityId, id })
+  const source = {
+    mediaAssetId: id,
+    businessId,
+    module,
+    moduleEntityId,
+    storagePath: objectPath,
+    storagePublicUrl: publicUrl,
+    mimeType
+  }
+
+  try {
+    const collection = await ensureBunnyStreamCollection(config)
+    logger.info(`[MediaStorage] Bunny Stream sync iniciada: ${id}`)
+    const created = await createBunnyStreamVideo(config, {
+      title,
+      collectionId: collection?.id || ''
+    })
+    const videoId = cleanString(created?.guid || created?.videoId || created?.id)
+    if (!videoId) {
+      throw errorWithStatus('Bunny Stream creó el video pero no regresó un videoId usable.', 502, 'bunny_stream_video_missing')
+    }
+    const uploadResult = await uploadBunnyStreamVideo(config, { videoId, buffer })
+    const video = await getBunnyStreamVideo(config, videoId).catch((error) => {
+      logger.warn(`[MediaStorage] Bunny Stream subió ${videoId}, pero no se pudo leer metadata inicial: ${error.message}`)
+      return created
+    })
+    const normalizedVideo = normalizeBunnyStreamVideo(video) || normalizeBunnyStreamVideo(created)
+
+    logger.info(`[MediaStorage] Bunny Stream sync completada: ${id} -> ${videoId}`)
+    return {
+      provider: 'bunny_stream',
+      enabled: true,
+      providerReady: true,
+      syncStatus: 'uploaded',
+      syncedAt: nowIso(),
+      libraryId: config.bunnyStreamLibraryId,
+      collectionId: collection?.id || cleanString(normalizedVideo?.collectionId),
+      collectionName: collection?.name || config.bunnyStreamCollectionName || '',
+      videoId,
+      title,
+      source,
+      uploadResult: {
+        success: uploadResult?.success === undefined ? null : boolValue(uploadResult.success),
+        statusCode: uploadResult?.statusCode ?? null,
+        message: uploadResult?.message ?? null
+      },
+      video: normalizedVideo
+    }
+  } catch (error) {
+    logger.warn(`[MediaStorage] Bunny Stream sync falló para ${id}: ${error.message}`)
+    return {
+      provider: 'bunny_stream',
+      enabled: true,
+      providerReady: true,
+      syncStatus: 'failed',
+      failedAt: nowIso(),
+      libraryId: config.bunnyStreamLibraryId,
+      collectionId: config.bunnyStreamCollectionId || null,
+      collectionName: config.bunnyStreamCollectionName || null,
+      title,
+      source,
+      error: error.message,
+      code: error.code || 'bunny_stream_sync_failed'
+    }
+  }
+}
+
+function dimensionsFromStreamMetadata(stream = {}) {
+  const video = stream?.video || {}
+  return {
+    width: optionalNumberValue(video.width),
+    height: optionalNumberValue(video.height),
+    duration: optionalNumberValue(video.length)
+  }
+}
+
+async function updateMediaAssetStream({ asset, stream }) {
+  const metadata = {
+    ...(asset.metadata || {}),
+    stream
+  }
+  const streamDimensions = dimensionsFromStreamMetadata(stream)
+  const nextWidth = streamDimensions.width || asset.width || null
+  const nextHeight = streamDimensions.height || asset.height || null
+  const nextDuration = streamDimensions.duration || asset.duration || null
+
+  await db.run(
+    `UPDATE media_assets
+     SET width = ?,
+         height = ?,
+         duration = ?,
+         metadata_json = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      nextWidth,
+      nextHeight,
+      nextDuration,
+      JSON.stringify(metadata),
+      asset.id
+    ]
+  )
 }
 
 async function uploadToBunny({ config, objectPath, buffer, mimeType }) {
@@ -806,14 +1232,7 @@ export async function uploadMediaAsset(input = {}) {
     mimeDetection: detected.source,
     compression: processed.compression,
     storageStatus: config.storageStatus,
-    variants: {},
-    stream: finalMediaType === 'video'
-      ? {
-          providerReady: Boolean(config.bunnyStreamLibraryId && config.bunnyStreamApiKey),
-          mode: 'storage_first',
-          note: 'Bunny Stream queda soportado por configuración, pero este pipeline inicial guarda el MP4 optimizado en Bunny Storage.'
-        }
-      : undefined
+    variants: {}
   }
 
   if (config.provider === 'bunny' && config.bunnyConfigured) {
@@ -848,6 +1267,23 @@ export async function uploadMediaAsset(input = {}) {
     logger.warn(`[MediaStorage] Bunny no configurado; archivo guardado por fallback local: ${objectPath}`)
   }
 
+  if (isBunnyStreamEligibleVideo({ mediaType: finalMediaType, module })) {
+    metadata.stream = await syncVideoToBunnyStream({
+      config,
+      id,
+      businessId,
+      module,
+      moduleEntityId,
+      originalFilename,
+      objectPath,
+      publicUrl,
+      mimeType: finalMimeType,
+      buffer: processed.buffer
+    })
+  }
+
+  const streamDimensions = dimensionsFromStreamMetadata(metadata.stream)
+
   await insertMediaAsset({
     id,
     businessId,
@@ -863,9 +1299,9 @@ export async function uploadMediaAsset(input = {}) {
     sizeOriginal: originalBuffer.length,
     sizeProcessed: processed.buffer.length,
     quotaSize,
-    width: dimensions.width,
-    height: dimensions.height,
-    duration: null,
+    width: streamDimensions.width || dimensions.width,
+    height: streamDimensions.height || dimensions.height,
+    duration: streamDimensions.duration || null,
     status: 'ready',
     storageProvider,
     storageZone: storageProvider === 'bunny' ? config.bunnyStorageZone : null,
@@ -1171,8 +1607,16 @@ export async function softDeleteMediaAsset(assetId) {
         await fs.rm(metadata.variants.thumbnail.localPath, { force: true }).catch(() => undefined)
       }
     }
+
   } catch (error) {
     logger.warn(`[MediaStorage] No se pudo borrar archivo físico ${assetId}: ${error.message}`)
+  }
+
+  const streamVideoId = cleanString(metadata.stream?.videoId)
+  if (streamVideoId) {
+    await deleteBunnyStreamVideo(config, streamVideoId).catch((error) => {
+      logger.warn(`[MediaStorage] No se pudo borrar video de Bunny Stream ${streamVideoId}: ${error.message}`)
+    })
   }
 
   await refreshQuotaUsage(asset.businessId)
@@ -1258,6 +1702,53 @@ export async function getMediaAssetDataUrl(assetId) {
   }
 }
 
+export async function syncMediaAssetBunnyStream(assetId) {
+  const asset = await getMediaAsset(assetId)
+  if (!isBunnyStreamEligibleVideo({ mediaType: asset.mediaType, module: asset.module })) {
+    throw errorWithStatus('Este archivo no es un video de sitios o formularios.', 400, 'bunny_stream_not_applicable')
+  }
+
+  const config = await getStorageRuntimeConfig()
+  const currentStream = asset.metadata?.stream || {}
+  const currentVideoId = cleanString(currentStream.videoId)
+  let stream
+
+  if (currentVideoId && config.bunnyStreamConfigured) {
+    const video = await getBunnyStreamVideo(config, currentVideoId)
+    stream = {
+      ...currentStream,
+      provider: 'bunny_stream',
+      enabled: true,
+      providerReady: true,
+      syncStatus: 'synced',
+      syncedAt: nowIso(),
+      libraryId: config.bunnyStreamLibraryId,
+      collectionId: currentStream.collectionId || cleanString(video?.collectionId) || config.bunnyStreamCollectionId || null,
+      collectionName: currentStream.collectionName || config.bunnyStreamCollectionName || null,
+      videoId: currentVideoId,
+      title: currentStream.title || cleanString(video?.title),
+      video: normalizeBunnyStreamVideo(video) || currentStream.video || null
+    }
+  } else {
+    const { buffer, mimeType } = await getMediaAssetBuffer(asset.id)
+    stream = await syncVideoToBunnyStream({
+      config,
+      id: asset.id,
+      businessId: asset.businessId,
+      module: asset.module,
+      moduleEntityId: asset.moduleEntityId,
+      originalFilename: asset.originalFilename,
+      objectPath: asset.bunnyPath,
+      publicUrl: asset.publicUrl,
+      mimeType: mimeType || asset.mimeType,
+      buffer
+    })
+  }
+
+  await updateMediaAssetStream({ asset, stream })
+  return await getMediaAsset(asset.id)
+}
+
 export function extractMediaAssetIdFromUrl(value = '') {
   const match = cleanString(value).match(/(?:\/api)?\/media\/assets\/(media_[\w-]+)(?:\/file|\/thumbnail)?/i)
   return match?.[1] || ''
@@ -1284,7 +1775,12 @@ export async function runStorageDiagnostics() {
     bunny_storage_zone: config.bunnyStorageZone || null,
     bunny_storage_region: config.bunnyStorageRegion || null,
     bunny_cdn_base_url: config.bunnyCdnBaseUrl || null,
+    bunny_stream_enabled: config.bunnyStreamEnabled,
+    bunny_stream_status: config.streamStatus,
     bunny_stream_library_id: config.bunnyStreamLibraryId || null,
+    bunny_stream_collection_id: config.bunnyStreamCollectionId || null,
+    bunny_stream_collection_name: config.bunnyStreamCollectionName || null,
+    bunny_stream_missing_environment: config.streamMissingEnvironment,
     compression_enabled: config.compressionEnabled,
     quota_ready: Boolean(usage),
     usage,

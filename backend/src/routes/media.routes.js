@@ -15,6 +15,7 @@ import {
   replaceMediaAssetHandler,
   retryMediaAssetHandler,
   serveMediaAssetFileHandler,
+  syncMediaAssetStreamHandler,
   storageDiagnosticsHandler,
   uploadMediaHandler
 } from '../controllers/mediaController.js'
@@ -48,5 +49,6 @@ router.post('/assets/move', requireMediaAccess, moveMediaAssetsHandler)
 router.delete('/assets/:assetId', requireMediaAccess, deleteMediaAssetHandler)
 router.put('/assets/:assetId/replace', requireMediaAccess, upload.single('file'), replaceMediaAssetHandler)
 router.post('/assets/:assetId/retry', requireMediaAccess, retryMediaAssetHandler)
+router.post('/assets/:assetId/stream/sync', requireMediaAccess, syncMediaAssetStreamHandler)
 
 export default router

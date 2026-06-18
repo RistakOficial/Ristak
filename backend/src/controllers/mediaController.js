@@ -12,6 +12,7 @@ import {
   retryMediaAsset,
   runStorageDiagnostics,
   softDeleteMediaAsset,
+  syncMediaAssetBunnyStream,
   uploadMediaAsset,
   uploadMediaAssetFromDataUrl
 } from '../services/mediaStorageService.js'
@@ -332,6 +333,15 @@ export async function retryMediaAssetHandler(req, res) {
     res.json({ success: true, data: result })
   } catch (error) {
     sendError(res, error, 'Error reintentando archivo multimedia')
+  }
+}
+
+export async function syncMediaAssetStreamHandler(req, res) {
+  try {
+    const asset = await syncMediaAssetBunnyStream(req.params.assetId)
+    res.json({ success: true, data: asset })
+  } catch (error) {
+    sendError(res, error, 'Error sincronizando metadata de Bunny Stream')
   }
 }
 

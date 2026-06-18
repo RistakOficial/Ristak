@@ -19,6 +19,9 @@ Optional:
 - `BUNNY_STORAGE_ENDPOINT`
 - `BUNNY_STREAM_LIBRARY_ID`
 - `BUNNY_STREAM_API_KEY`
+- `BUNNY_STREAM_COLLECTION_ID`
+- `BUNNY_STREAM_COLLECTION_NAME` (default: `Ristak Sites & Forms`)
+- `BUNNY_STREAM_ENABLED=true`
 - `MEDIA_STORAGE_REQUIRE_BUNNY=true`
 - `INTERNAL_INSTALLER_TOKEN`
 
@@ -35,6 +38,7 @@ Authenticated app endpoints:
 - `DELETE /api/media/assets/:id`
 - `PUT /api/media/assets/:id/replace`
 - `POST /api/media/assets/:id/retry`
+- `POST /api/media/assets/:id/stream/sync`
 - `GET /api/media/diagnostics`
 
 Public file fallback:
@@ -55,6 +59,9 @@ The installer must send `Authorization: Bearer <INTERNAL_INSTALLER_TOKEN>` or `x
 - Videos are compressed/transcoded through FFmpeg to web-friendly MP4 when FFmpeg is available.
 - Audio is compressed through FFmpeg to a web/WhatsApp-friendly format when possible.
 - Failed compression keeps the original so uploads do not die only because FFmpeg is missing.
+- Videos uploaded from Sites, imported site assets, site editor media and Forms (`module=sites`, `module=forms`, `module=landing`) are copied into Bunny Stream after the Storage upload. Other modules do not sync to Stream.
+- Ristak creates or reuses a Bunny Stream collection named `Ristak Sites & Forms` unless `BUNNY_STREAM_COLLECTION_ID` is configured.
+- Bunny Stream video metadata is stored under `media_assets.metadata_json.stream` and can be refreshed with `POST /api/media/assets/:id/stream/sync` after transcoding finishes.
 
 ## Quotas
 
@@ -127,4 +134,3 @@ Diagnostics:
 curl -H "Authorization: Bearer $TOKEN" https://APP.onrender.com/api/media/diagnostics
 curl -H "Authorization: Bearer $INTERNAL_INSTALLER_TOKEN" https://APP.onrender.com/internal/storage/diagnostics
 ```
-
