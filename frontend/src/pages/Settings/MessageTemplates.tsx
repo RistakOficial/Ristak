@@ -45,6 +45,7 @@ import {
   type MessageTemplateHeaderType,
   type MessageTemplatePayload,
   type MessageTemplateStatus,
+  type MessageTemplateVariable,
   type MessageTemplateVariableBinding,
   type MessageTemplateVariableTarget
 } from '@/services/messageTemplatesService'
@@ -373,6 +374,8 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const [bulkTargetFolderId, setBulkTargetFolderId] = useState(ROOT_FOLDER_KEY)
   const [bulkWorking, setBulkWorking] = useState(false)
   const [dragging, setDragging] = useState<{ templateIds: string[]; folderIds: string[] } | null>(null)
+  const [activeVariablePicker, setActiveVariablePicker] = useState<string | null>(null)
+  const [variableSearchDrafts, setVariableSearchDrafts] = useState<Record<string, string>>({})
   const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null)
   const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null)
 
@@ -575,6 +578,8 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const startNewTemplate = () => {
     setSelectedTemplateId(null)
     setDraft(createEmptyDraft(getTemplateFolderTargetId(activeFolderId)))
+    setActiveVariablePicker(null)
+    setVariableSearchDrafts({})
     setTestPhone('')
     setView('editor')
   }
@@ -582,6 +587,8 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const editTemplate = (template: MessageTemplate) => {
     setSelectedTemplateId(template.id)
     setDraft(templateToDraft(template))
+    setActiveVariablePicker(null)
+    setVariableSearchDrafts({})
     setTestPhone('')
     setView('editor')
   }
@@ -605,6 +612,26 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     }
   }
 
+  const getMissingVariableBinding = () => {
+    const targets: Array<{ key: MessageTemplateVariableTarget; section: string; enabled: boolean }> = [
+      { key: 'headerText', section: 'el encabezado', enabled: draft.headerEnabled && draft.headerType === 'text' },
+      { key: 'bodyText', section: 'el cuerpo', enabled: true }
+    ]
+
+    for (const target of targets) {
+      if (!target.enabled) continue
+      const indexes = extractMetaVariableIndexes(String(draft[target.key] || ''))
+      for (const index of indexes) {
+        const binding = draft.variableBindings?.[target.key]?.[String(index)]
+        if (!binding?.variableKey || !variableByKey.has(binding.variableKey)) {
+          return { placeholder: `{{${index}}}`, section: target.section }
+        }
+      }
+    }
+
+    return null
+  }
+
   const saveDraft = async (options: { silent?: boolean } = {}) => {
     if (!draft.name.trim()) {
       showToast('warning', 'Nombre requerido', 'Escribe un nombre para la plantilla')
@@ -612,6 +639,15 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     }
     if (!draft.bodyText.trim()) {
       showToast('warning', 'Cuerpo requerido', 'Escribe el mensaje principal')
+      return null
+    }
+    const missingBinding = getMissingVariableBinding()
+    if (missingBinding) {
+      showToast(
+        'warning',
+        'Dato dinámico requerido',
+        `Selecciona una variable para ${missingBinding.placeholder} en ${missingBinding.section}. No se puede enviar texto libre.`
+      )
       return null
     }
 
@@ -943,16 +979,6 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     )
   }
 
-  const resolveVariableOption = (value: string) => {
-    const query = value.trim().toLowerCase()
-    if (!query) return null
-    return bundle.variables.find((variable) => (
-      variable.label.toLowerCase() === query ||
-      variable.key.toLowerCase() === query ||
-      variable.mergeField.toLowerCase() === query
-    )) || null
-  }
-
   const addMetaVariable = (target: MessageTemplateVariableTarget) => {
     setDraft((current) => {
       const nextText = appendMetaVariable(String(current[target] || ''))
@@ -1022,42 +1048,116 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     const indexes = extractMetaVariableIndexes(text)
     if (!indexes.length) return null
 
-    const datalistId = `template-variable-options-${target}`
-
     return (
       <div className={styles.variableBindings}>
-        <datalist id={datalistId}>
-          {bundle.variables.map((variable) => (
-            <option key={variable.key} value={variable.label}>
-              {variable.group}
-            </option>
-          ))}
-        </datalist>
-
         {indexes.map((index) => {
           const binding = draft.variableBindings?.[target]?.[String(index)] || {}
           const selectedVariable = binding.variableKey ? variableByKey.get(binding.variableKey) : null
-          const inputValue = binding.label || selectedVariable?.label || ''
+          const pickerKey = `${target}-${index}`
+          const searchValue = variableSearchDrafts[pickerKey] || ''
+          const searchQuery = searchValue.trim().toLowerCase()
+          const pickerMatches = bundle.variables
+            .filter((variable) => {
+              if (!searchQuery) return true
+              return [
+                variable.label,
+                variable.key,
+                variable.mergeField,
+                variable.group
+              ].some((value) => value.toLowerCase().includes(searchQuery))
+            })
+            .slice(0, 8)
+          const pickerOpen = activeVariablePicker === pickerKey && !selectedVariable
+          const selectVariable = (variable: MessageTemplateVariable) => {
+            updateVariableBinding(target, index, {
+              label: variable.label,
+              variableKey: variable.key,
+              mergeField: variable.mergeField
+            })
+            setVariableSearchDrafts((current) => ({ ...current, [pickerKey]: '' }))
+            setActiveVariablePicker(null)
+          }
+          const clearVariable = () => {
+            updateVariableBinding(target, index, {
+              label: '',
+              variableKey: '',
+              mergeField: ''
+            })
+            setVariableSearchDrafts((current) => ({ ...current, [pickerKey]: '' }))
+            setActiveVariablePicker(pickerKey)
+          }
 
           return (
             <div key={`${target}-${index}`} className={styles.variableBindingRow}>
               <strong>{`{{${index}}}`}</strong>
               <label>
                 <span>Dato dinámico</span>
-                <input
-                  list={datalistId}
-                  value={inputValue}
-                  onChange={(event) => {
-                    const value = event.target.value
-                    const match = resolveVariableOption(value)
-                    updateVariableBinding(target, index, {
-                      label: value,
-                      variableKey: match?.key || '',
-                      mergeField: match?.mergeField || ''
-                    })
-                  }}
-                  placeholder="Busca First Name, Email, Phone..."
-                />
+                <div className={styles.variablePicker}>
+                  {selectedVariable ? (
+                    <div className={styles.variablePickerSelection} data-ristak-dropdown-trigger>
+                      <span>
+                        <strong>{selectedVariable.label}</strong>
+                        <small>{selectedVariable.group} · {selectedVariable.mergeField}</small>
+                      </span>
+                      <button type="button" onClick={clearVariable} aria-label={`Cambiar variable {{${index}}}`}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className={styles.variablePickerSearch}>
+                        <Search size={14} />
+                        <input
+                          type="text"
+                          value={searchValue}
+                          onFocus={() => setActiveVariablePicker(pickerKey)}
+                          onChange={(event) => {
+                            setActiveVariablePicker(pickerKey)
+                            setVariableSearchDrafts((current) => ({ ...current, [pickerKey]: event.target.value }))
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault()
+                              const firstMatch = pickerMatches[0]
+                              if (firstMatch) selectVariable(firstMatch)
+                            }
+                            if (event.key === 'Escape') {
+                              setActiveVariablePicker(null)
+                            }
+                          }}
+                          onBlur={() => {
+                            window.setTimeout(() => {
+                              setActiveVariablePicker((current) => current === pickerKey ? null : current)
+                            }, 0)
+                          }}
+                          placeholder="Busca First Name, Email, Phone..."
+                          aria-expanded={pickerOpen}
+                          aria-autocomplete="list"
+                        />
+                      </div>
+                      {pickerOpen && (
+                        <div className={styles.variablePickerMenu} data-ristak-dropdown-panel>
+                          {pickerMatches.length ? pickerMatches.map((variable) => (
+                            <button
+                              key={variable.key}
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => selectVariable(variable)}
+                              data-ristak-dropdown-item
+                            >
+                              <span>
+                                <strong>{variable.label}</strong>
+                                <small>{variable.group} · {variable.mergeField}</small>
+                              </span>
+                            </button>
+                          )) : (
+                            <div className={styles.variablePickerEmpty}>Sin variables encontradas</div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
               </label>
               <label>
                 <span>Ejemplo para Meta</span>

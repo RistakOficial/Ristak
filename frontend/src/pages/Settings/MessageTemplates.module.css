@@ -976,10 +976,10 @@
 .variableBindings {
   display: grid;
   gap: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
   padding: 10px;
-  background: rgba(148, 163, 184, 0.05);
+  background: var(--surface);
 }
 
 .variableBindingRow {
@@ -989,13 +989,13 @@
   align-items: end;
 }
 
-.variableBindingRow strong {
+.variableBindingRow > strong {
   display: inline-grid;
   place-items: center;
   min-height: 40px;
-  border-radius: 8px;
-  color: var(--color-primary);
-  background: rgba(var(--color-primary-rgb), 0.1);
+  border-radius: var(--radius-ctl);
+  color: var(--accent);
+  background: var(--accent-soft);
   font-size: 0.9rem;
 }
 
@@ -1005,8 +1005,8 @@
   min-width: 0;
 }
 
-.variableBindingRow span {
-  color: var(--color-text-secondary);
+.variableBindingRow label > span {
+  color: var(--text-dim);
   font-size: 0.78rem;
   font-weight: 500;
 }
@@ -1014,20 +1014,145 @@
 .variableBindingRow input,
 .testSendRow input {
   width: 100%;
-  height: 40px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 8px;
+  height: var(--ristak-dropdown-trigger-height);
+  border: 1px solid var(--ristak-dropdown-border);
+  border-radius: var(--ristak-dropdown-radius);
   outline: 0;
-  color: var(--color-text-primary);
-  background: var(--color-background-primary);
+  color: var(--text);
+  background: var(--ristak-dropdown-bg);
   padding: 0 11px;
   font: inherit;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .variableBindingRow input:focus,
 .testSendRow input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.14);
+  border-color: var(--ristak-dropdown-border-focus);
+  box-shadow: var(--ristak-dropdown-ring);
+}
+
+.variablePicker {
+  position: relative;
+  min-width: 0;
+}
+
+.variablePickerSearch {
+  position: relative;
+}
+
+.variablePickerSearch svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  color: var(--text-mute);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.variablePickerSearch input {
+  padding-left: 36px;
+}
+
+.variablePickerSelection {
+  width: 100%;
+  min-height: var(--ristak-dropdown-trigger-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--ristak-dropdown-border);
+  border-radius: var(--ristak-dropdown-radius);
+  background: var(--ristak-dropdown-bg);
+  color: var(--text);
+  padding: 6px 8px 6px 11px;
+}
+
+.variablePickerSelection > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.variablePickerSelection strong,
+.variablePickerMenu strong {
+  color: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.variablePickerSelection small,
+.variablePickerMenu small {
+  color: var(--text-mute);
+  font-size: 0.74rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.variablePickerSelection button {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-ctl);
+  color: var(--text-mute);
+  background: transparent;
+  cursor: pointer;
+}
+
+.variablePickerSelection button:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.variablePickerMenu {
+  position: absolute;
+  z-index: var(--z-index-popover);
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--ristak-dropdown-border);
+  border-radius: var(--ristak-dropdown-radius);
+  background: var(--ristak-dropdown-panel-bg, var(--surface-solid, var(--surface)));
+  box-shadow: var(--ristak-dropdown-panel-shadow);
+  padding: 6px;
+}
+
+.variablePickerMenu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  border: 0;
+  border-radius: calc(var(--radius-ctl) - 2px);
+  color: var(--text-dim);
+  background: transparent;
+  text-align: left;
+  padding: 9px 10px;
+  cursor: pointer;
+}
+
+.variablePickerMenu button:hover {
+  color: var(--text);
+  background: var(--ristak-dropdown-bg-hover);
+}
+
+.variablePickerMenu button > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.variablePickerEmpty {
+  color: var(--text-mute);
+  font-size: 0.78rem;
+  padding: 10px;
 }
 
 .testSendRow {
