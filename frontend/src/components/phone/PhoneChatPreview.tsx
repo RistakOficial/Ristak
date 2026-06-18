@@ -6,7 +6,6 @@ import {
   MessageCircle,
   Mic,
   MoreVertical,
-  Paperclip,
   Pause,
   Play,
   Plus,
@@ -76,6 +75,7 @@ interface PhoneChatPreviewProps {
 }
 
 interface PhoneChatPreviewComposerProps {
+  inputRef?: React.Ref<HTMLInputElement>
   value?: string
   placeholder?: string
   disabled?: boolean
@@ -84,10 +84,31 @@ interface PhoneChatPreviewComposerProps {
   onChange?: (value: string) => void
   onSend?: () => void
   onAttach?: () => void
+  onEmoji?: () => void
   onVoice?: () => void
   voicePanel?: React.ReactNode
+  emojiOpen?: boolean
   recording?: boolean
   onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>
+}
+
+export interface PhoneChatPreviewAttachmentMenuAction {
+  id: string
+  label: string
+  icon: React.ReactNode
+  onClick: () => void
+  disabled?: boolean
+}
+
+interface PhoneChatPreviewAttachmentMenuProps {
+  open?: boolean
+  actions: PhoneChatPreviewAttachmentMenuAction[]
+}
+
+interface PhoneChatPreviewEmojiPickerProps {
+  open?: boolean
+  emojis?: string[]
+  onSelect: (emoji: string) => void
 }
 
 interface PhoneChatPreviewDraftAttachmentsProps {
@@ -154,8 +175,16 @@ function attachmentKindLabel(kind: PhoneChatPreviewAttachmentKind) {
 }
 
 const AUDIO_WAVE_PATTERN = [8, 14, 19, 11, 17, 24, 13, 9, 21, 16, 10, 18, 25, 12, 15, 22, 9, 18, 13, 24, 16, 11, 20, 14]
+const IPHONE_EMOJI_ROWS = [
+  '😀', '😃', '😄', '😁', '😆', '🥹', '😂', '🤣',
+  '🙂', '😉', '😊', '😍', '😘', '😎', '🤩', '🥳',
+  '😌', '😔', '😅', '😮‍💨', '🤔', '🙌', '👏', '🙏',
+  '👍', '👀', '🔥', '✨', '💯', '❤️', '💚', '💬',
+  '📸', '🎥', '📍', '📅', '⏰', '✅', '💵', '🚀'
+]
 
 export const PhoneChatPreviewComposer: React.FC<PhoneChatPreviewComposerProps> = ({
+  inputRef,
   value = '',
   placeholder = 'Mensaje',
   disabled = false,
@@ -164,8 +193,10 @@ export const PhoneChatPreviewComposer: React.FC<PhoneChatPreviewComposerProps> =
   onChange,
   onSend,
   onAttach,
+  onEmoji,
   onVoice,
   voicePanel,
+  emojiOpen = false,
   recording = false,
   onKeyDown
 }) => {
@@ -193,6 +224,7 @@ export const PhoneChatPreviewComposer: React.FC<PhoneChatPreviewComposerProps> =
       </button>
       <div className={styles.messageInputWrap}>
         <input
+          ref={inputRef}
           className={styles.composerInput}
           data-ristak-unstyled
           value={value}
@@ -202,17 +234,15 @@ export const PhoneChatPreviewComposer: React.FC<PhoneChatPreviewComposerProps> =
           disabled={disabled}
           aria-label={placeholder}
         />
-        <button type="button" className={styles.composerIconButton} aria-label="Emojis" disabled>
-          <Smile size={17} />
-        </button>
         <button
           type="button"
-          className={styles.composerIconButton}
-          aria-label="Adjuntar"
-          onClick={onAttach}
-          disabled={disabled || !onAttach}
+          className={`${styles.composerIconButton} ${emojiOpen ? styles.composerIconButtonActive : ''}`}
+          aria-label="Emojis"
+          aria-pressed={emojiOpen}
+          onClick={onEmoji}
+          disabled={disabled || !onEmoji}
         >
-          <Paperclip size={17} />
+          <Smile size={17} />
         </button>
       </div>
       <button
@@ -224,6 +254,60 @@ export const PhoneChatPreviewComposer: React.FC<PhoneChatPreviewComposerProps> =
       >
         {shouldSend ? <Send size={17} /> : <Mic size={18} />}
       </button>
+    </div>
+  )
+}
+
+export const PhoneChatPreviewAttachmentMenu: React.FC<PhoneChatPreviewAttachmentMenuProps> = ({
+  open = false,
+  actions
+}) => {
+  if (!open) return null
+
+  return (
+    <div className={styles.attachmentMenu} role="menu" aria-label="Opciones de adjunto">
+      {actions.map((action) => (
+        <button
+          key={action.id}
+          type="button"
+          role="menuitem"
+          className={styles.attachmentMenuButton}
+          onClick={action.onClick}
+          disabled={action.disabled}
+        >
+          <span aria-hidden="true">{action.icon}</span>
+          <strong>{action.label}</strong>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+export const PhoneChatPreviewEmojiPicker: React.FC<PhoneChatPreviewEmojiPickerProps> = ({
+  open = false,
+  emojis = IPHONE_EMOJI_ROWS,
+  onSelect
+}) => {
+  if (!open) return null
+
+  return (
+    <div className={styles.emojiPicker} aria-label="Selector de emojis">
+      <div className={styles.emojiPickerHeader}>
+        <span>Frecuentes</span>
+      </div>
+      <div className={styles.emojiGrid}>
+        {emojis.map((emoji, index) => (
+          <button
+            key={`${emoji}-${index}`}
+            type="button"
+            className={styles.emojiButton}
+            onClick={() => onSelect(emoji)}
+            aria-label={`Insertar ${emoji}`}
+          >
+            {emoji}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

@@ -610,7 +610,7 @@
 
 .messageInputWrap {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px 28px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
   min-height: 34px;
   border: 1px solid var(--pc-border);
@@ -656,6 +656,10 @@
   color: var(--pc-muted);
 }
 
+.composerIconButtonActive {
+  color: var(--pc-accent);
+}
+
 .composerIconButton:disabled,
 .composerPlus:disabled {
   opacity: 0.68;
@@ -682,6 +686,106 @@
   align-items: stretch;
   min-height: 112px;
   padding: 8px 12px 9px;
+}
+
+.attachmentMenu {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 11px 10px 7px;
+  border-bottom: 1px solid var(--pc-border);
+  background: color-mix(in srgb, var(--pc-surface) 94%, var(--pc-bg));
+}
+
+.attachmentMenuButton {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: var(--pc-text);
+  background: transparent;
+}
+
+.attachmentMenuButton span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  color: var(--pc-on-primary);
+  background: var(--pc-accent);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--pc-accent) 22%, transparent);
+}
+
+.attachmentMenuButton svg {
+  stroke-width: 2.25;
+}
+
+.attachmentMenuButton strong {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--pc-text);
+  font-size: 11px;
+  font-weight: 780;
+  letter-spacing: 0;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emojiPicker {
+  display: grid;
+  gap: 8px;
+  max-height: 222px;
+  padding: 9px 9px 10px;
+  border-bottom: 1px solid var(--pc-border);
+  background: color-mix(in srgb, var(--pc-surface) 96%, var(--pc-bg));
+  overflow: hidden;
+}
+
+.emojiPickerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 18px;
+  color: var(--pc-muted);
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.emojiGrid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 3px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.emojiGrid::-webkit-scrollbar {
+  display: none;
+}
+
+.emojiButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font-size: 23px;
+  line-height: 1;
+}
+
+.emojiButton:active {
+  background: color-mix(in srgb, var(--pc-muted) 12%, transparent);
 }
 
 .draftAttachments {

@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Bot, Brain, ChevronDown, Clock, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, ChevronDown, Clock, FileText, Image as ImageIcon, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Trash2, Video, X } from 'lucide-react'
 import { Badge, Button, Card, CustomSelect, Modal, NumberInput, TagPicker } from '@/components/common'
 import {
   PhoneChatPreview,
+  PhoneChatPreviewAttachmentMenu,
   PhoneChatPreviewComposer,
   PhoneChatPreviewDraftAttachments,
+  PhoneChatPreviewEmojiPicker,
   PhoneChatPreviewVoiceComposer,
   type PhoneChatPreviewAttachment,
   type PhoneChatPreviewMessage
@@ -263,10 +265,13 @@ const MAX_TEST_VOICE_RECORDING_MS = 3 * 60 * 1000
 const TEST_VOICE_WAVE_BAR_COUNT = 38
 const TEST_VOICE_WAVE_MIN_HEIGHT = 4
 const TEST_VOICE_WAVE_MAX_HEIGHT = 30
-const TEST_ATTACHMENT_ACCEPT = [
-  'image/*',
+const TEST_VOICE_WAVE_UPDATE_MS = 55
+const TEST_VOICE_WAVE_SILENCE_THRESHOLD = 3
+const TEST_VOICE_WAVE_SIGNAL_RANGE = 28
+const TEST_PHOTO_ATTACHMENT_ACCEPT = 'image/*'
+const TEST_VIDEO_ATTACHMENT_ACCEPT = 'video/*'
+const TEST_FILE_ATTACHMENT_ACCEPT = [
   'audio/*',
-  'video/*',
   '.pdf',
   '.doc',
   '.docx',
@@ -401,11 +406,27 @@ function getSupportedTestVoiceMimeType() {
   return TEST_VOICE_MIME_CANDIDATES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || ''
 }
 
-function createTestVoiceBars(offset = 0) {
-  return Array.from({ length: TEST_VOICE_WAVE_BAR_COUNT }, (_, index) => {
-    const value = Math.sin((index + offset) * 0.82) * 0.5 + 0.5
-    return Math.round(TEST_VOICE_WAVE_MIN_HEIGHT + value * (TEST_VOICE_WAVE_MAX_HEIGHT - TEST_VOICE_WAVE_MIN_HEIGHT))
-  })
+function createTestVoiceBars() {
+  return Array.from({ length: TEST_VOICE_WAVE_BAR_COUNT }, () => TEST_VOICE_WAVE_MIN_HEIGHT)
+}
+
+function getTestVoiceBarHeight(samples: Uint8Array) {
+  const average = samples.reduce((sum, value) => sum + Math.abs(value - 128), 0) / samples.length
+  const gatedLevel = average <= TEST_VOICE_WAVE_SILENCE_THRESHOLD
+    ? 0
+    : Math.min(1, (average - TEST_VOICE_WAVE_SILENCE_THRESHOLD) / TEST_VOICE_WAVE_SIGNAL_RANGE)
+  const responsiveLevel = Math.sqrt(gatedLevel)
+
+  return Math.round(TEST_VOICE_WAVE_MIN_HEIGHT + responsiveLevel * (TEST_VOICE_WAVE_MAX_HEIGHT - TEST_VOICE_WAVE_MIN_HEIGHT))
+}
+
+function getTestVoiceAudioContextConstructor() {
+  const audioWindow = window as Window & {
+    AudioContext?: typeof AudioContext
+    webkitAudioContext?: typeof AudioContext
+  }
+
+  return audioWindow.AudioContext || audioWindow.webkitAudioContext || null
 }
 
 function normalizeTestResponseDelay(value: unknown) {
@@ -636,6 +657,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const [testMessages, setTestMessages] = useState<TestMessage[]>([])
   const [testInput, setTestInput] = useState('')
   const [testAttachments, setTestAttachments] = useState<TestAttachment[]>([])
+  const [testAttachmentMenuOpen, setTestAttachmentMenuOpen] = useState(false)
+  const [testEmojiPickerOpen, setTestEmojiPickerOpen] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testVoiceRecording, setTestVoiceRecording] = useState(false)
   const [testVoiceProcessing, setTestVoiceProcessing] = useState(false)
@@ -643,9 +666,18 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const [testVoiceElapsedMs, setTestVoiceElapsedMs] = useState(0)
   const [testVoicePlaying, setTestVoicePlaying] = useState(false)
   const [testVoiceBars, setTestVoiceBars] = useState(() => createTestVoiceBars())
+  const testComposerInputRef = useRef<HTMLInputElement | null>(null)
+  const testPhotoInputRef = useRef<HTMLInputElement | null>(null)
   const testFileInputRef = useRef<HTMLInputElement | null>(null)
+  const testVideoInputRef = useRef<HTMLInputElement | null>(null)
   const testVoiceRecorderRef = useRef<MediaRecorder | null>(null)
   const testVoiceStreamRef = useRef<MediaStream | null>(null)
+  const testVoiceAudioContextRef = useRef<AudioContext | null>(null)
+  const testVoiceAudioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const testVoiceAnalyserRef = useRef<AnalyserNode | null>(null)
+  const testVoiceSamplesRef = useRef<Uint8Array | null>(null)
+  const testVoiceAnimationFrameRef = useRef<number | null>(null)
+  const testVoiceLastWaveUpdateRef = useRef(0)
   const testVoiceChunksRef = useRef<Blob[]>([])
   const testVoiceStartedAtRef = useRef(0)
   const testVoiceTimerRef = useRef<number | null>(null)
@@ -710,6 +742,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     : [{ value: '', label: 'Selecciona producto primero' }]
   const testVoicePanelActive = testVoiceRecording || testVoiceProcessing || Boolean(testVoiceDraft)
   const hasTestConversation = testMessages.length > 0 || Boolean(testInput.trim()) || testAttachments.length > 0 || Boolean(testVoiceDraft) || testVoiceRecording
+
+  useEffect(() => {
+    if (!testVoicePanelActive && !testing) return
+    setTestAttachmentMenuOpen(false)
+    setTestEmojiPickerOpen(false)
+  }, [testVoicePanelActive, testing])
+
   const testPreviewMessages: PhoneChatPreviewMessage[] = testMessages.map((message, index) => ({
     id: `test-${index}`,
     direction: message.internal ? 'system' : message.role === 'user' ? 'outbound' : 'inbound',
@@ -858,7 +897,74 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     }
   }
 
+  function stopTestVoiceWaveform() {
+    if (testVoiceAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(testVoiceAnimationFrameRef.current)
+      testVoiceAnimationFrameRef.current = null
+    }
+
+    try {
+      testVoiceAudioSourceRef.current?.disconnect()
+    } catch {
+      // Best effort cleanup: Safari may already disconnect when tracks stop.
+    }
+    testVoiceAudioSourceRef.current = null
+    testVoiceAnalyserRef.current = null
+    testVoiceSamplesRef.current = null
+
+    if (testVoiceAudioContextRef.current) {
+      testVoiceAudioContextRef.current.close().catch(() => undefined)
+      testVoiceAudioContextRef.current = null
+    }
+  }
+
+  function startTestVoiceWaveform(stream: MediaStream) {
+    stopTestVoiceWaveform()
+    const AudioContextConstructor = getTestVoiceAudioContextConstructor()
+    if (!AudioContextConstructor) return
+
+    try {
+      const audioContext = new AudioContextConstructor()
+      const analyser = audioContext.createAnalyser()
+      const source = audioContext.createMediaStreamSource(stream)
+
+      analyser.fftSize = 256
+      analyser.smoothingTimeConstant = 0.72
+      const samples = new Uint8Array(analyser.fftSize)
+      source.connect(analyser)
+
+      testVoiceAudioContextRef.current = audioContext
+      testVoiceAudioSourceRef.current = source
+      testVoiceAnalyserRef.current = analyser
+      testVoiceSamplesRef.current = samples
+      testVoiceLastWaveUpdateRef.current = 0
+      if (audioContext.state === 'suspended') {
+        audioContext.resume().catch(() => undefined)
+      }
+
+      const drawWave = (timestamp: number) => {
+        const currentAnalyser = testVoiceAnalyserRef.current
+        const currentSamples = testVoiceSamplesRef.current
+        if (!currentAnalyser || !currentSamples) return
+
+        if (timestamp - testVoiceLastWaveUpdateRef.current > TEST_VOICE_WAVE_UPDATE_MS) {
+          currentAnalyser.getByteTimeDomainData(currentSamples)
+          const nextHeight = getTestVoiceBarHeight(currentSamples)
+          setTestVoiceBars((current) => [...current.slice(1), nextHeight])
+          testVoiceLastWaveUpdateRef.current = timestamp
+        }
+
+        testVoiceAnimationFrameRef.current = window.requestAnimationFrame(drawWave)
+      }
+
+      testVoiceAnimationFrameRef.current = window.requestAnimationFrame(drawWave)
+    } catch {
+      stopTestVoiceWaveform()
+    }
+  }
+
   function stopTestVoiceStream() {
+    stopTestVoiceWaveform()
     testVoiceStreamRef.current?.getTracks().forEach((track) => track.stop())
     testVoiceStreamRef.current = null
   }
@@ -879,6 +985,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     }
     testVoiceRecorderRef.current = null
     stopTestVoiceStream()
+    setTestVoiceBars(createTestVoiceBars())
   }
 
   async function submitTestMessage(input: { content?: string; attachments?: TestAttachment[]; clearComposer?: boolean }) {
@@ -894,6 +1001,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     const nextMessages: TestMessage[] = [...testMessages.filter((m) => !m.internal), userMessage]
 
     setTestMessages((current) => [...current, userMessage])
+    setTestAttachmentMenuOpen(false)
+    setTestEmojiPickerOpen(false)
     if (input.clearComposer !== false) {
       setTestInput('')
       setTestAttachments([])
@@ -935,6 +1044,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const handleSendTestMessage = () => {
+    setTestAttachmentMenuOpen(false)
+    setTestEmojiPickerOpen(false)
     void submitTestMessage({
       content: testInput,
       attachments: testAttachments,
@@ -944,7 +1055,50 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
   const handleOpenTestAttachmentPicker = () => {
     if (testing || testVoicePanelActive) return
+    setTestEmojiPickerOpen(false)
+    setTestAttachmentMenuOpen((current) => !current)
+  }
+
+  const handlePickTestAttachment = (kind: 'photo' | 'file' | 'video') => {
+    if (testing || testVoicePanelActive) return
+    setTestAttachmentMenuOpen(false)
+    setTestEmojiPickerOpen(false)
+    if (kind === 'photo') {
+      testPhotoInputRef.current?.click()
+      return
+    }
+    if (kind === 'video') {
+      testVideoInputRef.current?.click()
+      return
+    }
     testFileInputRef.current?.click()
+  }
+
+  const handleToggleTestEmojiPicker = () => {
+    if (testing || testVoicePanelActive) return
+    setTestAttachmentMenuOpen(false)
+    setTestEmojiPickerOpen((current) => !current)
+  }
+
+  const handleSelectTestEmoji = (emoji: string) => {
+    if (testing || testVoicePanelActive) return
+    const input = testComposerInputRef.current
+
+    setTestInput((current) => {
+      if (!input) return `${current}${emoji}`
+
+      const start = input.selectionStart ?? current.length
+      const end = input.selectionEnd ?? start
+      const next = `${current.slice(0, start)}${emoji}${current.slice(end)}`
+      const cursorPosition = start + emoji.length
+
+      window.requestAnimationFrame(() => {
+        input.focus()
+        input.setSelectionRange(cursorPosition, cursorPosition)
+      })
+
+      return next
+    })
   }
 
   const handleTestAttachmentInputChange: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
@@ -1000,6 +1154,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const mimeType = getSupportedTestVoiceMimeType()
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      setTestAttachmentMenuOpen(false)
+      setTestEmojiPickerOpen(false)
       testVoiceStreamRef.current = stream
       testVoiceRecorderRef.current = recorder
       testVoiceChunksRef.current = []
@@ -1009,6 +1165,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       setTestVoiceDraft(null)
       setTestVoiceElapsedMs(0)
       setTestVoiceBars(createTestVoiceBars())
+      startTestVoiceWaveform(stream)
 
       recorder.ondataavailable = (event) => {
         if (event.data?.size) {
@@ -1030,6 +1187,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         testVoiceDiscardRef.current = false
 
         if (discard) {
+          setTestVoiceBars(createTestVoiceBars())
           setTestVoiceProcessing(false)
           return
         }
@@ -1076,7 +1234,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       testVoiceTimerRef.current = window.setInterval(() => {
         const elapsed = Date.now() - testVoiceStartedAtRef.current
         setTestVoiceElapsedMs(elapsed)
-        setTestVoiceBars(createTestVoiceBars(Math.round(elapsed / 120)))
         if (elapsed >= MAX_TEST_VOICE_RECORDING_MS) {
           handleStopTestVoiceRecording()
         }
@@ -1090,6 +1247,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const handleCancelTestVoiceDraft = () => {
+    setTestAttachmentMenuOpen(false)
+    setTestEmojiPickerOpen(false)
     if (testVoiceRecording) {
       testVoiceSendAfterStopRef.current = false
       testVoiceDiscardRef.current = true
@@ -1100,6 +1259,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     setTestVoicePlaying(false)
     setTestVoiceDraft(null)
     setTestVoiceElapsedMs(0)
+    setTestVoiceBars(createTestVoiceBars())
   }
 
   const handleTestVoicePrimary = () => {
@@ -1131,6 +1291,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     setTestVoiceDraft(null)
     setTestVoiceElapsedMs(0)
     setTestVoicePlaying(false)
+    setTestVoiceBars(createTestVoiceBars())
     void submitTestMessage({ content: '', attachments: [attachment], clearComposer: false })
   }
 
@@ -1140,11 +1301,14 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     setTestMessages([])
     setTestInput('')
     setTestAttachments([])
+    setTestAttachmentMenuOpen(false)
+    setTestEmojiPickerOpen(false)
     setTestVoiceDraft(null)
     setTestVoiceRecording(false)
     setTestVoiceProcessing(false)
     setTestVoiceElapsedMs(0)
     setTestVoicePlaying(false)
+    setTestVoiceBars(createTestVoiceBars())
   }
 
   return (
@@ -1854,18 +2018,62 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               composer={(
                 <>
                   <input
+                    ref={testPhotoInputRef}
+                    type="file"
+                    accept={TEST_PHOTO_ATTACHMENT_ACCEPT}
+                    multiple
+                    hidden
+                    onChange={handleTestAttachmentInputChange}
+                  />
+                  <input
                     ref={testFileInputRef}
                     type="file"
-                    accept={TEST_ATTACHMENT_ACCEPT}
+                    accept={TEST_FILE_ATTACHMENT_ACCEPT}
                     multiple
-                    style={{ display: 'none' }}
+                    hidden
                     onChange={handleTestAttachmentInputChange}
+                  />
+                  <input
+                    ref={testVideoInputRef}
+                    type="file"
+                    accept={TEST_VIDEO_ATTACHMENT_ACCEPT}
+                    multiple
+                    hidden
+                    onChange={handleTestAttachmentInputChange}
+                  />
+                  <PhoneChatPreviewAttachmentMenu
+                    open={testAttachmentMenuOpen}
+                    actions={[
+                      {
+                        id: 'photo',
+                        label: 'Mandar foto',
+                        icon: <ImageIcon size={29} />,
+                        onClick: () => handlePickTestAttachment('photo')
+                      },
+                      {
+                        id: 'file',
+                        label: 'Mandar archivo',
+                        icon: <FileText size={29} />,
+                        onClick: () => handlePickTestAttachment('file')
+                      },
+                      {
+                        id: 'video',
+                        label: 'Mandar video',
+                        icon: <Video size={29} />,
+                        onClick: () => handlePickTestAttachment('video')
+                      }
+                    ]}
+                  />
+                  <PhoneChatPreviewEmojiPicker
+                    open={testEmojiPickerOpen}
+                    onSelect={handleSelectTestEmoji}
                   />
                   <PhoneChatPreviewDraftAttachments
                     attachments={testAttachments}
                     onRemove={handleRemoveTestAttachment}
                   />
                   <PhoneChatPreviewComposer
+                    inputRef={testComposerInputRef}
                     value={testInput}
                     placeholder="Ejemplo: Hola, quiero agendar"
                     disabled={testing}
@@ -1874,7 +2082,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                     onChange={setTestInput}
                     onSend={handleSendTestMessage}
                     onAttach={handleOpenTestAttachmentPicker}
+                    onEmoji={handleToggleTestEmojiPicker}
                     onVoice={handleStartTestVoiceRecording}
+                    emojiOpen={testEmojiPickerOpen}
                     recording={testVoiceRecording}
                     voicePanel={testVoicePanelActive ? (
                       <PhoneChatPreviewVoiceComposer
