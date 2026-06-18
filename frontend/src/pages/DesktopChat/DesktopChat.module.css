@@ -332,21 +332,30 @@
 }
 
 .chatSelectionBar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 10px;
-  min-height: 44px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 0;
   padding: 9px 14px;
   border-bottom: 1px solid var(--chat-border);
   background: var(--surface);
   color: var(--text-dim);
   font-size: var(--font-size-xs);
-  overflow: visible;
+  overflow: hidden;
 }
 
 .chatSelectionBar[data-chat-selection-active='true'] {
   background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface));
+}
+
+.chatSelectionSummary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 26px;
 }
 
 .chatSelectAll,
@@ -390,8 +399,7 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  flex: 1 0 100%;
-  min-width: 100%;
+  min-width: 0;
 }
 
 .chatSelectionActions [data-btn] {
@@ -424,6 +432,7 @@
 }
 
 .chatList {
+  flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   padding: 0 0 12px;

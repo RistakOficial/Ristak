@@ -4136,24 +4136,26 @@ export const DesktopChat: React.FC = () => {
           ) : null}
 
           <div className={styles.chatSelectionBar} data-chat-selection-active={selectedVisibleChatCount > 0 ? 'true' : undefined}>
-            <label className={styles.chatSelectAll}>
-              <input
-                ref={selectAllChatCheckboxRef}
-                type="checkbox"
-                checked={allVisibleChatsSelected}
-                disabled={selectableChatRows.length === 0}
-                onChange={handleToggleVisibleChatSelection}
-                aria-label="Seleccionar todos los chats visibles"
-              />
-              <span>Seleccionar todos</span>
-            </label>
-            <span className={styles.chatSelectionCount}>
-              {selectedVisibleChatCount > 0
-                ? `${selectedVisibleChatCount} seleccionado${selectedVisibleChatCount === 1 ? '' : 's'}`
-                : `${selectableChatRows.length} visible${selectableChatRows.length === 1 ? '' : 's'}`}
-            </span>
+            <div className={styles.chatSelectionSummary}>
+              <label className={styles.chatSelectAll}>
+                <input
+                  ref={selectAllChatCheckboxRef}
+                  type="checkbox"
+                  checked={allVisibleChatsSelected}
+                  disabled={selectableChatRows.length === 0}
+                  onChange={handleToggleVisibleChatSelection}
+                  aria-label="Seleccionar todos los chats visibles"
+                />
+                <span>Seleccionar todos</span>
+              </label>
+              <span className={styles.chatSelectionCount}>
+                {selectedVisibleChatCount > 0
+                  ? `${selectedVisibleChatCount} seleccionado${selectedVisibleChatCount === 1 ? '' : 's'}`
+                  : `${selectableChatRows.length} visible${selectableChatRows.length === 1 ? '' : 's'}`}
+              </span>
+            </div>
             {selectedVisibleChatCount > 0 ? (
-              <span className={styles.chatSelectionActions}>
+              <div className={styles.chatSelectionActions}>
                 <Button type="button" variant="secondary" size="sm" className={styles.chatSelectionAction} onClick={handleMarkSelectedChatsAsRead}>
                   <CheckCheck size={14} />
                   Marcar como leídos
@@ -4176,7 +4178,7 @@ export const DesktopChat: React.FC = () => {
                 >
                   <X size={14} />
                 </Button>
-              </span>
+              </div>
             ) : null}
           </div>
 
