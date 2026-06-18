@@ -2376,7 +2376,7 @@
   flex: 1;
   min-width: 0;
   font-size: 16px;
-  font-weight: 760;
+  font-weight: var(--font-weight-medium);
   line-height: 1.2;
   color: var(--color-text-primary);
   overflow: hidden;
@@ -2432,7 +2432,7 @@
 
 .libRowActive {
   background: rgba(var(--color-primary-rgb), 0.14);
-  font-weight: 600;
+  font-weight: var(--font-weight-medium);
 }
 
 .libRowChecked {
@@ -2458,7 +2458,7 @@
   flex: 1;
   min-width: 0;
   font-size: 14.5px;
-  font-weight: 650;
+  font-weight: var(--font-weight-medium);
   line-height: 1.25;
   color: var(--color-text-primary);
   overflow: hidden;
