@@ -27,6 +27,7 @@ const MAX_STEPS = 60
 const MAX_INLINE_DELAY_SECONDS = 120
 const SCHEDULE_TRIGGER_WINDOW_MINUTES = 2
 const WAIT_KIND_REPLY = 'reply'
+const WAIT_KIND_BUTTON_REPLY = 'button_reply'
 const WAIT_KIND_TRIGGER_LINK_CLICK = 'trigger-link-click'
 const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 const CONDITION_VARIABLE_FIELD_PREFIX = 'var:'
@@ -65,6 +66,48 @@ function engineError(status, message) {
 
 function normalizeText(value) {
   return String(value || '').trim().toLowerCase()
+}
+
+function normalizeButtonMatchText(value) {
+  return normalizeText(value).replace(/\s+/g, ' ')
+}
+
+function normalizeMessageButtons(value = []) {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((button, index) => {
+      const label = cleanString(button?.label || button?.title || button?.text)
+      const id = cleanString(button?.id || button?.payload || `btn_${index}`)
+      const action = cleanString(button?.action) === 'url' ? 'url' : 'branch'
+      return {
+        id,
+        label,
+        action,
+        url: cleanString(button?.url)
+      }
+    })
+    .filter(button => button.label)
+}
+
+function findMatchingWaitButton(waitButtons = [], reply = {}) {
+  const buttons = normalizeMessageButtons(waitButtons)
+  if (!buttons.length) return null
+
+  const candidates = [
+    reply.buttonId,
+    reply.buttonPayload,
+    reply.buttonTitle,
+    reply.text
+  ].map(normalizeButtonMatchText).filter(Boolean)
+
+  return buttons.find(button => {
+    const buttonCandidates = [
+      button.id,
+      `btn_${button.id}`,
+      button.label
+    ].map(normalizeButtonMatchText).filter(Boolean)
+    return buttonCandidates.some(candidate => candidates.includes(candidate))
+  }) || null
 }
 
 function boolText(value) {
@@ -148,6 +191,158 @@ function readPath(source, path) {
     current = current[segment]
   }
   return current
+}
+
+function normalizeAnswerLookupKey(value) {
+  return cleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function answerComparableValue(value) {
+  if (Array.isArray(value)) return value.map(answerComparableValue).filter(Boolean).join(', ')
+  if (isPlainObject(value)) return JSON.stringify(value)
+  return cleanString(value)
+}
+
+function setAnswerAlias(target, key, value) {
+  const directKey = cleanString(key)
+  const normalizedKey = normalizeAnswerLookupKey(directKey)
+  if (directKey && target[directKey] === undefined) target[directKey] = value
+  if (normalizedKey && target[normalizedKey] === undefined) target[normalizedKey] = value
+}
+
+function addFormAnswer(normalized, answer = {}, index = 0) {
+  const value = Object.prototype.hasOwnProperty.call(answer, 'value')
+    ? answer.value
+    : Object.prototype.hasOwnProperty.call(answer, 'answer')
+      ? answer.answer
+      : ''
+  const id = cleanString(answer.id || answer.fieldId || answer.field_id || answer.blockId || answer.block_id)
+  const key = cleanString(answer.key || answer.fieldKey || answer.field_key || answer.name || answer.internalName || answer.internal_name)
+  const label = cleanString(answer.label || answer.question || answer.title || answer.name || key || id || `Respuesta ${index + 1}`)
+  const entry = {
+    id,
+    key: key || normalizeAnswerLookupKey(label || id || `respuesta_${index + 1}`),
+    label,
+    value,
+    type: cleanString(answer.type || answer.blockType || answer.block_type || '')
+  }
+
+  normalized.answers.push(entry)
+  setAnswerAlias(normalized.byId, id, value)
+  setAnswerAlias(normalized.byKey, entry.key, value)
+  setAnswerAlias(normalized.byLabel, label, value)
+}
+
+function normalizeFormResponses(raw) {
+  const normalized = {
+    answers: [],
+    byId: {},
+    byKey: {},
+    byLabel: {},
+    summary: ''
+  }
+  const source = parseJson(raw, raw)
+  if (!source || typeof source !== 'object') return normalized
+
+  if (Array.isArray(source.answers)) {
+    source.answers.forEach((answer, index) => addFormAnswer(normalized, answer, index))
+  }
+
+  const bags = [
+    ['byId', source.byId || source.by_id],
+    ['byKey', source.byKey || source.by_key],
+    ['byLabel', source.byLabel || source.by_label]
+  ]
+  for (const [targetKey, bag] of bags) {
+    if (!isPlainObject(bag)) continue
+    Object.entries(bag).forEach(([key, value]) => setAnswerAlias(normalized[targetKey], key, value))
+  }
+
+  for (const section of ['standard', 'custom', 'system', 'ignored', 'raw']) {
+    const bag = source[section]
+    if (!isPlainObject(bag)) continue
+    Object.entries(bag).forEach(([key, value]) => {
+      setAnswerAlias(normalized.byKey, key, value)
+      setAnswerAlias(normalized.byKey, `${section}.${key}`, value)
+    })
+  }
+
+  const knownEnvelopeKeys = new Set([
+    'answers',
+    'byId',
+    'by_id',
+    'byKey',
+    'by_key',
+    'byLabel',
+    'by_label',
+    'summary',
+    'text',
+    'standard',
+    'custom',
+    'system',
+    'ignored',
+    'raw'
+  ])
+  Object.entries(source).forEach(([key, value]) => {
+    if (knownEnvelopeKeys.has(key)) return
+    setAnswerAlias(normalized.byKey, key, value)
+  })
+
+  normalized.summary = cleanString(source.summary || source.text) || normalized.answers
+    .filter(answer => answer.label || answer.key)
+    .map(answer => `${answer.label || answer.key}: ${answerComparableValue(answer.value)}`)
+    .filter(line => cleanString(line.replace(/^[^:]+:\s*$/, '')))
+    .join('\n')
+
+  if (!normalized.summary && Object.keys(normalized.byKey).length) {
+    normalized.summary = Object.entries(normalized.byKey)
+      .map(([key, value]) => `${key}: ${answerComparableValue(value)}`)
+      .join('\n')
+  }
+
+  return normalized
+}
+
+function formResponsesFromContext(ctx = {}) {
+  return normalizeFormResponses(
+    ctx.formResponses ||
+    ctx.form_responses ||
+    ctx.formAnswers ||
+    ctx.form_answers ||
+    ctx.responses ||
+    {}
+  )
+}
+
+function hasFormResponses(responses) {
+  return Boolean(
+    responses.summary ||
+    responses.answers.length ||
+    Object.keys(responses.byId).length ||
+    Object.keys(responses.byKey).length ||
+    Object.keys(responses.byLabel).length
+  )
+}
+
+function formResponseValue(ctx = {}, key = '') {
+  const responses = formResponsesFromContext(ctx)
+  if (!cleanString(key)) return responses.summary
+  const wanted = normalizeAnswerLookupKey(key)
+  const bags = [responses.byKey, responses.byId, responses.byLabel]
+  for (const bag of bags) {
+    for (const [candidate, value] of Object.entries(bag)) {
+      if (normalizeAnswerLookupKey(candidate) === wanted) return value
+    }
+  }
+  const answer = responses.answers.find(item => (
+    [item.id, item.key, item.label].some(candidate => normalizeAnswerLookupKey(candidate) === wanted)
+  ))
+  return answer ? answer.value : ''
 }
 
 function resolveDynamicToken(token, ctx) {
@@ -359,14 +554,91 @@ function formDisqualifiedFromContext(ctx = {}) {
 
 function formDataFromContext(ctx = {}) {
   const status = ctx.formStatus || ctx.form_status || ctx.submissionStatus || ctx.submission_status || ctx.status || ''
+  const responses = formResponsesFromContext(ctx)
   return {
-    id_formulario: ctx.formId || ctx.form_id || '',
-    nombre_formulario: ctx.formName || ctx.form_name || '',
+    id_formulario: primaryFormIdFromContext(ctx),
+    nombre_formulario: primaryFormNameFromContext(ctx),
+    nombre: ctx.contact?.fullName || ctx.contactName || '',
+    telefono: ctx.contact?.phone || ctx.phone || '',
+    email: ctx.contact?.email || ctx.email || '',
     estado: status,
     descalificado: formDisqualifiedFromContext(ctx),
     id_envio: ctx.submissionId || ctx.submission_id || '',
-    fecha_de_envio: ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || ''
+    fecha_de_envio: ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || '',
+    respuestas: responses.byKey,
+    respuestas_por_id: responses.byId,
+    respuestas_por_etiqueta: responses.byLabel,
+    resumen_respuestas: responses.summary
   }
+}
+
+function automationImportedFormId(siteId, importedFormId) {
+  const site = str(siteId)
+  const form = str(importedFormId)
+  return site && form ? `${site}:imported:${form}` : ''
+}
+
+function primaryFormIdFromContext(ctx = {}) {
+  return (
+    ctx.automationFormId ||
+    ctx.automation_form_id ||
+    ctx.formSiteId ||
+    ctx.form_site_id ||
+    ctx.formId ||
+    ctx.form_id ||
+    ctx.importedFormId ||
+    ctx.imported_form_id ||
+    ctx.siteId ||
+    ctx.site_id ||
+    ''
+  )
+}
+
+function primaryFormNameFromContext(ctx = {}) {
+  return (
+    ctx.formName ||
+    ctx.form_name ||
+    ctx.formSiteName ||
+    ctx.form_site_name ||
+    ctx.importedFormName ||
+    ctx.imported_form_name ||
+    ctx.importedFormTitle ||
+    ctx.imported_form_title ||
+    ctx.siteName ||
+    ctx.site_name ||
+    ''
+  )
+}
+
+function formIdsFromContext(ctx = {}) {
+  const ids = new Set()
+  const add = (value) => {
+    const clean = str(value)
+    if (clean) ids.add(clean)
+  }
+
+  add(ctx.automationFormId)
+  add(ctx.automation_form_id)
+  add(ctx.formId)
+  add(ctx.form_id)
+  add(ctx.formSiteId)
+  add(ctx.form_site_id)
+  add(ctx.siteId)
+  add(ctx.site_id)
+  add(ctx.importedFormId)
+  add(ctx.imported_form_id)
+
+  const siteId = str(ctx.siteId || ctx.site_id || ctx.formId || ctx.form_id)
+  const importedFormId = str(ctx.importedFormId || ctx.imported_form_id)
+  add(automationImportedFormId(siteId, importedFormId))
+
+  return ids
+}
+
+function formSubmittedMatches(selectedForm, ctx = {}) {
+  const selected = str(selectedForm)
+  if (!selected) return true
+  return formIdsFromContext(ctx).has(selected)
 }
 
 function appointmentDataFromContext(ctx = {}) {
@@ -462,7 +734,16 @@ function buildVariableMap(ctx) {
     map['payment.date'] = String(payment.fecha ?? '')
   }
   const form = formDataFromContext(ctx)
-  if (Object.values(form).some((value) => value !== '' && value !== false)) {
+  const formResponses = formResponsesFromContext(ctx)
+  const hasFormData = Boolean(
+    form.id_formulario ||
+    form.nombre_formulario ||
+    form.estado ||
+    form.id_envio ||
+    form.fecha_de_envio ||
+    hasFormResponses(formResponses)
+  )
+  if (hasFormData) {
     setDeepVariable(map, 'formulario', form)
     setDeepVariable(map, 'formulario_1', form)
     map['form.id'] = String(form.id_formulario ?? '')
@@ -471,6 +752,17 @@ function buildVariableMap(ctx) {
     map['form.disqualified'] = boolText(Boolean(form.descalificado))
     map['form.submission_id'] = String(form.id_envio ?? '')
     map['form.submitted_at'] = String(form.fecha_de_envio ?? '')
+    map['form.answers'] = formResponses.summary
+    map['form.answers_text'] = formResponses.summary
+    if (hasFormResponses(formResponses)) {
+      map['formulario.respuestas'] = JSON.stringify(formResponses.byKey)
+      map['formulario_1.respuestas'] = JSON.stringify(formResponses.byKey)
+      map['formulario.respuestas_por_id'] = JSON.stringify(formResponses.byId)
+      map['formulario.respuestas_por_etiqueta'] = JSON.stringify(formResponses.byLabel)
+      map['formulario.resumen_respuestas'] = formResponses.summary
+      setDeepVariable(map, 'form.responses', formResponses.byKey)
+      setDeepVariable(map, 'form.answers_by_id', formResponses.byId)
+    }
   }
   const appointment = appointmentDataFromContext(ctx)
   if (Object.values(appointment).some((value) => value !== '')) {
@@ -588,6 +880,11 @@ function filterFieldValue(filter, ctx) {
     case 'campaign': return ctx.campaign || null
     case 'form_disqualified': return boolText(formDisqualifiedFromContext(ctx))
     case 'form_status': return ctx.formStatus || ctx.form_status || ctx.submissionStatus || ctx.submission_status || ctx.status || ''
+    case 'form-submitted': return (ctx.submissionId || ctx.submission_id || primaryFormIdFromContext(ctx)) ? 'true' : 'false'
+    case 'form-specific': return primaryFormIdFromContext(ctx)
+    case 'form-date': return ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || ''
+    case 'form-field-value':
+    case 'form_field': return formResponseValue(ctx, filter.customKey || filter.custom_key || filter.fieldKey || filter.field_key)
     case 'link': return ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ''
     case 'trigger_link': return ctx.triggerLinkName || ctx.triggerLinkPublicId || ctx.triggerLinkId || ''
     case 'destination_url': return ctx.destinationUrl || ''
@@ -722,7 +1019,7 @@ function triggerMatches(trigger, eventType, ctx) {
     case 'form-submitted': {
       if (trigger.type !== 'trigger-form-submitted') return false
       const form = str(config.form)
-      return !form || form === str(ctx.formId)
+      return formSubmittedMatches(form, ctx)
     }
 
     case 'scheduler': {
@@ -841,6 +1138,12 @@ function ruleFieldValue(rule, ctx) {
     case 'pay-product': return ctx.product || ctx.title || ctx.description || ''
     case 'pay-currency': return ctx.currency || ''
     case 'pay-date': return ctx.paymentDate || ctx.date || ctx.createdAt || ''
+    case 'form-submitted': return (ctx.submissionId || ctx.submission_id || primaryFormIdFromContext(ctx)) ? 'true' : 'false'
+    case 'form-specific': return primaryFormIdFromContext(ctx)
+    case 'form-date': return ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || ''
+    case 'form_disqualified': return boolText(formDisqualifiedFromContext(ctx))
+    case 'form-field-value':
+    case 'form_field': return formResponseValue(ctx, rule.customKey || rule.custom_key || rule.fieldKey || rule.field_key)
     case 'tag-has':
     case 'tag-any-of':
       return (contact.tagKeys || contact.tags || []).join(' , ')
@@ -1083,10 +1386,20 @@ async function createEnrollment(automation, contact, ctx) {
       payload: ctx.payload || null,
       formId: ctx.formId || null,
       formName: ctx.formName || null,
+      automationFormId: ctx.automationFormId || ctx.automation_form_id || null,
+      siteId: ctx.siteId || ctx.site_id || null,
+      siteName: ctx.siteName || ctx.site_name || null,
+      formSiteId: ctx.formSiteId || ctx.form_site_id || null,
+      formSiteName: ctx.formSiteName || ctx.form_site_name || null,
+      importedFormId: ctx.importedFormId || ctx.imported_form_id || null,
+      importedFormName: ctx.importedFormName || ctx.imported_form_name || ctx.importedFormTitle || ctx.imported_form_title || null,
       formStatus: ctx.formStatus || ctx.form_status || ctx.submissionStatus || ctx.submission_status || ctx.status || null,
       formDisqualified: formDisqualifiedFromContext(ctx),
       submissionId: ctx.submissionId || ctx.submission_id || null,
       submittedAt: ctx.submittedAt || ctx.submitted_at || null,
+      formResponses: ctx.formResponses || ctx.form_responses || null,
+      formAnswers: ctx.formAnswers || ctx.form_answers || null,
+      formAnswersText: ctx.formAnswersText || ctx.form_answers_text || '',
       scheduledFor: ctx.scheduledFor || null,
       scheduleRunKey: ctx.scheduleRunKey || null,
       scheduleRecurrence: ctx.scheduleRecurrence || null,
@@ -1642,7 +1955,11 @@ async function sendMediaBlock({ block, to, phoneNumberId, ctx }) {
 }
 
 async function sendWhatsAppBlocks(node, ctx) {
-  const { sendWhatsAppApiTextMessage, sendWhatsAppApiTemplateMessage } = await import('./whatsappApiService.js')
+  const {
+    sendWhatsAppApiInteractiveMessage,
+    sendWhatsAppApiTextMessage,
+    sendWhatsAppApiTemplateMessage
+  } = await import('./whatsappApiService.js')
   const config = node.config || {}
   const to = ctx.contact?.phone
   if (!to) throw new Error('El contacto no tiene teléfono')
@@ -1728,9 +2045,11 @@ async function sendWhatsAppBlocks(node, ctx) {
       }
     }
     if (sentNames.length === 0) throw new Error('No hay plantilla seleccionada')
-    return sentNames.length === 1
-      ? `Plantilla "${sentNames[0]}" enviada`
-      : `${sentNames.length} plantillas enviadas (${sentNames.join(', ')})`
+    return {
+      detail: sentNames.length === 1
+        ? `Plantilla "${sentNames[0]}" enviada`
+        : `${sentNames.length} plantillas enviadas (${sentNames.join(', ')})`
+    }
   }
 
   const blocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
@@ -1740,11 +2059,42 @@ async function sendWhatsAppBlocks(node, ctx) {
     if (block.type === 'text') {
       const text = renderTemplate(str(block.compiledText), ctx, { preserveUnknown: true }).trim()
       if (!text) continue
-      const buttons = Array.isArray(block.buttons) ? block.buttons.filter((b) => str(b.label).trim()) : []
-      const body = buttons.length
-        ? `${text}\n\n${buttons.map((b) => `▸ ${b.label.trim()}`).join('\n')}`
-        : text
-      await sendWhatsAppApiTextMessage({ to, text: body, contactId: ctx.contact?.id, phoneNumberId })
+      const buttons = normalizeMessageButtons(block.buttons)
+      const branchButtons = buttons.filter(button => button.action !== 'url')
+      const urlButtons = buttons.filter(button => button.action === 'url')
+      if (branchButtons.length && urlButtons.length) {
+        throw new Error('WhatsApp no permite mezclar botones de salida y botones de URL en el mismo globo')
+      }
+      if (urlButtons.length > 1) {
+        throw new Error('WhatsApp permite un solo botón de URL por globo')
+      }
+
+      if (branchButtons.length) {
+        await sendWhatsAppApiInteractiveMessage({
+          to,
+          body: text,
+          buttons: branchButtons.map(button => ({ id: button.id, title: button.label })),
+          contactId: ctx.contact?.id,
+          phoneNumberId
+        })
+        sent += 1
+        return {
+          detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''}; esperando botón`,
+          waitForButtons: branchButtons.map(button => ({ id: button.id, label: button.label }))
+        }
+      }
+
+      if (urlButtons.length) {
+        await sendWhatsAppApiInteractiveMessage({
+          to,
+          body: text,
+          urlButton: { title: urlButtons[0].label, url: urlButtons[0].url },
+          contactId: ctx.contact?.id,
+          phoneNumberId
+        })
+      } else {
+        await sendWhatsAppApiTextMessage({ to, text, contactId: ctx.contact?.id, phoneNumberId })
+      }
       sent += 1
     } else if (block.type === 'delay') {
       const seconds = Math.min(
@@ -1760,7 +2110,9 @@ async function sendWhatsAppBlocks(node, ctx) {
     }
   }
   if (sent === 0) throw new Error('El mensaje está vacío: configura al menos un globo de texto')
-  return `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''}${notes.length ? ` (${notes.join(', ')})` : ''}`
+  return {
+    detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''}${notes.length ? ` (${notes.join(', ')})` : ''}`
+  }
 }
 
 /**
@@ -1772,16 +2124,36 @@ async function sendWhatsAppBlocks(node, ctx) {
 async function executeNode(node, ctx) {
   switch (node.type) {
     case 'channel-whatsapp': {
-      const detail = await sendWhatsAppBlocks(node, ctx)
+      const sendResult = await sendWhatsAppBlocks(node, ctx)
+      const detail = sendResult?.detail || 'Mensaje de WhatsApp enviado'
+      const output = {
+        id_mensaje: '',
+        estado: 'enviado',
+        numero_destino: ctx.contact?.phone || '',
+        fecha_envio: nowIso()
+      }
+      if (Array.isArray(sendResult?.waitForButtons) && sendResult.waitForButtons.length) {
+        return {
+          wait: {
+            kind: WAIT_KIND_BUTTON_REPLY,
+            resumeAt: null,
+            context: {
+              waitExpectedAction: 'button_reply',
+              waitActionResource: node.id,
+              waitActionResourceName: node.label || nodeLabel(node),
+              waitActionChannel: 'whatsapp',
+              waitButtons: sendResult.waitForButtons
+            }
+          },
+          detail,
+          output,
+          outputBaseId: 'enviar_whatsapp'
+        }
+      }
       return {
         handle: 'out',
         detail,
-        output: {
-          id_mensaje: '',
-          estado: 'enviado',
-          numero_destino: ctx.contact?.phone || '',
-          fecha_envio: nowIso()
-        },
+        output,
         outputBaseId: 'enviar_whatsapp'
       }
     }
@@ -2289,13 +2661,83 @@ async function resumeWaitingTriggerLinkClicks(automations, baseCtx) {
 }
 
 /** Evento principal: llega un mensaje entrante (WhatsApp por ahora) */
-export async function handleIncomingMessage({ contactId, phone, contactName, text, channel = 'whatsapp', businessPhoneNumberId = null }) {
+export async function handleIncomingMessage({
+  contactId,
+  phone,
+  contactName,
+  text,
+  messageType = '',
+  buttonId = '',
+  buttonPayload = '',
+  buttonTitle = '',
+  buttonReplyType = '',
+  channel = 'whatsapp',
+  businessPhoneNumberId = null
+}) {
   try {
     const contact = await loadContact(contactId, { phone, name: contactName })
-    const baseCtx = { contact, messageText: text || '', channel, businessPhoneNumberId }
+    const baseCtx = {
+      contact,
+      messageText: text || '',
+      channel,
+      businessPhoneNumberId,
+      messageType,
+      buttonId,
+      buttonPayload,
+      buttonTitle,
+      buttonReplyType
+    }
     const automations = await listPublishedAutomations()
 
-    // 1) Reanudar inscripciones que esperaban respuesta de este contacto
+    // 1) Reanudar inscripciones que esperaban un botón de este contacto
+    const waitingButtons = await db.all(
+      `SELECT * FROM automation_enrollments WHERE contact_id = ? AND status = 'waiting' AND wait_kind = ?`,
+      [contact.id, WAIT_KIND_BUTTON_REPLY]
+    )
+    for (const row of waitingButtons) {
+      const automation = automations.find((candidate) => candidate.id === row.automation_id)
+      if (!automation) continue
+      const storedContext = parseJson(row.context, {})
+      const matchedButton = findMatchingWaitButton(storedContext.waitButtons, {
+        buttonId,
+        buttonPayload,
+        buttonTitle,
+        text
+      })
+      if (!matchedButton) continue
+
+      const enrollment = {
+        id: row.id,
+        automationId: row.automation_id,
+        status: 'active',
+        currentNodeId: row.current_node_id,
+        log: parseJson(row.log, []),
+        resumeAt: null,
+        waitKind: null,
+        context: storedContext
+      }
+      const ctx = {
+        ...baseCtx,
+        buttonId: matchedButton.id,
+        buttonTitle: buttonTitle || matchedButton.label,
+        buttonPayload: buttonPayload || matchedButton.id,
+        businessPhoneNumberId: businessPhoneNumberId || enrollment.context.businessPhoneNumberId
+      }
+      addLog(enrollment, {
+        nodeId: row.current_node_id,
+        label: nodeLabel(getNode(automation.flow, row.current_node_id)) || 'WhatsApp',
+        status: 'ok',
+        detail: `Botón "${matchedButton.label}" recibido`
+      })
+      const edge = edgesFrom(automation.flow, row.current_node_id, `btn_${matchedButton.id}`)[0]
+      if (edge) await runFrom(automation.flow, enrollment, edge.targetNodeId, ctx)
+      else {
+        enrollment.status = 'completed'
+        await saveEnrollment(enrollment)
+      }
+    }
+
+    // 2) Reanudar inscripciones que esperaban respuesta de este contacto
     const waiting = await db.all(
       `SELECT * FROM automation_enrollments WHERE contact_id = ? AND status = 'waiting' AND wait_kind = ?`,
       [contact.id, WAIT_KIND_REPLY]
@@ -2329,25 +2771,19 @@ export async function handleIncomingMessage({ contactId, phone, contactName, tex
       }
     }
 
-    // 2) Detener flujos configurados con "salir al responder"
+    // 3) Detener flujos configurados con "salir al responder"
     for (const automation of automations) {
       if (automation.flow?.settings?.stopOnContactResponse) {
         await db.run(
           `UPDATE automation_enrollments SET status = 'exited', updated_at = CURRENT_TIMESTAMP
-           WHERE automation_id = ? AND contact_id = ? AND status IN ('active', 'waiting') AND wait_kind IS DISTINCT FROM ?`,
-          [automation.id, contact.id, WAIT_KIND_REPLY]
-        ).catch(async () => {
-          // SQLite no soporta IS DISTINCT FROM
-          await db.run(
-            `UPDATE automation_enrollments SET status = 'exited', updated_at = CURRENT_TIMESTAMP
-             WHERE automation_id = ? AND contact_id = ? AND status IN ('active', 'waiting') AND (wait_kind IS NULL OR wait_kind != ?)`,
-            [automation.id, contact.id, WAIT_KIND_REPLY]
-          )
-        })
+           WHERE automation_id = ? AND contact_id = ? AND status IN ('active', 'waiting')
+             AND (wait_kind IS NULL OR wait_kind NOT IN (?, ?))`,
+          [automation.id, contact.id, WAIT_KIND_REPLY, WAIT_KIND_BUTTON_REPLY]
+        )
       }
     }
 
-    // 3) Inscribir en automatizaciones cuyo disparador coincide
+    // 4) Inscribir en automatizaciones cuyo disparador coincide
     await enrollMatching(automations, 'message-received', baseCtx)
   } catch (error) {
     logger.error(`[Automatizaciones] Error procesando mensaje entrante: ${error.message}`)

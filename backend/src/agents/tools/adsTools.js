@@ -2,6 +2,216 @@ import { tool } from '@openai/agents'
 import { z } from 'zod'
 import { db } from '../../config/database.js'
 import { getMetaConfig } from '../../services/metaAdsService.js'
+import { getAccountTimezone } from '../../utils/dateUtils.js'
+import { buildHiddenContactsCondition, getHiddenContactFilters } from '../../utils/hiddenContactsFilter.js'
+
+const isPostgres = Boolean(process.env.DATABASE_URL)
+
+function roundMoney(value) {
+  const number = Number(value || 0)
+  return Math.round(number * 100) / 100
+}
+
+function roundRatio(value) {
+  if (value === null || value === undefined) return null
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.round(number * 100) / 100 : null
+}
+
+function validateDateOnly(value, label) {
+  const text = String(value || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    throw new Error(`${label} debe venir en formato YYYY-MM-DD`)
+  }
+  return text
+}
+
+function escapeSqlLiteral(value) {
+  return String(value || 'UTC').replace(/'/g, "''")
+}
+
+function sqlDateExpression(column, timezone = 'UTC') {
+  if (!isPostgres) return `DATE(${column})`
+  return `((${column})::timestamptz AT TIME ZONE '${escapeSqlLiteral(timezone)}')::date`
+}
+
+function sqlDateOnlyExpression(column) {
+  return isPostgres ? `(${column})::date` : `DATE(${column})`
+}
+
+const CAMPAIGN_RETURN_GROUPS = {
+  campaign: {
+    key: "COALESCE(NULLIF(m.campaign_id, ''), NULLIF(m.campaign_name, ''), 'sin_campaign')",
+    attributedKey: "COALESCE(NULLIF(ma.campaign_id, ''), NULLIF(ma.campaign_name, ''), 'sin_campaign')",
+    name: "COALESCE(MAX(NULLIF(m.campaign_name, '')), MAX(NULLIF(m.campaign_id, '')), 'Campaña sin nombre')",
+    orderBy: 'profit DESC'
+  },
+  adset: {
+    key: "COALESCE(NULLIF(m.adset_id, ''), NULLIF(m.adset_name, ''), 'sin_adset')",
+    attributedKey: "COALESCE(NULLIF(ma.adset_id, ''), NULLIF(ma.adset_name, ''), 'sin_adset')",
+    name: "COALESCE(MAX(NULLIF(m.adset_name, '')), MAX(NULLIF(m.adset_id, '')), 'Conjunto sin nombre')",
+    orderBy: 'profit DESC'
+  },
+  ad: {
+    key: "COALESCE(NULLIF(m.ad_id, ''), NULLIF(m.ad_name, ''), 'sin_ad')",
+    attributedKey: "COALESCE(NULLIF(ma.ad_id, ''), NULLIF(ma.ad_name, ''), 'sin_ad')",
+    name: "COALESCE(MAX(NULLIF(m.ad_name, '')), MAX(NULLIF(m.ad_id, '')), 'Anuncio sin nombre')",
+    orderBy: 'profit DESC'
+  },
+  total: {
+    key: "'total'",
+    attributedKey: "'total'",
+    name: "'Total campañas'",
+    orderBy: 'spend DESC'
+  }
+}
+
+export async function getCampaignReturn({ startDate, endDate, groupBy = 'campaign', limit = 25 } = {}) {
+  const safeStartDate = validateDateOnly(startDate, 'startDate')
+  const safeEndDate = validateDateOnly(endDate, 'endDate')
+  const safeGroupBy = CAMPAIGN_RETURN_GROUPS[groupBy] ? groupBy : 'campaign'
+  const safeLimit = Math.max(1, Math.min(100, Number(limit) || 25))
+  const group = CAMPAIGN_RETURN_GROUPS[safeGroupBy]
+  const timezone = await getAccountTimezone().catch(() => 'America/Mexico_City')
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+  const contactWhere = [
+    "c.attribution_ad_id IS NOT NULL",
+    "c.attribution_ad_id != ''",
+    `${sqlDateExpression('c.created_at', timezone)} >= ?`,
+    `${sqlDateExpression('c.created_at', timezone)} <= ?`
+  ]
+
+  if (hiddenCondition) {
+    contactWhere.push(hiddenCondition)
+  }
+
+  const metaDate = sqlDateOnlyExpression('m.date')
+  const joinedMetaDate = sqlDateOnlyExpression('ma.date')
+  const contactCreatedDate = sqlDateExpression('c.created_at', timezone)
+  const groupByClause = safeGroupBy === 'total' ? '' : `GROUP BY ${group.key}`
+
+  const rows = await db.all(
+    `
+      WITH spend AS (
+        SELECT
+          ${group.key} AS group_id,
+          ${group.name} AS group_name,
+          MAX(NULLIF(m.campaign_id, '')) AS campaign_id,
+          MAX(NULLIF(m.campaign_name, '')) AS campaign_name,
+          MAX(NULLIF(m.adset_id, '')) AS adset_id,
+          MAX(NULLIF(m.adset_name, '')) AS adset_name,
+          MAX(NULLIF(m.ad_id, '')) AS ad_id,
+          MAX(NULLIF(m.ad_name, '')) AS ad_name,
+          COALESCE(SUM(m.spend), 0) AS spend,
+          COALESCE(SUM(m.clicks), 0) AS clicks,
+          COALESCE(SUM(m.reach), 0) AS reach
+        FROM meta_ads m
+        WHERE ${metaDate} >= ?
+          AND ${metaDate} <= ?
+        ${groupByClause}
+      ),
+      attributed_contacts AS (
+        SELECT DISTINCT
+          ${group.attributedKey} AS group_id,
+          c.id AS contact_id,
+          COALESCE(c.purchases_count, 0) AS purchases_count,
+          COALESCE(c.total_paid, 0) AS total_paid
+        FROM contacts c
+        JOIN meta_ads ma
+          ON ma.ad_id = c.attribution_ad_id
+         AND ${joinedMetaDate} = ${contactCreatedDate}
+        WHERE ${contactWhere.join(' AND ')}
+      ),
+      attributed_results AS (
+        SELECT
+          ac.group_id,
+          COUNT(DISTINCT ac.contact_id) AS leads,
+          COUNT(DISTINCT CASE WHEN EXISTS (
+            SELECT 1 FROM appointments a WHERE a.contact_id = ac.contact_id
+          ) THEN ac.contact_id END) AS appointments,
+          COUNT(DISTINCT CASE WHEN
+            EXISTS (
+              SELECT 1
+              FROM appointment_attendance_signals aas
+              WHERE aas.contact_id = ac.contact_id
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM appointments a2
+              WHERE a2.contact_id = ac.contact_id
+                AND LOWER(COALESCE(a2.appointment_status, a2.status, '')) IN ('showed', 'show', 'attended', 'completed', 'complete')
+            )
+            OR ac.purchases_count > 0
+            OR ac.total_paid > 0
+          THEN ac.contact_id END) AS attendances,
+          COUNT(DISTINCT CASE WHEN ac.purchases_count > 0 OR ac.total_paid > 0 THEN ac.contact_id END) AS sales,
+          COALESCE(SUM(ac.total_paid), 0) AS attributed_revenue
+        FROM attributed_contacts ac
+        GROUP BY ac.group_id
+      )
+      SELECT
+        spend.group_id,
+        spend.group_name,
+        spend.campaign_id,
+        spend.campaign_name,
+        spend.adset_id,
+        spend.adset_name,
+        spend.ad_id,
+        spend.ad_name,
+        spend.spend,
+        spend.clicks,
+        spend.reach,
+        COALESCE(attributed_results.leads, 0) AS leads,
+        COALESCE(attributed_results.appointments, 0) AS appointments,
+        COALESCE(attributed_results.attendances, 0) AS attendances,
+        COALESCE(attributed_results.sales, 0) AS sales,
+        COALESCE(attributed_results.attributed_revenue, 0) AS attributed_revenue,
+        COALESCE(attributed_results.attributed_revenue, 0) - spend.spend AS profit,
+        CASE WHEN spend.spend > 0 THEN COALESCE(attributed_results.attributed_revenue, 0) / spend.spend ELSE NULL END AS roas,
+        CASE WHEN COALESCE(attributed_results.leads, 0) > 0 THEN spend.spend / attributed_results.leads ELSE NULL END AS cost_per_lead,
+        CASE WHEN COALESCE(attributed_results.sales, 0) > 0 THEN spend.spend / attributed_results.sales ELSE NULL END AS cost_per_sale
+      FROM spend
+      LEFT JOIN attributed_results ON attributed_results.group_id = spend.group_id
+      ORDER BY ${group.orderBy}
+      LIMIT ?
+    `,
+    [safeStartDate, safeEndDate, safeStartDate, safeEndDate, safeLimit]
+  )
+
+  const results = rows.map((row) => ({
+    key: row.group_id,
+    name: row.group_name || row.group_id,
+    campaignId: row.campaign_id || null,
+    campaignName: row.campaign_name || null,
+    adsetId: row.adset_id || null,
+    adsetName: row.adset_name || null,
+    adId: row.ad_id || null,
+    adName: row.ad_name || null,
+    spend: roundMoney(row.spend),
+    clicks: Number(row.clicks || 0),
+    reach: Number(row.reach || 0),
+    leads: Number(row.leads || 0),
+    appointments: Number(row.appointments || 0),
+    attendances: Number(row.attendances || 0),
+    sales: Number(row.sales || 0),
+    attributedRevenue: roundMoney(row.attributed_revenue),
+    profit: roundMoney(row.profit),
+    roas: roundRatio(row.roas),
+    costPerLead: roundMoney(row.cost_per_lead),
+    costPerSale: roundMoney(row.cost_per_sale)
+  }))
+
+  return {
+    ok: true,
+    startDate: safeStartDate,
+    endDate: safeEndDate,
+    groupBy: safeGroupBy,
+    attributionModel: 'contacts.attribution_ad_id = meta_ads.ad_id, validando que el anuncio existiera el mismo día local en que se creó el contacto; ingresos = contacts.total_paid del contacto atribuido.',
+    total: results.length,
+    results
+  }
+}
 
 export const getAdsStatusTool = tool({
   name: 'get_ads_connection_status',
@@ -73,6 +283,23 @@ export const getAdsMetricsTool = tool({
   }
 })
 
+export const getCampaignReturnTool = tool({
+  name: 'get_campaign_return',
+  description: 'Mide el retorno real de campañas/anuncios cruzando Meta Ads con la atribución de contactos. Úsala para ROAS, retorno, rentabilidad, leads, citas, asistencias, ventas e ingresos atribuidos; no usa los "resultados" declarados por Meta.',
+  parameters: z.object({
+    startDate: z.string().describe('Fecha inicial YYYY-MM-DD'),
+    endDate: z.string().describe('Fecha final YYYY-MM-DD'),
+    groupBy: z.enum(['campaign', 'adset', 'ad', 'total']).describe('Agrupación del retorno real'),
+    limit: z.number().int().min(1).max(100).nullable().describe('Máximo de filas (default 25)')
+  }),
+  execute: async ({ startDate, endDate, groupBy, limit }) => getCampaignReturn({
+    startDate,
+    endDate,
+    groupBy,
+    limit
+  })
+})
+
 export const listCampaignsTool = tool({
   name: 'list_ad_campaigns',
   description: 'Lista las campañas de Meta Ads con actividad en un rango de fechas, con su gasto total y última fecha con datos.',
@@ -108,4 +335,4 @@ export const listCampaignsTool = tool({
   }
 })
 
-export const adsTools = [getAdsStatusTool, getAdsMetricsTool, listCampaignsTool]
+export const adsTools = [getAdsStatusTool, getAdsMetricsTool, getCampaignReturnTool, listCampaignsTool]

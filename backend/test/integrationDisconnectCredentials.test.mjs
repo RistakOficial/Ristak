@@ -4,16 +4,19 @@ import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   connectWhatsAppApi,
+  disconnectMetaDirectConnection,
   disconnectWhatsAppApi,
   getWhatsAppApiConfigKeys,
   getWhatsAppApiStatus,
-  previewWhatsAppApiPhoneNumbers
+  previewWhatsAppApiPhoneNumbers,
+  setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
 import {
   connectEmail,
   disconnectEmail,
   getEmailStatus
 } from '../src/services/emailService.js'
+import { getIntegrationAppConfigKeys } from '../src/services/integrationCredentialsCleanupService.js'
 
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
@@ -59,6 +62,7 @@ function whatsappConnectionKeys() {
       keys.senderPhone,
       keys.phoneNumberId,
       keys.wabaId,
+      keys.provider,
       keys.webhookEndpointId,
       keys.webhookSecret,
       keys.webhookUrl,
@@ -90,6 +94,28 @@ async function countExistingAppConfig(keys = []) {
     keys
   )
   return Number(row?.total || 0)
+}
+
+function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText,
+    text: async () => JSON.stringify(body)
+  }
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function waitUntil(predicate, { timeoutMs = 500, intervalMs = 10, label = 'condition' } = {}) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return
+    await wait(intervalMs)
+  }
+  throw new Error(`Timed out waiting for ${label}`)
 }
 
 test('desconectar WhatsApp API borra credenciales locales y evita reconectar sin API key', async () => {
@@ -159,6 +185,112 @@ test('WhatsApp API limpia llaves viejas marcadas como desconectadas', async () =
   })
 })
 
+test('conectar WhatsApp API responde sin esperar la sincronización pesada de YCloud', async () => {
+  await initializeMasterKey()
+  const { keys, all } = whatsappConnectionKeys()
+  const phoneId = 'phone_fast_connect_test'
+  let contactRequested = false
+  let releaseContacts = () => {}
+  const contactsGate = new Promise(resolve => {
+    releaseContacts = resolve
+  })
+  let connectPromise = null
+  let transactionOpen = false
+
+  setYCloudFetchForTest(async (url, options = {}) => {
+    const parsed = new URL(String(url))
+    const path = parsed.pathname.replace(/^\/v2/, '')
+    const method = String(options.method || 'GET').toUpperCase()
+
+    if (path === '/whatsapp/phoneNumbers') {
+      return ycloudJsonResponse({
+        items: [{
+          id: phoneId,
+          wabaId: 'waba_fast_connect_test',
+          phoneNumber: '+526561234567',
+          displayPhoneNumber: '+52 656 123 4567',
+          verifiedName: 'Ristak Test',
+          qualityRating: 'GREEN',
+          status: 'CONNECTED'
+        }],
+        total: 1
+      })
+    }
+
+    if (path === '/balance') {
+      return ycloudJsonResponse({ message: 'balance skipped in test' }, { status: 503, statusText: 'Unavailable' })
+    }
+
+    if (path === '/whatsapp/templates') {
+      return ycloudJsonResponse({ items: [], total: 0 })
+    }
+
+    if (/^\/whatsapp\/phoneNumbers\/.+\/.+\/profile$/.test(path)) {
+      return ycloudJsonResponse({ verifiedName: 'Ristak Test', businessName: 'Ristak' })
+    }
+
+    if (path === '/webhookEndpoints' && method === 'GET') {
+      return ycloudJsonResponse({ items: [], total: 0 })
+    }
+
+    if (path === '/webhookEndpoints' && method === 'POST') {
+      const body = JSON.parse(options.body || '{}')
+      return ycloudJsonResponse({
+        id: 'webhook_fast_connect_test',
+        url: body.url,
+        status: 'active',
+        secret: 'webhook_secret_test'
+      })
+    }
+
+    if (path === '/contact/contacts') {
+      contactRequested = true
+      await contactsGate
+      return ycloudJsonResponse({ items: [], total: 0 })
+    }
+
+    if (path === '/whatsapp/messages') {
+      return ycloudJsonResponse({ items: [], total: 0 })
+    }
+
+    throw new Error(`Unexpected YCloud test request ${method} ${path}`)
+  })
+
+  try {
+    await db.run('BEGIN IMMEDIATE')
+    transactionOpen = true
+    const placeholders = all.map(() => '?').join(', ')
+    await db.run(`DELETE FROM app_config WHERE config_key IN (${placeholders})`, all)
+
+    connectPromise = connectWhatsAppApi({
+      apiKey: 'ycloud_fast_connect_secret',
+      webhookUrl: 'https://example.test/api/webhooks/whatsapp-api/ycloud'
+    })
+
+    const status = await Promise.race([
+      connectPromise,
+      wait(250).then(() => {
+        throw new Error('La conexión esperó la sincronización pesada de YCloud')
+      })
+    ])
+
+    assert.equal(status.connected, true)
+    assert.equal(status.phoneNumbers.some(phone => phone.id === phoneId), true)
+
+    await waitUntil(() => contactRequested, { label: 'background YCloud contacts sync' })
+    await setAppConfig(keys.enabled, '0')
+    releaseContacts()
+    await wait(25)
+  } finally {
+    releaseContacts()
+    if (connectPromise) await connectPromise.catch(() => null)
+    setYCloudFetchForTest(null)
+    if (transactionOpen) {
+      await db.run('ROLLBACK').catch(() => undefined)
+    }
+  }
+})
+
 test('desconectar correo borra datos SMTP y password local', async () => {
   await initializeMasterKey()
 
@@ -225,5 +357,36 @@ test('correo no reutiliza password SMTP viejo cuando estaba desconectado', async
     assert.equal(status.configured, false)
     assert.equal(status.smtp.hasPassword, false)
     assert.equal(await countExistingAppConfig([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY]), 0)
+  })
+})
+
+test('desconectar WhatsApp Meta directo borra token e identificadores reutilizables', async () => {
+  await initializeMasterKey()
+  const metaDirectKeys = getIntegrationAppConfigKeys('whatsappMetaDirect')
+  const snapshotKeys = [
+    ...metaDirectKeys,
+    'whatsapp_api_provider',
+    'whatsapp_meta_direct_disconnected_at'
+  ]
+
+  await snapshotAppConfig(snapshotKeys, async () => {
+    for (const key of metaDirectKeys) {
+      await setAppConfig(key, key.includes('token') ? encrypt('meta_direct_secret') : `value_${key}`)
+    }
+    await setAppConfig('whatsapp_api_provider', 'meta_direct')
+
+    const disconnected = await disconnectMetaDirectConnection()
+
+    assert.equal(disconnected.metaDirect.connected, false)
+    assert.equal(disconnected.metaDirect.configured, false)
+    assert.equal(disconnected.metaDirect.hasSystemUserToken, false)
+    assert.equal(await getAppConfig('whatsapp_meta_direct_status'), 'disconnected')
+    assert.equal(await getAppConfig('whatsapp_api_provider'), 'ycloud')
+    assert.ok(await getAppConfig('whatsapp_meta_direct_disconnected_at'))
+    assert.equal(await countExistingAppConfig(metaDirectKeys), 1)
+    assert.equal(await getAppConfig('whatsapp_meta_direct_system_user_token_encrypted'), null)
+    assert.equal(await getAppConfig('whatsapp_meta_direct_waba_id'), null)
+    assert.equal(await getAppConfig('whatsapp_meta_direct_phone_number_id'), null)
+    assert.equal(await getAppConfig('whatsapp_meta_direct_installer_webhook_url'), null)
   })
 })

@@ -488,6 +488,354 @@ function mapMetaCatalogRow(row) {
   }
 }
 
+const AUTOMATION_FORM_FIELD_BLOCK_TYPES = new Set([
+  'short_text',
+  'paragraph',
+  'currency',
+  'number',
+  'dropdown',
+  'radio',
+  'checkboxes',
+  'phone',
+  'email',
+  'date'
+])
+
+function cleanCatalogString(value) {
+  return String(value || '').trim()
+}
+
+function parseCatalogJson(value, fallback) {
+  if (!value) return fallback
+  if (typeof value === 'object') return value
+  try {
+    const parsed = JSON.parse(String(value))
+    return parsed ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+function automationImportedFormId(siteId, importedFormId) {
+  const site = cleanCatalogString(siteId)
+  const form = cleanCatalogString(importedFormId)
+  return site && form ? `${site}:imported:${form}` : ''
+}
+
+function parseAutomationImportedFormId(formId) {
+  const match = cleanCatalogString(formId).match(/^(.+):imported:(.+)$/)
+  return match ? { siteId: match[1], importedFormId: match[2] } : null
+}
+
+function parseAutomationInlineFormId(formId) {
+  const match = cleanCatalogString(formId).match(/^(.+):form_embed:(.+)$/)
+  return match ? { siteId: match[1], blockId: match[2] } : null
+}
+
+function automationAnswerKey(value, fallback = 'campo') {
+  const normalized = cleanCatalogString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return normalized || fallback
+}
+
+function mapAutomationFormOption({ id, name, siteId, siteName, kind, status, updatedAt, meta }) {
+  return {
+    id: cleanCatalogString(id),
+    name: cleanCatalogString(name) || 'Formulario sin nombre',
+    siteId: cleanCatalogString(siteId),
+    siteName: cleanCatalogString(siteName),
+    kind: cleanCatalogString(kind) || 'site',
+    status: cleanCatalogString(status),
+    updatedAt: updatedAt || null,
+    meta: cleanCatalogString(meta)
+  }
+}
+
+function addAutomationFormOption(options, seen, option) {
+  const mapped = mapAutomationFormOption(option)
+  if (!mapped.id || seen.has(mapped.id)) return
+  seen.add(mapped.id)
+  options.push(mapped)
+}
+
+function mapAutomationFieldOption({ value, label, type, meta }) {
+  return {
+    id: cleanCatalogString(value),
+    name: cleanCatalogString(label) || cleanCatalogString(value) || 'Pregunta sin nombre',
+    type: cleanCatalogString(type) || 'text',
+    meta: cleanCatalogString(meta)
+  }
+}
+
+function addAutomationFieldOption(options, seen, option) {
+  const mapped = mapAutomationFieldOption(option)
+  if (!mapped.id || seen.has(mapped.id)) return
+  seen.add(mapped.id)
+  options.push(mapped)
+}
+
+function mapNativeBlockToFieldOption(block = {}, meta = '') {
+  const settings = block.settings || {}
+  const label = cleanCatalogString(block.label || settings.customFieldLabel || settings.custom_field_label || settings.internalName || block.id)
+  const key = automationAnswerKey(
+    settings.customFieldKey ||
+      settings.custom_field_key ||
+      settings.internalName ||
+      settings.internal_name ||
+      settings.systemFieldKey ||
+      settings.system_field_key ||
+      block.id,
+    cleanCatalogString(block.id) || 'respuesta'
+  )
+
+  return {
+    value: key,
+    label,
+    type: block.blockType,
+    meta
+  }
+}
+
+function mapImportedFieldToFieldOption(field = {}, meta = '') {
+  const value = cleanCatalogString(
+    field.sourceName ||
+      field.source_name ||
+      field.fieldId ||
+      field.field_id ||
+      field.destinationKey ||
+      field.destination_key ||
+      field.label
+  )
+  const label = cleanCatalogString(field.label || field.sourceName || field.source_name || field.fieldId || field.destinationKey)
+
+  return {
+    value,
+    label,
+    type: cleanCatalogString(field.type || field.customFieldDataType || field.custom_field_data_type || 'text'),
+    meta
+  }
+}
+
+/**
+ * Formularios reales disponibles para disparadores/filtros de automatizaciones.
+ *
+ * No depende del permiso de Sites: si alguien puede administrar automatizaciones,
+ * debe poder elegir el formulario que dispara la automatización.
+ */
+export async function listAutomationFormsCatalog() {
+  const [allSiteRows, formEmbedRows, fieldSiteRows, importedRows] = await Promise.all([
+    db.all(`
+      SELECT id, name, slug, site_type, status, updated_at
+      FROM public_sites
+      WHERE COALESCE(status, 'draft') != 'archived'
+      ORDER BY updated_at DESC, name ASC
+    `),
+    db.all(`
+      SELECT
+        b.id AS block_id,
+        b.label AS block_label,
+        b.settings_json,
+        b.updated_at AS block_updated_at,
+        s.id AS site_id,
+        s.name AS site_name,
+        s.site_type,
+        s.status,
+        s.updated_at AS site_updated_at
+      FROM public_site_blocks b
+      INNER JOIN public_sites s ON s.id = b.site_id
+      WHERE COALESCE(s.status, 'draft') != 'archived'
+        AND b.block_type = 'form_embed'
+      ORDER BY s.updated_at DESC, b.sort_order ASC, b.created_at ASC
+    `),
+    db.all(`
+      SELECT DISTINCT s.id, s.name, s.slug, s.site_type, s.status, s.updated_at
+      FROM public_sites s
+      INNER JOIN public_site_blocks b ON b.site_id = s.id
+      WHERE COALESCE(s.status, 'draft') != 'archived'
+        AND b.block_type IN (${Array.from(AUTOMATION_FORM_FIELD_BLOCK_TYPES).map(() => '?').join(',')})
+      ORDER BY s.updated_at DESC, s.name ASC
+    `, Array.from(AUTOMATION_FORM_FIELD_BLOCK_TYPES)),
+    db.all(`
+      SELECT
+        i.site_id,
+        i.form_mappings_json,
+        i.updated_at AS import_updated_at,
+        s.name AS site_name,
+        s.status,
+        s.updated_at AS site_updated_at
+      FROM public_site_imports i
+      INNER JOIN public_sites s ON s.id = i.site_id
+      WHERE COALESCE(s.status, 'draft') != 'archived'
+      ORDER BY s.updated_at DESC, i.updated_at DESC
+    `)
+  ])
+
+  const options = []
+  const seen = new Set()
+  const siteById = new Map(allSiteRows.map((site) => [cleanCatalogString(site.id), site]))
+  const siteRows = allSiteRows.filter((site) => cleanCatalogString(site.site_type).includes('form'))
+
+  for (const site of siteRows) {
+    addAutomationFormOption(options, seen, {
+      id: site.id,
+      name: site.name,
+      siteId: site.id,
+      siteName: site.name,
+      kind: 'site_form',
+      status: site.status,
+      updatedAt: site.updated_at,
+      meta: site.site_type === 'interactive_form' ? 'Formulario interactivo' : 'Formulario'
+    })
+  }
+
+  for (const row of formEmbedRows) {
+    const settings = parseCatalogJson(row.settings_json, {})
+    const embeddedSiteId = cleanCatalogString(
+      settings.embeddedSiteId ||
+      settings.embedded_site_id ||
+      settings.formSiteId ||
+      settings.form_site_id
+    )
+    const embeddedSiteName = cleanCatalogString(
+      settings.embeddedSiteName ||
+      settings.embedded_site_name ||
+      settings.formSiteName ||
+      settings.form_site_name
+    )
+    const linkedSite = embeddedSiteId ? siteById.get(embeddedSiteId) : null
+    const id = embeddedSiteId || `${row.site_id}:form_embed:${row.block_id}`
+    const name = cleanCatalogString(linkedSite?.name) ||
+      embeddedSiteName ||
+      cleanCatalogString(settings.formName || settings.form_name || settings.formTitle || settings.form_title || settings.name) ||
+      `Formulario de ${row.site_name}`
+    addAutomationFormOption(options, seen, {
+      id,
+      name,
+      siteId: row.site_id,
+      siteName: row.site_name,
+      kind: embeddedSiteId ? 'embedded_site_form' : 'landing_form',
+      status: row.status,
+      updatedAt: row.block_updated_at || row.site_updated_at,
+      meta: embeddedSiteId ? `Embebido en ${row.site_name}` : `Formulario en ${row.site_name}`
+    })
+  }
+
+  for (const site of fieldSiteRows) {
+    addAutomationFormOption(options, seen, {
+      id: site.id,
+      name: site.name,
+      siteId: site.id,
+      siteName: site.name,
+      kind: 'native_fields',
+      status: site.status,
+      updatedAt: site.updated_at,
+      meta: site.site_type === 'landing_page' ? 'Formulario en landing' : 'Formulario'
+    })
+  }
+
+  for (const row of importedRows) {
+    const mappings = parseCatalogJson(row.form_mappings_json, [])
+    if (!Array.isArray(mappings) || !mappings.length) {
+      addAutomationFormOption(options, seen, {
+        id: row.site_id,
+        name: row.site_name,
+        siteId: row.site_id,
+        siteName: row.site_name,
+        kind: 'imported_site',
+        status: row.status,
+        updatedAt: row.import_updated_at || row.site_updated_at,
+        meta: 'Formulario importado'
+      })
+      continue
+    }
+
+    for (const mapping of mappings) {
+      const formId = cleanCatalogString(mapping?.formId || mapping?.form_id)
+      const id = automationImportedFormId(row.site_id, formId) || row.site_id
+      const formTitle = cleanCatalogString(mapping?.formTitle || mapping?.form_title || mapping?.title)
+      addAutomationFormOption(options, seen, {
+        id,
+        name: formTitle || row.site_name,
+        siteId: row.site_id,
+        siteName: row.site_name,
+        kind: 'imported_form',
+        status: row.status,
+        updatedAt: row.import_updated_at || row.site_updated_at,
+        meta: formTitle && formTitle !== row.site_name ? `Importado de ${row.site_name}` : 'Formulario importado'
+      })
+    }
+  }
+
+  return options
+}
+
+export async function listAutomationFormFieldsCatalog(formId) {
+  const requestedFormId = cleanCatalogString(formId)
+  if (!requestedFormId) return []
+
+  const options = []
+  const seen = new Set()
+  const importedForm = parseAutomationImportedFormId(requestedFormId)
+  if (importedForm) {
+    const row = await db.get(
+      'SELECT form_mappings_json FROM public_site_imports WHERE site_id = ? LIMIT 1',
+      [importedForm.siteId]
+    )
+    const mappings = parseCatalogJson(row?.form_mappings_json, [])
+    const mapping = Array.isArray(mappings)
+      ? mappings.find((item) => cleanCatalogString(item?.formId || item?.form_id) === importedForm.importedFormId)
+      : null
+    for (const field of Array.isArray(mapping?.fields) ? mapping.fields : []) {
+      addAutomationFieldOption(options, seen, mapImportedFieldToFieldOption(field, 'Importado'))
+    }
+    return options
+  }
+
+  const inlineForm = parseAutomationInlineFormId(requestedFormId)
+  if (inlineForm) {
+    const row = await db.get(
+      `SELECT settings_json FROM public_site_blocks WHERE id = ? AND site_id = ? AND block_type = 'form_embed' LIMIT 1`,
+      [inlineForm.blockId, inlineForm.siteId]
+    )
+    const settings = parseCatalogJson(row?.settings_json, {})
+    for (const block of Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks : []) {
+      if (!AUTOMATION_FORM_FIELD_BLOCK_TYPES.has(block?.blockType)) continue
+      addAutomationFieldOption(options, seen, mapNativeBlockToFieldOption(block, 'Pregunta'))
+    }
+    return options
+  }
+
+  const site = await db.get(
+    'SELECT id, name, site_type FROM public_sites WHERE id = ? LIMIT 1',
+    [requestedFormId]
+  )
+  if (!site) return []
+
+  const blocks = await db.all(
+    `SELECT id, block_type, label, settings_json
+     FROM public_site_blocks
+     WHERE site_id = ?
+       AND block_type IN (${Array.from(AUTOMATION_FORM_FIELD_BLOCK_TYPES).map(() => '?').join(',')})
+     ORDER BY sort_order ASC, created_at ASC`,
+    [requestedFormId, ...Array.from(AUTOMATION_FORM_FIELD_BLOCK_TYPES)]
+  )
+
+  for (const block of blocks) {
+    addAutomationFieldOption(options, seen, mapNativeBlockToFieldOption({
+      id: block.id,
+      blockType: block.block_type,
+      label: block.label,
+      settings: parseCatalogJson(block.settings_json, {})
+    }, 'Pregunta'))
+  }
+
+  return options
+}
+
 /**
  * Campañas reales sincronizadas desde Meta Ads: alimentan filtros y triggers
  * donde el usuario antes tenia que adivinar nombres o IDs.

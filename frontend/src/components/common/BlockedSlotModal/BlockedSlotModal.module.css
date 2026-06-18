@@ -100,7 +100,7 @@
 
 .label {
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-secondary);
 }
 
@@ -154,12 +154,12 @@
 
 .presetCardActive {
   border-color: var(--color-primary);
-  background: rgba(99, 102, 241, 0.08);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .presetCardActive:hover {
-  background: rgba(99, 102, 241, 0.12);
+  background: var(--accent-soft);
 }
 
 .presetLabel {
@@ -187,7 +187,7 @@
 }
 
 :global(body.dark) .presetCardActive {
-  background: rgba(99, 102, 241, 0.15);
+  background: var(--accent-soft);
   border-color: var(--color-primary);
 }
 
@@ -355,7 +355,8 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
+  background-color: rgba(8, 11, 16, 0.55);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -364,19 +365,13 @@
 }
 
 .deleteModal {
-  background-color: #ffffff;
-  border-radius: var(--radius-lg);
+  background-color: var(--surface-solid, var(--surface));
+  border-radius: var(--radius-card);
   padding: 1.5rem;
   max-width: 400px;
   width: 100%;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  border: 1px solid rgba(148, 163, 184, 0.12);
-}
-
-:global(body.dark) .deleteModal {
-  background-color: #18181b !important;
-  border: 1px solid rgba(148, 163, 184, 0.25) !important;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.3) !important;
+  box-shadow: var(--shadow-pop);
+  border: 1px solid var(--border-strong);
 }
 
 .deleteModalHeader {

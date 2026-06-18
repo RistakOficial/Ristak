@@ -1529,6 +1529,15 @@ function isRistakOwnedRow(row = {}, prefix = '') {
   return source === 'ristak' || (prefix && id.startsWith(prefix))
 }
 
+function isHighLevelCalendar(calendar = {}) {
+  return normalizeCalendarSource(calendar.source) === 'ghl' || Boolean(cleanString(calendar.ghlCalendarId || calendar.ghl_calendar_id))
+}
+
+function getSlotAppointmentLimit(calendar = {}) {
+  if (!isHighLevelCalendar(calendar)) return 1
+  return Math.max(1, toInt(calendar.appoinmentPerSlot ?? calendar.appointmentPerSlot ?? calendar.appoinment_per_slot, 1))
+}
+
 export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone) {
   const calendar = await getLocalCalendar(calendarId)
   if (!calendar) return []
@@ -1548,6 +1557,7 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
 
   const durationMinutes = Math.max(1, toInt(calendar.slotDuration, 60))
   const intervalMinutes = Math.max(1, toInt(calendar.slotInterval, durationMinutes))
+  const appointmentLimit = getSlotAppointmentLimit(calendar)
   const nowMs = Date.now()
   const slotsByDate = []
 
@@ -1557,6 +1567,7 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
     // componentes de la fecha preserva el día de la semana correcto.
     const intervals = getCalendarOpenIntervals(calendar, new Date(cursor.year, cursor.month - 1, cursor.day))
     const slots = []
+    const seenSlots = new Set()
 
     for (const interval of intervals) {
       const open = cursor.set({
@@ -1575,15 +1586,20 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
       for (let slot = open; slot.plus({ minutes: durationMinutes }) <= close; slot = slot.plus({ minutes: intervalMinutes })) {
         const slotStartMs = slot.toMillis()
         const slotEndMs = slot.plus({ minutes: durationMinutes }).toMillis()
-        const hasConflict = existing.some(event => overlaps(
+        const overlappingAppointments = existing.filter(event => overlaps(
           slotStartMs,
           slotEndMs,
           new Date(event.startTime).getTime(),
           new Date(event.endTime || event.startTime).getTime()
-        ))
+        )).length
+        const hasConflict = overlappingAppointments >= appointmentLimit
 
         if (!hasConflict && slotStartMs >= nowMs) {
-          slots.push(slot.toUTC().toISO())
+          const slotIso = slot.toUTC().toISO()
+          if (!seenSlots.has(slotIso)) {
+            slots.push(slotIso)
+            seenSlots.add(slotIso)
+          }
         }
       }
     }
@@ -1749,7 +1765,7 @@ export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
 // Devuelve el ID de HighLevel a usar en el payload remoto de la cita.
 // La cita y el contacto conservan SIEMPRE su ID local de Ristak; el ID de GHL
 // solo se liga en contacts.ghl_contact_id.
-async function ensureHighLevelContactForAppointment(client, appointment = {}) {
+export async function ensureHighLevelContactForAppointment(client, appointment = {}) {
   if (!appointment.contactId) return null
 
   const contact = await db.get('SELECT * FROM contacts WHERE id = ?', [appointment.contactId])

@@ -65,25 +65,30 @@
   left: var(--spacing-md);
   top: 50%;
   transform: translateY(-50%);
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   pointer-events: none;
 }
 
 .searchInput {
   width: 100%;
   padding: var(--spacing-sm) var(--spacing-md) var(--spacing-sm) calc(var(--spacing-md) + 24px);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  background-color: var(--color-background);
-  color: var(--color-text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background-color: var(--surface);
+  color: var(--text);
   font-size: var(--font-size-sm);
   transition: all var(--transition-fast);
 }
 
+.searchInput::placeholder {
+  color: var(--text-mute);
+}
+
 .searchInput:focus {
   outline: none;
-  border-color: var(--color-primary);
-  background-color: var(--color-background);
+  border-color: var(--accent);
+  background-color: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .tableWrapper {
@@ -363,11 +368,11 @@
 }
 
 .revenuePositive {
-  color: color-mix(in srgb, var(--color-status-success, #10b981) 54%, var(--color-text-primary) 46%);
+  color: color-mix(in srgb, var(--pos) 54%, var(--color-text-primary) 46%);
 }
 
 .revenueNegative {
-  color: color-mix(in srgb, var(--color-status-error, #dc2626) 52%, var(--color-text-primary) 48%);
+  color: color-mix(in srgb, var(--neg) 52%, var(--color-text-primary) 48%);
 }
 
 /* Placeholder sutil para filas expandidas */
@@ -470,7 +475,7 @@
 
 .warningText strong {
   color: var(--color-text-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .dismissButton {
@@ -480,7 +485,7 @@
   padding: 8px 16px;
   color: var(--color-text-primary);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
   flex-shrink: 0;
@@ -774,9 +779,10 @@
   align-items: center;
   gap: 6px;
   padding: 8px 14px;
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background-color: var(--color-background);
+  background-color: var(--surface-2);
+  box-shadow: var(--shadow-xs);
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
@@ -861,7 +867,7 @@
 .creativeModalBackdrop {
   position: fixed;
   inset: 0;
-  z-index: 1200;
+  z-index: var(--z-index-modal);
   background: rgba(15, 23, 42, 0.76);
   display: flex;
   align-items: center;
@@ -875,7 +881,7 @@
   min-width: min(420px, calc(100vw - 48px));
   max-width: min(960px, calc(100vw - 48px));
   max-height: min(86vh, 820px);
-  background: var(--color-background);
+  background: var(--surface-solid, var(--color-background));
   border: 1px solid var(--color-border-subtle);
   border-radius: 8px;
   overflow: hidden;

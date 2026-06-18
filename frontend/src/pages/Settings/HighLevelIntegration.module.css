@@ -347,7 +347,7 @@ body.dark .formInput:focus {
 
 .integrationGuide strong {
   color: var(--color-text-primary);
-  font-weight: 750;
+  font-weight: 600;
 }
 
 .stepGuidePanel {
@@ -433,11 +433,11 @@ body.dark .dropdownTrigger:focus {
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  z-index: 1000;
+  z-index: var(--z-index-popover);
 }
 
 .dropdownMenu {
-  background: var(--color-background);
+  background: var(--surface-solid, var(--color-background));
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
@@ -557,7 +557,7 @@ body.dark .dropdownMenu {
 
 .toggleLabelActive {
   color: var(--color-text-primary);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
 }
 
 .toggle {
@@ -842,7 +842,7 @@ body.dark .input:focus {
 
 .stepList > li strong {
   color: var(--color-text-primary);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
 }
 
 .stepList ul {
@@ -877,7 +877,7 @@ body.dark .input:focus {
 
 .warningText {
   color: var(--color-warning-dark) !important;
-  font-weight: var(--font-weight-semibold) !important;
+  font-weight: var(--font-weight-medium) !important;
 }
 
 /* Custom Values Table */
@@ -986,7 +986,7 @@ body.dark .input:focus {
   font-family: monospace;
   font-size: 14px;
   color: var(--color-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* Dark mode para warningBox */
@@ -1018,7 +1018,7 @@ body.dark .input:focus {
 .successBox strong,
 .warningBox strong {
   color: var(--color-text-primary);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
 }
 
 .infoText {
@@ -1341,7 +1341,7 @@ body.dark .warningBox {
 }
 
 .hiddenContactsModal {
-  background: var(--color-background);
+  background: var(--surface-solid, var(--color-background));
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-xl);
   max-width: 600px;
@@ -1416,18 +1416,22 @@ body.dark .warningBox {
   flex: 1;
   height: 40px;
   padding: 0 var(--spacing-md);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
   font-size: var(--font-size-md);
-  color: var(--color-text-primary);
-  background: var(--color-background);
+  color: var(--text);
+  background: var(--surface);
   transition: all 0.2s;
+}
+
+.filterInput::placeholder {
+  color: var(--text-mute);
 }
 
 .filterInput:focus {
   outline: none;
-  border-color: var(--color-primary);
-  box-shadow: var(--ristak-focus-ring);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .filterInput:disabled {
@@ -2179,7 +2183,7 @@ textarea.input {
 
 .integrationGuide strong {
   color: var(--color-text-primary);
-  font-weight: 750;
+  font-weight: 600;
 }
 
 .stepGuidePanel {
@@ -2345,7 +2349,7 @@ textarea.input {
 
 .toggleLabelActive {
   color: var(--color-text-primary);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .toggle,

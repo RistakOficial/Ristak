@@ -1,8 +1,9 @@
 import { Agent, Runner, OpenAIProvider } from '@openai/agents'
+import { CHEAPEST_OPENAI_MODEL } from '../config/openAIModels.js'
 import { logger } from '../utils/logger.js'
-import { getAIAgentConfig, getOpenAIApiKey } from '../services/aiAgentService.js'
+import { getOpenAIApiKey } from '../services/aiAgentService.js'
 
-const DEFAULT_MODEL = 'gpt-5.5'
+export const APPOINTMENT_CONFIRMATION_MODEL = CHEAPEST_OPENAI_MODEL
 
 // Prompt interno que clasifica la respuesta acumulada del contacto.
 const CLASSIFICATION_INSTRUCTIONS = `Eres un clasificador especializado en analizar respuestas a mensajes de confirmación de cita.
@@ -66,8 +67,7 @@ export async function classifyConfirmationResponse({ accumulatedMessages = [] } 
     return null
   }
 
-  const aiConfig = await getAIAgentConfig({}).catch(() => ({}))
-  const model = String(aiConfig?.model || DEFAULT_MODEL)
+  const model = APPOINTMENT_CONFIRMATION_MODEL
 
   const messagesText = accumulatedMessages
     .map((text, i) => `Mensaje ${i + 1}: "${String(text || '').trim()}"`)

@@ -28,9 +28,10 @@ export const TabList: React.FC<TabListProps> = ({
   className
 }) => {
   const containerClasses = cn(
-    'items-center gap-1 rounded-xl border border-[rgba(148,163,184,0.18)] bg-[rgba(148,163,184,0.06)] backdrop-blur-xl dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]',
+    // borde más marcado + sombra sutil: el control se lee como un segmentado
+    // elevado incluso cuando el track (--surface-2) coincide con el fondo (Onyx).
+    'items-center gap-[3px] rounded-[var(--radius-ctl)] border border-[var(--border-strong)] bg-[var(--surface-2)] p-[3px] shadow-[var(--shadow-xs)]',
     fullWidth ? 'flex w-full' : 'inline-flex',
-    variant === 'default' ? 'p-1' : 'p-0.5',
     className
   )
 
@@ -46,11 +47,12 @@ export const TabList: React.FC<TabListProps> = ({
             data-ristak-tablist-tab
             data-active={isActive ? 'true' : undefined}
             className={cn(
-              'relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1.5',
+              'relative rounded-[calc(var(--radius-ctl)-3px)] text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1.5',
+              variant === 'default' ? 'px-3 py-1.5' : 'px-2.5 py-1',
               fullWidth && 'flex-1 w-full justify-center',
               isActive
-                ? 'bg-[rgba(148,163,184,0.16)] text-[var(--color-text-primary)] dark:shadow-[0_10px_20px_-16px_rgba(15,23,42,0.45)]'
-                : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[rgba(148,163,184,0.12)]'
+                ? 'bg-[var(--surface)] text-[var(--text)] border border-[var(--border)] shadow-[var(--shadow-xs)]'
+                : 'border border-transparent text-[var(--text-dim)] hover:text-[var(--text)]'
             )}
           >
             {tab.icon && <span className="flex-shrink-0">{tab.icon}</span>}

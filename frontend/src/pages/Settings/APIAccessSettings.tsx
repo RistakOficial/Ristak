@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { BookOpen, CheckCircle, Copy, ExternalLink, FileText, KeyRound, RefreshCw, ServerCog, Trash2, Webhook, XCircle } from 'lucide-react'
 import { Button, Card } from '@/components/common'
+import { Badge } from '@/components/common/Badge'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { apiUrl, getApiBaseUrl } from '@/services/apiBaseUrl'
@@ -266,10 +267,10 @@ export const APIAccessSettings: React.FC = () => {
             </div>
           </div>
           <div className={styles.panelHeaderActions}>
-            <div className={apiTokenMetadata?.hasToken ? styles.statusConnected : styles.statusDisconnected}>
+            <Badge variant={apiTokenMetadata?.hasToken ? 'success' : 'error'}>
               {apiTokenMetadata?.hasToken ? <CheckCircle size={15} /> : <XCircle size={15} />}
               {apiTokenMetadata?.hasToken ? 'Token activo' : 'Sin token'}
-            </div>
+            </Badge>
           </div>
         </div>
 

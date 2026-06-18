@@ -30,9 +30,85 @@ const DESIGN_PRESETS: Array<{
 
 const THEME_COLOR_CONFIG_KEY = 'theme_color'
 const THEME_STYLE_CONFIG_KEY = 'theme_style'
-const DEFAULT_DESIGN_PRESET: DesignPreset = 'editorial'
+const THEME_DIR_CONFIG_KEY = 'theme_dir'
+// El sistema de presets antiguo (atelier/editorial) queda sustituido por las 4
+// familias visuales (data-dir). Forzamos 'classic' para neutralizar las reglas
+// de preset y dejar que el sistema nuevo gobierne la estética.
+const DEFAULT_DESIGN_PRESET: DesignPreset = 'classic'
+const DEFAULT_THEME_DIR: ThemeDir = 'en'
 const LEGACY_THEME_STORAGE_KEY = 'manualTheme'
 const LEGACY_DESIGN_PRESET_STORAGE_KEY = 'ristak-design-preset'
+
+// ===== Familias visuales (data-dir) =====
+export type ThemeDir =
+  | 'a'
+  | 'c' | 'cb' | 'cv' | 'ca'
+  | 'd' | 'db' | 'dl' | 'dm'
+  | 'e' | 'en' | 'eb' | 'em'
+
+export interface ThemeVariant {
+  dir: ThemeDir
+  label: string
+}
+
+export interface ThemeFamily {
+  id: string
+  label: string
+  description: string
+  variants: ThemeVariant[]
+}
+
+export const THEME_FAMILIES: ThemeFamily[] = [
+  {
+    id: 'aurora',
+    label: 'Aurora',
+    description: 'Glass, profundidad y degradados suaves',
+    variants: [
+      { dir: 'en', label: 'Neutral' },
+      { dir: 'e', label: 'Violeta' },
+      { dir: 'eb', label: 'Azul' },
+      { dir: 'em', label: 'Sobria' }
+    ]
+  },
+  {
+    id: 'onyx',
+    label: 'Onyx',
+    description: 'Alto contraste, panel lateral oscuro',
+    variants: [
+      { dir: 'c', label: 'Esmeralda' },
+      { dir: 'cb', label: 'Azul' },
+      { dir: 'cv', label: 'Violeta' },
+      { dir: 'ca', label: 'Ámbar' }
+    ]
+  },
+  {
+    id: 'brut',
+    label: 'Brut',
+    description: 'Neobrutalismo: bordes duros, tipografía mono',
+    variants: [
+      { dir: 'd', label: 'Rojo' },
+      { dir: 'db', label: 'Azul' },
+      { dir: 'dl', label: 'Lima' },
+      { dir: 'dm', label: 'Magenta' }
+    ]
+  },
+  {
+    id: 'nimbus',
+    label: 'Nimbus',
+    description: 'Limpio, profesional, neutro frío',
+    variants: [{ dir: 'a', label: 'Clásico' }]
+  }
+]
+
+const ALL_THEME_DIRS = THEME_FAMILIES.flatMap((family) => family.variants.map((variant) => variant.dir))
+
+const isThemeDir = (value: unknown): value is ThemeDir =>
+  typeof value === 'string' && (ALL_THEME_DIRS as string[]).includes(value)
+
+const getConfigThemeDir = (value: unknown): ThemeDir | null => {
+  const parsed = parseConfigValue(value)
+  return isThemeDir(parsed) ? parsed : null
+}
 const DAY_START_HOUR = 6
 const NIGHT_START_HOUR = 19
 
@@ -47,6 +123,9 @@ interface ThemeContextType {
   designPreset: DesignPreset
   setDesignPreset: (preset: DesignPreset) => void
   designPresets: typeof DESIGN_PRESETS
+  themeDir: ThemeDir
+  setThemeDir: (dir: ThemeDir) => void
+  themeFamilies: ThemeFamily[]
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
@@ -189,6 +268,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return getLegacyTheme() ? 'manual' : 'system'
   })
   const [designPreset, setDesignPresetState] = useState<DesignPreset>(() => getLegacyDesignPreset() ?? DEFAULT_DESIGN_PRESET)
+  const [themeDir, setThemeDirState] = useState<ThemeDir>(DEFAULT_THEME_DIR)
 
   const setTheme = (newTheme: ThemeMode) => {
     setThemeState(newTheme)
@@ -202,6 +282,13 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setDesignPresetState(preset)
     void saveAppConfig(THEME_STYLE_CONFIG_KEY, preset).catch((error) => {
       console.error('Error saving theme style config:', error)
+    })
+  }
+
+  const setThemeDir = (dir: ThemeDir) => {
+    setThemeDirState(dir)
+    void saveAppConfig(THEME_DIR_CONFIG_KEY, dir).catch((error) => {
+      console.error('Error saving theme dir config:', error)
     })
   }
 
@@ -223,7 +310,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const syncThemeConfig = async () => {
       try {
-        const response = await fetch(apiUrl(`/api/config?keys=${THEME_COLOR_CONFIG_KEY},${THEME_STYLE_CONFIG_KEY}`))
+        const response = await fetch(apiUrl(`/api/config?keys=${THEME_COLOR_CONFIG_KEY},${THEME_DIR_CONFIG_KEY}`))
 
         if (!response.ok) {
           throw new Error('Failed to fetch theme config')
@@ -232,9 +319,8 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const data = await response.json()
         const config = data.config ?? {}
         const configuredTheme = getConfigTheme(config[THEME_COLOR_CONFIG_KEY])
-        const configuredPreset = getConfigDesignPreset(config[THEME_STYLE_CONFIG_KEY])
+        const configuredDir = getConfigThemeDir(config[THEME_DIR_CONFIG_KEY])
         const legacyTheme = getLegacyTheme()
-        const legacyPreset = getLegacyDesignPreset()
         const migrations: Array<Promise<void>> = []
 
         if (!isMounted) {
@@ -253,13 +339,11 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setThemeSource('system')
         }
 
-        if (configuredPreset) {
-          setDesignPresetState(configuredPreset)
-        } else if (legacyPreset) {
-          setDesignPresetState(legacyPreset)
-          migrations.push(saveAppConfig(THEME_STYLE_CONFIG_KEY, legacyPreset))
-        } else {
-          setDesignPresetState(DEFAULT_DESIGN_PRESET)
+        // El preset antiguo queda neutralizado en 'classic'; la familia visual
+        // se gobierna con theme_dir.
+        setDesignPresetState(DEFAULT_DESIGN_PRESET)
+        if (configuredDir) {
+          setThemeDirState(configuredDir)
         }
 
         void Promise.all(migrations)
@@ -303,27 +387,16 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [themeSource])
 
   useEffect(() => {
+    // El color ya no se inyecta como variables inline en <html>: el sistema de
+    // diseño global (familias + modo) lo resuelve por CSS. Aquí solo marcamos el
+    // modo (clase + data-theme/data-mode) que sirve de gancho a los selectores.
     const root = document.documentElement
-    const themeColors = themes[theme]
-
-    const setVars = (prefix: string, obj: Record<string, any>) => {
-      Object.entries(obj).forEach(([key, value]) => {
-        const variableName = `${prefix}-${key}`
-        if (typeof value === 'string') {
-          root.style.setProperty(`--${variableName}`, value)
-        } else if (value && typeof value === 'object') {
-          setVars(variableName, value)
-        }
-      })
-    }
-
-    setVars('color', themeColors.colors)
-    setVars('effect', themeColors.effects)
-
     document.body.classList.remove('light', 'dark')
     document.body.classList.add(theme)
     root.dataset.theme = theme
     document.body.dataset.theme = theme
+    root.dataset.mode = theme
+    document.body.dataset.mode = theme
   }, [theme])
 
   useEffect(() => {
@@ -331,6 +404,12 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     root.dataset.designPreset = designPreset
     document.body.dataset.designPreset = designPreset
   }, [designPreset])
+
+  useEffect(() => {
+    const root = document.documentElement
+    root.dataset.dir = themeDir
+    document.body.dataset.dir = themeDir
+  }, [themeDir])
 
   const themeData = { ...themes[theme], ...sharedTokens }
   const isSystemTheme = themeSource === 'system'
@@ -347,7 +426,10 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isSystemTheme,
         designPreset,
         setDesignPreset,
-        designPresets: DESIGN_PRESETS
+        designPresets: DESIGN_PRESETS,
+        themeDir,
+        setThemeDir,
+        themeFamilies: THEME_FAMILIES
       }}
     >
       {children}

@@ -14,6 +14,8 @@ import {
   GripVertical,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   LogOut,
   MessageCircle,
   Moon,
@@ -58,6 +60,8 @@ import { CSS } from '@dnd-kit/utilities'
 import automationsService from '@/services/automationsService'
 
 interface SidebarProps {
+  collapsed?: boolean
+  onCollapsedChange?: (collapsed: boolean) => void
   onNavigate?: () => void
   onLogout?: () => void
 }
@@ -152,6 +156,7 @@ const getInitials = (name?: string, email?: string) => {
 interface NavigationItemProps {
   item: NavItem
   isActive: boolean
+  collapsed?: boolean
   onNavigate?: () => void
 }
 
@@ -163,11 +168,12 @@ interface SortableItemProps {
   onNavigate?: () => void
 }
 
-const getNavLinkClasses = (isActive: boolean, extraClasses?: string) => cn(
-  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+const getNavLinkClasses = (isActive: boolean, extraClasses?: string, collapsed = false) => cn(
+  'flex items-center rounded-lg text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+  collapsed ? 'min-h-[42px] justify-center px-0 py-2.5' : 'gap-3 px-3 py-2.5',
   isActive
-    ? 'bg-[rgba(148,163,184,0.16)] text-[var(--color-text-primary)] dark:shadow-[0_10px_20px_-16px_rgba(15,23,42,0.45)]'
-    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[rgba(148,163,184,0.12)]',
+    ? 'bg-[var(--accent-soft)] text-[var(--text)]'
+    : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]',
   extraClasses
 )
 
@@ -175,7 +181,9 @@ interface SettingsNavGroupProps {
   pathname: string
   open: boolean
   items: typeof settingsNavigation
+  collapsed?: boolean
   onToggle: () => void
+  onRequestExpand?: () => void
   onNavigate?: () => void
 }
 
@@ -183,14 +191,45 @@ interface SettingsNavGroupProps {
 // misma lista del sidebar y al expandirse muestra las secciones anidadas con
 // una guía vertical. El estado activo reutiliza la misma receta visual que el
 // resto de los items del panel.
-const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({ pathname, open, items, onToggle, onNavigate }) => {
+const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({
+  pathname,
+  open,
+  items,
+  collapsed = false,
+  onToggle,
+  onRequestExpand,
+  onNavigate
+}) => {
   const isSettingsRoute = pathname.startsWith('/settings')
 
   if (!items.length) return null
 
+  if (collapsed) {
+    return (
+      <div className="pt-2">
+        <div className="mx-2 mb-2 border-t border-[var(--border)]" />
+        <button
+          type="button"
+          onClick={() => {
+            if (!open) onToggle()
+            onRequestExpand?.()
+          }}
+          aria-label="Configuración"
+          title="Configuración"
+          data-ristak-sidebar-nav-item
+          data-active={isSettingsRoute ? 'true' : undefined}
+          className={cn(getNavLinkClasses(isSettingsRoute, 'w-full', true))}
+        >
+          <Settings className="h-5 w-5 flex-shrink-0" />
+          <span className="sr-only">Configuración</span>
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="pt-2">
-      <div className="mb-2 border-t border-[rgba(148,163,184,0.12)]" />
+      <div className="mb-2 border-t border-[var(--border)]" />
       <button
         type="button"
         onClick={onToggle}
@@ -203,14 +242,14 @@ const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({ pathname, open, ite
         <span className="flex-1 text-left">Configuración</span>
         <ChevronDown
           className={cn(
-            'h-4 w-4 flex-shrink-0 text-[var(--color-text-tertiary)] transition-transform',
+            'h-4 w-4 flex-shrink-0 text-[var(--text-mute)] transition-transform',
             open && 'rotate-180'
           )}
         />
       </button>
 
       {open && (
-        <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[rgba(148,163,184,0.16)] pl-2.5">
+        <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[var(--border)] pl-2.5">
           {items.map((item) => {
             const hasChildren = Boolean(item.children?.length)
             const sectionOpen = pathname.startsWith(item.to)
@@ -225,22 +264,22 @@ const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({ pathname, open, ite
                   className={cn(
                     'flex items-center justify-between rounded-md px-2.5 py-[7px] text-[13px] font-medium transition-colors',
                     isActive
-                      ? 'bg-[rgba(148,163,184,0.16)] text-[var(--color-text-primary)]'
-                      : 'text-[var(--color-text-tertiary)] hover:bg-[rgba(148,163,184,0.1)] hover:text-[var(--color-text-primary)]'
+                      ? 'bg-[var(--accent-soft)] text-[var(--text)]'
+                      : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
                   )}
                 >
                   {item.label}
                   {hasChildren && (
                     <ChevronDown
                       className={cn(
-                        'h-3.5 w-3.5 flex-shrink-0 text-[var(--color-text-tertiary)] transition-transform',
+                        'h-3.5 w-3.5 flex-shrink-0 text-[var(--text-mute)] transition-transform',
                         sectionOpen && 'rotate-180'
                       )}
                     />
                   )}
                 </Link>
                 {hasChildren && sectionOpen && (
-                  <div className="ml-2.5 space-y-0.5 border-l border-[rgba(148,163,184,0.16)] pl-2">
+                  <div className="ml-2.5 space-y-0.5 border-l border-[var(--border)] pl-2">
                     {item.children!.map((child) => {
                       const childActive = child.end ? pathname === child.to : pathname.startsWith(child.to)
                       return (
@@ -253,8 +292,8 @@ const SettingsNavGroup: React.FC<SettingsNavGroupProps> = ({ pathname, open, ite
                           className={cn(
                             'block rounded-md px-2.5 py-[6px] text-[12.5px] font-medium transition-colors',
                             childActive
-                              ? 'bg-[rgba(148,163,184,0.16)] text-[var(--color-text-primary)]'
-                              : 'text-[var(--color-text-tertiary)] hover:bg-[rgba(148,163,184,0.1)] hover:text-[var(--color-text-primary)]'
+                              ? 'bg-[var(--accent-soft)] text-[var(--text)]'
+                              : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
                           )}
                         >
                           {child.label}
@@ -276,12 +315,42 @@ interface AIAgentNavGroupProps {
   pathname: string
   open: boolean
   items: ReadonlyArray<AIAgentNavItem>
+  collapsed?: boolean
   onToggle: () => void
+  onRequestExpand?: () => void
   onNavigate?: () => void
 }
 
-const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({ pathname, open, items, onToggle, onNavigate }) => {
+const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({
+  pathname,
+  open,
+  items,
+  collapsed = false,
+  onToggle,
+  onRequestExpand,
+  onNavigate
+}) => {
   const isAIAgentRoute = pathname.startsWith('/ai-agent')
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          if (!open) onToggle()
+          onRequestExpand?.()
+        }}
+        aria-label="Agente AI"
+        title="Agente AI"
+        data-ristak-sidebar-nav-item
+        data-active={isAIAgentRoute ? 'true' : undefined}
+        className={cn(getNavLinkClasses(isAIAgentRoute, 'w-full', true))}
+      >
+        <BotMessageSquare className="h-5 w-5 flex-shrink-0" />
+        <span className="sr-only">Agente AI</span>
+      </button>
+    )
+  }
 
   return (
     <div>
@@ -297,14 +366,14 @@ const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({ pathname, open, items
         <span className="flex-1 text-left">Agente AI</span>
         <ChevronDown
           className={cn(
-            'h-4 w-4 flex-shrink-0 text-[var(--color-text-tertiary)] transition-transform',
+            'h-4 w-4 flex-shrink-0 text-[var(--text-mute)] transition-transform',
             open && 'rotate-180'
           )}
         />
       </button>
 
       {open && (
-        <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[rgba(148,163,184,0.16)] pl-2.5">
+        <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[var(--border)] pl-2.5">
           {items.map((child) => {
             const childActive = child.exact ? pathname === child.to : pathname.startsWith(child.to)
             return (
@@ -317,8 +386,8 @@ const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({ pathname, open, items
                 className={cn(
                   'block rounded-md px-2.5 py-[7px] text-[13px] font-medium transition-colors',
                   childActive
-                    ? 'bg-[rgba(148,163,184,0.16)] text-[var(--color-text-primary)]'
-                    : 'text-[var(--color-text-tertiary)] hover:bg-[rgba(148,163,184,0.1)] hover:text-[var(--color-text-primary)]'
+                    ? 'bg-[var(--accent-soft)] text-[var(--text)]'
+                    : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
                 )}
               >
                 {child.label}
@@ -331,13 +400,13 @@ const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({ pathname, open, items
   )
 }
 
-const NavigationItem: React.FC<NavigationItemProps> = ({ item, isActive, onNavigate }) => {
+const NavigationItem: React.FC<NavigationItemProps> = ({ item, isActive, collapsed = false, onNavigate }) => {
   const Icon = item.icon
 
   if (item.isDivider) {
     return (
       <div className="py-2">
-        <div className="border-t border-[rgba(148,163,184,0.12)]" />
+        <div className="border-t border-[var(--border)]" />
       </div>
     )
   }
@@ -347,11 +416,13 @@ const NavigationItem: React.FC<NavigationItemProps> = ({ item, isActive, onNavig
       <button
         type="button"
         onClick={() => item.action?.()}
+        aria-label={item.name}
+        title={collapsed ? item.name : undefined}
         data-ristak-sidebar-nav-item
-        className={getNavLinkClasses(false, 'w-full')}
+        className={getNavLinkClasses(false, 'w-full', collapsed)}
       >
         <Icon className="h-5 w-5 flex-shrink-0" />
-        <span>{item.name}</span>
+        <span className={collapsed ? 'sr-only' : undefined}>{item.name}</span>
       </button>
     )
   }
@@ -362,12 +433,14 @@ const NavigationItem: React.FC<NavigationItemProps> = ({ item, isActive, onNavig
       onClick={() => {
         onNavigate?.()
       }}
+      aria-label={item.name}
+      title={collapsed ? item.name : undefined}
       data-ristak-sidebar-nav-item
       data-active={isActive ? 'true' : undefined}
-      className={getNavLinkClasses(isActive)}
+      className={getNavLinkClasses(isActive, undefined, collapsed)}
     >
       <Icon className="h-5 w-5 flex-shrink-0" />
-      <span>{item.name}</span>
+      <span className={collapsed ? 'sr-only' : undefined}>{item.name}</span>
     </Link>
   )
 }
@@ -392,7 +465,7 @@ const SortableItem: React.FC<SortableItemProps> = ({ item, isActive, isDragging,
   if (item.isDivider) {
     return (
       <div ref={setNodeRef} style={style} className="relative py-2">
-        <div className="border-t border-[rgba(148,163,184,0.12)]" />
+        <div className="border-t border-[var(--border)]" />
       </div>
     )
   }
@@ -464,7 +537,12 @@ const SortableItem: React.FC<SortableItemProps> = ({ item, isActive, isDragging,
   )
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
+export const Sidebar: React.FC<SidebarProps> = ({
+  collapsed = false,
+  onCollapsedChange,
+  onNavigate,
+  onLogout
+}) => {
   // Precalienta la librería de automatizaciones (abre sin parpadeo)
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -480,9 +558,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
     themeSource,
     resetToSystem,
     isSystemTheme,
-    designPreset,
-    setDesignPreset,
-    designPresets
+    themeDir,
+    setThemeDir,
+    themeFamilies
   } = useTheme()
   const { user } = useAuth()
   const { isInitialized } = useInitialization()
@@ -505,6 +583,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
   useEffect(() => {
     setAiAgentOpen(isAIAgentRoute)
   }, [isAIAgentRoute])
+
+  useEffect(() => {
+    if (!collapsed) return
+    setIsEditMode(false)
+  }, [collapsed])
   const longPressTimerRef = React.useRef<number | null>(null)
   const longPressStartPos = React.useRef<{ x: number; y: number } | null>(null)
   const userMenuRef = React.useRef<HTMLDivElement>(null)
@@ -533,6 +616,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
   )
 
   const startLongPress = (e: React.PointerEvent) => {
+    if (collapsed) {
+      return
+    }
     if (isEditMode) {
       return
     }
@@ -673,38 +759,63 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
     onNavigate?.()
   }
 
+  const handleRequestExpand = () => {
+    onCollapsedChange?.(false)
+  }
+
+  const handleToggleCollapsed = () => {
+    const nextCollapsed = !collapsed
+    if (nextCollapsed) {
+      setIsEditMode(false)
+      setShowUserMenu(false)
+    }
+    onCollapsedChange?.(nextCollapsed)
+  }
+
   const activeItem = activeId ? navigation.find(item => item.id === activeId) : null
 
   return (
-    <div data-ristak-sidebar className="flex flex-col h-full">
+    <div data-ristak-sidebar data-collapsed={collapsed ? 'true' : undefined} className="flex h-full flex-col">
       {/* Header con cuenta */}
       <div
         data-ristak-sidebar-header
-        className="relative flex items-stretch border-b border-[rgba(148,163,184,0.12)]"
+        className="relative flex items-stretch border-b border-[var(--border)]"
         style={{ height: 'var(--header-height)' }}
       >
         <div ref={userMenuRef} className="relative flex min-w-0 flex-1 items-center">
           <button
             type="button"
-            className="flex h-full min-w-0 flex-1 items-center px-4 text-left transition-colors hover:bg-[rgba(148,163,184,0.08)] focus:outline-none"
+            className={cn(
+              'flex h-full min-w-0 flex-1 items-center text-left transition-colors hover:bg-[var(--surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+              collapsed ? 'justify-center px-0' : 'px-4'
+            )}
             onClick={() => setShowUserMenu((current) => !current)}
+            aria-label={collapsed ? `Abrir menú de ${accountMenuLabel}` : undefined}
             aria-expanded={showUserMenu}
             aria-haspopup="menu"
+            title={collapsed ? accountMenuLabel : undefined}
           >
-            <span className="ml-1.5 mr-3 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[rgba(255,238,219,0.92)] text-xs font-semibold text-[#2f251b]">
+            <span className={cn(
+              'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-xs font-semibold text-[var(--accent)]',
+              collapsed ? 'mx-0' : 'ml-1.5 mr-3'
+            )}>
               {initials}
             </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-semibold text-[var(--color-text-primary)]">
-                {accountMenuLabel}
+            {!collapsed && (
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold text-[var(--text)]">
+                  {accountMenuLabel}
+                </span>
               </span>
-            </span>
-            <ChevronDown
-              className={cn(
-                'ml-3 h-3.5 w-3.5 flex-shrink-0 text-[var(--color-text-tertiary)] transition-transform',
-                showUserMenu && 'rotate-180'
-              )}
-            />
+            )}
+            {!collapsed && (
+              <ChevronDown
+                className={cn(
+                  'ml-3 h-3.5 w-3.5 flex-shrink-0 text-[var(--text-mute)] transition-transform',
+                  showUserMenu && 'rotate-180'
+                )}
+              />
+            )}
           </button>
 
           {showUserMenu && (
@@ -715,7 +826,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
             >
               <div className="border-b border-[rgba(148,163,184,0.1)] p-4">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[rgba(255,238,219,0.92)] text-sm font-semibold text-[#2f251b]">
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-sm font-semibold text-[var(--accent)]">
                     {initials}
                   </div>
                   <div className="min-w-0 flex-1">
@@ -730,32 +841,36 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
                     <Palette className="h-3.5 w-3.5" />
                     Diseño de app
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {designPresets.map((preset) => {
-                      const isActive = preset.id === designPreset
-
-                      return (
-                        <button
-                          key={preset.id}
-                          type="button"
-                          title={preset.description}
-                          onClick={() => setDesignPreset(preset.id)}
-                          className={cn(
-                            'flex min-h-[58px] items-center gap-2 rounded-lg border border-[rgba(148,163,184,0.14)] px-2.5 py-2 text-left text-sm text-[var(--color-text-primary)] transition-colors hover:glass-hover',
-                            isActive && 'border-[rgba(var(--color-primary-rgb),0.28)] bg-[rgba(var(--color-primary-rgb),0.12)]'
-                          )}
-                          aria-pressed={isActive}
-                        >
-                          <span
-                            className="design-preset-preview"
-                            data-preset={preset.id}
-                            aria-hidden="true"
-                          />
-                          <span className="min-w-0 flex-1 truncate font-medium">{preset.label}</span>
-                          {isActive && <Check className="h-4 w-4 flex-shrink-0 text-[var(--color-status-success)]" />}
-                        </button>
-                      )
-                    })}
+                  <div className="space-y-2.5">
+                    {themeFamilies.map((family) => (
+                      <div key={family.id}>
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">
+                          {family.label}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {family.variants.map((variant) => {
+                            const isActive = variant.dir === themeDir
+                            return (
+                              <button
+                                key={variant.dir}
+                                type="button"
+                                title={`${family.label} · ${variant.label}`}
+                                onClick={() => setThemeDir(variant.dir)}
+                                aria-pressed={isActive}
+                                className={cn(
+                                  'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                                  isActive
+                                    ? 'border-[var(--color-primary)] bg-[rgba(var(--color-primary-rgb),0.14)] text-[var(--color-text-primary)]'
+                                    : 'border-[rgba(148,163,184,0.18)] text-[var(--color-text-secondary)] hover:bg-[rgba(148,163,184,0.12)]'
+                                )}
+                              >
+                                {variant.label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button
@@ -799,7 +914,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
                     setShowUserMenu(false)
                     onLogout?.()
                   }}
-                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-red-500 transition-colors hover:glass-hover"
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-[var(--neg)] transition-colors hover:glass-hover"
                   role="menuitem"
                 >
                   <LogOut className="h-4 w-4" />
@@ -822,20 +937,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
 
       {/* Navigation */}
       <nav className={cn(
-        "flex-1 min-h-0 overflow-y-auto p-4 pt-3 transition-all duration-200",
-        isEditMode && "bg-white/[0.02] mx-2 rounded-lg"
+        "flex-1 min-h-0 overflow-y-auto transition-all duration-200",
+        collapsed ? 'p-3 pt-3' : 'p-4 pt-3',
+        isEditMode && "mx-2 rounded-lg bg-[var(--surface-2)]"
       )}>
         {isEditMode && (
-          <div className="mb-3 px-2 py-1.5 text-xs text-[var(--color-text-tertiary)] bg-white/[0.05] rounded-md border border-dashed border-[rgba(148,163,184,0.2)]">
+          <div className="mb-3 rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-2)] px-2 py-1.5 text-xs text-[var(--text-mute)]">
             <span className="flex items-center gap-2">
               <span className="flex h-1.5 w-1.5">
-                <span className="animate-ping absolute inline-flex h-1.5 w-1.5 rounded-full bg-[var(--color-accent-blue)] opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[var(--color-accent-blue)]"></span>
+                <span className="absolute inline-flex h-1.5 w-1.5 animate-ping rounded-full bg-[var(--accent)] opacity-75"></span>
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--accent)]"></span>
               </span>
-      Modo edición - Arrastra para reordenar
-    </span>
-  </div>
-)}
+              Modo edición - Arrastra para reordenar
+            </span>
+          </div>
+        )}
 
         {isEditMode ? (
           <DndContext
@@ -879,6 +995,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
                 open={aiAgentOpen}
                 items={visibleAIAgentNavigation}
                 onToggle={() => setAiAgentOpen((current) => !current)}
+                onRequestExpand={handleRequestExpand}
                 onNavigate={handleNavigate}
               />
             )}
@@ -887,6 +1004,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
               open={settingsOpen}
               items={visibleSettingsNavigation}
               onToggle={() => setSettingsOpen((current) => !current)}
+              onRequestExpand={handleRequestExpand}
               onNavigate={handleNavigate}
             />
           </DndContext>
@@ -914,6 +1032,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
                   key={item.id}
                   item={item}
                   isActive={isActive}
+                  collapsed={collapsed}
                   onNavigate={handleNavigate}
                 />
               )
@@ -924,7 +1043,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
                 pathname={location.pathname}
                 open={aiAgentOpen}
                 items={visibleAIAgentNavigation}
+                collapsed={collapsed}
                 onToggle={() => setAiAgentOpen((current) => !current)}
+                onRequestExpand={handleRequestExpand}
                 onNavigate={handleNavigate}
               />
             )}
@@ -932,12 +1053,39 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
               pathname={location.pathname}
               open={settingsOpen}
               items={visibleSettingsNavigation}
+              collapsed={collapsed}
               onToggle={() => setSettingsOpen((current) => !current)}
+              onRequestExpand={handleRequestExpand}
               onNavigate={handleNavigate}
             />
           </div>
         )}
       </nav>
+
+      <div data-ristak-sidebar-footer className="border-t border-[var(--border)] p-3">
+        <button
+          type="button"
+          onClick={handleToggleCollapsed}
+          aria-label={collapsed ? 'Expandir menú lateral' : 'Contraer menú lateral'}
+          title={collapsed ? 'Expandir menú lateral' : 'Contraer menú lateral'}
+          data-ristak-sidebar-nav-item
+          className={cn(
+            'flex min-h-[42px] w-full items-center rounded-lg text-sm font-medium text-[var(--text-mute)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+            collapsed ? 'justify-center px-0' : 'justify-between gap-3 px-3'
+          )}
+        >
+          {collapsed ? (
+            <ChevronRight className="h-5 w-5 flex-shrink-0" />
+          ) : (
+            <>
+              <span className="flex min-w-0 items-center gap-3">
+                <ChevronLeft className="h-5 w-5 flex-shrink-0" />
+                <span className="truncate">Contraer menú</span>
+              </span>
+            </>
+          )}
+        </button>
+      </div>
     </div>
   )
 }

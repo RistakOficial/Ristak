@@ -4,7 +4,9 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(8, 11, 16, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -23,13 +25,14 @@
 }
 
 .modal {
-  background: var(--color-surface);
-  border-radius: 14px;
+  background: var(--surface-solid, var(--surface));
+  border-radius: var(--radius-card);
   width: 100%;
   max-height: 90vh;
   overflow: hidden;
   animation: modalSlideUp 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-pop);
   position: relative;
 }
 
@@ -139,11 +142,6 @@
   to { transform: translateY(104%); }
 }
 
-body.dark .modal {
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25),
-              0 0 0 1px rgba(0, 0, 0, 0.03);
-}
-
 /* Barra de color eliminada para diseño minimalista */
 .modal::before {
   content: none;
@@ -185,7 +183,7 @@ body.dark .modal {
   align-items: center;
   justify-content: space-between;
   padding: 24px 32px;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--border);
 }
 
 .titleWrapper {
@@ -213,20 +211,16 @@ body.dark .modal {
   border: none;
   color: var(--color-text-tertiary);
   cursor: pointer;
-  border-radius: 10px;
+  border-radius: var(--radius-ctl);
   transition: all 0.15s ease;
   opacity: 0.6;
 }
 
 .closeButton:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--surface-2);
   color: var(--color-text-primary);
   opacity: 1;
   transform: rotate(90deg);
-}
-
-[data-theme="dark"] .closeButton:hover {
-  background: rgba(255, 255, 255, 0.08);
 }
 
 .content {
@@ -285,7 +279,7 @@ body.dark .modal {
 
 .typeToConfirmLabel strong {
   color: var(--color-text-primary);
-  font-weight: 600;
+  font-weight: 500;
   user-select: none;
 }
 
@@ -310,12 +304,8 @@ body.dark .modal {
   justify-content: flex-end;
   gap: 10px;
   padding: 20px 32px 24px;
-  border-top: 1px solid var(--color-border);
-  background: rgba(0, 0, 0, 0.01);
-}
-
-[data-theme="dark"] .footer {
-  background: rgba(255, 255, 255, 0.01);
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
 }
 
 /* Icon wrapper - diseño minimalista sin fondos de colores */
@@ -581,17 +571,8 @@ body.dark .modal {
 .modal.info {
   width: min(92vw, 430px);
   max-width: 430px;
-  border-radius: 14px;
-  box-shadow: 0 22px 55px -34px rgba(15, 23, 42, 0.62);
-}
-
-body.dark .modal.confirm,
-body.dark .modal.alert,
-body.dark .modal.info,
-[data-theme="dark"] .modal.confirm,
-[data-theme="dark"] .modal.alert,
-[data-theme="dark"] .modal.info {
-  box-shadow: 0 24px 58px -32px rgba(0, 0, 0, 0.75);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-pop);
 }
 
 .modal.confirm .header,

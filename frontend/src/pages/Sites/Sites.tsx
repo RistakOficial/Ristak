@@ -8,6 +8,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragOverEvent,
   type DragStartEvent
 } from '@dnd-kit/core'
 import {
@@ -86,11 +87,14 @@ import {
   X
 } from 'lucide-react'
 import {
+  Badge,
+  type BadgeVariant,
   Button,
   Loading,
   NumberInput,
   CustomSelect,
   TabList,
+  SegmentTabs,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -142,10 +146,15 @@ import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import {
   customFieldsService,
   isSystemCustomFieldDefinition,
-  type CustomFieldDefinition
+  type CustomFieldDataType,
+  type CustomFieldDefinition,
+  type CustomFieldFolder,
+  type CustomFieldOption,
+  type SaveCustomFieldInput
 } from '@/services/customFieldsService'
 import { COUNTRY_OPTIONS, getCountryDefaults, getCountryFlagEmoji, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import styles from './Sites.module.css'
+import customFieldModalStyles from '../Settings/CustomFields.module.css'
 import './sitesCanvas.css'
 import { buildCanvasTheme } from './sitesCanvasTheme'
 
@@ -359,6 +368,15 @@ const normalizeVisibleRuleAction = (action?: SiteOptionAction): SiteOptionAction
   action && visibleRuleActionValues.has(action) ? action : 'continue'
 )
 const exitRuleActions = new Set<SiteOptionAction>(['redirect', 'site_page'])
+const fieldValidationOptions = [
+  { value: '', label: 'Ninguna' },
+  { value: 'email', label: 'Correo' },
+  { value: 'phone', label: 'Teléfono' },
+  { value: 'number', label: 'Número' },
+  { value: 'currency', label: 'Moneda' },
+  { value: 'date', label: 'Fecha' },
+  { value: 'url', label: 'URL' }
+]
 
 const embeddedFormFieldTypes: SiteBlockType[] = [
   'short_text',
@@ -1290,6 +1308,9 @@ const hasEditablePages = (site?: PublicSite | null) => isLanding(site) || isInte
 const canManagePages = (site?: PublicSite | null) => hasEditablePages(site)
 const isFormFinalPageId = (pageId?: string) => Boolean(pageId && FORM_FINAL_PAGE_IDS.has(pageId))
 const isFormFinalPage = (page?: SitePage | null) => isFormFinalPageId(page?.id)
+const getManualRedirectPages = (pages: SitePage[], activePageId?: string) => (
+  pages.filter(page => page.id !== activePageId && !isFormFinalPage(page))
+)
 
 const formatDate = (value?: string | null) => {
   if (!value) return 'Sin fecha'
@@ -1317,10 +1338,24 @@ const getStatusLabel = (site: PublicSite, domainConfig: SitesDomainConfig) => {
   return domainConfig.renderDomainVerified ? 'Publicado' : 'Dominio pendiente'
 }
 
-const getStatusClass = (site: PublicSite, domainConfig: SitesDomainConfig) => {
-  if (site.status !== 'published') return styles.statusMuted
-  if (!domainConfig.domain || !domainConfig.renderDomainVerified) return styles.statusWarning
-  return styles.statusSuccess
+// Fecha de edición relativa, compacta (estilo "hace 2 días" del ZIP)
+const formatSiteEdited = (value?: string | null): string | null => {
+  if (!value) return null
+  const then = new Date(value).getTime()
+  if (!Number.isFinite(then)) return null
+  const days = Math.floor((Date.now() - then) / 86400000)
+  if (days <= 0) return 'hoy'
+  if (days === 1) return 'ayer'
+  if (days < 7) return `hace ${days} días`
+  if (days < 30) return `hace ${Math.floor(days / 7)} sem`
+  if (days < 365) return `hace ${Math.floor(days / 30)} mes`
+  return `hace ${Math.floor(days / 365)} año`
+}
+
+const getStatusVariant = (site: PublicSite, domainConfig: SitesDomainConfig): BadgeVariant => {
+  if (site.status !== 'published') return 'neutral'
+  if (!domainConfig.domain || !domainConfig.renderDomainVerified) return 'warning'
+  return 'success'
 }
 
 const isPublicSiteLive = (site: PublicSite, domainConfig: SitesDomainConfig) =>
@@ -2500,6 +2535,19 @@ const cloneJson = <T,>(value: T): T => {
     return value
   }
 }
+
+const editorValuesEqual = (left: unknown, right: unknown) => {
+  if (Object.is(left, right)) return true
+
+  try {
+    return JSON.stringify(left) === JSON.stringify(right)
+  } catch {
+    return false
+  }
+}
+
+const editorPatchHasChanges = (current: Record<string, unknown>, patch: Record<string, unknown>) =>
+  Object.entries(patch).some(([key, value]) => !editorValuesEqual(current[key], value))
 
 const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
   const seen = new Set<string>()
@@ -3710,6 +3758,7 @@ function FormEmbedEditorPanel({
   activeField,
   activeElement,
   customFields,
+  customFieldFolders,
   pages,
   activePageId,
   sitePages,
@@ -3720,6 +3769,7 @@ function FormEmbedEditorPanel({
   onPatchField,
   onPatchFieldSettings,
   onDeleteField,
+  onCustomFieldCreated,
   onSave,
   onSaveSite,
   onActivePageChange,
@@ -3734,6 +3784,7 @@ function FormEmbedEditorPanel({
   activeField: SiteBlock | null
   activeElement: EmbeddedFormActiveElement
   customFields: CustomFieldDefinition[]
+  customFieldFolders: CustomFieldFolder[]
   pages: SitePage[]
   activePageId: string
   sitePages: SitePage[]
@@ -3744,6 +3795,7 @@ function FormEmbedEditorPanel({
   onPatchField: (fieldId: string, patch: Partial<SiteBlock>) => void
   onPatchFieldSettings: (field: SiteBlock, patch: Record<string, unknown>) => void
   onDeleteField: (fieldId: string) => void
+  onCustomFieldCreated: (field: CustomFieldDefinition) => void
   onSave: () => void
   onSaveSite: () => void
   onActivePageChange: (pageId: string) => void
@@ -3973,12 +4025,7 @@ function FormEmbedEditorPanel({
                   onChange={(event) => patchActiveFieldSettings({ validation: event.target.value })}
                   onBlur={onSave}
                 >
-                  <option value="">Ninguna</option>
-                  <option value="email">Correo</option>
-                  <option value="phone">Teléfono</option>
-                  <option value="number">Número</option>
-                  <option value="currency">Moneda</option>
-                  <option value="date">Fecha</option>
+                  {fieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
                 </CustomSelect>
               </label>
               <label className={styles.checkboxLabel}>
@@ -4012,7 +4059,9 @@ function FormEmbedEditorPanel({
           <CustomFieldBindingControl
             block={activeField}
             customFields={customFields}
+            customFieldFolders={customFieldFolders}
             onPatchSettings={patchActiveFieldSettings}
+            onCustomFieldCreated={onCustomFieldCreated}
             onSave={onSave}
           />
 
@@ -4201,6 +4250,7 @@ export const Sites: React.FC = () => {
   const [domainInput, setDomainInput] = useState('')
   const [calendars, setCalendars] = useState<CalendarType[]>([])
   const [customFields, setCustomFields] = useState<CustomFieldDefinition[]>([])
+  const [customFieldFolders, setCustomFieldFolders] = useState<CustomFieldFolder[]>([])
   const [metaPixelConnected, setMetaPixelConnected] = useState(false)
   const [connectedSocialProfiles, setConnectedSocialProfiles] = useState<ConnectedSocialProfile[]>([])
   const [loadingSocialProfiles, setLoadingSocialProfiles] = useState(false)
@@ -4213,7 +4263,6 @@ export const Sites: React.FC = () => {
   const [device, setDevice] = useState<DeviceMode>(routeState.device)
   const [createFlow, setCreateFlow] = useState<CreateFlow>(routeState.createFlow)
   const [activePageId, setActivePageId] = useState<string>(routeState.pageId || DEFAULT_FUNNEL_PAGE_ID)
-  const [draggingPageId, setDraggingPageId] = useState<string | null>(null)
   const [activeDragId, setActiveDragId] = useState<string | null>(null)
   const [paletteDragging, setPaletteDragging] = useState(false)
   const [paletteDragPayload, setPaletteDragPayload] = useState<PaletteDragPayload | null>(null)
@@ -4428,7 +4477,14 @@ export const Sites: React.FC = () => {
   const activeDragBlock = editableCanvasBlocks.find(block => block.id === activeDragId) || null
   const activeAIGeneration = aiEditorGeneration && editorSite?.id === aiEditorGeneration.siteId ? aiEditorGeneration : null
   const editorAIGenerating = Boolean(activeAIGeneration)
-  const formCanvasHasFields = Boolean(editorSite && isFormSite(editorSite) && canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)))
+  const formCanvasShowsActions = Boolean(
+    editorSite &&
+    isFormSite(editorSite) &&
+    (
+      canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)) ||
+      (activePage && isStandardForm(editorSite) && !isFormFinalPage(activePage))
+    )
+  )
   const formCanvasActionLabel = editorSite && activePage && isStandardForm(editorSite) && !isLastFormContentPage(editorSite, pages, activePage.id)
     ? getThemeString(editorSite.theme, 'continueText') || 'Continuar'
     : undefined
@@ -4459,6 +4515,11 @@ export const Sites: React.FC = () => {
     : editorSaveStatus.tone === 'dirty'
       ? styles.editorSaveStatusDirty
       : styles.editorSaveStatusSaved
+  const editorDirtyActionTarget = hasUnsavedChanges
+    ? editorSite?.status === 'published'
+      ? 'publish'
+      : 'save'
+    : null
   const editorActive = Boolean(editorSite)
   const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
   const createFlowHeaderCopy = getCreateFlowHeaderCopy(createFlow)
@@ -5068,11 +5129,23 @@ export const Sites: React.FC = () => {
   const loadCustomFieldsForBuilder = async () => {
     try {
       const catalog = await customFieldsService.listCatalog()
+      setCustomFieldFolders(catalog.folders || [])
       setCustomFields((catalog.fields || []).filter(field => !isSystemCustomFieldDefinition(field)))
     } catch {
+      setCustomFieldFolders([])
       setCustomFields([])
     }
   }
+
+  const handleCustomFieldCreated = useCallback((field: CustomFieldDefinition) => {
+    setCustomFields(current => {
+      const withoutDuplicate = current.filter(item => item.definitionId !== field.definitionId)
+      return [...withoutDuplicate, field].sort((a, b) => (
+        String(a.folderName || '').localeCompare(String(b.folderName || '')) ||
+        String(a.label || '').localeCompare(String(b.label || ''))
+      ))
+    })
+  }, [])
 
   const loadLeads = async () => {
     if (!sites.length) {
@@ -5255,7 +5328,6 @@ export const Sites: React.FC = () => {
       setSelectedSite(null)
       setSelectedBlockId('')
       setActivePageId(DEFAULT_FUNNEL_PAGE_ID)
-      setDraggingPageId(null)
       setActiveDragId(null)
       setPaletteDragging(false)
       setPaletteDragPayload(null)
@@ -5283,7 +5355,6 @@ export const Sites: React.FC = () => {
       setSelectedSite(null)
       setSelectedBlockId('')
       setActivePageId(DEFAULT_FUNNEL_PAGE_ID)
-      setDraggingPageId(null)
       setActiveDragId(null)
       setPaletteDragging(false)
       setPaletteDragPayload(null)
@@ -5451,18 +5522,21 @@ export const Sites: React.FC = () => {
   }, [editorSite])
 
   const updateSelectedSite = (patch: Partial<PublicSite>) => {
-    markEditorDirty({ site: true })
     const current = selectedSiteRef.current
     if (!current) return
+    if (!editorPatchHasChanges(current as unknown as Record<string, unknown>, patch as Record<string, unknown>)) return
+    markEditorDirty({ site: true })
     const next = { ...current, ...patch }
     selectedSiteRef.current = next
     setSelectedSite(next)
   }
 
   const patchSiteTheme = (patch: Partial<SiteTheme>) => {
-    markEditorDirty({ site: true })
     const current = selectedSiteRef.current
     if (!current) return
+    const currentTheme = (current.theme || {}) as Record<string, unknown>
+    if (!editorPatchHasChanges(currentTheme, patch as Record<string, unknown>)) return
+    markEditorDirty({ site: true })
     const next = { ...current, theme: { ...(current.theme || {}), ...patch } }
     selectedSiteRef.current = next
     setSelectedSite(next)
@@ -5778,7 +5852,15 @@ export const Sites: React.FC = () => {
     )
   }
 
-  const handleReorderPages = (sourcePageId: string, targetPageId: string) => {
+  const orderPagesByIds = (sourcePages: SitePage[], pageIds?: string[]) => {
+    if (!pageIds?.length) return sourcePages
+    const byId = new Map(sourcePages.map(page => [page.id, page]))
+    const ordered = pageIds.map(pageId => byId.get(pageId)).filter((page): page is SitePage => Boolean(page))
+    if (ordered.length !== sourcePages.length) return sourcePages
+    return ordered
+  }
+
+  const handleReorderPages = (sourcePageId: string, targetPageId: string, orderedPageIds?: string[]) => {
     if (!selectedSite || !canManagePages(selectedSite)) return
     if (!sourcePageId || sourcePageId === targetPageId) return
     if (isStandardForm(selectedSite)) {
@@ -5787,8 +5869,11 @@ export const Sites: React.FC = () => {
       const oldIndex = contentPages.findIndex(page => page.id === sourcePageId)
       const newIndex = contentPages.findIndex(page => page.id === targetPageId)
       if (oldIndex < 0 || newIndex < 0) return
+      const nextContentPages = orderedPageIds?.length
+        ? orderPagesByIds(contentPages, orderedPageIds)
+        : arrayMove(contentPages, oldIndex, newIndex)
       void persistFunnelPages([
-        ...arrayMove(contentPages, oldIndex, newIndex),
+        ...nextContentPages,
         ...pages.filter(isFormFinalPage)
       ], activePageId)
       return
@@ -5799,6 +5884,10 @@ export const Sites: React.FC = () => {
       if (!source || !target) return
       // Only reorder among siblings (same parent); moving a page across levels is not allowed.
       if ((source.parentPageId || '') !== (target.parentPageId || '')) return
+      if (orderedPageIds?.length) {
+        void persistFunnelPages(orderPagesByIds(pages, orderedPageIds), activePageId)
+        return
+      }
       const subtreeSet = new Set([sourcePageId, ...getDescendantPageIds(sourcePageId, pages)])
       const subtreePages = pages.filter(page => subtreeSet.has(page.id))
       const without = pages.filter(page => !subtreeSet.has(page.id))
@@ -5815,7 +5904,8 @@ export const Sites: React.FC = () => {
     const oldIndex = pages.findIndex(page => page.id === sourcePageId)
     const newIndex = pages.findIndex(page => page.id === targetPageId)
     if (oldIndex < 0 || newIndex < 0) return
-    void persistFunnelPages(arrayMove(pages, oldIndex, newIndex), activePageId)
+    const nextPages = orderedPageIds?.length ? orderPagesByIds(pages, orderedPageIds) : arrayMove(pages, oldIndex, newIndex)
+    void persistFunnelPages(nextPages, activePageId)
   }
 
   const handleRenamePage = (pageId: string, title: string) => {
@@ -6847,9 +6937,12 @@ export const Sites: React.FC = () => {
   }
 
   const patchBlockLocal = (blockId: string, patch: Partial<SiteBlock>) => {
-    markEditorDirty({ blockIds: [blockId] })
     const current = selectedSiteRef.current
     if (!current?.blocks) return
+    const currentBlock = current.blocks.find(block => block.id === blockId)
+    if (!currentBlock) return
+    if (!editorPatchHasChanges(currentBlock as unknown as Record<string, unknown>, patch as Record<string, unknown>)) return
+    markEditorDirty({ blockIds: [blockId] })
     const next = {
       ...current,
       blocks: current.blocks.map(block => block.id === blockId ? { ...block, ...patch } : block)
@@ -7047,12 +7140,14 @@ export const Sites: React.FC = () => {
         const sameSurface = sourceIsPopupBlock ? isPopupBlock(block) : !isPopupBlock(block)
         const samePage = sourceIsPopupBlock || !isLanding(current) || getBlockPageId(block, pages) === sourcePageId
         if (sameType && samePage && sameSurface) {
+          if (!editorPatchHasChanges((block.settings || {}) as Record<string, unknown>, patch)) return block
           changedBlockIds.push(block.id)
           return { ...block, settings: { ...(block.settings || {}), ...patch } }
         }
         return block
       })
     }
+    if (!changedBlockIds.length) return
     selectedSiteRef.current = next
     setSelectedSite(next)
     markEditorDirty({ blockIds: changedBlockIds })
@@ -7080,6 +7175,16 @@ export const Sites: React.FC = () => {
   const handleSaveBlock = async (blockId = selectedBlock?.id) => {
     const siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave?.blocks || !blockId) return
+    if (
+      !pendingSiteSaveRef.current &&
+      !pendingCreatedBlockIdsRef.current.has(blockId) &&
+      !pendingDeletedBlockIdsRef.current.has(blockId) &&
+      !pendingBlockSaveIdsRef.current.has(blockId) &&
+      pendingBlockOrderScopesRef.current.size === 0 &&
+      pendingImportedCodeDraftsRef.current.size === 0
+    ) {
+      return
+    }
     if (!pendingBlockSaveIdsRef.current.has(blockId)) pendingBlockSaveIdsRef.current.add(blockId)
     setHasUnsavedChanges(true)
   }
@@ -7654,7 +7759,6 @@ export const Sites: React.FC = () => {
       pages={pages}
       activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
       locked={!canManagePages(editorSite) || editorAIGenerating}
-      draggingPageId={draggingPageId}
       colorFinalPages={isStandardForm(editorSite)}
       isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
       pageMode={getSitePageMode(editorSite)}
@@ -7671,7 +7775,6 @@ export const Sites: React.FC = () => {
       onAddPage={handleAddPage}
       onDuplicatePage={handleDuplicatePage}
       onDeletePage={handleDeletePage}
-      onDragPage={setDraggingPageId}
       onReorderPages={handleReorderPages}
       onRenamePage={handleRenamePage}
     />
@@ -7713,7 +7816,7 @@ export const Sites: React.FC = () => {
                       </label>
                     )}
                     {editorSite.status !== 'draft' && !formEditMode && (
-                      <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
+                      <Badge variant={getStatusVariant(editorSite, domainConfig)}>{getStatusLabel(editorSite, domainConfig)}</Badge>
                     )}
                     {formEditMode && editorPageSelector && (
                       <div className={styles.editorPageSelectorSlot}>
@@ -7782,22 +7885,37 @@ export const Sites: React.FC = () => {
                       </button>
                     </div>
                     {isPublicSiteLive(editorSite, domainConfig) && (
-                      <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating}>
+                      <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating} aria-label="Ver en vivo">
                         <ExternalLink size={15} />
-                        Ver en vivo
+                        <span className={styles.editorActionLabel}>Ver en vivo</span>
                       </Button>
                     )}
-                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handlePreviewSite} disabled={editorAIGenerating}>
+                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handlePreviewSite} disabled={editorAIGenerating} aria-label="Previsualizar">
                       <Eye size={15} />
-                      Previsualizar
+                      <span className={styles.editorActionLabel}>Previsualizar</span>
                     </Button>
-                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={() => handleSaveSite()} loading={saving} disabled={editorAIGenerating}>
+                    <Button
+                      variant="secondary"
+                      size="md"
+                      className={`${styles.editorActionButton} ${editorDirtyActionTarget === 'save' ? styles.editorDirtyActionButton : ''}`}
+                      onClick={() => handleSaveSite()}
+                      loading={saving}
+                      disabled={editorAIGenerating}
+                      aria-label="Guardar"
+                    >
                       <Save size={15} />
-                      Guardar
+                      <span className={styles.editorActionLabel}>Guardar</span>
                     </Button>
-                    <Button size="md" className={styles.editorPublishButton} onClick={() => handleSaveSite('published')} loading={saving} disabled={editorAIGenerating}>
+                    <Button
+                      size="md"
+                      className={`${styles.editorPublishButton} ${editorDirtyActionTarget === 'publish' ? styles.editorDirtyActionButton : ''}`}
+                      onClick={() => handleSaveSite('published')}
+                      loading={saving}
+                      disabled={editorAIGenerating}
+                      aria-label="Publicar"
+                    >
                       <Send size={15} />
-                      Publicar
+                      <span className={styles.editorActionLabel}>Publicar</span>
                     </Button>
                   </div>
                 </div>
@@ -7853,25 +7971,17 @@ export const Sites: React.FC = () => {
 
         <div className={`${styles.sitesShell} ${isFocusedSitesMode ? styles.sitesShellFocused : ''}`}>
           {!isFocusedSitesMode && (
-            <nav className={styles.sectionTabs} role="tablist" aria-label="Secciones de sitios">
-              {sectionItems.map(item => {
-                const isActive = section === item.id
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={isActive}
-                    className={`${styles.sectionTab} ${isActive ? styles.sectionTabActive : ''}`}
-                    onClick={() => handleSectionChange(item.id)}
-                  >
-                    {item.icon}
-                    <span>{item.label}</span>
-                    {item.id === 'domains' && <ExternalLink size={14} aria-hidden="true" />}
-                  </button>
-                )
-              })}
-            </nav>
+            <SegmentTabs
+              aria-label="Secciones de sitios"
+              value={section}
+              onChange={(id) => handleSectionChange(id as typeof section)}
+              tabs={sectionItems.map(item => ({
+                id: item.id,
+                label: item.label,
+                icon: item.icon,
+                trailingIcon: item.id === 'domains' ? <ExternalLink size={14} aria-hidden="true" /> : undefined
+              }))}
+            />
           )}
 
           <main className={styles.mainSurface}>
@@ -8135,7 +8245,7 @@ export const Sites: React.FC = () => {
                                   })}
                                 </>
                               )}
-                              {formCanvasHasFields && (
+                              {formCanvasShowsActions && (
                                 <div className="rstk-actions">
                                   <button type="button" data-submit><SubmitButtonContent theme={editorSite.theme} label={formCanvasActionLabel} /></button>
                                 </div>
@@ -8167,6 +8277,7 @@ export const Sites: React.FC = () => {
                     activeField={activeEmbeddedFormField}
                     activeElement={activeEmbeddedFormSubmitSelected ? 'submit' : 'field'}
                     customFields={customFields}
+                    customFieldFolders={customFieldFolders}
                     pages={formEditPages}
                     activePageId={activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID}
                     sitePages={pages}
@@ -8177,6 +8288,7 @@ export const Sites: React.FC = () => {
                     onPatchField={patchEmbeddedFormField}
                     onPatchFieldSettings={patchEmbeddedFormFieldSettings}
                     onDeleteField={removeEmbeddedFormField}
+                    onCustomFieldCreated={handleCustomFieldCreated}
                     onSave={() => handleSaveBlock()}
                     onSaveSite={() => handleSaveSite()}
                     onActivePageChange={selectEmbeddedFormPage}
@@ -8195,6 +8307,7 @@ export const Sites: React.FC = () => {
                     forms={forms}
                     calendars={calendars}
                     customFields={customFields}
+                    customFieldFolders={customFieldFolders}
                     pages={pages}
                     activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                     metaPixelConnected={metaPixelConnected}
@@ -8208,6 +8321,7 @@ export const Sites: React.FC = () => {
                     onPatchSettings={(patch) => patchSelectedBlockSettings(patch)}
                     onPatchCategorySettings={(block, patch) => patchBlockCategorySettingsLocal(block, patch)}
                     onSaveCategory={(block) => handleSaveBlockCategory(block)}
+                    onCustomFieldCreated={handleCustomFieldCreated}
                     onSave={() => handleSaveBlock()}
                   />
                 )}
@@ -14307,7 +14421,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     }
   }
 
-  const targetImportedPages = importedPages.filter(page => page.id !== activeImportedPage?.id)
+  const targetImportedPages = getManualRedirectPages(importedPages, activeImportedPage?.id)
   const buttonEditorFormRuleMessage = buttonEditor
     ? getImportedButtonFormRuleMessage(buttonEditor.selection, buttonEditor.buttonActions)
     : ''
@@ -15376,15 +15490,24 @@ const ImportedHtmlEditorPanel: React.FC<{
               onChange={handleCodeAssistantPickFiles}
               disabled={codeAssistantSaving || !aiAgentAvailable}
             />
+            <div className={styles.importedCodeAssistantModelRow}>
+              <CustomSelect
+                value={codeAssistantModel}
+                portal
+                disabled={codeAssistantSaving || !aiAgentAvailable}
+                className={styles.importedCodeAssistantInlineModel}
+                aria-label="Modelo del asistente de código"
+                onChange={(event) => setCodeAssistantModel(event.target.value)}
+              >
+                {chatgptSiteModelOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </div>
             <div
               className={`${styles.importedCodeAssistantComposer} ${codeAssistantVoiceDictation.voiceIsActive ? styles.importedCodeAssistantComposerVoiceActive : ''}`}
               data-ristak-unstyled
             >
-              <AIVoiceDictationControl
-                voice={codeAssistantVoiceDictation}
-                disabled={codeAssistantSaving || !aiAgentAvailable}
-                className={styles.importedCodeAssistantVoice}
-              />
               <button
                 type="button"
                 className={styles.importedCodeAssistantAttachButton}
@@ -15413,18 +15536,11 @@ const ImportedHtmlEditorPanel: React.FC<{
                   }}
                 />
               </label>
-              <CustomSelect
-                value={codeAssistantModel}
-                portal
+              <AIVoiceDictationControl
+                voice={codeAssistantVoiceDictation}
                 disabled={codeAssistantSaving || !aiAgentAvailable}
-                className={styles.importedCodeAssistantInlineModel}
-                aria-label="Modelo del asistente de código"
-                onChange={(event) => setCodeAssistantModel(event.target.value)}
-              >
-                {chatgptSiteModelOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </CustomSelect>
+                className={styles.importedCodeAssistantVoice}
+              />
               <button
                 type="button"
                 className={styles.importedCodeAssistantSendButton}
@@ -16728,8 +16844,10 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
               className={`${styles.libraryCard} ${selectedSiteId === site.id ? styles.libraryCardActive : ''}`}
             >
               <div className={styles.libraryCardPreview}>
-                <LibrarySitePreview site={site} forms={forms} calendars={calendars} />
-                <span className={styles.libraryPreviewType}>{getSiteTypeLabel(site)}</span>
+                <span className={styles.libraryThumbLabel}>{getSiteTypeLabel(site)}</span>
+                <span style={{ position: 'absolute', top: 10, left: 10, zIndex: 2 }}>
+                  <Badge variant={getStatusVariant(site, domainConfig)}>{getStatusLabel(site, domainConfig)}</Badge>
+                </span>
                 <div className={styles.libraryCardHoverActions} data-library-card-action="true">
                   <button type="button" onClick={() => onEdit(site.id)}>
                     <Pencil size={16} />
@@ -16782,9 +16900,13 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
               <div className={styles.libraryCardBody}>
                 <div className={styles.libraryCardTitleRow}>
                   <strong>{site.name}</strong>
-                  <span className={`${styles.statusPill} ${getStatusClass(site, domainConfig)}`}>{getStatusLabel(site, domainConfig)}</span>
                 </div>
                 <span className={styles.siteDomain}>{getPublicRouteLabel(site, domainConfig)}</span>
+                {formatSiteEdited(site.updatedAt) && (
+                  <div className={styles.libraryCardMeta}>
+                    <time dateTime={site.updatedAt || undefined}>Editado {formatSiteEdited(site.updatedAt)}</time>
+                  </div>
+                )}
               </div>
             </article>
           )
@@ -19463,7 +19585,6 @@ interface FunnelPagesPanelProps {
   pages: SitePage[]
   activePageId: string
   locked?: boolean
-  draggingPageId: string | null
   colorFinalPages?: boolean
   isFixedPage?: (page: SitePage) => boolean
   pageMode?: 'funnel' | 'website'
@@ -19478,8 +19599,7 @@ interface FunnelPagesPanelProps {
   onAddPage: () => void
   onDuplicatePage: (pageId: string) => void
   onDeletePage: (pageId: string) => void
-  onDragPage: (pageId: string | null) => void
-  onReorderPages: (sourcePageId: string, targetPageId: string) => void
+  onReorderPages: (sourcePageId: string, targetPageId: string, orderedPageIds?: string[]) => void
   onRenamePage: (pageId: string, title: string) => void
 }
 
@@ -19487,7 +19607,6 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   pages,
   activePageId,
   locked = false,
-  draggingPageId,
   colorFinalPages = false,
   isFixedPage = () => false,
   pageMode = 'funnel',
@@ -19502,12 +19621,14 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   onAddPage,
   onDuplicatePage,
   onDeletePage,
-  onDragPage,
   onReorderPages,
   onRenamePage
 }) => {
   const [renamingPageId, setRenamingPageId] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
+  const [draggingPageId, setDraggingPageId] = useState<string | null>(null)
+  const [dragOrderedPageIds, setDragOrderedPageIds] = useState<string[] | null>(null)
+  const dragOrderedPageIdsRef = useRef<string[] | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
   const hasFixedPageSection = colorFinalPages
@@ -19518,6 +19639,12 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   const orderedItems = websiteMode
     ? buildOrderedPageTree(movablePages)
     : movablePages.map(page => ({ page, depth: 0 }))
+  const orderedItemById = useMemo(() => new Map(orderedItems.map(item => [item.page.id, item])), [orderedItems])
+  const visibleOrderedItems = useMemo(() => {
+    if (!dragOrderedPageIds || dragOrderedPageIds.length !== orderedItems.length) return orderedItems
+    const nextItems = dragOrderedPageIds.map(pageId => orderedItemById.get(pageId)).filter((item): item is { page: SitePage; depth: number } => Boolean(item))
+    return nextItems.length === orderedItems.length ? nextItems : orderedItems
+  }, [dragOrderedPageIds, orderedItemById, orderedItems])
 
   useEffect(() => {
     if (!open) return
@@ -19549,6 +19676,9 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   useEffect(() => {
     if (!open) {
       setRenamingPageId(null)
+      setDraggingPageId(null)
+      setDragOrderedPageIds(null)
+      dragOrderedPageIdsRef.current = null
     }
   }, [open])
 
@@ -19563,16 +19693,75 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
     const pageId = String(event.active.id)
     const page = movablePages.find(item => item.id === pageId)
     if (!page || locked || isFixedPage(page)) return
-    onDragPage(pageId)
+    const initialOrder = orderedItems.map(item => item.page.id)
+    setDraggingPageId(pageId)
+    setDragOrderedPageIds(initialOrder)
+    dragOrderedPageIdsRef.current = initialOrder
+  }
+
+  const canSortPageOver = (sourcePageId: string, targetPageId: string) => {
+    if (!sourcePageId || !targetPageId || sourcePageId === targetPageId) return false
+    const source = movablePages.find(page => page.id === sourcePageId)
+    const target = movablePages.find(page => page.id === targetPageId)
+    if (!source || !target || locked || isFixedPage(source) || isFixedPage(target)) return false
+    return !websiteMode || (source.parentPageId || '') === (target.parentPageId || '')
+  }
+
+  const handlePageDragOver = (event: DragOverEvent) => {
+    const sourcePageId = String(event.active.id)
+    const targetPageId = event.over?.id ? String(event.over.id) : ''
+    if (!canSortPageOver(sourcePageId, targetPageId)) return
+
+    setDragOrderedPageIds(current => {
+      const currentIds = current?.length ? current : orderedItems.map(item => item.page.id)
+      const oldIndex = currentIds.indexOf(sourcePageId)
+      const newIndex = currentIds.indexOf(targetPageId)
+      if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) {
+        dragOrderedPageIdsRef.current = currentIds
+        return currentIds
+      }
+
+      if (websiteMode) {
+        const subtreeIds = new Set([sourcePageId, ...getDescendantPageIds(sourcePageId, movablePages)])
+        const movingIds = currentIds.filter(pageId => subtreeIds.has(pageId))
+        const remainingIds = currentIds.filter(pageId => !subtreeIds.has(pageId))
+        const targetIndex = remainingIds.indexOf(targetPageId)
+        if (targetIndex < 0 || movingIds.length === 0) {
+          dragOrderedPageIdsRef.current = currentIds
+          return currentIds
+        }
+        const insertIndex = oldIndex < newIndex ? targetIndex + 1 : targetIndex
+        const nextIds = [
+          ...remainingIds.slice(0, insertIndex),
+          ...movingIds,
+          ...remainingIds.slice(insertIndex)
+        ]
+        dragOrderedPageIdsRef.current = nextIds
+        return nextIds
+      }
+
+      const nextIds = arrayMove(currentIds, oldIndex, newIndex)
+      dragOrderedPageIdsRef.current = nextIds
+      return nextIds
+    })
   }
 
   const handlePageDragEnd = (event: DragEndEvent) => {
     const sourcePageId = String(event.active.id)
     const targetPageId = event.over?.id ? String(event.over.id) : ''
-    onDragPage(null)
-    if (!targetPageId || sourcePageId === targetPageId) return
+    const finalOrderedPageIds = dragOrderedPageIdsRef.current || dragOrderedPageIds || orderedItems.map(item => item.page.id)
+    setDraggingPageId(null)
+    setDragOrderedPageIds(null)
+    dragOrderedPageIdsRef.current = null
+    if (!canSortPageOver(sourcePageId, targetPageId)) return
     if (hasFixedPageSection && fixedPages.some(page => page.id === targetPageId)) return
-    onReorderPages(sourcePageId, targetPageId)
+    onReorderPages(sourcePageId, targetPageId, finalOrderedPageIds)
+  }
+
+  const handlePageDragCancel = () => {
+    setDraggingPageId(null)
+    setDragOrderedPageIds(null)
+    dragOrderedPageIdsRef.current = null
   }
 
   return (
@@ -19641,12 +19830,13 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
             sensors={pageSensors}
             collisionDetection={closestCenter}
             onDragStart={handlePageDragStart}
+            onDragOver={handlePageDragOver}
             onDragEnd={handlePageDragEnd}
-            onDragCancel={() => onDragPage(null)}
+            onDragCancel={handlePageDragCancel}
           >
-            <SortableContext items={orderedItems.map(item => item.page.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={visibleOrderedItems.map(item => item.page.id)} strategy={verticalListSortingStrategy}>
               <div className={styles.pagesDropdownList}>
-                {orderedItems.map(({ page, depth }, index) => {
+                {visibleOrderedItems.map(({ page, depth }, index) => {
                   const fixedPage = isFixedPage(page)
                   const pageCanDelete = !locked && canDeletePage(page)
                   const pageCanDuplicate = !locked && canDuplicatePage(page)
@@ -20154,9 +20344,11 @@ const InlineEditable: React.FC<InlineEditableProps> = ({
   as = 'div', className, value, placeholder, disabled, multiline, onChange, onCommit
 }) => {
   const ref = useRef<HTMLElement>(null)
+  const editingRef = useRef(false)
 
   useEffect(() => {
     const el = ref.current
+    if (editingRef.current) return
     if (el && el.textContent !== value) el.textContent = value
   }, [value])
 
@@ -20172,12 +20364,21 @@ const InlineEditable: React.FC<InlineEditableProps> = ({
       data-rstk-edit=""
       data-empty={value ? 'false' : 'true'}
       data-placeholder={placeholder || ''}
+      onFocus={() => {
+        editingRef.current = true
+      }}
       onInput={(event: React.FormEvent<HTMLElement>) => {
         const text = event.currentTarget.textContent || ''
         event.currentTarget.setAttribute('data-empty', text ? 'false' : 'true')
         onChange(text)
       }}
-      onBlur={() => onCommit?.()}
+      onBlur={(event: React.FocusEvent<HTMLElement>) => {
+        editingRef.current = false
+        const text = event.currentTarget.textContent || ''
+        event.currentTarget.setAttribute('data-empty', text ? 'false' : 'true')
+        if (text !== value) onChange(text)
+        onCommit?.()
+      }}
       onKeyDown={(event: React.KeyboardEvent<HTMLElement>) => {
         if (!multiline && event.key === 'Enter') {
           event.preventDefault()
@@ -22141,11 +22342,13 @@ const PhoneCountryInputPreview: React.FC<{ placeholder?: string }> = ({ placehol
   )
 }
 
-const getFieldPreviewInputType = (blockType: SiteBlockType) => {
-  if (blockType === 'email') return 'email'
-  if (blockType === 'phone') return 'tel'
-  if (blockType === 'date') return 'date'
-  if (blockType === 'number' || blockType === 'currency') return 'number'
+const getFieldPreviewInputType = (block: SiteBlock) => {
+  const validation = getSettingString(block.settings || {}, 'validation')
+  if (block.blockType === 'email' || validation === 'email') return 'email'
+  if (block.blockType === 'phone' || validation === 'phone') return 'tel'
+  if (block.blockType === 'date' || validation === 'date') return 'date'
+  if (validation === 'url') return 'url'
+  if (block.blockType === 'number' || block.blockType === 'currency' || validation === 'number' || validation === 'currency') return 'number'
   return 'text'
 }
 
@@ -22187,7 +22390,7 @@ const FieldControlPreview: React.FC<{ block: SiteBlock }> = ({ block }) => {
     return <PhoneCountryInputPreview placeholder={block.placeholder || ''} />
   }
 
-  return <input type={getFieldPreviewInputType(block.blockType)} readOnly placeholder={block.placeholder || 'Respuesta'} />
+  return <input type={getFieldPreviewInputType(block)} readOnly placeholder={block.placeholder || 'Respuesta'} />
 }
 
 // Read-only field preview (rstk markup) for embedded form fields on the canvas.
@@ -22369,6 +22572,7 @@ interface PropertiesPanelProps {
   forms: PublicSite[]
   calendars: CalendarType[]
   customFields: CustomFieldDefinition[]
+  customFieldFolders: CustomFieldFolder[]
   pages: SitePage[]
   activePageId: string
   metaPixelConnected: boolean
@@ -22382,6 +22586,7 @@ interface PropertiesPanelProps {
   onPatchSettings: (patch: Record<string, unknown>) => void
   onPatchCategorySettings: (block: SiteBlock, patch: Record<string, unknown>) => void
   onSaveCategory: (block: SiteBlock) => void
+  onCustomFieldCreated: (field: CustomFieldDefinition) => void
   onSave: () => void
 }
 
@@ -22838,13 +23043,12 @@ const PopupInspector: React.FC<{
             </label>
             <label className={styles.field}>
               <span>Segundos</span>
-              <input
-                type="number"
+              <NumberInput
                 min={0}
                 max={120}
                 value={delaySeconds}
                 disabled={popupTrigger !== 'delay'}
-                onChange={(event) => onPatchTheme({ popupDelaySeconds: Math.min(120, Math.max(0, Number(event.target.value) || 0)) })}
+                onValueChange={(popupDelaySeconds) => onPatchTheme({ popupDelaySeconds })}
                 onBlur={onSaveSite}
               />
             </label>
@@ -23011,9 +23215,7 @@ const SiteGlobalSettings: React.FC<{
   </div>
 )
 
-const hasBlockSettingsTabContent = (block: SiteBlock, isField: boolean) => (
-  isField ||
-  isChoiceBlock(block.blockType) ||
+const hasBlockSettingsTabContent = (block: SiteBlock) => (
   isPanelBlock(block) ||
   block.blockType === SECTION_BLOCK_TYPE ||
   [
@@ -23286,7 +23488,7 @@ const PageInspector: React.FC<{
       title="Página"
       subtitle={isLanding(site) ? (site.theme?.pageMode === 'website' ? 'Sitio web' : 'Embudo') : 'Formulario'}
       tabs={[
-        { value: 'edit', label: 'Página', icon: <FileText size={14} />, content: pageConfigContent },
+        { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: pageConfigContent },
         { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: pageDesignContent },
         { value: 'settings', label: 'Global', icon: <Globe2 size={14} />, content: pageGlobalContent }
       ]}
@@ -23294,17 +23496,118 @@ const PageInspector: React.FC<{
   )
 }
 
-const customFieldTypeCompatibility: Partial<Record<SiteBlockType, string[]>> = {
-  short_text: ['text'],
-  paragraph: ['textarea', 'text'],
-  number: ['number'],
-  currency: ['currency', 'number'],
-  dropdown: ['dropdown', 'select', 'radio'],
-  radio: ['radio', 'dropdown', 'select'],
-  checkboxes: ['checkboxes', 'multiselect'],
-  phone: ['phone'],
-  email: ['email'],
-  date: ['date']
+type CustomFieldQuickDraft = {
+  label: string
+  fieldKey: string
+  dataType: CustomFieldDataType
+  folderId: string
+  optionsText: string
+}
+
+const customFieldEditorTypes: Array<{ value: CustomFieldDataType; label: string; detail: string }> = [
+  { value: 'text', label: 'Texto corto', detail: 'Una línea de texto.' },
+  { value: 'textarea', label: 'Párrafo', detail: 'Texto largo o notas.' },
+  { value: 'radio', label: 'Radio buttons', detail: 'Una opción visible.' },
+  { value: 'dropdown', label: 'Dropdown', detail: 'Una opción en lista.' },
+  { value: 'checkboxes', label: 'Checkboxes', detail: 'Varias opciones.' },
+  { value: 'number', label: 'Número', detail: 'Solo cantidad numérica.' },
+  { value: 'currency', label: 'Moneda', detail: 'Importe de dinero.' },
+  { value: 'date', label: 'Fecha', detail: 'Día o fecha.' },
+  { value: 'email', label: 'Email', detail: 'Correo electrónico.' },
+  { value: 'phone', label: 'Teléfono', detail: 'Número de contacto.' }
+]
+
+const customFieldChoiceTypes = new Set<CustomFieldDataType>(['radio', 'dropdown', 'checkboxes', 'select', 'multiselect'])
+
+const normalizeCustomFieldKey = (value: string) => {
+  const normalized = value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+
+  return normalized || 'campo_personalizado'
+}
+
+const customFieldOptionsFromText = (value: string): CustomFieldOption[] => (
+  value
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => ({ label: line, value: normalizeCustomFieldKey(line) }))
+)
+
+const customFieldTokenPreview = (fieldKey: string) => `{{custom.${fieldKey || 'campo_personalizado'}}}`
+
+const getCustomFieldFolderName = (folders: CustomFieldFolder[], folderId: string) => (
+  folders.find(folder => folder.id === folderId)?.name || 'Sin carpeta'
+)
+
+const customFieldDataTypeForBlock = (blockType: SiteBlockType): CustomFieldDataType => {
+  if (blockType === 'paragraph') return 'textarea'
+  if (blockType === 'radio') return 'radio'
+  if (blockType === 'dropdown') return 'dropdown'
+  if (blockType === 'checkboxes') return 'checkboxes'
+  if (blockType === 'number') return 'number'
+  if (blockType === 'currency') return 'currency'
+  if (blockType === 'date') return 'date'
+  if (blockType === 'email') return 'email'
+  if (blockType === 'phone') return 'phone'
+  return 'text'
+}
+
+const makeCustomFieldDraftForBlock = (block: SiteBlock): CustomFieldQuickDraft => {
+  const label = block.label || 'Campo personalizado'
+  const dataType = customFieldDataTypeForBlock(block.blockType)
+  const optionsText = isChoiceBlock(block.blockType)
+    ? getOptions(block).map(option => option.label || option.value).filter(Boolean).join('\n')
+    : ''
+
+  return {
+    label,
+    fieldKey: normalizeCustomFieldKey(label),
+    dataType,
+    folderId: '',
+    optionsText
+  }
+}
+
+const buildCustomFieldPayload = (
+  draft: CustomFieldQuickDraft,
+  folders: CustomFieldFolder[],
+  notify: (title: string, message: string) => void
+): SaveCustomFieldInput | null => {
+  const label = draft.label.trim()
+  const fieldKey = normalizeCustomFieldKey(draft.fieldKey || label)
+  const options = customFieldChoiceTypes.has(draft.dataType)
+    ? customFieldOptionsFromText(draft.optionsText)
+    : []
+
+  if (!label) {
+    notify('Falta nombre', 'Ponle un nombre al campo.')
+    return null
+  }
+
+  if (!fieldKey) {
+    notify('Falta parámetro', 'El parámetro sirve para guardar y usar el dato del contacto.')
+    return null
+  }
+
+  if (customFieldChoiceTypes.has(draft.dataType) && options.length === 0) {
+    notify('Faltan opciones', 'Agrega al menos una opción para este tipo de campo.')
+    return null
+  }
+
+  return {
+    label,
+    fieldKey,
+    dataType: draft.dataType,
+    folderId: draft.folderId || undefined,
+    fieldGroup: draft.folderId ? getCustomFieldFolderName(folders, draft.folderId) : 'general',
+    options,
+    syncTarget: 'local'
+  }
 }
 
 const normalizeCustomFieldDataType = (value = '') => {
@@ -23328,21 +23631,73 @@ const customFieldTypeLabel = (value = '') => {
   return value || 'Campo'
 }
 
-const isCustomFieldCompatibleWithBlock = (blockType: SiteBlockType, field: CustomFieldDefinition) => {
-  const allowed = customFieldTypeCompatibility[blockType]
-  if (!allowed) return false
-  const dataType = normalizeCustomFieldDataType(field.dataType)
-  return allowed.includes(dataType)
-}
-
 const CustomFieldBindingControl: React.FC<{
   block: SiteBlock
   customFields: CustomFieldDefinition[]
+  customFieldFolders: CustomFieldFolder[]
   onPatchSettings: (patch: Record<string, unknown>) => void
+  onCustomFieldCreated: (field: CustomFieldDefinition) => void
   onSave: () => void
-}> = ({ block, customFields, onPatchSettings, onSave }) => {
+}> = ({ block, customFields, customFieldFolders, onPatchSettings, onCustomFieldCreated, onSave }) => {
+  const { showToast } = useNotification()
   const settings = block.settings || {}
+  const [creatorOpen, setCreatorOpen] = useState(false)
+  const [creatorSaving, setCreatorSaving] = useState(false)
+  const [creatorDraft, setCreatorDraft] = useState<CustomFieldQuickDraft>(() => makeCustomFieldDraftForBlock(block))
   const systemPreset = getSystemFormFieldPresetForBlock(block)
+
+  useEffect(() => {
+    if (!creatorOpen) setCreatorDraft(makeCustomFieldDraftForBlock(block))
+  }, [block, creatorOpen])
+
+  const openCreator = () => {
+    setCreatorDraft(makeCustomFieldDraftForBlock(block))
+    setCreatorOpen(true)
+  }
+
+  const closeCreator = () => {
+    if (creatorSaving) return
+    setCreatorOpen(false)
+  }
+
+  const patchCreatorDraft = (patch: Partial<CustomFieldQuickDraft>) => {
+    setCreatorDraft(current => ({ ...current, ...patch }))
+  }
+
+  const handleCreatorLabelChange = (value: string) => {
+    setCreatorDraft(current => ({
+      ...current,
+      label: value,
+      fieldKey: normalizeCustomFieldKey(value)
+    }))
+  }
+
+  const handleCreateField = async () => {
+    const payload = buildCustomFieldPayload(creatorDraft, customFieldFolders, (title, message) => {
+      showToast('warning', title, message)
+    })
+    if (!payload) return
+
+    setCreatorSaving(true)
+    try {
+      const field = await customFieldsService.createField(payload)
+      onCustomFieldCreated(field)
+      onPatchSettings({
+        customFieldDefinitionId: field.definitionId,
+        customFieldKey: field.fieldKey || field.key,
+        customFieldLabel: field.label,
+        customFieldDataType: field.dataType
+      })
+      setCreatorOpen(false)
+      showToast('success', 'Campo creado', 'Ya quedó ligado a esta pregunta.')
+      window.setTimeout(onSave, 0)
+    } catch (error) {
+      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Intenta otra vez')
+    } finally {
+      setCreatorSaving(false)
+    }
+  }
+
   if (systemPreset) {
     return (
       <div className={styles.customFieldBinding}>
@@ -23359,15 +23714,15 @@ const CustomFieldBindingControl: React.FC<{
   }
 
   const currentDefinitionId = getSettingString(settings, 'customFieldDefinitionId')
-  const compatibleFields = customFields
-    .filter(field => !field.archived && !isSystemCustomFieldDefinition(field) && isCustomFieldCompatibleWithBlock(block.blockType, field))
+  const availableFields = customFields
+    .filter(field => !field.archived && !isSystemCustomFieldDefinition(field))
     .sort((a, b) => (
       String(a.folderName || '').localeCompare(String(b.folderName || '')) ||
       String(a.label || '').localeCompare(String(b.label || ''))
     ))
-  const selectedField = compatibleFields.find(field => field.definitionId === currentDefinitionId) ||
+  const selectedField = availableFields.find(field => field.definitionId === currentDefinitionId) ||
     customFields.find(field => field.definitionId === currentDefinitionId && !isSystemCustomFieldDefinition(field))
-  const groups = compatibleFields.reduce((acc, field) => {
+  const groups = availableFields.reduce((acc, field) => {
     const folderName = field.folderName || 'Sin carpeta'
     const current = acc.get(folderName) || []
     current.push(field)
@@ -23384,7 +23739,7 @@ const CustomFieldBindingControl: React.FC<{
           value={currentDefinitionId}
           onChange={(event) => {
             const definitionId = event.target.value
-            const field = compatibleFields.find(item => item.definitionId === definitionId)
+            const field = availableFields.find(item => item.definitionId === definitionId)
 
             if (!field) {
               onPatchSettings({
@@ -23419,14 +23774,94 @@ const CustomFieldBindingControl: React.FC<{
           ))}
         </CustomSelect>
       </label>
+      <div className={styles.customFieldCreateAction}>
+        <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={openCreator}>
+          Crear campo personalizado
+        </Button>
+      </div>
       {selectedField ? (
         <p className={styles.customFieldHint}>
           Se guardara como <code>{selectedField.fieldKey || selectedField.key}</code> ({customFieldTypeLabel(selectedField.dataType)}).
         </p>
       ) : (
         <p className={styles.customFieldHint}>
-          Crea campos compatibles en Configuración para guardar este dato dentro del contacto.
+          {availableFields.length
+            ? 'Selecciona un campo personalizado para guardar este dato dentro del contacto.'
+            : 'No hay campos personalizados todavía. Crea uno para guardar este dato.'}
         </p>
+      )}
+      {creatorOpen && (
+        <div className={customFieldModalStyles.editorOverlay} role="dialog" aria-modal="true" aria-labelledby="sites-custom-field-editor-title">
+          <section className={customFieldModalStyles.editorPanel}>
+            <div className={customFieldModalStyles.editorHeader}>
+              <div>
+                <p className={customFieldModalStyles.eyebrow}>Nuevo campo</p>
+                <h3 id="sites-custom-field-editor-title">Crear campo personalizado</h3>
+              </div>
+              <button type="button" className={customFieldModalStyles.iconButton} onClick={closeCreator} aria-label="Cerrar editor">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className={customFieldModalStyles.editorBody}>
+              <label className={customFieldModalStyles.field}>
+                <span>Nombre visible</span>
+                <input value={creatorDraft.label} placeholder="Ej. Presupuesto mensual" onChange={(event) => handleCreatorLabelChange(event.target.value)} />
+                <small className={customFieldModalStyles.parameterPreview}>Parámetro: <code>{customFieldTokenPreview(creatorDraft.fieldKey || normalizeCustomFieldKey(creatorDraft.label))}</code></small>
+              </label>
+
+              <label className={customFieldModalStyles.field}>
+                <span>Tipo</span>
+                <CustomSelect
+                  portal
+                  value={creatorDraft.dataType}
+                  onChange={(event) => patchCreatorDraft({ dataType: event.target.value as CustomFieldDataType })}
+                >
+                  {customFieldEditorTypes.map(type => (
+                    <option key={type.value} value={type.value}>{type.label}</option>
+                  ))}
+                </CustomSelect>
+              </label>
+
+              <div className={customFieldModalStyles.typeHint}>
+                <ChevronRight size={15} />
+                <span>{customFieldEditorTypes.find(type => type.value === creatorDraft.dataType)?.detail}</span>
+              </div>
+
+              <label className={customFieldModalStyles.field}>
+                <span>Carpeta</span>
+                <CustomSelect portal value={creatorDraft.folderId} onChange={(event) => patchCreatorDraft({ folderId: event.target.value })}>
+                  <option value="">Sin carpeta</option>
+                  {customFieldFolders.map(folder => (
+                    <option key={folder.id} value={folder.id}>{folder.name}</option>
+                  ))}
+                </CustomSelect>
+              </label>
+
+              {customFieldChoiceTypes.has(creatorDraft.dataType) && (
+                <label className={customFieldModalStyles.field}>
+                  <span>Opciones</span>
+                  <textarea
+                    rows={5}
+                    value={creatorDraft.optionsText}
+                    placeholder={'Opción 1\nOpción 2\nOpción 3'}
+                    onChange={(event) => patchCreatorDraft({ optionsText: event.target.value })}
+                  />
+                  <small>Una opción por línea.</small>
+                </label>
+              )}
+            </div>
+
+            <div className={customFieldModalStyles.editorActions}>
+              <Button type="button" variant="ghost" onClick={closeCreator}>
+                Cancelar
+              </Button>
+              <Button type="button" onClick={() => void handleCreateField()} loading={creatorSaving} leftIcon={<Save size={16} />}>
+                Guardar campo
+              </Button>
+            </div>
+          </section>
+        </div>
       )}
     </div>
   )
@@ -23442,6 +23877,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   forms,
   calendars,
   customFields,
+  customFieldFolders,
   pages,
   activePageId,
   metaPixelConnected,
@@ -23455,6 +23891,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onPatchSettings,
   onPatchCategorySettings,
   onSaveCategory,
+  onCustomFieldCreated,
   onSave
 }) => {
   if (surfaceSelectionId === POPUP_SELECTED_ID) {
@@ -23537,7 +23974,107 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     </label>
   ) : null
 
-  const blockHasSettingsContent = hasBlockSettingsTabContent(block, isField)
+  const blockHasSettingsContent = hasBlockSettingsTabContent(block)
+  const fieldEditControls = isField ? (
+    <>
+      <div className={styles.settingsGroup}>
+        <div className={styles.panelSubheader}>Campo</div>
+        {systemFieldPreset ? (
+          <label className={styles.field}>
+            <span>Texto dentro del campo</span>
+            <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
+          </label>
+        ) : (
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Texto dentro del campo</span>
+              <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
+            </label>
+            <label className={styles.field}>
+              <span>Nombre interno</span>
+              <input
+                value={getSettingString(settings, 'internalName')}
+                onChange={(event) => onPatchSettings({ internalName: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+          </div>
+        )}
+
+        {systemFieldPreset ? (
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={block.required}
+              onChange={(event) => {
+                onPatchBlock({ required: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Campo requerido</span>
+          </label>
+        ) : (
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Validación</span>
+              <CustomSelect
+                value={getSettingString(settings, 'validation')}
+                onChange={(event) => onPatchSettings({ validation: event.target.value })}
+                onBlur={onSave}
+              >
+                {fieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
+              </CustomSelect>
+            </label>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={block.required}
+                onChange={(event) => {
+                  onPatchBlock({ required: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Campo requerido</span>
+            </label>
+          </div>
+        )}
+
+        {block.blockType === 'phone' && !systemFieldPreset && (
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={isPhoneCountrySelectorEnabled(block)}
+              onChange={(event) => {
+                onPatchSettings({ phoneCountrySelectorEnabled: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Mostrar país y lada</span>
+          </label>
+        )}
+      </div>
+
+      <CustomFieldBindingControl
+        block={block}
+        customFields={customFields}
+        customFieldFolders={customFieldFolders}
+        onPatchSettings={onPatchSettings}
+        onCustomFieldCreated={onCustomFieldCreated}
+        onSave={onSave}
+      />
+    </>
+  ) : null
+  const choiceEditControls = isChoiceBlock(block.blockType) ? (
+    <OptionsRulesEditor
+      block={block}
+      blocks={allBlocks || blocks}
+      pages={pages}
+      sitePages={pages}
+      activeSitePageId={activePageId}
+      onPatchBlock={onPatchBlock}
+      onSave={onSave}
+    />
+  ) : null
   const defaultInspectorTab: InspectorTabId = isMediaBlock ? 'settings' : 'edit'
   const editContent = (
     <>
@@ -23589,116 +24126,15 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           />
         </label>
       )}
+
+      {fieldEditControls}
+
+      {choiceEditControls}
     </>
   )
 
   const settingsContent = (
     <>
-      {isField && (
-        <>
-          <div className={styles.settingsGroup}>
-            <div className={styles.panelSubheader}>Campo</div>
-            {systemFieldPreset ? (
-              <label className={styles.field}>
-                <span>Texto dentro del campo</span>
-                <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
-              </label>
-            ) : (
-              <div className={styles.twoColumn}>
-                <label className={styles.field}>
-                  <span>Texto dentro del campo</span>
-                  <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
-                </label>
-                <label className={styles.field}>
-                  <span>Nombre interno</span>
-                  <input
-                    value={getSettingString(settings, 'internalName')}
-                    onChange={(event) => onPatchSettings({ internalName: event.target.value })}
-                    onBlur={onSave}
-                  />
-                </label>
-              </div>
-            )}
-
-            {systemFieldPreset ? (
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={block.required}
-                  onChange={(event) => {
-                    onPatchBlock({ required: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Campo requerido</span>
-              </label>
-            ) : (
-              <div className={styles.twoColumn}>
-                <label className={styles.field}>
-                  <span>Validación</span>
-                  <CustomSelect
-                    value={getSettingString(settings, 'validation')}
-                    onChange={(event) => onPatchSettings({ validation: event.target.value })}
-                    onBlur={onSave}
-                  >
-                    <option value="">Ninguna</option>
-                    <option value="email">Correo</option>
-                    <option value="phone">Teléfono</option>
-                    <option value="number">Número</option>
-                    <option value="currency">Moneda</option>
-                    <option value="date">Fecha</option>
-                  </CustomSelect>
-                </label>
-                <label className={styles.checkboxLabel}>
-                  <input
-                    type="checkbox"
-                    checked={block.required}
-                    onChange={(event) => {
-                      onPatchBlock({ required: event.target.checked })
-                      window.setTimeout(onSave, 0)
-                    }}
-                  />
-                  <span>Campo requerido</span>
-                </label>
-              </div>
-            )}
-
-            {block.blockType === 'phone' && !systemFieldPreset && (
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={isPhoneCountrySelectorEnabled(block)}
-                  onChange={(event) => {
-                    onPatchSettings({ phoneCountrySelectorEnabled: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Mostrar país y lada</span>
-              </label>
-            )}
-          </div>
-
-          <CustomFieldBindingControl
-            block={block}
-            customFields={customFields}
-            onPatchSettings={onPatchSettings}
-            onSave={onSave}
-          />
-        </>
-      )}
-
-      {isChoiceBlock(block.blockType) && (
-        <OptionsRulesEditor
-          block={block}
-          blocks={allBlocks || blocks}
-          pages={pages}
-          sitePages={pages}
-          activeSitePageId={activePageId}
-          onPatchBlock={onPatchBlock}
-          onSave={onSave}
-        />
-      )}
-
       {!isField && (
         <LandingBlockSettings
           site={site}
@@ -23736,17 +24172,22 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     </>
   )
 
+  const inspectorTabs: InspectorTab[] = [
+    { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
+    { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent }
+  ]
+
+  if (blockHasSettingsContent) {
+    inspectorTabs.push({ value: 'settings', label: 'Ajustes', icon: <Settings2 size={14} />, content: settingsContent })
+  }
+
   return (
     <InspectorTabbedPanel
       key={`${block.id}:${block.blockType}`}
       title="Propiedades"
       subtitle={blockLabels[block.blockType]}
       defaultTab={defaultInspectorTab}
-      tabs={[
-        { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
-        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent },
-        { value: 'settings', label: 'Ajustes', icon: <Settings2 size={14} />, content: settingsContent }
-      ]}
+      tabs={inspectorTabs}
     />
   )
 }
@@ -23764,8 +24205,7 @@ interface OptionsRulesEditorProps {
 const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, pages, sitePages, activeSitePageId, onPatchBlock, onSave }) => {
   const options = getOptions(block)
   const fieldTargets = blocks.filter(item => fieldBlockTypes.has(item.blockType) && item.id !== block.id)
-  const pageTargets = (sitePages && sitePages.length ? sitePages : pages)
-    .filter(page => page.id !== activeSitePageId)
+  const pageTargets = getManualRedirectPages(sitePages && sitePages.length ? sitePages : pages, activeSitePageId)
   const getTargetLabel = (target: SiteBlock) => {
     const page = pages.find(item => item.id === getBlockPageId(target, pages))
     return page ? `${target.label} - ${page.title}` : target.label
@@ -24328,9 +24768,9 @@ const LeadsPanel: React.FC<{ rows: LeadRow[]; loading: boolean; onRefresh: () =>
           <article key={row.id} className={styles.leadRow}>
             <span>{row.contactName || row.contactEmail || row.contactPhone || 'Lead sin nombre'}</span>
             <span>{row.siteName}</span>
-            <span className={`${styles.statusPill} ${row.status === 'disqualified' ? styles.statusWarning : styles.statusSuccess}`}>
+            <Badge variant={row.status === 'disqualified' ? 'warning' : 'success'}>
               {row.status === 'disqualified' ? 'Descalificado' : 'Recibido'}
-            </span>
+            </Badge>
             <span>{[tags, categories].filter(Boolean).join(' / ') || 'Sin reglas'}</span>
             <span>{formatDate(row.createdAt)}</span>
           </article>
@@ -24355,11 +24795,11 @@ const DomainsPanel: React.FC<DomainsPanelProps> = ({
   onDomainChange,
   onVerifyDomain
 }) => {
-  const domainStatus = !domainConfig.domain
-    ? { label: 'Sin dominio', className: styles.statusMuted }
+  const domainStatus: { label: string; variant: BadgeVariant } = !domainConfig.domain
+    ? { label: 'Sin dominio', variant: 'neutral' }
     : domainConfig.renderDomainVerified
-      ? { label: 'Verificado', className: styles.statusSuccess }
-      : { label: 'Pendiente', className: styles.statusWarning }
+      ? { label: 'Verificado', variant: 'success' }
+      : { label: 'Pendiente', variant: 'warning' }
 
   return (
     <section className={styles.dataPanel}>
@@ -24368,7 +24808,7 @@ const DomainsPanel: React.FC<DomainsPanelProps> = ({
           <h2>Dominios</h2>
           <p>Conecta un solo dominio general para enrutar todos los formularios y sitios web.</p>
         </div>
-        <span className={`${styles.statusPill} ${domainStatus.className}`}>{domainStatus.label}</span>
+        <Badge variant={domainStatus.variant}>{domainStatus.label}</Badge>
       </div>
 
       <div className={styles.domainEditor}>

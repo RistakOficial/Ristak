@@ -19,6 +19,8 @@ import {
   getCampaignsCatalogHandler,
   getAdsetsCatalogHandler,
   getAdsCatalogHandler,
+  getFormsCatalogHandler,
+  getFormFieldsCatalogHandler,
   uploadAssetHandler,
   serveAssetHandler
 } from '../controllers/automationsController.js'
@@ -44,6 +46,8 @@ router.delete('/folders/:folderId', deleteFolderHandler)
 router.get('/catalogs/campaigns', getCampaignsCatalogHandler)
 router.get('/catalogs/adsets', getAdsetsCatalogHandler)
 router.get('/catalogs/ads', getAdsCatalogHandler)
+router.get('/catalogs/forms', getFormsCatalogHandler)
+router.get('/catalogs/form-fields', getFormFieldsCatalogHandler)
 
 // Automatizaciones
 router.get('/', getAutomationsHandler)

@@ -18,7 +18,7 @@ import {
   type CrmFieldType
 } from '../crmFields'
 import { MAX_BRANCHES } from '../nodeRegistry'
-import { CatalogSelect, Field, TextInput } from './configPrimitives'
+import { CatalogSelect, Field, NumberTextInput, TextInput } from './configPrimitives'
 import { VariableTextInput } from '../composer/MessageComposer'
 import { FlowVariablesContext, type FlowVariable } from '../variablesCatalog'
 import { DrillSelect } from './DrillSelect'
@@ -208,8 +208,7 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
     } else if (field.type === 'duration' || rule.operator === 'last_days' || rule.operator === 'older_days') {
       input = (
         <div className={styles.configRow}>
-          <TextInput
-            type="number"
+          <NumberTextInput
             min={0}
             className={styles.configRowGrow}
             value={rule.value || ''}

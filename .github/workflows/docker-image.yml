@@ -1,5 +1,5 @@
 # Publica la imagen Docker de Ristak en GitHub Container Registry.
-# push a main → ghcr.io/ristakoficial/ristak:beta (+ :sha)
+# push a main → ghcr.io/ristakoficial/ristak:stable (+ :sha)
 # accion manual → ghcr.io/ristakoficial/ristak:stable (+ :sha)
 #
 # Cada push genera una versión (v1.0.<número de build>) que:
@@ -45,12 +45,8 @@ jobs:
         id: tags
         run: |
           REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          CHANNEL=beta
-          BRANCH=test
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.release_channel }}" = "stable" ]; then
-            CHANNEL=stable
-            BRANCH=main
-          fi
+          CHANNEL=stable
+          BRANCH=main
           VERSION="v1.0.${{ github.run_number }}"
           echo "tags=ghcr.io/${REPO_LC}:${CHANNEL},ghcr.io/${REPO_LC}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/${REPO_LC}:${CHANNEL}" >> "$GITHUB_OUTPUT"

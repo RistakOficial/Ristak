@@ -1,11 +1,37 @@
+import type { ConversationalAIProviderId } from '@/constants/conversationalAIProviders'
+import { apiUrl } from './apiBaseUrl'
+
 export type ConversationalObjective = 'citas' | 'ventas' | 'datos' | 'filtrar' | 'custom'
-export type ConversationalSuccessAction = 'book_appointment' | 'ready_for_human' | 'ready_to_buy' | 'internal_signal' | 'none'
+export type ConversationalSuccessAction = 'book_appointment' | 'ready_for_human' | 'ready_to_buy' | 'send_goal_url' | 'send_trigger_link' | 'internal_signal' | 'none'
 export type ConversationStatus = 'active' | 'paused' | 'human' | 'skipped' | 'completed' | 'discarded'
-export type ConversationSignal = 'ready_for_human' | 'ready_to_schedule' | 'ready_to_buy' | 'appointment_booked' | 'discarded'
+export type ConversationSignal = 'ready_for_human' | 'ready_to_schedule' | 'ready_to_buy' | 'appointment_booked' | 'purchase_completed' | 'discarded'
 export type ClosingStrategyMode = 'system' | 'custom'
 export type AgentResponseDelayMode = 'none' | 'fixed' | 'random'
 export type AgentResponseDelayUnit = 'seconds' | 'minutes'
 export type AgentReplyDeliveryMode = 'single' | 'split'
+
+export interface ConversationalAIProviderStatus {
+  id: ConversationalAIProviderId
+  label: string
+  connected: boolean
+  default: boolean
+  tokenPreview: string | null
+  needsReconnect: boolean
+  connectionIssue: string | null
+  canDelete: boolean
+  defaultModel: string
+}
+
+export interface ConversationalBusinessPromptStatus {
+  ready: boolean
+  status: string
+  extractionStatus: string
+  extractionError: string | null
+  businessName: string | null
+  industry: string | null
+  updatedAt: string | null
+  summary: string | null
+}
 
 export interface AgentResponseDelayConfig {
   mode: AgentResponseDelayMode
@@ -30,12 +56,14 @@ export interface AgentReplyDeliveryConfig {
   maxDelaySeconds: number
 }
 
-export type AgentGoalOwner = 'human' | 'ai'
+export type AgentGoalOwner = 'human' | 'ai' | 'url'
 
 export interface AgentGoalWorkflowConfig {
   appointments: {
     owner: AgentGoalOwner
     calendarId: string | null
+    url: string
+    trackingParam: string
   }
   sales: {
     owner: AgentGoalOwner
@@ -45,6 +73,8 @@ export interface AgentGoalWorkflowConfig {
     priceName: string
     amount: number | null
     currency: string
+    url: string
+    trackingParam: string
   }
   data: {
     afterComplete: 'human'
@@ -54,10 +84,17 @@ export interface AgentGoalWorkflowConfig {
     qualifies: string
     disqualifies: string
   }
+  triggerLink: {
+    triggerLinkId: string
+    triggerLinkPublicId: string
+    triggerLinkName: string
+    triggerLinkUrl: string
+  }
 }
 
 export interface ConversationalAgentConfig {
   enabled: boolean
+  aiProvider: ConversationalAIProviderId
   model: string
   objective: ConversationalObjective
   customObjective: string
@@ -75,10 +112,13 @@ export interface ConversationalAgentConfig {
   objectives?: Array<{ id: string; label: string }>
   successActions?: Array<{ id: string; label: string }>
   systemClosingStrategy?: string
+  businessPromptStatus?: ConversationalBusinessPromptStatus
+  aiProviders?: ConversationalAIProviderStatus[]
 }
 
 export interface ConversationalAgentConfigInput {
   enabled?: boolean
+  aiProvider?: ConversationalAIProviderId
   model?: string
   objective?: ConversationalObjective
   customObjective?: string
@@ -166,6 +206,7 @@ export interface ConversationalAgentDef {
   id: string
   name: string
   enabled: boolean
+  aiProvider: ConversationalAIProviderId
   model: string
   position: number
   objective: ConversationalObjective
@@ -181,6 +222,7 @@ export interface ConversationalAgentDef {
   defaultCalendarId: string | null
   closingStrategyMode: ClosingStrategyMode
   closingStrategyCustom: string
+  systemClosingStrategy?: string
   responseDelay: AgentResponseDelayConfig
   replyDelivery: AgentReplyDeliveryConfig
   goalWorkflow: AgentGoalWorkflowConfig
@@ -189,7 +231,7 @@ export interface ConversationalAgentDef {
   updatedAt: string | null
 }
 
-export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, 'id' | 'createdAt' | 'updatedAt'>>
+export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, 'id' | 'createdAt' | 'updatedAt' | 'systemClosingStrategy'>>
 
 export interface ConversationAgentState {
   contactId: string
@@ -215,8 +257,10 @@ export interface ConversationalAgentTestResult {
   reply: string
   replyParts?: string[]
   replyPartDelaysMs?: number[]
+  responseDelayMs?: number
   suppressed: boolean
   actions: Array<{ type: string; [key: string]: unknown }>
+  aiProvider: ConversationalAIProviderId
   model: string
 }
 
@@ -232,6 +276,7 @@ export interface ConversationalAgentMetricByAgent {
   agentId: string
   name: string
   enabled: boolean
+  aiProvider: ConversationalAIProviderId
   model: string
   assignedConversations: number
   completedConversations: number
@@ -277,14 +322,19 @@ const VALID_CONVERSATIONAL_SUCCESS_ACTIONS = new Set<ConversationalSuccessAction
   'book_appointment',
   'ready_for_human',
   'ready_to_buy',
+  'send_goal_url',
+  'send_trigger_link',
   'internal_signal',
   'none'
 ])
+const VALID_CONVERSATIONAL_AI_PROVIDERS = new Set<ConversationalAIProviderId>(['openai', 'gemini', 'claude', 'deepseek'])
 
 const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   appointments: {
     owner: 'human',
-    calendarId: null
+    calendarId: null,
+    url: '',
+    trackingParam: 'ristak_goal_id'
   },
   sales: {
     owner: 'human',
@@ -293,7 +343,9 @@ const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     productName: '',
     priceName: '',
     amount: null,
-    currency: ''
+    currency: '',
+    url: '',
+    trackingParam: 'ristak_goal_id'
   },
   data: {
     afterComplete: 'human'
@@ -302,6 +354,12 @@ const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     questions: '',
     qualifies: '',
     disqualifies: ''
+  },
+  triggerLink: {
+    triggerLinkId: '',
+    triggerLinkPublicId: '',
+    triggerLinkName: '',
+    triggerLinkUrl: ''
   }
 }
 
@@ -310,10 +368,16 @@ function normalizeConversationalSuccessAction(value?: unknown): ConversationalSu
   return VALID_CONVERSATIONAL_SUCCESS_ACTIONS.has(action) ? action : 'ready_for_human'
 }
 
+function normalizeConversationalAIProvider(value?: unknown): ConversationalAIProviderId {
+  const provider = String(value || '').trim().toLowerCase() as ConversationalAIProviderId
+  return VALID_CONVERSATIONAL_AI_PROVIDERS.has(provider) ? provider : 'openai'
+}
+
 function normalizeAgentConfig<T extends ConversationalAgentConfig | null | undefined>(config: T): T {
   if (!config) return config
   return {
     ...config,
+    aiProvider: normalizeConversationalAIProvider(config.aiProvider),
     successAction: normalizeConversationalSuccessAction(config.successAction)
   }
 }
@@ -321,6 +385,7 @@ function normalizeAgentConfig<T extends ConversationalAgentConfig | null | undef
 function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
   return {
     ...agent,
+    aiProvider: normalizeConversationalAIProvider(agent.aiProvider),
     successAction: normalizeConversationalSuccessAction(agent.successAction),
     goalWorkflow: {
       ...DEFAULT_AGENT_GOAL_WORKFLOW,
@@ -340,6 +405,10 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
       qualification: {
         ...DEFAULT_AGENT_GOAL_WORKFLOW.qualification,
         ...((agent.goalWorkflow?.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+      },
+      triggerLink: {
+        ...DEFAULT_AGENT_GOAL_WORKFLOW.triggerLink,
+        ...((agent.goalWorkflow?.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
       }
     }
   }
@@ -460,6 +529,23 @@ export const conversationalAgentService = {
     return next
   },
 
+  listAIProviders(): Promise<ConversationalAIProviderStatus[]> {
+    return request<ConversationalAIProviderStatus[]>('/ai-providers')
+  },
+
+  connectAIProvider(providerId: ConversationalAIProviderId, apiKey: string): Promise<ConversationalAIProviderStatus[]> {
+    return request<ConversationalAIProviderStatus[]>(`/ai-providers/${encodeURIComponent(providerId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ apiKey })
+    })
+  },
+
+  deleteAIProvider(providerId: ConversationalAIProviderId): Promise<ConversationalAIProviderStatus[]> {
+    return request<ConversationalAIProviderStatus[]>(`/ai-providers/${encodeURIComponent(providerId)}`, {
+      method: 'DELETE'
+    })
+  },
+
   async listAgents(): Promise<ConversationalAgentDef[]> {
     const agents = normalizeAgentDefs(await request<ConversationalAgentDef[]>('/agents'))
     writeConversationalAgentLiveCache({ agents })
@@ -524,10 +610,17 @@ export const conversationalAgentService = {
     return request<ConversationAgentState | null>(`/states/${encodeURIComponent(contactId)}`)
   },
 
-  async updateState(contactId: string, action: ConversationStateAction): Promise<ConversationAgentState> {
+  async updateState(
+    contactId: string,
+    action: ConversationStateAction,
+    options: { agentId?: string } = {}
+  ): Promise<ConversationAgentState> {
     const state = await request<ConversationAgentState>(`/states/${encodeURIComponent(contactId)}`, {
       method: 'POST',
-      body: JSON.stringify({ action })
+      body: JSON.stringify({
+        action,
+        ...(options.agentId ? { agentId: options.agentId } : {})
+      })
     })
     updateCachedAgentState(state)
     return state
@@ -555,4 +648,3 @@ export const conversationalAgentService = {
     return request<ConversationalAgentEvent[]>(`/events${query ? `?${query}` : ''}`)
   }
 }
-import { apiUrl } from './apiBaseUrl'

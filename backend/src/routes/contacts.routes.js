@@ -24,7 +24,8 @@ import {
   updateContactCustomFieldDefinitionHandler,
   deleteContact,
   getContactJourney,
-  getContactWhatsAppRoutingEvents
+  getContactWhatsAppRoutingEvents,
+  bulkUpdateContactCustomFields
 } from '../controllers/contactsController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
@@ -46,6 +47,7 @@ router.put('/custom-fields/:definitionId', updateContactCustomFieldDefinitionHan
 router.post('/', createContact)
 router.post('/sync-stats', syncContactsStats)
 router.post('/bulk/tags', bulkUpdateContactTags)
+router.post('/bulk/custom-fields', bulkUpdateContactCustomFields)
 router.get('/bulk-actions', listBulkContactActions)
 router.post('/bulk-actions/whatsapp-template', createBulkWhatsAppTemplateAction)
 router.post('/bulk-actions/automation', createBulkAutomationAction)

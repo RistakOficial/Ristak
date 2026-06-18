@@ -52,12 +52,14 @@ const DEFAULT_MODEL = process.env.OPENAI_AGENT_MODEL || 'gpt-5.4-nano'
 const DEFAULT_TRANSCRIPTION_MODEL = process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe'
 const OPENAI_CREDENTIAL_RECONNECT_CODE = 'OPENAI_CREDENTIAL_RECONNECT_REQUIRED'
 const OPENAI_CREDENTIAL_RECONNECT_MESSAGE = 'OpenAI necesita reconectarse. Ve a Configuración > Agente AI y pega nuevamente tu API token.'
-const REQUEST_TIMEOUT_MS = 45000
-const BUSINESS_CONTEXT_LIMIT = 12000
+const REQUEST_TIMEOUT_MS = readBoundedNumberEnv('OPENAI_AGENT_REQUEST_TIMEOUT_MS', 45_000, 10_000, 180_000)
+const BUSINESS_PROFILE_EXTRACTION_TIMEOUT_MS = readBoundedNumberEnv('OPENAI_BUSINESS_PROFILE_EXTRACTION_TIMEOUT_MS', 90_000, 15_000, 180_000)
+const BUSINESS_CONTEXT_LIMIT = 50_000
 const BUSINESS_PROFILE_CONTEXT_MIN_LENGTH = 40
 const BUSINESS_PROFILE_TEXT_LIMIT = 1200
 const BUSINESS_PROFILE_SUMMARY_LIMIT = 2400
-const BUSINESS_PROFILE_SOURCE_LIMIT = 12000
+const BUSINESS_PROFILE_SOURCE_LIMIT = 50_000
+const BUSINESS_PROFILE_EXTRACTION_CONTEXT_LIMIT = 16_000
 const VIEW_CONTEXT_LIMIT = 6000
 const MESSAGE_HISTORY_LIMIT = 12
 const MAX_MODEL_QUERIES = 6
@@ -530,15 +532,23 @@ function getAudioExtension(mimeType = '') {
   return 'webm'
 }
 
-async function fetchWithTimeout(url, options = {}) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
     return await fetch(url, {
       ...options,
       signal: controller.signal
     })
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error('OpenAI tardó demasiado en responder. Se usará una preparación segura del contexto para no detener el guardado.')
+      timeoutError.name = 'OpenAIRequestTimeoutError'
+      timeoutError.code = 'OPENAI_REQUEST_TIMEOUT'
+      throw timeoutError
+    }
+    throw error
   } finally {
     clearTimeout(timeout)
   }
@@ -12436,6 +12446,7 @@ async function callOpenAIResponseRaw(apiKey, {
   temperature = null,
   topP = null,
   reasoning = null,
+  timeoutMs = REQUEST_TIMEOUT_MS,
   retryWithoutResponseTuning = true
 }) {
   const body = {
@@ -12479,7 +12490,7 @@ async function callOpenAIResponseRaw(apiKey, {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(body)
-  })
+  }, timeoutMs)
 
   let data = null
 
@@ -12506,6 +12517,7 @@ async function callOpenAIResponseRaw(apiKey, {
         temperature: null,
         topP: null,
         reasoning: null,
+        timeoutMs,
         retryWithoutResponseTuning: false
       })
     }
@@ -12525,7 +12537,8 @@ async function callOpenAIResponse(apiKey, {
   include = [],
   temperature = null,
   topP = null,
-  reasoning = null
+  reasoning = null,
+  timeoutMs = REQUEST_TIMEOUT_MS
 }) {
   const data = await callOpenAIResponseRaw(apiKey, {
     model,
@@ -12536,7 +12549,8 @@ async function callOpenAIResponse(apiKey, {
     include,
     temperature,
     topP,
-    reasoning
+    reasoning,
+    timeoutMs
   })
 
   const text = extractResponseText(data)
@@ -15690,6 +15704,114 @@ function getBusinessContextHash(value = '') {
     .digest('hex')
 }
 
+function normalizeBusinessContextWhitespace(value = '') {
+  return String(value || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function buildBusinessProfileFallbackDescription(businessContext = '', maxLength = BUSINESS_PROFILE_SUMMARY_LIMIT) {
+  const clean = normalizeBusinessContextWhitespace(businessContext)
+  if (clean.length <= maxLength) return cleanBusinessProfileText(clean, maxLength)
+
+  const headLength = Math.max(400, Math.floor(maxLength * 0.46))
+  const tailLength = Math.max(300, Math.floor(maxLength * 0.26))
+  const middleLength = Math.max(300, maxLength - headLength - tailLength - 20)
+  const middleStart = Math.max(headLength, Math.floor((clean.length - middleLength) / 2))
+
+  return cleanBusinessProfileText([
+    clean.slice(0, headLength).trim(),
+    clean.slice(middleStart, middleStart + middleLength).trim(),
+    clean.slice(Math.max(0, clean.length - tailLength)).trim()
+  ].filter(Boolean).join(' … '), maxLength)
+}
+
+const BUSINESS_PROFILE_PRIORITY_PATTERN = /\b(agenda|agendar|atiende|atencion|atención|cita|citas|cliente|clientes|condicion|condición|condiciones|costo|costos|diferenciador|diferenciadores|direccion|dirección|domingo|factura|facturacion|facturación|garantiz|horario|horarios|ideal|incluye|lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|mxn|negocio|paquete|paquetes|pago|pagos|precio|precios|producto|productos|promesa|restriccion|restricción|servicio|servicios|tarjeta|ticket|transferencia|ubicacion|ubicación|vende|venta|ventas|whatsapp)\b/gi
+
+function buildBusinessProfilePrioritySnippets(businessContext = '', maxLength = 2400) {
+  const clean = normalizeBusinessContextWhitespace(businessContext)
+  if (!clean || maxLength <= 0) return ''
+
+  const sentences = clean.match(/[^.!?\n]+[.!?]?/g) || [clean]
+  const snippets = []
+  const seen = new Set()
+  let used = 0
+
+  for (const sentence of sentences) {
+    BUSINESS_PROFILE_PRIORITY_PATTERN.lastIndex = 0
+    const match = BUSINESS_PROFILE_PRIORITY_PATTERN.exec(sentence)
+    if (!match) continue
+
+    const start = Math.max(0, match.index - 220)
+    const snippet = cleanBusinessProfileText(sentence.slice(start, start + 760), 760)
+    const fingerprint = snippet.slice(0, 160).toLowerCase()
+    if (!snippet || seen.has(fingerprint)) continue
+
+    const nextUsed = used + snippet.length + (snippets.length ? 3 : 0)
+    if (nextUsed > maxLength) break
+
+    snippets.push(snippet)
+    seen.add(fingerprint)
+    used = nextUsed
+  }
+
+  return snippets.join(' | ')
+}
+
+export function buildBusinessProfileExtractionContext(businessContext = '', maxLength = BUSINESS_PROFILE_EXTRACTION_CONTEXT_LIMIT) {
+  const clean = normalizeBusinessContextWhitespace(businessContext)
+  if (!clean || clean.length <= maxLength) return clean
+
+  const priorityBudget = maxLength < 6000 ? 700 : 2600
+  const prioritySnippets = buildBusinessProfilePrioritySnippets(clean, priorityBudget)
+  const header = [
+    `Contexto completo guardado: ${clean.length} caracteres.`,
+    'Este es un extracto representativo repartido entre inicio, medio y final para evitar abortos por tamaño.',
+    'Extrae sólo datos presentes aquí y no inventes información.'
+  ].join(' ')
+  const segmentCount = maxLength < 6000 ? 2 : 4
+  const overhead = header.length + prioritySnippets.length + 500
+  const usableBudget = Math.max(1200, maxLength - overhead)
+  const minEdgeLength = maxLength < 6000 ? 420 : 1600
+  const minMiddleLength = maxLength < 6000 ? 260 : 600
+  const edgeLength = Math.max(minEdgeLength, Math.floor(usableBudget * 0.28))
+  const middleLength = Math.max(minMiddleLength, Math.floor((usableBudget - edgeLength * 2) / segmentCount))
+  const middleStart = edgeLength
+  const middleEnd = Math.max(middleStart, clean.length - edgeLength)
+  const middleRange = Math.max(1, middleEnd - middleStart)
+  const segments = [
+    ['Inicio', clean.slice(0, edgeLength).trim()]
+  ]
+
+  for (let index = 0; index < segmentCount; index += 1) {
+    const ratio = (index + 1) / (segmentCount + 1)
+    const start = Math.min(
+      Math.max(middleStart, Math.floor(middleStart + middleRange * ratio - middleLength / 2)),
+      Math.max(middleStart, middleEnd - middleLength)
+    )
+    const text = clean.slice(start, start + middleLength).trim()
+    if (text) {
+      segments.push([`Extracto medio ${index + 1}`, text])
+    }
+  }
+
+  segments.push(['Final', clean.slice(Math.max(0, clean.length - edgeLength)).trim()])
+
+  const compacted = [
+    header,
+    prioritySnippets ? `## Datos prioritarios detectados\n${prioritySnippets}` : '',
+    ...segments
+      .filter(([, text]) => Boolean(text))
+      .map(([label, text]) => `## ${label}\n${text}`)
+  ].filter(Boolean).join('\n\n')
+
+  return compacted.length <= maxLength
+    ? compacted
+    : `${compacted.slice(0, Math.max(0, maxLength - 1)).trim()}…`
+}
+
 function parseStoredJson(value, fallback) {
   if (value === null || value === undefined || value === '') return fallback
   if (typeof value === 'object') return value
@@ -15882,7 +16004,7 @@ function buildBusinessProfileFallback(businessContext = '') {
     industry: '',
     businessNature: '',
     businessType: 'unknown',
-    description: cleanBusinessProfileText(businessContext, BUSINESS_PROFILE_SUMMARY_LIMIT),
+    description: buildBusinessProfileFallbackDescription(businessContext),
     offerings: [],
     locations: [],
     hours: {},
@@ -15893,6 +16015,7 @@ function buildBusinessProfileFallback(businessContext = '') {
     differentiators: '',
     importantConditions: '',
     languageTone: '',
+    conversationAdaptation: {},
     missingData: []
   }
 }
@@ -15905,6 +16028,14 @@ function normalizeBusinessProfile(profile = {}, { businessContext = '' } = {}) {
   const hours = normalizeBusinessProfileObject(raw.hours || raw.horarios || raw.businessHours || {})
   const contacts = normalizeBusinessProfileObject(raw.contacts || raw.contact || raw.contacto || raw.telefonos || {})
   const payments = normalizeBusinessProfileObject(raw.payments || raw.paymentMethods || raw.pagos || raw.metodosPago || {})
+  const conversationAdaptation = normalizeBusinessProfileObject(
+    raw.conversationAdaptation ||
+    raw.conversationalAdaptation ||
+    raw.adaptacionConversacional ||
+    raw.adaptacionDeCierre ||
+    raw.closingAdaptation ||
+    {}
+  )
 
   return {
     businessName: firstBusinessProfileValue(raw.businessName, raw.name, raw.nombreNegocio, raw.nombre),
@@ -15922,6 +16053,7 @@ function normalizeBusinessProfile(profile = {}, { businessContext = '' } = {}) {
     differentiators: firstBusinessProfileValue(raw.differentiators, raw.diferenciadores, raw.ventajas, raw.valueProposition),
     importantConditions: firstBusinessProfileValue(raw.importantConditions, raw.conditions, raw.condiciones, raw.restricciones),
     languageTone: firstBusinessProfileValue(raw.languageTone, raw.tono, raw.brandVoice),
+    conversationAdaptation,
     missingData: Array.isArray(raw.missingData || raw.datosFaltantes)
       ? (raw.missingData || raw.datosFaltantes).map((item) => cleanBusinessProfileText(item, 180)).filter(Boolean).slice(0, 12)
       : []
@@ -15935,6 +16067,7 @@ function buildProfileDerivedSummaries(profile = {}, businessContext = '') {
   const paymentSummary = summarizeObjectValues(profile.payments, 500)
   const contactSummary = summarizeObjectValues(profile.contacts, 500)
   const pricingSummary = firstBusinessProfileValue(profile.pricingSummary, offeringsSummary)
+  const conversationAdaptationSummary = summarizeObjectValues(profile.conversationAdaptation, 900)
   const profileSummary = [
     profile.businessName ? `Negocio: ${profile.businessName}` : '',
     profile.industry ? `Industria: ${profile.industry}` : '',
@@ -15948,7 +16081,8 @@ function buildProfileDerivedSummaries(profile = {}, businessContext = '') {
     contactSummary ? `Contacto: ${contactSummary}` : '',
     profile.targetCustomers ? `Cliente ideal: ${profile.targetCustomers}` : '',
     profile.differentiators ? `Diferenciadores: ${profile.differentiators}` : '',
-    profile.importantConditions ? `Condiciones: ${profile.importantConditions}` : ''
+    profile.importantConditions ? `Condiciones: ${profile.importantConditions}` : '',
+    conversationAdaptationSummary ? `Adaptación conversacional: ${conversationAdaptationSummary}` : ''
   ].filter(Boolean).join('\n')
 
   return {
@@ -15958,7 +16092,88 @@ function buildProfileDerivedSummaries(profile = {}, businessContext = '') {
     locationSummary: cleanBusinessProfileText(locationSummary, 1200),
     hoursSummary,
     paymentSummary: cleanBusinessProfileText(paymentSummary, 1200),
-    contactSummary: cleanBusinessProfileText(contactSummary, 1200)
+    contactSummary: cleanBusinessProfileText(contactSummary, 1200),
+    conversationAdaptationSummary: cleanBusinessProfileText(conversationAdaptationSummary, 1200)
+  }
+}
+
+function cleanBusinessProfileListText(value, maxLength = 900) {
+  if (Array.isArray(value)) {
+    return cleanBusinessProfileText(
+      value.map((item) => cleanBusinessProfileText(item, 220)).filter(Boolean).join('; '),
+      maxLength
+    )
+  }
+  if (value && typeof value === 'object') {
+    return summarizeObjectValues(value, maxLength)
+  }
+  return cleanBusinessProfileText(value, maxLength)
+}
+
+function readConversationAdaptationValue(adaptation = {}, keys = [], maxLength = 1000) {
+  for (const key of keys) {
+    const clean = cleanBusinessProfileListText(adaptation?.[key], maxLength)
+    if (clean) return clean
+  }
+  return ''
+}
+
+function buildBusinessConversationPromptParameters(profile = {}, summaries = {}) {
+  const adaptation = profile.conversationAdaptation || {}
+  const businessName = firstBusinessProfileValue(profile.businessName, 'este negocio')
+  const industry = firstBusinessProfileValue(profile.industry, profile.businessNature, 'este giro')
+  const offering = firstBusinessProfileValue(summaries.offeringsSummary, profile.description, 'la solución del negocio')
+  const targetCustomers = firstBusinessProfileValue(profile.targetCustomers, 'la persona que escribió')
+  const differentiators = firstBusinessProfileValue(profile.differentiators, '')
+  const conditions = firstBusinessProfileValue(profile.importantConditions, summaries.paymentSummary, '')
+
+  const narrativeFrame = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['narrativeFrame', 'marcoNarrativo', 'enfoqueNarrativo', 'narrativa'], 1000),
+    `No presentes ${offering} como algo que se empuja. Guía a ${targetCustomers} a revisar con calma si seguir igual en el contexto de ${industry} le pesa más que tomar un siguiente paso claro.`
+  )
+  const customerPerception = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['customerPerception', 'percepcionDelCliente', 'percepciónDelCliente', 'perception'], 900),
+    `La persona debe sentirse escuchada y con criterio para decidir, no como comprador presionado de ${businessName}.`
+  )
+  const languageGuidance = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['languageGuidance', 'lenguaje', 'lenguajeDelNegocio', 'languageTone'], 900),
+    `Usa vocabulario natural del giro ${industry}; aterriza los ejemplos en ${offering}${differentiators ? ` y en lo que diferencia al negocio: ${differentiators}` : ''}.`
+  )
+  const contrastFrame = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['contrastFrame', 'marcoDeContraste', 'contraste', 'consequenceFrame'], 900),
+    `El contraste debe ser entre dejar igual la situación que la persona ya contó y revisar una ruta más clara hacia el resultado que busca. No uses miedo inventado ni promesas.`
+  )
+  const discoveryAngles = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['discoveryAngles', 'preguntasDescubrimiento', 'angulosDeDescubrimiento', 'preguntas'], 900),
+    `Pregunta qué detonó la búsqueda, qué ha intentado, qué le incomoda de seguir igual y qué resultado necesita ver para que ${offering} tenga sentido.`
+  )
+  const safeValueLanguage = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['safeValueLanguage', 'lenguajeSeguroDeValor', 'valueLanguage', 'lenguajeDeValor'], 900),
+    'Habla de "valor", "opción", "siguiente paso", "revisarlo", "ver si te conviene" y "tener claridad"; evita sonar a transacción antes de que la persona pida avanzar.'
+  )
+  const forbiddenSalesLanguage = firstBusinessProfileValue(
+    readConversationAdaptationValue(adaptation, ['forbiddenSalesLanguage', 'lenguajeProhibido', 'salesLanguageToAvoid', 'evitar'], 900),
+    'Evita "te vendo", "compra ya", "aprovecha", "oferta", "invierte", "dinero" o "paga" salvo que la persona ya esté preguntando cómo completar el pago o el flujo necesite confirmar un dato real.'
+  )
+
+  const businessAdaptation = [
+    `Marco narrativo: ${narrativeFrame}`,
+    `Percepción buscada: ${customerPerception}`,
+    `Lenguaje del negocio: ${languageGuidance}`,
+    `Contraste útil: ${contrastFrame}`,
+    `Ángulos de descubrimiento: ${discoveryAngles}`,
+    `Lenguaje seguro de valor: ${safeValueLanguage}`,
+    `Lenguaje de venta a evitar: ${forbiddenSalesLanguage}`,
+    conditions ? `Condiciones que cambian el encuadre: ${conditions}` : ''
+  ].filter(Boolean).join(' ')
+
+  return {
+    ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO: cleanBusinessProfileText(businessAdaptation, 1400),
+    LENGUAJE_DEL_NEGOCIO: cleanBusinessProfileText(languageGuidance, 1000),
+    NARRATIVA_DE_CONTRASTE_DEL_NEGOCIO: cleanBusinessProfileText(contrastFrame, 1000),
+    PERCEPCION_DEL_CLIENTE: cleanBusinessProfileText(customerPerception, 1000),
+    PREGUNTAS_DE_DESCUBRIMIENTO_DEL_NEGOCIO: cleanBusinessProfileText(discoveryAngles, 1000),
+    RIESGO_VERBAL_A_EVITAR: cleanBusinessProfileText(forbiddenSalesLanguage, 1000)
   }
 }
 
@@ -15971,6 +16186,40 @@ export function buildBusinessProfilePromptParameters(profile = {}, extraParamete
   const location = firstBusinessProfileValue(summaries.locationSummary, 'ubicación o modalidad no especificada')
   const availability = firstBusinessProfileValue(summaries.hoursSummary, 'horarios no especificados; consulta disponibilidad real antes de prometer horarios')
   const value = firstBusinessProfileValue(summaries.pricingSummary, summaries.offeringsSummary, 'valor no especificado; consulta productos/precios reales antes de hablar de precio')
+  const whoWeAre = firstBusinessProfileValue(summaries.profileSummary, normalizedProfile.description, offering)
+  const whoWeHelp = firstBusinessProfileValue(
+    normalizedProfile.targetCustomers,
+    `personas interesadas en ${offering}`
+  )
+  const deepProblem = firstBusinessProfileValue(
+    readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['problem', 'problema', 'realProblem', 'problemaReal', 'pain', 'dolor'], 1000),
+    normalizedProfile.description,
+    offering
+  )
+  const proofContext = firstBusinessProfileValue(
+    readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['proof', 'pruebas', 'results', 'resultados', 'cases', 'casos'], 1000),
+    normalizedProfile.differentiators,
+    'usa solo casos, pruebas o resultados reales que aparezcan en las tools o en el perfil; si no existen, no inventes'
+  )
+  const marketObjections = firstBusinessProfileValue(
+    readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['objections', 'objeciones', 'marketObjections', 'objecionesTipicas', 'truthBehindObjections', 'verdadDetrasObjeciones'], 1000),
+    'detecta la objecion real en conversacion y respondela con datos reales; no inventes razones ni presiones'
+  )
+  const regionContext = firstBusinessProfileValue(
+    readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['regionalContext', 'contextoRegional', 'cityContext', 'contextoCiudad', 'cultureContext', 'contextoCultural'], 1000),
+    location
+  )
+  const customerLanguage = firstBusinessProfileValue(
+    normalizedProfile.languageTone,
+    readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['customerLanguage', 'lenguajeCliente', 'clientLanguage', 'comoHablaCliente'], 1000),
+    summaries.conversationAdaptationSummary,
+    `usa vocabulario natural de ${industry} y calibra el lenguaje al estilo del contacto`
+  )
+  const businessRegister = firstBusinessProfileValue(
+    readConversationAdaptationValue(normalizedProfile.conversationAdaptation, ['register', 'registro', 'businessRegister', 'registroDelNegocio'], 600),
+    normalizedProfile.languageTone,
+    'registro medio: cercano, claro y profesional; ajusta informalidad segun la persona, industria y valor del servicio'
+  )
   const conditions = [
     normalizedProfile.importantConditions,
     summaries.paymentSummary ? `Pagos/facturación: ${summaries.paymentSummary}` : '',
@@ -15994,7 +16243,17 @@ export function buildBusinessProfilePromptParameters(profile = {}, extraParamete
     UBICACION: location,
     DISPONIBILIDAD: availability,
     CONDICIONES_IMPORTANTES: conditions,
-    CONDICIONES_DEL_NEGOCIO: conditions
+    CONDICIONES_DEL_NEGOCIO: conditions,
+    QUIENES_SOMOS_QUIEN_SOY: whoWeAre,
+    A_QUIEN_AYUDAMOS_Y_A_QUIEN_NO: whoWeHelp,
+    EL_PROBLEMA_REAL_QUE_RESOLVEMOS: deepProblem,
+    CASOS_PRUEBAS_RESULTADOS_REALES: proofContext,
+    OBJECIONES_TIPICAS_DE_ESTE_MERCADO_Y_LA_VERDAD_DETRAS_DE_CADA_UNA: marketObjections,
+    CONTEXTO_DE_CIUDAD_REGION_CULTURA_CREENCIAS: regionContext,
+    CONTEXTO_DE_CIUDAD_REGION: regionContext,
+    COMO_HABLA_NUESTRO_TIPO_DE_CLIENTE: customerLanguage,
+    REGISTRO_DEL_NEGOCIO: businessRegister,
+    ...buildBusinessConversationPromptParameters(normalizedProfile, summaries)
   }
 
   return {
@@ -16175,6 +16434,8 @@ function buildBusinessProfileExtractionInstructions() {
     'Si es el mismo negocio, mezcla datos: conserva lo anterior cuando siga vigente y agrega o corrige con lo nuevo.',
     'Si claramente es otro negocio, reemplaza el perfil anterior y usa sólo el contexto nuevo.',
     'Detecta nombre del negocio, industria, giro/naturaleza, si vende productos, servicios o ambos, ubicaciones, horarios, teléfonos, extensiones, persona encargada, precios, métodos de pago, facturación, productos/servicios, frecuencia/cadencia, condiciones, cliente ideal y tono útil.',
+    'Además, extrae parámetros conversacionales del giro del negocio para rellenar los campos del guión de fábrica. No reescribas, resumas, transformes ni cambies la idea general del guión: la estructura de pull, conciencia, contraste, preguntas y cierre ya está definida por Ristak.',
+    'Estos parámetros sólo deben cambiar nicho, lenguaje del negocio, objeciones, contexto del cliente, riesgos verbales y ejemplos mentales. La cadencia general sigue siendo la misma: descubrir origen, motivo, urgencia, problema real, consecuencia lógica, resultado deseado y siguiente paso.',
     'Devuelve solamente JSON válido, sin markdown, sin explicación y sin texto fuera del JSON.',
     'Schema esperado:',
     JSON.stringify({
@@ -16211,6 +16472,15 @@ function buildBusinessProfileExtractionInstructions() {
         differentiators: '',
         importantConditions: '',
         languageTone: '',
+        conversationAdaptation: {
+          narrativeFrame: '',
+          customerPerception: '',
+          languageGuidance: '',
+          contrastFrame: '',
+          discoveryAngles: [],
+          safeValueLanguage: '',
+          forbiddenSalesLanguage: ''
+        },
         missingData: []
       },
       promptParameters: {
@@ -16221,37 +16491,53 @@ function buildBusinessProfileExtractionInstructions() {
         VALOR: '',
         UBICACION_O_MODALIDAD: '',
         DISPONIBILIDAD: '',
-        CONDICIONES_IMPORTANTES: ''
+        CONDICIONES_IMPORTANTES: '',
+        ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO: '',
+        LENGUAJE_DEL_NEGOCIO: '',
+        NARRATIVA_DE_CONTRASTE_DEL_NEGOCIO: '',
+        PERCEPCION_DEL_CLIENTE: '',
+        PREGUNTAS_DE_DESCUBRIMIENTO_DEL_NEGOCIO: '',
+        RIESGO_VERBAL_A_EVITAR: ''
       }
     }, null, 2)
   ].join('\n')
 }
 
-async function extractBusinessProfileWithAI({ apiKey, model, businessContext, previousSnapshot } = {}) {
+async function extractBusinessProfileWithAI({ apiKey, model, businessContext, sourceBusinessContext = businessContext, previousSnapshot } = {}) {
+  const previousSourceContext = previousSnapshot?.sourceContext
+    ? buildBusinessProfileExtractionContext(previousSnapshot.sourceContext, 6000)
+    : ''
   const { text } = await callOpenAIResponse(apiKey, {
     model: normalizeAIAgentModel(model),
     maxOutputTokens: 3200,
     instructions: buildBusinessProfileExtractionInstructions(),
     input: JSON.stringify({
       contextoNuevoDelNegocio: businessContext,
+      contextoCompletoGuardadoCaracteres: normalizeBusinessContextWhitespace(sourceBusinessContext).length,
       perfilAnterior: previousSnapshot?.configured
         ? {
             status: previousSnapshot.extractionStatus,
-            sourceContext: previousSnapshot.sourceContext,
+            sourceContext: previousSourceContext,
             profile: previousSnapshot.profile
           }
         : null
     }, null, 2),
     temperature: 0.1,
-    topP: 0.9
+    topP: 0.9,
+    timeoutMs: BUSINESS_PROFILE_EXTRACTION_TIMEOUT_MS
   })
 
   return normalizeBusinessProfileExtraction(parseJsonObjectFromAI(text, 'La IA no devolvió JSON válido para el perfil del negocio'), {
-    businessContext
+    businessContext: sourceBusinessContext
   })
 }
 
-async function syncBusinessProfileFromContext({ businessContext, model } = {}) {
+export async function syncBusinessProfileFromContext({
+  businessContext,
+  model,
+  apiKey: providedApiKey,
+  extractor = extractBusinessProfileWithAI
+} = {}) {
   const normalizedContext = cleanConfigText(businessContext, BUSINESS_PROFILE_SOURCE_LIMIT)
   if (!normalizedContext) {
     await db.run('DELETE FROM ai_business_profile').catch(() => undefined)
@@ -16276,10 +16562,14 @@ async function syncBusinessProfileFromContext({ businessContext, model } = {}) {
   }
 
   let apiKey = null
-  try {
-    apiKey = await getOpenAIApiKey()
-  } catch (error) {
-    logger.warn(`[Agente AI] No se pudo leer OpenAI para extraer perfil del negocio: ${error.message}`)
+  if (providedApiKey !== undefined) {
+    apiKey = providedApiKey || null
+  } else {
+    try {
+      apiKey = await getOpenAIApiKey()
+    } catch (error) {
+      logger.warn(`[Agente AI] No se pudo leer OpenAI para extraer perfil del negocio: ${error.message}`)
+    }
   }
 
   if (!apiKey) {
@@ -16293,10 +16583,12 @@ async function syncBusinessProfileFromContext({ businessContext, model } = {}) {
   }
 
   try {
-    const extraction = await extractBusinessProfileWithAI({
+    const extractionContext = buildBusinessProfileExtractionContext(normalizedContext)
+    const extraction = await extractor({
       apiKey,
       model,
-      businessContext: normalizedContext,
+      businessContext: extractionContext,
+      sourceBusinessContext: normalizedContext,
       previousSnapshot
     })
 
@@ -16314,8 +16606,8 @@ async function syncBusinessProfileFromContext({ businessContext, model } = {}) {
       businessContext: normalizedContext,
       sourceHash,
       profile: fallbackProfile,
-      status: 'failed',
-      error: error.message || 'Error extrayendo perfil del negocio'
+      status: 'ready',
+      error: null
     })
   }
 }
@@ -16578,7 +16870,7 @@ export async function saveRefinedAIAgentBusinessContextAnswer({ field, answer } 
     throw new Error('Primero configura una API Key válida de OpenAI')
   }
 
-  const rawAnswer = cleanConfigText(answer, 1800)
+  const rawAnswer = cleanConfigText(answer, BUSINESS_CONTEXT_LIMIT)
 
   if (!rawAnswer) {
     throw new Error('Escribe una respuesta para guardar el contexto')
@@ -16586,27 +16878,35 @@ export async function saveRefinedAIAgentBusinessContextAnswer({ field, answer } 
 
   const config = await getAIAgentConfig()
   const existingText = buildUnifiedBusinessContext(config)
-  const { text } = await callOpenAIResponse(apiKey, {
-    model: normalizeAIAgentModel(config?.model),
-    maxOutputTokens: 650,
-    instructions: [
-      'Eres editor de contexto de negocio para un agente AI dentro de Ristak.',
-      'Tu trabajo es convertir la respuesta cruda del usuario en un solo bloque de contexto claro, profesional y útil para guardar en configuración.',
-      'No inventes datos. No agregues números, ciudades, competidores, promesas ni públicos que el usuario no haya mencionado.',
-      'Puedes ordenar, corregir redacción, quitar muletillas y unir con el texto existente si aporta continuidad.',
-      'Si el dato nuevo contradice el texto existente, prioriza el dato nuevo sin hacer drama.',
-      'Devuelve solamente el texto final para guardar. No uses título, saludo, explicación ni markdown decorativo.',
-      'Mantén el texto en español, directo, natural y fácil de leer para que otro agente pueda usarlo como memoria del negocio.'
-    ].join('\n'),
-    input: JSON.stringify({
-      campo: fieldDefinition.label,
-      objetivoDelCampo: fieldDefinition.instruction,
-      textoExistente: existingText,
-      respuestaNuevaDelUsuario: rawAnswer
-    }, null, 2)
-  })
+  let refinedText = ''
 
-  const refinedText = cleanConfigText(text, 3000)
+  try {
+    const { text } = await callOpenAIResponse(apiKey, {
+      model: normalizeAIAgentModel(config?.model),
+      maxOutputTokens: 900,
+      instructions: [
+        'Eres editor de contexto de negocio para un agente AI dentro de Ristak.',
+        'Tu trabajo es convertir la respuesta cruda del usuario en un solo bloque de contexto claro, profesional y útil para guardar en configuración.',
+        'No inventes datos. No agregues números, ciudades, competidores, promesas ni públicos que el usuario no haya mencionado.',
+        'Puedes ordenar, corregir redacción, quitar muletillas y unir con el texto existente si aporta continuidad.',
+        'Si el dato nuevo contradice el texto existente, prioriza el dato nuevo sin hacer drama.',
+        'Devuelve solamente el texto final para guardar. No uses título, saludo, explicación ni markdown decorativo.',
+        'Mantén el texto en español, directo, natural y fácil de leer para que otro agente pueda usarlo como memoria del negocio.'
+      ].join('\n'),
+      input: JSON.stringify({
+        campo: fieldDefinition.label,
+        objetivoDelCampo: fieldDefinition.instruction,
+        textoExistente: buildBusinessProfileExtractionContext(existingText, 6000),
+        respuestaNuevaDelUsuario: buildBusinessProfileExtractionContext(rawAnswer, 10000)
+      }, null, 2),
+      timeoutMs: BUSINESS_PROFILE_EXTRACTION_TIMEOUT_MS
+    })
+
+    refinedText = cleanConfigText(text, BUSINESS_CONTEXT_LIMIT)
+  } catch (error) {
+    logger.warn(`[Agente AI] No se pudo refinar contexto del negocio; guardando texto seguro: ${error.message}`)
+    refinedText = cleanConfigText(rawAnswer, BUSINESS_CONTEXT_LIMIT)
+  }
 
   if (!refinedText) {
     throw new Error('OpenAI no devolvió texto útil para guardar')

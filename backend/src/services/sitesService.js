@@ -847,6 +847,14 @@ function resolveImportedRelativeReference(referencePath = '', currentAssetPath =
   return normalizeImportedAssetPath(combined)
 }
 
+function decodeImportedPathSegment(segment = '') {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
 function getImportedAssetPublicUrl(siteId, assetPath) {
   const encodedPath = normalizeImportedAssetPath(assetPath)
     .split('/')
@@ -855,16 +863,56 @@ function getImportedAssetPublicUrl(siteId, assetPath) {
   return `/api/sites/public/imported-assets/${encodeURIComponent(siteId)}/${encodedPath}`
 }
 
-function rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths) {
+function getImportedAssetPathFromPublicUrl(pathname = '', siteId = '') {
+  const prefix = `/api/sites/public/imported-assets/${encodeURIComponent(siteId)}/`
+  const rawPathname = String(pathname || '')
+  if (!rawPathname.startsWith(prefix)) return ''
+
+  return normalizeImportedAssetPath(
+    rawPathname
+      .slice(prefix.length)
+      .split('/')
+      .map(decodeImportedPathSegment)
+      .join('/')
+  )
+}
+
+function buildImportedPageIdByAssetPath(pages = []) {
+  const entries = (Array.isArray(pages) ? pages : [])
+    .map(page => [
+      normalizeImportedAssetPath(page?.importedAssetPath || page?.imported_asset_path || page?.filename || page?.assetPath),
+      cleanString(page?.id || page?.pageId || page?.page_id)
+    ])
+    .filter(([assetPath, pageId]) => assetPath && pageId)
+
+  return new Map(entries)
+}
+
+function buildImportedPageQueryHref(pageId = '', search = '', hash = '') {
+  const cleanPageId = cleanString(pageId)
+  if (!cleanPageId) return hash || '#'
+
+  const params = new URLSearchParams()
+  params.set('page', cleanPageId)
+  const extraParams = new URLSearchParams(String(search || '').replace(/^\?/, ''))
+  extraParams.forEach((value, key) => {
+    if (key !== 'page') params.append(key, value)
+  })
+
+  return `?${params.toString()}${hash || ''}`
+}
+
+function rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths, options = {}) {
   const raw = String(value || '')
   if (isImportedExternalReference(raw)) return raw
 
   const { pathname, search, hash } = splitImportedUrlReference(raw)
   const resolvedPath = resolveImportedRelativeReference(pathname, currentAssetPath)
-  if (!resolvedPath) return raw
+  const publicAssetPath = getImportedAssetPathFromPublicUrl(pathname, siteId)
+  if (!resolvedPath && !publicAssetPath) return raw
 
-  let assetPath = resolvedPath
-  if (!availablePaths.has(assetPath) && String(pathname || '').startsWith('/')) {
+  let assetPath = publicAssetPath || resolvedPath
+  if (!publicAssetPath && !availablePaths.has(assetPath) && String(pathname || '').startsWith('/')) {
     const currentPath = normalizeImportedAssetPath(currentAssetPath)
     const rootFolder = currentPath.includes('/') ? currentPath.split('/')[0] : ''
     const prefixedPath = rootFolder ? normalizeImportedAssetPath(`${rootFolder}/${assetPath}`) : ''
@@ -874,6 +922,11 @@ function rewriteImportedReferenceValue(value, currentAssetPath, siteId, availabl
   }
 
   if (!availablePaths.has(assetPath)) return raw
+
+  const pageIdByAssetPath = options?.pageIdByAssetPath instanceof Map ? options.pageIdByAssetPath : null
+  if (options?.preferPageHref && pageIdByAssetPath?.has(assetPath)) {
+    return buildImportedPageQueryHref(pageIdByAssetPath.get(assetPath), search, hash)
+  }
 
   return `${getImportedAssetPublicUrl(siteId, assetPath)}${search}${hash}`
 }
@@ -905,18 +958,26 @@ function rewriteImportedCssReferences(css = '', currentAssetPath = '', siteId = 
   return rewritten
 }
 
-function rewriteImportedHtmlReferences(html = '', currentAssetPath = '', siteId = '', availablePaths = new Set()) {
+function rewriteImportedHtmlReferences(html = '', currentAssetPath = '', siteId = '', availablePaths = new Set(), options = {}) {
   let rewritten = String(html || '').replace(/\s(src|href|poster|action|srcset)\s*=\s*(["'])([^"']*)\2/gi, (_match, attr, quote, value) => {
+    const attrName = attr.toLowerCase()
     const nextValue = attr.toLowerCase() === 'srcset'
       ? rewriteImportedSrcsetValue(value, currentAssetPath, siteId, availablePaths)
-      : rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths)
+      : rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths, {
+        ...options,
+        preferPageHref: attrName === 'href'
+      })
     return ` ${attr}=${quote}${nextValue}${quote}`
   })
 
   rewritten = rewritten.replace(/\s(src|href|poster|action|srcset)\s*=\s*([^\s"'=<>`]+)/gi, (_match, attr, value) => {
-    const nextValue = attr.toLowerCase() === 'srcset'
+    const attrName = attr.toLowerCase()
+    const nextValue = attrName === 'srcset'
       ? rewriteImportedSrcsetValue(value, currentAssetPath, siteId, availablePaths)
-      : rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths)
+      : rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths, {
+        ...options,
+        preferPageHref: attrName === 'href'
+      })
     return ` ${attr}="${nextValue}"`
   })
 
@@ -925,6 +986,23 @@ function rewriteImportedHtmlReferences(html = '', currentAssetPath = '', siteId 
   ))
 
   return rewritten
+}
+
+async function getImportedSiteAvailableAssetPaths(siteId) {
+  const rows = await db.all(`
+    SELECT asset_path
+    FROM public_site_import_assets
+    WHERE site_id = ?
+  `, [siteId]).catch(() => [])
+
+  return new Set(rows.map(row => normalizeImportedAssetPath(row.asset_path)).filter(Boolean))
+}
+
+function rewriteImportedHtmlForRender(site, html = '', currentAssetPath = '', availablePaths = new Set()) {
+  const pages = normalizeSitePages(site)
+  return rewriteImportedHtmlReferences(html, currentAssetPath, site.id, availablePaths, {
+    pageIdByAssetPath: buildImportedPageIdByAssetPath(pages)
+  })
 }
 
 function hasImportedAlias(haystack = '', aliases = []) {
@@ -7206,6 +7284,10 @@ async function addImportedEditableImageAsset(siteId, currentImport, input = {}) 
 async function prepareImportedZipContent({ filename, fileBase64, siteId, importId }) {
   const archive = await extractImportedZipArchive(filename, decodeBase64Buffer(fileBase64))
   const availablePaths = new Set(archive.files.map(file => file.assetPath))
+  const pageIdByAssetPath = new Map(archive.htmlPaths.map((assetPath, index) => [
+    normalizeImportedAssetPath(assetPath),
+    index === 0 ? DEFAULT_FUNNEL_PAGE_ID : `page-${index + 1}`
+  ]))
   const usedFormIds = new Set()
   const detectedForms = []
   const assets = []
@@ -7225,7 +7307,7 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
         title: file.assetPath === archive.mainPath ? form.title : `${form.title} - ${file.assetPath}`
       })))
       let pageHtml = assignImportedFormIds(sanitized.html, pageForms)
-      pageHtml = rewriteImportedHtmlReferences(pageHtml, file.assetPath, siteId, availablePaths)
+      pageHtml = rewriteImportedHtmlReferences(pageHtml, file.assetPath, siteId, availablePaths, { pageIdByAssetPath })
       pageHtml = annotateImportedEditableHtml(pageHtml)
 
       for (const item of sanitized.report) {
@@ -7305,6 +7387,7 @@ async function prepareGeneratedImportedPagesContent({ pages = [], siteId, import
   }
 
   const availablePaths = new Set(normalizedPages.map(page => page.filename))
+  const pageIdByAssetPath = buildImportedPageIdByAssetPath(normalizedPages)
   const usedFormIds = new Set()
   const detectedForms = []
   const assets = []
@@ -7321,7 +7404,7 @@ async function prepareGeneratedImportedPagesContent({ pages = [], siteId, import
     })))
 
     let pageHtml = assignImportedFormIds(sanitized.html, pageForms)
-    pageHtml = rewriteImportedHtmlReferences(pageHtml, page.filename, siteId, availablePaths)
+    pageHtml = rewriteImportedHtmlReferences(pageHtml, page.filename, siteId, availablePaths, { pageIdByAssetPath })
     pageHtml = annotateImportedEditableHtml(pageHtml)
 
     for (const item of sanitized.report) {
@@ -8066,7 +8149,9 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
     ORDER BY asset_path COLLATE NOCASE ASC
   `, [siteId]).catch(() => [])
   const assetByPath = new Map(assetRows.map(row => [normalizeImportedAssetPath(row.asset_path), row]))
+  const availablePaths = new Set(assetRows.map(row => normalizeImportedAssetPath(row.asset_path)).filter(Boolean))
   const pages = normalizeSitePages(currentSite)
+  const pageIdByAssetPath = buildImportedPageIdByAssetPath(pages)
   const pageByAssetPath = new Map()
   const orderedPageAssetPaths = []
 
@@ -8134,7 +8219,9 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
       if (formId) usedFormIds.add(formId)
     })
     detectedForms.push(...pageForms)
-    const htmlSanitized = annotateImportedEditableHtml(assignImportedFormIds(sanitized.html, pageForms))
+    let htmlSanitized = assignImportedFormIds(sanitized.html, pageForms)
+    htmlSanitized = rewriteImportedHtmlReferences(htmlSanitized, assetPath, siteId, availablePaths, { pageIdByAssetPath })
+    htmlSanitized = annotateImportedEditableHtml(htmlSanitized)
     sanitizedHtmlByPath.set(assetPath, htmlSanitized)
     securityReport.push(...sanitized.report.map(item => (
       assetPath ? `${pageByAssetPath.get(assetPath)?.title || assetPath}: ${item}` : item
@@ -9813,6 +9900,56 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
   site.blocks = await hydrateEmbeddedForms(await ensureSocialProfileBlock(site, await listSiteBlocks(site.id)))
   site.domain = domainResolution.domain || host
   return { ok: true, site, host, domain: domainResolution.domain || host, path }
+}
+
+function normalizePublicPreviewContext(context = {}) {
+  if (!context || typeof context !== 'object') return null
+
+  const siteId = cleanString(context.siteId || context.site_id)
+  if (!siteId) return null
+
+  return {
+    siteId,
+    pageId: cleanString(context.pageId || context.page_id),
+    token: cleanString(context.token),
+    host: normalizeDomain(context.host)
+  }
+}
+
+function canUsePublicPreviewContext(host, submittedSiteId, previewContext) {
+  if (!host || !submittedSiteId || !previewContext?.siteId) return false
+  if (previewContext.siteId !== submittedSiteId) return false
+  if (isDashboardHost(host)) return true
+  return Boolean(previewContext.host && matchesPublicDomain(host, previewContext.host))
+}
+
+async function resolvePublicRequestAccess(req, body = {}, options = {}) {
+  const host = getRequestHost(req)
+  const submittedSiteId = cleanString(body.siteId || body.site_id)
+  const domainResolution = await resolveConnectedPublicDomainForHost(host)
+
+  if (domainResolution.ok) {
+    return { host, submittedSiteId, domainResolution, previewContext: null }
+  }
+
+  const previewContext = normalizePublicPreviewContext(options.previewContext)
+  if (canUsePublicPreviewContext(host, submittedSiteId, previewContext)) {
+    return {
+      host,
+      submittedSiteId,
+      domainResolution: {
+        ok: true,
+        host,
+        domain: host,
+        preview: true
+      },
+      previewContext
+    }
+  }
+
+  const error = new Error(domainResolution.message)
+  error.status = domainResolution.status
+  throw error
 }
 
 function escapeHtml(value) {
@@ -12005,12 +12142,27 @@ function renderContentBlock(block, context = {}) {
   return `<div class="rstk-text">${content.replace(/\n/g, '<br>')}</div>`
 }
 
+const supportedNativeFieldValidations = new Set(['email', 'phone', 'number', 'currency', 'date', 'url'])
+
+function getNativeFieldValidation(block = {}) {
+  const settings = block.settings || {}
+  const explicit = cleanString(settings.validation || settings.fieldValidation || settings.field_validation).toLowerCase()
+  if (supportedNativeFieldValidations.has(explicit)) return explicit
+  if (block.blockType === 'email') return 'email'
+  if (block.blockType === 'phone') return 'phone'
+  if (block.blockType === 'number') return 'number'
+  if (block.blockType === 'currency') return 'currency'
+  if (block.blockType === 'date') return 'date'
+  return ''
+}
+
 function renderFieldInput(block, context = {}) {
   const id = escapeHtml(block.id)
   const placeholder = escapeHtml(block.placeholder)
   const required = block.required ? 'required' : ''
   const options = getBlockOptions(block)
   const settings = block.settings || {}
+  const validation = getNativeFieldValidation(block)
 
   if (block.blockType === 'paragraph') {
     return `<textarea id="${id}" name="${id}" rows="5" placeholder="${placeholder}" ${required}></textarea>`
@@ -12088,6 +12240,10 @@ function renderFieldInput(block, context = {}) {
     `
   }
 
+  if (validation === 'url') {
+    return `<input id="${id}" name="${id}" type="url" inputmode="url" placeholder="${placeholder}" ${required}>`
+  }
+
   return `<input id="${id}" name="${id}" type="text" placeholder="${placeholder}" ${required}>`
 }
 
@@ -12096,7 +12252,7 @@ function renderFieldBlock(block, _interactive = false, pageId = '', context = {}
   const required = block.required ? '<span class="rstk-required">*</span>' : ''
 
   return `
-    <section class="rstk-field" data-block-id="${escapeHtml(block.id)}" data-page-id="${escapeHtml(pageId)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}">
+    <section class="rstk-field" data-block-id="${escapeHtml(block.id)}" data-page-id="${escapeHtml(pageId)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}" data-validation="${escapeHtml(getNativeFieldValidation(block))}">
       <label for="${escapeHtml(block.id)}">${label}${required}</label>
       ${block.content ? `<p class="rstk-help">${escapeHtml(block.content)}</p>` : ''}
       ${renderFieldInput(block, context)}
@@ -13512,6 +13668,15 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         message.textContent = text;
         message.style.color = state === 'error' ? '#b91c1c' : '#166534';
       };
+      const showImportedMessageOnly = (form, text) => {
+        Array.from(form.querySelectorAll('input, select, textarea, button')).forEach((element) => {
+          const type = String(element.type || '').toLowerCase();
+          if (type === 'hidden') return;
+          const wrapper = element.closest('label, .field, .form-field, .form-group, .rstk-field') || element;
+          wrapper.hidden = true;
+        });
+        setMessage(form, text || 'Gracias. Por ahora no califica.', 'success');
+      };
 
       Array.from(document.querySelectorAll('form')).forEach((form, index) => {
         form.setAttribute('data-rstk-import-form', 'true');
@@ -13531,6 +13696,8 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
             }
           }
           if (!immediate) return;
+          form.dataset.rstkImmediateDisqualify = 'true';
+          showImportedMessageOnly(form, immediate.buttonMessage || 'Gracias. Por ahora no califica.');
           if (typeof form.requestSubmit === 'function') form.requestSubmit();
           else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         });
@@ -13562,7 +13729,8 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
                   fbc: readCookie('_fbc'),
                   importedChoiceActions: selectedChoiceActions,
                   importedDisqualified: Boolean(disqualifyingAction),
-                  importedDisqualifiedMessage: disqualifyingAction && disqualifyingAction.buttonMessage ? disqualifyingAction.buttonMessage : ''
+                  importedDisqualifiedMessage: disqualifyingAction && disqualifyingAction.buttonMessage ? disqualifyingAction.buttonMessage : '',
+                  immediateDisqualify: form.dataset.rstkImmediateDisqualify === 'true'
                 }
               })
             });
@@ -13614,6 +13782,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           } catch (error) {
             setMessage(form, error && error.message ? error.message : 'No se pudo enviar el formulario', 'error');
           } finally {
+            delete form.dataset.rstkImmediateDisqualify;
             if (submitter) submitter.disabled = false;
           }
         });
@@ -13937,6 +14106,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
 
   const activePage = getImportedRenderPage(site, pageId)
   const importedAssetPath = normalizeImportedAssetPath(activePage?.importedAssetPath || activePage?.imported_asset_path)
+  const availablePaths = await getImportedSiteAvailableAssetPaths(site.id)
   let html = imported.htmlSanitized || imported.htmlOriginal || '<!doctype html><html><body></body></html>'
 
   if (importedAssetPath) {
@@ -13945,6 +14115,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
       html = asset.content.toString('utf8')
     }
   }
+  html = rewriteImportedHtmlForRender(site, html, importedAssetPath, availablePaths)
 
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
     trackingEnabled,
@@ -13980,6 +14151,13 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     if (!imported) return null
 
     const page = getImportedRenderPageByAssetPath(site, asset.assetPath)
+    const availablePaths = await getImportedSiteAvailableAssetPaths(site.id)
+    const html = rewriteImportedHtmlForRender(
+      site,
+      asset.content.toString('utf8'),
+      asset.assetPath,
+      availablePaths
+    )
     const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
       trackingEnabled,
       pageId: page?.id || DEFAULT_FUNNEL_PAGE_ID,
@@ -13987,7 +14165,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     })
 
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
-      annotateImportedEditableHtml(asset.content.toString('utf8')),
+      annotateImportedEditableHtml(html),
       buildHeaderTrackingCode(site, page)
     )
 
@@ -14128,10 +14306,12 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const standardFormContentPages = isStandardFormType ? getStandardFormContentPages(site) : []
   const standardFormContentPageIds = standardFormContentPages.map(page => page.id)
   const standardFormPageIndex = isStandardFormType ? standardFormContentPageIds.indexOf(activePage?.id || '') : -1
-  const isStandardFormIntermediatePage = isStandardFormType && standardFormPageIndex >= 0 && standardFormPageIndex < standardFormContentPageIds.length - 1
+  const isStandardFormContentPage = isStandardFormType && standardFormPageIndex >= 0
+  const isStandardFormIntermediatePage = isStandardFormContentPage && standardFormPageIndex < standardFormContentPageIds.length - 1
   const standardFormNextPage = isStandardFormIntermediatePage ? standardFormContentPages[standardFormPageIndex + 1] : null
   const nativeFormContext = getNativeFormContext(site, blocks)
   const hasForm = fieldBlocks.length > 0
+  const hasFormActions = hasForm || (isInteractive && interactivePageCount > 1) || isStandardFormContentPage
   const completionAction = isLandingType
     ? getFormCompletionAction(blocks)
     : isStandardFormType
@@ -14203,7 +14383,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     ? Object.fromEntries(collectFieldBlockPageEntries(isStandardFormType ? (Array.isArray(site.blocks) ? site.blocks : []) : blocks, pages))
     : {}
 
-  const submitArea = hasForm && !isLandingType
+  const submitArea = hasFormActions && !isLandingType
     ? `
       <div class="rstk-actions">
         ${isInteractive && interactivePageCount > 1 ? `<button type="button" class="rstk-secondary" data-back hidden>${escapeHtml(backText)}</button>` : ''}
@@ -14261,7 +14441,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     ${siteNavHtml}
     <main class="rstk-page">
       <div class="rstk-shell">
-        ${isInteractive && hasForm && interactivePageCount > 1 ? `<div class="rstk-progress" data-progress><span class="rstk-progress-track"><span class="rstk-progress-fill" data-progress-fill></span></span><b data-progress-label>Pantalla ${interactiveInitialIndex + 1} de ${interactivePageCount}</b></div>` : ''}
+        ${isInteractive && interactivePageCount > 1 ? `<div class="rstk-progress" data-progress><span class="rstk-progress-track"><span class="rstk-progress-fill" data-progress-fill></span></span><b data-progress-label>Pantalla ${interactiveInitialIndex + 1} de ${interactivePageCount}</b></div>` : ''}
         <form data-site-form data-site-id="${escapeHtml(site.id)}" data-page-id="${escapeHtml(activePage?.id || '')}" novalidate>
           ${bodyBlocks}
           ${submitArea}
@@ -14496,16 +14676,40 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         if (rule.action === 'site_page') return pageUrl(rule.targetPageId || '');
         return '';
       };
-      const handleBlockingRule = (rule, rulePageId, targetMessage) => {
+      const showOnlyRuleMessage = (targetMessage, text) => {
+        const scope = targetMessage && targetMessage.closest ? targetMessage.closest('.rstk-embedded-form') || form : form;
+        scope.querySelectorAll('.rstk-field, [data-interactive-page-content], [data-embedded-page-content]').forEach((element) => {
+          element.hidden = true;
+        });
+        scope.querySelectorAll('[data-next], [data-form-next], [data-back], [data-submit], [data-embedded-next], [data-embedded-back]').forEach((element) => {
+          element.hidden = true;
+        });
+        if (progressLabel) progressLabel.hidden = true;
+        if (progressFill && progressFill.parentElement) progressFill.parentElement.hidden = true;
+        if (targetMessage) {
+          targetMessage.hidden = false;
+          targetMessage.textContent = text;
+        }
+      };
+      const handleBlockingRule = (rule, rulePageId, targetMessage, options = {}) => {
         if (!rule) return false;
         if (isExitRule(rule) && !shouldSubmitRule(rule)) {
           const targetUrl = getRuleRedirectUrl(rule);
           if (targetUrl) window.location.href = targetUrl;
           return true;
         }
-        if (targetMessage) targetMessage.textContent = isExitRule(rule) ? 'Enviando...' : (rule.message || 'Gracias. Tu información fue recibida.');
+        const immediateDisqualify = options.immediate === true && rule.action === 'disqualify';
+        const statusText = isExitRule(rule) ? 'Enviando...' : (rule.message || 'Gracias. Tu información fue recibida.');
+        if (immediateDisqualify) {
+          showOnlyRuleMessage(targetMessage, statusText);
+        } else if (targetMessage) {
+          targetMessage.textContent = statusText;
+        }
         form.dataset.ruleSubmit = 'true';
         form.dataset.rulePageId = rulePageId || getCurrentPageId();
+        form.dataset.ruleAction = rule.action || '';
+        form.dataset.ruleFieldId = options.fieldId || '';
+        form.dataset.immediateDisqualify = immediateDisqualify ? 'true' : '';
         form.requestSubmit();
         return true;
       };
@@ -14526,12 +14730,52 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         return [];
       };
 
+      const isValidUrlValue = (raw) => {
+        const value = String(raw || '').trim();
+        if (!value) return true;
+        try {
+          const parsed = new URL(value.match(/^https?:\\/\\//i) ? value : 'https://' + value);
+          return ['http:', 'https:'].includes(parsed.protocol) && Boolean(parsed.hostname);
+        } catch {
+          return false;
+        }
+      };
+
+      const isValidFieldValue = (validation, value) => {
+        const text = Array.isArray(value) ? value.join(',') : String(value || '').trim();
+        if (!text) return true;
+        if (validation === 'email') return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(text);
+        if (validation === 'phone') return phoneDigits(text).length >= 7;
+        if (validation === 'number') return Number.isFinite(Number(text));
+        if (validation === 'currency') return Number.isFinite(Number(text)) && Number(text) >= 0;
+        if (validation === 'date') return !Number.isNaN(Date.parse(text));
+        if (validation === 'url') return isValidUrlValue(text);
+        return true;
+      };
+
+      const getValidationMessage = (validation) => {
+        if (validation === 'email') return 'Ingresa un correo válido.';
+        if (validation === 'phone') return 'Ingresa un teléfono válido.';
+        if (validation === 'number') return 'Ingresa un número válido.';
+        if (validation === 'currency') return 'Ingresa un monto válido.';
+        if (validation === 'date') return 'Ingresa una fecha válida.';
+        if (validation === 'url') return 'Ingresa una URL válida.';
+        return 'Revisa esta respuesta.';
+      };
+
       const validateField = (field) => {
         const required = field.getAttribute('data-required') === 'true';
+        const validation = field.getAttribute('data-validation') || '';
         const value = readFieldValue(field);
-        const valid = !required || (Array.isArray(value) ? value.length > 0 : String(value || '').trim() !== '');
+        const empty = Array.isArray(value) ? value.length === 0 : String(value || '').trim() === '';
+        const hasRequiredValue = !required || !empty;
+        const hasValidFormat = empty || isValidFieldValue(validation, value);
+        const valid = hasRequiredValue && hasValidFormat;
         const error = field.querySelector('.rstk-error');
-        if (error) error.hidden = valid;
+        if (error) {
+          error.textContent = !hasRequiredValue ? 'Esta respuesta es requerida.' : getValidationMessage(validation);
+          error.hidden = valid;
+        }
         return valid;
       };
 
@@ -14554,6 +14798,31 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         if (progressLabel) progressLabel.textContent = 'Pantalla ' + (index + 1) + ' de ' + stepPages.length;
         if (progressFill) progressFill.style.width = (((index + 1) / stepPages.length) * 100) + '%';
       };
+
+      const getFieldMessageTarget = (field) => {
+        const embeddedForm = field && field.closest ? field.closest('.rstk-embedded-form') : null;
+        return embeddedForm ? embeddedForm.querySelector('[data-message]') || message : message;
+      };
+
+      const handleImmediateRuleChange = (event) => {
+        if (form.dataset.ruleSubmit === 'true') return;
+        const target = event.target;
+        if (!target || !target.closest) return;
+        if (!target.matches('input[type="radio"], input[type="checkbox"], select')) return;
+        if (target.matches('input[type="checkbox"]') && !target.checked) return;
+        const field = target.closest('.rstk-field');
+        if (!field) return;
+        const rule = readSelectedRules(field).find(item => item.action === 'disqualify') || null;
+        if (!rule) return;
+        const fieldPageId = field.getAttribute('data-page-id') || getCurrentPageId();
+        const fieldId = field.getAttribute('data-block-id') || '';
+        handleBlockingRule(rule, fieldPageId, getFieldMessageTarget(field), {
+          immediate: true,
+          fieldId
+        });
+      };
+
+      form.addEventListener('change', handleImmediateRuleChange);
 
       const embeddedForms = Array.from(form.querySelectorAll('[data-embedded-form-pages]')).map((host) => {
         const pageContents = Array.from(host.querySelectorAll('[data-embedded-page-content]'));
@@ -14659,10 +14928,18 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         event.preventDefault();
         const ruleSubmit = form.dataset.ruleSubmit === 'true';
         const rulePageId = form.dataset.rulePageId || getCurrentPageId();
-        const fieldsToValidate = ruleSubmit ? getPageFields(rulePageId) : fields;
+        const ruleAction = form.dataset.ruleAction || '';
+        const ruleFieldId = form.dataset.ruleFieldId || '';
+        const immediateDisqualify = form.dataset.immediateDisqualify === 'true';
+        const fieldsToValidate = immediateDisqualify && ruleFieldId
+          ? fields.filter(field => field.getAttribute('data-block-id') === ruleFieldId)
+          : ruleSubmit ? getPageFields(rulePageId) : fields;
         const valid = fieldsToValidate.every(validateField);
         if (!valid) {
           delete form.dataset.ruleSubmit;
+          delete form.dataset.ruleAction;
+          delete form.dataset.ruleFieldId;
+          delete form.dataset.immediateDisqualify;
           return;
         }
 
@@ -14695,6 +14972,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
                 visitorId: nativeIdentity.visitorId || null,
                 sessionId: nativeIdentity.sessionId || null,
                 ruleSubmit,
+                ruleAction,
+                ruleFieldId,
+                immediateDisqualify,
                 formFinalSubmit: isStandardForm && !ruleSubmit && !isStandardFormIntermediatePage,
                 tracking: nativeTracking,
                 fbp: (document.cookie.match(/(?:^|; )_fbp=([^;]+)/) || [])[1] || null,
@@ -14719,9 +14999,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
               conversion_type: 'form_submit'
             }, metaEventName);
           }
-          form.reset();
           clearStoredResponses();
-          initPhoneCountryFields();
           if (window.ristakNativeRememberContact && submission.contactId) {
             window.ristakNativeRememberContact({
               contactId: submission.contactId,
@@ -14729,12 +15007,16 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
               email: submission.contactEmail || ''
             });
           }
-          index = 0;
-          renderStep();
-          embeddedForms.forEach((state) => {
-            state.index = 0;
-            renderEmbeddedForm(state);
-          });
+          if (!immediateDisqualify) {
+            form.reset();
+            initPhoneCountryFields();
+            index = 0;
+            renderStep();
+            embeddedForms.forEach((state) => {
+              state.index = 0;
+              renderEmbeddedForm(state);
+            });
+          }
           if (submission.redirectUrl) {
             window.location.href = preserveUrl(submission.redirectUrl);
             return;
@@ -14754,6 +15036,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         } finally {
           delete form.dataset.ruleSubmit;
           delete form.dataset.rulePageId;
+          delete form.dataset.ruleAction;
+          delete form.dataset.ruleFieldId;
+          delete form.dataset.immediateDisqualify;
           if (submitButton) submitButton.disabled = false;
           if (formNextButton) formNextButton.disabled = false;
         }
@@ -15180,7 +15465,167 @@ async function findExistingContact({ email, phone }) {
   return null
 }
 
-async function upsertContactFromSubmission({ site, contact, meta }) {
+function automationAnswerKey(value, fallback = 'campo') {
+  const normalized = cleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return normalized || fallback
+}
+
+function automationAnswerText(value) {
+  if (Array.isArray(value)) return value.map(automationAnswerText).filter(Boolean).join(', ')
+  if (value && typeof value === 'object') return JSON.stringify(value)
+  return cleanString(value)
+}
+
+function setAutomationAnswerAlias(target, key, value) {
+  const directKey = cleanString(key)
+  const normalizedKey = automationAnswerKey(directKey, '')
+  if (directKey && target[directKey] === undefined) target[directKey] = value
+  if (normalizedKey && target[normalizedKey] === undefined) target[normalizedKey] = value
+}
+
+function addAutomationAnswer(output, answer = {}) {
+  const value = Object.prototype.hasOwnProperty.call(answer, 'value') ? answer.value : ''
+  const id = cleanString(answer.id || answer.fieldId || answer.blockId)
+  const label = cleanString(answer.label || answer.question || answer.name || id)
+  const key = automationAnswerKey(answer.key || answer.fieldKey || answer.internalName || label || id, id || 'respuesta')
+  const entry = {
+    id,
+    key,
+    label: label || key,
+    type: cleanString(answer.type || answer.blockType || ''),
+    value
+  }
+  output.answers.push(entry)
+  setAutomationAnswerAlias(output.byId, id, value)
+  setAutomationAnswerAlias(output.byKey, key, value)
+  setAutomationAnswerAlias(output.byLabel, entry.label, value)
+}
+
+function finishAutomationResponses(output) {
+  output.summary = output.answers
+    .map(answer => `${answer.label || answer.key}: ${automationAnswerText(answer.value)}`)
+    .filter(line => !/:\s*$/.test(line))
+    .join('\n')
+  return output
+}
+
+function makeEmptyAutomationResponses() {
+  return {
+    answers: [],
+    byId: {},
+    byKey: {},
+    byLabel: {},
+    summary: ''
+  }
+}
+
+function buildNativeAutomationFormResponses({ blocks = [], responses = {} } = {}) {
+  const output = makeEmptyAutomationResponses()
+  for (const block of collectFieldBlocks(blocks)) {
+    if (!Object.prototype.hasOwnProperty.call(responses || {}, block.id)) continue
+    const settings = block.settings || {}
+    const value = responses[block.id]
+    const empty = Array.isArray(value) ? value.length === 0 : !cleanString(value)
+    if (empty) continue
+    addAutomationAnswer(output, {
+      id: block.id,
+      key: settings.customFieldKey || settings.internalName || settings.systemFieldKey || block.id,
+      label: block.label || settings.customFieldLabel || settings.internalName || block.id,
+      type: block.blockType,
+      value
+    })
+  }
+  return finishAutomationResponses(output)
+}
+
+function buildImportedAutomationFormResponses({ rawFields = {}, mappedFields = {} } = {}) {
+  const output = makeEmptyAutomationResponses()
+  Object.entries(rawFields || {}).forEach(([key, value]) => {
+    if (isEmptyImportedValue(value)) return
+    addAutomationAnswer(output, {
+      id: key,
+      key,
+      label: key,
+      type: Array.isArray(value) ? 'checkboxes' : 'text',
+      value
+    })
+  })
+  ;['standard', 'custom', 'ignored'].forEach(section => {
+    Object.entries(mappedFields?.[section] || {}).forEach(([key, value]) => {
+      if (isEmptyImportedValue(value)) return
+      setAutomationAnswerAlias(output.byKey, key, value)
+      setAutomationAnswerAlias(output.byKey, `${section}.${key}`, value)
+    })
+  })
+  return finishAutomationResponses(output)
+}
+
+function customFieldChangeKeys(fields = []) {
+  return fields
+    .map(field => cleanString(field.fieldKey || field.key || field.field_key))
+    .filter(Boolean)
+    .flatMap(key => [`custom:${key}`, key])
+}
+
+function automationImportedFormId(siteId, importedFormId) {
+  const site = cleanString(siteId)
+  const form = cleanString(importedFormId)
+  return site && form ? `${site}:imported:${form}` : ''
+}
+
+function emitSiteSubmissionAutomationEvents({ contactResult, formEvent, contactChangedFields = [] }) {
+  const contactId = contactResult?.contactId || formEvent?.contactId
+  import('./automationEngine.js')
+    .then(async (engine) => {
+      if (contactId) {
+        const contactEvent = {
+          contactId,
+          source: 'form',
+          contactChangeSource: 'form',
+          formId: formEvent.formId,
+          formName: formEvent.formName,
+          automationFormId: formEvent.automationFormId,
+          siteId: formEvent.siteId,
+          siteName: formEvent.siteName,
+          formSiteId: formEvent.formSiteId,
+          formSiteName: formEvent.formSiteName,
+          importedFormId: formEvent.importedFormId,
+          importedFormName: formEvent.importedFormName,
+          submissionId: formEvent.submissionId,
+          formStatus: formEvent.formStatus,
+          status: formEvent.status,
+          formDisqualified: formEvent.formDisqualified,
+          submittedAt: formEvent.submittedAt,
+          formResponses: formEvent.formResponses
+        }
+        if (contactResult?.created) {
+          await engine.handleAutomationEvent('contact-created', contactEvent)
+        } else {
+          await engine.handleAutomationEvent('contact-updated', {
+            ...contactEvent,
+            changedFields: [...new Set([
+              ...(contactResult?.changedFields || []),
+              ...contactChangedFields,
+              'formSubmission',
+              'publicSiteSubmission',
+              'updatedAt'
+            ].filter(Boolean))]
+          })
+        }
+      }
+      await engine.handleAutomationEvent('form-submitted', formEvent)
+    })
+    .catch(error => {
+      logger.warn(`No se pudieron disparar automatizaciones de formulario: ${error.message}`)
+    })
+}
+
+async function upsertContactFromSubmissionWithResult({ site, contact, meta }) {
   const email = normalizeEmail(contact.email)
   const phone = await normalizePhoneForAccount(contact.phone) || cleanString(contact.phone)
   const explicitFirstName = cleanString(contact.firstName || contact.first_name)
@@ -15200,6 +15645,14 @@ async function upsertContactFromSubmission({ site, contact, meta }) {
   const visitorId = cleanString(meta?.visitorId || meta?.visitor_id)
 
   if (existing) {
+    const changedFields = ['updatedAt']
+    if (!cleanString(existing.phone) && phone) changedFields.push('phone')
+    if (!cleanString(existing.email) && email) changedFields.push('email')
+    if (!cleanString(existing.full_name) && fullName) changedFields.push('fullName')
+    if (!cleanString(existing.first_name) && firstName) changedFields.push('firstName')
+    if (!cleanString(existing.last_name) && lastName) changedFields.push('lastName')
+    if (visitorId) changedFields.push('visitorId')
+
     await db.run(`
       UPDATE contacts SET
         phone = COALESCE(NULLIF(phone, ''), ?),
@@ -15232,7 +15685,11 @@ async function upsertContactFromSubmission({ site, contact, meta }) {
       contactId
     ])
     await finalizePreparedPhoneUpsert(phoneUpsert, contactId)
-    return contactId
+    return {
+      contactId,
+      created: false,
+      changedFields: [...new Set(changedFields)]
+    }
   }
 
   await db.run(`
@@ -15266,12 +15723,31 @@ async function upsertContactFromSubmission({ site, contact, meta }) {
   ])
 
   await finalizePreparedPhoneUpsert(phoneUpsert, contactId)
-  return contactId
+  return {
+    contactId,
+    created: true,
+    changedFields: [
+      'createdAt',
+      'phone',
+      'email',
+      'fullName',
+      'firstName',
+      'lastName',
+      'source',
+      visitorId ? 'visitorId' : ''
+    ].filter(Boolean)
+  }
 }
 
-function normalizeSubmissionResponses(blocks, responses = {}) {
+async function upsertContactFromSubmission(args) {
+  const result = await upsertContactFromSubmissionWithResult(args)
+  return result.contactId
+}
+
+function normalizeSubmissionResponses(blocks, responses = {}, options = {}) {
   const normalized = {}
   const errors = []
+  const skipRequired = options.skipRequired === true
 
   for (const block of collectFieldBlocks(blocks)) {
     if (!FIELD_BLOCK_TYPES.has(block.blockType)) continue
@@ -15288,7 +15764,7 @@ function normalizeSubmissionResponses(blocks, responses = {}) {
     }
 
     const missing = Array.isArray(value) ? value.length === 0 : !value
-    if (block.required && missing) {
+    if (!skipRequired && block.required && missing) {
       errors.push(`${block.label || 'Pregunta'} es requerida`)
     }
 
@@ -15948,8 +16424,9 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields }) {
 }
 
 async function upsertImportedContactFromSubmission({ site, contact, customFields, meta, imported, formMapping }) {
-  const contactId = await upsertContactFromSubmission({ site, contact, meta })
-  if (!contactId || !Array.isArray(customFields) || customFields.length === 0) return contactId
+  const contactResult = await upsertContactFromSubmissionWithResult({ site, contact, meta })
+  const contactId = contactResult.contactId
+  if (!contactId || !Array.isArray(customFields) || customFields.length === 0) return contactResult
 
   const preparedFields = await prepareContactCustomFieldsForStorage(customFields, {
     sourceType: 'imported_html',
@@ -15976,10 +16453,16 @@ async function upsertImportedContactFromSubmission({ site, contact, customFields
     contactId
   ])
 
-  return contactId
+  return {
+    ...contactResult,
+    changedFields: [
+      ...(contactResult.changedFields || []),
+      ...customFieldChangeKeys(preparedFields)
+    ]
+  }
 }
 
-async function createImportedSubmissionFromRequest({ req, body, site, host }) {
+async function createImportedSubmissionFromRequest({ req, body, site, host, previewContext = null }) {
   const imported = await getImportedSiteBySiteId(site.id)
   if (!imported) {
     const error = new Error('Importacion de HTML no encontrada')
@@ -16010,6 +16493,8 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
   const meta = {
     ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),
     host,
+    previewSession: Boolean(previewContext),
+    previewPageId: previewContext?.pageId || '',
     importedHtml: true,
     importedFormId: layers.formMapping?.formId || importedFormId,
     importedFormTitle: layers.formMapping?.formTitle || '',
@@ -16021,7 +16506,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
   const responseMessage = importedDisqualified
     ? cleanString(meta.importedDisqualifiedMessage || meta.imported_disqualified_message) || 'Gracias. Por ahora esta solicitud no califica.'
     : 'Listo. Recibimos tu información.'
-  const contactId = await upsertImportedContactFromSubmission({
+  const contactResult = await upsertImportedContactFromSubmission({
     site,
     contact,
     customFields: layers.customFields,
@@ -16029,7 +16514,10 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
     imported,
     formMapping: layers.formMapping
   })
+  const contactId = contactResult.contactId
   const submissionId = crypto.randomUUID()
+  const importedAutomationFormId = layers.formMapping?.formId || importedFormId
+  const importedAutomationFormName = layers.formMapping?.formTitle || site.name || ''
 
   await db.run(`
     INSERT INTO public_site_submissions (
@@ -16049,20 +16537,29 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
     submissionStatus
   ])
 
-  // Motor de automatizaciones: formulario enviado
-  import('./automationEngine.js')
-    .then(engine => engine.handleAutomationEvent('form-submitted', {
+  emitSiteSubmissionAutomationEvents({
+    contactResult,
+    formEvent: {
       contactId,
       formId: site.id,
-      formName: site.name || '',
+      formName: importedAutomationFormName,
+      automationFormId: automationImportedFormId(site.id, importedAutomationFormId),
+      siteId: site.id,
+      siteName: site.name || '',
+      importedFormId: importedAutomationFormId,
+      importedFormName: importedAutomationFormName,
       submissionId,
       formStatus: submissionStatus,
       status: submissionStatus,
       formDisqualified: submissionStatus === 'disqualified',
       submittedAt: meta.submittedAt,
-      formResponses: layers.mappedFields
-    }))
-    .catch(() => {})
+      formResponses: buildImportedAutomationFormResponses({
+        rawFields: layers.rawFields,
+        mappedFields: layers.mappedFields
+      })
+    },
+    contactChangedFields: customFieldChangeKeys(layers.customFields)
+  })
 
   const capi = await sendSiteLeadMetaEvent({
     site,
@@ -16105,17 +16602,13 @@ async function createImportedSubmissionFromRequest({ req, body, site, host }) {
   }
 }
 
-export async function createSubmissionFromRequest(req, body = {}) {
-  const host = getRequestHost(req)
-  const domainResolution = await resolveConnectedPublicDomainForHost(host)
-
-  if (!domainResolution.ok) {
-    const error = new Error(domainResolution.message)
-    error.status = domainResolution.status
-    throw error
-  }
-
-  const submittedSiteId = cleanString(body.siteId)
+export async function createSubmissionFromRequest(req, body = {}, options = {}) {
+  const {
+    host,
+    submittedSiteId,
+    domainResolution,
+    previewContext
+  } = await resolvePublicRequestAccess(req, body, options)
   const site = submittedSiteId
     ? await getSite(submittedSiteId, { includeBlocks: false, includeSubmissions: false })
     : await findSiteByRoutePath(req.path)
@@ -16134,7 +16627,7 @@ export async function createSubmissionFromRequest(req, body = {}) {
 
   site.domain = domainResolution.domain || host
   if (isImportedHtmlSite(site)) {
-    return createImportedSubmissionFromRequest({ req, body, site, host })
+    return createImportedSubmissionFromRequest({ req, body, site, host, previewContext })
   }
 
   site.blocks = await hydrateEmbeddedForms(await listSiteBlocks(site.id))
@@ -16162,7 +16655,15 @@ export async function createSubmissionFromRequest(req, body = {}) {
     : site.siteType === 'landing_page' && submittedPageId
       ? getPageBlocks(siteWithBlocks, submittedPageId)
       : orderedSubmissionBlocks
-  const { responses, errors } = normalizeSubmissionResponses(submissionBlocks, body.responses || {})
+  const immediateDisqualifySubmit = normalizeBoolean(
+    body.meta?.immediateDisqualify ||
+    body.meta?.immediate_disqualify ||
+    (body.meta?.ruleAction === 'disqualify' ? true : false) ||
+    (body.meta?.rule_action === 'disqualify' ? true : false)
+  )
+  const { responses, errors } = normalizeSubmissionResponses(submissionBlocks, body.responses || {}, {
+    skipRequired: immediateDisqualifySubmit
+  })
   if (errors.length) {
     const error = new Error(errors.join(', '))
     error.status = 400
@@ -16176,13 +16677,16 @@ export async function createSubmissionFromRequest(req, body = {}) {
   const meta = {
     ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),
     host,
+    previewSession: Boolean(previewContext),
+    previewPageId: previewContext?.pageId || '',
     rules: ruleEvaluation,
     userAgent: req.headers['user-agent'] || '',
     submittedAt: new Date().toISOString()
   }
   const nativeLayers = buildNativeSubmissionLayers({ site, blocks: submissionBlocks, responses })
   const inferredContact = inferContactFromResponses(collectFieldBlocks(submissionBlocks), responses)
-  const contactId = await upsertContactFromSubmission({ site, contact: inferredContact, meta })
+  const contactResult = await upsertContactFromSubmissionWithResult({ site, contact: inferredContact, meta })
+  const contactId = contactResult.contactId
   const preparedCustomFields = await upsertNativeContactCustomFields({
     site,
     contactId,
@@ -16200,6 +16704,7 @@ export async function createSubmissionFromRequest(req, body = {}) {
       : {})
   }
   const submissionId = crypto.randomUUID()
+  const nativeFormContext = getNativeFormContext(site, submissionBlocks)
 
   await db.run(`
     INSERT INTO public_site_submissions (
@@ -16219,20 +16724,29 @@ export async function createSubmissionFromRequest(req, body = {}) {
     ruleEvaluation.status
   ])
 
-  // Motor de automatizaciones: formulario enviado
-  import('./automationEngine.js')
-    .then(engine => engine.handleAutomationEvent('form-submitted', {
+  emitSiteSubmissionAutomationEvents({
+    contactResult,
+    formEvent: {
       contactId,
-      formId: site.id,
-      formName: site.name || '',
+      formId: nativeFormContext.formSiteId || site.id,
+      formName: nativeFormContext.formSiteName || site.name || '',
+      siteId: site.id,
+      siteName: site.name || '',
+      formSiteId: nativeFormContext.formSiteId || site.id,
+      formSiteName: nativeFormContext.formSiteName || site.name || '',
       submissionId,
       formStatus: ruleEvaluation.status,
       status: ruleEvaluation.status,
       formDisqualified: ruleEvaluation.status === 'disqualified' || ruleEvaluation.disqualified === true,
       submittedAt: meta.submittedAt,
-      formResponses: responses
-    }))
-    .catch(() => {})
+      formResponses: buildNativeAutomationFormResponses({
+        blocks: submissionBlocks,
+        responses
+      }),
+      immediateDisqualify: immediateDisqualifySubmit
+    },
+    contactChangedFields: customFieldChangeKeys(preparedCustomFields)
+  })
 
   const capi = await sendSiteLeadMetaEvent({
     site,
@@ -16278,15 +16792,12 @@ export async function createSubmissionFromRequest(req, body = {}) {
   }
 }
 
-export async function createMetaPageEventFromRequest(req, body = {}) {
-  const host = getRequestHost(req)
-  const domainResolution = await resolveConnectedPublicDomainForHost(host)
-
-  if (!domainResolution.ok) {
-    const error = new Error(domainResolution.message)
-    error.status = domainResolution.status
-    throw error
-  }
+export async function createMetaPageEventFromRequest(req, body = {}, options = {}) {
+  const {
+    host,
+    domainResolution,
+    previewContext
+  } = await resolvePublicRequestAccess(req, body, options)
 
   const siteId = cleanString(body.siteId || body.site_id)
   if (!siteId) {
@@ -16320,7 +16831,11 @@ export async function createMetaPageEventFromRequest(req, body = {}) {
     return { sent: false, reason: 'page_event_disabled' }
   }
 
-  const meta = body.meta && typeof body.meta === 'object' ? body.meta : {}
+  const meta = {
+    ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),
+    previewSession: Boolean(previewContext),
+    previewPageId: previewContext?.pageId || ''
+  }
   const eventId = cleanString(body.eventId || body.event_id) || `site_page_${site.id}_${pageMeta.page.id}_${crypto.randomUUID()}`
   const contactId = cleanString(body.contactId || body.contact_id)
 

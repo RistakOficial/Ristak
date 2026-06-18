@@ -5,6 +5,7 @@ import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
+import { publishChatMessageEvent } from './chatLiveEventsService.js'
 
 const DEFAULT_VERIFY_TOKEN = 'ristak-meta-webhook'
 const META_SIGNATURE_HEADER = 'x-hub-signature-256'
@@ -557,6 +558,17 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
           timestamp: socialMessage.messageTimestamp
         }
         results.push(result)
+        publishChatMessageEvent({
+          contactId: result.contactId,
+          messageId: result.messageId,
+          channel: result.platform,
+          provider: 'meta',
+          transport: result.platform,
+          direction: result.direction,
+          messageType: result.messageType,
+          messageTimestamp: result.timestamp,
+          isNew: result.isNew
+        })
 
         if (result.direction === 'inbound' && result.isNew !== false) {
           // Motor de automatizaciones (import dinámico: evita ciclo)

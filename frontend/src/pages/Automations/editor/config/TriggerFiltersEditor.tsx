@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Plus, X } from 'lucide-react'
+import { getFormFieldCatalog, type CatalogOption } from '@/services/automationCatalogsService'
 import {
   asTriggerFilters,
   filterFieldsFor,
@@ -23,9 +24,12 @@ export const TriggerFiltersEditor: React.FC<{
   onChange: (filters: TriggerFilter[]) => void
   /** Tipo del disparador (u objetivo) para mostrar solo campos congruentes */
   contextKey?: string
-}> = ({ value, onChange, contextKey }) => {
+  /** Formulario elegido en el disparador/objetivo para cargar sus preguntas */
+  selectedFormId?: string
+}> = ({ value, onChange, contextKey, selectedFormId }) => {
   const filters = asTriggerFilters(value)
   const fields = filterFieldsFor(contextKey)
+  const formIdForQuestions = selectedFormId || filters.find((filter) => filter.field === 'form-specific' && filter.value)?.value || ''
 
   const groups: DrillGroup[] = []
   fields.forEach((field) => {
@@ -45,7 +49,8 @@ export const TriggerFiltersEditor: React.FC<{
     <div>
       {filters.map((filter, index) => {
         const field = fields.find((candidate) => candidate.id === filter.field)
-        const fieldReady = Boolean(filter.field) && (filter.field !== 'custom' || Boolean(filter.customKey))
+        const needsCustomKey = Boolean(field?.needsCustomKey)
+        const fieldReady = Boolean(filter.field) && (!needsCustomKey || Boolean(filter.customKey))
         const operators = triggerOperatorsForField(field)
         const needsValue = Boolean(filter.match) && triggerOperatorNeedsValue(filter.match)
         return (
@@ -98,6 +103,17 @@ export const TriggerFiltersEditor: React.FC<{
                   onChange={(next, label) => update(index, { customKey: next, customLabel: label })}
                   placeholder="Elige el campo personalizado"
                   aria-label="Campo personalizado"
+                />
+              </div>
+            )}
+
+            {filter.field === 'form_field' && (
+              <div className={styles.filterStep}>
+                <FormFieldSelect
+                  formId={formIdForQuestions}
+                  value={filter.customKey || ''}
+                  savedLabel={filter.customLabel || ''}
+                  onChange={(next, label) => update(index, { customKey: next, customLabel: label })}
                 />
               </div>
             )}
@@ -169,5 +185,70 @@ export const TriggerFiltersEditor: React.FC<{
         Añadir filtro
       </button>
     </div>
+  )
+}
+
+const FormFieldSelect: React.FC<{
+  formId: string
+  value: string
+  savedLabel?: string
+  onChange: (value: string, label: string) => void
+}> = ({ formId, value, savedLabel, onChange }) => {
+  const [options, setOptions] = useState<CatalogOption[]>([])
+  const [loading, setLoading] = useState(Boolean(formId))
+
+  useEffect(() => {
+    const cleanFormId = String(formId || '').trim()
+    if (!cleanFormId) {
+      setOptions([])
+      setLoading(false)
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    getFormFieldCatalog(cleanFormId).then((loaded) => {
+      if (cancelled) return
+      setOptions(loaded)
+      setLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [formId])
+
+  const selectOptions = useMemo(() => {
+    const mapped = options.map((option) => ({
+      value: option.value,
+      label: option.meta ? `${option.label} · ${option.meta}` : option.label
+    }))
+    if (value && !mapped.some((option) => option.value === value)) {
+      mapped.unshift({ value, label: `${savedLabel || value} · guardado` })
+    }
+    return mapped
+  }, [options, savedLabel, value])
+
+  if (!formId) {
+    return <span className={styles.configHelp}>Primero selecciona el formulario del disparador.</span>
+  }
+
+  if (loading) {
+    return <span className={styles.configHelp} role="status" aria-live="polite">Cargando preguntas del formulario...</span>
+  }
+
+  if (selectOptions.length === 0) {
+    return <span className={styles.configHelp}>Este formulario todavía no tiene preguntas detectadas.</span>
+  }
+
+  return (
+    <CustomSelect
+      options={selectOptions}
+      value={value}
+      onValueChange={(next) => {
+        const selected = options.find((option) => option.value === next)
+        onChange(next, selected?.label || savedLabel || next)
+      }}
+      placeholder="Elige la pregunta del formulario"
+      aria-label="Pregunta del formulario"
+    />
   )
 }

@@ -5,6 +5,7 @@ import { db } from '../src/config/database.js'
 import { createTriggerLink } from '../src/services/triggerLinksService.js'
 import { createVariableField } from '../src/services/variableFieldsService.js'
 import { renderTemplateVariables } from '../src/services/templateVariablesService.js'
+import { renderCalendarAppointmentTemplates } from '../src/services/calendarAppointmentTemplateService.js'
 
 test('renderTemplateVariables resuelve contacto, personalizados, variables y enlaces de disparo', async () => {
   const suffix = randomUUID()
@@ -59,6 +60,62 @@ test('renderTemplateVariables resuelve contacto, personalizados, variables y enl
       await db.run('DELETE FROM trigger_link_events WHERE trigger_link_id = ?', [triggerLink.id]).catch(() => undefined)
       await db.run('DELETE FROM trigger_links WHERE id = ?', [triggerLink.id]).catch(() => undefined)
     }
+    if (variableField?.id) {
+      await db.run('DELETE FROM variable_fields WHERE id = ?', [variableField.id]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('renderCalendarAppointmentTemplates arma titulo y notas de cita con parametros', async () => {
+  const suffix = randomUUID()
+  const contactId = `rstk_contact_calendar_tpl_${suffix}`
+  let variableField
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        '+525555551234',
+        `cita-${suffix}@example.test`,
+        'Luis Agenda',
+        'Luis',
+        'Agenda'
+      ]
+    )
+
+    variableField = await createVariableField({
+      label: 'Nombre del negocio',
+      fieldKey: `negocio_cal_${suffix.replace(/-/g, '_')}`,
+      value: 'Ristak Consultores'
+    })
+
+    const rendered = await renderCalendarAppointmentTemplates({
+      calendar: {
+        id: 'rstk_cal_demo',
+        name: 'Consultor Digital',
+        eventTitle: 'Cita con {{contact.full_name}}',
+        notes: 'Cliente: {{contact.first_name}}\nNegocio: {{variable.' + variableField.fieldKey + '}}\nNotas: {{appointment.notes}}'
+      },
+      appointmentData: {
+        contactId,
+        calendarId: 'rstk_cal_demo',
+        startTime: '2026-06-20T16:30:00.000Z',
+        endTime: '2026-06-20T17:30:00.000Z',
+        appointmentStatus: 'confirmed',
+        notes: 'Quiere revisar calendario'
+      },
+      titleTemplate: 'Cita con {{contact.full_name}}',
+      notesTemplate: 'Cliente: {{contact.first_name}}\nNegocio: {{variable.' + variableField.fieldKey + '}}\nNotas: {{appointment.notes}}'
+    })
+
+    assert.equal(rendered.title, 'Cita con Luis Agenda')
+    assert.match(rendered.notes, /Cliente: Luis/)
+    assert.match(rendered.notes, /Negocio: Ristak Consultores/)
+    assert.match(rendered.notes, /Notas: Quiere revisar calendario/)
+  } finally {
     if (variableField?.id) {
       await db.run('DELETE FROM variable_fields WHERE id = ?', [variableField.id]).catch(() => undefined)
     }

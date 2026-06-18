@@ -1,8 +1,14 @@
 import { randomUUID } from 'crypto'
 import { db } from '../config/database.js'
+import { PUBLIC_URL } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { getAccountTimezone } from '../utils/dateUtils.js'
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
+import {
+  DEFAULT_CONVERSATIONAL_AI_PROVIDER,
+  getDefaultConversationalModelForProvider,
+  normalizeConversationalAIProvider
+} from './conversationalAIProviderService.js'
 
 /**
  * Servicio del agente conversacional: configuración global, estado por
@@ -17,7 +23,7 @@ import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsS
  * - discarded: conversación descartada (spam, acoso, fuera de contexto)
  *
  * Señales internas (signal): ready_for_human | ready_to_schedule |
- * ready_to_buy | appointment_booked | discarded
+ * ready_to_buy | appointment_booked | purchase_completed | discarded
  */
 
 export const CONVERSATIONAL_OBJECTIVES = [
@@ -31,14 +37,16 @@ export const CONVERSATIONAL_OBJECTIVES = [
 export const SUCCESS_ACTIONS = [
   { id: 'ready_for_human', label: 'Pasar a un humano' },
   { id: 'book_appointment', label: 'Agendar con IA' },
-  { id: 'ready_to_buy', label: 'Enviar link de pago' }
+  { id: 'ready_to_buy', label: 'Enviar link de pago' },
+  { id: 'send_goal_url', label: 'Enviar enlace con confirmación automática' },
+  { id: 'send_trigger_link', label: 'Enviar enlace de disparo' }
 ]
 
 const VALID_OBJECTIVES = new Set(CONVERSATIONAL_OBJECTIVES.map((item) => item.id))
 const VALID_SUCCESS_ACTIONS = new Set(SUCCESS_ACTIONS.map((item) => item.id))
 const DEFAULT_SUCCESS_ACTION = 'ready_for_human'
 const VALID_STATUSES = new Set(['active', 'paused', 'human', 'skipped', 'completed', 'discarded'])
-const DEFAULT_CONVERSATIONAL_AGENT_MODEL = process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || 'gpt-5.4-nano'
+const DEFAULT_CONVERSATIONAL_AGENT_MODEL = getDefaultConversationalModelForProvider(DEFAULT_CONVERSATIONAL_AI_PROVIDER)
 const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
 const RESPONSE_DELAY_MODES = new Set(['none', 'fixed', 'random'])
 const RESPONSE_DELAY_UNITS = new Set(['seconds', 'minutes'])
@@ -56,7 +64,7 @@ const DEFAULT_REPLY_DELIVERY_CONFIG = {
   mode: 'single',
   splitMessagesEnabled: false,
   minMessageLengthToSplit: 120,
-  maxBubbles: 5,
+  maxBubbles: 6,
   minBubbleLength: 20,
   maxBubbleLength: 350,
   targetChars: 350,
@@ -92,9 +100,9 @@ function toBoolean(value) {
   return [true, 1, '1', 'true'].includes(value)
 }
 
-export function normalizeConversationalAgentModel(value) {
+export function normalizeConversationalAgentModel(value, provider = DEFAULT_CONVERSATIONAL_AI_PROVIDER) {
   const model = String(value || '').trim().slice(0, 100)
-  return AI_MODEL_ID_PATTERN.test(model) ? model : DEFAULT_CONVERSATIONAL_AGENT_MODEL
+  return AI_MODEL_ID_PATTERN.test(model) ? model : getDefaultConversationalModelForProvider(provider)
 }
 
 export function normalizeConversationalSuccessAction(value = DEFAULT_SUCCESS_ACTION) {
@@ -106,6 +114,7 @@ function mapConfigRow(row) {
   if (!row) {
     return {
       enabled: false,
+      aiProvider: DEFAULT_CONVERSATIONAL_AI_PROVIDER,
       model: DEFAULT_CONVERSATIONAL_AGENT_MODEL,
       objective: 'citas',
       customObjective: '',
@@ -125,7 +134,8 @@ function mapConfigRow(row) {
 
   return {
     enabled: toBoolean(row.enabled),
-    model: normalizeConversationalAgentModel(row.model),
+    aiProvider: normalizeConversationalAIProvider(row.ai_provider),
+    model: normalizeConversationalAgentModel(row.model, row.ai_provider),
     objective: VALID_OBJECTIVES.has(row.objective) ? row.objective : 'citas',
     customObjective: row.custom_objective || '',
     successAction: VALID_SUCCESS_ACTIONS.has(row.success_action) ? row.success_action : DEFAULT_SUCCESS_ACTION,
@@ -154,7 +164,12 @@ export async function saveConversationalAgentConfig(input = {}) {
 
   const next = {
     enabled: input.enabled === undefined ? current.enabled : toBoolean(input.enabled),
-    model: input.model === undefined ? current.model : normalizeConversationalAgentModel(input.model),
+    aiProvider: input.aiProvider === undefined ? current.aiProvider : normalizeConversationalAIProvider(input.aiProvider),
+    model: input.model === undefined
+      ? (input.aiProvider === undefined
+        ? normalizeConversationalAgentModel(current.model, current.aiProvider)
+        : getDefaultConversationalModelForProvider(input.aiProvider))
+      : normalizeConversationalAgentModel(input.model, input.aiProvider === undefined ? current.aiProvider : input.aiProvider),
     objective: VALID_OBJECTIVES.has(input.objective) ? input.objective : current.objective,
     customObjective: input.customObjective === undefined ? current.customObjective : String(input.customObjective || '').slice(0, 2000),
     successAction: normalizeConversationalSuccessAction(input.successAction === undefined ? current.successAction : input.successAction),
@@ -177,14 +192,14 @@ export async function saveConversationalAgentConfig(input = {}) {
   if (existing) {
     await db.run(`
       UPDATE conversational_agent_config
-      SET enabled = ?, model = ?, objective = ?, custom_objective = ?, success_action = ?,
+      SET enabled = ?, ai_provider = ?, model = ?, objective = ?, custom_objective = ?, success_action = ?,
           required_data = ?, handoff_rules = ?, extra_instructions = ?,
           allow_emojis = ?, hide_attended = ?, hide_attended_notifications = ?, default_calendar_id = ?,
           closing_strategy_mode = ?, closing_strategy_custom = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = 1
     `, [
-      next.enabled ? 1 : 0, next.model, next.objective, next.customObjective, next.successAction,
+      next.enabled ? 1 : 0, next.aiProvider, next.model, next.objective, next.customObjective, next.successAction,
       next.requiredData, next.handoffRules, next.extraInstructions,
       next.allowEmojis ? 1 : 0, next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
       next.closingStrategyMode, next.closingStrategyCustom
@@ -192,13 +207,13 @@ export async function saveConversationalAgentConfig(input = {}) {
   } else {
     await db.run(`
       INSERT INTO conversational_agent_config (
-        id, enabled, model, objective, custom_objective, success_action,
+        id, enabled, ai_provider, model, objective, custom_objective, success_action,
         required_data, handoff_rules, extra_instructions,
         allow_emojis, hide_attended, hide_attended_notifications, default_calendar_id,
         closing_strategy_mode, closing_strategy_custom
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
-      next.enabled ? 1 : 0, next.model, next.objective, next.customObjective, next.successAction,
+      next.enabled ? 1 : 0, next.aiProvider, next.model, next.objective, next.customObjective, next.successAction,
       next.requiredData, next.handoffRules, next.extraInstructions,
       next.allowEmojis ? 1 : 0, next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
       next.closingStrategyMode, next.closingStrategyCustom
@@ -208,7 +223,7 @@ export async function saveConversationalAgentConfig(input = {}) {
   await recordConversationalAgentEvent({
     contactId: null,
     eventType: 'config_updated',
-    detail: { enabled: next.enabled, model: next.model, objective: next.objective, successAction: next.successAction }
+    detail: { enabled: next.enabled, aiProvider: next.aiProvider, model: next.model, objective: next.objective, successAction: next.successAction }
   })
 
   return getConversationalAgentConfig()
@@ -638,12 +653,16 @@ function normalizeAgentFilters(input) {
 }
 
 const SUCCESS_EXTRA_TYPES = new Set(['add_tag', 'remove_tag', 'set_custom_field'])
-const GOAL_WORKFLOW_OWNERS = new Set(['human', 'ai'])
+const GOAL_WORKFLOW_OWNERS = new Set(['human', 'ai', 'url'])
+export const CONVERSATIONAL_AGENT_GOAL_WEBHOOK_PATH = '/webhook/conversational-agent/goal'
+export const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
 
 const DEFAULT_GOAL_WORKFLOW_CONFIG = {
   appointments: {
     owner: 'human',
-    calendarId: null
+    calendarId: null,
+    url: '',
+    trackingParam: DEFAULT_GOAL_TRACKING_PARAM
   },
   sales: {
     owner: 'human',
@@ -652,7 +671,9 @@ const DEFAULT_GOAL_WORKFLOW_CONFIG = {
     productName: '',
     priceName: '',
     amount: null,
-    currency: ''
+    currency: '',
+    url: '',
+    trackingParam: DEFAULT_GOAL_TRACKING_PARAM
   },
   data: {
     afterComplete: 'human'
@@ -661,6 +682,12 @@ const DEFAULT_GOAL_WORKFLOW_CONFIG = {
     questions: '',
     qualifies: '',
     disqualifies: ''
+  },
+  triggerLink: {
+    triggerLinkId: '',
+    triggerLinkPublicId: '',
+    triggerLinkName: '',
+    triggerLinkUrl: ''
   }
 }
 
@@ -683,6 +710,29 @@ function normalizeGoalOwner(value, fallback = 'human') {
   return GOAL_WORKFLOW_OWNERS.has(owner) ? owner : fallback
 }
 
+function normalizeTrackingParam(value) {
+  const param = String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_.-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64)
+  return param || DEFAULT_GOAL_TRACKING_PARAM
+}
+
+function normalizeGoalUrl(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) || raw.startsWith('/')
+    ? raw
+    : `https://${raw}`
+  const base = `${String(process.env.RENDER_EXTERNAL_URL || PUBLIC_URL || 'http://localhost:3002').replace(/\/+$/, '')}/`
+  try {
+    return new URL(withProtocol, base).toString()
+  } catch {
+    return ''
+  }
+}
+
 function normalizeNullableAmount(value) {
   const amount = Number(value)
   if (!Number.isFinite(amount) || amount <= 0) return null
@@ -694,11 +744,14 @@ export function normalizeAgentGoalWorkflow(input) {
   const appointments = raw.appointments && typeof raw.appointments === 'object' ? raw.appointments : {}
   const sales = raw.sales && typeof raw.sales === 'object' ? raw.sales : {}
   const qualification = raw.qualification && typeof raw.qualification === 'object' ? raw.qualification : {}
+  const triggerLink = raw.triggerLink && typeof raw.triggerLink === 'object' ? raw.triggerLink : {}
 
   return {
     appointments: {
       owner: normalizeGoalOwner(appointments.owner, DEFAULT_GOAL_WORKFLOW_CONFIG.appointments.owner),
-      calendarId: String(appointments.calendarId || '').trim() || null
+      calendarId: String(appointments.calendarId || '').trim() || null,
+      url: normalizeGoalUrl(appointments.url),
+      trackingParam: normalizeTrackingParam(appointments.trackingParam)
     },
     sales: {
       owner: normalizeGoalOwner(sales.owner, DEFAULT_GOAL_WORKFLOW_CONFIG.sales.owner),
@@ -707,7 +760,9 @@ export function normalizeAgentGoalWorkflow(input) {
       productName: String(sales.productName || '').trim().slice(0, 240),
       priceName: String(sales.priceName || '').trim().slice(0, 160),
       amount: normalizeNullableAmount(sales.amount),
-      currency: String(sales.currency || '').trim().slice(0, 12).toUpperCase()
+      currency: String(sales.currency || '').trim().slice(0, 12).toUpperCase(),
+      url: normalizeGoalUrl(sales.url),
+      trackingParam: normalizeTrackingParam(sales.trackingParam)
     },
     data: {
       afterComplete: 'human'
@@ -716,8 +771,374 @@ export function normalizeAgentGoalWorkflow(input) {
       questions: String(qualification.questions || '').slice(0, 2000),
       qualifies: String(qualification.qualifies || '').slice(0, 2000),
       disqualifies: String(qualification.disqualifies || '').slice(0, 2000)
+    },
+    triggerLink: {
+      triggerLinkId: String(triggerLink.triggerLinkId || triggerLink.id || '').trim().slice(0, 180),
+      triggerLinkPublicId: String(triggerLink.triggerLinkPublicId || triggerLink.publicId || '').trim().slice(0, 120),
+      triggerLinkName: String(triggerLink.triggerLinkName || triggerLink.name || '').trim().slice(0, 160),
+      triggerLinkUrl: normalizeGoalUrl(triggerLink.triggerLinkUrl || triggerLink.publicUrl || triggerLink.url)
     }
   }
+}
+
+function getPublicWebhookBaseUrl() {
+  return String(process.env.RENDER_EXTERNAL_URL || PUBLIC_URL || 'http://localhost:3002').replace(/\/+$/, '')
+}
+
+export function getConversationalGoalWebhookUrl() {
+  return new URL(CONVERSATIONAL_AGENT_GOAL_WEBHOOK_PATH, `${getPublicWebhookBaseUrl()}/`).toString()
+}
+
+function normalizeGoalLinkParams(params = {}) {
+  if (!params || typeof params !== 'object') return {}
+  return Object.entries(params).reduce((acc, [key, value]) => {
+    const cleanKey = normalizeTrackingParam(key)
+    const cleanValue = String(value || '').trim()
+    if (cleanKey && cleanValue) acc[cleanKey] = cleanValue.slice(0, 240)
+    return acc
+  }, {})
+}
+
+function buildTrackedGoalUrl(targetUrl, trackingParam, goalId, linkParams = {}) {
+  const cleanTargetUrl = normalizeGoalUrl(targetUrl)
+  if (!cleanTargetUrl) {
+    throw Object.assign(new Error('Configura un enlace válido para mandar este objetivo'), { statusCode: 400 })
+  }
+  const parsed = new URL(cleanTargetUrl)
+  parsed.searchParams.set(normalizeTrackingParam(trackingParam), goalId)
+  for (const [key, value] of Object.entries(normalizeGoalLinkParams(linkParams))) {
+    parsed.searchParams.set(key, value)
+  }
+  return parsed.toString()
+}
+
+function normalizeGoalLinkObjective(value) {
+  const objective = String(value || '').trim()
+  if (objective === 'ventas' || objective === 'citas') return objective
+  return 'custom'
+}
+
+function mapGoalLinkRow(row) {
+  if (!row) return null
+  return {
+    id: row.id,
+    contactId: row.contact_id,
+    agentId: row.agent_id || null,
+    objective: row.objective,
+    status: row.status,
+    targetUrl: row.target_url,
+    sentUrl: row.sent_url,
+    trackingParam: row.tracking_param || DEFAULT_GOAL_TRACKING_PARAM,
+    externalObjectId: row.external_object_id || null,
+    externalStatus: row.external_status || null,
+    metadata: parseJsonField(row.metadata_json, {}),
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+    completedAt: row.completed_at || null
+  }
+}
+
+export async function createConversationGoalLink({
+  contactId,
+  agentId = null,
+  objective = 'custom',
+  targetUrl,
+  trackingParam = DEFAULT_GOAL_TRACKING_PARAM,
+  linkParams = {},
+  metadata = {}
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  if (!cleanContactId) {
+    throw Object.assign(new Error('Falta el contacto para crear el enlace de objetivo'), { statusCode: 400 })
+  }
+
+  const id = `goal_${randomUUID()}`
+  const cleanObjective = normalizeGoalLinkObjective(objective)
+  const cleanTrackingParam = normalizeTrackingParam(trackingParam)
+  const cleanTargetUrl = normalizeGoalUrl(targetUrl)
+  const cleanLinkParams = normalizeGoalLinkParams(linkParams)
+  const sentUrl = buildTrackedGoalUrl(cleanTargetUrl, cleanTrackingParam, id, cleanLinkParams)
+  const cleanMetadata = metadata && typeof metadata === 'object' ? metadata : {}
+
+  await db.run(`
+    INSERT INTO conversational_agent_goal_links (
+      id, contact_id, agent_id, objective, status, target_url, sent_url, tracking_param, metadata_json
+    ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+  `, [
+    id,
+    cleanContactId,
+    agentId ? String(agentId) : null,
+    cleanObjective,
+    cleanTargetUrl,
+    sentUrl,
+    cleanTrackingParam,
+    JSON.stringify(cleanMetadata)
+  ])
+
+  await recordConversationalAgentEvent({
+    contactId: cleanContactId,
+    eventType: 'goal_url_created',
+    detail: {
+      goalId: id,
+      agentId: agentId || null,
+      objective: cleanObjective,
+      trackingParam: cleanTrackingParam,
+      targetUrl: cleanTargetUrl,
+      linkParams: cleanLinkParams
+    }
+  })
+
+  return {
+    id,
+    contactId: cleanContactId,
+    agentId: agentId || null,
+    objective: cleanObjective,
+    status: 'pending',
+    targetUrl: cleanTargetUrl,
+    sentUrl,
+    trackingParam: cleanTrackingParam,
+    linkParams: cleanLinkParams,
+    callbackUrl: getConversationalGoalWebhookUrl()
+  }
+}
+
+export async function getConversationGoalLink(goalId) {
+  const cleanGoalId = String(goalId || '').trim()
+  if (!cleanGoalId) return null
+  return mapGoalLinkRow(await db.get('SELECT * FROM conversational_agent_goal_links WHERE id = ?', [cleanGoalId]))
+}
+
+function conversationSignalForGoalObjective(objective) {
+  if (objective === 'ventas') {
+    return {
+      signal: 'purchase_completed',
+      reason: 'Compra confirmada desde enlace de pedido',
+      objectLabel: 'compra'
+    }
+  }
+  if (objective === 'citas') {
+    return {
+      signal: 'appointment_booked',
+      reason: 'Cita confirmada desde enlace de calendario',
+      objectLabel: 'cita'
+    }
+  }
+  return {
+    signal: 'ready_for_human',
+    reason: 'Objetivo confirmado desde enlace',
+    objectLabel: 'objetivo'
+  }
+}
+
+function normalizeComparableId(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function validateExpectedGoalReference(expected = {}, received = {}) {
+  const checks = [
+    ['calendarId', 'calendario'],
+    ['productId', 'producto'],
+    ['priceId', 'precio']
+  ]
+  for (const [key, label] of checks) {
+    const expectedValue = normalizeComparableId(expected[key])
+    const receivedValue = normalizeComparableId(received[key])
+    if (expectedValue && receivedValue && expectedValue !== receivedValue) {
+      const error = new Error(`La confirmación no corresponde al ${label} esperado`)
+      error.statusCode = 409
+      error.expected = { [key]: expected[key] }
+      error.received = { [key]: received[key] }
+      throw error
+    }
+  }
+}
+
+export async function completeConversationGoalLink(goalId, {
+  externalObjectId = '',
+  externalStatus = '',
+  calendarId = '',
+  productId = '',
+  priceId = '',
+  metadata = {}
+} = {}) {
+  const cleanGoalId = String(goalId || '').trim()
+  if (!cleanGoalId) {
+    throw Object.assign(new Error('Falta el ID de seguimiento del objetivo'), { statusCode: 400 })
+  }
+
+  const row = await db.get('SELECT * FROM conversational_agent_goal_links WHERE id = ?', [cleanGoalId])
+  if (!row) {
+    throw Object.assign(new Error('No encontramos ese objetivo pendiente'), { statusCode: 404 })
+  }
+
+  const mapped = conversationSignalForGoalObjective(row.objective)
+  if (row.status === 'completed') {
+    return {
+      ...mapGoalLinkRow(row),
+      alreadyCompleted: true,
+      signal: mapped.signal,
+      callbackUrl: getConversationalGoalWebhookUrl()
+    }
+  }
+
+  const cleanExternalObjectId = String(externalObjectId || '').trim().slice(0, 240)
+  const cleanExternalStatus = String(externalStatus || '').trim().slice(0, 120)
+  const cleanMetadata = metadata && typeof metadata === 'object' ? metadata : {}
+  const previousMetadata = parseJsonField(row.metadata_json, {})
+  const expected = previousMetadata.expected && typeof previousMetadata.expected === 'object'
+    ? previousMetadata.expected
+    : {}
+  const receivedReference = {
+    calendarId: String(calendarId || '').trim().slice(0, 160),
+    productId: String(productId || '').trim().slice(0, 160),
+    priceId: String(priceId || '').trim().slice(0, 160)
+  }
+  validateExpectedGoalReference(expected, receivedReference)
+  const nextMetadata = {
+    ...previousMetadata,
+    confirmation: cleanMetadata,
+    receivedReference
+  }
+
+  await db.run(`
+    UPDATE conversational_agent_goal_links
+    SET status = 'completed',
+        external_object_id = ?,
+        external_status = ?,
+        metadata_json = ?,
+        completed_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    cleanExternalObjectId || null,
+    cleanExternalStatus || null,
+    JSON.stringify(nextMetadata),
+    cleanGoalId
+  ])
+
+  const summary = cleanExternalObjectId
+    ? `ID de ${mapped.objectLabel}: ${cleanExternalObjectId}`
+    : `Confirmación recibida para ${mapped.objectLabel}`
+
+  await setConversationSignal(row.contact_id, mapped.signal, {
+    reason: mapped.reason,
+    summary,
+    status: 'completed'
+  })
+
+  if (row.agent_id) {
+    const agent = await getConversationalAgent(row.agent_id).catch(() => null)
+    if (agent) {
+      await applyAgentSuccessExtras(agent, row.contact_id)
+    }
+  }
+
+  await recordConversationalAgentEvent({
+    contactId: row.contact_id,
+    eventType: 'goal_url_completed',
+    detail: {
+      goalId: cleanGoalId,
+      agentId: row.agent_id || null,
+      objective: row.objective,
+      signal: mapped.signal,
+      externalObjectId: cleanExternalObjectId || null,
+      externalStatus: cleanExternalStatus || null,
+      receivedReference
+    }
+  })
+
+  return {
+    ...(await getConversationGoalLink(cleanGoalId)),
+    signal: mapped.signal,
+    callbackUrl: getConversationalGoalWebhookUrl()
+  }
+}
+
+function extractPayloadValue(payload, keys, seen = new Set()) {
+  if (!payload || typeof payload !== 'object' || seen.has(payload)) return ''
+  seen.add(payload)
+
+  for (const key of keys) {
+    const value = payload[key]
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim()
+  }
+
+  for (const value of Object.values(payload)) {
+    if (!value || typeof value !== 'object') continue
+    const nested = extractPayloadValue(value, keys, seen)
+    if (nested) return nested
+  }
+
+  return ''
+}
+
+function extractGoalIdValue(payload, seen = new Set()) {
+  if (payload === null || payload === undefined) return ''
+  if (typeof payload !== 'object') {
+    const value = String(payload || '').trim()
+    return /^goal_[a-f0-9-]{12,}$/i.test(value) ? value : ''
+  }
+  if (seen.has(payload)) return ''
+  seen.add(payload)
+
+  for (const value of Object.values(payload)) {
+    const nested = extractGoalIdValue(value, seen)
+    if (nested) return nested
+  }
+  return ''
+}
+
+const GOAL_ID_WEBHOOK_KEYS = [
+  DEFAULT_GOAL_TRACKING_PARAM,
+  'goalId',
+  'goal_id',
+  'trackingId',
+  'tracking_id',
+  'ristakGoalId',
+  'ristak_goal_id'
+]
+
+const EXTERNAL_OBJECT_WEBHOOK_KEYS = [
+  'objectId',
+  'object_id',
+  'externalObjectId',
+  'external_object_id',
+  'appointmentId',
+  'appointment_id',
+  'bookingId',
+  'booking_id',
+  'purchaseId',
+  'purchase_id',
+  'paymentId',
+  'payment_id',
+  'orderId',
+  'order_id',
+  'invoiceId',
+  'invoice_id',
+  'id'
+]
+
+const EXTERNAL_STATUS_WEBHOOK_KEYS = ['status', 'state', 'eventStatus', 'event_status', 'paymentStatus', 'payment_status']
+
+const CALENDAR_WEBHOOK_KEYS = ['calendarId', 'calendar_id', 'calendar', 'calendarRef', 'calendar_ref']
+const PRODUCT_WEBHOOK_KEYS = ['productId', 'product_id', 'product', 'productRef', 'product_ref', 'itemId', 'item_id', 'sku']
+const PRICE_WEBHOOK_KEYS = ['priceId', 'price_id', 'price', 'priceRef', 'price_ref', 'variantId', 'variant_id']
+
+export async function completeConversationGoalLinkFromWebhook(payload = {}) {
+  const source = payload && typeof payload === 'object' ? payload : {}
+  const goalId = extractPayloadValue(source, GOAL_ID_WEBHOOK_KEYS) || extractGoalIdValue(source)
+  if (!goalId) {
+    throw Object.assign(new Error(`Falta ${DEFAULT_GOAL_TRACKING_PARAM} en la confirmación automática`), { statusCode: 400 })
+  }
+
+  return completeConversationGoalLink(goalId, {
+    externalObjectId: extractPayloadValue(source, EXTERNAL_OBJECT_WEBHOOK_KEYS),
+    externalStatus: extractPayloadValue(source, EXTERNAL_STATUS_WEBHOOK_KEYS),
+    calendarId: extractPayloadValue(source, CALENDAR_WEBHOOK_KEYS),
+    productId: extractPayloadValue(source, PRODUCT_WEBHOOK_KEYS),
+    priceId: extractPayloadValue(source, PRICE_WEBHOOK_KEYS),
+    metadata: source
+  })
 }
 
 function clampDelayValue(value, unit, fallback) {
@@ -828,6 +1249,20 @@ export function normalizeAgentReplyDelivery(input) {
   }
 }
 
+function normalizeAgentReplyDeliveryForConfig(input) {
+  const delivery = normalizeAgentReplyDelivery(input)
+  return {
+    ...delivery,
+    minMessageLengthToSplit: DEFAULT_REPLY_DELIVERY_CONFIG.minMessageLengthToSplit,
+    maxBubbles: DEFAULT_REPLY_DELIVERY_CONFIG.maxBubbles,
+    minBubbleLength: DEFAULT_REPLY_DELIVERY_CONFIG.minBubbleLength,
+    maxBubbleLength: DEFAULT_REPLY_DELIVERY_CONFIG.maxBubbleLength,
+    targetChars: DEFAULT_REPLY_DELIVERY_CONFIG.targetChars,
+    randomizeSplitting: true,
+    delayBetweenBubblesEnabled: true
+  }
+}
+
 export function getAgentReplyDeliveryPartDelayMs(agentConfig = {}) {
   const delivery = normalizeAgentReplyDelivery(agentConfig.replyDelivery)
   if (delivery.mode !== 'split' || !delivery.delayBetweenBubblesEnabled) return 0
@@ -839,11 +1274,13 @@ export function getAgentReplyDeliveryPartDelayMs(agentConfig = {}) {
 
 function mapAgentRow(row) {
   if (!row) return null
+  const aiProvider = normalizeConversationalAIProvider(row.ai_provider)
   return {
     id: row.id,
     name: row.name || 'Agente',
     enabled: toBoolean(row.enabled),
-    model: normalizeConversationalAgentModel(row.model),
+    aiProvider,
+    model: normalizeConversationalAgentModel(row.model, aiProvider),
     position: Number(row.position) || 0,
     objective: VALID_OBJECTIVES.has(row.objective) ? row.objective : 'citas',
     customObjective: row.custom_objective || '',
@@ -861,7 +1298,7 @@ function mapAgentRow(row) {
     closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     closingStrategyCustom: row.closing_strategy_custom || '',
     responseDelay: normalizeAgentResponseDelay(parseJsonField(row.response_delay_config, null)),
-    replyDelivery: normalizeAgentReplyDelivery(parseJsonField(row.reply_delivery_config, null)),
+    replyDelivery: normalizeAgentReplyDeliveryForConfig(parseJsonField(row.reply_delivery_config, null)),
     goalWorkflow: normalizeAgentGoalWorkflow(parseJsonField(row.goal_workflow_config, null)),
     filters: normalizeAgentFilters(parseJsonField(row.entry_filters, null)),
     createdAt: row.created_at || null,
@@ -905,16 +1342,17 @@ export async function ensureAgentsMigration() {
   if (!shouldMigrateLegacyConversationalAgentConfig(legacy)) return
   await db.run(`
     INSERT INTO conversational_agents (
-      id, name, enabled, model, position, objective, custom_objective, success_action,
+      id, name, enabled, ai_provider, model, position, objective, custom_objective, success_action,
       success_extras, required_data, handoff_rules, extra_instructions,
       allow_emojis, hide_attended, hide_attended_notifications,
       default_calendar_id, closing_strategy_mode, closing_strategy_custom,
       response_delay_config, reply_delivery_config, goal_workflow_config, entry_filters
-    ) VALUES (?, ?, 1, ?, 0, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, 1, ?, ?, 0, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     `cagent_${randomUUID()}`,
     'Agente principal',
-    normalizeConversationalAgentModel(legacy.model),
+    normalizeConversationalAIProvider(legacy.ai_provider),
+    normalizeConversationalAgentModel(legacy.model, legacy.ai_provider),
     VALID_OBJECTIVES.has(legacy.objective) ? legacy.objective : 'citas',
     legacy.custom_objective || '',
     DEFAULT_SUCCESS_ACTION,
@@ -965,6 +1403,7 @@ function buildEmptyAgentMetric(agent) {
     agentId: agent.id,
     name: agent.name,
     enabled: Boolean(agent.enabled),
+    aiProvider: agent.aiProvider || DEFAULT_CONVERSATIONAL_AI_PROVIDER,
     model: agent.model,
     assignedConversations: 0,
     completedConversations: 0,
@@ -1009,6 +1448,7 @@ export function buildConversationalAgentMetrics({ agents = [], stateRows = [], e
           id: agentId,
           name: 'Agente eliminado',
           enabled: false,
+          aiProvider: DEFAULT_CONVERSATIONAL_AI_PROVIDER,
           model: DEFAULT_CONVERSATIONAL_AGENT_MODEL
         })
       })
@@ -1104,7 +1544,12 @@ function agentInputToRowValues(input, base) {
   const next = {
     name: input.name === undefined ? base.name : String(input.name || 'Agente').trim().slice(0, 120) || 'Agente',
     enabled: input.enabled === undefined ? base.enabled : toBoolean(input.enabled),
-    model: input.model === undefined ? normalizeConversationalAgentModel(base.model) : normalizeConversationalAgentModel(input.model),
+    aiProvider: input.aiProvider === undefined ? normalizeConversationalAIProvider(base.aiProvider) : normalizeConversationalAIProvider(input.aiProvider),
+    model: input.model === undefined
+      ? (input.aiProvider === undefined
+        ? normalizeConversationalAgentModel(base.model, base.aiProvider)
+        : getDefaultConversationalModelForProvider(input.aiProvider))
+      : normalizeConversationalAgentModel(input.model, input.aiProvider === undefined ? base.aiProvider : input.aiProvider),
     position: input.position === undefined ? base.position : Number(input.position) || 0,
     objective: VALID_OBJECTIVES.has(input.objective) ? input.objective : base.objective,
     customObjective: input.customObjective === undefined ? base.customObjective : String(input.customObjective || '').slice(0, 2000),
@@ -1127,8 +1572,8 @@ function agentInputToRowValues(input, base) {
       ? normalizeAgentResponseDelay(base.responseDelay)
       : normalizeAgentResponseDelay(input.responseDelay),
     replyDelivery: input.replyDelivery === undefined
-      ? normalizeAgentReplyDelivery(base.replyDelivery)
-      : normalizeAgentReplyDelivery(input.replyDelivery),
+      ? normalizeAgentReplyDeliveryForConfig(base.replyDelivery)
+      : normalizeAgentReplyDeliveryForConfig(input.replyDelivery),
     goalWorkflow: input.goalWorkflow === undefined
       ? normalizeAgentGoalWorkflow(base.goalWorkflow)
       : normalizeAgentGoalWorkflow(input.goalWorkflow),
@@ -1140,6 +1585,7 @@ function agentInputToRowValues(input, base) {
 const DEFAULT_AGENT_BASE = {
   name: 'Agente',
   enabled: true,
+  aiProvider: DEFAULT_CONVERSATIONAL_AI_PROVIDER,
   model: DEFAULT_CONVERSATIONAL_AGENT_MODEL,
   position: 0,
   objective: 'citas',
@@ -1168,14 +1614,14 @@ export async function createConversationalAgent(input = {}) {
   const id = `cagent_${randomUUID()}`
   await db.run(`
     INSERT INTO conversational_agents (
-      id, name, enabled, model, position, objective, custom_objective, success_action,
+      id, name, enabled, ai_provider, model, position, objective, custom_objective, success_action,
       success_extras, required_data, handoff_rules, extra_instructions,
       allow_emojis, hide_attended, hide_attended_notifications,
       default_calendar_id, closing_strategy_mode, closing_strategy_custom,
       response_delay_config, reply_delivery_config, goal_workflow_config, entry_filters
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
-    id, next.name, next.enabled ? 1 : 0, next.model, next.position, next.objective, next.customObjective,
+    id, next.name, next.enabled ? 1 : 0, next.aiProvider, next.model, next.position, next.objective, next.customObjective,
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
     next.extraInstructions, next.allowEmojis ? 1 : 0,
     next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
@@ -1194,7 +1640,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
   const next = agentInputToRowValues(input, current)
   await db.run(`
     UPDATE conversational_agents
-    SET name = ?, enabled = ?, model = ?, position = ?, objective = ?, custom_objective = ?,
+    SET name = ?, enabled = ?, ai_provider = ?, model = ?, position = ?, objective = ?, custom_objective = ?,
         success_action = ?, success_extras = ?, required_data = ?, handoff_rules = ?,
         extra_instructions = ?, allow_emojis = ?, hide_attended = ?, hide_attended_notifications = ?,
         default_calendar_id = ?,
@@ -1203,7 +1649,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
-    next.name, next.enabled ? 1 : 0, next.model, next.position, next.objective, next.customObjective,
+    next.name, next.enabled ? 1 : 0, next.aiProvider, next.model, next.position, next.objective, next.customObjective,
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
     next.extraInstructions, next.allowEmojis ? 1 : 0,
     next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
@@ -2008,6 +2454,61 @@ export async function shouldSuppressChatNotificationForConversationalAgent(conta
   if (!state?.agentId || state.status !== 'active' || state.signal) return false
   const agent = await getConversationalAgent(state.agentId)
   return Boolean(agent?.enabled && agent.hideAttendedNotifications)
+}
+
+function triggerLinkMatchesWorkflow(configured = {}, payload = {}) {
+  const expectedId = String(configured.triggerLinkId || '').trim()
+  const expectedPublicId = String(configured.triggerLinkPublicId || '').trim()
+  const expectedName = normalizeMatchText(configured.triggerLinkName)
+  const actualId = String(payload.triggerLinkId || payload.trigger_link_id || '').trim()
+  const actualPublicId = String(payload.triggerLinkPublicId || payload.publicId || payload.public_id || '').trim()
+  const actualName = normalizeMatchText(payload.triggerLinkName || payload.name)
+
+  if (expectedId) return actualId === expectedId
+  if (expectedPublicId) return actualPublicId === expectedPublicId
+  if (expectedName) return Boolean(actualName && actualName === expectedName)
+  return false
+}
+
+export async function handleConversationalAgentTriggerLinkClick(payload = {}) {
+  const contactId = String(payload.contactId || payload.contact_id || payload.query?.contact_id || payload.query?.contactId || '').trim()
+  if (!contactId) return { matched: false, reason: 'missing_contact' }
+
+  const state = await getConversationState(contactId)
+  if (!state?.agentId) return { matched: false, reason: 'missing_agent' }
+  if (state.signal || !['active', 'paused'].includes(state.status)) {
+    return { matched: false, reason: 'conversation_closed' }
+  }
+
+  const agent = await getConversationalAgent(state.agentId)
+  if (!agent?.enabled || agent.successAction !== 'send_trigger_link') {
+    return { matched: false, reason: 'agent_not_waiting_for_trigger_link' }
+  }
+
+  const configured = agent.goalWorkflow?.triggerLink || {}
+  if (!triggerLinkMatchesWorkflow(configured, payload)) {
+    return { matched: false, reason: 'trigger_link_mismatch' }
+  }
+
+  const triggerLinkName = configured.triggerLinkName || payload.triggerLinkName || 'Enlace de disparo'
+  const nextState = await setConversationSignal(contactId, 'ready_for_human', {
+    reason: `Tocó el enlace de disparo: ${triggerLinkName}`,
+    summary: `El contacto tocó el enlace de disparo "${triggerLinkName}". El equipo debe continuar la conversación.`,
+    status: 'completed'
+  })
+  await applyAgentSuccessExtras(agent, contactId)
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'trigger_link_goal_completed',
+    detail: {
+      agentId: agent.id,
+      triggerLinkId: configured.triggerLinkId || payload.triggerLinkId || null,
+      triggerLinkPublicId: configured.triggerLinkPublicId || payload.triggerLinkPublicId || null,
+      eventId: payload.eventId || null
+    }
+  })
+
+  return { matched: true, state: nextState, agentId: agent.id }
 }
 
 /**

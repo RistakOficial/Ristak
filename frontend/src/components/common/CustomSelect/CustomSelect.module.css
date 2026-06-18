@@ -14,7 +14,7 @@
   border: 1px solid var(--ristak-dropdown-border);
   border-radius: var(--ristak-dropdown-radius);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 400;
   background: var(--ristak-dropdown-bg);
   cursor: pointer;
   transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -71,8 +71,8 @@
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  z-index: 1000;
-  background: var(--ristak-dropdown-bg);
+  z-index: var(--z-index-popover);
+  background: var(--surface-solid, var(--surface));
   border: 1px solid var(--ristak-dropdown-border);
   border-radius: var(--ristak-dropdown-radius);
   box-shadow: var(--ristak-dropdown-panel-shadow);
@@ -174,7 +174,7 @@
 .optionSelected {
   background: rgba(var(--color-primary-rgb), 0.08);
   color: var(--color-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .optionSelected:hover {
@@ -195,7 +195,7 @@
   padding: 8px 12px 5px;
   color: var(--color-text-tertiary);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }

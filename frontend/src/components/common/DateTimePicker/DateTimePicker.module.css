@@ -37,8 +37,8 @@
 
 .trigger:focus {
   outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .trigger svg:first-child {
@@ -74,14 +74,14 @@
   bottom: calc(100% + 8px); /* Se abre hacia ARRIBA */
   left: 0;
   right: auto;
-  z-index: 1000;
+  z-index: var(--z-index-popover);
   width: min(440px, calc(100vw - 48px));
   min-width: min(380px, calc(100vw - 48px));
   max-width: 520px;
-  background: var(--color-background-primary);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+  background: var(--surface-solid, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-pop);
   overflow: hidden;
   animation: slideUp 0.2s ease; /* Animación hacia arriba */
   display: flex;
@@ -161,7 +161,7 @@
 .weekday {
   text-align: center;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-secondary);
   padding: 3px 2px;
 }
@@ -196,13 +196,13 @@
 
 .day.today {
   color: var(--color-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .day.selected {
   background: var(--color-primary);
   color: white;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .day.selected:hover {
@@ -320,7 +320,7 @@
 
 .periodToggle button {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .periodToggle button + button {
@@ -368,7 +368,3 @@
   border-color: var(--color-primary-hover);
 }
 
-/* Dark mode */
-body.dark .dropdown {
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-}

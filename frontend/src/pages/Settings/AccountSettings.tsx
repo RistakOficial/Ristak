@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Bell, CalendarDays, Check, CheckCircle, ChevronDown, Clock, CreditCard, Database, Globe2, Loader2, Lock, MessageCircle, Save, Smartphone, Upload, User, X } from 'lucide-react'
-import { Button, Card, CustomSelect } from '@/components/common'
+import { Button, Card, CustomSelect, Switch } from '@/components/common'
+import { Badge } from '@/components/common/Badge'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -718,10 +719,10 @@ export const AccountSettings: React.FC = () => {
             </div>
           </div>
           <div className={styles.panelHeaderActions}>
-            <div className={styles.statusConnected}>
+            <Badge variant="success">
               <CheckCircle size={15} />
               {currentRoleLabel}
-            </div>
+            </Badge>
           </div>
         </div>
 
@@ -1092,7 +1093,7 @@ export const AccountSettings: React.FC = () => {
                       top: dropdownPos.top,
                       left: dropdownPos.left,
                       width: dropdownPos.width,
-                      zIndex: 9999
+                      zIndex: 'var(--z-index-dropdown)'
                     }}
                   >
                     <div className={styles.dropdownMenu} data-ristak-dropdown-panel>
@@ -1282,12 +1283,8 @@ export const AccountSettings: React.FC = () => {
               </div>
 
               <div className={styles.notificationSettingsGrid}>
-                <button
-                  type="button"
+                <div
                   className={`${styles.notificationSettingCard} ${chatPushEnabled ? styles.notificationSettingCardActive : ''}`}
-                  onClick={() => handleToggleNotification(chatPushEnabled, setChatPushEnabled, 'Notificaciones de chat encendidas', 'Notificaciones de chat apagadas')}
-                  disabled={savingChatPush}
-                  aria-pressed={chatPushEnabled}
                 >
                   <span className={styles.notificationSettingIcon}>
                     <MessageCircle size={18} />
@@ -1296,15 +1293,18 @@ export const AccountSettings: React.FC = () => {
                     <strong>Chat</strong>
                     <small>Mensajes nuevos de WhatsApp.</small>
                   </span>
-                  <i>{chatPushEnabled ? 'Activo' : 'Apagado'}</i>
-                </button>
+                  <span style={{ gridColumn: '1 / -1' }}>
+                    <Switch
+                      checked={chatPushEnabled}
+                      onChange={() => handleToggleNotification(chatPushEnabled, setChatPushEnabled, 'Notificaciones de chat encendidas', 'Notificaciones de chat apagadas')}
+                      disabled={savingChatPush}
+                      aria-label="Notificaciones de chat"
+                    />
+                  </span>
+                </div>
 
-                <button
-                  type="button"
+                <div
                   className={`${styles.notificationSettingCard} ${calendarPushEnabled ? styles.notificationSettingCardActive : ''}`}
-                  onClick={() => handleToggleNotification(calendarPushEnabled, setCalendarPushEnabled, 'Notificaciones de citas encendidas', 'Notificaciones de citas apagadas')}
-                  disabled={savingCalendarPush}
-                  aria-pressed={calendarPushEnabled}
                 >
                   <span className={styles.notificationSettingIcon}>
                     <CalendarDays size={18} />
@@ -1313,15 +1313,18 @@ export const AccountSettings: React.FC = () => {
                     <strong>Citas</strong>
                     <small>Cuando alguien agenda una cita.</small>
                   </span>
-                  <i>{calendarPushEnabled ? 'Activo' : 'Apagado'}</i>
-                </button>
+                  <span style={{ gridColumn: '1 / -1' }}>
+                    <Switch
+                      checked={calendarPushEnabled}
+                      onChange={() => handleToggleNotification(calendarPushEnabled, setCalendarPushEnabled, 'Notificaciones de citas encendidas', 'Notificaciones de citas apagadas')}
+                      disabled={savingCalendarPush}
+                      aria-label="Notificaciones de citas"
+                    />
+                  </span>
+                </div>
 
-                <button
-                  type="button"
+                <div
                   className={`${styles.notificationSettingCard} ${paymentPushEnabled ? styles.notificationSettingCardActive : ''}`}
-                  onClick={() => handleToggleNotification(paymentPushEnabled, setPaymentPushEnabled, 'Notificaciones de pagos encendidas', 'Notificaciones de pagos apagadas')}
-                  disabled={savingPaymentPush}
-                  aria-pressed={paymentPushEnabled}
                 >
                   <span className={styles.notificationSettingIcon}>
                     <CreditCard size={18} />
@@ -1330,8 +1333,15 @@ export const AccountSettings: React.FC = () => {
                     <strong>Pagos</strong>
                     <small>Cuando se registre un pago.</small>
                   </span>
-                  <i>{paymentPushEnabled ? 'Activo' : 'Apagado'}</i>
-                </button>
+                  <span style={{ gridColumn: '1 / -1' }}>
+                    <Switch
+                      checked={paymentPushEnabled}
+                      onChange={() => handleToggleNotification(paymentPushEnabled, setPaymentPushEnabled, 'Notificaciones de pagos encendidas', 'Notificaciones de pagos apagadas')}
+                      disabled={savingPaymentPush}
+                      aria-label="Notificaciones de pagos"
+                    />
+                  </span>
+                </div>
               </div>
             </section>
 

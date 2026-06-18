@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, Loading, TreeFilter, CustomSelect, TagPicker } from '@/components/common'
+import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, Loading, TreeFilter, CustomSelect } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
   Users,
@@ -16,7 +16,9 @@ import {
   Mail,
   Plus,
   MessageSquare,
-  Workflow
+  Workflow,
+  Tags,
+  ListPlus
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -26,13 +28,18 @@ import { contactsService, type Contact, type ContactStats } from '@/services/con
 import { contactTagsService } from '@/services/contactTagsService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
-import type { ContactAppointment, ContactCustomField, ContactPayment } from '@/types'
+import type { ContactAppointment, ContactCustomField, ContactCustomFieldDefinition, ContactPayment } from '@/types'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
 import styles from './Contacts.module.css'
 import { dedupeContacts } from '@/utils/contactDedup'
 import { getContactStageBadge, isAttendedAppointmentStatus } from '@/utils/contactStageBadge'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
+import {
+  formatContactCustomFieldDisplayValue,
+  getContactCustomFieldDisplayLabel,
+  getContactCustomFieldKeys
+} from '@/utils/contactCustomFields'
 import {
   COUNTRY_OPTIONS,
   composePhoneWithDialCode,
@@ -43,6 +50,7 @@ import {
 } from '@/utils/accountLocale'
 import { ContactBulkActionModals } from './ContactBulkActionModals'
 import { ContactBulkActionProgress } from './ContactBulkActionProgress'
+import { ContactBulkPropertyModals } from './ContactBulkPropertyModals'
 
 const APPOINTMENT_CANCELED_STATUSES = new Set([
   'cancelled',
@@ -65,6 +73,13 @@ const contactViewModes: ContactViewMode[] = ['all', 'by-date']
 const contactFilters = ['all', 'leads', 'appointments', 'attendances', 'customers']
 const isContactViewMode = (value?: string): value is ContactViewMode => contactViewModes.includes(value as ContactViewMode)
 const isContactFilter = (value?: string) => Boolean(value && contactFilters.includes(value))
+const CUSTOM_FIELD_COLUMN_PREFIX = 'custom-field:'
+
+interface ContactCustomFieldColumnSpec {
+  columnKey: string
+  label: string
+  matchKeySet: Set<string>
+}
 
 const parseContactsRoute = (pathname: string) => {
   const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
@@ -264,6 +279,55 @@ const getContactTrackingData = (contact: Contact) => {
 
 const getCustomFieldIdentity = (field: ContactCustomField, index: number) =>
   field.id || field.key || field.fieldKey || field.label || field.name || `custom-field-${index}`
+
+const cleanColumnValue = (value: unknown) => String(value ?? '').trim()
+
+const createTagLabelMap = (tags: Array<{ id?: string; name?: string }>) => {
+  const labels: Record<string, string> = {}
+
+  tags.forEach((tag) => {
+    const id = cleanColumnValue(tag.id)
+    const name = cleanColumnValue(tag.name)
+    if (!name) return
+    if (id) labels[id] = name
+    labels[name] = name
+  })
+
+  return labels
+}
+
+const getContactTagLabels = (tagIds: string[] | undefined, tagLabelMap: Record<string, string>) => {
+  if (!Array.isArray(tagIds)) return []
+
+  return tagIds
+    .map((tagId) => {
+      const cleanTagId = cleanColumnValue(tagId)
+      if (!cleanTagId) return ''
+      return tagLabelMap[cleanTagId] || contactTagsService.getDisplayName(cleanTagId, {
+        fallback: cleanTagId,
+        includeSystem: true
+      })
+    })
+    .filter(Boolean)
+}
+
+const getCustomFieldColumnLabel = (
+  field: ContactCustomField | ContactCustomFieldDefinition,
+  index: number
+) => {
+  const baseLabel = getContactCustomFieldDisplayLabel(field, index)
+  const folderName = cleanColumnValue((field as ContactCustomFieldDefinition).folderName)
+  return folderName ? `${baseLabel} · ${folderName}` : baseLabel
+}
+
+const shouldExposeCustomFieldColumn = (field: ContactCustomField | ContactCustomFieldDefinition) =>
+  !Boolean((field as ContactCustomFieldDefinition).archived) &&
+  (field.sourceType || '') !== 'system'
+
+const findContactCustomField = (contact: Contact, matchKeySet: Set<string>) =>
+  (contact.customFields || []).find((field) =>
+    getContactCustomFieldKeys(field).some((key) => matchKeySet.has(key))
+  )
 
 const mergeCustomFields = (baseFields: ContactCustomField[] = [], nextFields: ContactCustomField[] = []) => {
   const fieldMap = new Map<string, ContactCustomField>()
@@ -466,17 +530,20 @@ const ContactsTable: React.FC = () => {
   const [whatsappPhoneNumbers, setWhatsappPhoneNumbers] = useState<WhatsAppApiPhoneNumber[]>([])
   const [contactDeleteConfirmation, setContactDeleteConfirmation] = useState('')
   const [showBulkTagsModal, setShowBulkTagsModal] = useState(false)
+  const [showBulkCustomFieldsModal, setShowBulkCustomFieldsModal] = useState(false)
   const [showBulkWhatsAppModal, setShowBulkWhatsAppModal] = useState(false)
   const [showBulkAutomationModal, setShowBulkAutomationModal] = useState(false)
-  const [bulkAddTagIds, setBulkAddTagIds] = useState<string[]>([])
-  const [bulkRemoveTagIds, setBulkRemoveTagIds] = useState<string[]>([])
-  const [applyingBulkTags, setApplyingBulkTags] = useState(false)
   const [deletingContacts, setDeletingContacts] = useState(false)
   const [loading, setLoading] = useState(false)
   const [loadingEvents, setLoadingEvents] = useState(false) // Loading específico para eventos de calendarios
   const [viewMode, setViewMode] = useState<ContactViewMode>(routeState.viewMode)
   const [isClient, setIsClient] = useState(false)
   const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]) // Eventos de calendarios
+  const [contactTagLabels, setContactTagLabels] = useState<Record<string, string>>(() => {
+    const cachedTags = contactTagsService.getCachedTags({ includeSystem: true }) || contactTagsService.getCachedTags()
+    return cachedTags ? createTagLabelMap(cachedTags) : {}
+  })
+  const [customFieldDefinitions, setCustomFieldDefinitions] = useState<ContactCustomFieldDefinition[]>([])
   const [hasLoadedContacts, setHasLoadedContacts] = useState(false)
   const handledOpenContactRef = useRef<string | null>(null)
   const fetchRequestRef = useRef(0)
@@ -619,6 +686,44 @@ const ContactsTable: React.FC = () => {
 
   useEffect(() => {
     setIsClient(true)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    contactTagsService.getTags({ includeSystem: true })
+      .then((tags) => {
+        if (!cancelled) {
+          setContactTagLabels(createTagLabelMap(Array.isArray(tags) ? tags : []))
+        }
+      })
+      .catch(() => {
+        // Las etiquetas siguen mostrándose con el valor guardado si el catálogo no carga.
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    contactsService.getCustomFieldDefinitions()
+      .then((definitions) => {
+        if (cancelled) return
+        const activeDefinitions = Array.isArray(definitions)
+          ? definitions.filter((field) => !field.archived && field.sourceType !== 'system')
+          : []
+        setCustomFieldDefinitions(activeDefinitions)
+      })
+      .catch(() => {
+        if (!cancelled) setCustomFieldDefinitions([])
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -857,32 +962,30 @@ const ContactsTable: React.FC = () => {
     return nextTags
   }
 
-  const closeBulkTagsModal = () => {
-    setShowBulkTagsModal(false)
-    setBulkAddTagIds([])
-    setBulkRemoveTagIds([])
+  const handleBulkTagsApplied = ({ mode, tagIds }: { mode: 'add' | 'remove'; tagIds: string[] }) => {
+    const targetIds = new Set(selectedContactIds)
+    const tagSet = new Set(tagIds)
+
+    setContacts(prev => prev.map(contact => {
+      if (!targetIds.has(contact.id)) return contact
+      const current = contact.tags || []
+      const next = mode === 'add'
+        ? [...new Set([...current, ...tagIds])]
+        : current.filter(tagId => !tagSet.has(tagId))
+      return { ...contact, tags: next }
+    }))
   }
 
-  const handleApplyBulkTags = async () => {
-    if (selectedContactIds.length === 0 || (bulkAddTagIds.length === 0 && bulkRemoveTagIds.length === 0)) return
-    setApplyingBulkTags(true)
-    try {
-      const result = await contactTagsService.bulkUpdateTags(selectedContactIds, bulkAddTagIds, bulkRemoveTagIds)
-      const addSet = new Set(bulkAddTagIds)
-      const removeSet = new Set(bulkRemoveTagIds)
-      setContacts(prev => prev.map(contact => {
-        if (!selectedContactIds.includes(contact.id)) return contact
-        const current = contact.tags || []
-        const next = [...new Set([...current.filter(tagId => !removeSet.has(tagId)), ...addSet])]
-        return { ...contact, tags: next }
-      }))
-      closeBulkTagsModal()
-      showToast('success', 'Etiquetas aplicadas', `Se actualizaron ${result.updated} de ${selectedContactIds.length} contactos.`)
-    } catch (error) {
-      showToast('error', 'No se pudieron aplicar las etiquetas', error instanceof Error ? error.message : 'Intenta de nuevo.')
-    } finally {
-      setApplyingBulkTags(false)
-    }
+  const handleBulkCustomFieldsApplied = ({ customFields }: { customFields: ContactCustomField[] }) => {
+    const targetIds = new Set(selectedContactIds)
+
+    setContacts(prev => prev.map(contact => {
+      if (!targetIds.has(contact.id)) return contact
+      return {
+        ...contact,
+        customFields: mergeCustomFields(contact.customFields || [], customFields)
+      }
+    }))
   }
 
   const handleUpdatePreferredWhatsAppPhoneNumber = async (contactId: string, phoneNumberId: string) => {
@@ -1374,6 +1477,40 @@ const ContactsTable: React.FC = () => {
     { label: labels.customers, value: 'customers' }
   ]
 
+  const customFieldColumnSpecs = useMemo(() => {
+    const specs: ContactCustomFieldColumnSpec[] = []
+
+    const upsertCustomFieldColumn = (
+      field: ContactCustomField | ContactCustomFieldDefinition,
+      index: number
+    ) => {
+      if (!shouldExposeCustomFieldColumn(field)) return
+
+      const keys = getContactCustomFieldKeys(field)
+      if (keys.length === 0) return
+
+      const existingSpec = specs.find((spec) => keys.some((key) => spec.matchKeySet.has(key)))
+      if (existingSpec) {
+        keys.forEach((key) => existingSpec.matchKeySet.add(key))
+        return
+      }
+
+      specs.push({
+        columnKey: `${CUSTOM_FIELD_COLUMN_PREFIX}${keys[0]}`,
+        label: getCustomFieldColumnLabel(field, index),
+        matchKeySet: new Set(keys)
+      })
+    }
+
+    customFieldDefinitions.forEach(upsertCustomFieldColumn)
+    contacts.forEach((contact) => {
+      const fields = contact.customFields || []
+      fields.forEach(upsertCustomFieldColumn)
+    })
+
+    return specs.sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }))
+  }, [contacts, customFieldDefinitions])
+
   const hasAttendedAppointment = (contact: Contact) =>
     Boolean(contact.hasShowedAppointment || contact.hasAttendedAppointment) ||
     Boolean(allEvents.some(event =>
@@ -1489,6 +1626,17 @@ const ContactsTable: React.FC = () => {
       sortable: true
     },
     {
+      key: 'tags',
+      header: 'Etiquetas',
+      render: (_value, item) => {
+        const tagLabels = getContactTagLabels(item.tags, contactTagLabels)
+        return tagLabels.length > 0 ? tagLabels.join(', ') : '-'
+      },
+      searchValue: (_value, item) => getContactTagLabels(item.tags, contactTagLabels),
+      sortable: false,
+      visible: false
+    },
+    {
       key: 'phone',
       header: 'Teléfono',
       sortable: true
@@ -1505,6 +1653,22 @@ const ContactsTable: React.FC = () => {
       render: (value) => value > 0 ? formatCurrency(value) : '-',
       sortable: true
     },
+    ...customFieldColumnSpecs.map((fieldColumn): Column<Contact> => ({
+      key: fieldColumn.columnKey,
+      header: fieldColumn.label,
+      render: (_value, item) => {
+        const field = findContactCustomField(item, fieldColumn.matchKeySet)
+        const displayValue = formatContactCustomFieldDisplayValue(field?.value)
+        return displayValue || '-'
+      },
+      searchValue: (_value, item) => {
+        const field = findContactCustomField(item, fieldColumn.matchKeySet)
+        const displayValue = formatContactCustomFieldDisplayValue(field?.value)
+        return displayValue ? [displayValue] : []
+      },
+      sortable: false,
+      visible: false
+    })),
     {
       key: 'id',
       header: 'Acciones',
@@ -1616,6 +1780,24 @@ const ContactsTable: React.FC = () => {
   const contactSelectionToolbar = selectedContacts.length > 0 ? (
     <div className={styles.selectionToolbar}>
       <span>{selectedContacts.length} seleccionado{selectedContacts.length === 1 ? '' : 's'}</span>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={() => setShowBulkTagsModal(true)}
+      >
+        <Tags size={16} />
+        Etiquetas
+      </Button>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={() => setShowBulkCustomFieldsModal(true)}
+      >
+        <ListPlus size={16} />
+        Campos personalizados
+      </Button>
       <Button
         type="button"
         variant="secondary"
@@ -1788,6 +1970,18 @@ const ContactsTable: React.FC = () => {
           }}
         />
       </Card>
+
+      {isClient && (
+        <ContactBulkPropertyModals
+          selectedContacts={selectedContacts}
+          tagsOpen={showBulkTagsModal}
+          customFieldsOpen={showBulkCustomFieldsModal}
+          onCloseTags={() => setShowBulkTagsModal(false)}
+          onCloseCustomFields={() => setShowBulkCustomFieldsModal(false)}
+          onTagsApplied={handleBulkTagsApplied}
+          onCustomFieldsApplied={handleBulkCustomFieldsApplied}
+        />
+      )}
 
       {isClient && (
         <ContactBulkActionModals
@@ -1963,67 +2157,6 @@ const ContactsTable: React.FC = () => {
                 </Button>
               </div>
             </form>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {isClient && showBulkTagsModal && createPortal(
-        <div className={styles.modalOverlay} onClick={closeBulkTagsModal}>
-          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div className={styles.modalHeader}>
-              <div>
-                <h2>Etiquetas en bloque</h2>
-                <p className={styles.modalSubtitle}>
-                  Se aplicará a {selectedContactIds.length} contacto{selectedContactIds.length === 1 ? '' : 's'} seleccionado{selectedContactIds.length === 1 ? '' : 's'}.
-                </p>
-              </div>
-              <button
-                className={styles.closeButton}
-                onClick={closeBulkTagsModal}
-                disabled={applyingBulkTags}
-                type="button"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className={styles.formGroup}>
-              <label>Agregar etiquetas</label>
-              <TagPicker
-                multiple
-                selectedIds={bulkAddTagIds}
-                onChange={setBulkAddTagIds}
-                allowCreate
-                disabled={applyingBulkTags}
-                placeholder="Buscar o crear etiqueta…"
-                aria-label="Etiquetas a agregar"
-              />
-            </div>
-            <div className={styles.formGroup}>
-              <label>Quitar etiquetas</label>
-              <TagPicker
-                multiple
-                selectedIds={bulkRemoveTagIds}
-                onChange={setBulkRemoveTagIds}
-                allowCreate={false}
-                disabled={applyingBulkTags}
-                placeholder="Buscar etiqueta a quitar…"
-                aria-label="Etiquetas a quitar"
-              />
-            </div>
-            <div className={styles.formActions}>
-              <Button type="button" variant="ghost" onClick={closeBulkTagsModal} disabled={applyingBulkTags}>
-                Cancelar
-              </Button>
-              <Button
-                variant="primary"
-                onClick={handleApplyBulkTags}
-                loading={applyingBulkTags}
-                disabled={applyingBulkTags || (bulkAddTagIds.length === 0 && bulkRemoveTagIds.length === 0)}
-              >
-                Aplicar etiquetas
-              </Button>
-            </div>
           </div>
         </div>,
         document.body

@@ -17,6 +17,7 @@ import {
   verifyMetaSocialWebhook,
   handleAutomationIncomingWebhook
 } from '../controllers/webhooksController.js'
+import { handleGoalWebhook as handleConversationalAgentGoalWebhook } from '../controllers/conversationalAgentController.js'
 
 const router = express.Router()
 
@@ -31,6 +32,11 @@ router.post('/appointment', handleAppointmentWebhook)
 router.post('/appointment/showed', handleAppointmentShowedWebhook)
 router.post('/whatsapp/attribution', handleWhatsAppAttributionWebhook)
 router.post('/conversation', handleConversationWebhook)
+router.post('/conversational-agent/goal', handleConversationalAgentGoalWebhook)
+router.post('/conversational-agent/goal/:goalId', (req, res, next) => {
+  req.query.goalId = req.params.goalId
+  return handleConversationalAgentGoalWebhook(req, res, next)
+})
 router.post('/whatsapp-api/ycloud', handleYCloudWhatsAppApiWebhook)
 router.post('/invoice', handleInvoiceWebhook)
 router.get('/meta', verifyMetaSocialWebhook)

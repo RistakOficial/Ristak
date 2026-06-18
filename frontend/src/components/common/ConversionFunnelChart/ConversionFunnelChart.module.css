@@ -2,8 +2,8 @@
   --chart-loading-fill: var(--app-skeleton-base);
   --funnel-progress-fill: linear-gradient(
     90deg,
-    var(--design-chart-primary, var(--color-primary)) 0%,
-    color-mix(in srgb, var(--design-chart-primary, var(--color-primary)) 82%, var(--color-background-secondary) 18%) 100%
+    var(--accent) 0%,
+    color-mix(in srgb, var(--accent) 82%, var(--surface-2) 18%) 100%
   );
 
   padding: 1.5rem;
@@ -284,7 +284,7 @@
 .conversionRate {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--design-chart-primary, var(--color-status-success));
+  color: var(--color-text-secondary);
 }
 
 .progressBar {
@@ -342,13 +342,13 @@
 
 .insightValue {
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
   margin: 0;
 }
 
 .insightHighlight {
-  color: var(--design-chart-primary, var(--color-status-success));
+  color: var(--color-text-secondary);
   font-size: 1rem;
 }
 

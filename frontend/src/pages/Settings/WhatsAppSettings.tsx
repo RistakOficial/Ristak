@@ -17,7 +17,7 @@ import {
   Wallet
 } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
-import { Button, Modal, PageHeader } from '@/components/common'
+import { Badge, Button, Modal, PageHeader } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
 import { MessageTemplates } from './MessageTemplates'
@@ -716,7 +716,7 @@ export const WhatsAppSettings: React.FC = () => {
                             <span>{phone.id}</span>
                           </td>
                           <td>{displayName}</td>
-                          <td><span className={styles.statusPill}>{isSender ? 'Principal' : 'Oficial'}</span></td>
+                          <td><Badge variant="success">{isSender ? 'Principal' : 'Oficial'}</Badge></td>
                           <td>
                             <div className={styles.qrCell}>
                               <span className={`${styles.statusPill} ${getQrStatusClass(qrStatus)}`}>{getQrStatusLabel(qrStatus)}</span>

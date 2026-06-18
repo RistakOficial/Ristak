@@ -7,12 +7,14 @@ interface AIAgentAvailability {
   configured: boolean
   loading: boolean
   needsReconnect: boolean
+  businessProfile?: AIAgentConfigStatus['businessProfile']
 }
 
 function readAvailability(status?: AIAgentConfigStatus | null): Omit<AIAgentAvailability, 'loading'> {
   return {
     configured: Boolean(status?.configured),
-    needsReconnect: Boolean(status?.needsReconnect)
+    needsReconnect: Boolean(status?.needsReconnect),
+    businessProfile: status?.businessProfile
   }
 }
 

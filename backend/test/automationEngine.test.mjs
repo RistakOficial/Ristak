@@ -113,6 +113,127 @@ test('filtersMatch: formulario enviado puede ser descalificado o no descalificad
   }), false)
 })
 
+test('formularios exponen respuestas no guardadas para variables, filtros y condiciones', () => {
+  const formCtx = {
+    contact: {
+      fullName: 'Lead Formulario',
+      phone: '+5215555555555',
+      email: 'lead-form@test.com'
+    },
+    formId: 'site_form_123',
+    formName: 'Diagnóstico',
+    submissionId: 'submission_123',
+    formStatus: 'disqualified',
+    formDisqualified: true,
+    submittedAt: '2026-06-17T20:00:00.000Z',
+    formResponses: {
+      answers: [
+        { id: 'field_budget', key: 'presupuesto', label: 'Presupuesto mensual', value: '5000', type: 'currency' },
+        { id: 'field_need', key: 'necesidad', label: 'Necesidad', value: 'Seguimiento por WhatsApp', type: 'text' }
+      ]
+    }
+  }
+
+  assert.equal(renderTemplate('{{form.answers}}', formCtx), 'Presupuesto mensual: 5000\nNecesidad: Seguimiento por WhatsApp')
+  assert.equal(renderTemplate('{{formulario.respuestas.presupuesto}}', formCtx), '5000')
+  assert.equal(renderTemplate('{{formulario.respuestas_por_id.field_budget}}', formCtx), '5000')
+  assert.equal(filtersMatch([{ field: 'form-field-value', customKey: 'presupuesto', match: 'is', value: '5000' }], formCtx), true)
+  assert.equal(filtersMatch([{ field: 'form-field-value', match: 'contains', value: 'WhatsApp' }], formCtx), true)
+
+  const condition = {
+    branches: [
+      {
+        name: 'Presupuesto suficiente',
+        groupsOperator: 'AND',
+        groups: [{
+          operator: 'AND',
+          negate: false,
+          rules: [{
+            field: 'var:formulario.respuestas.presupuesto',
+            operator: 'gte',
+            value: '4000'
+          }]
+        }]
+      }
+    ]
+  }
+  assert.equal(evaluateConditionNode(condition, formCtx).handle, 'yes')
+})
+
+test('trigger de formulario reconoce IDs específicos de formularios embebidos', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_embedded_form_${suffix}`
+  const contactId = `contact_embedded_form_${suffix}`
+  const siteId = `landing_${suffix}`
+  const formSiteId = `${siteId}:form_embed:block_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        category: 'trigger',
+        label: 'Cuando...',
+        position: { x: 120, y: 220 },
+        config: {
+          triggers: [{
+            id: 'trigger-form-submitted',
+            type: 'trigger-form-submitted',
+            config: { form: formSiteId }
+          }]
+        }
+      }
+    ],
+    edges: [],
+    viewport: { x: 0, y: 0, zoom: 1 },
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `embedded-form-${suffix}@example.com`,
+        'Lead Formulario Embebido',
+        'Lead',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test formulario embebido', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('form-submitted', {
+      contactId,
+      formId: formSiteId,
+      formName: 'Solicitud interna',
+      siteId,
+      siteName: 'Landing principal',
+      formSiteId,
+      formSiteName: 'Solicitud interna',
+      submissionId: `submission_${suffix}`,
+      formStatus: 'received'
+    })
+
+    const enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.ok(enrollment)
+    const context = JSON.parse(enrollment.context || '{}')
+    assert.equal(context.formSiteId, formSiteId)
+    assert.equal(context.siteId, siteId)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
 test('evaluateConditionNode: una rama → Sí/No', () => {
   const config = {
     branches: [
@@ -241,6 +362,94 @@ test('filtersMatch: conector O entre filtros', () => {
     { field: 'message', match: 'contains', value: 'precio', connector: 'and' }
   ]
   assert.equal(filtersMatch(andFilters, ctx), false)
+})
+
+test('logic-wait por duración respeta segundos', async () => {
+  const suffix = randomUUID()
+  const contactId = `rstk_contact_wait_seconds_${suffix}`
+  const automationId = `automation_wait_seconds_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-message',
+              type: 'trigger-customer-replied',
+              config: { channel: 'any' }
+            }
+          ]
+        }
+      },
+      {
+        id: 'wait-seconds',
+        type: 'logic-wait',
+        label: 'Esperar',
+        config: {
+          mode: 'duration',
+          amount: 10,
+          unit: 'seconds'
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-wait', sourceNodeId: 'start', targetNodeId: 'wait-seconds' },
+      { id: 'edge-wait-done', sourceNodeId: 'wait-seconds', sourceHandle: 'out', targetNodeId: 'done' }
+    ],
+    settings: {}
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `wait-seconds-${suffix}@example.com`,
+        'Contacto Segundos',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test espera segundos', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    const before = Date.now()
+    await handleAutomationEvent('message-received', {
+      contactId,
+      messageText: 'hola',
+      channel: 'whatsapp'
+    })
+    const after = Date.now()
+
+    const enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    const resumeAt = new Date(enrollment.resume_at).getTime()
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.wait_kind, 'duration')
+    assert.equal(enrollment.current_node_id, 'wait-seconds')
+    assert.ok(resumeAt >= before + 10_000)
+    assert.ok(resumeAt <= after + 11_000)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
 })
 
 test('logic-wait por clic de disparo reanuda cuando llega el trigger link configurado', async () => {

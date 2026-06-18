@@ -1,4 +1,4 @@
-import type { Contact as ContactType, ContactCustomFieldDefinition } from '@/types'
+import type { Contact as ContactType, ContactCustomField, ContactCustomFieldDefinition } from '@/types'
 import { dedupeContacts } from '@/utils/contactDedup'
 import { formatName } from '@/utils/format'
 import { apiUrl } from './apiBaseUrl'
@@ -23,6 +23,10 @@ export interface JourneyEvent {
   type: 'page_visit' | 'whatsapp_message' | 'meta_message' | 'contact_created' | 'appointment' | 'payment'
   date: string
   data: Record<string, any>
+}
+
+interface ContactJourneyOptions {
+  includeBusinessMessages?: boolean
 }
 
 interface ContactChartData {
@@ -244,9 +248,11 @@ export const contactsService = {
     return normalizeContact(data)
   },
 
-  async getContactJourney(id: string): Promise<JourneyEvent[]> {
+  async getContactJourney(id: string, options: ContactJourneyOptions = {}): Promise<JourneyEvent[]> {
     try {
-      const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/journey`)
+      const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/journey`, {
+        params: options.includeBusinessMessages ? { includeBusinessMessages: 'true' } : undefined
+      })
 
       if (!Array.isArray(data)) {
         return []
@@ -284,6 +290,13 @@ export const contactsService = {
 
   updateCustomFieldDefinition(definitionId: string, payload: Partial<ContactCustomFieldDefinition>) {
     return apiClient.put<ContactCustomFieldDefinition>(`/contacts/custom-fields/${definitionId}`, payload)
+  },
+
+  bulkUpdateCustomFields(contactIds: string[], customFields: ContactCustomField[]) {
+    return apiClient.post<{ updated: number; total: number; customFields: ContactCustomField[] }>('/contacts/bulk/custom-fields', {
+      contactIds,
+      customFields
+    })
   },
 
   async getContactsChart(startDate?: string, endDate?: string): Promise<ContactChartData[]> {

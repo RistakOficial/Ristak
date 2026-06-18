@@ -1,12 +1,13 @@
-import { Agent, Runner, OpenAIProvider } from '@openai/agents'
+import { Agent, Runner } from '@openai/agents'
 import { db } from '../../config/database.js'
 import { logger } from '../../utils/logger.js'
 import { getAccountTimezone } from '../../utils/dateUtils.js'
+import { getAccountLocaleSettings } from '../../utils/accountLocale.js'
 import {
   buildBusinessProfilePromptParameters,
   getAIAgentConfig,
-  getBusinessProfileSnapshot,
-  getOpenAIApiKey
+  getOpenAIApiKey,
+  getBusinessProfileSnapshot
 } from '../../services/aiAgentService.js'
 import {
   startAgentRun,
@@ -31,14 +32,27 @@ import {
   normalizeAgentReplyDelivery,
   ADVANCED_CLOSING_CONTEXT_FIELDS
 } from '../../services/conversationalAgentService.js'
+import {
+  normalizeConversationalAIProvider,
+  resolveConversationalAIRuntime
+} from '../../services/conversationalAIProviderService.js'
 import { tagNamesForIds } from '../../services/contactTagsService.js'
-import { buildConversationalInstructions } from './prompt.js'
+import {
+  buildClosingStrategyTemplateParameters,
+  buildConversationalInstructions,
+  getAccountRegionalLocaleTag,
+  getClosingChannelLabel
+} from './prompt.js'
 import { createConversationalTools } from './tools.js'
 import { buildInputItems } from '../runner.js'
 import {
   splitMessageIntoBubbles,
   splitMessageIntoBubblesFallback
 } from './messageSplitter.js'
+import {
+  buildConversationalMediaSummary,
+  hydrateConversationalMessagesMedia
+} from './mediaContext.js'
 
 const HISTORY_LIMIT = 20
 const MAX_TURNS = 10
@@ -50,28 +64,31 @@ const PENDING_INBOUND_SCAN_LIMIT = 30
 const PENDING_RECOVERY_SCAN_LIMIT = 80
 const PENDING_RECOVERY_SCHEDULE_LIMIT = 10
 const PENDING_RECOVERY_MAX_AGE_MS = Number(process.env.CONVERSATIONAL_AGENT_PENDING_RECOVERY_MAX_AGE_MS || 60 * 60 * 1000)
-const CHANNEL_LABELS = {
-  whatsapp: 'WhatsApp',
-  instagram: 'Instagram',
-  messenger: 'Messenger',
-  webchat: 'Chat web',
-  sms: 'SMS',
-  email: 'Email'
-}
-const OBJECTIVE_FINAL_TEXTS = {
-  citas: 'agendar una cita',
-  ventas: 'comprar',
-  datos: 'compartir los datos clave',
-  filtrar: 'confirmar si tiene intencion real',
-  custom: 'avanzar al siguiente paso definido por el negocio'
-}
-
 // Conversaciones que el agente está procesando ahora mismo (instancia única).
 const runningContacts = new Set()
 const pendingContactReruns = new Map()
 
 // Palabras internas que jamás deben llegar al cliente final.
-const INTERNAL_TOKEN_PATTERN = /\b(AGENDAR|SALTAR|ready_for_human|ready_to_schedule|ready_to_buy|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link)\b/gi
+const INTERNAL_TOKEN_PATTERN = /\b(AGENDAR|SALTAR|ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link|send_goal_url|send_trigger_link)\b/gi
+const INTERNAL_REASONING_LABEL_PATTERN = /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:lectura|movimiento|textura|energ[ií]a|intenci[oó]n|an[aá]lisis|razonamiento|objetivo|decisi[oó]n|criterio|checklist|paso\s+[a-z0-9]+)\s*[:：-]\s*(?:\*\*)?/i
+const INTERNAL_REASONING_MARKER_PATTERN = /(?:\*\*)?\s*(?:lectura|movimiento|textura|energ[ií]a|intenci[oó]n|an[aá]lisis|razonamiento|criterio|checklist)\s*[:：-]\s*(?:\*\*)?/i
+const VISIBLE_REPLY_PREFIX_PATTERN = /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:respuesta|mensaje)\s+(?:visible|final)\s*[:：-]\s*(?:\*\*)?\s*/i
+const HARD_INTERNAL_META_PHRASES = [
+  /\b(?:tengo|ya tengo|cuento con)\s+(?:el\s+)?contexto\s+del\s+negocio\b/i,
+  /\bel contacto es (?:nuevo|fr[ií]o|tibio|caliente|neutral)\b/i,
+  /\bahora voy a responder\b/i,
+  /\bno voy a\b.*\b(?:soltar|dar|explicar|responder|valores|pitch)\b/i
+]
+const SOFT_INTERNAL_META_PHRASES = [
+  /\bvoy a (?:regresar|devolver|soltar|aplicar|usar|espejear|mantener)\b/i,
+  /\b(?:primer|siguiente) mensaje\b/i,
+  /\b(?:la persona|el contacto) (?:est[aá]|viene|llega|dijo|no dijo|trae|se siente|pregunt[oó]|pidi[oó])\b/i,
+  /\b(?:prospecto|interlocutor|estatus|pitch|pull|push|rebote|desarmad[oa]|sin ser mam[oó]n|registro profesional|registro alto|registro medio|registro bajo)\b/i,
+  /\b(?:espejeo|espejear|espeja)\b/i,
+  /\bsu sequedad\b/i,
+  /\bvalores (?:de golpe|concretos)\b/i,
+  /\bpregunta espec[ií]fica\b/i
+]
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -115,6 +132,7 @@ export function sanitizeAgentReply(text) {
   let reply = String(text || '').trim()
   if (!reply) return ''
   reply = reply.replace(INTERNAL_TOKEN_PATTERN, '').replace(/\[[^\]]*herramienta[^\]]*\]/gi, '')
+  reply = removeInternalReasoningBlocks(reply)
   reply = reply.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
   if ((reply.startsWith('"') && reply.endsWith('"')) || (reply.startsWith('“') && reply.endsWith('”'))) {
     reply = reply.slice(1, -1).trim()
@@ -125,8 +143,43 @@ export function sanitizeAgentReply(text) {
   return reply
 }
 
+function isInternalReasoningBlock(value) {
+  const block = String(value || '').trim()
+  if (!block) return false
+  if (INTERNAL_REASONING_LABEL_PATTERN.test(block) || INTERNAL_REASONING_MARKER_PATTERN.test(block)) return true
+  if (HARD_INTERNAL_META_PHRASES.some((pattern) => pattern.test(block))) return true
+  let score = 0
+  for (const pattern of SOFT_INTERNAL_META_PHRASES) {
+    if (pattern.test(block)) score += 1
+  }
+  return score >= 2
+}
+
+function cleanVisibleReplyBlock(value) {
+  const block = String(value || '').trim()
+  if (!block) return ''
+  const visibleMatch = block.match(VISIBLE_REPLY_PREFIX_PATTERN)
+  if (visibleMatch) return block.slice(visibleMatch[0].length).trim()
+  if (isInternalReasoningBlock(block)) return ''
+  return block
+}
+
+function removeInternalReasoningBlocks(text) {
+  const blocks = String(text || '')
+    .replace(/\r\n/g, '\n')
+    .split(/\n{1,}/)
+    .map((block) => cleanVisibleReplyBlock(block))
+    .filter(Boolean)
+
+  return blocks.join('\n').trim()
+}
+
 function cleanMessageText(row) {
-  return String(row?.message_text || '').trim() ||
+  const text = String(row?.message_text || row?.content || '').trim()
+  const mediaSummary = buildConversationalMediaSummary(row)
+  if (text && mediaSummary) return `${text}\n${mediaSummary}`
+  return text ||
+    mediaSummary ||
     (row?.message_type && row.message_type !== 'text' ? `[${row.message_type} sin texto]` : '') ||
     '(mensaje vacío)'
 }
@@ -165,16 +218,7 @@ function firstText(...values) {
 }
 
 function getChannelLabel(channel = 'whatsapp') {
-  return CHANNEL_LABELS[String(channel || '').toLowerCase()] || compactText(channel) || 'WhatsApp'
-}
-
-function describeObjectiveFinal(config = {}) {
-  if (config.objective === 'custom' && config.customObjective) return compactText(config.customObjective)
-  return OBJECTIVE_FINAL_TEXTS[config.objective] || OBJECTIVE_FINAL_TEXTS.citas
-}
-
-function resolveAdvanceToolName(config = {}) {
-  return 'mark_ready_to_advance'
+  return getClosingChannelLabel(channel)
 }
 
 function summarizeProducts(rows = []) {
@@ -235,6 +279,7 @@ async function loadAdvancedClosingRuntimeContext({
   businessProfile = null,
   timezone,
   nowIso,
+  accountLocale = {},
   channel = 'whatsapp',
   ruleContext = null
 } = {}) {
@@ -311,6 +356,18 @@ async function loadAdvancedClosingRuntimeContext({
     productSummary: firstText(profileOffering, productSummary),
     businessProfile
   })
+  const adaptationPromptParameters = businessProfile?.configured
+    ? profileParameters
+    : buildBusinessProfilePromptParameters({
+      businessName: firstText(profileBusinessName, businessName),
+      industry: profileIndustry,
+      description: businessInfoSummary || businessContext,
+      offerings: firstText(profileOffering, productSummary) ? [{ name: firstText(profileOffering, productSummary) }] : [],
+      locations: firstText(profileLocation, locationSummary) ? [{ modality: firstText(profileLocation, locationSummary) }] : [],
+      hours: profileAvailability ? { summary: profileAvailability } : {},
+      payments: profileConditions ? { summary: profileConditions } : {},
+      importantConditions: profileConditions
+    })
   const businessConditions = [
     profileConditions,
     conditions
@@ -320,50 +377,26 @@ async function loadAdvancedClosingRuntimeContext({
     availability
   ].map((item) => compactText(item, 700)).filter(Boolean).join(' · ')
 
-  const parameters = {
-    ...profileParameters,
-    NOMBRE_DEL_NEGOCIO: firstText(profileBusinessName, businessName, 'este negocio'),
-    ESCRIBIR_NOMBRE_DEL_NEGOCIO: firstText(profileBusinessName, businessName, 'este negocio'),
-    INDUSTRIA: firstText(profileIndustry, businessContext ? 'la industria descrita en el perfil estructurado del negocio' : 'no especificada'),
-    ESCRIBIR_INDUSTRIA: firstText(profileIndustry, businessContext ? 'la industria descrita en el perfil estructurado del negocio' : 'no especificada'),
-    PRODUCTO_O_SERVICIO: firstText(learned.productInterest, profileOffering, productSummary, 'los servicios del negocio'),
-    ESCRIBIR_PRODUCTO_O_SERVICIO: firstText(learned.productInterest, profileOffering, productSummary, 'los servicios del negocio'),
-    TIPO_DE_PERSONA: personType,
-    ESCRIBIR_TIPO_DE_CLIENTE: personType,
-    OBJETIVO_FINAL: describeObjectiveFinal(config),
-    ESCRIBIR_OBJETIVO_FINAL: describeObjectiveFinal(config),
-    CANAL_DE_CONVERSACION: channelLabel,
-    WHATSAPP_INSTAGRAM_MESSENGER_CHAT_WEB_SMS: channelLabel,
-    HERRAMIENTA_INTERNA_DE_AVANCE: resolveAdvanceToolName(config),
-    ESCRIBIR_TOOL_DE_AVANCE: resolveAdvanceToolName(config),
-    HERRAMIENTA_INTERNA_DE_DESCARTE: 'discard_conversation',
-    ESCRIBIR_TOOL_DE_DESCARTE: 'discard_conversation',
-    INFO_GENERAL_DEL_NEGOCIO: businessInfoSummary || 'consulta get_business_profile y list_products para información real del negocio',
-    PEGAR_INFO_DEL_NEGOCIO: businessInfoSummary || 'consulta get_business_profile y list_products para información real del negocio',
-    VALOR: firstText(profileValue, productSummary, 'consulta list_products antes de hablar de valor'),
-    VALOR_DEL_PRODUCTO_O_SERVICIO: firstText(profileValue, productSummary, 'consulta list_products antes de hablar de valor'),
-    UBICACION_O_MODALIDAD: firstText(profileLocation, locationSummary, 'modalidad no especificada; consulta get_business_profile si hace falta'),
-    PRESENCIAL_ONLINE_AMBAS_UBICACION: firstText(profileLocation, locationSummary, 'modalidad no especificada; consulta get_business_profile si hace falta'),
-    MODALIDAD: firstText(profileLocation, locationSummary, 'modalidad no especificada'),
-    UBICACION: firstText(profileLocation, locationSummary, 'ubicación no especificada'),
-    DISPONIBILIDAD: fullAvailability || availability,
-    CONDICIONES_IMPORTANTES: businessConditions || 'sin condiciones adicionales configuradas',
-    CONDICIONES_DEL_NEGOCIO: businessConditions || 'sin condiciones adicionales configuradas',
-    ORIGEN_CONTACTO: arrivalSource,
-    ETIQUETAS_CONTACTO: tagNames.length ? tagNames.join(', ') : 'sin etiquetas registradas',
-    FECHA_REGISTRO_CONTACTO: contact?.created_at || 'no disponible',
-    MOTIVO_DE_CONTACTO: firstText(learned.contactReason, 'pendiente de descubrir con una pregunta natural'),
-    POR_QUE_AHORA: firstText(learned.whyNow, 'pendiente de descubrir con una pregunta natural'),
-    PROBLEMA_SUPERFICIAL: firstText(learned.surfaceProblem, 'lo primero que la persona menciono'),
-    PROBLEMA_REAL: firstText(learned.realProblem, learned.surfaceProblem, 'el problema real que se confirme en la conversación'),
-    CONSECUENCIA: firstText(learned.consequenceIfNoAction, 'la consecuencia logica segun lo que la persona ya dijo'),
-    CONSECUENCIA_LOGICA: firstText(learned.consequenceIfNoAction, 'la consecuencia logica segun lo que la persona ya dijo'),
-    RESULTADO_DESEADO: firstText(learned.desiredOutcome, 'el resultado que la persona diga que busca'),
-    OBJECION_PRINCIPAL: firstText(learned.objection, 'ninguna objecion clara todavia'),
-    URGENCIA_DETECTADA: firstText(learned.urgencyLevel, 'desconocida'),
-    CAMINO_1_CONSECUENCIA: firstText(learned.consequenceIfNoAction, 'seguir igual con el problema que ya conto'),
-    CAMINO_2_RESULTADO_DESEADO: firstText(learned.desiredOutcome, 'tomar acción hacia el resultado que busca')
-  }
+  const parameters = buildClosingStrategyTemplateParameters({
+    profileParameters,
+    adaptationParameters: adaptationPromptParameters,
+    config,
+    businessName: firstText(profileBusinessName, businessName, 'este negocio'),
+    industry: firstText(profileIndustry, businessContext ? 'la industria descrita en el perfil estructurado del negocio' : 'no especificada'),
+    offering: firstText(learned.productInterest, profileOffering, productSummary, 'los servicios del negocio'),
+    personType,
+    channelLabel,
+    businessInfo: businessInfoSummary || 'consulta get_business_profile y list_products para información real del negocio',
+    value: firstText(profileValue, productSummary, 'consulta list_products antes de hablar de valor'),
+    location: firstText(profileLocation, locationSummary, 'modalidad no especificada; consulta get_business_profile si hace falta'),
+    availability: fullAvailability || availability,
+    conditions: businessConditions || 'sin condiciones adicionales configuradas',
+    learned,
+    contact,
+    tagNames,
+    arrivalSource,
+    accountLocale
+  })
 
   const systemFacts = [
     `Canal detectado: ${channelLabel}`,
@@ -380,6 +413,7 @@ async function loadAdvancedClosingRuntimeContext({
     productSummary ? `Productos/servicios activos: ${productSummary}` : '',
     businessProfile?.summary ? `Perfil estructurado del negocio: ${businessProfile.summary}` : '',
     locationSummary ? `Ubicación registrada: ${locationSummary}` : '',
+    parameters.PAIS_CUENTA ? `País/región textual de la cuenta: ${parameters.PAIS_CUENTA}` : '',
     `Zona horaria: ${timezone}`,
     `Fecha/hora para interpretar relativos: ${nowIso}`
   ].map((item) => compactText(item, 700)).filter(Boolean)
@@ -436,7 +470,8 @@ export function buildPendingReplyContextMessage(pendingMessages = []) {
 
 async function loadConversationHistory(contactId) {
   const rows = await db.all(`
-    SELECT id, direction, message_type, message_text, message_timestamp, created_at
+    SELECT id, direction, message_type, message_text, media_url, media_mime_type,
+           media_filename, media_duration_ms, message_timestamp, created_at
     FROM whatsapp_api_messages
     WHERE contact_id = ?
     ORDER BY COALESCE(message_timestamp, created_at) DESC
@@ -447,7 +482,12 @@ async function loadConversationHistory(contactId) {
     return {
       id: row.id,
       role: row.direction === 'outbound' ? 'assistant' : 'user',
-      content: cleanMessageText(row),
+      content: String(row.message_text || '').trim(),
+      message_type: row.message_type,
+      media_url: row.media_url,
+      media_mime_type: row.media_mime_type,
+      media_filename: row.media_filename,
+      media_duration_ms: row.media_duration_ms,
       timestamp: row.message_timestamp || row.created_at || null
     }
   })
@@ -455,7 +495,8 @@ async function loadConversationHistory(contactId) {
 
 async function loadPendingInboundMessages(contactId, state = {}) {
   const rows = await db.all(`
-    SELECT id, message_text, message_type, message_timestamp, created_at
+    SELECT id, message_text, message_type, media_url, media_mime_type,
+           media_filename, media_duration_ms, message_timestamp, created_at
     FROM whatsapp_api_messages
     WHERE contact_id = ? AND direction = 'inbound'
     ORDER BY COALESCE(message_timestamp, created_at) DESC
@@ -481,7 +522,8 @@ async function loadPendingInboundMessages(contactId, state = {}) {
 
 async function loadLatestInboundMessage(contactId) {
   return db.get(`
-    SELECT id, message_text, message_type, phone, business_phone, business_phone_number_id
+    SELECT id, message_text, message_type, media_url, media_mime_type,
+           media_filename, media_duration_ms, phone, business_phone, business_phone_number_id
     FROM whatsapp_api_messages
     WHERE contact_id = ? AND direction = 'inbound'
     ORDER BY COALESCE(message_timestamp, created_at) DESC
@@ -490,14 +532,16 @@ async function loadLatestInboundMessage(contactId) {
 }
 
 async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null }) {
-  const [aiConfig, timezone, businessProfile] = await Promise.all([
+  const [aiConfig, timezone, businessProfile, accountLocale] = await Promise.all([
     getAIAgentConfig({}),
     getAccountTimezone().catch(() => 'America/Mexico_City'),
-    getBusinessProfileSnapshot().catch(() => null)
+    getBusinessProfileSnapshot().catch(() => null),
+    getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
   ])
 
-  const model = normalizeConversationalAgentModel(conversationModel || config?.model || DEFAULT_MODEL)
-  const nowIso = new Date().toLocaleString('es-MX', { timeZone: timezone, dateStyle: 'full', timeStyle: 'short' })
+  const aiProvider = normalizeConversationalAIProvider(config?.aiProvider)
+  const model = normalizeConversationalAgentModel(conversationModel || config?.model || DEFAULT_MODEL, aiProvider)
+  const nowIso = new Date().toLocaleString(getAccountRegionalLocaleTag(accountLocale), { timeZone: timezone, dateStyle: 'full', timeStyle: 'short' })
 
   let businessName = null
   try {
@@ -520,6 +564,7 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     businessProfile,
     timezone,
     nowIso,
+    accountLocale,
     channel,
     ruleContext
   })
@@ -532,7 +577,8 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     timezone,
     nowIso,
     contactName,
-    advancedClosingContext
+    advancedClosingContext,
+    accountLocale
   })
 
   const agent = new Agent({
@@ -542,10 +588,10 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     tools
   })
 
-  return { agent, ctx, model }
+  return { agent, ctx, model, aiProvider }
 }
 
-async function executeAgent({ agent, apiKey, messages, contactId, model, traceMessage = '' }) {
+async function executeAgent({ agent, modelProvider, messages, contactId, model, aiProvider = 'openai', traceMessage = '' }) {
   let agentRun = null
   try {
     agentRun = await startAgentRun({
@@ -557,7 +603,7 @@ async function executeAgent({ agent, apiKey, messages, contactId, model, traceMe
       domain: 'conversacional',
       action: 'whatsapp_reply',
       model,
-      route: { engine: 'openai-agents-sdk', category: 'conversacional', contactId }
+      route: { engine: aiProvider === 'openai' ? 'openai-agents-sdk' : `${aiProvider}-openai-compatible`, category: 'conversacional', contactId }
     })
   } catch (error) {
     logger.warn(`[Agente conversacional] No se pudo iniciar rastro: ${error.message}`)
@@ -565,7 +611,7 @@ async function executeAgent({ agent, apiKey, messages, contactId, model, traceMe
 
   try {
     const runner = new Runner({
-      modelProvider: new OpenAIProvider({ apiKey }),
+      modelProvider,
       tracingDisabled: true
     })
     const result = await runner.run(agent, buildInputItems(messages), {
@@ -577,9 +623,9 @@ async function executeAgent({ agent, apiKey, messages, contactId, model, traceMe
     await recordAgentStep(agentRun, {
       stepType: 'final_response',
       status: 'completed',
-      output: { reply: reply.slice(0, 1600), model }
+      output: { reply: reply.slice(0, 1600), model, aiProvider }
     })
-    await completeAgentRun(agentRun, { status: 'completed', reply, model, usage: null })
+    await completeAgentRun(agentRun, { status: 'completed', reply, model, aiProvider, usage: null })
 
     return reply
   } catch (error) {
@@ -636,8 +682,7 @@ export async function sendReplyParts({
   const splitResult = await splitter({
     text: reply,
     settings: agentConfig.replyDelivery,
-    apiKey,
-    model
+    apiKey
   })
   const parts = splitResult.messages
   if (!parts.length) return { parts: [], sentParts: 0, interruptedBy: null }
@@ -758,17 +803,12 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         WHERE contact_id = ?
       `, [latest.id, contactId])
 
-      const apiKey = await getOpenAIApiKey()
-      if (!apiKey) {
-        logger.warn('[Agente conversacional] Sin API Key de OpenAI configurada; no se puede responder')
-        return
-      }
-
       // Resolver qué agente atiende esta conversación: el ya asignado o el
       // primero cuyas reglas de entrada coincidan con el mensaje/contacto.
+      const latestMessageText = cleanMessageText(latest)
       const ruleContext = await buildRuleContext({
         contactId,
-        messageText: latest.message_text || '',
+        messageText: latestMessageText,
         channel: 'whatsapp'
       })
 
@@ -790,7 +830,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       if (!agentConfig || !agentConfig.enabled) {
         agentConfig = await matchAgentForMessage({
           contactId,
-          messageText: latest.message_text || '',
+          messageText: latestMessageText,
           channel: 'whatsapp',
           excludeAgentId: releasedAgentId,
           ruleContext
@@ -809,8 +849,21 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         return
       }
 
+      const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || config.aiProvider)
+      const runtime = await resolveConversationalAIRuntime(aiProvider)
+      agentConfig = { ...agentConfig, aiProvider }
+
       const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
-      const messages = await loadConversationHistory(contactId)
+      const rawMessages = await loadConversationHistory(contactId)
+      const audioTranscriptionApiKey = aiProvider === 'openai'
+        ? runtime.apiKey
+        : await getOpenAIApiKey().catch(() => null)
+      const messages = await hydrateConversationalMessagesMedia(rawMessages, {
+        aiProvider,
+        apiKey: runtime.apiKey,
+        audioTranscriptionApiKey,
+        includeBinary: aiProvider === 'openai'
+      })
       if (!messages.length) return
       const pendingMessages = await loadPendingInboundMessages(contactId, freshState)
       const pendingContextMessage = buildPendingReplyContextMessage(pendingMessages)
@@ -829,10 +882,11 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
 
       const reply = await executeAgent({
         agent,
-        apiKey,
+        modelProvider: runtime.modelProvider,
         messages: messagesForAgent,
         contactId,
         model,
+        aiProvider,
         traceMessage
       })
 
@@ -900,7 +954,18 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         return
       }
 
-      const delivery = await sendReplyParts({ contactId, phone, latest, agentConfig, reply, apiKey, model })
+      const delivery = await sendReplyParts({
+        contactId,
+        phone,
+        latest,
+        agentConfig,
+        reply,
+        apiKey: runtime.apiKey,
+        model,
+        dependencies: {
+          splitter: runtime.supportsAISplitting ? splitMessageIntoBubbles : splitMessageIntoBubblesFallback
+        }
+      })
       if (delivery.interruptedBy) {
         await recordConversationalAgentEvent({
           contactId,
@@ -932,6 +997,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
           replyPreview: reply.slice(0, 280),
           partCount: delivery.parts.length,
           pendingInboundCount: pendingMessages.length,
+          aiProvider,
           actions: ctx.actions
         }
       })
@@ -966,7 +1032,8 @@ export async function recoverPendingConversationalAgentConversations({
   if (!config.enabled) return { scanned: 0, scheduled: 0 }
 
   const rows = await db.all(`
-    SELECT id, contact_id, message_text, message_type, phone, business_phone,
+    SELECT id, contact_id, message_text, message_type, media_url, media_mime_type,
+           media_filename, media_duration_ms, phone, business_phone,
            business_phone_number_id, message_timestamp, created_at
     FROM whatsapp_api_messages
     WHERE direction = 'inbound' AND contact_id IS NOT NULL
@@ -1014,13 +1081,6 @@ export async function recoverPendingConversationalAgentConversations({
  * se devuelven como lista para mostrarlas en la prueba.
  */
 export async function runConversationalAgentPreview({ messages = [], configOverride = null, agentId = null }) {
-  const apiKey = await getOpenAIApiKey()
-  if (!apiKey) {
-    const error = new Error('Primero configura una API Key válida de OpenAI en la sección General del Agente AI')
-    error.statusCode = 409
-    throw error
-  }
-
   const globalConfig = await getConversationalAgentConfig()
   let baseConfig = agentId ? await getConversationalAgent(agentId) : null
   if (!baseConfig) {
@@ -1030,12 +1090,15 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     baseConfig = {
       name: 'Agente', objective: 'citas', customObjective: '', successAction: 'ready_for_human',
       successExtras: [], requiredData: '', handoffRules: '', extraInstructions: '',
-      allowEmojis: false, model: globalConfig.model, defaultCalendarId: null, closingStrategyMode: 'system', closingStrategyCustom: '',
+      allowEmojis: false, aiProvider: globalConfig.aiProvider, model: globalConfig.model, defaultCalendarId: null, closingStrategyMode: 'system', closingStrategyCustom: '',
       responseDelay: { mode: 'none', fixedValue: 10, fixedUnit: 'seconds', minValue: 1, maxValue: 10, rangeUnit: 'minutes' },
       replyDelivery: { mode: 'single', targetChars: 280, minDelaySeconds: 2, maxDelaySeconds: 6 }
     }
   }
   const config = configOverride ? { ...baseConfig, ...configOverride } : baseConfig
+  const aiProvider = normalizeConversationalAIProvider(config.aiProvider || globalConfig.aiProvider)
+  const runtime = await resolveConversationalAIRuntime(aiProvider)
+  const runtimeConfig = { ...config, aiProvider }
 
   const cleanMessages = (Array.isArray(messages) ? messages : [])
     .filter((m) => m && typeof m.content === 'string' && m.content.trim())
@@ -1049,8 +1112,8 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
   }
 
   const { agent, ctx, model } = await buildAgentForRun({
-    config,
-    conversationModel: config.model || globalConfig.model,
+    config: runtimeConfig,
+    conversationModel: runtimeConfig.model || globalConfig.model,
     contactId: null,
     contactName: null,
     dryRun: true,
@@ -1058,25 +1121,40 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     ruleContext: null
   })
 
-  const reply = await executeAgent({ agent, apiKey, messages: cleanMessages, contactId: null, model })
+  const reply = await executeAgent({
+    agent,
+    modelProvider: runtime.modelProvider,
+    messages: cleanMessages,
+    contactId: null,
+    model,
+    aiProvider
+  })
 
   const splitResult = ctx.suppressReply
     ? { messages: [] }
-    : await splitMessageIntoBubbles({
-      text: reply,
-      settings: config.replyDelivery,
-      apiKey,
-      model
-    })
+    : runtime.supportsAISplitting
+      ? await splitMessageIntoBubbles({
+        text: reply,
+        settings: runtimeConfig.replyDelivery,
+        apiKey: runtime.apiKey,
+        model
+      })
+      : splitMessageIntoBubblesFallback({
+        text: reply,
+        settings: runtimeConfig.replyDelivery
+      })
   const replyParts = splitResult.messages
-  const replyPartDelaysMs = buildReplyPartDelaySchedule(replyParts, { replyDelivery: config.replyDelivery })
+  const replyPartDelaysMs = buildReplyPartDelaySchedule(replyParts, { replyDelivery: runtimeConfig.replyDelivery })
+  const responseDelayMs = getAgentResponseDelayMs(runtimeConfig)
 
   return {
     reply: ctx.suppressReply ? '' : reply,
     replyParts,
     replyPartDelaysMs,
+    responseDelayMs,
     suppressed: ctx.suppressReply,
     actions: ctx.actions,
+    aiProvider,
     model
   }
 }

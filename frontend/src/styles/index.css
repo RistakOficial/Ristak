@@ -16,7 +16,7 @@
      (classic/atelier/editorial): no los elimines de los componentes.
    ============================================================ */
 @import './tooltip-override.css';
-@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&family=Sora:wght@400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -308,10 +308,13 @@ body.dark {
     --opacity-hover: 0.8;
     --opacity-backdrop: 0.6;
 
-    --z-index-dropdown: 1100;
-    --z-index-popover: 1150;
+    /* Orden de apilado: los flotantes (dropdown/popover) van POR ENCIMA del header
+       y de los modales (para que un select dentro de un modal también funcione).
+       Antes el header (1200) tapaba a los dropdowns (1100) -> aparecían detrás. */
     --z-index-header: 1200;
     --z-index-modal: 9999;
+    --z-index-dropdown: 10000;
+    --z-index-popover: 10010;
     --z-index-tooltip: 10100;
     --z-index-toast: 10200;
 
@@ -576,7 +579,7 @@ body:not([data-phone-app='active']) [data-ristak-dropdown-trigger][data-state='o
 body:not([data-phone-app='active']) [data-ristak-dropdown-panel] {
   border: 1px solid var(--ristak-dropdown-border) !important;
   border-radius: var(--ristak-dropdown-radius) !important;
-  background: var(--ristak-dropdown-bg) !important;
+  background: var(--ristak-dropdown-panel-bg, var(--surface-solid, var(--surface))) !important;
   color: var(--color-text-primary);
   box-shadow: var(--ristak-dropdown-panel-shadow) !important;
   overflow: hidden;
@@ -1195,7 +1198,7 @@ body.light [data-ristak-user-menu] {
 }
 
 body [data-ristak-notification-menu] {
-  background: color-mix(in srgb, var(--color-background-secondary) 98%, var(--color-background-tertiary) 2%) !important;
+  background: var(--surface-solid, var(--surface)) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   border-radius: 0.9rem !important;
@@ -2612,3 +2615,714 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   clip-path: inset(0 round 0) !important;
   -webkit-clip-path: inset(0 round 0) !important;
 }
+
+
+/* ============================================================
+   SISTEMA DE DISEÑO GLOBAL — 4 familias (Aurora/Onyx/Brut/Nimbus)
+   Generado del diseño de referencia. Familia: body[data-dir]; modo:
+   body.light / body.dark. Default: Aurora Neutral (data-dir="en").
+   La app móvil (data-phone-app / data-phone-chat-theme) queda excluida
+   de la capa de compatibilidad y conserva su sistema propio.
+   ============================================================ */
+  body[data-dir='a'], body:not([data-dir]) {
+    /* ===== Nimbus (A) — limpio, profesional, neutro frío ===== */
+    --font-display: 'Sora', 'Sora', system-ui, -apple-system, sans-serif; --font-body: 'Hanken Grotesk', system-ui, -apple-system, sans-serif; --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+    --label-font: var(--font-body); --label-transform: none; --label-spacing: 0.005em; --num-font: var(--font-display);
+    --radius-card: 14px; --radius-ctl: 10px; --radius-pill: 999px;
+    --shadow-card: 0 1px 2px rgba(0,0,0,0.28); --shadow-xs: 0 1px 2px rgba(0,0,0,0.22); --shadow-pop: 0 22px 48px -22px rgba(0,0,0,0.6);
+    --bg:#0b0e13; --bg-soft:#10141a; --surface:#161c25; --surface-2:#1f2733; --surface-hover:#27303d;
+    --border:rgba(255,255,255,0.09); --border-strong:rgba(255,255,255,0.18);
+    --text:#eef2f7; --text-dim:#9aa6b6; --text-mute:#65707f;
+    --accent:#4c8dff; --accent-rgb:76,141,255; --accent-2:#7aa9ff; --on-accent:#ffffff; --accent-soft:rgba(76,141,255,0.16);
+    --pos:#48c98a; --pos-soft:rgba(72,201,138,0.15); --neg:#ef6a6a; --neg-soft:rgba(239,106,106,0.15);
+    --warn:#e0a64b; --warn-soft:rgba(224,166,75,0.16); --info:#38b2c4; --info-soft:rgba(56,178,196,0.16);
+    --sidebar:#070a0e; --topbar:rgba(11,14,19,0.82); --chart-grid:rgba(255,255,255,0.06);
+  }
+  body[data-dir='a'].light {
+    --bg:#e7ebf1; --bg-soft:#dfe4ec; --surface:#ffffff; --surface-2:#eef1f6; --surface-hover:#e5eaf1;
+    --border:rgba(15,23,42,0.12); --border-strong:rgba(15,23,42,0.22);
+    --text:#0f172a; --text-dim:#525e74; --text-mute:#7e8a9d;
+    --accent:#2f6fed; --accent-rgb:47,111,237; --accent-2:#4c8dff; --on-accent:#ffffff; --accent-soft:rgba(47,111,237,0.12);
+    --pos:#1f9d57; --pos-soft:rgba(31,157,87,0.13); --neg:#e0544f; --neg-soft:rgba(224,84,79,0.12);
+    --warn:#c98a1e; --warn-soft:rgba(201,138,30,0.15); --info:#1f8aa0; --info-soft:rgba(31,138,160,0.13);
+    --sidebar:#ffffff; --topbar:rgba(231,235,241,0.86); --chart-grid:rgba(15,23,42,0.08);
+    --shadow-card: 0 1px 2px rgba(15,23,42,0.07), 0 1px 3px rgba(15,23,42,0.05); --shadow-xs: 0 1px 2px rgba(15,23,42,0.06); --shadow-pop: 0 22px 48px -24px rgba(15,23,42,0.28);
+  }
+  /* ===== Onyx (C*) — alto contraste, audaz, panel lateral siempre oscuro. 4 versiones de color: Esmeralda (c), Azul (cb), Violeta (cv), Ámbar (ca) ===== */
+  body[data-dir^='c'] {
+    --font-display: 'Outfit', 'Sora', system-ui, -apple-system, sans-serif; --font-body: 'Outfit', system-ui, -apple-system, sans-serif; --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+    --label-font: var(--font-body); --label-transform: none; --label-spacing: 0.012em; --num-font: var(--font-display);
+    --radius-card: 9px; --radius-ctl: 8px; --radius-pill: 999px;
+    --shadow-card: 0 1px 2px rgba(0,0,0,0.3); --shadow-xs: 0 1px 2px rgba(0,0,0,0.25); --shadow-pop: 0 24px 50px -22px rgba(0,0,0,0.66);
+  }
+  body[data-dir^='c'].dark {
+    --bg:#06070a; --bg-soft:#0c0e12; --surface:#13161c; --surface-2:#1d212a; --surface-hover:#262b35;
+    --border:rgba(255,255,255,0.13); --border-strong:rgba(255,255,255,0.3);
+    --text:#ffffff; --text-dim:#d2dae3; --text-mute:#909cab;
+    --neg:#f0635f; --neg-soft:rgba(240,99,95,0.16); --warn:#e6b34d; --warn-soft:rgba(230,179,77,0.17); --info:#46b7d4; --info-soft:rgba(70,183,212,0.16);
+    --sidebar:#0c1014; --topbar:rgba(6,7,10,0.84); --chart-grid:rgba(255,255,255,0.07);
+  }
+  body[data-dir^='c'].light {
+    --bg:#e9ebee; --bg-soft:#e0e3e8; --surface:#ffffff; --surface-2:#eceff2; --surface-hover:#e3e7ec;
+    --border:rgba(10,12,16,0.14); --border-strong:rgba(10,12,16,0.32);
+    --text:#0a0c10; --text-dim:#48505e; --text-mute:#79838f;
+    --neg:#d83b36; --neg-soft:rgba(216,59,54,0.11); --warn:#b5821b; --warn-soft:rgba(181,130,27,0.14); --info:#1f7f99; --info-soft:rgba(31,127,153,0.12);
+    --sidebar:#0c1014; --topbar:rgba(233,235,238,0.88); --chart-grid:rgba(10,12,16,0.08);
+    --shadow-card: 0 1px 2px rgba(10,12,16,0.08), 0 1px 3px rgba(10,12,16,0.05); --shadow-xs: 0 1px 2px rgba(10,12,16,0.07); --shadow-pop: 0 22px 48px -24px rgba(10,12,16,0.3);
+  }
+  /* Onyx · Esmeralda */
+  body[data-dir='c'].dark { --accent:#22c98a; --accent-rgb:34,201,138; --accent-2:#54e0a6; --on-accent:#04130c; --accent-soft:rgba(34,201,138,0.16); --pos:#22c98a; --pos-soft:rgba(34,201,138,0.16); }
+  body[data-dir='c'].light { --accent:#0a9d62; --accent-rgb:10,157,98; --accent-2:#12b873; --on-accent:#ffffff; --accent-soft:rgba(10,157,98,0.12); --pos:#0a9d62; --pos-soft:rgba(10,157,98,0.12); }
+  /* Onyx · Azul */
+  body[data-dir='cb'].dark { --accent:#3d9bff; --accent-rgb:61,155,255; --accent-2:#74b8ff; --on-accent:#04101f; --accent-soft:rgba(61,155,255,0.16); --pos:#22c98a; --pos-soft:rgba(34,201,138,0.16); }
+  body[data-dir='cb'].light { --accent:#1f74e0; --accent-rgb:31,116,224; --accent-2:#3f8cf0; --on-accent:#ffffff; --accent-soft:rgba(31,116,224,0.12); --pos:#0a9d62; --pos-soft:rgba(10,157,98,0.12); }
+  /* Onyx · Violeta */
+  body[data-dir='cv'].dark { --accent:#9d7bff; --accent-rgb:157,123,255; --accent-2:#bda6ff; --on-accent:#0a0618; --accent-soft:rgba(157,123,255,0.16); --pos:#22c98a; --pos-soft:rgba(34,201,138,0.16); }
+  body[data-dir='cv'].light { --accent:#6d3fe0; --accent-rgb:109,63,224; --accent-2:#875cf0; --on-accent:#ffffff; --accent-soft:rgba(109,63,224,0.12); --pos:#0a9d62; --pos-soft:rgba(10,157,98,0.12); }
+  /* Onyx · Ámbar */
+  body[data-dir='ca'].dark { --accent:#f0a93c; --accent-rgb:240,169,60; --accent-2:#f7c46e; --on-accent:#1a1003; --accent-soft:rgba(240,169,60,0.16); --pos:#22c98a; --pos-soft:rgba(34,201,138,0.16); }
+  body[data-dir='ca'].light { --accent:#c97f10; --accent-rgb:201,127,16; --accent-2:#e09a2a; --on-accent:#1a1003; --accent-soft:rgba(201,127,16,0.13); --pos:#0a9d62; --pos-soft:rgba(10,157,98,0.12); }
+
+  /* ===== Brut (D*) — neobrutalismo: duro, alto contraste, mono. Variantes de color: Rojo (d), Azul (db), Lima (dl) ===== */
+  body[data-dir^='d'] {
+    --font-display:'Space Grotesk', 'Sora', system-ui, -apple-system, sans-serif; --font-body:'Space Grotesk', system-ui, -apple-system, sans-serif; --font-mono:'Space Mono', ui-monospace, 'SF Mono', monospace;
+    --label-font:var(--font-mono); --label-transform:uppercase; --label-spacing:0.08em; --num-font:var(--font-display);
+    --radius-card:2px; --radius-ctl:2px; --radius-pill:3px;
+  }
+  body[data-dir^='d'].dark {
+    --bg:#121212; --bg-soft:#171717; --surface:#1d1d1d; --surface-2:#272727; --surface-hover:#323232;
+    --border:rgba(255,255,255,0.7); --border-strong:#ffffff;
+    --text:#fafafa; --text-dim:#bdbdbd; --text-mute:#8a8a8a;
+    --pos:#3ddc84; --pos-soft:rgba(61,220,132,0.18); --neg:#ff5252; --neg-soft:rgba(255,82,82,0.18);
+    --warn:#ffd23f; --warn-soft:rgba(255,210,63,0.2); --info:#54b9ff; --info-soft:rgba(84,185,255,0.18);
+    --sidebar:#171717; --topbar:rgba(18,18,18,0.94); --chart-grid:rgba(255,255,255,0.14);
+    --shadow-card:4px 4px 0 #000000; --shadow-xs:2px 2px 0 #000000; --shadow-pop:8px 8px 0 #000000;
+  }
+  body[data-dir^='d'].light {
+    --bg:#f4f1e8; --bg-soft:#efebde; --surface:#ffffff; --surface-2:#f0ece0; --surface-hover:#e7e2d2;
+    --border:#141414; --border-strong:#141414;
+    --text:#141414; --text-dim:#3c3c3c; --text-mute:#6d6d6d;
+    --pos:#1f9d57; --pos-soft:rgba(31,157,87,0.15); --neg:#e0322b; --neg-soft:rgba(224,50,43,0.13);
+    --warn:#b67d00; --warn-soft:rgba(182,125,0,0.16); --info:#1f6fd6; --info-soft:rgba(31,111,214,0.13);
+    --sidebar:#ffffff; --topbar:rgba(244,241,232,0.94); --chart-grid:rgba(20,20,20,0.13);
+    --shadow-card:4px 4px 0 #141414; --shadow-xs:2px 2px 0 #141414; --shadow-pop:8px 8px 0 #141414;
+  }
+  /* Brut · Rojo */
+  body[data-dir='d'].dark { --accent:#ff4d24; --accent-rgb:255,77,36; --accent-2:#ff7a52; --on-accent:#ffffff; --accent-soft:rgba(255,77,36,0.2); }
+  body[data-dir='d'].light { --accent:#fa3c12; --accent-rgb:250,60,18; --accent-2:#ff6a3d; --on-accent:#ffffff; --accent-soft:rgba(250,60,18,0.15); }
+  /* Brut · Azul eléctrico */
+  body[data-dir='db'].dark { --accent:#2f6bff; --accent-rgb:47,107,255; --accent-2:#6f97ff; --on-accent:#ffffff; --accent-soft:rgba(47,107,255,0.22); }
+  body[data-dir='db'].light { --accent:#1f4fe0; --accent-rgb:31,79,224; --accent-2:#3f6fff; --on-accent:#ffffff; --accent-soft:rgba(31,79,224,0.15); }
+  /* Brut · Lima */
+  body[data-dir='dl'].dark { --accent:#c6f432; --accent-rgb:198,244,50; --accent-2:#d8ff5e; --on-accent:#10140a; --accent-soft:rgba(198,244,50,0.2); }
+  body[data-dir='dl'].light { --accent:#7fa600; --accent-rgb:127,166,0; --accent-2:#9bc400; --on-accent:#10140a; --accent-soft:rgba(127,166,0,0.16); }
+  /* Brut · Magenta */
+  body[data-dir='dm'].dark { --accent:#ff2d8e; --accent-rgb:255,45,142; --accent-2:#ff66ad; --on-accent:#ffffff; --accent-soft:rgba(255,45,142,0.2); }
+  body[data-dir='dm'].light { --accent:#e0107a; --accent-rgb:224,16,122; --accent-2:#ff3d97; --on-accent:#ffffff; --accent-soft:rgba(224,16,122,0.14); }
+
+  /* ===== Aurora (E*) — glass, profundidad, degradados suaves. Variantes: Violeta/femenina (e), Neutral (en), Azul (eb), Sobria/elegante (em) ===== */
+  body[data-dir^='e'] {
+    --font-display:'Outfit', 'Sora', system-ui, -apple-system, sans-serif; --font-body:'Outfit', system-ui, -apple-system, sans-serif; --font-mono:'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+    --label-font:var(--font-body); --label-transform:none; --label-spacing:0.012em; --num-font:var(--font-display);
+    --radius-card:20px; --radius-ctl:13px; --radius-pill:999px;
+    --shadow-card:0 22px 50px -30px rgba(0,0,0,0.6); --shadow-xs:0 8px 18px -12px rgba(0,0,0,0.45); --shadow-pop:0 32px 72px -32px rgba(0,0,0,0.65);
+  }
+  body[data-dir^='e'].light {
+    --shadow-card:0 22px 48px -30px rgba(40,44,90,0.4); --shadow-xs:0 8px 18px -12px rgba(40,44,90,0.28); --shadow-pop:0 30px 64px -30px rgba(40,44,90,0.4);
+  }
+  /* Aurora · Violeta (femenina) */
+  body[data-dir='e'].dark {
+    --bg:#0c0e1a; --bg-soft:#11142a; --surface:rgba(31,36,68,0.66); --surface-2:rgba(48,54,96,0.6); --surface-hover:rgba(62,69,118,0.66);
+    --border:rgba(173,182,255,0.16); --border-strong:rgba(173,182,255,0.32);
+    --text:#eef0ff; --text-dim:#a7accf; --text-mute:#71769b;
+    --accent:#8b7bff; --accent-rgb:139,123,255; --accent-2:#b9a6ff; --on-accent:#0c0e1a; --accent-soft:rgba(139,123,255,0.22);
+    --pos:#4fd6a6; --pos-soft:rgba(79,214,166,0.18); --neg:#ff6f8b; --neg-soft:rgba(255,111,139,0.18);
+    --warn:#ffce6b; --warn-soft:rgba(255,206,107,0.18); --info:#6bc8ff; --info-soft:rgba(107,200,255,0.18);
+    --sidebar:rgba(13,15,32,0.72); --topbar:rgba(12,14,26,0.55); --chart-grid:rgba(173,182,255,0.1);
+  }
+  body[data-dir='e'].light {
+    --bg:#eef0ff; --bg-soft:#e6e9ff; --surface:rgba(255,255,255,0.66); --surface-2:rgba(244,245,255,0.78); --surface-hover:rgba(236,238,255,0.85);
+    --border:rgba(108,92,255,0.16); --border-strong:rgba(108,92,255,0.3);
+    --text:#1b1d3a; --text-dim:#565b86; --text-mute:#8388b0;
+    --accent:#6d5cff; --accent-rgb:109,92,255; --accent-2:#9a87ff; --on-accent:#ffffff; --accent-soft:rgba(109,92,255,0.14);
+    --pos:#1aa97a; --pos-soft:rgba(26,169,122,0.14); --neg:#e84f70; --neg-soft:rgba(232,79,112,0.12);
+    --warn:#c98a1e; --warn-soft:rgba(201,138,30,0.15); --info:#2f7fd6; --info-soft:rgba(47,127,214,0.13);
+    --sidebar:rgba(255,255,255,0.7); --topbar:rgba(238,240,255,0.55); --chart-grid:rgba(108,92,255,0.1);
+  }
+  /* Aurora · Neutral (equilibrado) */
+  body[data-dir='en'].dark {
+    --bg:#0b0e14; --bg-soft:#10141c; --surface:rgba(30,36,46,0.66); --surface-2:rgba(44,52,64,0.6); --surface-hover:rgba(56,64,78,0.66);
+    --border:rgba(180,196,214,0.15); --border-strong:rgba(180,196,214,0.3);
+    --text:#eef1f5; --text-dim:#a4afbd; --text-mute:#6e7886;
+    --accent:#6f8fc4; --accent-rgb:111,143,196; --accent-2:#9bb4dc; --on-accent:#0b0e14; --accent-soft:rgba(111,143,196,0.2);
+    --pos:#54c8a0; --pos-soft:rgba(84,200,160,0.17); --neg:#e87d80; --neg-soft:rgba(232,125,128,0.17);
+    --warn:#d8b46a; --warn-soft:rgba(216,180,106,0.17); --info:#6fb4cc; --info-soft:rgba(111,180,204,0.17);
+    --sidebar:rgba(12,15,21,0.74); --topbar:rgba(11,14,20,0.55); --chart-grid:rgba(180,196,214,0.1);
+  }
+  body[data-dir='en'].light {
+    --bg:#eef1f5; --bg-soft:#e6eaf0; --surface:rgba(255,255,255,0.68); --surface-2:rgba(244,247,251,0.78); --surface-hover:rgba(235,239,245,0.85);
+    --border:rgba(70,90,120,0.16); --border-strong:rgba(70,90,120,0.3);
+    --text:#1b2230; --text-dim:#536074; --text-mute:#828d9e;
+    --accent:#4f6fb0; --accent-rgb:79,111,176; --accent-2:#7790cb; --on-accent:#ffffff; --accent-soft:rgba(79,111,176,0.13);
+    --pos:#1d9b73; --pos-soft:rgba(29,155,115,0.14); --neg:#d65560; --neg-soft:rgba(214,85,96,0.12);
+    --warn:#b6862a; --warn-soft:rgba(182,134,42,0.15); --info:#2f7f9c; --info-soft:rgba(47,127,156,0.13);
+    --sidebar:rgba(255,255,255,0.72); --topbar:rgba(238,241,245,0.55); --chart-grid:rgba(70,90,120,0.1);
+  }
+  /* Aurora · Azul (profesional, universal) */
+  body[data-dir='eb'].dark {
+    --bg:#0a0f1a; --bg-soft:#0e1626; --surface:rgba(22,33,54,0.66); --surface-2:rgba(34,48,76,0.6); --surface-hover:rgba(44,60,92,0.66);
+    --border:rgba(120,170,255,0.16); --border-strong:rgba(120,170,255,0.32);
+    --text:#eaf1ff; --text-dim:#9fb1cf; --text-mute:#69789a;
+    --accent:#3d8bff; --accent-rgb:61,139,255; --accent-2:#7aa9ff; --on-accent:#06101f; --accent-soft:rgba(61,139,255,0.2);
+    --pos:#3fcf93; --pos-soft:rgba(63,207,147,0.17); --neg:#ff6f80; --neg-soft:rgba(255,111,128,0.17);
+    --warn:#f0c061; --warn-soft:rgba(240,192,97,0.17); --info:#52b8ff; --info-soft:rgba(82,184,255,0.17);
+    --sidebar:rgba(8,13,24,0.74); --topbar:rgba(10,15,26,0.55); --chart-grid:rgba(120,170,255,0.1);
+  }
+  body[data-dir='eb'].light {
+    --bg:#e9f0fc; --bg-soft:#e0e9f8; --surface:rgba(255,255,255,0.68); --surface-2:rgba(240,246,254,0.8); --surface-hover:rgba(231,239,251,0.85);
+    --border:rgba(40,100,200,0.16); --border-strong:rgba(40,100,200,0.3);
+    --text:#10243f; --text-dim:#4a607e; --text-mute:#7b8ca6;
+    --accent:#2f6fed; --accent-rgb:47,111,237; --accent-2:#5a8cf5; --on-accent:#ffffff; --accent-soft:rgba(47,111,237,0.12);
+    --pos:#179a6c; --pos-soft:rgba(23,154,108,0.14); --neg:#df4f63; --neg-soft:rgba(223,79,99,0.12);
+    --warn:#c2891e; --warn-soft:rgba(194,137,30,0.15); --info:#2f7fd6; --info-soft:rgba(47,127,214,0.13);
+    --sidebar:rgba(255,255,255,0.72); --topbar:rgba(233,240,252,0.55); --chart-grid:rgba(40,100,200,0.1);
+  }
+  /* Aurora · Sobria (masculina, elegante) — grafito + dorado */
+  body[data-dir='em'].dark {
+    --bg:#0c0d10; --bg-soft:#121316; --surface:rgba(28,30,36,0.7); --surface-2:rgba(42,45,53,0.64); --surface-hover:rgba(54,58,68,0.7);
+    --border:rgba(220,210,190,0.13); --border-strong:rgba(220,210,190,0.28);
+    --text:#f1f1ee; --text-dim:#b0afa6; --text-mute:#787870;
+    --accent:#c6a256; --accent-rgb:198,162,86; --accent-2:#ddc187; --on-accent:#15130c; --accent-soft:rgba(198,162,86,0.18);
+    --pos:#7fbf86; --pos-soft:rgba(127,191,134,0.16); --neg:#d97a6e; --neg-soft:rgba(217,122,110,0.16);
+    --warn:#d6b25e; --warn-soft:rgba(214,178,94,0.17); --info:#84acb8; --info-soft:rgba(132,172,184,0.16);
+    --sidebar:rgba(10,11,14,0.76); --topbar:rgba(12,13,16,0.55); --chart-grid:rgba(220,210,190,0.08);
+  }
+  body[data-dir='em'].light {
+    --bg:#edece8; --bg-soft:#e5e3dd; --surface:rgba(255,255,255,0.72); --surface-2:rgba(245,243,238,0.8); --surface-hover:rgba(236,233,226,0.85);
+    --border:rgba(60,54,40,0.16); --border-strong:rgba(60,54,40,0.32);
+    --text:#23211b; --text-dim:#585347; --text-mute:#8a8576;
+    --accent:#9c7a2a; --accent-rgb:156,122,42; --accent-2:#b89542; --on-accent:#ffffff; --accent-soft:rgba(156,122,42,0.13);
+    --pos:#3f8f57; --pos-soft:rgba(63,143,87,0.13); --neg:#c0503f; --neg-soft:rgba(192,80,63,0.11);
+    --warn:#a8791a; --warn-soft:rgba(168,121,26,0.15); --info:#3a7f93; --info-soft:rgba(58,127,147,0.12);
+    --sidebar:rgba(255,255,255,0.74); --topbar:rgba(237,236,232,0.55); --chart-grid:rgba(60,54,40,0.09);
+  }
+
+  /* Aurora: superficie TOTALMENTE opaca para modales, dropdowns, popovers y los
+     nodos del canvas (que se solapan entre sí, así que cualquier translucidez deja
+     ver el nodo de atrás). Las tarjetas normales siguen usando --surface (glass). */
+  body[data-dir='e'].dark  { --surface-solid: rgb(33,38,72); }
+  body[data-dir='en'].dark { --surface-solid: rgb(31,37,48); }
+  body[data-dir='eb'].dark { --surface-solid: rgb(24,35,58); }
+  body[data-dir='em'].dark { --surface-solid: rgb(30,32,39); }
+  body[data-dir^='e'].light { --surface-solid: rgb(255,255,255); }
+
+  ::selection { background: var(--accent-soft); }
+  [data-scroll]::-webkit-scrollbar { width: 9px; height: 9px; }
+  [data-scroll]::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+  body.light .brand-logo-dark { display: none !important; }
+  body.light .brand-logo-light { display: block !important; }
+  [data-workspace]:hover { background: var(--surface-hover); }
+  [data-content][data-fullbleed='true'] { max-width: none; }
+  [data-nav]:hover { background: var(--surface-hover); color: var(--text); }
+  [data-nav][data-active='true'] { background: var(--accent-soft); color: var(--text); }
+  [data-nav][data-active='true'] .nav-rail { opacity: 1; }
+  [data-nav][data-active='true'] .nav-ic { color: var(--accent); }
+  [data-tab]:hover { color: var(--text); }
+  [data-rowx]:hover { background: var(--surface-2); }
+  [data-caret] { transition: transform .15s; flex-shrink: 0; }
+  [data-caret][data-exp='true'] { transform: rotate(90deg); }
+  [data-caret][data-show='false'] { visibility: hidden; pointer-events: none; }
+  [data-lvl='campaign'] { padding-left: 0; }
+  [data-lvl='adset'] { padding-left: 24px; }
+  [data-lvl='ad'] { padding-left: 48px; }
+  [data-arow][data-lvl='adset'] { background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+  [data-arow][data-lvl='ad'] td:first-child { color: var(--text-dim); }
+  [data-arow]:hover { background: var(--surface-2); }
+  [data-tabx] { cursor: pointer; transition: color .12s, background .12s; border: 1px solid transparent; border-radius: calc(var(--radius-ctl) - 3px) !important; }
+  [data-tabx][data-on='true'] { background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow-xs); }
+  [data-tabx]:not([data-on='true']):hover { color: var(--text); }
+  /* Tablist [data-tab]: el item activo se anida dentro del contenedor — mismo tipo de borde, grosor y radio */
+  [data-tab] { border: 1px solid transparent; border-radius: calc(var(--radius-ctl) - 3px) !important; }
+  [data-tab][style*="background:var(--surface)"] { border-color: var(--border) !important; box-shadow: var(--shadow-xs) !important; }
+  [data-check] { width: 17px; height: 17px; border-radius: 5px; border: 1.6px solid var(--border-strong); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: .12s; color: transparent; }
+  [data-check][data-on='true'] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  [data-rowx][data-sel='true'] { background: var(--accent-soft); }
+  [data-conv]:hover { background: var(--surface-2); }
+  [data-conv][data-on='true'] { background: var(--accent-soft); }
+  [data-day]:hover { background: var(--surface-2); }
+  [data-today='true'] { background: var(--accent); color: var(--on-accent); }
+  [data-setrow]:hover { background: var(--surface-2); color: var(--text); }
+  [data-setrow][data-on='true'] { background: var(--accent-soft); color: var(--text); border-color: transparent; }
+  [data-autorow]:hover { border-color: var(--accent); }
+  [data-msg] { justify-content: flex-start; }
+  [data-msg][data-from='me'] { justify-content: flex-end; }
+  [data-msg] .bubble { background: var(--surface-2); color: var(--text); border-radius: 14px 14px 14px 4px; }
+  [data-msg][data-from='me'] .bubble { background: var(--accent); color: var(--on-accent); border-radius: 14px 14px 4px 14px; }
+  [data-msg][data-from='me'] .bubble .btime { color: var(--on-accent); opacity: 0.8; }
+  [data-chip]:hover { border-color: var(--border-strong); color: var(--text); }
+  [data-icon-btn]:hover { background: var(--surface-hover); color: var(--text); }
+  [data-site-card]:hover { border-color: var(--accent); transform: translateY(-2px); }
+  [data-cta]:hover { filter: brightness(1.07); }
+  [data-cta]:active { filter: brightness(0.96); transform: translateY(0.5px); }
+  /* Sistema de botones */
+  [data-btn] { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 38px; padding: 0 16px; border-radius: var(--radius-ctl); font-size: 13px; font-weight: 700; cursor: pointer; transition: filter .14s, background .14s, border-color .14s, transform .1s; border: 1px solid transparent; white-space: nowrap; user-select: none; }
+  [data-btn][data-size='sm'] { height: 32px; padding: 0 12px; font-size: 12.5px; font-weight: 600; }
+  [data-btn][data-v='primary'] { background: var(--accent); color: var(--on-accent); }
+  [data-btn][data-v='primary']:hover { filter: brightness(1.08); }
+  [data-btn][data-v='primary']:active { filter: brightness(0.95); transform: translateY(0.5px); }
+  [data-btn][data-v='secondary'] { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+  [data-btn][data-v='secondary']:hover { background: var(--surface-hover); border-color: var(--text-mute); }
+  [data-btn][data-v='ghost'] { background: transparent; color: var(--text-dim); }
+  [data-btn][data-v='ghost']:hover { background: var(--surface-2); color: var(--text); }
+  [data-btn][data-v='danger'] { background: var(--neg-soft); color: var(--neg); border-color: transparent; }
+  [data-btn][data-v='danger']:hover { background: var(--neg); color: #fff; }
+  [data-btn][data-disabled='true'] { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
+  [data-btn][data-on='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  [data-typecard] { transition: border-color .12s, background .12s; }
+  [data-typecard][data-on='true'] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  [data-typecard]:not([data-on='true']):hover { border-color: var(--border-strong); }
+  [data-radio] { width: 18px; height: 18px; border-radius: 50%; border: 1.6px solid var(--border-strong); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; transition: .12s; }
+  [data-radio][data-on='true'] { border-color: var(--accent); }
+  [data-radio] .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); transform: scale(0); transition: transform .12s; }
+  [data-radio][data-on='true'] .dot { transform: scale(1); }
+  [data-overlay] { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(8,11,16,0.55); backdrop-filter: blur(4px); animation: rk-ovfade 0.16s ease both; }
+  @keyframes rk-ovfade { from { opacity: 0; } to { opacity: 1; } }
+  [data-modal] { background: var(--surface-solid, var(--surface)); border: 1px solid var(--border-strong); border-radius: var(--radius-card); box-shadow: 0 40px 80px -24px rgba(0,0,0,0.6); width: 100%; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; animation: rk-modalin 0.2s cubic-bezier(0.4,0,0.2,1) both; }
+  @keyframes rk-modalin { from { opacity: 0; transform: translateY(10px) scale(0.99); } to { opacity: 1; transform: none; } }
+  [data-amt][data-tone='pos'] { color: var(--pos); }
+  [data-amt][data-tone='neg'] { color: var(--neg); }
+  /* Switch */
+  [data-sw] { width: 40px; height: 23px; border-radius: 999px; position: relative; flex-shrink: 0; cursor: pointer; transition: background .16s; background: var(--surface-2); border: 1px solid var(--border-strong); }
+  [data-sw] .knob { position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: var(--text-mute); transition: transform .16s, background .16s; }
+  [data-sw][data-on='true'] { background: var(--accent); border-color: var(--accent); }
+  [data-sw][data-on='true'] .knob { transform: translateX(17px); background: #fff; }
+  /* Campo (input simulado) */
+  [data-fld] { height: 40px; display: flex; align-items: center; padding: 0 13px; border: 1px solid var(--border); border-radius: var(--radius-ctl); background: var(--bg-soft); font-size: 13.5px; color: var(--text); transition: border-color .14s; }
+  [data-fld]:hover { border-color: var(--border-strong); }
+  [data-sel]:hover { border-color: var(--border-strong); }
+  [data-cfgnav]:hover { background: var(--surface-hover); color: var(--text); }
+  [data-cfgnav][data-on='true'] { background: var(--accent-soft); color: var(--text); }
+  [data-cfgnav][data-on='true'] .cfgdot { background: var(--accent); }
+  [data-link]:hover { color: var(--accent); }
+  [data-seg][data-on='true'] { background: var(--accent); color: var(--on-accent); border-color: var(--accent) !important; }
+  [data-segdir][data-on='true'] { background: var(--accent); color: var(--on-accent) !important; box-shadow: 0 2px 8px -2px var(--accent-soft); }
+  [data-segdir]:not([data-on='true']):hover { color: var(--text); background: var(--surface-2); }
+  [data-trend][data-tone='pos'] { color: var(--pos); }
+  [data-trend][data-tone='neg'] { color: var(--neg); }
+  [data-trend][data-tone='neutral'] { color: var(--text-dim); }
+  [data-badge][data-tone='success'] { color: var(--pos); background: var(--pos-soft); }
+  [data-badge][data-tone='warning'] { color: var(--warn); background: var(--warn-soft); }
+  [data-badge][data-tone='error'] { color: var(--neg); background: var(--neg-soft); }
+  [data-badge][data-tone='info'] { color: var(--info); background: var(--info-soft); }
+  [data-badge][data-tone='neutral'] { color: var(--text-dim); background: var(--surface-2); border: 1px solid var(--border); }
+  @keyframes rk-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  [data-screen] { opacity: 1; }
+  @media (prefers-reduced-motion: no-preference) {
+    [data-screen] { animation: rk-fade 0.3s cubic-bezier(0.4,0,0.2,1) both; }
+  }
+
+  /* ===================== AJUSTES POR DIRECCIÓN ===================== */
+  /* Brut (todas las variantes d*): bordes duros, sombras sólidas, todo cuadrado */
+  body[data-dir^='d'] [data-btn] { border-width:2px; border-color:var(--text); box-shadow:3px 3px 0 var(--text); text-transform:uppercase; letter-spacing:0.03em; }
+  body[data-dir^='d'] [data-btn][data-v='ghost'] { border-color:transparent; box-shadow:none; }
+  body[data-dir^='d'] [data-btn]:hover { transform:translate(-1px,-1px); box-shadow:4px 4px 0 var(--text); }
+  body[data-dir^='d'] [data-btn]:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--text); }
+  body[data-dir^='d'] [data-tab], body[data-dir^='d'] [data-tabx], body[data-dir^='d'] [data-badge], body[data-dir^='d'] [data-check] { border-radius:0 !important; }
+  body[data-dir^='d'] [data-badge] { border:1.5px solid currentColor; }
+  body[data-dir^='d'] [data-nav][data-active='true'] { box-shadow:inset 3px 0 0 var(--accent); }
+  body[data-dir^='d'] .nav-ic path, body[data-dir^='d'] .nav-ic rect, body[data-dir^='d'] .nav-ic circle, body[data-dir^='d'] .nav-ic line { stroke-width:2.4px; }
+
+  /* Aurora (todas las variantes e*): panel lateral con tipografía estilo Pulse, iconos finos, fondo degradado por variante */
+  body[data-dir^='e'] aside { font-family:'Plus Jakarta Sans','Outfit',sans-serif; }
+  body[data-dir^='e'] aside [data-nav] { font-weight:600; letter-spacing:0.005em; }
+  body[data-dir^='e'] .nav-ic path, body[data-dir^='e'] .nav-ic rect, body[data-dir^='e'] .nav-ic circle, body[data-dir^='e'] .nav-ic line { stroke-width:1.6px; }
+  body[data-dir='e'] [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #1b2150 0%, rgba(12,14,26,0) 52%), radial-gradient(120% 120% at 100% 28%, #3a1f5e 0%, rgba(12,14,26,0) 52%), var(--bg) !important; }
+  body[data-dir='e'].light [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #dfe2ff 0%, rgba(238,240,255,0) 52%), radial-gradient(120% 120% at 100% 28%, #ffe2f4 0%, rgba(238,240,255,0) 52%), var(--bg) !important; }
+  body[data-dir='en'] [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #1a2436 0%, rgba(11,14,20,0) 52%), radial-gradient(120% 120% at 100% 28%, #16323a 0%, rgba(11,14,20,0) 52%), var(--bg) !important; }
+  body[data-dir='en'].light [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #dde4f0 0%, rgba(238,241,245,0) 52%), radial-gradient(120% 120% at 100% 28%, #d6ecee 0%, rgba(238,241,245,0) 52%), var(--bg) !important; }
+  body[data-dir='eb'] [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #102a52 0%, rgba(10,15,26,0) 52%), radial-gradient(120% 120% at 100% 28%, #103a4e 0%, rgba(10,15,26,0) 52%), var(--bg) !important; }
+  body[data-dir='eb'].light [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #d8e6ff 0%, rgba(233,240,252,0) 52%), radial-gradient(120% 120% at 100% 28%, #d6f0fb 0%, rgba(233,240,252,0) 52%), var(--bg) !important; }
+  body[data-dir='em'] [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #1d1f28 0%, rgba(12,13,16,0) 52%), radial-gradient(120% 120% at 100% 28%, #2b2417 0%, rgba(12,13,16,0) 52%), var(--bg) !important; }
+  body[data-dir='em'].light [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #e6e4dc 0%, rgba(237,236,232,0) 52%), radial-gradient(120% 120% at 100% 28%, #efe7d2 0%, rgba(237,236,232,0) 52%), var(--bg) !important; }
+
+  /* Onyx (C*): el panel lateral es SIEMPRE oscuro → texto, iconos y logo claros en ambos modos; tipografía Aurora */
+  body[data-dir^='c'] aside { font-family:'Plus Jakarta Sans','Outfit',sans-serif; color:#cfd8e2; }
+  body[data-dir^='c'] aside [data-nav] { color:#cfd8e2 !important; font-weight:600; }
+  body[data-dir^='c'] aside [data-nav] .nav-ic { color:#93a3b5; }
+  body[data-dir^='c'] aside [data-nav]:hover { background:#1a2028 !important; color:#ffffff !important; }
+  body[data-dir^='c'] aside [data-nav]:hover .nav-ic { color:#ffffff; }
+  body[data-dir^='c'] aside [data-nav][data-active='true'] { background:color-mix(in srgb, var(--accent) 26%, transparent) !important; color:#ffffff !important; }
+  body[data-dir^='c'] aside [data-nav][data-active='true'] .nav-ic { color:var(--accent); }
+  body[data-dir^='c'] aside .nav-rail { background:var(--accent); }
+  body[data-dir^='c'] aside [data-workspace] > div > div:last-child { color:#8c9aab !important; }
+  /* divisores y bordes internos del panel, visibles sobre oscuro */
+  body[data-dir^='c'] aside, body[data-dir^='c'] aside > div { border-color:rgba(255,255,255,0.1) !important; }
+  body[data-dir^='c'] aside [data-workspace] > div + div, body[data-dir^='c'] aside div[style*='background:var(--border)'] { background:rgba(255,255,255,0.12) !important; }
+  /* logo siempre en su versión blanca dentro del panel oscuro de Onyx */
+  body[data-dir^='c'] aside .brand-logo-dark { display:block !important; }
+  body[data-dir^='c'] aside .brand-logo-light { display:none !important; }
+
+  /* ===================== CAPA DE COMPATIBILIDAD =====================
+     Re-apunta TODOS los tokens heredados (--color-*, --design-*, --rstk-*,
+     --ristak-*, --chat-*, --record-payment-*, --native-control-*, etc.) a los
+     tokens nuevos del sistema. Así toda la app adopta la nueva estética sin
+     reescribir miles de referencias. Excluye la app móvil. Alta especificidad
+     (body + [data-dir] + 2×:not) para ganar a :root, body.light y a los presets. */
+  body[data-dir]:not([data-phone-app='active']):not([data-phone-chat-theme='active']),
+  body:not([data-dir]):not([data-phone-app='active']):not([data-phone-chat-theme='active']) {
+    /* Superficies / fondos */
+    --color-background-primary: var(--bg);
+    --color-bg-primary: var(--bg);
+    --color-background: var(--bg);
+    --color-bg-secondary: var(--surface);
+    --color-background-secondary: var(--surface);
+    --color-surface: var(--surface);
+    --color-surface-primary: var(--surface);
+    --color-card-background: var(--surface);
+    --color-background-elevated: var(--surface);
+    --color-background-tertiary: var(--surface-2);
+    --color-surface-secondary: var(--surface-2);
+    --color-surface-2: var(--surface-2);
+    --color-bg-hover: var(--surface-hover);
+    --color-background-hover: var(--surface-hover);
+    --color-bg-disabled: var(--surface-2);
+    --color-background-glass: var(--surface);
+    --color-background-glassBorder: var(--border);
+
+    /* Texto */
+    --color-text-primary: var(--text);
+    --color-text: var(--text);
+    --color-text-secondary: var(--text-dim);
+    --color-text-tertiary: var(--text-mute);
+    --color-text-muted: var(--text-mute);
+    --color-text-onAccent: var(--on-accent);
+    --color-text-inverse: var(--on-accent);
+    --text-primary: var(--text);
+    --text-secondary: var(--text-dim);
+    --text-tertiary: var(--text-mute);
+
+    /* Bordes */
+    --color-border: var(--border);
+    --color-border-subtle: var(--border);
+    --color-border-secondary: var(--border);
+    --color-border-primary: var(--border-strong);
+
+    /* Acento / primario */
+    --color-primary: var(--accent);
+    --color-primary-rgb: var(--accent-rgb);
+    --color-primary-hover: var(--accent-2);
+    --color-primary-dark: var(--accent);
+    --color-primary-light: var(--accent-soft);
+    --color-primary-alpha: var(--accent-soft);
+    --color-primary-50: var(--accent-soft);
+    --color-primary-100: var(--accent-soft);
+    --color-primary-200: var(--accent-soft);
+    --color-primary-300: var(--accent-2);
+    --color-primary-500: var(--accent);
+    --color-primary-600: var(--accent);
+    --color-primary-700: var(--accent);
+    --color-primary-800: var(--accent);
+    --color-accent: var(--accent);
+    --color-accent-blue: var(--accent);
+    --rstk-accent: var(--accent);
+    --rstk-accent-strong: var(--accent-2);
+    --node-accent: var(--accent);
+    --site-accent: var(--accent);
+    --tile-accent: var(--accent);
+    --form-mode-accent: var(--accent);
+
+    /* Estado / semántico */
+    --color-status-success: var(--pos);
+    --color-success: var(--pos);
+    --color-success-light: var(--pos-soft);
+    --color-success-dark: var(--pos);
+    --chat-green: var(--pos);
+    --color-status-error: var(--neg);
+    --color-error: var(--neg);
+    --color-error-500: var(--neg);
+    --color-error-light: var(--neg-soft);
+    --color-error-dark: var(--neg);
+    --color-error-rgb: 239, 68, 68;
+    --color-danger: var(--neg);
+    --color-status-danger: var(--neg);
+    --color-status-error-light: var(--neg-soft);
+    --apple-red: var(--neg);
+    --color-status-warning: var(--warn);
+    --color-warning: var(--warn);
+    --color-warning-500: var(--warn);
+    --color-warning-light: var(--warn-soft);
+    --color-warning-dark: var(--warn);
+    --color-warning-rgb: 245, 158, 11;
+    --color-status-info: var(--info);
+    --color-info: var(--info);
+
+    /* Badges (legacy) -> sistema de tonos */
+    --badge-success-bg: var(--pos-soft);   --badge-success-text: var(--pos);
+    --badge-warning-bg: var(--warn-soft);   --badge-warning-text: var(--warn);
+    --badge-error-bg: var(--neg-soft);      --badge-error-text: var(--neg);
+    --badge-info-bg: var(--info-soft);      --badge-info-text: var(--info);
+    --badge-neutral-bg: var(--surface-2);   --badge-neutral-text: var(--text-dim);
+    --badge-default-bg: var(--surface-2);   --badge-default-text: var(--text-dim);
+    --badge-purple-bg: var(--accent-soft);  --badge-purple-text: var(--accent);
+    --badge-primary-bg: var(--accent-soft); --badge-primary-text: var(--accent);
+
+    /* Radios (heredan la geometría de la familia) */
+    --radius-sm: var(--radius-ctl);
+    --radius-md: var(--radius-ctl);
+    --radius-lg: var(--radius-card);
+    --radius-xl: var(--radius-card);
+    --radius-full: var(--radius-pill);
+    --design-control-radius: var(--radius-ctl);
+    --design-card-radius: var(--radius-card);
+    --design-table-radius: var(--radius-card);
+    --ristak-dropdown-radius: var(--radius-ctl);
+    --native-control-radius: var(--radius-ctl);
+    --design-control-height: 38px;
+    --ristak-dropdown-trigger-height: 40px;
+    --native-control-height: 38px;
+    --rstk-radius: var(--radius-card);
+    --rstk-radius-lg: var(--radius-card);
+    --rstk-field-radius: var(--radius-ctl);
+    --rstk-block-radius: var(--radius-card);
+    --rstk-btn-radius: var(--radius-ctl);
+    --rstk-card-radius: var(--radius-card);
+    --rstk-page-radius: var(--radius-card);
+    --rstk-media-radius: var(--radius-card);
+    --rstk-submit-radius: var(--radius-ctl);
+    --rstk-block-button-radius: var(--radius-ctl);
+    --block-radius: var(--radius-card);
+    --block-button-radius: var(--radius-ctl);
+    --site-page-radius: var(--radius-card);
+
+    /* Tipografía */
+    --font-app: var(--font-body);
+    --font-family-mono: var(--font-mono);
+    --rstk-font: var(--font-body);
+    --rstk-form-font: var(--font-body);
+
+    /* Sombras / efectos */
+    --effect-glassMorphism-background: var(--surface);
+    --effect-glassMorphism-border: 1px solid var(--border);
+    --effect-glassMorphism-backdropFilter: blur(14px) saturate(1.1);
+    --design-card-shadow: var(--shadow-card);
+    --design-control-shadow: var(--shadow-xs);
+    --design-control-focus-shadow: 0 0 0 3px var(--accent-soft);
+    --ristak-dropdown-panel-shadow: var(--shadow-pop);
+    --native-control-shadow: var(--shadow-xs);
+    --shadow-lg: var(--shadow-card);
+    --shadow-xl: var(--shadow-pop);
+    --rstk-selection-shadow: var(--shadow-pop);
+    --sites-editor-focus-shadow: 0 0 0 3px var(--accent-soft);
+    --preview-shadow: var(--shadow-pop);
+    --ristak-focus-ring: 0 0 0 3px var(--accent-soft);
+    --ristak-focus-ring-strong: 0 0 0 3px var(--accent-soft);
+    --ristak-focus-border: var(--accent);
+
+    /* Controles / paneles / tarjetas (--design-*) */
+    --design-control-bg: var(--bg-soft);
+    --design-control-bg-hover: var(--surface-hover);
+    --design-control-border: var(--border);
+    --design-control-border-hover: var(--border-strong);
+    --design-control-border-focus: var(--accent);
+    --design-control-text: var(--text);
+    --design-control-muted: var(--text-mute);
+    --design-card-bg: var(--surface);
+    --design-card-border: var(--border);
+    --design-panel-bg: var(--surface);
+    --design-panel-border: var(--border);
+    --design-section-bg: var(--surface);
+    --design-section-border: var(--border);
+    --design-section-title: var(--text);
+    --design-border: var(--border);
+    --design-border-subtle: var(--border);
+    --design-sidebar-bg: var(--sidebar);
+    --design-header-bg: var(--topbar);
+
+    /* Tablas (--design-table-*) */
+    --design-table-bg: var(--surface);
+    --design-table-head-bg: var(--surface-2);
+    --design-table-border: var(--border);
+    --design-table-control-bg: var(--bg-soft);
+    --design-table-toolbar-bg: var(--surface);
+    --design-table-empty-bg: var(--surface);
+    --design-table-row-even: var(--surface-2);
+    --table-row-even: var(--surface-2);
+
+    /* Gráficas (--design-chart-*) */
+    --design-chart-primary: var(--accent);
+    --design-chart-secondary: var(--text-mute);
+    --design-chart-tertiary: var(--accent-2);
+    --design-chart-accent: var(--accent-2);
+    --design-chart-warning: var(--warn);
+    --design-chart-danger: var(--neg);
+    --design-chart-muted: var(--text-mute);
+    --design-chart-grid: var(--chart-grid);
+    --design-chart-axis: var(--text-mute);
+    --design-chart-empty-bg: var(--surface-2);
+    --design-chart-panel-bg: var(--surface);
+    --design-chart-tooltip-bg: var(--surface-solid, var(--surface));
+    --design-chart-tooltip-border: var(--border-strong);
+    --chart-loading-fill: var(--surface-2);
+    --chart-grid: var(--chart-grid);
+
+    /* Dropdowns (--ristak-dropdown-*) */
+    --ristak-dropdown-bg: var(--surface);
+    --ristak-dropdown-bg-hover: var(--surface-hover);
+    --ristak-dropdown-border: var(--border);
+    --ristak-dropdown-border-hover: var(--border-strong);
+    --ristak-dropdown-border-focus: var(--accent);
+    --ristak-dropdown-ring: 0 0 0 3px var(--accent-soft);
+    --ristak-dropdown-panel-bg: var(--surface-solid, var(--surface));
+
+    /* Controles nativos (--native-control-*) */
+    --native-control-bg: var(--bg-soft);
+    --native-control-bg-hover: var(--surface-hover);
+    --native-control-border: var(--border);
+    --native-control-border-hover: var(--border-strong);
+    --native-control-icon: var(--text-mute);
+
+    /* Editor de pagos embebido (--record-payment-*) */
+    --record-payment-embedded-text: var(--text);
+    --record-payment-embedded-border: var(--border);
+    --record-payment-embedded-muted: var(--text-mute);
+    --record-payment-embedded-panel: var(--surface);
+    --record-payment-embedded-bg: var(--bg-soft);
+    --record-payment-embedded-soft: var(--surface-2);
+    --record-payment-control-border: var(--border);
+    --record-payment-embedded-tablist-border: var(--border);
+    --record-payment-embedded-tablist-bg: var(--surface-2);
+    --record-payment-embedded-tab-active-bg: var(--surface);
+
+    /* Chat de escritorio (--chat-*) */
+    --chat-border: var(--border);
+    --chat-border-strong: var(--border-strong);
+    --chat-soft: var(--surface-2);
+    --chat-soft-strong: var(--surface-hover);
+
+    /* Chrome del EDITOR de sitios (toolbars/paneles del CRM alrededor del
+       lienzo): sí deben seguir el tema del CRM. */
+    --sites-editor-border: var(--border);
+    --sites-editor-border-strong: var(--border-strong);
+    --sites-editor-control-bg: var(--bg-soft);
+    --sites-editor-section-border: var(--border);
+    --sites-editor-hover-bg: var(--surface-hover);
+    --sites-editor-focus: var(--accent);
+    --sites-editor-card-bg: var(--surface);
+    /* ⚠️ NO mapear --rstk-* / --site-* / --block-* aquí: son tokens del LIENZO
+       (la página que el usuario diseña). El lienzo (.rstkCanvas) debe quedar
+       AISLADO del tema del CRM — se tematiza solo vía sitesCanvasTheme.ts y usa
+       sus propios fallbacks claros. Definirlos aquí los "secuestraba" y hacía que
+       el preview heredara el modo oscuro del CRM. */
+
+    /* Esqueletos de carga (--skeleton-* / --app-skeleton-*) */
+    --skeleton-card: var(--surface-2);
+    --skeleton-border: var(--border);
+    --skeleton-base: var(--surface-2);
+    --skeleton-muted: var(--surface-hover);
+    --skeleton-highlight: var(--surface-hover);
+    --app-skeleton-card: var(--surface-2);
+    --app-skeleton-border: var(--border);
+    --app-skeleton-base: var(--surface-2);
+    --app-skeleton-muted: var(--surface-hover);
+    --app-skeleton-highlight: var(--surface-hover);
+    --table-skeleton-base: var(--surface-2);
+    --table-skeleton-highlight: var(--surface-hover);
+
+    /* Grises / líneas heredadas */
+    --color-gray-50: var(--surface-2);
+    --color-gray-100: var(--surface-2);
+    --color-gray-300: var(--border-strong);
+    --color-gray-400: var(--text-mute);
+    --color-gray-500: var(--text-mute);
+    --color-gray-800: var(--text-dim);
+    --color-gray-900: var(--text);
+    --soft-line: var(--border);
+    --line: var(--border);
+    --post-it-ink: var(--text);
+    --post-it-muted: var(--text-mute);
+
+    /* Gradientes de fondo legacy: desactivados (sin foto de fondo) */
+    --gradient-card-default: none;
+    --gradient-card-hover: none;
+    --color-gradients-background-image: none;
+    --color-gradients-background-main: none;
+    --color-gradients-background-overlay: none;
+  }
+
+  /* ===================== RE-SKIN DEL SHELL (vía hooks existentes) =====================
+     Los presets antiguos (atelier/editorial) quedan desactivados (preset 'classic'),
+     así que re-pintamos aquí el panel lateral, la barra superior y el item activo del
+     nav con los tokens nuevos, siempre (no dependiente de preset). */
+  [data-ristak-sidebar] { background: var(--sidebar); }
+  [data-ristak-layout-sidebar],
+  [data-ristak-sidebar-header],
+  [data-ristak-header] { border-color: var(--border) !important; }
+  [data-ristak-header] { background: var(--topbar); backdrop-filter: blur(14px) saturate(1.1); -webkit-backdrop-filter: blur(14px) saturate(1.1); }
+  /* Item activo del nav del panel: usa el acento de la familia */
+  [data-ristak-sidebar-nav-item][data-active='true'] {
+    background: var(--accent-soft);
+    color: var(--text);
+    box-shadow: none;
+  }
+
+  /* Onyx: el panel lateral es SIEMPRE oscuro (en claro y en oscuro). Re-escalamos
+     los tokens de texto/borde/superficie SOLO dentro del panel para que el texto
+     se lea claro sobre el fondo oscuro en ambos modos (antes en modo claro el
+     texto activo quedaba casi negro sobre oscuro = invisible). */
+  body[data-dir^='c'] [data-ristak-sidebar],
+  body[data-dir^='c'] [data-ristak-layout-sidebar],
+  body[data-dir^='c'] [data-ristak-sidebar-header] {
+    --text: #ffffff;
+    --text-dim: #cfd8e2;
+    --text-mute: #93a3b5;
+    --color-text-primary: #ffffff;
+    --color-text-secondary: #cfd8e2;
+    --color-text-tertiary: #93a3b5;
+    --color-text-muted: #93a3b5;
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.2);
+    --color-border: rgba(255, 255, 255, 0.1);
+    --color-border-subtle: rgba(255, 255, 255, 0.08);
+    --surface-2: rgba(255, 255, 255, 0.06);
+    --surface-hover: rgba(255, 255, 255, 0.08);
+  }
+  body[data-dir^='c'] [data-ristak-sidebar-nav-item][data-active='true'] {
+    background: color-mix(in srgb, var(--accent) 24%, transparent);
+    color: #ffffff;
+  }
+  body[data-dir^='c'] [data-ristak-sidebar-nav-item]:hover {
+    background: rgba(255, 255, 255, 0.07);
+  }
+  /* Onyx: los menús flotantes del panel (usuario/notificaciones) heredan el texto
+     claro re-escalado; en modo claro su fondo era blanco -> texto blanco invisible.
+     Les damos superficie oscura sólida (coherente con el panel siempre oscuro de
+     Onyx) para que se lean en ambos modos. */
+  body[data-dir^='c'] [data-ristak-user-menu],
+  body[data-dir^='c'] [data-ristak-notification-menu] {
+    background: #14181f !important;
+    border-color: rgba(255, 255, 255, 0.14) !important;
+    --color-background-secondary: #14181f;
+    --surface: #14181f;
+    --surface-2: rgba(255, 255, 255, 0.06);
+  }
+  body[data-dir^='c'] [data-ristak-user-menu] [data-ristak-notification-item],
+  body[data-dir^='c'] [data-ristak-user-menu] a:hover,
+  body[data-dir^='c'] [data-ristak-user-menu] button:hover {
+    background: rgba(255, 255, 255, 0.07);
+  }
+
+  /* Fondo principal con degradado sutil por familia Aurora (firma del tema) */
+  body[data-dir='en'] [data-ristak-layout-main],
+  body[data-dir='en'] [data-main-scroll] {
+    background:
+      radial-gradient(130% 110% at 0% 0%, color-mix(in srgb, var(--accent) 16%, transparent) 0%, transparent 52%),
+      radial-gradient(120% 120% at 100% 28%, color-mix(in srgb, var(--info) 14%, transparent) 0%, transparent 52%),
+      var(--bg);
+  }
+  body[data-dir^='e'] [data-ristak-layout-main],
+  body[data-dir^='e'] [data-main-scroll] {
+    background:
+      radial-gradient(130% 110% at 0% 0%, color-mix(in srgb, var(--accent) 14%, transparent) 0%, transparent 52%),
+      radial-gradient(120% 120% at 100% 28%, color-mix(in srgb, var(--accent-2) 12%, transparent) 0%, transparent 52%),
+      var(--bg);
+  }

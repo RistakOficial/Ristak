@@ -13,6 +13,7 @@ import {
   X
 } from 'lucide-react'
 import { Button, CustomSelect, PageHeader } from '@/components/common'
+import { Badge } from '@/components/common/Badge'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   contactTagsService,
@@ -598,7 +599,7 @@ export const TagsSettings: React.FC = () => {
                       </td>
                       <td>
                         {systemTag
-                          ? <span className={styles.typePill}>Automática</span>
+                          ? <Badge variant="info">Automática</Badge>
                           : (tag.usageCount === 1 ? '1 contacto' : `${tag.usageCount || 0} contactos`)}
                       </td>
                       <td>{systemTag ? '-' : getFolderName(folders, tag.folderId)}</td>

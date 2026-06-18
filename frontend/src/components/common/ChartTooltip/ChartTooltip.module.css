@@ -1,5 +1,6 @@
 .tooltip {
   --tooltip-gap: 8px;
+  z-index: var(--z-index-tooltip);
   background-color: var(--design-chart-tooltip-bg, #1a1a1a);
   border: 1px solid var(--design-chart-tooltip-border, rgba(255, 255, 255, 0.1));
   border-radius: var(--design-table-radius, var(--radius-lg));
@@ -7,7 +8,7 @@
   min-width: 220px;
   max-width: 320px;
   pointer-events: none;
-  color: #f8fafc;
+  color: var(--text);
   backdrop-filter: none;
   box-shadow: none !important;
   will-change: transform, opacity;
@@ -25,7 +26,7 @@
   letter-spacing: 0.18em;
   text-transform: uppercase;
   font-weight: 600;
-  color: rgba(226, 232, 240, 0.75);
+  color: var(--text-dim);
 }
 
 .seriesGroup {
@@ -51,10 +52,10 @@
 }
 
 .seriesLabel {
-  color: rgba(226, 232, 240, 0.72);
+  color: var(--text-dim);
 }
 
 .seriesValue {
-  color: #ffffff;
+  color: var(--text);
   font-weight: 600;
 }

@@ -2798,9 +2798,12 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_contacts_contact ON whatsapp_api_contacts(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_contact ON whatsapp_api_messages(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_contact_date ON whatsapp_api_messages(contact_id, message_timestamp, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_date_contact ON whatsapp_api_messages(message_timestamp, created_at, contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_phone ON whatsapp_api_messages(phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_business_phone ON whatsapp_api_messages(business_phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_business_phone_id ON whatsapp_api_messages(business_phone_number_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_business_phone_date ON whatsapp_api_messages(business_phone, message_timestamp, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_business_phone_id_date ON whatsapp_api_messages(business_phone_number_id, message_timestamp, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_created ON whatsapp_api_messages(created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_wamid ON whatsapp_api_messages(wamid)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_meta_message ON whatsapp_api_messages(meta_message_id)')
@@ -3182,6 +3185,7 @@ async function initTables() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_contacts_sender ON meta_social_contacts(platform, sender_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_contact ON meta_social_messages(contact_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_contact_date ON meta_social_messages(contact_id, message_timestamp, created_at)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_date_contact ON meta_social_messages(message_timestamp, created_at, contact_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_sender ON meta_social_messages(platform, sender_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_created ON meta_social_messages(created_at)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_meta_id ON meta_social_messages(meta_message_id)')
@@ -3595,6 +3599,7 @@ async function initTables() {
       CREATE TABLE IF NOT EXISTS conversational_agent_config (
         id INTEGER PRIMARY KEY,
         enabled INTEGER DEFAULT 0,
+        ai_provider TEXT DEFAULT 'openai',
         model TEXT DEFAULT 'gpt-5.4-nano',
         objective TEXT DEFAULT 'citas',
         custom_objective TEXT,
@@ -3615,6 +3620,7 @@ async function initTables() {
 
     // Columnas agregadas después del despliegue inicial del agente conversacional
     for (const [columnName, columnType] of [
+      ['ai_provider', "TEXT DEFAULT 'openai'"],
       ['model', "TEXT DEFAULT 'gpt-5.4-nano'"],
       ['hide_attended_notifications', 'INTEGER'],
       ['closing_strategy_mode', "TEXT DEFAULT 'system'"],
@@ -3638,6 +3644,7 @@ async function initTables() {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         enabled INTEGER DEFAULT 1,
+        ai_provider TEXT DEFAULT 'openai',
         model TEXT DEFAULT 'gpt-5.4-nano',
         position INTEGER DEFAULT 0,
         objective TEXT DEFAULT 'citas',
@@ -3662,6 +3669,7 @@ async function initTables() {
       )
     `)
     for (const [columnName, columnType] of [
+      ['ai_provider', "TEXT DEFAULT 'openai'"],
       ['model', "TEXT DEFAULT 'gpt-5.4-nano'"],
       ['hide_attended', 'INTEGER DEFAULT 0'],
       ['hide_attended_notifications', 'INTEGER DEFAULT 0'],
@@ -3732,6 +3740,30 @@ async function initTables() {
     `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_events_contact ON conversational_agent_events(contact_id, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_events_type ON conversational_agent_events(event_type, created_at)')
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agent_goal_links (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        agent_id TEXT,
+        objective TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        target_url TEXT NOT NULL,
+        sent_url TEXT NOT NULL,
+        tracking_param TEXT NOT NULL DEFAULT 'ristak_goal_id',
+        external_object_id TEXT,
+        external_status TEXT,
+        metadata_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        completed_at DATETIME,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
+        FOREIGN KEY (agent_id) REFERENCES conversational_agents(id) ON DELETE SET NULL
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_contact ON conversational_agent_goal_links(contact_id, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_status ON conversational_agent_goal_links(status, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_external ON conversational_agent_goal_links(external_object_id)')
 
     const userOptionalColumns = [
       ['first_name', 'TEXT'],

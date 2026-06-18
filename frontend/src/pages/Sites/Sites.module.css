@@ -783,8 +783,8 @@
   --rstk-assistant-composer-action: 40px;
   min-width: 0;
   display: grid;
-  grid-template-columns: var(--rstk-assistant-composer-action) var(--rstk-assistant-composer-action) minmax(0, 1fr) minmax(150px, 190px) var(--rstk-assistant-composer-action);
-  grid-template-areas: "mic attach input model send";
+  grid-template-columns: var(--rstk-assistant-composer-action) minmax(0, 1fr) var(--rstk-assistant-composer-action) var(--rstk-assistant-composer-action);
+  grid-template-areas: "attach input mic send";
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -903,10 +903,6 @@
   display: none;
 }
 
-.importedCodeAssistantComposerVoiceActive .importedCodeAssistantInlineModel {
-  display: none;
-}
-
 .importedCodeAssistantInputWrap textarea {
   width: 100%;
   min-height: 40px;
@@ -925,8 +921,15 @@
   box-shadow: none !important;
 }
 
+.importedCodeAssistantModelRow {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 2px;
+}
+
 .importedCodeAssistantInlineModel {
-  grid-area: model;
+  width: min(100%, 230px);
   min-width: 0;
 }
 
@@ -1277,7 +1280,7 @@
 
 .importedInlineEditor {
   position: fixed;
-  z-index: 90;
+  z-index: var(--z-index-popover);
   width: min(340px, calc(100vw - 32px));
   display: grid;
   gap: 10px;
@@ -1620,7 +1623,7 @@
   position: fixed;
   left: var(--imported-element-popover-left, 24px);
   top: var(--imported-element-popover-top, 96px);
-  z-index: 160;
+  z-index: var(--z-index-popover);
   width: min(430px, calc(100vw - 24px));
   max-height: min(620px, calc(100vh - 24px));
   display: grid;
@@ -1630,7 +1633,7 @@
   scrollbar-gutter: stable;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 10px;
-  background: var(--color-background-primary);
+  background: var(--surface-solid, var(--surface));
   color: var(--color-text-primary);
   padding: 14px;
   box-shadow: 0 28px 72px -42px rgba(15, 23, 42, 0.82);
@@ -4243,6 +4246,11 @@
   gap: 8px;
 }
 
+.customFieldCreateAction {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .customFieldHint {
   margin: 0;
   color: var(--color-text-tertiary);
@@ -4488,7 +4496,8 @@
 
 .siteDomain {
   color: var(--color-text-tertiary);
-  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
 }
 
 .siteStats {
@@ -4620,42 +4629,49 @@
 
 .createLibraryCard,
 .libraryCard {
-  min-height: 292px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.16);
+  min-height: 236px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
   color: var(--color-text-primary);
   text-align: left;
-  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+  box-shadow: var(--shadow-card);
+  transition: background 160ms ease, border-color 160ms ease, transform 180ms ease, box-shadow 180ms ease;
 }
 
 .createLibraryCard {
   display: grid;
   align-content: center;
   justify-items: center;
-  gap: 9px;
+  gap: 10px;
   padding: 18px;
   color: var(--color-text-secondary);
   text-align: center;
+  border: 1.5px dashed var(--border-strong);
+  background: transparent;
+  box-shadow: none;
 }
 
 .createLibraryCard:hover,
 .libraryCard:hover,
 .libraryCardActive {
-  border-color: rgba(148, 163, 184, 0.34);
-  background: rgba(148, 163, 184, 0.12);
-  transform: translateY(-1px);
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.libraryCard:hover {
+  box-shadow: var(--shadow-pop);
 }
 
 .createLibraryIcon {
-  width: 44px;
-  height: 44px;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--color-text-primary);
+  border: none;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .createLibraryCard strong {
@@ -4674,7 +4690,7 @@
   min-width: 0;
   position: relative;
   display: grid;
-  grid-template-rows: 178px 1fr;
+  grid-template-rows: 128px 1fr;
   overflow: hidden;
   cursor: default;
 }
@@ -4686,23 +4702,33 @@
   box-sizing: border-box;
   position: relative;
   overflow: hidden;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0)),
-    rgba(148, 163, 184, 0.08);
-  padding: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--border);
+  /* franja diagonal (como el ZIP) */
+  background: repeating-linear-gradient(135deg, var(--surface-2) 0 12px, var(--bg-soft) 12px 24px);
+  padding: 0;
+}
+
+.libraryThumbLabel {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--color-text-tertiary);
+  pointer-events: none;
 }
 
 .libraryPreviewViewport {
   position: absolute;
-  inset: 28px 10px 10px;
+  inset: 0;
   display: grid;
   place-items: start center;
   overflow: hidden;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  border-radius: 6px;
+  border: 0;
+  border-radius: 0;
   background: var(--color-background-primary);
-  padding: 8px;
+  padding: 0;
   pointer-events: none;
 }
 
@@ -4763,8 +4789,8 @@
   box-sizing: border-box;
   display: grid;
   align-content: start;
-  gap: 8px;
-  padding: 13px;
+  gap: 3px;
+  padding: 13px 15px;
 }
 
 .libraryCardTitleRow {
@@ -4778,9 +4804,25 @@
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-primary);
-  font-size: 0.98rem;
+  font-size: 0.875rem;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Pie de la tarjeta (estilo ZIP): dominio mono + fecha de edición */
+.libraryCardMeta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 9px;
+}
+
+.libraryCardMeta time {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: var(--color-text-tertiary);
 }
 
 .libraryCardMenuButton {
@@ -5284,7 +5326,7 @@
 
 .pageMenu {
   position: absolute;
-  z-index: 20;
+  z-index: var(--z-index-popover);
   top: calc(100% + 4px);
   right: 0;
   min-width: 172px;
@@ -5292,7 +5334,7 @@
   gap: 4px;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 8px;
-  background: var(--color-background-primary);
+  background: var(--surface-solid, var(--surface));
   padding: 6px;
   box-shadow: 0 18px 48px -30px rgba(15, 23, 42, 0.75);
 }
@@ -6092,7 +6134,7 @@
   width: min(460px, 100%);
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 8px;
-  background: var(--color-background-secondary);
+  background: var(--surface-solid, var(--color-background-secondary));
   box-shadow: 0 28px 80px -36px rgba(0, 0, 0, 0.78);
   padding: 20px;
 }
@@ -6148,7 +6190,7 @@
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 8px;
-  background: var(--color-background-secondary);
+  background: var(--surface-solid, var(--color-background-secondary));
   box-shadow: 0 30px 90px -38px rgba(2, 6, 23, 0.82);
 }
 
@@ -7852,7 +7894,7 @@
 
 /* --- Pages context menu (Radix portal content) --- */
 .pageMenu {
-  z-index: 4200;
+  z-index: var(--z-index-popover);
   min-width: 196px;
   padding: 6px;
   border-radius: 12px;
@@ -9595,7 +9637,7 @@
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 90;
+  z-index: var(--z-index-popover);
   width: min(340px, calc(100vw - 48px));
   max-height: min(78vh, 760px);
   overflow-y: auto;
@@ -9604,7 +9646,7 @@
   gap: 10px;
   border: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.24));
   border-radius: 8px;
-  background: var(--color-background-secondary);
+  background: var(--surface-solid, var(--color-background-secondary));
   padding: 10px;
 }
 
@@ -10247,11 +10289,11 @@
 }
 
 .colorField:has(.colorPopover) {
-  z-index: 2600;
+  z-index: var(--z-index-dropdown);
 }
 
 .colorPopover {
-  z-index: 2600;
+  z-index: var(--z-index-popover);
   box-shadow: 0 24px 70px -42px rgba(15, 23, 42, 0.75);
 }
 
@@ -12226,7 +12268,7 @@
 
 .editorSettingsDropdown {
   position: relative;
-  z-index: 90;
+  z-index: var(--z-index-dropdown);
   flex: 0 0 auto;
 }
 
@@ -12286,7 +12328,7 @@
   position: absolute;
   top: calc(100% + 10px);
   left: 0;
-  z-index: 3600;
+  z-index: var(--z-index-popover);
   width: min(520px, calc(100vw - 32px));
   max-height: min(720px, calc(100dvh - 112px));
   display: grid;
@@ -12296,7 +12338,7 @@
   overscroll-behavior: contain;
   border: 1px solid var(--ristak-dropdown-border, rgba(148, 163, 184, 0.24));
   border-radius: var(--design-control-radius, var(--radius-md));
-  background: var(--color-background-primary);
+  background: var(--surface-solid, var(--surface));
   color: var(--color-text-primary);
   padding: 12px 14px;
   font-family: var(--font-app, inherit);
@@ -12750,13 +12792,13 @@
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  z-index: 70;
+  z-index: var(--z-index-popover);
   width: min(420px, calc(100vw - 32px));
   display: grid;
   gap: 10px;
   border: 1px solid var(--sites-editor-border, rgba(148, 163, 184, 0.2));
   border-radius: var(--radius-md, 8px);
-  background: var(--ristak-dropdown-bg, var(--color-background-primary));
+  background: var(--ristak-dropdown-panel-bg, var(--ristak-dropdown-bg, var(--color-background-primary)));
   padding: 12px;
   box-shadow: 0 10px 24px -20px rgba(15, 23, 42, 0.45);
 }
@@ -13445,7 +13487,7 @@
 }
 
 .pagesDropdownOpen {
-  z-index: 3400;
+  z-index: var(--z-index-dropdown);
 }
 
 .pagesDropdownTrigger {
@@ -13512,14 +13554,14 @@
   top: calc(100% + 10px);
   left: 0;
   right: auto;
-  z-index: 1;
+  z-index: var(--z-index-popover);
   width: min(420px, calc(100vw - 32px));
   min-width: min(420px, calc(100vw - 32px));
   max-height: min(720px, calc(100dvh - 96px));
   overflow: auto;
   border: 1px solid var(--ristak-dropdown-border, rgba(148, 163, 184, 0.26));
   border-radius: 8px;
-  background: var(--ristak-dropdown-bg, #ffffff);
+  background: var(--ristak-dropdown-panel-bg, var(--surface-solid, var(--surface)));
   color: var(--color-text-primary);
   padding: 16px;
   box-shadow: var(--ristak-dropdown-panel-shadow, 0 18px 46px -30px rgba(15, 23, 42, 0.46));
@@ -13785,7 +13827,7 @@
 }
 
 .pagesDropdownActionMenu {
-  z-index: 4600 !important;
+  z-index: var(--z-index-tooltip) !important;
   min-width: 206px;
   display: grid;
   gap: 4px;
@@ -14712,7 +14754,7 @@
 .pageFrame .containerFocused .pagesDropdownPanel {
   border: 1px solid var(--sites-editor-border);
   border-radius: 8px;
-  background: var(--ristak-dropdown-bg, var(--color-background-secondary));
+  background: var(--ristak-dropdown-panel-bg, var(--ristak-dropdown-bg, var(--color-background-secondary)));
   padding: 12px;
   box-shadow: var(--ristak-dropdown-panel-shadow, 0 18px 46px -30px rgba(15, 23, 42, 0.46));
 }
@@ -15452,6 +15494,24 @@
   background: rgba(var(--color-primary-rgb), 0.18) !important;
 }
 
+.editorDirtyActionButton {
+  position: relative;
+}
+
+.editorDirtyActionButton::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--surface);
+  border-radius: var(--radius-pill);
+  background: var(--warn);
+  box-shadow: var(--shadow-xs);
+  pointer-events: none;
+}
+
 .editorSaveStatus {
   min-width: 126px;
   height: 32px;
@@ -15852,6 +15912,32 @@
   padding-bottom: 0;
 }
 
+@media (min-width: 1361px) {
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm {
+    grid-template-columns: minmax(260px, 288px) minmax(0, 1fr) minmax(440px, 520px) !important;
+  }
+
+  .builderGridFormMode,
+  .containerFocused .builderGridFormMode,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
+    grid-template-columns: minmax(286px, 324px) minmax(320px, 1fr) minmax(500px, 560px) !important;
+  }
+}
+
+@media (min-width: 1181px) and (max-width: 1360px) {
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm {
+    grid-template-columns: minmax(224px, 260px) minmax(0, 1fr) minmax(390px, 450px) !important;
+  }
+
+  .builderGridFormMode,
+  .containerFocused .builderGridFormMode,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
+    grid-template-columns: minmax(248px, 286px) minmax(280px, 1fr) minmax(420px, 480px) !important;
+  }
+}
+
 .formFieldList {
   display: grid;
   gap: 8px;
@@ -16026,4 +16112,359 @@
   gap: 10px;
   border-top: 1px solid rgba(148, 163, 184, 0.16);
   padding-top: 12px;
+}
+
+/* Sites editor responsive density: keep the top toolbar usable on short/small monitors. */
+.pageFrame .containerFocused:has(.builder) {
+  --sites-editor-toolbar-gap: 10px;
+  --sites-editor-toolbar-pad-x: 16px;
+  --sites-editor-tools-pad-x: 10px;
+  --sites-editor-action-pad-x: 13px;
+  --sites-editor-page-selector-w: 224px;
+  --sites-editor-toolbar-offset: calc(var(--sites-editor-topbar-h, 72px) + 18px);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorHeader {
+  padding: calc((var(--sites-editor-topbar-h, 72px) - var(--editor-control-h, 40px)) / 2) var(--sites-editor-toolbar-pad-x);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTop {
+  grid-template-columns: minmax(200px, 0.85fr) minmax(0, max-content) minmax(0, 1.15fr);
+  gap: var(--sites-editor-toolbar-gap);
+  overflow: visible;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarContext,
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools,
+.pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools {
+  padding-inline: var(--sites-editor-tools-pad-x);
+  position: relative;
+  z-index: var(--z-index-dropdown);
+  overflow: visible;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarPrimary::-webkit-scrollbar {
+  display: none;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorPageSelectorSlot {
+  flex: 0 1 var(--sites-editor-page-selector-w);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorPageSelectorSlot .pagesDropdown {
+  width: min(var(--sites-editor-page-selector-w), 100%);
+  min-width: 0;
+}
+
+.editorActionButton,
+.editorPublishButton {
+  flex: 0 0 auto;
+  max-width: 100%;
+  gap: 7px !important;
+  padding-inline: var(--sites-editor-action-pad-x) !important;
+}
+
+.editorActionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editorSaveStatus {
+  flex: 0 1 132px;
+  min-width: 0;
+  max-width: 132px;
+}
+
+.editorSaveStatus > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1680px), (max-height: 900px) {
+  .pageFrame .containerFocused:has(.builder) {
+    --sites-editor-topbar-h: 64px;
+    --editor-control-h: 36px;
+    --sites-editor-toolbar-gap: 8px;
+    --sites-editor-toolbar-pad-x: 12px;
+    --sites-editor-tools-pad-x: 8px;
+    --sites-editor-action-pad-x: 10px;
+    --sites-editor-page-selector-w: 206px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
+    grid-template-columns: minmax(176px, 0.8fr) minmax(246px, max-content) minmax(0, 1.2fr);
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarContext,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+    gap: 6px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop .backButton {
+    padding-inline: 6px;
+    font-size: 12px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop .editorToolbarNameField {
+    flex-basis: 156px;
+    min-width: 108px;
+    max-width: 168px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorSettingsButton,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools .seoToolbarButton {
+    padding-inline: 9px;
+    font-size: 12px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary .deviceToggle {
+    padding: 2px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary .deviceToggle button {
+    width: 29px;
+    height: 29px;
+  }
+
+  .editorActionButton,
+  .editorPublishButton {
+    font-size: 12px !important;
+  }
+
+  .editorActionButton .editorActionLabel {
+    max-width: 92px;
+  }
+
+  .editorSaveStatus {
+    flex-basis: 118px;
+    max-width: 118px;
+    font-size: 11.5px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm {
+    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr) minmax(360px, 420px) !important;
+    gap: 10px;
+  }
+
+  .builderGridFormMode,
+  .containerFocused .builderGridFormMode,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
+    grid-template-columns: minmax(238px, 280px) minmax(280px, 1fr) minmax(390px, 450px) !important;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .blocksRail,
+  .pageFrame .containerFocused:has(.builder) .propertiesPanel {
+    padding-inline: 8px;
+  }
+
+  .importedCodeEditorPanel {
+    grid-template-columns: minmax(304px, var(--imported-code-source-width, 48%)) 10px minmax(180px, 1fr);
+  }
+
+  .importedCodePaneHeader {
+    min-height: 46px;
+    padding-inline: 10px;
+  }
+
+  .importedCodeHighlight,
+  .importedCodeTextarea {
+    font-size: 13px;
+    line-height: 1.5;
+  }
+}
+
+@media (max-width: 1540px), (max-height: 820px) {
+  .pageFrame .containerFocused:has(.builder) {
+    --sites-editor-topbar-h: 58px;
+    --editor-control-h: 34px;
+    --sites-editor-toolbar-gap: 6px;
+    --sites-editor-toolbar-pad-x: 10px;
+    --sites-editor-tools-pad-x: 6px;
+    --sites-editor-action-pad-x: 0px;
+    --sites-editor-page-selector-w: 190px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
+    grid-template-columns: minmax(150px, 0.72fr) minmax(222px, max-content) minmax(0, 1.28fr);
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop .editorToolbarNameField {
+    flex-basis: 132px;
+    min-width: 94px;
+    max-width: 146px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop .editorToolbarNameField input,
+  .pageFrame .containerFocused:has(.builder) .editorPageSelectorSlot .pagesDropdownTriggerText strong {
+    font-size: 12px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorSettingsButton,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools .seoToolbarButton {
+    padding-inline: 8px;
+  }
+
+  .editorActionButton {
+    width: var(--editor-control-h, 34px);
+    min-width: var(--editor-control-h, 34px);
+    justify-content: center;
+  }
+
+  .editorActionButton .editorActionLabel {
+    display: none;
+  }
+
+  .editorPublishButton {
+    min-width: 96px;
+    padding-inline: 10px !important;
+  }
+
+  .editorSaveStatus {
+    flex: 0 0 30px;
+    width: 30px;
+    max-width: 30px;
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .editorSaveStatus > span {
+    display: none;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm {
+    grid-template-columns: minmax(198px, 232px) minmax(0, 1fr) minmax(312px, 360px) !important;
+    gap: 8px;
+  }
+
+  .builderGridFormMode,
+  .containerFocused .builderGridFormMode,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
+    grid-template-columns: minmax(212px, 248px) minmax(260px, 1fr) minmax(340px, 390px) !important;
+  }
+
+  .importedCodeEditorPanel {
+    grid-template-columns: minmax(280px, var(--imported-code-source-width, 46%)) 8px minmax(160px, 1fr);
+  }
+
+  .importedCodePaneHeader {
+    min-height: 42px;
+    gap: 8px;
+    padding-inline: 8px;
+  }
+
+  .importedCodeTitleBlock strong,
+  .importedCodeTitleBlock span {
+    font-size: 12px;
+  }
+
+  .importedCodeAssistantPanel {
+    gap: 8px;
+    padding: 10px;
+  }
+}
+
+@media (max-width: 1320px) {
+  .pageFrame .containerFocused:has(.builder) {
+    --sites-editor-topbar-h: 108px;
+    --editor-control-h: 34px;
+    --sites-editor-toolbar-offset: calc(var(--sites-editor-topbar-h, 108px) + 14px);
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorHeader {
+    padding-block: 8px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    grid-template-areas:
+      "context tools"
+      "primary primary";
+    row-gap: 8px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarContext,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+    width: auto;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools {
+    justify-content: flex-end;
+    padding-inline: 0;
+    border-inline: 0;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+    justify-content: flex-start;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary::-webkit-scrollbar {
+    display: block;
+    height: 4px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .builderGridLanding,
+  .pageFrame .containerFocused:has(.builder) .builderGridForm,
+  .builderGridFormMode,
+  .containerFocused .builderGridFormMode,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
+    grid-template-columns: 1fr !important;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .blocksRail,
+  .pageFrame .containerFocused:has(.builder) .propertiesPanel {
+    max-height: none;
+  }
+}
+
+@media (max-width: 980px) {
+  .pageFrame .containerFocused:has(.builder) {
+    --sites-editor-topbar-h: 148px;
+    --sites-editor-toolbar-offset: calc(var(--sites-editor-topbar-h, 148px) + 12px);
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "context"
+      "tools"
+      "primary";
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarContext,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools {
+    max-width: none;
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    overflow: visible;
+  }
 }

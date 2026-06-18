@@ -25,7 +25,7 @@ export const BarChart: React.FC<BarChartProps> = ({
   data,
   loading = false,
   height = 300,
-  color = 'var(--design-chart-primary, #10b981)',
+  color = 'var(--accent)',
   xAxisLabel,
   yAxisLabel,
   formatTooltip = (value) => value.toString(),

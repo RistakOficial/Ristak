@@ -38,7 +38,7 @@ import {
 import { genId } from '../flowUtils'
 import automationsService from '@/services/automationsService'
 import { MessageComposer } from '../composer/MessageComposer'
-import { CatalogSelect, TextInput, Toggle } from './configPrimitives'
+import { CatalogSelect, NumberTextInput, TextInput, Toggle } from './configPrimitives'
 import { WhatsAppTemplatePreview, templateInputs, useWhatsAppTemplate } from './WhatsAppTemplatePreview'
 import { VariableTextInput } from '../composer/MessageComposer'
 import styles from '../AutomationEditor.module.css'
@@ -53,6 +53,7 @@ interface MessageBlocksEditorProps {
   value: unknown
   onChange: (blocks: MessageBlock[]) => void
   supportsQuickReplies?: boolean
+  buttonLabelMaxLength?: number
   /** 'chat' = globos normales; 'template' = secuencia de plantillas + retrasos */
   variant?: 'chat' | 'template'
 }
@@ -155,12 +156,11 @@ const DelayPopover: React.FC<{
       </div>
       <div className={styles.delayPopoverLabel}>Duración del retraso</div>
       <div className={styles.configRow}>
-        <TextInput
-          type="number"
+        <NumberTextInput
           min={1}
           style={{ width: 76 }}
           value={amount}
-          onChange={(event) => onChange({ amount: Number(event.target.value) })}
+          onValueChange={(nextAmount) => onChange({ amount: nextAmount })}
         />
         <div className={styles.configRowGrow}>
           <CustomSelect
@@ -289,6 +289,7 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
   value,
   onChange,
   supportsQuickReplies = false,
+  buttonLabelMaxLength = 40,
   variant = 'chat'
 }) => {
   const blocks = asMessageBlocks(value)
@@ -391,8 +392,8 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
         <TextInput
           className={styles.configRowGrow}
           value={button.label}
-          maxLength={40}
-          placeholder="Texto del botón"
+          maxLength={buttonLabelMaxLength}
+          placeholder={buttonLabelMaxLength === 20 ? 'Botón (máx. 20)' : 'Texto del botón'}
           onChange={(event) => update(buttonIndex, { label: event.target.value })}
         />
         <div style={{ width: 118, flexShrink: 0 }}>

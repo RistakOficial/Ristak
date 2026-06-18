@@ -208,6 +208,36 @@ export const automationsCache = {
   automations: new Map<string, Automation>()
 }
 
+function automationToSummary(automation: Automation): AutomationSummary {
+  return {
+    id: automation.id,
+    folderId: automation.folderId,
+    name: automation.name,
+    description: automation.description,
+    status: automation.status,
+    hasUnpublishedChanges: automation.hasUnpublishedChanges,
+    createdAt: automation.createdAt,
+    updatedAt: automation.updatedAt,
+    publishedAt: automation.publishedAt
+  }
+}
+
+function cacheAutomation(automation: Automation) {
+  automationsCache.automations.set(automation.id, automation)
+  if (!automationsCache.overview) return
+
+  const summary = automationToSummary(automation)
+  const exists = automationsCache.overview.automations.some((item) => item.id === automation.id)
+  automationsCache.overview = {
+    ...automationsCache.overview,
+    automations: exists
+      ? automationsCache.overview.automations.map((item) =>
+          item.id === automation.id ? { ...item, ...summary } : item
+        )
+      : [summary, ...automationsCache.overview.automations]
+  }
+}
+
 export const automationsService = {
   async getOverview(): Promise<AutomationsOverview> {
     const overview = await apiClient.get<AutomationsOverview>('/automations')
@@ -217,31 +247,37 @@ export const automationsService = {
 
   async getAutomation(automationId: string): Promise<Automation> {
     const automation = await apiClient.get<Automation>(`/automations/${automationId}`)
-    automationsCache.automations.set(automation.id, automation)
+    cacheAutomation(automation)
     return automation
   },
 
   async createAutomation(input: { name: string; folderId?: string | null }): Promise<Automation> {
     const automation = await apiClient.post<Automation>('/automations', input)
-    automationsCache.automations.set(automation.id, automation)
+    cacheAutomation(automation)
     return automation
   },
 
   async updateAutomation(automationId: string, input: AutomationUpdateInput): Promise<Automation> {
     const automation = await apiClient.put<Automation>(`/automations/${automationId}`, input)
-    automationsCache.automations.set(automation.id, automation)
+    cacheAutomation(automation)
     return automation
   },
 
   async duplicateAutomation(automationId: string): Promise<Automation> {
     const automation = await apiClient.post<Automation>(`/automations/${automationId}/duplicate`)
-    automationsCache.automations.set(automation.id, automation)
+    cacheAutomation(automation)
     return automation
   },
 
   async deleteAutomation(automationId: string): Promise<void> {
     await apiClient.delete(`/automations/${automationId}`)
     automationsCache.automations.delete(automationId)
+    if (automationsCache.overview) {
+      automationsCache.overview = {
+        ...automationsCache.overview,
+        automations: automationsCache.overview.automations.filter((automation) => automation.id !== automationId)
+      }
+    }
   },
 
   async createFolder(input: { name: string }): Promise<AutomationFolder> {

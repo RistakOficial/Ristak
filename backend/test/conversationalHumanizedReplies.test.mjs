@@ -1,26 +1,47 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { db } from '../src/config/database.js'
+import { CHEAPEST_OPENAI_MODEL } from '../src/config/openAIModels.js'
+import { APPOINTMENT_CONFIRMATION_MODEL } from '../src/agents/appointmentConfirmationAgent.js'
 import {
   buildConversationalAgentMetrics,
+  completeConversationGoalLinkFromWebhook,
+  createConversationalAgent,
+  createConversationGoalLink,
+  getConversationGoalLink,
+  getConversationState,
   getAgentReplyDeliveryPartDelayMs,
+  handleConversationalAgentTriggerLinkClick,
   mergeAdvancedClosingContext,
+  normalizeAgentGoalWorkflow,
   normalizeAgentReplyDelivery,
   normalizeConversationalSuccessAction,
   shouldMigrateLegacyConversationalAgentConfig
 } from '../src/services/conversationalAgentService.js'
+import { createTriggerLink } from '../src/services/triggerLinksService.js'
 import {
   buildReplyPartDelaySchedule,
   buildPendingReplyContextMessage,
+  sanitizeAgentReply,
   sendReplyParts,
   shouldRecoverPendingInbound,
   splitReplyIntoParts
 } from '../src/agents/conversational/runner.js'
 import {
-  splitMessageIntoBubbles
+  buildConversationalMediaSummary,
+  hydrateConversationalMessagesMedia,
+  inferConversationalMediaKind
+} from '../src/agents/conversational/mediaContext.js'
+import {
+  MESSAGE_SPLITTER_MODEL,
+  splitMessageIntoBubbles,
+  splitMessageIntoBubblesFallback
 } from '../src/agents/conversational/messageSplitter.js'
 import {
   DEFAULT_CLOSING_STRATEGY,
+  buildBusinessAdaptiveClosingSection,
+  buildClosingStrategyTemplateParameters,
   buildConversationalInstructions,
   renderClosingStrategyTemplate
 } from '../src/agents/conversational/prompt.js'
@@ -28,6 +49,12 @@ import {
   buildBusinessProfilePromptParameters,
   normalizeBusinessProfileExtraction
 } from '../src/services/aiAgentService.js'
+
+test('flujos IA automaticos de bajo costo usan siempre el modelo mas barato aprobado', () => {
+  assert.equal(CHEAPEST_OPENAI_MODEL, 'gpt-5.4-nano')
+  assert.equal(MESSAGE_SPLITTER_MODEL, CHEAPEST_OPENAI_MODEL)
+  assert.equal(APPOINTMENT_CONFIRMATION_MODEL, CHEAPEST_OPENAI_MODEL)
+})
 
 test('normaliza la entrega de respuestas en partes', () => {
   const delivery = normalizeAgentReplyDelivery({
@@ -49,9 +76,257 @@ test('normaliza la entrega de respuestas en partes', () => {
 test('normaliza acciones del agente conversacional', () => {
   assert.equal(normalizeConversationalSuccessAction('book_appointment'), 'book_appointment')
   assert.equal(normalizeConversationalSuccessAction('ready_to_buy'), 'ready_to_buy')
+  assert.equal(normalizeConversationalSuccessAction('send_goal_url'), 'send_goal_url')
+  assert.equal(normalizeConversationalSuccessAction('send_trigger_link'), 'send_trigger_link')
   assert.equal(normalizeConversationalSuccessAction('ready_for_human'), 'ready_for_human')
   for (const action of ['internal_signal', 'none', '', null]) {
     assert.equal(normalizeConversationalSuccessAction(action), 'ready_for_human')
+  }
+})
+
+test('normaliza flujo por enlace con parametro de seguimiento', () => {
+  const workflow = normalizeAgentGoalWorkflow({
+    appointments: {
+      owner: 'url',
+      url: 'agenda.test/reserva',
+      trackingParam: 'booking-ref!'
+    },
+    sales: {
+      owner: 'url',
+      url: 'https://tienda.test/checkout',
+      trackingParam: 'order_id'
+    },
+    triggerLink: {
+      triggerLinkId: 'trigger_link_123',
+      triggerLinkPublicId: 'abc123',
+      triggerLinkName: 'Ficha de diagnóstico',
+      triggerLinkUrl: 'https://app.test/trigger-links/abc123'
+    }
+  })
+
+  assert.equal(workflow.appointments.owner, 'url')
+  assert.equal(workflow.appointments.url, 'https://agenda.test/reserva')
+  assert.equal(workflow.appointments.trackingParam, 'booking-ref')
+  assert.equal(workflow.sales.owner, 'url')
+  assert.equal(workflow.sales.trackingParam, 'order_id')
+  assert.equal(workflow.triggerLink.triggerLinkId, 'trigger_link_123')
+  assert.equal(workflow.triggerLink.triggerLinkPublicId, 'abc123')
+  assert.equal(workflow.triggerLink.triggerLinkName, 'Ficha de diagnóstico')
+  assert.equal(workflow.triggerLink.triggerLinkUrl, 'https://app.test/trigger-links/abc123')
+})
+
+test('click del enlace de disparo cumple objetivo personalizado y detiene la IA', async () => {
+  const contactId = 'test_trigger_link_goal_contact'
+  let triggerLink = null
+  let agent = null
+
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '+5215550000002', 'trigger-link@test.local', 'Trigger Link Test', 'test']
+    )
+
+    triggerLink = await createTriggerLink({
+      name: 'Diagnóstico express',
+      destinationUrl: 'https://example.test/diagnostico'
+    })
+
+    agent = await createConversationalAgent({
+      name: 'Agente trigger link',
+      objective: 'custom',
+      customObjective: 'Que toque el enlace de diagnóstico',
+      successAction: 'send_trigger_link',
+      goalWorkflow: {
+        triggerLink: {
+          triggerLinkId: triggerLink.id,
+          triggerLinkPublicId: triggerLink.publicId,
+          triggerLinkName: triggerLink.name,
+          triggerLinkUrl: triggerLink.publicUrl
+        }
+      }
+    })
+
+    await db.run(
+      'INSERT OR REPLACE INTO conversational_agent_state (contact_id, status, agent_id, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+      [contactId, 'active', agent.id]
+    )
+
+    const ignored = await handleConversationalAgentTriggerLinkClick({
+      contactId,
+      triggerLinkId: 'trigger_link_equivocado',
+      triggerLinkPublicId: 'otro',
+      triggerLinkName: 'Otro enlace'
+    })
+    assert.equal(ignored.matched, false)
+
+    let state = await getConversationState(contactId)
+    assert.equal(state.status, 'active')
+    assert.equal(state.signal, null)
+
+    const completed = await handleConversationalAgentTriggerLinkClick({
+      contactId,
+      triggerLinkId: triggerLink.id,
+      triggerLinkPublicId: triggerLink.publicId,
+      triggerLinkName: triggerLink.name,
+      eventId: 'trigger_event_test'
+    })
+
+    assert.equal(completed.matched, true)
+    state = await getConversationState(contactId)
+    assert.equal(state.status, 'completed')
+    assert.equal(state.signal, 'ready_for_human')
+    assert.match(state.signalReason, /Diagnóstico express/)
+    assert.match(state.signalSummary, /equipo debe continuar/)
+
+    const event = await db.get(
+      "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'trigger_link_goal_completed' ORDER BY created_at DESC LIMIT 1",
+      [contactId]
+    )
+    assert.ok(event?.detail_json)
+    assert.match(event.detail_json, /trigger_event_test/)
+  } finally {
+    if (agent?.id) await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+    if (triggerLink?.id) {
+      await db.run('DELETE FROM trigger_link_events WHERE trigger_link_id = ?', [triggerLink.id]).catch(() => undefined)
+      await db.run('DELETE FROM trigger_links WHERE id = ?', [triggerLink.id]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('confirmacion automatica de enlace de calendario confirma cita con ID real', async () => {
+  const contactId = 'test_goal_url_contact'
+  await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '+5215550000000', 'goal-url@test.local', 'Goal URL Test', 'test']
+    )
+
+    const link = await createConversationGoalLink({
+      contactId,
+      objective: 'citas',
+      targetUrl: 'https://agenda.test/reserva?origen=whatsapp',
+      trackingParam: 'booking_ref',
+      linkParams: { calendar_id: 'cal_demo' },
+      metadata: {
+        expected: { calendarId: 'cal_demo' }
+      }
+    })
+
+    assert.match(link.id, /^goal_/)
+    assert.equal(new URL(link.sentUrl).searchParams.get('booking_ref'), link.id)
+    assert.equal(new URL(link.sentUrl).searchParams.get('calendar_id'), 'cal_demo')
+
+    const completed = await completeConversationGoalLinkFromWebhook({
+      booking_ref: link.id,
+      calendar_id: 'cal_demo',
+      appointment_id: 'appt_123',
+      status: 'scheduled'
+    })
+
+    assert.equal(completed.status, 'completed')
+    assert.equal(completed.externalObjectId, 'appt_123')
+    assert.equal(completed.signal, 'appointment_booked')
+
+    const stored = await getConversationGoalLink(link.id)
+    assert.equal(stored.status, 'completed')
+    assert.equal(stored.externalObjectId, 'appt_123')
+
+    const state = await db.get('SELECT status, signal, signal_summary FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+    assert.equal(state.status, 'completed')
+    assert.equal(state.signal, 'appointment_booked')
+    assert.match(state.signal_summary, /appt_123/)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('confirmacion automatica de pedido valida producto antes de cerrar venta', async () => {
+  const contactId = 'test_goal_order_contact'
+  await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '+5215550000001', 'goal-order@test.local', 'Goal Order Test', 'test']
+    )
+
+    const link = await createConversationGoalLink({
+      contactId,
+      objective: 'ventas',
+      targetUrl: 'https://tienda.test/pedido',
+      trackingParam: 'pedido_ref',
+      linkParams: {
+        product_id: 'prod_x',
+        price_id: 'price_mensual'
+      },
+      metadata: {
+        expected: {
+          productId: 'prod_x',
+          priceId: 'price_mensual',
+          productName: 'Producto X',
+          priceName: 'Mensual'
+        }
+      }
+    })
+
+    const sentUrl = new URL(link.sentUrl)
+    assert.equal(sentUrl.searchParams.get('pedido_ref'), link.id)
+    assert.equal(sentUrl.searchParams.get('product_id'), 'prod_x')
+    assert.equal(sentUrl.searchParams.get('price_id'), 'price_mensual')
+
+    await assert.rejects(
+      () => completeConversationGoalLinkFromWebhook({
+        pedido_ref: link.id,
+        product_id: 'prod_y',
+        price_id: 'price_mensual',
+        purchase_id: 'purchase_wrong',
+        status: 'paid'
+      }),
+      /producto esperado/
+    )
+
+    const pending = await getConversationGoalLink(link.id)
+    assert.equal(pending.status, 'pending')
+
+    const completed = await completeConversationGoalLinkFromWebhook({
+      pedido_ref: link.id,
+      product_id: 'prod_x',
+      price_id: 'price_mensual',
+      purchase_id: 'purchase_123',
+      status: 'paid'
+    })
+
+    assert.equal(completed.status, 'completed')
+    assert.equal(completed.externalObjectId, 'purchase_123')
+    assert.equal(completed.signal, 'purchase_completed')
+
+    const state = await db.get('SELECT status, signal, signal_summary FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+    assert.equal(state.status, 'completed')
+    assert.equal(state.signal, 'purchase_completed')
+    assert.match(state.signal_summary, /purchase_123/)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
 })
 
@@ -132,8 +407,47 @@ test('crea calendario de pausas dejando el primer globo inmediato', () => {
   assert.deepEqual(schedule, [0, 2000, 2000])
 })
 
+test('sanitiza razonamiento interno antes de enviar al contacto', () => {
+  const raw = [
+    'Vale. Tengo el contexto del negocio. El contacto es nuevo. Ahora voy a responder.',
+    '',
+    '**Lectura:** llega corto, directo, con una necesidad puntual (costos). **Movimiento:** no voy a soltar los valores de golpe.',
+    '',
+    'Voy a regresar la pregunta para que se especifique qué es lo que le interesa exactamente, transmitiendo que tengo varias cosas. Desarmado, sin ser mamón.',
+    '',
+    'Corto. Uno o dos valores concretos nada más si pregunta específico después. Espejeo su sequedad pero desde arriba.',
+    '',
+    'qué cosa.. digo, tengo varias cosas por acá, cuál fue lo que te llamó?'
+  ].join('\n')
+
+  assert.equal(
+    sanitizeAgentReply(raw),
+    'qué cosa.. digo, tengo varias cosas por acá, cuál fue lo que te llamó?'
+  )
+})
+
+test('bloquea una respuesta que solo contiene razonamiento interno', () => {
+  const raw = [
+    '**Lectura:** pregunta precio, energía seca.',
+    'Voy a regresar la pregunta y no voy a soltar valores de golpe.',
+    'Primer mensaje desarmado, registro profesional.'
+  ].join('\n')
+
+  assert.equal(sanitizeAgentReply(raw), '')
+})
+
+test('conserva una respuesta visible etiquetada tras razonamiento interno', () => {
+  const raw = [
+    '**Lectura:** trae una duda puntual.',
+    '**Respuesta visible:** claro, depende de qué necesitas revisar primero'
+  ].join('\n')
+
+  assert.equal(sanitizeAgentReply(raw), 'claro, depende de qué necesitas revisar primero')
+})
+
 test('envio real espera antes de cada globo posterior', async () => {
   const sequence = []
+  let splitterArgs = null
   const result = await sendReplyParts({
     contactId: 'contacto-test',
     phone: '+526561111111',
@@ -157,7 +471,10 @@ test('envio real espera antes de cada globo posterior', async () => {
     apiKey: 'sk-test',
     model: 'test-model',
     dependencies: {
-      splitter: async () => ({ messages: ['globo uno', 'globo dos', 'globo tres'], source: 'test', reason: 'ok' }),
+      splitter: async (args) => {
+        splitterArgs = args
+        return { messages: ['globo uno', 'globo dos', 'globo tres'], source: 'test', reason: 'ok' }
+      },
       sendTextMessage: async ({ text }) => {
         sequence.push(`send:${text}`)
       },
@@ -172,6 +489,8 @@ test('envio real espera antes de cada globo posterior', async () => {
     }
   })
 
+  assert.equal(splitterArgs?.model, undefined)
+  assert.equal(splitterArgs?.apiKey, 'sk-test')
   assert.deepEqual(result.delaySchedule, [0, 2000, 2000])
   assert.deepEqual(sequence, [
     'send:globo uno',
@@ -237,6 +556,139 @@ test('mensaje corto se queda en un solo globo', async () => {
 
   assert.equal(result.source, 'threshold')
   assert.deepEqual(result.messages, ['Ok, listo.'])
+})
+
+test('modo humano no fuerza globos cuando la respuesta corta es una sola idea', () => {
+  const result = splitMessageIntoBubblesFallback({
+    text: 'sí, mañana a las 5 está perfecto',
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 20, maxBubbleLength: 120, randomizeSplitting: true },
+    random: () => 0
+  })
+
+  assert.deepEqual(result.messages, ['sí, mañana a las 5 está perfecto'])
+})
+
+test('modo humano usa fallback natural cuando no hay splitter IA disponible', async () => {
+  const result = await splitMessageIntoBubbles({
+    text: 'ah ya te entendí… ¿pero cómo está eso exactamente?',
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 120, randomizeSplitting: true },
+    random: () => 0.8
+  })
+
+  assert.equal(result.source, 'fallback')
+  assert.deepEqual(result.messages, ['ah ya te entendí…', '¿pero cómo está eso exactamente?'])
+})
+
+test('modo humano acepta BREAK como separador pero no lo expone al contacto', async () => {
+  const result = await splitMessageIntoBubbles({
+    text: 'ok perfecto ahora dime qué fecha te queda mejor',
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 4, maxBubbleLength: 120 },
+    aiSplitter: async () => 'ok perfecto [BREAK] ahora dime qué fecha te queda mejor'
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.deepEqual(result.messages, ['ok perfecto', 'ahora dime qué fecha te queda mejor'])
+  assert.ok(result.messages.every((message) => !message.includes('[BREAK]')))
+})
+
+test('modo humano separa BREAK aunque venga dentro de JSON válido', async () => {
+  const result = await splitMessageIntoBubbles({
+    text: 'ok perfecto ahora dime qué fecha te queda mejor',
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 4, maxBubbleLength: 120 },
+    aiSplitter: async () => '{"messages":["ok perfecto [BREAK] ahora dime qué fecha te queda mejor"]}'
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.deepEqual(result.messages, ['ok perfecto', 'ahora dime qué fecha te queda mejor'])
+  assert.ok(result.messages.every((message) => !message.includes('[BREAK]')))
+})
+
+test('modo humano repara globos con reacción, salto y pregunta en el mismo mensaje', async () => {
+  const original = 'ya.. entonces sí traes ese tema encima\n\npa entenderte bien y no decirte algo al aire, hoy cómo te llegan los pacientes?'
+  const result = await splitMessageIntoBubbles({
+    text: original,
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 240, randomizeSplitting: true },
+    aiSplitter: async () => ({ messages: [original] })
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.deepEqual(result.messages, [
+    'ya..',
+    'entonces sí traes ese tema encima',
+    'pa entenderte bien y no decirte algo al aire',
+    'hoy cómo te llegan los pacientes?'
+  ])
+})
+
+test('modo humano fallback separa reaccion lectura puente y pregunta final', () => {
+  const original = 'ya.. entonces sí traes ese tema encima\npa entenderte bien y no decirte algo al aire, hoy cómo te llegan los pacientes?'
+  const result = splitMessageIntoBubblesFallback({
+    text: original,
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 240, randomizeSplitting: true },
+    random: () => 0.99
+  })
+
+  assert.deepEqual(result.messages, [
+    'ya..',
+    'entonces sí traes ese tema encima',
+    'pa entenderte bien y no decirte algo al aire',
+    'hoy cómo te llegan los pacientes?'
+  ])
+})
+
+test('modo humano deja una reaccion con coma como globo propio', async () => {
+  const result = await splitMessageIntoBubbles({
+    text: 'claro, de qué te gustaría saber?',
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 4, maxBubbleLength: 120, randomizeSplitting: true },
+    aiSplitter: async () => ({ messages: ['claro, de qué te gustaría saber?'] })
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.deepEqual(result.messages, ['claro,', 'de qué te gustaría saber?'])
+})
+
+test('modo humano no deja una frase dependiente sola antes de una pregunta', async () => {
+  const original = 'depende de lo que necesites. tú eres médico o lo ves para alguien más?'
+  const result = await splitMessageIntoBubbles({
+    text: original,
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 160, randomizeSplitting: true },
+    aiSplitter: async () => ({ messages: ['depende de lo que necesites.', 'tú eres médico o lo ves para alguien más?'] })
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.deepEqual(result.messages, [original])
+})
+
+test('modo humano fallback no corta depende de lo que necesitas antes del contexto', () => {
+  const original = 'depende de lo que necesites. tú eres médico o lo ves para alguien más?'
+  const result = splitMessageIntoBubblesFallback({
+    text: original,
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 160, randomizeSplitting: true },
+    random: () => 0.99
+  })
+
+  assert.deepEqual(result.messages, [original])
+})
+
+test('modo humano puede llegar hasta seis globos sólo cuando el texto largo lo amerita', () => {
+  const longReply = [
+    'va, ya te entendí.',
+    'Primero revisamos qué estás intentando resolver ahorita.',
+    'Luego vemos qué ya probaste antes para no repetir lo mismo.',
+    'Después ubicamos qué dato real falta para darte una respuesta clara.',
+    'Con eso te digo cuál sería el siguiente paso sin inventarte nada.',
+    'Y si sí hace sentido, lo pasamos a revisión con alguien del equipo.'
+  ].join(' ')
+
+  const result = splitMessageIntoBubblesFallback({
+    text: longReply,
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 120, randomizeSplitting: true },
+    random: () => 0.99
+  })
+
+  assert.ok(result.messages.length > 4)
+  assert.ok(result.messages.length <= 6)
+  assert.equal(result.messages.join(' '), longReply)
 })
 
 test('mensaje casual se divide en globos humanos con IA', async () => {
@@ -387,6 +839,102 @@ test('construye contexto interno con mensajes pendientes sin exponerlo al client
   assert.match(context.content, /2\. también cuánto cuesta\?/)
 })
 
+test('describe adjuntos multimedia en mensajes conversacionales', () => {
+  const row = {
+    message_type: 'image',
+    media_url: 'https://cdn.test/foto.jpg',
+    media_mime_type: 'image/jpeg',
+    media_filename: 'foto.jpg'
+  }
+
+  assert.equal(inferConversationalMediaKind(row), 'image')
+  const summary = buildConversationalMediaSummary(row)
+  assert.match(summary, /Adjunto recibido: imagen/)
+  assert.match(summary, /foto\.jpg/)
+  assert.match(summary, /image\/jpeg/)
+})
+
+test('prepara imagen entrante como adjunto visual para el agente conversacional', async () => {
+  const messages = [{
+    role: 'user',
+    content: 'te mando foto',
+    message_type: 'image',
+    media_url: 'https://cdn.test/foto.jpg',
+    media_mime_type: 'image/jpeg',
+    media_filename: 'foto.jpg'
+  }]
+
+  const hydrated = await hydrateConversationalMessagesMedia(messages, {
+    includeBinary: true,
+    fetchMediaBuffer: async () => ({
+      buffer: Buffer.from([1, 2, 3, 4]),
+      mimeType: 'image/jpeg',
+      filename: 'foto.jpg'
+    })
+  })
+
+  assert.equal(hydrated[0].attachments.length, 1)
+  assert.equal(hydrated[0].attachments[0].kind, 'image')
+  assert.match(hydrated[0].attachments[0].dataUrl, /^data:image\/jpeg;base64,/)
+  assert.match(hydrated[0].content, /Contexto del adjunto/)
+})
+
+test('transcribe audio entrante antes de responder con el agente conversacional', async () => {
+  const messages = [{
+    role: 'user',
+    content: '',
+    message_type: 'audio',
+    media_url: 'https://cdn.test/nota.webm',
+    media_mime_type: 'audio/webm',
+    media_filename: 'nota.webm'
+  }]
+
+  const hydrated = await hydrateConversationalMessagesMedia(messages, {
+    aiProvider: 'openai',
+    apiKey: 'sk-test',
+    audioTranscriptionApiKey: 'sk-test',
+    includeBinary: true,
+    fetchMediaBuffer: async () => ({
+      buffer: Buffer.from('audio bytes'),
+      mimeType: 'audio/webm',
+      filename: 'nota.webm'
+    }),
+    transcribeAudio: async ({ audioBuffer, mimeType }) => {
+      assert.equal(audioBuffer.toString(), 'audio bytes')
+      assert.equal(mimeType, 'audio/webm')
+      return { text: 'quiero cotizar una cita para mañana' }
+    }
+  })
+
+  assert.equal(hydrated[0].attachments.length, 0)
+  assert.match(hydrated[0].content, /Transcripción del audio: quiero cotizar una cita para mañana/)
+})
+
+test('video entrante queda como referencia sin fingir análisis visual completo', async () => {
+  let fetched = false
+  const messages = [{
+    role: 'user',
+    content: 'mira este video',
+    message_type: 'video',
+    media_url: 'https://cdn.test/video.mp4',
+    media_mime_type: 'video/mp4',
+    media_filename: 'video.mp4'
+  }]
+
+  const hydrated = await hydrateConversationalMessagesMedia(messages, {
+    includeBinary: true,
+    fetchMediaBuffer: async () => {
+      fetched = true
+      return null
+    }
+  })
+
+  assert.equal(fetched, false)
+  assert.equal(hydrated[0].attachments.length, 0)
+  assert.match(hydrated[0].content, /Adjunto recibido: video/)
+  assert.match(hydrated[0].content, /no analiza movimiento/)
+})
+
 test('rellena parametros de la estrategia de cierre de fabrica', () => {
   const rendered = renderClosingStrategyTemplate(
     'Agente de [NOMBRE_DEL_NEGOCIO] por [CANAL_DE_CONVERSACION]; problema: [PROBLEMA_REAL]; avance: [HERRAMIENTA_INTERNA_DE_AVANCE]',
@@ -432,6 +980,8 @@ test('convierte el perfil estructurado del negocio en parametros del prompt', ()
   assert.match(extraction.promptParameters.UBICACION_O_MODALIDAD, /Ciudad Juárez/)
   assert.match(extraction.promptParameters.DISPONIBILIDAD, /Lunes a viernes/)
   assert.match(extraction.promptParameters.CONDICIONES_IMPORTANTES, /factura/)
+  assert.match(extraction.promptParameters.ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO, /clínica dental/)
+  assert.match(extraction.promptParameters.RIESGO_VERBAL_A_EVITAR, /compra ya/)
 
   const rendered = renderClosingStrategyTemplate(
     '[NOMBRE_DEL_NEGOCIO] · [INDUSTRIA] · [PRODUCTO_O_SERVICIO] · [UBICACION_O_MODALIDAD]',
@@ -441,33 +991,164 @@ test('convierte el perfil estructurado del negocio en parametros del prompt', ()
   assert.doesNotMatch(rendered, /\[INDUSTRIA\]/)
 })
 
-test('los parametros del perfil no acortan ni cambian la estrategia de fabrica', () => {
+test('parametriza el cierre de fabrica sin transformar el guion general', () => {
   const parameters = buildBusinessProfilePromptParameters({
+    businessName: 'Growth Médico',
+    industry: 'marketing para médicos especialistas',
+    businessType: 'service',
+    description: 'Ayuda a médicos a convertir conversaciones de redes en pacientes agendados sin sonar invasivos.',
+    offerings: [
+      { name: 'sistema de captación de pacientes', description: 'anuncios, WhatsApp y seguimiento para clínicas', price: 'desde $12,000 MXN mensuales' }
+    ],
+    targetCustomers: 'médicos con agenda irregular que reciben mensajes pero no suficientes citas reales',
+    differentiators: 'acompaña al médico con estrategia, anuncios y seguimiento conversacional',
+    conversationAdaptation: {
+      narrativeFrame: 'No vendas marketing; guía al médico a revisar si depender de recomendaciones y mensajes sueltos está frenando su agenda.',
+      customerPerception: 'Debe sentirse como una revisión profesional de su captación de pacientes, no como una compra impulsiva.',
+      languageGuidance: 'Habla de pacientes, agenda, consultas, seguimiento y claridad del sistema.',
+      contrastFrame: 'Contrasta seguir con conversaciones que no llegan a cita contra ordenar el sistema para que los interesados correctos avancen.',
+      discoveryAngles: ['qué pasa con los mensajes que llegan', 'cuántas consultas reales se pierden', 'qué cambió para revisar esto ahora'],
+      safeValueLanguage: 'Habla de revisar si tiene sentido y de ver una ruta clara.',
+      forbiddenSalesLanguage: 'Evita compra, oferta, invierte hoy y pago hasta que el médico pida avanzar.'
+    }
+  })
+
+  const section = buildBusinessAdaptiveClosingSection({
+    enabled: true,
+    parameters
+  })
+
+  assert.match(section, /Parámetros del negocio para el guión de fábrica/)
+  assert.match(section, /Growth Médico/)
+  assert.match(section, /marketing para médicos especialistas/)
+  assert.match(section, /No vendas marketing/)
+  assert.match(section, /pacientes, agenda, consultas/)
+  assert.match(section, /no reescribe, resume, reemplaza ni transforma el guión de fábrica/)
+  assert.match(section, /El guión de fábrica manda completo/)
+  assert.match(section, /No pongas a la persona en modo comprador/)
+  assert.doesNotMatch(section, /Adaptación conversacional al negocio/)
+  assert.doesNotMatch(section, /Adapta todo el diálogo/)
+  assert.doesNotMatch(section, /manda sobre los ejemplos genéricos/)
+})
+
+test('los parametros del perfil no acortan ni cambian la estrategia de fabrica', () => {
+  const profileParameters = buildBusinessProfilePromptParameters({
     businessName: 'Academia Sol',
     industry: 'escuela de idiomas',
     offerings: [{ name: 'clases de inglés para adultos', price: '$1,500 MXN mensuales' }],
     locations: [{ modality: 'online y presencial en Chihuahua' }]
   })
-  const rendered = renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, parameters)
+  const parameters = buildClosingStrategyTemplateParameters({
+    profileParameters,
+    config: { objective: 'citas', successAction: 'ready_for_human' },
+    channelLabel: 'WhatsApp',
+    businessName: 'Academia Sol',
+    industry: 'escuela de idiomas',
+    offering: 'clases de inglés para adultos',
+    personType: 'prospecto',
+    accountLocale: { countryCode: 'CO', currency: 'COP', dialCode: '57' }
+  })
+  const rendered = renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, parameters, { replaceMissing: true })
 
   assert.match(rendered, /Academia Sol/)
   assert.match(rendered, /escuela de idiomas/)
   assert.match(rendered, /clases de inglés para adultos/)
-  assert.match(rendered, /PRINCIPIO CENTRAL DEL AGENTE/)
-  assert.match(rendered, /VARIACIÓN HUMANA OBLIGATORIA/)
+  assert.match(rendered, /Cuenta configurada en Colombia \(CO\)/)
+  assert.match(rendered, /español colombiano/)
+  assert.match(rendered, /listo/)
+  assert.match(rendered, /AGENTE CONVERSACIONAL DE CIERRE/)
+  assert.match(rendered, /Escribes como una persona real tecleando por WhatsApp/)
+  assert.match(rendered, /CÓMO PIENSAS ANTES DE CADA MENSAJE/)
+  assert.match(rendered, /CONTEXTO PROFUNDO/)
+  assert.match(rendered, /PROHIBICIÓN MÁXIMA/)
+  assert.match(rendered, /mark_ready_to_advance/)
+  assert.match(rendered, /NOMBRE_DEL_NEGOCIO: Academia Sol/)
+  assert.match(rendered, /INDUSTRIA: escuela de idiomas/)
+  assert.match(rendered, /PRODUCTO_O_SERVICIO: clases de inglés para adultos/)
+  assert.match(rendered, /\[regresa\]/)
+  assert.doesNotMatch(rendered, /dato pendiente de configurar/)
+  assert.doesNotMatch(rendered, /\[(?:ESCRIBIR[^\]]*|NOMBRE_DEL_NEGOCIO|INDUSTRIA|PRODUCTO_O_SERVICIO|CANAL_DE_CONVERSACION|HERRAMIENTA_INTERNA_DE_AVANCE|HERRAMIENTA_INTERNA_DE_DESCARTE)\]/)
   assert.ok(rendered.length > 15000)
 })
 
-test('estrategia de fabrica evita moldes repetitivos de venta', () => {
-  assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /ah va/i)
+test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /me da curiosidad/i)
-  assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /qué fue lo que/i)
   assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /justo ahorita/i)
   assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /qué te hizo escribirnos/i)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /VARIACIÓN HUMANA OBLIGATORIA/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /No repitas:/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /no son guiones para copiar literal/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /sin parecer que estás llenando un formulario/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /AGENTE CONVERSACIONAL DE CIERRE/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /PROHIBICIÓN MÁXIMA: NO COPIES/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Todos los ejemplos de este prompt son FILOSOFÍA, no libreto/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /CÓMO PIENSAS ANTES DE CADA MENSAJE/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /CÓMO ESCRIBES \(textura humana real\)/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Refleja LIMPIO, en sus palabras/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /No jales hacia lo que vendes/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /PROHIBIDO diagnosticar con TUS categorías/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Reacciones y emoción \(escribe con sentimiento\)/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /La emoción no es decoración/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /LA BIBLIA DEL PRIMER CONTACTO Y LAS PREGUNTAS VAGAS/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Diagnosticar, jalar a tu solución y reflejar mamado/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /tu primera respuesta NO informa. DEVUELVE/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /ante un mensaje vago de apertura/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /EJEMPLOS = FILOSOFÍA \(NO LIBRETO\)/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /NO ASUMAS el perfil de la persona/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /signos de apertura/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 6 — Asumir el perfil/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 7 — Loop de rebotes \+ signos de apertura/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /NO te quedes en LOOP rebotando/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Varía el justificante/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Manejo del precio/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /El precio NUNCA es lo primero/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /NUNCA el menú completo/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /NUNCA suenes evasivo/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /JAMÁS sueltes una "biblia"/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /El "se me hace caro" \(voltea el costo\)/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Humor y buena experiencia/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Cuidado quirúrgico con el lenguaje/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 8 — Lenguaje tieso/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /DESCARTE Y SILENCIO/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Cuándo NO te quedes callado/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /El PRIMER regreso es el más delicado/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /dosis EXTRA de ligereza/)
+})
+
+test('instrucciones del agente respetan el toggle de emojis', () => {
+  const baseConfig = {
+    objective: 'citas',
+    customObjective: '',
+    successAction: 'ready_for_human',
+    requiredData: '',
+    handoffRules: '',
+    extraInstructions: '',
+    allowEmojis: false,
+    closingStrategyMode: 'custom',
+    closingStrategyCustom: 'Haz cierre breve y humano.'
+  }
+  const commonContext = {
+    businessContext: '',
+    brandVoice: '',
+    businessName: 'Clinica Sol',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: null,
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+  }
+
+  const disabledInstructions = buildConversationalInstructions({
+    config: baseConfig,
+    ...commonContext
+  })
+  const enabledInstructions = buildConversationalInstructions({
+    config: { ...baseConfig, allowEmojis: true },
+    ...commonContext
+  })
+
+  assert.match(disabledInstructions, /Control de emojis: APAGADO/)
+  assert.match(disabledInstructions, /No uses emojis en ningún mensaje visible/)
+  assert.doesNotMatch(disabledInstructions, /Control de emojis: ACTIVADO/)
+  assert.match(enabledInstructions, /Control de emojis: ACTIVADO/)
+  assert.match(enabledInstructions, /incluye 1 emoji cuando suene natural/)
+  assert.match(enabledInstructions, /No uses más de 1 emoji por mensaje/)
+  assert.doesNotMatch(enabledInstructions, /Control de emojis: APAGADO/)
 })
 
 test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', () => {
@@ -509,16 +1190,27 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
     timezone: 'America/Mexico_City',
     nowIso: 'sábado, 13 de junio de 2026, 10:00',
     contactName: 'Juan',
-    advancedClosingContext
+    advancedClosingContext,
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
   })
 
-  assert.match(instructions, /Eres un agente conversacional de Ristak/)
-  assert.match(instructions, /dentro de una conversación por WhatsApp/)
+  assert.match(instructions, /Eres el asistente conversacional de Ristak/)
+  assert.match(instructions, /conversación de WhatsApp/)
   assert.match(instructions, /Parámetros internos de cierre avanzado/)
   assert.match(instructions, /Puntos aprendidos de esta conversación/)
   assert.match(instructions, /Problema real: sus conversaciones se enfrían/)
   assert.match(instructions, /update_closing_context/)
+  assert.match(instructions, /Parámetros del negocio para el guión de fábrica/)
+  assert.match(instructions, /El guión de fábrica manda completo/)
+  assert.match(instructions, /No pongas a la persona en modo comprador/)
+  assert.match(instructions, /Cultura textual regional/)
+  assert.match(instructions, /Cuenta configurada en México/)
+  assert.match(instructions, /GAD/)
+  assert.match(instructions, /Espejo y rapport/)
   assert.doesNotMatch(instructions, /\[NOMBRE_DEL_NEGOCIO\]/)
+  assert.match(instructions, /\[regresa\]/)
+  assert.match(instructions, /\[siguiente paso\]/)
+  assert.doesNotMatch(instructions, /\[(?:ESCRIBIR[^\]]*|NOMBRE_DEL_NEGOCIO|INDUSTRIA|PRODUCTO_O_SERVICIO|CANAL_DE_CONVERSACION|HERRAMIENTA_INTERNA_DE_AVANCE|HERRAMIENTA_INTERNA_DE_DESCARTE)\]/)
   assert.match(instructions, /No uses el mismo molde dos veces seguidas/)
   assert.match(instructions, /precisión concreta, reflejo breve, respuesta puntual o siguiente paso/)
 
@@ -534,10 +1226,16 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
     timezone: 'America/Mexico_City',
     nowIso: 'sábado, 13 de junio de 2026, 10:00',
     contactName: null,
-    advancedClosingContext
+    advancedClosingContext,
+    accountLocale: { countryCode: 'ES', currency: 'EUR', dialCode: '34' }
   })
 
   assert.match(customInstructions, /Mi estrategia custom con \[NOMBRE_DEL_NEGOCIO\]/)
+  assert.match(customInstructions, /Cuenta configurada en España/)
+  assert.match(customInstructions, /vale/)
+  assert.doesNotMatch(customInstructions, /Lenguaje natural, cercano, mexicano/)
+  assert.doesNotMatch(customInstructions, /Parámetros del negocio para el guión de fábrica/)
+  assert.doesNotMatch(customInstructions, /Adaptación conversacional al negocio/)
   assert.doesNotMatch(customInstructions, /Parametros internos de cierre avanzado/)
 })
 

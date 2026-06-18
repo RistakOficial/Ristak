@@ -38,7 +38,6 @@ import trackingRoutes, { publicTrackingRoutes } from './routes/tracking.routes.j
 import triggerLinksRoutes from './routes/triggerLinks.routes.js'
 import configRoutes from './routes/config.routes.js'
 import costsRoutes from './routes/costs.routes.js'
-import maintenanceRoutes from './routes/maintenance.routes.js'
 import authRoutes from './routes/auth.routes.js'
 import apiAccessRoutes from './routes/apiAccess.routes.js'
 import oauthRoutes from './routes/oauth.routes.js'
@@ -58,10 +57,12 @@ import automationsRoutes from './routes/automations.routes.js'
 import appointmentRemindersRoutes from './routes/appointmentReminders.routes.js'
 import pushRoutes from './routes/push.routes.js'
 import licenseRoutes from './routes/license.routes.js'
+import chatEventsRoutes from './routes/chatEvents.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
 import { getHealthInfo } from './services/licenseService.js'
 import { requireFeature } from './middleware/licenseMiddleware.js'
 import { recoverPendingConversationalAgentConversations } from './agents/conversational/runner.js'
+import { repairStoredYCloudHistoryMessageDirections } from './services/whatsappApiService.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -135,9 +136,9 @@ app.use('/api/settings', settingsRoutes)
 app.use('/api/calendars', requireFeature('google_calendar'), calendarsRoutes)
 app.use('/api/push', pushRoutes)
 app.use('/api/license', licenseRoutes)
+app.use('/api/chat-events', chatEventsRoutes)
 app.use('/api/config', configRoutes)
 app.use('/api', costsRoutes)
-app.use('/api/maintenance', maintenanceRoutes)
 app.use('/api/hidden-contacts', hiddenContactsRoutes)
 app.use('/api/ai-agent', requireFeature('app_assistant_ai'), aiAgentRoutes)
 app.use('/api/conversational-agent', requireFeature('conversational_ai'), conversationalAgentRoutes)
@@ -209,6 +210,10 @@ app.listen(PORT, '0.0.0.0', async () => {
 
   repairPendingPaymentFlows().catch(error => {
     logger.error(`No se pudo ejecutar reparación inicial de parcialidades: ${error.message}`)
+  })
+
+  repairStoredYCloudHistoryMessageDirections().catch(error => {
+    logger.error(`No se pudo recalcular historial WhatsApp API afectado: ${error.message}`)
   })
 
   recoverPendingConversationalAgentConversations().catch(error => {

@@ -540,7 +540,7 @@ export type TriggerFilterMatch =
 
 export interface TriggerFilter {
   field: string
-  /** Campo personalizado elegido cuando field === 'custom' */
+  /** Llave del subcampo elegido cuando el filtro lo necesita */
   customKey?: string
   customLabel?: string
   match: TriggerFilterMatch | ''
@@ -599,6 +599,8 @@ export interface TriggerFilterField {
   category: string
   /** Contextos donde aplica; sin lista = siempre (datos del contacto) */
   appliesTo?: string[]
+  /** Pide elegir una llave/subcampo antes de elegir el operador */
+  needsCustomKey?: boolean
 }
 
 export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
@@ -649,7 +651,14 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
     category: 'Formulario',
     appliesTo: ['form']
   },
-  { id: 'form_field', label: 'Campo del formulario', phrase: 'el campo del formulario', category: 'Formulario', appliesTo: ['form'] },
+  {
+    id: 'form_field',
+    label: 'Pregunta del formulario',
+    phrase: 'la respuesta',
+    category: 'Formulario',
+    appliesTo: ['form'],
+    needsCustomKey: true
+  },
   // Atribución de anuncios (vive en el contacto: disponible siempre)
   { id: 'ad', label: 'Anuncio de origen', phrase: 'el anuncio de origen', catalog: 'ads', category: 'Anuncio' },
   { id: 'ad_id', label: 'ID del anuncio', phrase: 'el ID del anuncio', catalog: 'adIds', category: 'Anuncio' },
@@ -666,7 +675,7 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'phone', label: 'Teléfono', phrase: 'el teléfono', category: 'Contacto' },
   { id: 'assigned', label: 'Usuario asignado', phrase: 'el usuario asignado', catalog: 'users', category: 'Contacto' },
   { id: 'preferred_whatsapp_number', label: 'Número de WhatsApp asignado', phrase: 'el número de WhatsApp asignado', catalog: 'whatsappNumbers', category: 'Contacto' },
-  { id: 'custom', label: 'Campo personalizado…', phrase: 'el campo', category: 'Contacto' },
+  { id: 'custom', label: 'Campo personalizado…', phrase: 'el campo', category: 'Contacto', needsCustomKey: true },
   { id: 'created_at', label: 'Fecha de creación', phrase: 'la fecha de creación', category: 'Sistema' },
   { id: 'updated_at', label: 'Fecha de actualización', phrase: 'la fecha de actualización', category: 'Sistema' },
   { id: 'visitor_id', label: 'Visitor ID', phrase: 'el visitor ID', category: 'Sistema' },
@@ -740,7 +749,9 @@ export function validateTriggerFilters(value: unknown): string[] {
     const operators = triggerOperatorsForField(field)
     if (!filter.field) errors.push(`Filtro ${index + 1}: elige el campo`)
     else if (!field) errors.push(`Filtro ${index + 1}: el campo seleccionado ya no existe`)
-    else if (filter.field === 'custom' && !filter.customKey) errors.push(`Filtro ${index + 1}: elige el campo personalizado`)
+    else if (field.needsCustomKey && !filter.customKey) {
+      errors.push(`Filtro ${index + 1}: ${filter.field === 'form_field' ? 'elige la pregunta del formulario' : 'elige el campo personalizado'}`)
+    }
     else if (!filter.match) errors.push(`Filtro ${index + 1}: elige qué debe pasar`)
     else if (!operators.some((operator) => operator.value === filter.match)) errors.push(`Filtro ${index + 1}: elige una condición válida`)
     if (filter.match && triggerOperatorNeedsValue(filter.match) && !String(filter.value || '').trim()) {
@@ -757,12 +768,13 @@ export function triggerFiltersSentence(value: unknown): string {
       (filter) =>
         filter.field &&
         filter.match &&
-        (!triggerOperatorNeedsValue(filter.match) || String(filter.value || '').trim())
+        (!triggerOperatorNeedsValue(filter.match) || String(filter.value || '').trim()) &&
+        (!TRIGGER_FILTER_FIELDS.find((candidate) => candidate.id === filter.field)?.needsCustomKey || Boolean(filter.customKey))
     )
     .map((filter) => {
       const field = TRIGGER_FILTER_FIELDS.find((candidate) => candidate.id === filter.field)
-      const phrase = filter.field === 'custom'
-        ? `el campo "${filter.customLabel || filter.customKey}"`
+      const phrase = field?.needsCustomKey && (filter.customLabel || filter.customKey)
+        ? `${filter.field === 'form_field' ? 'la respuesta de' : 'el campo'} "${filter.customLabel || filter.customKey}"`
         : field?.phrase || 'el campo'
       if (filter.field === 'form_disqualified') {
         const joiner = filter.connector === 'or' ? ' o ' : ' y '

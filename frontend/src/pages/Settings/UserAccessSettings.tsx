@@ -377,10 +377,10 @@ const AccessMatrix: React.FC<AccessMatrixProps> = ({ role, accessConfig, disable
                             </div>
 
                             <div className={styles.permissionControls}>
-                              <span className={`${styles.levelPill} ${styles[`level_${currentLevel}`]}`}>
+                              <Badge variant="info">
                                 {currentLevel === 'none' ? <LockKeyhole size={12} /> : <Eye size={12} />}
                                 {getLevelLabel(currentLevel)}
-                              </span>
+                              </Badge>
                               {moduleLocked && (
                                 <span className={styles.lockHint}>
                                   <LockKeyhole size={12} />
@@ -602,10 +602,10 @@ export const UserAccessSettings: React.FC = () => {
               </p>
             </div>
           </div>
-          <div className={styles.statusPill}>
+          <Badge variant="success">
             <CheckCircle2 size={15} />
             Solo administradores
-          </div>
+          </Badge>
         </div>
 
         <section className={styles.section}>
@@ -787,9 +787,9 @@ export const UserAccessSettings: React.FC = () => {
                           </span>
                         </span>
                         <span className={styles.memberRoleCell}>
-                          <span className={member.isActive ? styles.rolePill : styles.inactivePill}>
+                          <Badge variant={member.isActive ? (member.role === 'admin' ? 'primary' : 'neutral') : 'neutral'}>
                             {member.isActive ? getRoleLabel(member.role) : 'Sin acceso'}
-                          </span>
+                          </Badge>
                         </span>
                         <span className={styles.memberAccessCell}>
                           {member.isActive ? getAccessSummaryLabel(member.role, memberAccess) : 'Desactivado'}

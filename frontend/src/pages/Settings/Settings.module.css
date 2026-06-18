@@ -52,7 +52,7 @@
   border-radius: 8px;
   color: var(--color-text-secondary);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 450;
   text-align: left;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -799,7 +799,7 @@ body.dark .select:focus {
   flex: 1;
   color: var(--color-text-primary);
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -830,7 +830,7 @@ body.dark .select:focus {
   margin-bottom: 8px;
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .developerReadonlyField div {
@@ -900,7 +900,7 @@ body.dark .select:focus {
   background: rgba(148, 163, 184, 0.06);
   color: var(--color-text-primary);
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 500;
   text-decoration: none;
 }
 
@@ -1157,7 +1157,7 @@ body.dark .select:focus {
   top: calc(100% + 4px);
   right: 0;
   left: 0;
-  z-index: 30;
+  z-index: var(--z-index-popover);
 }
 
 .dropdownMenu {
@@ -1165,7 +1165,7 @@ body.dark .select:focus {
   overflow-y: auto;
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 8px;
-  background: var(--color-background-primary);
+  background: var(--surface-solid, var(--surface));
   box-shadow: 0 16px 32px -24px rgba(15, 23, 42, 0.65);
 }
 
@@ -1196,7 +1196,7 @@ body.dark .select:focus {
 .dropdownItemActive {
   color: var(--color-primary);
   background: rgba(var(--color-primary-rgb), 0.08);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .dropdownItem svg {
@@ -1443,7 +1443,7 @@ body.dark .select:focus {
   color: var(--color-text-primary);
   background: rgba(148, 163, 184, 0.055);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   text-decoration: none;
   transition: background 0.15s ease, border-color 0.15s ease;
 }

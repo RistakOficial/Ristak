@@ -71,8 +71,8 @@
 
 .statusConnected {
   color: var(--color-status-success);
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.22);
+  background: var(--pos-soft);
+  border: 1px solid var(--pos);
 }
 
 .statusDisconnected {
@@ -269,7 +269,7 @@
   background: rgba(148, 163, 184, 0.08);
   color: var(--color-text-primary);
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 650;
   white-space: nowrap;
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
@@ -303,7 +303,7 @@
   width: fit-content;
   margin-top: 14px;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 550;
   color: var(--color-text-tertiary);
 }
 
@@ -479,14 +479,14 @@
 }
 
 .optionButtonActive {
-  border-color: rgba(16, 185, 129, 0.38);
-  background: rgba(16, 185, 129, 0.1);
+  border-color: var(--pos);
+  background: var(--pos-soft);
   color: var(--color-text-primary);
 }
 
 .optionLabel {
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 650;
   color: var(--color-text-primary);
 }
 
@@ -572,7 +572,7 @@
 
 .inlineToggle input[type="checkbox"]:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18);
+  box-shadow: 0 0 0 4px var(--pos);
 }
 
 .inlineToggle input[type="checkbox"]:disabled {
@@ -646,8 +646,8 @@
 }
 
 .selectionToggleChecked {
-  border-color: rgba(16, 185, 129, 0.34);
-  background: rgba(16, 185, 129, 0.09);
+  border-color: var(--pos);
+  background: var(--pos-soft);
   color: var(--color-text-primary);
 }
 
@@ -665,7 +665,7 @@
 .selectionToggleCopy strong {
   color: var(--color-text-primary);
   font-size: 13px;
-  font-weight: 760;
+  font-weight: 660;
   line-height: 1.25;
 }
 
@@ -976,8 +976,8 @@
 }
 
 .agentDirectoryStatError {
-  border-color: rgba(239, 68, 68, 0.24) !important;
-  background: rgba(239, 68, 68, 0.07) !important;
+  border-color: var(--neg) !important;
+  background: var(--neg-soft) !important;
 }
 
 .agentDirectoryStatError span {
@@ -994,7 +994,7 @@
 .agentDirectoryStats small {
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 550;
 }
 
 .agentDirectoryGrid {
@@ -1019,7 +1019,7 @@
 }
 
 .agentDirectoryCard:hover {
-  border-color: rgba(16, 185, 129, 0.38);
+  border-color: var(--pos);
   transform: translateY(-1px);
 }
 
@@ -1038,7 +1038,7 @@
 
 .agentDirectoryOpenButton:hover,
 .agentDirectoryOpenButton:focus-visible {
-  background: rgba(16, 185, 129, 0.05);
+  background: var(--pos-soft);
   outline: none;
 }
 
@@ -1152,7 +1152,7 @@
   min-height: 44px;
   margin-bottom: 14px;
   padding: 0 0 12px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  border-bottom: 1px solid var(--border);
 }
 
 .agentStickyActions {
@@ -1161,10 +1161,9 @@
   justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 4px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  background: rgba(248, 250, 252, 0.72);
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 
 .agentStickyActions button {
@@ -1192,7 +1191,7 @@
 
 .agentTestColumn {
   position: fixed;
-  top: 230px;
+  top: 104px;
   right: max(68px, calc((100vw - 224px - var(--app-page-max, 1664px)) / 2 + 25px));
   bottom: 20px;
   z-index: 30;
@@ -1221,8 +1220,8 @@
 
 .agentStatusPillActive {
   color: var(--color-status-success);
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.22);
+  background: var(--pos-soft);
+  border: 1px solid var(--pos);
 }
 
 .agentStatusPillMuted {
@@ -1231,11 +1230,187 @@
   border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
+.promptReadinessBanner,
+.promptReadinessNotice,
+.strategyPromptState {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.07);
+}
+
+.promptReadinessBanner {
+  margin-top: 16px;
+}
+
+.promptReadinessNotice {
+  margin-top: 10px;
+}
+
+.promptReadinessBanner strong,
+.promptReadinessNotice strong,
+.strategyPromptState strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.promptReadinessBanner span,
+.promptReadinessNotice span,
+.strategyPromptState span {
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.promptReadinessBannerReady,
+.strategyPromptStateReady {
+  background: var(--pos-soft);
+  border-color: var(--pos);
+}
+
+.promptReadinessBannerLocked,
+.strategyPromptStateLocked {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.24);
+}
+
 .agentOpsGrid {
   display: grid;
-  grid-template-columns: minmax(220px, 360px) minmax(280px, 1fr);
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
   align-items: start;
+  gap: 14px 12px;
+}
+
+.aiProviderSettings {
+  display: grid;
   gap: 14px;
+  min-width: 0;
+}
+
+.aiProviderSelectMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.aiProviderSelectMeta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiProviderManager {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.aiProviderManagerHeader {
+  display: grid;
+  align-items: flex-start;
+  justify-content: start;
+  gap: 10px;
+}
+
+.aiProviderManagerActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.aiProviderManagerSummary {
+  max-width: 420px;
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.aiProviderManagerToggle {
+  flex-shrink: 1;
+  max-width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 34px;
+  white-space: normal;
+  text-align: left;
+}
+
+.aiProviderManagerToggleIcon {
+  flex: 0 0 auto;
+  transition: transform 0.15s ease;
+}
+
+.aiProviderManagerToggleIconOpen {
+  transform: rotate(180deg);
+}
+
+.aiProviderManagerList {
+  display: grid;
+  min-width: 0;
+}
+
+.aiProviderManagerRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.aiProviderManagerRow:first-child {
+  border-top: 0;
+}
+
+.aiProviderManagerCopy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.aiProviderManagerCopy strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13.5px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiProviderManagerCopy span {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiProviderModalBody {
+  display: grid;
+  gap: 14px;
+}
+
+.aiProviderModalActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .agentOpsToggles {
@@ -1248,19 +1423,19 @@
 .agentTestPanel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  justify-content: center;
   height: 100%;
   max-height: none;
   min-width: 0;
-  padding: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  background: var(--color-background-secondary);
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .agentTestHeader {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 @media (max-width: 1180px) {
@@ -1275,6 +1450,25 @@
     grid-template-columns: 1fr;
   }
 
+  .aiProviderManagerRow {
+    grid-template-columns: 1fr;
+  }
+
+  .aiProviderManagerHeader {
+    display: grid;
+  }
+
+  .aiProviderManagerActions {
+    align-items: flex-start;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .aiProviderManagerSummary {
+    max-width: none;
+    text-align: left;
+  }
+
   .agentTestPanel {
     height: auto;
     max-height: none;
@@ -1285,9 +1479,6 @@
     width: auto;
   }
 
-  .agentTestPanel .testChatBox {
-    min-height: 320px;
-  }
 }
 
 @media (max-width: 640px) {
@@ -1321,6 +1512,7 @@
   .agentCardActions {
     justify-content: space-between;
   }
+
 }
 
 .agentCardHeader {
@@ -1363,7 +1555,7 @@
   border-radius: 8px;
   padding: 0 12px;
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--color-text-primary);
   background: var(--color-background-primary);
   transition: border-color 0.15s ease, background 0.15s ease;
@@ -1481,7 +1673,7 @@
 
 .advancedDetails summary span {
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 650;
 }
 
 .advancedDetails summary small {
@@ -1607,7 +1799,7 @@
   background: transparent;
   color: var(--color-text-tertiary);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease;
 }
@@ -1619,14 +1811,14 @@
 
 .ruleAddMenu {
   position: absolute;
-  z-index: 30;
+  z-index: var(--z-index-popover);
   top: calc(100% + 6px);
   left: 0;
   min-width: 280px;
   padding: 6px;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 10px;
-  background: var(--color-background-primary);
+  background: var(--surface-solid, var(--surface));
   box-shadow: 0 14px 34px rgba(15, 23, 42, 0.16);
   display: flex;
   flex-direction: column;
@@ -1696,6 +1888,16 @@
   color: #3b82f6;
 }
 
+.strategyBadgeReady {
+  color: var(--color-status-success);
+  background: var(--pos-soft);
+}
+
+.strategyBadgeLocked {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+}
+
 .resetStrategyButton {
   display: inline-flex;
   align-items: center;
@@ -1708,7 +1910,7 @@
   background: transparent;
   color: var(--color-text-tertiary);
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease;
 }
@@ -1718,82 +1920,21 @@
   border-color: rgba(148, 163, 184, 0.6);
 }
 
-/* ------------------------------------------------------------------ */
-/* Conversación simulada para probar el agente                         */
-/* ------------------------------------------------------------------ */
-
-.testChatBox {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 10px;
-  background: var(--color-background-primary);
-  min-height: 130px;
-  max-height: 340px;
-  overflow-y: auto;
+.agentTestPhonePreview {
+  height: 100%;
+  min-height: 0;
 }
 
-.agentTestPanel .testChatBox {
-  flex: 1 1 auto;
-  height: auto;
-  min-height: 220px;
-  max-height: none;
+@media (max-width: 900px) {
+  .agentTestPhonePreview {
+    height: clamp(560px, calc(100vh - 48px), 760px);
+  }
 }
 
-.testChatEmpty {
-  margin: auto;
-  font-size: 13px;
-  color: var(--color-text-tertiary);
-  text-align: center;
-}
-
-.testChatMessage {
-  max-width: 82%;
-  padding: 8px 12px;
-  border-radius: 12px;
-  font-size: 13.5px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.testChatUser {
-  align-self: flex-end;
-  background: #2563eb;
-  color: #ffffff;
-  border-bottom-right-radius: 4px;
-}
-
-.testChatAssistant {
-  align-self: flex-start;
-  background: rgba(148, 163, 184, 0.14);
-  color: var(--color-text-primary);
-  border-bottom-left-radius: 4px;
-}
-
-.testChatInternal {
-  background: transparent;
-  border: 1px dashed rgba(148, 163, 184, 0.4);
-  color: var(--color-text-tertiary);
-  font-size: 12.5px;
-  font-style: italic;
-}
-
-.testChatComposer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.agentTestPanel .testChatComposer {
-  align-items: stretch;
-}
-
-.testChatComposer .input {
-  flex: 1;
-  padding-right: 12px;
+@media (max-width: 640px) {
+  .agentTestPhonePreview {
+    height: clamp(520px, calc(100vh - 32px), 720px);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1972,7 +2113,7 @@
   background: var(--color-background-primary);
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }

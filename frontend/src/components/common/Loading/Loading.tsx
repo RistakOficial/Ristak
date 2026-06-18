@@ -95,7 +95,11 @@ const renderToolbar = ({
   </div>
 )
 
-const renderKpiCards = (count: number, layout: 'cards' | 'joined' = 'cards') => {
+const renderKpiCards = (
+  count: number,
+  layout: 'cards' | 'joined' = 'cards',
+  options: { dashboard?: boolean } = {}
+) => {
   const normalizedKpiCount = Math.max(0, Math.floor(count))
   if (normalizedKpiCount === 0) return null
 
@@ -105,9 +109,13 @@ const renderKpiCards = (count: number, layout: 'cards' | 'joined' = 'cards') => 
   )
 
   return (
-    <div className={gridClassName} data-kpi-count={normalizedKpiCount}>
+    <div
+      className={gridClassName}
+      data-dashboard-kpi-grid={options.dashboard ? true : undefined}
+      data-kpi-count={normalizedKpiCount}
+    >
       {Array.from({ length: normalizedKpiCount }).map((_, index) => (
-        <div className={styles.skeletonCard} key={`kpi-${index}`}>
+        <div data-ristak-kpi-card className={styles.skeletonCard} key={`kpi-${index}`}>
           <div className={styles.skeletonCardTop}>
             {block(styles.skeletonLabel)}
             {icon()}
@@ -422,16 +430,120 @@ const renderSettingsListSkeleton = () => (
   </>
 )
 
-const renderDashboardSkeleton = (kpiCount: number, kpiLayout: 'cards' | 'joined') => (
-  <>
-    {renderHeader({ actions: 1 })}
-    {renderKpiCards(kpiCount, kpiLayout)}
-    {renderChartPanel()}
-    <div className={styles.skeletonContentGrid}>
-      {renderListPanel(5)}
-      {renderTableSkeleton({ columns: 3, rows: 6, filters: 0, actions: 0 })}
+const renderDashboardChartPanel = () => (
+  <div data-ristak-card data-dashboard-chart-card className={cx(styles.skeletonPanel, styles.skeletonDashboardChartCard)}>
+    <div className={styles.skeletonDashboardChartHeader}>
+      <div className={styles.skeletonDashboardChartToolbar}>
+        {block(styles.skeletonDashboardChartTitle)}
+        {block(styles.skeletonDashboardChartSelect)}
+        {block(styles.skeletonDashboardChartSelectWide)}
+        <div className={styles.skeletonDashboardLegend}>
+          {Array.from({ length: 2 }).map((_, index) => (
+            <span key={`dashboard-legend-${index}`}>
+              <i />
+              {block(styles.skeletonDashboardLegendLabel)}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className={styles.skeletonDashboardScopeTabs}>
+        {Array.from({ length: 3 }).map((_, index) => (
+          <div className={cx(styles.skeletonBlock, styles.skeletonDashboardScopeTab)} key={`dashboard-chart-scope-${index}`} />
+        ))}
+      </div>
     </div>
-  </>
+    <div className={styles.skeletonDashboardChartCanvas}>
+      {[34, 34, 34, 34, 34, 34, 34, 78, 72, 61, 54, 46].map((height, index) => (
+        <span style={{ height: `${height}%` }} key={`dashboard-chart-canvas-${index}`} />
+      ))}
+    </div>
+  </div>
+)
+
+const renderDashboardPanels = () => (
+  <div className={styles.skeletonDashboardPanelGrid}>
+    <div data-ristak-card className={cx(styles.skeletonPanel, styles.skeletonDashboardConversionPanel)}>
+      <div className={styles.skeletonDashboardPanelTop}>
+        {block(styles.skeletonDashboardPanelTitle)}
+        <div className={styles.skeletonDashboardScopeTabs}>
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div className={cx(styles.skeletonBlock, styles.skeletonDashboardScopeTab)} key={`dashboard-panel-scope-${index}`} />
+          ))}
+        </div>
+      </div>
+      <div className={styles.skeletonDashboardConversionList}>
+        {[92, 68, 54, 42].map((width, index) => (
+          <div className={styles.skeletonDashboardConversionRow} key={`dashboard-conversion-${index}`}>
+            {icon(styles.skeletonDashboardConversionIcon)}
+            <div className={styles.skeletonDashboardConversionBody}>
+              <div className={styles.skeletonDashboardConversionMeta}>
+                {block(styles.skeletonDashboardConversionLabel)}
+                {block(styles.skeletonDashboardConversionValue)}
+              </div>
+              {block(styles.skeletonDashboardProgressTrack, { width: `${width}%` })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+
+    <div data-ristak-card className={cx(styles.skeletonPanel, styles.skeletonDashboardOriginPanel)}>
+      {block(styles.skeletonDashboardPanelTitleShort)}
+      <div className={styles.skeletonDashboardOriginMetric}>
+        {block(styles.skeletonDashboardOriginNumber)}
+        {block(styles.skeletonDashboardOriginMeta)}
+      </div>
+      <div className={styles.skeletonDashboardOriginBody}>
+        <div className={styles.skeletonDashboardDonut} />
+        <div className={styles.skeletonDashboardOriginLegend}>
+          {Array.from({ length: 4 }).map((_, index) => (
+            <span key={`dashboard-origin-${index}`}>
+              <i />
+              {block(styles.skeletonDashboardOriginLabel)}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  </div>
+)
+
+const renderDashboardOperations = () => (
+  <section data-dashboard-operations className={styles.skeletonDashboardOperationsGrid}>
+    {Array.from({ length: 3 }).map((_, cardIndex) => (
+      <div data-ristak-card className={cx(styles.skeletonPanel, styles.skeletonDashboardOperationCard)} key={`dashboard-operation-${cardIndex}`}>
+        <div className={styles.skeletonDashboardOperationHeader}>
+          <div className={styles.skeletonTitleGroup}>
+            {block(styles.skeletonDashboardOperationEyebrow)}
+            {block(styles.skeletonDashboardOperationTitle)}
+            {block(styles.skeletonDashboardOperationSubtitle)}
+          </div>
+          {block(styles.skeletonDashboardOperationLink)}
+        </div>
+        <div className={styles.skeletonDashboardOperationList}>
+          {[76, 62, 70].map((width, rowIndex) => (
+            <div className={styles.skeletonDashboardOperationRow} key={`dashboard-operation-${cardIndex}-${rowIndex}`}>
+              <div className={styles.skeletonTitleGroup}>
+                {block(styles.skeletonDashboardOperationRowTitle)}
+                {block(styles.skeletonDashboardOperationRowMeta)}
+              </div>
+              {block(styles.skeletonDashboardOperationPill, { width })}
+            </div>
+          ))}
+        </div>
+      </div>
+    ))}
+  </section>
+)
+
+const renderDashboardSkeleton = (kpiCount: number, kpiLayout: 'cards' | 'joined') => (
+  <div data-ristak-dashboard className={styles.skeletonDashboardFlow}>
+    {renderHeader({ actions: 1 })}
+    {renderKpiCards(kpiCount, kpiLayout, { dashboard: true })}
+    {renderDashboardChartPanel()}
+    {renderDashboardPanels()}
+    {renderDashboardOperations()}
+  </div>
 )
 
 const renderContactsSkeleton = () => (
@@ -721,8 +833,8 @@ const renderPageSkeleton = (page: LoadingPage, kpiCount: number, kpiLayout: 'car
   }[page]
 
   return (
-    <div className={styles.skeletonPage} role="status" aria-live="polite" aria-label={message}>
-      <div className={cx(styles.skeletonInner, isWide && styles.skeletonInnerWide)}>
+    <div data-ristak-page className={styles.skeletonPage} role="status" aria-live="polite" aria-label={message}>
+      <div data-ristak-page-inner className={cx(styles.skeletonInner, isWide && styles.skeletonInnerWide)}>
         {content}
       </div>
     </div>

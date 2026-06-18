@@ -110,12 +110,12 @@ export const getStatus = async (req, res) => {
     try {
       const waRows = await db.all(
         `SELECT config_key, config_value FROM app_config
-         WHERE config_key IN ('whatsapp_api_enabled', 'whatsapp_api_key', 'whatsapp_api_webhook_endpoint_id')`
+         WHERE config_key IN ('whatsapp_api_enabled', 'whatsapp_api_ycloud_api_key_encrypted', 'whatsapp_api_key', 'whatsapp_api_webhook_endpoint_id')`
       );
       const wa = {};
       for (const row of waRows || []) wa[row.config_key] = row.config_value;
       const enabled = wa['whatsapp_api_enabled'] !== '0';
-      const hasApiKey = Boolean(wa['whatsapp_api_key']);
+      const hasApiKey = Boolean(wa['whatsapp_api_ycloud_api_key_encrypted'] || wa['whatsapp_api_key']);
       const hasWebhook = Boolean(wa['whatsapp_api_webhook_endpoint_id']);
       whatsappStatus = {
         configured: hasApiKey,

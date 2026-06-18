@@ -154,6 +154,92 @@ test('imported HTML code editor saves popup code as site popup HTML', async () =
   }
 })
 
+test('imported HTML internal page links stay inside the site preview flow', async () => {
+  const {
+    createImportedSiteFromHtml,
+    deleteSite,
+    getSitePreview,
+    renderPublicSiteHtml,
+    updateImportedSiteCodeFiles
+  } = await import('../src/services/sitesService.js')
+  const { db } = await import('../src/config/database.js')
+
+  let siteId = ''
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'inicio.html',
+      siteType: 'landing_page',
+      name: `Multi Page Links ${Date.now()}`,
+      pages: [
+        {
+          id: 'page-1',
+          title: 'Inicio',
+          filename: 'inicio.html',
+          html: '<!doctype html><html><head><title>Inicio</title></head><body><main><a id="next" href="gracias.html#detalle">Ir a gracias</a></main></body></html>'
+        },
+        {
+          id: 'page-2',
+          title: 'Gracias',
+          filename: 'gracias.html',
+          html: '<!doctype html><html><head><title>Gracias</title></head><body><main id="detalle"><h1>Gracias</h1><a href="inicio.html">Volver</a></main></body></html>'
+        }
+      ]
+    })
+    siteId = created.site.id
+
+    let previewSite = await getSitePreview(siteId)
+    let rendered = await renderPublicSiteHtml(previewSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(rendered, /href="\?page=page-2#detalle"/)
+    assert.doesNotMatch(rendered, /href="\/api\/sites\/public\/imported-assets\/[^"]*gracias\.html/)
+
+    const legacyHtml = `<!doctype html><html><head><title>Inicio</title></head><body><main><a id="next" href="/api/sites/public/imported-assets/${encodeURIComponent(siteId)}/gracias.html?legacy=1#detalle">Ir a gracias</a></main></body></html>`
+    await db.run(`
+      UPDATE public_site_import_assets
+      SET content_base64 = ?, size_bytes = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE site_id = ? AND asset_path = ?
+    `, [
+      Buffer.from(legacyHtml, 'utf8').toString('base64'),
+      Buffer.byteLength(legacyHtml, 'utf8'),
+      siteId,
+      'inicio.html'
+    ])
+
+    previewSite = await getSitePreview(siteId)
+    rendered = await renderPublicSiteHtml(previewSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(rendered, /href="\?page=page-2&amp;legacy=1#detalle"|href="\?page=page-2&legacy=1#detalle"/)
+    assert.doesNotMatch(rendered, /href="\/api\/sites\/public\/imported-assets\/[^"]*gracias\.html/)
+
+    await updateImportedSiteCodeFiles(siteId, {
+      files: [{
+        path: 'inicio.html',
+        content: '<!doctype html><html><head><title>Inicio</title></head><body><main><a id="next" href="./gracias.html?src=cta#detalle">Ir a gracias</a></main></body></html>'
+      }]
+    })
+
+    previewSite = await getSitePreview(siteId)
+    rendered = await renderPublicSiteHtml(previewSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(rendered, /href="\?page=page-2&amp;src=cta#detalle"|href="\?page=page-2&src=cta#detalle"/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
 test('AI HTML editor instructions stay scoped to active code only', async () => {
   const { buildSitesAIHtmlInstructions } = await import('../src/services/sitesService.js')
 

@@ -36,6 +36,7 @@ import automationsService, {
   defaultFlowSettings,
   type Automation,
   type AutomationNode,
+  type AutomationSummary,
   type AutomationStatus,
   type AutomationViewport,
   type FlowSettings
@@ -127,7 +128,6 @@ interface PreviewStep {
 type EditorFlow = Pick<Automation['flow'], 'nodes' | 'edges' | 'viewport' | 'settings'>
 
 const DEFAULT_VIEWPORT: AutomationViewport = { x: 0, y: 0, zoom: 1 }
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -195,6 +195,34 @@ function normalizeEditorFlow(flow: Automation['flow'] | null | undefined): Edito
   }
 }
 
+function automationContentSignature(
+  name: string,
+  nodes: AutomationNode[],
+  edges: Automation['flow']['edges'],
+  settings: FlowSettings
+) {
+  return JSON.stringify({
+    name: name.trim(),
+    nodes,
+    edges,
+    settings
+  })
+}
+
+function toAutomationSummary(automation: Automation): AutomationSummary {
+  return {
+    id: automation.id,
+    folderId: automation.folderId,
+    name: automation.name,
+    description: automation.description,
+    status: automation.status,
+    hasUnpublishedChanges: automation.hasUnpublishedChanges,
+    createdAt: automation.createdAt,
+    updatedAt: automation.updatedAt,
+    publishedAt: automation.publishedAt
+  }
+}
+
 export const AutomationEditor: React.FC = () => {
   const { automationId = '' } = useParams()
   const navigate = useNavigate()
@@ -212,7 +240,6 @@ export const AutomationEditor: React.FC = () => {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [recordsTab, setRecordsTab] = useState<RecordsTab | null>(null)
   const [nodeStats, setNodeStats] = useState<Record<string, number>>({})
-  const [settingsRevision, setSettingsRevision] = useState(0)
   const [fitSignal, setFitSignal] = useState(0)
   const flowSettingsRef = useRef(flowSettings)
   flowSettingsRef.current = flowSettings
@@ -228,11 +255,9 @@ export const AutomationEditor: React.FC = () => {
 
   const viewportRef = useRef<AutomationViewport>({ x: 0, y: 0, zoom: 1 })
   const [configViewport, setConfigViewport] = useState<AutomationViewport>(viewportRef.current)
-  const viewportDirtyRef = useRef(false)
-  const savedRevisionRef = useRef(0)
-  const savedSettingsRevisionRef = useRef(0)
-  const settingsRevisionRef = useRef(settingsRevision)
-  settingsRevisionRef.current = settingsRevision
+  const savedContentSignatureRef = useRef('')
+  const nameRef = useRef(name)
+  nameRef.current = name
   const stateRef = useRef(state)
   stateRef.current = state
   const automationRef = useRef(automation)
@@ -266,6 +291,11 @@ export const AutomationEditor: React.FC = () => {
   }, [automation])
 
   const { nodes, edges } = state.present
+
+  const currentContentSignature = useMemo(
+    () => automationContentSignature(name, nodes, edges, flowSettings),
+    [edges, flowSettings, name, nodes]
+  )
 
   const editorPointToWorld = useCallback(
     (point: { x: number; y: number }, viewport: AutomationViewport = viewportRef.current) => ({
@@ -322,19 +352,18 @@ export const AutomationEditor: React.FC = () => {
     [config?.nodeId, config?.triggerId, edges, nodes]
   )
 
-  const markDraftAsUnpublished = useCallback(() => {
-    setAutomation((value) => {
-      if (!value || !['published', 'paused'].includes(value.status) || value.hasUnpublishedChanges) {
-        return value
-      }
-      return { ...value, hasUnpublishedChanges: true }
-    })
-  }, [])
-
   const hasUnpublishedChanges = Boolean(automation?.hasUnpublishedChanges)
-  const shouldWarnBeforeLeaving = Boolean(
-    automation && ['published', 'paused'].includes(automation.status) && hasUnpublishedChanges
-  )
+  const getHasUnsavedChanges = useCallback(() => {
+    if (!automationRef.current) return false
+    return automationContentSignature(
+      nameRef.current,
+      stateRef.current.present.nodes,
+      stateRef.current.present.edges,
+      flowSettingsRef.current
+    ) !== savedContentSignatureRef.current
+  }, [])
+  const hasUnsavedChanges = Boolean(automation && currentContentSignature !== savedContentSignatureRef.current)
+  const shouldWarnBeforeLeaving = Boolean(automation && hasUnsavedChanges)
 
   useEffect(() => {
     if (!shouldWarnBeforeLeaving) return
@@ -348,19 +377,20 @@ export const AutomationEditor: React.FC = () => {
 
   const confirmLeavingIfNeeded = useCallback(
     (onContinue: () => void) => {
-      if (!shouldWarnBeforeLeaving) {
+      const pendingUnsavedChanges = getHasUnsavedChanges()
+      if (!pendingUnsavedChanges) {
         onContinue()
         return
       }
       showConfirm(
-        'Cambios sin publicar',
-        'Esta automatización ya tenía una versión en vivo, pero hiciste cambios nuevos que todavía no has publicado. Si sales ahora, se guardan como borrador y la versión activa seguirá igual.',
+        'Cambios sin guardar',
+        'Si sales ahora, los cambios que no guardaste se perderán.',
         onContinue,
-        'Salir sin publicar',
+        'Salir sin guardar',
         'Seguir editando'
       )
     },
-    [shouldWarnBeforeLeaving, showConfirm]
+    [getHasUnsavedChanges, showConfirm]
   )
 
   const navigateFromEditor = useCallback(
@@ -420,15 +450,18 @@ export const AutomationEditor: React.FC = () => {
 
     const initFrom = (data: Automation) => {
       const safeFlow = normalizeEditorFlow(data.flow)
+      const safeSettings = { ...defaultFlowSettings(), ...(safeFlow.settings || {}) }
       setAutomation({ ...data, flow: safeFlow })
       setName(data.name)
       viewportRef.current = safeFlow.viewport
-      viewportDirtyRef.current = false
-      setFlowSettings({ ...defaultFlowSettings(), ...(safeFlow.settings || {}) })
-      setSettingsRevision(0)
+      setFlowSettings(safeSettings)
       dispatch({ type: 'init', flow: { nodes: safeFlow.nodes, edges: safeFlow.edges } })
-      savedRevisionRef.current = 0
-      savedSettingsRevisionRef.current = 0
+      savedContentSignatureRef.current = automationContentSignature(
+        data.name,
+        safeFlow.nodes,
+        safeFlow.edges,
+        safeSettings
+      )
       setNodeErrors({})
       setSaveState('saved')
     }
@@ -459,16 +492,23 @@ export const AutomationEditor: React.FC = () => {
   }, [automationId])
 
   // ------------------------------------------------------------------
-  // Guardado (autosave con debounce + manual + al salir)
+  // Guardado manual del editor
   // ------------------------------------------------------------------
-  const persistFlow = useCallback(async () => {
+  const persistAutomation = useCallback(async (options: { notify?: boolean } = {}) => {
     const current = automationRef.current
     if (!current) return false
-    const revision = stateRef.current.revision
-    const settingsRevision = settingsRevisionRef.current
+    const trimmedName = nameRef.current.trim()
+    if (!trimmedName) {
+      setSaveState('error')
+      if (options.notify) {
+        showToast('error', 'No se pudo guardar', 'Ponle un nombre a la automatización')
+      }
+      return false
+    }
     setSaveState('saving')
     try {
       const updated = await automationsService.updateAutomation(current.id, {
+        name: trimmedName,
         flow: {
           nodes: stateRef.current.present.nodes,
           edges: stateRef.current.present.edges,
@@ -480,63 +520,42 @@ export const AutomationEditor: React.FC = () => {
         value
           ? {
               ...value,
+              name: updated.name,
               updatedAt: updated.updatedAt,
               hasUnpublishedChanges: updated.hasUnpublishedChanges ?? value.hasUnpublishedChanges
             }
           : value
       )
-      savedRevisionRef.current = revision
-      savedSettingsRevisionRef.current = settingsRevision
-      viewportDirtyRef.current = false
-      setSaveState(
-        stateRef.current.revision === revision && settingsRevisionRef.current === settingsRevision
-          ? 'saved'
-          : 'dirty'
+      if (nameRef.current !== updated.name) {
+        nameRef.current = updated.name
+        setName(updated.name)
+      }
+      savedContentSignatureRef.current = automationContentSignature(
+        updated.name,
+        stateRef.current.present.nodes,
+        stateRef.current.present.edges,
+        flowSettingsRef.current
       )
+      const stillDirty = getHasUnsavedChanges()
+      setSaveState(stillDirty ? 'dirty' : 'saved')
+      if (options.notify && !stillDirty) {
+        showToast('success', 'Automatización guardada', 'Los cambios quedaron guardados')
+      }
       return true
     } catch {
       setSaveState('error')
+      if (options.notify) {
+        showToast('error', 'No se pudo guardar', 'Revisa tu conexión e intenta de nuevo')
+      }
       return false
     }
-  }, [])
+  }, [getHasUnsavedChanges, showToast])
 
   useEffect(() => {
     if (!automation) return
-    const hasDraftChanges =
-      state.revision !== savedRevisionRef.current ||
-      settingsRevision !== savedSettingsRevisionRef.current
-    if (!hasDraftChanges) return
-    setSaveState('dirty')
-    markDraftAsUnpublished()
-    const timer = window.setTimeout(() => {
-      void persistFlow()
-    }, 1200)
-    return () => window.clearTimeout(timer)
-  }, [automation, markDraftAsUnpublished, persistFlow, state.revision, settingsRevision])
-
-  // Al desmontar: guardar lo pendiente sin bloquear la navegación
-  useEffect(() => {
-    return () => {
-      const current = automationRef.current
-      if (!current) return
-      if (
-        stateRef.current.revision !== savedRevisionRef.current ||
-        settingsRevisionRef.current !== savedSettingsRevisionRef.current ||
-        viewportDirtyRef.current
-      ) {
-        void automationsService
-          .updateAutomation(current.id, {
-            flow: {
-              nodes: stateRef.current.present.nodes,
-              edges: stateRef.current.present.edges,
-              viewport: viewportRef.current,
-              settings: flowSettingsRef.current
-            }
-          })
-          .catch(() => undefined)
-      }
-    }
-  }, [])
+    const dirty = getHasUnsavedChanges()
+    setSaveState((current) => (current === 'saving' ? current : dirty ? 'dirty' : 'saved'))
+  }, [automation, currentContentSignature, getHasUnsavedChanges])
 
   // ------------------------------------------------------------------
   // Helpers de mutación del flujo
@@ -955,7 +974,6 @@ export const AutomationEditor: React.FC = () => {
       },
       onViewportChange: (viewport: AutomationViewport) => {
         viewportRef.current = viewport
-        viewportDirtyRef.current = true
         if (configRef.current) setConfigViewport(viewport)
       },
       // ----------------- selección múltiple -----------------
@@ -1123,7 +1141,7 @@ export const AutomationEditor: React.FC = () => {
   }
 
   // ------------------------------------------------------------------
-  // Teclado global (eliminar, deshacer/rehacer, escape)
+  // Teclado global (guardar, eliminar, deshacer/rehacer, escape)
   // ------------------------------------------------------------------
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1134,6 +1152,12 @@ export const AutomationEditor: React.FC = () => {
           target.tagName === 'TEXTAREA' ||
           target.tagName === 'SELECT' ||
           target.isContentEditable)
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        void persistAutomation({ notify: true })
+        return
+      }
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
         if (typing) return
@@ -1183,27 +1207,11 @@ export const AutomationEditor: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [canvasActions, closeConfig, config, picker, selectedEdgeId, selectedNodeId, multiSelectedIds])
+  }, [canvasActions, closeConfig, config, persistAutomation, picker, selectedEdgeId, selectedNodeId, multiSelectedIds])
 
   // ------------------------------------------------------------------
   // Nombre, estado, publicar, vista previa
   // ------------------------------------------------------------------
-  const saveName = async () => {
-    const current = automationRef.current
-    const trimmed = name.trim()
-    if (!current || !trimmed || trimmed === current.name) {
-      setName(current?.name || trimmed)
-      return
-    }
-    try {
-      const updated = await automationsService.updateAutomation(current.id, { name: trimmed })
-      setAutomation((value) => (value ? { ...value, name: updated.name } : value))
-    } catch {
-      showToast('error', 'No se pudo renombrar', 'Intenta de nuevo')
-      setName(current.name)
-    }
-  }
-
   const changeStatus = async (status: AutomationStatus) => {
     const current = automationRef.current
     if (!current || statusBusy) return
@@ -1221,12 +1229,12 @@ export const AutomationEditor: React.FC = () => {
 
     setStatusBusy(true)
     try {
-      const saved = await persistFlow()
+      const hadPendingChanges = Boolean(current.hasUnpublishedChanges || getHasUnsavedChanges())
+      const saved = await persistAutomation()
       if (!saved) {
-        showToast('error', 'No se pudo guardar', 'Revisa tu conexión e intenta de nuevo')
+        showToast('error', 'No se pudo guardar', 'Revisa el nombre o tu conexión e intenta de nuevo')
         return
       }
-      const hadPendingChanges = Boolean(current.hasUnpublishedChanges)
       const updated = await automationsService.updateAutomation(current.id, { status })
       setAutomation((value) =>
         value
@@ -1241,8 +1249,6 @@ export const AutomationEditor: React.FC = () => {
       )
       setNodeErrors({})
       if (status === 'published') {
-        savedRevisionRef.current = stateRef.current.revision
-        savedSettingsRevisionRef.current = settingsRevisionRef.current
         setSaveState('saved')
         showToast(
           'success',
@@ -1265,7 +1271,8 @@ export const AutomationEditor: React.FC = () => {
     const current = automationRef.current
     if (!current) return
     try {
-      await persistFlow()
+      const saved = await persistAutomation()
+      if (!saved) return
       const copy = await automationsService.duplicateAutomation(current.id)
       showToast('success', 'Automatización duplicada', copy.name)
       navigate(`/automations/${copy.id}`)
@@ -1425,7 +1432,35 @@ export const AutomationEditor: React.FC = () => {
   }
 
   const status = automation.status
-  const publishButtonLabel = hasUnpublishedChanges
+  const currentAutomationSummary = toAutomationSummary(automation)
+  const hasDraftChanges = hasUnsavedChanges || hasUnpublishedChanges
+  const automationHasPublishedVersion = Boolean(automation.publishedAt) || status === 'published' || status === 'paused'
+  const dirtyActionTarget = hasDraftChanges
+    ? automationHasPublishedVersion
+      ? 'publish'
+      : 'save'
+    : null
+  const saveIndicatorMode =
+    saveState === 'saving'
+      ? 'saving'
+      : saveState === 'error'
+        ? 'error'
+        : hasUnsavedChanges
+          ? 'dirty'
+          : hasUnpublishedChanges
+            ? 'unpublished'
+            : 'saved'
+  const saveIndicatorText =
+    saveIndicatorMode === 'saving'
+      ? 'Guardando…'
+      : saveIndicatorMode === 'error'
+        ? 'Error al guardar'
+        : saveIndicatorMode === 'dirty'
+          ? 'Cambios sin guardar'
+          : saveIndicatorMode === 'unpublished'
+            ? 'Cambios sin publicar'
+            : 'Guardado'
+  const publishButtonLabel = hasDraftChanges
     ? 'Publicar'
     : status === 'paused'
       ? 'Reanudar'
@@ -1456,7 +1491,6 @@ export const AutomationEditor: React.FC = () => {
           className={styles.toolbarName}
           value={name}
           onChange={(event) => setName(event.target.value)}
-          onBlur={() => void saveName()}
           onKeyDown={(event) => {
             if (event.key === 'Enter') (event.target as HTMLInputElement).blur()
           }}
@@ -1483,9 +1517,7 @@ export const AutomationEditor: React.FC = () => {
           <Redo2 size={14} />
         </button>
 
-        <div className={styles.toolbarSpacer} />
-
-        <div className={styles.toolbarGroup}>
+        <div className={styles.toolbarCenterGroup}>
           <Button
             variant="secondary"
             size="sm"
@@ -1494,40 +1526,50 @@ export const AutomationEditor: React.FC = () => {
           >
             Configuración
           </Button>
-          <button
-            type="button"
-            className={styles.toolbarTab}
-            onClick={() => setRecordsTab('enrollments')}
-          >
-            Historial de inscripciones
-          </button>
-          <button
-            type="button"
-            className={styles.toolbarTab}
-            onClick={() => setRecordsTab('executions')}
-          >
-            Registros de ejecución
-          </button>
+          <div className={styles.toolbarTabList} role="tablist" aria-label="Registros de automatización">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={recordsTab === 'enrollments'}
+              className={cn(styles.toolbarTab, recordsTab === 'enrollments' && styles.toolbarTabActive)}
+              onClick={() => setRecordsTab('enrollments')}
+            >
+              Historial de inscripciones
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={recordsTab === 'executions'}
+              className={cn(styles.toolbarTab, recordsTab === 'executions' && styles.toolbarTabActive)}
+              onClick={() => setRecordsTab('executions')}
+            >
+              Registros de ejecución
+            </button>
+          </div>
         </div>
 
+        <div className={styles.toolbarSpacer} />
+
         <div className={styles.toolbarGroup}>
-          <span className={cn(styles.saveIndicator, saveState === 'error' && styles.saveIndicatorError)}>
-            {saveState === 'saving' && <Loader2 size={12} className="animate-spin" />}
-            {saveState === 'saved' && <Check size={12} />}
-            {saveState === 'error' && <CloudOff size={12} />}
-            {saveState === 'saving'
-              ? 'Guardando…'
-              : saveState === 'saved'
-                ? 'Guardado'
-                : saveState === 'error'
-                  ? 'Error al guardar'
-                  : 'Cambios sin guardar'}
+          <span
+            className={cn(
+              styles.saveIndicator,
+              saveIndicatorMode === 'error' && styles.saveIndicatorError,
+              (saveIndicatorMode === 'dirty' || saveIndicatorMode === 'unpublished') && styles.saveIndicatorWarning
+            )}
+          >
+            {saveIndicatorMode === 'saving' && <Loader2 size={12} className="animate-spin" />}
+            {saveIndicatorMode === 'saved' && <Check size={12} />}
+            {saveIndicatorMode === 'error' && <CloudOff size={12} />}
+            {saveIndicatorText}
           </span>
           <Button
             variant="secondary"
             size="sm"
+            className={dirtyActionTarget === 'save' ? styles.dirtyActionButton : undefined}
             leftIcon={<Save size={13} />}
-            onClick={() => void persistFlow()}
+            loading={saveState === 'saving'}
+            onClick={() => void persistAutomation({ notify: true })}
           >
             Guardar
           </Button>
@@ -1535,13 +1577,7 @@ export const AutomationEditor: React.FC = () => {
             Vista previa
           </Button>
 
-          {hasUnpublishedChanges && (
-            <span className={styles.publishPendingBadge}>
-              Cambios sin publicar
-            </span>
-          )}
-
-          {status === 'published' && !hasUnpublishedChanges ? (
+          {status === 'published' && !hasDraftChanges ? (
             <Button
               variant="secondary"
               size="sm"
@@ -1555,7 +1591,7 @@ export const AutomationEditor: React.FC = () => {
             <Button
               variant="primary"
               size="sm"
-              className={cn(styles.publishButton, hasUnpublishedChanges && styles.publishButtonDirty)}
+              className={cn(styles.publishButton, dirtyActionTarget === 'publish' && styles.dirtyActionButton)}
               leftIcon={<Play size={13} />}
               loading={statusBusy}
               onClick={() => void changeStatus('published')}
@@ -1601,6 +1637,7 @@ export const AutomationEditor: React.FC = () => {
       <div className={styles.editorMain}>
         <AutomationLibrary
           currentAutomationId={automation.id}
+          currentAutomation={currentAutomationSummary}
           onOpenAutomation={(targetId) => navigateFromEditor(`/automations/${targetId}`)}
         />
         <AutomationCanvas
@@ -1680,14 +1717,12 @@ export const AutomationEditor: React.FC = () => {
         open={settingsOpen}
         onClose={() => {
           setSettingsOpen(false)
-          void saveName()
         }}
         name={name}
         onRename={setName}
         settings={flowSettings}
         onChange={(next) => {
           setFlowSettings(next)
-          setSettingsRevision((value) => value + 1)
         }}
       />
 

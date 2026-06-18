@@ -8,6 +8,7 @@ import {
   CatalogSelect,
   ConfigSection,
   Field,
+  NumberTextInput,
   TextArea,
   TextInput,
   Toggle,
@@ -156,8 +157,7 @@ export const FlowSettingsPanel: React.FC<FlowSettingsPanelProps> = ({
             label="Evitar duplicados si ya está activo en el flujo"
           />
           <Field label="Máximo de veces que un contacto puede entrar (opcional)">
-            <TextInput
-              type="number"
+            <NumberTextInput
               min={1}
               value={settings.maxEnrollments ?? ''}
               placeholder="Sin límite"

@@ -67,13 +67,13 @@
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #fff;
-  border: 1px solid rgba(148, 163, 184, 0.55);
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
 
 :global(body.dark) .adBadge {
-  background: #111827;
-  border-color: rgba(148, 163, 184, 0.5);
+  background: var(--surface);
+  border-color: var(--border);
 }
 
 .adBadgeFacebook,
@@ -149,12 +149,12 @@
 
 .eventDot.green {
   background-color: rgba(16, 185, 129, 0.12);
-  color: #059669;
+  color: var(--pos);
 }
 
 :global(body.dark) .eventDot.green {
   background-color: rgba(16, 185, 129, 0.15);
-  color: #34d399;
+  color: var(--pos);
 }
 
 .eventDot.facebook,
@@ -271,12 +271,12 @@
 
 .eventDot.success {
   background-color: rgba(16, 185, 129, 0.12);
-  color: #059669;
+  color: var(--pos);
 }
 
 :global(body.dark) .eventDot.success {
   background-color: rgba(16, 185, 129, 0.15);
-  color: #34d399;
+  color: var(--pos);
 }
 
 .eventDot.gray {
@@ -297,7 +297,7 @@
   justify-content: center;
   align-self: flex-start;
   margin-top: 12px;
-  color: rgba(148, 163, 184, 0.5);
+  color: var(--border);
   padding: 0 8px;
 }
 
@@ -307,11 +307,11 @@
 }
 
 :global(body.light) .connector {
-  color: rgba(148, 163, 184, 0.45);
+  color: var(--border);
 }
 
 :global(body.dark) .connector {
-  color: rgba(148, 163, 184, 0.5);
+  color: var(--border);
 }
 
 /* Contenido del evento (textos) - más compacto */
@@ -328,7 +328,7 @@
 
 .eventTitle {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
   line-height: 1.2;
@@ -447,7 +447,7 @@
 
 .tooltipDate {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: rgba(226, 232, 240, 0.75);
   margin-bottom: 10px;
   padding-bottom: 8px;
@@ -468,7 +468,7 @@
 }
 
 .tooltipLabel {
-  font-weight: 600;
+  font-weight: 500;
   color: rgba(226, 232, 240, 0.72);
   min-width: 80px;
   flex-shrink: 0;
@@ -478,5 +478,5 @@
   color: #ffffff;
   word-break: break-word;
   flex: 1;
-  font-weight: 600;
+  font-weight: 500;
 }

@@ -184,7 +184,7 @@
 }
 
 .modal {
-  background-color: var(--color-background);
+  background-color: var(--surface-solid, var(--color-background));
   border-radius: var(--radius-lg);
   padding: var(--spacing-xl);
   max-width: 600px;
@@ -284,10 +284,21 @@
   margin-top: var(--spacing-md);
 }
 
+.bulkActionModal.bulkActionModal.bulkActionModal {
+  max-width: 520px;
+}
+
+.bulkActionModalContent.bulkActionModalContent {
+  padding: var(--spacing-lg) var(--spacing-xl);
+}
+
 .bulkModalBody {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
+  width: 100%;
+  max-width: 456px;
+  margin: 0 auto;
 }
 
 .bulkModalLead {
@@ -297,18 +308,30 @@
   line-height: 1.5;
 }
 
-.bulkFormGrid,
-.bulkOptionsGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.bulkModalHint {
+  margin: calc(var(--spacing-xs) * -1) 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.bulkFormStack,
+.bulkOptionsStack {
+  display: flex;
+  flex-direction: column;
   gap: var(--spacing-md);
+}
+
+.bulkTemplateAction {
+  align-self: flex-start;
+  margin-top: var(--spacing-xs);
 }
 
 .bulkVariablePanel {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
-  padding-top: var(--spacing-sm);
+  padding-top: var(--spacing-md);
   border-top: 1px solid var(--color-border-subtle);
 }
 
@@ -319,29 +342,59 @@
   font-weight: var(--font-weight-semibold);
 }
 
+.bulkOptionsStack {
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.bulkOptionBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
 .bulkOptionToggle {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  min-height: 40px;
+  width: fit-content;
+  min-height: 32px;
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
 }
 
+.bulkOptionField {
+  padding-left: calc(16px + var(--spacing-sm));
+}
+
+.bulkOptionField > input {
+  width: 100%;
+}
+
 .bulkInlineField {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
+  gap: 10px;
+  min-height: var(--design-control-height);
 }
 
 .bulkInlineField input {
-  max-width: 96px;
+  flex: 0 0 88px;
+  width: 88px;
+  min-width: 88px;
+  padding: 0 10px;
+  text-align: left;
 }
 
 .bulkInlineField span {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
+}
+
+.bulkModalBody .formActions {
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border-subtle);
 }
 
 .bulkSuccessBody {
@@ -426,11 +479,6 @@
     width: 100%;
     margin-left: 0;
     justify-content: flex-start;
-  }
-
-  .bulkFormGrid,
-  .bulkOptionsGrid {
-    grid-template-columns: 1fr;
   }
 
   .bulkProgressHeader {

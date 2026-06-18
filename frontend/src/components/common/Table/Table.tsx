@@ -737,13 +737,20 @@ export function Table<T extends Record<string, any>>({
                     style={rowStyle}
                   >
                     {rowSelection && (
-                      <td className={styles.selectionCell} onClick={(event) => event.stopPropagation()}>
+                      <td
+                        className={styles.selectionCell}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          handleToggleRowSelection(item)
+                        }}
+                      >
                         {!rowSelection.isRowDisabled?.(item) && (
                           <input
                             className={styles.selectionCheckbox}
                             type="checkbox"
                             checked={selectedKeySet.has(rowKey)}
                             aria-label={`Seleccionar ${rowSelection.getRowLabel?.(item) || 'fila'}`}
+                            onClick={(event) => event.stopPropagation()}
                             onChange={() => handleToggleRowSelection(item)}
                           />
                         )}

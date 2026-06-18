@@ -60,6 +60,10 @@ function getPreviewCookieName(token) {
   return `rstk_site_preview_${String(token || '').slice(0, 18).replace(/[^a-zA-Z0-9_-]/g, '')}`
 }
 
+function getPreviewSiteId(body = {}) {
+  return String(body.siteId || body.site_id || '').trim()
+}
+
 function parseCookies(req) {
   return String(req.headers.cookie || '')
     .split(';')
@@ -73,6 +77,43 @@ function parseCookies(req) {
       acc[key] = decodeURIComponent(value || '')
       return acc
     }, {})
+}
+
+function getPreviewSessionFromRequest(req, siteId = '') {
+  cleanupPreviewSessions()
+  const requestedSiteId = String(siteId || '').trim()
+  if (!requestedSiteId) return null
+
+  const cookies = parseCookies(req)
+  for (const [cookieName, cookieValue] of Object.entries(cookies)) {
+    if (!cookieName.startsWith('rstk_site_preview_')) continue
+    const token = String(cookieValue || '')
+    const session = sitePreviewSessions.get(token)
+    if (session?.token === token && session.siteId === requestedSiteId) {
+      return session
+    }
+  }
+
+  return null
+}
+
+async function getPreviewContextForPublicRequest(req, body = {}) {
+  const siteId = getPreviewSiteId(body)
+  const session = getPreviewSessionFromRequest(req, siteId)
+  if (!session) return null
+
+  const host = getRequestHost(req)
+  if (!host) return null
+  if (isDashboardHost(host)) {
+    return { siteId: session.siteId, pageId: session.pageId, token: session.token, host }
+  }
+
+  const appDomainResolution = await resolveConnectedAppDomainForHost(host)
+  if (appDomainResolution.ok) {
+    return { siteId: session.siteId, pageId: session.pageId, token: session.token, host }
+  }
+
+  return null
 }
 
 function getRequestOrigin(req) {
@@ -518,7 +559,9 @@ export async function removeSitesAppDomainHandler(req, res) {
 
 export async function submitPublicSiteHandler(req, res) {
   try {
-    const result = await createSubmissionFromRequest(req, req.body || {})
+    const body = req.body || {}
+    const previewContext = await getPreviewContextForPublicRequest(req, body)
+    const result = await createSubmissionFromRequest(req, body, { previewContext })
     res.status(201).json({ success: true, data: result })
   } catch (error) {
     logger.warn(`Submit público rechazado: ${error.message}`)
@@ -528,7 +571,9 @@ export async function submitPublicSiteHandler(req, res) {
 
 export async function metaPageEventPublicHandler(req, res) {
   try {
-    const result = await createMetaPageEventFromRequest(req, req.body || {})
+    const body = req.body || {}
+    const previewContext = await getPreviewContextForPublicRequest(req, body)
+    const result = await createMetaPageEventFromRequest(req, body, { previewContext })
     res.status(200).json({ success: true, data: result })
   } catch (error) {
     logger.warn(`Evento público de página Site rechazado: ${error.message}`)

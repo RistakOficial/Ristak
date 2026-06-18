@@ -95,6 +95,7 @@ import {
 import { DEFAULT_AI_MODEL, aiModelOptions, getKnownAIModel } from '@/constants/aiModels'
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
+import { subscribeToChatLiveEvents } from '@/services/chatLiveEventsService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import {
@@ -276,7 +277,7 @@ const DEFAULT_PHONE_AGENT_REPLY_DELIVERY: AgentReplyDeliveryConfig = {
   mode: 'single',
   splitMessagesEnabled: false,
   minMessageLengthToSplit: 120,
-  maxBubbles: 5,
+  maxBubbles: 6,
   minBubbleLength: 20,
   maxBubbleLength: 350,
   targetChars: 350,
@@ -300,7 +301,9 @@ const PHONE_AGENT_RESPONSE_DELAY_UNIT_OPTIONS: Array<{ value: AgentResponseDelay
 const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   appointments: {
     owner: 'human',
-    calendarId: null
+    calendarId: null,
+    url: '',
+    trackingParam: 'ristak_goal_id'
   },
   sales: {
     owner: 'human',
@@ -309,7 +312,9 @@ const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     productName: '',
     priceName: '',
     amount: null,
-    currency: ''
+    currency: '',
+    url: '',
+    trackingParam: 'ristak_goal_id'
   },
   data: {
     afterComplete: 'human'
@@ -318,12 +323,19 @@ const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     questions: '',
     qualifies: '',
     disqualifies: ''
+  },
+  triggerLink: {
+    triggerLinkId: '',
+    triggerLinkPublicId: '',
+    triggerLinkName: '',
+    triggerLinkUrl: ''
   }
 }
 
 const PHONE_AGENT_OWNER_OPTIONS = [
   { value: 'human', label: 'Pasar a humano' },
-  { value: 'ai', label: 'Que lo haga la IA' }
+  { value: 'ai', label: 'Que lo haga la IA' },
+  { value: 'url', label: 'Mandar enlace' }
 ]
 
 interface ProductPrice {
@@ -380,6 +392,10 @@ function getPhoneAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWork
     qualification: {
       ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.qualification,
       ...((workflow.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+    },
+    triggerLink: {
+      ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.triggerLink,
+      ...((workflow.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
     }
   }
 }
@@ -591,6 +607,7 @@ interface ChatMessage {
     name?: string
     mimeType?: string
     durationMs?: number
+    isGif?: boolean
   }
 }
 
@@ -682,6 +699,7 @@ interface ContactInfoArchiveItem {
   date: string
   direction: 'inbound' | 'outbound'
   mimeType?: string
+  isGif?: boolean
 }
 
 interface ContactInfoCustomFieldView {
@@ -836,7 +854,18 @@ function getContactMessageCount(contact: ChatContact) {
 
 function normalizeWhatsAppBusinessDirection(value?: unknown): 'inbound' | 'outbound' {
   const direction = String(value || '').toLowerCase()
-  return ['outbound', 'business_echo', 'smb_echo', 'echo', 'message_echo'].includes(direction) ? 'outbound' : 'inbound'
+  return [
+    'outbound',
+    'outgoing',
+    'sent',
+    'business',
+    'api',
+    'app',
+    'business_echo',
+    'smb_echo',
+    'echo',
+    'message_echo'
+  ].includes(direction) ? 'outbound' : 'inbound'
 }
 
 function applyLocalUnreadState(contact: ChatContact, readState: ChatReadState): ChatContact {
@@ -1446,7 +1475,8 @@ function getMessageSignature(message: ChatMessage) {
     attachment?.url,
     attachment?.name,
     attachment?.mimeType,
-    attachment?.durationMs
+    attachment?.durationMs,
+    attachment?.isGif
   ].map(compactCompareValue).join('\u001f')
 }
 
@@ -1464,20 +1494,42 @@ function getJourneySignature(journey: JourneyEvent[]) {
   }
 }
 
-function getMediaAttachmentType(messageType = '', mimeType = '', name = ''): ChatAttachmentType | null {
+function getMediaPathExtension(value = '') {
+  const clean = String(value || '').trim().split('?')[0].split('#')[0].toLowerCase()
+  const leaf = clean.split('/').pop() || clean
+  const extension = leaf.split('.').pop() || ''
+  return /^[a-z0-9]{2,8}$/.test(extension) ? extension : ''
+}
+
+function hasGifFileSignature(mimeType = '', name = '', mediaUrl = '') {
+  const normalizedMime = mimeType.split(';')[0].trim().toLowerCase()
+  return normalizedMime === 'image/gif' || getMediaPathExtension(name) === 'gif' || getMediaPathExtension(mediaUrl) === 'gif'
+}
+
+function isGifMedia(messageType = '', mimeType = '', name = '', mediaUrl = '') {
+  return messageType.toLowerCase().includes('gif') || hasGifFileSignature(mimeType, name, mediaUrl)
+}
+
+function getMediaAttachmentType(messageType = '', mimeType = '', name = '', mediaUrl = ''): ChatAttachmentType | null {
   const normalizedType = messageType.toLowerCase()
-  const normalizedMime = mimeType.toLowerCase()
+  const normalizedMime = mimeType.split(';')[0].trim().toLowerCase()
   const normalizedName = name.toLowerCase()
+  const gifFile = hasGifFileSignature(mimeType, name, mediaUrl)
+  const gifMessageType = normalizedType.includes('gif')
 
   if (normalizedType.includes('audio') || normalizedType.includes('voice') || normalizedMime.startsWith('audio/')) {
     return 'audio'
+  }
+
+  if (gifFile || (gifMessageType && !normalizedMime.startsWith('video/'))) {
+    return 'image'
   }
 
   if (normalizedType.includes('image') || normalizedType.includes('sticker') || normalizedMime.startsWith('image/')) {
     return 'image'
   }
 
-  if (normalizedType.includes('video') || normalizedType.includes('gif') || normalizedMime.startsWith('video/')) {
+  if (normalizedType.includes('video') || gifMessageType || normalizedMime.startsWith('video/')) {
     return 'video'
   }
 
@@ -1514,14 +1566,64 @@ function getAttachmentFallbackName(type: ChatAttachmentType, name = '', mediaId 
   return 'Mensaje de voz'
 }
 
+function pickMediaUrl(data: Record<string, unknown>) {
+  const keys = [
+    'media_url',
+    'mediaUrl',
+    'public_url',
+    'publicUrl',
+    'download_url',
+    'downloadUrl',
+    'file_url',
+    'fileUrl',
+    'audio_url',
+    'audioUrl',
+    'image_url',
+    'imageUrl',
+    'video_url',
+    'videoUrl',
+    'url',
+    'link',
+    'href'
+  ]
+  for (const key of keys) {
+    const value = String(data[key] || '').trim()
+    if (value) return value
+  }
+  return ''
+}
+
+function cleanAttachmentMessageText(text = '', attachment?: ChatMessage['attachment']) {
+  if (!attachment) return text
+  const placeholderByType: Record<ChatAttachmentType, string[]> = {
+    audio: ['audio', 'voice', 'voice message', 'mensaje de voz'],
+    image: ['image', 'photo', 'foto', 'imagen', 'gif'],
+    video: ['video'],
+    document: ['document', 'documento'],
+    file: ['file', 'archivo']
+  }
+  const normalized = text
+    .replace(/\[[^\]]*received on[^\]]*\]/gi, '')
+    .replace(/\[[^\]]*sent from[^\]]*\]/gi, '')
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+
+  if ((placeholderByType[attachment.type] || []).includes(normalized)) return ''
+  return text
+}
+
 function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment'] | undefined {
-  const messageType = String(event.data?.message_type || '').toLowerCase()
-  const mediaUrl = String(event.data?.media_url || event.data?.mediaUrl || '').trim()
-  const mediaId = String(event.data?.media_id || event.data?.mediaId || '').trim()
-  const mimeType = String(event.data?.media_mime_type || event.data?.mediaMimeType || '').trim()
-  const name = String(event.data?.media_filename || event.data?.mediaFilename || '').trim()
-  const durationMs = Number(event.data?.media_duration_ms || event.data?.mediaDurationMs || 0) || undefined
-  const attachmentType = getMediaAttachmentType(messageType, mimeType, name)
+  const data = (event.data || {}) as Record<string, unknown>
+  const messageType = String(data.message_type || data.messageType || data.type || '').toLowerCase()
+  const mediaUrl = pickMediaUrl(data)
+  const mediaId = String(data.media_id || data.mediaId || '').trim()
+  const mimeType = String(data.media_mime_type || data.mediaMimeType || data.mimeType || data.mime_type || '').trim()
+  const name = String(data.media_filename || data.mediaFilename || data.filename || data.fileName || '').trim()
+  const durationMs = Number(data.media_duration_ms || data.mediaDurationMs || data.durationMs || data.duration_ms || 0) || undefined
+  const attachmentType = getMediaAttachmentType(messageType, mimeType, name, mediaUrl)
+  const isGif = isGifMedia(messageType, mimeType, name, mediaUrl)
 
   if (attachmentType === 'audio') {
     return {
@@ -1529,7 +1631,8 @@ function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment
       url: mediaUrl,
       name: getAttachmentFallbackName('audio', name, mediaId),
       mimeType,
-      durationMs
+      durationMs,
+      isGif
     }
   }
 
@@ -1537,8 +1640,9 @@ function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment
     return {
       type: attachmentType,
       url: mediaUrl,
-      name: getAttachmentFallbackName(attachmentType, name, mediaId),
-      mimeType
+      name: name || mediaId || (isGif ? 'GIF enviado' : getAttachmentFallbackName(attachmentType, name, mediaId)),
+      mimeType,
+      isGif
     }
   }
 
@@ -1580,18 +1684,20 @@ function getContactInfoArchiveItems(journey: JourneyEvent[] = []): ContactInfoAr
       event.data?.meta_message_id ||
       `message-${eventIndex}`
     )
-    const messageType = String(event.data?.message_type || '')
-    const mediaUrl = String(event.data?.media_url || event.data?.mediaUrl || '').trim()
-    const mediaId = String(event.data?.media_id || event.data?.mediaId || '').trim()
-    const mimeType = String(event.data?.media_mime_type || event.data?.mediaMimeType || '').trim()
-    const name = String(event.data?.media_filename || event.data?.mediaFilename || '').trim()
-    const attachmentType = getMediaAttachmentType(messageType, mimeType, name)
+    const eventData = (event.data || {}) as Record<string, unknown>
+    const messageType = String(eventData.message_type || eventData.messageType || eventData.type || '')
+    const mediaUrl = pickMediaUrl(eventData)
+    const mediaId = String(eventData.media_id || eventData.mediaId || '').trim()
+    const mimeType = String(eventData.media_mime_type || eventData.mediaMimeType || eventData.mimeType || eventData.mime_type || '').trim()
+    const name = String(eventData.media_filename || eventData.mediaFilename || eventData.filename || eventData.fileName || '').trim()
+    const attachmentType = getMediaAttachmentType(messageType, mimeType, name, mediaUrl)
+    const isGif = isGifMedia(messageType, mimeType, name, mediaUrl)
 
     if (attachmentType && attachmentType !== 'audio' && (mediaUrl || mediaId)) {
       const tab: ContactInfoArchiveTab = attachmentType === 'image' || attachmentType === 'video'
         ? 'media'
         : 'documents'
-      const fallbackName = getAttachmentFallbackName(attachmentType, name, mediaId)
+      const fallbackName = name || mediaId || (isGif ? 'GIF enviado' : getAttachmentFallbackName(attachmentType, name, mediaId))
 
       items.push({
         id: `${messageId}-${tab}-${items.length}`,
@@ -1602,7 +1708,8 @@ function getContactInfoArchiveItems(journey: JourneyEvent[] = []): ContactInfoAr
         caption: text,
         date: event.date,
         direction,
-        mimeType
+        mimeType,
+        isGif
       })
     }
 
@@ -1628,7 +1735,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
   if (event.type !== 'whatsapp_message' && !isMetaMessage) return null
   const eventData = (event.data || {}) as Record<string, unknown>
 
-  const text = String(
+  const rawText = String(
     event.data?.message_text ||
     event.data?.message ||
     event.data?.body ||
@@ -1636,6 +1743,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
   ).trim()
   const messageType = String(event.data?.message_type || '')
   const attachment = getJourneyMediaAttachment(event)
+  const text = cleanAttachmentMessageText(rawText, attachment)
 
   if (!text && !messageType && !attachment) return null
 
@@ -1710,6 +1818,7 @@ function getScheduledChatMessageBubble(message: ScheduledChatMessage): ChatMessa
 
 function getMessageTypeLabel(type = '', fallback = 'Mensaje de WhatsApp') {
   const normalized = type.toLowerCase()
+  if (normalized.includes('gif')) return 'GIF'
   if (normalized.includes('image')) return 'Foto'
   if (normalized.includes('video')) return 'Video'
   if (normalized.includes('audio') || normalized.includes('voice')) return 'Mensaje de voz'
@@ -2157,6 +2266,7 @@ function getJourneyEventLabel(event: JourneyEvent, leadLabel: string) {
 }
 
 const GENERIC_JOURNEY_SOURCES = new Set(['directo', 'desconocido', 'otro'])
+const MESSAGE_JOURNEY_EVENT_TYPES = new Set(['whatsapp_message', 'meta_message'])
 const WEB_JOURNEY_SOURCE_PATTERN = /(ristak_site|native_site|site|website|web|form|landing|pagina|página)/i
 const WHATSAPP_JOURNEY_SOURCE_PATTERN = /(whatsapp|waapi|ycloud|click_to_whatsapp|ctwa)/i
 
@@ -2169,8 +2279,13 @@ function journeySourceLooksWhatsApp(source?: string | null) {
 }
 
 function isOutboundJourneyMessage(event?: JourneyEvent | null) {
-  const direction = String(event?.data?.direction || '').trim().toLowerCase()
-  return ['outbound', 'business_echo', 'sent'].includes(direction)
+  return normalizeWhatsAppBusinessDirection(
+    event?.data?.direction || event?.data?.message_direction || event?.data?.from_type
+  ) === 'outbound'
+}
+
+function isBusinessAuthoredJourneyMessage(event?: JourneyEvent | null) {
+  return Boolean(event && MESSAGE_JOURNEY_EVENT_TYPES.has(event.type) && isOutboundJourneyMessage(event))
 }
 
 function getJourneySourceLabelFromData(data: Record<string, any> = {}) {
@@ -2218,7 +2333,7 @@ function isWhatsAppJourneyEvent(event?: JourneyEvent | null) {
   const data = event.data || {}
   const conversionChannel = String(data.conversion_channel || '').trim().toLowerCase()
 
-  if (event.type === 'whatsapp_message') return true
+  if (event.type === 'whatsapp_message') return !isOutboundJourneyMessage(event)
   if (event.type !== 'contact_created') return false
   if (hasWebJourneySignal(event)) return false
   if (conversionChannel === 'whatsapp') return true
@@ -2409,6 +2524,7 @@ function buildContactInfoJourney(
 
   events.forEach((event) => {
     if (!event?.date) return
+    if (isBusinessAuthoredJourneyMessage(event)) return
     if (isWhatsAppJourneyEvent(event)) {
       if (!shouldShowWhatsAppInContactInfoJourney(event, firstPaymentTime)) return
       whatsappEvents.push(event)
@@ -4101,7 +4217,7 @@ export const PhoneChat: React.FC = () => {
 
     try {
       const [journey, scheduledMessages] = await Promise.all([
-        contactsService.getContactJourney(contactId),
+        contactsService.getContactJourney(contactId, { includeBusinessMessages: true }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => [])
       ])
       if (!isCurrentConversationLoad()) return
@@ -4638,6 +4754,16 @@ export const PhoneChat: React.FC = () => {
       window.removeEventListener(MOBILE_APP_NOTIFICATION_EVENT, handleNativeNotification)
       navigator.serviceWorker?.removeEventListener('message', handleServiceWorkerMessage)
     }
+  }, [accessState, refreshChatInboxNow])
+
+  useEffect(() => {
+    if (accessState !== 'allowed') return
+
+    return subscribeToChatLiveEvents({
+      onMessage: (event) => {
+        refreshChatInboxNow({ contactId: event.contactId }).catch(() => undefined)
+      }
+    })
   }, [accessState, refreshChatInboxNow])
 
   useEffect(() => {
@@ -8461,13 +8587,14 @@ export const PhoneChat: React.FC = () => {
     const dateLabel = formatLocalDateShort(item.date)
 
     if (item.tab === 'media') {
+      const isGifVideo = item.type === 'video' && Boolean(item.isGif)
       const media = item.type === 'video'
-        ? <video src={item.url || undefined} preload="metadata" muted playsInline />
+        ? <video src={item.url || undefined} preload={isGifVideo ? 'auto' : 'metadata'} muted playsInline autoPlay={isGifVideo} loop={isGifVideo} aria-label={isGifVideo ? item.title : undefined} />
         : <img src={item.url || undefined} alt={item.title} loading="lazy" />
       const mediaContent = (
         <>
           {item.url ? media : <ImageIcon size={24} />}
-          {item.type === 'video' && (
+          {item.type === 'video' && !isGifVideo && (
             <span className={styles.contactInfoMediaType}>
               <Play size={12} />
             </span>
@@ -9006,6 +9133,7 @@ export const PhoneChat: React.FC = () => {
               const isAudioAttachment = message.attachment?.type === 'audio'
               const isAudioMessage = isAudioAttachment && Boolean(message.attachment?.dataUrl || message.attachment?.url)
               const isVideoMessage = message.attachment?.type === 'video' && Boolean(message.attachment.dataUrl || message.attachment.url)
+              const isGifVideoMessage = isVideoMessage && Boolean(message.attachment?.isGif)
               const isFileMessage = Boolean(message.attachment && ['document', 'file'].includes(message.attachment.type))
               const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage
               const messageSwipeOffset = draggingMessageInfoSwipe?.messageId === message.id ? draggingMessageInfoSwipe.offset : 0
@@ -9046,15 +9174,19 @@ export const PhoneChat: React.FC = () => {
                       onTouchCancel={canOpenMessageInfo ? handleMessageInfoTouchEnd : undefined}
                     >
                     {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
-                      <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
+                      <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || (message.attachment.isGif ? 'GIF enviado' : 'Foto enviada')} />
                     )}
                     {isVideoMessage && (
                       <video
                         className={styles.messageVideo}
                         src={message.attachment?.dataUrl || message.attachment?.url}
-                        controls
+                        controls={!isGifVideoMessage}
+                        autoPlay={isGifVideoMessage}
+                        muted={isGifVideoMessage}
+                        loop={isGifVideoMessage}
                         playsInline
-                        preload="metadata"
+                        preload={isGifVideoMessage ? 'auto' : 'metadata'}
+                        aria-label={isGifVideoMessage ? (message.attachment?.name || 'GIF enviado') : undefined}
                       />
                     )}
                     {isFileMessage && renderMessageFile(message)}
@@ -10922,23 +11054,23 @@ export const PhoneChat: React.FC = () => {
             <label className={styles.scheduleField}>
               <span>Hora</span>
               <input
-                type="number"
+                type="text"
                 min="1"
                 max="12"
                 inputMode="numeric"
                 value={scheduleDraft.hour}
-                onChange={(event) => handleScheduleDraftChange({ hour: event.target.value.slice(0, 2) })}
+                onChange={(event) => handleScheduleDraftChange({ hour: event.target.value.replace(/\D/g, '').slice(0, 2) })}
               />
             </label>
             <label className={styles.scheduleField}>
               <span>Min</span>
               <input
-                type="number"
+                type="text"
                 min="0"
                 max="59"
                 inputMode="numeric"
                 value={scheduleDraft.minute}
-                onChange={(event) => handleScheduleDraftChange({ minute: event.target.value.slice(0, 2) })}
+                onChange={(event) => handleScheduleDraftChange({ minute: event.target.value.replace(/\D/g, '').slice(0, 2) })}
                 onBlur={() => {
                   const minute = Math.min(59, Math.max(0, Number(scheduleDraft.minute) || 0))
                   handleScheduleDraftChange({ minute: padTwoDigits(minute) })
@@ -11139,6 +11271,7 @@ export const PhoneChat: React.FC = () => {
     ready_to_schedule: 'Pasar a humano',
     ready_to_buy: 'Link de pago enviado',
     appointment_booked: 'Cita agendada',
+    purchase_completed: 'Compra confirmada',
     discarded: 'Descartada'
   }
 
@@ -11248,6 +11381,10 @@ export const PhoneChat: React.FC = () => {
       qualification: {
         ...goalWorkflow.qualification,
         ...((patch.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+      },
+      triggerLink: {
+        ...goalWorkflow.triggerLink,
+        ...((patch.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
       }
     })
 
@@ -11261,20 +11398,30 @@ export const PhoneChat: React.FC = () => {
     }
 
     const updateAppointmentOwner = (owner: AgentGoalWorkflowConfig['appointments']['owner']) => {
-      const calendarId = owner === 'ai'
+      const calendarId = owner === 'ai' || owner === 'url'
         ? goalWorkflow.appointments.calendarId || selectedAgentDef?.defaultCalendarId || calendars[0]?.id || null
         : goalWorkflow.appointments.calendarId
+      const successAction: ConversationalSuccessAction = owner === 'ai'
+        ? 'book_appointment'
+        : owner === 'url'
+        ? 'send_goal_url'
+        : 'ready_for_human'
       saveSelectedAgentPatch({
         goalWorkflow: mergeGoalWorkflow({ appointments: { ...goalWorkflow.appointments, owner, calendarId } }),
-        successAction: owner === 'ai' ? 'book_appointment' : 'ready_for_human',
+        successAction,
         defaultCalendarId: owner === 'ai' ? calendarId : selectedAgentDef?.defaultCalendarId || null
       })
     }
 
     const updateSalesOwner = (owner: AgentGoalWorkflowConfig['sales']['owner']) => {
+      const successAction: ConversationalSuccessAction = owner === 'ai'
+        ? 'ready_to_buy'
+        : owner === 'url'
+        ? 'send_goal_url'
+        : 'ready_for_human'
       saveSelectedAgentPatch({
         goalWorkflow: mergeGoalWorkflow({ sales: { ...goalWorkflow.sales, owner } }),
-        successAction: owner === 'ai' ? 'ready_to_buy' : 'ready_for_human'
+        successAction
       })
     }
 
@@ -11334,7 +11481,7 @@ export const PhoneChat: React.FC = () => {
           <section className={styles.agentMenuSection} aria-label="Flujo de agenda">
             <div className={styles.agentMenuSectionHeader}>
               <span>Agenda</span>
-              <small>{goalWorkflow.appointments.owner === 'ai' ? 'La IA agenda' : 'Pasa a humano'}</small>
+              <small>{goalWorkflow.appointments.owner === 'ai' ? 'La IA agenda' : goalWorkflow.appointments.owner === 'url' ? 'Manda enlace' : 'Pasa a humano'}</small>
             </div>
             <label className={styles.agentMenuField}>
               <span>Quién quieres que lo agende</span>
@@ -11379,6 +11526,58 @@ export const PhoneChat: React.FC = () => {
                   La IA revisa horarios reales, confirma el horario con la persona y agenda en este calendario.
                 </p>
               </div>
+            ) : goalWorkflow.appointments.owner === 'url' ? (
+              <div className={styles.agentGoalPanel}>
+                <label className={styles.agentMenuField}>
+                  <span>Calendario del enlace</span>
+                  <PhoneSelect
+                    value={goalWorkflow.appointments.calendarId || agent.defaultCalendarId || ''}
+                    onChange={(value) => {
+                      const calendarId = value || null
+                      saveSelectedAgentPatch({
+                        goalWorkflow: mergeGoalWorkflow({ appointments: { ...goalWorkflow.appointments, calendarId } }),
+                        defaultCalendarId: calendarId,
+                        successAction: 'send_goal_url'
+                      })
+                    }}
+                    ariaLabel="Calendario del enlace para agendar"
+                    options={[
+                      { value: '', label: calendarsLoading ? '...' : 'Elegir calendario activo' },
+                      ...calendars.map((calendar) => ({ value: calendar.id, label: calendar.name }))
+                    ]}
+                    title="Calendario"
+                    placeholder="Calendario"
+                    disabled={agentConfigSaving || calendarsLoading || calendars.length === 0}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
+                <PhoneTextField
+                  label="Enlace del calendario"
+                  value={goalWorkflow.appointments.url}
+                  onChange={(value) => updateGoalWorkflowDraft({ appointments: { ...goalWorkflow.appointments, url: value } })}
+                  onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
+                  placeholder="https://calendly.com/tu-negocio/cita"
+                  disabled={agentConfigSaving}
+                />
+                <PhoneTextField
+                  label="ID que se agrega al enlace"
+                  value={goalWorkflow.appointments.trackingParam ?? ''}
+                  onChange={(value) => updateGoalWorkflowDraft({ appointments: { ...goalWorkflow.appointments, trackingParam: value } })}
+                  onBlur={() => saveSelectedAgentPatch({
+                    goalWorkflow: mergeGoalWorkflow({
+                      appointments: {
+                        ...goalWorkflow.appointments,
+                        trackingParam: goalWorkflow.appointments.trackingParam?.trim() || DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.appointments.trackingParam
+                      }
+                    })
+                  })}
+                  placeholder="ristak_goal_id"
+                  disabled={agentConfigSaving}
+                />
+                <p className={styles.agentMenuHint}>
+                  La IA manda el enlace del calendario seleccionado y Ristak confirma la cita cuando regresa el ID real.
+                </p>
+              </div>
             ) : (
               <p className={styles.agentMenuHint}>
                 Cuando la persona quiera cita, el chat sube como prioridad para que un humano lo agende.
@@ -11407,7 +11606,7 @@ export const PhoneChat: React.FC = () => {
           <section className={styles.agentMenuSection} aria-label="Flujo de ventas">
             <div className={styles.agentMenuSectionHeader}>
               <span>Venta</span>
-              <small>{goalWorkflow.sales.owner === 'ai' ? 'IA cobra' : 'Humano cobra'}</small>
+              <small>{goalWorkflow.sales.owner === 'ai' ? 'IA cobra' : goalWorkflow.sales.owner === 'url' ? 'Manda enlace' : 'Humano cobra'}</small>
             </div>
             <label className={styles.agentMenuField}>
               <span>Quién cierra la venta</span>
@@ -11474,6 +11673,74 @@ export const PhoneChat: React.FC = () => {
                 )}
                 <p className={styles.agentMenuHint}>
                   La IA confirma el cobro y el canal antes de mandar el link de pago.
+                </p>
+              </div>
+            ) : goalWorkflow.sales.owner === 'url' ? (
+              <div className={styles.agentGoalPanel}>
+                <label className={styles.agentMenuField}>
+                  <span>Producto del pedido</span>
+                  <PhoneSelect
+                    value={goalWorkflow.sales.productId}
+                    onChange={updateSalesProduct}
+                    ariaLabel="Producto del pedido"
+                    options={productOptions}
+                    title="Producto"
+                    placeholder="Producto"
+                    disabled={agentConfigSaving || agentProductsLoading || agentProducts.length === 0}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
+                {selectedSalesProduct && (
+                  <label className={styles.agentMenuField}>
+                    <span>Precio del pedido</span>
+                    <PhoneSelect
+                      value={goalWorkflow.sales.priceId}
+                      onChange={(priceId) => {
+                        const price = (selectedSalesProduct.prices || []).find((item) => getPriceId(item) === priceId) || getPrimaryPrice(selectedSalesProduct)
+                        updateGoalWorkflow({
+                          sales: {
+                            ...goalWorkflow.sales,
+                            priceId: getPriceId(price),
+                            priceName: price?.name || '',
+                            amount: price ? getPriceAmount(price) : null,
+                            currency: price?.currency || selectedSalesProduct.currency || ''
+                          }
+                        })
+                      }}
+                      ariaLabel="Precio del pedido"
+                      options={priceOptions}
+                      title="Precio"
+                      placeholder="Precio"
+                      disabled={agentConfigSaving}
+                      buttonClassName={styles.agentMenuSelectButton}
+                    />
+                  </label>
+                )}
+                <PhoneTextField
+                  label="Enlace del pedido"
+                  value={goalWorkflow.sales.url}
+                  onChange={(value) => updateGoalWorkflowDraft({ sales: { ...goalWorkflow.sales, url: value } })}
+                  onBlur={() => saveSelectedAgentPatch({ goalWorkflow })}
+                  placeholder="https://tutienda.com/checkout"
+                  disabled={agentConfigSaving}
+                />
+                <PhoneTextField
+                  label="ID que se agrega al enlace"
+                  value={goalWorkflow.sales.trackingParam ?? ''}
+                  onChange={(value) => updateGoalWorkflowDraft({ sales: { ...goalWorkflow.sales, trackingParam: value } })}
+                  onBlur={() => saveSelectedAgentPatch({
+                    goalWorkflow: mergeGoalWorkflow({
+                      sales: {
+                        ...goalWorkflow.sales,
+                        trackingParam: goalWorkflow.sales.trackingParam?.trim() || DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.sales.trackingParam
+                      }
+                    })
+                  })}
+                  placeholder="ristak_goal_id"
+                  disabled={agentConfigSaving}
+                />
+                <p className={styles.agentMenuHint}>
+                  La IA manda el enlace del pedido ligado al producto seleccionado y Ristak confirma la compra cuando regresa el ID real.
                 </p>
               </div>
             ) : (
@@ -11735,8 +12002,12 @@ export const PhoneChat: React.FC = () => {
                     const objective = value as ConversationalObjective
                     const nextSuccessAction: ConversationalSuccessAction = objective === 'citas' && goalWorkflow.appointments.owner === 'ai'
                       ? 'book_appointment'
+                      : objective === 'citas' && goalWorkflow.appointments.owner === 'url'
+                      ? 'send_goal_url'
                       : objective === 'ventas' && goalWorkflow.sales.owner === 'ai'
                       ? 'ready_to_buy'
+                      : objective === 'ventas' && goalWorkflow.sales.owner === 'url'
+                      ? 'send_goal_url'
                       : 'ready_for_human'
                     saveSelectedAgentPatch({
                       objective,

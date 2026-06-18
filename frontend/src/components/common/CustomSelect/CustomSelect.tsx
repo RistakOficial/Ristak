@@ -161,7 +161,6 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         : Math.min(rect.bottom + dropdownGap, window.innerHeight - viewportPadding - dropdownHeight),
       left: Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - rect.width - viewportPadding),
       width: rect.width,
-      zIndex: 10000,
       '--custom-select-options-max-height': `${dropdownHeight}px`
     } as React.CSSProperties)
   }, [flatOptions.length, portal, size])

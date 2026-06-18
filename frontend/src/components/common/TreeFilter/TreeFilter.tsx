@@ -548,8 +548,8 @@ export function TreeFilter({
       {/* Dropdown principal con menú tipo navegación */}
       {isOpen && (
         <div
-          className="absolute top-full left-0 mt-2 z-50 bg-[var(--color-background-primary)] rounded-lg shadow-xl animate-fadeIn flex"
-          style={{ border: '1px solid var(--color-border-subtle)' }}
+          className="absolute top-full left-0 mt-2 z-50 bg-[var(--surface)] rounded-[var(--radius-card)] animate-fadeIn flex"
+          style={{ border: '1px solid var(--border)', boxShadow: 'var(--shadow-pop)' }}
           onMouseLeave={handleCategoryLeave}
           data-ristak-dropdown-panel
         >
@@ -580,10 +580,10 @@ export function TreeFilter({
                   onClick={handleClearAllFilters}
                   aria-label={`Borrar todo: ${activeFiltersCount} filtros activos`}
                   className="w-full flex items-center justify-between gap-2 px-2.5 py-2 text-sm
-                           text-red-500 hover:bg-red-500/10 rounded-md transition-colors duration-150"
+                           text-[var(--neg)] hover:bg-[var(--neg-soft)] rounded-md transition-colors duration-150"
                 >
                   <span>Borrar todo</span>
-                  <span className="text-xs bg-red-500/10 text-red-500 px-1.5 py-0.5 rounded">
+                  <span className="text-xs bg-[var(--neg-soft)] text-[var(--neg)] px-1.5 py-0.5 rounded">
                     {activeFiltersCount}
                   </span>
                 </button>

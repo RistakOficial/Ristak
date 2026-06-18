@@ -4,7 +4,7 @@ import fs from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import fetch from 'node-fetch'
+import nodeFetch from 'node-fetch'
 import sharp from 'sharp'
 import { db, getAppConfig, repairWhatsAppApiContactIdentityFromMessages, setAppConfig } from '../config/database.js'
 import { findContactByPhoneCandidates, generateContactId } from './contactIdentityService.js'
@@ -35,6 +35,11 @@ import {
 import { getMetaConfig } from './metaAdsService.js'
 import { getVerifiedAppBaseUrl } from './sitesService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
+import { publishChatMessageEvent } from './chatLiveEventsService.js'
+import {
+  clearWhatsAppApiIntegrationCredentials,
+  clearWhatsAppMetaDirectIntegrationCredentials
+} from './integrationCredentialsCleanupService.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -48,6 +53,11 @@ const DEFAULT_INSTALLER_PUBLIC_URL = 'https://www.ristak.com'
 const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
+let ycloudFetch = nodeFetch
+
+export function setYCloudFetchForTest(fetchImpl) {
+  ycloudFetch = typeof fetchImpl === 'function' ? fetchImpl : nodeFetch
+}
 const WHATSAPP_IMAGE_PUBLIC_PATH = '/uploads/whatsapp-images'
 const MAX_WHATSAPP_IMAGE_INPUT_BYTES = 25 * 1024 * 1024
 const MAX_WHATSAPP_IMAGE_OUTPUT_BYTES = 5 * 1024 * 1024
@@ -60,6 +70,9 @@ const MAX_WHATSAPP_DOCUMENT_BYTES = 20 * 1024 * 1024
 const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 const WHATSAPP_API_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const WHATSAPP_API_PROFILE_PICTURE_BATCH_LIMIT = 40
+const WHATSAPP_INTERACTIVE_REPLY_BUTTON_LIMIT = 3
+const WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX = 20
+const WHATSAPP_INTERACTIVE_REPLY_BUTTON_ID_MAX = 256
 const IMAGE_EXTENSION_BY_MIME = {
   'image/jpeg': 'jpg',
   'image/jpg': 'jpg',
@@ -278,6 +291,9 @@ const CONFIG_KEYS = {
   lastSyncedAt: 'whatsapp_api_last_synced_at',
   lastError: 'whatsapp_api_last_error'
 }
+
+const HISTORY_DIRECTION_REPAIR_CONFIG_KEY = 'whatsapp_api_history_direction_repair_version'
+const HISTORY_DIRECTION_REPAIR_VERSION = '2026-06-17-history-context-and-outbound-list'
 
 function nowIso() {
   return new Date().toISOString()
@@ -974,27 +990,8 @@ async function setEncryptedConfig(key, value) {
   await setAppConfig(key, encrypt(cleanValue))
 }
 
-async function deleteAppConfig(keys = []) {
-  for (const key of keys) {
-    await db.run('DELETE FROM app_config WHERE config_key = ?', [key])
-  }
-}
-
-const YCLOUD_CONNECTION_CONFIG_KEYS = [
-  CONFIG_KEYS.apiKey,
-  CONFIG_KEYS.webhookSecret,
-  CONFIG_KEYS.senderPhone,
-  CONFIG_KEYS.phoneNumberId,
-  CONFIG_KEYS.wabaId,
-  CONFIG_KEYS.webhookEndpointId,
-  CONFIG_KEYS.webhookUrl,
-  CONFIG_KEYS.webhookStatus,
-  CONFIG_KEYS.connectedAt,
-  CONFIG_KEYS.lastSyncedAt
-]
-
 async function clearYCloudConnectionConfig() {
-  await deleteAppConfig(YCLOUD_CONNECTION_CONFIG_KEYS)
+  await clearWhatsAppApiIntegrationCredentials()
 }
 
 async function clearStaleDisconnectedYCloudCredentials(config) {
@@ -1274,7 +1271,7 @@ async function ycloudRequest(path, { apiKey, method = 'GET', body, query } = {})
     }
   }
 
-  const response = await fetch(url.toString(), {
+  const response = await ycloudFetch(url.toString(), {
     method,
     headers: {
       accept: 'application/json',
@@ -2899,6 +2896,76 @@ export async function getWhatsAppApiStatus() {
   }
 }
 
+async function isCurrentYCloudConnection(apiKey) {
+  const cleanApiKey = normalizeYCloudApiKeyInput(apiKey)
+  if (!cleanApiKey) return false
+
+  try {
+    const config = await loadConfig({ includeSecrets: true })
+    return Boolean(
+      config.enabled &&
+      config.provider === PROVIDER_NAME &&
+      normalizeYCloudApiKeyInput(config.apiKey) === cleanApiKey
+    )
+  } catch (error) {
+    logger.warn(`No se pudo verificar la conexión YCloud activa: ${error.message}`)
+    return false
+  }
+}
+
+async function runYCloudPostConnectionSync({ apiKey, businessPhoneHints = [], wabaIds = [], source = 'conexion' } = {}) {
+  const cleanApiKey = normalizeYCloudApiKeyInput(apiKey)
+  if (!cleanApiKey) return
+
+  const cleanBusinessPhoneHints = [...new Set(businessPhoneHints.map(cleanString).filter(Boolean))]
+  const cleanWabaIds = [...new Set(wabaIds.map(cleanString).filter(Boolean))]
+  const stillConnected = () => isCurrentYCloudConnection(cleanApiKey)
+
+  if (!await stillConnected()) return
+
+  const ycloudContacts = await listYCloudContacts(cleanApiKey).catch(error => {
+    logger.warn(`No se pudieron leer contactos de WhatsApp API en segundo plano (${source}): ${error.message}`)
+    return []
+  })
+
+  if (ycloudContacts.length && await stillConnected()) {
+    await syncYCloudContacts(ycloudContacts).catch(error => {
+      logger.warn(`No se pudieron sincronizar contactos de WhatsApp API en segundo plano (${source}): ${error.message}`)
+    })
+  }
+
+  if (!await stillConnected()) return
+
+  await syncYCloudMessagesFromApi(cleanApiKey, {
+    businessPhoneHints: cleanBusinessPhoneHints,
+    wabaIds: cleanWabaIds
+  }).catch(error => {
+    logger.warn(`No se pudo sincronizar historial saliente desde YCloud en segundo plano (${source}): ${error.message}`)
+  })
+
+  if (!await stillConnected()) return
+
+  await backfillStoredWhatsAppApiMessageEvents({
+    businessPhoneHints: cleanBusinessPhoneHints
+  }).catch(error => {
+    logger.warn(`No se pudo recuperar historial guardado WhatsApp Business en segundo plano (${source}): ${error.message}`)
+  })
+
+  if (!await stillConnected()) return
+
+  await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
+    logger.warn(`No se pudo reparar nombres/fechas de contactos WhatsApp API en segundo plano (${source}): ${error.message}`)
+  })
+}
+
+function scheduleYCloudPostConnectionSync(options = {}) {
+  setTimeout(() => {
+    runYCloudPostConnectionSync(options).catch(error => {
+      logger.warn(`No se pudo completar la sincronización de WhatsApp API en segundo plano: ${error.message}`)
+    })
+  }, 0)
+}
+
 export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, wabaId, webhookUrl } = {}) {
   const saved = await loadConfig({ includeSecrets: true })
   const submittedApiKey = normalizeYCloudApiKeyInput(apiKey)
@@ -2916,7 +2983,7 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
   try {
     let webhookEndpoint = null
     let webhookSetupWarning = ''
-    const [phoneNumbers, balance, templates, ycloudContacts] = await Promise.all([
+    const [phoneNumbers, balance, templates] = await Promise.all([
       listYCloudPhoneNumbers(cleanApiKey),
       retrieveYCloudBalance(cleanApiKey).catch(error => {
         logger.warn(`No se pudo leer balance de WhatsApp API: ${error.message}`)
@@ -2925,17 +2992,12 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       listYCloudTemplates(cleanApiKey, { wabaId }).catch(error => {
         logger.warn(`No se pudieron leer plantillas de WhatsApp API: ${error.message}`)
         return []
-      }),
-      listYCloudContacts(cleanApiKey).catch(error => {
-        logger.warn(`No se pudieron leer contactos de WhatsApp API: ${error.message}`)
-        return []
       })
     ])
     const enrichedPhoneNumbers = await enrichPhoneNumbersWithProfiles(cleanApiKey, phoneNumbers)
     await syncPhoneNumbers(enrichedPhoneNumbers, { pruneMissing: true })
     if (balance) await syncBalance(balance)
     await syncTemplates(templates)
-    await syncYCloudContacts(ycloudContacts)
 
     const selectedPhone = pickPhoneNumber(enrichedPhoneNumbers, { senderPhone, phoneNumberId, wabaId })
     if (selectedPhone) {
@@ -2986,21 +3048,11 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       ...enrichedPhoneNumbers.map(item => item.wabaId)
     ].filter(Boolean)
 
-    await syncYCloudMessagesFromApi(cleanApiKey, {
+    scheduleYCloudPostConnectionSync({
+      apiKey: cleanApiKey,
       businessPhoneHints,
-      wabaIds
-    }).catch(error => {
-      logger.warn(`No se pudo sincronizar historial saliente desde YCloud: ${error.message}`)
-    })
-
-    await backfillStoredWhatsAppApiMessageEvents({
-      businessPhoneHints
-    }).catch(error => {
-      logger.warn(`No se pudo recuperar historial guardado WhatsApp Business: ${error.message}`)
-    })
-
-    await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
-      logger.warn(`No se pudo reparar nombres/fechas de contactos WhatsApp API: ${error.message}`)
+      wabaIds,
+      source: 'conexion'
     })
 
     return getWhatsAppApiStatus()
@@ -3021,7 +3073,7 @@ export async function refreshWhatsAppApi() {
 
   try {
     let webhookSetupWarning = ''
-    const [phoneNumbers, balance, templates, ycloudContacts] = await Promise.all([
+    const [phoneNumbers, balance, templates] = await Promise.all([
       listYCloudPhoneNumbers(config.apiKey),
       retrieveYCloudBalance(config.apiKey).catch(error => {
         logger.warn(`No se pudo actualizar balance de WhatsApp API: ${error.message}`)
@@ -3029,10 +3081,6 @@ export async function refreshWhatsAppApi() {
       }),
       listYCloudTemplates(config.apiKey, { wabaId: config.wabaId }).catch(error => {
         logger.warn(`No se pudieron actualizar plantillas de WhatsApp API: ${error.message}`)
-        return []
-      }),
-      listYCloudContacts(config.apiKey).catch(error => {
-        logger.warn(`No se pudieron actualizar contactos de WhatsApp API: ${error.message}`)
         return []
       })
     ])
@@ -3043,7 +3091,6 @@ export async function refreshWhatsAppApi() {
     }
     if (balance) await syncBalance(balance)
     await syncTemplates(templates)
-    await syncYCloudContacts(ycloudContacts)
 
     const businessPhoneHints = [
       config.senderPhone,
@@ -3078,25 +3125,14 @@ export async function refreshWhatsAppApi() {
       }
     }
 
-    await syncYCloudMessagesFromApi(config.apiKey, {
-      businessPhoneHints,
-      wabaIds
-    }).catch(error => {
-      logger.warn(`No se pudo sincronizar historial saliente desde YCloud: ${error.message}`)
-    })
-
-    await backfillStoredWhatsAppApiMessageEvents({
-      businessPhoneHints
-    }).catch(error => {
-      logger.warn(`No se pudo recuperar historial guardado WhatsApp Business: ${error.message}`)
-    })
-
-    await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
-      logger.warn(`No se pudo reparar nombres/fechas de contactos WhatsApp API: ${error.message}`)
-    })
-
     await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
     await setAppConfig(CONFIG_KEYS.lastError, webhookSetupWarning)
+    scheduleYCloudPostConnectionSync({
+      apiKey: config.apiKey,
+      businessPhoneHints,
+      wabaIds,
+      source: 'actualizacion'
+    })
     return getWhatsAppApiStatus()
   } catch (error) {
     await setAppConfig(CONFIG_KEYS.lastError, error.message)
@@ -3192,6 +3228,47 @@ function extractMessageText(message = {}) {
   )
 }
 
+function extractButtonReply(message = {}) {
+  const messageType = cleanString(message.type).toLowerCase()
+  const interactiveType = cleanString(message.interactive?.type).toLowerCase()
+  const buttonReply = message.interactive?.button_reply
+  if (buttonReply) {
+    const id = cleanString(buttonReply.id)
+    const title = cleanString(buttonReply.title)
+    return {
+      id: id || title,
+      payload: id || title,
+      title,
+      type: interactiveType || 'button_reply'
+    }
+  }
+
+  const listReply = message.interactive?.list_reply
+  if (listReply) {
+    const id = cleanString(listReply.id)
+    const title = cleanString(listReply.title)
+    return {
+      id: id || title,
+      payload: id || title,
+      title,
+      type: interactiveType || 'list_reply'
+    }
+  }
+
+  if (messageType === 'button' || message.button) {
+    const payload = cleanString(message.button?.payload || message.button?.id)
+    const title = cleanString(message.button?.text || message.button?.title)
+    return {
+      id: payload || title,
+      payload: payload || title,
+      title,
+      type: 'template_button'
+    }
+  }
+
+  return null
+}
+
 function extractMessageMedia(message = {}) {
   const messageType = cleanString(message.type).toLowerCase()
   const candidates = [
@@ -3216,10 +3293,210 @@ function extractMessageMedia(message = {}) {
   }
 
   return {
-    mediaUrl: cleanString(media.link || media.url || media.href || media.publicUrl || media.downloadUrl),
-    mediaMimeType: cleanString(media.mimeType || media.mime_type || media.mimetype || media.contentType),
-    mediaFilename: cleanString(media.filename || media.fileName || media.name),
+    mediaUrl: cleanString(
+      media.mediaUrl ||
+      media.media_url ||
+      media.publicUrl ||
+      media.public_url ||
+      media.downloadUrl ||
+      media.download_url ||
+      media.fileUrl ||
+      media.file_url ||
+      media.audioUrl ||
+      media.audio_url ||
+      media.imageUrl ||
+      media.image_url ||
+      media.videoUrl ||
+      media.video_url ||
+      media.link ||
+      media.url ||
+      media.href
+    ),
+    mediaMimeType: cleanString(media.mimeType || media.mime_type || media.mimetype || media.contentType || media.content_type),
+    mediaFilename: cleanString(media.filename || media.fileName || media.file_name || media.originalFilename || media.original_filename || media.name),
     mediaDurationMs: Number(media.durationMs || media.duration_ms || 0) || null
+  }
+}
+
+function getMessageMediaObject(message = {}) {
+  const messageType = cleanString(message.type).toLowerCase()
+  const candidates = [
+    messageType ? message[messageType] : null,
+    message.audio,
+    message.image,
+    message.video,
+    message.document,
+    message.sticker,
+    message.media,
+    message.file
+  ].filter(isPlainObject)
+  return candidates[0] || null
+}
+
+function getMessageMediaId(message = {}) {
+  const media = getMessageMediaObject(message)
+  return cleanString(
+    media?.id ||
+    media?.mediaId ||
+    media?.media_id ||
+    media?.assetId ||
+    media?.asset_id ||
+    media?.fileId ||
+    media?.file_id
+  )
+}
+
+function getInboundMediaLimitBytes(messageType = '') {
+  const type = cleanString(messageType).toLowerCase()
+  if (type === 'audio' || type === 'voice') return MAX_WHATSAPP_AUDIO_BYTES
+  if (type === 'image' || type === 'sticker') return MAX_WHATSAPP_IMAGE_INPUT_BYTES
+  if (type === 'document') return MAX_WHATSAPP_DOCUMENT_BYTES
+  if (type === 'video') return Number(process.env.WHATSAPP_INBOUND_VIDEO_MAX_BYTES || 64 * 1024 * 1024)
+  return MAX_WHATSAPP_DOCUMENT_BYTES
+}
+
+function getInboundMediaExtension({ messageType = '', mimeType = '', filename = '' } = {}) {
+  const cleanMime = cleanMimeType(mimeType)
+  const currentExtension = cleanString(filename).toLowerCase().split('.').pop()
+  if (/^[a-z0-9]{2,8}$/.test(currentExtension)) return currentExtension
+
+  const type = cleanString(messageType).toLowerCase()
+  if (type === 'audio' || type === 'voice') return AUDIO_EXTENSION_BY_MIME[cleanMime] || 'ogg'
+  if (type === 'image' || type === 'sticker') return IMAGE_EXTENSION_BY_MIME[cleanMime] || 'jpg'
+  if (type === 'document') return DOCUMENT_EXTENSION_BY_MIME[cleanMime] || 'bin'
+  if (type === 'video') {
+    if (cleanMime === 'video/mp4') return 'mp4'
+    if (cleanMime === 'video/quicktime') return 'mov'
+    if (cleanMime === 'video/webm') return 'webm'
+    return 'mp4'
+  }
+  return DOCUMENT_EXTENSION_BY_MIME[cleanMime] || 'bin'
+}
+
+function buildInboundMediaFilename({ mediaId = '', messageType = '', mimeType = '', filename = '' } = {}) {
+  const provided = cleanString(filename).split(/[\\/]/).pop()
+  if (provided && /\.[a-z0-9]{2,8}$/i.test(provided)) return provided.slice(0, 180)
+
+  const type = cleanString(messageType).toLowerCase() || 'media'
+  const extension = getInboundMediaExtension({ messageType: type, mimeType, filename })
+  const suffix = cleanString(mediaId).slice(-10) || Date.now()
+  return `whatsapp-${type}-${suffix}.${extension}`
+}
+
+async function downloadMetaDirectInboundMedia({ mediaId, token, phoneNumberId = '', messageType = '', mimeType = '', filename = '' } = {}) {
+  const cleanMediaId = cleanString(mediaId)
+  if (!cleanMediaId) return null
+  const cleanMessageType = cleanString(messageType).toLowerCase()
+  const maxBytes = getInboundMediaLimitBytes(cleanMessageType)
+
+  const mediaInfo = await metaDirectGraphRequest(`/${encodeURIComponent(cleanMediaId)}`, {
+    token,
+    query: {
+      fields: 'url,mime_type,file_size',
+      ...(phoneNumberId ? { phone_number_id: phoneNumberId } : {})
+    }
+  })
+  const mediaUrl = cleanString(mediaInfo.url)
+  if (!mediaUrl) throw new Error('Meta no devolvió URL para el archivo recibido')
+
+  const declaredSize = Number(mediaInfo.file_size || 0)
+  if (declaredSize > maxBytes) {
+    throw new Error('El archivo recibido excede el tamaño máximo permitido')
+  }
+
+  const response = await nodeFetch(mediaUrl, {
+    headers: { Authorization: `Bearer ${cleanString(token)}` }
+  })
+  if (!response.ok) {
+    throw new Error(`Meta no permitió descargar el archivo recibido (${response.status})`)
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer())
+  if (!buffer.length) throw new Error('Meta devolvió un archivo vacío')
+  if (buffer.length > maxBytes) throw new Error('El archivo recibido excede el tamaño máximo permitido')
+
+  const responseMimeType = cleanString(response.headers.get('content-type')).split(';')[0]
+  const fallbackMimeType = cleanMessageType === 'audio' || cleanMessageType === 'voice'
+    ? 'audio/ogg'
+    : cleanMessageType === 'image' || cleanMessageType === 'sticker'
+      ? 'image/jpeg'
+      : cleanMessageType === 'video'
+        ? 'video/mp4'
+        : 'application/octet-stream'
+  const finalMimeType = cleanMimeType(mediaInfo.mime_type || responseMimeType || mimeType || fallbackMimeType)
+  const finalFilename = buildInboundMediaFilename({
+    mediaId: cleanMediaId,
+    messageType: cleanMessageType,
+    mimeType: finalMimeType,
+    filename
+  })
+  const { uploadMediaAsset } = await import('./mediaStorageService.js')
+  const asset = await uploadMediaAsset({
+    buffer,
+    mimeType: finalMimeType,
+    filename: finalFilename,
+    module: 'chat',
+    isPublic: true,
+    skipCompression: true,
+    metadata: {
+      source: 'meta_direct_inbound_media',
+      whatsappMediaId: cleanMediaId,
+      whatsappMessageType: cleanMessageType,
+      phoneNumberId: cleanString(phoneNumberId)
+    }
+  })
+
+  return {
+    mediaUrl: asset.publicUrl,
+    mediaMimeType: asset.mimeType || finalMimeType,
+    mediaFilename: asset.originalFilename || asset.storedFilename || finalFilename,
+    mediaAssetId: asset.id
+  }
+}
+
+async function hydrateInboundMessageMedia(normalizedMessage = {}, media = {}, { businessPhoneNumberId = '' } = {}) {
+  if (media.mediaUrl) return media
+  const messageType = cleanString(normalizedMessage.type).toLowerCase()
+  if (!['audio', 'voice', 'image', 'video', 'document', 'sticker'].includes(messageType)) return media
+  if (cleanString(normalizedMessage.provider) !== META_DIRECT_PROVIDER_NAME) return media
+
+  const mediaId = getMessageMediaId(normalizedMessage)
+  if (!mediaId) return media
+
+  try {
+    const config = await loadMetaDirectConfig({ includeSecrets: true })
+    const downloaded = await downloadMetaDirectInboundMedia({
+      mediaId,
+      token: config.systemUserToken,
+      phoneNumberId: cleanString(normalizedMessage.phoneNumberId || businessPhoneNumberId || config.phoneNumberId),
+      messageType,
+      mimeType: media.mediaMimeType,
+      filename: media.mediaFilename
+    })
+    if (!downloaded?.mediaUrl) return media
+
+    const mediaKey = messageType === 'voice' ? 'audio' : messageType
+    const currentMedia = isPlainObject(normalizedMessage[mediaKey]) ? normalizedMessage[mediaKey] : {}
+    normalizedMessage[mediaKey] = {
+      ...currentMedia,
+      id: mediaId,
+      link: downloaded.mediaUrl,
+      url: downloaded.mediaUrl,
+      publicUrl: downloaded.mediaUrl,
+      mimeType: downloaded.mediaMimeType,
+      filename: downloaded.mediaFilename,
+      mediaAssetId: downloaded.mediaAssetId
+    }
+
+    return {
+      ...media,
+      mediaUrl: downloaded.mediaUrl,
+      mediaMimeType: media.mediaMimeType || downloaded.mediaMimeType,
+      mediaFilename: media.mediaFilename || downloaded.mediaFilename
+    }
+  } catch (error) {
+    logger.warn(`[Meta directo] No se pudo preparar media entrante ${mediaId}: ${error.message}`)
+    return media
   }
 }
 
@@ -3303,6 +3580,18 @@ function normalizePhoneSet(values = []) {
       .map(value => normalizePhoneForStorage(value) || cleanString(value))
       .filter(Boolean)
   )
+}
+
+function normalizePhoneComparable(value) {
+  return normalizePhoneForStorage(value) || cleanString(value)
+}
+
+function phoneMatches(left, right) {
+  const leftPhone = normalizePhoneComparable(left)
+  const rightPhone = normalizePhoneComparable(right)
+  if (!leftPhone || !rightPhone) return false
+  const rightCandidates = new Set(buildPhoneMatchCandidates(rightPhone))
+  return buildPhoneMatchCandidates(leftPhone).some(candidate => rightCandidates.has(candidate))
 }
 
 function inferMessageDirection({ payload = {}, direction = '', message = {}, businessPhoneHints = [] }) {
@@ -3879,7 +4168,12 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const errorCode = cleanString(error?.code || normalizedMessage.errorCode)
   const errorMessage = cleanString(error?.message || error?.title || normalizedMessage.errorMessage)
   const messageType = cleanString(normalizedMessage.type) || 'unknown'
-  const media = extractMessageMedia(normalizedMessage)
+  const buttonReply = extractButtonReply(normalizedMessage)
+  const media = await hydrateInboundMessageMedia(
+    normalizedMessage,
+    extractMessageMedia(normalizedMessage),
+    { businessPhoneNumberId }
+  )
   const businessEcho = identity.direction === 'business_echo' || normalizedMessage.businessEcho === true || normalizedMessage.business_echo === true
   const relayEventId = cleanString(payload.relayEventId || payload.relay_event_id)
 
@@ -4076,6 +4370,18 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     ])
   }
 
+  publishChatMessageEvent({
+    contactId: localContact.id,
+    messageId,
+    channel: 'whatsapp',
+    provider,
+    transport: cleanTransport,
+    direction: identity.direction,
+    messageType,
+    messageTimestamp,
+    isNew: !existingMessage
+  })
+
   return {
     messageId,
     contactId: localContact.id,
@@ -4093,6 +4399,10 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     profileName,
     messageText,
     messageType,
+    buttonId: buttonReply?.id || '',
+    buttonPayload: buttonReply?.payload || '',
+    buttonTitle: buttonReply?.title || '',
+    buttonReplyType: buttonReply?.type || '',
     isNew: !existingMessage,
     messageTimestamp
   }
@@ -4243,10 +4553,133 @@ function directionFromCandidatePath(path = [], payload = {}) {
 
   if (pathText.includes('inbound')) return 'inbound'
   if (pathText.includes('outbound')) return 'outbound'
+  if (HISTORY_MESSAGE_EVENT_TYPES.has(type)) return ''
   if (pathText.includes('whatsappmessage') || pathText.includes('whatsapp_message')) return 'outbound'
   if (INBOUND_MESSAGE_EVENT_TYPES.has(type)) return 'inbound'
   if (OUTBOUND_MESSAGE_EVENT_TYPES.has(type)) return 'outbound'
   return ''
+}
+
+function isHistoryPayload(payload = {}) {
+  return HISTORY_MESSAGE_EVENT_TYPES.has(cleanString(payload?.type)) ||
+    cleanString(payload?.event).toLowerCase() === 'history'
+}
+
+function pickFirstPhone(values = []) {
+  for (const value of values) {
+    const phone = normalizePhoneComparable(value)
+    if (phone) return phone
+  }
+  return ''
+}
+
+function getHistoryBusinessPhoneFromObject(value = {}) {
+  if (!isPlainObject(value)) return ''
+  const metadata = isPlainObject(value.metadata) ? value.metadata : {}
+  const valueMetadata = isPlainObject(value.value?.metadata) ? value.value.metadata : {}
+  const dataMetadata = isPlainObject(value.data?.metadata) ? value.data.metadata : {}
+
+  return pickFirstPhone([
+    metadata.display_phone_number,
+    metadata.displayPhoneNumber,
+    metadata.business_phone_number,
+    metadata.businessPhoneNumber,
+    valueMetadata.display_phone_number,
+    valueMetadata.displayPhoneNumber,
+    dataMetadata.display_phone_number,
+    dataMetadata.displayPhoneNumber,
+    value.businessPhone,
+    value.business_phone,
+    value.businessPhoneNumber,
+    value.business_phone_number,
+    value.senderPhoneNumber,
+    value.sender_phone_number
+  ])
+}
+
+function getHistoryCustomerPhoneFromObject(value = {}) {
+  if (!isPlainObject(value)) return ''
+  if (Array.isArray(value.messages) || Array.isArray(value.whatsappMessages)) {
+    return pickFirstPhone([
+      value.customerPhone,
+      value.customer_phone,
+      value.customer,
+      value.phone,
+      value.waId,
+      value.wa_id,
+      value.id
+    ])
+  }
+
+  return pickFirstPhone([
+    value.customerPhone,
+    value.customer_phone,
+    value.customer,
+    value.contactPhone,
+    value.contact_phone
+  ])
+}
+
+function mergeHistoryContext(context = {}, value = {}) {
+  const businessPhone = getHistoryBusinessPhoneFromObject(value)
+  const customerPhone = getHistoryCustomerPhoneFromObject(value)
+
+  return {
+    businessPhone: businessPhone || context.businessPhone || '',
+    customerPhone: customerPhone || context.customerPhone || ''
+  }
+}
+
+function withHistoryMessageContext(message = {}, context = {}, payload = {}) {
+  if (!isHistoryPayload(payload) || !isPlainObject(message)) return message
+
+  const businessPhone = normalizePhoneComparable(
+    message.businessPhone ||
+    message.business_phone ||
+    message.businessPhoneNumber ||
+    message.business_phone_number ||
+    context.businessPhone
+  )
+  const customerPhone = normalizePhoneComparable(
+    message.customerPhone ||
+    message.customer_phone ||
+    message.customer ||
+    message.phone ||
+    context.customerPhone
+  )
+
+  if (!businessPhone && !customerPhone) return message
+
+  const next = { ...message }
+  if (businessPhone && !pickFirstPhone([next.businessPhone, next.business_phone, next.businessPhoneNumber, next.business_phone_number])) {
+    next.businessPhone = businessPhone
+  }
+  if (customerPhone && !pickFirstPhone([next.customerPhone, next.customer_phone, next.customer, next.phone])) {
+    next.customerPhone = customerPhone
+  }
+
+  const fromPhone = normalizePhoneComparable(next.from || next.fromPhone || next.from_phone || next.sender || next.senderPhone)
+  const toPhone = normalizePhoneComparable(next.to || next.toPhone || next.to_phone || next.recipient || next.recipientPhone)
+  const hasExplicitDirection = normalizeDirectionValue(next.direction || next.messageDirection || next.message_direction)
+
+  if (businessPhone && customerPhone) {
+    const fromIsBusiness = phoneMatches(fromPhone, businessPhone)
+    const fromIsCustomer = phoneMatches(fromPhone, customerPhone)
+    const toIsBusiness = phoneMatches(toPhone, businessPhone)
+    const toIsCustomer = phoneMatches(toPhone, customerPhone)
+
+    if (fromIsBusiness || toIsCustomer) {
+      if (!hasExplicitDirection) next.direction = 'outbound'
+      if (!toPhone) next.to = customerPhone
+      if (!fromPhone) next.from = businessPhone
+    } else if (fromIsCustomer || toIsBusiness) {
+      if (!hasExplicitDirection) next.direction = 'inbound'
+      if (!fromPhone) next.from = customerPhone
+      if (!toPhone) next.to = businessPhone
+    }
+  }
+
+  return next
 }
 
 function looksLikeWhatsAppMessage(value = {}) {
@@ -4260,7 +4693,9 @@ function looksLikeWhatsAppMessage(value = {}) {
     value.toPhone ||
     value.sender ||
     value.recipient ||
-    value.customer
+    value.customer ||
+    value.customerPhone ||
+    value.customer_phone
   ))
   const hasContent = Boolean(
     value.text ||
@@ -4310,24 +4745,29 @@ function candidateKey(candidate = {}) {
   ].join('|')
 }
 
-function collectWhatsAppMessageCandidates(value, { payload, path = [], candidates = [], seen = new WeakSet() } = {}) {
+function collectWhatsAppMessageCandidates(value, { payload, path = [], candidates = [], seen = new WeakSet(), historyContext = {} } = {}) {
   if (!value || typeof value !== 'object') return candidates
   if (seen.has(value)) return candidates
   seen.add(value)
+
+  const nextHistoryContext = isHistoryPayload(payload)
+    ? mergeHistoryContext(historyContext, value)
+    : historyContext
 
   if (Array.isArray(value)) {
     value.forEach((item, index) => collectWhatsAppMessageCandidates(item, {
       payload,
       path: [...path, String(index)],
       candidates,
-      seen
+      seen,
+      historyContext: nextHistoryContext
     }))
     return candidates
   }
 
   if (looksLikeWhatsAppMessage(value) && !isMetadataPath(path)) {
     candidates.push({
-      message: value,
+      message: withHistoryMessageContext(value, nextHistoryContext, payload),
       direction: directionFromCandidatePath(path, payload),
       path: path.join('.')
     })
@@ -4339,7 +4779,8 @@ function collectWhatsAppMessageCandidates(value, { payload, path = [], candidate
       payload,
       path: [...path, key],
       candidates,
-      seen
+      seen,
+      historyContext: nextHistoryContext
     })
   }
 
@@ -4389,6 +4830,11 @@ async function getKnownBusinessPhoneHints(config = {}) {
 }
 
 async function processWhatsAppMessageEventPayload({ payload = {}, businessPhoneHints = [] } = {}) {
+  const payloadBusinessPhone = getHistoryBusinessPhoneFromObject(payload)
+  const effectiveBusinessPhoneHints = [
+    ...businessPhoneHints,
+    payloadBusinessPhone
+  ].filter(Boolean)
   const candidates = extractWhatsAppMessageCandidates(payload)
   const results = []
 
@@ -4397,7 +4843,7 @@ async function processWhatsAppMessageEventPayload({ payload = {}, businessPhoneH
       payload,
       message: candidate.message,
       direction: candidate.direction,
-      businessPhoneHints
+      businessPhoneHints: effectiveBusinessPhoneHints
     }))
   }
 
@@ -4599,9 +5045,15 @@ async function syncYCloudMessagesFromApi(apiKey, { businessPhoneHints = [], waba
   return summary
 }
 
-async function backfillStoredWhatsAppApiMessageEvents({ businessPhoneHints = [], limit = 0 } = {}) {
-  const eventTypes = [...MESSAGE_EVENT_TYPES]
-  const placeholders = eventTypes.map(() => '?').join(', ')
+async function backfillStoredWhatsAppApiMessageEvents({ businessPhoneHints = [], limit = 0, eventTypes = [...MESSAGE_EVENT_TYPES] } = {}) {
+  const cleanEventTypes = [...new Set((Array.isArray(eventTypes) ? eventTypes : [])
+    .map(cleanString)
+    .filter(Boolean))]
+  if (!cleanEventTypes.length) {
+    return { events: 0, messages: 0 }
+  }
+
+  const placeholders = cleanEventTypes.map(() => '?').join(', ')
   const cleanLimit = Math.max(Number(limit) || 0, 0)
   const rows = await db.all(`
     SELECT id, event_type, raw_payload_json
@@ -4609,7 +5061,7 @@ async function backfillStoredWhatsAppApiMessageEvents({ businessPhoneHints = [],
     WHERE event_type IN (${placeholders})
     ORDER BY COALESCE(ycloud_create_time, created_at) ASC, id ASC
     ${cleanLimit ? 'LIMIT ?' : ''}
-  `, cleanLimit ? [...eventTypes, cleanLimit] : eventTypes)
+  `, cleanLimit ? [...cleanEventTypes, cleanLimit] : cleanEventTypes)
 
   let savedMessages = 0
   for (const row of rows) {
@@ -4628,6 +5080,63 @@ async function backfillStoredWhatsAppApiMessageEvents({ businessPhoneHints = [],
   }
 
   return { events: rows.length, messages: savedMessages }
+}
+
+export async function repairStoredYCloudHistoryMessageDirections({ force = false, limit = 0 } = {}) {
+  if (!force) {
+    const currentVersion = await getAppConfig(HISTORY_DIRECTION_REPAIR_CONFIG_KEY).catch(() => '')
+    if (currentVersion === HISTORY_DIRECTION_REPAIR_VERSION) {
+      return { skipped: true, reason: 'already_repaired', events: 0, messages: 0, outboundMessages: 0 }
+    }
+  }
+
+  const config = await loadConfig({ includeSecrets: true }).catch(error => {
+    logger.warn(`No se pudo cargar configuración WhatsApp API para reparación de historial: ${error.message}`)
+    return {}
+  })
+  const businessPhoneHints = await getKnownBusinessPhoneHints(config).catch(error => {
+    logger.warn(`No se pudieron cargar números WhatsApp API para reparación de historial: ${error.message}`)
+    return []
+  })
+
+  const result = await backfillStoredWhatsAppApiMessageEvents({
+    businessPhoneHints,
+    limit,
+    eventTypes: [...HISTORY_MESSAGE_EVENT_TYPES]
+  })
+
+  let outboundSync = null
+  if (config.apiKey) {
+    const wabaIds = [config.wabaId].filter(Boolean)
+    outboundSync = await syncYCloudMessagesFromApi(config.apiKey, {
+      businessPhoneHints,
+      wabaIds
+    }).catch(error => {
+      logger.warn(`No se pudo corregir historial saliente desde YCloud durante reparación: ${error.message}`)
+      return { messages: 0, created: 0, updated: 0, failed: 0 }
+    })
+  }
+
+  await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
+    logger.warn(`No se pudo reparar identidad tras recalcular historial WhatsApp API: ${error.message}`)
+  })
+  await setAppConfig(HISTORY_DIRECTION_REPAIR_CONFIG_KEY, HISTORY_DIRECTION_REPAIR_VERSION)
+
+  if (result.events) {
+    logger.info(`WhatsApp API recalculo dirección de historial guardado: ${result.messages} mensajes en ${result.events} eventos.`)
+  }
+  if (outboundSync?.messages) {
+    logger.info(`WhatsApp API recalculo historial saliente desde YCloud: ${outboundSync.messages} mensajes (${outboundSync.updated} actualizados, ${outboundSync.created} nuevos).`)
+  }
+
+  return {
+    skipped: false,
+    ...result,
+    outboundMessages: outboundSync?.messages || 0,
+    outboundCreated: outboundSync?.created || 0,
+    outboundUpdated: outboundSync?.updated || 0,
+    outboundFailed: outboundSync?.failed || 0
+  }
 }
 
 function parseSignatureHeader(signatureHeader = '') {
@@ -4771,6 +5280,11 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
           phone: result.phone,
           contactName: result.contactName,
           text: result.messageText,
+          messageType: result.messageType,
+          buttonId: result.buttonId,
+          buttonPayload: result.buttonPayload,
+          buttonTitle: result.buttonTitle,
+          buttonReplyType: result.buttonReplyType,
           channel: 'whatsapp',
           businessPhoneNumberId: result.businessPhoneNumberId || null
         }))
@@ -4999,10 +5513,7 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
 }
 
 export async function disconnectMetaDirectConnection() {
-  await deleteAppConfig([
-    CONFIG_KEYS.metaSystemUserToken,
-    CONFIG_KEYS.metaLastError
-  ])
+  await clearWhatsAppMetaDirectIntegrationCredentials()
   await setAppConfig(CONFIG_KEYS.metaStatus, 'disconnected')
   await setAppConfig(CONFIG_KEYS.metaDisconnectedAt, nowIso())
 
@@ -5037,7 +5548,7 @@ async function metaDirectGraphRequest(path, { method = 'GET', token, query, body
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value))
   }
 
-  const response = await fetch(url.toString(), {
+  const response = await nodeFetch(url.toString(), {
     method,
     headers: {
       Authorization: `Bearer ${cleanToken}`,
@@ -5319,6 +5830,11 @@ export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = ''
           phone: result.phone,
           contactName: result.contactName,
           text: result.messageText,
+          messageType: result.messageType,
+          buttonId: result.buttonId,
+          buttonPayload: result.buttonPayload,
+          buttonTitle: result.buttonTitle,
+          buttonReplyType: result.buttonReplyType,
           channel: 'whatsapp',
           businessPhoneNumberId: result.businessPhoneNumberId || null
         }))
@@ -5414,6 +5930,122 @@ async function sendTemplateViaMetaDirect({ to, template, components, externalId 
         language: { code: template.language },
         ...(Array.isArray(components) && components.length ? { components } : {})
       },
+      ...(externalId ? { biz_opaque_callback_data: externalId } : {})
+    }
+  })
+}
+
+function normalizeInteractiveReplyButtons(buttons = []) {
+  if (!Array.isArray(buttons)) return []
+  const normalized = buttons
+    .map((button, index) => {
+      const title = cleanString(button?.title || button?.label || button?.text)
+      const id = cleanString(button?.id || button?.payload || `btn_${index}_${slugForButtonPayload(title)}`)
+      return {
+        id: id.slice(0, WHATSAPP_INTERACTIVE_REPLY_BUTTON_ID_MAX),
+        title
+      }
+    })
+    .filter(button => button.title)
+
+  if (normalized.length > WHATSAPP_INTERACTIVE_REPLY_BUTTON_LIMIT) {
+    throw new Error(`WhatsApp permite máximo ${WHATSAPP_INTERACTIVE_REPLY_BUTTON_LIMIT} botones por mensaje`)
+  }
+
+  const ids = new Set()
+  normalized.forEach((button) => {
+    if (button.title.length > WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX) {
+      throw new Error(`El botón "${button.title}" supera ${WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX} caracteres`)
+    }
+    if (!button.id) throw new Error(`El botón "${button.title}" necesita un identificador`)
+    if (ids.has(button.id)) throw new Error(`Hay botones repetidos con el identificador "${button.id}"`)
+    ids.add(button.id)
+  })
+
+  return normalized
+}
+
+function normalizeInteractiveUrlButton(value = null) {
+  if (!value || typeof value !== 'object') return null
+  const title = cleanString(value.title || value.label || value.text || value.displayText)
+  const url = cleanString(value.url)
+  if (!title && !url) return null
+  if (!title) throw new Error('El botón de URL necesita texto')
+  if (!url) throw new Error('El botón de URL necesita URL')
+  if (title.length > WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX) {
+    throw new Error(`El botón "${title}" supera ${WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX} caracteres`)
+  }
+  if (!/^https?:\/\//i.test(url)) throw new Error('El botón de URL debe empezar con http:// o https://')
+  return { title, url }
+}
+
+function buildInteractiveMessagePayload({ body, buttons, urlButton } = {}) {
+  const bodyText = cleanString(body)
+  if (!bodyText) throw new Error('Falta el texto del mensaje')
+
+  const replyButtons = normalizeInteractiveReplyButtons(buttons)
+  const ctaButton = normalizeInteractiveUrlButton(urlButton)
+  if (replyButtons.length && ctaButton) {
+    throw new Error('WhatsApp no permite mezclar botones de respuesta y botón de URL en el mismo mensaje')
+  }
+  if (!replyButtons.length && !ctaButton) {
+    throw new Error('Agrega al menos un botón')
+  }
+
+  if (ctaButton) {
+    return {
+      interactive: {
+        type: 'cta_url',
+        body: { text: bodyText },
+        action: {
+          name: 'cta_url',
+          parameters: {
+            display_text: ctaButton.title,
+            url: ctaButton.url
+          }
+        }
+      },
+      fallbackText: `${bodyText}\n\n${ctaButton.title}: ${ctaButton.url}`,
+      buttons: [],
+      urlButton: ctaButton
+    }
+  }
+
+  return {
+    interactive: {
+      type: 'button',
+      body: { text: bodyText },
+      action: {
+        buttons: replyButtons.map((button) => ({
+          type: 'reply',
+          reply: {
+            id: button.id,
+            title: button.title
+          }
+        }))
+      }
+    },
+    fallbackText: `${bodyText}\n\n${replyButtons.map((button) => `- ${button.title}`).join('\n')}`,
+    buttons: replyButtons,
+    urlButton: null
+  }
+}
+
+async function sendInteractiveViaMetaDirect({ to, interactive, externalId } = {}) {
+  const config = await loadMetaDirectConfig({ includeSecrets: true })
+  if (!config.connected) throw new Error('Meta directo no está conectado')
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  if (!toPhone) throw new Error('Falta el número destino')
+  if (!interactive) throw new Error('Falta el mensaje interactivo')
+
+  return metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
+    method: 'POST',
+    token: config.systemUserToken,
+    body: {
+      messaging_product: 'whatsapp',
+      to: toPhone,
+      type: 'interactive',
+      interactive,
       ...(externalId ? { biz_opaque_callback_data: externalId } : {})
     }
   })
@@ -5549,6 +6181,49 @@ function buildTemplateComponents({ components, variables } = {}) {
   }]
 }
 
+function slugForButtonPayload(value = '') {
+  return cleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function templateButtonPayload({ template, button, index }) {
+  const name = slugForButtonPayload(template?.name) || 'template'
+  const language = slugForButtonPayload(template?.language) || 'lang'
+  const label = slugForButtonPayload(button?.text || button?.label || button?.title) || `button_${index}`
+  return `template:${name}:${language}:button:${index}:${label}`.slice(0, WHATSAPP_INTERACTIVE_REPLY_BUTTON_ID_MAX)
+}
+
+function templateQuickReplyButtonComponents(template = {}, components = []) {
+  const existingComponents = Array.isArray(components) ? components : []
+  if (existingComponents.some(component => cleanString(component?.type).toLowerCase() === 'button')) {
+    return existingComponents
+  }
+
+  const sourceComponents = parseJsonValue(template?.components_json, [])
+  const buttonsComponent = (Array.isArray(sourceComponents) ? sourceComponents : []).find(component =>
+    cleanString(component?.type).toUpperCase() === 'BUTTONS'
+  )
+  const buttons = Array.isArray(buttonsComponent?.buttons) ? buttonsComponent.buttons : []
+  const quickReplies = buttons
+    .map((button, index) => ({ button, index }))
+    .filter(({ button }) => cleanString(button?.type).toUpperCase() === 'QUICK_REPLY')
+    .map(({ button, index }) => ({
+      type: 'button',
+      sub_type: 'quick_reply',
+      index: String(index),
+      parameters: [{
+        type: 'payload',
+        payload: templateButtonPayload({ template, button, index })
+      }]
+    }))
+
+  return quickReplies.length ? [...existingComponents, ...quickReplies] : existingComponents
+}
+
 async function findTemplateForSend({ templateId, templateName, language }) {
   if (templateId) {
     return db.get(`
@@ -5600,6 +6275,16 @@ function buildTemplateTextForQrFallback({ template, components, variables } = {}
     const params = getComponentParameters(requestComponents, type)
     const values = params.length ? params : type === 'body' ? normalizedVariables : []
     textParts.push(renderTemplateText(sourceText, values))
+  }
+
+  const buttonsComponent = (Array.isArray(sourceComponents) ? sourceComponents : []).find(component =>
+    cleanString(component?.type).toUpperCase() === 'BUTTONS'
+  )
+  const buttonLabels = (Array.isArray(buttonsComponent?.buttons) ? buttonsComponent.buttons : [])
+    .map(button => cleanString(button?.text || button?.label || button?.title))
+    .filter(Boolean)
+  if (buttonLabels.length) {
+    textParts.push(buttonLabels.map(label => `- ${label}`).join('\n'))
   }
 
   return textParts.map(cleanString).filter(Boolean).join('\n\n')
@@ -5700,7 +6385,10 @@ export async function sendWhatsAppApiTemplateMessage({
     publicBaseUrl,
     extraVariables
   })
-  const templateComponents = buildTemplateComponents({ components, variables: renderedVariables })
+  const templateComponents = templateQuickReplyButtonComponents(
+    finalTemplate,
+    buildTemplateComponents({ components, variables: renderedVariables })
+  )
 
   if (config.provider === META_DIRECT_PROVIDER_NAME) {
     return sendTemplateViaMetaDirect({
@@ -5832,6 +6520,144 @@ export async function sendWhatsAppApiTemplateMessage({
       to: response.to || toPhone,
       type: response.type || 'template',
       template: response.template || requestBody.template,
+      transport: 'api',
+      createTime: response.createTime || nowIso()
+    },
+    direction: 'outbound',
+    transport: 'api',
+    contactId
+  })
+
+  return response
+}
+
+export async function sendWhatsAppApiInteractiveMessage({
+  to,
+  from,
+  body,
+  text,
+  buttons,
+  urlButton,
+  externalId,
+  transport = 'api',
+  contactId,
+  userId,
+  publicBaseUrl,
+  extraVariables,
+  phoneNumberId
+} = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const renderedBody = await renderTemplateVariables(body || text, {
+    contactId,
+    phone: toPhone || to,
+    userId,
+    publicBaseUrl,
+    extraVariables
+  })
+  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  const interactivePayload = buildInteractiveMessagePayload({
+    body: renderedBody,
+    buttons,
+    urlButton
+  })
+
+  if (!toPhone) throw new Error('Falta el número destino')
+
+  if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
+    return sendInteractiveViaMetaDirect({
+      to: toPhone,
+      interactive: interactivePayload.interactive,
+      externalId
+    })
+  }
+
+  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
+    throw new Error('WhatsApp_API no está conectado')
+  }
+
+  if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
+
+  if (cleanTransport === 'qr') {
+    return sendTextViaQrFallback({
+      phoneNumberId,
+      fromPhone,
+      toPhone,
+      body: interactivePayload.fallbackText,
+      externalId,
+      contactId
+    })
+  }
+
+  const fallbackDecision = await getOfficialApiFallbackDecision({
+    config,
+    fromPhone,
+    phoneNumberId
+  })
+  if (fallbackDecision.shouldFallback) {
+    return sendTextViaQrFallback({
+      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      fromPhone,
+      toPhone,
+      body: interactivePayload.fallbackText,
+      externalId,
+      contactId,
+      fallbackReason: fallbackDecision.reason
+    })
+  }
+
+  const requestBody = {
+    from: fromPhone,
+    to: toPhone,
+    type: 'interactive',
+    interactive: interactivePayload.interactive,
+    ...(externalId ? { externalId } : {})
+  }
+
+  let response
+  try {
+    response = await ycloudRequest('/whatsapp/messages', {
+      apiKey: config.apiKey,
+      method: 'POST',
+      body: requestBody
+    })
+  } catch (error) {
+    const retryDecision = await getOfficialApiFallbackDecision({
+      config,
+      fromPhone,
+      phoneNumberId,
+      error
+    })
+    if (retryDecision.shouldFallback) {
+      logger.warn(`[WhatsApp API] Envio interactivo API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
+      return sendTextViaQrFallback({
+        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        fromPhone,
+        toPhone,
+        body: interactivePayload.fallbackText,
+        externalId,
+        contactId,
+        fallbackReason: retryDecision.reason,
+        originalError: error
+      })
+    }
+    throw error
+  }
+
+  await upsertMessage({
+    payload: {
+      id: response.id || externalId || hashId('waapi_interactive_send_event', `${fromPhone}|${toPhone}|${safeJson(interactivePayload.interactive)}`),
+      type: 'whatsapp.message.updated',
+      createTime: nowIso(),
+      whatsappMessage: response
+    },
+    message: {
+      ...response,
+      from: response.from || fromPhone,
+      to: response.to || toPhone,
+      type: response.type || 'interactive',
+      interactive: response.interactive || interactivePayload.interactive,
       transport: 'api',
       createTime: response.createTime || nowIso()
     },

@@ -50,7 +50,7 @@ interface WaitMode {
 }
 
 const WAIT_MODES: WaitMode[] = [
-  { id: 'duration', title: 'Un periodo de tiempo establecido', example: 'Ejemplo: 2 días, 6 horas, 30 minutos', icon: Clock },
+  { id: 'duration', title: 'Un periodo de tiempo establecido', example: 'Ejemplo: 10 segundos, 30 minutos, 6 horas', icon: Clock },
   { id: 'datetime', title: 'Una fecha y hora específicas', example: 'Ej: 4 de diciembre a las 9:00 AM', icon: CalendarDays },
   { id: 'appointment', title: 'Una cita o reserva próxima', example: 'Ej.: 1 hora antes de la cita programada', icon: CalendarClock },
   { id: 'reply', title: 'El contacto al que responder', example: 'Espera una respuesta por WhatsApp, Messenger o Instagram', icon: MessageCircleReply },
@@ -432,12 +432,26 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
           <div className={styles.configRow}>
             <div className={styles.configRowGrow}>
               <Field label="Desde">
-                <TextInput type="time" value={str(config.windowStart) || '09:00'} onChange={(event) => set({ windowStart: event.target.value })} />
+                <TextInput
+                  type="time"
+                  value={str(config.windowStart)}
+                  onChange={(event) => set({ windowStart: event.target.value })}
+                  onBlur={(event) => {
+                    if (!event.currentTarget.value) set({ windowStart: '09:00' })
+                  }}
+                />
               </Field>
             </div>
             <div className={styles.configRowGrow}>
               <Field label="Hasta">
-                <TextInput type="time" value={str(config.windowEnd) || '18:00'} onChange={(event) => set({ windowEnd: event.target.value })} />
+                <TextInput
+                  type="time"
+                  value={str(config.windowEnd)}
+                  onChange={(event) => set({ windowEnd: event.target.value })}
+                  onBlur={(event) => {
+                    if (!event.currentTarget.value) set({ windowEnd: '18:00' })
+                  }}
+                />
               </Field>
             </div>
           </div>

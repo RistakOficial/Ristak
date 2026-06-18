@@ -110,7 +110,7 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 500;
   text-align: left;
 }
 
@@ -141,7 +141,7 @@
   color: var(--color-text-tertiary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  font-weight: 750;
+  font-weight: 500;
   min-width: 16px;
   text-align: right;
 }
@@ -310,12 +310,12 @@
   position: absolute;
   right: 0;
   bottom: calc(100% + 4px);
-  z-index: 20;
+  z-index: var(--z-index-popover);
   min-width: 168px;
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 8px;
-  background: var(--color-background-primary);
+  background: var(--surface-solid, var(--surface));
   box-shadow: 0 18px 42px -28px rgba(15, 23, 42, 0.7);
 }
 
@@ -371,15 +371,25 @@
   width: min(460px, 100%);
   min-height: 40px;
   padding: 0 12px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 8px;
-  background: var(--color-background-primary);
-  color: var(--color-text-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-mute);
+}
+
+.searchBox:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .searchBox input {
   min-height: 38px;
   padding: 0;
+  color: var(--text);
+}
+
+.searchBox input::placeholder {
+  color: var(--text-mute);
 }
 
 .searchBox svg {
@@ -414,7 +424,7 @@
 .filterControl span {
   color: var(--color-text-secondary);
   font-size: 12px;
-  font-weight: 720;
+  font-weight: 500;
 }
 
 .filterControl select,
@@ -457,7 +467,7 @@
   padding: 0 12px;
   font: inherit;
   font-size: 13px;
-  font-weight: 720;
+  font-weight: 620;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -482,7 +492,7 @@
 .bulkBar strong {
   color: var(--color-text-primary);
   font-size: 13px;
-  font-weight: 760;
+  font-weight: 660;
   white-space: nowrap;
 }
 
@@ -492,7 +502,7 @@
   background: transparent;
   font: inherit;
   font-size: 13px;
-  font-weight: 720;
+  font-weight: 620;
   cursor: pointer;
 }
 
@@ -504,7 +514,7 @@
   min-width: 0;
   color: var(--color-text-secondary);
   font-size: 12px;
-  font-weight: 720;
+  font-weight: 500;
 }
 
 .bulkBar select {
@@ -644,13 +654,13 @@
 .collectionNameButton strong {
   color: var(--color-text-primary);
   font-size: 14px;
-  font-weight: 760;
+  font-weight: 660;
 }
 
 .collectionNameButton small {
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 550;
 }
 
 .collectionTableActions {
@@ -770,7 +780,7 @@
 .field span {
   color: var(--color-text-secondary);
   font-size: 0.82rem;
-  font-weight: 850;
+  font-weight: 500;
 }
 
 .inlineActions {
@@ -825,7 +835,7 @@
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: 0.84rem;
-  font-weight: 750;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -880,7 +890,7 @@
   gap: 10px;
   width: max-content;
   color: var(--color-text-primary);
-  font-weight: 800;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -910,7 +920,7 @@
   background: var(--color-background-primary);
   font: inherit;
   font-size: 0.78rem;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.15;
   cursor: pointer;
 }
@@ -947,7 +957,7 @@
   justify-self: end;
   color: var(--color-text-tertiary);
   font-size: 0.8rem;
-  font-weight: 750;
+  font-weight: 500;
 }
 
 .variableFieldBlock {
@@ -998,7 +1008,7 @@
 .variableBindingRow span {
   color: var(--color-text-secondary);
   font-size: 0.78rem;
-  font-weight: 850;
+  font-weight: 500;
 }
 
 .variableBindingRow input,
@@ -1059,41 +1069,14 @@
 }
 
 .previewPanel {
+  display: grid;
+  gap: 12px;
   padding: 14px;
 }
 
-.phonePreview {
-  min-height: 310px;
-  margin-top: 12px;
-  padding: 26px 18px;
-  border-radius: 8px;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0)),
-    #e9dfd4;
-  box-shadow: inset 0 0 0 1px rgba(120, 113, 108, 0.16);
-}
-
-[data-theme="dark"] .phonePreview {
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0)),
-    #24302b;
-}
-
-.chatBubble {
-  display: grid;
-  gap: 8px;
-  width: min(100%, 310px);
-  margin-left: auto;
-  border-radius: 8px;
-  padding: 12px;
-  color: #18212f;
-  background: #ffffff;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
-}
-
-[data-theme="dark"] .chatBubble {
-  color: #e5e7eb;
-  background: #17211c;
+.templatePhonePreview {
+  height: 560px;
+  min-height: 520px;
 }
 
 .previewHeaderText {
@@ -1108,8 +1091,8 @@
   gap: 7px;
   min-height: 118px;
   border-radius: 8px;
-  color: #64748b;
-  background: #e2e8f0;
+  color: var(--phone-chat-muted, #77736c);
+  background: color-mix(in srgb, var(--phone-chat-surface-soft, #f5f3ee) 86%, var(--phone-chat-conversation-bg, #f1eadf) 14%);
   text-align: center;
   overflow: hidden;
 }
@@ -1125,54 +1108,7 @@
 }
 
 .previewLocation small {
-  color: #64748b;
-}
-
-.previewBody {
-  margin: 0;
-  color: inherit;
-  font-size: 0.92rem;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.previewFooter {
-  color: #64748b;
-  font-size: 0.78rem;
-}
-
-.previewTime {
-  justify-self: end;
-  color: #94a3b8;
-  font-size: 0.72rem;
-}
-
-.previewButtons {
-  display: grid;
-  gap: 6px;
-  width: min(100%, 310px);
-  margin-top: 7px;
-  margin-left: auto;
-}
-
-.previewButtons span {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 36px;
-  border-radius: 8px;
-  color: #2563eb;
-  background: #ffffff;
-  font-size: 0.84rem;
-  font-weight: 850;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
-}
-
-[data-theme="dark"] .previewButtons span {
-  color: #93c5fd;
-  background: #17211c;
+  color: var(--phone-chat-muted, #77736c);
 }
 
 @media (max-width: 1360px) {

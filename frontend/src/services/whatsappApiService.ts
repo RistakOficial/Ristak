@@ -233,6 +233,18 @@ export interface WhatsAppApiTextSendPayload {
   phoneNumberId?: string
 }
 
+export interface WhatsAppApiInteractiveSendPayload {
+  to: string
+  from?: string
+  contactId?: string
+  body: string
+  buttons?: Array<{ id?: string; title?: string; label?: string; payload?: string }>
+  urlButton?: { title?: string; label?: string; url: string }
+  externalId?: string
+  transport?: 'api' | 'qr'
+  phoneNumberId?: string
+}
+
 export interface ScheduledChatMessage {
   id: string
   contactId: string
@@ -407,6 +419,7 @@ export const whatsappApiService = {
     apiClient.delete<ScheduledChatMessage>(`/whatsapp-api/messages/scheduled/${encodeURIComponent(id)}`, contactId ? { contactId } : undefined)
   ),
   sendText: (payload: WhatsAppApiTextSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/text', payload),
+  sendInteractive: (payload: WhatsAppApiInteractiveSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/interactive', payload),
   sendImage: (payload: WhatsAppApiImageSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/image', payload),
   sendDocument: (payload: WhatsAppApiDocumentSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/document', payload),
   sendAudio: (payload: WhatsAppApiAudioSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/audio', payload),

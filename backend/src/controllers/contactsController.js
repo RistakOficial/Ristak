@@ -76,6 +76,40 @@ const dedupeAppointments = (appointments = []) => {
   return Array.from(map.values())
 }
 
+const buildContactPhoneCandidates = (phone) => {
+  return [...new Set([
+    normalizePhoneForStorage(phone),
+    cleanString(phone)
+  ].filter(Boolean))]
+}
+
+const buildWhatsAppApiMessageContactMatch = (contactId, phoneCandidates = [], alias = 'msg', profileAlias = 'api_profile') => {
+  const cleanContactId = cleanString(contactId)
+  const cleanPhoneCandidates = [...new Set(phoneCandidates.map(cleanString).filter(Boolean))]
+  if (!cleanPhoneCandidates.length) {
+    return {
+      condition: `${alias}.contact_id = ?`,
+      params: [cleanContactId]
+    }
+  }
+
+  const placeholders = cleanPhoneCandidates.map(() => '?').join(', ')
+  const phoneColumns = [
+    `${alias}.phone`,
+    `${alias}.from_phone`,
+    `${alias}.to_phone`,
+    `${profileAlias}.phone`
+  ]
+
+  return {
+    condition: `(${alias}.contact_id = ? OR ${phoneColumns.map(column => `${column} IN (${placeholders})`).join(' OR ')})`,
+    params: [
+      cleanContactId,
+      ...phoneColumns.flatMap(() => cleanPhoneCandidates)
+    ]
+  }
+}
+
 const APPOINTMENT_CANCELED_STATUSES = new Set([
   'cancelled',
   'canceled',
@@ -340,8 +374,21 @@ const resolveWebConversionEvidence = (contact = {}, sessions = []) => {
   return candidates.sort((left, right) => right.score - left.score)[0] || { score: 0, data: null, source: null }
 }
 
+const OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS = [
+  'outbound',
+  'outgoing',
+  'sent',
+  'business',
+  'api',
+  'app',
+  'business_echo',
+  'smb_echo',
+  'echo',
+  'message_echo'
+]
+const OUTBOUND_JOURNEY_MESSAGE_DIRECTION_SET = new Set(OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS)
 const isOutboundWhatsAppDirection = (direction) =>
-  ['outbound', 'business_echo', 'sent'].includes(cleanString(direction).toLowerCase())
+  OUTBOUND_JOURNEY_MESSAGE_DIRECTION_SET.has(cleanString(direction).toLowerCase())
 
 const getWhatsAppEventScore = (event = {}, contactCreatedAt = null) => {
   const data = event.data || {}
@@ -573,6 +620,77 @@ const getWhatsAppMediaFromPayload = (rawPayload, messageType = '') => {
   const payload = parseJsonObject(rawPayload)
   if (!payload) return {}
 
+  const pickMediaUrl = (media = {}) => cleanString(
+    media.mediaUrl ||
+    media.media_url ||
+    media.publicUrl ||
+    media.public_url ||
+    media.downloadUrl ||
+    media.download_url ||
+    media.fileUrl ||
+    media.file_url ||
+    media.audioUrl ||
+    media.audio_url ||
+    media.imageUrl ||
+    media.image_url ||
+    media.videoUrl ||
+    media.video_url ||
+    media.link ||
+    media.url ||
+    media.href
+  )
+  const pickMediaId = (media = {}) => cleanString(
+    media.id ||
+    media.mediaId ||
+    media.media_id ||
+    media.assetId ||
+    media.asset_id ||
+    media.fileId ||
+    media.file_id
+  )
+  const pickMediaMimeType = (media = {}) => cleanString(
+    media.mimeType ||
+    media.mime_type ||
+    media.mimetype ||
+    media.contentType ||
+    media.content_type
+  )
+  const pickMediaFilename = (media = {}) => cleanString(
+    media.filename ||
+    media.fileName ||
+    media.file_name ||
+    media.originalFilename ||
+    media.original_filename ||
+    media.name ||
+    media.title
+  )
+  const pickMediaDurationMs = (media = {}) => (
+    Number(media.durationMs || media.duration_ms || media.duration || 0) || null
+  )
+  const normalizeMediaCandidate = (media) => {
+    if (!media) return null
+    if (typeof media === 'string') {
+      const mediaUrl = cleanString(media)
+      return mediaUrl ? { media_url: mediaUrl } : null
+    }
+    if (typeof media !== 'object') return null
+
+    const mediaUrl = pickMediaUrl(media)
+    const mediaId = pickMediaId(media)
+    const mimeType = pickMediaMimeType(media)
+    const filename = pickMediaFilename(media)
+    const durationMs = pickMediaDurationMs(media)
+    if (!mediaUrl && !mediaId && !mimeType && !filename && !durationMs) return null
+
+    return {
+      media_url: mediaUrl,
+      media_id: mediaId,
+      media_mime_type: mimeType,
+      media_filename: filename,
+      media_duration_ms: durationMs
+    }
+  }
+
   const normalizedType = cleanString(messageType).toLowerCase()
   const mediaObjects = [
     payload[normalizedType],
@@ -583,19 +701,22 @@ const getWhatsAppMediaFromPayload = (rawPayload, messageType = '') => {
     payload.sticker,
     payload.whatsappMessage?.[normalizedType],
     payload.whatsappInboundMessage?.[normalizedType],
-    payload.message?.[normalizedType]
-  ].filter(item => item && typeof item === 'object')
+    payload.message?.[normalizedType],
+    payload.localMedia,
+    payload.response?.[normalizedType],
+    payload.request?.[normalizedType],
+    ...(Array.isArray(payload.attachments) ? payload.attachments : []),
+    ...(Array.isArray(payload.message?.attachments) ? payload.message.attachments : []),
+    payload.message?.attachment,
+    payload.attachment,
+    payload.media,
+    payload.file
+  ].map(normalizeMediaCandidate).filter(Boolean)
 
   const media = mediaObjects[0] || null
   if (!media) return {}
 
-  return {
-    media_url: cleanString(media.link || media.url || media.href),
-    media_id: cleanString(media.id || media.mediaId || media.media_id),
-    media_mime_type: cleanString(media.mimeType || media.mime_type),
-    media_filename: cleanString(media.filename || media.fileName || media.name),
-    media_duration_ms: Number(media.durationMs || media.duration_ms || 0) || null
-  }
+  return media
 }
 
 const splitName = (name = '') => {
@@ -1015,7 +1136,29 @@ export const getChatContacts = async (req, res) => {
     const searchTerm = cleanString(q)
     const phoneNumberIdFilter = cleanString(businessPhoneNumberId)
     const businessPhoneFilter = normalizePhoneForStorage(businessPhone)
-    const whatsappMessageConditions = ['contact_id IS NOT NULL']
+    const resolvedWhatsAppContactIdSql = `
+      COALESCE(
+        msg.contact_id,
+        api_profile.contact_id,
+        CASE
+          WHEN msg.contact_id IS NULL AND api_profile.contact_id IS NULL THEN (
+            SELECT c_lookup.id
+            FROM contacts c_lookup
+            WHERE c_lookup.phone IS NOT NULL
+              AND c_lookup.phone != ''
+              AND (
+                c_lookup.phone = msg.phone
+                OR c_lookup.phone = msg.from_phone
+                OR c_lookup.phone = msg.to_phone
+                OR c_lookup.phone = api_profile.phone
+              )
+            LIMIT 1
+          )
+          ELSE NULL
+        END
+      )
+    `
+    const whatsappMessageConditions = []
     const whatsappMessageParams = []
     const conditions = []
     const params = []
@@ -1024,11 +1167,11 @@ export const getChatContacts = async (req, res) => {
     if (phoneNumberIdFilter || businessPhoneFilter) {
       const phoneClauses = []
       if (phoneNumberIdFilter) {
-        phoneClauses.push('business_phone_number_id = ?')
+        phoneClauses.push('msg.business_phone_number_id = ?')
         whatsappMessageParams.push(phoneNumberIdFilter)
       }
       if (businessPhoneFilter) {
-        phoneClauses.push('business_phone = ?')
+        phoneClauses.push('msg.business_phone = ?')
         whatsappMessageParams.push(businessPhoneFilter)
       }
       whatsappMessageConditions.push(`(${phoneClauses.join(' OR ')})`)
@@ -1047,21 +1190,27 @@ export const getChatContacts = async (req, res) => {
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+    const whatsappBaseWhereClause = whatsappMessageConditions.length ? `WHERE ${whatsappMessageConditions.join(' AND ')}` : ''
     const messageRowsSql = `
-        SELECT
-          contact_id,
-          'whatsapp:' || id AS message_row_id,
-          message_text,
-          message_type,
-          direction,
-          business_phone,
-          business_phone_number_id,
-          transport,
-          COALESCE(message_timestamp, created_at) AS message_date,
-          created_at,
-          'whatsapp' AS message_channel
-        FROM whatsapp_api_messages
-        WHERE ${whatsappMessageConditions.join(' AND ')}
+        SELECT *
+        FROM (
+          SELECT
+            ${resolvedWhatsAppContactIdSql} AS contact_id,
+            'whatsapp:' || msg.id AS message_row_id,
+            msg.message_text,
+            msg.message_type,
+            msg.direction,
+            msg.business_phone,
+            msg.business_phone_number_id,
+            msg.transport,
+            COALESCE(msg.message_timestamp, msg.created_at) AS message_date,
+            msg.created_at,
+            'whatsapp' AS message_channel
+          FROM whatsapp_api_messages msg
+          LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
+          ${whatsappBaseWhereClause}
+        ) whatsapp_rows
+        WHERE contact_id IS NOT NULL
         ${includeMetaSocialMessages ? `
         UNION ALL
         SELECT
@@ -1093,6 +1242,22 @@ export const getChatContacts = async (req, res) => {
         FROM message_rows
         GROUP BY contact_id
       ),
+      ranked_chats AS (
+        SELECT
+          chat_stats.contact_id,
+          chat_stats.message_count,
+          chat_stats.last_message_date
+        FROM chat_stats
+        JOIN contacts c ON c.id = chat_stats.contact_id
+        ${whereClause}
+        ORDER BY chat_stats.last_message_date DESC
+        LIMIT ?
+      ),
+      selected_message_rows AS (
+        SELECT message_rows.*
+        FROM message_rows
+        JOIN ranked_chats ON ranked_chats.contact_id = message_rows.contact_id
+      ),
       latest_messages AS (
         SELECT
           *,
@@ -1100,7 +1265,7 @@ export const getChatContacts = async (req, res) => {
             PARTITION BY contact_id
             ORDER BY message_date DESC, created_at DESC
           ) AS row_rank
-        FROM message_rows
+        FROM selected_message_rows
       ),
       latest_inbound_messages AS (
         SELECT
@@ -1109,7 +1274,7 @@ export const getChatContacts = async (req, res) => {
             PARTITION BY contact_id
             ORDER BY message_date DESC, created_at DESC
           ) AS row_rank
-        FROM message_rows
+        FROM selected_message_rows
         WHERE direction = 'inbound'
           AND (business_phone_number_id IS NOT NULL OR business_phone IS NOT NULL)
       ),
@@ -1120,13 +1285,13 @@ export const getChatContacts = async (req, res) => {
             PARTITION BY contact_id
             ORDER BY message_date ASC, created_at ASC
           ) AS row_rank
-        FROM message_rows
+        FROM selected_message_rows
         WHERE direction = 'inbound'
           AND (business_phone_number_id IS NOT NULL OR business_phone IS NOT NULL)
       ),
       payment_stats AS (
         SELECT
-          contact_id,
+          payments.contact_id,
           SUM(CASE
                 WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
                 AND ${nonTestPaymentCondition()}
@@ -1140,7 +1305,8 @@ export const getChatContacts = async (req, res) => {
                 AND ${nonTestPaymentCondition()}
                 THEN date ELSE NULL END) AS last_purchase_date
         FROM payments
-        GROUP BY contact_id
+        JOIN ranked_chats ON ranked_chats.contact_id = payments.contact_id
+        GROUP BY payments.contact_id
       )
       SELECT
         c.id,
@@ -1182,8 +1348,8 @@ ${CONTACT_META_PROFILE_SELECT},
               AND ${ATTENDED_APPOINTMENT_CONDITION}
           )
         ) AS has_showed_appointment,
-        chat_stats.message_count,
-        chat_stats.last_message_date,
+        ranked_chats.message_count,
+        ranked_chats.last_message_date,
         lm.message_text AS last_message_text,
         lm.message_type AS last_message_type,
         lm.message_channel AS last_message_channel,
@@ -1196,15 +1362,13 @@ ${CONTACT_META_PROFILE_SELECT},
         fim.business_phone AS first_inbound_business_phone,
         fim.business_phone_number_id AS first_inbound_business_phone_number_id,
         0 AS unread_count
-      FROM chat_stats
-      JOIN contacts c ON c.id = chat_stats.contact_id
+      FROM ranked_chats
+      JOIN contacts c ON c.id = ranked_chats.contact_id
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
       LEFT JOIN latest_messages lm ON lm.contact_id = c.id AND lm.row_rank = 1
       LEFT JOIN latest_inbound_messages lim ON lim.contact_id = c.id AND lim.row_rank = 1
       LEFT JOIN first_inbound_messages fim ON fim.contact_id = c.id AND fim.row_rank = 1
-      ${whereClause}
-      ORDER BY chat_stats.last_message_date DESC
-      LIMIT ?
+      ORDER BY ranked_chats.last_message_date DESC
     `, [...whatsappMessageParams, ...params, limitNumber])
 
     const responseRows = shouldWarmProfilePictures
@@ -2673,6 +2837,96 @@ export const bulkUpdateContactTags = async (req, res) => {
 }
 
 /**
+ * Actualiza campos personalizados en bloque para contactos seleccionados.
+ * Body: { contactIds, customFields }
+ */
+export const bulkUpdateContactCustomFields = async (req, res) => {
+  try {
+    const contactIds = Array.isArray(req.body?.contactIds)
+      ? req.body.contactIds.map((value) => cleanString(value)).filter(Boolean)
+      : []
+    if (contactIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'Selecciona al menos un contacto' })
+    }
+    if (contactIds.length > 1000) {
+      return res.status(400).json({ success: false, error: 'Máximo 1000 contactos por operación' })
+    }
+
+    const customFields = Array.isArray(req.body?.customFields) ? req.body.customFields : []
+    if (customFields.length === 0) {
+      return res.status(400).json({ success: false, error: 'Selecciona al menos un campo personalizado' })
+    }
+
+    const preparedCustomFields = await prepareContactCustomFieldsForStorage(customFields, {
+      sourceType: 'manual',
+      ownerUserId: req.user?.userId
+    })
+    if (!preparedCustomFields.length) {
+      return res.status(400).json({ success: false, error: 'No se pudo preparar el campo personalizado' })
+    }
+
+    const placeholders = contactIds.map(() => '?').join(', ')
+    const rows = await db.all(
+      `SELECT id, custom_fields FROM contacts WHERE id IN (${placeholders})`,
+      contactIds
+    )
+
+    const changedFields = [
+      ...new Set(preparedCustomFields.flatMap((field) => [
+        cleanString(field.key || field.fieldKey),
+        cleanString(field.fieldKey),
+        cleanString(field.id),
+        cleanString(field.definitionId),
+        cleanString(field.key || field.fieldKey) ? `custom:${cleanString(field.key || field.fieldKey)}` : ''
+      ]).filter(Boolean))
+    ]
+
+    let updated = 0
+    for (const row of rows) {
+      const mergedCustomFields = mergeContactCustomFields(
+        parseContactCustomFields(row.custom_fields),
+        preparedCustomFields
+      )
+
+      await db.run(
+        `UPDATE contacts SET custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [serializeContactCustomFieldsForDb(mergedCustomFields), row.id]
+      )
+      updated += 1
+    }
+
+    if (updated > 0 && changedFields.length > 0) {
+      import('../services/automationEngine.js').then(engine => {
+        rows.forEach(row => {
+          engine.handleAutomationEvent('contact-updated', {
+            contactId: row.id,
+            changedFields,
+            contactChangeSource: 'manual'
+          }).catch(() => {})
+        })
+      }).catch(() => {})
+    }
+
+    logger.info(`Campos personalizados en bloque aplicados: ${updated} contactos actualizados`)
+    res.json({
+      success: true,
+      data: {
+        updated,
+        total: contactIds.length,
+        customFields: preparedCustomFields
+      }
+    })
+  } catch (error) {
+    logger.error(`Error aplicando campos personalizados en bloque: ${error.message}`)
+    const status = error.status || error.statusCode || 500
+    res.status(status).json({
+      success: false,
+      error: status === 500 ? 'No se pudieron aplicar los campos personalizados' : error.message
+    })
+  }
+}
+
+/**
  * Elimina un contacto
  */
 export const deleteContact = async (req, res) => {
@@ -2922,6 +3176,8 @@ export const getContactsChart = async (req, res) => {
 export const getContactJourney = async (req, res) => {
   try {
     const { id } = req.params
+    const includeBusinessMessages = String(req.query?.includeBusinessMessages || '').toLowerCase() === 'true'
+    const outboundMessageDirectionPlaceholders = OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS.map(() => '?').join(', ')
 
     // Verificar que el contacto existe y obtener info de atribución completa
     const contact = await db.get(`
@@ -2944,6 +3200,8 @@ export const getContactJourney = async (req, res) => {
         error: 'Contacto no encontrado'
       })
     }
+    const contactPhoneCandidates = buildContactPhoneCandidates(contact.phone)
+    const whatsappApiMessageContactMatch = buildWhatsAppApiMessageContactMatch(id, contactPhoneCandidates)
 
     const journey = []
     await refreshHighLevelConversationMessageStatuses(id)
@@ -2971,11 +3229,9 @@ export const getContactJourney = async (req, res) => {
 
     const detectWhatsAppAdPlatform = (data = {}) => normalizeWhatsAppAttributionPlatform(data)
 
-    // El backend emite los eventos de WhatsApp tal cual (uno por mensaje). El frontend
-    // los agrupa a uno por día —usando la MISMA zona horaria con la que muestra las
-    // fechas— y fusiona la info dando prioridad a la atribución de anuncio. Los mensajes
-    // reales del chat se entregan completos para no romper conversación ni archivos; la
-    // regla temporal de conversión se aplica sólo al timeline de Info del contacto.
+    // El journey default sólo representa acciones del contacto. Las pantallas de chat
+    // pueden pedir includeBusinessMessages=true para reconstruir conversación completa,
+    // pero los timelines de atribución no deben contar mensajes salientes del negocio.
     const isStoredChatMessageEvent = (event) => Boolean(
       event?.data?.whatsapp_api_message_id ||
       event?.data?.whatsapp_message_id ||
@@ -2987,6 +3243,7 @@ export const getContactJourney = async (req, res) => {
     const addWhatsAppJourneyEvents = (events) => {
       events
         .filter(event => event?.date)
+        .filter(event => includeBusinessMessages || !isOutboundWhatsAppDirection(event?.data?.direction))
         .sort((a, b) => getDateTime(a.date) - getDateTime(b.date))
         .forEach(event => {
           const eventTime = getDateTime(event.date)
@@ -3149,13 +3406,20 @@ export const getContactJourney = async (req, res) => {
           COALESCE(attr.detected_conversion_data, msg.detected_conversion_data) as detected_conversion_data,
           COALESCE(attr.detected_ctwa_payload, msg.detected_ctwa_payload) as detected_ctwa_payload
        FROM whatsapp_api_messages msg
+       LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
        LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
-       WHERE msg.contact_id = ?
+       WHERE ${whatsappApiMessageContactMatch.condition}
+         AND (
+           ? = 1
+           OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
+         )
        ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC`,
-      [id]
+      [...whatsappApiMessageContactMatch.params, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS]
     )
 
     whatsappApiMessages.forEach(msg => {
+      if (!includeBusinessMessages && isOutboundWhatsAppDirection(msg.direction)) return
+
       const payloadMedia = getWhatsAppMediaFromPayload(msg.raw_payload_json, msg.message_type)
       const media = {
         media_url: cleanString(msg.media_url) || payloadMedia.media_url,
@@ -3235,11 +3499,17 @@ export const getContactJourney = async (req, res) => {
        FROM meta_social_messages msg
        LEFT JOIN meta_social_contacts profile ON profile.id = msg.meta_social_contact_id
        WHERE msg.contact_id = ?
+         AND (
+           ? = 1
+           OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
+         )
        ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC`,
-      [id]
+      [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS]
     )
 
     metaSocialMessages.forEach(msg => {
+      if (!includeBusinessMessages && isOutboundWhatsAppDirection(msg.direction)) return
+
       const platform = cleanString(msg.platform)
       const source = platform === 'instagram' ? 'Instagram DM' : 'Messenger'
 

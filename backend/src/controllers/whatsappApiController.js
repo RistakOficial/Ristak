@@ -19,6 +19,7 @@ import {
   sendWhatsAppApiAudioMessage,
   sendWhatsAppApiDocumentMessage,
   sendWhatsAppApiImageMessage,
+  sendWhatsAppApiInteractiveMessage,
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage,
   sendMetaDirectTestMessage,
@@ -432,6 +433,32 @@ export async function sendWhatsAppApiTextMessageView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo enviar el mensaje por WhatsApp_API'
+    })
+  }
+}
+
+export async function sendWhatsAppApiInteractiveMessageView(req, res) {
+  try {
+    const data = await sendWhatsAppApiInteractiveMessage({
+      to: req.body?.to,
+      from: req.body?.from,
+      body: req.body?.body || req.body?.text,
+      buttons: req.body?.buttons,
+      urlButton: req.body?.urlButton,
+      externalId: req.body?.externalId,
+      transport: req.body?.transport,
+      contactId: req.body?.contactId,
+      userId: req.user?.userId,
+      publicBaseUrl: getPublicBaseUrl(req),
+      phoneNumberId: req.body?.phoneNumberId
+    })
+    notifyHumanTakeover(req.body?.to)
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error enviando WhatsApp_API interactivo: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo enviar el mensaje interactivo por WhatsApp_API'
     })
   }
 }
