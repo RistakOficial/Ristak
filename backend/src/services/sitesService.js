@@ -11656,13 +11656,13 @@ function buildNativeSiteTrackingScript(context) {
 const RSTK_ICONS = {
   check: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   cross: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>',
-  play: '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>',
+  play: '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M6.4 3.4v17.2L20.8 12z" fill="currentColor"/></svg>',
   pause: '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 5h3v14H7zM14 5h3v14h-3z" fill="currentColor"/></svg>',
   playOutline: '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 8.2v7.6l6-3.8z" fill="currentColor"/></svg>',
   playSoft: '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M8.2 6.8c0-1.05 1.14-1.7 2.04-1.15l8.05 4.95c.86.53.86 1.77 0 2.3l-8.05 4.95c-.9.55-2.04-.1-2.04-1.15z" fill="currentColor" opacity=".42"/><path d="M9.4 8.45v6.6l5.38-3.3z" fill="currentColor"/></svg>',
   playSpark: '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M8.5 5.8v12.4l9.9-6.2z" fill="currentColor"/><path d="M17.9 3.7l.72 1.65 1.65.72-1.65.72-.72 1.65-.72-1.65-1.65-.72 1.65-.72z" fill="currentColor" opacity=".76"/><path d="M6.3 4.8l.45 1.03 1.03.45-1.03.45-.45 1.03-.45-1.03-1.03-.45 1.03-.45z" fill="currentColor" opacity=".58"/></svg>',
-  volume: '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 10v4h4l5 4V6l-5 4H4z" fill="currentColor"/><path d="M16 9.2c.8.8 1.2 1.7 1.2 2.8s-.4 2-1.2 2.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-  volumeMuted: '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 10v4h4l5 4V6l-5 4H4z" fill="currentColor"/><path d="M17 9l4 4M21 9l-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  volume: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M15.5 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18.4 5.6a9 9 0 0 1 0 12.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  volumeMuted: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M16 9l5 5M21 9l-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   settings: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 15.2A3.2 3.2 0 1 0 12 8.8a3.2 3.2 0 0 0 0 6.4Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.04.04a2 2 0 1 1-2.83 2.83l-.04-.04a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.87.34l-.04.04a2 2 0 1 1-2.83-2.83l.04-.04A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.08A1.7 1.7 0 0 0 4.6 8a1.7 1.7 0 0 0-.34-1.87l-.04-.04a2 2 0 1 1 2.83-2.83l.04.04A1.7 1.7 0 0 0 8.96 4.6 1.7 1.7 0 0 0 10 3.08V3a2 2 0 1 1 4 0v.08a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.04-.04a2 2 0 1 1 2.83 2.83l-.04.04A1.7 1.7 0 0 0 19.4 8c.2.57.72.96 1.32.96H21a2 2 0 1 1 0 4h-.28A1.7 1.7 0 0 0 19.4 15Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   verified: '<svg class="rstk-verified" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M12 2.2l2.3 1.7 2.85.05.95 2.7 2.25 1.8-.95 2.75.95 2.75-2.25 1.8-.95 2.7L14.3 18.6 12 20.3l-2.3-1.7-2.85-.05-.95-2.7-2.25-1.8.95-2.75-.95-2.75 2.25-1.8.95-2.7L9.7 3.9z"/><path d="M8.4 12.3l2.4 2.4 4.8-4.9" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   globe: '<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 12h18M12 3c3.2 3 3.2 15 0 18M12 3c-3.2 3-3.2 15 0 18" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
@@ -11673,7 +11673,16 @@ const RSTK_ICONS = {
 
 const VIDEO_PLAY_ICON_STYLES = new Set(['solid', 'outline', 'soft', 'spark'])
 const DEFAULT_VIDEO_PLAY_ICON_STYLE = 'solid'
-const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
+const VIDEO_PLAY_SHAPES = new Set(['round', 'rectangle'])
+const DEFAULT_VIDEO_PLAY_SHAPE = 'rectangle'
+const LEGACY_VIDEO_PLAY_SIZE = 82
+const LEGACY_VIDEO_PLAY_ICON_SIZE = 32
+const LEGACY_VIDEO_PLAY_RADIUS = 999
+const DEFAULT_VIDEO_PLAY_SIZE = 96
+const DEFAULT_VIDEO_PLAY_ICON_SIZE = 54
+const DEFAULT_VIDEO_PLAY_RADIUS = 8
+const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
+const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
 const VIDEO_SPEED_OPTIONS = ['0.75', '1', '1.25', '1.5', '2']
 
@@ -11689,9 +11698,55 @@ function getVideoPlayIconMarkup(style) {
   return RSTK_ICONS.play
 }
 
+function isLegacyDefaultVideoPlay(settings = {}) {
+  const shape = cleanString(settings.videoPlayShape)
+  const radius = Number(settings.videoPlayRadius)
+  const size = Number(settings.videoPlaySize)
+  const iconSize = Number(settings.videoPlayIconSize)
+  return shape === 'round' &&
+    radius === LEGACY_VIDEO_PLAY_RADIUS &&
+    (!Number.isFinite(size) || size === LEGACY_VIDEO_PLAY_SIZE) &&
+    (!Number.isFinite(iconSize) || iconSize === LEGACY_VIDEO_PLAY_ICON_SIZE)
+}
+
+function normalizeVideoPlayShape(settings = {}) {
+  const shape = cleanString(settings.videoPlayShape)
+  if (VIDEO_PLAY_SHAPES.has(shape)) {
+    return isLegacyDefaultVideoPlay(settings) ? DEFAULT_VIDEO_PLAY_SHAPE : shape
+  }
+  const radius = Number(settings.videoPlayRadius)
+  return Number.isFinite(radius) && radius < 120 ? 'rectangle' : DEFAULT_VIDEO_PLAY_SHAPE
+}
+
+function normalizeVideoPlaySize(settings = {}) {
+  const size = Number(settings.videoPlaySize)
+  if (!Number.isFinite(size)) return DEFAULT_VIDEO_PLAY_SIZE
+  if (isLegacyDefaultVideoPlay(settings) || (size === 64 && !Object.prototype.hasOwnProperty.call(settings, 'videoPlayShape'))) {
+    return DEFAULT_VIDEO_PLAY_SIZE
+  }
+  return Math.min(160, Math.max(56, size))
+}
+
+function normalizeVideoPlayIconSize(settings = {}) {
+  const size = Number(settings.videoPlayIconSize)
+  if (!Number.isFinite(size)) return DEFAULT_VIDEO_PLAY_ICON_SIZE
+  if (isLegacyDefaultVideoPlay(settings) || (size === 22 && !Object.prototype.hasOwnProperty.call(settings, 'videoPlayShape'))) {
+    return DEFAULT_VIDEO_PLAY_ICON_SIZE
+  }
+  return Math.min(76, Math.max(18, size))
+}
+
+function normalizeVideoPlayRadius(settings = {}, shape = DEFAULT_VIDEO_PLAY_SHAPE) {
+  if (isLegacyDefaultVideoPlay(settings)) return DEFAULT_VIDEO_PLAY_RADIUS
+  const fallback = shape === 'rectangle' ? DEFAULT_VIDEO_PLAY_RADIUS : LEGACY_VIDEO_PLAY_RADIUS
+  const radius = Number(settings.videoPlayRadius ?? fallback)
+  return Number.isFinite(radius) ? Math.min(LEGACY_VIDEO_PLAY_RADIUS, Math.max(0, radius)) : fallback
+}
+
 function getVideoSoundNoticeText(settings = {}) {
   if (Object.prototype.hasOwnProperty.call(settings, 'videoSoundNoticeText')) {
-    return cleanString(settings.videoSoundNoticeText)
+    const text = cleanString(settings.videoSoundNoticeText)
+    return text === LEGACY_VIDEO_SOUND_NOTICE_TEXT ? DEFAULT_VIDEO_SOUND_NOTICE_TEXT : text
   }
   return DEFAULT_VIDEO_SOUND_NOTICE_TEXT
 }
@@ -12231,13 +12286,12 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const playerBorderWidth = Number.isFinite(rawPlayerBorderWidth) ? Math.min(12, Math.max(0, rawPlayerBorderWidth)) : 0
   const playerColor = normalizeCssPaint(settings.videoPlayerColor, 'rgba(0,0,0,.52)') || 'rgba(0,0,0,.52)'
   const playColor = normalizeCssPaint(settings.videoPlayColor, '#ffffff') || '#ffffff'
-  const rawPlaySize = Number(settings.videoPlaySize || 64)
-  const playSize = Number.isFinite(rawPlaySize) ? Math.min(110, Math.max(42, rawPlaySize)) : 64
-  const rawPlayRadius = Number(settings.videoPlayRadius ?? 999)
-  const playRadius = Number.isFinite(rawPlayRadius) ? Math.min(999, Math.max(0, rawPlayRadius)) : 999
+  const playShape = normalizeVideoPlayShape(settings)
+  const playSize = normalizeVideoPlaySize(settings)
+  const playWidth = playShape === 'rectangle' ? Math.round(playSize * 1.45) : playSize
+  const playRadius = normalizeVideoPlayRadius(settings, playShape)
   const playIconStyle = normalizeVideoPlayIconStyle(settings.videoPlayIconStyle)
-  const rawPlayIconSize = Number(settings.videoPlayIconSize ?? 22)
-  const playIconSize = Number.isFinite(rawPlayIconSize) ? Math.min(54, Math.max(14, rawPlayIconSize)) : 22
+  const playIconSize = normalizeVideoPlayIconSize(settings)
   const playBorderColor = normalizeCssPaint(settings.videoPlayBorderColor, 'rgba(255, 255, 255, 0)') || 'rgba(255, 255, 255, 0)'
   const rawPlayBorderWidth = Number(settings.videoPlayBorderWidth ?? 0)
   const playBorderWidth = Number.isFinite(rawPlayBorderWidth) ? Math.min(10, Math.max(0, rawPlayBorderWidth)) : 0
@@ -12249,6 +12303,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     showCustomControlBar ? 'rstk-video-has-control-bar' : '',
     soundHint && showOverlay ? 'rstk-video-sound-hint' : '',
+    `rstk-video-play-shape-${playShape}`,
     `rstk-video-play-${playIconStyle}`
   ].filter(Boolean).join(' ')
   const styleVars = [
@@ -12258,6 +12313,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     `--rstk-video-border-width:${escapeHtml(String(playerBorderWidth))}px`,
     `--rstk-video-player-color:${escapeHtml(playerColor)}`,
     `--rstk-video-play-color:${escapeHtml(playColor)}`,
+    `--rstk-video-play-width:${escapeHtml(String(playWidth))}px`,
     `--rstk-video-play-size:${escapeHtml(String(playSize))}px`,
     `--rstk-video-play-radius:${escapeHtml(String(playRadius))}px`,
     `--rstk-video-play-icon-size:${escapeHtml(String(playIconSize))}px`,
@@ -12280,7 +12336,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
       ${showOverlay ? `
         <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
           <span class="rstk-video-play-dot">${getVideoPlayIconMarkup(playIconStyle)}</span>
-          ${soundHint ? `<span class="rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}"><span class="rstk-video-sound-icon" aria-hidden="true">${RSTK_ICONS.volume}<i></i><i></i></span>${soundNoticeText ? `<span class="rstk-video-sound-text">${escapeHtml(soundNoticeText)}</span>` : ''}</span>` : ''}
+          ${soundHint ? `<span class="rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}"><span class="rstk-video-sound-icon" aria-hidden="true">${RSTK_ICONS.volume}</span>${soundNoticeText ? `<span class="rstk-video-sound-text">${escapeHtml(soundNoticeText)}</span>` : ''}</span>` : ''}
         </button>
       ` : ''}
       ${showCustomControlBar ? `
@@ -13337,20 +13393,23 @@ const RSTK_BASE_CSS = `
   .rstk-media,.rstk-video{width:100%;margin:0;overflow:hidden;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-media-radius,var(--rstk-block-radius,var(--rstk-radius)));background:var(--rstk-block-bg,var(--rstk-surface2))}
   .rstk-media img,.rstk-video iframe,.rstk-video video{width:100%;display:block;border:0}
   .rstk-video{aspect-ratio:16/9;position:relative;border-width:var(--rstk-video-border-width,var(--rstk-block-border-width,1px));border-color:var(--rstk-video-border-color,var(--rstk-block-border,var(--rstk-border)));border-radius:var(--rstk-video-radius,var(--rstk-media-radius,var(--rstk-block-radius,var(--rstk-radius))));background:var(--rstk-video-bg,var(--rstk-block-bg,var(--rstk-surface2)))}
-  .rstk-video iframe,.rstk-video video{height:100%}
-  .rstk-video video{background:var(--rstk-video-bg,#000);object-fit:cover}
-  .rstk-video-player{isolation:isolate}
-	  .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:linear-gradient(180deg,transparent,rgba(0,0,0,.12));color:var(--rstk-video-play-color,#fff);cursor:pointer}
-	  .rstk-video-play-dot{width:var(--rstk-video-play-size,64px);height:var(--rstk-video-play-size,64px);display:grid;place-items:center;border:var(--rstk-video-play-border-width,0) solid var(--rstk-video-play-border-color,transparent);border-radius:var(--rstk-video-play-radius,999px);background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:0 16px 38px rgba(0,0,0,.28);transition:opacity .18s ease,transform .18s ease}
-	  .rstk-video-is-playing .rstk-video-play-dot{opacity:0;transform:scale(.9)}
-	  .rstk-video-is-playing:hover .rstk-video-play-dot{opacity:.92;transform:scale(1)}
-	  .rstk-video-play-dot svg{width:var(--rstk-video-play-icon-size,22px);height:var(--rstk-video-play-icon-size,22px)}
-	  .rstk-video-sound{position:absolute;left:14px;bottom:14px;display:inline-flex;align-items:center;justify-content:flex-start;gap:9px;max-width:38px;min-height:38px;overflow:hidden;border-radius:999px;background:color-mix(in srgb,#020617 76%,transparent);color:var(--rstk-video-sound-color,var(--rstk-video-play-color,#fff));box-shadow:0 18px 42px rgba(0,0,0,.32);padding:8px 11px;pointer-events:none;backdrop-filter:blur(12px)}
-	  .rstk-video-has-control-bar .rstk-video-sound{bottom:64px}
-	  .rstk-video-sound-auto{animation:rstkVideoSoundNotice var(--rstk-video-sound-cycle,6.6s) cubic-bezier(.2,.8,.2,1) .45s both}
-	  .rstk-video-sound-persistent{animation:rstkVideoSoundNoticeOpen .8s cubic-bezier(.2,.8,.2,1) .45s both}
-	  .rstk-video-sound-icon{display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;min-width:16px}
-	  .rstk-video-sound-text{display:inline-block;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:currentColor;font-size:.78rem;font-weight:750;letter-spacing:0;opacity:0;transform:translateX(-8px)}
+	  .rstk-video iframe,.rstk-video video{height:100%}
+	  .rstk-video video{background:var(--rstk-video-bg,#000);object-fit:cover}
+	  .rstk-video-player{isolation:isolate}
+	  .rstk-video-custom-controls video{cursor:pointer}
+		  .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:linear-gradient(180deg,transparent,rgba(0,0,0,.12));color:var(--rstk-video-play-color,#fff);cursor:pointer}
+		  .rstk-video-play-dot{width:var(--rstk-video-play-width,var(--rstk-video-play-size,96px));height:var(--rstk-video-play-size,96px);display:grid;place-items:center;border:var(--rstk-video-play-border-width,0) solid var(--rstk-video-play-border-color,transparent);border-radius:var(--rstk-video-play-radius,8px);background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:0 16px 38px rgba(0,0,0,.28);transition:opacity .18s ease,transform .18s ease}
+		  .rstk-video-is-playing .rstk-video-play-dot{opacity:0;transform:scale(.9)}
+		  .rstk-video-is-playing:hover .rstk-video-play-dot{opacity:.92;transform:scale(1)}
+		  .rstk-video-play-shape-round .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,999px)}
+		  .rstk-video-play-shape-rectangle .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,8px)}
+		  .rstk-video-play-dot svg{width:var(--rstk-video-play-icon-size,54px);height:var(--rstk-video-play-icon-size,54px)}
+		  .rstk-video-sound{position:absolute;top:22px;right:22px;z-index:3;box-sizing:border-box;display:inline-flex;flex-direction:row-reverse;align-items:center;justify-content:flex-end;gap:13px;max-width:76px;min-height:64px;overflow:hidden;border-radius:999px;background:color-mix(in srgb,#020617 88%,transparent);color:var(--rstk-video-sound-color,var(--rstk-video-play-color,#fff));box-shadow:0 18px 44px rgba(0,0,0,.34);padding:0 19px 0 22px;pointer-events:none;backdrop-filter:blur(14px);transform-origin:right center}
+		  .rstk-video-has-control-bar .rstk-video-sound{top:22px}
+		  .rstk-video-sound-auto{animation:rstkVideoSoundNotice var(--rstk-video-sound-cycle,6.6s) cubic-bezier(.2,.8,.2,1) .45s both}
+		  .rstk-video-sound-persistent{animation:rstkVideoSoundNoticeOpen .8s cubic-bezier(.2,.8,.2,1) .45s both}
+		  .rstk-video-sound-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:28px;min-width:28px;height:28px}
+		  .rstk-video-sound-text{display:inline-block;max-width:min(260px,calc(100vw - 150px));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:currentColor;font-size:1rem;font-weight:500;letter-spacing:0;opacity:0;transform:translateX(10px)}
 	  .rstk-video-sound-auto .rstk-video-sound-text{animation:rstkVideoSoundText var(--rstk-video-sound-cycle,6.6s) ease .45s both}
 	  .rstk-video-sound-persistent .rstk-video-sound-text{animation:rstkVideoSoundTextOpen .8s ease .55s both}
 	  .rstk-video-control-bar{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;display:grid;grid-template-columns:auto minmax(44px,1fr) auto auto;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:color-mix(in srgb,#020617 76%,transparent);color:var(--rstk-video-play-color,#fff);box-shadow:0 18px 42px rgba(0,0,0,.28);padding:7px;backdrop-filter:blur(14px)}
@@ -13366,13 +13425,10 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-speed-control{min-width:66px;height:30px;display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;padding:0 8px}
 	  .rstk-video-speed-control select{width:42px;appearance:none;border:0;background:transparent;background-image:none;color:inherit;font:inherit;font-size:.76rem;font-weight:750;outline:0;padding:0}
 	  .rstk-video-speed-control option{color:#111827}
-	  @keyframes rstkVideoSoundNotice{0%,12%{max-width:38px}22%,70%{max-width:min(76%,380px)}100%{max-width:38px}}
-	  @keyframes rstkVideoSoundNoticeOpen{0%{max-width:38px}100%{max-width:min(76%,380px)}}
-	  @keyframes rstkVideoSoundText{0%,17%,76%,100%{opacity:0;transform:translateX(-8px)}26%,68%{opacity:1;transform:translateX(0)}}
-	  @keyframes rstkVideoSoundTextOpen{0%{opacity:0;transform:translateX(-8px)}100%{opacity:1;transform:translateX(0)}}
-	  .rstk-video-sound-icon i{width:5px;height:12px;border-radius:999px;background:currentColor;animation:rstkVideoSound 1s ease-in-out infinite}
-	  .rstk-video-sound-icon i:last-child{height:18px;animation-delay:.18s}
-	  @keyframes rstkVideoSound{0%,100%{transform:scaleY(.55);opacity:.65}50%{transform:scaleY(1);opacity:1}}
+		  @keyframes rstkVideoSoundNotice{0%,12%{max-width:76px}22%,70%{max-width:min(calc(100% - 44px),360px)}100%{max-width:76px}}
+		  @keyframes rstkVideoSoundNoticeOpen{0%{max-width:76px}100%{max-width:min(calc(100% - 44px),360px)}}
+		  @keyframes rstkVideoSoundText{0%,17%,76%,100%{opacity:0;transform:translateX(10px)}26%,68%{opacity:1;transform:translateX(0)}}
+		  @keyframes rstkVideoSoundTextOpen{0%{opacity:0;transform:translateX(10px)}100%{opacity:1;transform:translateX(0)}}
   .rstk-media-empty{min-height:190px;display:grid;place-items:center;gap:8px;color:var(--rstk-muted);font-size:.92rem}
   .rstk-play{display:grid;place-items:center;width:58px;height:58px;border-radius:50%;background:var(--rstk-accent);color:var(--rstk-on-accent)}
 

@@ -52,9 +52,9 @@
 }
 
 .mediaPickerModal[data-modal] {
-  width: min(1120px, calc(100vw - 40px));
-  min-height: min(600px, calc(100vh - 40px));
-  max-height: min(860px, calc(100vh - 40px));
+  width: min(1240px, calc(100vw - 48px));
+  min-height: min(680px, calc(100vh - 48px));
+  max-height: min(900px, calc(100vh - 48px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -65,12 +65,11 @@
 }
 
 .mediaPickerHeader {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: start;
   gap: 16px;
-  padding: 18px 64px 14px 20px;
+  padding: 18px 20px 14px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -94,8 +93,9 @@
   font-weight: 780;
 }
 
-.mediaPickerIconButton,
+.mediaPickerCloseButton,
 .mediaPickerDeleteButton {
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -105,19 +105,26 @@
   cursor: pointer;
 }
 
-.mediaPickerIconButton {
-  position: absolute;
-  top: 16px;
-  right: 20px;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
+.mediaPickerCloseButton {
+  width: 36px;
+  min-width: 36px;
+  max-width: 36px;
+  height: 36px;
+  padding: 0;
+  justify-self: end;
+  flex: 0 0 36px;
   border-radius: var(--radius-ctl);
+}
+
+.mediaPickerCloseButton:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .mediaPickerToolbar {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) auto;
+  grid-template-columns: minmax(280px, 1fr) auto;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -153,7 +160,8 @@
 }
 
 .mediaPickerActions {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
@@ -169,11 +177,13 @@
   gap: 8px;
   max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
   border-radius: var(--radius-ctl);
   padding: 0 12px;
   font: inherit;
   font-size: 0.82rem;
   font-weight: 760;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -208,21 +218,21 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 18px 20px 20px;
+  padding: 20px 22px 22px;
   scrollbar-gutter: stable;
 }
 
 .mediaPickerGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
+  gap: 14px;
 }
 
 .mediaPickerAsset {
   min-width: 0;
   display: grid;
   gap: 10px;
-  padding: 8px;
+  padding: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
   background: var(--surface);
@@ -309,8 +319,9 @@
 }
 
 .mediaPickerAssetFooter {
+  min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) 36px;
   align-items: center;
   gap: 8px;
   color: var(--accent);
@@ -320,8 +331,10 @@
 
 .mediaPickerChooseButton {
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   width: 100%;
-  min-height: 32px;
+  min-height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -331,6 +344,7 @@
   border-radius: var(--radius-ctl);
   background: var(--surface-2);
   color: var(--accent);
+  padding: 0 10px;
   font: inherit;
   font-size: 0.78rem;
   font-weight: 760;
@@ -355,9 +369,12 @@
 }
 
 .mediaPickerDeleteButton {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  min-width: 36px;
+  max-width: 36px;
+  height: 36px;
   flex: 0 0 auto;
+  padding: 0;
   border-radius: var(--radius-ctl);
 }
 
@@ -382,7 +399,7 @@
   font-size: 0.95rem;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 860px) {
   .mediaPickerOverlay {
     padding: 12px;
   }
@@ -394,12 +411,7 @@
   }
 
   .mediaPickerHeader {
-    padding: 16px 58px 13px 16px;
-  }
-
-  .mediaPickerIconButton {
-    top: 14px;
-    right: 16px;
+    padding: 16px;
   }
 
   .mediaPickerToolbar {
@@ -427,7 +439,7 @@
   }
 }
 
-@media (max-width: 460px) {
+@media (max-width: 520px) {
   .mediaPickerActions {
     grid-template-columns: 1fr;
   }

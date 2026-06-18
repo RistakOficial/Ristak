@@ -298,21 +298,22 @@
   cursor: pointer;
 }
 .rstkCanvas .rstk-video-play-dot {
-  width: var(--rstk-video-play-width, var(--rstk-video-play-size, 82px));
-  height: var(--rstk-video-play-size, 64px);
+  width: var(--rstk-video-play-width, var(--rstk-video-play-size, 96px));
+  height: var(--rstk-video-play-size, 96px);
   display: grid;
   place-items: center;
   border: var(--rstk-video-play-border-width, 0) solid var(--rstk-video-play-border-color, transparent);
-  border-radius: var(--rstk-video-play-radius, 999px);
+  border-radius: var(--rstk-video-play-radius, 8px);
   background: var(--rstk-video-player-color, rgba(0,0,0,.52));
   color: var(--rstk-video-play-color, #fff);
   box-shadow: 0 16px 38px rgba(0,0,0,.28);
   transition: opacity .18s ease, transform .18s ease;
 }
-.rstkCanvas .rstk-video-play-shape-rectangle .rstk-video-play-dot { border-radius: var(--rstk-video-play-radius, 18px); }
+.rstkCanvas .rstk-video-play-shape-round .rstk-video-play-dot { border-radius: var(--rstk-video-play-radius, 999px); }
+.rstkCanvas .rstk-video-play-shape-rectangle .rstk-video-play-dot { border-radius: var(--rstk-video-play-radius, 8px); }
 .rstkCanvas .rstk-video-play-dot svg {
-  width: var(--rstk-video-play-icon-size, 22px);
-  height: var(--rstk-video-play-icon-size, 22px);
+  width: var(--rstk-video-play-icon-size, 54px);
+  height: var(--rstk-video-play-icon-size, 54px);
 }
 .rstkCanvas .rstk-video-sound {
   position: absolute;

@@ -646,7 +646,7 @@ const videoSoundNoticeDurationOptions = [
 ] as const
 const DEFAULT_VIDEO_CONTROLS_MODE: VideoControlsMode = 'clean'
 const DEFAULT_VIDEO_PLAY_ICON_STYLE: VideoPlayIconStyle = 'solid'
-const DEFAULT_VIDEO_PLAY_SHAPE: VideoPlayShape = 'round'
+const DEFAULT_VIDEO_PLAY_SHAPE: VideoPlayShape = 'rectangle'
 const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
 const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
@@ -654,8 +654,12 @@ const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
 const DEFAULT_VIDEO_PLAYER_COLOR = 'rgba(0,0,0,.52)'
 const DEFAULT_VIDEO_PLAY_COLOR = '#ffffff'
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
-const DEFAULT_VIDEO_PLAY_SIZE = 82
-const DEFAULT_VIDEO_PLAY_ICON_SIZE = 32
+const LEGACY_VIDEO_PLAY_SIZE = 82
+const LEGACY_VIDEO_PLAY_ICON_SIZE = 32
+const LEGACY_VIDEO_PLAY_RADIUS = 999
+const DEFAULT_VIDEO_PLAY_SIZE = 96
+const DEFAULT_VIDEO_PLAY_ICON_SIZE = 54
+const DEFAULT_VIDEO_PLAY_RADIUS = 8
 const VIDEO_PLAY_SIZE_MIN = 56
 const VIDEO_PLAY_SIZE_MAX = 160
 const VIDEO_PLAY_ICON_SIZE_MIN = 18
@@ -683,7 +687,7 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoPlayColor: DEFAULT_VIDEO_PLAY_COLOR,
   videoPlaySize: DEFAULT_VIDEO_PLAY_SIZE,
   videoPlayShape: DEFAULT_VIDEO_PLAY_SHAPE,
-  videoPlayRadius: 999,
+  videoPlayRadius: DEFAULT_VIDEO_PLAY_RADIUS,
   videoPlayIconStyle: DEFAULT_VIDEO_PLAY_ICON_STYLE,
   videoPlayIconSize: DEFAULT_VIDEO_PLAY_ICON_SIZE,
   videoPlayBorderColor: DEFAULT_VIDEO_TRANSPARENT,
@@ -2054,9 +2058,23 @@ const getVideoPlayIconStyle = (settings: Record<string, unknown>): VideoPlayIcon
 const isVideoPlayShape = (value: string): value is VideoPlayShape =>
   videoPlayShapeOptions.some(option => option.value === value)
 
+const isLegacyDefaultVideoPlay = (settings: Record<string, unknown>) => {
+  const rawShape = getSettingString(settings, 'videoPlayShape')
+  const rawRadius = Number(settings.videoPlayRadius)
+  const rawSize = Number(settings.videoPlaySize)
+  const rawIconSize = Number(settings.videoPlayIconSize)
+
+  return rawShape === 'round' &&
+    rawRadius === LEGACY_VIDEO_PLAY_RADIUS &&
+    (!Number.isFinite(rawSize) || rawSize === LEGACY_VIDEO_PLAY_SIZE) &&
+    (!Number.isFinite(rawIconSize) || rawIconSize === LEGACY_VIDEO_PLAY_ICON_SIZE)
+}
+
 const getVideoPlayShape = (settings: Record<string, unknown>): VideoPlayShape => {
   const rawShape = getSettingString(settings, 'videoPlayShape')
-  if (isVideoPlayShape(rawShape)) return rawShape
+  if (isVideoPlayShape(rawShape)) {
+    return isLegacyDefaultVideoPlay(settings) ? DEFAULT_VIDEO_PLAY_SHAPE : rawShape
+  }
   const radius = Number(settings.videoPlayRadius)
   return Number.isFinite(radius) && radius < 120 ? 'rectangle' : DEFAULT_VIDEO_PLAY_SHAPE
 }
@@ -2064,7 +2082,7 @@ const getVideoPlayShape = (settings: Record<string, unknown>): VideoPlayShape =>
 const getVideoPlaySizeValue = (settings: Record<string, unknown>) => {
   const rawSize = Number(settings.videoPlaySize)
   if (!Number.isFinite(rawSize)) return DEFAULT_VIDEO_PLAY_SIZE
-  if (rawSize === 64 && !Object.prototype.hasOwnProperty.call(settings, 'videoPlayShape')) {
+  if (isLegacyDefaultVideoPlay(settings) || (rawSize === 64 && !Object.prototype.hasOwnProperty.call(settings, 'videoPlayShape'))) {
     return DEFAULT_VIDEO_PLAY_SIZE
   }
   return Math.min(VIDEO_PLAY_SIZE_MAX, Math.max(VIDEO_PLAY_SIZE_MIN, rawSize))
@@ -2073,10 +2091,16 @@ const getVideoPlaySizeValue = (settings: Record<string, unknown>) => {
 const getVideoPlayIconSizeValue = (settings: Record<string, unknown>) => {
   const rawSize = Number(settings.videoPlayIconSize)
   if (!Number.isFinite(rawSize)) return DEFAULT_VIDEO_PLAY_ICON_SIZE
-  if (rawSize === 22 && !Object.prototype.hasOwnProperty.call(settings, 'videoPlayShape')) {
+  if (isLegacyDefaultVideoPlay(settings) || (rawSize === 22 && !Object.prototype.hasOwnProperty.call(settings, 'videoPlayShape'))) {
     return DEFAULT_VIDEO_PLAY_ICON_SIZE
   }
   return Math.min(VIDEO_PLAY_ICON_SIZE_MAX, Math.max(VIDEO_PLAY_ICON_SIZE_MIN, rawSize))
+}
+
+const getVideoPlayRadiusValue = (settings: Record<string, unknown>, shape: VideoPlayShape) => {
+  if (isLegacyDefaultVideoPlay(settings)) return DEFAULT_VIDEO_PLAY_RADIUS
+  const defaultRadius = shape === 'rectangle' ? DEFAULT_VIDEO_PLAY_RADIUS : LEGACY_VIDEO_PLAY_RADIUS
+  return getSettingNumber(settings, 'videoPlayRadius', defaultRadius, 0, LEGACY_VIDEO_PLAY_RADIUS)
 }
 
 const getVideoSoundNoticeText = (settings: Record<string, unknown>) => {
@@ -18698,7 +18722,7 @@ const SitesMediaPickerModal: React.FC<{
             <span>{kind === 'image' ? 'Biblioteca de imágenes' : 'Biblioteca de videos'}</span>
             <strong>{title}</strong>
           </div>
-          <button type="button" className={styles.mediaPickerIconButton} onClick={onClose} aria-label="Cerrar selector">
+          <button type="button" className={styles.mediaPickerCloseButton} onClick={onClose} aria-label="Cerrar selector">
             <X size={16} />
           </button>
         </header>
@@ -19044,7 +19068,7 @@ const VideoPlayerSettingsControls: React.FC<{
                   const nextShape = isVideoPlayShape(event.target.value) ? event.target.value : DEFAULT_VIDEO_PLAY_SHAPE
                   onPatchSettings({
                     videoPlayShape: nextShape,
-                    videoPlayRadius: nextShape === 'rectangle' ? 18 : 999
+                    videoPlayRadius: nextShape === 'rectangle' ? DEFAULT_VIDEO_PLAY_RADIUS : LEGACY_VIDEO_PLAY_RADIUS
                   })
                 }}
                 onBlur={onSave}
@@ -22671,7 +22695,11 @@ const VideoPlayGlyph: React.FC<{ iconStyle: VideoPlayIconStyle; size: number }> 
       </svg>
     )
   }
-  return <Play size={size} fill="currentColor" strokeWidth={0} />
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <path d="M6.4 3.4v17.2L20.8 12z" fill="currentColor" />
+    </svg>
+  )
 }
 
 const VideoPlayerPreview: React.FC<{
@@ -22716,7 +22744,7 @@ const VideoPlayerPreview: React.FC<{
   const playSizeValue = getVideoPlaySizeValue(settings)
   const playSize = `${playSizeValue}px`
   const playWidth = `${playShape === 'rectangle' ? Math.round(playSizeValue * 1.45) : playSizeValue}px`
-  const playRadius = `${getSettingNumber(settings, 'videoPlayRadius', 999, 0, 999)}px`
+  const playRadius = `${getVideoPlayRadiusValue(settings, playShape)}px`
   const playIconStyle = getVideoPlayIconStyle(settings)
   const playIconSize = getVideoPlayIconSizeValue(settings)
   const playBorderColor = getSettingString(settings, 'videoPlayBorderColor') || DEFAULT_VIDEO_TRANSPARENT
