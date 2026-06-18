@@ -2,8 +2,8 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 20px;
-  padding-bottom: 18px;
+  gap: var(--app-page-header-gap, 20px);
+  padding-bottom: var(--app-page-header-padding-bottom, 18px);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -24,7 +24,7 @@
 .title {
   margin: 0;
   color: var(--color-text-primary);
-  font-size: 24px;
+  font-size: var(--app-page-title-size, 24px);
   font-weight: 760;
   line-height: 1.15;
 }
@@ -34,7 +34,7 @@
   margin: 6px 0 0;
   max-width: 64ch;
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--app-page-subtitle-size, 13px);
   line-height: 1.45;
 }
 

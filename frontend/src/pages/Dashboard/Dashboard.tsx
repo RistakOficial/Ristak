@@ -438,6 +438,17 @@ const getAppointmentTitle = (appointment: CalendarEvent) => (
   appointment.title || appointment.description || 'Cita sin título'
 )
 
+const getResponsiveDashboardChartHeight = () => {
+  if (typeof window === 'undefined') return 380
+
+  const width = window.innerWidth
+  if (width <= 1024) return 300
+  if (width <= 1180) return 320
+  if (width <= 1366) return 340
+  if (width <= 1536) return 360
+  return 380
+}
+
 const formatPeriodRange = (from: string, to: string) => {
   const startDate = parseLocalDateString(from.slice(0, 10))
   const endDate = to.includes('T') ? new Date(to) : parseLocalDateString(to.slice(0, 10))
@@ -498,6 +509,7 @@ export const Dashboard: React.FC = () => {
   const [recentAppointments, setRecentAppointments] = useState<CalendarEvent[]>([])
   const [recentContacts, setRecentContacts] = useState<ContactListItem[]>([])
   const [chartInsightModal, setChartInsightModal] = useState<ChartInsightModalState>(emptyChartInsightModal)
+  const [chartHeight, setChartHeight] = useState(getResponsiveDashboardChartHeight)
 
   useUrlDateRangeSync({
     dateRange,
@@ -540,6 +552,22 @@ export const Dashboard: React.FC = () => {
   }, [setShowFunnelVisitorsConfig])
 
   const chartsGridClass = showTrafficSourcesChart ? 'grid gap-4 lg:grid-cols-2' : 'grid gap-4'
+
+  useEffect(() => {
+    const handleResize = () => {
+      setChartHeight(getResponsiveDashboardChartHeight())
+    }
+
+    handleResize()
+    window.addEventListener('resize', handleResize)
+    window.visualViewport?.addEventListener('resize', handleResize)
+
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      window.visualViewport?.removeEventListener('resize', handleResize)
+    }
+  }, [])
+
   const calendarRangeDays = React.useMemo(
     () => getInclusiveRangeDays(dateRange.start, dateRange.end),
     [dateRange.start, dateRange.end]
@@ -716,8 +744,6 @@ export const Dashboard: React.FC = () => {
     () => chartConfig.data.some(item => (item.value ?? 0) !== 0 || (item.value2 ?? 0) !== 0),
     [chartConfig]
   )
-
-  const chartHeight = 380
 
   const chartViewOptions = React.useMemo(() => {
     const options: Array<{ value: ChartView; label: string }> = [
@@ -1530,7 +1556,7 @@ export const Dashboard: React.FC = () => {
   return (
     <>
       <PageContainer>
-      <div data-ristak-dashboard className="flex flex-col" style={{ gap: '18px' }}>
+      <div data-ristak-dashboard className="flex flex-col" style={{ gap: 'var(--app-section-gap, 18px)' }}>
         {/* data-dashboard-topbar/-heading: hooks que usan los presets de diseño (index.css) */}
         <PageHeader
           data-dashboard-topbar
@@ -1550,7 +1576,7 @@ export const Dashboard: React.FC = () => {
           )}
         />
 
-        <div data-dashboard-kpi-grid className="grid grid-cols-2 gap-4 sm:grid-cols-2 sm:gap-5 xl:grid-cols-4">
+        <div data-dashboard-kpi-grid className="grid grid-cols-2 gap-[var(--app-grid-gap,1rem)] sm:grid-cols-2 xl:grid-cols-4">
           <KpiCard
             title="Ingresos Netos"
             value={formatCurrency(metrics.ingresosNetos.value)}
@@ -1617,21 +1643,21 @@ export const Dashboard: React.FC = () => {
           />
         </div>
 
-        <Card data-dashboard-chart-card variant="glass" className="space-y-4">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex min-w-0 flex-1 flex-col gap-3 xl:flex-row xl:items-center xl:gap-4">
+        <Card data-dashboard-chart-card variant="glass" className="space-y-[var(--app-card-content-gap,1rem)]">
+          <div className="flex flex-col gap-[var(--app-card-content-gap,1rem)] xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 flex-1 flex-col gap-3 xl:flex-row xl:items-center xl:gap-[var(--app-grid-gap,1rem)]">
               <h2 className="m-0 text-lg font-semibold text-[var(--color-text-primary)] sm:whitespace-nowrap">
                 {activeChartLabel}
               </h2>
-              <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+              <div data-dashboard-chart-controls className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-[var(--app-grid-gap,1rem)]">
                 <ViewSelector
-                  className="min-w-[190px]"
+                  className="dashboard-chart-period-selector"
                   options={chartPeriodOptions}
                   value={selectedChartPeriodValue}
                   onChange={handleChartPeriodChange}
                 />
                 <ViewSelector
-                  className="min-w-[220px]"
+                  className="dashboard-chart-view-selector"
                   options={chartViewOptions}
                   value={selectedChartView}
                   onChange={(value) => {
@@ -1641,7 +1667,7 @@ export const Dashboard: React.FC = () => {
                     }
                   }}
                 />
-                <div className="flex flex-wrap items-center gap-4 px-2 text-xs text-[var(--color-text-secondary)]">
+                <div className="flex flex-wrap items-center gap-[var(--app-legend-gap,1rem)] px-2 text-xs text-[var(--color-text-secondary)]">
                   {chartLegendItems.map((item) => (
                     <div key={item.key} className="inline-flex items-center gap-2">
                       <span
@@ -1716,8 +1742,8 @@ export const Dashboard: React.FC = () => {
           )}
         </div>
 
-        <section data-dashboard-operations className="grid gap-4 xl:grid-cols-3">
-          <Card variant="glass" className="flex min-h-[320px] flex-col gap-4">
+        <section data-dashboard-operations className="grid gap-[var(--app-grid-gap,1rem)] xl:grid-cols-3">
+          <Card variant="glass" className="flex min-h-[var(--dashboard-operation-card-min-height,320px)] flex-col gap-[var(--app-card-content-gap,1rem)]">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <div className="mb-2 flex items-center gap-2 text-[var(--color-text-tertiary)]">
@@ -1767,7 +1793,7 @@ export const Dashboard: React.FC = () => {
             </div>
           </Card>
 
-          <Card variant="glass" className="flex min-h-[320px] flex-col gap-4">
+          <Card variant="glass" className="flex min-h-[var(--dashboard-operation-card-min-height,320px)] flex-col gap-[var(--app-card-content-gap,1rem)]">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <div className="mb-2 flex items-center gap-2 text-[var(--color-text-tertiary)]">
@@ -1813,7 +1839,7 @@ export const Dashboard: React.FC = () => {
             </div>
           </Card>
 
-          <Card variant="glass" className="flex min-h-[320px] flex-col gap-4">
+          <Card variant="glass" className="flex min-h-[var(--dashboard-operation-card-min-height,320px)] flex-col gap-[var(--app-card-content-gap,1rem)]">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <div className="mb-2 flex items-center gap-2 text-[var(--color-text-tertiary)]">

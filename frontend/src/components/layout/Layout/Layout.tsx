@@ -14,7 +14,7 @@ export const Layout: React.FC<LayoutProps> = ({ sidebar, sidebarCollapsed = fals
       <aside
         data-ristak-layout-sidebar
         data-collapsed={sidebarCollapsed ? 'true' : undefined}
-        className={`${sidebarCollapsed ? 'w-20' : 'w-56'} flex-shrink-0 border-r border-[var(--border)] transition-[width] duration-200 ease-out`}
+        className={`${sidebarCollapsed ? 'w-[var(--app-sidebar-collapsed-width,5rem)]' : 'w-[var(--app-sidebar-width,14rem)]'} flex-shrink-0 border-r border-[var(--border)] transition-[width] duration-200 ease-out`}
       >
         {sidebar}
       </aside>

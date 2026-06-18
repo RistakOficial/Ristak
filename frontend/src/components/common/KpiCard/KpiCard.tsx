@@ -57,21 +57,21 @@ export const KpiCard: React.FC<KpiCardProps> = ({
     >
       <div
         data-ristak-kpi-content
-        className="flex min-h-[calc(var(--design-kpi-min-height,112px)-2rem)] items-center justify-between gap-3"
+        className="flex min-h-[var(--app-kpi-content-min-height,calc(var(--design-kpi-min-height,112px)-2rem))] items-center justify-between gap-[var(--app-kpi-gap,0.75rem)]"
       >
         <div className="min-w-0 flex-1">
-          <p className="mb-1 text-sm text-[var(--color-text-tertiary)]">
+          <p className="mb-1 text-[length:var(--app-kpi-title-size,0.875rem)] text-[var(--color-text-tertiary)]">
             {title}
           </p>
           <p className={cn(
-            'mb-1 text-2xl font-bold text-[var(--color-text-primary)] truncate transition-opacity duration-150',
+            'mb-1 text-[length:var(--app-kpi-value-size,1.5rem)] font-bold text-[var(--color-text-primary)] truncate transition-opacity duration-150',
             loading && 'invisible'
           )}>
             {value}
           </p>
           {formattedDelta && (
             <div className={cn(
-              'flex items-center gap-2 text-xs transition-opacity duration-150',
+              'flex items-center gap-2 text-[length:var(--app-kpi-delta-size,0.75rem)] transition-opacity duration-150',
               trendColor,
               loading && 'invisible'
             )}>

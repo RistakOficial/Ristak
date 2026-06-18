@@ -11,10 +11,10 @@ interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
 
 const paddingClasses: Record<CardPadding, string> = {
   none: '',
-  xs: 'p-3',
-  sm: 'p-4',
-  md: 'p-5',
-  lg: 'p-6'
+  xs: 'p-[var(--app-card-padding-xs,0.75rem)]',
+  sm: 'p-[var(--app-card-padding-sm,1rem)]',
+  md: 'p-[var(--app-card-padding-md,1.25rem)]',
+  lg: 'p-[var(--app-card-padding-lg,1.5rem)]'
 }
 
 const variantClasses: Record<CardVariant, string> = {

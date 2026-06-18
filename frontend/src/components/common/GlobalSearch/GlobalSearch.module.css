@@ -9,7 +9,7 @@
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: 42px;
+  min-height: var(--app-global-search-height, 42px);
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: var(--design-control-radius, 12px);
   background: var(--effect-glassMorphism-background, rgba(255, 255, 255, 0.04));
@@ -26,11 +26,11 @@
 .input {
   width: 100%;
   min-width: 0;
-  height: 40px;
+  height: calc(var(--app-global-search-height, 42px) - 2px);
   border: 0;
   background: transparent;
   color: var(--color-text-primary);
-  font-size: 0.95rem;
+  font-size: var(--app-global-search-font-size, 0.95rem);
   outline: none;
   padding: 0 38px 0 38px;
 }
