@@ -148,11 +148,12 @@
 .input,
 .select {
   padding: 9px 12px;
-  background: var(--color-background);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 6px;
+  background: var(--design-control-bg);
+  border: 1px solid var(--design-control-border);
+  border-radius: var(--design-control-radius);
+  box-shadow: var(--design-control-shadow);
   font-size: 14px;
-  color: var(--color-text);
+  color: var(--design-control-text);
   transition: all 0.15s ease;
   height: 38px;
   width: 100%;
@@ -160,19 +161,21 @@
 
 [data-theme="dark"] .input,
 [data-theme="dark"] .select {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--design-control-bg);
+  border-color: var(--design-control-border);
 }
 
 .input:focus,
 .select:focus {
   outline: none;
-  border-color: var(--color-primary);
+  border-color: var(--design-control-border-focus);
+  background: var(--design-control-bg);
+  box-shadow: var(--design-control-focus-shadow);
 }
 
 body.dark .input:focus,
 body.dark .select:focus {
-  box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb), 0.15);
+  box-shadow: var(--design-control-focus-shadow);
 }
 
 .inputDisabled {
@@ -737,17 +740,20 @@ body.dark .select:focus {
 .select {
   height: 42px;
   padding: 0 12px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 8px;
-  background: var(--color-background-primary);
-  color: var(--color-text-primary);
+  border: 1px solid var(--design-control-border);
+  border-radius: var(--design-control-radius);
+  background: var(--design-control-bg);
+  color: var(--design-control-text);
+  box-shadow: var(--design-control-shadow);
   font-size: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .input:focus,
 .select:focus {
-  border-color: rgba(100, 116, 139, 0.55);
-  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.12);
+  border-color: var(--design-control-border-focus);
+  background: var(--design-control-bg);
+  box-shadow: var(--design-control-focus-shadow);
 }
 
 .inputReadOnly {
@@ -1249,10 +1255,11 @@ body.dark .select:focus {
   width: 100%;
   min-height: 42px;
   padding: 0 12px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 8px;
-  background: var(--color-background-primary);
+  border: 1px solid var(--ristak-dropdown-border);
+  border-radius: var(--ristak-dropdown-radius);
+  background: var(--ristak-dropdown-bg);
   color: var(--color-text-primary);
+  box-shadow: var(--ristak-dropdown-trigger-shadow, var(--design-control-shadow));
   font: inherit;
   font-size: 14px;
   cursor: pointer;
@@ -1261,8 +1268,9 @@ body.dark .select:focus {
 
 .dropdownTrigger:hover:not(:disabled),
 .dropdownTrigger:focus {
-  border-color: rgba(100, 116, 139, 0.55);
-  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.12);
+  border-color: var(--ristak-dropdown-border-focus);
+  background: var(--ristak-dropdown-bg);
+  box-shadow: var(--ristak-dropdown-ring);
   outline: none;
 }
 
@@ -1300,10 +1308,10 @@ body.dark .select:focus {
 .dropdownMenu {
   max-height: 240px;
   overflow-y: auto;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 8px;
-  background: var(--surface-solid, var(--surface));
-  box-shadow: 0 16px 32px -24px rgba(15, 23, 42, 0.65);
+  border: 1px solid var(--ristak-dropdown-border);
+  border-radius: var(--ristak-dropdown-radius);
+  background: var(--ristak-dropdown-panel-bg, var(--surface-solid, var(--surface)));
+  box-shadow: var(--ristak-dropdown-panel-shadow);
 }
 
 .dropdownItem {
@@ -1327,12 +1335,12 @@ body.dark .select:focus {
 }
 
 .dropdownItem:hover {
-  background: rgba(148, 163, 184, 0.1);
+  background: var(--ristak-dropdown-bg-hover);
 }
 
 .dropdownItemActive {
   color: var(--color-primary);
-  background: rgba(var(--color-primary-rgb), 0.08);
+  background: var(--accent-soft);
   font-weight: 600;
 }
 

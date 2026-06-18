@@ -433,7 +433,7 @@ body:not([data-phone-app='active']) :where(select):not(:where(.rstkCanvas select
   font-size: var(--font-size-sm) !important;
   font-weight: var(--font-weight-medium) !important;
   line-height: 1.25rem !important;
-  box-shadow: none !important;
+  box-shadow: var(--ristak-dropdown-trigger-shadow, var(--design-control-shadow)) !important;
   outline: none !important;
   appearance: none !important;
   -webkit-appearance: none !important;
@@ -558,7 +558,7 @@ body:not([data-phone-app='active']) [data-ristak-dropdown-trigger] {
   border-radius: var(--ristak-dropdown-radius) !important;
   background: var(--ristak-dropdown-bg) !important;
   color: var(--color-text-primary) !important;
-  box-shadow: none !important;
+  box-shadow: var(--ristak-dropdown-trigger-shadow, var(--design-control-shadow)) !important;
   outline: none !important;
 }
 
@@ -3108,7 +3108,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --design-control-shadow: var(--shadow-xs);
     --design-control-focus-shadow: 0 0 0 3px var(--accent-soft);
     --ristak-dropdown-panel-shadow: var(--shadow-pop);
-    --native-control-shadow: var(--shadow-xs);
+    --native-control-shadow: var(--design-control-shadow);
     --shadow-lg: var(--shadow-card);
     --shadow-xl: var(--shadow-pop);
     --rstk-selection-shadow: var(--shadow-pop);
@@ -3166,17 +3166,18 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --chart-grid: var(--chart-grid);
 
     /* Dropdowns (--ristak-dropdown-*) */
-    --ristak-dropdown-bg: var(--surface);
-    --ristak-dropdown-bg-hover: var(--surface-hover);
+    --ristak-dropdown-bg: var(--design-control-bg);
+    --ristak-dropdown-bg-hover: var(--design-control-bg-hover);
     --ristak-dropdown-border: var(--border);
     --ristak-dropdown-border-hover: var(--border-strong);
     --ristak-dropdown-border-focus: var(--accent);
     --ristak-dropdown-ring: 0 0 0 3px var(--accent-soft);
+    --ristak-dropdown-trigger-shadow: var(--design-control-shadow);
     --ristak-dropdown-panel-bg: var(--surface-solid, var(--surface));
 
     /* Controles nativos (--native-control-*) */
-    --native-control-bg: var(--bg-soft);
-    --native-control-bg-hover: var(--surface-hover);
+    --native-control-bg: var(--design-control-bg);
+    --native-control-bg-hover: var(--design-control-bg-hover);
     --native-control-border: var(--border);
     --native-control-border-hover: var(--border-strong);
     --native-control-icon: var(--text-mute);
@@ -3247,6 +3248,24 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --color-gradients-background-image: none;
     --color-gradients-background-main: none;
     --color-gradients-background-overlay: none;
+  }
+
+  body[data-dir].light:not([data-phone-app='active']):not([data-phone-chat-theme='active']),
+  body:not([data-dir]).light:not([data-phone-app='active']):not([data-phone-chat-theme='active']) {
+    --design-control-bg: var(--surface);
+    --design-control-bg-hover: var(--surface-hover);
+    --design-control-shadow: none;
+    --ristak-dropdown-trigger-shadow: none;
+    --native-control-shadow: none;
+  }
+
+  body[data-dir].dark:not([data-phone-app='active']):not([data-phone-chat-theme='active']),
+  body:not([data-dir]).dark:not([data-phone-app='active']):not([data-phone-chat-theme='active']) {
+    --design-control-bg: var(--bg-soft);
+    --design-control-bg-hover: var(--surface-hover);
+    --design-control-shadow: var(--shadow-xs);
+    --ristak-dropdown-trigger-shadow: var(--design-control-shadow);
+    --native-control-shadow: var(--design-control-shadow);
   }
 
   /* ===================== RE-SKIN DEL SHELL (vía hooks existentes) =====================
