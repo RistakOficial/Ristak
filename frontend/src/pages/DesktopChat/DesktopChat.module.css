@@ -98,6 +98,14 @@
   background: color-mix(in srgb, var(--accent-soft) 38%, transparent);
 }
 
+.inboxHeaderAgent {
+  justify-content: flex-start;
+}
+
+.inboxHeaderCopy {
+  min-width: 0;
+}
+
 .inboxTitleLine {
   display: flex;
   align-items: center;
@@ -107,20 +115,6 @@
 
 .inboxTitleLine h2 {
   min-width: 0;
-}
-
-.inboxTitleAgentIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 26px;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  box-shadow: var(--shadow-xs);
 }
 
 .inboxHeader .agentInboxButton[data-btn] {
@@ -340,7 +334,7 @@
 .chatList {
   min-height: 0;
   overflow: auto;
-  padding: 0 8px 12px;
+  padding: 0 0 12px;
 }
 
 .archiveRow,
@@ -378,7 +372,7 @@
 
 .chatRowActive,
 .archiveRowActive {
-  border-radius: 8px;
+  border-radius: 0;
 }
 
 .chatRowUnread {
