@@ -783,8 +783,8 @@
   --rstk-assistant-composer-action: 40px;
   min-width: 0;
   display: grid;
-  grid-template-columns: var(--rstk-assistant-composer-action) var(--rstk-assistant-composer-action) minmax(0, 1fr) minmax(150px, 190px) var(--rstk-assistant-composer-action);
-  grid-template-areas: "mic attach input model send";
+  grid-template-columns: var(--rstk-assistant-composer-action) minmax(0, 1fr) var(--rstk-assistant-composer-action) var(--rstk-assistant-composer-action);
+  grid-template-areas: "attach input mic send";
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -903,10 +903,6 @@
   display: none;
 }
 
-.importedCodeAssistantComposerVoiceActive .importedCodeAssistantInlineModel {
-  display: none;
-}
-
 .importedCodeAssistantInputWrap textarea {
   width: 100%;
   min-height: 40px;
@@ -925,8 +921,15 @@
   box-shadow: none !important;
 }
 
+.importedCodeAssistantModelRow {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 2px;
+}
+
 .importedCodeAssistantInlineModel {
-  grid-area: model;
+  width: min(100%, 230px);
   min-width: 0;
 }
 

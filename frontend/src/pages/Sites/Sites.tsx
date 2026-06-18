@@ -15413,15 +15413,24 @@ const ImportedHtmlEditorPanel: React.FC<{
               onChange={handleCodeAssistantPickFiles}
               disabled={codeAssistantSaving || !aiAgentAvailable}
             />
+            <div className={styles.importedCodeAssistantModelRow}>
+              <CustomSelect
+                value={codeAssistantModel}
+                portal
+                disabled={codeAssistantSaving || !aiAgentAvailable}
+                className={styles.importedCodeAssistantInlineModel}
+                aria-label="Modelo del asistente de código"
+                onChange={(event) => setCodeAssistantModel(event.target.value)}
+              >
+                {chatgptSiteModelOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </div>
             <div
               className={`${styles.importedCodeAssistantComposer} ${codeAssistantVoiceDictation.voiceIsActive ? styles.importedCodeAssistantComposerVoiceActive : ''}`}
               data-ristak-unstyled
             >
-              <AIVoiceDictationControl
-                voice={codeAssistantVoiceDictation}
-                disabled={codeAssistantSaving || !aiAgentAvailable}
-                className={styles.importedCodeAssistantVoice}
-              />
               <button
                 type="button"
                 className={styles.importedCodeAssistantAttachButton}
@@ -15450,18 +15459,11 @@ const ImportedHtmlEditorPanel: React.FC<{
                   }}
                 />
               </label>
-              <CustomSelect
-                value={codeAssistantModel}
-                portal
+              <AIVoiceDictationControl
+                voice={codeAssistantVoiceDictation}
                 disabled={codeAssistantSaving || !aiAgentAvailable}
-                className={styles.importedCodeAssistantInlineModel}
-                aria-label="Modelo del asistente de código"
-                onChange={(event) => setCodeAssistantModel(event.target.value)}
-              >
-                {chatgptSiteModelOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </CustomSelect>
+                className={styles.importedCodeAssistantVoice}
+              />
               <button
                 type="button"
                 className={styles.importedCodeAssistantSendButton}
