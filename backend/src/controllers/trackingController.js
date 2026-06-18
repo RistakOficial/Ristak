@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js'
 import { createSession, getRecentSessions, linkVisitorToContact, getSessionsByDateRange, getSessionMetricsByDateRange } from '../services/trackingService.js'
+import { recordVideoPlaybackEvent } from '../services/videoTrackingService.js'
 import { getHighLevelConfig, getAppConfig, setAppConfig, db } from '../config/database.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
@@ -164,6 +165,28 @@ function contactAnalyticsSourceCondition(alias = 'c') {
       WHERE wa.contact_id = ${prefix}id
     )
   )`
+}
+
+function getRequestIp(req) {
+  let ip = null
+  const xForwardedFor = req.headers['x-forwarded-for']
+  if (typeof xForwardedFor === 'string' && xForwardedFor.length > 0) {
+    ip = xForwardedFor.split(',')[0].trim()
+  } else if (Array.isArray(xForwardedFor) && xForwardedFor.length > 0) {
+    ip = xForwardedFor[0].trim()
+  } else if (typeof req.headers['cf-connecting-ip'] === 'string') {
+    ip = req.headers['cf-connecting-ip']
+  }
+
+  if (!ip) {
+    ip =
+      req.ip ||
+      req.socket?.remoteAddress ||
+      req.connection?.remoteAddress ||
+      null
+  }
+
+  return ip && ip.startsWith('::ffff:') ? ip.substring(7) : ip
 }
 
 function buildTrackingSnippet({ trackingDomain, metaPixelId = null, includeMetaPixel = false }) {
@@ -849,6 +872,44 @@ export async function collectEvent(req, res) {
   } catch (error) {
     logger.error('Error en /collect:', error)
     res.status(500).json({ error: 'Internal server error' })
+  }
+}
+
+/**
+ * Recibe eventos de reproducción de video desde Sites públicos
+ * POST /video-event
+ */
+export async function collectVideoEvent(req, res) {
+  try {
+    const MAX_SIZE = 50 * 1024
+    const contentLength = parseInt(req.headers['content-length'] || '0', 10)
+    if (contentLength > MAX_SIZE) {
+      return res.status(413).json({ error: 'Payload too large' })
+    }
+
+    const { visitor_id, session_id, event_name, ts, data } = req.body || {}
+    const noTrackReason = getNoTrackReason({ req, body: req.body, data })
+    if (noTrackReason) {
+      return res.json({ ok: true, skipped: true, reason: noTrackReason })
+    }
+
+    if (!visitor_id || !session_id || !event_name || !ts || !data?.playback_id) {
+      return res.status(400).json({ error: 'Missing required fields' })
+    }
+
+    const summary = await recordVideoPlaybackEvent({
+      ...req.body,
+      ip: getRequestIp(req),
+      user_agent: req.headers['user-agent'] || null
+    })
+
+    res.json({ ok: true, data: summary })
+  } catch (error) {
+    const status = error.status || 500
+    logger.error('Error en /video-event:', error)
+    res.status(status).json({
+      error: status === 500 ? 'Internal server error' : error.message
+    })
   }
 }
 

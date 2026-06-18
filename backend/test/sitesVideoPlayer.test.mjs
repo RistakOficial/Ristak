@@ -197,6 +197,7 @@ test('preview uses storage video while live render uses Bunny Stream player when
     assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
     assert.doesNotMatch(previewHtml, /no_track=1/)
     assert.doesNotMatch(previewHtml, /player\.mediadelivery\.net\/embed/)
+    assert.doesNotMatch(previewHtml, /ristakVideoTrackingLoaded/)
 
     const liveHtml = await renderPublicSiteHtml(site, {
       pageId: 'page-1',
@@ -204,7 +205,12 @@ test('preview uses storage video while live render uses Bunny Stream player when
       preview: false
     })
 
-    assert.match(liveHtml, new RegExp(`src="https://player\\.mediadelivery\\.net/embed/123456/${streamVideoId}\\?autoplay=true&amp;muted=false&amp;loop=true&amp;preload=true&amp;playsinline=true"`))
+    assert.match(liveHtml, new RegExp(`src="https://player\\.mediadelivery\\.net/embed/123456/${streamVideoId}\\?autoplay=true&amp;muted=false&amp;loop=true&amp;preload=true&amp;playsinline=true&amp;rstk_play_id=[^"]+"`))
+    assert.match(liveHtml, /data-rstk-video-track="true"/)
+    assert.match(liveHtml, new RegExp(`data-rstk-media-asset-id="${assetId}"`))
+    assert.match(liveHtml, new RegExp(`data-rstk-stream-video-id="${streamVideoId}"`))
+    assert.match(liveHtml, /data-rstk-playback-id="[^"]+"/)
+    assert.match(liveHtml, /assets\.mediadelivery\.net\/playerjs\/playerjs-latest\.min\.js/)
     assert.doesNotMatch(liveHtml, new RegExp(`src="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
   } finally {
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
@@ -255,6 +261,7 @@ test('editor-style preview does not load manually pasted Bunny Stream embeds', a
     assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
     assert.doesNotMatch(previewHtml, /no_track=1/)
     assert.doesNotMatch(previewHtml, /player\.mediadelivery\.net\/embed/)
+    assert.doesNotMatch(previewHtml, /ristakVideoTrackingLoaded/)
 
     const liveHtml = await renderPublicSiteHtml(site, {
       pageId: 'page-1',
@@ -262,7 +269,10 @@ test('editor-style preview does not load manually pasted Bunny Stream embeds', a
       preview: false
     })
 
-    assert.match(liveHtml, new RegExp(`src="https://player\\.mediadelivery\\.net/embed/123456/${streamVideoId}"`))
+    assert.match(liveHtml, new RegExp(`src="https://player\\.mediadelivery\\.net/embed/123456/${streamVideoId}\\?rstk_play_id=[^"]+"`))
+    assert.match(liveHtml, /data-rstk-video-track="true"/)
+    assert.match(liveHtml, new RegExp(`data-rstk-media-asset-id="${assetId}"`))
+    assert.match(liveHtml, new RegExp(`data-rstk-stream-video-id="${streamVideoId}"`))
   } finally {
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
   }

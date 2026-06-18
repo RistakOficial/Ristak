@@ -1,6 +1,7 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
+import { linkVideoVisitorToContact, unifyVideoPlaybackVisitorIds } from './videoTrackingService.js'
 import fetch from 'node-fetch'
 
 const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
@@ -511,7 +512,12 @@ export async function linkVisitorToContact(visitor_id, contact_id, full_name) {
 
     logger.info(`Guardado visitor_id ${visitor_id} en contacto ${contact_id}`)
 
-    return { success: true, updated: result.changes }
+    const videoResult = await linkVideoVisitorToContact(visitor_id, contact_id, full_name)
+    if (videoResult.sessionsUpdated > 0 || videoResult.eventsUpdated > 0) {
+      logger.info(`Vinculadas ${videoResult.sessionsUpdated} reproducciones de video de visitor ${visitor_id} a contact ${contact_id}`)
+    }
+
+    return { success: true, updated: result.changes, videoUpdated: videoResult.sessionsUpdated }
   } catch (error) {
     logger.error('Error vinculando visitor a contact:', error)
     throw error
@@ -893,6 +899,8 @@ export async function unifyVisitorIds(contactId) {
         WHERE id = ?
       `, [canonicalVisitorId, contactId])
 
+      await unifyVideoPlaybackVisitorIds(contactId, canonicalVisitorId)
+
       return { success: true, canonicalVisitorId, sessionsUpdated: 0 }
     }
 
@@ -909,6 +917,11 @@ export async function unifyVisitorIds(contactId) {
     `, [canonicalVisitorId, contactId, canonicalVisitorId])
 
     logger.info(`✅ Actualizadas ${result.changes} sesiones con visitor_id unificado`)
+
+    const videoResult = await unifyVideoPlaybackVisitorIds(contactId, canonicalVisitorId)
+    if (videoResult.sessionsUpdated > 0 || videoResult.eventsUpdated > 0) {
+      logger.info(`✅ Actualizadas ${videoResult.sessionsUpdated} reproducciones de video con visitor_id unificado`)
+    }
 
     // PASO 4: Guardar visitor_id canónico en tabla contacts
     await db.run(`

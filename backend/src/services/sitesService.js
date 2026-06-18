@@ -10135,23 +10135,75 @@ function buildBunnyStreamEmbedUrl(stream, settings = {}) {
 }
 
 function getBunnyStreamVideoIdFromUrl(value = '') {
+  return getBunnyStreamMetadataFromUrl(value)?.videoId || ''
+}
+
+function getBunnyStreamMetadataFromUrl(value = '') {
   const url = safeUrl(value)
-  if (!url) return ''
+  if (!url) return null
 
   try {
     const parsed = new URL(url)
     const host = parsed.hostname.replace(/^www\./i, '').toLowerCase()
-    if (host !== 'player.mediadelivery.net' && host !== 'iframe.mediadelivery.net') return ''
+    if (host !== 'player.mediadelivery.net' && host !== 'iframe.mediadelivery.net') return null
     const pathParts = parsed.pathname.split('/').filter(Boolean)
-    if (pathParts[0] !== 'embed') return ''
-    return cleanString(pathParts[2])
+    if (pathParts[0] !== 'embed') return null
+    const libraryId = cleanString(pathParts[1])
+    const videoId = cleanString(pathParts[2])
+    return libraryId && videoId ? { libraryId, videoId } : null
   } catch {
-    return ''
+    return null
   }
 }
 
-function renderBunnyStreamIframe(embedUrl, block) {
-  return `<div class="rstk-video"><iframe src="${escapeHtml(embedUrl)}" title="${escapeHtml(block.label || 'Video')}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
+function appendBunnyStreamPlaybackId(embedUrl, playbackId) {
+  const cleanPlaybackId = cleanString(playbackId)
+  if (!cleanPlaybackId) return embedUrl
+
+  try {
+    const url = new URL(embedUrl)
+    url.searchParams.set('rstk_play_id', cleanPlaybackId)
+    return url.toString()
+  } catch {
+    return embedUrl
+  }
+}
+
+function renderVideoTrackingAttributes(attrs = {}) {
+  return Object.entries(attrs)
+    .filter(([, value]) => value !== null && value !== undefined && value !== '')
+    .map(([key, value]) => `data-rstk-${key}="${escapeHtml(String(value))}"`)
+    .join(' ')
+}
+
+function buildVideoTrackingAttributes({ enabled = false, block = {}, asset = null, stream = null, provider = '', playbackId = '' } = {}) {
+  if (!enabled) return ''
+  const resolvedStream = stream || getMediaAssetStreamMetadata(asset)
+  return renderVideoTrackingAttributes({
+    'video-track': 'true',
+    'video-provider': provider || (resolvedStream?.videoId ? 'bunny_stream' : 'html5_video'),
+    'playback-id': playbackId,
+    'media-asset-id': asset?.id || '',
+    'stream-library-id': resolvedStream?.libraryId || '',
+    'stream-video-id': resolvedStream?.videoId || '',
+    'block-id': block?.id || '',
+    'block-label': block?.label || ''
+  })
+}
+
+function renderBunnyStreamIframe(embedUrl, block, tracking = {}) {
+  const playbackId = tracking.enabled ? (tracking.playbackId || crypto.randomUUID()) : ''
+  const stream = tracking.stream || getBunnyStreamMetadataFromUrl(embedUrl)
+  const trackedEmbedUrl = playbackId ? appendBunnyStreamPlaybackId(embedUrl, playbackId) : embedUrl
+  const trackingAttrs = buildVideoTrackingAttributes({
+    enabled: tracking.enabled,
+    block,
+    asset: tracking.asset,
+    stream,
+    provider: 'bunny_stream',
+    playbackId
+  })
+  return `<div class="rstk-video"><iframe src="${escapeHtml(trackedEmbedUrl)}" title="${escapeHtml(block.label || 'Video')}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"${trackingAttrs ? ` ${trackingAttrs}` : ''}></iframe></div>`
 }
 
 function collectVideoStorageUrlsFromBlocks(blocks = [], urls = new Set()) {
@@ -10219,18 +10271,34 @@ async function buildVideoStorageAssetsByStreamVideoId(blocks = [], { enabled = f
 }
 
 function getLiveStreamEmbedUrlForStorageVideo(rawVideoUrl, settings = {}, context = {}) {
-  if (context.noTrack) return ''
-  const lookupUrl = normalizeMediaLookupUrl(rawVideoUrl)
-  if (!lookupUrl) return ''
-  const asset = context.videoStreamAssetsByStorageUrl?.get(lookupUrl)
+  const asset = getLiveStreamAssetForStorageVideo(rawVideoUrl, context)
   const stream = getMediaAssetStreamMetadata(asset)
   return stream ? buildBunnyStreamEmbedUrl(stream, settings) : ''
+}
+
+function getLiveStreamAssetForStorageVideo(rawVideoUrl, context = {}) {
+  if (context.noTrack) return null
+  const lookupUrl = normalizeMediaLookupUrl(rawVideoUrl)
+  if (!lookupUrl) return null
+  return context.videoStreamAssetsByStorageUrl?.get(lookupUrl) || null
+}
+
+function getStorageAssetForStreamVideoUrl(videoUrl, context = {}) {
+  const videoId = getBunnyStreamVideoIdFromUrl(videoUrl)
+  if (!videoId) return null
+  return context.videoStorageAssetsByStreamVideoId?.get(videoId) || null
+}
+
+function getStreamMetadataForVideoUrl(videoUrl, context = {}) {
+  const asset = getStorageAssetForStreamVideoUrl(videoUrl, context)
+  const stream = getMediaAssetStreamMetadata(asset)
+  return stream || getBunnyStreamMetadataFromUrl(videoUrl)
 }
 
 function renderNoTrackBunnyStreamBlock(videoUrl, block, settings = {}, context = {}) {
   const videoId = getBunnyStreamVideoIdFromUrl(videoUrl)
   if (!context.noTrack || !videoId) return ''
-  const asset = context.videoStorageAssetsByStreamVideoId?.get(videoId)
+  const asset = getStorageAssetForStreamVideoUrl(videoUrl, context)
   if (asset?.publicUrl) {
     return renderVideoPlayer(asset.publicUrl, block, settings, { noTrack: false })
   }
@@ -11638,7 +11706,7 @@ function buildNativeSiteTrackingScript(context) {
         }).catch(() => {});
       };
 
-      window.ristakNativeIdentity = () => ({ visitorId: getVisitorId(), sessionId: getSessionId() });
+      window.ristakNativeIdentity = () => ({ visitorId: getVisitorId(), sessionId: getSessionId(), contactId: getSavedContactId() });
       window.ristakNativeBuildData = buildTrackingData;
       window.ristakNativeRememberContact = rememberContact;
       window.ristakNativeTrack = sendEvent;
@@ -11649,6 +11717,337 @@ function buildNativeSiteTrackingScript(context) {
       } else {
         document.addEventListener('DOMContentLoaded', emitView, { once: true });
       }
+    })();
+  </script>`
+}
+
+function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
+  if (!enabled) return ''
+
+  return `
+  <script>
+    (() => {
+      if (window.ristakVideoTrackingLoaded) return;
+      window.ristakVideoTrackingLoaded = true;
+
+      const ENDPOINT = '/video-event';
+      const PLAYERJS_URL = 'https://assets.mediadelivery.net/playerjs/playerjs-latest.min.js';
+      const NO_TRACK_KEYS = ['no_track', 'noTrack', 'notrack', 'rstk_no_track', 'rstkNoTrack', 'rstk_preview', 'rstkPreview', 'preview', 'editor', 'editor_preview', 'editorPreview'];
+      const LIVE_VALUES = ['live', 'public', 'published', 'production', 'track', 'tracked'];
+      const NO_TRACK_VALUES = ['', '1', 'true', 'yes', 'y', 'on', 'preview', 'editor', 'test', 'no_track', 'notrack', 'disabled', 'disable', 'off'];
+      const milestones = [10, 25, 50, 75, 90, 100];
+      let playerJsLoader = null;
+
+      const clean = value => String(value || '').trim();
+      const num = value => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : 0;
+      };
+      const clamp = (value, min, max) => Math.min(max, Math.max(min, num(value)));
+      const makeId = () => {
+        if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+          const r = Math.random() * 16 | 0;
+          const v = c === 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
+      };
+      const flagMeansNoTrack = value => {
+        if (value === true) return true;
+        if (value === false || value === null || typeof value === 'undefined') return false;
+        const normalized = String(value).trim().toLowerCase();
+        if (LIVE_VALUES.includes(normalized)) return false;
+        return NO_TRACK_VALUES.includes(normalized);
+      };
+      const isNoTrackMode = () => {
+        try {
+          const params = new URLSearchParams(window.location.search || '');
+          for (const key of NO_TRACK_KEYS) {
+            if (params.has(key) && flagMeansNoTrack(params.get(key))) return true;
+          }
+          if (params.has('tracking')) {
+            const value = String(params.get('tracking') || '').trim().toLowerCase();
+            if (!LIVE_VALUES.includes(value) && (NO_TRACK_VALUES.includes(value) || ['0', 'false', 'no'].includes(value))) return true;
+          }
+          if (window.ristakNoTrack === true || window.ristakPreviewMode === true) return true;
+        } catch (_) {}
+        return false;
+      };
+      if (isNoTrackMode()) return;
+
+      const readJson = (storage, key) => {
+        try {
+          const raw = storage.getItem(key);
+          return raw ? JSON.parse(raw) : {};
+        } catch (_) {
+          return {};
+        }
+      };
+      const generateShortId = () => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        let id = '';
+        for (let i = 0; i < 20; i += 1) id += chars.charAt(Math.floor(Math.random() * chars.length));
+        return id;
+      };
+      const getFallbackIdentity = () => {
+        const local = readJson(localStorage, 'ristak');
+        const session = readJson(sessionStorage, 'ristak');
+        if (!local.visitor_id) {
+          local.visitor_id = generateShortId();
+          local.first_visit = new Date().toISOString();
+          try { localStorage.setItem('ristak', JSON.stringify(local)); } catch (_) {}
+        }
+        if (!session.session_id) {
+          session.session_id = makeId();
+          session.session_start = Date.now();
+          try { sessionStorage.setItem('ristak', JSON.stringify(session)); } catch (_) {}
+        }
+        return {
+          visitorId: local.visitor_id,
+          sessionId: session.session_id,
+          contactId: local.contact_id || null
+        };
+      };
+      const getIdentity = () => {
+        try {
+          if (typeof window.ristakNativeIdentity === 'function') {
+            const identity = window.ristakNativeIdentity() || {};
+            if (identity.visitorId && identity.sessionId) return identity;
+          }
+        } catch (_) {}
+        return getFallbackIdentity();
+      };
+      const buildBaseData = extra => {
+        try {
+          if (typeof window.ristakNativeBuildData === 'function') {
+            return window.ristakNativeBuildData(extra || {});
+          }
+        } catch (_) {}
+        return Object.assign({
+          tracking_source: 'native_site_video',
+          url: window.location.href,
+          referrer: document.referrer || null,
+          title: document.title || null,
+          language: navigator.language || navigator.userLanguage || null,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+          user_agent: navigator.userAgent
+        }, extra || {});
+      };
+      const sendPayload = (eventName, meta, options = {}) => {
+        const identity = getIdentity();
+        if (!identity.visitorId || !identity.sessionId || !meta.playbackId) return;
+        const position = clamp(meta.positionSeconds, 0, 86400);
+        const duration = clamp(meta.durationSeconds, 0, 86400);
+        const percent = duration > 0 ? Math.min(100, Math.max(0, (position / duration) * 100)) : clamp(meta.progressPercent, 0, 100);
+        const data = buildBaseData({
+          tracking_source: 'native_site_video',
+          video_event_name: eventName,
+          playback_id: meta.playbackId,
+          event_id: meta.eventId || [meta.playbackId, eventName, Math.floor(position), Date.now()].join(':'),
+          media_asset_id: meta.mediaAssetId || null,
+          stream_library_id: meta.streamLibraryId || null,
+          stream_video_id: meta.streamVideoId || null,
+          video_provider: meta.videoProvider || 'bunny_stream',
+          video_title: meta.videoTitle || null,
+          block_id: meta.blockId || null,
+          block_label: meta.blockLabel || null,
+          position_seconds: position,
+          duration_seconds: duration,
+          progress_percent: percent,
+          watched_delta_seconds: clamp(meta.watchedDeltaSeconds, 0, 30)
+        });
+        const payload = {
+          visitor_id: identity.visitorId,
+          session_id: identity.sessionId,
+          contact_id: identity.contactId || null,
+          event_name: eventName,
+          ts: Date.now(),
+          data
+        };
+        const body = JSON.stringify(payload);
+        if (options.beacon && navigator.sendBeacon) {
+          try {
+            const blob = new Blob([body], { type: 'application/json' });
+            if (navigator.sendBeacon(ENDPOINT, blob)) return;
+          } catch (_) {}
+        }
+        fetch(ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          keepalive: true
+        }).catch(() => {});
+      };
+      const readMeta = element => ({
+        playbackId: clean(element.dataset.rstkPlaybackId) || makeId(),
+        mediaAssetId: clean(element.dataset.rstkMediaAssetId),
+        streamLibraryId: clean(element.dataset.rstkStreamLibraryId),
+        streamVideoId: clean(element.dataset.rstkStreamVideoId),
+        videoProvider: clean(element.dataset.rstkVideoProvider) || 'bunny_stream',
+        videoTitle: element.getAttribute('title') || clean(element.dataset.rstkBlockLabel),
+        blockId: clean(element.dataset.rstkBlockId),
+        blockLabel: clean(element.dataset.rstkBlockLabel)
+      });
+      const streamMetaFromUrl = src => {
+        try {
+          const url = new URL(src, window.location.href);
+          const host = url.hostname.replace(/^www\\./i, '').toLowerCase();
+          if (host !== 'player.mediadelivery.net' && host !== 'iframe.mediadelivery.net') return null;
+          const parts = url.pathname.split('/').filter(Boolean);
+          if (parts[0] !== 'embed' || !parts[1] || !parts[2]) return null;
+          return { libraryId: parts[1], videoId: parts[2], url };
+        } catch (_) {
+          return null;
+        }
+      };
+      const ensureStreamIframe = iframe => {
+        const stream = streamMetaFromUrl(iframe.getAttribute('src') || '');
+        if (!stream) return null;
+        if (!iframe.dataset.rstkVideoTrack) iframe.dataset.rstkVideoTrack = 'true';
+        if (!iframe.dataset.rstkVideoProvider) iframe.dataset.rstkVideoProvider = 'bunny_stream';
+        if (!iframe.dataset.rstkStreamLibraryId) iframe.dataset.rstkStreamLibraryId = stream.libraryId;
+        if (!iframe.dataset.rstkStreamVideoId) iframe.dataset.rstkStreamVideoId = stream.videoId;
+        if (!iframe.dataset.rstkPlaybackId) iframe.dataset.rstkPlaybackId = makeId();
+        if (!stream.url.searchParams.has('rstk_play_id')) {
+          stream.url.searchParams.set('rstk_play_id', iframe.dataset.rstkPlaybackId);
+          iframe.setAttribute('src', stream.url.toString());
+        }
+        return iframe;
+      };
+      const loadPlayerJs = () => {
+        if (window.playerjs && window.playerjs.Player) return Promise.resolve(window.playerjs);
+        if (playerJsLoader) return playerJsLoader;
+        playerJsLoader = new Promise(resolve => {
+          const existing = document.querySelector('script[data-rstk-playerjs="true"]');
+          if (existing) {
+            existing.addEventListener('load', () => resolve(window.playerjs || null), { once: true });
+            existing.addEventListener('error', () => resolve(null), { once: true });
+            return;
+          }
+          const script = document.createElement('script');
+          script.src = PLAYERJS_URL;
+          script.async = true;
+          script.dataset.rstkPlayerjs = 'true';
+          script.onload = () => resolve(window.playerjs || null);
+          script.onerror = () => resolve(null);
+          document.head.appendChild(script);
+        });
+        return playerJsLoader;
+      };
+      const createState = meta => ({
+        ...meta,
+        lastPosition: 0,
+        lastSentAt: 0,
+        sentMilestones: new Set(),
+        durationSeconds: 0,
+        positionSeconds: 0
+      });
+      const shouldSendProgress = (state, percent, position) => {
+        const now = Date.now();
+        const hitMilestone = milestones.find(item => percent >= item && !state.sentMilestones.has(item));
+        if (hitMilestone) {
+          state.sentMilestones.add(hitMilestone);
+          return true;
+        }
+        if (now - state.lastSentAt >= 5000 && Math.abs(position - state.lastPosition) >= 1) return true;
+        return false;
+      };
+      const updateStateTiming = (state, seconds, duration) => {
+        const position = clamp(seconds, 0, 86400);
+        const total = clamp(duration || state.durationSeconds, 0, 86400);
+        const delta = position > state.positionSeconds && position - state.positionSeconds <= 10 ? position - state.positionSeconds : 0;
+        state.positionSeconds = position;
+        if (total) state.durationSeconds = total;
+        return { position, duration: state.durationSeconds, delta };
+      };
+      const trackBunnyIframe = iframe => {
+        const trackedIframe = ensureStreamIframe(iframe);
+        if (!trackedIframe || trackedIframe.dataset.rstkVideoTrackingAttached === 'true') return;
+        trackedIframe.dataset.rstkVideoTrackingAttached = 'true';
+        const state = createState(readMeta(trackedIframe));
+        loadPlayerJs().then(playerjs => {
+          if (!playerjs || !playerjs.Player) return;
+          const player = new playerjs.Player(trackedIframe);
+          const emit = (eventName, timing = {}, force = false, beacon = false) => {
+            const info = updateStateTiming(state, timing.seconds, timing.duration);
+            const percent = info.duration > 0 ? (info.position / info.duration) * 100 : 0;
+            if (!force && eventName === 'video_progress' && !shouldSendProgress(state, percent, info.position)) return;
+            state.lastSentAt = Date.now();
+            state.lastPosition = info.position;
+            sendPayload(eventName, {
+              ...state,
+              positionSeconds: info.position,
+              durationSeconds: info.duration,
+              progressPercent: percent,
+              watchedDeltaSeconds: info.delta,
+              eventId: eventName === 'video_progress'
+                ? [state.playbackId, eventName, Math.floor(info.position / 5) * 5].join(':')
+                : undefined
+            }, { beacon });
+          };
+          player.on('ready', () => {
+            if (player.getDuration) {
+              player.getDuration(duration => {
+                state.durationSeconds = clamp(duration, 0, 86400);
+                emit('video_ready', { seconds: 0, duration: state.durationSeconds }, true);
+              });
+            } else {
+              emit('video_ready', {}, true);
+            }
+          });
+          player.on('play', timing => emit('video_play', timing || {}, true));
+          player.on('pause', timing => emit('video_pause', timing || {}, true));
+          player.on('seeked', timing => emit('video_seeked', timing || {}, true));
+          player.on('ended', timing => emit('video_ended', timing || { seconds: state.durationSeconds, duration: state.durationSeconds }, true, true));
+          player.on('error', timing => emit('video_error', timing || {}, true, true));
+          player.on('timeupdate', timing => emit('video_progress', timing || {}, false));
+        }).catch(() => {});
+      };
+      const trackNativeVideo = video => {
+        if (!video || video.dataset.rstkVideoTrackingAttached === 'true') return;
+        if (video.dataset.rstkVideoTrack !== 'true') return;
+        video.dataset.rstkVideoTrackingAttached = 'true';
+        if (!video.dataset.rstkPlaybackId) video.dataset.rstkPlaybackId = makeId();
+        const state = createState(readMeta(video));
+        state.videoProvider = state.videoProvider || 'html5_video';
+        const emit = (eventName, force = false, beacon = false) => {
+          const duration = Number.isFinite(video.duration) ? video.duration : state.durationSeconds;
+          const info = updateStateTiming(state, video.currentTime || 0, duration || 0);
+          const percent = info.duration > 0 ? (info.position / info.duration) * 100 : 0;
+          if (!force && eventName === 'video_progress' && !shouldSendProgress(state, percent, info.position)) return;
+          state.lastSentAt = Date.now();
+          state.lastPosition = info.position;
+          sendPayload(eventName, {
+            ...state,
+            positionSeconds: info.position,
+            durationSeconds: info.duration,
+            progressPercent: percent,
+            watchedDeltaSeconds: info.delta,
+            eventId: eventName === 'video_progress'
+              ? [state.playbackId, eventName, Math.floor(info.position / 5) * 5].join(':')
+              : undefined
+          }, { beacon });
+        };
+        video.addEventListener('loadedmetadata', () => emit('video_ready', true));
+        video.addEventListener('play', () => emit('video_play', true));
+        video.addEventListener('pause', () => emit('video_pause', true));
+        video.addEventListener('seeked', () => emit('video_seeked', true));
+        video.addEventListener('ended', () => emit('video_ended', true, true));
+        video.addEventListener('error', () => emit('video_error', true, true));
+        video.addEventListener('timeupdate', () => emit('video_progress', false));
+        window.addEventListener('pagehide', () => emit('video_progress', true, true));
+      };
+      const attach = () => {
+        document.querySelectorAll('iframe').forEach(trackBunnyIframe);
+        document.querySelectorAll('video[data-rstk-video-track="true"]').forEach(trackNativeVideo);
+      };
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attach, { once: true });
+      } else {
+        attach();
+      }
+      const observer = new MutationObserver(() => attach());
+      observer.observe(document.documentElement, { childList: true, subtree: true });
     })();
   </script>`
 }
@@ -12269,9 +12668,19 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
 
   const videoSrc = options.noTrack ? appendNoTrackParam(src) : src
   const hlsSource = isHlsVideoUrl(videoSrc)
+  const trackingEnabled = Boolean(options.tracking?.enabled)
+  const trackingAttrs = buildVideoTrackingAttributes({
+    enabled: trackingEnabled,
+    block,
+    asset: options.tracking?.asset,
+    stream: options.tracking?.stream,
+    provider: options.tracking?.provider || 'html5_video',
+    playbackId: trackingEnabled ? (options.tracking?.playbackId || crypto.randomUUID()) : ''
+  })
   const videoSourceAttrs = [
     hlsSource ? '' : `src="${escapeHtml(videoSrc)}"`,
-    `data-rstk-video-src="${escapeHtml(videoSrc)}"`
+    `data-rstk-video-src="${escapeHtml(videoSrc)}"`,
+    trackingAttrs
   ].filter(Boolean).join(' ')
 
   return `
@@ -12361,17 +12770,35 @@ function renderContentBlock(block, context = {}) {
     const rawVideoUrl = settings.mediaUrl || block.content
     const directVideoUrl = isDirectVideoUrl(rawVideoUrl) ? safePublicMediaUrl(rawVideoUrl, 'video') : ''
     const videoUrl = directVideoUrl ? '' : normalizeVideoEmbedUrl(rawVideoUrl)
-    const liveStreamEmbedUrl = directVideoUrl ? getLiveStreamEmbedUrlForStorageVideo(rawVideoUrl, settings, context) : ''
+    const liveStreamAsset = directVideoUrl ? getLiveStreamAssetForStorageVideo(rawVideoUrl, context) : null
+    const liveStream = getMediaAssetStreamMetadata(liveStreamAsset)
+    const liveStreamEmbedUrl = liveStream ? buildBunnyStreamEmbedUrl(liveStream, settings) : ''
     const noTrackStreamMarkup = videoUrl ? renderNoTrackBunnyStreamBlock(videoUrl, block, settings, context) : ''
     const embedVideoUrl = context.noTrack ? appendNoTrackParam(videoUrl) : videoUrl
     return directVideoUrl
       ? liveStreamEmbedUrl
-        ? renderBunnyStreamIframe(liveStreamEmbedUrl, block)
-        : renderVideoPlayer(directVideoUrl, block, settings, { noTrack: false })
+        ? renderBunnyStreamIframe(liveStreamEmbedUrl, block, {
+          enabled: !context.noTrack,
+          asset: liveStreamAsset,
+          stream: liveStream
+        })
+        : renderVideoPlayer(directVideoUrl, block, settings, {
+          noTrack: false,
+          tracking: {
+            enabled: !context.noTrack,
+            provider: 'html5_video'
+          }
+        })
       : noTrackStreamMarkup
         ? noTrackStreamMarkup
       : embedVideoUrl
-        ? `<div class="rstk-video"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
+        ? getBunnyStreamVideoIdFromUrl(embedVideoUrl)
+          ? renderBunnyStreamIframe(embedVideoUrl, block, {
+            enabled: !context.noTrack,
+            asset: getStorageAssetForStreamVideoUrl(embedVideoUrl, context),
+            stream: getStreamMetadataForVideoUrl(embedVideoUrl, context)
+          })
+          : `<div class="rstk-video"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
       : `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
   }
 
@@ -14467,13 +14894,14 @@ async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabl
       endpoint: '/collect'
     })
     : ''
+  const videoTrackingScript = trackingEnabled ? buildVideoPlaybackTrackingScript({ enabled: true }) : ''
   const buttonActionScript = buildImportedButtonActionScript(site, { pageId: activePageId })
   const captureScript = buildImportedFormCaptureScript(site, imported, { pageId: activePageId })
   const popupHtml = renderSitePopup(site)
   // El script de preservación de params va primero: define los helpers globales
   // que usan el tracking, los botones y la captura de formularios.
   const paramPreservationScript = buildParamPreservationScript()
-  return `${paramPreservationScript}${metaPixelSnippet}${nativeTrackingScript}${buttonActionScript}${captureScript}${popupHtml}`
+  return `${paramPreservationScript}${metaPixelSnippet}${nativeTrackingScript}${videoTrackingScript}${buttonActionScript}${captureScript}${popupHtml}`
 }
 
 function injectImportedHtmlRuntime(html = '', injection = '') {
@@ -14528,7 +14956,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
   }
 
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
-    trackingEnabled,
+    trackingEnabled: trackingEnabled && !preview,
     pageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID,
     pageTitle: activePage?.title || site.title || site.name
   })
@@ -14793,7 +15221,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const noTrack = !trackingEnabled || preview
   const [videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId] = await Promise.all([
     buildVideoStreamAssetsByStorageUrl(videoLookupBlocks, { enabled: !noTrack }),
-    buildVideoStorageAssetsByStreamVideoId(videoLookupBlocks, { enabled: noTrack })
+    buildVideoStorageAssetsByStreamVideoId(videoLookupBlocks, { enabled: true })
   ])
 	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId }
   const bodyBlocks = isLandingType
@@ -14826,6 +15254,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       pageTitle: activePage?.title || ''
     })
     : ''
+  const videoTrackingScript = !noTrack ? buildVideoPlaybackTrackingScript({ enabled: true }) : ''
   // En páginas publicadas (no preview) los params de URL se preservan siempre,
   // aunque el tracking esté apagado: la atribución no debe perderse nunca.
   const paramPreservationScript = preview ? '' : buildParamPreservationScript()
@@ -15581,6 +16010,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   </script>
   ${metaPixelSnippet}
   ${nativeTrackingScript}
+  ${videoTrackingScript}
 </body>
 </html>`
 }

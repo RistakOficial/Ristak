@@ -42,6 +42,7 @@ import {
   getMediaAssetBunnyStreamAnalytics,
   listMediaAssets
 } from '../services/mediaStorageService.js'
+import { getVideoPlaybackViewers } from '../services/videoTrackingService.js'
 import { logger } from '../utils/logger.js'
 import { requestHasNoTrack } from '../utils/noTracking.js'
 
@@ -186,15 +187,49 @@ export async function getSitesVideoAssetsHandler(req, res) {
 
 export async function getSitesVideoAnalyticsHandler(req, res) {
   try {
-    const analytics = await getMediaAssetBunnyStreamAnalytics(req.params.assetId, {
-      dateFrom: req.query.dateFrom || req.query.date_from,
-      dateTo: req.query.dateTo || req.query.date_to,
-      hourly: req.query.hourly
+    const dateFrom = req.query.dateFrom || req.query.date_from
+    const dateTo = req.query.dateTo || req.query.date_to
+    const [analytics, firstPartyTracking] = await Promise.all([
+      getMediaAssetBunnyStreamAnalytics(req.params.assetId, {
+        dateFrom,
+        dateTo,
+        hourly: req.query.hourly
+      }),
+      getVideoPlaybackViewers({
+        assetId: req.params.assetId,
+        dateFrom,
+        dateTo,
+        limit: req.query.viewerLimit || req.query.viewer_limit || 50
+      })
+    ])
+    res.json({
+      success: true,
+      data: {
+        ...analytics,
+        firstPartyTracking
+      }
     })
-    res.json({ success: true, data: analytics })
   } catch (error) {
     logger.error(`Error obteniendo analíticas de video de sites: ${error.message}`)
     sendError(res, error, 'Error obteniendo analíticas de video')
+  }
+}
+
+export async function getSitesVideoViewersHandler(req, res) {
+  try {
+    const viewers = await getVideoPlaybackViewers({
+      assetId: req.params.assetId,
+      streamVideoId: req.query.streamVideoId || req.query.stream_video_id,
+      siteId: req.query.siteId || req.query.site_id,
+      dateFrom: req.query.dateFrom || req.query.date_from,
+      dateTo: req.query.dateTo || req.query.date_to,
+      limit: req.query.limit,
+      offset: req.query.offset
+    })
+    res.json({ success: true, data: viewers })
+  } catch (error) {
+    logger.error(`Error obteniendo espectadores de video de sites: ${error.message}`)
+    sendError(res, error, 'Error obteniendo espectadores de video')
   }
 }
 
@@ -680,6 +715,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
       req.path.startsWith('/api/sites/public/imported-assets/') ||
       req.path === '/snip.js' ||
       req.path === '/collect' ||
+      req.path === '/video-event' ||
       req.path === '/sync-visitor' ||
       req.path === '/link-visitor' ||
       req.path.startsWith('/api/calendars/public/')

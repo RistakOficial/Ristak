@@ -2,6 +2,7 @@ import express from 'express'
 import {
   servePixel,
   collectEvent,
+  collectVideoEvent,
   syncVisitorToHighLevel,
   linkVisitorToContactHandler,
   getSessionsHandler,
@@ -29,6 +30,9 @@ publicTrackingRoutes.get('/snip.js', servePixel)
 
 // Recibir eventos del pixel
 publicTrackingRoutes.post('/collect', collectEvent)
+
+// Recibir eventos de reproduccion de video en sitios publicos
+publicTrackingRoutes.post('/video-event', collectVideoEvent)
 
 // Sincronizar visitor_id con HighLevel
 publicTrackingRoutes.post('/sync-visitor', syncVisitorToHighLevel)

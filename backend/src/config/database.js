@@ -377,7 +377,9 @@ const CONTACT_PHONE_REFERENCE_TABLES = [
   { table: 'whatsapp_api_attribution', column: 'contact_id' },
   { table: 'scheduled_chat_messages', column: 'contact_id' },
   { table: 'payment_flows', column: 'contact_id' },
-  { table: 'sessions', column: 'contact_id' }
+  { table: 'sessions', column: 'contact_id' },
+  { table: 'video_playback_sessions', column: 'contact_id' },
+  { table: 'video_playback_events', column: 'contact_id' }
 ]
 
 // Tablas que NO referencian contacts.id aunque tengan columna contact_id propia
@@ -3471,6 +3473,113 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_tracking_source ON sessions(tracking_source)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_site ON sessions(site_id, site_type)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_form_site ON sessions(form_site_id)')
+
+    // Tracking granular de reproducciones de video.
+    // video_playback_sessions es el resumen por reproducción; video_playback_events
+    // guarda los hitos relevantes para auditoría sin depender de Bunny para identidad.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS video_playback_sessions (
+        id ${usePostgres ? 'UUID PRIMARY KEY DEFAULT gen_random_uuid()' : 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))'},
+        playback_id TEXT NOT NULL UNIQUE,
+        visitor_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        contact_id TEXT,
+        full_name TEXT,
+        email TEXT,
+
+        media_asset_id TEXT,
+        stream_library_id TEXT,
+        stream_video_id TEXT,
+        video_provider TEXT DEFAULT 'bunny_stream',
+        video_title TEXT,
+
+        tracking_source TEXT DEFAULT 'native_site_video',
+        site_id TEXT,
+        site_slug TEXT,
+        site_name TEXT,
+        site_type TEXT,
+        form_site_id TEXT,
+        form_site_name TEXT,
+        public_page_id TEXT,
+        public_page_title TEXT,
+        block_id TEXT,
+        block_label TEXT,
+        page_url TEXT,
+        referrer_url TEXT,
+
+        ip TEXT,
+        user_agent TEXT,
+        device_type TEXT,
+        os TEXT,
+        browser TEXT,
+        browser_version TEXT,
+        language TEXT,
+        timezone TEXT,
+
+        duration_seconds REAL DEFAULT 0,
+        max_position_seconds REAL DEFAULT 0,
+        last_position_seconds REAL DEFAULT 0,
+        watched_seconds REAL DEFAULT 0,
+        max_progress_percent REAL DEFAULT 0,
+        play_count INTEGER DEFAULT 0,
+        pause_count INTEGER DEFAULT 0,
+        seek_count INTEGER DEFAULT 0,
+        ended INTEGER DEFAULT 0,
+
+        match_method TEXT DEFAULT 'anonymous',
+        first_event_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_event_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        ended_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS video_playback_events (
+        id ${usePostgres ? 'UUID PRIMARY KEY DEFAULT gen_random_uuid()' : 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))'},
+        event_id TEXT UNIQUE,
+        playback_id TEXT NOT NULL,
+        visitor_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        contact_id TEXT,
+        event_name TEXT NOT NULL,
+
+        media_asset_id TEXT,
+        stream_library_id TEXT,
+        stream_video_id TEXT,
+        video_provider TEXT DEFAULT 'bunny_stream',
+        site_id TEXT,
+        public_page_id TEXT,
+        block_id TEXT,
+        page_url TEXT,
+
+        position_seconds REAL DEFAULT 0,
+        duration_seconds REAL DEFAULT 0,
+        progress_percent REAL DEFAULT 0,
+        watched_delta_seconds REAL DEFAULT 0,
+        payload_json TEXT,
+        event_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_playback ON video_playback_sessions(playback_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_contact ON video_playback_sessions(contact_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_visitor ON video_playback_sessions(visitor_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_session ON video_playback_sessions(session_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_asset ON video_playback_sessions(media_asset_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_stream_video ON video_playback_sessions(stream_video_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_site ON video_playback_sessions(site_id, public_page_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_last_event ON video_playback_sessions(last_event_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_playback ON video_playback_events(playback_id, event_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_contact ON video_playback_events(contact_id, event_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_stream_video ON video_playback_events(stream_video_id, event_at)')
 
     // Tabla de usuarios (para autenticación)
     await db.run(`
