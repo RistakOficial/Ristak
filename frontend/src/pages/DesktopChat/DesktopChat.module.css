@@ -13,6 +13,12 @@
   color: var(--color-text-primary);
 }
 
+.pageAgentInbox {
+  --chat-agent-accent-border: color-mix(in srgb, var(--accent) 30%, var(--chat-border));
+  --chat-agent-row: color-mix(in srgb, var(--accent-soft) 46%, transparent);
+  --chat-agent-row-active: color-mix(in srgb, var(--accent-soft) 70%, var(--surface));
+}
+
 .chatShell {
   display: grid;
   grid-template-columns: minmax(320px, 370px) minmax(500px, 1fr) minmax(400px, 470px);
@@ -41,6 +47,16 @@
 
 .inboxPanel {
   border-right: 1px solid var(--chat-border);
+}
+
+.inboxPanelAgent {
+  border-right-color: var(--chat-agent-accent-border);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent-soft) 64%, var(--surface)) 0%,
+      var(--surface) 46%
+    );
 }
 
 .infoPanel {
@@ -74,6 +90,37 @@
   margin: 3px 0 0;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
+}
+
+.inboxPanelAgent .inboxHeader,
+.inboxPanelAgent .filterRow {
+  border-bottom-color: color-mix(in srgb, var(--accent) 24%, var(--chat-border));
+  background: color-mix(in srgb, var(--accent-soft) 38%, transparent);
+}
+
+.inboxTitleLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inboxTitleLine h2 {
+  min-width: 0;
+}
+
+.inboxTitleAgentIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: var(--shadow-xs);
 }
 
 .inboxHeader .agentInboxButton[data-btn] {
@@ -340,6 +387,22 @@
 
 .chatRowAgentAction {
   background: color-mix(in srgb, var(--chat-soft-strong) 74%, transparent);
+}
+
+.chatRowAgentAssigned {
+  border-bottom-color: color-mix(in srgb, var(--accent) 22%, var(--chat-border));
+  background: var(--chat-agent-row);
+}
+
+.chatRowAgentAssigned:hover,
+.chatRowAgentAssigned.chatRowActive {
+  background: var(--chat-agent-row-active);
+}
+
+.chatRowAgentAssigned .avatarAgentBadge {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, var(--chat-border));
 }
 
 .archiveRowIcon {

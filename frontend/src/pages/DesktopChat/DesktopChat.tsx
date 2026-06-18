@@ -3307,12 +3307,26 @@ export const DesktopChat: React.FC = () => {
   const canSubmitSchedule = Boolean(schedulePreviewDate && composerText.trim() && !schedulingMessage)
 
   return (
-    <div className={styles.page} data-ristak-page>
+    <div
+      className={`${styles.page} ${agentAssignedViewOpen ? styles.pageAgentInbox : ''}`}
+      data-ristak-page
+      data-desktop-chat-agent-view={agentAssignedViewOpen ? 'true' : undefined}
+    >
       <section className={styles.chatShell} data-desktop-chat-page>
-        <aside className={styles.inboxPanel} aria-label="Lista de chats">
+        <aside
+          className={`${styles.inboxPanel} ${agentAssignedViewOpen ? styles.inboxPanelAgent : ''}`}
+          aria-label={agentAssignedViewOpen ? 'Lista de chats del bot' : 'Lista de chats'}
+        >
           <div className={styles.inboxHeader}>
             <div>
-              <h2>{inboxTitle}</h2>
+              <span className={styles.inboxTitleLine}>
+                {agentAssignedViewOpen ? (
+                  <span className={styles.inboxTitleAgentIcon} aria-hidden="true">
+                    <Bot size={14} />
+                  </span>
+                ) : null}
+                <h2>{inboxTitle}</h2>
+              </span>
               <p>{inboxSubtitle}</p>
             </div>
             <Button
@@ -3497,13 +3511,14 @@ export const DesktopChat: React.FC = () => {
                   const active = contact.id === activeContactId
                   const unread = Number(contact.unreadCount || 0)
                   const isAgentActionChat = Boolean(agentStates[contact.id]?.signal && agentStates[contact.id]?.signal !== 'discarded')
+                  const showAgentBadge = agentAssignedViewOpen || isAgentActionChat
                   return (
                     <div
                       key={contact.id}
                       role="button"
                       tabIndex={0}
-                      data-chat-row={unread > 0 ? 'unread' : 'chat'}
-                      className={`${styles.chatRow} ${unread > 0 ? styles.chatRowUnread : ''} ${active ? styles.chatRowActive : ''}`}
+                      data-chat-row={agentAssignedViewOpen ? 'agent-assigned' : unread > 0 ? 'unread' : 'chat'}
+                      className={`${styles.chatRow} ${agentAssignedViewOpen ? styles.chatRowAgentAssigned : ''} ${unread > 0 ? styles.chatRowUnread : ''} ${active ? styles.chatRowActive : ''}`}
                       onClick={() => handleSelectChat(contact)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
@@ -3512,7 +3527,7 @@ export const DesktopChat: React.FC = () => {
                         }
                       }}
                     >
-                      {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge: isAgentActionChat })}
+                      {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge })}
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>
