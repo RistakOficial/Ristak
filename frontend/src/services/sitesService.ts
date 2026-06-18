@@ -776,6 +776,7 @@ export const sitesService = {
     if (input.dateFrom) params.dateFrom = input.dateFrom
     if (input.dateTo) params.dateTo = input.dateTo
     if (input.hourly !== undefined) params.hourly = String(input.hourly)
+    if (input.viewerLimit) params.viewerLimit = String(input.viewerLimit)
     return apiClient.get<MediaStreamAnalytics>(`/sites/video-analytics/${encodeURIComponent(assetId)}`, { params })
   },
 

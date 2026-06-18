@@ -149,7 +149,13 @@ import {
 import { aiAgentService } from '@/services/aiAgentService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
-import mediaService, { type MediaAsset, type MediaStreamAnalytics, type StreamChartPoint } from '@/services/mediaService'
+import mediaService, {
+  type FirstPartyVideoRetentionSegment,
+  type FirstPartyVideoViewer,
+  type MediaAsset,
+  type MediaStreamAnalytics,
+  type StreamChartPoint
+} from '@/services/mediaService'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import { formatDateToISO, parseLocalDateString } from '@/utils/format'
 import {
@@ -1505,6 +1511,85 @@ const buildSitesChartPoints = (points: StreamChartPoint[] = [], mode: 'count' | 
     value: mode === 'seconds' ? Math.round((Number(point.value || 0) / 60) * 10) / 10 : Number(point.value || 0)
   }))
 )
+
+const clampSitesPercent = (value: unknown) => {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 0
+  return Math.min(100, Math.max(0, number))
+}
+
+const formatSitesTimecode = (value: unknown) => {
+  const totalSeconds = Math.max(0, Math.floor(readSitesNumber(value)))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+const buildSitesRetentionSegments = (
+  firstPartySegments: FirstPartyVideoRetentionSegment[] = [],
+  bunnyHeatmap: MediaStreamAnalytics['heatmap'] = []
+): FirstPartyVideoRetentionSegment[] => {
+  if (firstPartySegments.length) return firstPartySegments
+  return bunnyHeatmap.map((point, index) => ({
+    segment: index,
+    startPercent: index,
+    endPercent: index + 1,
+    startSeconds: 0,
+    endSeconds: 0,
+    label: point.label || `${point.segment}`,
+    retainedSessions: 0,
+    skippedSessions: 0,
+    replayedSessions: 0,
+    retentionPercent: clampSitesPercent(point.intensity),
+    replayRatePercent: 0,
+    intensity: clampSitesPercent(point.intensity)
+  }))
+}
+
+const buildSitesRetentionCurvePoints = (segments: FirstPartyVideoRetentionSegment[]) => {
+  if (!segments.length) return ''
+  const lastIndex = Math.max(1, segments.length - 1)
+  return segments.map((segment, index) => {
+    const x = (index / lastIndex) * 100
+    const y = 100 - clampSitesPercent(segment.retentionPercent)
+    return `${x.toFixed(2)},${y.toFixed(2)}`
+  }).join(' ')
+}
+
+const buildSitesRetentionAreaPath = (points: string) => (
+  points ? `M 0 100 L ${points.split(' ').join(' L ')} L 100 100 Z` : ''
+)
+
+const getSitesViewerName = (viewer: FirstPartyVideoViewer) => (
+  viewer.contactName ||
+  viewer.contactEmail ||
+  viewer.contactPhone ||
+  (viewer.visitorId ? `Visitante ${String(viewer.visitorId).slice(-6)}` : 'Visitante anónimo')
+)
+
+const getSitesViewerMeta = (viewer: FirstPartyVideoViewer) => {
+  const page = viewer.publicPageTitle || viewer.pageUrl
+  const block = viewer.blockLabel
+  return [block, page].filter(Boolean).join(' · ') || (viewer.contactId ? 'Contacto identificado' : 'Sin contacto')
+}
+
+const buildSitesViewerHeatmapSegments = (viewer: FirstPartyVideoViewer, segmentCount = 18) => {
+  const progress = clampSitesPercent(viewer.maxProgressPercent)
+  const replayed = Number(viewer.playCount || 0) > 1
+  const completed = Boolean(viewer.completed) || progress >= 99
+
+  return Array.from({ length: segmentCount }, (_, index) => {
+    const start = (index / segmentCount) * 100
+    const end = ((index + 1) / segmentCount) * 100
+    const watched = completed || start < progress
+    const hot = replayed && watched && end <= progress
+    return {
+      index,
+      label: `${Math.round(start)}-${Math.round(end)}%`,
+      state: !watched ? 'skipped' : hot ? 'replayed' : 'played'
+    }
+  })
+}
 
 const getSiteTypeFilterMatch = (site: PublicSite, selectedType: SitesAnalyticsSiteType) => {
   if (selectedType === 'videos') return true
@@ -5700,7 +5785,10 @@ export const Sites: React.FC = () => {
     setSitesVideoAnalyticsLoading(true)
     setSitesVideoAnalyticsError('')
 
-    sitesService.getVideoAnalytics(asset.id, getSitesAnalyticsRange(dateRange.start, dateRange.end))
+    sitesService.getVideoAnalytics(asset.id, {
+      ...getSitesAnalyticsRange(dateRange.start, dateRange.end),
+      viewerLimit: 200
+    })
       .then((analytics) => {
         if (!cancelled) setSitesVideoAnalytics(analytics)
       })
@@ -25933,16 +26021,29 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   )
   const rowsByVideoCount = [...siteRows].filter(row => row.videoCount > 0).sort((a, b) => b.videoCount - a.videoCount)
   const selectedVideoStats = getMediaStreamVideoRecord(selectedVideo)
+  const firstPartyTracking = analytics?.firstPartyTracking || null
+  const firstPartySummary = firstPartyTracking?.summary || null
   const totalVideoViews = videos.reduce((total, asset) => total + readSitesNumber(getMediaStreamVideoRecord(asset).views), 0)
   const totalVideoWatchTime = videos.reduce((total, asset) => total + readSitesNumber(getMediaStreamVideoRecord(asset).totalWatchTime), 0)
-  const videoViews = selectedVideo ? (analytics?.summary.views ?? readSitesNumber(selectedVideoStats.views)) : totalVideoViews
-  const videoWatchTime = selectedVideo ? (analytics?.summary.watchTime ?? readSitesNumber(selectedVideoStats.totalWatchTime)) : totalVideoWatchTime
-  const averageWatchTime = selectedVideo ? (analytics?.summary.averageWatchTime ?? readSitesNumber(selectedVideoStats.averageWatchTime)) : 0
-  const engagementScore = selectedVideo ? analytics?.summary.engagementScore ?? null : null
+  const videoViews = selectedVideo ? (firstPartySummary?.plays ?? analytics?.summary.views ?? readSitesNumber(selectedVideoStats.views)) : totalVideoViews
+  const videoLoads = selectedVideo ? (firstPartySummary?.playbackSessions ?? 0) : 0
+  const uniqueVideoViewers = selectedVideo ? (firstPartySummary?.totalViewers ?? 0) : 0
+  const videoWatchTime = selectedVideo ? (firstPartySummary?.watchedSeconds ?? analytics?.summary.watchTime ?? readSitesNumber(selectedVideoStats.totalWatchTime)) : totalVideoWatchTime
+  const averageWatchTime = selectedVideo ? (firstPartySummary?.averageWatchSeconds ?? analytics?.summary.averageWatchTime ?? readSitesNumber(selectedVideoStats.averageWatchTime)) : 0
+  const engagementScore = selectedVideo ? (firstPartySummary?.avgProgressPercent ?? analytics?.summary.engagementScore ?? null) : null
+  const playRate = selectedVideo ? firstPartySummary?.playRatePercent ?? null : null
+  const completionRate = selectedVideo ? firstPartySummary?.completionRatePercent ?? null : null
+  const dropOffRate = selectedVideo ? firstPartySummary?.dropOffPercent ?? null : null
   const streamVideoId = getMediaStreamVideoId(selectedVideo)
   const viewsChart = buildSitesChartPoints(analytics?.viewsChart || [], 'count')
   const watchTimeChart = buildSitesChartPoints(analytics?.watchTimeChart || [], 'seconds')
   const heatmap = analytics?.heatmap || []
+  const retentionSegments = buildSitesRetentionSegments(firstPartyTracking?.retentionSegments || [], heatmap)
+  const retentionCurvePoints = buildSitesRetentionCurvePoints(retentionSegments)
+  const retentionAreaPath = buildSitesRetentionAreaPath(retentionCurvePoints)
+  const videoViewers = firstPartyTracking?.viewers || []
+  const pageBreakdown = firstPartyTracking?.pages || []
+  const blockBreakdown = firstPartyTracking?.blocks || []
   const countryRows = analytics?.countries || []
   const topCountry = selectedVideo ? analytics?.summary.topCountry || countryRows[0]?.country || 'Sin dato' : 'Sin dato'
   const currentVideoLabel = selectedVideo ? getSiteAnalyticsVideoLabel(selectedVideo, sitesById) : 'Sin video seleccionado'
@@ -25956,10 +26057,10 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     ? [
         { key: 'videos', icon: <Video size={16} />, label: 'Videos', value: formatSitesCompactNumber(videos.length) },
         { key: 'plays', icon: <Play size={16} />, label: 'Reproducciones', value: formatSitesCompactNumber(videoViews) },
+        { key: 'viewers', icon: <Eye size={16} />, label: 'Viewers', value: formatSitesCompactNumber(uniqueVideoViewers) },
+        { key: 'play-rate', icon: <MousePointerClick size={16} />, label: 'Play rate', value: playRate === null ? 'Sin dato' : formatSitesPercent(playRate) },
         { key: 'watch-time', icon: <Clock3 size={16} />, label: 'Tiempo visto', value: formatSitesSeconds(videoWatchTime) },
-        { key: 'average', icon: <MousePointerClick size={16} />, label: 'Promedio visto', value: formatSitesSeconds(averageWatchTime) },
-        { key: 'engagement', icon: <Flame size={16} />, label: 'Engagement', value: engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore) },
-        { key: 'country', icon: <Globe2 size={16} />, label: 'País top', value: topCountry }
+        { key: 'engagement', icon: <Flame size={16} />, label: 'Engagement', value: engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore) }
       ]
     : isFormsView
       ? [
@@ -26111,97 +26212,190 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       )
     }
 
+    const primaryVideoMetrics = [
+      { key: 'engagement', label: 'Average engagement', value: engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore), hint: 'Promedio del máximo visto por sesión.' },
+      { key: 'plays', label: 'Total plays', value: formatSitesCompactNumber(videoViews), hint: `${formatSitesCompactNumber(videoLoads)} cargas detectadas.` },
+      { key: 'play-rate', label: 'Play rate', value: playRate === null ? 'Sin dato' : formatSitesPercent(playRate), hint: 'Sesiones que sí dieron play.' },
+      { key: 'completion', label: 'Completion', value: completionRate === null ? 'Sin dato' : formatSitesPercent(completionRate), hint: `${firstPartySummary?.completions ?? 0} completados.` },
+      { key: 'drop-off', label: 'Drop off', value: dropOffRate === null ? 'Sin dato' : formatSitesPercent(dropOffRate), hint: 'Promedio que se perdió antes del final.' },
+      { key: 'identified', label: 'Identificados', value: formatSitesCompactNumber(firstPartySummary?.identifiedContacts ?? 0), hint: `${formatSitesCompactNumber(firstPartySummary?.anonymousVisitors ?? 0)} anónimos.` }
+    ]
+
     return (
-      <div className={styles.sitesAnalyticsGrid}>
-        <div className={styles.sitesAnalyticsChartBlock}>
-          <div className={styles.sitesAnalyticsChartTitle}>
-            <span>Reproducciones del video</span>
-            <strong>{formatSitesCompactNumber(videoViews)}</strong>
-          </div>
-          {viewsChart.length ? (
-            <AreaChart
-              data={viewsChart}
-              height={220}
-              showLegend={false}
-              formatValue={(value) => formatSitesCompactNumber(value)}
-              formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} reproducciones`}
-            />
-          ) : (
-            <div className={styles.sitesAnalyticsChartEmpty}>Sin reproducciones en este periodo.</div>
-          )}
-        </div>
-
-        <div className={styles.sitesAnalyticsChartBlock}>
-          <div className={styles.sitesAnalyticsChartTitle}>
-            <span>Tiempo visto</span>
-            <strong>{formatSitesSeconds(videoWatchTime)}</strong>
-          </div>
-          {watchTimeChart.length ? (
-            <AreaChart
-              data={watchTimeChart}
-              height={220}
-              color="var(--pos)"
-              showLegend={false}
-              formatValue={(value) => `${formatSitesCompactNumber(value)}m`}
-              formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} min vistos`}
-            />
-          ) : (
-            <div className={styles.sitesAnalyticsChartEmpty}>Sin tiempo visto en este periodo.</div>
-          )}
-        </div>
-
-        <div className={styles.sitesAnalyticsChartBlock}>
-          <div className={styles.sitesAnalyticsChartTitle}>
-            <span>Retención</span>
-            <strong>{heatmap.length ? `${heatmap.length} puntos` : 'Sin dato'}</strong>
-          </div>
-          {heatmap.length ? (
-            <div className={styles.sitesAnalyticsHeatmap} aria-label="Mapa de retención">
-              {heatmap.map((point, index) => (
-                <span
-                  key={`${point.segment}-${index}`}
-                  title={`${point.label || point.segment}: ${Math.round(point.intensity)}%`}
-                  style={{ height: `${Math.max(6, point.intensity)}%` }}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className={styles.sitesAnalyticsChartEmpty}>Sin heatmap todavía.</div>
-          )}
-        </div>
-
-        <div className={styles.sitesAnalyticsChartBlock}>
-          <div className={styles.sitesAnalyticsChartTitle}>
-            <span>Detalle</span>
-            <strong>{engagementScore === null ? 'Sin engagement' : formatSitesPercent(engagementScore)}</strong>
-          </div>
-          <div className={styles.sitesAnalyticsDetailList}>
-            <div>
-              <Flame size={15} />
+      <div className={styles.videoEngagementDashboard}>
+        <div className={styles.videoEngagementHero}>
+          <div className={styles.videoEngagementMetrics}>
+            <div className={styles.videoEngagementHeader}>
               <span>Engagement</span>
-              <strong>{engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore)}</strong>
+              <strong>{firstPartyTracking ? 'Tracking Ristak' : 'Stream'}</strong>
             </div>
-            <div>
-              <Clock3 size={15} />
-              <span>Promedio visto</span>
-              <strong>{formatSitesSeconds(averageWatchTime)}</strong>
-            </div>
-            {countryRows.slice(0, 4).map(country => (
-              <div key={country.country}>
-                <Globe2 size={15} />
-                <span>{country.country}</span>
-                <strong>{formatSitesCompactNumber(country.views)} · {formatSitesSeconds(country.watchTime)}</strong>
+            {primaryVideoMetrics.map(metric => (
+              <div key={metric.key} className={styles.videoEngagementMetric}>
+                <strong>{metric.value}</strong>
+                <span>{metric.label}</span>
+                <small>{metric.hint}</small>
               </div>
             ))}
-            {countryRows.length === 0 && (
+          </div>
+
+          <div className={styles.videoRetentionPanel}>
+            <div className={styles.videoRetentionHeader}>
               <div>
-                <Globe2 size={15} />
-                <span>Países</span>
-                <strong>Sin dato</strong>
+                <span>Curva de retención</span>
+                <strong>{retentionSegments.length ? `${formatSitesPercent(retentionSegments[retentionSegments.length - 1]?.retentionPercent || 0)} llega al final` : 'Sin datos'}</strong>
               </div>
+              {loadingAnalytics && <em>Actualizando...</em>}
+            </div>
+            {retentionSegments.length && retentionCurvePoints ? (
+              <div className={styles.videoRetentionChart}>
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  <path d={retentionAreaPath} />
+                  <polyline points={retentionCurvePoints} />
+                </svg>
+                <div className={styles.videoRetentionGrid} aria-hidden="true">
+                  <span>100%</span>
+                  <span>75%</span>
+                  <span>50%</span>
+                  <span>25%</span>
+                </div>
+                {selectedVideo.publicUrl ? (
+                  <div className={styles.videoRetentionPreview}>
+                    <video src={selectedVideo.publicUrl} muted playsInline preload="metadata" />
+                  </div>
+                ) : (
+                  <div className={styles.videoRetentionPreview}>
+                    <Video size={24} />
+                  </div>
+                )}
+                <div className={styles.videoRetentionTimes}>
+                  <span>0:00</span>
+                  <span>{formatSitesTimecode(readSitesNumber(selectedVideo.duration) || retentionSegments[retentionSegments.length - 1]?.endSeconds || 0)}</span>
+                </div>
+              </div>
+            ) : (
+              <div className={styles.sitesAnalyticsChartEmpty}>Aún no hay suficientes reproducciones para dibujar retención.</div>
             )}
           </div>
         </div>
+
+        <div className={styles.videoEngagementGrid}>
+          <section className={styles.videoAnalyticsSection}>
+            <div className={styles.videoAnalyticsSectionHeader}>
+              <div>
+                <span>Heatmaps por viewer</span>
+                <strong>{formatSitesCompactNumber(videoViewers.length)} recientes</strong>
+              </div>
+              <div className={styles.viewerHeatmapLegend}>
+                <span><i className={styles.viewerHeatmapPlayed} />Visto</span>
+                <span><i className={styles.viewerHeatmapReplayed} />Repetido</span>
+                <span><i className={styles.viewerHeatmapSkipped} />Saltado</span>
+              </div>
+            </div>
+            {videoViewers.length ? (
+              <div className={styles.viewerHeatmapList}>
+                {videoViewers.slice(0, 8).map(viewer => (
+                  <div key={viewer.key} className={styles.viewerHeatmapRow}>
+                    <div className={styles.viewerIdentity}>
+                      <strong>{getSitesViewerName(viewer)}</strong>
+                      <span>{getSitesViewerMeta(viewer)}</span>
+                    </div>
+                    <div className={styles.viewerHeatmapTrack} aria-label={`Heatmap de ${getSitesViewerName(viewer)}`}>
+                      {buildSitesViewerHeatmapSegments(viewer).map(segment => (
+                        <span
+                          key={segment.index}
+                          className={
+                            segment.state === 'replayed'
+                              ? styles.viewerHeatmapReplayed
+                              : segment.state === 'played'
+                                ? styles.viewerHeatmapPlayed
+                                : styles.viewerHeatmapSkipped
+                          }
+                          title={`${segment.label}: ${segment.state === 'skipped' ? 'saltado' : segment.state === 'replayed' ? 'repetido' : 'visto'}`}
+                        />
+                      ))}
+                    </div>
+                    <strong className={styles.viewerProgress}>{formatSitesPercent(viewer.maxProgressPercent)}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className={styles.sitesAnalyticsChartEmpty}>Sin viewers identificados todavía.</div>
+            )}
+          </section>
+
+          <section className={styles.videoAnalyticsSection}>
+            <div className={styles.videoAnalyticsSectionHeader}>
+              <div>
+                <span>Detalle del video</span>
+                <strong>{formatSitesSeconds(videoWatchTime)} vistos</strong>
+              </div>
+            </div>
+            <div className={styles.videoDetailColumns}>
+              {renderDetailRows([
+                { key: 'average', icon: <Clock3 size={15} />, label: 'Promedio visto', value: formatSitesSeconds(averageWatchTime) },
+                { key: 'viewers', icon: <Eye size={15} />, label: 'Viewers únicos', value: formatSitesCompactNumber(uniqueVideoViewers) },
+                { key: 'loads', icon: <MousePointerClick size={15} />, label: 'Cargas del player', value: formatSitesCompactNumber(videoLoads) },
+                { key: 'top-country', icon: <Globe2 size={15} />, label: 'País top', value: topCountry }
+              ], 'Sin métricas suficientes.')}
+
+              {renderDetailRows(
+                pageBreakdown.slice(0, 4).map(row => ({
+                  key: row.key,
+                  icon: <LayoutTemplate size={15} />,
+                  label: row.label,
+                  value: `${formatSitesCompactNumber(row.plays)} plays · ${formatSitesPercent(row.avgProgressPercent)}`
+                })),
+                'Sin páginas asociadas.'
+              )}
+
+              {renderDetailRows(
+                blockBreakdown.slice(0, 4).map(row => ({
+                  key: row.key,
+                  icon: <Video size={15} />,
+                  label: row.label,
+                  value: `${formatSitesCompactNumber(row.playbackSessions)} sesiones · ${formatSitesSeconds(row.watchedSeconds)}`
+                })),
+                'Sin bloques asociados.'
+              )}
+            </div>
+          </section>
+        </div>
+
+        {(viewsChart.length || watchTimeChart.length) && (
+          <div className={styles.videoStreamCharts}>
+            {viewsChart.length ? (
+              <div className={styles.sitesAnalyticsChartBlock}>
+                <div className={styles.sitesAnalyticsChartTitle}>
+                  <span>Reproducciones por periodo</span>
+                  <strong>{formatSitesCompactNumber(videoViews)}</strong>
+                </div>
+                <AreaChart
+                  data={viewsChart}
+                  height={190}
+                  showLegend={false}
+                  formatValue={(value) => formatSitesCompactNumber(value)}
+                  formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} reproducciones`}
+                />
+              </div>
+            ) : null}
+            {watchTimeChart.length ? (
+              <div className={styles.sitesAnalyticsChartBlock}>
+                <div className={styles.sitesAnalyticsChartTitle}>
+                  <span>Tiempo visto por periodo</span>
+                  <strong>{formatSitesSeconds(videoWatchTime)}</strong>
+                </div>
+                <AreaChart
+                  data={watchTimeChart}
+                  height={190}
+                  color="var(--pos)"
+                  showLegend={false}
+                  formatValue={(value) => `${formatSitesCompactNumber(value)}m`}
+                  formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} min vistos`}
+                />
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
     )
   }

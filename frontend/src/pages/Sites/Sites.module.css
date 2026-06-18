@@ -6498,6 +6498,300 @@
   text-align: center;
 }
 
+.videoEngagementDashboard {
+  display: grid;
+  gap: 12px;
+}
+
+.videoEngagementHero {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.44fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.videoEngagementMetrics,
+.videoRetentionPanel,
+.videoAnalyticsSection {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.videoEngagementMetrics {
+  display: grid;
+  align-content: start;
+  overflow: hidden;
+}
+
+.videoEngagementHeader,
+.videoRetentionHeader,
+.videoAnalyticsSectionHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.videoEngagementHeader span,
+.videoRetentionHeader span,
+.videoAnalyticsSectionHeader span {
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.videoEngagementHeader strong,
+.videoRetentionHeader strong,
+.videoAnalyticsSectionHeader strong {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.videoRetentionHeader em {
+  color: var(--text-mute);
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.videoEngagementMetric {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.videoEngagementMetric:last-child {
+  border-bottom: 0;
+}
+
+.videoEngagementMetric strong {
+  grid-row: span 2;
+  min-width: 78px;
+  color: var(--text);
+  font-family: var(--num-font);
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.videoEngagementMetric span {
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.videoEngagementMetric small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-mute);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.videoRetentionPanel {
+  display: grid;
+  overflow: hidden;
+}
+
+.videoRetentionChart {
+  position: relative;
+  min-height: 360px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.videoRetentionChart svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.videoRetentionChart path {
+  fill: var(--accent-soft);
+}
+
+.videoRetentionChart polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.3;
+}
+
+.videoRetentionGrid {
+  position: absolute;
+  inset: 28px 44px 42px 18px;
+  display: grid;
+  grid-template-rows: repeat(4, 1fr);
+  pointer-events: none;
+}
+
+.videoRetentionGrid span {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px dashed var(--border);
+  color: var(--text-mute);
+  font-size: 0.72rem;
+}
+
+.videoRetentionPreview {
+  position: absolute;
+  inset: 54px 34% 48px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-solid, var(--surface));
+  color: var(--text-mute);
+}
+
+.videoRetentionPreview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.videoRetentionTimes {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  left: 12px;
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-mute);
+  font-family: var(--num-font);
+  font-size: 0.76rem;
+}
+
+.videoEngagementGrid,
+.videoStreamCharts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 12px;
+}
+
+.videoAnalyticsSection {
+  display: grid;
+  align-content: start;
+  overflow: hidden;
+}
+
+.viewerHeatmapLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--text-mute);
+  font-size: 0.78rem;
+}
+
+.viewerHeatmapLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.viewerHeatmapLegend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+}
+
+.viewerHeatmapList {
+  display: grid;
+}
+
+.viewerHeatmapRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.34fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 58px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.viewerHeatmapRow:last-child {
+  border-bottom: 0;
+}
+
+.viewerIdentity {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.viewerIdentity strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewerIdentity span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-mute);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewerHeatmapTrack {
+  display: grid;
+  grid-template-columns: repeat(18, minmax(0, 1fr));
+  gap: 2px;
+  min-height: 24px;
+}
+
+.viewerHeatmapTrack span {
+  min-width: 0;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+}
+
+.viewerHeatmapPlayed {
+  background: var(--pos-soft);
+}
+
+.viewerHeatmapReplayed {
+  background: var(--warn);
+}
+
+.viewerHeatmapSkipped {
+  background: var(--surface-2);
+}
+
+.viewerProgress {
+  color: var(--text);
+  font-family: var(--num-font);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.videoDetailColumns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
 .unsavedModalBackdrop {
   position: fixed;
   inset: 0;
@@ -16851,8 +17145,16 @@
 
 @media (max-width: 1100px) {
   .sitesAnalyticsFilters,
-  .sitesAnalyticsGrid {
+  .sitesAnalyticsGrid,
+  .videoEngagementHero,
+  .videoEngagementGrid,
+  .videoStreamCharts,
+  .videoDetailColumns {
     grid-template-columns: 1fr;
+  }
+
+  .videoRetentionPreview {
+    inset: 62px 28% 50px;
   }
 
   .sitesAnalyticsKpis {
@@ -16867,6 +17169,35 @@
 @media (max-width: 720px) {
   .sitesAnalyticsKpis {
     grid-template-columns: 1fr;
+  }
+
+  .videoEngagementHeader,
+  .videoRetentionHeader,
+  .videoAnalyticsSectionHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .videoEngagementMetric strong {
+    min-width: 64px;
+    font-size: 1.18rem;
+  }
+
+  .videoRetentionChart {
+    min-height: 300px;
+  }
+
+  .videoRetentionPreview {
+    inset: 72px 18% 54px;
+  }
+
+  .viewerHeatmapRow {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .viewerProgress {
+    justify-self: end;
   }
 
   .sitesAnalyticsHeaderActions {

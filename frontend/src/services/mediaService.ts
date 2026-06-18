@@ -90,6 +90,77 @@ export interface StreamCountryMetric {
   watchTime: number
 }
 
+export interface FirstPartyVideoRetentionSegment {
+  segment: number
+  startPercent: number
+  endPercent: number
+  startSeconds: number
+  endSeconds: number
+  label: string
+  retainedSessions: number
+  skippedSessions: number
+  replayedSessions: number
+  retentionPercent: number
+  replayRatePercent: number
+  intensity: number
+}
+
+export interface FirstPartyVideoBreakdownItem {
+  key: string
+  label: string
+  playbackSessions: number
+  plays: number
+  watchedSeconds: number
+  maxProgressTotal?: number
+  avgProgressPercent: number
+}
+
+export interface FirstPartyVideoViewer {
+  key: string
+  contactId?: string | null
+  visitorId?: string | null
+  contactName?: string | null
+  contactEmail?: string | null
+  contactPhone?: string | null
+  matchMethod?: string
+  playbackCount: number
+  playCount: number
+  watchedSeconds: number
+  maxProgressPercent: number
+  maxPositionSeconds: number
+  durationSeconds: number
+  completed: boolean
+  firstEventAt?: string | null
+  lastEventAt?: string | null
+  pageUrl?: string | null
+  publicPageTitle?: string | null
+  blockLabel?: string | null
+}
+
+export interface FirstPartyVideoTracking {
+  summary: {
+    playbackSessions: number
+    playedSessions: number
+    identifiedContacts: number
+    anonymousVisitors: number
+    totalViewers: number
+    plays: number
+    watchedSeconds: number
+    avgProgressPercent: number
+    averageWatchSeconds: number
+    playRatePercent: number
+    completions: number
+    completionRatePercent: number
+    dropOffPercent: number
+  }
+  retentionSegments: FirstPartyVideoRetentionSegment[]
+  pages: FirstPartyVideoBreakdownItem[]
+  blocks: FirstPartyVideoBreakdownItem[]
+  viewers: FirstPartyVideoViewer[]
+  limit: number
+  offset: number
+}
+
 export interface MediaStreamAnalytics {
   assetId: string
   configured: boolean
@@ -110,6 +181,7 @@ export interface MediaStreamAnalytics {
   watchTimeChart: StreamChartPoint[]
   countries: StreamCountryMetric[]
   heatmap: StreamHeatmapPoint[]
+  firstPartyTracking?: FirstPartyVideoTracking | null
   raw?: Record<string, unknown> | null
 }
 
@@ -117,6 +189,7 @@ export interface MediaStreamAnalyticsInput {
   dateFrom?: string
   dateTo?: string
   hourly?: boolean
+  viewerLimit?: number
 }
 
 function getAuthHeaders() {
@@ -301,6 +374,7 @@ export const mediaService = {
     if (input.dateFrom) params.dateFrom = input.dateFrom
     if (input.dateTo) params.dateTo = input.dateTo
     if (input.hourly !== undefined) params.hourly = String(input.hourly)
+    if (input.viewerLimit) params.viewerLimit = String(input.viewerLimit)
     return apiClient.get<MediaStreamAnalytics>(`/media/assets/${encodeURIComponent(assetId)}/stream/analytics`, { params })
   },
 

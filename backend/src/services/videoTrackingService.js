@@ -578,6 +578,107 @@ function mergeViewer(acc, row) {
   if (!acc.blockLabel && row.block_label) acc.blockLabel = row.block_label
 }
 
+function isPlayedPlayback(row = {}) {
+  return (
+    Number(row.play_count || 0) > 0 ||
+    Number(row.watched_seconds || 0) > 0 ||
+    Number(row.max_progress_percent || 0) > 0 ||
+    Number(row.ended || 0) === 1
+  )
+}
+
+function clampPercent(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 0
+  return Math.min(100, Math.max(0, number))
+}
+
+function roundMetric(value, decimals = 1) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 0
+  const factor = 10 ** decimals
+  return Math.round(number * factor) / factor
+}
+
+function buildRetentionSegments(rows = [], segmentCount = 24) {
+  const playedRows = rows.filter(isPlayedPlayback)
+  const denominator = playedRows.length || rows.length
+  const durationSeconds = Math.max(
+    0,
+    ...rows.map(row => Number(row.duration_seconds || 0)),
+    ...rows.map(row => Number(row.max_position_seconds || 0))
+  )
+
+  if (!denominator || segmentCount <= 0) return []
+
+  return Array.from({ length: segmentCount }, (_, index) => {
+    const startPercent = (index / segmentCount) * 100
+    const endPercent = ((index + 1) / segmentCount) * 100
+    const retainedSessions = playedRows.filter(row => (
+      Number(row.ended || 0) === 1 ||
+      clampPercent(row.max_progress_percent) >= startPercent ||
+      (index === 0 && isPlayedPlayback(row))
+    )).length
+    const replayedSessions = playedRows.filter(row => (
+      Number(row.play_count || 0) > 1 &&
+      (Number(row.ended || 0) === 1 || clampPercent(row.max_progress_percent) >= startPercent)
+    )).length
+    const retentionPercent = denominator > 0 ? (retainedSessions / denominator) * 100 : 0
+    const replayRatePercent = denominator > 0 ? (replayedSessions / denominator) * 100 : 0
+    const startSeconds = durationSeconds > 0 ? (durationSeconds * startPercent) / 100 : 0
+    const endSeconds = durationSeconds > 0 ? (durationSeconds * endPercent) / 100 : 0
+
+    return {
+      segment: index,
+      startPercent: roundMetric(startPercent),
+      endPercent: roundMetric(endPercent),
+      startSeconds: roundMetric(startSeconds),
+      endSeconds: roundMetric(endSeconds),
+      label: `${Math.round(startPercent)}-${Math.round(endPercent)}%`,
+      retainedSessions,
+      skippedSessions: Math.max(0, denominator - retainedSessions),
+      replayedSessions,
+      retentionPercent: roundMetric(retentionPercent),
+      replayRatePercent: roundMetric(replayRatePercent),
+      intensity: roundMetric(retentionPercent)
+    }
+  })
+}
+
+function buildPlaybackBreakdown(rows = [], getKey, mapLabel) {
+  const grouped = new Map()
+
+  rows.forEach(row => {
+    const key = getKey(row)
+    if (!key) return
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        key,
+        label: mapLabel(row) || key,
+        playbackSessions: 0,
+        plays: 0,
+        watchedSeconds: 0,
+        maxProgressTotal: 0
+      })
+    }
+    const item = grouped.get(key)
+    item.playbackSessions += 1
+    item.plays += Number(row.play_count || 0)
+    item.watchedSeconds += Number(row.watched_seconds || 0)
+    item.maxProgressTotal += Number(row.max_progress_percent || 0)
+  })
+
+  return [...grouped.values()]
+    .map(item => ({
+      ...item,
+      avgProgressPercent: item.playbackSessions > 0
+        ? roundMetric(item.maxProgressTotal / item.playbackSessions)
+        : 0
+    }))
+    .sort((a, b) => b.plays - a.plays || b.playbackSessions - a.playbackSessions || b.watchedSeconds - a.watchedSeconds)
+    .slice(0, 8)
+}
+
 export async function getVideoPlaybackViewers(input = {}) {
   const dateFilters = await resolvePlaybackDateFilters(input)
   const filters = {
@@ -594,6 +695,7 @@ export async function getVideoPlaybackViewers(input = {}) {
   const summary = await db.get(`
     SELECT
       COUNT(*) as playback_sessions,
+      COALESCE(SUM(CASE WHEN play_count > 0 OR watched_seconds > 0 OR max_progress_percent > 0 OR ended = 1 THEN 1 ELSE 0 END), 0) as played_sessions,
       COUNT(DISTINCT contact_id) as identified_contacts,
       COUNT(DISTINCT CASE WHEN contact_id IS NULL OR contact_id = '' THEN visitor_id ELSE NULL END) as anonymous_visitors,
       COALESCE(SUM(play_count), 0) as plays,
@@ -602,6 +704,14 @@ export async function getVideoPlaybackViewers(input = {}) {
       COALESCE(SUM(CASE WHEN ended = 1 OR max_progress_percent >= 99 THEN 1 ELSE 0 END), 0) as completions
     FROM video_playback_sessions vps
     ${where}
+  `, params)
+
+  const analyticsRows = await db.all(`
+    SELECT *
+    FROM video_playback_sessions vps
+    ${where}
+    ORDER BY vps.last_event_at DESC
+    LIMIT 5000
   `, params)
 
   const rows = await db.all(`
@@ -646,16 +756,42 @@ export async function getVideoPlaybackViewers(input = {}) {
     mergeViewer(grouped.get(key), row)
   }
 
+  const playbackSessions = Number(summary?.playback_sessions || 0)
+  const playedSessions = Number(summary?.played_sessions || 0)
+  const plays = Number(summary?.plays || 0)
+  const watchedSeconds = Number(summary?.watched_seconds || 0)
+  const avgProgressPercent = Number(summary?.avg_progress_percent || 0)
+  const completions = Number(summary?.completions || 0)
+  const totalViewers = Number(summary?.identified_contacts || 0) + Number(summary?.anonymous_visitors || 0)
+  const completionBase = playedSessions || playbackSessions
+
   return {
     summary: {
-      playbackSessions: Number(summary?.playback_sessions || 0),
+      playbackSessions,
+      playedSessions,
       identifiedContacts: Number(summary?.identified_contacts || 0),
       anonymousVisitors: Number(summary?.anonymous_visitors || 0),
-      plays: Number(summary?.plays || 0),
-      watchedSeconds: Number(summary?.watched_seconds || 0),
-      avgProgressPercent: Number(summary?.avg_progress_percent || 0),
-      completions: Number(summary?.completions || 0)
+      totalViewers,
+      plays,
+      watchedSeconds,
+      avgProgressPercent: roundMetric(avgProgressPercent),
+      averageWatchSeconds: playedSessions > 0 ? roundMetric(watchedSeconds / playedSessions) : 0,
+      playRatePercent: playbackSessions > 0 ? roundMetric((playedSessions / playbackSessions) * 100) : 0,
+      completions,
+      completionRatePercent: completionBase > 0 ? roundMetric((completions / completionBase) * 100) : 0,
+      dropOffPercent: roundMetric(100 - clampPercent(avgProgressPercent))
     },
+    retentionSegments: buildRetentionSegments(analyticsRows),
+    pages: buildPlaybackBreakdown(
+      analyticsRows,
+      row => cleanString(row.public_page_id || row.page_url, 500),
+      row => cleanString(row.public_page_title || row.page_url, 500)
+    ),
+    blocks: buildPlaybackBreakdown(
+      analyticsRows,
+      row => cleanString(row.block_id || row.block_label, 260),
+      row => cleanString(row.block_label || row.block_id, 260)
+    ),
     viewers: [...grouped.values()]
       .sort((a, b) => String(b.lastEventAt || '').localeCompare(String(a.lastEventAt || '')))
       .slice(0, limit),
