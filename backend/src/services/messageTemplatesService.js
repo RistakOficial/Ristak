@@ -75,7 +75,7 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     status: 'active',
     headerEnabled: true,
     headerType: 'text',
-    headerText: '🗓️ Cita programada para {{1}}',
+    headerText: 'Cita programada para {{1}}',
     bodyText: 'Hola {{1}}.\n\n*🔔 Importante:* Te llegarán *varios* recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!',
     footerText: '',
     buttons: [],
@@ -152,7 +152,7 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     headerEnabled: false,
     headerType: 'none',
     headerText: '',
-    bodyText: '{{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?',
+    bodyText: 'Hola {{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?',
     footerText: 'Es necesario RESPONDER para evitar errores en la agenda',
     buttons: [],
     variableExamples: {
@@ -1037,6 +1037,17 @@ async function ensureDefaultMessageTemplate(definition, folderId) {
   const language = normalizeLanguage(definition.language)
   const existing = await findMessageTemplateByNameLanguage(name, language)
   if (existing) {
+    const ycloudStatus = normalizeYCloudTemplateStatus(existing.ycloudStatus)
+    const shouldRefreshUnsubmittedDefault = !ycloudStatus && !existing.ycloudTemplateId
+    if (shouldRefreshUnsubmittedDefault) {
+      return updateMessageTemplate(existing.id, {
+        ...definition,
+        folderId,
+        name,
+        language
+      })
+    }
+
     if (folderId && existing.folderId !== folderId) {
       await db.run(`
         UPDATE whatsapp_message_templates

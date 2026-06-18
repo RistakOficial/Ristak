@@ -108,7 +108,7 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       const scheduledTemplate = captures.find((capture) => capture.name === 'cita_programada')
       assert.ok(scheduledTemplate)
       assert.equal(scheduledTemplate.components[0].type, 'HEADER')
-      assert.equal(scheduledTemplate.components[0].text, '🗓️ Cita programada para {{1}}')
+      assert.equal(scheduledTemplate.components[0].text, 'Cita programada para {{1}}')
       assert.equal(scheduledTemplate.components[0].example.header_text[0], 'viernes, 19 de junio de 2026 9:00')
       assert.match(scheduledTemplate.components[1].text, /Te llegarán \*varios\* recordatorios/)
 
@@ -140,6 +140,81 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       const secondRun = await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: true })
       assert.equal(secondRun.submitted, 0)
       assert.equal(captures.length, 3)
+    } finally {
+      setYCloudFetchForTest(null)
+      await deleteDefaultTemplates()
+    }
+  })
+})
+
+test('repara defaults existentes sin enviar y manda solo los pendientes', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const captures = []
+
+  await snapshotAppConfig([keys.enabled, keys.apiKey, keys.wabaId], async () => {
+    await deleteDefaultTemplates()
+    await setAppConfig(keys.enabled, '1')
+    await setAppConfig(keys.apiKey, encrypt('ycloud_default_templates_secret'))
+    await setAppConfig(keys.wabaId, 'waba_default_templates_test')
+
+    setYCloudFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(String(url))
+      const path = parsed.pathname.replace(/^\/v2/, '')
+      const method = String(options.method || 'GET').toUpperCase()
+
+      if (path === '/whatsapp/templates' && method === 'POST') {
+        const body = JSON.parse(options.body || '{}')
+        captures.push(body)
+        return ycloudJsonResponse({
+          id: `official_${body.name}`,
+          wabaId: body.wabaId,
+          name: body.name,
+          language: body.language,
+          category: body.category,
+          status: 'PENDING',
+          components: body.components
+        })
+      }
+
+      return ycloudJsonResponse({ ok: true })
+    })
+
+    try {
+      await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET ycloud_status = 'APPROVED', ycloud_template_id = 'official_recordatorio_cita_un_dia_antes'
+        WHERE name = 'recordatorio_cita_un_dia_antes'
+      `)
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET header_text = '🗓️ Cita programada para {{1}}'
+        WHERE name = 'cita_programada'
+      `)
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET body_text = '{{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?'
+        WHERE name = 'confirmacion_cita_dia_anterior'
+      `)
+
+      const result = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
+      assert.equal(result.submitted, 2)
+      assert.deepEqual(
+        captures.map((capture) => capture.name).sort(),
+        ['cita_programada', 'confirmacion_cita_dia_anterior']
+      )
+
+      const scheduledTemplate = captures.find((capture) => capture.name === 'cita_programada')
+      assert.equal(scheduledTemplate.components[0].text, 'Cita programada para {{1}}')
+      const confirmationTemplate = captures.find((capture) => capture.name === 'confirmacion_cita_dia_anterior')
+      assert.equal(confirmationTemplate.components[0].text, 'Hola {{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?')
+
+      const bundle = await getMessageTemplateBundle()
+      const byName = new Map(bundle.templates.map((template) => [template.name, template]))
+      assert.equal(byName.get('recordatorio_cita_un_dia_antes').ycloudStatus, 'APPROVED')
+      assert.equal(byName.get('cita_programada').ycloudStatus, 'PENDING')
+      assert.equal(byName.get('confirmacion_cita_dia_anterior').ycloudStatus, 'PENDING')
     } finally {
       setYCloudFetchForTest(null)
       await deleteDefaultTemplates()

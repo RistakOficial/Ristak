@@ -613,6 +613,7 @@ export async function sendWhatsAppApiAudioMessageView(req, res) {
 
 export async function getWhatsAppApiTemplatesView(req, res) {
   try {
+    await ensureDefaultAppointmentTemplatesForWhatsAppApi()
     const data = await getWhatsAppApiTemplates({
       status: req.query?.status,
       limit: req.query?.limit

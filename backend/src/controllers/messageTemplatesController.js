@@ -9,6 +9,7 @@ import {
   getMessageTemplateBundle,
   getVariableCatalog,
   previewMessageTemplate,
+  repairDefaultAppointmentMessageTemplatesForCurrentConnection,
   sendMessageTemplateTest,
   submitMessageTemplateToYCloud,
   syncAllMessageTemplatesWithYCloud,
@@ -27,6 +28,9 @@ function sendError(res, error, fallback = 'No se pudo completar la operación') 
 
 export async function getMessageTemplatesView(req, res) {
   try {
+    await repairDefaultAppointmentMessageTemplatesForCurrentConnection().catch(error => {
+      logger.warn(`No se pudo reparar plantillas default de WhatsApp antes de listar: ${error.message}`)
+    })
     const data = await getMessageTemplateBundle()
     res.json({ success: true, data })
   } catch (error) {
