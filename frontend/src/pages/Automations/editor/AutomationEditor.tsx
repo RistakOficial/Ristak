@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } 
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   Archive,
+  AlertTriangle,
   ArrowLeft,
   Check,
   CloudOff,
@@ -31,11 +32,13 @@ import {
 } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import automationsService, {
+  AUTOMATION_REVIEW_LABEL,
   automationsCache,
   AUTOMATION_STATUS_LABELS,
   defaultFlowSettings,
   type Automation,
   type AutomationNode,
+  type AutomationReviewIssue,
   type AutomationSummary,
   type AutomationStatus,
   type AutomationViewport,
@@ -218,10 +221,19 @@ function toAutomationSummary(automation: Automation): AutomationSummary {
     description: automation.description,
     status: automation.status,
     hasUnpublishedChanges: automation.hasUnpublishedChanges,
+    reviewStatus: automation.reviewStatus,
     createdAt: automation.createdAt,
     updatedAt: automation.updatedAt,
     publishedAt: automation.publishedAt
   }
+}
+
+function reviewIssuesToNodeErrors(issues: AutomationReviewIssue[] = []) {
+  return issues.reduce<Record<string, string[]>>((acc, issue) => {
+    if (!issue.nodeId) return acc
+    acc[issue.nodeId] = [...(acc[issue.nodeId] || []), issue.message]
+    return acc
+  }, {})
 }
 
 export const AutomationEditor: React.FC = () => {
@@ -476,7 +488,7 @@ export const AutomationEditor: React.FC = () => {
         safeFlow.edges,
         safeSettings
       )
-      setNodeErrors({})
+      setNodeErrors(reviewIssuesToNodeErrors(data.reviewStatus?.issues))
       setSaveState('saved')
     }
 
@@ -1258,11 +1270,12 @@ export const AutomationEditor: React.FC = () => {
               status: updated.status,
               publishedAt: updated.publishedAt,
               updatedAt: updated.updatedAt,
-              hasUnpublishedChanges: updated.hasUnpublishedChanges ?? false
+              hasUnpublishedChanges: updated.hasUnpublishedChanges ?? false,
+              reviewStatus: updated.reviewStatus
             }
           : value
       )
-      setNodeErrors({})
+      setNodeErrors(reviewIssuesToNodeErrors(updated.reviewStatus?.issues))
       if (status === 'published') {
         setSaveState('saved')
         showToast(
@@ -1448,6 +1461,8 @@ export const AutomationEditor: React.FC = () => {
 
   const status = automation.status
   const currentAutomationSummary = toAutomationSummary(automation)
+  const requiresReview = automation.reviewStatus?.state === 'requires_review'
+  const reviewSummary = automation.reviewStatus?.summary || 'Hay referencias que ya no existen.'
   const hasDraftChanges = hasUnsavedChanges || hasUnpublishedChanges
   const automationHasPublishedVersion = Boolean(automation.publishedAt) || status === 'published' || status === 'paused'
   const dirtyActionTarget = hasDraftChanges
@@ -1647,6 +1662,15 @@ export const AutomationEditor: React.FC = () => {
           </DropdownMenu>
         </div>
       </header>
+
+      {requiresReview && (
+        <div className={styles.reviewBanner} role="alert">
+          <AlertTriangle size={16} className={styles.reviewBannerIcon} />
+          <span>
+            <strong>{AUTOMATION_REVIEW_LABEL}.</strong> {reviewSummary}
+          </span>
+        </div>
+      )}
 
       {/* ------------------------------ Canvas ----------------------------- */}
       <div className={styles.editorMain}>

@@ -83,6 +83,29 @@
   margin-left: 12px;
 }
 
+.reviewBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--neg-soft);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.reviewBannerIcon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--neg);
+}
+
+.reviewBanner strong {
+  color: var(--neg);
+  font-weight: 700;
+}
+
 .saveIndicator {
   display: inline-flex;
   align-items: center;
@@ -2381,13 +2404,22 @@
 .libRowText {
   flex: 1;
   min-width: 0;
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
 }
 
-.libRowText .libRowName {
-  flex: 0 1 auto;
+.libRowTitleLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.libRowTitleLine .libRowName {
+  flex: 1 1 auto;
 }
 
 .libRowText .nodeStatusDot {
@@ -2405,6 +2437,21 @@
 
 .libRowChecked {
   background: rgba(var(--color-primary-rgb), 0.1);
+}
+
+.libRowRequiresReview,
+.libRowRequiresReview:hover {
+  background: var(--neg-soft);
+}
+
+.libReviewHint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--neg);
+  font-size: 11.5px;
+  line-height: 1.1;
 }
 
 .libRowName {
@@ -4003,6 +4050,23 @@
 .libStatusPill[data-status='paused'] {
   background: rgba(245, 158, 11, 0.14);
   color: rgb(180, 120, 8);
+}
+
+.libStatusPill[data-status='requires_review'] {
+  border: 1px solid var(--neg);
+  background: var(--neg-soft);
+  color: var(--neg);
+}
+
+.configSelectMissing [data-ristak-dropdown-trigger] {
+  border-color: var(--neg) !important;
+  background: var(--neg-soft) !important;
+  color: var(--text) !important;
+}
+
+.configSelectMissing [data-ristak-dropdown-trigger]:focus-visible {
+  outline: 2px solid var(--neg);
+  outline-offset: 2px;
 }
 
 /* ---------------- Vista previa de plantilla de WhatsApp ---------------- */

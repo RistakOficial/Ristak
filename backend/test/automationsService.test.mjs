@@ -10,6 +10,7 @@ import {
   listAutomationFormFieldsCatalog,
   listAutomationFormsCatalog,
   listAutomationWhatsAppTemplatesCatalog,
+  listAutomations,
   updateAutomation
 } from '../src/services/automationsService.js'
 
@@ -49,6 +50,27 @@ function makeFlow(label = 'Mensaje publicado', viewport = { x: 0, y: 0, zoom: 1 
   }
 }
 
+function makeTagTriggerFlow(tagId, tagName = tagId) {
+  const flow = makeFlow('Mensaje con etiqueta')
+  return {
+    ...flow,
+    nodes: flow.nodes.map((node) =>
+      node.id === 'start'
+        ? {
+            ...node,
+            config: {
+              triggers: [{
+                id: 'trig_tag_test',
+                type: 'trigger-contact-tag',
+                config: { tag: tagId, tagName }
+              }]
+            }
+          }
+        : node
+    )
+  }
+}
+
 test('updateAutomation separa borrador guardado de flujo publicado', async () => {
   const automation = await createAutomation({
     name: `Publicación con borrador ${Date.now()}`,
@@ -83,6 +105,60 @@ test('updateAutomation separa borrador guardado de flujo publicado', async () =>
     assert.equal(fresh.flow.nodes[1].config.customTitle, 'Cambio pendiente')
   } finally {
     await db.run('DELETE FROM automations WHERE id = ?', [automation.id])
+  }
+})
+
+test('updateAutomation bloquea publicación cuando una referencia ya no existe', async () => {
+  const suffix = Date.now()
+  const missingTagId = `tag_missing_review_${suffix}`
+  const automation = await createAutomation({
+    name: `Referencia rota ${suffix}`,
+    flow: makeTagTriggerFlow(missingTagId, 'Etiqueta eliminada')
+  })
+
+  try {
+    await assert.rejects(
+      () => updateAutomation(automation.id, { status: 'published' }),
+      (error) => {
+        assert.equal(error.status, 400)
+        assert.match(error.message, /La etiqueta "Etiqueta eliminada" ya no existe/)
+        assert.ok(error.validationErrors.some((message) => /Selecciona otra etiqueta/.test(message)))
+        return true
+      }
+    )
+  } finally {
+    await db.run('DELETE FROM automations WHERE id = ?', [automation.id])
+  }
+})
+
+test('automatización publicada queda en requires_review si se elimina una referencia usada', async () => {
+  const suffix = Date.now()
+  const tagId = `tag_review_${suffix}`
+  const automationName = `Automatización rota ${suffix}`
+
+  await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [tagId, 'Etiqueta temporal'])
+  const automation = await createAutomation({
+    name: automationName,
+    flow: makeTagTriggerFlow(tagId, 'Etiqueta temporal')
+  })
+
+  try {
+    const published = await updateAutomation(automation.id, { status: 'published' })
+    assert.equal(published.reviewStatus.state, 'ok')
+
+    await db.run('DELETE FROM contact_tags WHERE id = ?', [tagId])
+
+    const fresh = await getAutomation(automation.id)
+    assert.equal(fresh.reviewStatus.state, 'requires_review')
+    assert.equal(fresh.reviewStatus.issueCount, 1)
+    assert.match(fresh.reviewStatus.summary, /La etiqueta "Etiqueta temporal" ya no existe/)
+
+    const listed = await listAutomations()
+    const listedAutomation = listed.find((item) => item.id === automation.id)
+    assert.equal(listedAutomation?.reviewStatus?.state, 'requires_review')
+  } finally {
+    await db.run('DELETE FROM automations WHERE id = ?', [automation.id])
+    await db.run('DELETE FROM contact_tags WHERE id = ?', [tagId]).catch(() => undefined)
   }
 })
 

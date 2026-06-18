@@ -217,15 +217,16 @@ const FormFieldSelect: React.FC<{
   }, [formId])
 
   const selectOptions = useMemo(() => {
-    const mapped = options.map((option) => ({
+    const mapped: Array<{ value: string; label: string; disabled?: boolean }> = options.map((option) => ({
       value: option.value,
       label: option.meta ? `${option.label} · ${option.meta}` : option.label
     }))
     if (value && !mapped.some((option) => option.value === value)) {
-      mapped.unshift({ value, label: `${savedLabel || value} · guardado` })
+      mapped.unshift({ value, label: `${savedLabel || value} · ya no existe`, disabled: true })
     }
     return mapped
   }, [options, savedLabel, value])
+  const hasSavedValue = Boolean(value) && !options.some((option) => option.value === value)
 
   if (!formId) {
     return <span className={styles.configHelp}>Primero selecciona el formulario del disparador.</span>
@@ -248,6 +249,7 @@ const FormFieldSelect: React.FC<{
         onChange(next, selected?.label || savedLabel || next)
       }}
       placeholder="Elige la pregunta del formulario"
+      className={hasSavedValue ? styles.configSelectMissing : undefined}
       aria-label="Pregunta del formulario"
     />
   )

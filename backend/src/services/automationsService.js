@@ -3,6 +3,11 @@ import { db } from '../config/database.js'
 import { normalizeFlow, validateFlowForPublish, START_NODE_TYPE } from './automationFlowValidation.js'
 import { enrollContactManually } from './automationEngine.js'
 import { getWhatsAppApiTemplates } from './whatsappApiService.js'
+import {
+  AUTOMATION_REVIEW_OK,
+  getAutomationReviewStatus,
+  loadAutomationReferenceCatalogs
+} from './automationReferenceResolver.js'
 
 const usePostgres = !!process.env.DATABASE_URL
 const flowPlaceholder = usePostgres ? '?::jsonb' : '?'
@@ -58,7 +63,7 @@ function mapFolderRow(row) {
   }
 }
 
-function mapAutomationRow(row, { includeFlow = false } = {}) {
+function mapAutomationRow(row, { includeFlow = false, reviewStatus = AUTOMATION_REVIEW_OK } = {}) {
   const canComparePublication = row.flow !== undefined && row.published_flow !== undefined
   const draftFlow = canComparePublication ? parseFlow(row.flow) : null
   const publishedFlow = canComparePublication && row.published_flow ? parseFlow(row.published_flow) : null
@@ -75,7 +80,8 @@ function mapAutomationRow(row, { includeFlow = false } = {}) {
       publishedFlow &&
         ['published', 'paused'].includes(row.status || 'draft') &&
         !sameFlow(draftFlow, publishedFlow)
-    )
+    ),
+    reviewStatus
   }
 
   if (includeFlow) {
@@ -83,6 +89,17 @@ function mapAutomationRow(row, { includeFlow = false } = {}) {
   }
 
   return automation
+}
+
+function getReviewFlowForAutomationRow(row) {
+  const status = row.status || 'draft'
+  if (!['published', 'paused'].includes(status)) return null
+  return parseFlow(row.published_flow || row.flow)
+}
+
+function getReviewStatusForAutomationRow(row, catalogs) {
+  const reviewFlow = getReviewFlowForAutomationRow(row)
+  return reviewFlow ? getAutomationReviewStatus(reviewFlow, catalogs) : AUTOMATION_REVIEW_OK
 }
 
 function defaultFlow() {
@@ -205,17 +222,24 @@ export async function deleteFolder(folderId) {
 
 export async function listAutomations() {
   const rows = await db.all(
-    `SELECT id, folder_id, name, description, status, created_at, updated_at, published_at
+    `SELECT id, folder_id, name, description, status, flow, published_flow, created_at, updated_at, published_at
      FROM automations
      ORDER BY updated_at DESC, created_at DESC`
   )
-  return rows.map((row) => mapAutomationRow(row))
+  const catalogs = await loadAutomationReferenceCatalogs()
+  return rows.map((row) => mapAutomationRow(row, {
+    reviewStatus: getReviewStatusForAutomationRow(row, catalogs)
+  }))
 }
 
 export async function getAutomation(automationId) {
   const row = await db.get('SELECT * FROM automations WHERE id = ?', [automationId])
   if (!row) throw notFound('Automatización no encontrada')
-  return mapAutomationRow(row, { includeFlow: true })
+  const catalogs = await loadAutomationReferenceCatalogs()
+  return mapAutomationRow(row, {
+    includeFlow: true,
+    reviewStatus: getReviewStatusForAutomationRow(row, catalogs)
+  })
 }
 
 async function assertFolderExists(folderId) {
@@ -274,6 +298,15 @@ export async function updateAutomation(automationId, input = {}) {
         error.validationErrors = errors
         throw error
       }
+
+      const reviewStatus = getAutomationReviewStatus(flow, await loadAutomationReferenceCatalogs())
+      if (reviewStatus.state === 'requires_review') {
+        const validationErrors = reviewStatus.issues.map((issue) => issue.message)
+        const error = badRequest(reviewStatus.summary || validationErrors.join('. '))
+        error.validationErrors = validationErrors
+        throw error
+      }
+
       publishedAt = new Date().toISOString()
       publishedFlow = flow
     }

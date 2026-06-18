@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
+  AlertTriangle,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -34,6 +35,7 @@ const CustomSelect: React.FC<React.ComponentProps<typeof BaseCustomSelect>> = (p
 )
 import { useNotification } from '@/contexts/NotificationContext'
 import automationsService, {
+  AUTOMATION_REVIEW_LABEL,
   AUTOMATION_STATUS_LABELS,
   automationsCache,
   type AutomationFolder,
@@ -484,13 +486,17 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
         {visibleAutomations.map((automation) => {
           const isCurrent = automation.id === currentAutomationId
           const isChecked = selected.has(automation.id)
+          const requiresReview = automation.reviewStatus?.state === 'requires_review'
+          const reviewSummary = automation.reviewStatus?.summary || ''
+          const reviewIssueCount = automation.reviewStatus?.issueCount || 1
           return (
             <div
               key={automation.id}
               className={cn(
                 styles.libRow,
                 isCurrent && styles.libRowActive,
-                isChecked && styles.libRowChecked
+                isChecked && styles.libRowChecked,
+                requiresReview && styles.libRowRequiresReview
               )}
               role="button"
               draggable
@@ -518,12 +524,24 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
                 </button>
               </span>
               <span className={styles.libRowText}>
-                <span className={styles.libRowName} title={automation.name}>
-                  {automation.name}
+                <span className={styles.libRowTitleLine}>
+                  <span className={styles.libRowName} title={automation.name}>
+                    {automation.name}
+                  </span>
+                  <span
+                    className={styles.libStatusPill}
+                    data-status={requiresReview ? 'requires_review' : automation.status}
+                    title={requiresReview ? reviewSummary : undefined}
+                  >
+                    {requiresReview ? AUTOMATION_REVIEW_LABEL : AUTOMATION_STATUS_LABELS[automation.status]}
+                  </span>
                 </span>
-                <span className={styles.libStatusPill} data-status={automation.status}>
-                  {AUTOMATION_STATUS_LABELS[automation.status]}
-                </span>
+                {requiresReview && (
+                  <span className={styles.libReviewHint} title={reviewSummary}>
+                    <AlertTriangle size={12} />
+                    {reviewIssueCount === 1 ? '1 pendiente' : `${reviewIssueCount} pendientes`}
+                  </span>
+                )}
               </span>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

@@ -5,6 +5,25 @@ import apiClient from './apiClient'
 // ---------------------------------------------------------------------------
 
 export type AutomationStatus = 'draft' | 'published' | 'paused' | 'archived'
+export type AutomationReviewState = 'ok' | 'requires_review'
+
+export interface AutomationReviewIssue {
+  id: string
+  nodeId: string | null
+  triggerId?: string | null
+  catalog: string
+  fieldPath: string
+  value: string
+  label: string
+  message: string
+}
+
+export interface AutomationReviewStatus {
+  state: AutomationReviewState
+  issueCount: number
+  summary: string
+  issues: AutomationReviewIssue[]
+}
 
 export interface AutomationFolder {
   id: string
@@ -112,6 +131,7 @@ export interface AutomationSummary {
   description: string
   status: AutomationStatus
   hasUnpublishedChanges?: boolean
+  reviewStatus?: AutomationReviewStatus
   createdAt: string
   updatedAt: string
   publishedAt: string | null
@@ -195,6 +215,8 @@ export const AUTOMATION_STATUS_LABELS: Record<AutomationStatus, string> = {
   archived: 'Archivada'
 }
 
+export const AUTOMATION_REVIEW_LABEL = 'Requiere revisión'
+
 // ---------------------------------------------------------------------------
 // Llamadas a la API
 // ---------------------------------------------------------------------------
@@ -216,6 +238,7 @@ function automationToSummary(automation: Automation): AutomationSummary {
     description: automation.description,
     status: automation.status,
     hasUnpublishedChanges: automation.hasUnpublishedChanges,
+    reviewStatus: automation.reviewStatus,
     createdAt: automation.createdAt,
     updatedAt: automation.updatedAt,
     publishedAt: automation.publishedAt

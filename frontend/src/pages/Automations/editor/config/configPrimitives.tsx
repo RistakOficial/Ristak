@@ -107,6 +107,18 @@ export function useCatalogOptions(kind: CatalogKind | undefined): {
   return { options, loading }
 }
 
+type SelectOption = {
+  value: string
+  label: string
+  disabled?: boolean
+}
+
+function optionMatchesSavedValue(option: CatalogOption | SelectOption, value: string) {
+  const cleanValue = String(value || '').trim()
+  if (!cleanValue) return true
+  return option.value === cleanValue || option.label.trim().toLowerCase() === cleanValue.toLowerCase()
+}
+
 interface CatalogSelectProps {
   catalog: CatalogKind
   value: string
@@ -129,6 +141,7 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
 
   // Etiquetas: selector con buscador y "crear etiqueta" inline (catálogo real)
   if (catalog === 'tags') {
+    const hasSavedValue = Boolean(value) && !loading && !options.some((option) => optionMatchesSavedValue(option, value))
     return (
       <TagPicker
         value={value}
@@ -137,6 +150,8 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
         allowCreate
         portal
         size="large"
+        className={hasSavedValue ? styles.configSelectMissing : undefined}
+        missingLabel={hasSavedValue ? `${value} · ya no existe` : undefined}
         placeholder={placeholder || 'Selecciona una etiqueta'}
         aria-label={rest['aria-label']}
       />
@@ -148,13 +163,13 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
   }
 
   if (catalog === 'customFields') {
-    const selectOptions = options.map((option) => ({
+    const selectOptions: SelectOption[] = options.map((option) => ({
       value: option.value,
       label: option.meta ? `${option.label} · ${option.meta}` : option.label
     }))
     const hasSavedValue = Boolean(value) && !selectOptions.some((option) => option.value === value)
     if (hasSavedValue) {
-      selectOptions.unshift({ value, label: `${value} · guardado` })
+      selectOptions.unshift({ value, label: `${value} · ya no existe`, disabled: true })
     }
     if (selectOptions.length === 0) {
       return <span className={styles.configHelp}>No hay campos personalizados activos todavía.</span>
@@ -168,13 +183,10 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
           onChange(next, selected?.label || next)
         }}
         placeholder={placeholder || 'Selecciona el campo personalizado'}
+        className={hasSavedValue ? styles.configSelectMissing : undefined}
         aria-label={rest['aria-label']}
       />
     )
-  }
-
-  if (options.length === 0) {
-    return <span className={styles.configHelp}>No hay opciones disponibles todavía.</span>
   }
 
   // Campos de contacto: drill-down con categorías (datos básicos vs personalizados)
@@ -195,18 +207,29 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
     )
   }
 
+  const selectOptions: SelectOption[] = options.map((option) => ({
+    value: option.value,
+    label: option.meta ? `${option.label} · ${option.meta}` : option.label
+  }))
+  const hasSavedValue = Boolean(value) && !selectOptions.some((option) => option.value === value)
+  if (hasSavedValue) {
+    selectOptions.unshift({ value, label: `${value} · ya no existe`, disabled: true })
+  }
+
+  if (selectOptions.length === 0) {
+    return <span className={styles.configHelp}>No hay opciones disponibles todavía.</span>
+  }
+
   return (
     <CustomSelect
-      options={options.map((option) => ({
-        value: option.value,
-        label: option.meta ? `${option.label} · ${option.meta}` : option.label
-      }))}
+      options={selectOptions}
       value={value}
       onValueChange={(next) => {
         const selected = options.find((option) => option.value === next)
         onChange(next, selected?.label || next)
       }}
       placeholder={placeholder || 'Selecciona una opción'}
+      className={hasSavedValue ? styles.configSelectMissing : undefined}
       aria-label={rest['aria-label']}
     />
   )

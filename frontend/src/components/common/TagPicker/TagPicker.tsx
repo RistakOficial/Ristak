@@ -38,6 +38,8 @@ interface TagPickerBaseProps {
   size?: 'default' | 'large'
   triggerVariant?: 'button' | 'chip'
   closeOnSelect?: boolean
+  className?: string
+  missingLabel?: string
   'aria-label'?: string
 }
 
@@ -69,7 +71,8 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
     portal = false,
     size = 'default',
     triggerVariant = 'button',
-    closeOnSelect = false
+    closeOnSelect = false,
+    className = ''
   } = props
   const isMultiple = props.multiple === true
   const useChipTrigger = isMultiple && triggerVariant === 'chip'
@@ -198,7 +201,9 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
   const tagById = useMemo(() => new Map(tags.map((tag) => [tag.id, tag])), [tags])
   const lockedTags = isMultiple ? (props as TagPickerMultiProps).lockedTags || [] : []
   const singleSelected = !isMultiple ? tagById.get(singleValue) : undefined
-  const singleLabel = singleSelected?.name || contactTagsService.getDisplayName(singleValue)
+  const missingSingleValue = !isMultiple && Boolean(singleValue) && !singleSelected && !loading
+  const singleLabel = singleSelected?.name ||
+    (missingSingleValue && props.missingLabel ? props.missingLabel : contactTagsService.getDisplayName(singleValue))
 
   const dropdown = isOpen && !disabled ? (
     <div
@@ -271,7 +276,7 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
   ) : null
 
   return (
-    <div ref={containerRef} className={`${styles.container} ${size === 'large' ? styles.large : ''}`}>
+    <div ref={containerRef} className={`${styles.container} ${size === 'large' ? styles.large : ''} ${className}`}>
       {isMultiple && (lockedTags.length > 0 || selectedIds.length > 0 || useChipTrigger) && (
         <div className={`${styles.chips} ${useChipTrigger ? styles.chipsInline : ''}`}>
           {lockedTags.map((tag) => (

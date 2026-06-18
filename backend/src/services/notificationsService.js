@@ -3,6 +3,7 @@ import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { getMetaConfig, getMetaSyncProgress } from './metaAdsService.js'
 import { getSitesPublicDomain } from './sitesService.js'
+import { listAutomationReviewProblems } from './automationReferenceResolver.js'
 import { logger } from '../utils/logger.js'
 
 const STORAGE_LIMIT_GB = Number(process.env.DATABASE_STORAGE_LIMIT_GB || 1)
@@ -1059,12 +1060,49 @@ async function getAiNotifications() {
   return []
 }
 
+async function getAutomationReviewNotifications() {
+  try {
+    const problems = await listAutomationReviewProblems({ limit: 5 })
+    if (!problems.length) return []
+
+    const preview = problems
+      .map((item) => {
+        const name = cleanString(item.automation?.name) || 'Automatización'
+        const summary = cleanString(item.reviewStatus?.summary)
+        return summary ? `${name}: ${summary}` : name
+      })
+      .join('; ')
+    const latest = problems
+      .map((item) => item.automation?.updated_at || item.automation?.published_at)
+      .filter(Boolean)
+      .sort()
+      .at(-1)
+
+    return [createNotification({
+      id: 'automations:requires-review',
+      source: 'Automatizaciones',
+      severity: 'warning',
+      title: problems.length === 1
+        ? 'Automatización requiere revisión'
+        : `${problems.length} automatizaciones requieren revisión`,
+      message: limitText(preview, 620),
+      updatedAt: latest || new Date().toISOString(),
+      actionUrl: '/automations',
+      actionLabel: 'Revisar automatizaciones'
+    })]
+  } catch (error) {
+    logger.warn(`No se pudieron revisar automatizaciones para notificaciones: ${error.message}`)
+    return []
+  }
+}
+
 export async function getSystemNotifications({ liveMetaCheck = true, limit = 30 } = {}) {
   const groups = await Promise.all([
     getWhatsAppNotifications(),
     getMetaNotifications({ liveMetaCheck }),
     getStorageNotifications(),
     getDomainNotifications(),
+    getAutomationReviewNotifications(),
     getAiNotifications()
   ])
 
