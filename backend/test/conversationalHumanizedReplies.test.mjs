@@ -7,15 +7,19 @@ import { APPOINTMENT_CONFIRMATION_MODEL } from '../src/agents/appointmentConfirm
 import {
   buildConversationalAgentMetrics,
   completeConversationGoalLinkFromWebhook,
+  createConversationalAgent,
   createConversationGoalLink,
   getConversationGoalLink,
+  getConversationState,
   getAgentReplyDeliveryPartDelayMs,
+  handleConversationalAgentTriggerLinkClick,
   mergeAdvancedClosingContext,
   normalizeAgentGoalWorkflow,
   normalizeAgentReplyDelivery,
   normalizeConversationalSuccessAction,
   shouldMigrateLegacyConversationalAgentConfig
 } from '../src/services/conversationalAgentService.js'
+import { createTriggerLink } from '../src/services/triggerLinksService.js'
 import {
   buildReplyPartDelaySchedule,
   buildPendingReplyContextMessage,
@@ -68,6 +72,7 @@ test('normaliza acciones del agente conversacional', () => {
   assert.equal(normalizeConversationalSuccessAction('book_appointment'), 'book_appointment')
   assert.equal(normalizeConversationalSuccessAction('ready_to_buy'), 'ready_to_buy')
   assert.equal(normalizeConversationalSuccessAction('send_goal_url'), 'send_goal_url')
+  assert.equal(normalizeConversationalSuccessAction('send_trigger_link'), 'send_trigger_link')
   assert.equal(normalizeConversationalSuccessAction('ready_for_human'), 'ready_for_human')
   for (const action of ['internal_signal', 'none', '', null]) {
     assert.equal(normalizeConversationalSuccessAction(action), 'ready_for_human')
@@ -85,6 +90,12 @@ test('normaliza flujo por enlace con parametro de seguimiento', () => {
       owner: 'url',
       url: 'https://tienda.test/checkout',
       trackingParam: 'order_id'
+    },
+    triggerLink: {
+      triggerLinkId: 'trigger_link_123',
+      triggerLinkPublicId: 'abc123',
+      triggerLinkName: 'Ficha de diagnóstico',
+      triggerLinkUrl: 'https://app.test/trigger-links/abc123'
     }
   })
 
@@ -93,6 +104,95 @@ test('normaliza flujo por enlace con parametro de seguimiento', () => {
   assert.equal(workflow.appointments.trackingParam, 'booking-ref')
   assert.equal(workflow.sales.owner, 'url')
   assert.equal(workflow.sales.trackingParam, 'order_id')
+  assert.equal(workflow.triggerLink.triggerLinkId, 'trigger_link_123')
+  assert.equal(workflow.triggerLink.triggerLinkPublicId, 'abc123')
+  assert.equal(workflow.triggerLink.triggerLinkName, 'Ficha de diagnóstico')
+  assert.equal(workflow.triggerLink.triggerLinkUrl, 'https://app.test/trigger-links/abc123')
+})
+
+test('click del enlace de disparo cumple objetivo personalizado y detiene la IA', async () => {
+  const contactId = 'test_trigger_link_goal_contact'
+  let triggerLink = null
+  let agent = null
+
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '+5215550000002', 'trigger-link@test.local', 'Trigger Link Test', 'test']
+    )
+
+    triggerLink = await createTriggerLink({
+      name: 'Diagnóstico express',
+      destinationUrl: 'https://example.test/diagnostico'
+    })
+
+    agent = await createConversationalAgent({
+      name: 'Agente trigger link',
+      objective: 'custom',
+      customObjective: 'Que toque el enlace de diagnóstico',
+      successAction: 'send_trigger_link',
+      goalWorkflow: {
+        triggerLink: {
+          triggerLinkId: triggerLink.id,
+          triggerLinkPublicId: triggerLink.publicId,
+          triggerLinkName: triggerLink.name,
+          triggerLinkUrl: triggerLink.publicUrl
+        }
+      }
+    })
+
+    await db.run(
+      'INSERT OR REPLACE INTO conversational_agent_state (contact_id, status, agent_id, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+      [contactId, 'active', agent.id]
+    )
+
+    const ignored = await handleConversationalAgentTriggerLinkClick({
+      contactId,
+      triggerLinkId: 'trigger_link_equivocado',
+      triggerLinkPublicId: 'otro',
+      triggerLinkName: 'Otro enlace'
+    })
+    assert.equal(ignored.matched, false)
+
+    let state = await getConversationState(contactId)
+    assert.equal(state.status, 'active')
+    assert.equal(state.signal, null)
+
+    const completed = await handleConversationalAgentTriggerLinkClick({
+      contactId,
+      triggerLinkId: triggerLink.id,
+      triggerLinkPublicId: triggerLink.publicId,
+      triggerLinkName: triggerLink.name,
+      eventId: 'trigger_event_test'
+    })
+
+    assert.equal(completed.matched, true)
+    state = await getConversationState(contactId)
+    assert.equal(state.status, 'completed')
+    assert.equal(state.signal, 'ready_for_human')
+    assert.match(state.signalReason, /Diagnóstico express/)
+    assert.match(state.signalSummary, /equipo debe continuar/)
+
+    const event = await db.get(
+      "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'trigger_link_goal_completed' ORDER BY created_at DESC LIMIT 1",
+      [contactId]
+    )
+    assert.ok(event?.detail_json)
+    assert.match(event.detail_json, /trigger_event_test/)
+  } finally {
+    if (agent?.id) await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+    if (triggerLink?.id) {
+      await db.run('DELETE FROM trigger_link_events WHERE trigger_link_id = ?', [triggerLink.id]).catch(() => undefined)
+      await db.run('DELETE FROM trigger_links WHERE id = ?', [triggerLink.id]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
 })
 
 test('confirmacion automatica de enlace de calendario confirma cita con ID real', async () => {

@@ -41,6 +41,7 @@ import {
   type SuccessExtraType
 } from '@/services/conversationalAgentService'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
+import { triggerLinksService, type TriggerLink } from '@/services/triggerLinksService'
 import apiClient from '@/services/apiClient'
 import { formatCurrency } from '@/utils/format'
 import { ConditionBuilder } from './ConditionBuilder'
@@ -62,16 +63,17 @@ const successActionLabels: Record<ConversationalSuccessAction, { label: string; 
   ready_for_human: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' },
   ready_to_buy: { label: 'Que mande link de pago', description: 'La IA confirma el cobro y crea el link de pago si el contacto acepta.' },
   send_goal_url: { label: 'Mandar enlace confirmado', description: 'La IA manda el enlace configurado y Ristak confirma el objetivo cuando regresa el ID real.' },
+  send_trigger_link: { label: 'Mandar enlace de disparo', description: 'La IA manda el enlace elegido y Ristak detiene la IA cuando el contacto lo toca.' },
   internal_signal: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' },
   none: { label: 'Pasar a un humano', description: 'En el chat aparecerá como prioridad en rojo para que el equipo lo atienda.' }
 }
 
 const actionsByObjective: Record<ConversationalObjective, ConversationalSuccessAction[]> = {
-  citas: ['ready_for_human', 'book_appointment', 'send_goal_url'],
+  citas: ['ready_for_human', 'book_appointment', 'send_goal_url', 'send_trigger_link'],
   ventas: ['ready_for_human', 'ready_to_buy', 'send_goal_url'],
   datos: ['ready_for_human'],
   filtrar: ['ready_for_human'],
-  custom: ['ready_for_human']
+  custom: ['ready_for_human', 'send_trigger_link']
 }
 
 const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
@@ -166,6 +168,12 @@ const defaultGoalWorkflow: AgentGoalWorkflowConfig = {
     questions: '',
     qualifies: '',
     disqualifies: ''
+  },
+  triggerLink: {
+    triggerLinkId: '',
+    triggerLinkPublicId: '',
+    triggerLinkName: '',
+    triggerLinkUrl: ''
   }
 }
 
@@ -206,6 +214,12 @@ function getPriceAmount(price?: ProductPrice | null) {
 }
 
 function getSuccessActionInfo(action: ConversationalSuccessAction, objective: ConversationalObjective) {
+  if (action === 'send_trigger_link') {
+    return {
+      label: 'Mandar enlace de disparo',
+      description: 'La IA manda el enlace elegido y Ristak detiene la IA cuando el contacto lo toca.'
+    }
+  }
   if (action !== 'send_goal_url') return successActionLabels[action] || successActionLabels.ready_for_human
   if (objective === 'citas') {
     return {
@@ -282,6 +296,10 @@ function getAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowC
     qualification: {
       ...defaultGoalWorkflow.qualification,
       ...((workflow.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+    },
+    triggerLink: {
+      ...defaultGoalWorkflow.triggerLink,
+      ...((workflow.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
     }
   }
 }
@@ -308,6 +326,10 @@ function mergeGoalWorkflow(
     qualification: {
       ...base.qualification,
       ...((patch.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+    },
+    triggerLink: {
+      ...base.triggerLink,
+      ...((patch.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
     }
   }
 }
@@ -433,6 +455,8 @@ interface AgentCardProps {
   calendars: Calendar[]
   products: ProductItem[]
   productsLoading: boolean
+  triggerLinks: TriggerLink[]
+  triggerLinksLoading: boolean
   filterOptions?: AgentFilterOptions
   systemStrategy: string
   businessPromptStatus?: ConversationalBusinessPromptStatus | null
@@ -446,7 +470,7 @@ function getProviderStatus(aiProviders: ConversationalAIProviderStatus[], provid
   return aiProviders.find((provider) => provider.id === providerId) || null
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, filterOptions, systemStrategy, businessPromptStatus, onConnectProvider, onBack, onChange, onDelete }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, triggerLinks, triggerLinksLoading, filterOptions, systemStrategy, businessPromptStatus, onConnectProvider, onBack, onChange, onDelete }) => {
   const { showToast } = useNotification()
   const [testMessages, setTestMessages] = useState<TestMessage[]>([])
   const [testInput, setTestInput] = useState('')
@@ -485,6 +509,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const selectedSalesPrice = selectedSalesProduct
     ? (selectedSalesProduct.prices || []).find((price) => getPriceId(price) === goalWorkflow.sales.priceId) || getPrimaryPrice(selectedSalesProduct)
     : null
+  const selectedTriggerLink = triggerLinks.find((link) => link.id === goalWorkflow.triggerLink.triggerLinkId) || null
+  const triggerLinkOptions = [
+    { value: '', label: triggerLinksLoading ? 'Cargando enlaces...' : 'Elegir enlace de disparo' },
+    ...triggerLinks.map((link) => ({ value: link.id, label: link.name }))
+  ]
   const productOptions = [
     { value: '', label: productsLoading ? 'Cargando productos...' : 'Elegir producto del sistema' },
     ...products.map((product) => ({ value: getProductId(product), label: product.name }))
@@ -523,6 +552,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     onChange({ goalWorkflow: mergeGoalWorkflow(goalWorkflow, patch) })
   }
 
+  const getTriggerLinkWorkflow = (triggerLink?: TriggerLink | null): AgentGoalWorkflowConfig['triggerLink'] => ({
+    triggerLinkId: triggerLink?.id || '',
+    triggerLinkPublicId: triggerLink?.publicId || '',
+    triggerLinkName: triggerLink?.name || '',
+    triggerLinkUrl: triggerLink?.publicUrl || ''
+  })
+
   const handleProviderSelect = (providerId: ConversationalAIProviderId) => {
     const status = getProviderStatus(aiProviders, providerId)
     if (!status?.connected) {
@@ -544,28 +580,39 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     const allowed = actionsByObjective[objective] || actionsByObjective.custom
     const patch: ConversationalAgentDefInput = { objective }
     const objectiveAction = getObjectiveSuccessAction(objective, goalWorkflow)
-    patch.successAction = allowed.includes(objectiveAction) ? objectiveAction : allowed[0]
+    patch.successAction = allowed.includes(agent.successAction)
+      ? agent.successAction
+      : allowed.includes(objectiveAction)
+        ? objectiveAction
+        : allowed[0]
     onChange(patch)
   }
 
   const handleSuccessActionChange = (successAction: ConversationalSuccessAction) => {
     const patch: ConversationalAgentDefInput = { successAction }
+    let nextGoalWorkflow: AgentGoalWorkflowConfig | null = null
     if (agent.objective === 'citas') {
       const owner = successAction === 'book_appointment' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
       const calendarId = owner === 'ai' || owner === 'url'
         ? goalWorkflow.appointments.calendarId || agent.defaultCalendarId || calendars[0]?.id || null
         : goalWorkflow.appointments.calendarId
-      patch.goalWorkflow = mergeGoalWorkflow(goalWorkflow, {
+      nextGoalWorkflow = mergeGoalWorkflow(goalWorkflow, {
         appointments: { ...goalWorkflow.appointments, owner, calendarId }
       })
       if (owner === 'ai') patch.defaultCalendarId = calendarId
     }
     if (agent.objective === 'ventas') {
       const owner = successAction === 'ready_to_buy' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
-      patch.goalWorkflow = mergeGoalWorkflow(goalWorkflow, {
+      nextGoalWorkflow = mergeGoalWorkflow(nextGoalWorkflow || goalWorkflow, {
         sales: { ...goalWorkflow.sales, owner }
       })
     }
+    if (successAction === 'send_trigger_link') {
+      nextGoalWorkflow = mergeGoalWorkflow(nextGoalWorkflow || goalWorkflow, {
+        triggerLink: getTriggerLinkWorkflow(selectedTriggerLink || triggerLinks[0] || null)
+      })
+    }
+    if (nextGoalWorkflow) patch.goalWorkflow = nextGoalWorkflow
     onChange(patch)
   }
 
@@ -605,6 +652,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         currency: price?.currency || selectedSalesProduct.currency || ''
       }
     })
+  }
+
+  const updateTriggerLinkGoal = (triggerLinkId: string) => {
+    const triggerLink = triggerLinks.find((link) => link.id === triggerLinkId) || null
+    updateGoalWorkflow({ triggerLink: getTriggerLinkWorkflow(triggerLink) })
   }
 
   const handleSendTestMessage = async () => {
@@ -1093,6 +1145,36 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   </div>
                 </>
               )}
+
+              {agent.successAction === 'send_trigger_link' && (
+                <>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Enlace de disparo</label>
+                    <CustomSelect
+                      value={goalWorkflow.triggerLink.triggerLinkId}
+                      onChange={(event) => updateTriggerLinkGoal(event.target.value)}
+                      portal
+                      disabled={triggerLinksLoading || triggerLinks.length === 0}
+                    >
+                      {triggerLinkOptions.map((option) => (
+                        <option key={option.value || 'empty-trigger-link'} value={option.value}>{option.label}</option>
+                      ))}
+                    </CustomSelect>
+                    <p className={styles.helper}>
+                      La IA manda este enlace y se detiene cuando el contacto lo toca.
+                    </p>
+                  </div>
+
+                  <div className={styles.fieldWide}>
+                    <label className={styles.label}>Qué pasa al tocarlo</label>
+                    <p className={styles.helper}>
+                      {selectedTriggerLink
+                        ? `Ristak cumple el objetivo cuando ese contacto toca "${selectedTriggerLink.name}" y pasa el chat al equipo.`
+                        : 'Elige un enlace de disparo para que Ristak pueda confirmar el objetivo.'}
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
 
             {agent.objective === 'custom' && (
@@ -1362,6 +1444,8 @@ export const ConversationalAgentSettings: React.FC = () => {
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [products, setProducts] = useState<ProductItem[]>([])
   const [productsLoading, setProductsLoading] = useState(false)
+  const [triggerLinks, setTriggerLinks] = useState<TriggerLink[]>([])
+  const [triggerLinksLoading, setTriggerLinksLoading] = useState(false)
   const [filterOptions, setFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -1412,6 +1496,8 @@ export const ConversationalAgentSettings: React.FC = () => {
         setCalendars([])
         setProducts([])
         setProductsLoading(false)
+        setTriggerLinks([])
+        setTriggerLinksLoading(false)
         setFilterOptions(undefined)
         setSelectedAgentId(null)
         setLoading(false)
@@ -1420,8 +1506,9 @@ export const ConversationalAgentSettings: React.FC = () => {
 
       setLoading(true)
       setProductsLoading(true)
+      setTriggerLinksLoading(true)
       try {
-        const [nextConfig, nextAgents, nextProviders, nextMetrics, calendarList, productsResponse, nextOptions] = await Promise.all([
+        const [nextConfig, nextAgents, nextProviders, nextMetrics, calendarList, productsResponse, nextTriggerLinks, nextOptions] = await Promise.all([
           conversationalAgentService.getConfig(),
           conversationalAgentService.listAgents(),
           conversationalAgentService.listAIProviders(),
@@ -1433,6 +1520,7 @@ export const ConversationalAgentSettings: React.FC = () => {
               includePrices: 'true'
             }
           }).catch(() => null),
+          triggerLinksService.list().catch(() => []),
           conversationalAgentService.getFilterOptions().catch(() => undefined)
         ])
         if (cancelled) return
@@ -1444,6 +1532,7 @@ export const ConversationalAgentSettings: React.FC = () => {
         setProducts(Array.isArray(productsResponse?.products)
           ? productsResponse.products.filter((product) => getProductId(product))
           : [])
+        setTriggerLinks(nextTriggerLinks.filter((link) => link.active && !link.archived))
         setFilterOptions(nextOptions)
       } catch (error: any) {
         if (!cancelled) {
@@ -1452,6 +1541,7 @@ export const ConversationalAgentSettings: React.FC = () => {
       } finally {
         if (!cancelled) {
           setProductsLoading(false)
+          setTriggerLinksLoading(false)
           setLoading(false)
         }
       }
@@ -1756,6 +1846,8 @@ export const ConversationalAgentSettings: React.FC = () => {
           calendars={calendars}
           products={products}
           productsLoading={productsLoading}
+          triggerLinks={triggerLinks}
+          triggerLinksLoading={triggerLinksLoading}
           filterOptions={filterOptions}
           systemStrategy={systemStrategy}
           businessPromptStatus={businessPromptStatus}

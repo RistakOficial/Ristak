@@ -9,6 +9,7 @@ const OBJECTIVE_TEXTS = {
   ventas: 'que la persona compre',
   datos: 'conseguir los datos clave del prospecto',
   filtrar: 'filtrar curiosos y detectar prospectos con intención real',
+  custom: 'cumplir el objetivo personalizado definido por el negocio'
 }
 
 export const CLOSING_CHANNEL_LABELS = {
@@ -190,7 +191,12 @@ const SUCCESS_ACTION_TEXTS = {
 - Confirma que sí quiere continuar por enlace.
 - Ejecuta send_goal_url y manda el enlace devuelto como sentUrl en el mensaje visible.
 - No digas que la cita, compra u objetivo ya quedó confirmado; sólo queda pendiente.
-- El objetivo se cumple hasta que llegue la confirmación automática con el ID real.`
+- El objetivo se cumple hasta que llegue la confirmación automática con el ID real.`,
+  send_trigger_link: `Cuando la persona esté lista para avanzar con enlace de disparo:
+- Confirma que sí quiere tocar ese enlace para continuar.
+- Ejecuta send_trigger_link y manda el enlace devuelto como sentUrl en el mensaje visible.
+- No digas que el objetivo ya quedó cumplido; sólo queda pendiente.
+- El objetivo se cumple cuando el contacto toca ese enlace. En ese momento Ristak detiene la IA y pasa el chat al equipo.`
 }
 
 /**
@@ -1456,8 +1462,19 @@ function describeObjective(config) {
 function buildGoalWorkflowSection(config = {}) {
   const workflow = config.goalWorkflow || {}
   const sections = []
+  const usesTriggerLink = config.successAction === 'send_trigger_link'
 
-  if (config.objective === 'citas') {
+  if (usesTriggerLink) {
+    const triggerLink = workflow.triggerLink || {}
+    sections.push(`## Flujo con enlace de disparo configurado
+- Este agente debe mandar el enlace de disparo configurado cuando la persona esté lista para avanzar.
+- Enlace configurado: ${triggerLink.triggerLinkName || triggerLink.triggerLinkPublicId || 'sin enlace seleccionado; si falta, manda a humano'}.
+- Cuando la persona acepte avanzar, ejecuta send_trigger_link y manda el enlace devuelto.
+- El objetivo se cumple hasta que el contacto toca ese enlace. Al tocarlo, Ristak detiene la IA y pasa el chat al equipo.
+- No digas que ya quedó cumplido sólo por mandar el enlace.`)
+  }
+
+  if (config.objective === 'citas' && !usesTriggerLink) {
     const appointments = workflow.appointments || {}
     if (appointments.owner === 'url') {
       sections.push(`## Flujo de agenda configurado
@@ -1480,7 +1497,7 @@ function buildGoalWorkflowSection(config = {}) {
     }
   }
 
-  if (config.objective === 'ventas') {
+  if (config.objective === 'ventas' && !usesTriggerLink) {
     const sales = workflow.sales || {}
     if (sales.owner === 'url') {
       const productLine = sales.productName
@@ -1622,7 +1639,7 @@ ${config.requiredData}`)
 
   sections.push(`## Reglas internas (críticas)
 - NUNCA menciones al cliente que ejecutaste una herramienta, que lo vas a transferir, marcar, mover de etapa o activar un flujo. La conversación debe sentirse natural.
-- NUNCA escribas palabras clave internas (AGENDAR, SALTAR, ready_for_human, ready_to_buy, send_goal_url, etc.) en el mensaje visible.
+- NUNCA escribas palabras clave internas (AGENDAR, SALTAR, ready_for_human, ready_to_buy, send_goal_url, send_trigger_link, etc.) en el mensaje visible.
 - Tu respuesta final es SOLO el texto que verá la persona en WhatsApp. No incluyas análisis, razonamiento, planes, etiquetas ni comentarios sobre cómo vas a responder.
 - Prohibido escribir encabezados o notas como "Lectura:", "Movimiento:", "Textura:", "Análisis:", "Respuesta visible:", "voy a responder", "tengo contexto del negocio" o cualquier explicación interna.
 - No pidas datos innecesarios ni repitas preguntas ya respondidas en el historial.

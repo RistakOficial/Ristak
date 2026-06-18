@@ -1,12 +1,14 @@
 import { tool } from '@openai/agents'
 import { z } from 'zod'
 import { db } from '../../config/database.js'
+import { PUBLIC_URL } from '../../config/constants.js'
 import { invokeController, toToolResult } from '../invokeController.js'
 import { createAppointment } from '../../controllers/calendarsController.js'
 import { updateContact } from '../../controllers/contactsController.js'
 import { listCalendarsTool, getFreeSlotsTool } from '../tools/appointmentTools.js'
 import { createSinglePaymentLink } from '../../services/paymentFlowService.js'
 import { getBusinessProfileSnapshot } from '../../services/aiAgentService.js'
+import { buildTriggerLinkPublicUrl, getTriggerLink } from '../../services/triggerLinksService.js'
 import {
   setConversationSignal,
   setConversationStatus,
@@ -44,6 +46,10 @@ function getConfiguredGoalUrl(config = {}) {
   if (config.objective === 'ventas') return workflow.sales || {}
   if (config.objective === 'citas') return workflow.appointments || {}
   return {}
+}
+
+function getConfiguredTriggerLink(config = {}) {
+  return config.goalWorkflow?.triggerLink || {}
 }
 
 function compactObject(input = {}) {
@@ -90,6 +96,22 @@ function buildGoalLinkPreview(targetUrl, trackingParam, goalId, linkParams = {})
   } catch {
     const separator = targetUrl.includes('?') ? '&' : '?'
     return `${targetUrl}${separator}${trackingParam}=${goalId}`
+  }
+}
+
+function getPublicBaseUrl() {
+  return String(process.env.RENDER_EXTERNAL_URL || PUBLIC_URL || 'http://localhost:3002').replace(/\/+$/, '')
+}
+
+function buildContactTriggerLinkUrl(publicUrl, contactId) {
+  const baseUrl = getPublicBaseUrl()
+  try {
+    const parsed = new URL(publicUrl, `${baseUrl}/`)
+    if (contactId) parsed.searchParams.set('contact_id', contactId)
+    return parsed.toString()
+  } catch {
+    const separator = publicUrl.includes('?') ? '&' : '?'
+    return contactId ? `${publicUrl}${separator}contact_id=${encodeURIComponent(contactId)}` : publicUrl
   }
 }
 
@@ -588,6 +610,67 @@ export function createConversationalTools(ctx) {
     }
   })
 
+  const sendTriggerLinkTool = tool({
+    name: 'send_trigger_link',
+    description: 'Manda el enlace de disparo configurado para este objetivo. Úsala sólo cuando la persona ya esté lista para tocar ese enlace. El objetivo se cumple cuando el contacto toca ese enlace; después Ristak detiene la IA y pasa el chat a humano.',
+    parameters: z.object({
+      intencionDetectada: z.string().describe('Qué quiere lograr la persona antes de recibir el enlace'),
+      resumen: z.string().describe('Resumen breve del contexto útil para el humano'),
+      confirm: z.boolean().describe('true sólo cuando la persona ya aceptó avanzar con ese enlace')
+    }),
+    execute: async ({ intencionDetectada, resumen, confirm }) => {
+      if (!confirm) {
+        return { ok: false, error: 'Falta confirmación explícita. Primero confirma que la persona quiere avanzar con ese enlace.' }
+      }
+
+      const configuredLink = getConfiguredTriggerLink(config)
+      const triggerLinkId = configuredLink.triggerLinkId || ''
+      if (!triggerLinkId) {
+        return { ok: false, error: 'No hay enlace de disparo configurado para este objetivo. Manda a humano con send_to_human y avisa que falta configurar el enlace.' }
+      }
+
+      const baseUrl = getPublicBaseUrl()
+      let link = {
+        id: triggerLinkId,
+        publicId: configuredLink.triggerLinkPublicId || '',
+        name: configuredLink.triggerLinkName || 'Enlace de disparo',
+        publicUrl: configuredLink.triggerLinkUrl || buildTriggerLinkPublicUrl(configuredLink.triggerLinkPublicId, baseUrl),
+        active: true,
+        archived: false
+      }
+
+      if (!ctx.dryRun) {
+        const storedLink = await getTriggerLink(triggerLinkId, { baseUrl })
+        if (!storedLink || storedLink.archived) {
+          return { ok: false, error: 'El enlace de disparo configurado ya no existe. Manda a humano y pide revisar la configuración.' }
+        }
+        if (!storedLink.active) {
+          return { ok: false, error: 'El enlace de disparo configurado está apagado. Manda a humano y pide revisar la configuración.' }
+        }
+        link = storedLink
+      }
+
+      const publicUrl = link.publicUrl || buildTriggerLinkPublicUrl(link, baseUrl)
+      const sentUrl = buildContactTriggerLinkUrl(publicUrl, ctx.contactId)
+      pushAction(ctx, 'send_trigger_link', {
+        objective: config.objective,
+        intencionDetectada,
+        triggerLinkId: link.id,
+        triggerLinkPublicId: link.publicId || null
+      })
+
+      return {
+        ok: true,
+        simulated: Boolean(ctx.dryRun),
+        triggerLinkId: link.id,
+        triggerLinkPublicId: link.publicId || null,
+        triggerLinkName: link.name,
+        sentUrl,
+        note: 'Manda sentUrl visible en el chat. No digas que el objetivo ya quedó cumplido; se confirma cuando el contacto toque ese enlace.'
+      }
+    }
+  })
+
   const sendToHumanTool = tool({
     name: 'send_to_human',
     description: 'Manda la conversación a un humano: preguntas delicadas, quejas serias, confusión fuerte, información que no tienes, o casos definidos por el negocio. Crea la señal interna y el agente deja de responder. No le digas al cliente que lo estás transfiriendo.',
@@ -662,5 +745,6 @@ export function createConversationalTools(ctx) {
   if (config?.successAction === 'book_appointment') tools.push(bookAppointmentTool)
   if (config?.successAction === 'ready_to_buy') tools.push(createPaymentLinkTool)
   if (config?.successAction === 'send_goal_url') tools.push(sendGoalUrlTool)
+  if (config?.successAction === 'send_trigger_link') tools.push(sendTriggerLinkTool)
   return tools
 }

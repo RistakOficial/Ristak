@@ -323,6 +323,12 @@ const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     questions: '',
     qualifies: '',
     disqualifies: ''
+  },
+  triggerLink: {
+    triggerLinkId: '',
+    triggerLinkPublicId: '',
+    triggerLinkName: '',
+    triggerLinkUrl: ''
   }
 }
 
@@ -386,6 +392,10 @@ function getPhoneAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWork
     qualification: {
       ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.qualification,
       ...((workflow.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+    },
+    triggerLink: {
+      ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.triggerLink,
+      ...((workflow.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
     }
   }
 }
@@ -11371,6 +11381,10 @@ export const PhoneChat: React.FC = () => {
       qualification: {
         ...goalWorkflow.qualification,
         ...((patch.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+      },
+      triggerLink: {
+        ...goalWorkflow.triggerLink,
+        ...((patch.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
       }
     })
 

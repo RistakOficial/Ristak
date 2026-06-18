@@ -38,7 +38,8 @@ export const SUCCESS_ACTIONS = [
   { id: 'ready_for_human', label: 'Pasar a un humano' },
   { id: 'book_appointment', label: 'Agendar con IA' },
   { id: 'ready_to_buy', label: 'Enviar link de pago' },
-  { id: 'send_goal_url', label: 'Enviar enlace con confirmación automática' }
+  { id: 'send_goal_url', label: 'Enviar enlace con confirmación automática' },
+  { id: 'send_trigger_link', label: 'Enviar enlace de disparo' }
 ]
 
 const VALID_OBJECTIVES = new Set(CONVERSATIONAL_OBJECTIVES.map((item) => item.id))
@@ -681,6 +682,12 @@ const DEFAULT_GOAL_WORKFLOW_CONFIG = {
     questions: '',
     qualifies: '',
     disqualifies: ''
+  },
+  triggerLink: {
+    triggerLinkId: '',
+    triggerLinkPublicId: '',
+    triggerLinkName: '',
+    triggerLinkUrl: ''
   }
 }
 
@@ -737,6 +744,7 @@ export function normalizeAgentGoalWorkflow(input) {
   const appointments = raw.appointments && typeof raw.appointments === 'object' ? raw.appointments : {}
   const sales = raw.sales && typeof raw.sales === 'object' ? raw.sales : {}
   const qualification = raw.qualification && typeof raw.qualification === 'object' ? raw.qualification : {}
+  const triggerLink = raw.triggerLink && typeof raw.triggerLink === 'object' ? raw.triggerLink : {}
 
   return {
     appointments: {
@@ -763,6 +771,12 @@ export function normalizeAgentGoalWorkflow(input) {
       questions: String(qualification.questions || '').slice(0, 2000),
       qualifies: String(qualification.qualifies || '').slice(0, 2000),
       disqualifies: String(qualification.disqualifies || '').slice(0, 2000)
+    },
+    triggerLink: {
+      triggerLinkId: String(triggerLink.triggerLinkId || triggerLink.id || '').trim().slice(0, 180),
+      triggerLinkPublicId: String(triggerLink.triggerLinkPublicId || triggerLink.publicId || '').trim().slice(0, 120),
+      triggerLinkName: String(triggerLink.triggerLinkName || triggerLink.name || '').trim().slice(0, 160),
+      triggerLinkUrl: normalizeGoalUrl(triggerLink.triggerLinkUrl || triggerLink.publicUrl || triggerLink.url)
     }
   }
 }
@@ -2440,6 +2454,61 @@ export async function shouldSuppressChatNotificationForConversationalAgent(conta
   if (!state?.agentId || state.status !== 'active' || state.signal) return false
   const agent = await getConversationalAgent(state.agentId)
   return Boolean(agent?.enabled && agent.hideAttendedNotifications)
+}
+
+function triggerLinkMatchesWorkflow(configured = {}, payload = {}) {
+  const expectedId = String(configured.triggerLinkId || '').trim()
+  const expectedPublicId = String(configured.triggerLinkPublicId || '').trim()
+  const expectedName = normalizeMatchText(configured.triggerLinkName)
+  const actualId = String(payload.triggerLinkId || payload.trigger_link_id || '').trim()
+  const actualPublicId = String(payload.triggerLinkPublicId || payload.publicId || payload.public_id || '').trim()
+  const actualName = normalizeMatchText(payload.triggerLinkName || payload.name)
+
+  if (expectedId) return actualId === expectedId
+  if (expectedPublicId) return actualPublicId === expectedPublicId
+  if (expectedName) return Boolean(actualName && actualName === expectedName)
+  return false
+}
+
+export async function handleConversationalAgentTriggerLinkClick(payload = {}) {
+  const contactId = String(payload.contactId || payload.contact_id || payload.query?.contact_id || payload.query?.contactId || '').trim()
+  if (!contactId) return { matched: false, reason: 'missing_contact' }
+
+  const state = await getConversationState(contactId)
+  if (!state?.agentId) return { matched: false, reason: 'missing_agent' }
+  if (state.signal || !['active', 'paused'].includes(state.status)) {
+    return { matched: false, reason: 'conversation_closed' }
+  }
+
+  const agent = await getConversationalAgent(state.agentId)
+  if (!agent?.enabled || agent.successAction !== 'send_trigger_link') {
+    return { matched: false, reason: 'agent_not_waiting_for_trigger_link' }
+  }
+
+  const configured = agent.goalWorkflow?.triggerLink || {}
+  if (!triggerLinkMatchesWorkflow(configured, payload)) {
+    return { matched: false, reason: 'trigger_link_mismatch' }
+  }
+
+  const triggerLinkName = configured.triggerLinkName || payload.triggerLinkName || 'Enlace de disparo'
+  const nextState = await setConversationSignal(contactId, 'ready_for_human', {
+    reason: `Tocó el enlace de disparo: ${triggerLinkName}`,
+    summary: `El contacto tocó el enlace de disparo "${triggerLinkName}". El equipo debe continuar la conversación.`,
+    status: 'completed'
+  })
+  await applyAgentSuccessExtras(agent, contactId)
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'trigger_link_goal_completed',
+    detail: {
+      agentId: agent.id,
+      triggerLinkId: configured.triggerLinkId || payload.triggerLinkId || null,
+      triggerLinkPublicId: configured.triggerLinkPublicId || payload.triggerLinkPublicId || null,
+      eventId: payload.eventId || null
+    }
+  })
+
+  return { matched: true, state: nextState, agentId: agent.id }
 }
 
 /**

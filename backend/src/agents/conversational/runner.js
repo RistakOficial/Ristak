@@ -64,7 +64,7 @@ const runningContacts = new Set()
 const pendingContactReruns = new Map()
 
 // Palabras internas que jamás deben llegar al cliente final.
-const INTERNAL_TOKEN_PATTERN = /\b(AGENDAR|SALTAR|ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link|send_goal_url)\b/gi
+const INTERNAL_TOKEN_PATTERN = /\b(AGENDAR|SALTAR|ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link|send_goal_url|send_trigger_link)\b/gi
 const INTERNAL_REASONING_LABEL_PATTERN = /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:lectura|movimiento|textura|energ[ií]a|intenci[oó]n|an[aá]lisis|razonamiento|objetivo|decisi[oó]n|criterio|checklist|paso\s+[a-z0-9]+)\s*[:：-]\s*(?:\*\*)?/i
 const INTERNAL_REASONING_MARKER_PATTERN = /(?:\*\*)?\s*(?:lectura|movimiento|textura|energ[ií]a|intenci[oó]n|an[aá]lisis|razonamiento|criterio|checklist)\s*[:：-]\s*(?:\*\*)?/i
 const VISIBLE_REPLY_PREFIX_PATTERN = /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:respuesta|mensaje)\s+(?:visible|final)\s*[:：-]\s*(?:\*\*)?\s*/i

@@ -2,7 +2,7 @@ import type { ConversationalAIProviderId } from '@/constants/conversationalAIPro
 import { apiUrl } from './apiBaseUrl'
 
 export type ConversationalObjective = 'citas' | 'ventas' | 'datos' | 'filtrar' | 'custom'
-export type ConversationalSuccessAction = 'book_appointment' | 'ready_for_human' | 'ready_to_buy' | 'send_goal_url' | 'internal_signal' | 'none'
+export type ConversationalSuccessAction = 'book_appointment' | 'ready_for_human' | 'ready_to_buy' | 'send_goal_url' | 'send_trigger_link' | 'internal_signal' | 'none'
 export type ConversationStatus = 'active' | 'paused' | 'human' | 'skipped' | 'completed' | 'discarded'
 export type ConversationSignal = 'ready_for_human' | 'ready_to_schedule' | 'ready_to_buy' | 'appointment_booked' | 'purchase_completed' | 'discarded'
 export type ClosingStrategyMode = 'system' | 'custom'
@@ -83,6 +83,12 @@ export interface AgentGoalWorkflowConfig {
     questions: string
     qualifies: string
     disqualifies: string
+  }
+  triggerLink: {
+    triggerLinkId: string
+    triggerLinkPublicId: string
+    triggerLinkName: string
+    triggerLinkUrl: string
   }
 }
 
@@ -316,6 +322,7 @@ const VALID_CONVERSATIONAL_SUCCESS_ACTIONS = new Set<ConversationalSuccessAction
   'ready_for_human',
   'ready_to_buy',
   'send_goal_url',
+  'send_trigger_link',
   'internal_signal',
   'none'
 ])
@@ -346,6 +353,12 @@ const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     questions: '',
     qualifies: '',
     disqualifies: ''
+  },
+  triggerLink: {
+    triggerLinkId: '',
+    triggerLinkPublicId: '',
+    triggerLinkName: '',
+    triggerLinkUrl: ''
   }
 }
 
@@ -391,6 +404,10 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
       qualification: {
         ...DEFAULT_AGENT_GOAL_WORKFLOW.qualification,
         ...((agent.goalWorkflow?.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+      },
+      triggerLink: {
+        ...DEFAULT_AGENT_GOAL_WORKFLOW.triggerLink,
+        ...((agent.goalWorkflow?.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
       }
     }
   }
