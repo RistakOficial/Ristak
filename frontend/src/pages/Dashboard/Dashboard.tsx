@@ -442,8 +442,11 @@ const getResponsiveDashboardChartHeight = () => {
   if (typeof window === 'undefined') return 380
 
   const width = window.innerWidth
-  if (width <= 1024) return 300
-  if (width <= 1180) return 320
+  if (width <= 680) return 220
+  if (width <= 760) return 240
+  if (width <= 820) return 260
+  if (width <= 1024) return 280
+  if (width <= 1180) return 310
   if (width <= 1366) return 340
   if (width <= 1536) return 360
   return 380
