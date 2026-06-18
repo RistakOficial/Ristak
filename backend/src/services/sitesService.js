@@ -9923,6 +9923,11 @@ function canUsePublicPreviewContext(host, submittedSiteId, previewContext) {
   return Boolean(previewContext.host && matchesPublicDomain(host, previewContext.host))
 }
 
+function canExecutePublicSiteAction(site, previewContext) {
+  if (site?.status === 'published') return true
+  return Boolean(site?.id && previewContext?.siteId === site.id)
+}
+
 async function resolvePublicRequestAccess(req, body = {}, options = {}) {
   const host = getRequestHost(req)
   const submittedSiteId = cleanString(body.siteId || body.site_id)
@@ -16619,7 +16624,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     throw error
   }
 
-  if (site.status !== 'published') {
+  if (!canExecutePublicSiteAction(site, previewContext)) {
     const error = new Error('Este site no esta publicado')
     error.status = 404
     throw error
@@ -16813,7 +16818,7 @@ export async function createMetaPageEventFromRequest(req, body = {}, options = {
     throw error
   }
 
-  if (site.status !== 'published') {
+  if (!canExecutePublicSiteAction(site, previewContext)) {
     const error = new Error('Este site no esta publicado')
     error.status = 404
     throw error

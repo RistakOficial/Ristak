@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
-import { createBlock, createSite, createSubmissionFromRequest, deleteSite } from '../src/services/sitesService.js'
+import { createBlock, createMetaPageEventFromRequest, createSite, createSubmissionFromRequest, deleteSite } from '../src/services/sitesService.js'
 
 const DOMAIN_KEYS = {
   domain: 'sites_public_domain',
@@ -29,7 +29,7 @@ async function restorePublicDomainConfig(config) {
   ])
 }
 
-test('preview submissions work on the service domain without a public domain', async () => {
+test('draft preview actions work on the service domain without a public domain', async () => {
   const previousConfig = await snapshotPublicDomainConfig()
   const slug = `preview-service-${Date.now()}`
   const email = `preview-service-${Date.now()}@example.test`
@@ -45,7 +45,7 @@ test('preview submissions work on the service domain without a public domain', a
       name: 'Preview sin dominio publico',
       slug,
       siteType: 'standard_form',
-      status: 'published',
+      status: 'draft',
       blankCanvas: true
     })
 
@@ -105,6 +105,23 @@ test('preview submissions work on the service domain without a public domain', a
     const meta = JSON.parse(submission.meta_json)
     assert.equal(meta.previewSession, true)
     assert.equal(meta.previewPageId, 'preview-page')
+
+    const metaEvent = await createMetaPageEventFromRequest(
+      req,
+      {
+        siteId: site.id,
+        pageId: 'page-1'
+      },
+      {
+        previewContext: {
+          siteId: site.id,
+          pageId: 'preview-page',
+          token: 'preview-test',
+          host: 'ristak-preview.onrender.com'
+        }
+      }
+    )
+    assert.deepEqual(metaEvent, { sent: false, reason: 'site_disabled' })
   } finally {
     if (site?.id) await deleteSite(site.id).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
