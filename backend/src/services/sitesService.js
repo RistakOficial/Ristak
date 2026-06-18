@@ -10191,21 +10191,6 @@ function getMediaAssetStreamMetadata(asset) {
   return { videoId, libraryId }
 }
 
-function buildBunnyStreamEmbedUrl(stream, settings = {}) {
-  if (!stream?.libraryId || !stream?.videoId) return ''
-  const url = new URL(`https://player.mediadelivery.net/embed/${encodeURIComponent(stream.libraryId)}/${encodeURIComponent(stream.videoId)}`)
-  const autoplay = Boolean(settings.videoAutoplay)
-  const muted = settings.videoMuted !== false
-  const loop = Boolean(settings.videoLoop) || autoplay
-  const preload = settings.videoPreviewEnabled !== false
-  url.searchParams.set('autoplay', autoplay ? 'true' : 'false')
-  url.searchParams.set('muted', muted ? 'true' : 'false')
-  url.searchParams.set('loop', loop ? 'true' : 'false')
-  url.searchParams.set('preload', preload ? 'true' : 'false')
-  url.searchParams.set('playsinline', 'true')
-  return url.toString()
-}
-
 function getBunnyStreamVideoIdFromUrl(value = '') {
   return getBunnyStreamMetadataFromUrl(value)?.videoId || ''
 }
@@ -10342,12 +10327,6 @@ async function buildVideoStorageAssetsByStreamVideoId(blocks = [], { enabled = f
   return assetsByVideoId
 }
 
-function getLiveStreamEmbedUrlForStorageVideo(rawVideoUrl, settings = {}, context = {}) {
-  const asset = getLiveStreamAssetForStorageVideo(rawVideoUrl, context)
-  const stream = getMediaAssetStreamMetadata(asset)
-  return stream ? buildBunnyStreamEmbedUrl(stream, settings) : ''
-}
-
 function getLiveStreamAssetForStorageVideo(rawVideoUrl, context = {}) {
   if (context.noTrack) return null
   const lookupUrl = normalizeMediaLookupUrl(rawVideoUrl)
@@ -10375,6 +10354,20 @@ function renderNoTrackBunnyStreamBlock(videoUrl, block, settings = {}, context =
     return renderVideoPlayer(asset.publicUrl, block, settings, { noTrack: false })
   }
   return `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Video disponible en el sitio publicado</div>`
+}
+
+function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, context = {}, stream = null) {
+  if (!asset?.publicUrl) return ''
+  const resolvedStream = stream || getMediaAssetStreamMetadata(asset)
+  return renderVideoPlayer(asset.publicUrl, block, settings, {
+    noTrack: false,
+    tracking: {
+      enabled: !context.noTrack,
+      asset,
+      stream: resolvedStream,
+      provider: resolvedStream?.videoId ? 'bunny_stream' : 'html5_video'
+    }
+  })
 }
 
 function collectBunnyStreamVideoIdsFromHtml(html = '') {
@@ -12900,34 +12893,44 @@ function renderContentBlock(block, context = {}) {
     const videoUrl = directVideoUrl ? '' : normalizeVideoEmbedUrl(rawVideoUrl)
     const liveStreamAsset = directVideoUrl ? getLiveStreamAssetForStorageVideo(rawVideoUrl, context) : null
     const liveStream = getMediaAssetStreamMetadata(liveStreamAsset)
-    const liveStreamEmbedUrl = liveStream ? buildBunnyStreamEmbedUrl(liveStream, settings) : ''
     const noTrackStreamMarkup = videoUrl ? renderNoTrackBunnyStreamBlock(videoUrl, block, settings, context) : ''
     const embedVideoUrl = context.noTrack ? appendNoTrackParam(videoUrl) : videoUrl
-    return directVideoUrl
-      ? liveStreamEmbedUrl
-        ? renderBunnyStreamIframe(liveStreamEmbedUrl, block, {
+    const storageAssetForStreamVideo = embedVideoUrl ? getStorageAssetForStreamVideoUrl(embedVideoUrl, context) : null
+    const storageStream = getMediaAssetStreamMetadata(storageAssetForStreamVideo)
+
+    if (directVideoUrl) {
+      if (liveStreamAsset?.publicUrl) {
+        return renderStorageBackedBunnyStreamVideo(liveStreamAsset, block, settings, context, liveStream)
+      }
+
+      return renderVideoPlayer(directVideoUrl, block, settings, {
+        noTrack: false,
+        tracking: {
           enabled: !context.noTrack,
-          asset: liveStreamAsset,
-          stream: liveStream
+          provider: 'html5_video'
+        }
+      })
+    }
+
+    if (noTrackStreamMarkup) return noTrackStreamMarkup
+
+    if (embedVideoUrl) {
+      if (getBunnyStreamVideoIdFromUrl(embedVideoUrl)) {
+        if (storageAssetForStreamVideo?.publicUrl) {
+          return renderStorageBackedBunnyStreamVideo(storageAssetForStreamVideo, block, settings, context, storageStream)
+        }
+
+        return renderBunnyStreamIframe(embedVideoUrl, block, {
+          enabled: !context.noTrack,
+          asset: storageAssetForStreamVideo,
+          stream: getStreamMetadataForVideoUrl(embedVideoUrl, context)
         })
-        : renderVideoPlayer(directVideoUrl, block, settings, {
-          noTrack: false,
-          tracking: {
-            enabled: !context.noTrack,
-            provider: 'html5_video'
-          }
-        })
-      : noTrackStreamMarkup
-        ? noTrackStreamMarkup
-      : embedVideoUrl
-        ? getBunnyStreamVideoIdFromUrl(embedVideoUrl)
-          ? renderBunnyStreamIframe(embedVideoUrl, block, {
-            enabled: !context.noTrack,
-            asset: getStorageAssetForStreamVideoUrl(embedVideoUrl, context),
-            stream: getStreamMetadataForVideoUrl(embedVideoUrl, context)
-          })
-          : `<div class="rstk-video"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
-      : `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
+      }
+
+      return `<div class="rstk-video"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
+    }
+
+    return `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
   }
 
   if (block.blockType === 'button') {
