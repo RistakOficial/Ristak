@@ -1423,7 +1423,11 @@ async function initTables() {
         bunny_storage_zone TEXT,
         bunny_storage_region TEXT,
         bunny_cdn_base_url TEXT,
+        bunny_stream_enabled INTEGER DEFAULT 1,
         bunny_stream_library_id TEXT,
+        bunny_stream_library_name TEXT,
+        bunny_stream_collection_id TEXT,
+        bunny_stream_collection_name TEXT,
         max_image_size_mb INTEGER DEFAULT 25,
         max_video_size_mb INTEGER DEFAULT 512,
         max_audio_size_mb INTEGER DEFAULT 100,
@@ -1472,6 +1476,23 @@ async function initTables() {
     }
 
     for (const [columnName, columnType] of [
+      ['bunny_stream_enabled', 'INTEGER DEFAULT 1'],
+      ['bunny_stream_library_name', 'TEXT'],
+      ['bunny_stream_collection_id', 'TEXT'],
+      ['bunny_stream_collection_name', 'TEXT']
+    ]) {
+      try {
+        if (usePostgres) {
+          await db.run(`ALTER TABLE storage_settings ADD COLUMN IF NOT EXISTS ${columnName} ${columnType}`)
+        } else {
+          await db.run(`ALTER TABLE storage_settings ADD COLUMN ${columnName} ${columnType}`)
+        }
+      } catch (err) {
+        // La columna ya existe.
+      }
+    }
+
+    for (const [columnName, columnType] of [
       ['quota_gb', 'REAL DEFAULT 5'],
       ['quota_bytes', 'BIGINT DEFAULT 5368709120'],
       ['used_bytes', 'BIGINT DEFAULT 0'],
@@ -1513,13 +1534,17 @@ async function initTables() {
           bunny_storage_zone,
           bunny_storage_region,
           bunny_cdn_base_url,
+          bunny_stream_enabled,
           bunny_stream_library_id,
+          bunny_stream_library_name,
+          bunny_stream_collection_id,
+          bunny_stream_collection_name,
           max_image_size_mb,
           max_video_size_mb,
           max_audio_size_mb,
           max_document_size_mb
         )
-        VALUES (?, ?, 1, ?, 1, 1, 1, 1, ?, ?, ?, ?, 25, 512, 100, 50)
+        VALUES (?, ?, 1, ?, 1, 1, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, 25, 512, 100, 50)
         ON CONFLICT (id) DO NOTHING
       `, [
         1,
@@ -1528,7 +1553,11 @@ async function initTables() {
         process.env.BUNNY_STORAGE_ZONE || null,
         process.env.BUNNY_STORAGE_REGION || null,
         process.env.BUNNY_CDN_BASE_URL || null,
-        process.env.BUNNY_STREAM_LIBRARY_ID || null
+        process.env.BUNNY_STREAM_ENABLED === undefined ? 1 : /^(1|true|yes|si|on)$/i.test(String(process.env.BUNNY_STREAM_ENABLED).trim()) ? 1 : 0,
+        process.env.BUNNY_STREAM_LIBRARY_ID || null,
+        process.env.BUNNY_STREAM_LIBRARY_NAME || null,
+        process.env.BUNNY_STREAM_COLLECTION_ID || null,
+        process.env.BUNNY_STREAM_COLLECTION_NAME || null
       ])
     } catch (err) {
       logger.warn('Advertencia al crear configuración default de almacenamiento:', err.message)

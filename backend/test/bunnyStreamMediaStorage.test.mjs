@@ -12,8 +12,15 @@ const ENV_KEYS = [
   'BUNNY_STORAGE_ENDPOINT',
   'BUNNY_STORAGE_API_KEY',
   'BUNNY_CDN_BASE_URL',
+  'BUNNY_API_KEY',
+  'BUNNY_ACCOUNT_API_KEY',
+  'BUNNY_API_TOKEN',
+  'BUNNY_ACCESS_KEY',
+  'BUNNY_CORE_ENDPOINT',
+  'BUNNY_API_ENDPOINT',
   'BUNNY_STREAM_ENABLED',
   'BUNNY_STREAM_LIBRARY_ID',
+  'BUNNY_STREAM_LIBRARY_NAME',
   'BUNNY_STREAM_API_KEY',
   'BUNNY_STREAM_COLLECTION_ID',
   'BUNNY_STREAM_COLLECTION_NAME',
@@ -81,6 +88,45 @@ async function createBunnyMockServer() {
           res.end('deleted')
           return
         }
+      }
+
+      if (path === '/core/videolibrary' && req.method === 'GET') {
+        requests.push({
+          kind: 'core-list-video-libraries',
+          page: url.searchParams.get('page'),
+          perPage: url.searchParams.get('perPage'),
+          accessKey: req.headers.accesskey
+        })
+        sendJson(res, 200, {
+          totalItems: 0,
+          currentPage: 1,
+          itemsPerPage: 1000,
+          items: []
+        })
+        return
+      }
+
+      if (path === '/core/videolibrary' && req.method === 'POST') {
+        const body = JSON.parse((await readRequestBuffer(req)).toString('utf8') || '{}')
+        requests.push({ kind: 'core-create-video-library', body, accessKey: req.headers.accesskey })
+        sendJson(res, 201, {
+          Id: 123,
+          Name: body.Name,
+          ApiKey: 'stream-secret',
+          ReadOnlyApiKey: 'stream-readonly-secret'
+        })
+        return
+      }
+
+      if (path === '/core/videolibrary/123' && req.method === 'GET') {
+        requests.push({ kind: 'core-get-video-library', accessKey: req.headers.accesskey })
+        sendJson(res, 200, {
+          Id: 123,
+          Name: 'Ristak Sites & Forms',
+          ApiKey: 'stream-secret',
+          ReadOnlyApiKey: 'stream-readonly-secret'
+        })
+        return
       }
 
       if (path === '/stream/library/123/collections' && req.method === 'GET') {
@@ -254,6 +300,12 @@ async function createBunnyMockServer() {
 
 function configureBunnyEnv(baseUrl) {
   delete process.env.DATABASE_URL
+  delete process.env.BUNNY_API_KEY
+  delete process.env.BUNNY_ACCOUNT_API_KEY
+  delete process.env.BUNNY_API_TOKEN
+  delete process.env.BUNNY_ACCESS_KEY
+  delete process.env.BUNNY_CORE_ENDPOINT
+  delete process.env.BUNNY_API_ENDPOINT
   delete process.env.BUNNY_STREAM_COLLECTION_ID
   delete process.env.RENDER_EXTERNAL_URL
   delete process.env.PUBLIC_URL
@@ -272,6 +324,118 @@ function configureBunnyEnv(baseUrl) {
   process.env.BUNNY_STREAM_ENDPOINT = `${baseUrl}/stream`
   process.env.BUNNY_STREAM_TIMEOUT_MS = '5000'
 }
+
+function configureBunnyAccountOnlyEnv(baseUrl) {
+  delete process.env.DATABASE_URL
+  delete process.env.BUNNY_ACCOUNT_API_KEY
+  delete process.env.BUNNY_API_TOKEN
+  delete process.env.BUNNY_ACCESS_KEY
+  delete process.env.BUNNY_API_ENDPOINT
+  delete process.env.BUNNY_STREAM_LIBRARY_ID
+  delete process.env.BUNNY_STREAM_API_KEY
+  delete process.env.BUNNY_STREAM_COLLECTION_ID
+  delete process.env.RENDER_EXTERNAL_URL
+  delete process.env.PUBLIC_URL
+  process.env.MEDIA_STORAGE_PROVIDER = 'bunny'
+  process.env.MEDIA_STORAGE_REQUIRE_BUNNY = 'true'
+  process.env.MEDIA_COMPRESSION_ENABLED = 'false'
+  process.env.BUNNY_STORAGE_ZONE = 'central-zone'
+  process.env.BUNNY_STORAGE_REGION = ''
+  process.env.BUNNY_STORAGE_ENDPOINT = `${baseUrl}/storage`
+  process.env.BUNNY_STORAGE_API_KEY = 'storage-secret'
+  process.env.BUNNY_CDN_BASE_URL = `${baseUrl}/cdn`
+  process.env.BUNNY_API_KEY = 'account-secret'
+  process.env.BUNNY_CORE_ENDPOINT = `${baseUrl}/core`
+  process.env.BUNNY_STREAM_ENABLED = 'true'
+  process.env.BUNNY_STREAM_LIBRARY_NAME = 'Ristak Sites & Forms'
+  process.env.BUNNY_STREAM_COLLECTION_NAME = 'Ristak Sites & Forms'
+  process.env.BUNNY_STREAM_ENDPOINT = `${baseUrl}/stream`
+  process.env.BUNNY_STREAM_TIMEOUT_MS = '5000'
+}
+
+test('Bunny Stream se prepara automaticamente al arrancar con API key de cuenta', async () => {
+  const previousEnv = snapshotEnv()
+  const bunny = await createBunnyMockServer()
+  let db = null
+  let mediaAssetId = ''
+
+  try {
+    configureBunnyAccountOnlyEnv(bunny.baseUrl)
+
+    const [mediaStorageService, database] = await Promise.all([
+      import('../src/services/mediaStorageService.js'),
+      import('../src/config/database.js')
+    ])
+    mediaStorageService.resetCentralStorageConfigCache()
+    db = database.db
+
+    await db.run(`
+      UPDATE storage_settings
+      SET bunny_stream_enabled = 1,
+          bunny_stream_library_id = NULL,
+          bunny_stream_library_name = NULL,
+          bunny_stream_collection_id = NULL,
+          bunny_stream_collection_name = NULL
+      WHERE id = 1
+    `)
+
+    const config = await mediaStorageService.ensureBunnyStreamRuntimeConfigured()
+    assert.equal(config.bunnyStreamConfigured, true)
+    assert.equal(config.bunnyStreamLibraryId, '123')
+    assert.equal(config.bunnyStreamLibraryName, 'Ristak Sites & Forms')
+    assert.equal(config.bunnyStreamApiKey, 'stream-secret')
+    assert.equal(process.env.BUNNY_STREAM_LIBRARY_ID, '123')
+    assert.equal(process.env.BUNNY_STREAM_API_KEY, 'stream-secret')
+
+    const storageSettings = await db.get(`
+      SELECT bunny_stream_enabled, bunny_stream_library_id, bunny_stream_library_name, bunny_stream_collection_name
+      FROM storage_settings
+      WHERE id = 1
+    `)
+    assert.equal(Number(storageSettings.bunny_stream_enabled), 1)
+    assert.equal(storageSettings.bunny_stream_library_id, '123')
+    assert.equal(storageSettings.bunny_stream_library_name, 'Ristak Sites & Forms')
+    assert.equal(storageSettings.bunny_stream_collection_name, 'Ristak Sites & Forms')
+
+    assert.ok(bunny.requests.some(request => request.kind === 'core-list-video-libraries'))
+    assert.ok(bunny.requests.some(request => request.kind === 'core-create-video-library'))
+    assert.ok(bunny.requests.some(request => request.kind === 'core-create-video-library' && request.accessKey === 'account-secret'))
+
+    const created = await mediaStorageService.uploadMediaAsset({
+      buffer: Buffer.from('fake mp4 bytes for auto-created bunny stream library'),
+      filename: 'auto-stream-video.mp4',
+      mimeType: 'video/mp4',
+      module: 'forms',
+      moduleEntityId: 'form_1',
+      businessId: 'default',
+      isPublic: true,
+      skipCompression: true
+    })
+    mediaAssetId = created.id
+
+    assert.equal(created.mediaType, 'video')
+    assert.equal(created.metadata.stream.syncStatus, 'uploaded')
+    assert.equal(created.metadata.stream.provider, 'bunny_stream')
+    assert.equal(created.metadata.stream.libraryId, '123')
+    assert.equal(created.metadata.stream.collectionId, 'collection-sites-forms')
+    assert.equal(created.metadata.stream.videoId, 'stream-video-1')
+    assert.ok(bunny.requests.some(request => request.kind === 'stream-create-video' && request.accessKey === 'stream-secret'))
+    assert.ok(bunny.requests.some(request => request.kind === 'stream-upload-video' && request.accessKey === 'stream-secret'))
+    assert.ok(bunny.requests.every(request => !request.accessKey || ['account-secret', 'stream-secret', 'storage-secret'].includes(request.accessKey)))
+  } finally {
+    if (mediaAssetId) {
+      const { softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')
+      await softDeleteMediaAsset(mediaAssetId).catch(() => undefined)
+    }
+    if (db && mediaAssetId) {
+      await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+    }
+    bunny.close()
+    restoreEnv(previousEnv)
+    const mediaStorageService = await import('../src/services/mediaStorageService.js')
+    mediaStorageService.resetCentralStorageConfigCache()
+  }
+})
 
 test('videos de Sites se copian a Bunny Stream y guardan metadata del video', async () => {
   const previousEnv = snapshotEnv()

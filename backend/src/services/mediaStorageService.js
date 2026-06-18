@@ -15,7 +15,9 @@ const __dirname = dirname(__filename)
 
 const GB = 1024 * 1024 * 1024
 const LOCAL_MEDIA_ROOT = join(__dirname, '../../uploads/media-storage')
+const BUNNY_CORE_API_BASE_URL = 'https://api.bunny.net'
 const BUNNY_STREAM_API_BASE_URL = 'https://video.bunnycdn.com'
+const DEFAULT_BUNNY_STREAM_LIBRARY_NAME = 'Ristak Sites & Forms'
 const DEFAULT_BUNNY_STREAM_COLLECTION_NAME = 'Ristak Sites & Forms'
 const CENTRAL_STORAGE_CONFIG_TTL_MS = Math.max(
   30_000,
@@ -33,6 +35,11 @@ const BUNNY_STREAM_TIMEOUT_MS = Math.max(
 let centralStorageConfigCache = {
   expiresAt: 0,
   env: null,
+  promise: null
+}
+let bunnyStreamLibraryProvisionCache = {
+  key: '',
+  expiresAt: 0,
   promise: null
 }
 const bunnyStreamCollectionCache = new Map()
@@ -285,10 +292,13 @@ function buildStorageRuntimeConfig(row) {
     bunnyStorageRegion: cleanString(process.env.BUNNY_STORAGE_REGION || row?.bunny_storage_region),
     bunnyStorageApiKey: cleanString(process.env.BUNNY_STORAGE_API_KEY),
     bunnyCdnBaseUrl: normalizeBaseUrl(process.env.BUNNY_CDN_BASE_URL || row?.bunny_cdn_base_url),
+    bunnyAccountApiKey: cleanString(process.env.BUNNY_API_KEY || process.env.BUNNY_ACCOUNT_API_KEY || process.env.BUNNY_API_TOKEN || process.env.BUNNY_ACCESS_KEY),
+    bunnyCoreEndpoint: normalizeBaseUrl(process.env.BUNNY_CORE_ENDPOINT || process.env.BUNNY_API_ENDPOINT || BUNNY_CORE_API_BASE_URL),
     bunnyStreamEnabled: process.env.BUNNY_STREAM_ENABLED !== undefined
       ? boolValue(process.env.BUNNY_STREAM_ENABLED, true)
       : boolValue(row?.bunny_stream_enabled, true),
     bunnyStreamLibraryId: cleanString(process.env.BUNNY_STREAM_LIBRARY_ID || row?.bunny_stream_library_id),
+    bunnyStreamLibraryName: cleanString(process.env.BUNNY_STREAM_LIBRARY_NAME || row?.bunny_stream_library_name || DEFAULT_BUNNY_STREAM_LIBRARY_NAME),
     bunnyStreamApiKey: cleanString(process.env.BUNNY_STREAM_API_KEY),
     bunnyStreamCollectionId: cleanString(process.env.BUNNY_STREAM_COLLECTION_ID || row?.bunny_stream_collection_id),
     bunnyStreamCollectionName: cleanString(process.env.BUNNY_STREAM_COLLECTION_NAME || row?.bunny_stream_collection_name || DEFAULT_BUNNY_STREAM_COLLECTION_NAME),
@@ -312,6 +322,7 @@ function buildStorageRuntimeConfig(row) {
   if (config.bunnyStreamEnabled) {
     if (!config.bunnyStreamLibraryId) streamMissing.push('BUNNY_STREAM_LIBRARY_ID')
     if (!config.bunnyStreamApiKey) streamMissing.push('BUNNY_STREAM_API_KEY')
+    if (streamMissing.length && !config.bunnyAccountApiKey) streamMissing.push('BUNNY_API_KEY')
   }
 
   config.missingEnvironment = missing
@@ -364,8 +375,11 @@ function normalizeCentralStorageEnv(config = {}) {
     BUNNY_STORAGE_ENDPOINT: readCentralStorageConfigValue(config, 'bunny_storage_endpoint', 'BUNNY_STORAGE_ENDPOINT'),
     BUNNY_STORAGE_API_KEY: readCentralStorageConfigValue(config, 'bunny_storage_api_key', 'BUNNY_STORAGE_API_KEY'),
     BUNNY_CDN_BASE_URL: readCentralStorageConfigValue(config, 'bunny_cdn_base_url', 'BUNNY_CDN_BASE_URL'),
+    BUNNY_API_KEY: readCentralStorageConfigValue(config, 'bunny_api_key', 'BUNNY_API_KEY') || readCentralStorageConfigValue(config, 'bunny_account_api_key', 'BUNNY_ACCOUNT_API_KEY'),
+    BUNNY_CORE_ENDPOINT: readCentralStorageConfigValue(config, 'bunny_core_endpoint', 'BUNNY_CORE_ENDPOINT') || readCentralStorageConfigValue(config, 'bunny_api_endpoint', 'BUNNY_API_ENDPOINT'),
     BUNNY_STREAM_ENABLED: readCentralStorageConfigValue(config, 'bunny_stream_enabled', 'BUNNY_STREAM_ENABLED'),
     BUNNY_STREAM_LIBRARY_ID: readCentralStorageConfigValue(config, 'bunny_stream_library_id', 'BUNNY_STREAM_LIBRARY_ID'),
+    BUNNY_STREAM_LIBRARY_NAME: readCentralStorageConfigValue(config, 'bunny_stream_library_name', 'BUNNY_STREAM_LIBRARY_NAME'),
     BUNNY_STREAM_API_KEY: readCentralStorageConfigValue(config, 'bunny_stream_api_key', 'BUNNY_STREAM_API_KEY'),
     BUNNY_STREAM_COLLECTION_ID: readCentralStorageConfigValue(config, 'bunny_stream_collection_id', 'BUNNY_STREAM_COLLECTION_ID'),
     BUNNY_STREAM_COLLECTION_NAME: readCentralStorageConfigValue(config, 'bunny_stream_collection_name', 'BUNNY_STREAM_COLLECTION_NAME'),
@@ -429,10 +443,174 @@ function applyCentralStorageEnv(env = null) {
   return applied
 }
 
+function bunnyCoreUrl(config, pathname, query = {}) {
+  const url = new URL(`${normalizeBaseUrl(config.bunnyCoreEndpoint || BUNNY_CORE_API_BASE_URL)}${pathname}`)
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value))
+  }
+  return url.toString()
+}
+
+async function bunnyCoreRequest(config, pathname, {
+  method = 'GET',
+  query = {},
+  body,
+  okStatuses = [200]
+} = {}) {
+  const response = await fetch(bunnyCoreUrl(config, pathname, query), {
+    method,
+    headers: {
+      AccessKey: config.bunnyAccountApiKey,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {})
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(BUNNY_STREAM_TIMEOUT_MS)
+  })
+  const payload = await parseBunnyResponse(response)
+
+  if (!okStatuses.includes(response.status)) {
+    const detail = cleanString(payload?.message || payload?.error || payload?.Message || response.statusText)
+    throw errorWithStatus(
+      `Bunny Core rechazó la operación (${response.status}): ${detail.slice(0, 180) || response.statusText}`,
+      502,
+      'bunny_core_request_failed'
+    )
+  }
+
+  return payload
+}
+
+function normalizeBunnyVideoLibrary(row = {}) {
+  if (!row || typeof row !== 'object') return null
+  const id = cleanString(row.Id ?? row.id ?? row.VideoLibraryId ?? row.videoLibraryId)
+  if (!id) return null
+  return {
+    id,
+    name: cleanString(row.Name ?? row.name),
+    apiKey: cleanString(row.ApiKey ?? row.apiKey ?? row.ApiAccessKey ?? row.apiAccessKey),
+    readOnlyApiKey: cleanString(row.ReadOnlyApiKey ?? row.readOnlyApiKey),
+    pullZoneId: row.PullZoneId ?? row.pullZoneId ?? null,
+    storageZoneId: row.StorageZoneId ?? row.storageZoneId ?? null,
+    created: false
+  }
+}
+
+function extractBunnyVideoLibraries(payload) {
+  if (Array.isArray(payload)) return payload.map(normalizeBunnyVideoLibrary).filter(Boolean)
+  const items = payload?.Items || payload?.items || payload?.Data || payload?.data || []
+  return Array.isArray(items) ? items.map(normalizeBunnyVideoLibrary).filter(Boolean) : []
+}
+
+async function listBunnyVideoLibraries(config) {
+  const payload = await bunnyCoreRequest(config, '/videolibrary', {
+    query: { page: 1, perPage: 1000 }
+  })
+  return extractBunnyVideoLibraries(payload)
+}
+
+async function getBunnyVideoLibrary(config, libraryId) {
+  const payload = await bunnyCoreRequest(config, `/videolibrary/${encodeURIComponent(libraryId)}`)
+  return normalizeBunnyVideoLibrary(payload)
+}
+
+async function createBunnyVideoLibrary(config) {
+  const payload = await bunnyCoreRequest(config, '/videolibrary', {
+    method: 'POST',
+    body: {
+      Name: config.bunnyStreamLibraryName || DEFAULT_BUNNY_STREAM_LIBRARY_NAME
+    },
+    okStatuses: [200, 201]
+  })
+  const library = normalizeBunnyVideoLibrary(payload)
+  return library ? { ...library, created: true } : null
+}
+
+async function updateStorageSettingsBunnyStreamLibrary(library, config) {
+  if (!library?.id) return
+  const name = library.name || config.bunnyStreamLibraryName || DEFAULT_BUNNY_STREAM_LIBRARY_NAME
+  try {
+    await db.run(
+      `UPDATE storage_settings
+       SET bunny_stream_enabled = 1,
+           bunny_stream_library_id = ?,
+           bunny_stream_library_name = ?,
+           bunny_stream_collection_name = COALESCE(NULLIF(bunny_stream_collection_name, ''), ?),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = 1`,
+      [library.id, name, config.bunnyStreamCollectionName || DEFAULT_BUNNY_STREAM_COLLECTION_NAME]
+    )
+  } catch (error) {
+    logger.warn(`[MediaStorage] No se pudo guardar configuración Bunny Stream autogenerada: ${error.message}`)
+  }
+}
+
+async function provisionBunnyStreamLibrary(config) {
+  if (!config.bunnyStreamEnabled || config.bunnyStreamConfigured || !config.bunnyAccountApiKey) return null
+
+  const provisionKey = [
+    config.bunnyCoreEndpoint || BUNNY_CORE_API_BASE_URL,
+    config.bunnyStreamLibraryId || '',
+    config.bunnyStreamLibraryName || DEFAULT_BUNNY_STREAM_LIBRARY_NAME
+  ].join('|')
+  if (bunnyStreamLibraryProvisionCache.key === provisionKey && bunnyStreamLibraryProvisionCache.expiresAt > Date.now()) {
+    return null
+  }
+  if (bunnyStreamLibraryProvisionCache.promise) return bunnyStreamLibraryProvisionCache.promise
+
+  bunnyStreamLibraryProvisionCache.key = provisionKey
+  bunnyStreamLibraryProvisionCache.promise = (async () => {
+    let library = null
+    if (config.bunnyStreamLibraryId) {
+      library = await getBunnyVideoLibrary(config, config.bunnyStreamLibraryId)
+    } else {
+      const name = (config.bunnyStreamLibraryName || DEFAULT_BUNNY_STREAM_LIBRARY_NAME).toLowerCase()
+      const libraries = await listBunnyVideoLibraries(config)
+      library = libraries.find(item => item.name.toLowerCase() === name) || null
+      if (!library) library = await createBunnyVideoLibrary(config)
+    }
+
+    if (!library?.id || !library?.apiKey) {
+      throw errorWithStatus('Bunny creó/encontró la librería Stream pero no regresó API key usable.', 502, 'bunny_stream_library_api_key_missing')
+    }
+
+    applyRuntimeEnvFallback('BUNNY_STREAM_LIBRARY_ID', library.id)
+    applyRuntimeEnvFallback('BUNNY_STREAM_LIBRARY_NAME', library.name || config.bunnyStreamLibraryName)
+    applyRuntimeEnvFallback('BUNNY_STREAM_API_KEY', library.apiKey)
+    await updateStorageSettingsBunnyStreamLibrary(library, config)
+    logger.info(`[MediaStorage] Bunny Stream ${library.created ? 'creó' : 'reutilizó'} librería: ${library.name || library.id}`)
+    return library
+  })()
+
+  try {
+    return await bunnyStreamLibraryProvisionCache.promise
+  } catch (error) {
+    bunnyStreamLibraryProvisionCache.expiresAt = Date.now() + 60_000
+    logger.warn(`[MediaStorage] No se pudo autoconfigurar Bunny Stream: ${error.message}`)
+    return null
+  } finally {
+    bunnyStreamLibraryProvisionCache.promise = null
+  }
+}
+
+async function autoProvisionBunnyStreamConfig(config) {
+  if (!config.bunnyStreamEnabled || config.bunnyStreamConfigured || !config.bunnyAccountApiKey) return config
+  const library = await provisionBunnyStreamLibrary(config)
+  if (!library) return config
+  const row = await getStorageSettingsRow()
+  const nextConfig = buildStorageRuntimeConfig(row)
+  nextConfig.streamAutoProvisioned = Boolean(library.created)
+  return nextConfig
+}
+
 export function resetCentralStorageConfigCache() {
   centralStorageConfigCache = {
     expiresAt: 0,
     env: null,
+    promise: null
+  }
+  bunnyStreamLibraryProvisionCache = {
+    key: '',
+    expiresAt: 0,
     promise: null
   }
   bunnyStreamCollectionCache.clear()
@@ -442,7 +620,7 @@ export async function getStorageRuntimeConfig() {
   const row = await getStorageSettingsRow()
   let config = buildStorageRuntimeConfig(row)
 
-  if (config.provider === 'bunny' && !config.bunnyConfigured) {
+  if (config.provider === 'bunny' && (!config.bunnyConfigured || (config.bunnyStreamEnabled && !config.bunnyStreamConfigured && !config.bunnyAccountApiKey))) {
     const centralEnv = await fetchCentralStorageConfig()
     if (applyCentralStorageEnv(centralEnv)) {
       config = buildStorageRuntimeConfig(row)
@@ -450,6 +628,19 @@ export async function getStorageRuntimeConfig() {
     }
   }
 
+  config = await autoProvisionBunnyStreamConfig(config)
+  return config
+}
+
+export async function ensureBunnyStreamRuntimeConfigured() {
+  const config = await getStorageRuntimeConfig()
+  if (!config.bunnyStreamEnabled) {
+    logger.info('[MediaStorage] Bunny Stream está deshabilitado.')
+  } else if (config.bunnyStreamConfigured) {
+    logger.info(`[MediaStorage] Bunny Stream listo: librería ${config.bunnyStreamLibraryId}.`)
+  } else {
+    logger.warn(`[MediaStorage] Bunny Stream no configurado: faltan ${config.streamMissingEnvironment.join(', ') || 'credenciales'}.`)
+  }
   return config
 }
 

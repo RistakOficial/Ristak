@@ -17,6 +17,7 @@ import { startWhatsAppQrWatchdogCron } from './jobs/whatsappQrWatchdog.cron.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
+import { ensureBunnyStreamRuntimeConfigured } from './services/mediaStorageService.js'
 
 // Force redeploy to ensure latest logs are active
 
@@ -200,6 +201,10 @@ app.listen(PORT, '0.0.0.0', async () => {
 
   // Inicializar versión de Meta API desde BD
   await initializeVersion()
+
+  ensureBunnyStreamRuntimeConfigured().catch(error => {
+    logger.error(`No se pudo preparar Bunny Stream al arrancar: ${error.message}`)
+  })
 
   updateMetaVersion({ source: 'startup' }).catch(error => {
     logger.error(`No se pudo revisar la versión de Meta API al arrancar: ${error.message}`)
