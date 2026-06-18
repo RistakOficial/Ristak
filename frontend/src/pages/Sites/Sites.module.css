@@ -6849,20 +6849,30 @@
 .videoRetentionGrid {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 3;
   display: grid;
   grid-template-rows: repeat(4, 1fr);
   pointer-events: none;
 }
 
 .videoRetentionGrid span {
+  position: relative;
   display: flex;
   justify-content: flex-end;
-  border-top: 1px dashed var(--video-retention-grid);
   color: var(--video-retention-axis);
   font-size: 0.72rem;
   line-height: 1;
   text-shadow: 0 1px 2px var(--surface-solid, var(--surface));
+}
+
+.videoRetentionGrid span::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--video-retention-axis) 68%, transparent);
+  filter: drop-shadow(0 1px 2px color-mix(in srgb, var(--surface-solid, var(--surface)) 68%, transparent));
 }
 
 .videoRetentionPlayhead {
