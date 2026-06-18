@@ -1301,13 +1301,24 @@
 }
 
 .agentDetailLayout {
-  --agent-test-panel-width: clamp(330px, 22vw, 390px);
-  --agent-test-panel-gutter: 28px;
+  --agent-test-panel-width: clamp(340px, 19vw, 390px);
+  --agent-test-panel-gutter: 32px;
+  --agent-shell-sidebar-width: 14rem;
+  --agent-settings-inline-padding: 5rem;
+  --agent-main-available-width: calc(100vw - var(--agent-shell-sidebar-width));
+  --agent-settings-visual-width: min(
+    calc(var(--agent-main-available-width) - var(--agent-settings-inline-padding)),
+    var(--app-page-max, 104rem)
+  );
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--agent-test-panel-width);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: start;
   gap: var(--agent-test-panel-gutter);
   width: 100%;
+}
+
+:global(body:has([data-ristak-layout-sidebar][data-collapsed='true'])) .agentDetailLayout {
+  --agent-shell-sidebar-width: 5rem;
 }
 
 .agentConfigColumn,
@@ -1323,14 +1334,21 @@
 }
 
 .agentTestColumn {
-  position: sticky;
-  top: 18px;
-  z-index: 1;
-  align-self: start;
-  justify-self: end;
+  position: fixed;
+  top: calc(var(--header-height, 84px) + ((100vh - var(--header-height, 84px)) / 2));
+  right: max(
+    24px,
+    calc(
+      (var(--agent-main-available-width) / 2)
+      - (var(--agent-settings-visual-width) / 4)
+      - (var(--agent-test-panel-width) / 2)
+    )
+  );
+  z-index: 12;
   width: var(--agent-test-panel-width);
-  height: calc(100vh - 36px);
+  height: min(760px, calc(100vh - var(--header-height, 84px) - 32px));
   min-height: 0;
+  transform: translateY(-50%);
 }
 
 .agentStatusPill {
@@ -1579,8 +1597,8 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .agentConfigColumn {
-    width: 100%;
+  .agentDetailLayout {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 0.8fr);
   }
 }
 
@@ -1619,6 +1637,7 @@
     width: auto;
     height: auto;
     min-height: 0;
+    transform: none;
   }
 
   .agentConfigColumn {
@@ -1791,8 +1810,8 @@
 
 .conversationAgentCard,
 .conversationAgentCard:global([data-ristak-card]) {
-  justify-self: center;
-  width: min(100%, 1040px);
+  justify-self: end;
+  width: min(100%, 760px);
   overflow: visible !important;
 }
 
@@ -2069,8 +2088,8 @@
 }
 
 .agentTestPhonePreview {
-  height: clamp(600px, calc(100vh - 72px), 760px);
-  min-height: 0;
+  height: min(760px, calc(100vh - var(--header-height, 84px) - 32px));
+  min-height: min(560px, calc(100vh - var(--header-height, 84px) - 32px));
   width: min(100%, var(--agent-test-panel-width));
 }
 
