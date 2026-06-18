@@ -8,6 +8,8 @@ import styles from './Modal.module.css'
 type ModalType = 'confirm' | 'alert' | 'info' | 'custom'
 type ModalSize = 'sm' | 'md' | 'lg' | 'xl'
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline'
+type ModalActionResult = void | boolean | Promise<void | boolean>
+type ModalActionHandler = () => ModalActionResult
 
 interface ModalProps {
   isOpen: boolean
@@ -20,8 +22,8 @@ interface ModalProps {
   cancelText?: string
   secondaryActionText?: string
   secondaryActionVariant?: ButtonVariant
-  onConfirm?: () => void
-  onSecondaryAction?: () => void
+  onConfirm?: ModalActionHandler
+  onSecondaryAction?: ModalActionHandler
   onCancel?: () => void
   showCloseButton?: boolean
   className?: string
@@ -103,12 +105,16 @@ export const Modal: React.FC<ModalProps> = ({
   children
 }) => {
   const [typedConfirmation, setTypedConfirmation] = useState('')
+  const [pendingAction, setPendingAction] = useState<'confirm' | 'secondary' | null>(null)
   const requiresTypedConfirmation = type === 'confirm' && !!typeToConfirm
   const typedConfirmationValid = !requiresTypedConfirmation ||
     normalizeModalText(typedConfirmation) === normalizeModalText(typeToConfirm || '')
 
   useEffect(() => {
-    if (!isOpen) setTypedConfirmation('')
+    if (!isOpen) {
+      setTypedConfirmation('')
+      setPendingAction(null)
+    }
   }, [isOpen])
 
   const normalizedConfirmText = normalizeModalText(confirmText)
@@ -119,11 +125,29 @@ export const Modal: React.FC<ModalProps> = ({
   )
   const confirmButtonVariant: ButtonVariant = isDestructiveConfirm ? 'danger' : 'primary'
   const isSystemModal = type !== 'custom'
+  const actionPending = pendingAction !== null
 
   const handleCancel = useCallback(() => {
+    if (pendingAction) return
     onCancel?.()
     onClose()
-  }, [onCancel, onClose])
+  }, [onCancel, onClose, pendingAction])
+
+  const runAction = useCallback(async (
+    actionName: 'confirm' | 'secondary',
+    action?: ModalActionHandler
+  ) => {
+    if (!typedConfirmationValid || pendingAction) return
+    setPendingAction(actionName)
+    try {
+      const result = await action?.()
+      if (result !== false) onClose()
+    } catch {
+      // La acción dueña del flujo muestra el error; el modal se queda abierto.
+    } finally {
+      setPendingAction(null)
+    }
+  }, [onClose, pendingAction, typedConfirmationValid])
   const bottomSheetDismiss = useBottomSheetDismiss({
     isOpen: isOpen && draggableSheet,
     onClose: handleCancel
@@ -224,6 +248,7 @@ export const Modal: React.FC<ModalProps> = ({
                 className={styles.closeButton}
                 onClick={draggableSheet ? closeWithSheetAnimation : handleCancel}
                 aria-label={closeAriaLabel}
+                disabled={actionPending}
               >
                 {closeIcon ?? <X size={20} />}
               </button>
@@ -263,35 +288,30 @@ export const Modal: React.FC<ModalProps> = ({
                   variant="secondary"
                   onClick={handleCancel}
                   size="medium"
+                  disabled={actionPending}
                 >
                   {cancelText}
+                </Button>
+                <Button
+                  variant={confirmButtonVariant}
+                  disabled={!typedConfirmationValid || actionPending}
+                  loading={pendingAction === 'confirm'}
+                  onClick={() => void runAction('confirm', onConfirm)}
+                  size="medium"
+                >
+                  {confirmText}
                 </Button>
                 {secondaryActionText && onSecondaryAction && (
                   <Button
                     variant={secondaryActionVariant}
-                    disabled={!typedConfirmationValid}
-                    onClick={() => {
-                      if (!typedConfirmationValid) return
-                      onSecondaryAction()
-                      onClose()
-                    }}
+                    disabled={!typedConfirmationValid || actionPending}
+                    loading={pendingAction === 'secondary'}
+                    onClick={() => void runAction('secondary', onSecondaryAction)}
                     size="medium"
                   >
                     {secondaryActionText}
                   </Button>
                 )}
-                <Button
-                  variant={confirmButtonVariant}
-                  disabled={!typedConfirmationValid}
-                  onClick={() => {
-                    if (!typedConfirmationValid) return
-                    onConfirm?.()
-                    onClose()
-                  }}
-                  size="medium"
-                >
-                  {confirmText}
-                </Button>
               </>
             )}
             {(type === 'alert' || type === 'info') && (

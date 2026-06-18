@@ -410,14 +410,14 @@ export const AutomationEditor: React.FC = () => {
         'Seguir editando',
         undefined,
         {
-          secondaryActionText: 'Salir y Guardar',
+          secondaryActionText: 'Salir y guardar',
           secondaryActionVariant: 'primary',
-          onSecondaryAction: () => {
+          onSecondaryAction: async () => {
             const saveBeforeLeaving = persistAutomationRef.current
-            if (!saveBeforeLeaving) return
-            void saveBeforeLeaving({ notify: true }).then((saved) => {
-              if (saved) onContinue()
-            })
+            if (!saveBeforeLeaving) return false
+            const saved = await saveBeforeLeaving({ notify: true })
+            if (saved) onContinue()
+            return saved
           }
         }
       )

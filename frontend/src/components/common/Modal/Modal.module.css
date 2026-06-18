@@ -223,6 +223,12 @@
   transform: rotate(90deg);
 }
 
+.closeButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+  transform: none;
+}
+
 .content {
   padding: 24px 32px;
   overflow-y: auto;
@@ -295,7 +301,7 @@
 }
 
 .typeToConfirmInput:focus {
-  border-color: var(--color-danger, #ef4444);
+  border-color: var(--neg);
 }
 
 .footer {
@@ -569,8 +575,8 @@
 .modal.confirm,
 .modal.alert,
 .modal.info {
-  width: min(92vw, 430px);
-  max-width: 430px;
+  width: min(92vw, 460px);
+  max-width: 460px;
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-pop);
 }
@@ -629,6 +635,21 @@
   background: transparent;
 }
 
+.modal.confirm .footer {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.modal.confirm .footer [data-btn] {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 100%;
+  padding-inline: 12px;
+  text-align: center;
+  white-space: normal;
+  line-height: 1.15;
+}
+
 .modal.destructive .iconWrapper {
   color: var(--color-status-error);
   opacity: 1;
@@ -643,8 +664,8 @@
   .modal.confirm,
   .modal.alert,
   .modal.info {
-    width: min(100%, 430px);
-    max-width: 430px;
+    width: min(100%, 460px);
+    max-width: 460px;
     max-height: calc(100dvh - 32px);
   }
 
@@ -664,5 +685,10 @@
   .modal.alert .footer,
   .modal.info .footer {
     padding: 18px 20px 20px;
+  }
+
+  .modal.confirm .footer [data-btn] {
+    flex-basis: 100%;
+    width: 100%;
   }
 }

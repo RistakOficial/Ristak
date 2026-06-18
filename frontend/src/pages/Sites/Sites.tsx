@@ -5488,20 +5488,16 @@ export const Sites: React.FC = () => {
       'Seguir editando',
       handleCancelLeaveEditor,
       {
-        secondaryActionText: 'Salir y Guardar',
+        secondaryActionText: 'Salir y guardar',
         secondaryActionVariant: 'primary',
-        onSecondaryAction: () => {
-          void flushPendingEditorSaves({ silent: true }).then((saved) => {
-            if (saved) {
-              handleConfirmLeaveEditor(action)
-              return
-            }
-            handleCancelLeaveEditor()
-          })
+        onSecondaryAction: async () => {
+          const saved = await flushPendingEditorSaves({ silent: true })
+          if (saved) handleConfirmLeaveEditor(action)
+          return saved
         }
       }
     )
-  }, [handleCancelLeaveEditor, handleConfirmLeaveEditor, hasUnsavedChanges, showConfirm])
+  }, [flushPendingEditorSaves, handleCancelLeaveEditor, handleConfirmLeaveEditor, hasUnsavedChanges, showConfirm])
 
   const markEditorDirty = (scope: EditorDirtyScope = { site: true }) => {
     const site = selectedSiteRef.current || editorSite

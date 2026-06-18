@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useCallback } from 'react'
 
 type ToastType = 'success' | 'error' | 'info' | 'warning'
+type ModalActionResult = void | boolean | Promise<void | boolean>
+type ModalActionHandler = () => ModalActionResult
 
 interface ToastData {
   id: string
@@ -14,7 +16,7 @@ interface ConfirmOptions {
   typeToConfirm?: string
   secondaryActionText?: string
   secondaryActionVariant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline'
-  onSecondaryAction?: () => void
+  onSecondaryAction?: ModalActionHandler
 }
 
 interface ModalData {
@@ -26,15 +28,15 @@ interface ModalData {
   cancelText?: string
   secondaryActionText?: string
   secondaryActionVariant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline'
-  onConfirm?: () => void
-  onSecondaryAction?: () => void
+  onConfirm?: ModalActionHandler
+  onSecondaryAction?: ModalActionHandler
   onCancel?: () => void
   typeToConfirm?: string
 }
 
 interface NotificationContextType {
   showToast: (type: ToastType, title: string, message?: string, duration?: number) => void
-  showConfirm: (title: string, message: string, onConfirm: () => void, confirmText?: string, cancelText?: string, onCancel?: () => void, options?: ConfirmOptions) => void
+  showConfirm: (title: string, message: string, onConfirm: ModalActionHandler, confirmText?: string, cancelText?: string, onCancel?: () => void, options?: ConfirmOptions) => void
   showAlert: (title: string, message: string, confirmText?: string) => void
   showInfo: (title: string, message: string, confirmText?: string) => void
   toasts: ToastData[]
@@ -85,7 +87,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const showConfirm = useCallback((
     title: string,
     message: string,
-    onConfirm: () => void,
+    onConfirm: ModalActionHandler,
     confirmText: string = 'Aceptar',
     cancelText: string = 'Cancelar',
     onCancel?: () => void,
