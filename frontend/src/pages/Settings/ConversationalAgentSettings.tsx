@@ -260,6 +260,11 @@ const MAX_TEST_REPLY_DELAY_MS = 60_000
 const MAX_TEST_ATTACHMENT_BYTES = 18 * 1024 * 1024
 const MAX_TEST_TEXT_ATTACHMENT_BYTES = 750 * 1024
 const MAX_TEST_ATTACHMENTS = 6
+const TEST_MEDIA_TTL_MS = 30 * 60 * 1000
+const TEST_MEDIA_CACHE_DB_NAME = 'ristak_conversational_agent_practice_media'
+const TEST_MEDIA_CACHE_STORE = 'practice-media'
+const TEST_MEDIA_CACHE_PREFIX = 'agent-practice'
+const TEST_MEDIA_EXPIRED_NOTICE = 'Expiró el contenido de prueba. Reinicia el chat o recarga la ventana para continuar con las pruebas.'
 const MIN_TEST_VOICE_RECORDING_MS = 600
 const MAX_TEST_VOICE_RECORDING_MS = 3 * 60 * 1000
 const TEST_VOICE_WAVE_BAR_COUNT = 38
@@ -300,12 +305,113 @@ const TEST_VOICE_MIME_CANDIDATES = [
 ]
 const TEST_TEXT_EXTENSIONS = new Set(['txt', 'csv', 'json', 'md', 'html', 'xml'])
 
-type TestAttachment = ConversationalAgentTestAttachment & PhoneChatPreviewAttachment & { id: string }
+type TestAttachment = ConversationalAgentTestAttachment & PhoneChatPreviewAttachment & {
+  id: string
+  cacheKey?: string
+  uploadedAt?: number
+  expiresAt?: number
+}
 type TestMessage = {
   role: 'user' | 'assistant'
   content: string
   attachments?: TestAttachment[]
   internal?: boolean
+}
+
+function createTestMediaCacheKey(id: string) {
+  return `${TEST_MEDIA_CACHE_PREFIX}:${id}`
+}
+
+function createTestMediaExpiry(now = Date.now()) {
+  return {
+    uploadedAt: now,
+    expiresAt: now + TEST_MEDIA_TTL_MS
+  }
+}
+
+function openTestMediaCache(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') {
+      reject(new Error('IndexedDB no disponible'))
+      return
+    }
+
+    const request = indexedDB.open(TEST_MEDIA_CACHE_DB_NAME, 1)
+    request.onupgradeneeded = () => {
+      const db = request.result
+      if (!db.objectStoreNames.contains(TEST_MEDIA_CACHE_STORE)) {
+        db.createObjectStore(TEST_MEDIA_CACHE_STORE)
+      }
+    }
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error || new Error('No se pudo abrir cache local'))
+  })
+}
+
+async function saveTestAttachmentToLocalCache(attachment: TestAttachment) {
+  if (!attachment.cacheKey) return
+  const db = await openTestMediaCache()
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(TEST_MEDIA_CACHE_STORE, 'readwrite')
+    const store = transaction.objectStore(TEST_MEDIA_CACHE_STORE)
+    store.put({ ...attachment, cachedAt: Date.now() }, attachment.cacheKey)
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error || new Error('No se pudo guardar cache local'))
+  }).finally(() => db.close())
+}
+
+async function clearExpiredTestMediaCache(now = Date.now()) {
+  const db = await openTestMediaCache()
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(TEST_MEDIA_CACHE_STORE, 'readwrite')
+    const store = transaction.objectStore(TEST_MEDIA_CACHE_STORE)
+    const request = store.openCursor()
+
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor) return
+      const value = cursor.value as Partial<TestAttachment> | undefined
+      if (Number(value?.expiresAt || 0) <= now) {
+        cursor.delete()
+      }
+      cursor.continue()
+    }
+    request.onerror = () => reject(request.error || new Error('No se pudo limpiar cache local'))
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error || new Error('No se pudo limpiar cache local'))
+  }).finally(() => db.close())
+}
+
+async function clearTestMediaCache() {
+  const db = await openTestMediaCache()
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(TEST_MEDIA_CACHE_STORE, 'readwrite')
+    transaction.objectStore(TEST_MEDIA_CACHE_STORE).clear()
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error || new Error('No se pudo limpiar cache local'))
+  }).finally(() => db.close())
+}
+
+function cacheTestAttachment(attachment: TestAttachment) {
+  void saveTestAttachmentToLocalCache(attachment).catch(() => undefined)
+}
+
+function testAttachmentExpired(attachment: TestAttachment | null | undefined, now = Date.now()) {
+  return Boolean(attachment?.expiresAt && attachment.expiresAt <= now)
+}
+
+function testMessageHasExpiredAttachment(message: TestMessage, now = Date.now()) {
+  return (message.attachments || []).some((attachment) => testAttachmentExpired(attachment, now))
+}
+
+function getNextTestMediaExpiration(messages: TestMessage[], draftAttachments: TestAttachment[], voiceDraft: TestAttachment | null) {
+  const expirations = [
+    ...messages.flatMap((message) => (message.attachments || []).map((attachment) => attachment.expiresAt || 0)),
+    ...draftAttachments.map((attachment) => attachment.expiresAt || 0),
+    voiceDraft?.expiresAt || 0
+  ].filter((value) => value > 0)
+
+  return expirations.length ? Math.min(...expirations) : null
 }
 
 function getFileExtension(name = '') {
@@ -361,13 +467,17 @@ async function createTestAttachment(file: File): Promise<TestAttachment> {
   const kind = inferTestAttachmentKind(file)
   const dataUrl = await readFileAsDataUrl(file)
   const text = canReadTextAttachment(file) ? await readFileAsText(file) : undefined
+  const id = `test-attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const expiry = createTestMediaExpiry()
   return {
-    id: `test-attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    id,
     kind,
     name: file.name || `archivo.${getFileExtension(file.name) || 'bin'}`,
     mimeType: file.type || 'application/octet-stream',
     size: file.size,
     dataUrl,
+    cacheKey: createTestMediaCacheKey(id),
+    ...expiry,
     ...(text ? { text: text.slice(0, 18_000) } : {})
   }
 }
@@ -659,6 +769,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const [testAttachments, setTestAttachments] = useState<TestAttachment[]>([])
   const [testAttachmentMenuOpen, setTestAttachmentMenuOpen] = useState(false)
   const [testEmojiPickerOpen, setTestEmojiPickerOpen] = useState(false)
+  const [testPracticeExpired, setTestPracticeExpired] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testVoiceRecording, setTestVoiceRecording] = useState(false)
   const [testVoiceProcessing, setTestVoiceProcessing] = useState(false)
@@ -684,9 +795,18 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const testVoiceSendAfterStopRef = useRef(false)
   const testVoiceDiscardRef = useRef(false)
   const testVoiceAudioRef = useRef<HTMLAudioElement | null>(null)
+  const testPracticeExpiredRef = useRef(false)
 
   useEffect(() => () => {
     cleanupTestVoiceRecorder()
+  }, [])
+
+  useEffect(() => {
+    testPracticeExpiredRef.current = testPracticeExpired
+  }, [testPracticeExpired])
+
+  useEffect(() => {
+    void clearExpiredTestMediaCache().catch(() => undefined)
   }, [])
 
   const allowedActions = actionsByObjective[agent.objective] || actionsByObjective.custom
@@ -741,7 +861,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       ]
     : [{ value: '', label: 'Selecciona producto primero' }]
   const testVoicePanelActive = testVoiceRecording || testVoiceProcessing || Boolean(testVoiceDraft)
-  const hasTestConversation = testMessages.length > 0 || Boolean(testInput.trim()) || testAttachments.length > 0 || Boolean(testVoiceDraft) || testVoiceRecording
+  const hasTestConversation = testPracticeExpired || testMessages.length > 0 || Boolean(testInput.trim()) || testAttachments.length > 0 || Boolean(testVoiceDraft) || testVoiceRecording
 
   useEffect(() => {
     if (!testVoicePanelActive && !testing) return
@@ -749,23 +869,30 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     setTestEmojiPickerOpen(false)
   }, [testVoicePanelActive, testing])
 
-  const testPreviewMessages: PhoneChatPreviewMessage[] = testMessages.map((message, index) => ({
-    id: `test-${index}`,
-    direction: message.internal ? 'system' : message.role === 'user' ? 'outbound' : 'inbound',
-    body: message.content || getAttachmentMessageLabel(message.attachments || []),
-    attachments: (message.attachments || []).map((attachment): PhoneChatPreviewAttachment => ({
-      id: attachment.id,
-      kind: attachment.kind,
-      name: attachment.name,
-      mimeType: attachment.mimeType,
-      size: attachment.size,
-      dataUrl: attachment.dataUrl,
-      thumbnailDataUrl: attachment.thumbnailDataUrl,
-      durationMs: attachment.durationMs
-    })),
-    internal: message.internal,
-    time: message.internal ? undefined : '11:48'
-  }))
+  const testPreviewMessages: PhoneChatPreviewMessage[] = testPracticeExpired
+    ? [{
+        id: 'test-media-expired',
+        direction: 'system',
+        body: TEST_MEDIA_EXPIRED_NOTICE,
+        internal: true
+      }]
+    : testMessages.map((message, index) => ({
+        id: `test-${index}`,
+        direction: message.internal ? 'system' : message.role === 'user' ? 'outbound' : 'inbound',
+        body: message.content || getAttachmentMessageLabel(message.attachments || []),
+        attachments: (message.attachments || []).map((attachment): PhoneChatPreviewAttachment => ({
+          id: attachment.id,
+          kind: attachment.kind,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          dataUrl: attachment.dataUrl,
+          thumbnailDataUrl: attachment.thumbnailDataUrl,
+          durationMs: attachment.durationMs
+        })),
+        internal: message.internal,
+        time: message.internal ? undefined : '11:48'
+      }))
 
   const updateExtra = (index: number, patch: Partial<AgentSuccessExtra>) => {
     onChange({ successExtras: agent.successExtras.map((extra, i) => (i === index ? { ...extra, ...patch } : extra)) })
@@ -988,10 +1115,51 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     setTestVoiceBars(createTestVoiceBars())
   }
 
+  const expireTestPracticeMedia = useCallback(() => {
+    testPracticeExpiredRef.current = true
+    cleanupTestVoiceRecorder()
+    testVoiceAudioRef.current?.pause()
+    setTestMessages([])
+    setTestInput('')
+    setTestAttachments([])
+    setTestAttachmentMenuOpen(false)
+    setTestEmojiPickerOpen(false)
+    setTesting(false)
+    setTestVoiceDraft(null)
+    setTestVoiceRecording(false)
+    setTestVoiceProcessing(false)
+    setTestVoiceElapsedMs(0)
+    setTestVoicePlaying(false)
+    setTestVoiceBars(createTestVoiceBars())
+    setTestPracticeExpired(true)
+    void clearTestMediaCache().catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    if (testPracticeExpired) return
+    const expiresAt = getNextTestMediaExpiration(testMessages, testAttachments, testVoiceDraft)
+    if (!expiresAt) return
+
+    const delayMs = expiresAt - Date.now()
+    if (delayMs <= 0) {
+      expireTestPracticeMedia()
+      return
+    }
+
+    const timer = window.setTimeout(expireTestPracticeMedia, Math.min(delayMs, 2_147_483_647))
+    return () => window.clearTimeout(timer)
+  }, [expireTestPracticeMedia, testAttachments, testMessages, testPracticeExpired, testVoiceDraft])
+
   async function submitTestMessage(input: { content?: string; attachments?: TestAttachment[]; clearComposer?: boolean }) {
     const content = String(input.content ?? '').trim()
     const attachments = input.attachments || []
-    if (testing || (!content && attachments.length === 0)) return
+    if (testPracticeExpired || testing || (!content && attachments.length === 0)) return
+
+    const now = Date.now()
+    if (attachments.some((attachment) => testAttachmentExpired(attachment, now)) || testMessages.some((message) => testMessageHasExpiredAttachment(message, now))) {
+      expireTestPracticeMedia()
+      return
+    }
 
     const userMessage: TestMessage = {
       role: 'user',
@@ -1019,8 +1187,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       if (responseDelayMs > 0) {
         await waitForTestReplyDelay(responseDelayMs)
       }
+      if (testPracticeExpiredRef.current) return
 
       for (const action of result.actions || []) {
+        if (testPracticeExpiredRef.current) return
         setTestMessages((current) => [...current, { role: 'assistant', content: `⚙︎ Acción interna: ${action.type}`, internal: true }])
       }
 
@@ -1031,19 +1201,26 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           if (index > 0 && delayMs > 0) {
             await waitForTestReplyDelay(delayMs)
           }
+          if (testPracticeExpiredRef.current) return
           setTestMessages((current) => [...current, { role: 'assistant', content: visibleReplies[index] }])
         }
       } else if (result.suppressed) {
+        if (testPracticeExpiredRef.current) return
         setTestMessages((current) => [...current, { role: 'assistant', content: '⚙︎ El agente decidió no responder (acción interna o silencio).', internal: true }])
       }
     } catch (error: any) {
-      showToast('error', 'Prueba fallida', error?.message || 'No se pudo probar el agente')
+      if (!testPracticeExpiredRef.current) {
+        showToast('error', 'Prueba fallida', error?.message || 'No se pudo probar el agente')
+      }
     } finally {
-      setTesting(false)
+      if (!testPracticeExpiredRef.current) {
+        setTesting(false)
+      }
     }
   }
 
   const handleSendTestMessage = () => {
+    if (testPracticeExpired) return
     setTestAttachmentMenuOpen(false)
     setTestEmojiPickerOpen(false)
     void submitTestMessage({
@@ -1054,13 +1231,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const handleOpenTestAttachmentPicker = () => {
-    if (testing || testVoicePanelActive) return
+    if (testPracticeExpired || testing || testVoicePanelActive) return
     setTestEmojiPickerOpen(false)
     setTestAttachmentMenuOpen((current) => !current)
   }
 
   const handlePickTestAttachment = (kind: 'photo' | 'file' | 'video') => {
-    if (testing || testVoicePanelActive) return
+    if (testPracticeExpired || testing || testVoicePanelActive) return
     setTestAttachmentMenuOpen(false)
     setTestEmojiPickerOpen(false)
     if (kind === 'photo') {
@@ -1075,13 +1252,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const handleToggleTestEmojiPicker = () => {
-    if (testing || testVoicePanelActive) return
+    if (testPracticeExpired || testing || testVoicePanelActive) return
     setTestAttachmentMenuOpen(false)
     setTestEmojiPickerOpen((current) => !current)
   }
 
   const handleSelectTestEmoji = (emoji: string) => {
-    if (testing || testVoicePanelActive) return
+    if (testPracticeExpired || testing || testVoicePanelActive) return
     const input = testComposerInputRef.current
 
     setTestInput((current) => {
@@ -1104,7 +1281,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const handleTestAttachmentInputChange: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
     const files = Array.from(event.currentTarget.files || [])
     event.currentTarget.value = ''
-    if (!files.length || testing) return
+    if (!files.length || testPracticeExpired || testing) return
 
     const availableSlots = Math.max(0, MAX_TEST_ATTACHMENTS - testAttachments.length)
     if (availableSlots <= 0) {
@@ -1121,6 +1298,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
     try {
       const attachments = await Promise.all(acceptedFiles.map(createTestAttachment))
+      attachments.forEach(cacheTestAttachment)
       setTestAttachments((current) => [...current, ...attachments].slice(0, MAX_TEST_ATTACHMENTS))
       if (files.length > acceptedFiles.length) {
         showToast('warning', 'Algunos archivos no se agregaron', `El demo acepta ${MAX_TEST_ATTACHMENTS} adjuntos por mensaje.`)
@@ -1131,7 +1309,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const handleRemoveTestAttachment = (attachmentId: string) => {
-    if (testing) return
+    if (testPracticeExpired || testing) return
     setTestAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))
   }
 
@@ -1143,7 +1321,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const handleStartTestVoiceRecording = async () => {
-    if (testing || testVoiceRecording || testVoiceProcessing) return
+    if (testPracticeExpired || testing || testVoiceRecording || testVoiceProcessing) return
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
       showToast('error', 'Audio no disponible', 'Este navegador no permite grabar notas de voz aquí.')
       return
@@ -1205,15 +1383,20 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           }
 
           const dataUrl = await readBlobAsDataUrl(blob)
+          const id = `test-voice-${Date.now()}`
+          const expiry = createTestMediaExpiry()
           const attachment: TestAttachment = {
-            id: `test-voice-${Date.now()}`,
+            id,
             kind: 'audio',
             name: `nota-de-voz.${type.includes('mp4') ? 'm4a' : 'webm'}`,
             mimeType: type,
             size: blob.size,
             durationMs,
-            dataUrl
+            dataUrl,
+            cacheKey: createTestMediaCacheKey(id),
+            ...expiry
           }
+          cacheTestAttachment(attachment)
 
           if (sendAfterStop) {
             setTestVoiceDraft(null)
@@ -1247,6 +1430,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const handleCancelTestVoiceDraft = () => {
+    if (testPracticeExpired) return
     setTestAttachmentMenuOpen(false)
     setTestEmojiPickerOpen(false)
     if (testVoiceRecording) {
@@ -1263,6 +1447,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const handleTestVoicePrimary = () => {
+    if (testPracticeExpired) return
     if (testVoiceRecording) {
       handleStopTestVoiceRecording()
       return
@@ -1281,6 +1466,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const handleSendTestVoice = () => {
+    if (testPracticeExpired) return
     if (testVoiceRecording) {
       testVoiceSendAfterStopRef.current = true
       handleStopTestVoiceRecording()
@@ -1297,6 +1483,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
   const handleResetTestChat = () => {
     if (testing) return
+    testPracticeExpiredRef.current = false
     cleanupTestVoiceRecorder()
     setTestMessages([])
     setTestInput('')
@@ -1309,6 +1496,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     setTestVoiceElapsedMs(0)
     setTestVoicePlaying(false)
     setTestVoiceBars(createTestVoiceBars())
+    setTestPracticeExpired(false)
+    void clearTestMediaCache().catch(() => undefined)
   }
 
   return (
@@ -2004,8 +2193,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               subtitle="Prueba interna"
               avatarLabel="Mi negocio"
               messages={testPreviewMessages}
-              emptyText="Escribe como prospecto y revisa si contesta como debe."
-              typing={testing}
+              emptyText={testPracticeExpired ? TEST_MEDIA_EXPIRED_NOTICE : 'Escribe como prospecto y revisa si contesta como debe.'}
+              typing={!testPracticeExpired && testing}
               headerActions={[
                 {
                   id: 'reset',
@@ -2075,9 +2264,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   <PhoneChatPreviewComposer
                     inputRef={testComposerInputRef}
                     value={testInput}
-                    placeholder="Ejemplo: Hola, quiero agendar"
-                    disabled={testing}
-                    sendDisabled={testing || (!testInput.trim() && testAttachments.length === 0)}
+                    placeholder={testPracticeExpired ? 'Prueba expirada. Reinicia el chat.' : 'Ejemplo: Hola, quiero agendar'}
+                    disabled={testPracticeExpired || testing}
+                    sendDisabled={testPracticeExpired || testing || (!testInput.trim() && testAttachments.length === 0)}
                     hasDraftContent={testAttachments.length > 0}
                     onChange={setTestInput}
                     onSend={handleSendTestMessage}
