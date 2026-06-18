@@ -253,6 +253,12 @@ type TestMessage = { role: 'user' | 'assistant'; content: string; internal?: boo
 
 const MAX_TEST_REPLY_DELAY_MS = 60_000
 
+function normalizeTestResponseDelay(value: unknown) {
+  const delayMs = Number(value)
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return 0
+  return Math.round(delayMs)
+}
+
 function normalizeTestReplyDelay(value: unknown) {
   const delayMs = Number(value)
   if (!Number.isFinite(delayMs) || delayMs <= 0) return 0
@@ -673,6 +679,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         nextMessages.map(({ role, content: text }) => ({ role, content: text })),
         { config: agentToInput(agent) }
       )
+
+      const responseDelayMs = normalizeTestResponseDelay(result.responseDelayMs)
+      if (responseDelayMs > 0) {
+        await waitForTestReplyDelay(responseDelayMs)
+      }
 
       for (const action of result.actions || []) {
         setTestMessages((current) => [...current, { role: 'assistant', content: `⚙︎ Acción interna: ${action.type}`, internal: true }])

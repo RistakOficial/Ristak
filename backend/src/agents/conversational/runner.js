@@ -1145,11 +1145,13 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
       })
   const replyParts = splitResult.messages
   const replyPartDelaysMs = buildReplyPartDelaySchedule(replyParts, { replyDelivery: runtimeConfig.replyDelivery })
+  const responseDelayMs = getAgentResponseDelayMs(runtimeConfig)
 
   return {
     reply: ctx.suppressReply ? '' : reply,
     replyParts,
     replyPartDelaysMs,
+    responseDelayMs,
     suppressed: ctx.suppressReply,
     actions: ctx.actions,
     aiProvider,
